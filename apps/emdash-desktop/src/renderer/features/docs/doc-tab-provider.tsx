@@ -10,6 +10,8 @@ import type {
 import { createTabProvider } from '@renderer/features/tabs/core/tab-provider-registry';
 import type { TaskTabContext } from '@renderer/features/tabs/core/task-tab-context';
 import { resolveWorkspacePath } from '@renderer/features/tasks/stores/workspace-path';
+import { commentDecorations } from './comments/comment-decorations';
+import { attachDocComments, disposeDocComments } from './comments/comments-store';
 import { DocTabResource, type DocPayload } from './doc-file-sync';
 import { DocPane } from './doc-pane';
 import { DocTabBarItem, DocTabBarItemDragPreview } from './doc-tab-item';
@@ -48,7 +50,9 @@ const DocTabContent = observer(function DocTabContent({ host }: TabContentProps)
           <div
             key={tab.tabId}
             className="absolute inset-0"
-            style={{ visibility: visible ? 'visible' : 'hidden' }}
+            // Only ever `hidden`: `visible` would escape PaneContent's hidden
+            // wrapper and paint this doc over whichever tab kind is active.
+            style={{ visibility: visible ? undefined : 'hidden' }}
             // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-ignore — `inert` is a valid HTML attribute in modern browsers but not yet in React types
             inert={visible ? undefined : ''}
@@ -78,16 +82,22 @@ export const docTabProvider: TabProvider<'doc', DocPayload, DocTabResource, DocO
       ctx: TabViewContext
     ): DocTabResource {
       const taskCtx = ctx as TaskTabContext;
-      return new DocTabResource(
+      const resource = new DocTabResource(
         entry.state,
         { projectId: taskCtx.projectId, workspaceId: taskCtx.workspaceId },
         handle
       );
+      // Comments ride along per tab (not via the global registry) so the layer
+      // is scoped to doc tabs and nothing else. Factories are read at mount.
+      const comments = attachDocComments(resource);
+      resource.extensionFactories.push(() => commentDecorations((id) => comments.focusThread(id)));
+      return resource;
     },
 
     // No onBeforeClose: dispose() flushes pending edits, so closing a doc tab
     // never needs a confirmation dialog.
     dispose(_entry: TabEntry<DocPayload>, resource: DocTabResource): void {
+      disposeDocComments(resource);
       resource.dispose();
     },
 

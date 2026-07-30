@@ -42,8 +42,9 @@ const docTheme = EditorView.theme({
     padding: '32px 24px 40vh',
     caretColor: 'var(--foreground)',
   },
-  '.cm-line': { padding: '0' },
-  // No gutters at all; keep the placeholder muted.
+  // `relative` is layout-neutral on its own, and gives the comments layer a
+  // containing block for the marker dot it absolutely positions beside the line.
+  '.cm-line': { padding: '0', position: 'relative' },
   '.cm-placeholder': { color: 'var(--foreground-passive)' },
   [`.${DOC_FLASH_CLASS}`]: {
     borderRadius: '2px',

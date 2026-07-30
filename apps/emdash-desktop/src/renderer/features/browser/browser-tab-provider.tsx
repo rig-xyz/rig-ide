@@ -57,7 +57,9 @@ const BrowserTabContent = observer(function BrowserTabContent({ host }: TabConte
           <div
             key={browserId}
             className="absolute inset-0"
-            style={{ visibility: visible ? 'visible' : 'hidden' }}
+            // Only ever `hidden`: `visible` would escape PaneContent's hidden
+            // wrapper and paint this browser over the active tab kind.
+            style={{ visibility: visible ? undefined : 'hidden' }}
             // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-ignore — `inert` is a valid HTML attribute in modern browsers but not yet in React types
             inert={visible ? undefined : ''}

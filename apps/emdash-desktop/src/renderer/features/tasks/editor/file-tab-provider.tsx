@@ -59,7 +59,9 @@ const FileContent = observer(function FileContent({ host, ctx: _ctx }: TabConten
     <div className="flex h-full w-full flex-col overflow-hidden">
       {activeFile && <FileContentToolbar tab={activeFile} canToggle={canToggle} />}
       <div className="relative flex-1 overflow-hidden">
-        <div className="absolute inset-0" style={{ visibility: showSource ? 'visible' : 'hidden' }}>
+        {/* Only ever `hidden`: `visible` would escape PaneContent's hidden
+            wrapper and paint Monaco over the active tab kind. */}
+        <div className="absolute inset-0" style={{ visibility: showSource ? undefined : 'hidden' }}>
           <FileContentRenderer />
         </div>
         {activeFile && showPreview && (

@@ -35,6 +35,7 @@ import { updateController } from './core/updates/controller';
 import { viewStateController } from './core/view-state/controller';
 import { projectSettingsController } from './core/workspaces/project-settings-controller';
 import { legacyPortController } from './db/legacy-port/controller';
+import { rigCommentsController } from './rig/comments';
 
 export const rpcRouter = createRPCRouter({
   account: accountController,
@@ -69,6 +70,9 @@ export const rpcRouter = createRPCRouter({
   viewState: viewStateController,
   search: searchController,
   projectSettings: projectSettingsController,
+  rig: createRPCNamespace({
+    comments: rigCommentsController,
+  }),
   workspace: createRPCNamespace({
     gitWorktree: gitWorktreeController,
     files: workspaceFileSystemController,

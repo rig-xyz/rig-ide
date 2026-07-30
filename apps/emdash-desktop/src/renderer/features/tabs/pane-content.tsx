@@ -80,7 +80,11 @@ export const PaneContent = observer(function PaneContent({
               <div
                 key={def.kind}
                 className="absolute inset-0"
-                style={{ visibility: isActive ? 'visible' : 'hidden' }}
+                // `visibility` is inherited, and a descendant that sets
+                // `visible` escapes a hidden ancestor and paints through the
+                // active tab. So it is only ever set to `hidden` here (and in
+                // every nested tab-kind wrapper) — never re-asserted.
+                style={{ visibility: isActive ? undefined : 'hidden' }}
                 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-ignore — `inert` is a valid HTML attribute in modern browsers but not yet in React types
                 inert={isActive ? undefined : ''}

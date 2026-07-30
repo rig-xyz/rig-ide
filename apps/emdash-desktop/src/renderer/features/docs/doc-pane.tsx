@@ -1,5 +1,6 @@
 import { observer } from 'mobx-react-lite';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { usePanelRef } from 'react-resizable-panels';
 import {
   useTaskViewContext,
   useWorkspace,
@@ -8,8 +9,20 @@ import {
 import { resolveWorkspaceResourcePath } from '@renderer/lib/editor/workspace-resource-path';
 import { rpc } from '@renderer/lib/ipc';
 import { MarkdownRenderer } from '@renderer/lib/ui/markdown-renderer';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@renderer/lib/ui/resizable';
 import { Spinner } from '@renderer/lib/ui/spinner';
 import { ToggleGroup, ToggleGroupItem } from '@renderer/lib/ui/toggle-group';
+import { CommentSelectionButton } from './comments/comment-selection';
+import {
+  CommentsMargin,
+  COMMENTS_MARGIN_MAX_WIDTH,
+  COMMENTS_MARGIN_MIN_WIDTH,
+  COMMENTS_MARGIN_WIDTH,
+  readCommentsMarginWidth,
+  shouldShowMargin,
+  writeCommentsMarginWidth,
+} from './comments/comments-margin';
+import { docCommentsFor } from './comments/comments-store';
 import { DocEditor } from './doc-editor';
 import type { DocSaveState, DocTabResource } from './doc-file-sync';
 
@@ -76,6 +89,11 @@ export const DocPane = observer(function DocPane({
   const { projectId } = useTaskViewContext();
   const workspaceId = useWorkspaceId();
   const workspacePath = useWorkspace().path;
+  const comments = docCommentsFor(resource);
+  const marginPanelRef = usePanelRef();
+  // Read once: the panel takes this as its `defaultSize` whenever it mounts,
+  // which is what makes the width survive the margin appearing and disappearing.
+  const [storedMarginWidth] = useState(readCommentsMarginWidth);
 
   useEffect(() => {
     if (visible) {
@@ -85,6 +103,15 @@ export const DocPane = observer(function DocPane({
     }
     void resource.flush();
   }, [visible, resource]);
+
+  // Polling follows visibility; markers need one paint once CM6 exists (child
+  // effects run first, so the view is already mounted here).
+  useEffect(() => {
+    comments?.setVisible(visible);
+  }, [comments, visible]);
+  useEffect(() => {
+    comments?.syncMarkers();
+  }, [comments]);
 
   const handleSave = useCallback(() => {
     void resource.flush();
@@ -104,47 +131,96 @@ export const DocPane = observer(function DocPane({
     [projectId, workspaceId, workspacePath, resource.path]
   );
 
+  const showMargin = shouldShowMargin(comments);
+
+  // The root is opaque and its own stacking context, like the other main-column
+  // panes, so nothing behind it can composite through the document.
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden">
+    <div className="relative isolate flex h-full w-full flex-col overflow-hidden bg-background-secondary-1">
       <DocToolbar resource={resource} />
-      <div className="relative min-h-0 flex-1">
-        {resource.isLoading ? (
-          <div className="flex h-full items-center justify-center">
-            <Spinner />
-          </div>
-        ) : resource.loadError ? (
-          <div className="px-8 py-8 text-sm text-foreground-destructive">
-            Could not open document: {resource.loadError}
-          </div>
-        ) : (
-          <>
-            <div
-              className="absolute inset-0"
-              style={{ visibility: resource.viewMode === 'source' ? 'visible' : 'hidden' }}
-            >
-              <DocEditor
-                ref={resource.editorRef}
-                path={resource.path}
-                initialContent={resource.content}
-                onChange={resource.handleEditorChange}
-                onSave={handleSave}
-                onSelectionChange={resource.handleSelectionChange}
-                extraExtensions={resource.extensionFactories}
-              />
+      <ResizablePanelGroup
+        orientation="horizontal"
+        id="doc-comments-layout"
+        className="min-h-0 flex-1"
+      >
+        {/* `overflow` must come through `style`: the panel sets it inline. */}
+        <ResizablePanel
+          id="doc-body"
+          minSize="240px"
+          className="relative"
+          style={{ overflow: 'hidden' }}
+        >
+          {resource.isLoading ? (
+            <div className="flex h-full items-center justify-center">
+              <Spinner />
             </div>
-            {resource.viewMode === 'preview' && (
-              <div className="absolute inset-0 overflow-y-auto bg-background-secondary-1">
-                <MarkdownRenderer
-                  content={resource.content}
-                  variant="full"
-                  className="mx-auto w-full max-w-3xl px-6 py-8"
-                  resolveImage={resolveImage}
+          ) : resource.loadError ? (
+            <div className="px-8 py-8 text-sm text-foreground-destructive">
+              Could not open document: {resource.loadError}
+            </div>
+          ) : (
+            <>
+              <div
+                className="absolute inset-0"
+                // `visibility` is inherited, so `visible` here would override
+                // the `hidden` PaneContent puts on this whole tab kind and
+                // paint the editor over whatever tab is actually active. Leave
+                // it unset in source mode and let it inherit.
+                style={{ visibility: resource.viewMode === 'source' ? undefined : 'hidden' }}
+              >
+                <DocEditor
+                  ref={resource.editorRef}
+                  path={resource.path}
+                  initialContent={resource.content}
+                  onChange={resource.handleEditorChange}
+                  onSave={handleSave}
+                  onSelectionChange={resource.handleSelectionChange}
+                  extraExtensions={resource.extensionFactories}
                 />
               </div>
-            )}
+              {resource.viewMode === 'preview' && (
+                <div className="absolute inset-0 overflow-y-auto bg-background-secondary-1">
+                  <MarkdownRenderer
+                    content={resource.content}
+                    variant="full"
+                    className="mx-auto w-full max-w-3xl px-6 py-8"
+                    resolveImage={resolveImage}
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </ResizablePanel>
+        {comments !== null && showMargin && (
+          <>
+            <ResizableHandle
+              disableDoubleClick
+              onDoubleClick={() => marginPanelRef.current?.resize(COMMENTS_MARGIN_WIDTH)}
+              className="bg-border transition-colors hover:bg-border-primary"
+            />
+            <ResizablePanel
+              id="doc-comments-margin"
+              panelRef={marginPanelRef}
+              defaultSize={`${storedMarginWidth}px`}
+              minSize={`${COMMENTS_MARGIN_MIN_WIDTH}px`}
+              maxSize={`${COMMENTS_MARGIN_MAX_WIDTH}px`}
+              // The margin is a fixed-width column, not a share of the pane:
+              // widening the window should grow the document, not the cards.
+              groupResizeBehavior="preserve-pixel-size"
+              style={{ overflow: 'hidden' }}
+              onResize={(panelSize, _id, prevPanelSize) => {
+                if (prevPanelSize === undefined) return;
+                writeCommentsMarginWidth(panelSize.inPixels);
+              }}
+            >
+              <CommentsMargin store={comments} />
+            </ResizablePanel>
           </>
         )}
-      </div>
+      </ResizablePanelGroup>
+      {comments !== null && visible && resource.viewMode === 'source' && (
+        <CommentSelectionButton resource={resource} store={comments} />
+      )}
     </div>
   );
 });
