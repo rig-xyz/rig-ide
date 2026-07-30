@@ -1,92 +1,58 @@
-<img alt="Emdash" src="https://github.com/user-attachments/assets/a2ecaf3c-9d84-40ca-9a8e-d4f612cc1c6f" />
+# Rig
 
-<div align="center">
+Rig is a collaborative agent workspace: a desktop app where agents and
+humans work on the same material — co-editing living documents,
+discussing them in anchored comment threads, and following agent work on
+a live task board. It is powered by the [rig](https://userig.xyz) CLI
+and the tap sync layer, so what you see in the app is shared with your
+workspace: comments land on the hub, the task board mirrors the agent's
+own plan, and an @mentioned agent replies in the thread you asked in.
 
-[Download](https://emdash.sh/download) · [Docs](https://emdash.sh/docs) · [Releases](https://github.com/generalaction/emdash/releases/latest) · [Discord](https://discord.gg/f2fv7YxuR2) · [Contributing](CONTRIBUTING.md)
+## Features
 
-<br />
+- **Living documents** — Markdown files open as a clean writing surface
+  (CodeMirror 6) with autosave and a Source/Preview toggle. When an
+  agent edits the file you have open, the change is absorbed in place
+  with your cursor and scroll preserved.
+- **Anchored comment threads** — Select text to comment. Threads persist
+  to your workspace's tap relay and stay attached to the passage they
+  were made on, re-anchoring as the document changes. Reply, resolve,
+  filter, collapse; unread tracking is built in.
+- **Agent thread participants** — @mention an agent in a comment and it
+  joins the thread: it reads the context, replies in place, and keeps
+  the conversation going without further mentions. Tool permission
+  prompts render directly in the thread, and the agent can edit the
+  document the tab has open.
+- **Transcript threads** — Reply in a thread on any agent message or
+  tool call: reactions, a reply-count thread bar, and a sidebar thread
+  pane with live-streaming agent replies.
+- **Rig Tasks** — A right-sidebar board that mirrors the agent's plan as
+  it works, published to your workspace so collaborators see progress
+  live.
+- **Parallel agents** — Everything the upstream app does: run multiple
+  coding agents at once, each isolated in its own Git worktree, review
+  diffs, and merge what works.
 
-[![Apache 2.0 License](https://img.shields.io/badge/License-Apache_2.0-555555.svg?labelColor=333333&color=666666)](./LICENSE.md)
-[![Downloads](https://img.shields.io/github/downloads/generalaction/emdash/total?labelColor=333333&color=666666)](https://github.com/generalaction/emdash/releases)
-[![GitHub Stars](https://img.shields.io/github/stars/generalaction/emdash?labelColor=333333&color=666666&logo=github)](https://github.com/generalaction/emdash)
-[![Last Commit](https://img.shields.io/github/last-commit/generalaction/emdash?labelColor=333333&color=666666)](https://github.com/generalaction/emdash/commits/main)
-[![Commit Activity](https://img.shields.io/github/commit-activity/m/generalaction/emdash?labelColor=333333&color=666666)](https://github.com/generalaction/emdash/graphs/commit-activity)
+## Development
 
-[![Discord](https://img.shields.io/badge/Discord-join-%235462eb?labelColor=%235462eb&logo=discord&logoColor=%23f5f5f5)](https://discord.gg/f2fv7YxuR2)
-<a href="https://www.ycombinator.com"><img src="https://img.shields.io/badge/Y%20Combinator-W26-orange" alt="Y Combinator W26"></a>
-[![Follow @emdashsh on X](https://img.shields.io/twitter/follow/emdashsh?logo=X&color=%23f5f5f5)](https://twitter.com/intent/follow?screen_name=emdashsh)
+Requires Node >= 24 and pnpm >= 10.28.
 
-</div>
-
-Emdash is a desktop app for running AI coding agents in parallel. Each task runs in its
-own Git worktree, so you can explore multiple fixes or features at once, review the
-diffs, and merge what works.
-
-It works with local projects and remote machines over SSH. Bring the CLI agents you
-already use: Claude Code, Codex, OpenCode, Amp, and more.
-
-<img alt="Emdash product screenshot" src="https://emdash.sh/media/blog/public-v1-beta/v1beta.jpg" />
-
-## What You Can Do
-
-- Run multiple coding agents at once without juggling terminals.
-- Keep every agent isolated in its own Git worktree and branch.
-- Send issues and tickets from Linear, GitHub, Jira, GitLab, Asana, Featurebase,
-  Monday.com, Forgejo, or Plain into an agent.
-- Review diffs, create pull requests, inspect CI checks, and merge from one place.
-- Work locally or on your own remote machines over SSH/SFTP.
-
-## Installation
-
-| Platform | Install |
-| --- | --- |
-| macOS | `brew install --cask emdash` · [Apple Silicon](https://github.com/generalaction/emdash/releases/latest/download/emdash-arm64.dmg) · [Intel](https://github.com/generalaction/emdash/releases/latest/download/emdash-x64.dmg) |
-| Windows | [Installer](https://github.com/generalaction/emdash/releases/latest/download/emdash-x64.msi) · [Portable](https://github.com/generalaction/emdash/releases/latest/download/emdash-x64.exe) |
-| Linux | [AppImage](https://github.com/generalaction/emdash/releases/latest/download/emdash-x86_64.AppImage) · [Debian package](https://github.com/generalaction/emdash/releases/latest/download/emdash-amd64.deb) |
-
-See the [latest release](https://github.com/generalaction/emdash/releases/latest) for
-all desktop builds.
-
-## Agents
-
-Emdash detects installed provider CLIs automatically. It supports agents like Claude
-Code, Codex, Cursor, OpenCode, Amp, Devin, Qwen Code, Droid, and GitHub
-Copilot.
-
-See [Providers](https://emdash.sh/docs/providers) for the full list, setup commands,
-and provider-specific behavior.
-
-## Remote Projects
-
-Connect to remote machines with SSH/SFTP and run the same parallel workflow on remote
-codebases. Emdash supports SSH agent, key, and password authentication, with credentials
-stored in your OS keychain.
-
-See [Remote Projects](https://emdash.sh/docs/remote-projects) and
-[Bring Your Own Infrastructure](https://emdash.sh/docs/bring-your-own-infrastructure)
-for setup details.
-
-## Privacy
-
-Emdash is local-first. App state is stored in a local SQLite database, and Emdash does
-not send your code or chats to Emdash servers.
-
-Agent CLIs may send code, prompts, and context to their own providers. Their data
-handling depends on the provider you choose.
-
-Telemetry is optional and can be disabled in Settings or by launching with:
-
-```bash
-TELEMETRY_ENABLED=false
+```sh
+pnpm install
+pnpm -C apps/emdash-desktop run dev
 ```
 
-See [Telemetry](https://emdash.sh/docs/telemetry) for details.
+## Built on Emdash
 
-## Contributing
-
-Contributions are welcome. Read the [Contributing Guide](CONTRIBUTING.md), open an
-issue, or join the [Discord](https://discord.gg/f2fv7YxuR2).
+Rig is built on [Emdash](https://github.com/generalaction/emdash) by
+General Action, Inc. — an open-source desktop app for orchestrating
+coding agents in parallel, each in its own Git worktree. Emdash's
+architecture is what makes Rig possible: the session engine, the
+worktree isolation model, and the chat surface all come from upstream,
+and they are excellent foundations to build on. If you want a
+general-purpose parallel-agent workbench rather than a rig/tap-connected
+workspace, use Emdash.
 
 ## License
 
-Licensed under the [Apache-2.0 license](LICENSE.md).
+Apache-2.0. See [LICENSE.md](LICENSE.md) and [NOTICE](NOTICE).

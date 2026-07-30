@@ -1,0 +1,12 @@
+Rig
+Copyright 2026 Rig Labs LLC
+
+This product is based on Emdash (https://github.com/generalaction/emdash),
+Copyright General Action, Inc., licensed under the Apache License,
+Version 2.0.
+
+Substantial modifications by Rig Labs LLC include: the collaboration
+plane (living documents, anchored comment threads, agent thread
+participants), integration with the rig CLI and tap sync layer,
+branding, and release identity. Per Apache License 2.0 Section 4(b),
+modified files are noted in the commit history of this repository.
