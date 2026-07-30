@@ -1,6 +1,8 @@
 import { StreamContext, type StreamAnimation } from '@components/contexts/StreamContext';
+import { ActionPill } from '@components/primitives/ActionPill';
 import { BlockStackView } from '@components/primitives/BlockStackView';
 import { CopyButton } from '@components/primitives/CopyButton';
+import { ReactionChips } from '@components/primitives/ReactionChips';
 import type { StackLayout } from '@core/compose';
 import type { MeasureCtx, Measured, RenderCtx } from '@core/define';
 import { layoutBlockStack } from '@core/layout/block-stack';
@@ -135,8 +137,14 @@ function AssistantRender(props: { data: ChatMessage; ctx: RenderCtx; vars: Messa
         >
           <Show when={!props.data.streaming}>
             <CopyButton text={props.data.text} variant="inline" label="Copy message" />
+            <div style={{ 'margin-left': '10px', display: 'flex' }}>
+              <ReactionChips itemId={props.data.id} />
+            </div>
           </Show>
         </div>
+      </Show>
+      <Show when={props.data.role === 'assistant' && !props.data.streaming}>
+        <ActionPill itemId={props.data.id} text={() => props.data.text} marker="message" />
       </Show>
     </div>
   );

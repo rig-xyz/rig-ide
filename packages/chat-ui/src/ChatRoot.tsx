@@ -491,6 +491,7 @@ export function ChatRoot(props: ChatRootProps) {
     pendingToolCallIds: () => state().session.state.pendingToolCallIds,
     terminalOutputText: (terminalId: string) =>
       state().session.state.terminalOutputText(terminalId),
+    threadSummary: (itemId: string) => state().session.state.threadSummary(itemId),
   });
 
   let committedUnitsArr: ReturnType<typeof flattenTier> = [];

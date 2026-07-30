@@ -166,6 +166,7 @@ export function mountRows(items: ChatItem[]): Mounted {
     plan: () => null,
     pendingToolCallIds: () => new Set<string>(),
     terminalOutputText: () => null,
+    threadSummary: () => null,
   };
   const measureCtx: MeasureCtx = {
     theme: DEFAULT_THEME,

@@ -34,6 +34,9 @@
  */
 
 import { useDebug } from '@components/contexts/debug-context';
+import { ActionPill } from '@components/primitives/ActionPill';
+import { ReactionChips, ThreadBadge } from '@components/primitives/ReactionChips';
+import { THREAD_OVERLAY_KINDS, threadExcerptForUnit } from '@components/primitives/thread-excerpt';
 import type { ChatCaches } from '@core/caches';
 import type { MeasureCtx, RenderCtx } from '@core/define';
 import type { ChatTheme } from '@core/theme';
@@ -61,6 +64,7 @@ import {
   debugOk,
   debugOverlay,
 } from './unit-row.css';
+import { threadRowGroup } from '@components/primitives/action-pill.css';
 
 // ── Debug overlay ─────────────────────────────────────────────────────────────
 
@@ -311,6 +315,7 @@ export function UnitRow(props: UnitRowProps) {
       ref={(e) => {
         rowEl = e;
       }}
+      class={THREAD_OVERLAY_KINDS.has(props.unit.kind) ? threadRowGroup : undefined}
       style={{ position: 'relative' }}
     >
       <Show when={def()}>
@@ -344,6 +349,41 @@ export function UnitRow(props: UnitRowProps) {
             </div>
           );
         }}
+      </Show>
+      {/* Hover action pill for tool-like rows. Absolutely positioned (zero
+          height impact); reveal is pure CSS via threadRowGroup hover.
+          Assistant messages carry their own pill inside the message root. */}
+      <Show when={THREAD_OVERLAY_KINDS.has(props.unit.kind)}>
+        <div
+          style={{
+            position: 'absolute',
+            top: `${props.unit.gapBefore - 4}px`,
+            right: `${insetX() + 6}px`,
+            'z-index': 10,
+          }}
+        >
+          <ActionPill
+            itemId={props.unit.itemId}
+            text={() => threadExcerptForUnit(props.unit)}
+            marker="row"
+          />
+        </div>
+        {/* Persistent overlay (visible without hover): 🧵N badge when the item
+            has a thread + reaction chips. Absolute → zero height impact. */}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '2px',
+            right: `${insetX() + 6}px`,
+            'z-index': 9,
+            display: 'flex',
+            'align-items': 'center',
+            gap: '4px',
+          }}
+        >
+          <ReactionChips itemId={props.unit.itemId} />
+          <ThreadBadge itemId={props.unit.itemId} text={() => threadExcerptForUnit(props.unit)} />
+        </div>
       </Show>
       <Show when={debug()}>
         <UnitDebugOverlay

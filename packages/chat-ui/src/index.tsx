@@ -64,6 +64,8 @@ export type {
   ResourceTarget,
   ChatPlan,
   ChatPlanEntry,
+  ThreadCollapsedItem,
+  ThreadSummary,
   PlanEntryStatus,
   PlanEntryPriority,
   ChatRole,

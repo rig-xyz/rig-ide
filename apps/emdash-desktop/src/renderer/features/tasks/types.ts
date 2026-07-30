@@ -1,1 +1,1 @@
-export type SidebarTab = 'conversations' | 'changes' | 'files' | 'rig-tasks';
+export type SidebarTab = 'conversations' | 'changes' | 'files' | 'rig-tasks' | 'thread';

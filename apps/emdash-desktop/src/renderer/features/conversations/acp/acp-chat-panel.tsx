@@ -49,6 +49,7 @@ import { useAgents } from '@renderer/lib/stores/use-agents';
 import { Button } from '@renderer/lib/ui/button';
 import { log } from '@renderer/utils/logger';
 import { linkedIssueMentionName, type LinkedIssue } from '@shared/core/linked-issue';
+import { getThreadStore, threadUi } from '../threads/thread-store';
 import type { AcpChatStore, AcpPromptAttachment } from './acp-chat-store';
 import type { AcpChatTabResource } from './acp-chat-tab-resource';
 import { chatViewCommandForShortcut, executeChatViewCommand } from './acp-chat-view-commands';
@@ -239,6 +240,15 @@ const ComposerForStore = observer(function ComposerForStore({
   useEffect(() => {
     editorApiRef.current?.focus();
   }, []);
+
+  // Expose the editor handle on the store (mirrors bindView) so commands like
+  // quote-to-composer can focus the editor after inserting text.
+  useEffect(() => {
+    store.bindEditorApi(editorApiRef);
+    return () => {
+      store.bindEditorApi(null);
+    };
+  }, [store]);
 
   useEffect(() => {
     const editor = editorApiRef.current;
@@ -754,6 +764,49 @@ export const AcpChatPanel = observer(function AcpChatPanel() {
     setViewer({ src, alt });
   }, []);
 
+  // ── Threads & reactions ─────────────────────────────────────────────────────
+  // Threads are renderer-local, keyed per conversation (see thread-store.ts).
+  // Reading `version` here (observer render) subscribes this component to
+  // thread mutations; it is also captured by the transcriptCommands memo so
+  // every mutation pushes a fresh commands object → view.setCommands → the
+  // Solid thread buttons / reaction chips re-read and refresh.
+  const threadStore = activeConversationId ? getThreadStore(activeConversationId) : null;
+  const threadVersion = threadStore ? threadStore.version : 0;
+
+  // Push thread summaries into the engine so thread bars appear under
+  // threaded messages. Runs on mount (covers threads restored from
+  // localStorage) and on every thread mutation.
+  useEffect(() => {
+    if (!store || !threadStore) return;
+    const summaries = new Map<string, { count: number; lastAt: number }>();
+    for (const [itemId, thread] of threadStore.entries()) {
+      if (thread.replies.length === 0) continue;
+      summaries.set(itemId, {
+        count: thread.replies.length,
+        lastAt: thread.replies.reduce((max, reply) => Math.max(max, reply.at), 0),
+      });
+    }
+    store.chatState.session.setThreadSummaries(summaries);
+  }, [store, threadStore, threadVersion]);
+
+  // Open the sidebar thread pane, remembering the tab to restore on close.
+  const openThreadPane = useCallback((chatStore: AcpChatStore, itemId: string, excerpt: string) => {
+    const taskView = getTaskStore(chatStore.projectId, chatStore.taskId)?.viewModel;
+    const currentTab = taskView && !taskView.isSidebarCollapsed ? taskView.sidebarTab : null;
+    threadUi.open(
+      {
+        taskId: chatStore.taskId,
+        conversationId: chatStore.conversationId,
+        itemId,
+        excerpt,
+        store: chatStore,
+      },
+      currentTab === 'thread' ? threadUi.prevSidebarTab : currentTab
+    );
+    taskView?.setSidebarTab('thread');
+    taskView?.setSidebarCollapsed(false);
+  }, []);
+
   const transcriptCommands = useMemo<ChatCommands>(
     () => ({
       onViewImage: (arg) => {
@@ -798,8 +851,37 @@ export const AcpChatPanel = observer(function AcpChatPanel() {
             });
         }
       },
+      onReplyInThread: (arg: Parameters<NonNullable<ChatCommands['onReplyInThread']>>[0]) => {
+        if (!store) return;
+        openThreadPane(store, arg.itemId, arg.excerpt);
+      },
+      getThreadInfo: threadStore
+        ? (itemId: string) => {
+            // Capture threadVersion so this commands object is rebuilt (and
+            // re-pushed via setCommands) on every thread mutation.
+            void threadVersion;
+            return threadStore.getThreadInfo(itemId);
+          }
+        : undefined,
+      onQuote: (arg: Parameters<NonNullable<ChatCommands['onQuote']>>[0]) => {
+        if (!store) return;
+        const quoted = `> ${arg.excerpt}\n\n`;
+        store.setDraftText(store.draftText ? `${store.draftText}\n${quoted}` : quoted);
+        store.editorApi?.focus();
+      },
+      onReact: threadStore
+        ? (arg: Parameters<NonNullable<ChatCommands['onReact']>>[0]) => {
+            threadStore.toggleReaction(arg.itemId, arg.emoji);
+          }
+        : undefined,
+      getReactions: threadStore
+        ? (itemId: string) => {
+            void threadVersion;
+            return threadStore.getReactions(itemId);
+          }
+        : undefined,
     }),
-    [store, handleViewerOpen]
+    [store, handleViewerOpen, openThreadPane, threadStore, threadVersion]
   );
 
   if (!store) return null;

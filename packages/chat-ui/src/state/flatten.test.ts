@@ -52,6 +52,7 @@ const segCtx = {
   plan: () => null,
   pendingToolCallIds: () => new Set<string>(),
   terminalOutputText: () => null,
+  threadSummary: () => null,
 } as unknown as SegmentCtx;
 
 type StubUnitDefs = Record<string, Pick<UnitDef<unknown, Record<string, number>>, 'margin'>>;

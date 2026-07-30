@@ -7,6 +7,7 @@ import {
   FolderOpen,
   GitBranch,
   ListChecks,
+  MessagesSquare,
   Pin,
   RefreshCcw,
   Terminal,
@@ -418,6 +419,16 @@ const ActiveTaskTitlebar = observer(function ActiveTaskTitlebar({
                 }
               />
               <TooltipContent>Rig Tasks</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <ToggleGroupItem size="icon-sm" value="thread" aria-label="Thread">
+                    <MessagesSquare className="size-3.5" />
+                  </ToggleGroupItem>
+                }
+              />
+              <TooltipContent>Thread</TooltipContent>
             </Tooltip>
           </ToggleGroup>
         </div>

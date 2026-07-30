@@ -29,7 +29,7 @@
  */
 
 import type { Component } from 'solid-js';
-import type { ChatItem, PlanState, SyntheticItem } from '@/model';
+import type { ChatItem, PlanState, SyntheticItem, ThreadSummary } from '@/model';
 import type { ChatCaches } from './caches';
 import type { MeasureCtx, RenderCtx } from './define';
 import type { Margin } from './spacing';
@@ -120,6 +120,13 @@ export type SegmentCtx = {
   plan: () => PlanState | null;
   pendingToolCallIds: () => Set<string>;
   terminalOutputText: (terminalId: string) => string | null;
+  /**
+   * App-side thread summary for an anchor item (null = no thread).
+   * Segmenters MUST call this unconditionally for candidate anchors — the
+   * read registers the Solid dependency on the threadSummaries signal even
+   * when null, so the first reply retriggers flatten.
+   */
+  threadSummary: (itemId: string) => ThreadSummary | null;
 };
 
 // ── UnitDef ───────────────────────────────────────────────────────────────────

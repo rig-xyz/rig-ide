@@ -24,6 +24,7 @@ function ctx(outputText: string | null): SegmentCtx {
     plan: () => null,
     pendingToolCallIds: () => new Set<string>(),
     terminalOutputText: () => outputText,
+    threadSummary: () => null,
   };
 }
 

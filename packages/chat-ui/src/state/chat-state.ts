@@ -40,6 +40,7 @@ import type {
   AcpPermissionRequest,
   ChatImageAttachment,
   PlanState,
+  ThreadSummary,
   TranscriptTurn,
 } from '../model';
 import { createTranscript } from './transcript';
@@ -81,6 +82,12 @@ export type ChatSessionState = {
   setPendingPrompt(prompt: PendingPrompt | null): void;
   setTerminalOutput(terminalId: string, text: string | null): void;
   setTerminalOutputs(outputs: ReadonlyMap<string, string>): void;
+  /**
+   * Wholesale-replace the app-side thread summaries (itemId → summary).
+   * The message segmenter reads this signal via SegmentCtx.threadSummary, so
+   * a replace re-flattens the transcript and inserts/removes thread bars.
+   */
+  setThreadSummaries(summaries: ReadonlyMap<string, ThreadSummary>): void;
 };
 
 export type ChatSessionSnapshot = {
@@ -89,6 +96,8 @@ export type ChatSessionSnapshot = {
   readonly pendingToolCallIds: Set<string>;
   readonly pendingPrompt: PendingPrompt | null;
   terminalOutputText(terminalId: string): string | null;
+  /** Reactive read of the thread summary for one anchor item (null = no thread). */
+  threadSummary(itemId: string): ThreadSummary | null;
 };
 
 export type PendingPrompt = {
@@ -265,6 +274,9 @@ function createSessionState(): ChatSessionState {
   const [terminalOutputs, setTerminalOutputs] = createSignal<ReadonlyMap<string, string>>(
     new Map()
   );
+  const [threadSummaries, setThreadSummaries] = createSignal<ReadonlyMap<string, ThreadSummary>>(
+    new Map()
+  );
   const pendingToolCallIds = createMemo(() => {
     const ids = new Set<string>();
     for (const request of permissions()) {
@@ -289,6 +301,9 @@ function createSessionState(): ChatSessionState {
     terminalOutputText(terminalId) {
       return terminalOutputs().get(terminalId) ?? null;
     },
+    threadSummary(itemId) {
+      return threadSummaries().get(itemId) ?? null;
+    },
   };
 
   return {
@@ -308,6 +323,7 @@ function createSessionState(): ChatSessionState {
       });
     },
     setTerminalOutputs: (next) => setTerminalOutputs(new Map(next)),
+    setThreadSummaries: (next) => setThreadSummaries(new Map(next)),
   };
 }
 

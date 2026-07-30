@@ -19,6 +19,8 @@ import { messageFromItem, messageUnitDef } from '@components/rows/message/messag
 import { planFromItem, planUnitDef } from '@components/rows/plan/plan.def';
 import { resourceLinkUnitDef } from '@components/rows/resource-link/resource-link.def';
 import { thinkingUnitDef } from '@components/rows/thinking/thinking.def';
+import { threadBarUnitDef } from '@components/rows/thread-bar/thread-bar.def';
+import { threadCollapsedUnitDef } from '@components/rows/thread-collapsed/thread-collapsed.def';
 import {
   createFileDiffFromItem,
   diffUnitDef,
@@ -104,7 +106,26 @@ const messageSegmenter: ItemSegmenter = {
     const data = messageFromItem(item as ChatMessage, ctx);
     const u = unit('message', item, data, { key: 'self' });
     u.chrome = data.role === 'user' ? USER_CHROME : COMPOSITE_CHROME;
-    return [u];
+    // UNCONDITIONAL read: registers the Solid dependency on the
+    // threadSummaries signal even when null, so the FIRST reply to a
+    // previously thread-less message still retriggers flatten.
+    const summary = ctx.threadSummary(item.id);
+    if (!summary) return [u];
+    // Emit the thread bar as a second unit after 'self' (id `${itemId}#thread`).
+    // Safe for scroll anchoring: anchors key on the first unit of an item.
+    const barUnit = unit(
+      'thread-bar',
+      item,
+      { message: data, summary },
+      {
+        key: 'thread',
+        gapBefore: 4,
+      }
+    );
+    // The segmenter has no top-level chrome (flatten's chrome-copy won't
+    // touch this unit), so set it here to match the message content inset.
+    barUnit.chrome = COMPOSITE_CHROME;
+    return [u, barUnit];
   },
 };
 
@@ -190,6 +211,11 @@ export const SEGMENTERS: Record<string, ItemSegmenter> = {
   'create-plan-tool-call': toolNodeSegment('create-plan-tool-call'),
   'unknown-tool-call': toolNodeSegment('unknown-tool-call'),
   'tool-group': toolNodeSegment('tool-group'),
+  'thread-collapsed': nativePassthrough<ChatItem>(
+    'thread-collapsed',
+    (item) => item,
+    COMPOSITE_CHROME
+  ),
   working: nativePassthrough<SyntheticItem>('working', (item) => item, COMPOSITE_CHROME),
   'turn-outcome': nativePassthrough<SyntheticItem>(
     'turn-outcome',
@@ -222,4 +248,7 @@ export const UNIT_REGISTRY: Record<string, RegistryUnitDef> = {
   'tool-group': toolGroupUnitDef as unknown as RegistryUnitDef,
   working: workingUnitDef as unknown as RegistryUnitDef,
   'turn-outcome': turnOutcomeUnitDef as unknown as RegistryUnitDef,
+  // Thread units
+  'thread-bar': threadBarUnitDef as unknown as RegistryUnitDef,
+  'thread-collapsed': threadCollapsedUnitDef as unknown as RegistryUnitDef,
 };

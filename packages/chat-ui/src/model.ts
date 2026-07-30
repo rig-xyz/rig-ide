@@ -275,6 +275,36 @@ export type ChatPlan = {
   streaming?: boolean;
 };
 
+/**
+ * App-side thread summary for one anchor item — read by the message segmenter
+ * via `SegmentCtx.threadSummary(itemId)` to emit a thread-bar unit.
+ */
+export type ThreadSummary = {
+  /** Number of replies in the thread. */
+  count: number;
+  /** Epoch ms of the most recent reply. */
+  lastAt: number;
+};
+
+/**
+ * A synthetic transcript item injected APP-SIDE into seeded turns to mark a
+ * place where a side conversation happened ("discussed in thread").
+ *
+ * chat-ui renders it as a single muted line; clicking it fires
+ * `commands.onReplyInThread` with `anchorItemId` so the host can open the
+ * thread pane. The item never originates from the agent transport — the host
+ * casts it into `TranscriptTurn['items']` when seeding history.
+ */
+export type ThreadCollapsedItem = {
+  kind: 'thread-collapsed';
+  id: string;
+  seq: number;
+  /** Id of the item the thread is anchored to. */
+  anchorItemId: string;
+  /** Display label, e.g. "discussed in thread". */
+  label: string;
+};
+
 export type WorkingItem = {
   kind: 'working';
   id: string;
@@ -298,4 +328,5 @@ export type ChatItem =
   | ChatExecute
   | ChatDiff
   | ChatResourceLink
-  | ChatPlan;
+  | ChatPlan
+  | ThreadCollapsedItem;

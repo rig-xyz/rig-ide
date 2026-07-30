@@ -1,4 +1,9 @@
-import type { ChatContext, ChatImageAttachment, ChatState, ChatView } from '@emdash/chat-ui';
+import type {
+  ChatContext,
+  ChatImageAttachment,
+  ChatState,
+  ChatView,
+} from '@emdash/chat-ui';
 import { connectSession, createChatState, pinTopMode } from '@emdash/chat-ui';
 import type {
   AttachmentMimeType,
@@ -7,6 +12,7 @@ import type {
   PromptDraft,
   PromptInput,
   QueuedPrompt,
+  TranscriptTurn,
 } from '@emdash/core/acp/client';
 import type {
   CommandItem,
@@ -14,6 +20,7 @@ import type {
   ComposerModelOption,
   ComposerPermissionModeOption,
   ComposerQueuedPrompt,
+  PromptEditorRef,
 } from '@emdash/ui/react/components';
 import type { BlobSource } from '@emdash/wire';
 import { action, computed, makeObservable, observable, runInAction, toJS } from 'mobx';
@@ -31,6 +38,7 @@ import { toast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
 import { log } from '@renderer/utils/logger';
 import { conversationRegistry } from '../stores/conversation-registry';
+import { getThreadStore } from '../threads/thread-store';
 import { bindSessionTerminalOutputs } from './acp-terminal-output-binding';
 
 export interface AgentAffordances {
@@ -69,6 +77,7 @@ export class AcpChatStore {
   draftText = '';
 
   private _view: ChatView | null = null;
+  private _editorApiRef: { readonly current: PromptEditorRef | null } | null = null;
   private _bootstrapped = false;
   private _unsubs: Array<() => void> = [];
   private _draftRev = 0;
@@ -232,6 +241,24 @@ export class AcpChatStore {
 
   bindView(view: ChatView | null): void {
     this._view = view;
+  }
+
+  /**
+   * Register the composer's imperative editor handle (mirrors bindView).
+   * A ref container is bound (not the value) because the composer populates
+   * `.current` after mount.
+   */
+  bindEditorApi(ref: { readonly current: PromptEditorRef | null } | null): void {
+    this._editorApiRef = ref;
+  }
+
+  get editorApi(): PromptEditorRef | null {
+    return this._editorApiRef?.current ?? null;
+  }
+
+  /** Re-fetch and re-seed committed history (e.g. after a thread hides a turn). */
+  refreshHistory(): void {
+    void this._refreshHistory();
   }
 
   async uploadAttachment(input: {
@@ -429,7 +456,7 @@ export class AcpChatStore {
       runInAction(() => {
         this.session?.dispose();
         this.session = clientSession;
-        this.chatState.transcript.history.seed(history.data.turns);
+        this.chatState.transcript.history.seed(this._collapseThreadTurns(history.data.turns));
         this._subscribeLiveSession(clientSession);
         this._applyDraftSnapshot(clientSession.draft.current());
         this.historyLoading = false;
@@ -640,9 +667,20 @@ export class AcpChatStore {
     if (!history?.success) return;
     runInAction(() => {
       this.chatState.session.setPendingPrompt(null);
-      this.chatState.transcript.history.seed(history.data.turns);
+      this.chatState.transcript.history.seed(this._collapseThreadTurns(history.data.turns));
       this._syncMessageCount();
     });
+  }
+
+  /**
+   * Drop turns that were "discussed in thread" (see thread-store hiddenTurns)
+   * from the seeded transcript entirely — Slack semantics: thread replies
+   * leave no trace in the channel; the anchor message's thread bar
+   * ("N replies · View thread") is the only footprint.
+   */
+  private _collapseThreadTurns(turns: readonly TranscriptTurn[]): readonly TranscriptTurn[] {
+    const threadStore = getThreadStore(this.conversationId);
+    return turns.filter((turn) => !threadStore.getHiddenTurn(turn.id));
   }
 
   private _syncMessageCount(): void {

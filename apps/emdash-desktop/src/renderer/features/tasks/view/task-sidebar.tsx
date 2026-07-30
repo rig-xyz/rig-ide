@@ -1,5 +1,6 @@
 import { observer } from 'mobx-react-lite';
 import { SidebarConversationsList } from '@renderer/features/conversations/sidebar-conversations-list';
+import { ThreadPane } from '@renderer/features/conversations/threads/thread-pane';
 import { useWorkspaceViewModel } from '@renderer/features/tasks/task-view-context';
 import { ShowHide } from '@renderer/lib/ui/show-hide';
 import { ChangesPanel } from '../diff-view/changes-panel/changes-panel';
@@ -26,6 +27,9 @@ export const TaskSidebar = observer(function TaskSidebar() {
       </ShowHide>
       <ShowHide visible={activeTab === 'rig-tasks'} lazy>
         <RigTasksPanel />
+      </ShowHide>
+      <ShowHide visible={activeTab === 'thread'} lazy>
+        <ThreadPane />
       </ShowHide>
     </div>
   );

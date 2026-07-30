@@ -90,6 +90,47 @@ export type ChatCommands = {
     itemId: string;
     source: 'prose-mention';
   }) => void;
+
+  /**
+   * Called when the user clicks the "reply in thread" button on an assistant
+   * message footer or a tool-call row. `anchorRect` is the button's viewport
+   * rect (from getBoundingClientRect) so the host can position a floating
+   * thread card; `excerpt` is a short plain-text summary of the item.
+   */
+  onReplyInThread?: (arg: {
+    itemId: string;
+    anchorRect: { top: number; left: number; right: number; bottom: number };
+    excerpt: string;
+  }) => void;
+
+  /**
+   * Synchronously resolve the host-side thread state for an item. Returns
+   * null when the item has no thread. When non-null, the thread button is
+   * always visible (not hover-only) and shows the reply count.
+   */
+  getThreadInfo?: (itemId: string) => { count: number; sent: boolean } | null;
+
+  /**
+   * Called when the user clicks the quote button in the hover action pill.
+   * `excerpt` is a short plain-text summary of the item (same derivation as
+   * the reply-in-thread excerpt).
+   */
+  onQuote?: (arg: { itemId: string; excerpt: string }) => void;
+
+  /**
+   * Called when the user clicks a quick-reaction button in the hover action
+   * pill or an existing reaction chip. Toggling is handled app-side.
+   */
+  onReact?: (arg: { itemId: string; emoji: string }) => void;
+
+  /**
+   * Synchronously resolve the reactions for an item. Returns null (or an
+   * empty array) when the item has no reactions. Reactions are stored
+   * app-side; the engine re-reads on every commands-object update.
+   */
+  getReactions?: (
+    itemId: string
+  ) => ReadonlyArray<{ emoji: string; count: number; mine: boolean }> | null;
 };
 
 export type ScrollToItemOptions = {
