@@ -78,7 +78,13 @@ export function threadLatestAt(thread: CommentThread): string {
   return latest;
 }
 
-export type CommentsState = 'loading' | 'ready' | 'unauthenticated' | 'notBound' | 'error';
+export type CommentsState =
+  | 'loading'
+  | 'ready'
+  | 'unauthenticated'
+  | 'notBound'
+  | 'untrustedRelay'
+  | 'error';
 
 /**
  * Which half of the pane the reader clicked to select a thread.
@@ -152,16 +158,24 @@ export function providerIdForAgentLabel(meta: Record<string, unknown> | null): s
  * answered by a provider this machine cannot run falls back to the app's
  * default agent rather than going silent; when even that is unavailable there
  * is nobody to dispatch to, and a plain reply stays a plain reply.
+ *
+ * Auto-continuation is granted only when that message was posted by the
+ * signed-in account (`author.userId === selfUserId`): relay content is
+ * collaborator-writable and `authorKind: 'agent'` is self-asserted, so a
+ * foreign "agent" message must not turn a plain reply into a local agent
+ * dispatch. Explicit `@mentions` are unaffected — they never come through here.
  */
 export function threadAgent(
   thread: CommentThread,
   agents: readonly AgentMention[],
-  fallback: AgentMention | null
+  fallback: AgentMention | null,
+  selfUserId: string | null
 ): AgentMention | null {
   const messages = [thread.root, ...thread.replies];
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
     if (message.author.kind !== 'agent') continue;
+    if (selfUserId === null || message.author.userId !== selfUserId) return null;
     const providerId = providerIdForAgentLabel(message.meta);
     return agents.find((agent) => agent.providerId === providerId) ?? fallback;
   }
@@ -201,9 +215,15 @@ export function threadHasAgent(thread: CommentThread): boolean {
 export class DocCommentsStore {
   threads: CommentThread[] = [];
   state: CommentsState = 'loading';
-  /** One-line explanation for `state === 'error'`. */
+  /** One-line explanation for `state === 'error'` or `'untrustedRelay'`. */
   errorMessage: string | null = null;
   target: RigCommentTarget | null = null;
+  /**
+   * The signed-in account's relay user id (matches `author.userId` on messages
+   * this account posts), or null when unknown. Gates agent auto-continuation:
+   * with no proven self id, no agent message counts as "ours".
+   */
+  selfUserId: string | null = null;
 
   /** Quote captured from the selection while a new-thread composer is open. */
   composerQuote: string | null = null;
@@ -276,6 +296,7 @@ export class DocCommentsStore {
       state: observable,
       errorMessage: observable,
       target: observable.ref,
+      selfUserId: observable,
       composerQuote: observable,
       activeThreadId: observable,
       pending: observable.shallow,
@@ -336,7 +357,14 @@ export class DocCommentsStore {
   }
 
   get hasContent(): boolean {
-    return this.threads.length > 0 || this.composerQuote !== null || this.agentReplies.size > 0;
+    return (
+      this.threads.length > 0 ||
+      this.composerQuote !== null ||
+      this.agentReplies.size > 0 ||
+      // Comments being refused for security is something the reader must see,
+      // even when there is nothing else to list.
+      this.state === 'untrustedRelay'
+    );
   }
 
   /**
@@ -751,7 +779,8 @@ export class DocCommentsStore {
       return;
     }
     runInAction(() => {
-      this.target = result.data;
+      this.target = result.data.target;
+      this.selfUserId = result.data.selfUserId;
     });
     // No fetch here — `setVisible` owns the first read and the poll timer.
   }
@@ -862,9 +891,15 @@ export class DocCommentsStore {
   }
 
   private _fail(error: RigCommentsError): void {
-    if (error.kind === 'notBound' || error.kind === 'unauthenticated') {
+    if (
+      error.kind === 'notBound' ||
+      error.kind === 'unauthenticated' ||
+      error.kind === 'untrustedRelay'
+    ) {
       this.state = error.kind;
-      this.errorMessage = null;
+      // The untrusted-relay message names the offending host; retrying is
+      // meaningless (the binding file itself is the problem), so the poll stops.
+      this.errorMessage = error.kind === 'untrustedRelay' ? error.message : null;
       this._stopPolling();
       return;
     }
@@ -925,7 +960,13 @@ export class DocCommentsStore {
 
   private _startPolling(): void {
     if (this._pollTimer !== null || this._disposed) return;
-    if (this.state === 'notBound' || this.state === 'unauthenticated') return;
+    if (
+      this.state === 'notBound' ||
+      this.state === 'unauthenticated' ||
+      this.state === 'untrustedRelay'
+    ) {
+      return;
+    }
     this._pollTimer = window.setInterval(() => void this.refresh(), this._pollIntervalMs);
   }
 

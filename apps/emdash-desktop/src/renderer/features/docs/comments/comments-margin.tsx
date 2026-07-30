@@ -246,6 +246,12 @@ export const CommentsMargin = observer(function CommentsMargin({
           </p>
         )}
 
+        {/* Muted and final, with no retry: the workspace's own binding file is
+            what points at the unrecognized host, so retrying cannot help. */}
+        {store.state === 'untrustedRelay' && store.errorMessage !== null && (
+          <p className="mb-3 text-xs text-foreground-muted">{store.errorMessage}</p>
+        )}
+
         {store.composerQuote !== null && <NewThreadCard store={store} />}
 
         {nothingToList && (
@@ -316,13 +322,14 @@ function useMentionableAgents(): AgentMention[] {
  * keeps talking to it — the same way a person in the thread doesn't have to be
  * re-addressed by name.
  */
-function useThreadAgent(thread: CommentThread): AgentMention | null {
+function useThreadAgent(store: DocCommentsStore, thread: CommentThread): AgentMention | null {
   const agents = useMentionableAgents();
   const { value: defaultAgent } = useAppSettingsKey('defaultAgent');
+  const selfUserId = store.selfUserId;
   return useMemo(() => {
     const fallback = agents.find((agent) => agent.providerId === defaultAgent) ?? null;
-    return threadAgent(thread, agents, fallback);
-  }, [agents, defaultAgent, thread]);
+    return threadAgent(thread, agents, fallback, selfUserId);
+  }, [agents, defaultAgent, thread, selfUserId]);
 }
 
 /** The `@token` the caret is sitting at the end of, if there is one. */
@@ -506,13 +513,41 @@ const PermissionRequestRow = observer(function PermissionRequestRow({
   request: RigCommentPermissionRequest;
 }) {
   const busy = store.isPending(request.requestId);
+
+  // The decision-relevant line: the exact command an execute would run, or the
+  // file an edit would touch plus its compact size. The title alone is the
+  // agent's own summary, which is not enough to approve on.
+  const detail = request.detail;
+  const detailText =
+    detail?.kind === 'execute'
+      ? (detail.command ?? null)
+      : detail?.path
+        ? detail.summary
+          ? `${detail.path}  ${detail.summary}`
+          : detail.path
+        : null;
+
+  // `allow_always` outlives this thread, so it never sits as a peer of the
+  // one-shot options — it is demoted below them, with the persistence spelled
+  // out in its label.
+  const oneShot = request.options.filter((option) => option.kind !== 'allow_always');
+  const persistent = request.options.filter((option) => option.kind === 'allow_always');
+
   return (
     <div className="mt-1.5 border-t border-border pt-1.5">
       <p className="truncate text-tiny text-foreground" title={request.title}>
         {request.title}
       </p>
+      {detailText !== null && (
+        <p
+          className="mt-1 line-clamp-6 rounded bg-background-secondary-1 px-1.5 py-1 font-mono text-micro break-all whitespace-pre-wrap text-foreground"
+          title={detailText}
+        >
+          {detailText}
+        </p>
+      )}
       <div className="mt-1 flex flex-wrap gap-1">
-        {request.options.map((option) => (
+        {oneShot.map((option) => (
           <Button
             key={option.optionId}
             size="xs"
@@ -527,6 +562,20 @@ const PermissionRequestRow = observer(function PermissionRequestRow({
           </Button>
         ))}
       </div>
+      {persistent.map((option) => (
+        <button
+          key={option.optionId}
+          type="button"
+          disabled={busy}
+          className="mt-1 block text-micro text-foreground-passive underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+          onClick={(event) => {
+            event.stopPropagation();
+            store.resolveAgentPermission(rootId, request.requestId, option.optionId);
+          }}
+        >
+          {option.name} — applies beyond this thread
+        </button>
+      ))}
     </div>
   );
 });
@@ -828,7 +877,12 @@ function CommentBody({ message }: { message: RigCommentMessage }) {
   return (
     <div className="flex min-w-0 flex-col gap-1">
       <AuthorLine message={message} />
-      <MarkdownRenderer content={message.body} variant="compact" className={COMMENT_BODY_CLASS} />
+      <MarkdownRenderer
+        content={message.body}
+        variant="compact"
+        className={COMMENT_BODY_CLASS}
+        externalImages="click"
+      />
     </div>
   );
 }
@@ -912,7 +966,7 @@ const ThreadCard = observer(function ThreadCard({
   const busy = store.isPending(root.id);
   const collapsed = store.isThreadCollapsed(root.id);
   const unread = store.isThreadUnread(thread);
-  const agent = useThreadAgent(thread);
+  const agent = useThreadAgent(store, thread);
 
   // What the thread is about, in one line. An unanchored thread has no passage
   // to point at, so it summarises itself by its opening comment instead.
@@ -1174,6 +1228,11 @@ function stateNotice(store: DocCommentsStore): string | null {
       return 'Sign in with `rig login` to load comments.';
     case 'notBound':
       return "This workspace isn't synced to a rig — comments are unavailable.";
+    case 'untrustedRelay':
+      return (
+        store.errorMessage ??
+        'This workspace points comments at an unrecognized relay — comments are disabled.'
+      );
     default:
       return null;
   }

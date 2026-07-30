@@ -420,6 +420,9 @@ class RigIntentBridge {
     }
   }
 
+  // Deliberately NOT behind the PAT trust gate (`relay-trust.ts`): this sends the
+  // binding's OWN capability token to the binding's OWN relay — same trust domain,
+  // nothing global to leak. Do not copy this pattern for `rpat_` PAT calls.
   private async relayFetch(
     binding: RigBindingLocation,
     path: string,

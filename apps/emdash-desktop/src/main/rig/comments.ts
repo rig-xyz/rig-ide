@@ -13,9 +13,11 @@ import {
   type RigCommentList,
   type RigCommentMessage,
   type RigCommentTarget,
+  type RigCommentTargetInfo,
   type RigCommentsError,
 } from '@shared/rig/comments';
 import { findBindingConfig } from './binding';
+import { checkRelayTrust } from './relay-trust';
 
 /**
  * Relay-backed comments for doc tabs.
@@ -136,9 +138,40 @@ const UNAUTHENTICATED: RigCommentsError = {
   message: 'Not signed in to Rig Hub — run `rig login`',
 };
 
+/** Untrusted relays already warned about, keyed per (binding, host) — not per poll. */
+const warnedUntrustedRelays = new Set<string>();
+
+/**
+ * The trust gate on the user's PAT (see `relay-trust.ts`). Returns null when
+ * the target's relay may be sent the token, an error otherwise.
+ *
+ * Called from `resolveContext` — the only place a `Resolved` (and with it the
+ * token) is ever minted — so every `relayFetch` call site is behind it and no
+ * future one can forget it. `resolveTarget`'s self-lookup runs the same check.
+ */
+function gateRelayTrust(target: RigCommentTarget): RigCommentsError | null {
+  const trust = checkRelayTrust(target.relayUrl);
+  if (trust.trusted) return null;
+  const key = `${target.bindingId}|${trust.host}`;
+  if (!warnedUntrustedRelays.has(key)) {
+    warnedUntrustedRelays.add(key);
+    log.warn('Rig comments: refusing to send the relay token to an untrusted host', {
+      bindingId: target.bindingId,
+      host: trust.host,
+    });
+  }
+  return {
+    kind: 'untrustedRelay',
+    host: trust.host,
+    message: `This workspace points comments at an unrecognized relay (${trust.host}) — comments are disabled.`,
+  };
+}
+
 async function resolveContext(absPath: string): Promise<Resolved | RigCommentsError> {
   const target = resolveCommentTarget(absPath);
   if (!target) return NOT_BOUND;
+  const untrusted = gateRelayTrust(target);
+  if (untrusted) return untrusted;
   const token = await readRelayToken();
   if (!token) return UNAUTHENTICATED;
   return { target, token };
@@ -178,6 +211,11 @@ async function relayError(response: Response, action: string): Promise<RigCommen
   };
 }
 
+/**
+ * The one place the PAT is attached. Only callable with a `Resolved`, which
+ * only `resolveContext` mints — and that path runs `gateRelayTrust` first, so
+ * the token can never travel to a workspace-declared host that isn't trusted.
+ */
 async function relayFetch(
   ctx: Resolved,
   url: string,
@@ -288,6 +326,50 @@ function validateBody(body: string): RigCommentsError | null {
   return null;
 }
 
+// ── self identity ────────────────────────────────────────────────────────────
+
+/**
+ * Successful lookups only, keyed by relay + token: the id a token maps to
+ * never changes, but a transient failure must be retried on the next resolve.
+ */
+const selfUserIdCache = new Map<string, string>();
+
+/**
+ * Who the signed-in user is on this relay, as `GET /v1/me` reports it.
+ *
+ * Returns the Clerk user id — the same id the relay stamps as `author.userId`
+ * on every message this account posts — so the renderer can tell its own
+ * agent-authored replies from a collaborator's. Null on any failure: the
+ * renderer then treats no agent message as its own, which is the safe default.
+ */
+async function readSelfUserId(target: RigCommentTarget): Promise<string | null> {
+  if (gateRelayTrust(target) !== null) return null;
+  const token = await readRelayToken();
+  if (!token) return null;
+
+  const key = `${target.relayUrl}|${token}`;
+  const cached = selfUserIdCache.get(key);
+  if (cached !== undefined) return cached;
+
+  try {
+    const base = target.relayUrl.replace(/\/+$/, '');
+    const response = await fetch(`${base}/v1/me`, {
+      headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const data = asRecord(await response.json());
+    const user = asRecord(data?.user);
+    const clerkUserId = user?.clerkUserId;
+    if (typeof clerkUserId !== 'string' || clerkUserId.length === 0) return null;
+    selfUserIdCache.set(key, clerkUserId);
+    return clerkUserId;
+  } catch (error) {
+    log.warn('Rig comments: could not read the signed-in relay user', { error: String(error) });
+    return null;
+  }
+}
+
 // ── controller ───────────────────────────────────────────────────────────────
 
 /**
@@ -295,11 +377,13 @@ function validateBody(body: string): RigCommentsError | null {
  * the renderer can always render *something*.
  */
 export const rigCommentsController = createRPCController({
-  /** Which rig (if any) this file's comments belong to. */
+  /** Which rig (if any) this file's comments belong to, and who the caller is on it. */
   resolveTarget: async ({ absPath }: { absPath: string }) => {
     try {
       const target = resolveCommentTarget(absPath);
-      return target ? ok(target) : err(NOT_BOUND);
+      if (!target) return err(NOT_BOUND);
+      const info: RigCommentTargetInfo = { target, selfUserId: await readSelfUserId(target) };
+      return ok(info);
     } catch (error) {
       log.warn('Rig comments: failed to resolve target', { absPath, error: String(error) });
       return err<RigCommentsError>({ kind: 'notBound', message: NOT_BOUND.message });

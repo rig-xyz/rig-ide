@@ -1,3 +1,4 @@
+import { ImageIcon } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import Markdown from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
@@ -17,6 +18,7 @@ import { normalizeLatexDelimiters } from './markdown-latex';
 import { MermaidDiagram } from './mermaid-diagram';
 
 type Variant = 'full' | 'compact';
+type ExternalImagesMode = 'auto' | 'click';
 
 interface MarkdownRendererProps {
   content: string;
@@ -30,6 +32,14 @@ interface MarkdownRendererProps {
    * render a "not found" placeholder. When omitted, local images are not resolved.
    */
   resolveImage?: (src: string) => Promise<string | null>;
+  /**
+   * Controls how images with an external http(s) source are rendered in the
+   * `compact` variant. `'auto'` (default) renders them immediately, matching
+   * prior behavior. `'click'` renders a click-to-load placeholder instead, so
+   * untrusted content (e.g. comment bodies) can't use an `<img>` src as a
+   * tracking pixel that fires on every render.
+   */
+  externalImages?: ExternalImagesMode;
 }
 
 // Sanitize runs before rehype-katex so user input is sanitized but KaTeX's
@@ -110,6 +120,50 @@ const ResolvedImage: React.FC<{
       containerClassName="my-3"
       className="max-w-full rounded"
     />
+  );
+};
+
+/**
+ * Click-to-load placeholder for an external (http/https) image source.
+ *
+ * Comment and thread bodies are relay content any workspace member can write,
+ * so an `<img>` pointed at an attacker-controlled URL would otherwise fire a
+ * network request — and leak the viewer's IP and read time — on every render
+ * or poll, with no interaction required. Rendering a placeholder first means
+ * the request only happens if the viewer chooses to load it.
+ */
+const ExternalImagePlaceholder: React.FC<{ src: string; alt?: string }> = ({ src, alt }) => {
+  const [loaded, setLoaded] = useState(false);
+
+  if (loaded) {
+    return (
+      <ExpandableImage
+        src={src}
+        alt={alt || ''}
+        containerClassName="my-2"
+        className="h-auto max-h-80 max-w-full rounded"
+      />
+    );
+  }
+
+  let hostname = src;
+  try {
+    hostname = new URL(src).hostname;
+  } catch {
+    // Not a parseable URL; fall back to showing the raw src.
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setLoaded(true)}
+      className="text-muted-foreground bg-muted/30 hover:bg-muted/50 my-1 inline-flex max-w-full items-center gap-1.5 rounded border border-border px-2 py-1 align-middle text-tiny"
+    >
+      <ImageIcon className="size-3 shrink-0" />
+      <span className="truncate">
+        {alt ? `${alt} — ` : ''}Image from {hostname} — click to load
+      </span>
+    </button>
   );
 };
 
@@ -291,7 +345,11 @@ function useFullComponents(
   );
 }
 
-function useCompactComponents(isDark: boolean, onOpenLink?: MarkdownRendererProps['onOpenLink']) {
+function useCompactComponents(
+  isDark: boolean,
+  onOpenLink?: MarkdownRendererProps['onOpenLink'],
+  externalImages: ExternalImagesMode = 'auto'
+) {
   return useMemo(
     () => ({
       h1: ({ children }: WithChildren) => (
@@ -382,17 +440,23 @@ function useCompactComponents(isDark: boolean, onOpenLink?: MarkdownRendererProp
           </a>
         );
       },
-      img: ({ node: _node, src, alt, className, ...props }: ImgProps) => (
-        <ExpandableImage
-          src={src}
-          alt={alt || ''}
-          containerClassName="my-2"
-          className={cn('h-auto max-h-80 max-w-full rounded', className)}
-          {...props}
-        />
-      ),
+      img: ({ node: _node, src, alt, className, ...props }: ImgProps) => {
+        const isExternal = typeof src === 'string' && /^https?:\/\//i.test(src);
+        if (isExternal && externalImages === 'click') {
+          return <ExternalImagePlaceholder src={src} alt={alt} />;
+        }
+        return (
+          <ExpandableImage
+            src={src}
+            alt={alt || ''}
+            containerClassName="my-2"
+            className={cn('h-auto max-h-80 max-w-full rounded', className)}
+            {...props}
+          />
+        );
+      },
     }),
-    [isDark, onOpenLink]
+    [isDark, onOpenLink, externalImages]
   );
 }
 
@@ -403,12 +467,13 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   allowHtml = variant === 'full',
   resolveImage,
   onOpenLink,
+  externalImages = 'auto',
 }) => {
   const { effectiveTheme } = useTheme();
   const isDark = effectiveTheme === 'emdark';
 
   const fullComponents = useFullComponents(isDark, resolveImage, onOpenLink);
-  const compactComponents = useCompactComponents(isDark, onOpenLink);
+  const compactComponents = useCompactComponents(isDark, onOpenLink, externalImages);
 
   const components = variant === 'full' ? fullComponents : compactComponents;
   const rehypePlugins = allowHtml ? FULL_REHYPE_PLUGINS : COMPACT_REHYPE_PLUGINS;

@@ -330,7 +330,12 @@ function ReplyRow({ reply, agentName }: { reply: ThreadReply; agentName: string 
         <span className="text-xs font-medium text-foreground">{agentName}</span>
         <RelativeTime value={reply.at} compact ago className="text-[10px] text-foreground-muted" />
       </div>
-      <MarkdownRenderer content={reply.text} variant="compact" className="text-sm" />
+      <MarkdownRenderer
+        content={reply.text}
+        variant="compact"
+        className="text-sm"
+        externalImages="click"
+      />
     </div>
   );
 }
