@@ -50,6 +50,11 @@ import {
 import { log } from './lib/logger';
 import { withRpcLogging } from './lib/rpc-logging';
 import { telemetryService } from './lib/telemetry';
+import {
+  ensureBundledRigBinInPath,
+  installBundledRigSkill,
+  logRigVersionSkew,
+} from './rig/bundled-cli';
 import { registerRigBridge } from './rig/intent-bridge';
 import { rpcRouter } from './rpc';
 import { resolveUserEnv } from './utils/userEnv';
@@ -107,7 +112,13 @@ app.on('activate', () => {
 });
 
 void app.whenReady().then(async () => {
+  // resolveUserEnv never throws (it falls back to process.env internally), so
+  // the bundled-rig PATH prepend below runs on both its success and failure
+  // paths — and must run after it, because it rebuilds PATH from the login shell.
   await resolveUserEnv();
+  ensureBundledRigBinInPath();
+  logRigVersionSkew();
+  installBundledRigSkill();
 
   try {
     await initializeDatabase();

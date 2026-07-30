@@ -17,6 +17,9 @@ apps/*/dist/
 # Temporary electron-builder deploy directories (created by scripts/release/build.ts)
 .emdash-deploy-*/
 
+# Vendored @rigxyz/cli build artifact (regenerate with scripts/vendor-rig-cli.ts)
+apps/*/vendor/
+
 # Logs
 *.log
 .emdash-logs/

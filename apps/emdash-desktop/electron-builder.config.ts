@@ -28,6 +28,25 @@ const config: Configuration = {
   ],
   generateUpdatesFilesForAllChannels: false,
   files: ['out/**/*', 'node_modules/**/*', 'drizzle/**/*'],
+  // Bundled @rigxyz/cli — produced by scripts/vendor-rig-cli.ts (run automatically
+  // by the package:* scripts and scripts/release/build.ts). Lives OUTSIDE the asar
+  // because the rig/tapd shims are exec'd by the OS (shebang + execve need real
+  // files). Lands in Contents/Resources/{rig-cli,rig-bin}; the shims in rig-bin
+  // locate the app executable by globbing Contents/MacOS, so they do not depend
+  // on productName above.
+  //
+  // The separate node_modules entry is NOT redundant: electron-builder's copy
+  // filter (app-builder-lib util/filter.js createFilter) silently drops a
+  // top-level `node_modules` directory relative to each entry's `from`, so the
+  // rig-cli entry alone ships the CLI without its deps. Pointing `from` at the
+  // node_modules dir itself sidesteps that special case. (Nested node_modules
+  // would still be dropped — scripts/vendor-rig-cli.ts fails the build if the
+  // vendored tree ever contains one.)
+  extraResources: [
+    { from: 'vendor/rig-cli', to: 'rig-cli' },
+    { from: 'vendor/rig-cli/node_modules', to: 'rig-cli/node_modules' },
+    { from: 'vendor/rig-bin', to: 'rig-bin' },
+  ],
   asarUnpack: [
     'node_modules/better-sqlite3/**',
     'node_modules/node-pty/**',
@@ -48,7 +67,11 @@ const config: Configuration = {
       { target: 'zip', arch: ['arm64'] },
     ],
     icon: 'src/assets/images/rig/rig.icns',
-    notarize: false,
+    // Signing picks the 'Developer ID Application' identity from the keychain
+    // automatically. Notarization reads APPLE_API_KEY (path to the .p8),
+    // APPLE_API_KEY_ID and APPLE_API_ISSUER from the environment at package
+    // time — credentials live with the operator, never in the repo.
+    notarize: true,
   },
   dmg: {
     icon: 'src/assets/images/rig/rig.icns',

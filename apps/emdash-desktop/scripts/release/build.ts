@@ -71,9 +71,15 @@ exec(`pnpm --filter @emdash/emdash-desktop deploy --legacy --prod ${deployDir}`,
   echo: true,
 });
 
+step('Vendoring bundled @rigxyz/cli');
+exec('node --experimental-strip-types scripts/vendor-rig-cli.ts', { echo: true });
+
 step('Copying built assets into deployment directory');
 cpSync('out', join(deployDir, 'out'), { recursive: true });
 cpSync('drizzle', join(deployDir, 'drizzle'), { recursive: true });
+// electron-builder runs with projectDir = deployDir, so the relative
+// extraResources.from ('vendor/rig-cli') resolves there — copy it in like out/.
+cpSync('vendor', join(deployDir, 'vendor'), { recursive: true });
 
 const electronVersion = exec(`node -p "require('electron/package.json').version"`);
 
