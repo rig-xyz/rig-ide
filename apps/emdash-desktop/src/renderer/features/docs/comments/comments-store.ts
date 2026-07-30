@@ -1,8 +1,15 @@
 import { EditorView } from '@codemirror/view';
 import { action, makeObservable, observable, reaction, runInAction } from 'mobx';
 import { toast } from '@renderer/lib/hooks/use-toast';
-import { rpc } from '@renderer/lib/ipc';
-import type { RigCommentMessage, RigCommentTarget, RigCommentsError } from '@shared/rig/comments';
+import { events, rpc } from '@renderer/lib/ipc';
+import {
+  rigCommentPermissionsChannel,
+  type RigCommentMessage,
+  type RigCommentPermissionRequest,
+  type RigCommentTarget,
+  type RigCommentThreadEntry,
+  type RigCommentsError,
+} from '@shared/rig/comments';
 import type { DocTabResource } from '../doc-file-sync';
 import { buildAnchor, groupThreads, reanchor } from './anchors';
 import { setCommentMarkers, type CommentMarker } from './comment-decorations';
@@ -22,8 +29,89 @@ import { setCommentMarkers, type CommentMarker } from './comment-decorations';
  */
 
 const POLL_INTERVAL_MS = 8_000; // matches the web hub's cadence
+/** While an @mention is out, a reply can land at any moment — watch more closely. */
+const MENTION_POLL_INTERVAL_MS = 3_000;
 
 export type CommentsState = 'loading' | 'ready' | 'unauthenticated' | 'notBound' | 'error';
+
+/** An agent the reader mentioned: the provider to run, and what to call it. */
+export type AgentMention = { providerId: string; name: string };
+
+/**
+ * An agent turn running for one thread.
+ *
+ * Deliberately not persisted: the relay has no draft state, so this exists only
+ * to keep the margin honest between "the mention was sent" and "the answer
+ * arrived". It is cleared when the real reply is fetched, and replaced by a
+ * retryable error when the turn fails.
+ */
+export type PendingAgentReply = {
+  agentName: string;
+  /** Null while the turn is running; a one-line explanation once it has failed. */
+  error: string | null;
+  /** Kept so the card's Retry can re-run the exact same request. */
+  request: AgentReplyRequest;
+};
+
+type AgentReplyRequest = {
+  parentId: string;
+  providerId: string;
+  quote: string | null;
+  thread: RigCommentThreadEntry[];
+};
+
+/** How the agent should see one earlier message of the thread. */
+function toThreadEntry(message: RigCommentMessage): RigCommentThreadEntry {
+  const agent = message.meta?.agent;
+  const author =
+    message.author.kind === 'agent'
+      ? typeof agent === 'string' && agent.trim()
+        ? agent.trim()
+        : 'an agent'
+      : (message.author.name ?? 'someone');
+  return { author, body: message.body };
+}
+
+/**
+ * The provider behind a `meta.agent` label, or null when there isn't one.
+ *
+ * The label is the rig ecosystem's name for the agent, not a provider id: the
+ * CLI and this app both stamp `claude-code` for Claude and the provider's own
+ * id for everything else, so `claude-code` is the one case that has to be
+ * mapped back by hand.
+ */
+export function providerIdForAgentLabel(meta: Record<string, unknown> | null): string | null {
+  const label = meta?.agent;
+  if (typeof label !== 'string') return null;
+  const trimmed = label.trim();
+  if (!trimmed) return null;
+  return trimmed === 'claude-code' ? 'claude' : trimmed;
+}
+
+/**
+ * The agent already taking part in a thread — the one a plain reply continues
+ * talking to, with no `@mention` needed.
+ *
+ * Read from the *most recent* agent-authored message, so bringing a second
+ * agent in by name hands the thread over to it from that point on. A thread
+ * answered by a provider this machine cannot run falls back to the app's
+ * default agent rather than going silent; when even that is unavailable there
+ * is nobody to dispatch to, and a plain reply stays a plain reply.
+ */
+export function threadAgent(
+  thread: CommentThread,
+  agents: readonly AgentMention[],
+  fallback: AgentMention | null
+): AgentMention | null {
+  const messages = [thread.root, ...thread.replies];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.author.kind !== 'agent') continue;
+    const providerId = providerIdForAgentLabel(message.meta);
+    return agents.find((agent) => agent.providerId === providerId) ?? fallback;
+  }
+  return null;
+}
 
 export type CommentThread = {
   root: RigCommentMessage;
@@ -48,13 +136,25 @@ export class DocCommentsStore {
   focusedThreadId: string | null = null;
   /** Ids with an in-flight mutation, so cards can disable their controls. */
   pending = new Set<string>();
+  /** Thread root id → the agent turn running (or failed) for it. */
+  agentReplies = new Map<string, PendingAgentReply>();
+  /**
+   * Thread root id → what that thread's agent is waiting for permission to do.
+   *
+   * Pushed by main, which follows the headless session directly; this store only
+   * mirrors it. Absent means nothing is blocked — including once the turn ends,
+   * which main announces with an empty set.
+   */
+  agentPermissions = new Map<string, RigCommentPermissionRequest[]>();
 
   private readonly _resource: DocTabResource;
   private _messages: RigCommentMessage[] = [];
   private _pollTimer: number | null = null;
+  private _pollIntervalMs = POLL_INTERVAL_MS;
   private _visible = false;
   private _disposed = false;
   private readonly _stopContentReaction: () => void;
+  private readonly _stopPermissionEvents: () => void;
 
   constructor(resource: DocTabResource) {
     this._resource = resource;
@@ -67,9 +167,12 @@ export class DocCommentsStore {
       composerQuote: observable,
       focusedThreadId: observable,
       pending: observable.shallow,
+      agentReplies: observable.shallow,
+      agentPermissions: observable.shallow,
       openComposer: action.bound,
       closeComposer: action.bound,
       focusThread: action.bound,
+      dismissAgentReply: action.bound,
       _reanchor: action,
       _applyMessages: action,
       _fail: action,
@@ -81,6 +184,15 @@ export class DocCommentsStore {
       () => this._resource.content,
       () => this._reanchor()
     );
+
+    // One channel for every doc tab: main names the file each update is about.
+    this._stopPermissionEvents = events.on(rigCommentPermissionsChannel, (update) => {
+      if (this._disposed || update.absPath !== this.path) return;
+      runInAction(() => {
+        if (update.requests.length === 0) this.agentPermissions.delete(update.rootId);
+        else this.agentPermissions.set(update.rootId, update.requests);
+      });
+    });
 
     void this._resolveTarget();
   }
@@ -99,12 +211,13 @@ export class DocCommentsStore {
   }
 
   get hasContent(): boolean {
-    return this.threads.length > 0 || this.composerQuote !== null;
+    return this.threads.length > 0 || this.composerQuote !== null || this.agentReplies.size > 0;
   }
 
   dispose(): void {
     this._disposed = true;
     this._stopContentReaction();
+    this._stopPermissionEvents();
     this._stopPolling();
   }
 
@@ -165,8 +278,12 @@ export class DocCommentsStore {
   /**
    * Post a new thread anchored to `quote`. Refuses a quote that isn't verbatim
    * text of the current buffer — the guardrail the CLI and hub also enforce.
+   *
+   * `mention` makes the post the opening move of an agent turn: the comment is
+   * still the reader's, and the answer arrives as a separate agent-authored
+   * reply once the turn finishes.
    */
-  async create(quote: string, body: string): Promise<boolean> {
+  async create(quote: string, body: string, mention?: AgentMention): Promise<boolean> {
     const built = buildAnchor(this._resource.content, quote);
     if (!built.ok) {
       toast({
@@ -189,15 +306,105 @@ export class DocCommentsStore {
           this.composerQuote = null;
           this.focusedThreadId = result.data.id;
         });
+        // A brand-new thread has no history: the posted comment is the thread.
+        if (mention) {
+          this._runAgent(mention.name, {
+            parentId: result.data.id,
+            providerId: mention.providerId,
+            quote,
+            thread: [toThreadEntry(result.data)],
+          });
+        }
       }
       return result;
     });
   }
 
-  async reply(rootId: string, body: string): Promise<boolean> {
-    return this._mutate(rootId, () =>
-      rpc.rig.comments.reply({ absPath: this.path, parentId: rootId, body })
-    );
+  /**
+   * Reply to a thread, optionally handing it to an agent.
+   *
+   * `mention` is whoever should answer: the agent named explicitly in the body,
+   * or — for a thread an agent is already taking part in — that agent, so a
+   * follow-up continues the conversation without re-`@`-ing it. Either way the
+   * dispatch decision is the caller's; this only refuses the one case that
+   * would loop, an agent-authored post answering itself.
+   */
+  async reply(rootId: string, body: string, mention?: AgentMention): Promise<boolean> {
+    return this._mutate(rootId, async () => {
+      const result = await rpc.rig.comments.reply({
+        absPath: this.path,
+        parentId: rootId,
+        body,
+      });
+      if (result.success && mention && result.data.author.kind !== 'agent') {
+        // Built from the POST response rather than the next poll, so the agent
+        // sees the message it is answering without waiting for a refresh.
+        const thread = this.threads.find((t) => t.root.id === rootId);
+        const prior = thread ? [thread.root, ...thread.replies] : [];
+        this._runAgent(mention.name, {
+          parentId: rootId,
+          providerId: mention.providerId,
+          quote: thread?.root.anchor?.exact ?? null,
+          thread: [...prior, result.data].map(toThreadEntry),
+        });
+      }
+      return result;
+    });
+  }
+
+  /** Re-run a mention whose turn failed, from the same thread context. */
+  retryAgentReply(rootId: string): void {
+    const entry = this.agentReplies.get(rootId);
+    if (!entry || entry.error === null) return;
+    this._runAgent(entry.agentName, entry.request);
+  }
+
+  /** Drop a failed agent turn's card. No effect while one is still running. */
+  dismissAgentReply(rootId: string): void {
+    if (this.agentReplies.get(rootId)?.error === null) return;
+    this.agentReplies.delete(rootId);
+    this._retunePolling();
+  }
+
+  agentReplyFor(rootId: string): PendingAgentReply | null {
+    return this.agentReplies.get(rootId) ?? null;
+  }
+
+  /** What this thread's agent is currently blocked on, if anything. */
+  agentPermissionsFor(rootId: string): RigCommentPermissionRequest[] {
+    return this.agentPermissions.get(rootId) ?? [];
+  }
+
+  /**
+   * Answer one permission request with the option the reader chose.
+   *
+   * No local patching: main republishes the session's own pending set the moment
+   * the broker settles, so the card empties because the agent moved on, not
+   * because we guessed it would. Until then the buttons are marked pending.
+   */
+  resolveAgentPermission(rootId: string, requestId: string, optionId: string): void {
+    if (this.pending.has(requestId)) return;
+    runInAction(() => {
+      this.pending.add(requestId);
+    });
+    void (async () => {
+      const result = await rpc.rig.comments.resolveCommentPermission({
+        rootId,
+        requestId,
+        optionId,
+      });
+      if (this._disposed) return;
+      runInAction(() => {
+        this.pending.delete(requestId);
+      });
+      if (!result.success) {
+        toast({
+          title: 'Could not answer the agent',
+          description: result.error.message,
+          variant: 'destructive',
+        });
+      }
+    })();
   }
 
   async setResolved(rootId: string, resolved: boolean): Promise<boolean> {
@@ -211,6 +418,47 @@ export class DocCommentsStore {
   }
 
   // ── internals ──────────────────────────────────────────────────────────────
+
+  /**
+   * One agent turn, start to finish.
+   *
+   * The placeholder goes up before the request leaves, so the card appears in
+   * the same frame as the reader's own comment; the answer itself is a single
+   * long round-trip in the main process. Nothing here patches the thread — the
+   * relay stays the authority, so the turn ends with a refresh and the reply
+   * arrives through the same read path as everybody else's.
+   */
+  private _runAgent(agentName: string, request: AgentReplyRequest): void {
+    const rootId = request.parentId;
+    runInAction(() => {
+      this.agentReplies.set(rootId, { agentName, error: null, request });
+    });
+    this._retunePolling();
+
+    void (async () => {
+      const result = await rpc.rig.comments.askAgent({
+        absPath: this.path,
+        projectId: this._resource.projectId,
+        taskId: this._resource.taskId,
+        parentId: request.parentId,
+        providerId: request.providerId,
+        quote: request.quote,
+        thread: request.thread,
+      });
+      if (this._disposed) return;
+
+      runInAction(() => {
+        if (result.success) {
+          this.agentReplies.delete(rootId);
+        } else {
+          this.agentReplies.set(rootId, { agentName, error: result.error.message, request });
+        }
+      });
+      this._retunePolling();
+      // Don't wait for the next tick: the reply exists on the relay right now.
+      if (result.success) await this.refresh();
+    })();
+  }
 
   private async _resolveTarget(): Promise<void> {
     const result = await rpc.rig.comments.resolveTarget({ absPath: this.path });
@@ -324,7 +572,18 @@ export class DocCommentsStore {
   private _startPolling(): void {
     if (this._pollTimer !== null || this._disposed) return;
     if (this.state === 'notBound' || this.state === 'unauthenticated') return;
-    this._pollTimer = window.setInterval(() => void this.refresh(), POLL_INTERVAL_MS);
+    this._pollTimer = window.setInterval(() => void this.refresh(), this._pollIntervalMs);
+  }
+
+  /** Tightens the poll while a mention is outstanding, and relaxes it after. */
+  private _retunePolling(): void {
+    const outstanding = [...this.agentReplies.values()].some((entry) => entry.error === null);
+    const next = outstanding ? MENTION_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
+    if (next === this._pollIntervalMs) return;
+    this._pollIntervalMs = next;
+    if (this._pollTimer === null) return;
+    this._stopPolling();
+    this._startPolling();
   }
 
   private _stopPolling(): void {

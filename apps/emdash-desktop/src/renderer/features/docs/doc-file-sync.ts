@@ -31,6 +31,8 @@ export interface DocPayload {
 export interface DocContext {
   projectId: string;
   workspaceId: string;
+  /** Owning task. Needed to run an agent in this document's workspace. */
+  taskId: string;
 }
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
@@ -59,6 +61,7 @@ export class DocTabResource implements TabResource {
   readonly path: string;
   readonly projectId: string;
   readonly workspaceId: string;
+  readonly taskId: string;
 
   /**
    * Per-tab CM6 extension factories, applied after the globally registered
@@ -93,6 +96,7 @@ export class DocTabResource implements TabResource {
     this.path = payload.path;
     this.projectId = ctx.projectId;
     this.workspaceId = ctx.workspaceId;
+    this.taskId = ctx.taskId;
     this._handle = handle ?? null;
 
     makeObservable(this, {

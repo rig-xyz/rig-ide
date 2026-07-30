@@ -84,7 +84,11 @@ export const docTabProvider: TabProvider<'doc', DocPayload, DocTabResource, DocO
       const taskCtx = ctx as TaskTabContext;
       const resource = new DocTabResource(
         entry.state,
-        { projectId: taskCtx.projectId, workspaceId: taskCtx.workspaceId },
+        {
+          projectId: taskCtx.projectId,
+          workspaceId: taskCtx.workspaceId,
+          taskId: taskCtx.taskId,
+        },
         handle
       );
       // Comments ride along per tab (not via the global registry) so the layer

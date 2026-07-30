@@ -35,6 +35,7 @@ import { updateController } from './core/updates/controller';
 import { viewStateController } from './core/view-state/controller';
 import { projectSettingsController } from './core/workspaces/project-settings-controller';
 import { legacyPortController } from './db/legacy-port/controller';
+import { rigCommentAgentController } from './rig/comment-agent';
 import { rigCommentsController } from './rig/comments';
 
 export const rpcRouter = createRPCRouter({
@@ -71,7 +72,9 @@ export const rpcRouter = createRPCRouter({
   search: searchController,
   projectSettings: projectSettingsController,
   rig: createRPCNamespace({
-    comments: rigCommentsController,
+    // `askAgent` sits alongside the relay reads/writes it builds on, so the
+    // renderer sees one comments surface rather than two.
+    comments: { ...rigCommentsController, ...rigCommentAgentController },
   }),
   workspace: createRPCNamespace({
     gitWorktree: gitWorktreeController,

@@ -9,6 +9,7 @@ import {
   RIG_COMMENT_ANCHOR_EXACT_MAX,
   RIG_COMMENT_BODY_MAX,
   type RigCommentAnchor,
+  type RigCommentAuthorKind,
   type RigCommentList,
   type RigCommentMessage,
   type RigCommentTarget,
@@ -258,6 +259,23 @@ function outboundAnchor(anchor: RigCommentAnchor): RigCommentAnchor {
   };
 }
 
+/**
+ * Optional authorship fields for an outbound post. `authorKind: 'agent'` makes
+ * the relay record joint authorship — the post still belongs to the signed-in
+ * account, with `meta` (conventionally `{ agent, model }`) naming the agent that
+ * actually wrote it. Omitted entirely when the human is the author, so the
+ * ordinary path sends exactly the body it always sent.
+ */
+function attribution(
+  authorKind: RigCommentAuthorKind | undefined,
+  meta: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  return {
+    ...(authorKind ? { authorKind } : {}),
+    ...(meta && Object.keys(meta).length > 0 ? { meta } : {}),
+  };
+}
+
 function validateBody(body: string): RigCommentsError | null {
   const trimmed = body.trim();
   if (!trimmed) return { kind: 'invalid', message: 'A comment needs some text.' };
@@ -326,10 +344,14 @@ export const rigCommentsController = createRPCController({
     absPath,
     body,
     anchor,
+    authorKind,
+    meta,
   }: {
     absPath: string;
     body: string;
     anchor: RigCommentAnchor;
+    authorKind?: RigCommentAuthorKind;
+    meta?: Record<string, unknown>;
   }) => {
     const invalid = validateBody(body);
     if (invalid) return err(invalid);
@@ -346,6 +368,7 @@ export const rigCommentsController = createRPCController({
       body: body.trim(),
       path: ctx.target.relPath,
       anchor: outboundAnchor(anchor),
+      ...attribution(authorKind, meta),
     });
   },
 
@@ -354,17 +377,25 @@ export const rigCommentsController = createRPCController({
     absPath,
     parentId,
     body,
+    authorKind,
+    meta,
   }: {
     absPath: string;
     parentId: string;
     body: string;
+    authorKind?: RigCommentAuthorKind;
+    meta?: Record<string, unknown>;
   }) => {
     const invalid = validateBody(body);
     if (invalid) return err(invalid);
     const ctx = await resolveContext(absPath);
     if (isError(ctx)) return err(ctx);
 
-    return postMessage(ctx, 'post the reply', { body: body.trim(), parentId });
+    return postMessage(ctx, 'post the reply', {
+      body: body.trim(),
+      parentId,
+      ...attribution(authorKind, meta),
+    });
   },
 
   /** Resolve or reopen a thread root (the relay rejects this on replies). */
