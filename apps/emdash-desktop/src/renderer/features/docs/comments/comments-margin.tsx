@@ -1,4 +1,10 @@
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  ListFilter,
+} from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppSettingsKey } from '@renderer/features/settings/use-app-settings-key';
@@ -9,14 +15,23 @@ import { Badge } from '@renderer/lib/ui/badge';
 import { Button } from '@renderer/lib/ui/button';
 import { MarkdownRenderer } from '@renderer/lib/ui/markdown-renderer';
 import { RelativeTime } from '@renderer/lib/ui/relative-time';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@renderer/lib/ui/select';
 import { Textarea } from '@renderer/lib/ui/textarea';
 import { cn } from '@renderer/utils/utils';
 import type { RigCommentMessage, RigCommentPermissionRequest } from '@shared/rig/comments';
 import { shortenQuote } from './anchors';
 import {
+  COMMENT_FILTERS,
   providerIdForAgentLabel,
   threadAgent,
   type AgentMention,
+  type CommentFilter,
   type CommentThread,
   type DocCommentsStore,
 } from './comments-store';
@@ -70,25 +85,151 @@ export function shouldShowMargin(store: DocCommentsStore | null): boolean {
   return store !== null && store.hasContent;
 }
 
+/** What the filter is called, in the picker and on its trigger. */
+const FILTER_LABELS: Record<CommentFilter, string> = {
+  all: 'All',
+  unresolved: 'Unresolved',
+  new: 'New',
+  resolved: 'Resolved',
+  agent: 'Agent',
+};
+
+/** What the column says instead of going blank when a lens matches nothing. */
+const FILTER_EMPTY: Record<CommentFilter, string> = {
+  all: 'No comments on this document yet.',
+  unresolved: 'No unresolved threads.',
+  new: 'Nothing new.',
+  resolved: 'No resolved threads.',
+  agent: 'No threads an agent has spoken in.',
+};
+
+/**
+ * The lens picker in the margin header.
+ *
+ * A select rather than a segmented control: the margin starts at 220px, and five
+ * labelled segments cannot be quiet at that width. Borderless until hovered, so
+ * the header stays a strip rather than becoming a toolbar.
+ */
+const FilterSelect = observer(function FilterSelect({ store }: { store: DocCommentsStore }) {
+  return (
+    <Select value={store.filter} onValueChange={(next) => store.setFilter(next as CommentFilter)}>
+      <SelectTrigger
+        size="sm"
+        aria-label="Filter threads"
+        title="Filter threads"
+        className="gap-1 border-transparent px-1.5 text-xs text-foreground-muted hover:border-border hover:text-foreground [&_svg]:size-3!"
+      >
+        <ListFilter />
+        <SelectValue>{(value) => FILTER_LABELS[value as CommentFilter]}</SelectValue>
+      </SelectTrigger>
+      <SelectContent align="end" alignItemWithTrigger={false} className="min-w-32">
+        {COMMENT_FILTERS.map((filter) => (
+          <SelectItem key={filter} value={filter} className="py-1 text-xs">
+            {FILTER_LABELS[filter]}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+});
+
+/**
+ * Fold every listed thread away, or open them all back up.
+ *
+ * Not a mode: it writes the same per-thread collapse state the card chevrons
+ * do, and its own label is read back out of that state, so the two can never
+ * disagree. Selecting a thread or a reply landing in one still opens that
+ * thread afterwards — this was a moment, not a setting.
+ *
+ * Absent rather than disabled when there is nothing to fold: a control for
+ * threads that aren't there is noise in a 220px strip.
+ */
+const CollapseAllButton = observer(function CollapseAllButton({
+  store,
+  threads,
+}: {
+  store: DocCommentsStore;
+  threads: CommentThread[];
+}) {
+  if (threads.length === 0) return null;
+  const allCollapsed = threads.every((thread) => store.isThreadCollapsed(thread.root.id));
+  const label = allCollapsed ? 'Expand all threads' : 'Collapse all threads';
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-label={label}
+      title={label}
+      // Borderless until hovered, like the filter beside it: the header is a
+      // strip, and two controls answering hover differently would break it.
+      className="border-transparent text-foreground-muted hover:border-border hover:bg-transparent hover:text-foreground [&_svg]:size-3!"
+      onClick={() =>
+        store.setThreadsCollapsed(
+          threads.map((thread) => thread.root.id),
+          !allCollapsed
+        )
+      }
+    >
+      {allCollapsed ? <ChevronsUpDown /> : <ChevronsDownUp />}
+    </Button>
+  );
+});
+
 export const CommentsMargin = observer(function CommentsMargin({
   store,
 }: {
   store: DocCommentsStore;
 }) {
   const [showResolved, setShowResolved] = useState(false);
-  const unresolved = store.unresolvedThreads;
-  const resolved = store.resolvedThreads;
+  const listed = store.visibleThreads;
+  const resolved = store.visibleResolvedThreads;
+
+  // Resolved passages stay marked in the document, so they stay clickable. If
+  // the reader clicks one, its card has to exist to be scrolled to.
+  const activeIsResolved = resolved.some((thread) => thread.root.id === store.activeThreadId);
+  useEffect(() => {
+    if (activeIsResolved) setShowResolved(true);
+  }, [activeIsResolved]);
+
+  // The chip and the `New` lens are the same claim about the same threads. Both
+  // at once would read as two different counts of two different things, so the
+  // lens the reader has explicitly chosen wins and the chip stands down.
+  const showUnreadChip = store.unreadCount > 0 && store.filter !== 'new';
+  const nothingToList =
+    listed.length === 0 && resolved.length === 0 && store.composerQuote === null;
+
+  // What "all" means for collapse-all: everything the reader can actually see.
+  // The current filter has already decided that for the main column; the
+  // resolved threads join it only while their disclosure is open, since folding
+  // cards that are themselves already folded away is work with no visible
+  // effect until some later click.
+  const collapsible = showResolved ? [...listed, ...resolved] : listed;
 
   // No left border of its own: the resize handle beside it is the divider.
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background-secondary-1">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
-        <span className="text-xs text-foreground-muted">Comments</span>
-        {unresolved.length > 0 && (
+        <span className="min-w-0 truncate text-xs text-foreground-muted">Comments</span>
+        {listed.length > 0 && (
           <Badge variant="secondary" className="shrink-0">
-            {unresolved.length}
+            {listed.length}
           </Badge>
         )}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {showUnreadChip && (
+            <button
+              type="button"
+              onClick={store.jumpToFirstUnread}
+              title="Go to the first thread with new messages"
+              className="flex shrink-0 items-center gap-1.5 text-xs text-foreground-muted hover:text-foreground"
+            >
+              <UnreadDot />
+              {store.unreadCount} new
+            </button>
+          )}
+          <CollapseAllButton store={store} threads={collapsible} />
+          <FilterSelect store={store} />
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
@@ -107,8 +248,12 @@ export const CommentsMargin = observer(function CommentsMargin({
 
         {store.composerQuote !== null && <NewThreadCard store={store} />}
 
+        {nothingToList && (
+          <p className="text-xs text-foreground-muted">{FILTER_EMPTY[store.filter]}</p>
+        )}
+
         <div className="flex flex-col gap-3">
-          {unresolved.map((thread) => (
+          {listed.map((thread) => (
             <ThreadCard key={thread.root.id} store={store} thread={thread} />
           ))}
         </div>
@@ -126,6 +271,9 @@ export const CommentsMargin = observer(function CommentsMargin({
                 <ChevronRight className="size-3 shrink-0" />
               )}
               {resolved.length} resolved
+              {/* Resolving a thread ends the question; it does not mute the
+                  people still answering it, so news in here still shows. */}
+              {!showResolved && resolved.some((t) => store.isThreadUnread(t)) && <UnreadDot />}
             </button>
             {showResolved && (
               <div className="mt-2 flex flex-col gap-3">
@@ -435,10 +583,13 @@ const AgentReplyCard = observer(function AgentReplyCard({
   // themselves.
   const waiting = permissions.length > 0;
   return (
-    <div className="mt-2.5 rounded-md border border-dashed border-border-1 px-2 py-1.5">
-      <div className="flex items-center gap-1.5">
+    // The size lives on the block, not on the line inside it: this is a status
+    // line at the card's own meta scale, and nothing it contains may inherit the
+    // body size and start reading as a heading.
+    <div className="mt-2.5 rounded-md border border-dashed border-border-1 px-2 py-1.5 text-tiny text-foreground-passive">
+      <div className="flex min-w-0 items-center gap-1.5">
         <AgentIcon id={pending.request.providerId} size={12} className="shrink-0" />
-        <span className={cn('text-tiny text-foreground-passive', !waiting && 'animate-pulse')}>
+        <span className={cn('min-w-0 truncate', !waiting && 'animate-pulse')}>
           {waiting ? `${pending.agentName} needs permission` : `${pending.agentName} is replying…`}
         </span>
       </div>
@@ -456,23 +607,126 @@ const AgentReplyCard = observer(function AgentReplyCard({
 
 // ── cards ────────────────────────────────────────────────────────────────────
 
+/**
+ * The selected card's accent, matched to the in-document one.
+ *
+ * One line, all the way around: the card's own 1px border recoloured to the
+ * same `--blue-11` the marker dot and the active range use in
+ * `comment-decorations.ts`. That shared colour is the only thing tying the two
+ * halves of the selection together, so it is the one thing worth spending.
+ *
+ * Only the colour changes — the border is already there and already 1px — so
+ * selecting a thread costs the card no width and the column never reflows. It
+ * also means there is exactly one edge being drawn: the rule-plus-inset-shadow
+ * this replaced stacked two hairlines on the same pixel column, which is what
+ * was fringing. Written as a style rather than utilities because the token is a
+ * raw ramp step with no utility of its own.
+ */
+const ACTIVE_CARD_STYLE: React.CSSProperties = {
+  borderColor: 'var(--blue-11)',
+};
+
+/**
+ * The ring's arrival, as a ripple that leaves nothing behind.
+ *
+ * An outer `box-shadow` only: it paints outside the border box, so it cannot
+ * move the card or its neighbours, and the column's own 12px padding is wider
+ * than the ripple, so the scroller never clips it. A 2px halo in the same
+ * `--blue-9` mix the in-document marker dot wears, spreading to 6px as it fades
+ * to nothing over 420ms — after which the card carries only the ring. A halo
+ * that stayed would be a second, permanent signal saying the same thing.
+ *
+ * Skipped outright under `prefers-reduced-motion`: the ring alone is the whole
+ * message, and it arrives the same either way.
+ */
+const GLOW_LIT: React.CSSProperties = {
+  ...ACTIVE_CARD_STYLE,
+  boxShadow: '0 0 0 2px color-mix(in srgb, var(--blue-9) 40%, transparent)',
+};
+const GLOW_FADING: React.CSSProperties = {
+  ...ACTIVE_CARD_STYLE,
+  boxShadow: '0 0 0 6px transparent',
+  transition: 'box-shadow 420ms ease-out',
+};
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+}
+
+/** Controls that own their own click; a click on one is not a card selection. */
+const INTERACTIVE = 'button, a, input, textarea, select, [role="button"], [contenteditable]';
+
 function Card({
   children,
-  focused,
+  active,
   muted,
-  onClick,
+  compact,
+  onActivate,
 }: {
   children: React.ReactNode;
-  focused?: boolean;
+  active?: boolean;
   muted?: boolean;
-  onClick?: () => void;
+  /** A folded thread: an index entry, so the card gives it index-entry padding. */
+  compact?: boolean;
+  onActivate?: () => void;
 }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  // 'lit' only ever lasts a frame: the glow has to be painted once before the
+  // transition to 'fading' has anything to animate away from.
+  const [glow, setGlow] = useState<'off' | 'lit' | 'fading'>('off');
+
+  // Document → margin. `nearest` is what makes this safe to run on every
+  // selection: a card already in view does not move, so selecting from the
+  // margin never scrolls the column out from under the pointer.
+  useEffect(() => {
+    if (!active) return;
+    ref.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [active]);
+
+  useEffect(() => {
+    if (!active || prefersReducedMotion()) {
+      setGlow('off');
+      return;
+    }
+    setGlow('lit');
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => setGlow('fading'));
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, [active]);
+
+  const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!onActivate) return;
+    if (event.target instanceof Element && event.target.closest(INTERACTIVE)) return;
+    // A click that finished a drag over this card's own text is a read, not a
+    // selection of the thread — copying out of a comment must stay possible.
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed && ref.current?.contains(selection.anchorNode)) return;
+    onActivate();
+  };
+
+  const style = !active
+    ? undefined
+    : glow === 'lit'
+      ? GLOW_LIT
+      : glow === 'fading'
+        ? GLOW_FADING
+        : ACTIVE_CARD_STYLE;
+
   return (
     <div
-      onClick={onClick}
+      ref={ref}
+      onClick={handleClick}
+      style={style}
       className={cn(
-        'rounded-md border bg-background px-2.5 py-2.5',
-        focused ? 'border-border-primary' : 'border-border',
+        'rounded-md border border-border bg-background px-2.5',
+        compact ? 'py-1' : 'py-2.5',
         muted && 'opacity-70'
       )}
     >
@@ -541,12 +795,107 @@ function AuthorLine({ message }: { message: RigCommentMessage }) {
   );
 }
 
-/** Author line plus body — the unit a thread is a stack of. */
+/**
+ * The type every comment body is set in, human or agent.
+ *
+ * A thread is one conversation, so it is one size: an agent answers in markdown
+ * and a person usually answers in a sentence, and neither may look like it is
+ * speaking louder than the other. The markdown is therefore constrained to the
+ * card rather than the card being enlarged to fit it — headings, list items and
+ * code sit at the body's own size and leading, and the last block ends flush
+ * with the bottom of the card instead of adding a paragraph gap of its own.
+ *
+ * Code keeps the usual 0.92em: a monospace face set at the same pixel size reads
+ * larger than the prose around it, so matching it takes the correction, not the
+ * number.
+ */
+const COMMENT_BODY_CLASS = cn(
+  'break-words text-sm leading-relaxed text-foreground',
+  '[&_h2]:text-sm [&_h3]:text-sm [&_h4]:text-sm [&_h5]:text-sm [&_h6]:text-sm',
+  '[&_p]:mb-1.5 [&_p]:leading-relaxed [&_ul]:mb-1.5 [&_ol]:mb-1.5 [&_li]:leading-relaxed',
+  '[&_code]:text-[0.92em] [&_table]:text-[0.92em]',
+  '[&_*:last-child]:mb-0'
+);
+
+/**
+ * Author line plus body — the unit a thread is a stack of.
+ *
+ * The gap between the two is what lets the author line act as the message's
+ * header rather than as its first line: in a six-message thread the eye finds
+ * the boundaries by those lines, so they need air above the prose they open.
+ */
 function CommentBody({ message }: { message: RigCommentMessage }) {
   return (
-    <div className="flex min-w-0 flex-col gap-0.5">
+    <div className="flex min-w-0 flex-col gap-1">
       <AuthorLine message={message} />
-      <MarkdownRenderer content={message.body} variant="compact" className="text-sm" />
+      <MarkdownRenderer content={message.body} variant="compact" className={COMMENT_BODY_CLASS} />
+    </div>
+  );
+}
+
+/**
+ * From this many replies, the middle of a thread is folded away by default.
+ *
+ * Four is the point at which folding actually buys something: with the opening
+ * comment and the last two always shown, a shorter thread would hide one
+ * message behind a line of text the same height, which is not a saving.
+ */
+const FOLD_FROM_REPLIES = 4;
+/** How much of the end of a folded thread stays visible. */
+const FOLD_TAIL = 2;
+
+/** Who spoke last, for a collapsed thread's summary line. */
+function lastSpeaker(thread: CommentThread): string {
+  const last = thread.replies[thread.replies.length - 1] ?? thread.root;
+  return last.author.kind === 'agent' ? 'rig' : last.author.name || 'someone';
+}
+
+/**
+ * The app's unread mark, as worn by conversations and tasks: a small filled dot
+ * in `foreground-info`, no count and no badge.
+ */
+function UnreadDot({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn('size-2 shrink-0 rounded-full bg-foreground-info', className)}
+      aria-label="New messages"
+      title="New messages"
+    />
+  );
+}
+
+/**
+ * The control that opens a thread's folded middle.
+ *
+ * A pill centred on the hairline that separates the messages either side of it,
+ * sized to its own words rather than to the column: full-width text on its own
+ * rule read as a section heading for the replies below, which is not what it
+ * is. The card's background breaks the rule behind the pill, so the two are one
+ * mark — a seam with a way through it — rather than two stacked elements.
+ */
+function MoreRepliesButton({
+  count,
+  store,
+  rootId,
+}: {
+  count: number;
+  store: DocCommentsStore;
+  rootId: string;
+}) {
+  return (
+    <div className="relative flex items-center justify-center">
+      <span aria-hidden className="absolute inset-x-0 top-1/2 h-px bg-border" />
+      <button
+        type="button"
+        className="relative inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-micro text-foreground-muted hover:border-border-1 hover:text-foreground"
+        onClick={(event) => {
+          event.stopPropagation();
+          store.expandThreadReplies(rootId);
+        }}
+      >
+        <ChevronDown className="size-3 shrink-0" />
+        {count} more {count === 1 ? 'reply' : 'replies'}
+      </button>
     </div>
   );
 }
@@ -559,72 +908,143 @@ const ThreadCard = observer(function ThreadCard({
   thread: CommentThread;
 }) {
   const { root, replies } = thread;
-  const focused = store.focusedThreadId === root.id;
+  const active = store.activeThreadId === root.id;
   const busy = store.isPending(root.id);
-  const quote = root.anchor ? shortenQuote(root.anchor.exact, 160) : null;
+  const collapsed = store.isThreadCollapsed(root.id);
+  const unread = store.isThreadUnread(thread);
   const agent = useThreadAgent(thread);
 
+  // What the thread is about, in one line. An unanchored thread has no passage
+  // to point at, so it summarises itself by its opening comment instead.
+  const summary = shortenQuote(root.anchor?.exact ?? root.body, 160);
+
+  // The opening comment and the tail always show; only the middle folds.
+  const folded =
+    !collapsed && !store.areThreadRepliesExpanded(root.id) && replies.length >= FOLD_FROM_REPLIES;
+  const shownReplies = folded ? replies.slice(-FOLD_TAIL) : replies;
+  const foldedAway = replies.length - shownReplies.length;
+
   return (
-    <Card focused={focused} muted={thread.resolved} onClick={() => store.focusThread(root.id)}>
-      {/* Context before content: what the thread points at, then what was said. */}
-      {quote !== null && (
-        <p
-          className="mb-2 line-clamp-2 border-l-2 border-border-1 pl-2 text-tiny text-foreground-passive"
-          title={root.anchor?.exact}
-        >
-          {quote}
-        </p>
-      )}
+    <Card
+      active={active}
+      muted={thread.resolved}
+      compact={collapsed}
+      onActivate={() => store.setActiveThread(root.id, 'margin')}
+    >
+      {/* Context before content: what the thread points at, then what was said.
+          Doubles as the collapse control, so the affordance sits in the same
+          place whether the thread is open or folded down to this one line.
 
-      {thread.orphan && (
-        <div className="mb-2">
-          <Badge
-            variant="secondary"
-            className="shrink-0"
-            title="The quoted passage has changed since this comment was made, so it can no longer be located in the document."
-          >
-            original text changed
-          </Badge>
-        </div>
-      )}
-
-      <CommentBody message={root} />
-
-      {replies.length > 0 && (
-        <div className="mt-2.5 flex flex-col gap-2.5 border-t border-border pt-2.5">
-          {replies.map((reply) => (
-            <CommentBody key={reply.id} message={reply} />
-          ))}
-        </div>
-      )}
-
-      <AgentReplyCard store={store} rootId={root.id} />
-
-      <div className="mt-2.5 flex flex-col gap-1.5">
-        {focused && <ReplyComposer store={store} thread={thread} agent={agent} disabled={busy} />}
-        <div className="flex items-center gap-2">
-          {!focused && (
-            <button
-              type="button"
-              className="shrink-0 text-xs text-foreground-muted hover:text-foreground"
-              onClick={() => store.focusThread(root.id)}
-            >
-              Reply
-            </button>
+          Folded, the row is all the card contains, and the card tightens to it
+          (`compact`): one truncated line, ~24px tall against the ~37px it used
+          to be. A folded thread is an index entry, and an index entry nearly as
+          tall as a card has saved the reader nothing. */}
+      <button
+        type="button"
+        title={collapsed ? 'Expand thread' : 'Collapse thread'}
+        onClick={(event) => {
+          event.stopPropagation();
+          store.toggleThreadCollapsed(root.id);
+        }}
+        className={cn('flex w-full min-w-0 items-start gap-1.5 text-left', !collapsed && 'mb-2')}
+      >
+        {collapsed ? (
+          <ChevronRight className="mt-px size-3 shrink-0 text-foreground-passive" />
+        ) : (
+          <ChevronDown className="mt-px size-3 shrink-0 text-foreground-passive" />
+        )}
+        <span
+          className={cn(
+            'min-w-0 flex-1 border-l-2 border-border-1 pl-2 text-tiny text-foreground-passive',
+            collapsed ? 'truncate' : 'line-clamp-2'
           )}
-          <button
-            type="button"
-            disabled={busy}
-            className="ml-auto shrink-0 text-xs text-foreground-muted hover:text-foreground disabled:opacity-50"
-            onClick={(event) => {
-              event.stopPropagation();
-              void store.setResolved(root.id, !thread.resolved);
-            }}
-          >
-            {thread.resolved ? 'Reopen' : 'Resolve'}
-          </button>
-        </div>
-      </div>
+          title={root.anchor?.exact ?? root.body}
+        >
+          {summary}
+        </span>
+        {collapsed && (
+          <span className="shrink-0 text-micro text-foreground-passive">
+            {lastSpeaker(thread)} · {replies.length + 1}
+          </span>
+        )}
+        {unread && <UnreadDot className={collapsed ? 'mt-1 size-1.5' : 'mt-0.5'} />}
+      </button>
+
+      {!collapsed && (
+        <>
+          {thread.orphan && (
+            <div className="mb-2">
+              <Badge
+                variant="secondary"
+                className="shrink-0"
+                title="The quoted passage has changed since this comment was made, so it can no longer be located in the document."
+              >
+                original text changed
+              </Badge>
+            </div>
+          )}
+
+          <CommentBody message={root} />
+
+          {/* One hairline per message rather than one around the whole reply
+              block: in a long conversation the boundaries are what make it
+              readable, and a single rule under the opening comment leaves the
+              rest as one undifferentiated column. */}
+          {(shownReplies.length > 0 || foldedAway > 0) && (
+            <div className="mt-2.5 flex flex-col gap-2.5">
+              {foldedAway > 0 && (
+                <MoreRepliesButton count={foldedAway} store={store} rootId={root.id} />
+              )}
+              {shownReplies.map((reply, index) => (
+                <div
+                  key={reply.id}
+                  // The expander's own hairline already *is* this message's top
+                  // boundary, so the message under it draws none: two rules a
+                  // pill's height apart read as two marks for one seam. Dropping
+                  // the border takes its 10px of padding with it, leaving the
+                  // column's own 10px gap above and below the pill — the same
+                  // 10px that sits either side of an ordinary message's rule.
+                  className={cn(
+                    !(index === 0 && foldedAway > 0) && 'border-t border-border pt-2.5'
+                  )}
+                >
+                  <CommentBody message={reply} />
+                </div>
+              ))}
+            </div>
+          )}
+
+          <AgentReplyCard store={store} rootId={root.id} />
+
+          <div className="mt-2.5 flex flex-col gap-1.5">
+            {active && (
+              <ReplyComposer store={store} thread={thread} agent={agent} disabled={busy} />
+            )}
+            <div className="flex items-center gap-2">
+              {!active && (
+                <button
+                  type="button"
+                  className="shrink-0 text-xs text-foreground-muted hover:text-foreground"
+                  onClick={() => store.setActiveThread(root.id, 'margin')}
+                >
+                  Reply
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={busy}
+                className="ml-auto shrink-0 text-xs text-foreground-muted hover:text-foreground disabled:opacity-50"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void store.setResolved(root.id, !thread.resolved);
+                }}
+              >
+                {thread.resolved ? 'Reopen' : 'Resolve'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </Card>
   );
 });

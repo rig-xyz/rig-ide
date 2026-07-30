@@ -117,6 +117,22 @@ export const DocPane = observer(function DocPane({
     void resource.flush();
   }, [resource]);
 
+  /**
+   * Escape gives the selected thread back — the one deliberate way out of a
+   * selection that is otherwise sticky.
+   *
+   * On the pane rather than on either half, because it has to work from the
+   * editor and from a card alike. A key another handler has already claimed
+   * (the @mention popup takes Escape first) is left alone.
+   */
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      comments?.setActiveThread(null);
+    },
+    [comments]
+  );
+
   const resolveImage = useCallback(
     async (src: string): Promise<string | null> => {
       const imagePath = resolveWorkspaceResourcePath({
@@ -136,7 +152,10 @@ export const DocPane = observer(function DocPane({
   // The root is opaque and its own stacking context, like the other main-column
   // panes, so nothing behind it can composite through the document.
   return (
-    <div className="relative isolate flex h-full w-full flex-col overflow-hidden bg-background-secondary-1">
+    <div
+      onKeyDown={handleKeyDown}
+      className="relative isolate flex h-full w-full flex-col overflow-hidden bg-background-secondary-1"
+    >
       <DocToolbar resource={resource} />
       <ResizablePanelGroup
         orientation="horizontal"

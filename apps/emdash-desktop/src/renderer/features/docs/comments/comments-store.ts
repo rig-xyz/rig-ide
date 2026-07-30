@@ -32,7 +32,62 @@ const POLL_INTERVAL_MS = 8_000; // matches the web hub's cadence
 /** While an @mention is out, a reply can land at any moment — watch more closely. */
 const MENTION_POLL_INTERVAL_MS = 3_000;
 
+/**
+ * Reader-local view state, per document, beside `docs:comments-margin-width`.
+ *
+ * Both are opinions about *this* reader's reading — which threads they have
+ * folded away and how far through each one they have got — so they live in
+ * localStorage rather than on the relay, and are keyed by the document they
+ * belong to. Reads are parse-tolerant (a corrupt or hand-edited blob degrades
+ * to "nothing collapsed, nothing seen") and writes are pruned to the threads
+ * that still exist, so a long-lived document can't grow an unbounded blob.
+ */
+const COLLAPSED_STORAGE_PREFIX = 'docs:comments-collapsed';
+const SEEN_STORAGE_PREFIX = 'docs:comments-seen';
+const FILTER_STORAGE_PREFIX = 'docs:comments-filter';
+const MAX_PERSISTED_THREADS = 200;
+
+function readStored(key: string): unknown {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw === null ? null : JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage may be unavailable; the state simply won't survive the session.
+  }
+}
+
+/**
+ * The most recent thing said in a thread.
+ *
+ * ISO-8601 timestamps from the relay, compared as strings — the same assumption
+ * `_reanchor` already makes when it orders threads by `createdAt`.
+ */
+export function threadLatestAt(thread: CommentThread): string {
+  let latest = thread.root.createdAt;
+  for (const reply of thread.replies) {
+    if (reply.createdAt > latest) latest = reply.createdAt;
+  }
+  return latest;
+}
+
 export type CommentsState = 'loading' | 'ready' | 'unauthenticated' | 'notBound' | 'error';
+
+/**
+ * Which half of the pane the reader clicked to select a thread.
+ *
+ * It decides which half moves: click a card and the document scrolls its passage
+ * into view; click the passage and the document stays exactly where it is while
+ * the margin scrolls the card in instead. Scrolling both would fight the reader.
+ */
+export type ActiveThreadSource = 'document' | 'margin';
 
 /** An agent the reader mentioned: the provider to run, and what to call it. */
 export type AgentMention = { providerId: string; name: string };
@@ -123,6 +178,26 @@ export type CommentThread = {
   resolved: boolean;
 };
 
+/**
+ * The lenses the margin can read a document's threads through.
+ *
+ * Every one of them is answerable from what the store already holds — the
+ * resolved flag, the unread marker, and the author kind of each message — so
+ * choosing one costs no read and asks the relay nothing.
+ */
+export const COMMENT_FILTERS = ['all', 'unresolved', 'new', 'resolved', 'agent'] as const;
+export type CommentFilter = (typeof COMMENT_FILTERS)[number];
+
+function isCommentFilter(value: unknown): value is CommentFilter {
+  return typeof value === 'string' && (COMMENT_FILTERS as readonly string[]).includes(value);
+}
+
+/** True when an agent has spoken in a thread — its opening comment or any reply. */
+export function threadHasAgent(thread: CommentThread): boolean {
+  if (thread.root.author.kind === 'agent') return true;
+  return thread.replies.some((reply) => reply.author.kind === 'agent');
+}
+
 export class DocCommentsStore {
   threads: CommentThread[] = [];
   state: CommentsState = 'loading';
@@ -132,8 +207,15 @@ export class DocCommentsStore {
 
   /** Quote captured from the selection while a new-thread composer is open. */
   composerQuote: string | null = null;
-  /** Thread card the UI should scroll to / highlight. */
-  focusedThreadId: string | null = null;
+  /**
+   * The thread the reader is currently reading, shared by the document and the
+   * margin so both can point at the same conversation: the anchored passage and
+   * its card take the same accent, and each side scrolls the other into view.
+   *
+   * View state, deliberately not persisted — it says where attention is right
+   * now, which is nobody's business between sessions.
+   */
+  activeThreadId: string | null = null;
   /** Ids with an in-flight mutation, so cards can disable their controls. */
   pending = new Set<string>();
   /** Thread root id → the agent turn running (or failed) for it. */
@@ -147,8 +229,38 @@ export class DocCommentsStore {
    */
   agentPermissions = new Map<string, RigCommentPermissionRequest[]>();
 
+  /**
+   * Threads the reader has folded down to their summary line. Persisted: a
+   * thread you have finished with should still be out of the way tomorrow.
+   */
+  collapsedThreads = new Set<string>();
+  /**
+   * Threads whose folded middle the reader has opened. Deliberately *not*
+   * persisted — "show me the whole of this conversation" is a thing you want
+   * now, not a preference, and it expires with the pane.
+   */
+  expandedThreads = new Set<string>();
+  /**
+   * Thread root id → the latest message timestamp the reader has actually
+   * looked at. Anything newer than the marker is unread; a thread with no
+   * marker at all has never been read.
+   */
+  seenAt = new Map<string, string>();
+  /**
+   * Which threads the margin lists. Persisted beside the collapse and unread
+   * state: it is the same kind of thing — an opinion about *this* reader's
+   * reading of *this* document, and no business of the relay's.
+   */
+  filter: CommentFilter = 'all';
+
   private readonly _resource: DocTabResource;
   private _messages: RigCommentMessage[] = [];
+  /**
+   * Message ids from the previous read, so a poll can tell an arrival from a
+   * message that was simply already there. Null until the first read lands —
+   * restoring a document must not be mistaken for everything arriving at once.
+   */
+  private _knownMessageIds: Set<string> | null = null;
   private _pollTimer: number | null = null;
   private _pollIntervalMs = POLL_INTERVAL_MS;
   private _visible = false;
@@ -159,24 +271,37 @@ export class DocCommentsStore {
   constructor(resource: DocTabResource) {
     this._resource = resource;
 
-    makeObservable<this, '_reanchor' | '_applyMessages' | '_fail'>(this, {
+    makeObservable<this, '_reanchor' | '_applyMessages' | '_fail' | '_loadViewState'>(this, {
       threads: observable,
       state: observable,
       errorMessage: observable,
       target: observable.ref,
       composerQuote: observable,
-      focusedThreadId: observable,
+      activeThreadId: observable,
       pending: observable.shallow,
       agentReplies: observable.shallow,
       agentPermissions: observable.shallow,
+      collapsedThreads: observable.shallow,
+      expandedThreads: observable.shallow,
+      seenAt: observable.shallow,
+      filter: observable,
+      setFilter: action.bound,
       openComposer: action.bound,
       closeComposer: action.bound,
-      focusThread: action.bound,
+      setActiveThread: action.bound,
       dismissAgentReply: action.bound,
+      toggleThreadCollapsed: action.bound,
+      setThreadsCollapsed: action.bound,
+      expandThreadReplies: action.bound,
+      markThreadSeen: action.bound,
+      jumpToFirstUnread: action.bound,
       _reanchor: action,
       _applyMessages: action,
       _fail: action,
+      _loadViewState: action,
     });
+
+    this._loadViewState();
 
     // Every buffer change re-runs the anchor search: keystrokes, an absorbed
     // agent edit, and the initial disk read all land here.
@@ -214,6 +339,140 @@ export class DocCommentsStore {
     return this.threads.length > 0 || this.composerQuote !== null || this.agentReplies.size > 0;
   }
 
+  /**
+   * Threads that have said something since the reader last looked.
+   *
+   * Resolved threads are counted with the rest: resolving a thread ends the
+   * question, it does not mute the people still answering it.
+   */
+  get unreadThreads(): CommentThread[] {
+    return this.threads.filter((thread) => this.isThreadUnread(thread));
+  }
+
+  get unreadCount(): number {
+    return this.unreadThreads.length;
+  }
+
+  isThreadUnread(thread: CommentThread): boolean {
+    const seen = this.seenAt.get(thread.root.id);
+    return seen === undefined || threadLatestAt(thread) > seen;
+  }
+
+  /** Choose the lens the margin lists threads through. */
+  setFilter(filter: CommentFilter): void {
+    if (this.filter === filter) return;
+    this.filter = filter;
+    writeStored(`${FILTER_STORAGE_PREFIX}:${this.path}`, filter);
+  }
+
+  /**
+   * The margin's main column, under the current filter.
+   *
+   * `all` is the layout the margin has always had — open threads here, resolved
+   * ones behind their own disclosure. Every other lens is one flat list instead:
+   * a filter that has already decided what the reader wants to see has no
+   * business hiding half of it behind a second control.
+   */
+  get visibleThreads(): CommentThread[] {
+    if (this.filter === 'all') return this.unresolvedThreads;
+    return this.threads.filter((thread) => this._passesFilter(thread));
+  }
+
+  /** What sits behind the `N resolved` disclosure. Only the unfiltered view has one. */
+  get visibleResolvedThreads(): CommentThread[] {
+    return this.filter === 'all' ? this.resolvedThreads : [];
+  }
+
+  /**
+   * The selected thread is listed whatever the filter says.
+   *
+   * A passage clicked in the document must have a card to scroll to, and reading
+   * a thread marks it read — which under `new` would otherwise pull it out from
+   * under the reader mid-sentence.
+   */
+  private _passesFilter(thread: CommentThread): boolean {
+    if (thread.root.id === this.activeThreadId) return true;
+    switch (this.filter) {
+      case 'unresolved':
+        return !thread.resolved;
+      case 'new':
+        return this.isThreadUnread(thread);
+      case 'resolved':
+        return thread.resolved;
+      case 'agent':
+        return threadHasAgent(thread);
+      default:
+        return true;
+    }
+  }
+
+  isThreadCollapsed(rootId: string): boolean {
+    return this.collapsedThreads.has(rootId);
+  }
+
+  /** True once the reader has opened this thread's folded middle. */
+  areThreadRepliesExpanded(rootId: string): boolean {
+    return this.expandedThreads.has(rootId);
+  }
+
+  /** Fold a thread down to its summary line, or open it back up. */
+  toggleThreadCollapsed(rootId: string): void {
+    if (this.collapsedThreads.has(rootId)) this.collapsedThreads.delete(rootId);
+    else this.collapsedThreads.add(rootId);
+    this._persistCollapsed();
+  }
+
+  /**
+   * Fold a set of threads down, or open them all back up, in one go.
+   *
+   * The same per-thread state the chevrons write, so there is no separate "all
+   * collapsed" flag that could drift out of step with it: this is a moment in
+   * time, and a thread that is later selected or answered opens again on its
+   * own terms.
+   *
+   * Takes ids rather than deciding for itself which threads are on screen — the
+   * resolved disclosure is the margin's own state, so only the margin can say
+   * what the reader can actually see.
+   */
+  setThreadsCollapsed(rootIds: readonly string[], collapsed: boolean): void {
+    let changed = false;
+    for (const id of rootIds) {
+      if (collapsed) {
+        if (this.collapsedThreads.has(id)) continue;
+        this.collapsedThreads.add(id);
+        changed = true;
+      } else if (this.collapsedThreads.delete(id)) {
+        changed = true;
+      }
+    }
+    if (changed) this._persistCollapsed();
+  }
+
+  expandThreadReplies(rootId: string): void {
+    this.expandedThreads.add(rootId);
+  }
+
+  /**
+   * Record that the reader has caught up with a thread.
+   *
+   * Called when a thread becomes the active one — deliberate attention, not the
+   * accident of scrolling past it — so the dot survives until it is answered.
+   */
+  markThreadSeen(rootId: string): void {
+    const thread = this.threads.find((t) => t.root.id === rootId);
+    if (!thread) return;
+    const latest = threadLatestAt(thread);
+    if (this.seenAt.get(rootId) === latest) return;
+    this.seenAt.set(rootId, latest);
+    this._persistSeen();
+  }
+
+  /** Select the first thread with something new in it. Backs the "N new" chip. */
+  jumpToFirstUnread(): void {
+    const next = this.unreadThreads[0];
+    if (next) this.setActiveThread(next.root.id, 'margin');
+  }
+
   dispose(): void {
     this._disposed = true;
     this._stopContentReaction();
@@ -235,7 +494,7 @@ export class DocCommentsStore {
 
   openComposer(quote: string): void {
     this.composerQuote = quote;
-    this.focusedThreadId = null;
+    this.setActiveThread(null);
     // The reader is about to act on a state we previously gave up on — a
     // `rig login` or a relay hiccup may well have been fixed since.
     if (this.state === 'unauthenticated' || this.state === 'error') void this.refresh();
@@ -245,14 +504,38 @@ export class DocCommentsStore {
     this.composerQuote = null;
   }
 
-  /** Focus a thread's card, and bring its anchored passage into view. */
-  focusThread(id: string | null): void {
-    this.focusedThreadId = id;
-    const thread = id === null ? null : this.threads.find((t) => t.root.id === id);
+  /**
+   * Select a thread, or clear the selection with `null`.
+   *
+   * Sticky, the way Docs is: only another thread, Escape, or opening the
+   * new-thread composer replaces it, so a stray click in the document never
+   * drops the conversation the reader is halfway through.
+   */
+  setActiveThread(id: string | null, source: ActiveThreadSource = 'margin'): void {
+    if (this.activeThreadId !== id) {
+      this.activeThreadId = id;
+      // The in-document accent is part of the marker set, so the selection is
+      // repainted the same way every other marker change is.
+      this._paintMarkers(this.threads, this._resource.content.length);
+    }
+    if (id !== null) {
+      // The thread being read is by definition not folded away, and is by
+      // definition caught up with.
+      if (this.collapsedThreads.delete(id)) this._persistCollapsed();
+      this.markThreadSeen(id);
+    }
+    // Re-clicking the card of the thread already selected still re-reveals its
+    // passage — that is the gesture for "where was this again?".
+    if (id === null || source === 'document') return;
+
+    // An orphan has no passage to scroll to, and a thread whose anchor moved
+    // past the end of the buffer between a poll and a keystroke has none either.
+    const thread = this.threads.find((t) => t.root.id === id);
     if (!thread || thread.index === null) return;
     const view = this._resource.editorRef.current?.getView();
     if (!view || thread.index > view.state.doc.length) return;
-    view.dispatch({ effects: EditorView.scrollIntoView(thread.index, { y: 'nearest' }) });
+    // Effects only, never `view.focus()`: the reader may be typing in the card.
+    view.dispatch({ effects: EditorView.scrollIntoView(thread.index, { y: 'center' }) });
   }
 
   /** Repaint the in-editor markers. Called once the CM6 view is mounted. */
@@ -304,7 +587,7 @@ export class DocCommentsStore {
       if (result.success) {
         runInAction(() => {
           this.composerQuote = null;
-          this.focusedThreadId = result.data.id;
+          this.activeThreadId = result.data.id;
         });
         // A brand-new thread has no history: the posted comment is the thread.
         if (mention) {
@@ -505,12 +788,77 @@ export class DocCommentsStore {
   }
 
   private _applyMessages(messages: RigCommentMessage[]): void {
+    const arrivals = this._takeArrivals(messages);
     this._messages = messages;
     this.state = 'ready';
     this.errorMessage = null;
     this._reanchor();
+
+    // Nothing that just arrived may be hidden by either fold: a reply the
+    // reader has not seen is the whole reason to look at the margin.
+    if (arrivals.size > 0) {
+      let uncollapsed = false;
+      for (const rootId of arrivals) {
+        if (this.collapsedThreads.delete(rootId)) uncollapsed = true;
+        this.expandedThreads.add(rootId);
+      }
+      if (uncollapsed) this._persistCollapsed();
+    }
+    // A reply landing in the thread the reader is already reading is not news.
+    if (this.activeThreadId !== null) this.markThreadSeen(this.activeThreadId);
+
     // A read succeeding after an error/sign-out resumes the poll `_fail` stopped.
     if (this._visible) this._startPolling();
+  }
+
+  /**
+   * The threads a read has brought genuinely new messages to, and the point at
+   * which "new" starts being meaningful.
+   */
+  private _takeArrivals(messages: RigCommentMessage[]): Set<string> {
+    const known = this._knownMessageIds;
+    this._knownMessageIds = new Set(messages.map((message) => message.id));
+    if (known === null) return new Set();
+    const roots = new Set<string>();
+    for (const message of messages) {
+      if (!known.has(message.id)) roots.add(message.parentId ?? message.id);
+    }
+    return roots;
+  }
+
+  private _loadViewState(): void {
+    const collapsed = readStored(`${COLLAPSED_STORAGE_PREFIX}:${this.path}`);
+    if (Array.isArray(collapsed)) {
+      for (const id of collapsed.slice(0, MAX_PERSISTED_THREADS)) {
+        if (typeof id === 'string' && id.length > 0) this.collapsedThreads.add(id);
+      }
+    }
+    const seen = readStored(`${SEEN_STORAGE_PREFIX}:${this.path}`);
+    if (seen !== null && typeof seen === 'object' && !Array.isArray(seen)) {
+      for (const [id, at] of Object.entries(seen).slice(0, MAX_PERSISTED_THREADS)) {
+        if (typeof at === 'string' && at.length > 0) this.seenAt.set(id, at);
+      }
+    }
+    const filter = readStored(`${FILTER_STORAGE_PREFIX}:${this.path}`);
+    if (isCommentFilter(filter)) this.filter = filter;
+  }
+
+  /**
+   * Writes back only the threads that still exist: a document whose comments
+   * come and go over months must not accumulate a blob of dead ids.
+   */
+  private _persistCollapsed(): void {
+    const live = new Set(this.threads.map((thread) => thread.root.id));
+    const ids = [...this.collapsedThreads]
+      .filter((id) => live.has(id))
+      .slice(0, MAX_PERSISTED_THREADS);
+    writeStored(`${COLLAPSED_STORAGE_PREFIX}:${this.path}`, ids);
+  }
+
+  private _persistSeen(): void {
+    const live = new Set(this.threads.map((thread) => thread.root.id));
+    const entries = [...this.seenAt].filter(([id]) => live.has(id)).slice(0, MAX_PERSISTED_THREADS);
+    writeStored(`${SEEN_STORAGE_PREFIX}:${this.path}`, Object.fromEntries(entries));
   }
 
   private _fail(error: RigCommentsError): void {
@@ -564,7 +912,13 @@ export class DocCommentsStore {
       const from = thread.index;
       const to = Math.min(from + thread.root.anchor.exact.length, docLength);
       if (to <= from) continue;
-      markers.push({ id: thread.root.id, from, to, resolved: thread.resolved });
+      markers.push({
+        id: thread.root.id,
+        from,
+        to,
+        resolved: thread.resolved,
+        active: thread.root.id === this.activeThreadId,
+      });
     }
     view.dispatch({ effects: setCommentMarkers.of(markers) });
   }

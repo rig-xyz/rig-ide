@@ -94,7 +94,9 @@ export const docTabProvider: TabProvider<'doc', DocPayload, DocTabResource, DocO
       // Comments ride along per tab (not via the global registry) so the layer
       // is scoped to doc tabs and nothing else. Factories are read at mount.
       const comments = attachDocComments(resource);
-      resource.extensionFactories.push(() => commentDecorations((id) => comments.focusThread(id)));
+      resource.extensionFactories.push(() =>
+        commentDecorations((id) => comments.setActiveThread(id, 'document'))
+      );
       return resource;
     },
 
