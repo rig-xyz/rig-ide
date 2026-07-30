@@ -4,6 +4,7 @@ import { useWorkspaceViewModel } from '@renderer/features/tasks/task-view-contex
 import { ShowHide } from '@renderer/lib/ui/show-hide';
 import { ChangesPanel } from '../diff-view/changes-panel/changes-panel';
 import { EditorFileTree } from '../editor/editor-file-tree';
+import { RigTasksPanel } from './rig-tasks-panel';
 
 export const TaskSidebar = observer(function TaskSidebar() {
   const taskView = useWorkspaceViewModel();
@@ -22,6 +23,9 @@ export const TaskSidebar = observer(function TaskSidebar() {
       </ShowHide>
       <ShowHide visible={activeTab === 'files'}>
         <EditorFileTree />
+      </ShowHide>
+      <ShowHide visible={activeTab === 'rig-tasks'} lazy>
+        <RigTasksPanel />
       </ShowHide>
     </div>
   );

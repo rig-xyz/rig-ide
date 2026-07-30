@@ -6,6 +6,7 @@ import {
   FileDiff,
   FolderOpen,
   GitBranch,
+  ListChecks,
   Pin,
   RefreshCcw,
   Terminal,
@@ -407,6 +408,16 @@ const ActiveTaskTitlebar = observer(function ActiveTaskTitlebar({
               <TooltipContent>
                 Conversations <BoundShortcut settingsKey="sidebarConversations" variant="keycaps" />
               </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <ToggleGroupItem size="icon-sm" value="rig-tasks" aria-label="Rig Tasks">
+                    <ListChecks className="size-3.5" />
+                  </ToggleGroupItem>
+                }
+              />
+              <TooltipContent>Rig Tasks</TooltipContent>
             </Tooltip>
           </ToggleGroup>
         </div>

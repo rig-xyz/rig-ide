@@ -50,6 +50,7 @@ import {
 import { log } from './lib/logger';
 import { withRpcLogging } from './lib/rpc-logging';
 import { telemetryService } from './lib/telemetry';
+import { registerRigBridge } from './rig/intent-bridge';
 import { rpcRouter } from './rpc';
 import { resolveUserEnv } from './utils/userEnv';
 
@@ -164,6 +165,7 @@ void app.whenReady().then(async () => {
     log.error('Failed to start agent-config runtime process:', e);
   });
   acpAgentStatusBridge.initialize();
+  registerRigBridge();
 
   emdashAccountService
     .initialize()

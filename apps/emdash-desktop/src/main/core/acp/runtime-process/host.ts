@@ -12,6 +12,7 @@ import { appScope } from '@main/app/app-scope';
 import { setSessionId } from '@main/core/conversations/set-session-id';
 import { providerOverrideSettings } from '@main/core/settings/provider-settings-service';
 import { log } from '@main/lib/logger';
+import { noteAcpSessionStart } from '@main/rig/session-registry';
 import { desktopWorkerPath } from '@main/worker-manifest';
 
 const ACP_WIRE_CHANNEL = 'acp-wire';
@@ -33,7 +34,7 @@ const acpWorker = lazyWorker(
   }),
   {
     onSpawned: (handle) =>
-      installRendererWire(withSessionIdPersistence(withProviderEnv(handle.client))),
+      installRendererWire(withRigSessionCapture(withSessionIdPersistence(withProviderEnv(handle.client)))),
   }
 );
 
@@ -54,7 +55,27 @@ export async function disposeAcpRuntimeProcess(): Promise<void> {
 }
 
 function decorateAcpRuntimeHandle(handle: WorkerHandle<AcpApiContract>): AcpRuntimeHandle {
-  return { ...handle, client: withSessionIdPersistence(withProviderEnv(handle.client)) };
+  return {
+    ...handle,
+    client: withRigSessionCapture(withSessionIdPersistence(withProviderEnv(handle.client))),
+  };
+}
+
+/**
+ * Records session-start inputs (cwd, providerId, ...) for the rig intent bridge,
+ * which observes plan updates over the wire but needs the session working
+ * directory that only crosses this main-process choke point.
+ */
+function withRigSessionCapture(client: AcpRuntimeClient): AcpRuntimeClient {
+  const note = <T extends { input: AcpStartInputWire }>(input: T): T => {
+    noteAcpSessionStart(input.input);
+    return input;
+  };
+  return {
+    ...client,
+    startSession: (input, meta) => client.startSession(note(input), meta),
+    resumeSession: (input, meta) => client.resumeSession(note(input), meta),
+  };
 }
 
 /**
