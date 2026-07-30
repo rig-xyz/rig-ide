@@ -10,6 +10,7 @@ export type TabDescriptor =
   | { kind: 'conversation'; tabId: string; conversationId: string; isPreview: boolean }
   | { kind: 'acp-chat'; tabId: string; conversationId: string; isPreview: boolean }
   | { kind: 'file'; tabId: string; path: string; isPreview: boolean; isExternal?: boolean }
+  | { kind: 'doc'; tabId: string; path: string; isPreview: boolean }
   | {
       kind: 'browser';
       tabId: string;

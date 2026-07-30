@@ -13,6 +13,7 @@ import {
 import { runInAction } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import React, { useRef, useState } from 'react';
+import { isDocPath } from '@renderer/features/docs/doc-tab-provider';
 import { CompactedPathLabel } from '@renderer/features/tasks/editor/compacted-path-label';
 import type { FilesStore } from '@renderer/features/tasks/editor/stores/files-store';
 import {
@@ -173,7 +174,9 @@ const FileTreeRow = observer(function FileTreeRow({
   const workspace = useWorkspace();
   const editorView = taskView.editorView;
   const files = editorView.files;
-  const { isActive, open: openFile } = useTabSelection('file', row.node.path);
+  // Markdown opens as a document ('doc' tab); everything else as source.
+  const tabKind = isDocPath(row.node.path) ? 'doc' : 'file';
+  const { isActive, open: openFile } = useTabSelection(tabKind, row.node.path);
 
   const node = row.node;
   const isExpanded = isChainExpanded(row.chain, editorView.expandedPaths);

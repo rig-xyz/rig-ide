@@ -74,6 +74,9 @@ function normalizeTabDescriptor(
   if (tab.kind === 'file' && !tab.isExternal) {
     return { ...tab, path: resolveWorkspacePath(workspacePath, tab.path) };
   }
+  if (tab.kind === 'doc') {
+    return { ...tab, path: resolveWorkspacePath(workspacePath, tab.path) };
+  }
   if (tab.kind === 'diff' && tab.diffGroup !== 'pr') {
     return { ...tab, path: resolveWorkspacePath(workspacePath, tab.path) };
   }
