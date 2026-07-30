@@ -946,17 +946,27 @@ const ThreadCard = observer(function ThreadCard({
           event.stopPropagation();
           store.toggleThreadCollapsed(root.id);
         }}
-        className={cn('flex w-full min-w-0 items-start gap-1.5 text-left', !collapsed && 'mb-2')}
+        className={cn(
+          'flex w-full min-w-0 gap-1.5 text-left',
+          // Folded, everything on the row is one line, so centring lines the
+          // chevron up with the text it opens. Expanded, the quote wraps to two
+          // lines and the chevron belongs at the top of them.
+          collapsed ? 'items-center' : 'items-start',
+          !collapsed && 'mb-2'
+        )}
       >
         {collapsed ? (
-          <ChevronRight className="mt-px size-3 shrink-0 text-foreground-passive" />
+          <ChevronRight className="size-3 shrink-0 text-foreground-passive" />
         ) : (
           <ChevronDown className="mt-px size-3 shrink-0 text-foreground-passive" />
         )}
         <span
           className={cn(
-            'min-w-0 flex-1 border-l-2 border-border-1 pl-2 text-tiny text-foreground-passive',
-            collapsed ? 'truncate' : 'line-clamp-2'
+            'min-w-0 flex-1 border-border-1 text-tiny text-foreground-passive',
+            // Folded, the quote stays a step above the 10px meta beside it —
+            // it is what the reader scans — but loses the 2px rule, which was
+            // what made the row read heavy rather than the type size.
+            collapsed ? 'truncate border-l pl-1.5' : 'line-clamp-2 border-l-2 pl-2'
           )}
           title={root.anchor?.exact ?? root.body}
         >
@@ -967,7 +977,7 @@ const ThreadCard = observer(function ThreadCard({
             {lastSpeaker(thread)} · {replies.length + 1}
           </span>
         )}
-        {unread && <UnreadDot className={collapsed ? 'mt-1 size-1.5' : 'mt-0.5'} />}
+        {unread && <UnreadDot className={collapsed ? 'size-1.5' : 'mt-0.5'} />}
       </button>
 
       {!collapsed && (

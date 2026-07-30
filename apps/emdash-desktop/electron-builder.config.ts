@@ -47,11 +47,11 @@ const config: Configuration = {
       { target: 'dmg', arch: ['arm64'] },
       { target: 'zip', arch: ['arm64'] },
     ],
-    icon: 'src/assets/images/emdash/emdash.icns',
+    icon: 'src/assets/images/rig/rig.icns',
     notarize: false,
   },
   dmg: {
-    icon: 'src/assets/images/emdash/emdash.icns',
+    icon: 'src/assets/images/rig/rig.icns',
     background: 'build/dmg-background.tiff',
     window: { width: 530, height: 319 },
     contents: [
@@ -61,7 +61,7 @@ const config: Configuration = {
   },
   linux: {
     category: 'Development',
-    icon: 'src/assets/images/emdash/emdash.png',
+    icon: 'src/assets/images/rig/rig.png',
     target: [
       { target: 'AppImage', arch: ['x64'] },
       { target: 'deb', arch: ['x64'] },
@@ -69,7 +69,7 @@ const config: Configuration = {
     ],
   },
   win: {
-    icon: 'src/assets/images/emdash/emdash.png',
+    icon: 'src/assets/images/rig/rig.png',
     target: [
       { target: 'nsis', arch: ['x64'] },
       { target: 'msi', arch: ['x64'] },

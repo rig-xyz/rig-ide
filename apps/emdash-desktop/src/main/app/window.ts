@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { BrowserWindow, nativeTheme } from 'electron';
-import devIcon from '@/assets/images/emdash/emdash-dev.png?asset';
+import devIcon from '@/assets/images/rig/rig-dev.png?asset';
 import { browserWebContentsRegistry } from '@main/core/browser/browser-webcontents-registry';
 import {
   hardenBrowserWebviewPreferences,

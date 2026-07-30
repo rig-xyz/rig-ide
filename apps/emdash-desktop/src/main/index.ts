@@ -4,7 +4,7 @@ import './core/telemetry/task-telemetry';
 import { join } from 'node:path';
 import { config as dotenvConfig } from 'dotenv';
 import { app, BrowserWindow, dialog, ipcMain, systemPreferences } from 'electron';
-import devIcon from '@/assets/images/emdash/emdash-dev.png?asset';
+import devIcon from '@/assets/images/rig/rig-dev.png?asset';
 import { PRODUCT_NAME } from '@shared/app-identity';
 import { githubAccountsChangedChannel } from '@shared/events/githubEvents';
 import { registerRPCRouter } from '@shared/lib/ipc/rpc';
