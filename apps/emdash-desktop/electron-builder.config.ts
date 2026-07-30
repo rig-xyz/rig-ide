@@ -13,13 +13,13 @@ const config: Configuration = {
   executableName: PRODUCT_NAME,
   directories: { output: 'release' },
   artifactName: `${ARTIFACT_PREFIX}-\${arch}.\${ext}`,
+  // Upstream published to generalaction/emdash's GitHub releases — running a
+  // publish with that block intact would try to draft releases on THEIR repo.
+  // We publish by uploading the release/ artifacts (dmg, zip, latest-mac.yml)
+  // to our R2 bucket behind R2_BASE_URL; the generic provider below is what
+  // electron-updater reads at runtime. If publishing ever moves into CI, add an
+  // s3-provider block pointed at the R2 endpoint — never a github one.
   publish: [
-    {
-      provider: 'github',
-      owner: 'generalaction',
-      repo: 'emdash',
-      releaseType: 'draft',
-    },
     {
       provider: 'generic',
       url: R2_BASE_URL,
@@ -41,7 +41,7 @@ const config: Configuration = {
     entitlementsInherit: 'build/entitlements.mac.plist',
     extendInfo: {
       NSMicrophoneUsageDescription:
-        'Emdash needs microphone access for voice dictation and voice mode features.',
+        'Rig needs microphone access for voice dictation and voice mode features.',
     },
     target: [
       { target: 'dmg', arch: ['arm64'] },
@@ -74,12 +74,9 @@ const config: Configuration = {
       { target: 'nsis', arch: ['x64'] },
       { target: 'msi', arch: ['x64'] },
     ],
-    azureSignOptions: {
-      publisherName: 'General Action, Inc.',
-      endpoint: 'https://eus.codesigning.azure.net/',
-      certificateProfileName: 'emdash-public',
-      codeSigningAccountName: 'emdash',
-    },
+    // Windows builds are unsigned until we have our own signing identity —
+    // upstream's azureSignOptions (General Action's Azure Trusted Signing
+    // account) was removed with the rest of their release identity.
   },
   msi: {
     oneClick: false,

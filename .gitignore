@@ -4,6 +4,11 @@ dist/
 out/
 /release/
 
+# rig: workspace binding configs hold live capability tokens — never track them.
+# The top-level dev.db shipped a contributor's machine paths once; keep it out.
+.rig/
+/tooling/db/dev.db
+
 # App-specific outputs
 apps/*/out/
 apps/*/release/
