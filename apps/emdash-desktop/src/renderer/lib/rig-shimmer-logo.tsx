@@ -1,7 +1,7 @@
 import { useId } from 'react';
-import { EMDASH_PATHS, NATURAL_HEIGHT, NATURAL_WIDTH } from '@renderer/lib/emdash-logo';
+import { NATURAL_HEIGHT, NATURAL_WIDTH, RIG_PATH } from '@renderer/lib/rig-logo';
 
-export function EmdashShimmerLogo({
+export function RigShimmerLogo({
   className,
   height = NATURAL_HEIGHT,
   color = 'currentColor',
@@ -22,7 +22,7 @@ export function EmdashShimmerLogo({
     <svg
       width={width}
       height={height}
-      viewBox="0 0 499 70"
+      viewBox="0 0 256 256"
       fill={`url(#${gradientId})`}
       className={className}
       xmlns="http://www.w3.org/2000/svg"
@@ -31,10 +31,10 @@ export function EmdashShimmerLogo({
         <linearGradient
           id={gradientId}
           gradientUnits="userSpaceOnUse"
-          x1="-499"
-          y1="-144"
+          x1="-256"
+          y1="-128"
           x2="0"
-          y2="144"
+          y2="128"
         >
           <stop offset="0%" stopColor={color} stopOpacity="1" />
           <stop offset="25%" stopColor={color} stopOpacity="1" />
@@ -45,7 +45,7 @@ export function EmdashShimmerLogo({
             <animateTransform
               attributeName="gradientTransform"
               type="translate"
-              values="0 0; 998 0; 998 0"
+              values="0 0; 512 0; 512 0"
               keyTimes="0; 0.9; 1"
               dur="7s"
               repeatCount="indefinite"
@@ -53,9 +53,7 @@ export function EmdashShimmerLogo({
           )}
         </linearGradient>
       </defs>
-      {EMDASH_PATHS.map((d) => (
-        <path key={d.slice(0, 8)} d={d} />
-      ))}
+      <path d={RIG_PATH} />
     </svg>
   );
 }

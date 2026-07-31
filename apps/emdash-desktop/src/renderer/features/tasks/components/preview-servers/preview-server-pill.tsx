@@ -22,6 +22,7 @@ import {
 } from '@renderer/lib/ui/dropdown-menu';
 import { MicroLabel } from '@renderer/lib/ui/label';
 import { cn } from '@renderer/utils/utils';
+import { PRODUCT_NAME } from '@shared/app-identity';
 import type { PreviewServer } from '@shared/core/preview-servers/types';
 import { previewServerUrl } from '@shared/core/preview-servers/types';
 import {
@@ -95,7 +96,7 @@ export const PreviewServerPill = observer(function PreviewServerPill({
           }}
         >
           <Globe className="size-3.5" />
-          Open in Emdash Browser
+          Open in {PRODUCT_NAME} Browser
         </DropdownMenuItem>
         <DropdownMenuItem
           disabled={!canOpen}

@@ -14,6 +14,7 @@ import { Switch } from '@renderer/lib/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { configureSoundPlayer, soundPlayer } from '@renderer/utils/soundPlayer';
 import { cn } from '@renderer/utils/utils';
+import { PRODUCT_NAME } from '@shared/app-identity';
 import type { NotificationSettings } from '@shared/core/app-settings';
 import { ResetToDefaultButton } from './ResetToDefaultButton';
 import { SettingRow } from './SettingRow';
@@ -216,7 +217,7 @@ const NotificationSettingsCard: React.FC = () => {
 
         <SettingRow
           title="OS notifications"
-          description="Show system banners when agents need attention or finish (while Emdash is unfocused)."
+          description={`Show system banners when agents need attention or finish (while ${PRODUCT_NAME} is unfocused).`}
           control={
             <>
               <ResetToDefaultButton

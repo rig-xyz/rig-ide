@@ -1,6 +1,6 @@
 {
   "name": "@emdash/emdash-desktop",
-  "version": "1.1.40",
+  "version": "0.2.0",
   "description": "A cross-platform Electron app that orchestrates multiple coding agents in parallel",
   "keywords": [
     "claude",
@@ -9,11 +9,11 @@
     "git",
     "openai"
   ],
-  "homepage": "https://emdash.sh",
+  "homepage": "https://userig.xyz",
   "license": "Apache-2.0",
   "author": {
-    "name": "Emdash Contributors",
-    "email": "support@emdash.sh"
+    "name": "Rig Labs LLC",
+    "email": "support@userig.xyz"
   },
   "type": "module",
   "main": "./out/main/index.js",

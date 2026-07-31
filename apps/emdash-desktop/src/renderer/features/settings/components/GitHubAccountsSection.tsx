@@ -14,6 +14,7 @@ import { rpc } from '@renderer/lib/ipc';
 import { useShowModal } from '@renderer/lib/modal/modal-provider';
 import { Button } from '@renderer/lib/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@renderer/lib/ui/tooltip';
+import { PRODUCT_NAME } from '@shared/app-identity';
 import type { GitHubAccountSummary } from '@shared/github';
 
 export function GitHubAccountsSection() {
@@ -105,7 +106,7 @@ export function GitHubAccountRows({ accounts }: { accounts: GitHubAccountSummary
   };
 
   const confirmRemove = async (account: GitHubAccountSummary) => {
-    let description = 'This removes the saved GitHub token from Emdash.';
+    let description = `This removes the saved GitHub token from ${PRODUCT_NAME}.`;
     try {
       const count = await rpc.projects.countProjectsUsingGithubAccount(account.accountId);
       if (count > 0) {

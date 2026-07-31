@@ -1,4 +1,5 @@
 import { Import } from 'lucide-react';
+import { PRODUCT_NAME } from '@shared/app-identity';
 import type { LegacyImportSource, LegacyPortPreviewSource } from '@shared/legacy-port';
 import { formatCount, sourceLabel } from './import-format';
 
@@ -13,20 +14,20 @@ export type ImportHeaderProps = {
 };
 
 function singleSourceTitle(source: LegacyImportSource): string {
-  return `Import your Emdash ${sourceLabel(source)} data`;
+  return `Import your ${PRODUCT_NAME} ${sourceLabel(source)} data`;
 }
 
 function singleSourceDescription(preview: LegacyPortPreviewSource): string {
   return `Found ${formatCount(preview.projects, 'project')} and ${formatCount(
     preview.tasks,
     'task'
-  )} from your previous Emdash installation`;
+  )} from your previous ${PRODUCT_NAME} installation`;
 }
 
 export function ImportHeader({ isLoading, singleSource = null }: ImportHeaderProps) {
   const title = singleSource
     ? singleSourceTitle(singleSource.source)
-    : 'Do you want to import projects and tasks from other Emdash versions?';
+    : `Do you want to import projects and tasks from other ${PRODUCT_NAME} versions?`;
   const description = singleSource
     ? singleSourceDescription(singleSource.preview)
     : 'Select one or more sources.';
@@ -39,7 +40,7 @@ export function ImportHeader({ isLoading, singleSource = null }: ImportHeaderPro
           <h1 className="text-center text-xl">{title}</h1>
           {isLoading ? (
             <p className="text-md text-center text-foreground-muted">
-              Scanning existing Emdash data...
+              Scanning existing {PRODUCT_NAME} data...
             </p>
           ) : (
             <p className="text-md text-center text-foreground-muted">{description}</p>

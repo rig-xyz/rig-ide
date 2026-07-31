@@ -1,6 +1,7 @@
 import { app, clipboard, Menu, shell } from 'electron';
 import { events } from '@main/lib/events';
 import { telemetryService } from '@main/lib/telemetry';
+import { PRODUCT_NAME } from '@shared/app-identity';
 import {
   menuCheckForUpdatesChannel,
   menuCloseTabChannel,
@@ -10,13 +11,13 @@ import {
   menuRedoChannel,
   menuUndoChannel,
 } from '@shared/events/appEvents';
-import { EMDASH_DOCS_URL, EMDASH_ISSUES_NEW_URL, EMDASH_RELEASES_URL } from '@shared/urls';
+import { RIG_ISSUES_NEW_URL, RIG_RELEASES_URL, RIG_WEBSITE_URL } from '@shared/urls';
 import { getMainWindow } from './window';
 
 function copyInstallationId(): void {
   const instanceId = telemetryService.getInstanceId() ?? 'unavailable';
   const lines = [
-    `Emdash ${app.getVersion()}`,
+    `${PRODUCT_NAME} ${app.getVersion()}`,
     `Installation ID: ${instanceId}`,
     `Platform: ${process.platform} ${process.arch}`,
     `Electron: ${process.versions.electron}`,
@@ -162,13 +163,13 @@ export function setupApplicationMenu(): void {
         {
           label: 'Docs',
           click: () => {
-            void shell.openExternal(EMDASH_DOCS_URL);
+            void shell.openExternal(RIG_WEBSITE_URL);
           },
         },
         {
           label: 'Changelog',
           click: () => {
-            void shell.openExternal(EMDASH_RELEASES_URL);
+            void shell.openExternal(RIG_RELEASES_URL);
           },
         },
         { type: 'separator' as const },
@@ -178,7 +179,7 @@ export function setupApplicationMenu(): void {
             {
               label: 'Report Issue\u2026',
               click: () => {
-                void shell.openExternal(EMDASH_ISSUES_NEW_URL);
+                void shell.openExternal(RIG_ISSUES_NEW_URL);
               },
             },
             {

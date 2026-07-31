@@ -19,6 +19,7 @@ import {
 } from '@renderer/lib/ui/combobox';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@renderer/lib/ui/select';
 import { cn } from '@renderer/utils/utils';
+import { PRODUCT_NAME } from '@shared/app-identity';
 import {
   pullRequestErrorMessage,
   type PullRequest,
@@ -124,7 +125,7 @@ export function PrSelector({
   const githubAuthDescription =
     error?.type === 'github_account_not_found'
       ? 'The selected GitHub account is no longer connected. Reconnect GitHub to show pull requests for this repository.'
-      : 'Emdash needs a connected GitHub account before it can show pull requests for this repository.';
+      : `${PRODUCT_NAME} needs a connected GitHub account before it can show pull requests for this repository.`;
   const connectGitHubButton = (
     <Button type="button" variant="outline" size="xs" onClick={() => showGithubConnectModal({})}>
       Connect GitHub

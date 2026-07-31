@@ -6,6 +6,7 @@ import { events, rpc } from '@renderer/lib/ipc';
 import { useNavigate, useWorkspaceSlots } from '@renderer/lib/layout/navigation-provider';
 import { toggleSettingsView } from '@renderer/lib/layout/settings-toggle';
 import { useShowModal } from '@renderer/lib/modal/modal-provider';
+import { PRODUCT_NAME } from '@shared/app-identity';
 import {
   menuGiveFeedbackChannel,
   menuOpenSettingsChannel,
@@ -13,12 +14,12 @@ import {
   notificationFocusTaskChannel,
 } from '@shared/events/appEvents';
 import { browserLinkCopiedChannel } from '@shared/events/browserEvents';
+import { RIG_ISSUES_NEW_URL } from '@shared/urls';
 
 export function AppMenuEvents({ onOpenSettings }: { onOpenSettings?: () => boolean | void }) {
   const { navigate } = useNavigate();
   const { currentView, lastNonSettingsView } = useWorkspaceSlots();
   const showConfirmQuitModal = useShowModal('confirmActionModal');
-  const showFeedbackModal = useShowModal('feedbackModal');
 
   useEffect(() => {
     return events.on(menuOpenSettingsChannel, () => {
@@ -34,7 +35,7 @@ export function AppMenuEvents({ onOpenSettings }: { onOpenSettings?: () => boole
   useEffect(() => {
     return events.on(menuQuitRequestedChannel, () => {
       showConfirmQuitModal({
-        title: 'Quit Emdash?',
+        title: `Quit ${PRODUCT_NAME}?`,
         description: 'Active terminal sessions and running agents will stop when the app quits.',
         confirmLabel: 'Quit',
         onSuccess: () => {
@@ -46,9 +47,9 @@ export function AppMenuEvents({ onOpenSettings }: { onOpenSettings?: () => boole
 
   useEffect(() => {
     return events.on(menuGiveFeedbackChannel, () => {
-      showFeedbackModal({});
+      void rpc.app.openExternal(RIG_ISSUES_NEW_URL);
     });
-  }, [showFeedbackModal]);
+  }, []);
 
   useEffect(() => {
     return events.on(browserLinkCopiedChannel, ({ kind }) => {

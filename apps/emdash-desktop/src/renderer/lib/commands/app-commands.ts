@@ -1,10 +1,12 @@
 import { applyHistoryEntry } from '@renderer/lib/components/nav-buttons';
 import { toast } from '@renderer/lib/hooks/use-toast';
+import { rpc } from '@renderer/lib/ipc';
 import { toggleSettingsView } from '@renderer/lib/layout/settings-toggle';
 import { showModal } from '@renderer/lib/modal/modal-provider';
 import { appState } from '@renderer/lib/stores/app-state';
 import { toggleAppTheme } from '@renderer/lib/theme/theme-toggle';
 import { APP_COMMAND_DEFS, type AppCommandId, type CommandDef } from '@shared/commands';
+import { RIG_ISSUES_NEW_URL } from '@shared/urls';
 import { commandRegistry } from './registry';
 import type { AppCommand, CommandProvider } from './types';
 
@@ -86,7 +88,7 @@ function createAppCommandProvider(): CommandProvider {
         shortcutKey: giveFeedbackDef.shortcutKey,
         group: giveFeedbackDef.group,
         execute() {
-          showModal('feedbackModal', {});
+          void rpc.app.openExternal(RIG_ISSUES_NEW_URL);
         },
       });
 

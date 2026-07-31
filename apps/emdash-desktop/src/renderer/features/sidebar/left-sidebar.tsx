@@ -1,17 +1,19 @@
 import { Clock, FolderInput, Library, MessageSquareShare, Settings } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React from 'react';
+import { rpc } from '@renderer/lib/ipc';
 import { useWorkspaceLayoutContext } from '@renderer/lib/layout/layout-provider';
 import {
   isCurrentView,
   useNavigate,
   useWorkspaceSlots,
 } from '@renderer/lib/layout/navigation-provider';
-import { useShowModal } from '@renderer/lib/modal/modal-provider';
 import { BoundShortcut } from '@renderer/lib/ui/shortcut';
 import { cn } from '@renderer/utils/utils';
+import { RIG_ISSUES_NEW_URL } from '@shared/urls';
 import { SidebarPinnedTaskList } from './pinned-task-list';
 import { ProjectsGroupLabel } from './projects-group-label';
+import { RigIdentityChip } from './rig-identity-chip';
 import {
   SidebarContainer,
   SidebarContent,
@@ -32,7 +34,6 @@ export const LeftSidebar: React.FC = observer(function LeftSidebar() {
   const { currentView } = useWorkspaceSlots();
   const { isLeftOpen } = useWorkspaceLayoutContext();
 
-  const showFeedbackModal = useShowModal('feedbackModal');
   const { isDragOver, onDragOver, onDragEnter, onDragLeave, onDrop } = useSidebarDrop();
 
   return (
@@ -114,12 +115,15 @@ export const LeftSidebar: React.FC = observer(function LeftSidebar() {
           <button
             type="button"
             className="flex h-6 w-full min-w-0 cursor-pointer items-center gap-2 rounded-lg px-3 text-sm text-foreground-muted focus:outline-none focus-visible:outline-none"
-            onClick={() => showFeedbackModal({})}
+            onClick={() => void rpc.app.openExternal(RIG_ISSUES_NEW_URL)}
           >
             <MessageSquareShare className="size-4 shrink-0" />
             <span className="truncate">Give feedback</span>
           </button>
           <UpdateSection />
+        </div>
+        <div className="border-t border-border px-3 py-2">
+          <RigIdentityChip />
         </div>
       </SidebarContainer>
     </div>

@@ -1,4 +1,5 @@
 import { cpSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -65,8 +66,23 @@ if (isCanary) {
 
 step('Creating deployment directory with production dependencies');
 const workspaceRoot = resolve(process.cwd(), '../..');
-const deployDir = mkdtempSync(join(workspaceRoot, '.emdash-deploy-'));
-exec(`pnpm --filter @emdash/emdash-desktop deploy --legacy --prod ${deployDir}`, {
+// OUTSIDE the workspace, deliberately. electron-builder walks up from
+// projectDir looking for a workspace root (it recognises one by the
+// `packageManager` field) and, when it finds ours, collects hoisted modules
+// from the root node_modules instead of the deploy tree it was pointed at.
+// With node-linker=hoisted a transitive dependency can own a shared slot
+// there — glob resolved to 7.2.3 at the root while both real consumers
+// declare ^13 — so the packaged app shipped a version its own code cannot
+// import, and died at launch with a bare SyntaxError. A deploy dir under
+// the OS temp dir has no workspace above it, so the deploy tree is used as
+// given. Verified: same build, in-repo dir packs glob 7.2.3, temp dir packs
+// 13.0.6.
+const deployDir = mkdtempSync(join(tmpdir(), 'rig-deploy-'));
+// Through corepack, not a bare `pnpm`: corepack resolves the version from the
+// workspace's own `packageManager` field, whereas a bare call gets whatever is
+// first on PATH — a system-wide pnpm 9 here, which does not know `--legacy`
+// and fails the deploy outright.
+exec(`corepack pnpm --filter @emdash/emdash-desktop deploy --legacy --prod ${deployDir}`, {
   cwd: workspaceRoot,
   echo: true,
 });
@@ -122,7 +138,16 @@ try {
   }
 
   step('Copying release artifacts to app directory');
-  cpSync(join(deployDir, 'release'), 'release', { recursive: true });
+  // The unpacked .app is deliberately skipped: we publish only dmg/zip/blockmap/
+  // yml, and copying a freshly signed bundle on top of a previous build's one
+  // fails with EPERM — macOS will not overwrite the sealed contents of an
+  // existing signed app. That aborted the copy partway, and the `finally` below
+  // then deleted the deploy dir, destroying artifacts that had already cost a
+  // full notarization round-trip.
+  cpSync(join(deployDir, 'release'), 'release', {
+    recursive: true,
+    filter: (src) => !src.endsWith('.app') && !src.includes('.app/'),
+  });
 
   step('Duplicating manifests for R2 stable channel');
   const publishArray = Array.isArray(baseConfig.publish)

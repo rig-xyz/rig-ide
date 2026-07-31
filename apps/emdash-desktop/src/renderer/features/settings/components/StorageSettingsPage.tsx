@@ -10,6 +10,7 @@ import { Checkbox } from '@renderer/lib/ui/checkbox';
 import { Spinner } from '@renderer/lib/ui/spinner';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/utils/utils';
+import { PRODUCT_NAME } from '@shared/app-identity';
 import type { StoragePathState, TaskStorageUsage } from '@shared/core/storage/storage';
 
 function formatBytes(bytes: number): string {
@@ -289,7 +290,7 @@ export function StorageSettingsPage() {
               <LabelWithInfo
                 label="Total"
                 tooltipLabel="About total size"
-                tooltip="Estimated disk space used by measured task worktrees. This is the amount Emdash expects to free when those tasks and their owned worktrees are deleted."
+                tooltip={`Estimated disk space used by measured task worktrees. This is the amount ${PRODUCT_NAME} expects to free when those tasks and their owned worktrees are deleted.`}
               />
             }
             value={formatBytes(usage?.reclaimableBytes ?? 0)}

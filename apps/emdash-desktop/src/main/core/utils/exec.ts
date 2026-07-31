@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { PRODUCT_NAME } from '@shared/app-identity';
 
 function windowsExecutableExtensions(env: NodeJS.ProcessEnv): string[] {
   const pathExt = env.PATHEXT || '.COM;.EXE;.BAT;.CMD';
@@ -83,6 +84,6 @@ export function isMissingGitExecutableError(error: unknown): boolean {
 
 export function missingGitExecutableError(): Error {
   return new Error(
-    'Git is not installed or Emdash cannot find it. Install Git, then restart Emdash.'
+    `Git is not installed or ${PRODUCT_NAME} cannot find it. Install Git, then restart ${PRODUCT_NAME}.`
   );
 }

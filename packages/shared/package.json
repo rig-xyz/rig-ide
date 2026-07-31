@@ -4,8 +4,8 @@
   "description": "Shared primitives for Emdash",
   "license": "Apache-2.0",
   "author": {
-    "name": "Emdash Contributors",
-    "email": "support@emdash.sh"
+    "name": "Rig Labs LLC",
+    "email": "support@userig.xyz"
   },
   "files": [
     "dist"

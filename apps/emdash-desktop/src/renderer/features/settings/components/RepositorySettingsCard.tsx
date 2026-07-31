@@ -2,6 +2,7 @@ import React from 'react';
 import { useAppSettingsKey } from '@renderer/features/settings/use-app-settings-key';
 import { Input } from '@renderer/lib/ui/input';
 import { Switch } from '@renderer/lib/ui/switch';
+import { PRODUCT_NAME } from '@shared/app-identity';
 import { normalizeBranchPrefix } from '@shared/util/branch-prefix';
 import { ResetToDefaultButton } from './ResetToDefaultButton';
 import { SettingRow } from './SettingRow';
@@ -103,7 +104,7 @@ const RepositorySettingsCard: React.FC = () => {
       />
       <SettingRow
         title="Auto-update .gitignore"
-        description="When Emdash writes CLI hook configs, also add their paths to .gitignore."
+        description={`When ${PRODUCT_NAME} writes CLI hook configs, also add their paths to .gitignore.`}
         control={
           <>
             <ResetToDefaultButton

@@ -1,17 +1,22 @@
 import { useState } from 'react';
 import { cn } from '@renderer/utils/utils';
+import { AgentStep } from './agent-step';
 import { ImportStep } from './import-step';
-import { SignInStep } from './sign-in-step';
+import { RigSignInStep } from './rig-sign-in-step';
 
-type OnboardingStep = 'sign-in' | 'import';
+type OnboardingStep = 'agent' | 'rigSignIn' | 'import';
 
 const stepConfig: Record<
   OnboardingStep,
   { label: string; component: React.ComponentType<{ onComplete: () => void }> }
 > = {
-  'sign-in': {
+  agent: {
+    label: 'Agent',
+    component: AgentStep,
+  },
+  rigSignIn: {
     label: 'Sign in',
-    component: SignInStep,
+    component: RigSignInStep,
   },
   import: {
     label: 'Import',

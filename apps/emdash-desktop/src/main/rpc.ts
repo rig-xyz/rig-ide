@@ -1,5 +1,4 @@
 import { createRPCNamespace, createRPCRouter } from '../shared/lib/ipc/rpc';
-import { accountController } from './core/account/controller';
 import { agentsController } from './core/agents/controller';
 import { appController } from './core/app/controller';
 import { automationsController } from './core/automations/controller';
@@ -35,11 +34,12 @@ import { updateController } from './core/updates/controller';
 import { viewStateController } from './core/view-state/controller';
 import { projectSettingsController } from './core/workspaces/project-settings-controller';
 import { legacyPortController } from './db/legacy-port/controller';
+import { rigAccountController } from './rig/account';
+import { rigAuthController } from './rig/auth';
 import { rigCommentAgentController } from './rig/comment-agent';
 import { rigCommentsController } from './rig/comments';
 
 export const rpcRouter = createRPCRouter({
-  account: accountController,
   agents: agentsController,
   legacyPort: legacyPortController,
   app: appController,
@@ -75,6 +75,13 @@ export const rpcRouter = createRPCRouter({
     // `askAgent` sits alongside the relay reads/writes it builds on, so the
     // renderer sees one comments surface rather than two.
     comments: { ...rigCommentsController, ...rigCommentAgentController },
+    // Account sign-in is its own surface: it drives the `rig` CLI rather than
+    // the relay, and everything else rig-related depends on it having run.
+    auth: rigAuthController,
+    // Account-scoped relay reads (who's signed in, which workspaces they're
+    // on) — no workspace involved, unlike `comments`, so it's its own key
+    // rather than folded into that surface.
+    account: rigAccountController,
   }),
   workspace: createRPCNamespace({
     gitWorktree: gitWorktreeController,

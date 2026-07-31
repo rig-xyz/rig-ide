@@ -12,13 +12,14 @@ import {
   DialogTitle,
 } from '@renderer/lib/ui/dialog';
 import { log } from '@renderer/utils/logger';
+import { PRODUCT_NAME } from '@shared/app-identity';
 import {
   githubAuthDeviceCodeChannel,
   githubAuthErrorChannel,
   githubAuthSuccessChannel,
 } from '@shared/events/githubEvents';
 import type { GitHubUser } from '@shared/github';
-import { EMDASH_ISSUES_URL } from '@shared/urls';
+import { RIG_ISSUES_URL } from '@shared/urls';
 
 export type GithubDeviceFlowModalArgs = {
   onError?: (error: string) => void;
@@ -277,7 +278,7 @@ export function GithubDeviceFlowModal({ onSuccess, onClose, onError }: GithubDev
         ) : (
           <>
             <p className="text-sm text-foreground-muted">
-              Enter this one-time code in GitHub to authorize Emdash.
+              Enter this one-time code in GitHub to authorize {PRODUCT_NAME}.
             </p>
 
             <button
@@ -312,7 +313,7 @@ export function GithubDeviceFlowModal({ onSuccess, onClose, onError }: GithubDev
                 <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-background-2 text-xs text-foreground-muted">
                   2
                 </span>
-                <p className="text-foreground-muted">Authorize Emdash.</p>
+                <p className="text-foreground-muted">Authorize {PRODUCT_NAME}.</p>
               </div>
             </div>
 
@@ -332,7 +333,7 @@ export function GithubDeviceFlowModal({ onSuccess, onClose, onError }: GithubDev
               </div>
               <button
                 type="button"
-                onClick={() => rpc.app.openExternal(EMDASH_ISSUES_URL)}
+                onClick={() => rpc.app.openExternal(RIG_ISSUES_URL)}
                 className="shrink-0 underline-offset-3 hover:text-foreground hover:underline focus:text-foreground focus:underline focus:outline-none"
               >
                 Having trouble?

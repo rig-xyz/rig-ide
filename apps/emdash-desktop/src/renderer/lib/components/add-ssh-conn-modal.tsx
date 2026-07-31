@@ -43,6 +43,7 @@ import { RadioGroup, RadioGroupItem } from '@renderer/lib/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@renderer/lib/ui/select';
 import { Switch } from '@renderer/lib/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@renderer/lib/ui/tooltip';
+import { PRODUCT_NAME } from '@shared/app-identity';
 import type { ConnectionTestResult, SshConfig, SshConfigHost } from '@shared/core/ssh/ssh';
 import { suggestedAuthTypeForSshConfigHost, type AuthType } from './ssh-connection-form-model';
 import { sshConnectionFormSchema } from './ssh-connection-form-schema';
@@ -543,8 +544,8 @@ export function AddSshConnModal({
                     <FieldLegend variant="label" className="mb-0 flex w-fit items-center gap-1.5">
                       Authentication
                       <FieldInfoTooltip label="Authentication">
-                        Choose how Emdash authenticates to the remote server. SSH config entries can
-                        preselect the best option.
+                        Choose how {PRODUCT_NAME} authenticates to the remote server. SSH config
+                        entries can preselect the best option.
                       </FieldInfoTooltip>
                     </FieldLegend>
                     <RadioGroup

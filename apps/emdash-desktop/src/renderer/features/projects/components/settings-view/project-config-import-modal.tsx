@@ -13,6 +13,7 @@ import {
 import { Field, FieldGroup } from '@renderer/lib/ui/field';
 import { RadioGroup, RadioGroupItem } from '@renderer/lib/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@renderer/lib/ui/select';
+import { PRODUCT_NAME } from '@shared/app-identity';
 import type {
   MigrateProjectConfigRequest,
   MigrateProjectConfigResult,
@@ -65,8 +66,8 @@ export function ProjectConfigImportModal({
   );
   const description =
     migrations.length === 1 && selectedMigration
-      ? `Found configuration file from ${selectedMigration.label} that can be imported into Emdash.`
-      : 'Found configuration files that can be imported into Emdash.';
+      ? `Found configuration file from ${selectedMigration.label} that can be imported into ${PRODUCT_NAME}.`
+      : `Found configuration files that can be imported into ${PRODUCT_NAME}.`;
 
   const disabled = !selectedMigration || status === 'importing' || status === 'imported';
 

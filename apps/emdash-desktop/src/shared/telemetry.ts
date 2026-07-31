@@ -128,9 +128,6 @@ export type TelemetryEventProperties = {
   vcs_files_unstaged: { count: number; scope: 'single' | 'multiple' | 'all' };
   vcs_files_discarded: { count: number; scope: 'single' | 'multiple' | 'all' };
 
-  user_signed_in: EmptyProps;
-  user_signed_out: EmptyProps;
-
   integration_connected: { provider: 'github' | 'linear' | 'jira' | 'asana' };
   integration_disconnected: { provider: 'github' | 'linear' | 'jira' | 'asana' };
   issue_linked_to_task: {

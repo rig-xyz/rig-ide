@@ -6,7 +6,6 @@ import { Workspace } from './app/workspace';
 import { IntegrationsProvider } from './features/integrations/integrations-provider';
 import { Onboarding } from './features/onboarding/onboarding';
 import { FramelessTitlebarOverlay } from './lib/components/titlebar/window-controls';
-import { useAccountSession } from './lib/hooks/useAccount';
 import { useLegacyPortStatus } from './lib/hooks/useLegacyPort';
 import { WorkspaceLayoutContextProvider } from './lib/layout/layout-provider';
 import { WorkspaceViewProvider } from './lib/layout/provider';
@@ -22,17 +21,14 @@ import { TooltipProvider } from './lib/ui/tooltip';
 export const HAS_SEEN_ONBOARDING = 'emdash:has-seen-onboarding:v1';
 
 type AppView = 'onboarding' | 'welcome' | 'workspace';
-type OnboardingStep = 'sign-in' | 'import';
+type OnboardingStep = 'agent' | 'rigSignIn' | 'import';
 
 function AppContent() {
   const [view, setView] = useState<AppView>(() =>
     localStorage.getItem(HAS_SEEN_ONBOARDING) === 'true' ? 'workspace' : 'onboarding'
   );
 
-  const { data: session, isLoading: sessionLoading } = useAccountSession();
-  const { data: legacyStatus, isLoading: legacyLoading } = useLegacyPortStatus();
-
-  const isLoading = sessionLoading || legacyLoading;
+  const { data: legacyStatus, isLoading } = useLegacyPortStatus();
 
   // Computed once when queries first resolve while in onboarding. Never updated
   // after that so query refetches mid-onboarding (e.g. legacyPortStatus after
@@ -41,13 +37,15 @@ function AppContent() {
 
   useEffect(() => {
     if (!isLoading && view === 'onboarding' && frozenSteps === null) {
-      const computed: OnboardingStep[] = [];
-      if (!session?.isSignedIn) computed.push('sign-in');
+      // Agent setup and Rig sign-in are unconditional: a fresh install has
+      // neither, and both steps read their own state, so they add nothing to the
+      // `isLoading` gate above. Legacy import stays last and stays conditional.
+      const computed: OnboardingStep[] = ['agent', 'rigSignIn'];
       const needsImport = legacyStatus?.hasImportSources && !legacyStatus.portStatus;
       if (needsImport) computed.push('import');
       setFrozenSteps(computed);
     }
-  }, [view, isLoading, frozenSteps, session, legacyStatus]);
+  }, [view, isLoading, frozenSteps, legacyStatus]);
 
   const stepsNeeded = frozenSteps ?? [];
 

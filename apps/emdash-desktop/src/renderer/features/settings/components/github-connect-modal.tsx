@@ -1,7 +1,6 @@
 import {
   AlertCircle,
   ArrowRight,
-  Github,
   KeyRound,
   Loader2,
   type LucideIcon,
@@ -9,11 +8,6 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { useToast } from '@renderer/lib/hooks/use-toast';
-import {
-  useAccountLinkProvider,
-  useAccountSession,
-  useAccountSignIn,
-} from '@renderer/lib/hooks/useAccount';
 import {
   useGitHubDeviceFlowAuth,
   useImportGitHubCliAccounts,
@@ -28,68 +22,23 @@ import {
   DialogTitle,
 } from '@renderer/lib/ui/dialog';
 import { cn } from '@renderer/utils/utils';
+import { PRODUCT_NAME } from '@shared/app-identity';
 
 type MethodError = {
-  method: 'oauth' | 'cli' | 'device_flow';
+  method: 'cli' | 'device_flow';
   message: string;
 } | null;
 
 export function GithubConnectModal({ onSuccess, onClose }: BaseModalProps<void>) {
   const { toast } = useToast();
-  const { data: session } = useAccountSession();
-  const signInMutation = useAccountSignIn();
-  const linkProviderMutation = useAccountLinkProvider();
   const deviceFlowMutation = useGitHubDeviceFlowAuth();
   const importCliAccountsMutation = useImportGitHubCliAccounts();
   const showDeviceFlow = useShowModal('githubDeviceFlowModal');
-  const [oauthLoading, setOauthLoading] = useState(false);
   const [cliLoading, setCliLoading] = useState(false);
   const [error, setError] = useState<MethodError>(null);
 
-  const isSignedIn = session?.isSignedIn === true;
-  const hasAccount = session?.hasAccount === true;
   const deviceFlowLoading = deviceFlowMutation.isPending;
-  const anyLoading = oauthLoading || cliLoading || deviceFlowLoading;
-  const oauthContent = getOAuthContent({ isSignedIn, hasAccount });
-  const showDeviceFlowMethod = !hasAccount;
-
-  const connectOAuth = async () => {
-    setError(null);
-    setOauthLoading(true);
-    try {
-      const result = isSignedIn
-        ? await linkProviderMutation.mutateAsync('github')
-        : await signInMutation.mutateAsync('github');
-
-      if (!result.success) {
-        setError({
-          method: 'oauth',
-          message: result.error ?? 'Connection failed. Please try again.',
-        });
-        return;
-      }
-
-      const providerAccount = 'providerAccount' in result ? result.providerAccount : undefined;
-      const providerAccountStatus =
-        'providerAccountStatus' in result ? result.providerAccountStatus : undefined;
-
-      toast({
-        title:
-          providerAccountStatus === 'updated'
-            ? 'GitHub account already connected'
-            : 'Connected to GitHub',
-        description:
-          providerAccountStatus === 'updated' && providerAccount
-            ? `@${providerAccount.login} was already connected.`
-            : providerAccount
-              ? `Linked @${providerAccount.login}.`
-              : 'GitHub is connected.',
-      });
-      onSuccess();
-    } finally {
-      setOauthLoading(false);
-    }
-  };
+  const anyLoading = cliLoading || deviceFlowLoading;
 
   const refreshCliAuth = async () => {
     setError(null);
@@ -116,8 +65,8 @@ export function GithubConnectModal({ onSuccess, onClose }: BaseModalProps<void>)
         title: 'GitHub CLI accounts imported',
         description:
           result.importedAccountIds.length === 1
-            ? '1 account is available in Emdash.'
-            : `${result.importedAccountIds.length} accounts are available in Emdash.`,
+            ? `1 account is available in ${PRODUCT_NAME}.`
+            : `${result.importedAccountIds.length} accounts are available in ${PRODUCT_NAME}.`,
       });
       onSuccess();
     } finally {
@@ -138,18 +87,6 @@ export function GithubConnectModal({ onSuccess, onClose }: BaseModalProps<void>)
       </DialogHeader>
       <DialogContentArea className="gap-3">
         <ConnectMethodCard
-          icon={Github}
-          title={oauthContent.title}
-          description={oauthContent.description}
-          label={oauthContent.buttonLabel}
-          loadingLabel={oauthContent.loadingLabel}
-          loading={oauthLoading}
-          disabled={anyLoading}
-          onClick={() => void connectOAuth()}
-          error={error?.method === 'oauth' ? error.message : undefined}
-        />
-
-        <ConnectMethodCard
           icon={Terminal}
           title="Import from GitHub CLI"
           description="Use accounts already authenticated with GitHub CLI"
@@ -161,19 +98,17 @@ export function GithubConnectModal({ onSuccess, onClose }: BaseModalProps<void>)
           error={error?.method === 'cli' ? error.message : undefined}
         />
 
-        {showDeviceFlowMethod && (
-          <ConnectMethodCard
-            icon={KeyRound}
-            title="Use device flow"
-            description="Connect GitHub on this device with a one-time code"
-            label="Use device flow"
-            loadingLabel="Opening device flow"
-            loading={deviceFlowLoading}
-            disabled={anyLoading}
-            onClick={connectDeviceFlow}
-            error={error?.method === 'device_flow' ? error.message : undefined}
-          />
-        )}
+        <ConnectMethodCard
+          icon={KeyRound}
+          title="Use device flow"
+          description="Connect GitHub on this device with a one-time code"
+          label="Use device flow"
+          loadingLabel="Opening device flow"
+          loading={deviceFlowLoading}
+          disabled={anyLoading}
+          onClick={connectDeviceFlow}
+          error={error?.method === 'device_flow' ? error.message : undefined}
+        />
       </DialogContentArea>
       <DialogFooter>
         <Button variant="outline" onClick={onClose} disabled={anyLoading}>
@@ -233,33 +168,6 @@ function ConnectMethodCard({
       {error && <InlineError message={error} className="mx-3 mt-2 mb-3" />}
     </div>
   );
-}
-
-function getOAuthContent({ isSignedIn, hasAccount }: { isSignedIn: boolean; hasAccount: boolean }) {
-  if (isSignedIn) {
-    return {
-      title: 'Link GitHub account',
-      description: 'Add another GitHub account to your Emdash account',
-      buttonLabel: 'Link',
-      loadingLabel: 'Linking...',
-    };
-  }
-
-  if (hasAccount) {
-    return {
-      title: 'Sign in with GitHub',
-      description: 'Sign into your Emdash account',
-      buttonLabel: 'Sign In',
-      loadingLabel: 'Signing in...',
-    };
-  }
-
-  return {
-    title: 'Sign in to Emdash',
-    description: 'Create or sign into your Emdash account with GitHub',
-    buttonLabel: 'Continue',
-    loadingLabel: 'Continuing...',
-  };
 }
 
 function InlineError({ message, className }: { message: string; className?: string }) {

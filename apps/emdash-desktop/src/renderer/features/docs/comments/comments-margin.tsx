@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { useAppSettingsKey } from '@renderer/features/settings/use-app-settings-key';
 import { AgentIcon } from '@renderer/lib/components/agent-icon';
 import { useAgentInstallationStatuses } from '@renderer/lib/stores/use-agent-installation-statuses';
@@ -1154,12 +1155,34 @@ const ReplyComposer = observer(function ReplyComposer({
   );
 });
 
+/**
+ * The unauthenticated composer state: sign in, right where the reader was
+ * about to comment. Runs the same flow as the sidebar chip and the
+ * onboarding step, and refreshes the store's own read once it lands — the
+ * mobx store has no react-query cache to invalidate, so it's told directly.
+ */
+const SignInNotice = observer(function SignInNotice({ store }: { store: DocCommentsStore }) {
+  const { phase, error, signIn } = useRigSignIn(() => void store.refresh());
+  return (
+    <div className="mt-2 flex flex-col items-start gap-1.5">
+      <p className="text-xs text-foreground-muted">Sign in to Rig to load and post comments.</p>
+      <Button variant="outline" size="xs" onClick={() => void signIn()} disabled={phase !== 'idle'}>
+        {phase === 'idle' ? 'Sign in to Rig' : 'Waiting for sign-in…'}
+      </Button>
+      {error && <p className="text-destructive text-xs">{error}</p>}
+    </div>
+  );
+});
+
 /** The composer for a brand-new thread, bound to the quote that opened it. */
 const NewThreadCard = observer(function NewThreadCard({ store }: { store: DocCommentsStore }) {
   const [draft, setDraft] = useState('');
   const quote = store.composerQuote ?? '';
   const agents = useMentionableAgents();
 
+  // Sign-in gets its own control (a button, not a line of text) — the other
+  // two blocked states have nothing the reader can do about them here.
+  const blocked = store.state !== 'ready' && store.state !== 'error' && store.state !== 'loading';
   const notice = stateNotice(store);
   const busy = store.isPending('new');
 
@@ -1179,7 +1202,9 @@ const NewThreadCard = observer(function NewThreadCard({ store }: { store: DocCom
         {shortenQuote(quote, 160)}
       </p>
 
-      {notice !== null ? (
+      {store.state === 'unauthenticated' ? (
+        <SignInNotice store={store} />
+      ) : notice !== null ? (
         <p className="mt-2 text-xs text-foreground-muted">{notice}</p>
       ) : (
         <div className="mt-2">
@@ -1202,7 +1227,7 @@ const NewThreadCard = observer(function NewThreadCard({ store }: { store: DocCom
         <Button variant="ghost" size="xs" onClick={store.closeComposer}>
           Cancel
         </Button>
-        {notice === null && (
+        {!blocked && (
           <Button
             variant="default"
             size="xs"
@@ -1218,14 +1243,13 @@ const NewThreadCard = observer(function NewThreadCard({ store }: { store: DocCom
 });
 
 /**
- * The one-line explanation for the two states where commenting can't work at
- * all. A failed read is *not* one of them — it gets the retryable banner above
- * the cards, and the composer stays usable.
+ * The one-line explanation for the blocked states that aren't sign-in — sign-in
+ * gets `SignInNotice` (a button) instead. A failed read is not one of these
+ * either — it gets the retryable banner above the cards, and the composer
+ * stays usable.
  */
 function stateNotice(store: DocCommentsStore): string | null {
   switch (store.state) {
-    case 'unauthenticated':
-      return 'Sign in with `rig login` to load comments.';
     case 'notBound':
       return "This workspace isn't synced to a rig — comments are unavailable.";
     case 'untrustedRelay':

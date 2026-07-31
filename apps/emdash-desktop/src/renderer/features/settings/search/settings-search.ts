@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from '@shared/app-identity';
 import { SETTINGS_TABS, type SettingsPageTab } from '../settings-tabs';
 
 export type SettingsSearchEntry = {
@@ -32,7 +33,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     id: 'privacy-telemetry',
     label: 'Privacy & Telemetry',
     tab: 'general',
-    description: 'Help improve Emdash by sending anonymous usage data.',
+    description: `Help improve ${PRODUCT_NAME} by sending anonymous usage data.`,
     keywords: ['analytics', 'posthog', 'usage data', 'tracking'],
   },
   {
@@ -118,15 +119,6 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     keywords: ['banner', 'system'],
   },
 
-  // Account
-  {
-    id: 'emdash-account',
-    label: 'Emdash Account',
-    tab: 'account',
-    description: 'Create an Emdash account to automatically connect GitHub using OAuth2.',
-    keywords: ['sign in', 'sign out', 'login', 'logout', 'oauth'],
-  },
-
   // Agents
   {
     id: 'agents',
@@ -152,6 +144,24 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     tab: 'connections',
     description: 'Reusable remote hosts for SSH projects.',
     keywords: ['remote', 'host'],
+  },
+
+  // Account
+  {
+    id: 'rig-account',
+    label: 'Account',
+    tab: 'account',
+    description: 'Your Rig sign-in, profile, and sign-out.',
+    keywords: ['rig', 'sign in', 'sign out', 'profile', 'email', 'avatar', 'logout'],
+  },
+
+  // Workspaces
+  {
+    id: 'rig-workspaces',
+    label: 'Workspaces',
+    tab: 'workspaces',
+    description: 'Rigs synced to your Rig account.',
+    keywords: ['rig', 'sync', 'binding', 'relay'],
   },
 
   // Repository
@@ -180,7 +190,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     id: 'auto-update-gitignore',
     label: 'Auto-update .gitignore',
     tab: 'repository',
-    description: 'When Emdash writes CLI hook configs, also add their paths to .gitignore.',
+    description: `When ${PRODUCT_NAME} writes CLI hook configs, also add their paths to .gitignore.`,
     keywords: ['git', 'ignore'],
   },
 
@@ -198,7 +208,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     id: 'color-mode',
     label: 'Color mode',
     tab: 'interface',
-    description: 'Choose how Emdash looks.',
+    description: `Choose how ${PRODUCT_NAME} looks.`,
     keywords: ['theme', 'dark mode', 'light mode', 'appearance', 'system'],
   },
   {
@@ -296,7 +306,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
     id: 'disable-cors-for-localhost',
     label: 'Disable CORS for localhost',
     tab: 'browser',
-    description: 'Allow localhost pages in Emdash browser tabs to call APIs without CORS headers.',
+    description: `Allow localhost pages in ${PRODUCT_NAME} browser tabs to call APIs without CORS headers.`,
     keywords: ['cross-origin'],
   },
   {

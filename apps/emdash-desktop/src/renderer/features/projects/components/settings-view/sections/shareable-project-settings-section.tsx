@@ -1,6 +1,4 @@
 import { Fragment } from 'react';
-import { rpc } from '@renderer/lib/ipc';
-import { Button } from '@renderer/lib/ui/button';
 import { Field, FieldDescription, FieldTitle } from '@renderer/lib/ui/field';
 import { Input } from '@renderer/lib/ui/input';
 import { Separator } from '@renderer/lib/ui/separator';
@@ -134,22 +132,6 @@ export function ShareableSettingsSection({
           <FieldDescription className="text-foreground-muted">
             Shell commands run at each stage of the worktree lifecycle. One command per line. When
             both are set to auto-run, the Run script waits for Setup to complete.
-            <span> See </span>
-            <Button
-              type="button"
-              variant="link"
-              size="sm"
-              className="group text-muted-foreground inline-flex h-auto cursor-pointer items-center gap-1 px-0 text-sm font-normal hover:text-foreground hover:no-underline focus-visible:ring-0 focus-visible:outline-none"
-              onClick={() => rpc.app.openExternal('https://www.emdash.sh/docs/project-config')}
-            >
-              <span className="font-sans text-xs transition-colors group-hover:text-foreground">
-                docs
-              </span>
-              <span className="text-muted-foreground text-sm transition-colors group-hover:text-foreground">
-                ↗
-              </span>
-            </Button>
-            <span> for the full project config reference.</span>
           </FieldDescription>
         </div>
 

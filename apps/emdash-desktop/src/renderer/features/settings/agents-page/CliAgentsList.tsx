@@ -19,7 +19,8 @@ const SectionLabel: React.FC<{ children: React.ReactNode; totalCount: number }> 
 
 export type AgentFilter = 'all' | 'installed' | 'uninstalled';
 
-const RECOMMENDED_IDS = new Set(['claude', 'codex', 'pi']);
+/** Exported so onboarding offers the same short list this page recommends. */
+export const RECOMMENDED_IDS = new Set(['claude', 'codex', 'pi']);
 
 type CliAgentsListProps = {
   searchQuery?: string;

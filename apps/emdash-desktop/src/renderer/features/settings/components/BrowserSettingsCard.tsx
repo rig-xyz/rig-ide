@@ -24,6 +24,7 @@ import {
 } from '@renderer/lib/ui/select';
 import { Switch } from '@renderer/lib/ui/switch';
 import { cn } from '@renderer/utils/utils';
+import { PRODUCT_NAME } from '@shared/app-identity';
 import {
   BROWSER_ISOLATED_PROFILE_ID,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -180,7 +181,7 @@ export function BrowserSettingsCard() {
 
       <SettingRow
         title="Disable CORS for localhost"
-        description="Allows pages opened from localhost in Emdash browser tabs to call APIs that do not send matching CORS headers."
+        description={`Allows pages opened from localhost in ${PRODUCT_NAME} browser tabs to call APIs that do not send matching CORS headers.`}
         control={
           <Switch
             checked={browserSettings?.relaxCorsForLocalhost ?? false}

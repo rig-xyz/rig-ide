@@ -3,11 +3,12 @@ import { PageHeader } from '@renderer/lib/components/page-header';
 import { PageContent, PageLayout, PageSidebarMenu } from '@renderer/lib/components/page-layout';
 import { rpc } from '@renderer/lib/ipc';
 import { SearchInput } from '@renderer/lib/ui/search-input';
+import { RIG_WEBSITE_URL } from '@shared/urls';
 import { AgentsSettingsPage } from '../agents-page/AgentsSettingsPage';
 import { matchedTabsForQuery, searchSettings } from '../search/settings-search';
 import { SettingsSearchProvider } from '../search/settings-search-context';
 import { SETTINGS_TABS, type SettingsPageTab } from '../settings-tabs';
-import { AccountTab } from './AccountTab';
+import { AccountSettingsCard } from './AccountSettingsCard';
 import { BrowserSettingsCard } from './BrowserSettingsCard';
 import HiddenToolsSettingsCard from './HiddenToolsSettingsCard';
 import IntegrationsCard from './IntegrationsCard';
@@ -33,6 +34,7 @@ import TelemetryCard from './TelemetryCard';
 import TerminalSettingsCard from './TerminalSettingsCard';
 import ThemeCard from './ThemeCard';
 import { UpdateCard } from './UpdateCard';
+import { WorkspacesSettingsCard } from './WorkspacesSettingsCard';
 
 function GeneralSettingsPage() {
   return (
@@ -40,7 +42,7 @@ function GeneralSettingsPage() {
       <PageHeader
         sticky
         title="General"
-        description="Manage your account, privacy settings, notifications, and app updates."
+        description="Manage privacy settings, notifications, and app updates."
       />
       <UpdateCard />
       <TelemetryCard />
@@ -53,15 +55,6 @@ function GeneralSettingsPage() {
       <IncludeIssueContextByDefaultRow />
       <EnableTmuxRow />
       <NotificationSettingsCard />
-    </div>
-  );
-}
-
-function AccountSettingsPage() {
-  return (
-    <div className="space-y-8">
-      <PageHeader sticky title="Account" description="Manage your Emdash account." />
-      <AccountTab />
     </div>
   );
 }
@@ -84,6 +77,24 @@ function ConnectionsSettingsPage() {
         description="Manage reusable SSH connections for remote projects."
       />
       <SshConnectionsSettingsCard />
+    </div>
+  );
+}
+
+function AccountSettingsPage() {
+  return (
+    <div className="space-y-8">
+      <PageHeader sticky title="Account" description="Your Rig sign-in and identity." />
+      <AccountSettingsCard />
+    </div>
+  );
+}
+
+function WorkspacesSettingsPage() {
+  return (
+    <div className="space-y-8">
+      <PageHeader sticky title="Workspaces" description="Rigs synced to your Rig account." />
+      <WorkspacesSettingsCard />
     </div>
   );
 }
@@ -157,10 +168,11 @@ function BrowserSettingsPage() {
 
 const TAB_CONTENT: Record<Exclude<SettingsPageTab, 'docs'>, React.ComponentType> = {
   general: GeneralSettingsPage,
-  account: AccountSettingsPage,
   'clis-models': AgentsSettingsPage,
   integrations: IntegrationsSettingsPage,
   connections: ConnectionsSettingsPage,
+  account: AccountSettingsPage,
+  workspaces: WorkspacesSettingsPage,
   browser: BrowserSettingsPage,
   repository: RepositorySettingsPage,
   storage: StorageTabPage,
@@ -181,7 +193,7 @@ export function SettingsPage({
   const isSearching = query.length > 0;
 
   const handleDocsClick = useCallback(() => {
-    void rpc.app.openExternal('https://docs.emdash.sh');
+    void rpc.app.openExternal(RIG_WEBSITE_URL);
   }, []);
 
   const visibleTabs = useMemo(() => {

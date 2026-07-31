@@ -1,8 +1,5 @@
-import { ArrowUpRight } from 'lucide-react';
 import React from 'react';
 import { useTelemetryConsent } from '@renderer/lib/hooks/useTelemetryConsent';
-import { rpc } from '@renderer/lib/ipc';
-import { Button } from '@renderer/lib/ui/button';
 import { Switch } from '@renderer/lib/ui/switch';
 import { PRODUCT_NAME } from '@shared/app-identity';
 import { SettingRow } from './SettingRow';
@@ -17,22 +14,6 @@ const TelemetryCard: React.FC = () => {
       description={
         <div>
           <p>Help improve {PRODUCT_NAME} by sending anonymous usage data.</p>
-          <p>
-            <span>See </span>
-            <Button
-              type="button"
-              variant="link"
-              size="sm"
-              className="group text-muted-foreground inline-flex h-auto items-center gap-1 px-0 text-sm font-normal hover:text-foreground hover:no-underline focus-visible:ring-0 focus-visible:outline-none"
-              onClick={() => rpc.app.openExternal('https://docs.emdash.sh/telemetry')}
-            >
-              <span className="transition-colors group-hover:text-foreground">
-                Telemetry information
-              </span>
-              <ArrowUpRight className="text-muted-foreground size-3.5 transition-colors transition-transform duration-200 group-hover:translate-x-px group-hover:-translate-y-px group-hover:text-foreground" />
-            </Button>
-            <span> for details.</span>
-          </p>
         </div>
       }
       control={

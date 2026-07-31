@@ -57,7 +57,7 @@ describe('LocalExecutionContext', () => {
     const ctx = new LocalExecutionContext({ root: '/repo' });
 
     await expect(ctx.exec('git', ['status'])).rejects.toThrow(
-      'Git is not installed or Emdash cannot find it'
+      'Git is not installed or Rig cannot find it'
     );
   });
 
@@ -96,6 +96,6 @@ describe('LocalExecutionContext', () => {
       Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT', path: GIT_EXECUTABLE })
     );
 
-    await expect(promise).rejects.toThrow('Git is not installed or Emdash cannot find it');
+    await expect(promise).rejects.toThrow('Git is not installed or Rig cannot find it');
   });
 });

@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from '@renderer/lib/ui/dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@renderer/lib/ui/tooltip';
+import { PRODUCT_NAME } from '@shared/app-identity';
 
 export type ExternalLinkChoice = 'emdash-browser' | 'external-browser';
 
@@ -94,7 +95,7 @@ export function ExternalLinkChoiceDialog({
           onClick={() => onSuccess('emdash-browser')}
         >
           <Globe className="size-4" />
-          Open in Emdash
+          Open in {PRODUCT_NAME}
         </Button>
         <Button className="w-full" variant="default" onClick={() => onSuccess('external-browser')}>
           <ExternalLink className="size-4" />

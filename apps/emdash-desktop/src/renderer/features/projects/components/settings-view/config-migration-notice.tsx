@@ -1,3 +1,4 @@
+import { PRODUCT_NAME } from '@shared/app-identity';
 import type { ProjectConfigMigration } from '@shared/core/project-settings/project-settings';
 
 export function ConfigMigrationNotice({
@@ -20,7 +21,7 @@ export function ConfigMigrationNotice({
         disabled={disabled}
         className="text-foreground hover:underline"
       >
-        Import into Emdash
+        Import into {PRODUCT_NAME}
       </button>
     </p>
   );

@@ -12,7 +12,11 @@ const config: Configuration = {
   productName: PRODUCT_NAME,
   executableName: PRODUCT_NAME,
   directories: { output: 'release' },
-  artifactName: `${ARTIFACT_PREFIX}-\${arch}.\${ext}`,
+  // Version in the filename so every release is a distinct URL. Without it,
+  // each release overwrites the previous object and the CDN keeps serving the
+  // old bytes from cache until the TTL expires — a stale download that looks
+  // like a successful one.
+  artifactName: `${ARTIFACT_PREFIX}-\${version}-\${arch}.\${ext}`,
   // Upstream published to generalaction/emdash's GitHub releases — running a
   // publish with that block intact would try to draft releases on THEIR repo.
   // We publish by uploading the release/ artifacts (dmg, zip, latest-mac.yml)

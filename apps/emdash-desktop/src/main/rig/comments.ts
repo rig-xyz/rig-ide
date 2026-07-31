@@ -1,6 +1,4 @@
 import { statSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
@@ -17,6 +15,7 @@ import {
   type RigCommentsError,
 } from '@shared/rig/comments';
 import { findBindingConfig } from './binding';
+import { readRelayToken } from './config';
 import { checkRelayTrust } from './relay-trust';
 
 /**
@@ -34,42 +33,6 @@ import { checkRelayTrust } from './relay-trust';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const LIST_LIMIT = 200;
-
-// ── credentials ──────────────────────────────────────────────────────────────
-
-function rigConfigPaths(): string[] {
-  const xdg = process.env.XDG_CONFIG_HOME?.trim();
-  const paths = xdg ? [join(xdg, 'rig', 'config.json')] : [];
-  paths.push(join(homedir(), '.config', 'rig', 'config.json'));
-  return paths;
-}
-
-/**
- * The user's relay PAT. Read on every call rather than cached so signing in with
- * `rig login` mid-session starts working without restarting the app.
- */
-async function readRelayToken(): Promise<string | null> {
-  const fromEnv = process.env.RIG_RELAY_TOKEN?.trim();
-  if (fromEnv) return fromEnv;
-
-  for (const path of rigConfigPaths()) {
-    let raw: string;
-    try {
-      raw = await readFile(path, 'utf8');
-    } catch {
-      continue;
-    }
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (typeof parsed !== 'object' || parsed === null) continue;
-      const token = (parsed as Record<string, unknown>).relay_token;
-      if (typeof token === 'string' && token.length > 0) return token;
-    } catch {
-      log.warn('Rig comments: could not parse rig config', { path });
-    }
-  }
-  return null;
-}
 
 // ── path mapping ─────────────────────────────────────────────────────────────
 
