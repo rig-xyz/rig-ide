@@ -90,6 +90,15 @@ exec(`corepack pnpm --filter @emdash/emdash-desktop deploy --legacy --prod ${dep
 step('Vendoring bundled @rigxyz/cli');
 exec('node --experimental-strip-types scripts/vendor-rig-cli.ts', { echo: true });
 
+// Build here rather than trusting whatever `out/` happens to hold. `pnpm dev`
+// writes out/ too, in development mode, where createMainWindow is compiled down
+// to `loadURL(process.env.ELECTRON_RENDERER_URL)` — undefined once packaged, so
+// the app throws before its window ever shows and quits with no message. This
+// step previously lived outside the script, which made shipping a dev build a
+// matter of forgetting one command.
+step('Building main, preload and renderer (production)');
+exec('corepack pnpm run build', { echo: true });
+
 step('Copying built assets into deployment directory');
 cpSync('out', join(deployDir, 'out'), { recursive: true });
 cpSync('drizzle', join(deployDir, 'drizzle'), { recursive: true });
