@@ -18,6 +18,23 @@ const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 30;
 const URL_PATTERN = /https?:\/\/[^\s"'<>]+/i;
 
+/**
+ * Asset downloads an agent CLI may print while bootstrapping itself — Claude
+ * Code fetches a Bun binary from GitHub releases on first run, for instance.
+ * The first URL in the output is not necessarily the sign-in URL, and offering
+ * the user "open this link to sign in" pointed at a .zip is both confusing and
+ * a bad habit to teach. A login URL is a page, never an archive or installer.
+ */
+const ASSET_URL_PATTERN = /\.(zip|tar|tar\.gz|tgz|gz|bz2|xz|dmg|pkg|exe|msi|deb|rpm|appimage)$/i;
+
+export function isAssetDownloadUrl(url: string): boolean {
+  try {
+    return ASSET_URL_PATTERN.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
 type CacheEntry = {
   status: AgentAuthStatus;
   checkedAt: number;
@@ -296,6 +313,9 @@ export class AgentAuthManager {
     const url = stripTrailingUrlPunctuation(match[0]);
     if (seenUrls.has(url)) return;
     seenUrls.add(url);
+    // Marked seen before this check so a repeated download URL is not retested
+    // on every chunk, but never offered as the thing to open to sign in.
+    if (isAssetDownloadUrl(url)) return;
 
     this.publish(providerId, (current) => {
       if (!current.login || current.login.pendingUrl) return current;

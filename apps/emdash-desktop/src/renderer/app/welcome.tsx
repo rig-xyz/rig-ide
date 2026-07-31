@@ -2,7 +2,6 @@ import { detectPlatform, matchesKeyboardEvent } from '@tanstack/react-hotkeys';
 import { motion, type Variants } from 'framer-motion';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import IconLight from '@/assets/images/rig/rig.png';
-import YTBanner from '@/assets/images/ytbanner.webp';
 import { useAppSettingsKey } from '@renderer/features/settings/use-app-settings-key';
 import { getEffectiveHotkey } from '@renderer/lib/hooks/useKeyboardShortcuts';
 import { useTheme } from '@renderer/lib/hooks/useTheme';
@@ -88,12 +87,17 @@ export function WelcomeScreen({ onGetStarted }: WelcomeScreenProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
       <div className="absolute right-0 bottom-0 left-0 h-3/5">
+        {/*
+          Was upstream's YouTube channel banner, which carries their wordmark
+          burned into the image. It went unnoticed because this screen has been
+          unreachable since the upstream sign-in step was removed. A wash gives
+          the same visual weight without shipping someone else's branding.
+        */}
         <div
           className="absolute inset-0 opacity-40"
           style={{
-            backgroundImage: `url(${YTBanner})`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center top',
+            backgroundImage:
+              'radial-gradient(ellipse 120% 70% at 50% 100%, rgba(125,145,185,0.38) 0%, transparent 65%)',
             maskImage:
               'linear-gradient(to bottom, transparent 0%, transparent 30%, rgba(0,0,0,0.4) 60%, rgba(0,0,0,0.8) 100%)',
             WebkitMaskImage:
@@ -108,11 +112,30 @@ export function WelcomeScreen({ onGetStarted }: WelcomeScreenProps) {
         initial="hidden"
         animate="visible"
       >
+        {/*
+          The mark, unboxed — the icon is already a dark squircle, so it sits
+          directly on the backdrop with a hairline ring and a slow metallic
+          sheen sweeping across it. overflow-hidden clips the sheen to the
+          squircle; the skewed gradient strip is what reads as "shine".
+        */}
         <motion.div
-          className="rounded-md border border-border/40 bg-white p-1.5 shadow-lg ring-1 shadow-black/5 ring-black/5 dark:shadow-white/5 dark:ring-white/10"
+          className="relative overflow-hidden rounded-xl shadow-lg shadow-black/40 ring-1 ring-white/15"
           variants={itemVariants}
         >
-          <img src={IconLight} alt="Rig" className="h-12 w-12 rounded-sm" />
+          <img src={IconLight} alt="Rig" className="block h-16 w-16" />
+          <motion.div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 left-0 w-1/2 -skew-x-12 bg-gradient-to-r from-transparent via-white/30 to-transparent"
+            initial={{ x: '-150%' }}
+            animate={{ x: '300%' }}
+            transition={{
+              repeat: Infinity,
+              duration: 1.6,
+              ease: 'easeInOut',
+              repeatDelay: 2.6,
+              delay: 0.8,
+            }}
+          />
         </motion.div>
 
         <motion.h1

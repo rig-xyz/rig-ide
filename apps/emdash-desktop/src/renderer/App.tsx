@@ -10,6 +10,7 @@ import { useLegacyPortStatus } from './lib/hooks/useLegacyPort';
 import { WorkspaceLayoutContextProvider } from './lib/layout/layout-provider';
 import { WorkspaceViewProvider } from './lib/layout/provider';
 import { ModalRenderer } from './lib/modal/modal-renderer';
+import { modalStore } from './lib/modal/modal-store';
 import { FeatureFlagProvider } from './lib/providers/feature-flag-override-context';
 import { GithubContextProvider } from './lib/providers/github-context-provider';
 import { ThemeProvider } from './lib/providers/theme-provider';
@@ -51,6 +52,14 @@ function AppContent() {
 
   const handleOnboardingComplete = () => {
     localStorage.setItem(HAS_SEEN_ONBOARDING, 'true');
+    // ModalRenderer is mounted unconditionally in the provider stack below,
+    // independent of `view` — a modal opened mid-onboarding (e.g. the agent
+    // sign-in terminal) that the user never explicitly closed would otherwise
+    // keep rendering through its own portal, on top of the welcome screen:
+    // DialogOverlay/DialogPrimitive.Popup use the same z-50 as the welcome
+    // root, and the portal (appended to document.body after #root) wins ties
+    // by DOM order regardless of which app-level view is showing.
+    modalStore.closeModal('dismissed');
     setView('welcome');
   };
 
@@ -64,8 +73,19 @@ function AppContent() {
     // Linux runs frameless (`frame: false`), so every branch — including the
     // pre-resolution loading window — must mount the overlay to keep window
     // controls and a drag region available.
+    //
+    // The backdrop matters as much as the overlay: FramelessTitlebarOverlay is
+    // a no-op on macOS/Windows, so without it this branch painted nothing at
+    // all — no opaque element to stop whatever was on screen a moment earlier
+    // (e.g. the workspace, mid-reload) from continuing to show through for the
+    // length of this loading window.
     if (isLoading || (view === 'onboarding' && frozenSteps === null)) {
-      return <FramelessTitlebarOverlay />;
+      return (
+        <>
+          <div className="fixed inset-0 z-50 bg-background" />
+          <FramelessTitlebarOverlay />
+        </>
+      );
     }
     if (view === 'onboarding' && stepsNeeded.length > 0) {
       return (

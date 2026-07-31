@@ -1,3 +1,4 @@
+import { Check } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@renderer/utils/utils';
 import { AgentStep } from './agent-step';
@@ -24,25 +25,43 @@ const stepConfig: Record<
   },
 };
 
-function StepHeader({
-  label,
-  isActive,
-  isLast,
-}: {
-  label: string;
-  isActive: boolean;
-  isLast: boolean;
-}) {
+/**
+ * Small centered progress indicator: numbered dots joined by hairlines, ticks
+ * for completed steps. Replaces the old browser-style tab strip that sat on the
+ * corner of a giant bordered panel.
+ */
+function StepIndicator({ steps, activeIndex }: { steps: OnboardingStep[]; activeIndex: number }) {
+  if (steps.length < 2) return null;
   return (
-    <div
-      aria-current={isActive ? 'step' : undefined}
-      className={cn(
-        'text-md border-r px-5 py-3',
-        isActive ? 'bg-background-1 text-primary' : 'text-foreground-muted',
-        isLast && 'border-r-0'
-      )}
-    >
-      {label}
+    <div className="flex items-center gap-2.5">
+      {steps.map((step, index) => {
+        const done = index < activeIndex;
+        const active = index === activeIndex;
+        return (
+          <div key={step} className="flex items-center gap-2.5">
+            {index > 0 && <div className="h-px w-8 bg-border" />}
+            <div
+              aria-current={active ? 'step' : undefined}
+              className={cn(
+                'flex items-center gap-1.5 text-xs',
+                active ? 'text-foreground' : 'text-foreground-muted'
+              )}
+            >
+              <span
+                className={cn(
+                  'flex h-4.5 w-4.5 items-center justify-center rounded-full border text-[10px] tabular-nums',
+                  done && 'border-transparent bg-background-2 text-foreground-muted',
+                  active && 'border-foreground/40',
+                  !done && !active && 'border-border'
+                )}
+              >
+                {done ? <Check className="h-2.5 w-2.5" /> : index + 1}
+              </span>
+              {stepConfig[step].label}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -68,18 +87,13 @@ export function OnboardingShell({
   };
 
   return (
-    <div className="mx-auto flex h-full max-h-[70vh] min-h-0 w-full max-w-5xl flex-col items-start justify-center [-webkit-app-region:no-drag]">
-      <div className="flex flex-row border border-b-0">
-        {steps.map((step, index) => (
-          <StepHeader
-            key={step}
-            label={stepConfig[step].label}
-            isLast={index === steps.length - 1}
-            isActive={step === activeStep}
-          />
-        ))}
-      </div>
-      <div className="flex h-full min-h-0 w-full flex-col items-center justify-center border bg-background-1">
+    // A plain centered column on the plain background, like the welcome
+    // screen — no panel. `my-auto` on the inner column centers it when it
+    // fits and degrades to normal top-anchored scrolling (scrollbar at the
+    // window edge, nothing clipped) when the window is short.
+    <div className="flex h-full w-full flex-col items-center overflow-y-auto [-webkit-app-region:no-drag]">
+      <div className="my-auto flex w-full max-w-md flex-col items-center gap-10 px-6 py-12">
+        <StepIndicator steps={steps} activeIndex={activeIndex} />
         <StepComponent onComplete={handleStepComplete} />
       </div>
     </div>

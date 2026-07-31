@@ -1,6 +1,8 @@
+import { useQuery } from '@tanstack/react-query';
 import { Bot, CheckCircle } from 'lucide-react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { AgentRow } from '@renderer/features/settings/agents-page/AgentRow';
+import { getAgentConfigRuntimeClient } from '@renderer/lib/agent-config/runtime-client';
 import { RECOMMENDED_IDS } from '@renderer/features/settings/agents-page/CliAgentsList';
 import { InstallDependencyCard } from '@renderer/features/settings/agents-page/InstallDependencyCard';
 import { showModal } from '@renderer/lib/modal/modal-provider';
@@ -25,6 +27,23 @@ function AgentSetupRow({ agent }: { agent: AgentPayload }) {
   const vm = useAgentInstallationStatus(agent.id, undefined, agent);
   const installed = vm.status === 'available';
   const loginMethod = cliLoginMethod(agent.capabilities);
+  // Flipped by the sign-in modal's completion callback, which only fires when
+  // the CLI actually reports authenticated — signing in succeeded silently
+  // before this, which read as "nothing happened".
+  const [signedIn, setSignedIn] = useState(false);
+  // Probe existing auth up front, so someone already signed in (or authed via
+  // an API key the CLI recognizes) sees the check immediately instead of being
+  // offered a sign-in that opens a terminal just to say "already logged in".
+  const { data: probed } = useQuery({
+    queryKey: ['onboarding', 'agent-auth', agent.id],
+    enabled: installed && loginMethod !== undefined,
+    queryFn: async () => {
+      const client = await getAgentConfigRuntimeClient();
+      const result = await client.refreshAuthStatus({ providerId: agent.id });
+      return result.success ? result.data : null;
+    },
+  });
+  const showSignedIn = signedIn || probed?.kind === 'authenticated';
   const installOptions = useMemo(
     () => preferredInstallOptions(vm.data?.installOptions ?? agent.installOptions),
     [vm.data?.installOptions, agent.installOptions]
@@ -46,19 +65,28 @@ function AgentSetupRow({ agent }: { agent: AgentPayload }) {
       )}
       {installed && loginMethod && (
         <div className="px-3 pb-3">
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={() =>
-              showModal('agentSignInModal', {
-                providerId: agent.id,
-                methodId: loginMethod.id,
-                providerName: agent.name,
-              })
-            }
-          >
-            Sign in to {agent.name}
-          </Button>
+          {showSignedIn ? (
+            <p className="flex items-center justify-center gap-1.5 py-1.5 text-sm text-foreground-muted">
+              <CheckCircle className="h-4 w-4 text-foreground-success" />
+              Signed in to {agent.name}
+              {probed?.kind === 'authenticated' && probed.account ? ` as ${probed.account}` : ''}
+            </p>
+          ) : (
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() =>
+                showModal('agentSignInModal', {
+                  providerId: agent.id,
+                  methodId: loginMethod.id,
+                  providerName: agent.name,
+                  onSuccess: () => setSignedIn(true),
+                })
+              }
+            >
+              Sign in to {agent.name}
+            </Button>
+          )}
         </div>
       )}
     </div>
@@ -87,7 +115,7 @@ export function AgentStep({ onComplete }: { onComplete: () => void }) {
   }
 
   return (
-    <div className="flex max-h-full max-w-md flex-col space-y-8 overflow-y-auto p-6">
+    <div className="flex w-full flex-col space-y-8">
       <div className="flex flex-col items-center justify-center gap-6">
         <Bot className="h-10 w-10" absoluteStrokeWidth strokeWidth={1.5} />
         <div className="flex flex-col items-center justify-center gap-2">

@@ -13,7 +13,11 @@ export function Onboarding({
   const [steps] = useState(initialSteps);
 
   return (
-    <div className="flex h-full w-full flex-col items-center justify-center [-webkit-app-region:drag]">
+    // fixed inset-0 z-50 + opaque bg, matching WelcomeScreen: first-run owns
+    // the whole window. The root was transparent and parent-sized before, so
+    // anything else painting (kept-alive panes, stale layers) showed through
+    // around and beneath the centered shell.
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background [-webkit-app-region:drag]">
       <OnboardingShell steps={steps} onComplete={onComplete} />
     </div>
   );

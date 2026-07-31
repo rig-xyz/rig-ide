@@ -88,15 +88,18 @@ export function ExternalLinkChoiceDialog({
         <Button className="w-full" variant="outline" onClick={onClose}>
           Cancel
         </Button>
-        <Button
-          className="w-full"
-          variant="outline"
-          disabled={!canOpenInEmdashBrowser}
-          onClick={() => onSuccess('emdash-browser')}
-        >
-          <Globe className="size-4" />
-          Open in {PRODUCT_NAME}
-        </Button>
+        {/*
+          Hidden, not disabled, when there is no task view to open a browser
+          pane in — onboarding and settings have none. A permanently dead
+          button is a worse answer than one fewer choice: it reads as something
+          the reader failed to unlock.
+        */}
+        {canOpenInEmdashBrowser && (
+          <Button className="w-full" variant="outline" onClick={() => onSuccess('emdash-browser')}>
+            <Globe className="size-4" />
+            Open in {PRODUCT_NAME}
+          </Button>
+        )}
         <Button className="w-full" variant="default" onClick={() => onSuccess('external-browser')}>
           <ExternalLink className="size-4" />
           Open in Browser
