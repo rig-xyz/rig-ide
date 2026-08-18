@@ -20,6 +20,8 @@ import { InvitesBell } from '@renderer/features/shell/invites-bell';
 import { SettingsModal } from '@renderer/features/shell/settings-modal';
 import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
 import { deriveTopbarContext, type TopbarContext } from '@renderer/features/shell/topbar-context';
+import { isUpdateReady, shouldAnnounceUpdate } from '@renderer/features/shell/update-status';
+import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
 import { FileTree } from '@renderer/features/workspace/file-tree';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { Button } from '@renderer/lib/ui/button';
@@ -194,6 +196,34 @@ type FolderState =
 export function App() {
   const [, themePreference, setThemePreference, applyThemeFromSettings] = useTheme();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Make-updates-visible round: the gear's dot opens Settings with About
+  // already scrolled into view — reset to false on every open so a later
+  // plain gear click (once the update's been seen) doesn't keep forcing a
+  // scroll nobody asked for this time.
+  const [focusAboutOnOpen, setFocusAboutOnOpen] = useState(false);
+  const openSettings = useCallback((focusAbout = false) => {
+    setFocusAboutOnOpen(focusAbout);
+    setSettingsOpen(true);
+  }, []);
+  const updateStatus = useUpdateStatus();
+  // The "ready" toast — exactly once per version (`shouldAnnounceUpdate`,
+  // pure/tested), regardless of whether Settings is ever opened. Marks the
+  // version announced the moment the toast is SHOWN, not on dismiss, which
+  // might never fire if the user quits without touching it. `updateStatus`
+  // is memoized (`useUpdateStatus`'s own `useMemo`) so this only actually
+  // reruns when `state`/`announcedVersion` change, not on every render.
+  useEffect(() => {
+    if (!shouldAnnounceUpdate(updateStatus.state, updateStatus.announcedVersion)) return;
+    const version = updateStatus.state.availableVersion;
+    if (!version) return;
+    updateStatus.markAnnounced(version);
+    toast({
+      title: `Rig ${version} is ready`,
+      action: { label: 'Restart', onClick: updateStatus.restart },
+      closeButton: true,
+      duration: Infinity,
+    });
+  }, [updateStatus]);
   // Polish round: scroll-aware topbar — see `Topbar`'s own comment for why
   // only `<main>` (Home/`FolderResult`) ever sets this away from false.
   const [mainScrolled, setMainScrolled] = useState(false);
@@ -449,15 +479,17 @@ export function App() {
         variant={bound ? 'rig' : 'home'}
         scrolled={!bound && mainScrolled}
         onGoHome={goHome}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={openSettings}
         onOpenPath={openPath}
         onOpenFolder={openFolder}
+        updateReady={isUpdateReady(updateStatus.state)}
       />
       <SettingsModal
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         themePreference={themePreference}
         onSetThemePreference={setThemePreference}
+        focusAbout={focusAboutOnOpen}
       />
       {bound ? (
         // The bar sits above ChatPanel/FileBrowser/ArtifactView here, but
@@ -593,6 +625,7 @@ function Topbar({
   onOpenSettings,
   onOpenPath,
   onOpenFolder,
+  updateReady,
 }: {
   context: TopbarContext;
   /** Which bottom-edge treatment the bar wears (Dylan's seam call, this
@@ -610,11 +643,19 @@ function Topbar({
   /** The mini-breadcrumb's house button (rig view only) — up-navigation
    * lives HERE now, not in the panel headers below the bar. */
   onGoHome: () => void;
-  onOpenSettings: () => void;
+  /** `true` scrolls Settings straight to About — the gear's own click passes this along as `updateReady` (see below), never called with `true` from anywhere else. */
+  onOpenSettings: (focusAbout?: boolean) => void;
   /** Threaded down to `InvitesBell` — its post-accept "Set up locally" opens the result the same way every other "open a rig" entry point does. Also `RigSwitcher`'s own row clicks. */
   onOpenPath: (path: string) => void;
   /** `RigSwitcher`'s "Open folder…" escape hatch — the native picker, same `openFolder` flow every other entry point uses. */
   onOpenFolder: () => void;
+  /**
+   * Make-updates-visible round: a small accent dot on the gear, ONLY once
+   * a download has genuinely finished and is installable — never during
+   * checking/downloading (noise about work nobody asked to watch). Clears
+   * itself the moment `isUpdateReady` goes false again (after install).
+   */
+  updateReady: boolean;
 }) {
   return (
     // The window is `titleBarStyle: 'hiddenInset'` (main/app/window.ts) — no
@@ -699,15 +740,22 @@ function Topbar({
             render={
               <button
                 type="button"
-                onClick={onOpenSettings}
+                onClick={() => onOpenSettings(updateReady)}
                 aria-label="Settings"
-                className="text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex size-7 items-center justify-center transition-colors"
+                className="text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control relative flex size-7 items-center justify-center transition-colors"
               >
                 <SettingsIcon size={15} strokeWidth={1.5} />
+                {/* Make-updates-visible round: same quiet accent-dot
+                    convention `InvitesBell`'s own count badge documents
+                    above — here just presence, no count, since "an update
+                    is ready" isn't a quantity. */}
+                {updateReady && (
+                  <span className="bg-accent absolute top-0.5 right-0.5 size-1.5 rounded-full" />
+                )}
               </button>
             }
           />
-          <TooltipContent side="bottom">Settings</TooltipContent>
+          <TooltipContent side="bottom">{updateReady ? 'Update ready' : 'Settings'}</TooltipContent>
         </Tooltip>
       </div>
     </header>

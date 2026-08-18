@@ -243,6 +243,58 @@ describe('RigSettingsStore', () => {
     });
   });
 
+  describe('updateLastCheckedAt / updateAnnouncedVersion (round — make app updates visible)', () => {
+    it('both default to null before anything is ever set', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().updateLastCheckedAt).toBeNull();
+      expect(store.get().updateAnnouncedVersion).toBeNull();
+    });
+
+    it('set() persists and round-trips through a second store instance', () => {
+      const first = new RigSettingsStore(settingsPath);
+      first.initialize();
+      first.set({ updateLastCheckedAt: 1_700_000_000_000, updateAnnouncedVersion: '2.0.0' });
+
+      const second = new RigSettingsStore(settingsPath);
+      second.initialize();
+      expect(second.get().updateLastCheckedAt).toBe(1_700_000_000_000);
+      expect(second.get().updateAnnouncedVersion).toBe('2.0.0');
+    });
+
+    it('an existing settings.json that predates these fields degrades both to null, not a throw', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({ version: 1, theme: null, chatPanelWidth: null, chatPanelCollapsed: false, lastHarnessByRig: {}, lastOpenTabsByRig: {} })
+      );
+      const store = new RigSettingsStore(settingsPath);
+      expect(() => store.initialize()).not.toThrow();
+      expect(store.get().updateLastCheckedAt).toBeNull();
+      expect(store.get().updateAnnouncedVersion).toBeNull();
+    });
+
+    it('a malformed value (wrong type) degrades to null rather than passing through', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({ ...DEFAULT_RIG_SETTINGS, updateLastCheckedAt: 'not-a-number', updateAnnouncedVersion: 42 })
+      );
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().updateLastCheckedAt).toBeNull();
+      expect(store.get().updateAnnouncedVersion).toBeNull();
+    });
+
+    it('does not touch the other on a partial set() of just one', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      store.set({ updateAnnouncedVersion: '1.5.0' });
+      expect(store.get().updateLastCheckedAt).toBeNull();
+      expect(store.get().updateAnnouncedVersion).toBe('1.5.0');
+    });
+  });
+
   it('degrades a corrupt settings.json to defaults instead of throwing', () => {
     mkdirSync(join(dir, 'nested'), { recursive: true });
     writeFileSync(settingsPath, 'not json');

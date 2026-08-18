@@ -7,6 +7,7 @@ import _electronUpdater, {
 import { resolveAppVersion } from '@main/core/app/utils';
 import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
+import { rigSettingsStore } from '@main/rig/settings-instance';
 import { IS_CANARY, UPDATE_CHANNEL } from '@shared/app-identity';
 import {
   updateAvailableEvent,
@@ -109,11 +110,23 @@ class UpdateService implements IInitializable, IDisposable {
       this.updateState.status = 'available';
       this.updateState.availableVersion = info.version;
       this.updateState.updateInfo = info;
+      this.recordCheckResolved();
       events.emit(updateAvailableEvent, { version: info.version, updateInfo: info });
+
+      // Make-updates-visible round: `autoDownload` is `false` (below) —
+      // nothing downloaded an available update automatically before this.
+      // The visibility design has no "found, click to download" state at
+      // all (idle/checking/downloading/ready/error only) and treats
+      // auto-download as the beta default, so this is the one place that
+      // has to make that true, not just assume it already was.
+      this.downloadUpdate().catch((error) => {
+        log.warn('Auto-download after update-available failed', { error: formatUpdaterError(error) });
+      });
     });
 
     autoUpdater.on('update-not-available', () => {
       this.updateState.status = 'idle';
+      this.recordCheckResolved();
       events.emit(updateNotAvailableEvent, undefined);
     });
 
@@ -161,6 +174,18 @@ class UpdateService implements IInitializable, IDisposable {
       this.updateState.rollbackVersion = this.updateState.currentVersion;
       events.emit(updateDownloadedEvent, { version: info.version });
     });
+  }
+
+  /**
+   * "Persist 'last checked' honestly (when a check actually resolved, not
+   * when the app booted)" — written here, not by the renderer, so it's
+   * true even if no Settings window is ever opened. Only the two
+   * DEFINITIVE outcomes call this (`update-available` / `update-not-
+   * available`) — an `error` is an attempt that failed, not a resolution,
+   * and must never advance this.
+   */
+  private recordCheckResolved(): void {
+    rigSettingsStore.set({ updateLastCheckedAt: Date.now() });
   }
 
   private scheduleNextCheck(delay = CHECK_INTERVAL_MS): void {

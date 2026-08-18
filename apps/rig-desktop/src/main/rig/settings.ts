@@ -156,6 +156,8 @@ function normalizeSettings(parsed: unknown): RigSettings {
     // either way.
     hasSeenOnboarding: typeof raw.hasSeenOnboarding === 'boolean' ? raw.hasSeenOnboarding : true,
     rigsRailView: isRigsRailView(raw.rigsRailView) ? raw.rigsRailView : DEFAULT_RIGS_RAIL_VIEW,
+    updateLastCheckedAt: typeof raw.updateLastCheckedAt === 'number' ? raw.updateLastCheckedAt : null,
+    updateAnnouncedVersion: typeof raw.updateAnnouncedVersion === 'string' ? raw.updateAnnouncedVersion : null,
   };
 }
 

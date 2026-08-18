@@ -1,10 +1,12 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Monitor, Moon, Sun } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AgentAuthTrailing } from '@renderer/features/agents/agent-auth-trailing';
 import { useAgentIdentities, type AgentIdentity } from '@renderer/features/chat/use-runnable-agents';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { deriveCliVersionRow } from '@renderer/features/shell/cli-versions';
+import { deriveUpdateAction, deriveUpdateStatusLine } from '@renderer/features/shell/update-status';
+import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
 import { confirmOpenExternalLink } from '@renderer/lib/open-external-link';
@@ -42,12 +44,28 @@ export function SettingsModal({
   onOpenChange,
   themePreference,
   onSetThemePreference,
+  focusAbout = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   themePreference: ThemePreference;
   onSetThemePreference: (next: ThemePreference) => void;
+  /**
+   * Make-updates-visible round: the topbar gear's dot opens Settings with
+   * About scrolled into view — that's where the live update status/action
+   * lives, and this is a single always-scrollable modal (no tabs) where
+   * About sits last. A ref + `scrollIntoView` on open is cheap; turning
+   * this into a tabbed modal just to jump to one section would not be.
+   */
+  focusAbout?: boolean;
 }) {
+  const aboutRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (open && focusAbout) {
+      aboutRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+  }, [open, focusAbout]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -65,7 +83,7 @@ export function SettingsModal({
           <Section label="Agents">
             <AgentsSection />
           </Section>
-          <Section label="About">
+          <Section label="About" containerRef={aboutRef}>
             <AboutSection />
           </Section>
         </div>
@@ -74,9 +92,17 @@ export function SettingsModal({
   );
 }
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
+function Section({
+  label,
+  children,
+  containerRef,
+}: {
+  label: string;
+  children: React.ReactNode;
+  containerRef?: React.RefObject<HTMLDivElement | null>;
+}) {
   return (
-    <div className="flex flex-col gap-2">
+    <div ref={containerRef} className="flex flex-col gap-2">
       <p className="text-text-muted font-mono text-xs tracking-wide uppercase">{label}</p>
       {children}
     </div>
@@ -320,6 +346,7 @@ function AboutSection() {
       </div>
       <CliVersionLine name="rig" sources={report?.rig} />
       <CliVersionLine name="tapd" sources={report?.tapd} />
+      <AppUpdateRow />
       <button
         type="button"
         onClick={() => confirmOpenExternalLink(RIG_WEBSITE_URL)}
@@ -328,6 +355,48 @@ function AboutSection() {
         userig.xyz
         <ExternalLink className="size-3" strokeWidth={1.5} />
       </button>
+    </div>
+  );
+}
+
+/**
+ * Make-updates-visible round: `main/core/updates/update-service.ts` was
+ * already fully wired (schedule, download, every event below) — a grep
+ * found zero renderer consumers, the same dead-channel shape as the
+ * external-link bug from an earlier round. This is that wiring, plus the
+ * design: one live status line (`deriveUpdateStatusLine`) + one action
+ * button (`deriveUpdateAction`) that swaps from "Check for updates" to
+ * "Restart to update" the moment a download is genuinely ready — never
+ * before. `useUpdateStatus` is the shared hook; the topbar gear's dot and
+ * the "ready" toast watcher (`App.tsx`) each mount their own instance of
+ * it too, all driven by the same main-process broadcast.
+ */
+function AppUpdateRow() {
+  const { state, check, restart } = useUpdateStatus();
+  const [now, setNow] = useState(() => Date.now());
+  // The "checked Xh ago" clause is the one part of the status line that
+  // goes stale just sitting open — a light tick keeps it honest without
+  // re-deriving anything else.
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const line = deriveUpdateStatusLine(state, now);
+  const action = deriveUpdateAction(state.status);
+
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <p className={cn('text-xs', state.status === 'error' ? 'text-danger' : 'text-text-muted')}>{line}</p>
+      {action.kind === 'restart' ? (
+        <Button size="xs" onClick={restart} className="shrink-0">
+          {action.label}
+        </Button>
+      ) : (
+        <Button variant="outline" size="xs" onClick={check} disabled={action.disabled} className="shrink-0">
+          {action.label}
+        </Button>
+      )}
     </div>
   );
 }

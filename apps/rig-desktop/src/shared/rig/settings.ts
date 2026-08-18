@@ -108,6 +108,23 @@ export type RigSettings = {
   hasSeenOnboarding: boolean;
   /** The rigs rail's own filter/sort choice — global, not per-rig (same "a plain preference" shape as `theme`, replaced wholesale on `set()`, not merged at a key level). */
   rigsRailView: RigsRailView;
+  /**
+   * Round: make app updates visible. ms epoch of the last time a version
+   * check genuinely RESOLVED (found an update, or confirmed none) —
+   * written by `main/core/updates/update-service.ts` itself, not the
+   * renderer, so "checked Xh ago" survives a relaunch honestly even if
+   * Settings → About was never opened this session. `null` until the
+   * first check this install has ever completed.
+   */
+  updateLastCheckedAt: number | null;
+  /**
+   * The version string of the last downloaded-and-ready update the "Rig
+   * X is ready" toast already announced — so a relaunch (or a second
+   * mount of the toast watcher) never re-shows it for the SAME version,
+   * while a genuinely newer one downloaded later still gets its own
+   * toast. `null` until the first update this install has ever announced.
+   */
+  updateAnnouncedVersion: string | null;
 };
 
 export const DEFAULT_RIG_SETTINGS: RigSettings = {
@@ -124,6 +141,8 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   lastOpenTabsByRig: {},
   hasSeenOnboarding: false,
   rigsRailView: DEFAULT_RIGS_RAIL_VIEW,
+  updateLastCheckedAt: null,
+  updateAnnouncedVersion: null,
 };
 
 /** The subset of legacy localStorage values the renderer can hand to `importLegacy`. */
