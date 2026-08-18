@@ -396,7 +396,7 @@ function AppUpdateRow() {
   if (supported === false) {
     return (
       <div className="border-border-hairline mt-1 border-t pt-3">
-        <p className="text-text-muted text-xs">Updates apply to the installed app.</p>
+        <p className="text-text-muted text-xs">Development build · auto-update is off</p>
       </div>
     );
   }
