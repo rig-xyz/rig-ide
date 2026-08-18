@@ -29,6 +29,39 @@ const CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const STARTUP_DELAY_MS = 30 * 1000; // 30 seconds
 const INSTALL_RESTART_GUARD_TIMEOUT_MS = 2 * 60 * 1000;
 
+/**
+ * Dev-mode full update cycle (RIG_UPDATER_DEV=1)
+ * ------------------------------------------------
+ * electron-updater refuses to run unpacked by default, so in a normal
+ * `pnpm dev` session this service never activates (see `initialize()`
+ * below) — there's no way to exercise checking → available → downloading
+ * → ready without actually packaging and publishing a build. To do that
+ * anyway, run:
+ *
+ *   RIG_UPDATER_DEV=1 pnpm dev
+ *
+ * This sets `autoUpdater.forceDevUpdateConfig = true`, which makes
+ * electron-updater read `dev-app-update.yml` (or `dev-app-update.canary.yml`
+ * for `VITE_BUILD=canary`) instead of refusing outright. Both files were
+ * fixed in this same round to point at the real R2 feed instead of stale
+ * emdash-era GitHub config.
+ *
+ * To actually SEE an update (rather than "up to date"), the running dev
+ * build's version has to be older than what's live on the channel — e.g.
+ * temporarily lower `version` in package.json below the current manifest's
+ * version (`curl https://dl.userig.xyz/v1-stable-mac.yml`), then run the
+ * command above and click "Check for updates" in Settings → About. Put the
+ * version back afterwards; this is a manual, temporary edit, not a real
+ * release.
+ *
+ * This can NEVER take effect in a packaged build: `import.meta.env.DEV` is
+ * a compile-time constant (`false` for anything built via `electron-vite
+ * build`), so `isDevUpdaterEnabled` below is statically `false` there
+ * regardless of what environment variables happen to be set — this isn't
+ * only a runtime check.
+ */
+export const isDevUpdaterEnabled = import.meta.env.DEV && process.env.RIG_UPDATER_DEV === '1';
+
 export interface UpdateState {
   status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'error';
   lastCheck?: Date;
@@ -69,7 +102,7 @@ class UpdateService implements IInitializable, IDisposable {
 
     this.updateState.currentVersion = await resolveAppVersion();
 
-    if (import.meta.env.DEV) return;
+    if (import.meta.env.DEV && !isDevUpdaterEnabled) return;
 
     this.setupAutoUpdater();
     this.setupEventListeners();
@@ -84,6 +117,9 @@ class UpdateService implements IInitializable, IDisposable {
   }
 
   private setupAutoUpdater(): void {
+    if (isDevUpdaterEnabled) {
+      autoUpdater.forceDevUpdateConfig = true;
+    }
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.autoRunAppAfterInstall = true;

@@ -1,6 +1,5 @@
-provider: github
-owner: generalaction
-repo: emdash
-channel: canary
+provider: generic
+url: https://dl.userig.xyz
+channel: v1-canary
 allowPrerelease: true
-updaterCacheDirName: emdash-canary-updater
+updaterCacheDirName: rig-desktop-dev-canary-updater

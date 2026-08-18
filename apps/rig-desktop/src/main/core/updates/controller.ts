@@ -1,5 +1,5 @@
 import { app, shell } from 'electron';
-import { updateService } from '@main/core/updates/update-service';
+import { isDevUpdaterEnabled, updateService } from '@main/core/updates/update-service';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { RIG_RELEASES_URL } from '@shared/urls';
 import { formatUpdaterError } from './utils';
@@ -7,12 +7,16 @@ import { formatUpdaterError } from './utils';
 export const updateController = createRPCController({
   /**
    * Whether the updater can do anything at all. electron-updater refuses to
-   * run unpacked, so in development `initialize()` throws and the service
-   * never activates — a "Check for updates" click then resolves to null
-   * with no event emitted, which reads to the user as a dead button. The
-   * UI asks this first and says so plainly instead.
+   * run unpacked, so in development the service never activates — a "Check
+   * for updates" click then resolves to null with no event emitted, which
+   * reads to the user as a dead button. The UI asks this first and says so
+   * plainly instead of offering a dead control.
+   *
+   * `isDevUpdaterEnabled` (RIG_UPDATER_DEV=1, see update-service.ts) is the
+   * one exception: it makes the service genuinely active in dev too, so the
+   * UI should show real states rather than the "development build" message.
    */
-  isSupported: async () => app.isPackaged,
+  isSupported: async () => app.isPackaged || isDevUpdaterEnabled,
 
   check: async () => {
     try {

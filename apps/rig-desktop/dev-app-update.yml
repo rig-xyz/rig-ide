@@ -1,4 +1,4 @@
-provider: github
-owner: generalaction
-repo: emdash
-updaterCacheDirName: emdash-updater
+provider: generic
+url: https://dl.userig.xyz
+channel: v1-stable
+updaterCacheDirName: rig-desktop-dev-updater
