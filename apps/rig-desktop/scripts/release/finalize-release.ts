@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util';
 import { Octokit } from '@octokit/rest';
+import { GITHUB_OWNER, GITHUB_REPO } from './lib/config.ts';
 import { fail, info, step, warn } from './lib/log.ts';
 import { resolveReleaseVersion } from './lib/version.ts';
 import type { ReleaseChannel } from './lib/version.ts';
@@ -23,13 +24,11 @@ const { tag, isCanary } = resolveReleaseVersion(channel);
 
 const octokit = new Octokit({ auth: token });
 
-const OWNER = 'generalaction';
-const REPO = 'emdash';
 
 step(`Looking for draft release with tag ${tag} (channel: ${channel})`);
 const { data: releases } = await octokit.rest.repos.listReleases({
-  owner: OWNER,
-  repo: REPO,
+  owner: GITHUB_OWNER,
+  repo: GITHUB_REPO,
   per_page: 100,
 });
 
@@ -49,8 +48,8 @@ const draft = drafts[0];
 
 step(`Publishing release ${tag} (id: ${draft.id}, prerelease: ${isCanary})`);
 await octokit.rest.repos.updateRelease({
-  owner: OWNER,
-  repo: REPO,
+  owner: GITHUB_OWNER,
+  repo: GITHUB_REPO,
   release_id: draft.id,
   draft: false,
   prerelease: isCanary,
