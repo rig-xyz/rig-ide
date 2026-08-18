@@ -3,7 +3,7 @@ import { Bell, FolderDown } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { relativeTime } from '@renderer/features/chat/session-history';
-import { defaultJoinDir } from '@renderer/features/home/join-flow';
+import { defaultJoinDir, joinTargetDir } from '@renderer/features/home/join-flow';
 import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
@@ -215,7 +215,10 @@ function InviteRow({ row, onOpenPath }: { row: MyInviteRow; onOpenPath: (path: s
         defaultPath: defaultJoinDir(row.rigName),
       });
       if (!picked) return;
-      const result = await rpc.rig.join.attach({ bindingId: row.bindingId, targetDir: picked });
+      const result = await rpc.rig.join.attach({
+        bindingId: row.bindingId,
+        targetDir: joinTargetDir(picked, row.rigName),
+      });
       if (!result.success) {
         setSetupError(result.error.message);
         return;

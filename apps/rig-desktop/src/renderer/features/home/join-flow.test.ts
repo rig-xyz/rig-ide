@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultJoinDir, slugifyRigName } from './join-flow';
+import { defaultJoinDir, joinTargetDir, slugifyRigName } from './join-flow';
 
 describe('slugifyRigName', () => {
   it('lowercases and hyphenates', () => {
@@ -32,5 +32,19 @@ describe('defaultJoinDir', () => {
 
   it('falls back honestly for an unnamed rig', () => {
     expect(defaultJoinDir(null)).toBe('~/Rigs/shared-rig');
+  });
+});
+
+describe('joinTargetDir', () => {
+  it('puts the rig in its own folder inside the picked one — picking ~/Code must never make ~/Code itself the rig', () => {
+    expect(joinTargetDir('/Users/d/Code', 'taprig')).toBe('/Users/d/Code/taprig');
+  });
+
+  it('does not nest a second copy when the picked folder is already named for the rig', () => {
+    expect(joinTargetDir('/Users/d/Code/taprig', 'taprig')).toBe('/Users/d/Code/taprig');
+  });
+
+  it('tolerates a trailing slash and an unnamed rig', () => {
+    expect(joinTargetDir('/Users/d/Code/', null)).toBe('/Users/d/Code/shared-rig');
   });
 });

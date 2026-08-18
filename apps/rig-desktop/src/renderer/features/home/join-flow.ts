@@ -20,3 +20,22 @@ export function slugifyRigName(name: string | null): string {
 export function defaultJoinDir(name: string | null): string {
   return `~/Rigs/${slugifyRigName(name)}`;
 }
+
+/**
+ * Where a rig actually materializes given the folder a person PICKED.
+ *
+ * The native directory picker returns the folder they selected, and a rig
+ * must never be unpacked directly into it: someone choosing `~/Code`
+ * means "put it in here", not "turn ~/Code itself into this rig". Passing
+ * the picked path through verbatim did exactly that — it bound `~/Code`
+ * as a rig workspace and pointed the sync daemon at every project inside
+ * it (it died on EMFILE watching them, which is the only reason nothing
+ * was uploaded). The rig always gets its own folder, named for itself.
+ */
+export function joinTargetDir(pickedDir: string, name: string | null): string {
+  const parent = pickedDir.replace(/\/+$/, '');
+  const slug = slugifyRigName(name);
+  // Already inside a folder of that name (they navigated into it, or
+  // picked a folder they made for it) — don't nest a second copy.
+  return parent.split('/').pop() === slug ? parent : `${parent}/${slug}`;
+}

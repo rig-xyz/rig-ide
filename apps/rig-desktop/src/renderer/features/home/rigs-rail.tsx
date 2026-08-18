@@ -39,7 +39,7 @@ import {
   type HomeRigRow,
   type HomeRigSession,
 } from './home-sections';
-import { defaultJoinDir } from './join-flow';
+import { defaultJoinDir, joinTargetDir } from './join-flow';
 
 /**
  * Round: HOME RESTRUCTURE — the left region ("YOUR RIGS", the action
@@ -660,7 +660,10 @@ function RelayOnlyActionsMenu({
         defaultPath: defaultJoinDir(row.name),
       });
       if (!picked) return;
-      const result = await rpc.rig.join.attach({ bindingId: row.bindingId, targetDir: picked });
+      const result = await rpc.rig.join.attach({
+        bindingId: row.bindingId,
+        targetDir: joinTargetDir(picked, row.name),
+      });
       if (!result.success) {
         onError(result.error.message);
         return;
