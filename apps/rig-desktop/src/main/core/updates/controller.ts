@@ -5,6 +5,15 @@ import { RIG_RELEASES_URL } from '@shared/urls';
 import { formatUpdaterError } from './utils';
 
 export const updateController = createRPCController({
+  /**
+   * Whether the updater can do anything at all. electron-updater refuses to
+   * run unpacked, so in development `initialize()` throws and the service
+   * never activates — a "Check for updates" click then resolves to null
+   * with no event emitted, which reads to the user as a dead button. The
+   * UI asks this first and says so plainly instead.
+   */
+  isSupported: async () => app.isPackaged,
+
   check: async () => {
     try {
       const result = await updateService.checkForUpdates();

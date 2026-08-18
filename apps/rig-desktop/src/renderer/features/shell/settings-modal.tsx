@@ -382,21 +382,39 @@ function AppUpdateRow() {
     return () => clearInterval(id);
   }, []);
 
+  const { data: supported } = useQuery({
+    queryKey: ['rig', 'updates', 'supported'],
+    queryFn: () => rpc.update.isSupported(),
+    staleTime: Infinity,
+  });
+
   const line = deriveUpdateStatusLine(state, now);
   const action = deriveUpdateAction(state.status);
 
+  // Development builds can't self-update (electron-updater requires a packed
+  // app), so offering the button would be offering nothing.
+  if (supported === false) {
+    return (
+      <div className="border-border-hairline mt-1 border-t pt-3">
+        <p className="text-text-muted text-xs">Updates apply to the installed app.</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex items-center justify-between gap-3">
-      <p className={cn('text-xs', state.status === 'error' ? 'text-danger' : 'text-text-muted')}>{line}</p>
-      {action.kind === 'restart' ? (
-        <Button size="xs" onClick={restart} className="shrink-0">
-          {action.label}
-        </Button>
-      ) : (
-        <Button variant="outline" size="xs" onClick={check} disabled={action.disabled} className="shrink-0">
-          {action.label}
-        </Button>
-      )}
+    <div className="border-border-hairline mt-1 flex items-center justify-between gap-4 border-t pt-3">
+      <p className={cn('text-xs', state.status === 'error' ? 'text-danger' : 'text-text-muted')}>
+        {line}
+      </p>
+      <Button
+        variant="outline"
+        size="xs"
+        onClick={action.kind === 'restart' ? restart : check}
+        disabled={action.kind === 'check' && action.disabled}
+        className="shrink-0"
+      >
+        {action.label}
+      </Button>
     </div>
   );
 }
