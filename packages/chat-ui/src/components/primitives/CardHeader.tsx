@@ -5,6 +5,7 @@ import {
   cardChevronExpanded,
   cardErrorIcon,
   cardHeader,
+  cardHeaderFlat,
   cardHeaderLeft,
   cardHeaderRight,
   cardHeaderTitle,
@@ -39,12 +40,18 @@ export type CardHeaderProps = {
   awaitingPermission?: boolean;
   /** Optional right-aligned content beside the status icon. */
   right?: JSX.Element;
+  /**
+   * `false` drops the header/body separator line — pairs with
+   * `CollapsibleCard`'s `chrome="line"` (design-system Rule 9: card chrome
+   * is reserved for file-edit summaries). Default `true`, unchanged.
+   */
+  bordered?: boolean;
 };
 
 export function CardHeader(props: CardHeaderProps) {
   return (
     <div
-      class={cardHeader}
+      class={props.bordered === false ? cardHeaderFlat : cardHeader}
       style={{ height: `${props.height}px` }}
       role="button"
       aria-expanded={props.expanded ? 'true' : 'false'}

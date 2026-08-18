@@ -1,0 +1,132 @@
+/*
+ * chat-theme.css — host override preset binding @emdash/chat-ui's `--chat-*`
+ * contract variables to this app's design-system tokens (`docs/design-system.md`).
+ *
+ * Modeled on emdash-desktop's `packages/ui/src/react/chat-ui/chat-theme.css`
+ * (same `--chat-*` surface, same "host override beats :where() defaults"
+ * mechanism) but rebound to rig's tokens instead of Emdash's `--em-*` system,
+ * and scoped to this app's actual theme selector (`:root[data-theme]`, see
+ * `renderer/tokens.css`) rather than Emdash's `.emlight`/`.emdark` classes —
+ * this app never applies those classes.
+ *
+ * Per the accent budget (design-system.md): teal is reserved for primary
+ * buttons, presence dots, links, focus rings, and live indicators. Mention
+ * pills and diff markers below stay neutral/semantic rather than teal-tinted.
+ */
+
+:root[data-theme='dark'],
+:root:not([data-theme]) {
+  --chat-fg: var(--text-primary);
+  --chat-fg-body: var(--text-primary);
+  --chat-fg-muted: var(--text-secondary);
+  --chat-fg-passive: var(--text-muted);
+
+  --chat-bg: var(--bg-1);
+  --chat-bg-1: var(--bg-1);
+  --chat-bg-2: var(--bg-2);
+  --chat-bg-3: var(--bg-2);
+
+  --chat-border: var(--border-hairline);
+
+  --chat-user-card-bg: var(--bg-2);
+  /* border-strong, not -hairline: a chat bubble needs to read as clearly
+     bounded at rest (round 12's user-bubble-polish pass) — a hairline all
+     but disappears against the bg-2 fill it's already drawn on. */
+  --chat-user-card-border: var(--border-strong);
+  --chat-user-card-border-hover: var(--border-strong);
+
+  --chat-mention-chip-bg: var(--bg-2);
+  --chat-mention-chip-fg: var(--text-primary);
+  --chat-mention-file-bg: var(--bg-2);
+  --chat-mention-file-fg: var(--text-primary);
+  --chat-mention-issue-bg: var(--bg-2);
+  --chat-mention-issue-fg: var(--text-primary);
+  --chat-mention-symbol-bg: var(--bg-2);
+  --chat-mention-symbol-fg: var(--text-primary);
+  --chat-mention-custom-bg: var(--bg-2);
+  --chat-mention-custom-fg: var(--text-primary);
+  --chat-mention-bg: var(--bg-2);
+  --chat-mention-fg: var(--text-primary);
+
+  --chat-diff-added: var(--success);
+  --chat-diff-deleted: var(--danger);
+  --chat-diff-modified: var(--warning);
+
+  --chat-link: var(--accent);
+  --chat-bubble-user: var(--bg-2);
+  --chat-bubble-user-fg: var(--text-primary);
+
+  --chat-code-bg: var(--bg-2);
+  --chat-code-inline-bg: rgba(255, 255, 255, 0.08);
+  --chat-table-header-bg: var(--bg-2);
+
+  --chat-font-sans: var(--font-sans);
+  --chat-font-mono: var(--font-mono);
+  /* Radii: 6px controls, 10px cards (design-system.md) — chat-ui's sm/md/lg/xl
+     scale only distinguishes "control" vs "card", so both collapse onto ours. */
+  --chat-radius-sm: var(--radius-control);
+  --chat-radius-md: var(--radius-card);
+  --chat-radius-lg: var(--radius-card);
+  --chat-radius-xl: var(--radius-card);
+  --chat-radius-full: var(--radius-chip);
+}
+
+:root[data-theme='light'] {
+  --chat-fg: var(--text-primary);
+  --chat-fg-body: var(--text-primary);
+  --chat-fg-muted: var(--text-secondary);
+  --chat-fg-passive: var(--text-muted);
+
+  --chat-bg: var(--bg-1);
+  --chat-bg-1: var(--bg-1);
+  --chat-bg-2: var(--bg-2);
+  --chat-bg-3: var(--bg-2);
+
+  --chat-border: var(--border-hairline);
+
+  --chat-user-card-bg: var(--bg-2);
+  /* border-strong, not -hairline: a chat bubble needs to read as clearly
+     bounded at rest (round 12's user-bubble-polish pass) — a hairline all
+     but disappears against the bg-2 fill it's already drawn on. */
+  --chat-user-card-border: var(--border-strong);
+  --chat-user-card-border-hover: var(--border-strong);
+
+  --chat-mention-chip-bg: var(--bg-2);
+  --chat-mention-chip-fg: var(--text-primary);
+  --chat-mention-file-bg: var(--bg-2);
+  --chat-mention-file-fg: var(--text-primary);
+  --chat-mention-issue-bg: var(--bg-2);
+  --chat-mention-issue-fg: var(--text-primary);
+  --chat-mention-symbol-bg: var(--bg-2);
+  --chat-mention-symbol-fg: var(--text-primary);
+  --chat-mention-custom-bg: var(--bg-2);
+  --chat-mention-custom-fg: var(--text-primary);
+  --chat-mention-bg: var(--bg-2);
+  --chat-mention-fg: var(--text-primary);
+
+  --chat-diff-added: var(--success);
+  --chat-diff-deleted: var(--danger);
+  --chat-diff-modified: var(--warning);
+
+  --chat-link: var(--accent);
+  --chat-bubble-user: var(--bg-2);
+  --chat-bubble-user-fg: var(--text-primary);
+
+  --chat-code-bg: var(--bg-2);
+  --chat-code-inline-bg: rgba(0, 0, 0, 0.06);
+  --chat-table-header-bg: var(--bg-2);
+
+  --chat-font-sans: var(--font-sans);
+  --chat-font-mono: var(--font-mono);
+  --chat-radius-sm: var(--radius-control);
+  --chat-radius-md: var(--radius-card);
+  --chat-radius-lg: var(--radius-card);
+  --chat-radius-xl: var(--radius-card);
+  --chat-radius-full: var(--radius-chip);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --chat-code-inline-bg: rgba(0, 0, 0, 0.06);
+  }
+}

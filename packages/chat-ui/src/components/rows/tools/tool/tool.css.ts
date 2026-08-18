@@ -13,7 +13,11 @@ export const toolVars = createVariableThemeContract<ToolStyleVars>({ rowH: null 
 export const toolRoot = style([
   sx({ display: 'flex', alignItems: 'center', borderColor: 'border' }),
   // overflow:hidden ensures content never escapes the reserved rowH.
-  { height: toolVars.rowH, overflow: 'hidden' },
+  // paddingLeft/Right match CardHeader's own 8px (card-header.css.ts) — the
+  // primitive execute/file-op/diff rows share via CollapsibleCard — so a
+  // Tool row's leading icon and label line up with theirs rather than
+  // starting flush at the row's outer inset with no icon at all.
+  { height: toolVars.rowH, overflow: 'hidden', paddingLeft: '8px', paddingRight: '8px' },
 ]);
 
 export const toolRow = style([
@@ -22,6 +26,19 @@ export const toolRow = style([
   // text-overflow ellipsis can take effect on the name and summary spans.
   { minWidth: 0 },
 ]);
+
+// Matches CardHeader's `cardLeadingSlot` (card-header.css.ts): a fixed
+// 14x14 box so every tool-call row — CollapsibleCard-based or this plain
+// one — reserves the same leading space, icon or not.
+export const toolIcon = style({
+  width: '14px',
+  height: '14px',
+  flexShrink: 0,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  color: vars.fgMuted,
+});
 
 export const toolName = style({
   fontSize: vars.typeBodyFontSize,

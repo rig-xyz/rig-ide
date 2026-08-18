@@ -39,6 +39,18 @@ import type { ChatItem, ChatSubagentToolCall, ChatToolCall } from '@/model';
 import { toolGroupCardVars, toolGroupRoot } from './tool-group.css';
 import { subagentChildrenOffset } from '@components/rows/tools/subagent/subagent.css';
 
+/**
+ * Humanized group-header labels, keyed by the root item's own `kind` — the
+ * only kinds that can root a group are `CHILD_DEFS`'s keys minus `subagent`
+ * (which never reaches this map; it has its own header). `tool` isn't here
+ * either — it's handled separately via the item's own `name`.
+ */
+const GROUP_KIND_LABELS: Partial<Record<ChatItem['kind'], string>> = {
+  execute: 'Command',
+  diff: 'Edit',
+  'file-op': 'File change',
+};
+
 // ── Vars ──────────────────────────────────────────────────────────────────────
 
 export type ToolGroupVars = {
@@ -208,7 +220,13 @@ function ToolGroupRender(props: { data: ItemNode; ctx: RenderCtx; vars: ToolGrou
   const label = () => {
     const item = props.data.item;
     if (item.kind === 'tool') return (item as ChatToolCall).name;
-    return item.kind;
+    // Second leak site of the same class the `Tool` row already fixed
+    // (design-system Rule 9): a group header must never show a raw
+    // ACP-internal kind string verbatim. `GROUP_KIND_LABELS` covers every
+    // kind that can actually root a group (subagent has its own header,
+    // handled by the `isSubagent()` branch above and never reaches here);
+    // the raw kind is the fallback only, never silently dropped.
+    return GROUP_KIND_LABELS[item.kind] ?? item.kind;
   };
 
   const showCollapsedPreview = () => canShowCollapsedPreview(props.data.item);

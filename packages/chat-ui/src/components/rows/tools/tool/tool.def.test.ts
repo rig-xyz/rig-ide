@@ -15,6 +15,19 @@ function searchItem(query: string) {
   } satisfies Extract<ToolNode, { kind: 'search-tool-call' }>;
 }
 
+function unknownItem(name: string, toolKind: string | null) {
+  return {
+    kind: 'unknown-tool-call',
+    id: 'unknown-1',
+    seq: 0,
+    toolCallId: 'call-2',
+    title: name,
+    status: 'done',
+    toolKind,
+    name,
+  } satisfies Extract<ToolNode, { kind: 'unknown-tool-call' }>;
+}
+
 const ctx = {
   pendingToolCallIds: () => new Set<string>(),
 } as SegmentCtx;
@@ -31,6 +44,25 @@ describe('toolFromItem', () => {
     expect(toolFromItem(searchItem('SolidJS virtualized list patterns'), ctx)).toMatchObject({
       name: 'Search',
       inputSummary: 'SolidJS virtualized list patterns',
+    });
+  });
+
+  it('drops an uninformative "other" toolKind instead of showing it raw', () => {
+    expect(toolFromItem(unknownItem('Skill', 'other'), ctx)).toMatchObject({
+      name: 'Skill',
+      inputSummary: undefined,
+    });
+  });
+
+  it('drops a null or blank toolKind the same way', () => {
+    expect(toolFromItem(unknownItem('Skill', null), ctx).inputSummary).toBeUndefined();
+    expect(toolFromItem(unknownItem('Skill', '  '), ctx).inputSummary).toBeUndefined();
+  });
+
+  it('keeps a toolKind that actually says something', () => {
+    expect(toolFromItem(unknownItem('Skill', 'lint'), ctx)).toMatchObject({
+      name: 'Skill',
+      inputSummary: 'lint',
     });
   });
 });

@@ -1076,3 +1076,132 @@ describe('HostDependencyManager enumeration', () => {
     expect(npmInst?.isActive).toBe(false);
   });
 });
+
+/**
+ * The codex regression: a PATH-first candidate that resolves (`which` finds
+ * it) but doesn't run (a transitive dependency's wrapper script that throws
+ * immediately — `node_modules/.bin/codex` shadowing a healthy `npm install
+ * -g @openai/codex`, in the real failure this reproduces). Before this fix,
+ * `resolveFirstPath` took the first `which` hit unconditionally, and
+ * `resolveProbeStatus` reported 'available' the instant *any* path resolved,
+ * without looking at whether running it actually worked.
+ */
+describe('HostDependencyManager runability-aware resolution', () => {
+  const REPO_LOCAL_PATH = '/Users/dylan/Code/rigdash/node_modules/.bin/codex';
+  const GLOBAL_PATH = '/usr/local/bin/codex';
+  const BROKEN_STDERR =
+    'Error: Missing optional dependency @openai/codex-darwin-arm64. Reinstall Codex: npm install -g @openai/codex@latest';
+
+  function brokenFirstCtx() {
+    return makeCtx(async (command, args = []) => {
+      if (command === 'which' && args[0] === '-a' && args[1] === 'codex') {
+        return { stdout: `${REPO_LOCAL_PATH}\n${GLOBAL_PATH}\n`, stderr: '' };
+      }
+      if (command === 'which' && args[0] === 'codex') {
+        return { stdout: `${REPO_LOCAL_PATH}\n`, stderr: '' };
+      }
+      if (command === 'realpath') {
+        return { stdout: `${args[0]}\n`, stderr: '' };
+      }
+      if (command === REPO_LOCAL_PATH && args[0] === '--version') {
+        const error = new Error('exit 1') as Error & {
+          code: number;
+          stdout: string;
+          stderr: string;
+        };
+        error.code = 1;
+        error.stdout = '';
+        error.stderr = BROKEN_STDERR;
+        throw error;
+      }
+      if (command === GLOBAL_PATH && args[0] === '--version') {
+        return { stdout: 'codex-cli 0.42.0\n', stderr: '' };
+      }
+      throw new Error(`Unexpected: ${command} ${args.join(' ')}`);
+    });
+  }
+
+  it('skips a resolvable-but-broken PATH-first candidate and selects the next runnable one', async () => {
+    const manager = new HostDependencyManager(brokenFirstCtx(), {
+      dependencies: TEST_DEPENDENCIES,
+      installMethodDetector: unknownDetector,
+    });
+
+    const state = await manager.probe('codex');
+
+    // The path actually used for spawning (resolveCli in plugin-host.ts reads
+    // exactly this) is the working global install, not the broken repo-local
+    // wrapper that happened to be first on PATH.
+    expect(state.path).toBe(GLOBAL_PATH);
+    expect(state.status).toBe('available');
+    expect(state.version).toBe('0.42.0');
+  });
+
+  it('reports a resolvable-but-broken install as available nowhere: status is error, not available', async () => {
+    // Only the broken candidate exists this time — nothing to fall through to.
+    const onlyBrokenCtx = makeCtx(async (command, args = []) => {
+      if (command === 'which' && args[0] === '-a' && args[1] === 'codex') {
+        return { stdout: `${REPO_LOCAL_PATH}\n`, stderr: '' };
+      }
+      if (command === 'which' && args[0] === 'codex') {
+        return { stdout: `${REPO_LOCAL_PATH}\n`, stderr: '' };
+      }
+      if (command === 'realpath') {
+        return { stdout: `${args[0]}\n`, stderr: '' };
+      }
+      if (command === REPO_LOCAL_PATH && args[0] === '--version') {
+        const error = new Error('exit 1') as Error & {
+          code: number;
+          stdout: string;
+          stderr: string;
+        };
+        error.code = 1;
+        error.stdout = '';
+        error.stderr = BROKEN_STDERR;
+        throw error;
+      }
+      throw new Error(`Unexpected: ${command} ${args.join(' ')}`);
+    });
+
+    const manager = new HostDependencyManager(onlyBrokenCtx, {
+      dependencies: TEST_DEPENDENCIES,
+      installMethodDetector: unknownDetector,
+    });
+
+    const state = await manager.probe('codex');
+
+    // A resolved path is no longer sufficient on its own — it has to have
+    // actually run. This is what makes the mention menu show "broken" with a
+    // fix command instead of quietly offering a mention that always fails.
+    expect(state.path).toBe(REPO_LOCAL_PATH);
+    expect(state.status).toBe('error');
+  });
+
+  it('marks the runnable installation active in the enumerated list, not merely the first on PATH', async () => {
+    const manager = new HostDependencyManager(brokenFirstCtx(), {
+      dependencies: TEST_DEPENDENCIES,
+      installMethodDetector: unknownDetector,
+    });
+
+    const events: Array<{ hostDependency?: { installations: unknown[] } }> = [];
+    manager.onStatusUpdated.subscribe((e) => events.push(e));
+
+    await manager.probe('codex');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const hostDepEvent = events.find((e) => e.hostDependency !== undefined);
+    const installations = (hostDepEvent?.hostDependency?.installations ?? []) as Array<{
+      pathEntry: string;
+      isActive: boolean;
+      status: string;
+    }>;
+
+    expect(installations).toHaveLength(2);
+    const repoLocal = installations.find((i) => i.pathEntry === REPO_LOCAL_PATH);
+    const global = installations.find((i) => i.pathEntry === GLOBAL_PATH);
+
+    expect(repoLocal?.isActive).toBe(false);
+    expect(global?.isActive).toBe(true);
+    expect(global?.status).toBe('available');
+  });
+});

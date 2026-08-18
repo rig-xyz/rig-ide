@@ -46,4 +46,4 @@ export {
   resolveRealpath,
   runVersionProbe,
 } from './probe';
-export { buildDescriptorFromProvider } from '../descriptor-from-provider';
+export { agentResolveStatus, buildDescriptorFromProvider } from '../descriptor-from-provider';

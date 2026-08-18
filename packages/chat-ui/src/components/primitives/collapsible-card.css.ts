@@ -21,3 +21,16 @@ export const collapsibleCard = style({
   boxSizing: 'border-box',
   height: collapsibleCardVars.height,
 });
+
+/**
+ * `chrome: 'line'` shell (design-system Rule 9) — same height/overflow
+ * mechanics as `collapsibleCard` (so the collapse/expand tween still tracks
+ * correctly) but no border or radius: card chrome is reserved for file-edit
+ * summaries, everything else is a quiet line whose "card" is really just an
+ * optional inset content block under it (see `Execute`'s `expandedInset`).
+ */
+export const collapsibleCardFlat = style({
+  overflow: 'hidden',
+  boxSizing: 'border-box',
+  height: collapsibleCardVars.height,
+});

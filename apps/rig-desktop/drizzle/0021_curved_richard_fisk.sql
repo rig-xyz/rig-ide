@@ -1,0 +1,1 @@
+ALTER TABLE `rig_sessions` ADD `acp_session_id` text;

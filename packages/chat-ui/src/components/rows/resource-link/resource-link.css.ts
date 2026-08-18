@@ -24,13 +24,14 @@ const rowBase = style({
 
 export const rowStatic = rowBase;
 
+// No border (design-system Rule 9: card chrome is reserved for file-edit
+// summaries — a resource link is a row, not that). Hover = bg shift only.
 export const rowClickable = style([
   rowBase,
   {
     cursor: 'pointer',
     padding: '8px',
     borderRadius: vars.radiusLg,
-    border: `1px solid ${vars.border}`,
     width: '100%',
     transition: 'background 150ms, color 150ms',
     selectors: {

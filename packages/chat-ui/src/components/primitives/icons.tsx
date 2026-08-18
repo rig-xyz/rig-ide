@@ -5,6 +5,7 @@ export { IconError } from './icons/IconError';
 export { IconPlanList } from './icons/IconPlanList';
 export { IconQuote } from './icons/IconQuote';
 export { IconShieldAlert } from './icons/IconShieldAlert';
+export { IconSparkles } from './icons/IconSparkles';
 export { IconStop } from './icons/IconStop';
 export { IconTerminal } from './icons/IconTerminal';
 export { IconThread } from './icons/IconThread';

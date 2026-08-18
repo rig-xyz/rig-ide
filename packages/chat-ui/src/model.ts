@@ -55,6 +55,15 @@ export type ChatMessage = {
   streaming?: boolean;
   /** Image attachments rendered as a thumbnail strip above the text (user messages). */
   attachments?: ChatImageAttachment[];
+  /**
+   * Epoch-ms this message's turn was actually persisted, if the host app
+   * tracks that — absent when unknown (a turn not yet written anywhere, or
+   * a host with no persistence at all). Never a client-clock guess: hosts
+   * that set this are expected to source it from their own honest,
+   * write-time-stamped storage, not `Date.now()` at render time. Read by
+   * `UserMessageCard`'s hover-reveal timestamp; unset renders nothing.
+   */
+  at?: number | null;
 };
 
 export type ChatToolCall = {
@@ -69,6 +78,14 @@ export type ChatToolCall = {
   inputSummary?: string;
   /** Id of the parent tool call (for hierarchical rendering). */
   parentId?: string;
+  /**
+   * The provider's raw, unclassified tool kind (`unknown-tool-call.toolKind`)
+   * — captured even when it's not meaningful enough for the primary line
+   * (e.g. `'other'`, or absent). Rule 9: nothing gets discarded on
+   * principle; this is what a suppressed kind relocates to (a hover
+   * tooltip — `Tool.tsx` has no expand affordance to put it in otherwise).
+   */
+  rawKind?: string | null;
 };
 
 export type SubagentPhase = 'spawning' | 'running' | 'completed' | 'failed';

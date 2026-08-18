@@ -8,6 +8,7 @@
  */
 
 import { globalStyle, style } from '@vanilla-extract/css';
+import { webkitThinScrollbar } from '@styles/scrollbar.css';
 import { vars } from '@styles/theme.css';
 
 /** Scroll + card container (inner div, no .pblock so overflow-x-auto wins). */
@@ -23,6 +24,16 @@ export const codeWrapper = style({
   // Thin scrollbar
   scrollbarWidth: 'thin',
 });
+
+globalStyle(`${codeWrapper}::-webkit-scrollbar`, {
+  width: '8px',
+  height: '8px',
+});
+
+// Polish round: same gap as the execute block — no track/thumb theming at
+// all, so Chromium fell back to its full default scrollbar. Horizontal
+// scroller, so the inset goes on the left/right ends instead of top/bottom.
+webkitThinScrollbar(codeWrapper, 'horizontal');
 
 /** Shiki token color: light mode — spans inside the wrapper. */
 globalStyle(`${codeWrapper} span`, {

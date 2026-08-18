@@ -1,8 +1,31 @@
 import type { CLIAgentPluginProvider } from '../agents/plugins';
 import type { DependencyDescriptor, DependencyStatus, ProbeResult } from './runtime';
 
-function agentResolveStatus(result: ProbeResult): DependencyStatus {
-  if (result.path !== null) return 'available';
+/**
+ * The default `resolveStatus` for every agent that doesn't supply its own —
+ * i.e. every agent that goes through `buildDescriptorFromProvider` at all,
+ * since the fallback below is what `resolveStatus` becomes when a provider's
+ * behavior doesn't override it. This always wins over
+ * `host-dependency-manager.ts`'s own `resolveProbeStatus` fallback (it checks
+ * `descriptor.resolveStatus` first and returns immediately if set) — so this
+ * function, not that one, is what actually decides every agent's status.
+ *
+ * Requires a passing probe before calling a resolved path 'available', for
+ * the same reason `resolveProbeStatus`'s fallback does: a `which` match only
+ * proves a binary is *named* right, not that it runs (or that it's the binary
+ * the reader thinks it is — a PATH name collision with an unrelated program
+ * of the same name looks identical to a working install right up until the
+ * moment something tries to actually run it as this agent). This used to
+ * return 'available' the instant a path resolved, without reading `result`
+ * at all — the exact bug the sibling fallback was fixed for, left
+ * unfixed here because this override shadows it for every agent.
+ */
+export function agentResolveStatus(result: ProbeResult): DependencyStatus {
+  if (result.path !== null) {
+    if (result.exitCode === 0) return 'available';
+    if (result.timedOut && result.stdout) return 'available';
+    return 'error';
+  }
   if (result.timedOut && result.stdout) return 'available';
   if (result.exitCode !== null && (result.stdout || result.stderr)) return 'available';
   return result.exitCode === null ? 'missing' : 'error';

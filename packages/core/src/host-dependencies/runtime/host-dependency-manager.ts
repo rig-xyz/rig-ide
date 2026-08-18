@@ -44,6 +44,9 @@ export type HostDependencyRunOptions = {
 
 const VERSION_RE = /(\d+\.\d+[\d.]*)/;
 
+/** Timeout for `resolveFirstPath`'s per-candidate runability probe — cheap, not the full version probe. */
+const RUNABILITY_PROBE_TIMEOUT_MS = 5_000;
+
 /** Methods that are non-PM origins — cannot be used for PM routing. */
 const NON_PM_KINDS = new Set(['manual', 'version-manager', 'unknown']);
 
@@ -80,7 +83,21 @@ function resolveProbeStatus(
   if (descriptor.resolveStatus) {
     return descriptor.resolveStatus(probe);
   }
-  if (resolvedPath !== null) return 'available';
+  if (resolvedPath !== null) {
+    // A concrete binary was found on PATH — but finding it only proves it's
+    // *named* right, not that it runs. This used to return 'available' the
+    // moment a path resolved, full stop, without even looking at `probe`: a
+    // transitive dependency's wrapper script that resolves to a real path and
+    // then immediately throws (codex's missing platform binary, see the
+    // punch-list report) was reported "available" on that basis alone. Trust
+    // what actually running it said instead.
+    if (probe.exitCode === 0) return 'available';
+    // A slow-starting CLI that hadn't finished printing its version yet is
+    // not the same failure as one that exited non-zero — same leniency the
+    // no-path branch below has always had.
+    if (probe.timedOut && probe.stdout) return 'available';
+    return 'error';
+  }
   if (probe.exitCode !== null && (probe.stdout || probe.stderr)) return 'available';
   if (probe.timedOut && probe.stdout) return 'available';
   return probe.exitCode === null ? 'missing' : 'error';
@@ -159,6 +176,17 @@ export class HostDependencyManager {
   private state = new Map<DependencyId, DependencyState>();
   /** Host-scoped installation data, populated for every dependency during probe(). */
   private hostState = new Map<DependencyId, HostDependency>();
+  /**
+   * Runability verdicts from `resolveFirstPath`'s candidate probing, keyed by
+   * resolved path. A `which`/`where` match only proves a binary is *named*
+   * right and sits somewhere on PATH — not that running it actually works
+   * (a transitive dependency's wrapper script that immediately throws still
+   * resolves a path). Cached because the probe that earns a verdict spawns a
+   * real process per candidate; cleared on `onExecutableInvalidated`, same
+   * trigger the resolved-path cache responds to, so a reinstall/update is
+   * re-probed rather than remembered as broken (or working) forever.
+   */
+  private readonly runabilityCache = new Map<string, boolean>();
 
   private readonly ctx: IExecutionContext;
   private readonly runInstallCommand: InstallCommandRunner;
@@ -191,6 +219,7 @@ export class HostDependencyManager {
       options.getDependencyDescriptor ?? ((id) => this._dependencies.find((d) => d.id === id));
     this.detector =
       options.installMethodDetector ?? createInstallMethodDetector(this.ctx, this.platform);
+    this.onExecutableInvalidated.subscribe(() => this.runabilityCache.clear());
     this.runInstallCommand =
       options.runInstallCommand ??
       (() =>
@@ -325,14 +354,22 @@ export class HostDependencyManager {
 
     for (let i = 0; i < allPaths.length; i++) {
       const pathEntry = allPaths[i]!;
-      const isFirstOverall = i === 0;
 
       const realpath = await resolveRealpath(pathEntry, this.ctx, this.platform);
 
       if (seenRealpaths.has(realpath)) continue;
       seenRealpaths.add(realpath);
 
-      const isActive = isFirstOverall;
+      // The installation `resolveFirstPath` actually selected (it probes
+      // runability now, see that method's docs) — not necessarily the first
+      // PATH hit, if that one doesn't run. `fullState` is the one path
+      // `resolveFirstPath` picked for this same descriptor; matching on it
+      // rather than on PATH position keeps this list's "active" entry and
+      // `probe()`'s own resolved state pointing at the same installation.
+      // Falls back to first-overall only when there's no `fullState` to
+      // compare against (skipVersionProbe, or nothing resolved at all) —
+      // the same cases the old position-only rule existed for.
+      const isActive = fullState !== null ? pathEntry === fullState.path : i === 0;
       const provenance = await this.detector.detect(realpath);
       const manageable = computeManageable(provenance, descriptor);
 
@@ -891,12 +928,58 @@ export class HostDependencyManager {
     return resolveInstallOptions(descriptor, this.platform);
   }
 
+  /**
+   * The path this dependency actually resolves to for spawning — the same
+   * choke point `probe()` (state/status) and `resolveCli` (real ACP spawn,
+   * `plugin-host.ts`) both build on. `which`/`where` order is PATH order, and
+   * PATH order has no idea one entry is a transitive dependency's wrapper
+   * script that immediately throws while a later entry is the user's real,
+   * working global install (exactly what happened with codex — repo-local
+   * `node_modules/.bin/codex` shadowing a healthy `npm install -g`). So this
+   * doesn't stop at the first match: it probes each PATH candidate in order
+   * and returns the first one that actually runs, only falling back to the
+   * plain first-match behavior when *nothing* on PATH runs — at which point
+   * `probe()`'s own version probe against that (still broken) path is what
+   * correctly reports the dependency as broken rather than available.
+   */
   private async resolveFirstPath(descriptor: DependencyDescriptor): Promise<string | null> {
     for (const command of descriptor.commands) {
-      const path = await resolveCommandPath(command, this.ctx, this.platform);
-      if (path) return path;
+      if (descriptor.skipVersionProbe) {
+        // Some CLIs run `--version` with side effects (see npmDependency's
+        // skipVersionProbe doc) — probing runability would trigger exactly
+        // what this flag exists to avoid, so first-match stands as before.
+        const path = await resolveCommandPath(command, this.ctx, this.platform);
+        if (path) return path;
+        continue;
+      }
+
+      const candidates = await resolveAllCommandPaths(command, this.ctx, this.platform);
+      let firstMatch: string | null = null;
+      for (const candidate of candidates) {
+        firstMatch ??= candidate;
+        if (await this.isRunnable(candidate, descriptor)) return candidate;
+      }
+      if (firstMatch) return firstMatch;
     }
     return null;
+  }
+
+  /** Cached, cheap (~5s timeout) `--version` probe — is this specific candidate actually runnable? */
+  private async isRunnable(path: string, descriptor: DependencyDescriptor): Promise<boolean> {
+    const cached = this.runabilityCache.get(path);
+    if (cached !== undefined) return cached;
+
+    const versionArgs = descriptor.versionArgs ?? ['--version'];
+    const probe = await runVersionProbe(
+      descriptor.commands[0] ?? descriptor.id,
+      path,
+      versionArgs,
+      this.ctx,
+      RUNABILITY_PROBE_TIMEOUT_MS
+    );
+    const runnable = probe.exitCode === 0;
+    this.runabilityCache.set(path, runnable);
+    return runnable;
   }
 
   private async refreshShellEnvIfRequested(options: DependencyProbeOptions = {}): Promise<void> {

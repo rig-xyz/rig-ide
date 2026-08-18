@@ -21,6 +21,24 @@ export const cardHeader = style({
   },
 });
 
+/** Same row, no header/body separator — pairs with `collapsibleCardFlat`. */
+export const cardHeaderFlat = style({
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '6px',
+  paddingLeft: '8px',
+  paddingRight: '8px',
+  cursor: 'pointer',
+  color: vars.fgMuted,
+  fontSize: vars.typeBodyFontSize,
+  transition: 'background 150ms',
+  userSelect: 'none',
+  selectors: {
+    '&:hover': { background: vars.bg3 },
+  },
+});
+
 export const cardHeaderLeft = style({
   display: 'flex',
   alignItems: 'center',

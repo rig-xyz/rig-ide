@@ -53,14 +53,18 @@ export type PlanEntryLaid = {
   priority: PlanEntryPriority;
 };
 
-/** Total horizontal chrome: 2*padX + 2*border. */
+/**
+ * Total horizontal chrome: 2*padX only — no border (design-system Rule 9:
+ * card chrome is reserved for file-edit summaries; a plan is a checklist,
+ * not that, so it renders as `CollapsibleCard`'s `chrome="line"`).
+ */
 function chromeX(vars: PlanVars): number {
-  return 2 * vars.padX + 2 * vars.border;
+  return 2 * vars.padX;
 }
 
-/** Total vertical chrome: top border + header separator + bottom border. */
-function chromeY(vars: PlanVars): number {
-  return 3 * vars.border;
+/** No border/separator chrome in the `chrome="line"` shell. */
+function chromeY(_vars: PlanVars): number {
+  return 0;
 }
 
 /** Total entry indent: icon box + icon gap. */
@@ -132,6 +136,7 @@ function PlanUnitRender(props: { data: ChatPlan; ctx: RenderCtx; vars: PlanVars 
       <CollapsibleCard
         id={props.data.id}
         ctx={props.ctx}
+        chrome="line"
         height={totalH()}
         headerH={props.vars.rowH}
         expanded={isExpanded()}

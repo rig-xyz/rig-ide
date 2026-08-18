@@ -1,0 +1,168 @@
+/*
+ * Rig design tokens — verbatim from `docs/collab-pivot-spec.md`'s companion,
+ * `docs/design-system.md` (frozen 2026-08-13 with Dylan). That doc + these
+ * tokens are color/type/spacing truth for this app. Do not invent inline
+ * hex values in components — propose new tokens here instead.
+ */
+
+/* Space Grotesk (display only: wordmark, empty-state headlines). Latin/latin-ext
+   weight-variable faces only — no italic axis needed for display use.
+   Must stay the first rule in this file: @import is only valid before any
+   other CSS rule (bar @charset/@layer), so it cannot sit below @font-face. */
+@import '@fontsource-variable/space-grotesk/wght.css';
+
+@font-face {
+  font-family: 'Geist Sans';
+  src: url('./assets/fonts/Geist-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('./assets/fonts/GeistMono-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* ── dark (default) ─────────────────────────────────────────── */
+  --bg-0: #09090b;
+  --bg-1: #0f0f12;
+  --bg-2: #18181b;
+  --border-hairline: #27272a;
+  --border-strong: #3f3f46;
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --accent: #5fa8a3;
+  --accent-subtle: rgba(95, 168, 163, 0.14);
+  --accent-ink: #04201d;
+  --success: #4ade80;
+  --warning: #c98a52;
+  --danger: #d9776b;
+  --shadow-soft: none;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+
+    --bg-0: #f9f9fa;
+    --bg-1: #ffffff;
+    --bg-2: #f1f1f3;
+    --border-hairline: #e4e4e7;
+    --border-strong: #d4d4d8;
+    --text-primary: #18181b;
+    --text-secondary: #52525b;
+    --text-muted: #a1a1aa;
+    --accent: #2f7a6d;
+    --accent-subtle: rgba(47, 122, 109, 0.12);
+    --accent-ink: #f4fbfa;
+    --success: #166534;
+    --warning: #9c6a34;
+    --danger: #b8483d;
+    --shadow-soft: 0 1px 2px rgba(24, 24, 27, 0.05), 0 10px 24px rgba(24, 24, 27, 0.07);
+  }
+}
+
+/* Explicit overrides (theme toggle) — an attribute selector on :root beats a
+   bare :root inside @media on specificity, so these win regardless of the
+   OS preference or declaration order. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg-0: #09090b;
+  --bg-1: #0f0f12;
+  --bg-2: #18181b;
+  --border-hairline: #27272a;
+  --border-strong: #3f3f46;
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --accent: #5fa8a3;
+  --accent-subtle: rgba(95, 168, 163, 0.14);
+  --accent-ink: #04201d;
+  --success: #4ade80;
+  --warning: #c98a52;
+  --danger: #d9776b;
+  --shadow-soft: none;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg-0: #f9f9fa;
+  --bg-1: #ffffff;
+  --bg-2: #f1f1f3;
+  --border-hairline: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --text-primary: #18181b;
+  --text-secondary: #52525b;
+  --text-muted: #a1a1aa;
+  --accent: #2f7a6d;
+  --accent-subtle: rgba(47, 122, 109, 0.12);
+  --accent-ink: #f4fbfa;
+  --success: #166534;
+  --warning: #9c6a34;
+  --danger: #b8483d;
+  --shadow-soft: 0 1px 2px rgba(24, 24, 27, 0.05), 0 10px 24px rgba(24, 24, 27, 0.07);
+}
+
+/*
+ * Tailwind preset: maps the semantic tokens above to Tailwind v4's `@theme`
+ * namespaces (`inline` so it re-reads the CSS custom properties at runtime
+ * rather than baking in build-time values — required since the tokens above
+ * change with `[data-theme]` / `prefers-color-scheme`). Components should use
+ * these utilities (`bg-bg-1`, `text-text-primary`, `border-border-hairline`,
+ * `text-accent`, `rounded-card`, …) or the raw `var(--token)` — never a raw hex.
+ */
+@theme inline {
+  --font-sans: 'Geist Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', Menlo, Monaco, Consolas, monospace;
+  --font-display: 'Space Grotesk Variable', 'Geist Sans', sans-serif;
+
+  --color-bg-0: var(--bg-0);
+  --color-bg-1: var(--bg-1);
+  --color-bg-2: var(--bg-2);
+  --color-border-hairline: var(--border-hairline);
+  --color-border-strong: var(--border-strong);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-accent-ink: var(--accent-ink);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+
+  --shadow-soft: var(--shadow-soft);
+
+  /* Radii: 6px controls, 10px cards/bubbles, 999px chips only. */
+  --radius-control: 6px;
+  --radius-card: 10px;
+  --radius-chip: 999px;
+
+  /* Type ramp 12/13/15/17/22/28. Body 15px/1.6. */
+  --text-xs: 12px;
+  --text-xs--line-height: 1.4;
+  --text-sm: 13px;
+  --text-sm--line-height: 1.5;
+  --text-base: 15px;
+  --text-base--line-height: 1.6;
+  --text-lg: 17px;
+  --text-lg--line-height: 1.5;
+  --text-xl: 22px;
+  --text-xl--line-height: 1.3;
+  --text-2xl: 28px;
+  --text-2xl--line-height: 1.2;
+
+  /* Motion: 150ms ease-out, shy. No decorative animation. */
+  --default-transition-duration: 150ms;
+  --default-transition-timing-function: ease-out;
+}

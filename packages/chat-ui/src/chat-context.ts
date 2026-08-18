@@ -107,7 +107,7 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
 
   let disposed = false;
 
-  registerFontsReadyClear(() => {
+  registerFontsReadyClear(theme.fonts, () => {
     if (disposed) return;
     sharedCaches.clearTextMeasure();
     bumpEpoch();

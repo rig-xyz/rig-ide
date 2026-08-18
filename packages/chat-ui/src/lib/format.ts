@@ -20,3 +20,18 @@ export function formatRelativeTime(epochMs: number, nowMs: number = Date.now()):
   if (h < 24) return `${h}h`;
   return `${Math.floor(h / 24)}d`;
 }
+
+/**
+ * `h:mm` + lowercase `am`/`pm`, no space — e.g. `2:04pm`. Empty on an
+ * invalid timestamp. Used for the hover-reveal precise time on a message
+ * (`UserMessageCard`'s `ChatMessage.at`) — relative time is glanceable
+ * without a hover, so the reveal is worth showing the absolute clock time.
+ */
+export function formatClockTime(epochMs: number): string {
+  const date = new Date(epochMs);
+  if (Number.isNaN(date.getTime())) return '';
+  return date
+    .toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+    .toLowerCase()
+    .replace(' ', '');
+}

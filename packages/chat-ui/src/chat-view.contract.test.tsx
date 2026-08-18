@@ -6,6 +6,8 @@
  * Monaco-style model-swap introduced in the ChatView setModel refactor.
  */
 
+import { messageUnitDef } from '@components/rows/message/message.def';
+import { userCardWidth } from '@components/rows/message/metrics';
 import { DEFAULT_THEME } from '@core/theme';
 import { describe, expect, it } from 'vitest';
 import { createChatContext } from '@/chat-context';
@@ -81,10 +83,21 @@ describe('createChatView', () => {
     document.body.removeChild(host);
   });
 
-  it('aligns pinned user messages with the measured transcript column', async () => {
+  it('sizes and right-aligns pinned user messages against the measured transcript column', async () => {
     const ctx = createChatContext({ theme: DEFAULT_THEME });
     const state = createChatState(ctx);
-    state.transcript.history.seed(generateMockTranscript(80, 11));
+    const turns = generateMockTranscript(80, 11);
+    state.transcript.history.seed(turns);
+
+    // The pinned overlay mirrors the transcript's LAST committed user
+    // message — find its text so the width formula (now content-fit, Round
+    // E) is checked against the SAME text the component actually measures.
+    const lastUserMessage = [...turns]
+      .reverse()
+      .flatMap((t) => t.items)
+      .find((item) => item.kind === 'message' && item.role === 'user');
+    expect(lastUserMessage).toBeDefined();
+    const pinnedText = (lastUserMessage as { text: string }).text;
 
     const host = document.createElement('div');
     host.style.cssText = 'position:fixed;top:0;left:0;width:800px;height:320px;';
@@ -105,8 +118,19 @@ describe('createChatView', () => {
 
     const pinRect = pinnedCard!.getBoundingClientRect();
     const probeRect = probe!.getBoundingClientRect();
-    expect(Math.abs(pinRect.left - probeRect.left)).toBeLessThan(1);
-    expect(Math.abs(pinRect.width - probeRect.width)).toBeLessThan(1);
+    // The bubble is capped narrower than the column and right-aligned within
+    // it (design-system round 10 — "not a full-width gray slab"), so it no
+    // longer shares the probe's left edge/width. What must still hold: the
+    // SAME width formula the engine measures with (`userCardWidth`, content-fit
+    // as of Round E) is what's actually on screen, and the bubble's right
+    // edge meets the column's.
+    const expectedWidth = userCardWidth(
+      pinnedText,
+      { width: probeRect.width, theme: DEFAULT_THEME } as Parameters<typeof userCardWidth>[1],
+      messageUnitDef.vars!
+    );
+    expect(Math.abs(pinRect.width - expectedWidth)).toBeLessThan(1);
+    expect(Math.abs(pinRect.right - probeRect.right)).toBeLessThan(1);
 
     view.dispose();
     ctx.dispose();

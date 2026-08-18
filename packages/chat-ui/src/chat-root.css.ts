@@ -6,7 +6,8 @@
  * should now pass a VE class or a raw CSS class string.
  */
 
-import { style } from '@vanilla-extract/css';
+import { globalStyle, style } from '@vanilla-extract/css';
+import { webkitThinScrollbar } from './styles/scrollbar.css';
 import { vars } from './styles/theme.css';
 
 /** Max-width of the centered content column — matches user message cards. */
@@ -49,7 +50,22 @@ export const scrollContainer = style({
   // composer slot carry the same gutter to stay aligned.
   paddingLeft: CONTENT_GUTTER,
   paddingRight: CONTENT_GUTTER,
+  // Thin overlay scrollbar — thumb only, no track, no border (round F:
+  // this was the platform-default scrollbar, which reads as visible chrome
+  // "a bar around it"). `scrollbarWidth`/`scrollbarColor` cover Firefox;
+  // the `globalStyle` block below covers Chromium/Electron, which ignores
+  // those two properties. Theme-aware via `vars.border` in both themes —
+  // no raw color.
+  scrollbarWidth: 'thin',
+  scrollbarColor: `${vars.border} transparent`,
 });
+
+globalStyle(`${scrollContainer}::-webkit-scrollbar`, {
+  width: '8px',
+  height: '8px',
+});
+
+webkitThinScrollbar(scrollContainer);
 
 /** Virtualizer canvas — positions all rows absolutely inside this container. */
 export const canvas = style({

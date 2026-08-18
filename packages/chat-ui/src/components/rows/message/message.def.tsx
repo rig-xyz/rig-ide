@@ -14,7 +14,7 @@ import { pxTokens } from '@styles/px-tokens';
 import { assignInlineVars } from '@vanilla-extract/dynamic';
 import { Show, createMemo } from 'solid-js';
 import type { ChatMessage } from '@/model';
-import { attachStripHeight, type MessageVars, userInnerWidth } from './metrics';
+import { attachStripHeight, type MessageVars, userInnerWidth, userTimestampFooterH } from './metrics';
 import { UserMessageCard } from './UserMessageCard';
 import {
   assistantOuter,
@@ -38,26 +38,66 @@ export function messageFromItem(item: ChatMessage, ctx: SegmentCtx): ChatMessage
 
 // ── Measure ───────────────────────────────────────────────────────────────────
 
-export function measureMessage(item: ChatMessage, ctx: MeasureCtx, vars: MessageVars): number {
-  const { userCardPadY, cardBorder, collapsedMaxH, expandedMaxH } = vars;
-  const blocks = item.streaming
-    ? ctx.caches.parseBlocksStreaming(item.id, item.text)
-    : ctx.caches.parseBlocks(item.id, item.text);
+type UserCardHeights = {
+  /** Uncapped content height — what the card would need to show everything. */
+  fullH: number;
+  /** `fullH`, capped to whichever bound (collapsed/expanded) is currently active. */
+  cardH: number;
+};
 
-  if (item.role === 'user') {
-    const innerW = userInnerWidth(ctx.width, vars);
-    const aH = attachStripHeight(item.attachments?.length ?? 0, innerW, vars);
-    if (blocks.length === 0) {
-      const fallback = aH + ctx.theme.fonts.body.lineHeight + 2 * userCardPadY + 2 * cardBorder;
-      return Math.min(fallback, ctx.expandedId === item.id ? expandedMaxH : collapsedMaxH);
-    }
+/**
+ * One measure pass for the user card, shared by `measureUserCard` (below —
+ * the card's own height, before the below-bubble actions row) and
+ * `measureMessage` (which also needs `fullH` to know whether the row must
+ * reserve space for "Show more" even when `at` is unset — see
+ * `userTimestampFooterH`'s own doc comment). Computed once so a message's
+ * height is never measured (and its block stack never laid out) twice per
+ * pass.
+ */
+function computeUserCardHeights(item: ChatMessage, ctx: MeasureCtx, vars: MessageVars): UserCardHeights {
+  const { userCardPadY, cardBorder, collapsedMaxH, expandedMaxH } = vars;
+  const blocks = ctx.caches.parseBlocks(item.id, item.text);
+  const innerW = userInnerWidth(item.text, ctx, vars);
+  const aH = attachStripHeight(item.attachments?.length ?? 0, innerW, vars);
+  const cap = ctx.expandedId === item.id ? expandedMaxH : collapsedMaxH;
+  let fullH: number;
+  if (blocks.length === 0) {
+    fullH = aH + ctx.theme.fonts.body.lineHeight + 2 * userCardPadY + 2 * cardBorder;
+  } else {
     const innerCtx = { ...ctx, width: innerW };
     const stack = layoutBlockStack(blocks, innerCtx, { isCollapsed: ctx.isCollapsed });
-    const contentH = aH + stack.height + 2 * userCardPadY + 2 * cardBorder;
-    return Math.min(contentH, ctx.expandedId === item.id ? expandedMaxH : collapsedMaxH);
+    fullH = aH + stack.height + 2 * userCardPadY + 2 * cardBorder;
+  }
+  return { fullH, cardH: Math.min(fullH, cap) };
+}
+
+/**
+ * A user card's own height, before the below-bubble actions row. Kept
+ * separate from the row's own addition so `UserMessageCard` (which needs
+ * the card height alone to size its animated tween) and `measureMessage`
+ * (which needs card + row together) share the exact same number.
+ */
+export function measureUserCard(item: ChatMessage, ctx: MeasureCtx, vars: MessageVars): number {
+  return computeUserCardHeights(item, ctx, vars).cardH;
+}
+
+export function measureMessage(item: ChatMessage, ctx: MeasureCtx, vars: MessageVars): number {
+  if (item.role === 'user') {
+    const { fullH, cardH } = computeUserCardHeights(item, ctx, vars);
+    // Clamp-redesign round: "was this message's FULL content taller than
+    // the collapsed cap" — regardless of `ctx.expandedId` (which only
+    // decides `cardH`'s own current cap) — same test as
+    // `UserMessageCard.tsx`'s own `wasOverflowingCollapsed`, computed here
+    // for `userTimestampFooterH`'s benefit (the row it now needs to reserve
+    // space in, even for an `at`-less host).
+    const needsClampAffordance = fullH > vars.collapsedMaxH;
+    return cardH + userTimestampFooterH(item, vars, needsClampAffordance);
   }
 
   // assistant / thought
+  const blocks = item.streaming
+    ? ctx.caches.parseBlocksStreaming(item.id, item.text)
+    : ctx.caches.parseBlocks(item.id, item.text);
   const footer = item.role === 'assistant' ? vars.footerH : 0;
   if (blocks.length === 0) {
     return ctx.theme.fonts.body.lineHeight + footer;
@@ -166,23 +206,37 @@ export const messageUnitDef = defineUnit<ChatMessage, MessageVars>({
   margin: { top: 8, bottom: 8 },
   vars: {
     cardBorder: 1,
-    collapsedMaxH: 120,
+    // Clamp-redesign round (Dylan's screenshot + threshold ask): 120 clamped
+    // at ~5 body lines (120 − 2×userCardPadY(8) − 2×cardBorder(1) = 84px of
+    // text ÷ the body font's 20px line-height) — aggressive enough that
+    // ordinary 4-8 line prompts routinely clamped. 280 clamps at ~13 body
+    // lines instead (280 − 18 = 262px ÷ 20px ≈ 13.1), landing in the
+    // requested 12-14 range: a typical prompt now renders in full, no fade,
+    // no affordance — only genuinely long messages ever see "Show more".
+    collapsedMaxH: 280,
     expandedMaxH: 360,
-    userCardPadX: 16,
-    userCardPadY: 16,
+    // Calmer padding (Round E, reference: Claude Code / Codex bubbles) —
+    // both values stay on the design system's 4/8/12/16/24/32 spacing
+    // scale, just a step tighter than the original 16/16.
+    userCardPadX: 12,
+    userCardPadY: 8,
     attachThumb: 32,
     attachGap: 8,
     footerH: 24,
+    maxCardWidth: 560,
+    userTimestampGap: 4,
+    userTimestampH: 16,
   },
 
   estimate(item, ctx, vars): number {
     if (item.role === 'user') {
-      const innerW = userInnerWidth(ctx.width, vars);
+      const innerW = userInnerWidth(item.text, ctx, vars);
       const lines = Math.max(1, Math.ceil(item.text.length / 60));
       const aH = attachStripHeight(item.attachments?.length ?? 0, innerW, vars);
       const est =
         aH + lines * ctx.theme.fonts.body.lineHeight + 2 * vars.userCardPadY + 2 * vars.cardBorder;
-      return Math.min(est, ctx.expandedId === item.id ? vars.expandedMaxH : vars.collapsedMaxH);
+      const cardH = Math.min(est, ctx.expandedId === item.id ? vars.expandedMaxH : vars.collapsedMaxH);
+      return cardH + userTimestampFooterH(item, vars);
     }
     const lines = Math.max(1, Math.ceil(item.text.length / 60));
     const footer = item.role === 'assistant' ? vars.footerH : 0;

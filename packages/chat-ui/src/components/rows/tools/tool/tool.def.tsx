@@ -7,6 +7,21 @@ import type { ChatToolCall, ToolNode } from '@/model';
 import { Tool } from './Tool';
 import { toolRoot, toolVars } from './tool.css';
 
+/**
+ * `toolKind` is the raw ACP-reported category for a tool call the reducer
+ * couldn't classify (`kind: 'unknown-tool-call'`, see
+ * `packages/core/src/acp/reducer/item-fold.ts`). Providers use it as a
+ * catch-all, and `'other'` (or nothing at all) is a real value it reports —
+ * showing it verbatim next to the tool's own name is how "Skill other"
+ * happens. Dropped rather than guessed at: this file has no reliable way to
+ * turn "other" into something truer than just not saying it.
+ */
+function meaningfulToolKind(toolKind: string | null | undefined): string | undefined {
+  const trimmed = toolKind?.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'other') return undefined;
+  return trimmed;
+}
+
 export function toolFromItem(item: ToolNode, ctx: SegmentCtx): ChatToolCall {
   const base = 'toolCallId' in item ? item : null;
   const name =
@@ -33,7 +48,7 @@ export function toolFromItem(item: ToolNode, ctx: SegmentCtx): ChatToolCall {
           : item.kind === 'spawn-subagent-tool-call'
             ? `${item.name}${item.background ? ' (background)' : ''}`
             : item.kind === 'unknown-tool-call'
-              ? (item.toolKind ?? undefined)
+              ? meaningfulToolKind(item.toolKind)
               : base?.inputSummary;
   return {
     kind: 'tool',
@@ -42,6 +57,7 @@ export function toolFromItem(item: ToolNode, ctx: SegmentCtx): ChatToolCall {
     status: 'status' in item ? item.status : 'done',
     awaitingPermission: base ? ctx.pendingToolCallIds().has(base.toolCallId) : false,
     inputSummary,
+    ...(item.kind === 'unknown-tool-call' ? { rawKind: item.toolKind } : {}),
   };
 }
 

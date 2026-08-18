@@ -2,6 +2,7 @@ import { definePlugin, registerPluginBehavior } from '@emdash/core/agents/plugin
 import { createNativeAcpBehavior } from '../../helpers/acp-stdio';
 import { buildGooseHookConfig } from './hooks';
 import { icon } from './icon';
+import { resolveGooseStatus } from './resolve-status';
 
 export const plugin = definePlugin(
   {
@@ -79,6 +80,13 @@ export const provider = registerPluginBehavior(plugin, {
   acp: createNativeAcpBehavior(() => ({
     args: ['acp'],
   })),
+  // Collision guard: `pressly/goose` (a Go DB-migration CLI, unrelated to
+  // this agent) answers to the same binary name and `--version` flag — see
+  // `resolve-status.ts`'s own doc comment for the real signature this
+  // distinguishes on.
+  hostDependency: {
+    resolveStatus: resolveGooseStatus,
+  },
   prompt: {
     buildCommand: (ctx) => {
       if (ctx.isResuming) {

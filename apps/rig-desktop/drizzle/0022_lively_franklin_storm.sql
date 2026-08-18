@@ -1,0 +1,1 @@
+ALTER TABLE `rig_sessions` ADD `title_source` text DEFAULT 'auto' NOT NULL;

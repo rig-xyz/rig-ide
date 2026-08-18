@@ -1558,9 +1558,13 @@ export function ChatRoot(props: ChatRootProps) {
       const userCard = t.closest('[data-user-card]') as HTMLElement | null;
       if (userCard?.dataset.userCard) {
         const id = userCard.dataset.userCard;
-        if (expandedUserId() !== id) {
-          setExpandedUserId(id);
-        }
+        // Round (long user message clamp): a real toggle, not set-only —
+        // clicking an already-expanded card used to do nothing (only a
+        // click OUTSIDE any card collapsed it, via the fallback branch
+        // below), which left the new "Show less" affordance
+        // (`UserMessageCard.tsx`) with no way to actually collapse via
+        // the card itself.
+        setExpandedUserId(expandedUserId() === id ? null : id);
         return;
       }
 

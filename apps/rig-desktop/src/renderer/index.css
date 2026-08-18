@@ -1,0 +1,83 @@
+@import 'tailwindcss';
+@import './tokens.css';
+/* xterm's own layout/layering CSS (`.xterm-screen`, `.xterm-viewport`,
+ * `.xterm-cursor-layer`, `.xterm-helper-textarea`, …) — REQUIRED, not
+ * optional: without it xterm's internal layers have no positioning at all,
+ * and its helper textarea (used to capture keyboard input, normally
+ * invisible) renders as a plain, visible, default-styled `<textarea>` that
+ * also picks up this app's own `:focus-visible` accent ring once
+ * `terminal.focus()` runs — the actual root cause of the sign-in dialog's
+ * "stray teal box" bug. emdash imports the same stylesheet the same way
+ * (`renderer/index.css`) — this app just never had an xterm consumer until
+ * the sign-in dialog. */
+@import '@xterm/xterm/css/xterm.css';
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-bg-0 text-text-primary font-sans;
+    font-size: var(--text-base);
+    line-height: var(--text-base--line-height);
+  }
+
+  ::selection {
+    background-color: var(--accent-subtle);
+    color: var(--text-primary);
+  }
+
+  /*
+   * Focus rings: the accent token, keyboard-only. A mouse click activating a
+   * control (a file-tree row, a card) shows that control's own active-state
+   * treatment — bg-2 + text shift, never a colored box — per the design
+   * system's rule against rails/boxes as state indicators. Without this,
+   * every plain `<button>` in the app (the file tree rows chief among them)
+   * falls back to the OS/browser's native focus ring, which follows the
+   * user's system accent color — amber on a Mac set to an orange accent,
+   * not a color this app chose or one `:focus-visible` alone would explain
+   * away, since a bare `:focus` fires on mouse activation too.
+   */
+  :focus {
+    outline: none;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /*
+   * The one shared scrollbar convention for this app's own scroll
+   * containers (Settings modal, Home's main scroll, the file browser/
+   * artifact panels) — otherwise unstyled surfaces that fell back to
+   * Chromium's full default scrollbar, visibly inconsistent next to
+   * chat-ui's own thin scrollbar (packages/chat-ui/src/styles/scrollbar.css.ts,
+   * the same numbers: 8px track, 4px top/bottom inset, full-pill thumb).
+   * Applied globally (`*`) rather than per-surface so a future scroll
+   * container gets this for free instead of needing to remember it.
+   */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-hairline) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+    margin-block: 4px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--border-hairline);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+}

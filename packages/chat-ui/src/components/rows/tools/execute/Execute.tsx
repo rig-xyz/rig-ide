@@ -1,28 +1,36 @@
 /**
- * Execute — SolidJS components for ChatExecute rows.
+ * Execute — SolidJS components for ChatExecute rows (design-system Rule 9:
+ * "quiet lines, not boxes — full fidelity, layered rendering").
  *
- * Renders ACP `kind: 'execute'` tool calls as a collapsible card:
+ *   Ran `pnpm run build --filter=...`                       ✓   ← primary line, always
+ *   ⤷ live last output line while running / purpose once settled  ← subtext, collapsed only
  *
- *   ┌─────────────────────────────────────┐
- *   │  Execute                          › │  ← header (CollapsibleCard primitive)
- *   ├─────────────────────────────────────┤
- *   │  pnpm run build --filter=...        │  ← body: mono, bash-highlighted
- *   │  ...                                │    clamped to collapsedMaxLines or
- *   └─────────────────────────────────────┘    expandedMaxLines with overflow scroll
+ *   Ran `pnpm run build --filter=...`                       ✓   ← expanded: primary line
+ *   │  pnpm run build --filter=...                              ← inset: full command (muted)
+ *   │  Building 4 packages…                                     ← inset: full output (primary)
+ *   │  ...
  *
- * Header + card shell are provided by CollapsibleCard.
- * Body:   collapsed = clamped height + fade overlay; expanded = scrollable.
+ * The header (primary line) is `CollapsibleCard`'s `chrome="line"` — no
+ * border, no card shell. `ExecuteBody` renders ONLY the expanded inset (a
+ * subtle left hairline, not a box) — the collapsed subtext ticker is a
+ * plain single line rendered directly by `execute.def.tsx`, not through
+ * this component.
  */
 
 import { useCaches } from '@components/contexts/CachesContext';
 import { cancelIdle, scheduleIdle } from '@components/engine/dom-utils';
 import { applyTokensToElement, type CodeToken } from '@core/highlight/apply-tokens';
-import { For, Show, createEffect, onCleanup } from 'solid-js';
+import { For, createEffect, onCleanup } from 'solid-js';
 import type { ChatExecute } from '@/model';
-import { executeBody, executeLine, executeOutputLine, executeSpacerLine } from './execute.css';
-import { fadeOverlayBottom } from '@styles/effects.css';
+import {
+  executeBody,
+  executeCommandLine,
+  executeInset,
+  executeLine,
+  executeSpacerLine,
+} from './execute.css';
 
-// ── ExecuteBody ───────────────────────────────────────────────────────────────
+// ── ExecuteBody (expanded inset only) ───────────────────────────────────────────
 
 export type ExecuteDisplayLine = {
   kind: 'command' | 'spacer' | 'output';
@@ -38,7 +46,6 @@ export type ExecuteBodyProps = {
   linePadX: number;
   scrollbarH: number;
   scrollbarGap: number;
-  expanded: boolean;
 };
 
 export function ExecuteBody(props: ExecuteBodyProps) {
@@ -83,53 +90,41 @@ export function ExecuteBody(props: ExecuteBodyProps) {
   const overflows = () => props.contentH > props.bodyH;
 
   return (
-    <div
-      class={executeBody}
-      style={{
-        height: `${props.bodyH}px`,
-        'padding-bottom': `${props.scrollbarH + props.scrollbarGap}px`,
-        '--execute-scrollbar-size': `${props.scrollbarH}px`,
-        'overflow-x': 'auto',
-        'overflow-y': props.expanded && overflows() ? 'auto' : 'hidden',
-      }}
-    >
-      <Show when={!props.expanded && overflows()}>
-        <div
-          class={fadeOverlayBottom}
-          style={{
-            position: 'absolute',
-            inset: '0',
-            'pointer-events': 'none',
-            height: '28px',
-            bottom: '0',
-            top: 'auto',
-          }}
-          aria-hidden="true"
-        />
-      </Show>
-      <For each={props.lines}>
-        {(line, i) => (
-          <div
-            ref={(el) => {
-              lineEls.set(i(), el);
-              onCleanup(() => lineEls.delete(i()));
-            }}
-            class={executeLine}
-            classList={{
-              [executeOutputLine]: line.kind === 'output',
-              [executeSpacerLine]: line.kind === 'spacer',
-            }}
-            style={{
-              height: `${props.codeLineH}px`,
-              'line-height': `${props.codeLineH}px`,
-              'padding-left': `${props.linePadX}px`,
-              'padding-right': `${props.linePadX}px`,
-            }}
-          >
-            {line.text}
-          </div>
-        )}
-      </For>
+    <div class={executeInset}>
+      <div
+        class={executeBody}
+        style={{
+          height: `${props.bodyH}px`,
+          'padding-bottom': `${props.scrollbarH + props.scrollbarGap}px`,
+          '--execute-scrollbar-size': `${props.scrollbarH}px`,
+          'overflow-x': 'auto',
+          'overflow-y': overflows() ? 'auto' : 'hidden',
+        }}
+      >
+        <For each={props.lines}>
+          {(line, i) => (
+            <div
+              ref={(el) => {
+                lineEls.set(i(), el);
+                onCleanup(() => lineEls.delete(i()));
+              }}
+              class={executeLine}
+              classList={{
+                [executeCommandLine]: line.kind === 'command',
+                [executeSpacerLine]: line.kind === 'spacer',
+              }}
+              style={{
+                height: `${props.codeLineH}px`,
+                'line-height': `${props.codeLineH}px`,
+                'padding-left': `${props.linePadX}px`,
+                'padding-right': `${props.linePadX}px`,
+              }}
+            >
+              {line.text}
+            </div>
+          )}
+        </For>
+      </div>
     </div>
   );
 }
