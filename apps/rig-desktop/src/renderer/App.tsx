@@ -1216,7 +1216,7 @@ function FileBrowser({
         onOpenChange={setImportOpen}
         onImported={handleOpenFile}
       />
-      <RigPeopleCard root={root} bindingId={bindingId} />
+      <RigPeopleCard root={root} bindingId={bindingId} onOpenFile={handleOpenFileFromCard} />
       <ActiveFiles root={root} bindingId={bindingId} onOpenFile={handleOpenFileFromCard} />
       <FileTree
         root={root}

@@ -14,9 +14,17 @@
  * prompt can ask a model not to print IDs, it cannot guarantee it.
  */
 
+/** Something in the prose a reader should be able to click through to. */
+export type SummaryTarget =
+  | { kind: 'rig'; bindingId: string }
+  | { kind: 'file'; relPath: string };
+
+/** A name the narration might mention, and where clicking it should go. */
+export type SummaryLink = { match: string; target: SummaryTarget };
+
 export type SummarySegment =
   | { kind: 'text'; text: string }
-  | { kind: 'rig'; text: string; bindingId: string };
+  | { kind: 'link'; text: string; target: SummaryTarget };
 
 /** Internal identifiers the narration sometimes cites. Never shown to a reader. */
 const ID_PATTERN = /\b(?:int|bnd|dev|chg)_[A-Za-z0-9]+\b/g;
@@ -39,37 +47,35 @@ export function stripIdentifiers(summary: string): string {
 }
 
 /**
- * Splits the cleaned summary on the names of rigs the reader actually has,
- * longest name first so `rig-bike-old` is never matched as `rig-bike`
- * followed by a stray `-old`. Matching is case-insensitive but the text
- * the reader sees is preserved exactly as the model wrote it.
+ * Splits the cleaned summary on every name the reader can actually open —
+ * their rigs, and the files the narration cites. Longest name first, so
+ * `rig-bike-old` is never matched as `rig-bike` plus a stray `-old`, and
+ * `untitled-1.md` never as `untitled-1`. Matching is case-insensitive
+ * while the text shown stays exactly as the model wrote it.
  */
-export function summarySegments(
-  summary: string,
-  rigs: readonly { bindingId: string; rigName: string }[]
-): SummarySegment[] {
+export function summarySegments(summary: string, links: readonly SummaryLink[]): SummarySegment[] {
   const cleaned = stripIdentifiers(summary);
   if (!cleaned) return [];
 
-  const named = rigs
-    .filter((rig) => rig.rigName.trim().length > 0)
-    .sort((a, b) => b.rigName.length - a.rigName.length);
-  if (named.length === 0) return [{ kind: 'text', text: cleaned }];
+  const candidates = links
+    .filter((link) => link.match.trim().length > 0)
+    .sort((a, b) => b.match.length - a.match.length);
+  if (candidates.length === 0) return [{ kind: 'text', text: cleaned }];
 
   const segments: SummarySegment[] = [];
   let rest = cleaned;
 
   while (rest.length > 0) {
     let bestIndex = -1;
-    let best: { bindingId: string; rigName: string } | null = null;
-    for (const rig of named) {
-      const index = rest.toLowerCase().indexOf(rig.rigName.toLowerCase());
+    let best: SummaryLink | null = null;
+    for (const link of candidates) {
+      const index = rest.toLowerCase().indexOf(link.match.toLowerCase());
       if (index === -1) continue;
-      // Earliest match wins; ties go to the longer name, which `named`
-      // already orders first.
+      // Earliest match wins; ties go to the longer name, which
+      // `candidates` already orders first.
       if (bestIndex === -1 || index < bestIndex) {
         bestIndex = index;
-        best = rig;
+        best = link;
       }
     }
     if (bestIndex === -1 || !best) {
@@ -78,14 +84,34 @@ export function summarySegments(
     }
     if (bestIndex > 0) segments.push({ kind: 'text', text: rest.slice(0, bestIndex) });
     segments.push({
-      kind: 'rig',
-      text: rest.slice(bestIndex, bestIndex + best.rigName.length),
-      bindingId: best.bindingId,
+      kind: 'link',
+      text: rest.slice(bestIndex, bestIndex + best.match.length),
+      target: best.target,
     });
-    rest = rest.slice(bestIndex + best.rigName.length);
+    rest = rest.slice(bestIndex + best.match.length);
   }
 
   return segments;
+}
+
+/** Every rig the briefing knows about, as link candidates. */
+export function rigLinks(
+  rigs: readonly { bindingId: string; rigName: string }[]
+): SummaryLink[] {
+  return rigs.map((rig) => ({ match: rig.rigName, target: { kind: 'rig', bindingId: rig.bindingId } }));
+}
+
+/**
+ * Files as link candidates, matched on BASENAME: the narration writes
+ * "untitled-1.md", never the full relative path, but clicking has to open
+ * the real file, so the path travels in the target while the basename does
+ * the matching.
+ */
+export function fileLinks(files: readonly { relPath: string }[]): SummaryLink[] {
+  return files.map((file) => ({
+    match: file.relPath.split('/').pop() ?? file.relPath,
+    target: { kind: 'file', relPath: file.relPath },
+  }));
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stripIdentifiers, stripRigPrefix, summarySegments } from './summary-segments';
+import { fileLinks, rigLinks, stripIdentifiers, stripRigPrefix, summarySegments } from './summary-segments';
 
 /**
  * The real case that prompted this: Dylan's own summary, IDs and all.
@@ -48,9 +48,9 @@ describe('stripIdentifiers', () => {
 
 describe('summarySegments', () => {
   it('turns every known rig name into a link carrying its bindingId', () => {
-    const linked = summarySegments(REAL, RIGS).filter((s) => s.kind === 'rig');
+    const linked = summarySegments(REAL, rigLinks(RIGS)).filter((s) => s.kind === 'link');
     expect(linked.map((s) => s.text)).toEqual(['rig-bike', 'cto-rig', 'test-google-import']);
-    expect(linked.map((s) => (s.kind === 'rig' ? s.bindingId : null))).toEqual([
+    expect(linked.map((s) => (s.kind === 'link' && s.target.kind === 'rig' ? s.target.bindingId : null))).toEqual([
       'bnd_bike',
       'bnd_cto',
       'bnd_import',
@@ -58,32 +58,35 @@ describe('summarySegments', () => {
   });
 
   it('reassembles to exactly the cleaned text, so linking never edits the prose', () => {
-    const rebuilt = summarySegments(REAL, RIGS)
+    const rebuilt = summarySegments(REAL, rigLinks(RIGS))
       .map((s) => s.text)
       .join('');
     expect(rebuilt).toBe(stripIdentifiers(REAL));
   });
 
   it('prefers the longest name so a prefix rig cannot swallow a longer one', () => {
-    const segments = summarySegments('work landed in rig-bike-old today', [
-      { bindingId: 'bnd_short', rigName: 'rig-bike' },
-      { bindingId: 'bnd_long', rigName: 'rig-bike-old' },
-    ]);
-    const linked = segments.filter((s) => s.kind === 'rig');
+    const segments = summarySegments(
+      'work landed in rig-bike-old today',
+      rigLinks([
+        { bindingId: 'bnd_short', rigName: 'rig-bike' },
+        { bindingId: 'bnd_long', rigName: 'rig-bike-old' },
+      ])
+    );
+    const linked = segments.filter((s) => s.kind === 'link');
     expect(linked).toHaveLength(1);
-    expect(linked[0]).toMatchObject({ text: 'rig-bike-old', bindingId: 'bnd_long' });
+    expect(linked[0]).toMatchObject({ text: 'rig-bike-old', target: { bindingId: 'bnd_long' } });
   });
 
   it('matches case-insensitively but shows the words the model actually wrote', () => {
-    const segments = summarySegments('Rig-Bike is busy', [{ bindingId: 'b', rigName: 'rig-bike' }]);
-    expect(segments.find((s) => s.kind === 'rig')?.text).toBe('Rig-Bike');
+    const segments = summarySegments('Rig-Bike is busy', rigLinks([{ bindingId: 'b', rigName: 'rig-bike' }]));
+    expect(segments.find((s) => s.kind === 'link')?.text).toBe('Rig-Bike');
   });
 
   it('links a rig named more than once, every time', () => {
-    const segments = summarySegments('rig-bike then rig-bike again', [
+    const segments = summarySegments('rig-bike then rig-bike again', rigLinks([
       { bindingId: 'b', rigName: 'rig-bike' },
-    ]);
-    expect(segments.filter((s) => s.kind === 'rig')).toHaveLength(2);
+    ]));
+    expect(segments.filter((s) => s.kind === 'link')).toHaveLength(2);
   });
 
   it('returns plain text when the reader has no rigs to link to', () => {
@@ -91,12 +94,37 @@ describe('summarySegments', () => {
   });
 
   it('returns nothing for a summary that was only an identifier', () => {
-    expect(summarySegments('int_abc123', RIGS)).toEqual([]);
+    expect(summarySegments('int_abc123', rigLinks(RIGS))).toEqual([]);
   });
 
   it('ignores a rig whose name is blank rather than matching every gap', () => {
-    const segments = summarySegments('some work', [{ bindingId: 'b', rigName: '   ' }]);
+    const segments = summarySegments('some work', rigLinks([{ bindingId: 'b', rigName: '   ' }]));
     expect(segments).toEqual([{ kind: 'text', text: 'some work' }]);
+  });
+});
+
+describe('file links', () => {
+  it('links a file the narration names, carrying its real path', () => {
+    const segments = summarySegments(
+      'Updated untitled-1.md today.',
+      fileLinks([{ relPath: 'notes/untitled-1.md' }])
+    );
+    const linked = segments.find((s) => s.kind === 'link');
+    expect(linked).toMatchObject({ text: 'untitled-1.md', target: { relPath: 'notes/untitled-1.md' } });
+  });
+
+  it('matches the basename, since narration never writes the full path', () => {
+    const segments = summarySegments('see profile.md', fileLinks([{ relPath: 'training/profile.md' }]));
+    expect(segments.filter((s) => s.kind === 'link')).toHaveLength(1);
+  });
+
+  it('links rigs and files in the same sentence', () => {
+    const segments = summarySegments('rig-bike: updated profile.md', [
+      ...rigLinks([{ bindingId: 'b', rigName: 'rig-bike' }]),
+      ...fileLinks([{ relPath: 'training/profile.md' }]),
+    ]);
+    const kinds = segments.filter((s) => s.kind === 'link').map((s) => (s.kind === 'link' ? s.target.kind : null));
+    expect(kinds).toEqual(['rig', 'file']);
   });
 });
 

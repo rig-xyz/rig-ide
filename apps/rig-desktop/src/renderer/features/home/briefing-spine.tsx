@@ -18,7 +18,7 @@ import type {
 } from '@shared/rig/pulse';
 import { resolveRigNameClick } from './home-sections';
 import { composeGreeting, firstNameOf } from './greeting';
-import { summarySegments } from './summary-segments';
+import { rigLinks, summarySegments } from './summary-segments';
 import {
   askErrorMessage,
   deriveAskSourceItems,
@@ -250,7 +250,7 @@ function Header({
   rigs: readonly { bindingId: string; rigName: string }[];
   onClickRig: (bindingId: string) => void;
 }) {
-  const segments = summarySegments(summary, rigs);
+  const segments = summarySegments(summary, rigLinks(rigs));
   return (
     <div className="flex flex-col gap-1">
       <p className="text-text-muted font-mono text-xs tracking-wide uppercase">{dateKicker()}</p>
@@ -258,11 +258,11 @@ function Header({
       {segments.length > 0 && (
         <p className="text-text-muted text-sm leading-relaxed">
           {segments.map((segment, index) =>
-            segment.kind === 'rig' ? (
+            segment.kind === 'link' && segment.target.kind === 'rig' ? (
               <button
-                key={`${segment.bindingId}-${index}`}
+                key={`${segment.target.bindingId}-${index}`}
                 type="button"
-                onClick={() => onClickRig(segment.bindingId)}
+                onClick={() => onClickRig((segment.target as { kind: 'rig'; bindingId: string }).bindingId)}
                 className="text-text-primary hover:decoration-text-primary underline decoration-current/30 underline-offset-2 transition-colors"
               >
                 {segment.text}
