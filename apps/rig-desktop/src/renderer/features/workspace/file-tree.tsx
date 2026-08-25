@@ -557,7 +557,7 @@ export function FileTree({
     <>
       {tabs}
       <div
-        className="@container flex flex-col px-3 py-2"
+        className="@container flex flex-col py-2 pl-3 pr-6"
         onContextMenu={(event) => {
           if (bindingId) menu.open(event, null);
         }}
