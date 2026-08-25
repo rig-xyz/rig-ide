@@ -69,6 +69,9 @@ export class RigSettingsStore {
       ...(patch.lastOpenTabsByRig
         ? { lastOpenTabsByRig: { ...this.settings.lastOpenTabsByRig, ...patch.lastOpenTabsByRig } }
         : {}),
+      ...(patch.hiddenByRig
+        ? { hiddenByRig: { ...this.settings.hiddenByRig, ...patch.hiddenByRig } }
+        : {}),
     };
     this.settings = next;
     writeSettingsFile(this.path, next);
@@ -158,6 +161,7 @@ function normalizeSettings(parsed: unknown): RigSettings {
     rigsRailView: isRigsRailView(raw.rigsRailView) ? raw.rigsRailView : DEFAULT_RIGS_RAIL_VIEW,
     updateLastCheckedAt: typeof raw.updateLastCheckedAt === 'number' ? raw.updateLastCheckedAt : null,
     updateAnnouncedVersion: typeof raw.updateAnnouncedVersion === 'string' ? raw.updateAnnouncedVersion : null,
+    hiddenByRig: isBooleanRecord(raw.hiddenByRig) ? raw.hiddenByRig : {},
   };
 }
 
@@ -165,7 +169,11 @@ function isRigsRailView(value: unknown): value is RigsRailView {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
   return (
-    (v.filter === 'all' || v.filter === 'local' || v.filter === 'shared' || v.filter === 'notSetUp') &&
+    (v.filter === 'all' ||
+      v.filter === 'local' ||
+      v.filter === 'shared' ||
+      v.filter === 'notSetUp' ||
+      v.filter === 'hidden') &&
     (v.sort === 'recent' || v.sort === 'name')
   );
 }
@@ -173,6 +181,11 @@ function isRigsRailView(value: unknown): value is RigsRailView {
 function isStringRecord(value: unknown): value is Record<string, string> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   return Object.values(value).every((v) => typeof v === 'string');
+}
+
+function isBooleanRecord(value: unknown): value is Record<string, boolean> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  return Object.values(value).every((v) => typeof v === 'boolean');
 }
 
 function isStringArray(value: unknown): value is string[] {

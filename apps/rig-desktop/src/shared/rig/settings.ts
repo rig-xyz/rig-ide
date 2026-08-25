@@ -25,9 +25,11 @@ export type RigOpenTabsState = {
  * 15+ rigs). `'shared'` mirrors `deriveRelayOnlyRowStatus`'s own role-based
  * "shared with you" test (role !== owner) — not "has a known local path,"
  * which is a DIFFERENT axis (availability, not ownership) `'notSetUp'`
- * already covers on its own.
+ * already covers on its own. `'hidden'` (Hide/Unhide round) is the one view
+ * that INCLUDES hidden rows on purpose — every other filter excludes them,
+ * see `filterHomeRigRows`.
  */
-export type RigsRailFilter = 'all' | 'local' | 'shared' | 'notSetUp';
+export type RigsRailFilter = 'all' | 'local' | 'shared' | 'notSetUp' | 'hidden';
 /** `'recent'` is `buildHomeRigRows`'s own existing order (local rows by recency, relay-only trailing alphabetically) — not a re-sort, just the default left alone. `'name'` re-sorts every row alphabetically regardless of kind. */
 export type RigsRailSort = 'recent' | 'name';
 
@@ -125,6 +127,16 @@ export type RigSettings = {
    * toast. `null` until the first update this install has ever announced.
    */
   updateAnnouncedVersion: string | null;
+  /**
+   * Hide round: a rig row hidden from the rail's normal views — purely a
+   * local display preference (no relay call, nothing touched on disk for
+   * the rig itself), same "bindingId-keyed map" shape as `lastHarnessByRig`/
+   * `lastOpenTabsByRig` above, merged at the key level on `set()` for the
+   * same reason those are: one rig's hide/unhide must never clobber
+   * another's. Absence of a key (not just `false`) means "not hidden" —
+   * `filterHomeRigRows` treats both the same way.
+   */
+  hiddenByRig: Record<string, boolean>;
 };
 
 export const DEFAULT_RIG_SETTINGS: RigSettings = {
@@ -143,6 +155,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   rigsRailView: DEFAULT_RIGS_RAIL_VIEW,
   updateLastCheckedAt: null,
   updateAnnouncedVersion: null,
+  hiddenByRig: {},
 };
 
 /** The subset of legacy localStorage values the renderer can hand to `importLegacy`. */

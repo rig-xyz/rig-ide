@@ -314,9 +314,7 @@ function WhatsNew({
         </button>
       )}
       {briefing.degraded && (
-        <p className="text-text-muted text-xs">
-          Showing a plain digest. Richer narration needs the relay&apos;s LLM key.
-        </p>
+        <p className="text-text-muted text-xs">Summaries are taking a break. Showing the plain version for now.</p>
       )}
     </div>
   );

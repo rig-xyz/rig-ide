@@ -53,6 +53,17 @@ export async function updateRigPath(bindingId: string, newPath: string): Promise
   await db.update(rigRigs).set({ path: newPath }).where(eq(rigRigs.bindingId, bindingId));
 }
 
+/**
+ * Updates ONLY the name for an existing `rig_rigs` row — the row menu's
+ * "Rename…" (`rename.ts`'s `renameRig`), after the `rig.toml` write on disk
+ * succeeds. Mirrors `updateRigPath` above; a binding with no local row yet
+ * (nothing to rename locally) is simply a no-op — `renameRig` never reaches
+ * this without one, since it operates on an already-open local rig.
+ */
+export async function updateRigName(bindingId: string, newName: string): Promise<void> {
+  await db.update(rigRigs).set({ name: newName }).where(eq(rigRigs.bindingId, bindingId));
+}
+
 // ── resolveLocalPaths (correction round — the scan is gone) ────────────────
 //
 // A prior round of this tried to close the "already synced via the CLI,

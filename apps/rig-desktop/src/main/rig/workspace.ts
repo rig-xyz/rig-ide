@@ -96,4 +96,16 @@ export const rigWorkspaceController = createRPCController({
     pendingOpenFilePath = null;
     return path;
   },
+
+  /**
+   * Title-reactivity round: a plain re-read of `rig.toml`'s own name, no
+   * side effects (unlike `detect`, which also upserts `rig_rigs` and touches
+   * macOS's Open Recent list on every call) — safe to call on every
+   * file-watcher event for the open rig's root, not just once at open time.
+   * Fixes the freshly-downloaded-rig case where `rig.toml` hadn't synced
+   * down yet at `detect`'s own read, so the title stuck on "Unnamed rig"
+   * until the user navigated away and back (a fresh `detect` call). See
+   * `App.tsx`'s own subscription to `rigFileChangeChannel` for the caller.
+   */
+  readName: (workspaceRoot: string): string | null => readRigName(workspaceRoot),
 });

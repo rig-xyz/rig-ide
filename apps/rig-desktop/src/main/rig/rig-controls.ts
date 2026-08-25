@@ -1,9 +1,12 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { commandFailureMessage } from './auth-output';
 import { runRig, type SpawnOutcome } from './create';
 import { extractJsonObjects, parseJsonErrorEnvelope } from './join';
-import { updateRigPath } from './recent-rigs';
+import { updateRigName, updateRigPath } from './recent-rigs';
+import { setTomlRigName } from './rig-toml';
 import { isRigSyncPaused } from './sync-paused';
 
 /**
@@ -83,6 +86,56 @@ async function toggleSync(
   return ok({ paused: await isRigSyncPaused(path) });
 }
 
+/**
+ * rigs-rail row menu's "Rename…". Rewrites `rig.toml`'s `[rig].name` field
+ * in place (`setTomlRigName` — a targeted line edit, not a parse/
+ * re-serialize; see that module's own header comment for why) and mirrors
+ * the new name into `rig_rigs.name` so the rail's next render reflects it
+ * without waiting on the file-watcher round trip.
+ *
+ * `rig.toml` is itself a tapd-synced file, so this write propagates to
+ * every other member on its own the moment tapd picks it up — no relay
+ * call needed for that half.
+ *
+ * TODO(rig CLI / relay): there is no `rig rename` CLI subcommand and no
+ * relay "rename binding" endpoint today (`PATCH /v1/me/bindings/:id` only
+ * accepts `{org, visibility}` — checked against `tap`'s own
+ * `packages/relay/src/routes/account.ts`), so the binding's OWN name on the
+ * relay (as opposed to the `rig.toml` this app and the CLI actually read
+ * display names from) stays whatever it was minted with. Wire a relay PATCH
+ * once one exists, if that divergence ever becomes a real problem.
+ */
+export async function renameRig(
+  bindingId: string,
+  path: string,
+  newName: string
+): Promise<Result<{ name: string }, { message: string }>> {
+  const trimmed = newName.trim();
+  if (!trimmed) return err({ message: 'Name cannot be empty.' });
+
+  const tomlPath = join(path, 'rig.toml');
+  let raw: string;
+  try {
+    raw = await readFile(tomlPath, 'utf8');
+  } catch (error) {
+    return err({ message: `Could not read rig.toml: ${error instanceof Error ? error.message : String(error)}` });
+  }
+
+  const rewritten = setTomlRigName(raw, trimmed);
+  if (rewritten === null) {
+    return err({ message: 'Could not find a [rig] name field in rig.toml.' });
+  }
+
+  try {
+    await writeFile(tomlPath, rewritten, 'utf8');
+  } catch (error) {
+    return err({ message: `Could not save rig.toml: ${error instanceof Error ? error.message : String(error)}` });
+  }
+
+  await updateRigName(bindingId, trimmed);
+  return ok({ name: trimmed });
+}
+
 export const rigControlController = createRPCController({
   /** rigs-rail row menu's "Move to Rig folder" (only offered for a row whose path is outside home). */
   move: ({ bindingId, path }: { bindingId: string; path: string }) => moveRig(bindingId, path),
@@ -90,4 +143,7 @@ export const rigControlController = createRPCController({
   pause: ({ path }: { path: string }) => toggleSync('pause', path),
   /** rigs-rail row menu's "Resume syncing". */
   resume: ({ path }: { path: string }) => toggleSync('resume', path),
+  /** rigs-rail row menu's "Rename…". */
+  rename: ({ bindingId, path, name }: { bindingId: string; path: string; name: string }) =>
+    renameRig(bindingId, path, name),
 });

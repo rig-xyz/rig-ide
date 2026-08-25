@@ -27,9 +27,11 @@ import { toast } from '@renderer/lib/hooks/use-toast';
 import { Button } from '@renderer/lib/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { events, rpc } from '@renderer/lib/ipc';
+import { consumeJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { cn } from '@renderer/lib/utils';
 import { ChevronRight, Home as HomeIcon, MessageSquare, Settings as SettingsIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { rigFileChangeChannel } from '@shared/rig/files';
 import {
   type RigSettings,
   type RigSettingsLegacyImport,
@@ -228,6 +230,12 @@ export function App() {
   // only `<main>` (Home/`FolderResult`) ever sets this away from false.
   const [mainScrolled, setMainScrolled] = useState(false);
   const [folder, setFolder] = useState<FolderState>({ status: 'empty' });
+  // First-sync round: the one root, if any, `openPath` just marked as
+  // "attached with syncing on" (see `lib/just-attached.ts`) — read by
+  // `FileBrowser`/`FileTree` to show a real syncing indicator instead of a
+  // bare "Empty folder." the moment a freshly-downloaded rig's tree mounts,
+  // before tapd has pulled anything down yet.
+  const [syncingRoot, setSyncingRoot] = useState<string | null>(null);
   // The home screen's CONTINUE row wants to open a rig AND land on one
   // specific session (round H1) — `openPath` only knows a path, so this
   // carries the extra target across the async `detect()` round trip to
@@ -299,6 +307,14 @@ export function App() {
     try {
       const result = await rpc.rig.workspace.detect(picked);
       setFolder({ status: 'detected', path: picked, result });
+      // First-sync round: a plain open never marks this (`consumeJustAttachedSyncing`
+      // returns false for any path nobody just ran `rig attach` for), so this
+      // is a no-op for the overwhelming majority of opens — see
+      // `lib/just-attached.ts`'s own header comment for why this is a
+      // same-tick handoff rather than a prop threaded through `onOpenPath`.
+      setSyncingRoot(
+        result.bound && consumeJustAttachedSyncing(result.workspaceRoot) ? result.workspaceRoot : null
+      );
     } catch (error) {
       setFolder({
         status: 'error',
@@ -367,6 +383,39 @@ export function App() {
   // the previous root.
   useEffect(() => {
     setNav(BROWSER_STATE);
+  }, [bound?.root]);
+
+  // Title-reactivity round: `bound.name` (the topbar/`RigSwitcher`'s title,
+  // via `deriveTopbarContext`) used to be read exactly once, at `openPath`'s
+  // own `rpc.rig.workspace.detect` call — if `rig.toml` hadn't synced down
+  // yet (a freshly downloaded shared rig), the title stuck on "Unnamed rig"
+  // until the user navigated away and back (a fresh `detect`). Subscribes
+  // to the SAME file-watcher signal `file-tree.tsx` already uses for this
+  // root (refcounted — an independent watch registration, not a race with
+  // that one) and re-reads just the name (`rpc.rig.workspace.readName`, no
+  // side effects, unlike `detect`) whenever anything under the root
+  // changes, including `rig.toml` first appearing — or a rename elsewhere
+  // syncing back down.
+  useEffect(() => {
+    const root = bound?.root;
+    if (!root) return;
+    void rpc.rig.files.watch(root);
+    const off = events.on(rigFileChangeChannel, ({ root: changedRoot }) => {
+      if (changedRoot !== root) return;
+      void rpc.rig.workspace.readName(root).then((name) => {
+        setFolder((prev) => {
+          if (prev.status !== 'detected' || !prev.result.bound || prev.result.workspaceRoot !== root) {
+            return prev;
+          }
+          if (prev.result.name === name) return prev;
+          return { ...prev, result: { ...prev.result, name } };
+        });
+      });
+    });
+    return () => {
+      off();
+      void rpc.rig.files.unwatch(root);
+    };
   }, [bound?.root]);
 
   // Round F: there was no way back from a workspace to the home screen —
@@ -570,6 +619,7 @@ export function App() {
                 name={bound.name}
                 revealPath={nav.revealPath}
                 onOpenFile={openFile}
+                justAttachedSyncing={bound.root === syncingRoot}
               />
             )}
           </div>
@@ -913,11 +963,14 @@ function FileBrowser({
   name,
   revealPath,
   onOpenFile,
+  justAttachedSyncing,
 }: {
   root: string;
   name: string | null;
   revealPath: string | null;
   onOpenFile: (absPath: string) => void;
+  /** First-sync round — see `FileTree`'s own prop comment. */
+  justAttachedSyncing: boolean;
 }) {
   const [importOpen, setImportOpen] = useState(false);
   return (
@@ -934,7 +987,13 @@ function FileBrowser({
         onOpenChange={setImportOpen}
         onImported={onOpenFile}
       />
-      <FileTree root={root} activePath={null} revealPath={revealPath} onOpenFile={onOpenFile} />
+      <FileTree
+        root={root}
+        activePath={null}
+        revealPath={revealPath}
+        onOpenFile={onOpenFile}
+        justAttachedSyncing={justAttachedSyncing}
+      />
     </div>
   );
 }

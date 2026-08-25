@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, File, FileText, Folder, FolderOpen, Table } from 'lucide-react';
+import { ChevronDown, ChevronRight, File, FileText, Folder, FolderOpen, Loader2, Table } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { events, rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
@@ -40,6 +40,7 @@ export function FileTree({
   activePath,
   revealPath,
   onOpenFile,
+  justAttachedSyncing = false,
 }: {
   root: string;
   activePath: string | null;
@@ -51,9 +52,26 @@ export function FileTree({
    */
   revealPath?: string | null;
   onOpenFile: (absPath: string) => void;
+  /**
+   * First-sync round: true for the one root just downloaded via "Download"/
+   * "Set up locally" (`rig attach --json`'s own `syncing` flag, handed
+   * through `App.tsx`'s `openPath` via `lib/just-attached.ts`) — while
+   * true AND the listing is still empty, the empty branch below reads as
+   * "syncing files…" instead of "Empty folder." Investigated: no RPC in
+   * this app reports "tapd is actively pulling right now" as an ongoing
+   * status; the real signal used here instead is the SAME file-watcher
+   * subscription this component already runs (`sawChange` below) — the
+   * first `rigFileChangeChannel` event for this root means tapd either
+   * produced files (the listing itself stops being empty) or settled
+   * without any (a genuinely empty rig), and either way "syncing" has
+   * stopped being the honest word for the state. A timer would guess at
+   * that moment; this waits for real evidence of it instead.
+   */
+  justAttachedSyncing?: boolean;
 }) {
   const queryClient = useQueryClient();
   const queryKey = useMemo(() => ['rig', 'files', 'list', root], [root]);
+  const [sawChange, setSawChange] = useState(false);
   const { data, isLoading, error } = useQuery({
     queryKey,
     queryFn: async () => {
@@ -67,11 +85,14 @@ export function FileTree({
   // changes on disk — an agent writing a file, `git checkout`, another
   // editor, all of it. `main/rig/files.ts` already debounces (200ms) and
   // ignores `.git`/`.rig`/`node_modules`/dotfile noise before this ever
-  // fires, so no extra debouncing needed here.
+  // fires, so no extra debouncing needed here. Also flips `sawChange` —
+  // see `justAttachedSyncing`'s own comment above.
   useEffect(() => {
+    setSawChange(false);
     void rpc.rig.files.watch(root);
     const off = events.on(rigFileChangeChannel, ({ root: changedRoot }) => {
       if (changedRoot !== root) return;
+      setSawChange(true);
       void queryClient.invalidateQueries({ queryKey });
     });
     return () => {
@@ -91,6 +112,14 @@ export function FileTree({
     );
   }
   if (!data || data.length === 0) {
+    if (justAttachedSyncing && !sawChange) {
+      return (
+        <div className="flex flex-col items-center gap-2 px-3 py-8 text-center">
+          <Loader2 className="text-text-muted size-4 animate-spin" strokeWidth={1.5} />
+          <p className="text-text-muted text-xs">Syncing files…</p>
+        </div>
+      );
+    }
     return <p className="text-text-muted px-3 py-2 text-xs">Empty folder.</p>;
   }
 

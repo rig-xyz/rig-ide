@@ -117,7 +117,6 @@ export function RigSwitcher({
                   <span className="text-text-primary block truncate text-sm">
                     {row.name ?? row.path.split('/').pop()}
                   </span>
-                  <span className="text-text-muted block truncate font-mono text-xs">{row.path}</span>
                 </span>
               </button>
             ))}

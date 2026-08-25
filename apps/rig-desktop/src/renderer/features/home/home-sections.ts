@@ -447,17 +447,28 @@ export function resolveRigNameClick(
  * (no known local path yet, and not still checking) — a row can honestly
  * match both at once, this is a single-select VIEW filter, not a taxonomy
  * that has to partition the list.
+ *
+ * Hide round: `hiddenBindingIds` (the renderer's own read of `RigSettings.
+ * hiddenByRig`, see `rigs-rail.tsx`) is excluded from every view EXCEPT
+ * `'hidden'` itself, which is the one view that exists purely to show them
+ * — "hidden" means "out of the way by default," never "gone."
  */
-export function filterHomeRigRows(rows: readonly HomeRigRow[], filter: RigsRailFilter): HomeRigRow[] {
+export function filterHomeRigRows(
+  rows: readonly HomeRigRow[],
+  filter: RigsRailFilter,
+  hiddenBindingIds: ReadonlySet<string> = new Set()
+): HomeRigRow[] {
+  if (filter === 'hidden') return rows.filter((r) => hiddenBindingIds.has(r.bindingId));
+  const visible = rows.filter((r) => !hiddenBindingIds.has(r.bindingId));
   switch (filter) {
     case 'all':
-      return [...rows];
+      return visible;
     case 'local':
-      return rows.filter((r) => r.kind === 'local');
+      return visible.filter((r) => r.kind === 'local');
     case 'shared':
-      return rows.filter((r) => r.kind === 'relayOnly' && r.role !== 'owner');
+      return visible.filter((r) => r.kind === 'relayOnly' && r.role !== 'owner');
     case 'notSetUp':
-      return rows.filter((r) => r.kind === 'relayOnly' && !r.localPathPending && r.localPath === null);
+      return visible.filter((r) => r.kind === 'relayOnly' && !r.localPathPending && r.localPath === null);
   }
 }
 

@@ -595,6 +595,28 @@ describe('filterHomeRigRows', () => {
   it('notSetUp excludes the checking (pending) state — honestly unknown, not yet "not set up"', () => {
     expect(filterHomeRigRows(rows, 'notSetUp')).not.toContainEqual(CHECKING);
   });
+
+  describe('Hide round — hiddenBindingIds', () => {
+    const hidden = new Set(['b1']);
+
+    it('a hidden row is excluded from every other view', () => {
+      expect(filterHomeRigRows(rows, 'all', hidden).map((r) => r.bindingId)).not.toContain('b1');
+      expect(filterHomeRigRows(rows, 'local', hidden)).toEqual([]);
+      expect(filterHomeRigRows(rows, 'shared', hidden).map((r) => r.bindingId)).toEqual(['b3', 'b4']);
+    });
+
+    it("'hidden' returns exactly the hidden rows, nothing else", () => {
+      expect(filterHomeRigRows(rows, 'hidden', hidden)).toEqual([LOCAL_ROW]);
+    });
+
+    it("'hidden' is empty when nothing is hidden", () => {
+      expect(filterHomeRigRows(rows, 'hidden')).toEqual([]);
+    });
+
+    it('defaults to no hidden rows when the argument is omitted — every existing call site keeps working', () => {
+      expect(filterHomeRigRows(rows, 'all')).toEqual(rows);
+    });
+  });
 });
 
 describe('sortHomeRigRows', () => {

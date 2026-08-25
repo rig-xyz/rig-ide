@@ -5,13 +5,18 @@ import {
   ChevronDown,
   Clock,
   CloudOff,
+  Copy,
   Download,
+  Eye,
+  EyeOff,
   FolderInput,
   FolderOpen,
   FolderSearch,
+  FolderSymlink,
   LayoutList,
   MoreHorizontal,
   Pause,
+  Pencil,
   Play,
   Plus,
   Users,
@@ -25,6 +30,7 @@ import type { AgentIdentity } from '@renderer/features/chat/use-runnable-agents'
 import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
 import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { events, rpc } from '@renderer/lib/ipc';
+import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import {
@@ -43,6 +49,7 @@ import {
   type HomeRigRow,
   type HomeRigSession,
 } from './home-sections';
+import { RenameRigDialog } from './rename-rig-dialog';
 
 /**
  * Round: HOME RESTRUCTURE — the left region ("YOUR RIGS", the action
@@ -92,8 +99,8 @@ export function RigsRail({
    */
   highlightBindingId?: string | null;
 }) {
-  const [view, setView] = useRigsRailView();
-  const visibleRows = sortHomeRigRows(filterHomeRigRows(rows, view.filter), view.sort);
+  const { view, setView, hiddenBindingIds, setHidden } = useRigsRailSettings();
+  const visibleRows = sortHomeRigRows(filterHomeRigRows(rows, view.filter, hiddenBindingIds), view.sort);
 
   return (
     <div className="lg:bg-bg-1 lg:rounded-card flex w-full flex-col gap-3 text-left lg:p-3">
@@ -134,6 +141,8 @@ export function RigsRail({
                 onOpenPath={onOpenPath}
                 onOpenSession={onOpenSession}
                 isHighlightTarget={row.bindingId === highlightBindingId}
+                hidden={hiddenBindingIds.has(row.bindingId)}
+                onToggleHidden={() => setHidden(row.bindingId, !hiddenBindingIds.has(row.bindingId))}
               />
             ) : (
               <RelayOnlyRigRow
@@ -141,6 +150,8 @@ export function RigsRail({
                 row={row}
                 onOpenPath={onOpenPath}
                 isHighlightTarget={row.bindingId === highlightBindingId}
+                hidden={hiddenBindingIds.has(row.bindingId)}
+                onToggleHidden={() => setHidden(row.bindingId, !hiddenBindingIds.has(row.bindingId))}
               />
             )
           )}
@@ -151,25 +162,40 @@ export function RigsRail({
 }
 
 /**
- * Reads/writes the rigs rail's filter/sort preference the same way
- * `chat-panel.tsx` reads `lastHarnessByRig`: an initial `rpc.rig.settings.get()`
- * plus a live `rigSettingsChangedChannel` subscription (so a change from
- * another window — or Settings, if this is ever surfaced there — reflects
- * immediately), defaulting to `DEFAULT_RIGS_RAIL_VIEW` until the first read
- * resolves rather than flashing something else first.
+ * Reads/writes the rigs rail's filter/sort preference AND (Hide round) the
+ * hidden-rigs map, the same way `chat-panel.tsx` reads `lastHarnessByRig`:
+ * an initial `rpc.rig.settings.get()` plus a live `rigSettingsChangedChannel`
+ * subscription (so a change from another window — or Settings, if this is
+ * ever surfaced there — reflects immediately), defaulting to
+ * `DEFAULT_RIGS_RAIL_VIEW`/no hidden rigs until the first read resolves
+ * rather than flashing something else first. One hook, not two, since both
+ * pieces live in the same settings payload and both drive the same render
+ * (`filterHomeRigRows`'s `'hidden'` view needs the SAME set the other views
+ * exclude it with).
  */
-function useRigsRailView(): [RigsRailView, (next: RigsRailView) => void] {
+function useRigsRailSettings(): {
+  view: RigsRailView;
+  setView: (next: RigsRailView) => void;
+  hiddenBindingIds: ReadonlySet<string>;
+  setHidden: (bindingId: string, hidden: boolean) => void;
+} {
   const [view, setLocalView] = useState<RigsRailView>(DEFAULT_RIGS_RAIL_VIEW);
+  const [hiddenByRig, setLocalHiddenByRig] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     let alive = true;
     rpc.rig.settings
       .get()
       .then((settings) => {
-        if (alive) setLocalView(settings.rigsRailView);
+        if (!alive) return;
+        setLocalView(settings.rigsRailView);
+        setLocalHiddenByRig(settings.hiddenByRig);
       })
       .catch(() => {});
-    const off = events.on(rigSettingsChangedChannel, (settings) => setLocalView(settings.rigsRailView));
+    const off = events.on(rigSettingsChangedChannel, (settings) => {
+      setLocalView(settings.rigsRailView);
+      setLocalHiddenByRig(settings.hiddenByRig);
+    });
     return () => {
       alive = false;
       off();
@@ -181,7 +207,18 @@ function useRigsRailView(): [RigsRailView, (next: RigsRailView) => void] {
     void rpc.rig.settings.set({ rigsRailView: next });
   };
 
-  return [view, setView];
+  const setHidden = (bindingId: string, hidden: boolean) => {
+    setLocalHiddenByRig((prev) => ({ ...prev, [bindingId]: hidden }));
+    void rpc.rig.settings.set({ hiddenByRig: { [bindingId]: hidden } });
+  };
+
+  const hiddenBindingIds = new Set(
+    Object.entries(hiddenByRig)
+      .filter(([, hidden]) => hidden)
+      .map(([bindingId]) => bindingId)
+  );
+
+  return { view, setView, hiddenBindingIds, setHidden };
 }
 
 const FILTER_LABELS: Record<RigsRailFilter, string> = {
@@ -189,6 +226,7 @@ const FILTER_LABELS: Record<RigsRailFilter, string> = {
   local: 'Local',
   shared: 'Shared',
   notSetUp: 'Not set up',
+  hidden: 'Hidden',
 };
 const SORT_LABELS: Record<RigsRailSort, string> = {
   recent: 'Recent activity',
@@ -198,13 +236,15 @@ const SORT_LABELS: Record<RigsRailSort, string> = {
  * One icon language: the same glyphs the rows themselves carry (a row's
  * leading glyph says what KIND of rig it is — folder = here, Users =
  * someone else's shared with you, CloudOff = yours but not on this Mac).
- * Every option carries one so no label floats out of alignment.
+ * Every option carries one so no label floats out of alignment. `EyeOff`
+ * for `'hidden'` matches the row menu's own Hide/Unhide glyphs below.
  */
 const FILTER_ICONS: Record<RigsRailFilter, LucideIcon> = {
   all: LayoutList,
   local: FolderOpen,
   shared: Users,
   notSetUp: CloudOff,
+  hidden: EyeOff,
 };
 const SORT_ICONS: Record<RigsRailSort, LucideIcon> = {
   recent: Clock,
@@ -420,12 +460,17 @@ function LocalRigRow({
   onOpenPath,
   onOpenSession,
   isHighlightTarget,
+  hidden,
+  onToggleHidden,
 }: {
   row: Extract<HomeRigRow, { kind: 'local' }>;
   identities: Map<string, AgentIdentity>;
   onOpenPath: (path: string) => void;
   onOpenSession: (path: string, sessionId: string) => void;
   isHighlightTarget: boolean;
+  /** Hide round — this row's current `RigSettings.hiddenByRig` value, read by the parent `RigsRail` (one settings read shared by every row, not one per row). */
+  hidden: boolean;
+  onToggleHidden: () => void;
 }) {
   const { ref, flashing } = useRowHighlight(isHighlightTarget);
   const [error, setError] = useState<string | null>(null);
@@ -454,14 +499,31 @@ function LocalRigRow({
                 {row.paused ? 'Paused' : relativeTime(lastActivity, Date.now())}
               </span>
               {row.outsideHome && (
-                <span className="bg-bg-2 text-text-muted rounded-chip shrink-0 px-1.5 py-0.5 font-mono text-xs">
-                  custom location
-                </span>
+                // Chip-to-icon round (Dylan — "better visual"): a text chip
+                // reading "custom location" on every outside-home row added
+                // up at 15+ rigs; a quiet folder-path glyph (same
+                // muted-icon-with-tooltip convention `NOT_SET_UP_TOOLTIP`
+                // already uses below) is a secondary annotation, not a
+                // badge — the real path lives in the tooltip, not the row.
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        tabIndex={0}
+                        aria-label={`Stored outside the Rig folder, at ${row.path}`}
+                        className="text-text-muted inline-flex size-3 shrink-0 items-center justify-center"
+                      >
+                        <FolderSymlink className="size-3" strokeWidth={1.5} />
+                      </span>
+                    }
+                  />
+                  <TooltipContent side="top">{row.path}</TooltipContent>
+                </Tooltip>
               )}
             </span>
           </span>
         </button>
-        <LocalRigRowMenu row={row} onError={setError} />
+        <LocalRigRowMenu row={row} onError={setError} hidden={hidden} onToggleHidden={onToggleHidden} />
       </div>
       {error && <p className="text-danger pl-6 text-xs">{error}</p>}
       {row.sessions.length > 0 && (
@@ -482,26 +544,38 @@ function LocalRigRow({
 
 /**
  * The `⋯` trigger for a local row: "Move to Rig folder" (only when
- * `row.outsideHome`) and the pause/resume sync toggle. Same portal
- * positioning/dismiss convention as `RelayOnlyActionsMenu`. Both actions
- * shell the CLI (`rig.control.move`/`.pause`/`.resume`, see
- * `rig-controls.ts`) and, on success, invalidate the same `recentRigs`
- * query key `home.tsx`'s own rail read uses — the row's next render picks
- * up the new path/paused state from there rather than this component
- * guessing at it locally.
+ * `row.outsideHome`), the pause/resume sync toggle, "Copy path"/"Reveal in
+ * Finder" (dropdown-paths round — these replace the rig-switcher dropdown's
+ * removed path line, see `rig-switcher.tsx`), "Rename…" (opens
+ * `RenameRigDialog`), and Hide/Unhide (purely local display state, see
+ * `useRigsRailSettings`). Same portal positioning/dismiss convention as
+ * `RelayOnlyActionsMenu`. Move/pause/resume shell the CLI
+ * (`rig.control.move`/`.pause`/`.resume`, see `rig-controls.ts`) and, on
+ * success, invalidate the same `recentRigs` query key `home.tsx`'s own rail
+ * read uses — the row's next render picks up the new path/paused state
+ * from there rather than this component guessing at it locally. Copy/Reveal
+ * are plain Electron calls (`rpc.app.clipboardWriteText`/`.showItemInFolder`,
+ * already wired for the artifact viewer's own "Reveal in Finder" — see
+ * `unsupported-artifact.tsx`) with nothing to invalidate. Hide/Unhide calls
+ * `onToggleHidden` straight through to the parent's settings write.
  */
 function LocalRigRowMenu({
   row,
   onError,
+  hidden,
+  onToggleHidden,
 }: {
   row: Extract<HomeRigRow, { kind: 'local' }>;
   onError: (message: string | null) => void;
+  hidden: boolean;
+  onToggleHidden: () => void;
 }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const rect = useAnchorRect(open, triggerRef, { gap: 4, estimatedHeight: 76, estimatedWidth: 170 });
+  const rect = useAnchorRect(open, triggerRef, { gap: 4, estimatedHeight: 230, estimatedWidth: 180 });
 
   useEffect(() => {
     if (!open) return;
@@ -552,8 +626,28 @@ function LocalRigRowMenu({
     void refreshRail();
   };
 
+  const copyPath = async () => {
+    setOpen(false);
+    const result = await rpc.app.clipboardWriteText(row.path);
+    if (!result.success) onError("Couldn't copy the path.");
+  };
+
+  const revealInFinder = async () => {
+    setOpen(false);
+    const result = await rpc.app.showItemInFolder(row.path);
+    if (!result.success) onError("Couldn't reveal this rig in Finder.");
+  };
+
   return (
     <>
+      <RenameRigDialog
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+        bindingId={row.bindingId}
+        path={row.path}
+        currentName={row.name}
+        onRenamed={() => void refreshRail()}
+      />
       <button
         ref={triggerRef}
         type="button"
@@ -576,7 +670,7 @@ function LocalRigRowMenu({
             role="menu"
             style={{
               position: 'fixed',
-              width: Math.max(rect.width, 170),
+              width: Math.max(rect.width, 180),
               maxHeight: rect.maxHeight,
               overflowY: 'auto',
               ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
@@ -613,6 +707,63 @@ function LocalRigRowMenu({
                 <Pause className="size-3.5 shrink-0" strokeWidth={1.5} />
               )}
               {row.paused ? 'Resume syncing' : 'Pause syncing'}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                setOpen(false);
+                setRenameOpen(true);
+              }}
+              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+            >
+              <Pencil className="size-3.5 shrink-0" strokeWidth={1.5} />
+              Rename…
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                void copyPath();
+              }}
+              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+            >
+              <Copy className="size-3.5 shrink-0" strokeWidth={1.5} />
+              Copy path
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                void revealInFinder();
+              }}
+              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+            >
+              <FolderOpen className="size-3.5 shrink-0" strokeWidth={1.5} />
+              Reveal in Finder
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                setOpen(false);
+                onToggleHidden();
+              }}
+              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+            >
+              {hidden ? (
+                <Eye className="size-3.5 shrink-0" strokeWidth={1.5} />
+              ) : (
+                <EyeOff className="size-3.5 shrink-0" strokeWidth={1.5} />
+              )}
+              {/* Wording round: "Hide" is purely visual (no relay call,
+                  nothing touched on disk for the rig itself) — the label
+                  says so directly rather than leaving that ambiguous. */}
+              {hidden ? 'Unhide' : 'Hide from this list'}
             </button>
           </div>,
           document.body
@@ -683,10 +834,14 @@ function RelayOnlyRigRow({
   row,
   onOpenPath,
   isHighlightTarget,
+  hidden,
+  onToggleHidden,
 }: {
   row: Extract<HomeRigRow, { kind: 'relayOnly' }>;
   onOpenPath: (path: string) => void;
   isHighlightTarget: boolean;
+  hidden: boolean;
+  onToggleHidden: () => void;
 }) {
   const status = deriveRelayOnlyRowStatus(row);
   // Owned here, not by `RelayOnlyActionsMenu`, so a failed Download/Locate
@@ -762,6 +917,8 @@ function RelayOnlyRigRow({
               row={row}
               onOpenPath={onOpenPath}
               onError={setError}
+              hidden={hidden}
+              onToggleHidden={onToggleHidden}
             />
           )
         )}
@@ -786,17 +943,21 @@ function RelayOnlyActionsMenu({
   row,
   onOpenPath,
   onError,
+  hidden,
+  onToggleHidden,
 }: {
   row: Extract<HomeRigRow, { kind: 'relayOnly' }>;
   onOpenPath: (path: string) => void;
   onError: (message: string | null) => void;
+  hidden: boolean;
+  onToggleHidden: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [locating, setLocating] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const busy = downloading || locating;
-  const rect = useAnchorRect(open, triggerRef, { gap: 4, estimatedHeight: 76, estimatedWidth: 140 });
+  const rect = useAnchorRect(open, triggerRef, { gap: 4, estimatedHeight: 110, estimatedWidth: 150 });
 
   useEffect(() => {
     if (!open) return;
@@ -831,6 +992,11 @@ function RelayOnlyActionsMenu({
         onError(result.error.message);
         return;
       }
+      // First-sync round: hands the CLI's own `syncing` flag to `openPath`
+      // (see `lib/just-attached.ts`) so the file tree can show a real
+      // syncing indicator instead of a bare "Empty folder." the moment it
+      // mounts, before tapd has pulled anything down yet.
+      markJustAttachedSyncing(result.data.localPath, result.data.syncing);
       onOpenPath(result.data.localPath);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Could not set up the rig locally.');
@@ -891,7 +1057,7 @@ function RelayOnlyActionsMenu({
             role="menu"
             style={{
               position: 'fixed',
-              width: Math.max(rect.width, 140),
+              width: Math.max(rect.width, 150),
               maxHeight: rect.maxHeight,
               overflowY: 'auto',
               ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
@@ -926,6 +1092,23 @@ function RelayOnlyActionsMenu({
             >
               <FolderSearch className="size-3.5 shrink-0" strokeWidth={1.5} />
               Locate…
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                setOpen(false);
+                onToggleHidden();
+              }}
+              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+            >
+              {hidden ? (
+                <Eye className="size-3.5 shrink-0" strokeWidth={1.5} />
+              ) : (
+                <EyeOff className="size-3.5 shrink-0" strokeWidth={1.5} />
+              )}
+              {hidden ? 'Unhide' : 'Hide from this list'}
             </button>
           </div>,
           document.body

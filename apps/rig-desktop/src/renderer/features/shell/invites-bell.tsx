@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
 import { rpc } from '@renderer/lib/ipc';
+import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { Button } from '@renderer/lib/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import type { RigMyInvite } from '@shared/rig/rig-share';
@@ -213,6 +214,9 @@ function InviteRow({ row, onOpenPath }: { row: MyInviteRow; onOpenPath: (path: s
         setSetupError(result.error.message);
         return;
       }
+      // First-sync round: same handoff `rigs-rail.tsx`'s "Download" uses —
+      // see `lib/just-attached.ts`.
+      markJustAttachedSyncing(result.data.localPath, result.data.syncing);
       onOpenPath(result.data.localPath);
     } catch (err) {
       setSetupError(err instanceof Error ? err.message : 'Could not set up the rig locally.');

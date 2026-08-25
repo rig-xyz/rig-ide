@@ -295,6 +295,73 @@ describe('RigSettingsStore', () => {
     });
   });
 
+  describe('hiddenByRig (Hide round)', () => {
+    it('defaults to an empty map before anything is ever set', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().hiddenByRig).toEqual({});
+    });
+
+    it('merges at the key level rather than replacing the map', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      store.set({ hiddenByRig: { 'binding-1': true } });
+      store.set({ hiddenByRig: { 'binding-2': true } });
+
+      expect(store.get().hiddenByRig).toEqual({ 'binding-1': true, 'binding-2': true });
+    });
+
+    it('unhide (false) overwrites a rig\'s own entry without touching another\'s', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      store.set({ hiddenByRig: { 'binding-1': true, 'binding-2': true } });
+      store.set({ hiddenByRig: { 'binding-1': false } });
+
+      expect(store.get().hiddenByRig).toEqual({ 'binding-1': false, 'binding-2': true });
+    });
+
+    it('persists and round-trips through a second store instance', () => {
+      const first = new RigSettingsStore(settingsPath);
+      first.initialize();
+      first.set({ hiddenByRig: { 'binding-1': true } });
+
+      const second = new RigSettingsStore(settingsPath);
+      second.initialize();
+      expect(second.get().hiddenByRig).toEqual({ 'binding-1': true });
+    });
+
+    it('an existing settings.json that predates this field degrades to an empty map, not a throw', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({ version: 1, theme: null, chatPanelWidth: null, chatPanelCollapsed: false, lastHarnessByRig: {}, lastOpenTabsByRig: {} })
+      );
+      const store = new RigSettingsStore(settingsPath);
+      expect(() => store.initialize()).not.toThrow();
+      expect(store.get().hiddenByRig).toEqual({});
+    });
+
+    it('a malformed value (non-boolean entries) degrades to an empty map rather than passing through', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({ ...DEFAULT_RIG_SETTINGS, hiddenByRig: { 'binding-1': 'yes' } })
+      );
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().hiddenByRig).toEqual({});
+    });
+  });
+
+  describe('rigsRailView accepts the \'hidden\' filter (Hide round)', () => {
+    it('round-trips filter: "hidden" through set()', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      store.set({ rigsRailView: { filter: 'hidden', sort: 'recent' } });
+      expect(store.get().rigsRailView).toEqual({ filter: 'hidden', sort: 'recent' });
+    });
+  });
+
   it('degrades a corrupt settings.json to defaults instead of throwing', () => {
     mkdirSync(join(dir, 'nested'), { recursive: true });
     writeFileSync(settingsPath, 'not json');
