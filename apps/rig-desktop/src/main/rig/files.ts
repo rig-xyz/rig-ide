@@ -1,6 +1,6 @@
 import { type FSWatcher, watch as fsWatch } from 'node:fs';
 import { open, readdir, readFile, stat, writeFile as fsWriteFile } from 'node:fs/promises';
-import { basename, join, relative, sep } from 'node:path';
+import { basename, extname, join, relative, sep } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
@@ -14,6 +14,7 @@ import {
   type RigFileReadResult,
   type RigFileWriteError,
 } from '@shared/rig/files';
+import { getFileTitle } from './file-title-cache';
 
 /**
  * Real filesystem access for the workspace screen's file tree and the doc
@@ -22,11 +23,41 @@ import {
  */
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
-/** Entries the recursive listing never descends into or shows. */
-const IGNORED_NAMES = new Set(['.git', '.rig', 'node_modules']);
+const MARKDOWN_EXTENSIONS = new Set(['.md', '.mdx']);
+/**
+ * Entries the recursive listing never descends into or shows, regardless
+ * of the file navigator's "Show system files" toggle (`shared/rig/
+ * file-navigator-categories.ts` classifies both as System, but the toggle
+ * only reveals what's actually LISTED here). `node_modules` was already
+ * excluded unconditionally before the navigator redesign; `.git` joins it
+ * as a deliberate deviation from the redesign's own example list (which
+ * names `.git` as a dotfile the toggle should reveal) — this walk is
+ * eager (every directory's `children` is recursed and returned in full on
+ * every `list` call, not lazily on expand), and `.git`'s object store can
+ * be enormous and is never something an agent-produced-document navigator
+ * needs to browse. `.rig` no longer gets this special-cased exclusion: it's
+ * a normal dotfile now, System-classified and toggle-revealed like any
+ * other.
+ */
+const IGNORED_NAMES = new Set(['.git', 'node_modules']);
 
 function isIgnored(name: string): boolean {
-  return IGNORED_NAMES.has(name) || name.startsWith('.');
+  return IGNORED_NAMES.has(name);
+}
+
+/**
+ * File-navigator redesign sort key: folders first, then files, both by
+ * TITLE A-Z (locale compare) — a folder's title is just its name; a file's
+ * is its extracted markdown title when present, else its filename (matching
+ * the renderer's own display fallback closely enough that sort order and
+ * displayed order agree in the overwhelming majority of cases — the one
+ * gap, an extension-hidden display title diverging from this extension-ful
+ * sort key, only shows up for two files sharing a base name with different
+ * extensions, which is rare enough not to warrant duplicating the
+ * extension-stripping logic here).
+ */
+function sortKey(node: RigFileNode): string {
+  return node.title ?? node.name;
 }
 
 async function listDir(absDir: string, root: string): Promise<RigFileNode[]> {
@@ -44,13 +75,18 @@ async function listDir(absDir: string, root: string): Promise<RigFileNode[]> {
         children: await listDir(absPath, root),
       });
     } else if (entry.isFile()) {
-      nodes.push({ name: entry.name, relPath, kind: 'file' });
+      const node: RigFileNode = { name: entry.name, relPath, kind: 'file' };
+      if (MARKDOWN_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
+        const title = await getFileTitle(absPath);
+        if (title) node.title = title;
+      }
+      nodes.push(node);
     }
     // Symlinks and other special entries are skipped rather than followed.
   }
   nodes.sort((a, b) => {
     if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1;
-    return a.name.localeCompare(b.name);
+    return sortKey(a).localeCompare(sortKey(b));
   });
   return nodes;
 }

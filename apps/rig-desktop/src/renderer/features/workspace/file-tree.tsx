@@ -1,19 +1,22 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, File, FileText, Folder, FolderOpen, Loader2, Table } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { detectByExtension } from '@renderer/features/artifact/file-type';
 import { events, rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
+import { classifyEntryCategory } from '@shared/rig/file-navigator-categories';
 import { rigFileChangeChannel } from '@shared/rig/files';
 import type { RigFileNode } from '@shared/rig/files';
+import { FILE_ICON_ASSETS, fileIconTypeFor, type FileIconType } from './file-icon';
+import { FolderIcon } from './folder-icon';
 
 /**
  * Real filesystem tree for the opened rig, via `rpc.rig.files.list` — a small,
  * new main rpc (see `main/rig/files.ts`), not a port of emdash's file-tree
  * component: that one is wired through the emdash project/workspace registry
  * (`workspace.fileTree`, `FileTreeProjector`) this app doesn't carry (see the
- * P0 report). Recursive listing, folders collapsible, file-type icons, mono
- * filenames, active row = `bg-2` + text shift — no colored left rail, per the
- * design system's hard rule.
+ * P0 report). Recursive listing, folders collapsible, no colored left rail,
+ * per the design system's hard rule.
  *
  * Round (live file tree): the listing used to be a one-shot fetch — an
  * agent creating a file was invisible here until something else (leaving
@@ -24,15 +27,96 @@ import type { RigFileNode } from '@shared/rig/files';
  * start, this component just never subscribed. Same pattern here:
  * `watch`/`unwatch` are refcounted per root, so this and any open doc tab
  * watching the same root share one real OS watcher.
+ *
+ * File-navigator redesign (`docs/file-navigator-design.md` §1): rows now
+ * show the document's TITLE (`node.title`, extracted+cached in main —
+ * `main/rig/file-title-cache.ts`) in the sans stack, falling back to the
+ * filename with its extension hidden; the real filename lives in the row's
+ * tooltip. Entries split into three categories
+ * (`classifyEntryCategory`): Content renders as the normal tree below;
+ * Skills (`.claude/skills`, `.agents/skills`, `.claude/commands`,
+ * `AGENTS.md`/`CLAUDE.md` at any depth) are pulled out into one collapsed
+ * "Skills" section at the bottom instead of being interleaved; System
+ * (`rig.toml`, `.rig/`, other dotfiles/dot-dirs) stays hidden unless
+ * `showSystemFiles` is on (`App.tsx`'s `FileBrowser` header toggle).
+ * Sorting itself (folders first, then title A-Z) happens server-side in
+ * `main/rig/files.ts`'s `listDir` — filtering here only ever REMOVES nodes,
+ * never reorders what's left.
  */
 
 const HIGHLIGHT_MS = 1400;
+/** One level of nested indent, matching a depth-1 file row's own `indent + 18`. */
+const SKILL_ROW_PADDING = 8 + 14 + 18;
 
-function iconFor(name: string) {
-  const ext = name.split('.').pop()?.toLowerCase();
-  if (ext === 'md' || ext === 'mdx' || ext === 'txt') return FileText;
-  if (ext === 'csv' || ext === 'tsv' || ext === 'xlsx') return Table;
-  return File;
+/** The document's display name: its extracted title, else the filename with a recognized extension hidden. */
+function displayTitle(node: RigFileNode): string {
+  if (node.kind === 'dir') return node.name;
+  if (node.title) return node.title;
+  return stripRecognizedExtension(node.name);
+}
+
+/** Only strips a real `name.ext` shape for a RECOGNIZED extension — a dotfile like `.gitignore` or an unknown type is shown in full. */
+function stripRecognizedExtension(name: string): string {
+  if (!detectByExtension(name)) return name;
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return name;
+  return name.slice(0, dot);
+}
+
+function FileIconImg({ type, className }: { type: FileIconType; className?: string }) {
+  const asset = FILE_ICON_ASSETS[type];
+  return (
+    <img
+      src={asset.src1x}
+      srcSet={`${asset.src1x} 1x, ${asset.src2x} 2x`}
+      alt=""
+      draggable={false}
+      className={className}
+    />
+  );
+}
+
+/** Every `skills`-classified FILE, anywhere in the tree, flattened — folders that only contain skills are not themselves listed. */
+function collectSkillFiles(nodes: RigFileNode[]): RigFileNode[] {
+  const out: RigFileNode[] = [];
+  const walk = (list: RigFileNode[]) => {
+    for (const node of list) {
+      if (node.kind === 'dir') {
+        walk(node.children ?? []);
+        continue;
+      }
+      if (classifyEntryCategory(node.relPath) === 'skills') out.push(node);
+    }
+  };
+  walk(nodes);
+  return out;
+}
+
+/**
+ * The normal content tree: Skills entries are always pulled out (they
+ * render in their own section, see `collectSkillFiles`); System entries
+ * are pruned unless `showSystemFiles`. A folder that only ever contained
+ * now-pruned entries is dropped too — a container that exists solely to
+ * hold hidden content is itself clutter — but a folder that was ALREADY
+ * empty in the raw listing still shows as an empty folder, unchanged.
+ */
+function filterContentTree(nodes: RigFileNode[], showSystemFiles: boolean): RigFileNode[] {
+  const out: RigFileNode[] = [];
+  for (const node of nodes) {
+    const category = classifyEntryCategory(node.relPath);
+    if (category === 'skills') continue;
+    if (category === 'system' && !showSystemFiles) continue;
+
+    if (node.kind === 'dir') {
+      const originalChildren = node.children ?? [];
+      const filteredChildren = filterContentTree(originalChildren, showSystemFiles);
+      if (originalChildren.length > 0 && filteredChildren.length === 0) continue;
+      out.push({ ...node, children: filteredChildren });
+    } else {
+      out.push(node);
+    }
+  }
+  return out;
 }
 
 export function FileTree({
@@ -41,6 +125,7 @@ export function FileTree({
   revealPath,
   onOpenFile,
   justAttachedSyncing = false,
+  showSystemFiles = false,
 }: {
   root: string;
   activePath: string | null;
@@ -68,6 +153,8 @@ export function FileTree({
    * that moment; this waits for real evidence of it instead.
    */
   justAttachedSyncing?: boolean;
+  /** File-navigator redesign: System entries stay hidden until this is true (`App.tsx`'s `FileBrowser` header toggle). */
+  showSystemFiles?: boolean;
 }) {
   const queryClient = useQueryClient();
   const queryKey = useMemo(() => ['rig', 'files', 'list', root], [root]);
@@ -84,9 +171,9 @@ export function FileTree({
   // Live updates: refetch the listing whenever anything under `root`
   // changes on disk — an agent writing a file, `git checkout`, another
   // editor, all of it. `main/rig/files.ts` already debounces (200ms) and
-  // ignores `.git`/`.rig`/`node_modules`/dotfile noise before this ever
-  // fires, so no extra debouncing needed here. Also flips `sawChange` —
-  // see `justAttachedSyncing`'s own comment above.
+  // ignores `.git`/`node_modules` before this ever fires, so no extra
+  // debouncing needed here. Also flips `sawChange` — see
+  // `justAttachedSyncing`'s own comment above.
   useEffect(() => {
     setSawChange(false);
     void rpc.rig.files.watch(root);
@@ -100,6 +187,12 @@ export function FileTree({
       void rpc.rig.files.unwatch(root);
     };
   }, [root, queryClient, queryKey]);
+
+  const skillFiles = useMemo(() => collectSkillFiles(data ?? []), [data]);
+  const contentTree = useMemo(
+    () => filterContentTree(data ?? [], showSystemFiles),
+    [data, showSystemFiles]
+  );
 
   if (isLoading) {
     return <p className="text-text-muted px-3 py-2 text-xs">Loading files…</p>;
@@ -123,9 +216,13 @@ export function FileTree({
     return <p className="text-text-muted px-3 py-2 text-xs">Empty folder.</p>;
   }
 
+  if (contentTree.length === 0 && skillFiles.length === 0) {
+    return <p className="text-text-muted px-3 py-2 text-xs">Empty folder.</p>;
+  }
+
   return (
     <div className="flex flex-col py-1">
-      {data.map((node) => (
+      {contentTree.map((node) => (
         <TreeNode
           key={node.relPath}
           node={node}
@@ -136,6 +233,7 @@ export function FileTree({
           onOpenFile={onOpenFile}
         />
       ))}
+      <SkillsSection files={skillFiles} root={root} activePath={activePath} onOpenFile={onOpenFile} />
     </div>
   );
 }
@@ -174,8 +272,6 @@ function TreeNode({
   const { ref: rowRef, flashing } = useRevealHighlight(isRevealTarget);
 
   if (node.kind === 'dir') {
-    const FolderIcon = open ? FolderOpen : Folder;
-
     return (
       <div>
         <button
@@ -195,7 +291,7 @@ function TreeNode({
           ) : (
             <ChevronRight className="size-3.5 shrink-0" strokeWidth={1.5} />
           )}
-          <FolderIcon className="size-3.5 shrink-0" strokeWidth={1.5} />
+          <FolderIcon open={open} className="size-[18px] shrink-0" />
           <span className="min-w-0 truncate">{node.name}</span>
         </button>
         {open &&
@@ -214,23 +310,94 @@ function TreeNode({
     );
   }
 
-  const Icon = iconFor(node.name);
   const active = absPath === activePath;
   return (
     <button
       type="button"
       onClick={() => onOpenFile(absPath)}
+      title={node.name}
       style={{ paddingLeft: indent + 18 }}
       className={cn(
-        'flex w-full items-center gap-1.5 py-1 pr-3 text-left font-mono text-sm transition-colors',
+        'flex w-full items-center gap-1.5 py-1 pr-3 text-left text-sm transition-colors',
         active
           ? 'bg-bg-2 text-text-primary'
           : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
       )}
     >
-      <Icon className="size-3.5 shrink-0" strokeWidth={1.5} />
-      <span className="min-w-0 truncate">{node.name}</span>
+      <FileIconImg type={fileIconTypeFor(node.name)} className="size-[18px] shrink-0" />
+      <span className="min-w-0 truncate">{displayTitle(node)}</span>
     </button>
+  );
+}
+
+/**
+ * Skills, grouped into one section at the bottom, collapsed by default
+ * (`docs/file-navigator-design.md` §1) — flat and sorted by title A-Z
+ * rather than mirroring their original folder structure: the design doc
+ * asks for "a single Skills section," not a second parallel tree, and a
+ * flat list keeps that section legible even when skills live at different
+ * depths (`.claude/skills/<name>/SKILL.md`, a top-level `AGENTS.md`, a
+ * `.claude/commands/*.md`). Each row gets the shimmer-on-hover
+ * (`skill-row-shimmer`, defined in `renderer/tokens.css`, itself gated
+ * behind `prefers-reduced-motion`) — the app's one deliberate decorative
+ * motion, reserved for skills so it stays meaningful.
+ */
+function SkillsSection({
+  files,
+  root,
+  activePath,
+  onOpenFile,
+}: {
+  files: RigFileNode[];
+  root: string;
+  activePath: string | null;
+  onOpenFile: (absPath: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (files.length === 0) return null;
+
+  const sorted = [...files].sort((a, b) => displayTitle(a).localeCompare(displayTitle(b)));
+
+  return (
+    <div className="mt-1">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        style={{ paddingLeft: 8 }}
+        className="text-text-secondary hover:bg-bg-2 hover:text-text-primary flex w-full items-center gap-1.5 py-1 pr-3 text-left text-sm transition-colors"
+      >
+        {open ? (
+          <ChevronDown className="size-3.5 shrink-0" strokeWidth={1.5} />
+        ) : (
+          <ChevronRight className="size-3.5 shrink-0" strokeWidth={1.5} />
+        )}
+        <FileIconImg type="skill" className="size-[18px] shrink-0" />
+        <span className="min-w-0 truncate">Skills</span>
+      </button>
+      {open &&
+        sorted.map((node) => {
+          const absPath = `${root}/${node.relPath}`;
+          const active = absPath === activePath;
+          return (
+            <button
+              key={node.relPath}
+              type="button"
+              onClick={() => onOpenFile(absPath)}
+              title={node.name}
+              style={{ paddingLeft: SKILL_ROW_PADDING }}
+              className={cn(
+                'skill-row-shimmer flex w-full items-center gap-1.5 py-1 pr-3 text-left text-sm transition-colors',
+                active
+                  ? 'bg-bg-2 text-text-primary'
+                  : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
+              )}
+            >
+              <FileIconImg type="skill" className="size-[18px] shrink-0" />
+              <span className="min-w-0 truncate">{displayTitle(node)}</span>
+            </button>
+          );
+        })}
+    </div>
   );
 }
 

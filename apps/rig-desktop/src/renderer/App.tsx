@@ -29,7 +29,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/toolti
 import { events, rpc } from '@renderer/lib/ipc';
 import { consumeJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { cn } from '@renderer/lib/utils';
-import { ChevronRight, Home as HomeIcon, MessageSquare, Settings as SettingsIcon } from 'lucide-react';
+import {
+  ChevronRight,
+  Eye,
+  EyeOff,
+  Home as HomeIcon,
+  MessageSquare,
+  Settings as SettingsIcon,
+} from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { rigFileChangeChannel } from '@shared/rig/files';
 import {
@@ -254,6 +261,10 @@ export function App() {
   // normal shell) while this is null, so a fresh boot never flashes the
   // wrong one before the real value is known.
   const [hasSeenOnboarding, setHasSeenOnboarding] = useState<boolean | null>(null);
+  // File-navigator redesign: the tree's "Show system files" toggle —
+  // reconciled from main alongside the other plain preferences below,
+  // rather than a second settings subscription in `FileBrowser`/`FileTree`.
+  const [showSystemFiles, setShowSystemFiles] = useState(false);
   const authStatusQuery = useQuery({
     queryKey: ['rig', 'auth', 'status'],
     queryFn: () => rpc.rig.auth.status(),
@@ -287,6 +298,7 @@ export function App() {
       }
       setChatCollapsed(settings.chatPanelCollapsed);
       setHasSeenOnboarding(settings.hasSeenOnboarding);
+      setShowSystemFiles(settings.showSystemFiles);
     };
 
     rpc.rig.settings.importLegacy(legacy).then(reconcile).catch(() => {});
@@ -464,6 +476,14 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [nav, backToBrowser]);
 
+  const toggleShowSystemFiles = useCallback(() => {
+    setShowSystemFiles((current) => {
+      const next = !current;
+      void rpc.rig.settings.set({ showSystemFiles: next });
+      return next;
+    });
+  }, []);
+
   const toggleChatCollapsed = useCallback(() => {
     setChatCollapsed((current) => {
       const next = !current;
@@ -620,6 +640,8 @@ export function App() {
                 revealPath={nav.revealPath}
                 onOpenFile={openFile}
                 justAttachedSyncing={bound.root === syncingRoot}
+                showSystemFiles={showSystemFiles}
+                onToggleShowSystemFiles={toggleShowSystemFiles}
               />
             )}
           </div>
@@ -964,6 +986,8 @@ function FileBrowser({
   revealPath,
   onOpenFile,
   justAttachedSyncing,
+  showSystemFiles,
+  onToggleShowSystemFiles,
 }: {
   root: string;
   name: string | null;
@@ -971,12 +995,37 @@ function FileBrowser({
   onOpenFile: (absPath: string) => void;
   /** First-sync round — see `FileTree`'s own prop comment. */
   justAttachedSyncing: boolean;
+  /** File-navigator redesign: System entries (`rig.toml`, `.rig/`, dotfiles) stay hidden until this is true. */
+  showSystemFiles: boolean;
+  onToggleShowSystemFiles: () => void;
 }) {
   const [importOpen, setImportOpen] = useState(false);
   return (
     <div className="flex h-full min-w-0 flex-col overflow-y-auto">
       <div className="border-border-hairline flex h-10 shrink-0 items-center justify-end border-b px-3">
         <div className="flex shrink-0 items-center gap-2">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={onToggleShowSystemFiles}
+                  aria-pressed={showSystemFiles}
+                  aria-label={showSystemFiles ? 'Hide system files' : 'Show system files'}
+                >
+                  {showSystemFiles ? (
+                    <Eye className="size-3.5" strokeWidth={1.5} />
+                  ) : (
+                    <EyeOff className="size-3.5" strokeWidth={1.5} />
+                  )}
+                </Button>
+              }
+            />
+            <TooltipContent side="bottom">
+              {showSystemFiles ? 'Hide system files' : 'Show system files'}
+            </TooltipContent>
+          </Tooltip>
           <AddMenu root={root} onOpenFile={onOpenFile} onOpenImportDialog={() => setImportOpen(true)} />
           <RigShareButton root={root} name={name} />
         </div>
@@ -993,6 +1042,7 @@ function FileBrowser({
         revealPath={revealPath}
         onOpenFile={onOpenFile}
         justAttachedSyncing={justAttachedSyncing}
+        showSystemFiles={showSystemFiles}
       />
     </div>
   );

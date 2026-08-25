@@ -20,8 +20,16 @@ export type RigFileNode = {
   /** Path relative to the listed root, forward slashes. */
   relPath: string;
   kind: RigFileNodeKind;
-  /** Present only for `kind: 'dir'`, sorted directories-first then alphabetically. */
+  /** Present only for `kind: 'dir'`, sorted directories-first then by title/name A-Z. */
   children?: RigFileNode[];
+  /**
+   * File-navigator redesign: the document's own title — front-matter `title:`
+   * or first `# H1`, markdown files only (`main/rig/file-title-cache.ts`
+   * extracts and caches it). Absent for directories, non-markdown files, and
+   * markdown files with neither — the renderer falls back to the filename
+   * (extension hidden for recognized types) in all of those cases.
+   */
+  title?: string;
 };
 
 export type RigFileListError = { kind: 'notFound' | 'notADirectory' | 'ioError'; message: string };

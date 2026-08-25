@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Sparkles } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useMemo, useRef } from 'react';
 import { CommentSelectionButton } from '@renderer/features/docs/comments/comment-selection';
@@ -8,6 +8,7 @@ import { MarginRail, shouldShowMargin } from '@renderer/features/docs/comments/c
 import { DocEditor } from '@renderer/features/docs/doc-editor';
 import { DocTabResource } from '@renderer/features/docs/doc-file-sync';
 import { cn } from '@renderer/lib/utils';
+import { classifyEntryCategory, relPathFromRoot } from '@shared/rig/file-navigator-categories';
 import { breadcrumbSegments, type BreadcrumbSegment } from './breadcrumb';
 import type { EditorLanguage } from './file-type';
 import { ImageArtifact } from './image-artifact';
@@ -54,6 +55,14 @@ export const ArtifactView = observer(function ArtifactView({
   const fileInfo = useFileType(path);
   const crumbs = useMemo(() => breadcrumbSegments(root, path), [root, path]);
   const type = fileInfo?.type ?? null;
+  // File-navigator redesign: a skill file (`.claude/skills`, `.agents/skills`,
+  // `.claude/commands`, `AGENTS.md`/`CLAUDE.md`) gets a friendly header
+  // instead of opening like any other document — see `EditableArtifactPane`'s
+  // banner below.
+  const isSkill = useMemo(
+    () => classifyEntryCategory(relPathFromRoot(root, path)) === 'skills',
+    [root, path]
+  );
 
   if (type !== null && (type.category === 'markdown' || type.category === 'text')) {
     return (
@@ -69,6 +78,7 @@ export const ArtifactView = observer(function ArtifactView({
         // to other text types is a real, cheap follow-up if wanted.
         commentsEnabled={type.category === 'markdown'}
         showShare={type.category === 'markdown'}
+        isSkill={isSkill}
         onClose={onClose}
         onNavigateFolder={onNavigateFolder}
       />
@@ -185,6 +195,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   language,
   commentsEnabled,
   showShare,
+  isSkill,
   onClose,
   onNavigateFolder,
 }: {
@@ -194,6 +205,8 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   language: EditorLanguage;
   commentsEnabled: boolean;
   showShare: boolean;
+  /** File-navigator redesign: shows the "Skill · teaches your agents" banner below the header. */
+  isSkill: boolean;
   onClose: () => void;
   onNavigateFolder: (relPath: string) => void;
 }) {
@@ -296,6 +309,13 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
           </>
         }
       />
+
+      {isSkill && (
+        <div className="border-border-hairline bg-bg-2 text-text-muted flex shrink-0 items-center gap-1.5 border-b px-4 py-1.5 text-xs">
+          <Sparkles className="size-3 shrink-0" strokeWidth={1.5} />
+          <span>Skill · teaches your agents</span>
+        </div>
+      )}
 
       <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto">
         {resource.isLoading ? (

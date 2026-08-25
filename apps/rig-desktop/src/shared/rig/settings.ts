@@ -137,6 +137,14 @@ export type RigSettings = {
    * `filterHomeRigRows` treats both the same way.
    */
   hiddenByRig: Record<string, boolean>;
+  /**
+   * File-navigator redesign (`docs/file-navigator-design.md` §1): the tree's
+   * "Show system files" toggle — `rig.toml`, `.rig/`, and other dotfiles/
+   * dot-dirs are hidden by default. Same "plain global preference, replaced
+   * wholesale" shape as `theme`/`rigsRailView` above, not per-rig — a
+   * reader's taste for seeing system files isn't scoped to one workspace.
+   */
+  showSystemFiles: boolean;
 };
 
 export const DEFAULT_RIG_SETTINGS: RigSettings = {
@@ -156,6 +164,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   updateLastCheckedAt: null,
   updateAnnouncedVersion: null,
   hiddenByRig: {},
+  showSystemFiles: false,
 };
 
 /** The subset of legacy localStorage values the renderer can hand to `importLegacy`. */

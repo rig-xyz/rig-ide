@@ -166,3 +166,38 @@
   --default-transition-duration: 150ms;
   --default-transition-timing-function: ease-out;
 }
+
+/*
+ * File-navigator redesign (`docs/file-navigator-design.md` §1): the ONE
+ * deliberate decorative motion in the app — a slow specular sweep on a
+ * Skills row's hover state (`file-tree.tsx`'s `SkillsSection`), reserved
+ * for the category the design doc calls "not machinery — the magic" so it
+ * stays meaningful rather than becoming ambient noise. Deliberately NOT a
+ * Tailwind utility: the whole rule (including the hover selector) lives
+ * inside the `prefers-reduced-motion: no-preference` query so a reduced-
+ * motion user never even downloads a hover state that would animate — the
+ * row still highlights via the plain `hover:bg-bg-2` Tailwind class
+ * already on it, just without the sweep.
+ */
+@keyframes skill-shimmer-sweep {
+  from {
+    background-position: -150% 0;
+  }
+  to {
+    background-position: 250% 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .skill-row-shimmer:hover {
+    background-image: linear-gradient(
+      100deg,
+      transparent 30%,
+      var(--accent-subtle) 45%,
+      var(--accent-subtle) 55%,
+      transparent 70%
+    );
+    background-size: 250% 100%;
+    animation: skill-shimmer-sweep 2.2s ease-in-out infinite;
+  }
+}

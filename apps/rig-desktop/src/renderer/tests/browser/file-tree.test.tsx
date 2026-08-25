@@ -60,6 +60,11 @@ function fileNode(name: string): RigFileNode {
   return { name, relPath: name, kind: 'file' };
 }
 
+// File-navigator redesign: rows now display the title (extension hidden
+// for a recognized type like `.md`) rather than the raw filename, so the
+// fixtures below use distinct base names and assert on the DISPLAYED
+// (extension-stripped) text, not the raw `x.md`/`y.md` name.
+
 async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -93,8 +98,8 @@ describe('FileTree — live updates on disk change', () => {
 
   it('refetches the listing when rigFileChangeChannel reports a change for this root (the agent-created-file case)', async () => {
     mocks.list
-      .mockResolvedValueOnce({ success: true, data: [fileNode('a.md')] })
-      .mockResolvedValueOnce({ success: true, data: [fileNode('a.md'), fileNode('b.md')] });
+      .mockResolvedValueOnce({ success: true, data: [fileNode('alpha.md')] })
+      .mockResolvedValueOnce({ success: true, data: [fileNode('alpha.md'), fileNode('beta.md')] });
 
     await act(async () => {
       root.render(
@@ -104,8 +109,8 @@ describe('FileTree — live updates on disk change', () => {
       );
     });
 
-    await waitFor(() => host.textContent?.includes('a.md') ?? false);
-    expect(host.textContent).not.toContain('b.md');
+    await waitFor(() => host.textContent?.includes('alpha') ?? false);
+    expect(host.textContent).not.toContain('beta');
     expect(mocks.watch).toHaveBeenCalledWith('/rig');
 
     // Simulate the main-process watcher firing for this exact root.
@@ -113,12 +118,12 @@ describe('FileTree — live updates on disk change', () => {
       fileChangeListener?.({ root: '/rig' });
     });
 
-    await waitFor(() => host.textContent?.includes('b.md') ?? false);
+    await waitFor(() => host.textContent?.includes('beta') ?? false);
     expect(mocks.list).toHaveBeenCalledTimes(2);
   });
 
   it('ignores a change reported for a different root', async () => {
-    mocks.list.mockResolvedValue({ success: true, data: [fileNode('a.md')] });
+    mocks.list.mockResolvedValue({ success: true, data: [fileNode('alpha.md')] });
 
     await act(async () => {
       root.render(
@@ -128,7 +133,7 @@ describe('FileTree — live updates on disk change', () => {
       );
     });
 
-    await waitFor(() => host.textContent?.includes('a.md') ?? false);
+    await waitFor(() => host.textContent?.includes('alpha') ?? false);
     expect(mocks.list).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -142,7 +147,7 @@ describe('FileTree — live updates on disk change', () => {
   });
 
   it('unwatches on unmount', async () => {
-    mocks.list.mockResolvedValue({ success: true, data: [fileNode('a.md')] });
+    mocks.list.mockResolvedValue({ success: true, data: [fileNode('alpha.md')] });
 
     await act(async () => {
       root.render(
@@ -151,7 +156,7 @@ describe('FileTree — live updates on disk change', () => {
         </QueryClientProvider>
       );
     });
-    await waitFor(() => host.textContent?.includes('a.md') ?? false);
+    await waitFor(() => host.textContent?.includes('alpha') ?? false);
 
     await act(async () => root.unmount());
     expect(mocks.unwatch).toHaveBeenCalledWith('/rig');

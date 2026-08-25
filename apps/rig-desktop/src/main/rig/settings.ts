@@ -162,6 +162,7 @@ function normalizeSettings(parsed: unknown): RigSettings {
     updateLastCheckedAt: typeof raw.updateLastCheckedAt === 'number' ? raw.updateLastCheckedAt : null,
     updateAnnouncedVersion: typeof raw.updateAnnouncedVersion === 'string' ? raw.updateAnnouncedVersion : null,
     hiddenByRig: isBooleanRecord(raw.hiddenByRig) ? raw.hiddenByRig : {},
+    showSystemFiles: raw.showSystemFiles === true,
   };
 }
 
