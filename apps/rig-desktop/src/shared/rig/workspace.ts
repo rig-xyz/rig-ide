@@ -23,7 +23,14 @@ import { defineEvent } from '../lib/ipc/events';
  */
 export type RigWorkspaceDetection =
   | { bound: false; unsynced: { path: string; name: string | null } | null }
-  | { bound: true; bindingId: string; workspaceRoot: string; name: string | null };
+  | {
+      bound: true;
+      bindingId: string;
+      /** Opaque main-process capability used by renderer filesystem calls. */
+      rootId: string;
+      workspaceRoot: string;
+      name: string | null;
+    };
 
 /**
  * The unbound half of detection, pure (loose-ends round). Mirrors the CLI's

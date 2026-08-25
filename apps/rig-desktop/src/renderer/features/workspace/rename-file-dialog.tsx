@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '@renderer/lib/ui/dialog';
+import { relPathFromRoot } from '@shared/rig/file-navigator-categories';
 
 /**
  * Navigator v2 (`docs/file-navigator-design.md` §3.3): the tree row context
@@ -17,12 +18,16 @@ export function RenameFileDialog({
   open,
   onOpenChange,
   absPath,
+  root,
+  rootId,
   currentName,
   onRenamed,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   absPath: string;
+  root: string;
+  rootId: string;
   currentName: string;
   onRenamed: () => void;
 }) {
@@ -38,6 +43,8 @@ export function RenameFileDialog({
         {open && (
           <RenameFileForm
             absPath={absPath}
+            root={root}
+            rootId={rootId}
             currentName={currentName}
             onClose={() => onOpenChange(false)}
             onRenamed={onRenamed}
@@ -50,11 +57,15 @@ export function RenameFileDialog({
 
 function RenameFileForm({
   absPath,
+  root,
+  rootId,
   currentName,
   onClose,
   onRenamed,
 }: {
   absPath: string;
+  root: string;
+  rootId: string;
   currentName: string;
   onClose: () => void;
   onRenamed: () => void;
@@ -69,14 +80,23 @@ function RenameFileForm({
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
-    const result = await rpc.rig.files.rename(absPath, trimmed);
-    setBusy(false);
-    if (!result.success) {
-      setError(result.error.message);
-      return;
+    try {
+      const result = await rpc.rig.files.rename({
+        rootId,
+        relativePath: relPathFromRoot(root, absPath),
+        newName: trimmed,
+      });
+      if (!result.success) {
+        setError(result.error.message);
+        return;
+      }
+      onRenamed();
+      onClose();
+    } catch {
+      setError("Couldn't rename this item. Try again.");
+    } finally {
+      setBusy(false);
     }
-    onRenamed();
-    onClose();
   };
 
   return (
@@ -89,7 +109,7 @@ function RenameFileForm({
       }}
     >
       <div className="flex flex-col gap-1">
-        <label htmlFor="rig-file-rename" className="text-text-secondary text-xs font-medium">
+        <label htmlFor="rig-file-rename" className="text-xs font-medium text-text-secondary">
           Name
         </label>
         <input
@@ -97,11 +117,11 @@ function RenameFileForm({
           autoFocus
           value={name}
           onChange={(event) => setName(event.target.value)}
-          className="border-border-hairline bg-bg-1 text-text-primary placeholder:text-text-muted focus:border-border-strong focus-visible:outline-accent rounded-control border px-2 py-1.5 text-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2"
+          className="rounded-control border border-border-hairline bg-bg-1 px-2 py-1.5 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-border-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         />
       </div>
 
-      {error && <p className="text-danger text-xs">{error}</p>}
+      {error && <p className="text-xs text-danger">{error}</p>}
 
       <div className="flex justify-end gap-2 pt-1">
         <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>

@@ -12,19 +12,15 @@
 
 import { defineEvent } from '../lib/ipc/events';
 
-export type RigImportSource =
-  | { kind: 'url'; url: string }
-  | { kind: 'file'; path: string };
+export type RigImportSource = { kind: 'url'; url: string } | { kind: 'file'; path: string };
 
 export type RigImportRequest = {
-  /** The bound rig's workspace root — the import writes into it. */
-  root: string;
+  /** Opaque handle for the bound rig root — the import writes only there. */
+  rootId: string;
   source: RigImportSource;
 };
 
 export type RigImportResult = {
-  /** Absolute path of the written markdown file. */
-  mdPath: string;
   /** Workspace-relative path (forward slashes) — what the file tree shows. */
   relPath: string;
   /** The doc's title as best known (export filename / picked file's name). */
@@ -33,7 +29,14 @@ export type RigImportResult = {
 };
 
 export type RigImportError = {
-  kind: 'invalidUrl' | 'restricted' | 'notFound' | 'network' | 'convertFailed' | 'writeFailed';
+  kind:
+    | 'invalidRoot'
+    | 'invalidUrl'
+    | 'restricted'
+    | 'notFound'
+    | 'network'
+    | 'convertFailed'
+    | 'writeFailed';
   message: string;
 };
 
@@ -44,15 +47,13 @@ export type RigImportError = {
  * rig root, collision-safe naming only — no conversion.
  */
 export type RigCopyFileRequest = {
-  /** The bound rig's workspace root — the copy writes into it. */
-  root: string;
+  /** Opaque handle for the bound rig root — the copy writes only there. */
+  rootId: string;
   /** Absolute path of the file the user picked. */
   path: string;
 };
 
 export type RigCopyFileResult = {
-  /** Absolute path of the copy written into the rig root. */
-  absPath: string;
   /** Workspace-relative path (forward slashes) — what the file tree shows. */
   relPath: string;
 };

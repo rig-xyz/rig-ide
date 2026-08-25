@@ -24,29 +24,35 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { relativeTime } from '@renderer/features/chat/session-history';
+import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
 import { classifyEntryCategory, filterToContentOnly } from '@shared/rig/file-navigator-categories';
 import { rigFileChangeChannel } from '@shared/rig/files';
 import type { RigFileNode } from '@shared/rig/files';
 import {
-  DEFAULT_FILE_TREE_VIEW,
-  rigSettingsChangedChannel,
-  type FileTreeFilter,
-  type FileTreeSort,
-} from '@shared/rig/settings';
-import {
   collectFileRelPaths,
   computeUnseenSummary,
   rigSeenStateChangedChannel,
   type SeenMap,
 } from '@shared/rig/seen-state';
+import {
+  DEFAULT_FILE_TREE_VIEW,
+  rigSettingsChangedChannel,
+  type FileTreeFilter,
+  type FileTreeSort,
+} from '@shared/rig/settings';
 import { filterTree, searchTree, sortTree, type TreeViewContext } from '@shared/rig/tree-view';
 import { RenameFileDialog } from './rename-file-dialog';
+import {
+  ContextMenuItem,
+  ContextMenuSeparator,
+  RowContextMenu,
+  useRowContextMenu,
+} from './row-context-menu';
 import { RowLabel } from './row-label';
 import { RowStatusPill, type RowStatus } from './row-status-pill';
 import { useRecentWrites } from './write-activity';
-import { ContextMenuItem, ContextMenuSeparator, RowContextMenu, useRowContextMenu } from './row-context-menu';
 
 /**
  * Real filesystem tree for the opened rig, via `rpc.rig.files.list` — a small,
@@ -122,7 +128,7 @@ const FILE_SORT_ICONS: Record<FileTreeSort, typeof Clock> = {
 function UnseenMark({ show }: { show: boolean }) {
   return (
     <span className="flex w-2.5 shrink-0 justify-center">
-      {show && <span className="unseen-dot-in bg-text-secondary size-[5px] rounded-full" />}
+      {show && <span className="unseen-dot-in size-[5px] rounded-full bg-text-secondary" />}
     </span>
   );
 }
@@ -152,9 +158,12 @@ export function iconFor(name: string) {
   return File;
 }
 
-/** The listing's react-query key — shared with `suggested-files.tsx` so both read the SAME cached `rpc.rig.files.list(root)` result rather than issuing a second, redundant call. */
-export function rigFilesQueryKey(root: string): readonly ['rig', 'files', 'list', string] {
-  return ['rig', 'files', 'list', root];
+/** Shared listing key: the path identifies the rig to people, while the root ID prevents a reopened rig from reusing data fetched under a revoked capability. */
+export function rigFilesQueryKey(
+  root: string,
+  rootId: string
+): readonly ['rig', 'files', 'list', string, string] {
+  return ['rig', 'files', 'list', root, rootId];
 }
 
 /**
@@ -194,6 +203,7 @@ type MenuTarget = RigFileNode | null;
 
 export function FileTree({
   root,
+  rootId,
   bindingId = null,
   activePath,
   revealPath,
@@ -209,6 +219,7 @@ export function FileTree({
   onProvideMarkAllSeen,
 }: {
   root: string;
+  rootId: string;
   /**
    * File-navigator redesign (§4, seen-state): identifies this rig for the
    * `rig_seen_files` table. Optional (and the whole seen-state feature
@@ -259,12 +270,12 @@ export function FileTree({
   onProvideMarkAllSeen?: (fn: (() => void) | null) => void;
 }) {
   const queryClient = useQueryClient();
-  const queryKey = useMemo(() => rigFilesQueryKey(root), [root]);
+  const queryKey = useMemo(() => rigFilesQueryKey(root, rootId), [root, rootId]);
   const [sawChange, setSawChange] = useState(false);
   const { data, isLoading, error } = useQuery({
     queryKey,
     queryFn: async () => {
-      const result = await rpc.rig.files.list(root);
+      const result = await rpc.rig.files.list({ rootId });
       if (!result.success) throw new Error(result.error.message);
       return result.data;
     },
@@ -278,17 +289,17 @@ export function FileTree({
   // `justAttachedSyncing`'s own comment above.
   useEffect(() => {
     setSawChange(false);
-    void rpc.rig.files.watch(root);
-    const off = events.on(rigFileChangeChannel, ({ root: changedRoot }) => {
-      if (changedRoot !== root) return;
+    void rpc.rig.files.watch({ rootId });
+    const off = events.on(rigFileChangeChannel, ({ rootId: changedRoot }) => {
+      if (changedRoot !== rootId) return;
       setSawChange(true);
       void queryClient.invalidateQueries({ queryKey });
     });
     return () => {
       off();
-      void rpc.rig.files.unwatch(root);
+      void rpc.rig.files.unwatch({ rootId });
     };
-  }, [root, queryClient, queryKey]);
+  }, [root, rootId, queryClient, queryKey]);
 
   const contentTree = useMemo(
     () => filterContentTree(data ?? [], showSystemFiles),
@@ -346,7 +357,8 @@ export function FileTree({
   // includes system entries once the toggle is on).
   const contentUnseenCount = useMemo(() => {
     if (!seenState || !data) return 0;
-    return computeUnseenSummary(filterToContentOnly(data), seenState.seen, seenState.baselineAt).unseenFiles.size;
+    return computeUnseenSummary(filterToContentOnly(data), seenState.seen, seenState.baselineAt)
+      .unseenFiles.size;
   }, [data, seenState]);
   useEffect(() => {
     onUnseenCountChange?.(contentUnseenCount);
@@ -426,7 +438,9 @@ export function FileTree({
 
   const togglePin = (relPath: string) => {
     if (!bindingId) return;
-    const next = pinned.includes(relPath) ? pinned.filter((p) => p !== relPath) : [...pinned, relPath];
+    const next = pinned.includes(relPath)
+      ? pinned.filter((p) => p !== relPath)
+      : [...pinned, relPath];
     setPinned(next);
     void rpc.rig.settings.set({ pinnedPathsByRig: { [bindingId]: next } });
   };
@@ -461,8 +475,23 @@ export function FileTree({
     [menu]
   );
 
-  const archive = (node: RigFileNode) => {
-    void rpc.rig.files.archive(root, `${root}/${node.relPath}`);
+  const archive = async (node: RigFileNode) => {
+    try {
+      const result = await rpc.rig.files.archive({ rootId, relativePath: node.relPath });
+      if (!result.success) {
+        toast({
+          title: "Couldn't archive this item",
+          description: result.error.message,
+          variant: 'destructive',
+        });
+      }
+    } catch {
+      toast({
+        title: "Couldn't archive this item",
+        description: 'Try again.',
+        variant: 'destructive',
+      });
+    }
   };
 
   /**
@@ -483,7 +512,7 @@ export function FileTree({
     return (
       <>
         {tabs}
-        <p className="text-text-muted px-3 py-2 text-xs">Loading files…</p>
+        <p className="px-3 py-2 text-xs text-text-muted">Loading files…</p>
       </>
     );
   }
@@ -491,7 +520,7 @@ export function FileTree({
     return (
       <>
         {tabs}
-        <p className="text-danger px-3 py-2 text-xs">
+        <p className="px-3 py-2 text-xs text-danger">
           {error instanceof Error ? error.message : 'Could not read this folder.'}
         </p>
       </>
@@ -503,8 +532,8 @@ export function FileTree({
         <>
           {tabs}
           <div className="flex flex-col items-center gap-2 px-3 py-8 text-center">
-            <Loader2 className="text-text-muted size-4 animate-spin" strokeWidth={1.5} />
-            <p className="text-text-muted text-xs">Syncing files…</p>
+            <Loader2 className="size-4 animate-spin text-text-muted" strokeWidth={1.5} />
+            <p className="text-xs text-text-muted">Syncing files…</p>
           </div>
         </>
       );
@@ -512,7 +541,7 @@ export function FileTree({
     return (
       <>
         {tabs}
-        <p className="text-text-muted px-3 py-2 text-xs">Empty folder.</p>
+        <p className="px-3 py-2 text-xs text-text-muted">Empty folder.</p>
       </>
     );
   }
@@ -530,27 +559,27 @@ export function FileTree({
         }}
       >
         {viewTree.length === 0 ? (
-          <p className="text-text-muted px-3 py-6 text-center text-xs">
-              {search ? `Nothing matching "${search}".` : 'Nothing here yet.'}
-            </p>
-          ) : (
-            viewTree.map((node) => (
-              <TreeNode
-                key={node.relPath}
-                node={node}
-                depth={0}
-                root={root}
-                activePath={activePath}
-                revealPath={revealPath ?? null}
-                onOpenFile={handleOpenFile}
-                onContextMenu={menu.open}
-                onRowMenu={openRowMenu}
-                statusFor={statusFor}
-                forceOpen={search.trim().length > 0 || filter === 'unseen'}
-                unseenFiles={unseen.unseenFiles}
-                unseenCountByDir={unseen.unseenCountByDir}
-                pinned={pinned}
-              />
+          <p className="px-3 py-6 text-center text-xs text-text-muted">
+            {search ? `Nothing matching "${search}".` : 'Nothing here yet.'}
+          </p>
+        ) : (
+          viewTree.map((node) => (
+            <TreeNode
+              key={node.relPath}
+              node={node}
+              depth={0}
+              root={root}
+              activePath={activePath}
+              revealPath={revealPath ?? null}
+              onOpenFile={handleOpenFile}
+              onContextMenu={menu.open}
+              onRowMenu={openRowMenu}
+              statusFor={statusFor}
+              forceOpen={search.trim().length > 0 || filter === 'unseen'}
+              unseenFiles={unseen.unseenFiles}
+              unseenCountByDir={unseen.unseenCountByDir}
+              pinned={pinned}
+            />
           ))
         )}
       </div>
@@ -626,7 +655,7 @@ export function FileTree({
                     label="Archive"
                     icon={Archive}
                     onSelect={() => {
-                      archive(target);
+                      void archive(target);
                       menu.close();
                     }}
                   />
@@ -663,6 +692,8 @@ export function FileTree({
             if (!open) setRenameTarget(null);
           }}
           absPath={`${root}/${renameTarget.relPath}`}
+          root={root}
+          rootId={rootId}
           currentName={renameTarget.name}
           onRenamed={() => setRenameTarget(null)}
         />
@@ -787,7 +818,9 @@ function TreeNode({
       onContextMenu={(event) => onContextMenu(event, node)}
       className={cn(
         'rounded-control group flex h-7 w-full items-center text-sm transition-colors',
-        active ? 'bg-bg-2 text-text-primary' : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
+        active
+          ? 'bg-bg-2 text-text-primary'
+          : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
       )}
     >
       <button
@@ -798,7 +831,11 @@ function TreeNode({
       >
         <UnseenMark show={isUnseen} />
         <Icon className="size-3.5 shrink-0" strokeWidth={1.5} />
-        <RowLabel text={displayName(node)} title={rowTitleHint(node)} className={cn(status && 'active-shimmer')} />
+        <RowLabel
+          text={displayName(node)}
+          title={rowTitleHint(node)}
+          className={cn(status && 'active-shimmer')}
+        />
       </button>
       {status && <RowStatusPill status={status} className="mr-2" />}
       {/*
@@ -809,11 +846,15 @@ function TreeNode({
         land. Unseen needs no badge of its own: a medium-weight name and an
         accent timestamp say it, the way an unread mail row does.
       */}
-      <span className="text-text-muted w-14 shrink-0 pr-1 text-right text-xs tabular-nums group-hover:hidden">
+      <span className="w-14 shrink-0 pr-1 text-right text-xs text-text-muted tabular-nums group-hover:hidden">
         {node.mtimeMs === undefined ? '' : relativeTime(node.mtimeMs, Date.now())}
       </span>
       {isPinned && (
-        <Pin className="text-text-muted mr-1 size-3 shrink-0 group-hover:hidden" strokeWidth={1.5} fill="currentColor" />
+        <Pin
+          className="mr-1 size-3 shrink-0 text-text-muted group-hover:hidden"
+          strokeWidth={1.5}
+          fill="currentColor"
+        />
       )}
       <button
         type="button"
@@ -822,7 +863,7 @@ function TreeNode({
           event.stopPropagation();
           onRowMenu(event, node);
         }}
-        className="rounded-control text-text-muted hover:bg-bg-1 hover:text-text-primary mr-2 hidden size-5 shrink-0 items-center justify-center group-hover:flex focus-visible:flex"
+        className="mr-2 hidden size-5 shrink-0 items-center justify-center rounded-control text-text-muted group-hover:flex hover:bg-bg-1 hover:text-text-primary focus-visible:flex"
       >
         <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
       </button>
@@ -867,7 +908,7 @@ function ExplorerTabs({
   onToggleShowSystemFiles?: () => void;
 }) {
   return (
-    <div className="border-border-hairline flex h-10 shrink-0 items-center gap-1 border-b px-3">
+    <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border-hairline px-3">
       <div className="flex-1" />
       {onChangeSort && (
         <SortControl
@@ -908,7 +949,7 @@ function SortControl({
           const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
           menu.openAt({ x: rect.right, y: rect.bottom + 2 }, null);
         }}
-        className="rounded-control text-text-muted hover:bg-bg-2 hover:text-text-primary flex shrink-0 items-center gap-1 px-1.5 py-1 text-xs transition-colors"
+        className="flex shrink-0 items-center gap-1 rounded-control px-1.5 py-1 text-xs text-text-muted transition-colors hover:bg-bg-2 hover:text-text-primary"
       >
         <ArrowUpDown className="size-3 shrink-0" strokeWidth={1.5} />
         {FILE_SORT_LABELS[sort]}

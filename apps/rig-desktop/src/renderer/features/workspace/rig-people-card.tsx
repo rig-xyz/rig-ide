@@ -1,17 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
-import { rpc } from '@renderer/lib/ipc';
-import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
-import { cn } from '@renderer/lib/utils';
 import { relativeTime } from '@renderer/features/chat/session-history';
-import { usePulseBriefing } from '@renderer/features/home/use-pulse-briefing';
 import {
   fileLinks,
   stripRigPrefix,
   summarySegments,
   type SummarySegment,
 } from '@renderer/features/home/summary-segments';
+import { usePulseBriefing } from '@renderer/features/home/use-pulse-briefing';
+import { rpc } from '@renderer/lib/ipc';
+import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
+import { cn } from '@renderer/lib/utils';
 import { rigFilesQueryKey } from './file-tree';
 
 /**
@@ -32,10 +32,12 @@ import { rigFilesQueryKey } from './file-tree';
  */
 export function RigPeopleCard({
   root,
+  rootId,
   bindingId,
   onOpenFile,
 }: {
   root: string;
+  rootId: string;
   bindingId: string | null;
   /** Opens a file the summary names — same handler the tree and cards use. */
   onOpenFile: (absPath: string, relPath: string) => void;
@@ -49,9 +51,9 @@ export function RigPeopleCard({
   // The listing the tree already fetched — a second reader of one cache
   // entry, not a second call. Files the summary names become links.
   const filesQuery = useQuery({
-    queryKey: rigFilesQueryKey(root),
+    queryKey: rigFilesQueryKey(root, rootId),
     queryFn: async () => {
-      const result = await rpc.rig.files.list(root);
+      const result = await rpc.rig.files.list({ rootId });
       if (!result.success) throw new Error(result.error.message);
       return result.data;
     },
@@ -71,7 +73,9 @@ export function RigPeopleCard({
     ? (briefing?.perRig.find((item) => item.bindingId === bindingId) ?? null)
     : null;
   const rigLine = rigEntry ? stripRigPrefix(rigEntry.line, rigEntry.rigName) : null;
-  const segments = rigLine ? summarySegments(rigLine, fileLinks(flattenFiles(filesQuery.data ?? []))) : [];
+  const segments = rigLine
+    ? summarySegments(rigLine, fileLinks(flattenFiles(filesQuery.data ?? [])))
+    : [];
 
   // A rig nobody shares is a rig with nothing to say about people. Local
   // rigs and unreachable-relay states both land here.
@@ -85,7 +89,7 @@ export function RigPeopleCard({
   return (
     <div className="group/people mx-4 mt-4 flex flex-col gap-2">
       <div className="flex items-center gap-1.5">
-        <p className="text-text-muted font-mono text-xs tracking-wide uppercase">People</p>
+        <p className="font-mono text-xs tracking-wide text-text-muted uppercase">People</p>
         {/*
           The briefing refreshes itself when it ages out, so this is a
           nudge, not the mechanism — it stays out of sight until you go
@@ -106,7 +110,10 @@ export function RigPeopleCard({
                     : 'opacity-0 group-hover/people:opacity-100 focus-visible:opacity-100'
                 )}
               >
-                <RefreshCw className={cn('size-3', refreshing && 'animate-spin')} strokeWidth={1.5} />
+                <RefreshCw
+                  className={cn('size-3', refreshing && 'animate-spin')}
+                  strokeWidth={1.5}
+                />
               </button>
             }
           />
@@ -142,12 +149,16 @@ export function RigPeopleCard({
               sizeClassName="size-5"
               textClassName="text-xs"
             />
-            <span className="text-text-primary text-xs font-medium">
-              {ordered[0].userId === selfId ? 'You' : (ordered[0].name ?? ordered[0].email ?? 'Teammate')}
+            <span className="text-xs font-medium text-text-primary">
+              {ordered[0].userId === selfId
+                ? 'You'
+                : (ordered[0].name ?? ordered[0].email ?? 'Teammate')}
             </span>
           </span>
-          <p className="text-text-muted min-w-0 flex-1 pt-0.5 text-xs leading-relaxed">
-            {segments.length > 0 ? renderSegments(segments, root, onOpenFile) : (rigLine ?? ordered[0].role)}
+          <p className="min-w-0 flex-1 pt-0.5 text-xs leading-relaxed text-text-muted">
+            {segments.length > 0
+              ? renderSegments(segments, root, onOpenFile)
+              : (rigLine ?? ordered[0].role)}
           </p>
         </div>
       ) : (
@@ -164,8 +175,10 @@ export function RigPeopleCard({
                         sizeClassName="size-5"
                         textClassName="text-xs"
                       />
-                      <span className="text-text-secondary min-w-0 truncate text-xs">
-                        {member.userId === selfId ? 'You' : (member.name ?? member.email ?? 'Teammate')}
+                      <span className="min-w-0 truncate text-xs text-text-secondary">
+                        {member.userId === selfId
+                          ? 'You'
+                          : (member.name ?? member.email ?? 'Teammate')}
                       </span>
                     </div>
                   }
@@ -177,7 +190,7 @@ export function RigPeopleCard({
             ))}
           </div>
           {rigLine && (
-            <p className="text-text-muted text-xs leading-relaxed">
+            <p className="text-xs leading-relaxed text-text-muted">
               {segments.length > 0 ? renderSegments(segments, root, onOpenFile) : rigLine}
             </p>
           )}
@@ -188,7 +201,9 @@ export function RigPeopleCard({
 }
 
 /** Every file in the listing, flattened — the summary names basenames, wherever they live. */
-function flattenFiles(nodes: readonly { relPath: string; kind: string; children?: unknown }[]): { relPath: string }[] {
+function flattenFiles(
+  nodes: readonly { relPath: string; kind: string; children?: unknown }[]
+): { relPath: string }[] {
   const out: { relPath: string }[] = [];
   const walk = (list: readonly { relPath: string; kind: string; children?: unknown }[]) => {
     for (const node of list) {
@@ -215,7 +230,7 @@ function renderSegments(
           const relPath = (segment.target as { kind: 'file'; relPath: string }).relPath;
           onOpenFile(`${root}/${relPath}`, relPath);
         }}
-        className="text-text-secondary hover:text-text-primary underline decoration-current/30 underline-offset-2 transition-colors"
+        className="text-text-secondary underline decoration-current/30 underline-offset-2 transition-colors hover:text-text-primary"
       >
         {segment.text}
       </button>

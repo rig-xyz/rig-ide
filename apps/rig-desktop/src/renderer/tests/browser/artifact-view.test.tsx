@@ -35,22 +35,22 @@ import '@renderer/tokens.css';
  */
 
 const mocks = vi.hoisted(() => ({
-  read: vi.fn<(path: string, maxBytes: number) => Promise<unknown>>(),
-  write: vi.fn<(path: string, content: string) => Promise<unknown>>(),
-  watch: vi.fn<(root: string) => void>(),
-  unwatch: vi.fn<(root: string) => void>(),
-  readBinary: vi.fn<(path: string, maxBytes: number) => Promise<unknown>>(),
+  read: vi.fn<(args: unknown) => Promise<unknown>>(),
+  write: vi.fn<(args: unknown) => Promise<unknown>>(),
+  watch: vi.fn<(args: unknown) => void>(),
+  unwatch: vi.fn<(args: unknown) => void>(),
+  readBinary: vi.fn<(args: unknown) => Promise<unknown>>(),
 }));
 
 vi.mock('@renderer/lib/ipc', () => ({
   rpc: {
     rig: {
       files: {
-        read: (...args: unknown[]) => mocks.read(...(args as [string, number])),
-        write: (...args: unknown[]) => mocks.write(...(args as [string, string])),
-        watch: (...args: unknown[]) => mocks.watch(...(args as [string])),
-        unwatch: (...args: unknown[]) => mocks.unwatch(...(args as [string])),
-        readBinary: (...args: unknown[]) => mocks.readBinary(...(args as [string, number])),
+        read: (...args: unknown[]) => mocks.read(args[0]),
+        write: (...args: unknown[]) => mocks.write(args[0]),
+        watch: (...args: unknown[]) => mocks.watch(args[0]),
+        unwatch: (...args: unknown[]) => mocks.unwatch(args[0]),
+        readBinary: (...args: unknown[]) => mocks.readBinary(args[0]),
       },
     },
     app: {
@@ -110,7 +110,13 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
   async function renderArtifact(path: string): Promise<void> {
     await act(async () => {
       root.render(
-        <ArtifactView root="/repo" path={path} onClose={() => {}} onNavigateFolder={() => {}} />
+        <ArtifactView
+          root="/repo"
+          rootId="repo-1"
+          path={path}
+          onClose={() => {}}
+          onNavigateFolder={() => {}}
+        />
       );
     });
   }
@@ -170,7 +176,9 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
     mocks.readBinary.mockRejectedValue(new Error('read failed'));
 
     await act(async () => {
-      root.render(<ImageArtifact path="/repo/photo.png" mime="image/png" />);
+      root.render(
+        <ImageArtifact root="/repo" rootId="root-1" path="/repo/photo.png" mime="image/png" />
+      );
     });
 
     await waitFor(() => !host.textContent?.includes('Loading…'));

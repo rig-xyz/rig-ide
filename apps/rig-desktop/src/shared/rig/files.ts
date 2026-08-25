@@ -1,8 +1,6 @@
 /**
- * Filesystem surface for a bound rig workspace, keyed on absolute paths rather
- * than the emdash project/workspace registry (there is no "task" behind a
- * plain `File → Open Folder…`, and registering one just to read a directory
- * would drag in worktree provisioning this app doesn't need).
+ * Filesystem surface for a registered rig root. The renderer receives an opaque
+ * root id and may only send relative paths; absolute paths never cross RPC.
  *
  * `read`/`write` mirror the shape `workspace.files` returns so `doc-file-sync.ts`
  * ports with only its IO layer swapped. `watch`/`unwatch` back a coarse "something
@@ -40,9 +38,13 @@ export type RigFileNode = {
   mtimeMs?: number;
 };
 
-export type RigFileListError = { kind: 'notFound' | 'notADirectory' | 'ioError'; message: string };
-export type RigFileReadError = { kind: 'notFound' | 'tooLarge' | 'ioError'; message: string };
-export type RigFileWriteError = { kind: 'ioError'; message: string };
+export type RigFileError = {
+  kind: 'invalidPath' | 'staleRoot' | 'outsideRoot' | 'notFound' | 'ioError';
+  message: string;
+};
+export type RigFileListError = RigFileError | { kind: 'notADirectory'; message: string };
+export type RigFileReadError = RigFileError | { kind: 'tooLarge'; message: string };
+export type RigFileWriteError = RigFileError;
 /**
  * Navigator v2 (§3.3's row context menu, "Rename"): a plain in-place
  * `fs.rename` within the entry's own parent directory, new for files this
@@ -53,7 +55,14 @@ export type RigFileWriteError = { kind: 'ioError'; message: string };
  * rule.
  */
 export type RigFileRenameError = {
-  kind: 'invalidName' | 'alreadyExists' | 'notFound' | 'ioError';
+  kind:
+    | 'invalidName'
+    | 'alreadyExists'
+    | 'invalidPath'
+    | 'staleRoot'
+    | 'outsideRoot'
+    | 'notFound'
+    | 'ioError';
   message: string;
 };
 
@@ -71,7 +80,7 @@ export type RigFileReadResult = { content: string; truncated: boolean };
  */
 export type RigFileReadBinaryResult = { data: string; truncated: boolean; size: number };
 
-/** Something changed somewhere under `root` — the receiver re-reads to find out what. */
-export type RigFileChangeUpdate = { root: string };
+/** Something changed somewhere under the registered root — the receiver re-reads to find out what. */
+export type RigFileChangeUpdate = { rootId: string };
 
 export const rigFileChangeChannel = defineEvent<RigFileChangeUpdate>('rig:file-change');

@@ -78,6 +78,8 @@ type RigSession = RigChatStore | ReplayStore;
 export interface ChatPanelProps {
   /** Absolute path to the opened rig's workspace root — the session cwd. */
   root: string;
+  /** Opaque main-process capability for this particular open of the rig. */
+  rootId: string;
   /** The rig's binding id (opaque `projectId` label — see rig-chat-store.ts). */
   bindingId: string;
   /** The rig's own name, for the zero-state transcript's "New session in …" line. */
@@ -97,6 +99,7 @@ export interface ChatPanelProps {
 
 export const ChatPanel = observer(function ChatPanel({
   root,
+  rootId,
   bindingId,
   name,
   initialActiveSessionId,
@@ -588,6 +591,7 @@ export const ChatPanel = observer(function ChatPanel({
               key={activeStore.conversationId}
               store={activeStore}
               cwd={root}
+              rootId={rootId}
               onOpenFile={onOpenFile}
               composerHeight={composerHeight}
               isFollowUp={followUpIds.has(activeStore.conversationId)}
@@ -1030,12 +1034,14 @@ function SessionHistoryList({
 const Transcript = observer(function Transcript({
   store,
   cwd,
+  rootId,
   onOpenFile,
   composerHeight,
   isFollowUp,
 }: {
   store: RigSession;
   cwd: string;
+  rootId: string;
   onOpenFile?: (absPath: string) => void;
   composerHeight: number;
   /** One-time muted notice above an empty transcript — a lazy-resume follow-up, not a continuation. */
@@ -1065,8 +1071,8 @@ const Transcript = observer(function Transcript({
         : undefined,
       // Synchronous per chat-ui's contract (`Prose.tsx` decides whether to
       // `preventDefault()` a click before the browser navigates) — reads
-      // `file-tree.tsx`'s own react-query cache (same key, `['rig', 'files',
-      // 'list', root]`) rather than fetching, so it's always answerable
+      // `file-tree.tsx`'s own react-query cache (including the current root
+      // capability) rather than fetching, so it's always answerable
       // in-click. A miss (tree not loaded yet, or the path genuinely isn't
       // in the rig) falls back to `'external'`, which the hardened
       // `setWindowOpenHandler` (main/utils/externalLinks.ts) then quietly
@@ -1074,10 +1080,10 @@ const Transcript = observer(function Transcript({
       classifyLink: (href) =>
         classifyProseLink(
           href,
-          queryClient.getQueryData<RigFileNode[]>(['rig', 'files', 'list', cwd])
+          queryClient.getQueryData<RigFileNode[]>(['rig', 'files', 'list', cwd, rootId])
         ),
     }),
-    [onOpenFile, cwd, queryClient]
+    [onOpenFile, cwd, rootId, queryClient]
   );
 
   const errorMessage = store.kind === 'live' ? store.loadError?.message : store.error;

@@ -377,7 +377,10 @@ export function App() {
     setPendingActiveSessionId(opts?.activeSessionId ?? null);
     try {
       const result = await rpc.rig.workspace.detect(picked);
-      if (!openPathRequests.current.isCurrent(requestToken)) return;
+      if (!openPathRequests.current.isCurrent(requestToken)) {
+        if (result.bound) void rpc.rig.files.releaseRoot({ rootId: result.rootId });
+        return;
+      }
       setFolder({ status: 'detected', path: picked, result });
       // First-sync round: a plain open never marks this (`consumeJustAttachedSyncing`
       // returns false for any path nobody just ran `rig attach` for), so this
@@ -453,6 +456,7 @@ export function App() {
     folder.status === 'detected' && folder.result.bound
       ? {
           root: folder.result.workspaceRoot,
+          rootId: folder.result.rootId,
           name: folder.result.name,
           bindingId: folder.result.bindingId,
         }
@@ -477,11 +481,12 @@ export function App() {
   // syncing back down.
   useEffect(() => {
     const root = bound?.root;
-    if (!root) return;
-    void rpc.rig.files.watch(root);
-    const off = events.on(rigFileChangeChannel, ({ root: changedRoot }) => {
-      if (changedRoot !== root) return;
-      void rpc.rig.workspace.readName(root).then((name) => {
+    const rootId = bound?.rootId;
+    if (!root || !rootId) return;
+    void rpc.rig.files.watch({ rootId });
+    const off = events.on(rigFileChangeChannel, ({ rootId: changedRootId }) => {
+      if (changedRootId !== rootId) return;
+      void rpc.rig.workspace.readName(rootId).then((name) => {
         setFolder((prev) => {
           if (
             prev.status !== 'detected' ||
@@ -497,9 +502,20 @@ export function App() {
     });
     return () => {
       off();
-      void rpc.rig.files.unwatch(root);
+      void rpc.rig.files.unwatch({ rootId });
     };
-  }, [bound?.root]);
+  }, [bound?.root, bound?.rootId]);
+
+  // The root handle is a renderer filesystem capability, not a durable rig
+  // identifier. Revoke it whenever this workspace is replaced or closed;
+  // `releaseRoot` also tears down any late watcher registrations.
+  useEffect(() => {
+    const rootId = bound?.rootId;
+    if (!rootId) return;
+    return () => {
+      void rpc.rig.files.releaseRoot({ rootId });
+    };
+  }, [bound?.rootId]);
 
   // Round F: there was no way back from a workspace to the home screen —
   // just closes the rig view (`folder` back to `'empty'`, which is exactly
@@ -706,6 +722,7 @@ export function App() {
                 <RecoveryBoundary scope="Chat panel">
                   <ChatPanel
                     root={bound.root}
+                    rootId={bound.rootId}
                     bindingId={bound.bindingId}
                     name={bound.name}
                     initialActiveSessionId={pendingActiveSessionId}
@@ -739,6 +756,7 @@ export function App() {
               <ArtifactView
                 key={nav.path}
                 root={bound.root}
+                rootId={bound.rootId}
                 path={nav.path}
                 onClose={backToBrowser}
                 onNavigateFolder={navigateToFolder}
@@ -746,6 +764,7 @@ export function App() {
             ) : (
               <FileBrowser
                 root={bound.root}
+                rootId={bound.rootId}
                 bindingId={bound.bindingId}
                 name={bound.name}
                 revealPath={nav.revealPath}
@@ -1103,6 +1122,7 @@ function UnsyncedRigCard({
  */
 function FileBrowser({
   root,
+  rootId,
   bindingId,
   name,
   revealPath,
@@ -1113,6 +1133,7 @@ function FileBrowser({
   onToggleShowSystemFiles,
 }: {
   root: string;
+  rootId: string;
   /** File-navigator redesign (§4, seen-state): identifies this rig for `rig_seen_files`. */
   bindingId: string;
   name: string | null;
@@ -1268,6 +1289,7 @@ function FileBrowser({
         <div className="flex shrink-0 items-center gap-2">
           <NewMenu
             root={root}
+            rootId={rootId}
             onOpenFile={handleOpenFile}
             onOpenImportDialog={() => setImportOpen(true)}
           />
@@ -1276,14 +1298,26 @@ function FileBrowser({
       </div>
       <ImportDocDialog
         root={root}
+        rootId={rootId}
         open={importOpen}
         onOpenChange={setImportOpen}
         onImported={handleOpenFile}
       />
-      <RigPeopleCard root={root} bindingId={bindingId} onOpenFile={handleOpenFileFromCard} />
-      <ActiveFiles root={root} bindingId={bindingId} onOpenFile={handleOpenFileFromCard} />
+      <RigPeopleCard
+        root={root}
+        rootId={rootId}
+        bindingId={bindingId}
+        onOpenFile={handleOpenFileFromCard}
+      />
+      <ActiveFiles
+        root={root}
+        rootId={rootId}
+        bindingId={bindingId}
+        onOpenFile={handleOpenFileFromCard}
+      />
       <FileTree
         root={root}
+        rootId={rootId}
         bindingId={bindingId}
         activePath={null}
         revealPath={revealPath}

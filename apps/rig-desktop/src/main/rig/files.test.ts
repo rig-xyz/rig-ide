@@ -1,205 +1,146 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join as joinPath } from 'node:path';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { rigFileRootRegistry } from './file-root-registry';
 import { rigFilesController } from './files';
 
-/**
- * Round (beyond-markdown): `readBinary` is new — a true partial read (not
- * `readFile` sliced afterward) backing both the image viewer and the
- * binary sniff on an unrecognized extension. Real filesystem, same
- * tmpdir-per-test convention `import-doc.test.ts`'s `claimImportSlug`
- * suite already established.
- */
-describe('rigFilesController.readBinary', () => {
-  const dirs: string[] = [];
-  afterEach(() => {
-    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-  });
-  const freshDir = () => {
-    const dir = mkdtempSync(joinPath(tmpdir(), 'rig-files-test-'));
-    dirs.push(dir);
-    return dir;
-  };
-
-  it('reads a small file whole, unset truncated, and reports its real size', async () => {
-    const dir = freshDir();
-    const path = joinPath(dir, 'small.bin');
-    const bytes = Buffer.from([1, 2, 3, 4, 5]);
-    writeFileSync(path, bytes);
-
-    const result = await rigFilesController.readBinary(path, 4096);
-    expect(result.success).toBe(true);
-    if (!result.success) return;
-    expect(result.data.truncated).toBe(false);
-    expect(result.data.size).toBe(5);
-    expect(Buffer.from(result.data.data, 'base64')).toEqual(bytes);
-  });
-
-  it('a genuine PARTIAL read for a file larger than maxBytes — only the first N bytes come back, truncated is true, size is still the REAL total', async () => {
-    const dir = freshDir();
-    const path = joinPath(dir, 'large.bin');
-    const bytes = Buffer.from(Array.from({ length: 10_000 }, (_, i) => i % 256));
-    writeFileSync(path, bytes);
-
-    const result = await rigFilesController.readBinary(path, 100);
-    expect(result.success).toBe(true);
-    if (!result.success) return;
-    expect(result.data.truncated).toBe(true);
-    expect(result.data.size).toBe(10_000);
-    const decoded = Buffer.from(result.data.data, 'base64');
-    expect(decoded.length).toBe(100);
-    expect(decoded).toEqual(bytes.subarray(0, 100));
-  });
-
-  it('a null byte survives the round trip intact — the binary sniff depends on this', async () => {
-    const dir = freshDir();
-    const path = joinPath(dir, 'withnull.bin');
-    const bytes = Buffer.from([72, 101, 0, 108, 111]);
-    writeFileSync(path, bytes);
-
-    const result = await rigFilesController.readBinary(path, 4096);
-    expect(result.success).toBe(true);
-    if (!result.success) return;
-    expect(Buffer.from(result.data.data, 'base64')).toEqual(bytes);
-  });
-
-  it('an empty file — no read attempted, still succeeds with size 0', async () => {
-    const dir = freshDir();
-    const path = joinPath(dir, 'empty.bin');
-    writeFileSync(path, Buffer.alloc(0));
-
-    const result = await rigFilesController.readBinary(path, 4096);
-    expect(result.success).toBe(true);
-    if (!result.success) return;
-    expect(result.data.size).toBe(0);
-    expect(result.data.truncated).toBe(false);
-    expect(result.data.data).toBe('');
-  });
-
-  it('a missing file — notFound, not a thrown exception', async () => {
-    const dir = freshDir();
-    const result = await rigFilesController.readBinary(joinPath(dir, 'nope.bin'), 4096);
-    expect(result.success).toBe(false);
-    if (result.success) return;
-    expect(result.error.kind).toBe('notFound');
-  });
-
-  it('a directory (not a file) — notFound, never attempts to read it as bytes', async () => {
-    const dir = freshDir();
-    const result = await rigFilesController.readBinary(dir, 4096);
-    expect(result.success).toBe(false);
-    if (result.success) return;
-    expect(result.error.kind).toBe('notFound');
-  });
+const dirs: string[] = [];
+const rootIds: string[] = [];
+afterEach(() => {
+  for (const rootId of rootIds.splice(0)) rigFilesController.releaseRoot({ rootId });
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/**
- * Navigator v2 (§3.3's row context menu "Rename"): a minimal, real-filesystem
- * `fs.rename` scoped to an entry's own parent directory. Same tmpdir-per-test
- * convention as `readBinary` above.
- */
-describe('rigFilesController.rename', () => {
-  const dirs: string[] = [];
-  afterEach(() => {
-    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-  });
-  const freshDir = () => {
-    const dir = mkdtempSync(joinPath(tmpdir(), 'rig-files-rename-test-'));
-    dirs.push(dir);
-    return dir;
-  };
+async function root() {
+  const dir = mkdtempSync(join(tmpdir(), 'rig-files-test-'));
+  dirs.push(dir);
+  const registered = await rigFileRootRegistry.register(dir);
+  if (!registered.success) throw new Error(registered.error.message);
+  rootIds.push(registered.data.rootId);
+  return { dir, rootId: registered.data.rootId };
+}
 
-  it('renames a file in place, within its own parent directory', async () => {
-    const dir = freshDir();
-    const original = joinPath(dir, 'draft.md');
-    writeFileSync(original, 'hello');
-
-    const result = await rigFilesController.rename(original, 'final.md');
-    expect(result.success).toBe(true);
-    if (!result.success) return;
-    expect(result.data.path).toBe(joinPath(dir, 'final.md'));
-    expect(existsSync(original)).toBe(false);
-    expect(existsSync(joinPath(dir, 'final.md'))).toBe(true);
+describe('rigFilesController', () => {
+  it('lists and reads using an opaque root id', async () => {
+    const { dir, rootId } = await root();
+    writeFileSync(join(dir, 'hello.md'), 'hello');
+    const listed = await rigFilesController.list({ rootId });
+    expect(listed.success).toBe(true);
+    const read = await rigFilesController.read({ rootId, relativePath: 'hello.md' });
+    expect(read).toMatchObject({ success: true, data: { content: 'hello', truncated: false } });
   });
 
-  it('renames a folder in place too — fs.rename works identically on either', async () => {
-    const dir = freshDir();
-    const original = joinPath(dir, 'old-folder');
-    mkdirSync(original);
-    writeFileSync(joinPath(original, 'inside.md'), 'x');
+  it('bounds text reads in bytes without returning a broken UTF-8 character', async () => {
+    const { dir, rootId } = await root();
+    writeFileSync(join(dir, 'unicode.txt'), 'éx');
 
-    const result = await rigFilesController.rename(original, 'new-folder');
-    expect(result.success).toBe(true);
-    if (!result.success) return;
-    expect(existsSync(joinPath(dir, 'new-folder', 'inside.md'))).toBe(true);
+    await expect(
+      rigFilesController.read({ rootId, relativePath: 'unicode.txt', maxBytes: 1 })
+    ).resolves.toMatchObject({ success: true, data: { content: '', truncated: true } });
+    await expect(
+      rigFilesController.read({ rootId, relativePath: 'unicode.txt', maxBytes: 2 })
+    ).resolves.toMatchObject({ success: true, data: { content: 'é', truncated: true } });
   });
 
-  it('never overwrites an existing target — alreadyExists, and the original is left untouched', async () => {
-    const dir = freshDir();
-    const original = joinPath(dir, 'draft.md');
-    const target = joinPath(dir, 'final.md');
-    writeFileSync(original, 'draft content');
-    writeFileSync(target, 'final content');
-
-    const result = await rigFilesController.rename(original, 'final.md');
-    expect(result.success).toBe(false);
-    if (result.success) return;
-    expect(result.error.kind).toBe('alreadyExists');
-    expect(existsSync(original)).toBe(true);
-  });
-
-  it('rejects an empty name', async () => {
-    const dir = freshDir();
-    const original = joinPath(dir, 'draft.md');
-    writeFileSync(original, 'hello');
-
-    const result = await rigFilesController.rename(original, '   ');
-    expect(result.success).toBe(false);
-    if (result.success) return;
-    expect(result.error.kind).toBe('invalidName');
-  });
-
-  it('rejects a name carrying a path separator — the traversal guard', async () => {
-    const dir = freshDir();
-    const original = joinPath(dir, 'draft.md');
-    writeFileSync(original, 'hello');
-
-    const result = await rigFilesController.rename(original, '../escaped.md');
-    expect(result.success).toBe(false);
-    if (result.success) return;
-    expect(result.error.kind).toBe('invalidName');
-  });
-
-  it('rejects a bare ".." or "." as a name', async () => {
-    const dir = freshDir();
-    const original = joinPath(dir, 'draft.md');
-    writeFileSync(original, 'hello');
-
-    for (const bad of ['..', '.']) {
-      const result = await rigFilesController.rename(original, bad);
+  it.each(['../escape', '/tmp/escape', 'dir/../../escape'])(
+    'rejects unsafe path %s',
+    async (relativePath) => {
+      const { rootId } = await root();
+      const result = await rigFilesController.read({ rootId, relativePath });
       expect(result.success).toBe(false);
-      if (result.success) continue;
-      expect(result.error.kind).toBe('invalidName');
+      if (!result.success) expect(['invalidPath', 'outsideRoot']).toContain(result.error.kind);
     }
+  );
+
+  it('rejects a symlink that escapes the root for reads and writes', async () => {
+    const { dir, rootId } = await root();
+    const outside = mkdtempSync(join(tmpdir(), 'rig-files-outside-'));
+    dirs.push(outside);
+    writeFileSync(join(outside, 'secret.txt'), 'secret');
+    symlinkSync(outside, join(dir, 'escape'));
+    const read = await rigFilesController.read({ rootId, relativePath: 'escape/secret.txt' });
+    const write = await rigFilesController.write({
+      rootId,
+      relativePath: 'escape/new.txt',
+      content: 'x',
+    });
+    expect(read.success).toBe(false);
+    expect(write.success).toBe(false);
   });
 
-  it('renaming to the exact same name is a harmless no-op success', async () => {
-    const dir = freshDir();
-    const original = joinPath(dir, 'draft.md');
-    writeFileSync(original, 'hello');
-
-    const result = await rigFilesController.rename(original, 'draft.md');
-    expect(result.success).toBe(true);
-    if (!result.success) return;
-    expect(existsSync(original)).toBe(true);
+  it('renames and archives within the root, returning relative paths', async () => {
+    const { dir, rootId } = await root();
+    writeFileSync(join(dir, 'draft.md'), 'draft');
+    const renamed = await rigFilesController.rename({
+      rootId,
+      relativePath: 'draft.md',
+      newName: 'final.md',
+    });
+    expect(renamed).toMatchObject({ success: true, data: { relativePath: 'final.md' } });
+    const archived = await rigFilesController.archive({ rootId, relativePath: 'final.md' });
+    expect(archived.success).toBe(true);
+    if (archived.success) expect(archived.data.relativePath).toBe('_archive/final.md');
+    expect(readFileSync(join(dir, '_archive/final.md'), 'utf8')).toBe('draft');
   });
 
-  it('a missing source file — notFound, not a thrown exception', async () => {
-    const dir = freshDir();
-    const result = await rigFilesController.rename(joinPath(dir, 'nope.md'), 'renamed.md');
-    expect(result.success).toBe(false);
-    if (result.success) return;
-    expect(result.error.kind).toBe('notFound');
+  it('rejects rename and archive of a symlink entry instead of moving its target', async () => {
+    const { dir, rootId } = await root();
+    writeFileSync(join(dir, 'target.md'), 'target');
+    symlinkSync('target.md', join(dir, 'link.md'));
+
+    await expect(
+      rigFilesController.rename({ rootId, relativePath: 'link.md', newName: 'renamed.md' })
+    ).resolves.toMatchObject({ success: false, error: { kind: 'invalidPath' } });
+    await expect(
+      rigFilesController.archive({ rootId, relativePath: 'link.md' })
+    ).resolves.toMatchObject({ success: false, error: { kind: 'invalidPath' } });
+    expect(readFileSync(join(dir, 'target.md'), 'utf8')).toBe('target');
+    expect(existsSync(join(dir, 'link.md'))).toBe(true);
+  });
+
+  it('returns a normalized relative path after writing', async () => {
+    const { dir, rootId } = await root();
+    mkdirSync(join(dir, 'notes'));
+    await expect(
+      rigFilesController.write({
+        rootId,
+        relativePath: 'notes/./saved.md',
+        content: 'saved',
+      })
+    ).resolves.toEqual({ success: true, data: { relativePath: 'notes/saved.md' } });
+  });
+
+  it('creates a directory and rejects rename traversal', async () => {
+    const { dir, rootId } = await root();
+    const made = await rigFilesController.makeDirectory({ rootId, name: 'notes' });
+    expect(made).toMatchObject({ success: true, data: { relativePath: 'notes' } });
+    mkdirSync(join(dir, 'draft'));
+    const bad = await rigFilesController.rename({
+      rootId,
+      relativePath: 'draft',
+      newName: '../escape',
+    });
+    expect(bad).toMatchObject({ success: false, error: { kind: 'invalidName' } });
+  });
+
+  it('release invalidates the root and makes watch-after-release fail', async () => {
+    const { rootId } = await root();
+    expect((await rigFilesController.watch({ rootId })).success).toBe(true);
+    expect(rigFilesController.releaseRoot({ rootId }).success).toBe(true);
+    await expect(rigFilesController.watch({ rootId })).resolves.toMatchObject({
+      success: false,
+      error: { kind: 'staleRoot' },
+    });
+    expect(rigFilesController.unwatch({ rootId }).success).toBe(true);
+    expect(rigFilesController.releaseRoot({ rootId }).success).toBe(true);
   });
 });

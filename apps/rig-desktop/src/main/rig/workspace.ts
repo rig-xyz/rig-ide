@@ -6,6 +6,7 @@ import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { deriveUnboundDetection, type RigWorkspaceDetection } from '@shared/rig/workspace';
 import { findBindingConfig } from './binding';
+import { rigFileRootRegistry } from './file-root-registry';
 import { recordRigOpened } from './recent-rigs';
 
 // Set by the macOS `open-file` handler in `main/index.ts`, which fires as
@@ -82,9 +83,19 @@ export const rigWorkspaceController = createRPCController({
       log.warn('rig: failed to add recent document', { error: String(error) });
     }
 
+    const registered = await rigFileRootRegistry.register(location.workspaceRoot);
+    if (!registered.success) {
+      log.warn('rig: failed to register workspace root', {
+        bindingId: location.config.bindingId,
+        kind: registered.error.kind,
+      });
+      throw new Error('Could not open this rig securely.');
+    }
+
     return {
       bound: true,
       bindingId: location.config.bindingId,
+      rootId: registered.data.rootId,
       workspaceRoot: location.workspaceRoot,
       name,
     };
@@ -107,5 +118,8 @@ export const rigWorkspaceController = createRPCController({
    * until the user navigated away and back (a fresh `detect` call). See
    * `App.tsx`'s own subscription to `rigFileChangeChannel` for the caller.
    */
-  readName: (workspaceRoot: string): string | null => readRigName(workspaceRoot),
+  readName: async (rootId: string): Promise<string | null> => {
+    const workspaceRoot = await rigFileRootRegistry.getVerified(rootId);
+    return workspaceRoot.success ? readRigName(workspaceRoot.data) : null;
+  },
 });

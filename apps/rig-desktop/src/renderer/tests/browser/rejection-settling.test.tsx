@@ -132,7 +132,13 @@ describe('renderer rejection paths settle their busy state', () => {
 
     await act(async () => {
       root.render(
-        <ImportDocDialog root="/repo" open onOpenChange={onOpenChange} onImported={onImported} />
+        <ImportDocDialog
+          root="/repo"
+          rootId="root-1"
+          open
+          onOpenChange={onOpenChange}
+          onImported={onImported}
+        />
       );
     });
 

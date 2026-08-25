@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
-import { detectByExtension, resolveFileType, SNIFF_BYTES, type DetectedFileType } from './file-type';
+import { relPathFromRoot } from '@shared/rig/file-navigator-categories';
+import {
+  detectByExtension,
+  resolveFileType,
+  SNIFF_BYTES,
+  type DetectedFileType,
+} from './file-type';
 
 export type FileTypeInfo = {
   type: DetectedFileType;
@@ -25,7 +31,7 @@ export type FileTypeInfo = {
  * finding out" — only ever true, and only ever briefly, for that
  * unrecognized-extension case.
  */
-export function useFileType(path: string): FileTypeInfo | null {
+export function useFileType(root: string, rootId: string, path: string): FileTypeInfo | null {
   const [info, setInfo] = useState<FileTypeInfo | null>(() => {
     const byExtension = detectByExtension(path);
     return byExtension ? { type: byExtension, size: null } : null;
@@ -39,25 +45,27 @@ export function useFileType(path: string): FileTypeInfo | null {
     }
     setInfo(null);
     let cancelled = false;
-    void rpc.rig.files.readBinary(path, SNIFF_BYTES).then((result) => {
-      if (cancelled) return;
-      if (!result.success) {
-        // Can't even read it to sniff it (permissions, a race with a
-        // delete) — the honest answer is the same empty state a genuine
-        // binary file gets, not a silent hang on "still finding out."
-        setInfo({ type: { category: 'unsupported' }, size: null });
-        return;
-      }
-      const bytes = base64ToBytes(result.data.data);
-      setInfo({ type: resolveFileType(path, bytes), size: result.data.size });
-    });
+    void rpc.rig.files
+      .readBinary({ rootId, relativePath: relPathFromRoot(root, path), maxBytes: SNIFF_BYTES })
+      .then((result) => {
+        if (cancelled) return;
+        if (!result.success) {
+          // Can't even read it to sniff it (permissions, a race with a
+          // delete) — the honest answer is the same empty state a genuine
+          // binary file gets, not a silent hang on "still finding out."
+          setInfo({ type: { category: 'unsupported' }, size: null });
+          return;
+        }
+        const bytes = base64ToBytes(result.data.data);
+        setInfo({ type: resolveFileType(path, bytes), size: result.data.size });
+      });
     return () => {
       cancelled = true;
     };
     // `path` alone: the caller remounts this component tree on file change
     // (`ArtifactView`'s own `key={path}`, same convention `doc-file-sync.ts`
     // relies on) rather than this effect needing to react to path churn itself.
-  }, [path]);
+  }, [root, rootId, path]);
 
   return info;
 }

@@ -185,19 +185,32 @@ function CreateRigForm({
     // honest partial: the rig opens, the toast names exactly what failed.
     if (importState.source) {
       if (!closedRef.current) setImporting(true);
-      const imported = await rpc.rig.importDoc.importDoc({
-        root: result.data.path,
-        source: importState.source,
-      });
-      if (!closedRef.current) setImporting(false);
-      if (!imported.success) {
+      try {
+        const imported = result.data.rootId
+          ? await rpc.rig.importDoc.importDoc({
+              rootId: result.data.rootId,
+              source: importState.source,
+            })
+          : null;
+        if (!imported?.success) {
+          toast({
+            title: 'Created the rig, but the doc import failed',
+            description:
+              imported?.error.message ?? 'The new rig could not be opened for a secure import.',
+            variant: 'destructive',
+          });
+        }
+      } catch {
         toast({
           title: 'Created the rig, but the doc import failed',
-          description: imported.error.message,
+          description: 'Try importing the document again after the rig opens.',
           variant: 'destructive',
         });
+      } finally {
+        if (!closedRef.current) setImporting(false);
       }
     }
+    if (result.data.rootId) void rpc.rig.files.releaseRoot({ rootId: result.data.rootId });
     if (!closedRef.current) setBusy(false);
 
     void queryClient.invalidateQueries({ queryKey: ['rig', 'recent'] });
@@ -233,23 +246,22 @@ function CreateRigForm({
     return (
       <div className="flex flex-col gap-3 px-4 pb-4">
         <div className="flex items-center gap-2">
-          <FolderCheck className="text-text-secondary size-4 shrink-0" strokeWidth={1.5} />
-          <p className="text-text-primary text-sm font-medium">Created “{createdLocal.rigName}”</p>
+          <FolderCheck className="size-4 shrink-0 text-text-secondary" strokeWidth={1.5} />
+          <p className="text-sm font-medium text-text-primary">Created “{createdLocal.rigName}”</p>
         </div>
-        <p className="text-text-muted font-mono text-xs break-all">{createdLocal.path}</p>
-        <div className="bg-bg-2 rounded-control flex flex-col gap-1 px-3 py-2">
+        <p className="font-mono text-xs break-all text-text-muted">{createdLocal.path}</p>
+        <div className="flex flex-col gap-1 rounded-control bg-bg-2 px-3 py-2">
           {createdLocal.syncError && (
-            <p className="text-text-secondary text-xs">
+            <p className="text-xs text-text-secondary">
               Sync didn’t come on: {createdLocal.syncError.message}
             </p>
           )}
-          <p className="text-text-muted text-xs">
-            It’s local-only for now. Syncing turns on sharing, invites, and lets this app open
-            it.
+          <p className="text-xs text-text-muted">
+            It’s local-only for now. Syncing turns on sharing, invites, and lets this app open it.
           </p>
-          <p className="text-text-muted font-mono text-xs">equivalent: rig sync</p>
+          <p className="font-mono text-xs text-text-muted">equivalent: rig sync</p>
         </div>
-        {lateSyncError && <p className="text-danger text-xs">{lateSyncError}</p>}
+        {lateSyncError && <p className="text-xs text-danger">{lateSyncError}</p>}
         <div className="flex items-center justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={onClose} disabled={lateSyncBusy}>
             Done
@@ -281,7 +293,7 @@ function CreateRigForm({
       }}
     >
       <div className="flex flex-col gap-1">
-        <label htmlFor="rig-name" className="text-text-secondary text-xs font-medium">
+        <label htmlFor="rig-name" className="text-xs font-medium text-text-secondary">
           Name
         </label>
         <input
@@ -294,32 +306,35 @@ function CreateRigForm({
           // `:focus-visible` ring (Tailwind's utilities layer beats
           // `@layer base`) — re-added via `focus-visible:` utilities,
           // consistent with how buttons already do it elsewhere.
-          className="border-border-hairline bg-bg-1 text-text-primary placeholder:text-text-muted focus:border-border-strong focus-visible:outline-accent rounded-control border px-2 py-1.5 text-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2"
+          className="rounded-control border border-border-hairline bg-bg-1 px-2 py-1.5 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-border-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         />
         {form.nameError ? (
-          <p className="text-danger text-xs">{form.nameError}</p>
+          <p className="text-xs text-danger">{form.nameError}</p>
         ) : form.showSlugPreview ? (
-          <p className="text-text-muted font-mono text-xs">{form.slug}</p>
+          <p className="font-mono text-xs text-text-muted">{form.slug}</p>
         ) : null}
       </div>
 
       <div className="flex flex-col gap-1">
-        <span className="text-text-secondary text-xs font-medium">Location</span>
+        <span className="text-xs font-medium text-text-secondary">Location</span>
         {advanced ? (
           parentDir ? (
             // The chosen destination as a quiet path row: folder glyph, the
             // full mono path (parent + slug), Change… as a text affordance.
             <div className="flex flex-col gap-1.5">
-              <div className="border-border-hairline flex min-w-0 items-center gap-2 rounded-control border px-2 py-1.5">
-                <FolderOpen className="text-text-muted size-3.5 shrink-0" strokeWidth={1.5} />
-                <span className="text-text-secondary min-w-0 flex-1 truncate font-mono text-xs" title={parentDir}>
+              <div className="flex min-w-0 items-center gap-2 rounded-control border border-border-hairline px-2 py-1.5">
+                <FolderOpen className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+                <span
+                  className="min-w-0 flex-1 truncate font-mono text-xs text-text-secondary"
+                  title={parentDir}
+                >
                   {parentDir}
                   {form.slug ? `/${form.slug}` : ''}
                 </span>
                 <button
                   type="button"
                   onClick={() => void chooseFolder()}
-                  className="text-text-muted hover:text-text-primary shrink-0 text-xs transition-colors"
+                  className="shrink-0 text-xs text-text-muted transition-colors hover:text-text-primary"
                 >
                   Change…
                 </button>
@@ -327,8 +342,11 @@ function CreateRigForm({
               {/* At-your-own-risk, stated once — the CLI's own guard
                   (dangerous location, non-empty target) is the real
                   enforcement; this is the honest heads-up in the UI. */}
-              <p className="text-text-muted flex items-start gap-1.5 text-xs">
-                <TriangleAlert className="text-text-muted mt-0.5 size-3 shrink-0" strokeWidth={1.5} />
+              <p className="flex items-start gap-1.5 text-xs text-text-muted">
+                <TriangleAlert
+                  className="mt-0.5 size-3 shrink-0 text-text-muted"
+                  strokeWidth={1.5}
+                />
                 At your own risk — rig won’t merge into a non-empty folder.
               </p>
             </div>
@@ -336,7 +354,7 @@ function CreateRigForm({
             <button
               type="button"
               onClick={() => void chooseFolder()}
-              className="border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex items-center gap-1.5 self-start border bg-transparent px-2 py-1 text-xs transition-colors"
+              className="flex items-center gap-1.5 self-start rounded-control border border-border-hairline bg-transparent px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
             >
               <FolderOpen className="size-3.5" strokeWidth={1.5} />
               Choose folder…
@@ -346,14 +364,14 @@ function CreateRigForm({
           // Rig home round default: read-only hint, updates live with the
           // slug — no location question asked.
           <div className="flex flex-col gap-1">
-            <p className="text-text-muted font-mono text-xs">
+            <p className="font-mono text-xs text-text-muted">
               Will live in {homeQuery.data?.displayPath ?? '~/Rig'}
               {form.slug ? `/${form.slug}` : ''}
             </p>
             <button
               type="button"
               onClick={() => setAdvanced(true)}
-              className="text-text-muted hover:text-text-primary self-start text-xs transition-colors"
+              className="self-start text-xs text-text-muted transition-colors hover:text-text-primary"
             >
               Advanced: choose location…
             </button>
@@ -364,15 +382,15 @@ function CreateRigForm({
       {/* SYNC as a real choice, not a bare toggle line: a card row with the
           icon naming what it is, the helper naming what it buys, and the
           switch as its one control. */}
-      <div className="border-border-hairline rounded-card flex flex-col gap-2 border p-3">
+      <div className="flex flex-col gap-2 rounded-card border border-border-hairline p-3">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-2">
-            <Cloud className="text-text-muted mt-0.5 size-4 shrink-0" strokeWidth={1.5} />
+            <Cloud className="mt-0.5 size-4 shrink-0 text-text-muted" strokeWidth={1.5} />
             <div className="flex min-w-0 flex-col gap-0.5">
-              <label htmlFor="rig-sync" className="text-text-primary text-xs font-medium">
+              <label htmlFor="rig-sync" className="text-xs font-medium text-text-primary">
                 Sync to your workspace
               </label>
-              <p className="text-text-muted text-xs">Syncing enables sharing and invites.</p>
+              <p className="text-xs text-text-muted">Syncing enables sharing and invites.</p>
             </div>
           </div>
           <button
@@ -401,7 +419,7 @@ function CreateRigForm({
         </div>
         {form.syncNeedsSignIn && (
           <div className="flex items-center justify-between gap-2 pl-6">
-            <p className="text-text-muted min-w-0 text-xs">
+            <p className="min-w-0 text-xs text-text-muted">
               Sign in to sync, or it’s created local-only.
             </p>
             <Button
@@ -421,13 +439,13 @@ function CreateRigForm({
           runs AFTER init/sync, into the new folder. Comments/suggestions
           never survive any Google Docs export — the copy stays silent about
           them rather than implying otherwise. */}
-      <div className="border-border-hairline rounded-card flex flex-col gap-2 border p-3">
+      <div className="flex flex-col gap-2 rounded-card border border-border-hairline p-3">
         <div className="flex items-center gap-2">
-          <FileInput className="text-text-muted size-3.5 shrink-0" strokeWidth={1.5} />
-          <span className="text-text-muted font-mono text-xs tracking-wide uppercase">
+          <FileInput className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+          <span className="font-mono text-xs tracking-wide text-text-muted uppercase">
             Start from a Google Doc
           </span>
-          <span className="bg-bg-2 text-text-muted rounded-chip px-1.5 py-0.5 font-mono text-xs">
+          <span className="rounded-chip bg-bg-2 px-1.5 py-0.5 font-mono text-xs text-text-muted">
             optional
           </span>
         </div>
@@ -439,7 +457,7 @@ function CreateRigForm({
         />
       </div>
 
-      {error && <p className="text-danger text-xs">{error}</p>}
+      {error && <p className="text-xs text-danger">{error}</p>}
 
       <div className="flex justify-end pt-1">
         <Button

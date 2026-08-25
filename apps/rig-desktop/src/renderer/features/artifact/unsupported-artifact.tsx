@@ -2,6 +2,7 @@ import { ExternalLink, FileQuestion, FolderOpen } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
+import { relPathFromRoot } from '@shared/rig/file-navigator-categories';
 import { formatFileSize } from './file-type';
 
 /**
@@ -15,7 +16,17 @@ import { formatFileSize } from './file-type';
  * existing, already-wired RPCs (no main-process change needed for this
  * piece).
  */
-export function UnsupportedArtifact({ path, size }: { path: string; size: number | null }) {
+export function UnsupportedArtifact({
+  root,
+  rootId,
+  path,
+  size,
+}: {
+  root: string;
+  rootId: string;
+  path: string;
+  size: number | null;
+}) {
   // Most callers already know the size for free (the binary sniff that
   // got this file classified as unsupported in the first place also
   // reports `size` — see `use-file-type.ts`). Only a genuinely
@@ -30,7 +41,7 @@ export function UnsupportedArtifact({ path, size }: { path: string; size: number
     let cancelled = false;
     setSizeUnavailable(false);
     void rpc.rig.files
-      .readBinary(path, 0)
+      .readBinary({ rootId, relativePath: relPathFromRoot(root, path), maxBytes: 0 })
       .then((result) => {
         if (cancelled) return;
         if (!result.success) {
@@ -45,7 +56,7 @@ export function UnsupportedArtifact({ path, size }: { path: string; size: number
     return () => {
       cancelled = true;
     };
-  }, [path, resolvedSize]);
+  }, [root, rootId, path, resolvedSize]);
 
   const filename = path.split('/').pop() ?? path;
   const dot = filename.lastIndexOf('.');

@@ -45,10 +45,14 @@ export function classifyEntryCategory(relPath: string): FileNavigatorCategory {
   return 'content';
 }
 
-/** Same relPath derivation `breadcrumb.ts` uses — a plain prefix strip, no `node:path` (renderer-safe). */
+/** Separator-aware absolute-to-relative conversion without a `node:path` dependency (renderer-safe). */
 export function relPathFromRoot(root: string, absPath: string): string {
-  const rel = absPath.startsWith(root) ? absPath.slice(root.length).replace(/^\/+/, '') : absPath;
-  return rel;
+  const trimmedRoot = root.length > 1 ? root.replace(/[\\/]+$/, '') : root;
+  if (absPath === trimmedRoot) return '';
+  if (!absPath.startsWith(`${trimmedRoot}/`) && !absPath.startsWith(`${trimmedRoot}\\`)) {
+    return absPath;
+  }
+  return absPath.slice(trimmedRoot.length).replace(/^[\\/]+/, '');
 }
 
 /**

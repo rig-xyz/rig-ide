@@ -1,14 +1,19 @@
 import { useQuery } from '@tanstack/react-query';
 import { Pin, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { relativeTime } from '@renderer/features/chat/session-history';
 import { events, rpc } from '@renderer/lib/ipc';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { cn } from '@renderer/lib/utils';
-import { relativeTime } from '@renderer/features/chat/session-history';
-import { type Card, selectCards, toContentOnlyPinned, toContentOnlyWrites } from '@shared/rig/card-rail';
+import {
+  type Card,
+  selectCards,
+  toContentOnlyPinned,
+  toContentOnlyWrites,
+} from '@shared/rig/card-rail';
 import { filterToContentOnly } from '@shared/rig/file-navigator-categories';
-import { rigSettingsChangedChannel } from '@shared/rig/settings';
 import type { RigFileNode } from '@shared/rig/files';
+import { rigSettingsChangedChannel } from '@shared/rig/settings';
 import { iconFor, rigFilesQueryKey } from './file-tree';
 import { useEverWrittenPaths, useRecentWrites } from './write-activity';
 
@@ -64,18 +69,20 @@ function parentFolder(relPath: string): string | null {
 
 export function ActiveFiles({
   root,
+  rootId,
   bindingId,
   onOpenFile,
 }: {
   root: string;
+  rootId: string;
   bindingId: string;
   /** Opens the file AND arms a reveal for when the user returns to the tree (`App.tsx`'s `openFileAndReveal`). */
   onOpenFile: (absPath: string, relPath: string) => void;
 }) {
   const { data } = useQuery({
-    queryKey: rigFilesQueryKey(root),
+    queryKey: rigFilesQueryKey(root, rootId),
     queryFn: async () => {
-      const result = await rpc.rig.files.list(root);
+      const result = await rpc.rig.files.list({ rootId });
       if (!result.success) throw new Error(result.error.message);
       return result.data;
     },
@@ -128,7 +135,9 @@ export function ActiveFiles({
   }, [contentTree, dismissed]);
 
   const togglePin = (relPath: string) => {
-    const next = pinned.includes(relPath) ? pinned.filter((p) => p !== relPath) : [...pinned, relPath];
+    const next = pinned.includes(relPath)
+      ? pinned.filter((p) => p !== relPath)
+      : [...pinned, relPath];
     setPinned(next);
     void rpc.rig.settings.set({ pinnedPathsByRig: { [bindingId]: next } });
   };
@@ -162,7 +171,7 @@ export function ActiveFiles({
         it is honestly just what changed last. One adaptive line beats a
         generic label that is wrong half the time.
       */}
-      <p className="text-text-muted px-4 font-mono text-xs tracking-wide uppercase">
+      <p className="px-4 font-mono text-xs tracking-wide text-text-muted uppercase">
         {activePaths.size > 0 ? 'Being worked on' : 'Recently updated'}
       </p>
       <div ref={scrollRef} className="carousel-scroll flex gap-2.5 px-4 pb-2">
@@ -215,7 +224,7 @@ function FileCard({
   onTogglePin: () => void;
   onDismiss: () => void;
 }) {
-  const name = node?.name ?? (card.relPath.split('/').pop() ?? card.relPath);
+  const name = node?.name ?? card.relPath.split('/').pop() ?? card.relPath;
   const folder = parentFolder(card.relPath);
   const Icon = iconFor(name);
 
@@ -233,10 +242,10 @@ function FileCard({
       <button
         type="button"
         onClick={onOpen}
-        className="rounded-card flex min-w-0 flex-1 flex-col gap-1 p-2.5 text-left"
+        className="flex min-w-0 flex-1 flex-col gap-1 rounded-card p-2.5 text-left"
       >
         <div className="flex min-w-0 items-center gap-1.5">
-          <Icon className="text-text-secondary size-3.5 shrink-0" strokeWidth={1.5} />
+          <Icon className="size-3.5 shrink-0 text-text-secondary" strokeWidth={1.5} />
           <span
             className={cn(
               'text-text-primary min-w-0 flex-1 truncate text-xs font-medium',
@@ -266,7 +275,7 @@ function FileCard({
             <>
               <RigMark size={11} className="shrink-0" />
               <span className="truncate">Editing now</span>
-              <span className="bg-accent active-dot size-[5px] shrink-0 rounded-full" />
+              <span className="active-dot size-[5px] shrink-0 rounded-full bg-accent" />
             </>
           ) : (
             <>
@@ -296,7 +305,7 @@ function FileCard({
           type="button"
           onClick={onDismiss}
           aria-label={card.type === 'pinned' ? 'Unpin' : 'Dismiss'}
-          className="rounded-control bg-bg-1 hover:bg-bg-2 text-text-muted hover:text-text-primary flex size-5 items-center justify-center"
+          className="flex size-5 items-center justify-center rounded-control bg-bg-1 text-text-muted hover:bg-bg-2 hover:text-text-primary"
         >
           <X className="size-3" strokeWidth={1.5} />
         </button>
@@ -320,7 +329,10 @@ function useScrollbarReveal(): React.RefObject<HTMLDivElement | null> {
     const onScroll = () => {
       element.classList.add('is-scrolling');
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => element.classList.remove('is-scrolling'), SCROLLBAR_LINGER_MS);
+      timer = window.setTimeout(
+        () => element.classList.remove('is-scrolling'),
+        SCROLLBAR_LINGER_MS
+      );
     };
     element.addEventListener('scroll', onScroll, { passive: true });
     return () => {

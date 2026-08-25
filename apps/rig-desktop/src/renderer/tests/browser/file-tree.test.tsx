@@ -1,8 +1,8 @@
-import React, { act } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FileTree } from '@renderer/features/workspace/file-tree';
+import { FileTree, rigFilesQueryKey } from '@renderer/features/workspace/file-tree';
 import type { RigFileNode } from '@shared/rig/files';
 
 /**
@@ -16,33 +16,33 @@ import type { RigFileNode } from '@shared/rig/files';
  * ever did a one-shot `useQuery` on mount, so the listing only refreshed
  * when something else (a full remount) happened to refetch it.
  *
- * This pins the fix: `FileTree` now calls `rpc.rig.files.watch(root)` and
+ * This pins the fix: `FileTree` now calls `rpc.rig.files.watch({ rootId })` and
  * listens for `rigFileChangeChannel`, invalidating its query (triggering a
  * real refetch through the same mocked `rpc.rig.files.list`) whenever the
- * event's root matches — and does NOT refetch for a change reported under
- * a different root.
+ * event's root ID matches — and does NOT refetch for a change reported under
+ * a different root capability.
  */
 
 const mocks = vi.hoisted(() => ({
-  list: vi.fn<(root: string) => Promise<unknown>>(),
-  watch: vi.fn<(root: string) => void>(),
-  unwatch: vi.fn<(root: string) => void>(),
+  list: vi.fn<(args: { rootId: string }) => Promise<unknown>>(),
+  watch: vi.fn<(args: { rootId: string }) => void>(),
+  unwatch: vi.fn<(args: { rootId: string }) => void>(),
 }));
 
-let fileChangeListener: ((data: { root: string }) => void) | null = null;
+let fileChangeListener: ((data: { rootId: string }) => void) | null = null;
 
 vi.mock('@renderer/lib/ipc', () => ({
   rpc: {
     rig: {
       files: {
-        list: (...args: unknown[]) => mocks.list(...(args as [string])),
-        watch: (...args: unknown[]) => mocks.watch(...(args as [string])),
-        unwatch: (...args: unknown[]) => mocks.unwatch(...(args as [string])),
+        list: (...args: unknown[]) => mocks.list(...(args as [{ rootId: string }])),
+        watch: (...args: unknown[]) => mocks.watch(...(args as [{ rootId: string }])),
+        unwatch: (...args: unknown[]) => mocks.unwatch(...(args as [{ rootId: string }])),
       },
     },
   },
   events: {
-    on: (_channel: unknown, cb: (data: { root: string }) => void) => {
+    on: (_channel: unknown, cb: (data: { rootId: string }) => void) => {
       fileChangeListener = cb;
       return () => {
         fileChangeListener = null;
@@ -52,8 +52,9 @@ vi.mock('@renderer/lib/ipc', () => ({
 }));
 
 beforeAll(() => {
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
-    true;
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
 function fileNode(name: string): RigFileNode {
@@ -91,6 +92,10 @@ describe('FileTree — live updates on disk change', () => {
     queryClient.clear();
   });
 
+  it('keeps reopened-root capabilities in separate listing cache entries', () => {
+    expect(rigFilesQueryKey('/rig', 'root-1')).not.toEqual(rigFilesQueryKey('/rig', 'root-2'));
+  });
+
   it('refetches the listing when rigFileChangeChannel reports a change for this root (the agent-created-file case)', async () => {
     mocks.list
       .mockResolvedValueOnce({ success: true, data: [fileNode('alpha.md')] })
@@ -99,18 +104,18 @@ describe('FileTree — live updates on disk change', () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <FileTree root="/rig" activePath={null} onOpenFile={() => {}} />
+          <FileTree root="/rig" rootId="rig-1" activePath={null} onOpenFile={() => {}} />
         </QueryClientProvider>
       );
     });
 
     await waitFor(() => host.textContent?.includes('alpha') ?? false);
     expect(host.textContent).not.toContain('beta');
-    expect(mocks.watch).toHaveBeenCalledWith('/rig');
+    expect(mocks.watch).toHaveBeenCalledWith({ rootId: 'rig-1' });
 
     // Simulate the main-process watcher firing for this exact root.
     await act(async () => {
-      fileChangeListener?.({ root: '/rig' });
+      fileChangeListener?.({ rootId: 'rig-1' });
     });
 
     await waitFor(() => host.textContent?.includes('beta') ?? false);
@@ -123,7 +128,7 @@ describe('FileTree — live updates on disk change', () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <FileTree root="/rig" activePath={null} onOpenFile={() => {}} />
+          <FileTree root="/rig" rootId="rig-1" activePath={null} onOpenFile={() => {}} />
         </QueryClientProvider>
       );
     });
@@ -132,7 +137,7 @@ describe('FileTree — live updates on disk change', () => {
     expect(mocks.list).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      fileChangeListener?.({ root: '/some/other/rig' });
+      fileChangeListener?.({ rootId: 'other' });
     });
     // No predicate to wait on for "nothing happened" — a fixed settle
     // window is the honest way to assert a non-event actually didn't fire.
@@ -147,13 +152,13 @@ describe('FileTree — live updates on disk change', () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <FileTree root="/rig" activePath={null} onOpenFile={() => {}} />
+          <FileTree root="/rig" rootId="rig-1" activePath={null} onOpenFile={() => {}} />
         </QueryClientProvider>
       );
     });
     await waitFor(() => host.textContent?.includes('alpha') ?? false);
 
     await act(async () => root.unmount());
-    expect(mocks.unwatch).toHaveBeenCalledWith('/rig');
+    expect(mocks.unwatch).toHaveBeenCalledWith({ rootId: 'rig-1' });
   });
 });

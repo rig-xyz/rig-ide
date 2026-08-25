@@ -1,4 +1,3 @@
-import { useSyncExternalStore } from 'react';
 import type {
   CreateFileToolCall,
   DeleteFileToolCall,
@@ -7,13 +6,14 @@ import type {
   TranscriptItem,
   TranscriptTurn,
 } from '@emdash/core/acp/client';
+import { useSyncExternalStore } from 'react';
 
 /**
  * File-navigator redesign (`docs/file-navigator-design.md` §3, card rail
  * "In progress" cards): the only REAL live signal for "an active agent
  * session just wrote this file." Investigated first: `rig_session_events`
  * is an opaque append-only JSON blob (no path index, no live push), and
- * `rigFileChangeChannel` is `{root}`-only fs-watch churn that can't tell an
+ * `rigFileChangeChannel` is `{rootId}`-only fs-watch churn that can't tell an
  * agent's write from a human's or the sync daemon's — see the investigation
  * notes on this round. The one genuine signal is the live `TranscriptTurn`s
  * `rig-chat-store.ts` already observes per session: `_applyHistory` calls

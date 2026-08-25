@@ -15,7 +15,9 @@ Scope: the "now" and "next" resilience work; broader collaboration features are 
   rollback, ordered retry, pagination, renderer recovery, and rejection-settling tests pass. Manual
   packaged-app validation of native renderer-crash recovery and persistence degradation messaging
   remains before release sign-off.
-- M3-M4: not started.
+- M3.1: implementation complete in the working tree on 2026-08-25. Opaque root capabilities,
+  relative-only file/import operations, canonical containment, capability-scoped watchers, and
+  adversarial path tests pass. M3.2 and M4 are not started.
 
 The current wire protocol cannot cancel a truly never-settling ACP start or resume request. Renderer
 operations are now safely serialized and late successes are cleaned up before a retry starts, but a
@@ -272,6 +274,25 @@ Acceptance criteria:
 - No renderer request can access an unregistered path.
 - Rejections are actionable without leaking unnecessary absolute paths.
 - Existing legitimate worktree behavior remains supported.
+
+Implementation notes:
+
+- Each successful rig open receives an opaque, revocable `rootId`; renderer file RPCs and import
+  destinations carry only that capability plus relative paths.
+- Main canonicalizes registered roots, rejects POSIX and Windows absolute paths, traversal, empty
+  segments, NUL bytes, broken/looping links, and links that resolve outside the root. Internal links
+  remain readable, while rename/archive reject a symlink entry to avoid mutating its target.
+- Root replacement/removal is rechecked for every operation. Node does not expose descriptor-relative
+  `openat` mutations, so an external process replacing a validated parent in the final syscall window
+  remains a narrow OS-level TOCTOU limitation; closing it would require a native helper and is outside
+  the renderer-request containment threat model for this milestone.
+- Watchers are reference-counted by `rootId`, handle asynchronous watcher failure, and are forcibly
+  closed when the capability is released. Stale handles fail explicitly.
+- Root registrations are capped, including registrations in flight, so repeated renderer calls cannot
+  grow the capability table without bound.
+- Native picker source paths remain an explicit machine-scoped import capability; every destination
+  path, including imported assets and images, is resolved through the registered root policy.
+- Linked Git worktrees register independently; their `.git` pointer file does not weaken containment.
 
 ### M3.2 - Lazy file tree
 

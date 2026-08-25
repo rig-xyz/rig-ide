@@ -1,6 +1,5 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
-import { basename, extname, join as joinPath } from 'node:path';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, extname } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
 import mammoth from 'mammoth';
 import TurndownService from 'turndown';
@@ -20,6 +19,7 @@ import {
   type RigImportRequest,
   type RigImportResult,
 } from '@shared/rig/import-doc';
+import { rigFileRootRegistry } from './file-root-registry';
 
 /**
  * Google Docs / .docx → markdown import pipeline (main process).
@@ -120,47 +120,85 @@ export function uniqueSlug(base: string, exists: (candidate: string) => boolean)
  * `doc-2.txt`, …). `exists` is asked about the FULL candidate filename
  * (extension included), unlike `uniqueSlug`'s own `base`-only candidates.
  */
-export function uniqueFileName(original: string, exists: (candidateFileName: string) => boolean): string {
+export function uniqueFileName(
+  original: string,
+  exists: (candidateFileName: string) => boolean
+): string {
   const ext = extname(original);
   const base = ext ? original.slice(0, -ext.length) : original;
-  const uniqueBase = uniqueSlug(base || 'file', (candidateBase) => exists(`${candidateBase}${ext}`));
+  const uniqueBase = uniqueSlug(base || 'file', (candidateBase) =>
+    exists(`${candidateBase}${ext}`)
+  );
   return `${uniqueBase}${ext}`;
 }
 
 /**
  * A5 fix — atomically CLAIMS a slug + its `assets/<slug>` directory,
- * rather than `uniqueSlug`'s plain `existsSync` probe (still used for the
- * `.md` half of the check below): two concurrent imports of the same
+ * rather than a plain existence probe: two concurrent imports of the same
  * title used to both pass the identical "is this slug free" check before
  * either had written anything, then race writing into the SAME
  * `assets/<slug>/` folder — cross-corrupting each other's images.
- * `mkdirSync` without `recursive` is exclusive at the OS level (EEXIST on
+ * `mkdir` without `recursive` is exclusive at the OS level (EEXIST on
  * a genuine collision, whether from a real prior import or a concurrent
  * one that claimed it a moment earlier), so the candidate this returns is
  * guaranteed to have been THIS call's own, empty, newly-created directory —
  * never a shared one. Candidate numbering mirrors `uniqueSlug` exactly.
  */
-export function claimImportSlug(root: string, base: string): { slug: string; assetsDir: string } {
-  const assetsRoot = joinPath(root, 'assets');
-  mkdirSync(assetsRoot, { recursive: true });
+export async function claimImportSlug(
+  rootId: string,
+  base: string
+): Promise<Result<{ slug: string; assetsRel: string }, RigImportError>> {
+  const assetsTarget = await rigFileRootRegistry.resolveWritable(rootId, 'assets');
+  if (!assetsTarget.success) return importRootError(assetsTarget.error.kind);
+  try {
+    await mkdir(assetsTarget.data);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+      return importWriteError('Could not prepare the document assets folder.');
+    }
+  }
+  const assetsRoot = await rigFileRootRegistry.resolveExisting(rootId, 'assets');
+  if (!assetsRoot.success) return importRootError(assetsRoot.error.kind);
+  try {
+    if (!(await stat(assetsRoot.data)).isDirectory()) {
+      return importWriteError('Could not prepare the document assets folder.');
+    }
+  } catch {
+    return importWriteError('Could not prepare the document assets folder.');
+  }
+
   for (let n = 0; n < MAX_NAME_ATTEMPTS; n++) {
     const candidate = n === 0 ? base : `${base}-${n + 1}`;
-    if (existsSync(joinPath(root, `${candidate}.md`))) continue;
-    const assetsDir = joinPath(assetsRoot, candidate);
+    const markdown = await rigFileRootRegistry.resolveExisting(rootId, `${candidate}.md`);
+    if (markdown.success) continue;
+    if (markdown.error.kind !== 'not-found') return importRootError(markdown.error.kind);
+    const assetsRel = `assets/${candidate}`;
+    const assetsDir = await rigFileRootRegistry.resolveWritable(rootId, assetsRel);
+    if (!assetsDir.success) return importRootError(assetsDir.error.kind);
     try {
-      mkdirSync(assetsDir);
-      return { slug: candidate, assetsDir };
+      await mkdir(assetsDir.data);
+      const verified = await rigFileRootRegistry.resolveExisting(rootId, assetsRel);
+      if (!verified.success) return importRootError(verified.error.kind);
+      return ok({ slug: candidate, assetsRel });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
-      throw error;
+      return importWriteError('Could not prepare the document assets folder.');
     }
   }
   // Pathological (100 imports of the same doc) — timestamp is still
   // unique, mirroring `uniqueSlug`'s own fallback.
   const candidate = `${base}-${Date.now()}`;
-  const assetsDir = joinPath(assetsRoot, candidate);
-  mkdirSync(assetsDir, { recursive: true });
-  return { slug: candidate, assetsDir };
+  const assetsRel = `assets/${candidate}`;
+  const assetsDir = await rigFileRootRegistry.resolveWritable(rootId, assetsRel);
+  if (!assetsDir.success) return importRootError(assetsDir.error.kind);
+  try {
+    await mkdir(assetsDir.data);
+    const verified = await rigFileRootRegistry.resolveExisting(rootId, assetsRel);
+    if (!verified.success) return importRootError(verified.error.kind);
+    return ok({ slug: candidate, assetsRel });
+  } catch {
+    return importWriteError('Could not choose a unique document name.');
+  }
 }
 
 /**
@@ -171,17 +209,33 @@ export function claimImportSlug(root: string, base: string): { slug: string; ass
  * write fails). Never throws — a cleanup failure must never mask or
  * replace the real error already being returned to the caller.
  */
-function cleanupFailedImport(assetsDir: string, mdPath: string): void {
+async function cleanupFailedImport(
+  rootId: string,
+  assetsRel: string,
+  mdRel: string
+): Promise<void> {
   try {
-    rmSync(assetsDir, { recursive: true, force: true });
+    const assets = await rigFileRootRegistry.resolveMutableEntry(rootId, assetsRel);
+    if (assets.success) await rm(assets.data, { recursive: true, force: true });
   } catch {
     // best-effort
   }
   try {
-    rmSync(mdPath, { force: true });
+    const markdown = await rigFileRootRegistry.resolveMutableEntry(rootId, mdRel);
+    if (markdown.success) await rm(markdown.data, { force: true });
   } catch {
     // best-effort
   }
+}
+
+function importRootError(kind: string): Result<never, RigImportError> {
+  return kind === 'stale-root'
+    ? err({ kind: 'invalidRoot', message: 'This rig is no longer open. Reopen it and try again.' })
+    : importWriteError('The destination is not safe to write.');
+}
+
+function importWriteError(message: string): Result<never, RigImportError> {
+  return err({ kind: 'writeFailed', message });
 }
 
 /** `image/png` → `png`, `image/jpeg` → `jpg`, `image/svg+xml` → `svg`; anything unknown falls back to `png`. */
@@ -209,8 +263,10 @@ export function prepareDocxHtmlForMarkdown(html: string): string {
       .replace(/<\/p>\s*<\/(td|th)>/g, '</$1>')
       .replace(/<\/p>\s*<p>/g, '<br />');
     if (!out.includes('<th')) {
-      out = out.replace(/<tr>(.*?)<\/tr>/s, (row, cells: string) =>
-        `<tr>${cells.replaceAll('<td', '<th').replaceAll('</td>', '</th>')}</tr>`
+      out = out.replace(
+        /<tr>(.*?)<\/tr>/s,
+        (row, cells: string) =>
+          `<tr>${cells.replaceAll('<td', '<th').replaceAll('</td>', '</th>')}</tr>`
       );
     }
     return `<table>${out}</table>`;
@@ -228,7 +284,7 @@ export type ConvertedDoc = { markdown: string; imageCount: number };
  */
 export async function convertDocxToMarkdown(
   buffer: Buffer,
-  writeImage: (index: number, extension: string, bytes: Buffer) => string
+  writeImage: (index: number, extension: string, bytes: Buffer) => string | Promise<string>
 ): Promise<ConvertedDoc> {
   let imageCount = 0;
   const html = await mammoth.convertToHtml(
@@ -237,7 +293,7 @@ export async function convertDocxToMarkdown(
       convertImage: mammoth.images.imgElement(async (image) => {
         const bytes = await image.read();
         const index = ++imageCount;
-        const src = writeImage(index, imageExtension(image.contentType), Buffer.from(bytes));
+        const src = await writeImage(index, imageExtension(image.contentType), Buffer.from(bytes));
         return { src };
       }),
     }
@@ -307,9 +363,16 @@ async function fetchGoogleDocAsDocx(url: string): Promise<Result<FetchedDoc, Rig
 
 export const rigImportController = createRPCController({
   importDoc: async ({
-    root,
+    rootId,
     source,
   }: RigImportRequest): Promise<Result<RigImportResult, RigImportError>> => {
+    const root = await rigFileRootRegistry.getVerified(rootId);
+    if (!root.success) {
+      return err<RigImportError>({
+        kind: 'invalidRoot',
+        message: 'This rig is no longer open. Reopen it and try again.',
+      });
+    }
     const progress = (phase: RigImportProgress['phase'], title: string | null) =>
       events.emit(rigImportProgressChannel, { phase, title });
 
@@ -329,9 +392,12 @@ export const rigImportController = createRPCController({
       try {
         buffer = await readFile(source.path);
       } catch (error) {
+        log.warn('Rig import: could not read the selected document', {
+          code: (error as NodeJS.ErrnoException)?.code,
+        });
         return err<RigImportError>({
           kind: 'writeFailed',
-          message: `Couldn't read that file: ${error instanceof Error ? error.message : String(error)}`,
+          message: "Couldn't read that file.",
         });
       }
       title = basename(source.path).replace(/\.docx$/i, '') || 'Imported doc';
@@ -342,10 +408,10 @@ export const rigImportController = createRPCController({
     // (A5 fix — see `claimImportSlug`'s own doc comment for why a plain
     // existence check alone isn't enough for two concurrent imports).
     const baseSlug = rigSlug(title) || 'imported-doc';
-    const { slug, assetsDir } = claimImportSlug(root, baseSlug);
-    const assetsRel = `assets/${slug}`;
+    const claimed = await claimImportSlug(rootId, baseSlug);
+    if (!claimed.success) return claimed;
+    const { slug, assetsRel } = claimed.data;
     const relPath = `${slug}.md`;
-    const mdPath = joinPath(root, relPath);
 
     // 3. Convert, writing images as they stream out of mammoth. `wx`
     // (A5 fix) — exclusive, matching the `.md` write below — the assets
@@ -354,14 +420,18 @@ export const rigImportController = createRPCController({
     // overwriting.
     let converted: ConvertedDoc;
     try {
-      converted = await convertDocxToMarkdown(buffer, (index, extension, bytes) => {
+      converted = await convertDocxToMarkdown(buffer, async (index, extension, bytes) => {
         const fileName = `img-${index}.${extension}`;
-        writeFileSync(joinPath(assetsDir, fileName), bytes, { flag: 'wx' });
+        const image = await rigFileRootRegistry.resolveWritable(rootId, `${assetsRel}/${fileName}`);
+        if (!image.success) throw new Error('Unsafe image destination.');
+        await writeFile(image.data, bytes, { flag: 'wx' });
         return `${assetsRel}/${fileName}`;
       });
     } catch (error) {
-      log.warn('Rig import: docx conversion failed', { error: String(error) });
-      cleanupFailedImport(assetsDir, mdPath);
+      log.warn('Rig import: docx conversion failed', {
+        code: (error as NodeJS.ErrnoException)?.code,
+      });
+      await cleanupFailedImport(rootId, assetsRel, relPath);
       return err<RigImportError>({
         kind: 'convertFailed',
         message: "Couldn't convert that document — is it a real .docx?",
@@ -371,16 +441,24 @@ export const rigImportController = createRPCController({
     // 4. Write the markdown, never over anything (slug is already unique).
     progress('writing', title);
     try {
-      writeFileSync(mdPath, converted.markdown, { flag: 'wx' });
+      const markdown = await rigFileRootRegistry.resolveWritable(rootId, relPath);
+      if (!markdown.success) {
+        await cleanupFailedImport(rootId, assetsRel, relPath);
+        return importRootError(markdown.error.kind);
+      }
+      await writeFile(markdown.data, converted.markdown, { flag: 'wx' });
     } catch (error) {
-      cleanupFailedImport(assetsDir, mdPath);
+      log.warn('Rig import: could not write the converted document', {
+        code: (error as NodeJS.ErrnoException)?.code,
+      });
+      await cleanupFailedImport(rootId, assetsRel, relPath);
       return err<RigImportError>({
         kind: 'writeFailed',
-        message: `Couldn't write ${relPath}: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Couldn't write ${relPath}.`,
       });
     }
 
-    return ok({ mdPath, relPath, title, imageCount: converted.imageCount });
+    return ok({ relPath, title, imageCount: converted.imageCount });
   },
 
   /**
@@ -390,26 +468,60 @@ export const rigImportController = createRPCController({
    * overwriting (`wx`, `uniqueFileName` — same never-overwrite convention
    * as the docx path's `.md`/image writes above).
    */
-  copyFile: async ({ root, path }: RigCopyFileRequest): Promise<Result<RigCopyFileResult, RigImportError>> => {
+  copyFile: async ({
+    rootId,
+    path,
+  }: RigCopyFileRequest): Promise<Result<RigCopyFileResult, RigImportError>> => {
+    const root = await rigFileRootRegistry.getVerified(rootId);
+    if (!root.success) {
+      return err<RigImportError>({
+        kind: 'invalidRoot',
+        message: 'This rig is no longer open. Reopen it and try again.',
+      });
+    }
     let bytes: Buffer;
     try {
       bytes = await readFile(path);
     } catch (error) {
+      log.warn('Rig import: could not read the selected file', {
+        code: (error as NodeJS.ErrnoException)?.code,
+      });
       return err<RigImportError>({
         kind: 'writeFailed',
-        message: `Couldn't read that file: ${error instanceof Error ? error.message : String(error)}`,
+        message: "Couldn't read that file.",
       });
     }
-    const relPath = uniqueFileName(basename(path), (candidate) => existsSync(joinPath(root, candidate)));
-    const absPath = joinPath(root, relPath);
-    try {
-      writeFileSync(absPath, bytes, { flag: 'wx' });
-    } catch (error) {
-      return err<RigImportError>({
-        kind: 'writeFailed',
-        message: `Couldn't write ${relPath}: ${error instanceof Error ? error.message : String(error)}`,
-      });
+    const originalName = basename(path);
+    for (let n = 0; n <= MAX_NAME_ATTEMPTS; n++) {
+      const relPath = copyCandidateName(originalName, n);
+      const destination = await rigFileRootRegistry.resolveWritable(rootId, relPath);
+      if (!destination.success) return importRootError(destination.error.kind);
+      try {
+        await writeFile(destination.data, bytes, { flag: 'wx' });
+        return ok({ relPath });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
+        log.warn('Rig import: could not copy the selected file', {
+          code: (error as NodeJS.ErrnoException)?.code,
+        });
+        return err<RigImportError>({
+          kind: 'writeFailed',
+          message: `Couldn't write ${relPath}.`,
+        });
+      }
     }
-    return ok({ absPath, relPath });
+    return importWriteError('Could not choose a unique file name.');
   },
 });
+
+function copyCandidateName(original: string, attempt: number): string {
+  if (attempt === 0) return original;
+  if (attempt === MAX_NAME_ATTEMPTS) {
+    const ext = extname(original);
+    const base = ext ? original.slice(0, -ext.length) : original;
+    return `${base || 'file'}-${Date.now()}${ext}`;
+  }
+  const ext = extname(original);
+  const base = ext ? original.slice(0, -ext.length) : original;
+  return `${base || 'file'}-${attempt + 1}${ext}`;
+}

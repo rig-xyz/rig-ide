@@ -1,9 +1,18 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as joinPath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { googleDocExportUrl, parseGoogleDocId } from '@shared/rig/import-doc';
+import { rigFileRootRegistry } from './file-root-registry';
 import {
   claimImportSlug,
   classifyExportResponse,
@@ -13,9 +22,64 @@ import {
   titleFromContentDisposition,
   uniqueFileName,
   uniqueSlug,
+  rigImportController,
 } from './import-doc';
 
 const DOC_ID = '1AbC-dEf_9xYz0123456789abcdefghijklmnopqrstu';
+
+describe('rigImportController root containment', () => {
+  it('rejects a stale root handle before reading or writing', async () => {
+    await expect(
+      rigImportController.importDoc({
+        rootId: 'stale-root',
+        source: { kind: 'file', path: '/tmp/should-not-be-read.docx' },
+      })
+    ).resolves.toMatchObject({
+      success: false,
+      error: { kind: 'invalidRoot' },
+    });
+  });
+
+  it('copies a selected file only into the registered root', async () => {
+    const root = mkdtempSync(joinPath(tmpdir(), 'rig-import-root-'));
+    const sourceDir = mkdtempSync(joinPath(tmpdir(), 'rig-import-source-'));
+    const source = joinPath(sourceDir, 'notes.txt');
+    writeFileSync(source, 'hello');
+    const registered = await rigFileRootRegistry.register(root);
+    expect(registered.success).toBe(true);
+    if (!registered.success) return;
+    try {
+      await expect(
+        rigImportController.copyFile({ rootId: registered.data.rootId, path: source })
+      ).resolves.toEqual({ success: true, data: { relPath: 'notes.txt' } });
+      expect(readFileSync(joinPath(root, 'notes.txt'), 'utf8')).toBe('hello');
+    } finally {
+      rigFileRootRegistry.release(registered.data.rootId);
+      rmSync(root, { recursive: true, force: true });
+      rmSync(sourceDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an assets symlink that would send an import outside the root', async () => {
+    const root = mkdtempSync(joinPath(tmpdir(), 'rig-import-root-'));
+    const outside = mkdtempSync(joinPath(tmpdir(), 'rig-import-outside-'));
+    symlinkSync(outside, joinPath(root, 'assets'), 'dir');
+    const registered = await rigFileRootRegistry.register(root);
+    expect(registered.success).toBe(true);
+    if (!registered.success) return;
+    try {
+      await expect(claimImportSlug(registered.data.rootId, 'doc')).resolves.toMatchObject({
+        success: false,
+        error: { kind: 'writeFailed' },
+      });
+      expect(readdirSync(outside)).toEqual([]);
+    } finally {
+      rigFileRootRegistry.release(registered.data.rootId);
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('parseGoogleDocId', () => {
   it('parses every docs.google.com/document URL form', () => {
@@ -129,60 +193,82 @@ describe('uniqueFileName (the Add menu\'s "From file…" copy-collision case)', 
   });
 
   it('handles a multi-dot name — only the final extension is preserved separately', () => {
-    expect(uniqueFileName('archive.tar.gz', (c) => c === 'archive.tar.gz')).toBe('archive.tar-2.gz');
+    expect(uniqueFileName('archive.tar.gz', (c) => c === 'archive.tar.gz')).toBe(
+      'archive.tar-2.gz'
+    );
   });
 });
 
 describe('claimImportSlug (real filesystem — the A5 race fix)', () => {
-  const roots: string[] = [];
+  const roots: Array<{ root: string; rootId: string }> = [];
   afterEach(() => {
-    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+    for (const entry of roots.splice(0)) {
+      rigFileRootRegistry.release(entry.rootId);
+      rmSync(entry.root, { recursive: true, force: true });
+    }
   });
-  const freshRoot = () => {
+  const freshRoot = async () => {
     const root = mkdtempSync(joinPath(tmpdir(), 'rig-import-doc-test-'));
-    roots.push(root);
-    return root;
+    const registered = await rigFileRootRegistry.register(root);
+    if (!registered.success) throw new Error(registered.error.message);
+    const value = { root, rootId: registered.data.rootId };
+    roots.push(value);
+    return value;
   };
 
-  it('claims the base slug and its empty assets dir on a clean root', () => {
-    const root = freshRoot();
-    const { slug, assetsDir } = claimImportSlug(root, 'doc');
-    expect(slug).toBe('doc');
-    expect(assetsDir).toBe(joinPath(root, 'assets', 'doc'));
-    expect(existsSync(assetsDir)).toBe(true);
+  it('claims the base slug and its empty assets dir on a clean root', async () => {
+    const { root, rootId } = await freshRoot();
+    const result = await claimImportSlug(rootId, 'doc');
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.slug).toBe('doc');
+    expect(result.data.assetsRel).toBe('assets/doc');
+    expect(existsSync(joinPath(root, result.data.assetsRel))).toBe(true);
   });
 
-  it('the core fix: two SEQUENTIAL claims for the same title never collide — the second gets its own reserved slug, not the first\'s directory', () => {
-    const root = freshRoot();
-    const first = claimImportSlug(root, 'doc');
-    const second = claimImportSlug(root, 'doc');
-    expect(first.slug).toBe('doc');
-    expect(second.slug).toBe('doc-2');
-    expect(second.assetsDir).not.toBe(first.assetsDir);
+  it("the core fix: two SEQUENTIAL claims for the same title never collide — the second gets its own reserved slug, not the first's directory", async () => {
+    const { rootId } = await freshRoot();
+    const first = await claimImportSlug(rootId, 'doc');
+    const second = await claimImportSlug(rootId, 'doc');
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    if (!first.success || !second.success) return;
+    expect(first.data.slug).toBe('doc');
+    expect(second.data.slug).toBe('doc-2');
+    expect(second.data.assetsRel).not.toBe(first.data.assetsRel);
     // Both are real, distinct, already-created directories — not a
     // check-then-write gap where a later write could land in the same
     // folder.
-    expect(existsSync(first.assetsDir)).toBe(true);
-    expect(existsSync(second.assetsDir)).toBe(true);
+    const root = rigFileRootRegistry.get(rootId);
+    expect(root).toBeDefined();
+    if (!root) return;
+    expect(existsSync(joinPath(root, first.data.assetsRel))).toBe(true);
+    expect(existsSync(joinPath(root, second.data.assetsRel))).toBe(true);
   });
 
-  it('a pre-existing assets/<slug> dir (from an earlier, unrelated import) is treated as taken, same as a pre-existing .md file', () => {
-    const root = freshRoot();
+  it('a pre-existing assets/<slug> dir (from an earlier, unrelated import) is treated as taken, same as a pre-existing .md file', async () => {
+    const { root, rootId } = await freshRoot();
     // Simulates a prior import that left `assets/doc/` behind but not
     // `doc.md` (e.g. a crash between steps 3 and 4) — the base slug must
     // still be skipped, not silently reused.
-    const { assetsDir: firstAssetsDir } = claimImportSlug(root, 'doc');
+    const first = await claimImportSlug(rootId, 'doc');
+    if (!first.success) return;
+    const firstAssetsDir = joinPath(root, first.data.assetsRel);
     writeFileSync(joinPath(root, 'other.md'), '# unrelated');
-    const { slug } = claimImportSlug(root, 'doc');
-    expect(slug).toBe('doc-2');
+    const second = await claimImportSlug(rootId, 'doc');
+    expect(second.success).toBe(true);
+    if (!second.success) return;
+    expect(second.data.slug).toBe('doc-2');
     expect(existsSync(firstAssetsDir)).toBe(true); // untouched, not reused
   });
 
-  it('an existing .md file with no matching assets dir still blocks that slug', () => {
-    const root = freshRoot();
+  it('an existing .md file with no matching assets dir still blocks that slug', async () => {
+    const { root, rootId } = await freshRoot();
     writeFileSync(joinPath(root, 'doc.md'), '# already here');
-    const { slug } = claimImportSlug(root, 'doc');
-    expect(slug).toBe('doc-2');
+    const result = await claimImportSlug(rootId, 'doc');
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.slug).toBe('doc-2');
   });
 });
 

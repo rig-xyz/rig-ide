@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import {
+  classifyEntryCategory,
+  filterToContentOnly,
+  relPathFromRoot,
+} from './file-navigator-categories';
 import type { RigFileNode } from './files';
-import { classifyEntryCategory, filterToContentOnly, relPathFromRoot } from './file-navigator-categories';
 
 describe('classifyEntryCategory', () => {
   it('treats ordinary files and folders as content', () => {
@@ -57,11 +61,16 @@ describe('relPathFromRoot', () => {
 
   it('returns the input unchanged when it does not start with root', () => {
     expect(relPathFromRoot('/rigs/foo', '/elsewhere/notes.md')).toBe('/elsewhere/notes.md');
+    expect(relPathFromRoot('/rigs/foo', '/rigs/foobar/notes.md')).toBe('/rigs/foobar/notes.md');
   });
 });
 
 describe('filterToContentOnly', () => {
-  const file = (relPath: string): RigFileNode => ({ name: relPath.split('/').pop() ?? relPath, relPath, kind: 'file' });
+  const file = (relPath: string): RigFileNode => ({
+    name: relPath.split('/').pop() ?? relPath,
+    relPath,
+    kind: 'file',
+  });
   const dir = (relPath: string, children: RigFileNode[]): RigFileNode => ({
     name: relPath.split('/').pop() ?? relPath,
     relPath,

@@ -1,6 +1,7 @@
 import { action, makeObservable, observable, runInAction } from 'mobx';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
+import { relPathFromRoot } from '@shared/rig/file-navigator-categories';
 import { rigFileChangeChannel } from '@shared/rig/files';
 import type { DocEditorHandle, DocSelection } from './doc-editor';
 import type { DocExtensionFactory } from './doc-extensions';
@@ -16,7 +17,8 @@ import type { DocExtensionFactory } from './doc-extensions';
  * registered in the task DB. A bound-rig folder opened via `rig.workspace.detect`
  * has no such registration (and per the P0 spec, this app doesn't carry
  * emdash's task/worktree system at all), so this talks to the new
- * `rpc.rig.files` surface instead, keyed directly on absolute paths, and
+ * `rpc.rig.files` surface instead, keyed by an opaque root capability plus
+ * a relative path, and
  * watches for external changes via `rigFileChangeChannel` rather than the
  * task-scoped `fileChangesChannel`.
  *
@@ -40,6 +42,7 @@ export interface DocPayload {
 export interface DocContext {
   /** The bound rig's workspace root — what the file watcher is scoped to. */
   root: string;
+  rootId: string;
 }
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
@@ -67,6 +70,8 @@ type DiskRead = { content: string } | { error: string };
 export class DocTabResource {
   readonly path: string;
   readonly root: string;
+  readonly rootId: string;
+  readonly relativePath: string;
 
   /**
    * Per-tab CM6 extension factories, applied after the globally registered
@@ -99,6 +104,8 @@ export class DocTabResource {
   constructor(payload: DocPayload, ctx: DocContext) {
     this.path = payload.path;
     this.root = ctx.root;
+    this.rootId = ctx.rootId;
+    this.relativePath = relPathFromRoot(ctx.root, payload.path);
 
     makeObservable(this, {
       content: observable,
@@ -112,9 +119,9 @@ export class DocTabResource {
       dismissDiskUpdate: action.bound,
     });
 
-    void rpc.rig.files.watch(this.root);
-    this._unwatch = events.on(rigFileChangeChannel, ({ root }) => {
-      if (root !== this.root) return;
+    void rpc.rig.files.watch({ rootId: this.rootId });
+    this._unwatch = events.on(rigFileChangeChannel, ({ rootId }) => {
+      if (rootId !== this.rootId) return;
       void this._syncFromDisk();
     });
 
@@ -128,7 +135,7 @@ export class DocTabResource {
   dispose(): void {
     this._isClosed = true;
     this._unwatch();
-    void rpc.rig.files.unwatch(this.root);
+    void rpc.rig.files.unwatch({ rootId: this.rootId });
     this._selectionListeners.clear();
     this.editorRef.current = null;
     if (this._saveTimer !== null) {
@@ -198,7 +205,11 @@ export class DocTabResource {
 
   private async _readDisk(): Promise<DiskRead> {
     try {
-      const result = await rpc.rig.files.read(this.path, MAX_DOC_BYTES);
+      const result = await rpc.rig.files.read({
+        rootId: this.rootId,
+        relativePath: this.relativePath,
+        maxBytes: MAX_DOC_BYTES,
+      });
       if (!result.success) return { error: describeError(result.error) };
       if (result.data.truncated) return { error: 'File is too large to open as a document.' };
       return { content: result.data.content };
@@ -290,7 +301,11 @@ export class DocTabResource {
           this.saveState = 'saving';
         });
 
-        const result = await rpc.rig.files.write(this.path, pending);
+        const result = await rpc.rig.files.write({
+          rootId: this.rootId,
+          relativePath: this.relativePath,
+          content: pending,
+        });
 
         if (!result.success) {
           runInAction(() => {

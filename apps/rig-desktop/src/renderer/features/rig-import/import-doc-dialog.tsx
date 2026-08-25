@@ -26,11 +26,13 @@ import {
  */
 export function ImportDocDialog({
   root,
+  rootId,
   open,
   onOpenChange,
   onImported,
 }: {
   root: string;
+  rootId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImported: (mdPath: string) => void;
@@ -46,6 +48,7 @@ export function ImportDocDialog({
         {open && (
           <ImportDocForm
             root={root}
+            rootId={rootId}
             onDone={(mdPath) => {
               onOpenChange(false);
               onImported(mdPath);
@@ -59,7 +62,15 @@ export function ImportDocDialog({
 
 const IMPORT_PHASES: readonly RigImportPhase[] = ['fetching', 'converting', 'writing'];
 
-function ImportDocForm({ root, onDone }: { root: string; onDone: (mdPath: string) => void }) {
+function ImportDocForm({
+  root,
+  rootId,
+  onDone,
+}: {
+  root: string;
+  rootId: string;
+  onDone: (mdPath: string) => void;
+}) {
   const [value, setValue] = useState<ImportSourceInput>(EMPTY_IMPORT_SOURCE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +106,7 @@ function ImportDocForm({ root, onDone }: { root: string; onDone: (mdPath: string
     setError(null);
     setProgress(null);
     try {
-      const result = await rpc.rig.importDoc.importDoc({ root, source: state.source });
+      const result = await rpc.rig.importDoc.importDoc({ rootId, source: state.source });
       if (closedRef.current) {
         // The write already happened (or failed) server-side — say so
         // quietly rather than navigating into a dialog the user closed.
@@ -106,7 +117,7 @@ function ImportDocForm({ root, onDone }: { root: string; onDone: (mdPath: string
         setError(result.error.message);
         return;
       }
-      onDone(result.data.mdPath);
+      onDone(`${root}/${result.data.relPath}`);
     } catch {
       if (!closedRef.current) setError("Couldn't import this doc. Try again.");
     } finally {

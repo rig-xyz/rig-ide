@@ -14,6 +14,7 @@ import {
 } from '@shared/rig/create';
 import { commandFailureMessage } from './auth-output';
 import { resolveCliBin } from './bundled-cli';
+import { rigFileRootRegistry } from './file-root-registry';
 import { ensureRigHomeDir, resolveHomeLandingDir } from './home';
 
 /**
@@ -125,7 +126,11 @@ export function runRig(args: string[], cwd: string, timeoutMs: number): Promise<
     });
 
     child.on('error', (error) => {
-      log.warn('Rig create: could not run the rig CLI', { bin, args: args[0], error: String(error) });
+      log.warn('Rig create: could not run the rig CLI', {
+        bin,
+        args: args[0],
+        error: String(error),
+      });
       settle({ kind: 'spawnFailed', bin });
     });
 
@@ -183,6 +188,18 @@ export async function enableSyncInDir(
 
 // ── controller ───────────────────────────────────────────────────────────────
 
+async function withRegisteredRoot(
+  result: Omit<RigCreateResult, 'rootId'>
+): Promise<RigCreateResult> {
+  const registered = await rigFileRootRegistry.register(result.path);
+  if (!registered.success) {
+    log.warn('Rig create: could not issue the temporary import root', {
+      kind: registered.error.kind,
+    });
+  }
+  return { ...result, rootId: registered.success ? registered.data.rootId : null };
+}
+
 export const rigCreateController = createRPCController({
   create: async ({
     parentDir,
@@ -216,7 +233,11 @@ export const rigCreateController = createRPCController({
       });
     }
 
-    const init = await runRig(['init', '--json', ...(sync ? ['--sync'] : [])], targetDir, INIT_TIMEOUT_MS);
+    const init = await runRig(
+      ['init', '--json', ...(sync ? ['--sync'] : [])],
+      targetDir,
+      INIT_TIMEOUT_MS
+    );
     const initError = interpretInitFailure(init);
     if (initError) {
       // Best-effort: never leave an empty husk behind for a failed init.
@@ -234,21 +255,39 @@ export const rigCreateController = createRPCController({
       initBody?.kind === 'ok' && typeof initBody.body.name === 'string' ? initBody.body.name : slug;
 
     if (!sync) {
-      return ok({ path: targetDir, rigName, synced: false, homeUrl: null, syncError: null });
+      return ok(
+        await withRegisteredRoot({
+          path: targetDir,
+          rigName,
+          synced: false,
+          homeUrl: null,
+          syncError: null,
+        })
+      );
     }
 
     // Go live. Every failure from here is PARTIAL: the rig exists on disk.
     const live = await enableSyncInDir(targetDir);
     if (!live.success) {
-      return ok({ path: targetDir, rigName, synced: false, homeUrl: null, syncError: live.error });
+      return ok(
+        await withRegisteredRoot({
+          path: targetDir,
+          rigName,
+          synced: false,
+          homeUrl: null,
+          syncError: live.error,
+        })
+      );
     }
-    return ok({
-      path: targetDir,
-      rigName,
-      synced: true,
-      homeUrl: live.data.homeUrl,
-      syncError: null,
-    });
+    return ok(
+      await withRegisteredRoot({
+        path: targetDir,
+        rigName,
+        synced: true,
+        homeUrl: live.data.homeUrl,
+        syncError: null,
+      })
+    );
   },
 
   /**
@@ -286,7 +325,11 @@ function interpretInitFailure(outcome: SpawnOutcome): RigCreateError | null {
   if (parsed.kind === 'unparseable' || outcome.exitCode !== 0) {
     return {
       kind: 'initFailed',
-      message: commandFailureMessage('init', `${outcome.stdout}\n${outcome.stderr}`, outcome.exitCode),
+      message: commandFailureMessage(
+        'init',
+        `${outcome.stdout}\n${outcome.stderr}`,
+        outcome.exitCode
+      ),
     };
   }
   return null;

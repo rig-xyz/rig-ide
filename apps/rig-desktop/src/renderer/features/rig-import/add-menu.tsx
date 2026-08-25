@@ -25,10 +25,12 @@ import { nextUntitledFileName } from './add-menu-logic';
  */
 export function NewMenu({
   root,
+  rootId,
   onOpenFile,
   onOpenImportDialog,
 }: {
   root: string;
+  rootId: string;
   onOpenFile: (absPath: string) => void;
   onOpenImportDialog: () => void;
 }) {
@@ -65,7 +67,7 @@ export function NewMenu({
   const newFile = async () => {
     setOpen(false);
     try {
-      const list = await rpc.rig.files.list(root);
+      const list = await rpc.rig.files.list({ rootId });
       if (!list.success) {
         toast({
           title: "Couldn't create the file",
@@ -79,7 +81,7 @@ export function NewMenu({
         .map((node) => node.name);
       const relPath = nextUntitledFileName(rootFileNames);
       const absPath = `${root}/${relPath}`;
-      const result = await rpc.rig.files.write(absPath, '');
+      const result = await rpc.rig.files.write({ rootId, relativePath: relPath, content: '' });
       if (!result.success) {
         toast({
           title: "Couldn't create the file",
@@ -101,7 +103,7 @@ export function NewMenu({
   const newFolder = async () => {
     setOpen(false);
     try {
-      const list = await rpc.rig.files.list(root);
+      const list = await rpc.rig.files.list({ rootId });
       if (!list.success) {
         toast({
           title: "Couldn't create the folder",
@@ -115,7 +117,7 @@ export function NewMenu({
       );
       let name = 'New folder';
       for (let n = 2; taken.has(name); n += 1) name = `New folder ${n}`;
-      const result = await rpc.rig.files.makeDirectory(root, name);
+      const result = await rpc.rig.files.makeDirectory({ rootId, name });
       if (!result.success) {
         toast({
           title: "Couldn't create the folder",
@@ -154,7 +156,7 @@ export function NewMenu({
     try {
       if (/\.docx$/i.test(picked)) {
         const result = await rpc.rig.importDoc.importDoc({
-          root,
+          rootId,
           source: { kind: 'file', path: picked },
         });
         if (!result.success) {
@@ -165,11 +167,11 @@ export function NewMenu({
           });
           return;
         }
-        onOpenFile(result.data.mdPath);
+        onOpenFile(`${root}/${result.data.relPath}`);
         return;
       }
 
-      const result = await rpc.rig.importDoc.copyFile({ root, path: picked });
+      const result = await rpc.rig.importDoc.copyFile({ rootId, path: picked });
       if (!result.success) {
         toast({
           title: "Couldn't add that file",
@@ -178,7 +180,7 @@ export function NewMenu({
         });
         return;
       }
-      onOpenFile(result.data.absPath);
+      onOpenFile(`${root}/${result.data.relPath}`);
     } catch {
       toast({ title: "Couldn't add that file", description: 'Try again.', variant: 'destructive' });
     } finally {

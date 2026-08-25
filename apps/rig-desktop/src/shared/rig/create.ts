@@ -37,6 +37,8 @@ export type RigCreateSyncError = {
  */
 export type RigCreateResult = {
   path: string;
+  /** Short-lived file capability used for an optional import before the rig opens. */
+  rootId: string | null;
   rigName: string;
   synced: boolean;
   homeUrl: string | null;

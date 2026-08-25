@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { rigFileRootRegistry } from './file-root-registry';
 import { rigFilesController } from './files';
 
 /**
@@ -14,7 +15,10 @@ const ROOT = join(homedir(), 'Code', 'knee-ability-rig');
 
 describe.skipIf(!existsSync(ROOT))('rigFilesController.list against knee-ability-rig', () => {
   it('returns real entries, ignoring .git/node_modules but including dotfiles/.rig for the navigator to categorize', async () => {
-    const result = await rigFilesController.list(ROOT);
+    const registered = await rigFileRootRegistry.register(ROOT);
+    expect(registered.success).toBe(true);
+    if (!registered.success) return;
+    const result = await rigFilesController.list({ rootId: registered.data.rootId });
     expect(result.success).toBe(true);
     if (!result.success) return;
     const names = result.data.map((n) => n.name);

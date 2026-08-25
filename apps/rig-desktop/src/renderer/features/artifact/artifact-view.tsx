@@ -1,10 +1,13 @@
 import { ChevronLeft, ChevronRight, Loader2, Sparkles } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useMemo, useRef } from 'react';
-import { CommentSelectionButton } from '@renderer/features/docs/comments/comment-selection';
 import { commentDecorations } from '@renderer/features/docs/comments/comment-decorations';
-import { attachDocComments, disposeDocComments } from '@renderer/features/docs/comments/comments-store';
+import { CommentSelectionButton } from '@renderer/features/docs/comments/comment-selection';
 import { MarginRail, shouldShowMargin } from '@renderer/features/docs/comments/comments-margin';
+import {
+  attachDocComments,
+  disposeDocComments,
+} from '@renderer/features/docs/comments/comments-store';
 import { DocEditor } from '@renderer/features/docs/doc-editor';
 import { DocTabResource } from '@renderer/features/docs/doc-file-sync';
 import { cn } from '@renderer/lib/utils';
@@ -39,12 +42,14 @@ import { useFileType } from './use-file-type';
 
 export const ArtifactView = observer(function ArtifactView({
   root,
+  rootId,
   path,
   onClose,
   onNavigateFolder,
 }: {
   /** The bound rig's workspace root — scopes the file watcher. */
   root: string;
+  rootId: string;
   /** Absolute path of the file being viewed. */
   path: string;
   /** Plain pop, no target — the header's Back button. */
@@ -52,7 +57,7 @@ export const ArtifactView = observer(function ArtifactView({
   /** Pop to the navigator AND reveal this folder (relPath) — folder breadcrumb segments. */
   onNavigateFolder: (relPath: string) => void;
 }) {
-  const fileInfo = useFileType(path);
+  const fileInfo = useFileType(root, rootId, path);
   const crumbs = useMemo(() => breadcrumbSegments(root, path), [root, path]);
   const type = fileInfo?.type ?? null;
   // File-navigator redesign: a skill file (`.claude/skills`, `.agents/skills`,
@@ -68,6 +73,7 @@ export const ArtifactView = observer(function ArtifactView({
     return (
       <EditableArtifactPane
         root={root}
+        rootId={rootId}
         path={path}
         crumbs={crumbs}
         language={type.category === 'markdown' ? 'markdown' : type.language}
@@ -87,17 +93,27 @@ export const ArtifactView = observer(function ArtifactView({
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
-      <ArtifactHeaderBar path={path} crumbs={crumbs} onClose={onClose} onNavigateFolder={onNavigateFolder} />
+      <ArtifactHeaderBar
+        path={path}
+        crumbs={crumbs}
+        onClose={onClose}
+        onNavigateFolder={onNavigateFolder}
+      />
       <div className="relative min-h-0 flex-1 overflow-y-auto">
         {type === null ? (
-          <div className="text-text-muted flex h-full items-center justify-center gap-2 text-sm">
+          <div className="flex h-full items-center justify-center gap-2 text-sm text-text-muted">
             <Loader2 className="size-4 animate-spin" strokeWidth={1.5} />
             Loading…
           </div>
         ) : type.category === 'image' ? (
-          <ImageArtifact path={path} mime={type.mime} />
+          <ImageArtifact root={root} rootId={rootId} path={path} mime={type.mime} />
         ) : (
-          <UnsupportedArtifact path={path} size={fileInfo?.size ?? null} />
+          <UnsupportedArtifact
+            root={root}
+            rootId={rootId}
+            path={path}
+            size={fileInfo?.size ?? null}
+          />
         )}
       </div>
     </div>
@@ -126,7 +142,7 @@ function ArtifactHeaderBar({
   trailing?: React.ReactNode;
 }) {
   return (
-    <div className="border-border-hairline flex h-10 shrink-0 items-center gap-2 border-b px-4">
+    <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border-hairline px-4">
       {/* Real button chrome (round 14): outlined ghost, radius 6, so this
           reads as a control you press — distinct from the breadcrumb path
           you read, which starts fresh after the gap below. */}
@@ -134,7 +150,7 @@ function ArtifactHeaderBar({
         type="button"
         onClick={onClose}
         aria-label="Back to files"
-        className="border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex shrink-0 items-center gap-1 border bg-transparent px-2 py-1 text-xs transition-colors"
+        className="flex shrink-0 items-center gap-1 rounded-control border border-border-hairline bg-transparent px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
       >
         <ChevronLeft className="size-3.5" strokeWidth={1.5} />
         Back
@@ -142,9 +158,11 @@ function ArtifactHeaderBar({
       <div className="flex min-w-0 items-center gap-1 text-xs" title={path}>
         {crumbs.map((segment, index) => (
           <span key={`${segment.kind}:${index}`} className="flex min-w-0 items-center gap-1">
-            {index > 0 && <ChevronRight className="text-text-muted size-3 shrink-0" strokeWidth={1.5} />}
+            {index > 0 && (
+              <ChevronRight className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
+            )}
             {segment.kind === 'file' ? (
-              <span className="text-text-primary min-w-0 truncate font-mono">{segment.label}</span>
+              <span className="min-w-0 truncate font-mono text-text-primary">{segment.label}</span>
             ) : (
               // Folder crumbs only — no root crumb of any kind (take 3):
               // the topbar's mini-breadcrumb owns Home, and the Back
@@ -152,7 +170,7 @@ function ArtifactHeaderBar({
               <button
                 type="button"
                 onClick={() => onNavigateFolder(segment.relPath)}
-                className="text-text-muted hover:text-text-primary shrink-0"
+                className="shrink-0 text-text-muted hover:text-text-primary"
               >
                 {segment.label}
               </button>
@@ -190,6 +208,7 @@ function ArtifactHeaderBar({
  */
 const EditableArtifactPane = observer(function EditableArtifactPane({
   root,
+  rootId,
   path,
   crumbs,
   language,
@@ -200,6 +219,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   onNavigateFolder,
 }: {
   root: string;
+  rootId: string;
   path: string;
   crumbs: readonly BreadcrumbSegment[];
   language: EditorLanguage;
@@ -218,7 +238,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // extension from a parent `useEffect` (after `DocEditor` has already
   // constructed its CM6 state) would be one render too late.
   const { resource, comments } = useMemo(() => {
-    const doc = new DocTabResource({ path }, { root });
+    const doc = new DocTabResource({ path }, { root, rootId });
     const store = commentsEnabled ? attachDocComments(doc) : null;
     if (store) {
       doc.extensionFactories.push(() =>
@@ -232,8 +252,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
     // Recreated only when the open file actually changes — `key={path}` on
     // the grandparent (`App.tsx`'s `<ArtifactView key={nav.path} .../>`)
     // guarantees a remount rather than relying on this dependency array.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, root, commentsEnabled]);
+  }, [path, root, rootId, commentsEnabled]);
 
   useEffect(() => {
     comments?.setVisible(true);
@@ -292,7 +311,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 type="button"
                 onClick={() => void resource.reloadFromDisk()}
                 title="This file changed on disk. Reload and discard your unsaved changes."
-                className="border-border-hairline text-text-muted hover:bg-bg-2 hover:text-text-primary rounded-chip border px-2 py-0.5 text-xs"
+                className="rounded-chip border border-border-hairline px-2 py-0.5 text-xs text-text-muted hover:bg-bg-2 hover:text-text-primary"
               >
                 Updated on disk · Reload
               </button>
@@ -311,7 +330,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
       />
 
       {isSkill && (
-        <div className="border-border-hairline bg-bg-2 text-text-muted flex shrink-0 items-center gap-1.5 border-b px-4 py-1.5 text-xs">
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-border-hairline bg-bg-2 px-4 py-1.5 text-xs text-text-muted">
           <Sparkles className="size-3 shrink-0" strokeWidth={1.5} />
           <span>Skill · teaches your agents</span>
         </div>
@@ -319,11 +338,11 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
 
       <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto">
         {resource.isLoading ? (
-          <div className="text-text-muted flex h-full items-center justify-center text-sm">
+          <div className="flex h-full items-center justify-center text-sm text-text-muted">
             Loading…
           </div>
         ) : resource.loadError ? (
-          <div className="text-danger px-8 py-8 text-sm">
+          <div className="px-8 py-8 text-sm text-danger">
             Could not open document: {resource.loadError}
           </div>
         ) : (

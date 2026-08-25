@@ -1,6 +1,7 @@
 import { ImageOff, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
+import { relPathFromRoot } from '@shared/rig/file-navigator-categories';
 import { formatFileSize } from './file-type';
 
 /**
@@ -31,14 +32,24 @@ type LoadState =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; src: string; size: number };
 
-export function ImageArtifact({ path, mime }: { path: string; mime: string }) {
+export function ImageArtifact({
+  root,
+  rootId,
+  path,
+  mime,
+}: {
+  root: string;
+  rootId: string;
+  path: string;
+  mime: string;
+}) {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void rpc.rig.files
-      .readBinary(path, MAX_IMAGE_BYTES)
+      .readBinary({ rootId, relativePath: relPathFromRoot(root, path), maxBytes: MAX_IMAGE_BYTES })
       .then((result) => {
         if (cancelled) return;
         if (!result.success) {
@@ -63,7 +74,7 @@ export function ImageArtifact({ path, mime }: { path: string; mime: string }) {
     };
     // `path`/`mime` alone: the caller remounts this component on file
     // change, same convention as `use-file-type.ts`'s own effect.
-  }, [path, mime]);
+  }, [root, rootId, path, mime]);
 
   const extension = path.split('.').pop()?.toUpperCase() ?? '';
 
