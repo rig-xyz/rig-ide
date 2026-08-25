@@ -1260,7 +1260,10 @@ function FileBrowser({
                 aria-pressed={view.filter === 'unseen'}
                 title={view.filter === 'unseen' ? 'Show everything' : 'Show only what is new'}
                 className={cn(
-                  'shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
+                  // popover-in reused: 150ms opacity+2px settle on mount, so
+                  // the chip arrives instead of teleporting in. The reflow
+                  // itself stays instant (layout properties never animate).
+                  'popover-in shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
                   view.filter === 'unseen'
                     ? 'bg-accent text-accent-ink'
                     : 'bg-accent-subtle text-accent hover:opacity-80'

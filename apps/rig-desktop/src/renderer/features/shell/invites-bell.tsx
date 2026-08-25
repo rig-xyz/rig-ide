@@ -1,12 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, FolderDown } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useRef, useState } from 'react';
 import { relativeTime } from '@renderer/features/chat/session-history';
-import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { Button } from '@renderer/lib/ui/button';
+import { Popover } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import type { RigMyInvite } from '@shared/rig/rig-share';
 import { deriveBellState, shapeMyInvites, type MyInviteRow } from './invites-inbox';
@@ -34,8 +33,6 @@ const POLL_INTERVAL_MS = 5 * 60_000;
 export function InvitesBell({ onOpenPath }: { onOpenPath: (path: string) => void }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const popupRef = useRef<HTMLDivElement>(null);
-  const rect = useAnchorRect(open, triggerRef, { gap: 6, estimatedHeight: 280, estimatedWidth: 320, align: 'right' });
 
   const authQuery = useQuery({
     queryKey: ['rig', 'auth', 'status'],
@@ -52,26 +49,6 @@ export function InvitesBell({ onOpenPath }: { onOpenPath: (path: string) => void
     staleTime: 30_000,
   });
   const invites = invitesQuery.data?.success ? invitesQuery.data.data.invites : null;
-
-  useEffect(() => {
-    if (!open) return;
-    const dismiss = () => setOpen(false);
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target)) return;
-      if (popupRef.current?.contains(target)) return;
-      dismiss();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') dismiss();
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
 
   const bell = deriveBellState(signedIn, invites ? invites.length : null);
   if (!bell.visible) return null;
@@ -92,7 +69,7 @@ export function InvitesBell({ onOpenPath }: { onOpenPath: (path: string) => void
             >
               <Bell size={15} strokeWidth={1.5} />
               {bell.count > 0 && (
-                <span className="bg-accent text-accent-ink absolute top-0.5 right-0.5 flex min-w-3.5 items-center justify-center rounded-full px-0.5 text-[8px] leading-3.5 font-medium">
+                <span className="bg-accent text-accent-ink absolute top-0.5 right-0.5 flex min-w-3.5 items-center justify-center rounded-full px-0.5 text-2xs leading-3.5 font-medium">
                   {bell.count}
                 </span>
               )}
@@ -102,36 +79,30 @@ export function InvitesBell({ onOpenPath }: { onOpenPath: (path: string) => void
         <TooltipContent side="bottom">Invites</TooltipContent>
       </Tooltip>
 
-      {open &&
-        rect &&
-        createPortal(
-          <div
-            ref={popupRef}
-            style={{
-              position: 'fixed',
-              width: 320,
-              maxHeight: rect.maxHeight,
-              overflowY: 'auto',
-              ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
-              ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
-            }}
-            className="border-border-hairline bg-bg-1 rounded-card shadow-soft z-50 overflow-hidden border"
-          >
-            <InvitesPopoverContent
-              invites={invites}
-              // B1 fix: `!invitesQuery.data?.success` was `true` while
-              // STILL LOADING too (data undefined before the first fetch
-              // resolves), so the popover showed "Could not load your
-              // invites" instead of "Loading…" every time it was opened.
-              // `data?.success === false` only trips once a fetch has
-              // actually resolved unsuccessfully; `isError` covers a
-              // transport-level failure (the query function itself threw).
-              error={invitesQuery.isError || invitesQuery.data?.success === false}
-              onOpenPath={onOpenPath}
-            />
-          </div>,
-          document.body
-        )}
+      <Popover
+        anchor={triggerRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        role="dialog"
+        align="right"
+        gap={6}
+        estimatedWidth={320}
+        minWidth={320}
+        ariaLabel="Invites"
+      >
+        <InvitesPopoverContent
+          invites={invites}
+          // B1 fix: `!invitesQuery.data?.success` was `true` while
+          // STILL LOADING too (data undefined before the first fetch
+          // resolves), so the popover showed "Could not load your
+          // invites" instead of "Loading…" every time it was opened.
+          // `data?.success === false` only trips once a fetch has
+          // actually resolved unsuccessfully; `isError` covers a
+          // transport-level failure (the query function itself threw).
+          error={invitesQuery.isError || invitesQuery.data?.success === false}
+          onOpenPath={onOpenPath}
+        />
+      </Popover>
     </>
   );
 }

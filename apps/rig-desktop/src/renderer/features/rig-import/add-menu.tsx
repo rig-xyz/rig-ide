@@ -1,9 +1,8 @@
 import { FilePlus, FolderPlus, Link, Plus, RefreshCw, Upload } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
+import { useRef, useState } from 'react';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
+import { Popover, PopoverMenuItem, PopoverSeparator } from '@renderer/lib/ui/popover';
 import { nextUntitledFileName } from './add-menu-logic';
 
 /**
@@ -37,32 +36,6 @@ export function NewMenu({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const rect = useAnchorRect(open, triggerRef, {
-    gap: 4,
-    estimatedHeight: 220,
-    estimatedWidth: 200,
-  });
-
-  useEffect(() => {
-    if (!open) return;
-    const dismiss = () => setOpen(false);
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target)) return;
-      if (menuRef.current?.contains(target)) return;
-      dismiss();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') dismiss();
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
 
   const newFile = async () => {
     setOpen(false);
@@ -203,93 +176,46 @@ export function NewMenu({
         <Plus className="size-3.5" strokeWidth={1.5} />
         {busy ? 'Adding…' : 'New'}
       </button>
-      {open &&
-        rect &&
-        createPortal(
-          <div
-            ref={menuRef}
-            role="menu"
-            style={{
-              position: 'fixed',
-              width: Math.max(rect.width, 200),
-              maxHeight: rect.maxHeight,
-              overflowY: 'auto',
-              ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
-              ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
-            }}
-            className="z-50 rounded-control border border-border-hairline bg-bg-1 py-1 shadow-soft"
-          >
-            <button
-              type="button"
-              role="menuitem"
-              onMouseDown={(event) => {
-                event.preventDefault();
-                void newFile();
-              }}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
-            >
-              <FilePlus className="size-3.5 shrink-0" strokeWidth={1.5} />
-              New file
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onMouseDown={(event) => {
-                event.preventDefault();
-                void newFolder();
-              }}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
-            >
-              <FolderPlus className="size-3.5 shrink-0" strokeWidth={1.5} />
-              New folder
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onMouseDown={(event) => {
-                event.preventDefault();
-                void fromFile();
-              }}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
-            >
-              <Upload className="size-3.5 shrink-0" strokeWidth={1.5} />
-              Import file…
-            </button>
-            <div className="my-1 h-px bg-border-hairline" />
-            <button
-              type="button"
-              role="menuitem"
-              onMouseDown={(event) => {
-                event.preventDefault();
-                setOpen(false);
-                onOpenImportDialog();
-              }}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
-            >
-              <Link className="size-3.5 shrink-0" strokeWidth={1.5} />
-              Import from Docs…
-            </button>
-            {/*
-              Named but not yet real. Shown disabled rather than hidden
-              because people ask for it constantly and an absent option
-              reads as "this product cannot do that", where a greyed one
-              with a date-free "coming soon" reads as "not yet". It must
-              never look clickable.
-            */}
-            <div
-              role="menuitem"
-              aria-disabled="true"
-              className="flex w-full cursor-default items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-muted"
-            >
-              <RefreshCw className="size-3.5 shrink-0" strokeWidth={1.5} />
-              Sync with Drive
-              <span className="ml-auto rounded-full border border-border-hairline px-1.5 text-xs text-text-muted">
-                Soon
-              </span>
-            </div>
-          </div>,
-          document.body
-        )}
+      <Popover
+        anchor={triggerRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        role="menu"
+        gap={4}
+        estimatedWidth={200}
+        minWidth={200}
+      >
+        <PopoverMenuItem icon={FilePlus} label="New file" onSelect={() => void newFile()} />
+        <PopoverMenuItem icon={FolderPlus} label="New folder" onSelect={() => void newFolder()} />
+        <PopoverMenuItem icon={Upload} label="Import file…" onSelect={() => void fromFile()} />
+        <PopoverSeparator />
+        <PopoverMenuItem
+          icon={Link}
+          label="Import from Docs…"
+          onSelect={() => {
+            setOpen(false);
+            onOpenImportDialog();
+          }}
+        />
+        {/*
+          Named but not yet real. Shown disabled rather than hidden
+          because people ask for it constantly and an absent option
+          reads as "this product cannot do that", where a greyed one
+          with a date-free "coming soon" reads as "not yet". It must
+          never look clickable.
+        */}
+        <div
+          role="menuitem"
+          aria-disabled="true"
+          className="flex w-full cursor-default items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-muted"
+        >
+          <RefreshCw className="size-3.5 shrink-0" strokeWidth={1.5} />
+          Sync with Drive
+          <span className="ml-auto rounded-full border border-border-hairline px-1.5 text-xs text-text-muted">
+            Soon
+          </span>
+        </div>
+      </Popover>
     </>
   );
 }

@@ -1,8 +1,7 @@
 import { ChevronDown } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
 import { AgentIcon } from '@renderer/lib/ui/agent-icon';
+import { Popover } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/lib/utils';
 import type { RunnableAgent } from './use-runnable-agents';
 
@@ -10,14 +9,16 @@ const POPUP_MIN_WIDTH = 180;
 
 /**
  * The harness picker — a designed dropdown replacing the native `<select>`,
- * portaled the same way the comments margin's `@`-mention menu is
- * (`comments-margin.tsx`'s `useAnchorRect` pattern, factored out to
- * `lib/hooks/use-anchor-rect.ts` so this isn't a third hand-rolled copy).
+ * portaled/positioned by the shared `Popover` primitive
+ * (`@renderer/lib/ui/popover`).
  *
  * Focus never leaves the trigger button while open: options select via
  * `onMouseDown` + `preventDefault` (same trick the mention menu uses), so a
  * click never blurs the trigger, and a real outside click or Tab-away does —
- * that's the whole dismiss mechanism, no document-level listener needed.
+ * that's the whole dismiss mechanism. `role="listbox"` opts this out of
+ * `Popover`'s own roving arrow-key focus (which only wires up for
+ * `role="menu"`), leaving the highlight/arrow-key handling below — this
+ * picker's own — as the only thing driving the option list.
  *
  * `variant`: `'field'` is the standalone picker (fixed width, bordered
  * field). `'chip'` is the same dropdown behind a compact pill trigger, for
@@ -40,13 +41,6 @@ export function HarnessPicker({
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  // ~34px/row (icon + text-sm row at px-2.5 py-1.5) + 8px list padding —
-  // close enough to pick the right side; `maxHeight` below is the real
-  // safety net if this guess is off.
-  const rect = useAnchorRect(open, triggerRef, {
-    estimatedHeight: agents.length * 34 + 8,
-    estimatedWidth: POPUP_MIN_WIDTH,
-  });
   const selected = agents.find((a) => a.id === selectedId) ?? null;
 
   useEffect(() => {
@@ -114,48 +108,39 @@ export function HarnessPicker({
         />
       </button>
 
-      {open &&
-        rect &&
-        createPortal(
-          <div
-            role="listbox"
-            style={{
-              position: 'fixed',
-              width: Math.max(rect.width, POPUP_MIN_WIDTH),
-              maxHeight: rect.maxHeight,
-              overflowY: 'auto',
-              ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
-              ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
+      <Popover
+        anchor={triggerRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        role="listbox"
+        estimatedWidth={POPUP_MIN_WIDTH}
+        minWidth={POPUP_MIN_WIDTH}
+      >
+        {agents.map((agent, index) => (
+          <button
+            key={agent.id}
+            type="button"
+            role="option"
+            aria-selected={agent.id === selectedId}
+            onMouseDown={(event) => {
+              // Keeps focus on the trigger — a plain click here would
+              // blur it first and close the popup before this handler runs.
+              event.preventDefault();
+              select(agent.id);
             }}
-            className="border-border-hairline bg-bg-1 rounded-control shadow-soft z-50 border py-1"
+            onMouseEnter={() => setHighlight(index)}
+            className={cn(
+              'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm',
+              index === highlight
+                ? 'bg-bg-2 text-text-primary'
+                : 'text-text-secondary'
+            )}
           >
-            {agents.map((agent, index) => (
-              <button
-                key={agent.id}
-                type="button"
-                role="option"
-                aria-selected={agent.id === selectedId}
-                onMouseDown={(event) => {
-                  // Keeps focus on the trigger — a plain click here would
-                  // blur it first and close the popup before this handler runs.
-                  event.preventDefault();
-                  select(agent.id);
-                }}
-                onMouseEnter={() => setHighlight(index)}
-                className={cn(
-                  'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm',
-                  index === highlight
-                    ? 'bg-bg-2 text-text-primary'
-                    : 'text-text-secondary'
-                )}
-              >
-                <AgentIcon icon={agent.icon} size={14} />
-                <span className="min-w-0 flex-1 truncate">{agent.name}</span>
-              </button>
-            ))}
-          </div>,
-          document.body
-        )}
+            <AgentIcon icon={agent.icon} size={14} />
+            <span className="min-w-0 flex-1 truncate">{agent.name}</span>
+          </button>
+        ))}
+      </Popover>
     </>
   );
 }

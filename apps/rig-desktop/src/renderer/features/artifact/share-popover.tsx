@@ -1,14 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, Share2, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useRef, useState } from 'react';
 import { isOfflineError } from '@renderer/features/docs/comments/comments-cache';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
-import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
 import { useClipboard } from '@renderer/lib/hooks/use-clipboard';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
+import { Popover } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/lib/utils';
 import type { RigShareLink, RigShareLinkError, SharePermission } from '@shared/rig/share-links';
 import { deriveMintedDisplay, deriveRevokeTarget, needsRemint, type MintedLink } from './share-mint-state';
@@ -16,37 +15,15 @@ import { deriveMintedDisplay, deriveRevokeTarget, needsRemint, type MintedLink }
 /**
  * The desktop end of the live share-link feature — a "Share" button in the
  * artifact view header that opens a popover: choose read/comment, mint a
- * link, copy it, see and revoke this file's existing ones. Portal pattern
- * matches `UserPill`'s (document-level mousedown/Escape dismissal, not the
- * blur-to-dismiss trick `HarnessPicker` uses) — this popover has real
+ * link, copy it, see and revoke this file's existing ones. Portal/dismissal/
+ * positioning come from the shared `Popover` primitive
+ * (`@renderer/lib/ui/popover`), right-aligned — this popover has real
  * interactive surface (a permission choice, a Create button, per-link
  * Revoke buttons) where a stray click shouldn't blur-and-close it.
  */
 export function ShareButton({ absPath, className }: { absPath: string; className?: string }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const popupRef = useRef<HTMLDivElement>(null);
-  const rect = useAnchorRect(open, triggerRef, { gap: 6, estimatedHeight: 280 });
-
-  useEffect(() => {
-    if (!open) return;
-    const dismiss = () => setOpen(false);
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target)) return;
-      if (popupRef.current?.contains(target)) return;
-      dismiss();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') dismiss();
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
 
   return (
     <>
@@ -65,25 +42,19 @@ export function ShareButton({ absPath, className }: { absPath: string; className
         Share
       </button>
 
-      {open &&
-        rect &&
-        createPortal(
-          <div
-            ref={popupRef}
-            style={{
-              position: 'fixed',
-              right: rect.right,
-              width: 280,
-              maxHeight: rect.maxHeight,
-              overflowY: 'auto',
-              ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
-            }}
-            className="border-border-hairline bg-bg-1 rounded-card shadow-soft z-50 overflow-hidden border"
-          >
-            <SharePopoverContent absPath={absPath} />
-          </div>,
-          document.body
-        )}
+      <Popover
+        anchor={triggerRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        role="dialog"
+        align="right"
+        gap={6}
+        estimatedWidth={280}
+        minWidth={280}
+        ariaLabel="Share"
+      >
+        <SharePopoverContent absPath={absPath} />
+      </Popover>
     </>
   );
 }

@@ -22,7 +22,7 @@ export function IdentityAvatar({
   name,
   avatarUrl,
   sizeClassName = 'size-4',
-  textClassName = 'text-[8px]',
+  textClassName = 'text-2xs',
   className,
 }: {
   name: string | null;

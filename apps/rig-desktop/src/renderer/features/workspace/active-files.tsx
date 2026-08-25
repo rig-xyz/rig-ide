@@ -265,17 +265,16 @@ function FileCard({
           as a single quiet sentence under the name rather than stacking
           into a third and fourth row of text in a small card.
         */}
-        <span
-          className={cn(
-            'text-text-muted flex min-w-0 items-center gap-1 text-xs',
-            active && 'active-shimmer-muted'
-          )}
-        >
+        {/*
+          Charter v2 one-signal rule: the shimmering NAME above is the
+          live-write signal. This line is provenance — plain text, no second
+          shimmer, no pulsing dot stacked onto motion already saying it.
+        */}
+        <span className="text-text-muted flex min-w-0 items-center gap-1 text-xs">
           {active ? (
             <>
               <RigMark size={11} className="shrink-0" />
               <span className="truncate">Editing now</span>
-              <span className="active-dot size-[5px] shrink-0 rounded-full bg-accent" />
             </>
           ) : (
             <>
@@ -296,7 +295,7 @@ function FileCard({
           aria-label={isPinned ? 'Unpin' : 'Pin'}
           className={cn(
             'rounded-control bg-bg-1 hover:bg-bg-2 flex size-5 items-center justify-center',
-            isPinned ? 'text-accent' : 'text-text-muted hover:text-text-primary'
+            isPinned ? 'text-text-primary' : 'text-text-muted hover:text-text-primary'
           )}
         >
           <Pin className="size-3" strokeWidth={1.5} fill={isPinned ? 'currentColor' : 'none'} />

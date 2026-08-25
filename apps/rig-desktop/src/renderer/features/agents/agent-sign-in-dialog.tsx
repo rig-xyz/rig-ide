@@ -48,7 +48,7 @@ const TERMINAL_CONTENT_HEIGHT = 400;
 const TERMINAL_SEED_WIDTH = 640;
 
 const LOGIN_TERMINAL_THEME: ITerminalOptions['theme'] = {
-  background: '#09090b',
+  background: 'var(--bg-0)',
   foreground: '#fafafa',
   cursor: '#5fa8a3',
   cursorAccent: '#09090b',

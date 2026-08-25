@@ -479,3 +479,29 @@
     animation: none;
   }
 }
+
+/*
+ * The atmospheric glow (charter v2 slice 6). Resend's discipline: a single
+ * low-opacity radial accent wash anchored to the top of ONE earned moment
+ * per surface (Home's greeting; empty states may adopt it later). Never on
+ * chrome, never solid, never twice on a screen. Static — decoration this
+ * quiet needs no motion and so no reduced-motion gate.
+ */
+.hero-glow {
+  position: relative;
+}
+.hero-glow::before {
+  content: '';
+  position: absolute;
+  inset: -72px -48px auto -48px;
+  height: 210px;
+  background: radial-gradient(
+    ellipse at 22% 0%,
+    color-mix(in oklab, var(--accent) 14%, transparent),
+    transparent 65%
+  );
+  pointer-events: none;
+}
+.hero-glow > * {
+  position: relative;
+}

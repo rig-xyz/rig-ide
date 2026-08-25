@@ -7,7 +7,6 @@ import {
   Check,
   CheckCheck,
   Clock,
-  ChevronDown,
   ChevronRight,
   Copy,
   ExternalLink,
@@ -51,7 +50,6 @@ import {
   useRowContextMenu,
 } from './row-context-menu';
 import { RowLabel } from './row-label';
-import { RowStatusPill, type RowStatus } from './row-status-pill';
 import { useRecentWrites } from './write-activity';
 
 /**
@@ -460,10 +458,7 @@ export function FileTree({
   // a human's editor from the sync daemon).
   const recentWrites = useRecentWrites(root);
   const agentPaths = useMemo(() => new Set(recentWrites.map((w) => w.relPath)), [recentWrites]);
-  const statusFor = useCallback(
-    (relPath: string): RowStatus | null => (agentPaths.has(relPath) ? { kind: 'agent' } : null),
-    [agentPaths]
-  );
+  const isLiveWrite = useCallback((relPath: string) => agentPaths.has(relPath), [agentPaths]);
 
   // The `⋯` button opens the shared menu at the button's own corner rather
   // than the pointer, so it behaves like every other dropdown in the app.
@@ -512,7 +507,7 @@ export function FileTree({
     return (
       <>
         {tabs}
-        <p className="px-3 py-2 text-xs text-text-muted">Loading files…</p>
+        <TreeSkeleton />
       </>
     );
   }
@@ -574,7 +569,7 @@ export function FileTree({
               onOpenFile={handleOpenFile}
               onContextMenu={menu.open}
               onRowMenu={openRowMenu}
-              statusFor={statusFor}
+              isLiveWrite={isLiveWrite}
               forceOpen={search.trim().length > 0 || filter === 'unseen'}
               unseenFiles={unseen.unseenFiles}
               unseenCountByDir={unseen.unseenCountByDir}
@@ -711,7 +706,7 @@ function TreeNode({
   onOpenFile,
   onContextMenu,
   onRowMenu,
-  statusFor,
+  isLiveWrite,
   forceOpen,
   unseenFiles,
   unseenCountByDir,
@@ -727,8 +722,8 @@ function TreeNode({
   onContextMenu: (event: React.MouseEvent, node: RigFileNode) => void;
   /** v3: the row's own hover `⋯` button opens the SAME menu, positioned at the button instead of the cursor. */
   onRowMenu: (event: React.MouseEvent, node: RigFileNode) => void;
-  /** v3: this file's status pill, or null when nothing is happening to it. */
-  statusFor: (relPath: string) => RowStatus | null;
+  /** Charter v2: true while an agent is writing this file — drives the one live-write signal, the text shimmer. */
+  isLiveWrite: (relPath: string) => boolean;
   /** v3: while a search is active every folder renders open, so a match is never hidden inside a collapsed parent. */
   forceOpen: boolean;
   /** File-navigator redesign (§4): every unseen FILE's relPath, for the row dot. */
@@ -775,11 +770,16 @@ function TreeNode({
               : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
           )}
         >
-          {open ? (
-            <ChevronDown className="size-3.5 shrink-0" strokeWidth={1.5} />
-          ) : (
-            <ChevronRight className="size-3.5 shrink-0" strokeWidth={1.5} />
-          )}
+          {/*
+            Charter v2 slice 5: ONE disclosure idiom app-wide — a single
+            chevron that ROTATES (briefing-spine already did this; the tree
+            hard-swapped two icons, so the same gesture animated in one
+            place and teleported in another).
+          */}
+          <ChevronRight
+            className={cn('size-3.5 shrink-0 transition-transform duration-150 ease-out', open && 'rotate-90')}
+            strokeWidth={1.5}
+          />
           <UnseenMark show={!open && !!unseenCount} />
           <FolderGlyph className="size-3.5 shrink-0" strokeWidth={1.5} />
           <RowLabel text={displayName(node)} className="flex-1" />
@@ -797,7 +797,7 @@ function TreeNode({
               onOpenFile={onOpenFile}
               onContextMenu={onContextMenu}
               onRowMenu={onRowMenu}
-              statusFor={statusFor}
+              isLiveWrite={isLiveWrite}
               forceOpen={forceOpen}
               unseenFiles={unseenFiles}
               unseenCountByDir={unseenCountByDir}
@@ -812,7 +812,7 @@ function TreeNode({
   const Icon = iconFor(node.name);
   const isUnseen = unseenFiles.has(node.relPath);
   const isPinned = pinned.includes(node.relPath);
-  const status = statusFor(node.relPath);
+  const live = isLiveWrite(node.relPath);
   return (
     <div
       onContextMenu={(event) => onContextMenu(event, node)}
@@ -834,10 +834,14 @@ function TreeNode({
         <RowLabel
           text={displayName(node)}
           title={rowTitleHint(node)}
-          className={cn(status && 'active-shimmer')}
+          className={cn(live && 'active-shimmer')}
         />
       </button>
-      {status && <RowStatusPill status={status} className="mr-2" />}
+      {/*
+        Charter v2 one-signal rule: the shimmer IS the live-write signal.
+        The row no longer stacks an "Editing" pill next to text already
+        announcing the same fact in motion.
+      */}
       {/*
         One fixed-width meta column, right-aligned, on EVERY row — files
         put their time here, folders their unseen mark, and because the
@@ -983,6 +987,26 @@ function SortControl({
         </RowContextMenu>
       )}
     </>
+  );
+}
+
+/**
+ * Charter v2 slice 5, one loading vocabulary: REGION loads render skeleton
+ * shapes of the content they become (briefing-spine set the pattern);
+ * spinners stay reserved for inline actions. Three ghost rows at the
+ * tree's real row height, pulse-gated for reduced motion globally in
+ * tokens.css.
+ */
+function TreeSkeleton() {
+  return (
+    <div className="flex flex-col gap-1 px-3 py-2" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="flex h-7 items-center gap-2">
+          <div className="bg-bg-2 size-3.5 shrink-0 animate-pulse rounded" />
+          <div className={cn('bg-bg-2 h-3 animate-pulse rounded', i === 0 ? 'w-36' : i === 1 ? 'w-28' : 'w-44')} />
+        </div>
+      ))}
+    </div>
   );
 }
 

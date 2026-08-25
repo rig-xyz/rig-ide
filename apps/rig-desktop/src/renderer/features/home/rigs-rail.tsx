@@ -22,14 +22,13 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { deriveTabTitle } from '@renderer/features/chat/session-list';
 import type { AgentIdentity } from '@renderer/features/chat/use-runnable-agents';
-import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
 import { events, rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { AgentIcon } from '@renderer/lib/ui/agent-icon';
+import { Popover } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import {
@@ -265,8 +264,8 @@ const SORT_ICONS: Record<RigsRailSort, LucideIcon> = {
  * goal, so one compact trigger wins). Trigger reads the current choice
  * ("All · Recent activity"); the menu lists Filter then Sort as two
  * labeled groups of selectable rows, current choice checked — same
- * `useAnchorRect` + portal + outside-pointerdown/Escape convention every
- * other dropdown here uses (`RelayOnlyActionsMenu`, `RigSwitcher`).
+ * shared `Popover` primitive (`@renderer/lib/ui/popover`) every other
+ * dropdown here uses (`RelayOnlyActionsMenu`, `RigSwitcher`).
  */
 function RigsFilterSortMenu({
   view,
@@ -277,32 +276,6 @@ function RigsFilterSortMenu({
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const rect = useAnchorRect(open, triggerRef, {
-    gap: 4,
-    estimatedHeight: 220,
-    estimatedWidth: 180,
-  });
-
-  useEffect(() => {
-    if (!open) return;
-    const dismiss = () => setOpen(false);
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target)) return;
-      if (menuRef.current?.contains(target)) return;
-      dismiss();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') dismiss();
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
 
   return (
     <>
@@ -317,55 +290,46 @@ function RigsFilterSortMenu({
         {FILTER_LABELS[view.filter]} · {SORT_LABELS[view.sort]}
         <ChevronDown className="size-3 shrink-0" strokeWidth={1.5} />
       </button>
-      {open &&
-        rect &&
-        createPortal(
-          <div
-            ref={menuRef}
-            role="menu"
-            style={{
-              position: 'fixed',
-              width: Math.max(rect.width, 180),
-              maxHeight: rect.maxHeight,
-              overflowY: 'auto',
-              ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
-              ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
+      <Popover
+        anchor={triggerRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        role="menu"
+        gap={4}
+        estimatedWidth={180}
+        minWidth={180}
+      >
+        <p className="px-2.5 pt-1 pb-0.5 font-mono text-xs tracking-wide text-text-muted uppercase">
+          Filter
+        </p>
+        {(Object.keys(FILTER_LABELS) as RigsRailFilter[]).map((filter) => (
+          <MenuOptionRow
+            key={filter}
+            label={FILTER_LABELS[filter]}
+            icon={FILTER_ICONS[filter]}
+            checked={view.filter === filter}
+            onSelect={() => {
+              onChange({ ...view, filter });
+              setOpen(false);
             }}
-            className="z-50 rounded-control border border-border-hairline bg-bg-1 py-1 shadow-soft"
-          >
-            <p className="px-2.5 pt-1 pb-0.5 font-mono text-xs tracking-wide text-text-muted uppercase">
-              Filter
-            </p>
-            {(Object.keys(FILTER_LABELS) as RigsRailFilter[]).map((filter) => (
-              <MenuOptionRow
-                key={filter}
-                label={FILTER_LABELS[filter]}
-                icon={FILTER_ICONS[filter]}
-                checked={view.filter === filter}
-                onSelect={() => {
-                  onChange({ ...view, filter });
-                  setOpen(false);
-                }}
-              />
-            ))}
-            <p className="mt-1 border-t border-border-hairline px-2.5 pt-1.5 pb-0.5 font-mono text-xs tracking-wide text-text-muted uppercase">
-              Sort
-            </p>
-            {(Object.keys(SORT_LABELS) as RigsRailSort[]).map((sort) => (
-              <MenuOptionRow
-                key={sort}
-                label={SORT_LABELS[sort]}
-                icon={SORT_ICONS[sort]}
-                checked={view.sort === sort}
-                onSelect={() => {
-                  onChange({ ...view, sort });
-                  setOpen(false);
-                }}
-              />
-            ))}
-          </div>,
-          document.body
-        )}
+          />
+        ))}
+        <p className="mt-1 border-t border-border-hairline px-2.5 pt-1.5 pb-0.5 font-mono text-xs tracking-wide text-text-muted uppercase">
+          Sort
+        </p>
+        {(Object.keys(SORT_LABELS) as RigsRailSort[]).map((sort) => (
+          <MenuOptionRow
+            key={sort}
+            label={SORT_LABELS[sort]}
+            icon={SORT_ICONS[sort]}
+            checked={view.sort === sort}
+            onSelect={() => {
+              onChange({ ...view, sort });
+              setOpen(false);
+            }}
+          />
+        ))}
+      </Popover>
     </>
   );
 }
@@ -390,11 +354,9 @@ function MenuOptionRow({
     <button
       type="button"
       role="menuitemradio"
+      tabIndex={-1}
       aria-checked={checked}
-      onMouseDown={(event) => {
-        event.preventDefault();
-        onSelect();
-      }}
+      onClick={onSelect}
       className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
     >
       <span className="flex size-3.5 shrink-0 items-center justify-center">
@@ -466,6 +428,9 @@ function useRowHighlight(isTarget: boolean): {
  * outside-home row also carries a quiet "custom location" chip, the same
  * chip convention already used elsewhere in this app (role labels, the
  * "optional" doc-import chip) rather than a new icon.
+ *
+ * The menu itself is the shared `Popover` primitive — arrow-key roving
+ * focus + Enter/Space activation over its rows come free from that.
  */
 function LocalRigRow({
   row,
@@ -544,8 +509,8 @@ function LocalRigRow({
  * Finder" (dropdown-paths round — these replace the rig-switcher dropdown's
  * removed path line, see `rig-switcher.tsx`), "Rename…" (opens
  * `RenameRigDialog`), and Hide/Unhide (purely local display state, see
- * `useRigsRailSettings`). Same portal positioning/dismiss convention as
- * `RelayOnlyActionsMenu`. Move/pause/resume shell the CLI
+ * `useRigsRailSettings`). Same shared `Popover` primitive
+ * (`@renderer/lib/ui/popover`) `RelayOnlyActionsMenu` uses. Move/pause/resume shell the CLI
  * (`rig.control.move`/`.pause`/`.resume`, see `rig-controls.ts`) and, on
  * success, invalidate the same `recentRigs` query key `home.tsx`'s own rail
  * read uses — the row's next render picks up the new path/paused state
@@ -571,30 +536,6 @@ function LocalRigRowMenu({
   const [busy, setBusy] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const rect = useAnchorRect(open, triggerRef, {
-    gap: 4,
-    estimatedHeight: 230,
-    estimatedWidth: 180,
-  });
-
-  useEffect(() => {
-    if (!open) return;
-    const dismiss = () => setOpen(false);
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target)) return;
-      dismiss();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') dismiss();
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
 
   const refreshRail = () => queryClient.invalidateQueries({ queryKey: ['rig', 'recent', 'list'] });
 
@@ -677,111 +618,95 @@ function LocalRigRowMenu({
       >
         <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
       </button>
-      {open &&
-        rect &&
-        createPortal(
-          <div
-            role="menu"
-            style={{
-              position: 'fixed',
-              width: Math.max(rect.width, 180),
-              maxHeight: rect.maxHeight,
-              overflowY: 'auto',
-              ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
-              ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
-            }}
-            className="z-50 rounded-control border border-border-hairline bg-bg-1 py-1 shadow-soft"
+      <Popover
+        anchor={triggerRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        role="menu"
+        gap={4}
+        estimatedWidth={180}
+        minWidth={180}
+      >
+        {row.outsideHome && (
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            onClick={() => void move()}
+            className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
           >
-            {row.outsideHome && (
-              <button
-                type="button"
-                role="menuitem"
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  void move();
-                }}
-                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
-              >
-                <FolderInput className="size-3.5 shrink-0" strokeWidth={1.5} />
-                Move to Rig folder
-              </button>
-            )}
-            <button
-              type="button"
-              role="menuitem"
-              onMouseDown={(event) => {
-                event.preventDefault();
-                void toggleSync();
-              }}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
-            >
-              {row.paused ? (
-                <Play className="size-3.5 shrink-0" strokeWidth={1.5} />
-              ) : (
-                <Pause className="size-3.5 shrink-0" strokeWidth={1.5} />
-              )}
-              {row.paused ? 'Resume syncing' : 'Pause syncing'}
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onMouseDown={(event) => {
-                event.preventDefault();
-                setOpen(false);
-                setRenameOpen(true);
-              }}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
-            >
-              <Pencil className="size-3.5 shrink-0" strokeWidth={1.5} />
-              Rename…
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onMouseDown={(event) => {
-                event.preventDefault();
-                void copyPath();
-              }}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
-            >
-              <Copy className="size-3.5 shrink-0" strokeWidth={1.5} />
-              Copy path
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onMouseDown={(event) => {
-                event.preventDefault();
-                void revealInFinder();
-              }}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
-            >
-              <FolderOpen className="size-3.5 shrink-0" strokeWidth={1.5} />
-              Reveal in Finder
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onMouseDown={(event) => {
-                event.preventDefault();
-                setOpen(false);
-                onToggleHidden();
-              }}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
-            >
-              {hidden ? (
-                <Eye className="size-3.5 shrink-0" strokeWidth={1.5} />
-              ) : (
-                <EyeOff className="size-3.5 shrink-0" strokeWidth={1.5} />
-              )}
-              {/* Wording round: "Hide" is purely visual (no relay call,
-                  nothing touched on disk for the rig itself) — the label
-                  says so directly rather than leaving that ambiguous. */}
-              {hidden ? 'Unhide' : 'Hide from this list'}
-            </button>
-          </div>,
-          document.body
+            <FolderInput className="size-3.5 shrink-0" strokeWidth={1.5} />
+            Move to Rig folder
+          </button>
         )}
+        <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          onClick={() => void toggleSync()}
+          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
+        >
+          {row.paused ? (
+            <Play className="size-3.5 shrink-0" strokeWidth={1.5} />
+          ) : (
+            <Pause className="size-3.5 shrink-0" strokeWidth={1.5} />
+          )}
+          {row.paused ? 'Resume syncing' : 'Pause syncing'}
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          onClick={() => {
+            setOpen(false);
+            setRenameOpen(true);
+          }}
+          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
+        >
+          <Pencil className="size-3.5 shrink-0" strokeWidth={1.5} />
+          Rename…
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          onClick={() => void copyPath()}
+          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
+        >
+          <Copy className="size-3.5 shrink-0" strokeWidth={1.5} />
+          Copy path
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          onClick={() => void revealInFinder()}
+          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
+        >
+          <FolderOpen className="size-3.5 shrink-0" strokeWidth={1.5} />
+          Reveal in Finder
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          onClick={() => {
+            setOpen(false);
+            onToggleHidden();
+          }}
+          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
+        >
+          {hidden ? (
+            <Eye className="size-3.5 shrink-0" strokeWidth={1.5} />
+          ) : (
+            <EyeOff className="size-3.5 shrink-0" strokeWidth={1.5} />
+          )}
+          {/* Wording round: "Hide" is purely visual (no relay call,
+              nothing touched on disk for the rig itself) — the label
+              says so directly rather than leaving that ambiguous. */}
+          {hidden ? 'Unhide' : 'Hide from this list'}
+        </button>
+      </Popover>
     </>
   );
 }
@@ -803,7 +728,7 @@ function SessionSubRow({
       className="flex items-center gap-1.5 rounded-control px-2 py-1 text-left transition-colors hover:bg-bg-2"
     >
       {icon && <AgentIcon icon={icon} size={12} className="shrink-0" />}
-      <span className="min-w-0 flex-1 truncate text-[12px] text-text-secondary">
+      <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
         {deriveTabTitle(session.title)}
       </span>
       <span className="shrink-0 font-mono text-xs text-text-muted">
@@ -949,11 +874,9 @@ function RelayOnlyRigRow({
  * by default (`opacity-0`), revealed on row hover (`group-hover`, the
  * parent row carries `group`) or when the trigger itself has keyboard
  * focus (`focus-visible:opacity-100`, so Tab still reaches it even with the
- * mouse elsewhere — declutter never means unreachable). Same portal
- * positioning primitive every other dropdown in this app uses
- * (`useAnchorRect`, see `harness-picker.tsx`), with the simpler
- * outside-pointerdown/Escape dismiss `user-pill.tsx`'s account popover uses
- * — a flat action list needs no arrow-key highlight state.
+ * mouse elsewhere — declutter never means unreachable). Same shared
+ * `Popover` primitive every other dropdown in this app uses
+ * (`@renderer/lib/ui/popover`, see `harness-picker.tsx`).
  */
 function RelayOnlyActionsMenu({
   row,
@@ -973,30 +896,6 @@ function RelayOnlyActionsMenu({
   const [locating, setLocating] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const busy = downloading || locating;
-  const rect = useAnchorRect(open, triggerRef, {
-    gap: 4,
-    estimatedHeight: 110,
-    estimatedWidth: 150,
-  });
-
-  useEffect(() => {
-    if (!open) return;
-    const dismiss = () => setOpen(false);
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target)) return;
-      dismiss();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') dismiss();
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
 
   const download = async () => {
     setOpen(false);
@@ -1072,69 +971,55 @@ function RelayOnlyActionsMenu({
           <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
         )}
       </button>
-      {open &&
-        rect &&
-        createPortal(
-          <div
-            role="menu"
-            style={{
-              position: 'fixed',
-              width: Math.max(rect.width, 150),
-              maxHeight: rect.maxHeight,
-              overflowY: 'auto',
-              ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
-              ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
-            }}
-            className="z-50 rounded-control border border-border-hairline bg-bg-1 py-1 shadow-soft"
+      <Popover
+        anchor={triggerRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        role="menu"
+        gap={4}
+        estimatedWidth={150}
+        minWidth={150}
+      >
+        {row.canAutoJoin && (
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            onClick={() => void download()}
+            className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
           >
-            {row.canAutoJoin && (
-              <button
-                type="button"
-                role="menuitem"
-                onMouseDown={(event) => {
-                  // Keeps focus on the trigger — a plain click here would
-                  // blur it first and close the menu before this fires.
-                  event.preventDefault();
-                  void download();
-                }}
-                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
-              >
-                <Download className="size-3.5 shrink-0" strokeWidth={1.5} />
-                Download
-              </button>
-            )}
-            <button
-              type="button"
-              role="menuitem"
-              onMouseDown={(event) => {
-                event.preventDefault();
-                void locate();
-              }}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
-            >
-              <FolderSearch className="size-3.5 shrink-0" strokeWidth={1.5} />
-              Locate…
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onMouseDown={(event) => {
-                event.preventDefault();
-                setOpen(false);
-                onToggleHidden();
-              }}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
-            >
-              {hidden ? (
-                <Eye className="size-3.5 shrink-0" strokeWidth={1.5} />
-              ) : (
-                <EyeOff className="size-3.5 shrink-0" strokeWidth={1.5} />
-              )}
-              {hidden ? 'Unhide' : 'Hide from this list'}
-            </button>
-          </div>,
-          document.body
+            <Download className="size-3.5 shrink-0" strokeWidth={1.5} />
+            Download
+          </button>
         )}
+        <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          onClick={() => void locate()}
+          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
+        >
+          <FolderSearch className="size-3.5 shrink-0" strokeWidth={1.5} />
+          Locate…
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          onClick={() => {
+            setOpen(false);
+            onToggleHidden();
+          }}
+          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
+        >
+          {hidden ? (
+            <Eye className="size-3.5 shrink-0" strokeWidth={1.5} />
+          ) : (
+            <EyeOff className="size-3.5 shrink-0" strokeWidth={1.5} />
+          )}
+          {hidden ? 'Unhide' : 'Hide from this list'}
+        </button>
+      </Popover>
     </>
   );
 }

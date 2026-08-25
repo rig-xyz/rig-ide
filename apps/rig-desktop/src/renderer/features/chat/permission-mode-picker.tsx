@@ -1,7 +1,6 @@
 import { ChevronDown, ShieldCheck, ShieldOff } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
+import { Popover } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/lib/utils';
 import { decideModeSelect, isDangerousMode } from './permission-mode';
 
@@ -24,9 +23,10 @@ export type PermissionModeOption = { id: string; name: string; description?: str
  * inline "Confirm: agent acts without asking" row in place of that
  * option's normal name/description (`decideModeSelect`, pure); any other
  * pick (including a second click elsewhere) cancels the arm. De-escalating
- * to a non-dangerous mode is always one click. `useAnchorRect` is the same
- * shared hook `HarnessPicker`/`MetaOptionPicker` use — opens upward near
- * the composer automatically, nothing bespoke to solve here.
+ * to a non-dangerous mode is always one click. The shared `Popover`
+ * primitive (`@renderer/lib/ui/popover`) is the same one `HarnessPicker`/
+ * `MetaOptionPicker` use — opens upward near the composer automatically,
+ * nothing bespoke to solve here.
  */
 export function PermissionModePicker({
   options,
@@ -49,7 +49,6 @@ export function PermissionModePicker({
   const [open, setOpen] = useState(false);
   const [pendingConfirmId, setPendingConfirmId] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const rect = useAnchorRect(open, triggerRef, { estimatedHeight: options.length * 46 + 8, estimatedWidth: 220 });
   const selected = options.find((o) => o.id === selectedId) ?? null;
   const activeIsDangerous = selectedId !== null && isDangerousMode(selectedId);
 
@@ -96,73 +95,57 @@ export function PermissionModePicker({
         <ChevronDown className="size-2.5 shrink-0" strokeWidth={1.5} />
       </button>
 
-      {open &&
-        rect &&
-        createPortal(
-          <div
-            role="listbox"
-            style={{
-              position: 'fixed',
-              width: Math.max(rect.width, 220),
-              maxHeight: rect.maxHeight,
-              overflowY: 'auto',
-              ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
-              ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
-            }}
-            className="border-border-hairline bg-bg-1 rounded-control shadow-soft z-50 border py-1"
-          >
-            {options.map((option) => {
-              const armed = pendingConfirmId === option.id;
-              const dangerous = isDangerousMode(option.id);
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  role="option"
-                  aria-selected={option.id === selectedId}
-                  onMouseDown={(event) => {
-                    // Same trick `HarnessPicker`/`MetaOptionPicker` use —
-                    // keeps focus on the trigger so a plain click doesn't
-                    // blur it and close the popup before this runs.
-                    event.preventDefault();
-                    pick(option.id);
-                  }}
-                  className={cn(
-                    'block w-full px-2.5 py-1.5 text-left',
-                    armed
-                      ? 'bg-warning/10'
-                      : option.id === selectedId
-                        ? 'bg-bg-2'
-                        : 'hover:bg-bg-2'
-                  )}
-                >
-                  {armed ? (
-                    <span className="text-warning text-xs font-medium">
-                      Confirm: agent acts without asking
+      <Popover anchor={triggerRef} open={open} onClose={() => setOpen(false)} role="listbox" estimatedWidth={220} minWidth={220}>
+        {options.map((option) => {
+          const armed = pendingConfirmId === option.id;
+          const dangerous = isDangerousMode(option.id);
+          return (
+            <button
+              key={option.id}
+              type="button"
+              role="option"
+              aria-selected={option.id === selectedId}
+              onMouseDown={(event) => {
+                // Same trick `HarnessPicker`/`MetaOptionPicker` use —
+                // keeps focus on the trigger so a plain click doesn't
+                // blur it and close the popup before this runs.
+                event.preventDefault();
+                pick(option.id);
+              }}
+              className={cn(
+                'block w-full px-2.5 py-1.5 text-left',
+                armed
+                  ? 'bg-warning/10'
+                  : option.id === selectedId
+                    ? 'bg-bg-2'
+                    : 'hover:bg-bg-2'
+              )}
+            >
+              {armed ? (
+                <span className="text-warning text-xs font-medium">
+                  Confirm: agent acts without asking
+                </span>
+              ) : (
+                <>
+                  <span
+                    className={cn(
+                      'block truncate font-mono text-xs',
+                      dangerous ? 'text-warning' : 'text-text-primary'
+                    )}
+                  >
+                    {option.name}
+                  </span>
+                  {option.description && (
+                    <span className="text-text-muted mt-0.5 block truncate text-xs">
+                      {option.description}
                     </span>
-                  ) : (
-                    <>
-                      <span
-                        className={cn(
-                          'block truncate font-mono text-xs',
-                          dangerous ? 'text-warning' : 'text-text-primary'
-                        )}
-                      >
-                        {option.name}
-                      </span>
-                      {option.description && (
-                        <span className="text-text-muted mt-0.5 block truncate text-xs">
-                          {option.description}
-                        </span>
-                      )}
-                    </>
                   )}
-                </button>
-              );
-            })}
-          </div>,
-          document.body
-        )}
+                </>
+              )}
+            </button>
+          );
+        })}
+      </Popover>
     </>
   );
 }

@@ -1,15 +1,14 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, Share2, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useRef, useState } from 'react';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { isOfflineError } from '@renderer/features/docs/comments/comments-cache';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
-import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
 import { useClipboard } from '@renderer/lib/hooks/use-clipboard';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
+import { Popover } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/lib/utils';
 import type { RigInviteMinted, RigInviteRole, RigMember } from '@shared/rig/rig-share';
 import { deriveAvatarStack } from './avatar-stack';
@@ -19,9 +18,10 @@ import { mintedInviteMatchesRole, shapePendingInvites, suggestCollaborators } fr
  * The rig-level Share button in the file browser header: its trigger shows
  * who's on the rig (stacked member avatars, capped +N) next to the word
  * Share; the popover lists members, and — for the rig's owner — its pending
- * outgoing invites and an invite form. Portal/dismissal conventions follow
- * `share-popover.tsx` exactly (document-level mousedown/Escape, not
- * blur-to-dismiss: this popover has real interactive surface).
+ * outgoing invites and an invite form. Portal/dismissal/positioning come
+ * from the shared `Popover` primitive (`@renderer/lib/ui/popover`), same as
+ * `share-popover.tsx` — this popover has real interactive surface (a
+ * permission choice, a Create button, per-link Revoke buttons).
  *
  * Relay contract mirrored from the web hub's InviteModal (user plane,
  * `/v1/me/bindings/:bindingId/*` over the trust-gated PAT — see
@@ -34,8 +34,6 @@ import { mintedInviteMatchesRole, shapePendingInvites, suggestCollaborators } fr
 export function RigShareButton({ root, name }: { root: string; name: string | null }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const popupRef = useRef<HTMLDivElement>(null);
-  const rect = useAnchorRect(open, triggerRef, { gap: 6, estimatedHeight: 360, estimatedWidth: 320, align: 'right' });
 
   const membersQuery = useQuery({
     queryKey: ['rig', 'share', 'members', root],
@@ -45,26 +43,6 @@ export function RigShareButton({ root, name }: { root: string; name: string | nu
     staleTime: 60_000,
   });
   const memberList = membersQuery.data?.success ? membersQuery.data.data : null;
-
-  useEffect(() => {
-    if (!open) return;
-    const dismiss = () => setOpen(false);
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target)) return;
-      if (popupRef.current?.contains(target)) return;
-      dismiss();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') dismiss();
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
 
   const stack = deriveAvatarStack(memberList?.members ?? []);
 
@@ -85,13 +63,13 @@ export function RigShareButton({ root, name }: { root: string; name: string | nu
                 key={member.userId}
                 name={member.name ?? member.email}
                 avatarUrl={member.avatarUrl}
-                sizeClassName="size-4"
-                textClassName="text-[8px]"
+                sizeClassName="size-5"
+                textClassName="text-2xs"
                 className={cn('ring-bg-1 ring-1', index > 0 && '-ml-1')}
               />
             ))}
             {stack.overflow > 0 && (
-              <span className="bg-bg-2 text-text-muted ring-bg-1 -ml-1 flex size-4 shrink-0 items-center justify-center rounded-chip text-[8px] font-medium ring-1">
+              <span className="bg-bg-2 text-text-muted ring-bg-1 -ml-1 flex size-5 shrink-0 items-center justify-center rounded-chip text-2xs font-medium ring-1">
                 +{stack.overflow}
               </span>
             )}
@@ -102,25 +80,19 @@ export function RigShareButton({ root, name }: { root: string; name: string | nu
         Share
       </button>
 
-      {open &&
-        rect &&
-        createPortal(
-          <div
-            ref={popupRef}
-            style={{
-              position: 'fixed',
-              width: 320,
-              maxHeight: rect.maxHeight,
-              overflowY: 'auto',
-              ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
-              ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
-            }}
-            className="border-border-hairline bg-bg-1 rounded-card shadow-soft z-50 overflow-hidden border"
-          >
-            <RigSharePopoverContent root={root} name={name} />
-          </div>,
-          document.body
-        )}
+      <Popover
+        anchor={triggerRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        role="dialog"
+        align="right"
+        gap={6}
+        estimatedWidth={320}
+        minWidth={320}
+        ariaLabel="Share"
+      >
+        <RigSharePopoverContent root={root} name={name} />
+      </Popover>
     </>
   );
 }
@@ -204,7 +176,7 @@ function MemberRow({ member }: { member: RigMember }) {
         name={member.name ?? member.email}
         avatarUrl={member.avatarUrl}
         sizeClassName="size-5"
-        textClassName="text-[9px]"
+        textClassName="text-2xs"
       />
       <span className="text-text-primary min-w-0 flex-1 truncate text-xs">{display}</span>
       <span className="bg-bg-2 text-text-secondary rounded-chip shrink-0 px-1.5 py-0.5 font-mono text-xs">
@@ -351,7 +323,7 @@ function InviteSection({ root, currentMembers }: { root: string; currentMembers:
                   name={person.name ?? person.email}
                   avatarUrl={person.avatarUrl}
                   sizeClassName="size-5"
-                  textClassName="text-[9px]"
+                  textClassName="text-2xs"
                 />
                 <span className="min-w-0 flex-1">
                   <span className="text-text-primary block truncate text-xs">

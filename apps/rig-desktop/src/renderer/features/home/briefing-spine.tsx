@@ -171,7 +171,13 @@ export function BriefingSpine({
 
   return (
     <div className="flex w-full flex-col gap-6 text-left">
-      <div className="flex items-start justify-between gap-2">
+      {/*
+        Charter v2 slice 6 (Resend discipline): ONE atmospheric accent glow
+        per surface, and Home's is here — a static radial wash behind the
+        greeting, never on chrome, never a second one further down. The
+        class lives in tokens.css so the treatment can't fork per surface.
+      */}
+      <div className="hero-glow flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           {/*
            * E fix: the greeting used to render as soon as `state` resolved,
@@ -373,7 +379,7 @@ function PickBackUpLine({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <p className="text-text-primary text-[13px] leading-relaxed">{item.why || item.title}</p>
+      <p className="text-text-primary text-sm leading-relaxed">{item.why || item.title}</p>
       <p className="text-text-muted font-mono text-xs">
         <RigNameLink bindingId={item.bindingId} name={item.rigName} onClick={onClickRig} />
         {' · '}
@@ -425,7 +431,7 @@ function PerRigLine({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <p className="text-text-primary text-[13px] leading-relaxed">{item.line}</p>
+      <p className="text-text-primary text-sm leading-relaxed">{item.line}</p>
       <p className="text-text-muted font-mono text-xs">
         <RigNameLink bindingId={item.bindingId} name={item.rigName} onClick={onClickRig} />
         {item.at && (
@@ -633,10 +639,10 @@ function QuestionAndAnswer({
             name={me?.name ?? me?.email ?? null}
             avatarUrl={me?.avatarUrl ?? null}
             sizeClassName="size-5"
-            textClassName="text-[9px]"
+            textClassName="text-2xs"
             className="mt-0.5 shrink-0"
           />
-          <p className="text-text-primary min-w-0 text-[13px] leading-relaxed">{question}</p>
+          <p className="text-text-primary min-w-0 text-sm leading-relaxed">{question}</p>
         </div>
         <button
           type="button"
@@ -649,13 +655,13 @@ function QuestionAndAnswer({
       </div>
 
       {asking ? (
-        <p className="text-text-muted animate-pulse pl-7 text-[13px]">Thinking…</p>
+        <p className="text-text-muted animate-pulse pl-7 text-sm">Thinking…</p>
       ) : error ? (
-        <p className="text-danger pl-7 text-[13px]">{askErrorMessage(error)}</p>
+        <p className="text-danger pl-7 text-sm">{askErrorMessage(error)}</p>
       ) : (
         answer && (
           <div className="flex flex-col gap-2 pl-7">
-            <SafeMarkdown content={answer.answer} className="text-[13px]" />
+            <SafeMarkdown content={answer.answer} className="text-sm" />
             {answer.sources.length > 0 && (
               <AskSourcesSection sources={answer.sources} rigNameOf={rigNameOf} onClickRig={onClickRig} />
             )}
@@ -703,7 +709,7 @@ function AskSourcesSection({
       type="button"
       onClick={() => setExpanded((v) => !v)}
       aria-expanded={expanded}
-      className="text-text-muted hover:text-text-primary flex items-center gap-1 font-mono text-[11px] transition-colors"
+      className="text-text-muted hover:text-text-primary flex items-center gap-1 font-mono text-2xs transition-colors"
     >
       <ChevronRight className={cn('size-3 shrink-0 transition-transform', expanded && 'rotate-90')} strokeWidth={1.5} />
       {summary}
@@ -758,7 +764,7 @@ function SourceRow({
         className="group flex items-start gap-2 text-left"
       >
         <FolderOpen className="text-text-muted mt-0.5 size-3 shrink-0" strokeWidth={1.5} />
-        <span className="text-text-primary group-hover:text-accent min-w-0 flex-1 text-[12.5px] leading-snug transition-colors">
+        <span className="text-text-primary group-hover:text-accent min-w-0 flex-1 text-xs leading-snug transition-colors">
           {item.title}
         </span>
       </button>
@@ -768,11 +774,11 @@ function SourceRow({
     <div className="flex items-start gap-2">
       <Circle className="text-text-muted mt-0.5 size-3 shrink-0" strokeWidth={1.5} />
       <div className="min-w-0 flex-1">
-        <p className="text-text-primary text-[12.5px] leading-snug">{item.title}</p>
+        <p className="text-text-primary text-xs leading-snug">{item.title}</p>
         <button
           type="button"
           onClick={() => onClickRig(item.bindingId)}
-          className="text-text-muted hover:text-text-primary font-mono text-[10px] underline decoration-dotted underline-offset-2 transition-colors"
+          className="text-text-muted hover:text-text-primary font-mono text-2xs underline decoration-dotted underline-offset-2 transition-colors"
         >
           {item.rigName ?? 'this rig'}
         </button>

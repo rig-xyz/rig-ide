@@ -50,10 +50,10 @@ export function PeopleRail() {
               className="mt-0.5"
             />
             <div className="min-w-0 flex-1">
-              <p className="text-text-primary text-[12.5px] font-medium">
+              <p className="text-text-primary text-xs font-medium">
                 {person.isSelf ? 'You' : (person.name ?? 'Teammate')}
               </p>
-              <p className="text-text-muted mt-0.5 text-[12px] leading-relaxed">{person.line}</p>
+              <p className="text-text-muted mt-0.5 text-xs leading-relaxed">{person.line}</p>
             </div>
           </div>
         ))}

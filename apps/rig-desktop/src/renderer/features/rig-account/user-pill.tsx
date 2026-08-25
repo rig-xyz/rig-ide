@@ -1,12 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { LogIn } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
+import { useRef, useState } from 'react';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
+import { Popover } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { useRigSignIn } from './use-rig-sign-in';
 
@@ -17,14 +16,14 @@ import { useRigSignIn } from './use-rig-sign-in';
  * signed in, an avatar + name that opens a small popover ("Signed in as …" +
  * Sign out) instead of navigating to a Settings page this app doesn't have.
  *
- * The popover's dismiss/positioning is the same portal pattern the harness
- * picker uses (`lib/hooks/use-anchor-rect.ts`), but right-aligned (`right`
- * instead of `left`) since this trigger sits at the window's own right edge.
- * Unlike the picker, focus does move into the popover here — a two-step
- * sign-out confirmation needs real Tab/Enter semantics, not the
- * never-blur-the-trigger trick a flat option list can get away with — so
- * dismissal is a document-level outside-pointerdown/Escape listener that
- * checks both the trigger and the portaled popup.
+ * The popover's dismiss/positioning is the shared `Popover` primitive
+ * (`@renderer/lib/ui/popover`), right-aligned (`align="right"`) since this
+ * trigger sits at the window's own right edge. Focus does move into the
+ * popover here — a two-step sign-out confirmation needs real Tab/Enter
+ * semantics, not the never-blur-the-trigger trick a flat option list can get
+ * away with — so the rich rows (the "Sign out" / confirm actions) keep their
+ * own markup with `role="menuitem"` so `Popover`'s roving-focus still finds
+ * them.
  *
  * Polish round: `compact` shrinks the trigger to avatar-only (icon-only —
  * Rule 7's compact-chrome carve-out, for the minimalized title bar) while
@@ -36,8 +35,6 @@ export function UserPill({ compact = false }: { compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const popupRef = useRef<HTMLDivElement>(null);
-  const rect = useAnchorRect(open, triggerRef, { gap: 6, estimatedHeight: 160, estimatedWidth: 240, align: 'right' });
 
   const { data: status } = useQuery({
     queryKey: ['rig', 'auth', 'status'],
@@ -53,28 +50,10 @@ export function UserPill({ compact = false }: { compact?: boolean }) {
 
   const { phase, signIn } = useRigSignIn();
 
-  useEffect(() => {
-    if (!open) return;
-    const dismiss = () => {
-      setOpen(false);
-      setConfirmingSignOut(false);
-    };
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target)) return;
-      if (popupRef.current?.contains(target)) return;
-      dismiss();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') dismiss();
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
+  const closePopover = () => {
+    setOpen(false);
+    setConfirmingSignOut(false);
+  };
 
   if (!signedIn) {
     const label = phase === 'idle' ? 'Sign in to Rig' : 'Waiting for sign-in…';
@@ -139,7 +118,7 @@ export function UserPill({ compact = false }: { compact?: boolean }) {
         name={label}
         avatarUrl={user?.avatarUrl ?? null}
         sizeClassName={compact ? 'size-6' : 'size-5'}
-        textClassName="text-[9px]"
+        textClassName="text-2xs"
       />
       {!compact && <span className="text-text-secondary max-w-28 truncate text-xs">{label ?? 'Signed in to Rig'}</span>}
     </button>
@@ -156,63 +135,74 @@ export function UserPill({ compact = false }: { compact?: boolean }) {
         triggerButton
       )}
 
-      {open &&
-        rect &&
-        createPortal(
-          <div
-            ref={popupRef}
-            style={{
-              position: 'fixed',
-              width: 240,
-              maxHeight: rect.maxHeight,
-              overflowY: 'auto',
-              ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
-              ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
-            }}
-            className="border-border-hairline bg-bg-1 rounded-card shadow-soft z-50 overflow-hidden border"
-          >
-            {confirmingSignOut ? (
-              <div className="flex flex-col gap-2.5 p-3">
-                <p className="text-text-primary text-xs font-medium">Sign out of Rig?</p>
-                <p className="text-text-muted text-xs">
-                  This signs you out of the rig CLI everywhere on this machine — every terminal, not
-                  just here. Comments and sign-in-gated features go dark until you sign back in.
+      <Popover
+        anchor={triggerRef}
+        open={open}
+        onClose={closePopover}
+        role="menu"
+        align="right"
+        gap={6}
+        estimatedWidth={240}
+        minWidth={240}
+      >
+        {confirmingSignOut ? (
+          <div className="flex flex-col gap-2.5 p-3">
+            <p className="text-text-primary text-xs font-medium">Sign out of Rig?</p>
+            <p className="text-text-muted text-xs">
+              This signs you out of the rig CLI everywhere on this machine — every terminal, not
+              just here. Comments and sign-in-gated features go dark until you sign back in.
+            </p>
+            <div className="mt-1 flex justify-end gap-1.5">
+              <Button
+                variant="ghost"
+                size="xs"
+                role="menuitem"
+                tabIndex={-1}
+                onClick={() => setConfirmingSignOut(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="xs"
+                role="menuitem"
+                tabIndex={-1}
+                onClick={() => void doSignOut()}
+              >
+                Sign out
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-2.5 px-3 py-2.5">
+              <IdentityAvatar
+                name={label}
+                avatarUrl={user?.avatarUrl ?? null}
+                sizeClassName="size-8"
+                textClassName="text-xs"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-text-primary truncate text-xs font-medium">
+                  Signed in as {label ?? 'you'}
                 </p>
-                <div className="mt-1 flex justify-end gap-1.5">
-                  <Button variant="ghost" size="xs" onClick={() => setConfirmingSignOut(false)}>
-                    Cancel
-                  </Button>
-                  <Button variant="destructive" size="xs" onClick={() => void doSignOut()}>
-                    Sign out
-                  </Button>
-                </div>
+                {showEmailRow && <p className="text-text-muted truncate text-xs">{user?.email}</p>}
               </div>
-            ) : (
-              <>
-                <div className="flex items-center gap-2.5 px-3 py-2.5">
-                  <IdentityAvatar
-                    name={label}
-                    avatarUrl={user?.avatarUrl ?? null}
-                    sizeClassName="size-8"
-                    textClassName="text-xs"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-text-primary truncate text-xs font-medium">
-                      Signed in as {label ?? 'you'}
-                    </p>
-                    {showEmailRow && <p className="text-text-muted truncate text-xs">{user?.email}</p>}
-                  </div>
-                </div>
-                <div className="border-border-hairline border-t px-3 py-2">
-                  <Button variant="outline" size="xs" onClick={() => setConfirmingSignOut(true)}>
-                    Sign out
-                  </Button>
-                </div>
-              </>
-            )}
-          </div>,
-          document.body
+            </div>
+            <div className="border-border-hairline border-t px-3 py-2">
+              <Button
+                variant="outline"
+                size="xs"
+                role="menuitem"
+                tabIndex={-1}
+                onClick={() => setConfirmingSignOut(true)}
+              >
+                Sign out
+              </Button>
+            </div>
+          </>
         )}
+      </Popover>
     </>
   );
 }
