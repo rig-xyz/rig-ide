@@ -164,7 +164,7 @@ export function ActiveFiles({
   if (cards.length === 0) return null;
 
   return (
-    <div className="mt-4 flex shrink-0 flex-col gap-2">
+    <div className="mt-5 flex shrink-0 flex-col gap-2">
       {/*
         The heading follows the content: while an agent is mid-write this
         strip really is showing work in progress, and the rest of the time
@@ -174,7 +174,7 @@ export function ActiveFiles({
       <p className="px-4 font-mono text-xs tracking-wide text-text-muted uppercase">
         {activePaths.size > 0 ? 'Being worked on' : 'Recently updated'}
       </p>
-      <div ref={scrollRef} className="carousel-scroll flex gap-2.5 px-4 pb-2">
+      <div ref={scrollRef} className="carousel-scroll flex gap-2.5 px-6 pb-2">
         {cards.map((card) => {
           const node = nodeByPath.get(card.relPath);
           return (

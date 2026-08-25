@@ -1285,31 +1285,9 @@ function FileBrowser({
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-y-auto">
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-hairline px-4">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-hairline px-6">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <SearchToggle value={search} onChange={setSearch} />
-          {unseenCount > 0 && (
-            /*
-              The chip filters to what is new; clearing lives with the Files
-              toolbar (structure pass: actions sit WITH their region). The
-              chip stays here because it is a panel-level status, and its
-              popover-in entrance keeps it from teleporting into the row.
-            */
-            <button
-              type="button"
-              onClick={toggleUnseenChip}
-              aria-pressed={view.filter === 'unseen'}
-              title={view.filter === 'unseen' ? 'Show everything' : 'Show only what is new'}
-              className={cn(
-                'popover-in shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
-                view.filter === 'unseen'
-                  ? 'bg-accent text-accent-ink'
-                  : 'bg-accent-subtle text-accent hover:opacity-80'
-              )}
-            >
-              {unseenCount} new
-            </button>
-          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <RigShareButton root={root} name={name} />
@@ -1350,9 +1328,23 @@ function FileBrowser({
         onToggleShowSystemFiles={onToggleShowSystemFiles}
         onUnseenCountChange={setUnseenCount}
         onProvideMarkAllSeen={setMarkAllSeen}
-        toolbarTrailing={
-          <>
-            {unseenCount > 0 && (
+        toolbarLeading={
+          unseenCount > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={toggleUnseenChip}
+                aria-pressed={view.filter === 'unseen'}
+                title={view.filter === 'unseen' ? 'Show everything' : 'Show only what is new'}
+                className={cn(
+                  'popover-in shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
+                  view.filter === 'unseen'
+                    ? 'bg-accent text-accent-ink'
+                    : 'bg-accent-subtle text-accent hover:opacity-80'
+                )}
+              >
+                {unseenCount} new
+              </button>
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -1368,14 +1360,16 @@ function FileBrowser({
                 />
                 <TooltipContent side="bottom">Mark all as seen</TooltipContent>
               </Tooltip>
-            )}
-            <NewMenu
+            </>
+          )
+        }
+        toolbarTrailing={
+          <NewMenu
               root={root}
               rootId={rootId}
               onOpenFile={handleOpenFile}
-              onOpenImportDialog={() => setImportOpen(true)}
-            />
-          </>
+            onOpenImportDialog={() => setImportOpen(true)}
+          />
         }
       />
     </div>

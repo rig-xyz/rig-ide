@@ -216,6 +216,7 @@ export function FileTree({
   onToggleShowSystemFiles,
   onUnseenCountChange,
   onProvideMarkAllSeen,
+  toolbarLeading,
   toolbarTrailing,
 }: {
   root: string;
@@ -268,7 +269,9 @@ export function FileTree({
   onUnseenCountChange?: (count: number) => void;
   /** v3: hands the header's "N new" chip a way to clear everything, using the listing this component already has. */
   onProvideMarkAllSeen?: (fn: (() => void) | null) => void;
-  /** Region actions rendered at the right end of the Files toolbar (App's New menu + mark-all-seen). */
+  /** Rendered before the sort control in the Files toolbar (unseen chip + mark-all-seen). */
+  toolbarLeading?: React.ReactNode;
+  /** Region actions rendered at the right end of the Files toolbar (App's New menu). */
   toolbarTrailing?: React.ReactNode;
 }) {
   const queryClient = useQueryClient();
@@ -504,6 +507,7 @@ export function FileTree({
       onChangeSort={onChangeSort}
       showSystemFiles={showSystemFiles}
       onToggleShowSystemFiles={onToggleShowSystemFiles}
+      leading={toolbarLeading}
       trailing={toolbarTrailing}
     />
   );
@@ -553,7 +557,7 @@ export function FileTree({
     <>
       {tabs}
       <div
-        className="@container flex flex-col py-1 pr-2"
+        className="@container flex flex-col px-3 py-2"
         onContextMenu={(event) => {
           if (bindingId) menu.open(event, null);
         }}
@@ -911,6 +915,7 @@ function ExplorerTabs({
   onChangeSort,
   showSystemFiles,
   onToggleShowSystemFiles,
+  leading,
   trailing,
 }: {
   sort: FileTreeSort;
@@ -918,14 +923,17 @@ function ExplorerTabs({
   showSystemFiles: boolean;
   /** v3: "Show system files" moved into the explorer's own view menu, beside sort. */
   onToggleShowSystemFiles?: () => void;
+  /** Rendered BEFORE the sort control: the unseen chip + mark-all-seen pair (Dylan's ordering: chip, clear, then Activity, then New). */
+  leading?: React.ReactNode;
   /** Charter v2 structure pass: region actions live WITH their region — App hands New and mark-all-seen down here instead of parking them in the panel title bar. */
   trailing?: React.ReactNode;
 }) {
   return (
-    <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border-hairline px-3">
+    <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border-hairline px-6">
       {/* The region names itself in the same mono-kicker voice as PEOPLE and RECENTLY UPDATED — the tab strip's removal had left the tree the only untitled section. */}
       <p className="text-2xs font-mono tracking-wide text-text-muted uppercase">Files</p>
       <div className="flex-1" />
+      {leading}
       {onChangeSort && (
         <SortControl
           sort={sort}

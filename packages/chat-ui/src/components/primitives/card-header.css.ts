@@ -48,6 +48,12 @@ export const cardHeaderLeft = style({
 
 export const cardHeaderTitle = style({
   minWidth: 0,
+  // Without overflow control a long command paints past its flex slot and
+  // under the right-side status icon (the JS-side 60-char cut is a rough
+  // guard, not a layout guarantee). Ellipsize at the real available width.
+  overflow: 'hidden',
+  whiteSpace: 'nowrap',
+  textOverflow: 'ellipsis',
 });
 
 export const cardHeaderRight = style({

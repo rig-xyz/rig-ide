@@ -87,7 +87,7 @@ export function RigPeopleCard({
   );
 
   return (
-    <div className="group/people mx-4 mt-4 flex flex-col gap-2">
+    <div className="group/people mx-6 mt-5 flex flex-col gap-2">
       <div className="flex items-center gap-1.5">
         <p className="font-mono text-xs tracking-wide text-text-muted uppercase">People</p>
         {/*
