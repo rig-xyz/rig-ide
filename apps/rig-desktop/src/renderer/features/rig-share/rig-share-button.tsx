@@ -54,7 +54,7 @@ export function RigShareButton({ root, name }: { root: string; name: string | nu
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="true"
         aria-expanded={open}
-        className="border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex shrink-0 items-center gap-1.5 border bg-transparent px-2 py-1 text-xs transition-colors"
+        className="border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex shrink-0 items-center gap-1.5 border bg-bg-1 px-2 py-1 text-xs transition-colors"
       >
         {stack.visible.length > 0 ? (
           <span className="flex items-center">

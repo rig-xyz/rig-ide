@@ -235,8 +235,11 @@ function FileCard({
         // A hairline, not a fill. A filled tile reads as heavy in light
         // mode and vanishes into the panel in dark; a border is legible in
         // both and lets the row of cards stay quiet next to the tree.
-        'card-pop-in border-border-hairline rounded-card group relative flex w-[190px] shrink-0 flex-col border transition-colors',
-        'hover:border-border-strong hover:bg-bg-1'
+        // Tonal pass: cards rest one surface step UP from the panel (white
+        // in light mode) instead of dissolving into it, and hover climbs
+        // the ladder rather than inventing a border change.
+        'card-pop-in border-border-hairline bg-bg-1 rounded-card group relative flex w-[190px] shrink-0 flex-col border transition-colors',
+        'hover:bg-bg-2'
       )}
     >
       <button

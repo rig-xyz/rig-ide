@@ -1120,6 +1120,60 @@ function UnsyncedRigCard({
  * other file, one menu (`AddMenu`). "Open…" moved off this header entirely
  * — the topbar's `RigSwitcher` carries the native-picker escape hatch now.
  */
+/**
+ * Structure pass (impeccable, "one quiet header"): search rests as an icon
+ * and expands into the input on demand — Raycast/Finder grammar. Expanded
+ * whenever it has focus OR text, so an active filter can never hide its
+ * own control; Escape clears and collapses. Width animates via max-width
+ * transition (transform-free, cheap), gated for reduced motion.
+ */
+function SearchToggle({ value, onChange }: { value: string; onChange: (next: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const open = expanded || value.length > 0;
+
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+
+  if (!open) {
+    return (
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label="Search files"
+        onClick={() => setExpanded(true)}
+      >
+        <Search className="size-3.5" strokeWidth={1.5} />
+      </Button>
+    );
+  }
+  return (
+    <div className="popover-in relative flex max-w-56 min-w-0 flex-1 items-center">
+      <Search
+        className="pointer-events-none absolute left-2 size-3.5 text-text-muted"
+        strokeWidth={1.5}
+      />
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={() => {
+          if (value.length === 0) setExpanded(false);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            onChange('');
+            setExpanded(false);
+          }
+        }}
+        placeholder="Search files"
+        className="w-full rounded-control border border-border-hairline bg-bg-1 py-1.5 pr-2 pl-7 text-xs text-text-primary transition-colors outline-none placeholder:text-text-muted focus:border-border-strong"
+      />
+    </div>
+  );
+}
+
 function FileBrowser({
   root,
   rootId,
@@ -1233,69 +1287,31 @@ function FileBrowser({
     <div className="flex h-full min-w-0 flex-col overflow-y-auto">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-hairline px-4">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          <div className="relative flex max-w-56 min-w-0 flex-1 items-center">
-            <Search
-              className="pointer-events-none absolute left-2 size-3.5 text-text-muted"
-              strokeWidth={1.5}
-            />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search files"
-              className="w-full rounded-control border border-border-hairline bg-bg-1 py-1.5 pr-2 pl-7 text-xs text-text-primary transition-colors outline-none placeholder:text-text-muted focus:border-border-strong"
-            />
-          </div>
+          <SearchToggle value={search} onChange={setSearch} />
           {unseenCount > 0 && (
             /*
-              Two separate controls, not one that mutates on hover: the
-              chip filters to what is new, and a distinct button beside it
-              clears. An affordance that grows out of another one moves the
-              thing you were aiming at, which is why the earlier version
-              felt broken.
+              The chip filters to what is new; clearing lives with the Files
+              toolbar (structure pass: actions sit WITH their region). The
+              chip stays here because it is a panel-level status, and its
+              popover-in entrance keeps it from teleporting into the row.
             */
-            <>
-              <button
-                type="button"
-                onClick={toggleUnseenChip}
-                aria-pressed={view.filter === 'unseen'}
-                title={view.filter === 'unseen' ? 'Show everything' : 'Show only what is new'}
-                className={cn(
-                  // popover-in reused: 150ms opacity+2px settle on mount, so
-                  // the chip arrives instead of teleporting in. The reflow
-                  // itself stays instant (layout properties never animate).
-                  'popover-in shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
-                  view.filter === 'unseen'
-                    ? 'bg-accent text-accent-ink'
-                    : 'bg-accent-subtle text-accent hover:opacity-80'
-                )}
-              >
-                {unseenCount} new
-              </button>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      onClick={onMarkAllSeen}
-                      aria-label="Mark all as seen"
-                      className="flex size-6 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors hover:bg-bg-2 hover:text-text-primary"
-                    >
-                      <CheckCheck className="size-3.5" strokeWidth={1.5} />
-                    </button>
-                  }
-                />
-                <TooltipContent side="bottom">Mark all as seen</TooltipContent>
-              </Tooltip>
-            </>
+            <button
+              type="button"
+              onClick={toggleUnseenChip}
+              aria-pressed={view.filter === 'unseen'}
+              title={view.filter === 'unseen' ? 'Show everything' : 'Show only what is new'}
+              className={cn(
+                'popover-in shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
+                view.filter === 'unseen'
+                  ? 'bg-accent text-accent-ink'
+                  : 'bg-accent-subtle text-accent hover:opacity-80'
+              )}
+            >
+              {unseenCount} new
+            </button>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <NewMenu
-            root={root}
-            rootId={rootId}
-            onOpenFile={handleOpenFile}
-            onOpenImportDialog={() => setImportOpen(true)}
-          />
           <RigShareButton root={root} name={name} />
         </div>
       </div>
@@ -1334,6 +1350,33 @@ function FileBrowser({
         onToggleShowSystemFiles={onToggleShowSystemFiles}
         onUnseenCountChange={setUnseenCount}
         onProvideMarkAllSeen={setMarkAllSeen}
+        toolbarTrailing={
+          <>
+            {unseenCount > 0 && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      onClick={onMarkAllSeen}
+                      aria-label="Mark all as seen"
+                      className="flex size-6 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors hover:bg-bg-2 hover:text-text-primary"
+                    >
+                      <CheckCheck className="size-3.5" strokeWidth={1.5} />
+                    </button>
+                  }
+                />
+                <TooltipContent side="bottom">Mark all as seen</TooltipContent>
+              </Tooltip>
+            )}
+            <NewMenu
+              root={root}
+              rootId={rootId}
+              onOpenFile={handleOpenFile}
+              onOpenImportDialog={() => setImportOpen(true)}
+            />
+          </>
+        }
       />
     </div>
   );

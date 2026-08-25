@@ -489,16 +489,21 @@
  */
 .hero-glow {
   position: relative;
+  /* Clip the wash to the surface it decorates: without this the ellipse
+     bled under the neighbouring panel and died in a hard vertical seam at
+     the rail border. The gradient reaches transparent well before the
+     clipped edges, so the containment itself is invisible. */
+  overflow: hidden;
 }
 .hero-glow::before {
   content: '';
   position: absolute;
-  inset: -72px -48px auto -48px;
+  inset: -72px 0 auto 0;
   height: 210px;
   background: radial-gradient(
-    ellipse at 22% 0%,
+    ellipse 70% 100% at 20% 0%,
     color-mix(in oklab, var(--accent) 14%, transparent),
-    transparent 65%
+    transparent 68%
   );
   pointer-events: none;
 }

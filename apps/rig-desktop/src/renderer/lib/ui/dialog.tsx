@@ -55,7 +55,10 @@ function DialogContent({
           // transitions (not keyframes) so a fast close mid-open reverses
           // smoothly instead of jumping.
           'border-border-hairline bg-bg-1 rounded-card shadow-modal fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-4rem)] w-full max-w-md -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden border outline-none',
-          'transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none',
+          // Tailwind v4 maps scale-* to the standalone `scale` property (not
+          // `transform`), so the transition must name it explicitly — the
+          // close "flash" was scale snapping while opacity animated.
+          'transition-[opacity,scale] duration-150 ease-out motion-reduce:transition-none',
           'data-[starting-style]:opacity-0 data-[starting-style]:scale-[0.98] data-[ending-style]:opacity-0 data-[ending-style]:scale-[0.98]',
           className
         )}

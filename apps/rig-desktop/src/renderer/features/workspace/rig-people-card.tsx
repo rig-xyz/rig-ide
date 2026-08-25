@@ -189,10 +189,16 @@ export function RigPeopleCard({
               </Tooltip>
             ))}
           </div>
-          {rigLine && (
+          {rigLine ? (
             <p className="text-xs leading-relaxed text-text-muted">
               {segments.length > 0 ? renderSegments(segments, root, onOpenFile) : rigLine}
             </p>
+          ) : (
+            briefing && (
+              /* An empty slot reads as a failure; the honest state is that
+                 the briefing simply has nothing for this rig yet. */
+              <p className="text-xs leading-relaxed text-text-muted">Nothing new to summarize yet.</p>
+            )
           )}
         </>
       )}

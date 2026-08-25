@@ -113,20 +113,21 @@ const FILE_SORT_ICONS: Record<FileTreeSort, typeof Clock> = {
 };
 
 /**
- * The unseen mark: one dot, in a fixed-width gutter at the START of every
- * row, files and folders alike. A left gutter rather than the right meta
- * column because the dot then sits at the same x on every row regardless
- * of what else that row has to say, which is what makes a column of them
- * scannable — the way an unread column in a mail client works.
- *
- * Not accent-coloured TEXT and not bold: green type reads as a link or a
- * success state, and weight alone is too quiet to find. The gutter is
- * always reserved, so a row never shifts when its dot appears or clears.
+ * The unseen mark, third iteration: a badge pinned to the row's ICON —
+ * macOS app-badge grammar — rather than a dot floating in a gutter.
+ * Earlier versions failed on placement, not shape: a free-floating dot
+ * read as orphaned and its x drifted between row types. Anchored to the
+ * icon it decorates it sits identically on files and folders, costs no
+ * gutter width, and the bg ring keeps it legible over hover backgrounds.
+ * Accent is within budget here: unseen activity is presence.
  */
-function UnseenMark({ show }: { show: boolean }) {
+function IconWithBadge({ show, children }: { show: boolean; children: React.ReactNode }) {
   return (
-    <span className="flex w-2.5 shrink-0 justify-center">
-      {show && <span className="unseen-dot-in size-[5px] rounded-full bg-text-secondary" />}
+    <span className="relative flex shrink-0">
+      {children}
+      {show && (
+        <span className="unseen-dot-in bg-accent ring-bg-0 absolute -top-0.5 -right-0.5 size-[6px] rounded-full ring-2" />
+      )}
     </span>
   );
 }
@@ -215,6 +216,7 @@ export function FileTree({
   onToggleShowSystemFiles,
   onUnseenCountChange,
   onProvideMarkAllSeen,
+  toolbarTrailing,
 }: {
   root: string;
   rootId: string;
@@ -266,6 +268,8 @@ export function FileTree({
   onUnseenCountChange?: (count: number) => void;
   /** v3: hands the header's "N new" chip a way to clear everything, using the listing this component already has. */
   onProvideMarkAllSeen?: (fn: (() => void) | null) => void;
+  /** Region actions rendered at the right end of the Files toolbar (App's New menu + mark-all-seen). */
+  toolbarTrailing?: React.ReactNode;
 }) {
   const queryClient = useQueryClient();
   const queryKey = useMemo(() => rigFilesQueryKey(root, rootId), [root, rootId]);
@@ -500,6 +504,7 @@ export function FileTree({
       onChangeSort={onChangeSort}
       showSystemFiles={showSystemFiles}
       onToggleShowSystemFiles={onToggleShowSystemFiles}
+      trailing={toolbarTrailing}
     />
   );
 
@@ -780,8 +785,9 @@ function TreeNode({
             className={cn('size-3.5 shrink-0 transition-transform duration-150 ease-out', open && 'rotate-90')}
             strokeWidth={1.5}
           />
-          <UnseenMark show={!open && !!unseenCount} />
-          <FolderGlyph className="size-3.5 shrink-0" strokeWidth={1.5} />
+          <IconWithBadge show={!open && !!unseenCount}>
+            <FolderGlyph className="size-3.5" strokeWidth={1.5} />
+          </IconWithBadge>
           <RowLabel text={displayName(node)} className="flex-1" />
           <span className="w-14 shrink-0" />
         </button>
@@ -829,8 +835,9 @@ function TreeNode({
         style={{ paddingLeft: indent + 18 }}
         className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-1 text-left"
       >
-        <UnseenMark show={isUnseen} />
-        <Icon className="size-3.5 shrink-0" strokeWidth={1.5} />
+        <IconWithBadge show={isUnseen}>
+          <Icon className="size-3.5" strokeWidth={1.5} />
+        </IconWithBadge>
         <RowLabel
           text={displayName(node)}
           title={rowTitleHint(node)}
@@ -904,15 +911,20 @@ function ExplorerTabs({
   onChangeSort,
   showSystemFiles,
   onToggleShowSystemFiles,
+  trailing,
 }: {
   sort: FileTreeSort;
   onChangeSort?: (sort: FileTreeSort) => void;
   showSystemFiles: boolean;
   /** v3: "Show system files" moved into the explorer's own view menu, beside sort. */
   onToggleShowSystemFiles?: () => void;
+  /** Charter v2 structure pass: region actions live WITH their region — App hands New and mark-all-seen down here instead of parking them in the panel title bar. */
+  trailing?: React.ReactNode;
 }) {
   return (
-    <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border-hairline px-3">
+    <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border-hairline px-3">
+      {/* The region names itself in the same mono-kicker voice as PEOPLE and RECENTLY UPDATED — the tab strip's removal had left the tree the only untitled section. */}
+      <p className="text-2xs font-mono tracking-wide text-text-muted uppercase">Files</p>
       <div className="flex-1" />
       {onChangeSort && (
         <SortControl
@@ -922,6 +934,7 @@ function ExplorerTabs({
           onToggleShowSystemFiles={onToggleShowSystemFiles}
         />
       )}
+      {trailing}
     </div>
   );
 }

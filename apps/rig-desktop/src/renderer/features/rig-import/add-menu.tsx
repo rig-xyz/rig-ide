@@ -171,7 +171,7 @@ export function NewMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         title="Add something to this rig"
-        className="flex shrink-0 items-center gap-1 rounded-control border border-border-hairline bg-transparent px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary disabled:opacity-60"
+        className="flex shrink-0 items-center gap-1 rounded-control border border-border-hairline bg-bg-1 px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary disabled:opacity-60"
       >
         <Plus className="size-3.5" strokeWidth={1.5} />
         {busy ? 'Adding…' : 'New'}

@@ -40,7 +40,7 @@ function TooltipContent({
             // provider delay; Base UI keeps subsequent tooltips instant
             // while a provider-group is warm, which is the Raycast/Emil
             // behavior (first delayed + animated, siblings immediate).
-            'transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none',
+            'transition-[opacity,translate] duration-150 ease-out motion-reduce:transition-none',
             'data-[starting-style]:opacity-0 data-[starting-style]:translate-y-0.5 data-[ending-style]:opacity-0',
             className
           )}
