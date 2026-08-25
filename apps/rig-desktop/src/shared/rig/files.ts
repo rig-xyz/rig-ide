@@ -30,6 +30,14 @@ export type RigFileNode = {
    * (extension hidden for recognized types) in all of those cases.
    */
   title?: string;
+  /**
+   * File-navigator redesign (§4, seen-state): last-modified time, epoch ms —
+   * files only, from `stat` at listing time. Feeds the unseen-dot comparison
+   * (`shared/rig/seen-state.ts`'s `isFileUnseen`); absent for directories,
+   * and best-effort for a file whose `stat` failed between `readdir` and
+   * this call (rare race, never fatal to the listing).
+   */
+  mtimeMs?: number;
 };
 
 export type RigFileListError = { kind: 'notFound' | 'notADirectory' | 'ioError'; message: string };

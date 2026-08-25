@@ -40,6 +40,31 @@ export type RigsRailView = {
 
 export const DEFAULT_RIGS_RAIL_VIEW: RigsRailView = { filter: 'all', sort: 'recent' };
 
+/**
+ * File-navigator redesign (§5, working-set sort + filters): the file tree's
+ * own sort/filter choice, per rig (unlike `rigsRailView` above, a person's
+ * taste for "what am I working on" genuinely differs rig to rig). `'workingSet'`
+ * is the default — frecency blending the user's own opens with file change
+ * times (`shared/rig/tree-view.ts`'s `frecencyScore`, pure and tested).
+ */
+export type FileTreeSort = 'workingSet' | 'unseenFirst' | 'alphabetical' | 'newest';
+/**
+ * `'agents'` uses the SAME live write-observation slice 4's card rail
+ * relies on (`renderer/features/workspace/write-activity.ts`) — this app
+ * has no durable, queryable "which session wrote which file" index (see
+ * that module's own header comment), so this filter can only ever reflect
+ * writes this running app process has actually observed live since launch,
+ * never a rig's full history or a restart-durable record.
+ */
+export type FileTreeFilter = 'all' | 'agents' | 'unseen';
+
+export type FileTreeView = {
+  sort: FileTreeSort;
+  filter: FileTreeFilter;
+};
+
+export const DEFAULT_FILE_TREE_VIEW: FileTreeView = { sort: 'workingSet', filter: 'all' };
+
 export type RigSettings = {
   version: 1;
   /** `null` = no explicit choice yet; the renderer falls back to system preference. */
@@ -145,6 +170,15 @@ export type RigSettings = {
    * reader's taste for seeing system files isn't scoped to one workspace.
    */
   showSystemFiles: boolean;
+  /**
+   * File-navigator redesign (§3, card rail): user-pinned file paths, per rig
+   * — an ordered list (pin order, most-recently-pinned last), same
+   * bindingId-keyed shape as `hiddenByRig`/`lastOpenTabsByRig` above, merged
+   * at the key level on `set()` for the same reason those are.
+   */
+  pinnedPathsByRig: Record<string, string[]>;
+  /** File-navigator redesign (§5): the tree's own sort/filter choice, per rig — see `FileTreeView`'s own comment. */
+  fileTreeViewByRig: Record<string, FileTreeView>;
 };
 
 export const DEFAULT_RIG_SETTINGS: RigSettings = {
@@ -165,6 +199,8 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   updateAnnouncedVersion: null,
   hiddenByRig: {},
   showSystemFiles: false,
+  pinnedPathsByRig: {},
+  fileTreeViewByRig: {},
 };
 
 /** The subset of legacy localStorage values the renderer can hand to `importLegacy`. */

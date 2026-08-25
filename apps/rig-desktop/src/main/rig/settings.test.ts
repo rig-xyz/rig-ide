@@ -353,6 +353,131 @@ describe('RigSettingsStore', () => {
     });
   });
 
+  describe('pinnedPathsByRig (card rail round)', () => {
+    it('defaults to an empty map before anything is ever pinned', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().pinnedPathsByRig).toEqual({});
+    });
+
+    it('merges at the key level rather than replacing the map', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      store.set({ pinnedPathsByRig: { 'binding-1': ['a.md'] } });
+      store.set({ pinnedPathsByRig: { 'binding-2': ['b.md'] } });
+
+      expect(store.get().pinnedPathsByRig).toEqual({
+        'binding-1': ['a.md'],
+        'binding-2': ['b.md'],
+      });
+    });
+
+    it('a rig\'s own pin list is replaced wholesale by the next set() for that rig, without touching another\'s', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      store.set({ pinnedPathsByRig: { 'binding-1': ['a.md'], 'binding-2': ['z.md'] } });
+      store.set({ pinnedPathsByRig: { 'binding-1': ['a.md', 'b.md'] } });
+
+      expect(store.get().pinnedPathsByRig).toEqual({
+        'binding-1': ['a.md', 'b.md'],
+        'binding-2': ['z.md'],
+      });
+    });
+
+    it('persists and round-trips through a second store instance', () => {
+      const first = new RigSettingsStore(settingsPath);
+      first.initialize();
+      first.set({ pinnedPathsByRig: { 'binding-1': ['a.md'] } });
+
+      const second = new RigSettingsStore(settingsPath);
+      second.initialize();
+      expect(second.get().pinnedPathsByRig).toEqual({ 'binding-1': ['a.md'] });
+    });
+
+    it('an existing settings.json that predates this field degrades to an empty map, not a throw', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({ version: 1, theme: null, chatPanelWidth: null, chatPanelCollapsed: false, lastHarnessByRig: {}, lastOpenTabsByRig: {} })
+      );
+      const store = new RigSettingsStore(settingsPath);
+      expect(() => store.initialize()).not.toThrow();
+      expect(store.get().pinnedPathsByRig).toEqual({});
+    });
+
+    it('a malformed value (non-string-array entries) degrades to an empty map rather than passing through', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({ ...DEFAULT_RIG_SETTINGS, pinnedPathsByRig: { 'binding-1': 'not-an-array' } })
+      );
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().pinnedPathsByRig).toEqual({});
+    });
+  });
+
+  describe('fileTreeViewByRig (working-set sort + filters round)', () => {
+    it('defaults to an empty map before any rig has chosen a sort/filter', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().fileTreeViewByRig).toEqual({});
+    });
+
+    it('merges at the key level rather than replacing the map', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      store.set({ fileTreeViewByRig: { 'binding-1': { sort: 'newest', filter: 'unseen' } } });
+      store.set({ fileTreeViewByRig: { 'binding-2': { sort: 'alphabetical', filter: 'all' } } });
+
+      expect(store.get().fileTreeViewByRig).toEqual({
+        'binding-1': { sort: 'newest', filter: 'unseen' },
+        'binding-2': { sort: 'alphabetical', filter: 'all' },
+      });
+    });
+
+    it('a rig\'s own choice is replaced wholesale by the next set() for that rig, without touching another\'s', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      store.set({ fileTreeViewByRig: { 'binding-1': { sort: 'newest', filter: 'all' } } });
+      store.set({ fileTreeViewByRig: { 'binding-1': { sort: 'workingSet', filter: 'agents' } } });
+
+      expect(store.get().fileTreeViewByRig['binding-1']).toEqual({ sort: 'workingSet', filter: 'agents' });
+    });
+
+    it('persists and round-trips through a second store instance', () => {
+      const first = new RigSettingsStore(settingsPath);
+      first.initialize();
+      first.set({ fileTreeViewByRig: { 'binding-1': { sort: 'unseenFirst', filter: 'unseen' } } });
+
+      const second = new RigSettingsStore(settingsPath);
+      second.initialize();
+      expect(second.get().fileTreeViewByRig).toEqual({ 'binding-1': { sort: 'unseenFirst', filter: 'unseen' } });
+    });
+
+    it('an existing settings.json that predates this field degrades to an empty map, not a throw', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({ version: 1, theme: null, chatPanelWidth: null, chatPanelCollapsed: false, lastHarnessByRig: {}, lastOpenTabsByRig: {} })
+      );
+      const store = new RigSettingsStore(settingsPath);
+      expect(() => store.initialize()).not.toThrow();
+      expect(store.get().fileTreeViewByRig).toEqual({});
+    });
+
+    it('a malformed value (unknown sort/filter) degrades to an empty map rather than passing through', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({ ...DEFAULT_RIG_SETTINGS, fileTreeViewByRig: { 'binding-1': { sort: 'bogus', filter: 'all' } } })
+      );
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().fileTreeViewByRig).toEqual({});
+    });
+  });
+
   describe('rigsRailView accepts the \'hidden\' filter (Hide round)', () => {
     it('round-trips filter: "hidden" through set()', () => {
       const store = new RigSettingsStore(settingsPath);

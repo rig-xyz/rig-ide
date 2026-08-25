@@ -22,7 +22,7 @@ describe('0020_rig_tables', () => {
     fixture?.close();
   });
 
-  it('creates all five rig_* tables on a fresh database', async () => {
+  it('creates all rig_* tables on a fresh database (Round A\'s five, plus every rig_* table added since)', async () => {
     fixture = await openFixture('empty');
 
     const tables = fixture.sqlite
@@ -34,6 +34,7 @@ describe('0020_rig_tables', () => {
       'rig_comments_cache',
       'rig_profiles',
       'rig_rigs',
+      'rig_seen_files',
       'rig_session_events',
       'rig_sessions',
     ]);

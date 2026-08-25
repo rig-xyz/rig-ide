@@ -48,6 +48,7 @@ import { rigJoinController } from './rig/join';
 import { rigPulseController } from './rig/pulse';
 import { rigControlController } from './rig/rig-controls';
 import { rigRecentController } from './rig/recent-rigs';
+import { rigSeenStateController } from './rig/seen-state';
 import { rigSessionsController } from './rig/sessions';
 import { rigSettingsController } from './rig/settings-instance';
 import { rigShareController } from './rig/rig-share';
@@ -115,6 +116,12 @@ export const rpcRouter = createRPCRouter({
     // from the `appSettings` surface above, which is Emdash's inherited
     // SQLite-backed store.
     settings: rigSettingsController,
+    // File-navigator redesign: `rig_seen_files` — per-user, per-rig,
+    // LOCAL-ONLY last-viewed timestamps behind the tree's unseen dots. Own
+    // key, own table: this is reading state, not a preference, so it's
+    // deliberately separate from `settings` above. See
+    // `main/rig/seen-state.ts`'s own header comment.
+    seenState: rigSeenStateController,
     // `rig_sessions`/`rig_session_events` — the writer lives in the
     // renderer (transcript events never reach main over the wire), so this
     // is main answering batched appends, not observing anything live.

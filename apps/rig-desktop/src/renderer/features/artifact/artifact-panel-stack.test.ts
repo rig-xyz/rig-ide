@@ -6,10 +6,15 @@ describe('artifact-panel-stack', () => {
     expect(BROWSER_STATE).toEqual({ view: 'browser', revealPath: null });
   });
 
-  it('pushFile enters the file view for that path', () => {
+  it('pushFile enters the file view for that path, with nothing to reveal on return by default', () => {
     const state = pushFile('/rig/notes.md');
-    expect(state).toEqual({ view: 'file', path: '/rig/notes.md' });
+    expect(state).toEqual({ view: 'file', path: '/rig/notes.md', revealPath: null });
     expect(isFileView(state)).toBe(true);
+  });
+
+  it('pushFile can carry a reveal target for when the user comes back to the browser (card rail click)', () => {
+    const state = pushFile('/rig/notes.md', 'docs/notes.md');
+    expect(state).toEqual({ view: 'file', path: '/rig/notes.md', revealPath: 'docs/notes.md' });
   });
 
   it('popToBrowser with no argument returns to the root with nothing to reveal', () => {

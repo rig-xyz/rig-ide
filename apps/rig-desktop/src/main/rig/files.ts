@@ -72,6 +72,12 @@ async function listDir(absDir: string, root: string): Promise<RigFileNode[]> {
       });
     } else if (entry.isFile()) {
       const node: RigFileNode = { name: entry.name, relPath, kind: 'file' };
+      try {
+        node.mtimeMs = (await stat(absPath)).mtimeMs;
+      } catch {
+        // Best-effort — a file that vanished between readdir and stat just
+        // ships without an mtime; it's never flagged unseen without one.
+      }
       if (MARKDOWN_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
         const title = await getFileTitle(absPath);
         if (title) node.title = title;

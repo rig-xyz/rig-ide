@@ -614,6 +614,28 @@ export const rigCommentsCache = sqliteTable(
   })
 );
 
+/**
+ * File-navigator redesign (`docs/file-navigator-design.md` §4): per-user,
+ * per-rig "last viewed" timestamps — LOCAL ONLY, never synced (one person's
+ * reading state is not another's). Same `(bindingId, relPath)` composite-key
+ * shape as `rig_comments_cache` above. The "never viewed" baseline a path
+ * falls back to is `rig_rigs.first_opened_at` for the same bindingId — no
+ * separate baseline column needed, that value already exists and means
+ * exactly the right thing ("first time this rig existed locally for this
+ * person").
+ */
+export const rigSeenFiles = sqliteTable(
+  'rig_seen_files',
+  {
+    bindingId: text('binding_id').notNull(),
+    relPath: text('rel_path').notNull(),
+    lastViewedAt: integer('last_viewed_at').notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.bindingId, table.relPath] }),
+  })
+);
+
 export type RigRigRow = typeof rigRigs.$inferSelect;
 export type RigRigInsert = typeof rigRigs.$inferInsert;
 export type RigSessionRow = typeof rigSessions.$inferSelect;
@@ -624,6 +646,8 @@ export type RigProfileRow = typeof rigProfiles.$inferSelect;
 export type RigProfileInsert = typeof rigProfiles.$inferInsert;
 export type RigCommentsCacheRow = typeof rigCommentsCache.$inferSelect;
 export type RigCommentsCacheInsert = typeof rigCommentsCache.$inferInsert;
+export type RigSeenFileRow = typeof rigSeenFiles.$inferSelect;
+export type RigSeenFileInsert = typeof rigSeenFiles.$inferInsert;
 
 export type SshConnectionRow = typeof sshConnections.$inferSelect;
 export type SshConnectionInsert = typeof sshConnections.$inferInsert;

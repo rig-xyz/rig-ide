@@ -5,6 +5,7 @@ import {
   DEFAULT_RIG_SETTINGS,
   DEFAULT_RIGS_RAIL_VIEW,
   RIG_SETTINGS_VERSION,
+  type FileTreeView,
   type RigOpenTabsState,
   type RigSettings,
   type RigSettingsLegacyImport,
@@ -71,6 +72,12 @@ export class RigSettingsStore {
         : {}),
       ...(patch.hiddenByRig
         ? { hiddenByRig: { ...this.settings.hiddenByRig, ...patch.hiddenByRig } }
+        : {}),
+      ...(patch.pinnedPathsByRig
+        ? { pinnedPathsByRig: { ...this.settings.pinnedPathsByRig, ...patch.pinnedPathsByRig } }
+        : {}),
+      ...(patch.fileTreeViewByRig
+        ? { fileTreeViewByRig: { ...this.settings.fileTreeViewByRig, ...patch.fileTreeViewByRig } }
         : {}),
     };
     this.settings = next;
@@ -163,6 +170,8 @@ function normalizeSettings(parsed: unknown): RigSettings {
     updateAnnouncedVersion: typeof raw.updateAnnouncedVersion === 'string' ? raw.updateAnnouncedVersion : null,
     hiddenByRig: isBooleanRecord(raw.hiddenByRig) ? raw.hiddenByRig : {},
     showSystemFiles: raw.showSystemFiles === true,
+    pinnedPathsByRig: isStringArrayRecord(raw.pinnedPathsByRig) ? raw.pinnedPathsByRig : {},
+    fileTreeViewByRig: isFileTreeViewRecord(raw.fileTreeViewByRig) ? raw.fileTreeViewByRig : {},
   };
 }
 
@@ -191,6 +200,30 @@ function isBooleanRecord(value: unknown): value is Record<string, boolean> {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === 'string');
+}
+
+function isStringArrayRecord(value: unknown): value is Record<string, string[]> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  return Object.values(value).every(isStringArray);
+}
+
+const FILE_TREE_SORTS = new Set(['workingSet', 'unseenFirst', 'alphabetical', 'newest']);
+const FILE_TREE_FILTERS = new Set(['all', 'agents', 'unseen']);
+
+function isFileTreeView(value: unknown): value is FileTreeView {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.sort === 'string' &&
+    FILE_TREE_SORTS.has(v.sort) &&
+    typeof v.filter === 'string' &&
+    FILE_TREE_FILTERS.has(v.filter)
+  );
+}
+
+function isFileTreeViewRecord(value: unknown): value is Record<string, FileTreeView> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  return Object.values(value).every(isFileTreeView);
 }
 
 function isOpenTabsState(value: unknown): value is RigOpenTabsState {

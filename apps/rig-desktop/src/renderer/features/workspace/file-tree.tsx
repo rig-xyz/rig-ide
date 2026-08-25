@@ -7,6 +7,7 @@ import {
   Folder,
   FolderOpen,
   Loader2,
+  Pin,
   Sparkles,
   Table,
 } from 'lucide-react';
@@ -16,6 +17,14 @@ import { cn } from '@renderer/lib/utils';
 import { classifyEntryCategory } from '@shared/rig/file-navigator-categories';
 import { rigFileChangeChannel } from '@shared/rig/files';
 import type { RigFileNode } from '@shared/rig/files';
+import { rigSettingsChangedChannel } from '@shared/rig/settings';
+import {
+  collectFileRelPaths,
+  computeUnseenSummary,
+  isFileUnseen,
+  rigSeenStateChangedChannel,
+  type SeenMap,
+} from '@shared/rig/seen-state';
 
 /**
  * Real filesystem tree for the opened rig, via `rpc.rig.files.list` — a small,
@@ -55,18 +64,28 @@ const HIGHLIGHT_MS = 1400;
 /** One level of nested indent, matching a depth-1 file row's own `indent + 18`. */
 const SKILL_ROW_PADDING = 8 + 14 + 18;
 
-/** The document's display name: its extracted title, else the full filename (extension included — Dylan keeps extensions). */
-function displayTitle(node: RigFileNode): string {
+/**
+ * The document's display name: its extracted title, else the full filename
+ * (extension included — Dylan keeps extensions). Exported: `card-rail.tsx`
+ * needs the exact same title logic for card titles (design doc §3, "same
+ * title logic as tree").
+ */
+export function displayTitle(node: RigFileNode): string {
   if (node.kind === 'dir') return node.name;
   return node.title ?? node.name;
 }
 
-/** Content-row icon by extension — reverted to the tree's original lucide line icons (icon asset pass deferred, see the design doc). */
-function iconFor(name: string) {
+/** Content-row icon by extension — reverted to the tree's original lucide line icons (icon asset pass deferred, see the design doc). Exported for `card-rail.tsx`'s card type icon, same vocabulary as the tree row it points at. */
+export function iconFor(name: string) {
   const ext = name.split('.').pop()?.toLowerCase();
   if (ext === 'md' || ext === 'mdx' || ext === 'txt') return FileText;
   if (ext === 'csv' || ext === 'tsv' || ext === 'xlsx') return Table;
   return File;
+}
+
+/** The listing's react-query key — shared with `card-rail.tsx` so both read the SAME cached `rpc.rig.files.list(root)` result rather than issuing a second, redundant call. */
+export function rigFilesQueryKey(root: string): readonly ['rig', 'files', 'list', string] {
+  return ['rig', 'files', 'list', root];
 }
 
 /** Every `skills`-classified FILE, anywhere in the tree, flattened — folders that only contain skills are not themselves listed. */
@@ -114,6 +133,7 @@ function filterContentTree(nodes: RigFileNode[], showSystemFiles: boolean): RigF
 
 export function FileTree({
   root,
+  bindingId = null,
   activePath,
   revealPath,
   onOpenFile,
@@ -121,6 +141,14 @@ export function FileTree({
   showSystemFiles = false,
 }: {
   root: string;
+  /**
+   * File-navigator redesign (§4, seen-state): identifies this rig for the
+   * `rig_seen_files` table. Optional (and the whole seen-state feature
+   * quietly no-ops without one) so the existing live-update tests, which
+   * render `FileTree` with only `root`/`activePath`/`onOpenFile`, keep
+   * passing unchanged — a real mount always has one (`App.tsx`'s `bound.bindingId`).
+   */
+  bindingId?: string | null;
   activePath: string | null;
   /**
    * A folder's relPath to expand its ancestors for, scroll into view, and
@@ -150,7 +178,7 @@ export function FileTree({
   showSystemFiles?: boolean;
 }) {
   const queryClient = useQueryClient();
-  const queryKey = useMemo(() => ['rig', 'files', 'list', root], [root]);
+  const queryKey = useMemo(() => rigFilesQueryKey(root), [root]);
   const [sawChange, setSawChange] = useState(false);
   const { data, isLoading, error } = useQuery({
     queryKey,
@@ -186,6 +214,94 @@ export function FileTree({
     () => filterContentTree(data ?? [], showSystemFiles),
     [data, showSystemFiles]
   );
+
+  // Seen-state (§4): baseline + last-viewed map for this rig, refetched on
+  // bindingId change and whenever a mark-seen elsewhere (e.g. "Mark all as
+  // seen" in `FileBrowserOptionsMenu`) broadcasts for the same bindingId.
+  // Quietly does nothing without a bindingId — see the prop's own comment.
+  const [seenState, setSeenState] = useState<{ baselineAt: number; seen: SeenMap } | null>(null);
+  useEffect(() => {
+    if (!bindingId) {
+      setSeenState(null);
+      return;
+    }
+    let alive = true;
+    const load = () => {
+      void rpc.rig.seenState.getState({ bindingId }).then((state) => {
+        if (alive) setSeenState(state);
+      });
+    };
+    load();
+    const off = events.on(rigSeenStateChangedChannel, ({ bindingId: changed }) => {
+      if (changed === bindingId) load();
+    });
+    return () => {
+      alive = false;
+      off();
+    };
+  }, [bindingId]);
+
+  // Ghost-row sweep: once per bindingId, the first time a listing actually
+  // loads — not on every live-update refetch (that would fire a DB write on
+  // every debounced fs change, which the design doc explicitly wants cheap).
+  const sweptForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!bindingId || !data) return;
+    if (sweptForRef.current === bindingId) return;
+    sweptForRef.current = bindingId;
+    void rpc.rig.seenState.sweep({ bindingId, existingRelPaths: collectFileRelPaths(data) });
+  }, [bindingId, data]);
+
+  const unseen = useMemo(
+    () =>
+      seenState
+        ? computeUnseenSummary(contentTree, seenState.seen, seenState.baselineAt)
+        : { unseenFiles: new Set<string>(), unseenCountByDir: {} },
+    [contentTree, seenState]
+  );
+
+  const markSeen = (relPath: string) => {
+    if (!bindingId) return;
+    void rpc.rig.seenState.markSeen({ bindingId, relPath });
+  };
+
+  const handleOpenFile = (absPath: string, relPath: string) => {
+    markSeen(relPath);
+    onOpenFile(absPath);
+  };
+
+  // Card rail round (§3): pin state, so a file row can carry its own pin
+  // toggle (design doc: "a small pin action on hover" — investigated, rows
+  // have no context menu to hang this off instead). Same fetch/subscribe
+  // shape as seen-state above; `card-rail.tsx` keeps its own independent
+  // copy of the same settings slice rather than this being threaded down
+  // as a prop — small, duplicated effects over a shared one is this app's
+  // own convention (see `useRevealHighlight`'s header comment).
+  const [pinned, setPinned] = useState<string[]>([]);
+  useEffect(() => {
+    if (!bindingId) {
+      setPinned([]);
+      return;
+    }
+    let alive = true;
+    void rpc.rig.settings.get().then((settings) => {
+      if (alive) setPinned(settings.pinnedPathsByRig[bindingId] ?? []);
+    });
+    const off = events.on(rigSettingsChangedChannel, (settings) => {
+      setPinned(settings.pinnedPathsByRig[bindingId] ?? []);
+    });
+    return () => {
+      alive = false;
+      off();
+    };
+  }, [bindingId]);
+
+  const togglePin = (relPath: string) => {
+    if (!bindingId) return;
+    const next = pinned.includes(relPath) ? pinned.filter((p) => p !== relPath) : [...pinned, relPath];
+    setPinned(next);
+    void rpc.rig.settings.set({ pinnedPathsByRig: { [bindingId]: next } });
+  };
 
   if (isLoading) {
     return <p className="text-text-muted px-3 py-2 text-xs">Loading files…</p>;
@@ -223,10 +339,20 @@ export function FileTree({
           root={root}
           activePath={activePath}
           revealPath={revealPath ?? null}
-          onOpenFile={onOpenFile}
+          onOpenFile={handleOpenFile}
+          unseenFiles={unseen.unseenFiles}
+          unseenCountByDir={unseen.unseenCountByDir}
+          pinned={pinned}
+          onTogglePin={togglePin}
         />
       ))}
-      <SkillsSection files={skillFiles} root={root} activePath={activePath} onOpenFile={onOpenFile} />
+      <SkillsSection
+        files={skillFiles}
+        root={root}
+        activePath={activePath}
+        onOpenFile={handleOpenFile}
+        seenState={seenState}
+      />
     </div>
   );
 }
@@ -238,13 +364,24 @@ function TreeNode({
   activePath,
   revealPath,
   onOpenFile,
+  unseenFiles,
+  unseenCountByDir,
+  pinned,
+  onTogglePin,
 }: {
   node: RigFileNode;
   depth: number;
   root: string;
   activePath: string | null;
   revealPath: string | null;
-  onOpenFile: (absPath: string) => void;
+  onOpenFile: (absPath: string, relPath: string) => void;
+  /** File-navigator redesign (§4): every unseen FILE's relPath, for the row dot. */
+  unseenFiles: Set<string>;
+  /** Every DIR relPath with at least one unseen descendant, mapped to that count. */
+  unseenCountByDir: Record<string, number>;
+  /** Card rail round (§3): currently-pinned relPaths, for the file row's hover pin toggle. */
+  pinned: string[];
+  onTogglePin: (relPath: string) => void;
 }) {
   // `null` = no explicit user choice yet, fall back to the default
   // (top-level open, or forced open while it's an ancestor of the reveal
@@ -266,6 +403,7 @@ function TreeNode({
 
   if (node.kind === 'dir') {
     const FolderGlyph = open ? FolderOpen : Folder;
+    const unseenCount = unseenCountByDir[node.relPath];
 
     return (
       <div>
@@ -288,6 +426,9 @@ function TreeNode({
           )}
           <FolderGlyph className="size-3.5 shrink-0" strokeWidth={1.5} />
           <span className="min-w-0 truncate">{node.name}</span>
+          {!!unseenCount && (
+            <span className="text-accent shrink-0 text-xs tabular-nums">{unseenCount}</span>
+          )}
         </button>
         {open &&
           (node.children ?? []).map((child) => (
@@ -299,6 +440,10 @@ function TreeNode({
               activePath={activePath}
               revealPath={revealPath}
               onOpenFile={onOpenFile}
+              unseenFiles={unseenFiles}
+              unseenCountByDir={unseenCountByDir}
+              pinned={pinned}
+              onTogglePin={onTogglePin}
             />
           ))}
       </div>
@@ -307,22 +452,43 @@ function TreeNode({
 
   const active = absPath === activePath;
   const Icon = iconFor(node.name);
+  const isUnseen = unseenFiles.has(node.relPath);
+  const isPinned = pinned.includes(node.relPath);
   return (
-    <button
-      type="button"
-      onClick={() => onOpenFile(absPath)}
-      title={node.name}
-      style={{ paddingLeft: indent + 18 }}
+    <div
       className={cn(
-        'flex w-full items-center gap-1.5 py-1 pr-3 text-left text-sm transition-colors',
-        active
-          ? 'bg-bg-2 text-text-primary'
-          : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
+        'group flex w-full items-center text-sm transition-colors',
+        active ? 'bg-bg-2 text-text-primary' : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
       )}
     >
-      <Icon className="size-3.5 shrink-0" strokeWidth={1.5} />
-      <span className="min-w-0 truncate">{displayTitle(node)}</span>
-    </button>
+      <button
+        type="button"
+        onClick={() => onOpenFile(absPath, node.relPath)}
+        title={node.name}
+        style={{ paddingLeft: indent + 18 }}
+        className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-1 text-left"
+      >
+        <Icon className="size-3.5 shrink-0" strokeWidth={1.5} />
+        <span className="min-w-0 truncate">{displayTitle(node)}</span>
+        {isUnseen && <span className="bg-accent size-1.5 shrink-0 rounded-full" />}
+      </button>
+      {/* Card rail round (§3): "a small pin action on hover" — rows have no context menu to hang this off (investigated). Always visible once pinned, so unpinning doesn't require a hover-hunt. */}
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onTogglePin(node.relPath);
+        }}
+        aria-label={isPinned ? 'Unpin' : 'Pin'}
+        title={isPinned ? 'Unpin' : 'Pin'}
+        className={cn(
+          'rounded-control mr-2 flex shrink-0 items-center justify-center p-1 transition-opacity',
+          isPinned ? 'text-accent opacity-100' : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-text-primary'
+        )}
+      >
+        <Pin className="size-3" strokeWidth={1.5} fill={isPinned ? 'currentColor' : 'none'} />
+      </button>
+    </div>
   );
 }
 
@@ -345,16 +511,22 @@ function SkillsSection({
   root,
   activePath,
   onOpenFile,
+  seenState,
 }: {
   files: RigFileNode[];
   root: string;
   activePath: string | null;
-  onOpenFile: (absPath: string) => void;
+  onOpenFile: (absPath: string, relPath: string) => void;
+  /** File-navigator redesign (§4): same seen-state FileTree already fetched — null while it's still loading, or when there's no bindingId at all. */
+  seenState: { baselineAt: number; seen: SeenMap } | null;
 }) {
   const [open, setOpen] = useState(false);
   if (files.length === 0) return null;
 
   const sorted = [...files].sort((a, b) => displayTitle(a).localeCompare(displayTitle(b)));
+  const unseenCount = seenState
+    ? sorted.filter((node) => isFileUnseen(node.mtimeMs, seenState.seen[node.relPath], seenState.baselineAt)).length
+    : 0;
 
   return (
     <div className="mt-1">
@@ -371,16 +543,20 @@ function SkillsSection({
         )}
         <Sparkles className="text-accent size-3.5 shrink-0" strokeWidth={1.5} />
         <span className="min-w-0 truncate">Skills</span>
+        {!!unseenCount && <span className="text-accent shrink-0 text-xs tabular-nums">{unseenCount}</span>}
       </button>
       {open &&
         sorted.map((node) => {
           const absPath = `${root}/${node.relPath}`;
           const active = absPath === activePath;
+          const isUnseen = seenState
+            ? isFileUnseen(node.mtimeMs, seenState.seen[node.relPath], seenState.baselineAt)
+            : false;
           return (
             <button
               key={node.relPath}
               type="button"
-              onClick={() => onOpenFile(absPath)}
+              onClick={() => onOpenFile(absPath, node.relPath)}
               title={node.name}
               style={{ paddingLeft: SKILL_ROW_PADDING }}
               className={cn(
@@ -392,6 +568,7 @@ function SkillsSection({
             >
               <Sparkles className="text-accent size-3.5 shrink-0" strokeWidth={1.5} />
               <span className="skill-label-shimmer min-w-0 truncate">{displayTitle(node)}</span>
+              {isUnseen && <span className="bg-accent size-1.5 shrink-0 rounded-full" />}
             </button>
           );
         })}
