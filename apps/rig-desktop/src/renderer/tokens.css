@@ -489,21 +489,23 @@
  */
 .hero-glow {
   position: relative;
-  /* Clip the wash to the surface it decorates: without this the ellipse
-     bled under the neighbouring panel and died in a hard vertical seam at
-     the rail border. The gradient reaches transparent well before the
-     clipped edges, so the containment itself is invisible. */
-  overflow: hidden;
+  /* No overflow clipping: v1 bled past the column and seamed at the rail;
+     v2 clipped and turned the wash into a hard-edged tinted BOX. v3 keeps
+     the wash inside the column by construction — zero horizontal bleed and
+     an ellipse whose transparent stop lands well before either edge, so it
+     fades out on its own with nothing to clip. */
 }
 .hero-glow::before {
   content: '';
   position: absolute;
-  inset: -72px 0 auto 0;
-  height: 210px;
+  top: -24px;
+  left: 0;
+  right: 0;
+  height: 240px;
   background: radial-gradient(
-    ellipse 70% 100% at 20% 0%,
-    color-mix(in oklab, var(--accent) 14%, transparent),
-    transparent 68%
+    ellipse 52% 90% at 30% 0%,
+    color-mix(in oklab, var(--accent) 13%, transparent),
+    transparent 70%
   );
   pointer-events: none;
 }
