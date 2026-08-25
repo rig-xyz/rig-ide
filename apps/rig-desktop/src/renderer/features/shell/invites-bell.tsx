@@ -3,7 +3,6 @@ import { Bell, FolderDown } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { relativeTime } from '@renderer/features/chat/session-history';
-import { defaultJoinDir, joinTargetDir } from '@renderer/features/home/join-flow';
 import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
@@ -206,26 +205,17 @@ function InviteRow({ row, onOpenPath }: { row: MyInviteRow; onOpenPath: (path: s
     setSettingUp(true);
     setSetupError(null);
     try {
-      const picked = await rpc.app.openSelectDirectoryDialog({
-        title: 'Choose a folder',
-        message: `Where should "${row.rigName}" be set up?`,
-        // A starting suggestion only, seen nowhere but inside the dialog
-        // the user controls — never displayed as page text (same
-        // convention as Home's "Download").
-        defaultPath: defaultJoinDir(row.rigName),
-      });
-      if (!picked) return;
-      const result = await rpc.rig.join.attach({
-        bindingId: row.bindingId,
-        targetDir: joinTargetDir(picked, row.rigName),
-      });
+      // Rig home round: no picker — same as Home's "Download", `rig
+      // attach` with no `targetDir` lands the rig in `<home>/<slug>` on
+      // its own.
+      const result = await rpc.rig.join.attach({ bindingId: row.bindingId });
       if (!result.success) {
         setSetupError(result.error.message);
         return;
       }
       onOpenPath(result.data.localPath);
     } catch (err) {
-      setSetupError(err instanceof Error ? err.message : "Couldn't open the folder picker.");
+      setSetupError(err instanceof Error ? err.message : 'Could not set up the rig locally.');
     } finally {
       setSettingUp(false);
     }

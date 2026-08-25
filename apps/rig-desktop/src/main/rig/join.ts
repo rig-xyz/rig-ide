@@ -15,11 +15,18 @@ import { resolveCliBin } from './bundled-cli';
  * comment for the full history of why this couldn't work for editor/viewer
  * bindings before the CLI shipped `rig attach`.
  *
- * One step now, not two: drive the bundled `rig attach <bindingId> --dir
- * <targetDir> --json` — it mints its own device credential straight off the
- * relay's member-gated endpoint, so there's no invite to self-mint from
- * here first. Spawned and parsed the same way `main/rig/auth.ts` drives
- * `rig login`.
+ * One step now, not two: drive the bundled `rig attach <bindingId> --json`
+ * — it mints its own device credential straight off the relay's
+ * member-gated endpoint, so there's no invite to self-mint from here first.
+ * Spawned and parsed the same way `main/rig/auth.ts` drives `rig login`.
+ *
+ * Rig home round: `targetDir` is now OPTIONAL. Omitted (the normal
+ * Download/"Set up locally" path), `--dir` is left off entirely and the CLI
+ * lands the rig in `<home>/<slug>` on its own (see docs/rig-home-design.md)
+ * — no picker, no location question. `targetDir` is still accepted for the
+ * "Advanced: choose location…" escape hatch, which passes `--dir` through
+ * unchanged (the CLI's own guard on that flag — dangerous/non-empty target
+ * — applies exactly as it does from a terminal).
  */
 
 /** `rig attach` mints a device, clones the manifest, and starts the sync daemon — generous headroom over a plain relay call. */
@@ -61,7 +68,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
  * escape handling) so a brace inside a quoted message — `"Unexpected token
  * }"` — never miscounts as structural.
  */
-function extractJsonObjects(output: string): Record<string, unknown>[] {
+// Exported: `rig-controls.ts` (`rig move`/`rig pause`/`rig resume`) reuses
+// this same tolerant parse rather than a second copy — those commands'
+// `--json` output goes through the identical `bin/rig.mjs` envelope
+// machinery this was written for.
+export function extractJsonObjects(output: string): Record<string, unknown>[] {
   const objects: Record<string, unknown>[] = [];
   let depth = 0;
   let start = -1;
@@ -106,7 +117,7 @@ function extractJsonObjects(output: string): Record<string, unknown>[] {
  * one that actually has that shape — tolerant of an unrelated earlier (or
  * later) JSON blob that isn't the envelope.
  */
-function parseJsonErrorEnvelope(output: string): { code: string; message: string } | null {
+export function parseJsonErrorEnvelope(output: string): { code: string; message: string } | null {
   const objects = extractJsonObjects(output);
   for (let i = objects.length - 1; i >= 0; i--) {
     const error = asRecord(objects[i].error);
@@ -161,17 +172,41 @@ export function classifyAttachFailure(stdout: string, stderr: string, code: numb
  * reporting a genuinely successful attach as "output could not be read."
  * Returns `null` only when stdout has no JSON object in it at all.
  */
-export function parseAttachSuccess(stdout: string, fallbackDir: string): RigJoinResult | null {
+export function parseAttachSuccess(stdout: string, fallbackDir: string | null): RigJoinResult | null {
   const parsed = extractJsonObjects(stdout).at(-1);
   if (!parsed) return null;
   const localPath = typeof parsed.dir === 'string' ? parsed.dir : fallbackDir;
+  // No `dir` in the envelope and no explicit `--dir` to fall back on (the
+  // home-landing path) — genuinely can't say where it landed.
+  if (!localPath) return null;
   const rigName = typeof parsed.rigName === 'string' ? parsed.rigName : null;
   const syncing = parsed.syncing === true;
   return { localPath, rigName, syncing };
 }
 
-/** Drives `rig attach <bindingId> --dir <targetDir> --json` — spawn, parse, done. `--json` pins the CLI's non-interactive branch, same as `--plain` does for `rig login`. */
-function spawnAttach(bindingId: string, targetDir: string): Promise<Result<RigJoinResult, RigAttachError>> {
+/**
+ * Pure — the `rig attach` argv, isolated from the spawn plumbing so the
+ * no-`targetDir` behavior (the rig home round's whole point: `--dir` must
+ * be OMITTED, not passed as empty/undefined, or the CLI would treat it as
+ * an explicit escape-hatch request) is a tested fact rather than something
+ * only exercised by actually spawning a process.
+ */
+export function buildAttachArgs(bindingId: string, targetDir: string | null): string[] {
+  return ['attach', bindingId, ...(targetDir ? ['--dir', targetDir] : []), '--json'];
+}
+
+/**
+ * Drives `rig attach <bindingId> [--dir <targetDir>] --json` — spawn,
+ * parse, done. `--json` pins the CLI's non-interactive branch, same as
+ * `--plain` does for `rig login`. `targetDir` null/omitted is the normal
+ * path: no `--dir` at all, so the CLI lands the rig in its own managed
+ * home (`<home>/<slug>`) exactly as `rig join`/`rig attach` from a
+ * terminal would.
+ */
+function spawnAttach(
+  bindingId: string,
+  targetDir: string | null
+): Promise<Result<RigJoinResult, RigAttachError>> {
   const bin = resolveCliBin();
   return new Promise((resolve) => {
     let stdout = '';
@@ -185,7 +220,7 @@ function spawnAttach(bindingId: string, targetDir: string): Promise<Result<RigJo
       resolve(value);
     };
 
-    const child = spawn(bin, ['attach', bindingId, '--dir', targetDir, '--json'], {
+    const child = spawn(bin, buildAttachArgs(bindingId, targetDir), {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
     });
@@ -262,21 +297,23 @@ export function deriveLocateOutcome(
 
 export const rigJoinController = createRPCController({
   /**
-   * Drives `rig attach` for `bindingId` into `targetDir` — works for any
-   * explicit member (owner/editor/viewer), unlike the old self-minted-invite
-   * flow this replaced. The caller (the Home screen's "Download" action, and
-   * the invites bell's post-accept "Set up locally") opens the resulting
-   * `localPath` via the normal `openPath` flow — this RPC only sets the
-   * folder up, it never opens anything itself.
+   * Drives `rig attach` for `bindingId` — works for any explicit member
+   * (owner/editor/viewer), unlike the old self-minted-invite flow this
+   * replaced. `targetDir` is omitted for the normal Home "Download"/invites
+   * bell "Set up locally" path — the CLI lands the rig in `<home>/<slug>`
+   * on its own, no picker involved (rig home round). It's still accepted
+   * for the "Advanced: choose location…" escape hatch. The caller opens
+   * the resulting `localPath` via the normal `openPath` flow — this RPC
+   * only sets the folder up, it never opens anything itself.
    */
   attach: async ({
     bindingId,
     targetDir,
   }: {
     bindingId: string;
-    targetDir: string;
+    targetDir?: string | null;
   }): Promise<Result<RigJoinResult, RigAttachError>> => {
-    return spawnAttach(bindingId, targetDir);
+    return spawnAttach(bindingId, targetDir ?? null);
   },
 
   /**

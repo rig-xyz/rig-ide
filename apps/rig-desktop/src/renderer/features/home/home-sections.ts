@@ -26,6 +26,10 @@ export type HomeLocalRig = {
   name: string | null;
   path: string;
   lastOpenedAt: number;
+  /** Sync toggle round — `.rig/sync-paused.json`'s flag, read fresh by the main process. */
+  paused: boolean;
+  /** Rig home round — true when this rig's path is outside the managed Rig home; gates "Move to Rig folder" and the "custom location" affordance. */
+  outsideHome: boolean;
 };
 
 /** One cross-rig recent session, as read from `rpc.rig.sessions.listRecentAcrossRigs`. */
@@ -176,6 +180,8 @@ export type HomeRigRow =
       path: string;
       lastOpenedAt: number;
       sessions: readonly HomeRigSession[];
+      paused: boolean;
+      outsideHome: boolean;
     }
   | {
       kind: 'relayOnly';
@@ -389,6 +395,8 @@ export function buildHomeRigRows(
       path: r.path,
       lastOpenedAt: r.lastOpenedAt,
       sessions: sessionsByRig.get(r.bindingId) ?? [],
+      paused: r.paused,
+      outsideHome: r.outsideHome,
     }))
     .sort((a, b) => localRecencyKey(b) - localRecencyKey(a));
 

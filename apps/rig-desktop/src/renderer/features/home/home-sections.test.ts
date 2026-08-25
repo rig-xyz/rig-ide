@@ -15,8 +15,8 @@ import {
   type HomeRigRow,
 } from './home-sections';
 
-const RIG_A = { bindingId: 'b1', name: 'Alpha', path: '/a', lastOpenedAt: 100 };
-const RIG_B = { bindingId: 'b2', name: 'Beta', path: '/b', lastOpenedAt: 200 };
+const RIG_A = { bindingId: 'b1', name: 'Alpha', path: '/a', lastOpenedAt: 100, paused: false, outsideHome: false };
+const RIG_B = { bindingId: 'b2', name: 'Beta', path: '/b', lastOpenedAt: 200, paused: false, outsideHome: false };
 const SESSION_A = {
   id: 's1',
   providerId: 'claude',
@@ -158,7 +158,16 @@ describe('buildHomeRigRows', () => {
       [SESSION_A]
     );
     expect(rows).toEqual([
-      { kind: 'local', bindingId: 'b1', name: 'Alpha', path: '/a', lastOpenedAt: 100, sessions: [SESSION_A].map((s) => ({ id: s.id, providerId: s.providerId, title: s.title, updatedAt: s.updatedAt })) },
+      {
+        kind: 'local',
+        bindingId: 'b1',
+        name: 'Alpha',
+        path: '/a',
+        lastOpenedAt: 100,
+        paused: false,
+        outsideHome: false,
+        sessions: [SESSION_A].map((s) => ({ id: s.id, providerId: s.providerId, title: s.title, updatedAt: s.updatedAt })),
+      },
     ]);
   });
 
@@ -213,7 +222,14 @@ describe('buildHomeRigRows', () => {
   });
 
   it('a rig chatted in recently outranks one merely opened earlier (session recency beats lastOpenedAt)', () => {
-    const staleOpenButRecentChat = { bindingId: 'b3', name: 'Old-open', path: '/c', lastOpenedAt: 50 };
+    const staleOpenButRecentChat = {
+      bindingId: 'b3',
+      name: 'Old-open',
+      path: '/c',
+      lastOpenedAt: 50,
+      paused: false,
+      outsideHome: false,
+    };
     const rows = buildHomeRigRows(
       [RIG_A, staleOpenButRecentChat], // RIG_A.lastOpenedAt = 100
       { status: 'skipped' },
@@ -239,7 +255,16 @@ describe('buildHomeRigRows', () => {
 
   it('no bindings data (skipped/loading/unreachable) still renders local rows', () => {
     expect(buildHomeRigRows([RIG_A], { status: 'skipped' }, [])).toEqual([
-      { kind: 'local', bindingId: 'b1', name: 'Alpha', path: '/a', lastOpenedAt: 100, sessions: [] },
+      {
+        kind: 'local',
+        bindingId: 'b1',
+        name: 'Alpha',
+        path: '/a',
+        lastOpenedAt: 100,
+        paused: false,
+        outsideHome: false,
+        sessions: [],
+      },
     ]);
     expect(buildHomeRigRows([RIG_A], { status: 'unreachable' }, [])).toHaveLength(1);
     expect(buildHomeRigRows([RIG_A], { status: 'loading' }, [])).toHaveLength(1);
@@ -276,6 +301,15 @@ describe('buildHomeRigRows', () => {
     expect(rows.every((r) => r.kind === 'relayOnly' && r.name === 'channel-test')).toBe(true);
     const disambiguators = rows.map((r) => (r.kind === 'relayOnly' ? r.disambiguator : null));
     expect(disambiguators).toEqual(['created May 12', 'created Jun 3']);
+  });
+
+  it('carries paused/outsideHome through from the local rig row, untouched', () => {
+    const rows = buildHomeRigRows(
+      [{ ...RIG_A, paused: true, outsideHome: true }],
+      { status: 'skipped' },
+      []
+    );
+    expect(rows[0]).toMatchObject({ paused: true, outsideHome: true });
   });
 
   it('a relay-only row with a discovered local path carries it, from the localPaths map', () => {
@@ -491,6 +525,8 @@ const LOCAL_ROW: HomeRigRow = {
   path: '/a',
   lastOpenedAt: 100,
   sessions: [],
+  paused: false,
+  outsideHome: false,
 };
 const OWNED_NOT_SET_UP: HomeRigRow = {
   kind: 'relayOnly',

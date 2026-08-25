@@ -15,6 +15,12 @@
  * of owner/editor/viewer, not owner-only) that needs no invite secret at
  * all. `main/rig/join.ts` drives it exactly like `rig join <url>` before
  * it: spawn, parse `--json`, done. One door for every role.
+ *
+ * Rig home round: no picker in the normal path any more — `targetDir` is
+ * omitted, and the CLI lands the rig in its own managed home
+ * (`<home>/<slug>`, see docs/rig-home-design.md) with no location question
+ * asked. It's still accepted for the "Advanced: choose location…" escape
+ * hatch.
  */
 
 export type RigJoinResult = {

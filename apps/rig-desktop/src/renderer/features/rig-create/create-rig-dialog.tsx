@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Cloud, FileInput, FolderCheck, FolderOpen } from 'lucide-react';
+import { Cloud, FileInput, FolderCheck, FolderOpen, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { ImportDocField } from '@renderer/features/rig-import/import-doc-field';
@@ -18,11 +18,17 @@ import { deriveCreateFormState } from './create-form-state';
 
 /**
  * Home's "New rig" dialog: name (slug preview when the CLI's naming rule
- * would change it), a parent folder via the native picker, and a real
- * sync toggle — `rig sync` is the CLI's genuine go-live verb, so the toggle
- * is honest end-to-end. Drives `rig.create.create` (main spawns the bundled
- * CLI headlessly) and, when the new rig came up SYNCED, opens it through
- * the normal `openPath` flow.
+ * would change it) and a real sync toggle — `rig sync` is the CLI's genuine
+ * go-live verb, so the toggle is honest end-to-end. Drives `rig.create.create`
+ * (main spawns the bundled CLI headlessly) and, when the new rig came up
+ * SYNCED, opens it through the normal `openPath` flow.
+ *
+ * Rig home round: no picker in the default flow. Location is a read-only
+ * hint ("Will live in ~/Rig/<slug>", `rpc.rig.home.get()` + the live slug)
+ * — the folder picker only reappears behind "Advanced: choose location…",
+ * with a one-line at-your-own-risk warning once a custom folder is
+ * actually chosen (the CLI's own guard on a dangerous/non-empty target
+ * still applies; this is just the honest heads-up in the UI).
  *
  * A local-only outcome (toggle off, or sync failed after creation) does NOT
  * open: this app's rig view only opens bound workspaces
@@ -63,6 +69,7 @@ function CreateRigForm({
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
+  const [advanced, setAdvanced] = useState(false);
   const [parentDir, setParentDir] = useState<string | null>(null);
   const [sync, setSync] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -120,7 +127,16 @@ function CreateRigForm({
     void queryClient.invalidateQueries({ queryKey: ['rig', 'auth', 'status'] });
   });
 
-  const form = deriveCreateFormState({ name, parentDir, sync, signedIn, busy });
+  // Default-flow location hint — "Will live in ~/Rig/<slug>". Falls back to
+  // the CLI's own `~/Rig` default while the read is in flight, which is
+  // never wrong in the common (never-customized) case.
+  const homeQuery = useQuery({
+    queryKey: ['rig', 'home', 'get'],
+    queryFn: () => rpc.rig.home.get(),
+    enabled: !advanced,
+  });
+
+  const form = deriveCreateFormState({ name, parentDir, advanced, sync, signedIn, busy });
 
   const chooseFolder = async () => {
     try {
@@ -145,7 +161,10 @@ function CreateRigForm({
     setBusy(true);
     setError(null);
     const result = await rpc.rig.create.create({
-      parentDir: parentDir!,
+      // Default flow: null — main lands the rig in `<home>/<slug>` on its
+      // own. Advanced: the folder the user picked (`form.canSubmit`
+      // already requires one before this can be reached).
+      parentDir: advanced ? parentDir : null,
       name,
       sync: form.syncEffective,
     });
@@ -286,32 +305,59 @@ function CreateRigForm({
 
       <div className="flex flex-col gap-1">
         <span className="text-text-secondary text-xs font-medium">Location</span>
-        {parentDir ? (
-          // The chosen destination as a quiet path row: folder glyph, the
-          // full mono path (parent + slug), Change… as a text affordance.
-          <div className="border-border-hairline flex min-w-0 items-center gap-2 rounded-control border px-2 py-1.5">
-            <FolderOpen className="text-text-muted size-3.5 shrink-0" strokeWidth={1.5} />
-            <span className="text-text-secondary min-w-0 flex-1 truncate font-mono text-xs" title={parentDir}>
-              {parentDir}
-              {form.slug ? `/${form.slug}` : ''}
-            </span>
+        {advanced ? (
+          parentDir ? (
+            // The chosen destination as a quiet path row: folder glyph, the
+            // full mono path (parent + slug), Change… as a text affordance.
+            <div className="flex flex-col gap-1.5">
+              <div className="border-border-hairline flex min-w-0 items-center gap-2 rounded-control border px-2 py-1.5">
+                <FolderOpen className="text-text-muted size-3.5 shrink-0" strokeWidth={1.5} />
+                <span className="text-text-secondary min-w-0 flex-1 truncate font-mono text-xs" title={parentDir}>
+                  {parentDir}
+                  {form.slug ? `/${form.slug}` : ''}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void chooseFolder()}
+                  className="text-text-muted hover:text-text-primary shrink-0 text-xs transition-colors"
+                >
+                  Change…
+                </button>
+              </div>
+              {/* At-your-own-risk, stated once — the CLI's own guard
+                  (dangerous location, non-empty target) is the real
+                  enforcement; this is the honest heads-up in the UI. */}
+              <p className="text-text-muted flex items-start gap-1.5 text-xs">
+                <TriangleAlert className="text-text-muted mt-0.5 size-3 shrink-0" strokeWidth={1.5} />
+                At your own risk — rig won’t merge into a non-empty folder.
+              </p>
+            </div>
+          ) : (
             <button
               type="button"
               onClick={() => void chooseFolder()}
-              className="text-text-muted hover:text-text-primary shrink-0 text-xs transition-colors"
+              className="border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex items-center gap-1.5 self-start border bg-transparent px-2 py-1 text-xs transition-colors"
             >
-              Change…
+              <FolderOpen className="size-3.5" strokeWidth={1.5} />
+              Choose folder…
+            </button>
+          )
+        ) : (
+          // Rig home round default: read-only hint, updates live with the
+          // slug — no location question asked.
+          <div className="flex flex-col gap-1">
+            <p className="text-text-muted font-mono text-xs">
+              Will live in {homeQuery.data?.displayPath ?? '~/Rig'}
+              {form.slug ? `/${form.slug}` : ''}
+            </p>
+            <button
+              type="button"
+              onClick={() => setAdvanced(true)}
+              className="text-text-muted hover:text-text-primary self-start text-xs transition-colors"
+            >
+              Advanced: choose location…
             </button>
           </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => void chooseFolder()}
-            className="border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex items-center gap-1.5 self-start border bg-transparent px-2 py-1 text-xs transition-colors"
-          >
-            <FolderOpen className="size-3.5" strokeWidth={1.5} />
-            Choose folder…
-          </button>
         )}
       </div>
 

@@ -23,19 +23,27 @@ export type CreateFormState = {
 
 export function deriveCreateFormState(input: {
   name: string;
+  /**
+   * Rig home round: only meaningful when `advanced` is true — the default
+   * flow lands in `<home>/<slug>` and never asks. Still typed as
+   * `string | null` since it's exactly `RigCreateRequest`'s own
+   * `parentDir` shape.
+   */
   parentDir: string | null;
+  /** "Advanced: choose location…" was opened — a folder is required before submit; the default (name-only) flow never needs one. */
+  advanced: boolean;
   sync: boolean;
   signedIn: boolean;
   busy: boolean;
 }): CreateFormState {
-  const { name, parentDir, sync, signedIn, busy } = input;
+  const { name, parentDir, advanced, sync, signedIn, busy } = input;
   const slug = rigSlug(name);
   const validation = validateRigName(name);
   return {
     slug,
     showSlugPreview: slug.length > 0 && slug !== name.trim(),
     nameError: name.length > 0 ? validation : null,
-    canSubmit: validation === null && parentDir !== null && !busy,
+    canSubmit: validation === null && (!advanced || parentDir !== null) && !busy,
     syncEffective: sync && signedIn,
     syncNeedsSignIn: sync && !signedIn,
   };

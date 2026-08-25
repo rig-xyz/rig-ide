@@ -100,6 +100,8 @@ export function Home({
     name: r.name,
     path: r.path,
     lastOpenedAt: r.lastOpenedAt,
+    paused: r.paused,
+    outsideHome: r.outsideHome,
   }));
   const recentSessions: HomeRecentSession[] = recentSessionsQuery.data ?? [];
   const workspaces = deriveWorkspacesState(signedIn, {

@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
-import { desc, sql } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import { db } from '@main/db/client';
 import { rigRigs, type RigRigRow } from '@main/db/schema';
 import { createRPCController } from '@shared/lib/ipc/rpc';
+import { isInsideHome, readRigHomeDir } from './home';
+import { isRigSyncPaused } from './sync-paused';
 
 /**
  * Recent-rigs bookkeeping (`persistence-design.md` Round A) — one `rig_rigs`
@@ -39,6 +41,16 @@ export async function recordRigOpened(input: {
         openCount: sql`${rigRigs.openCount} + 1`,
       },
     });
+}
+
+/**
+ * Updates ONLY the path for an existing `rig_rigs` row — the row menu's
+ * "Move to Rig folder" (`rig-controls.ts`'s `moveRig`) after a successful
+ * `rig move`. Deliberately narrower than `recordRigOpened`: a move is not
+ * an "open" (no `lastOpenedAt`/`openCount` bump).
+ */
+export async function updateRigPath(bindingId: string, newPath: string): Promise<void> {
+  await db.update(rigRigs).set({ path: newPath }).where(eq(rigRigs.bindingId, bindingId));
 }
 
 // ── resolveLocalPaths (correction round — the scan is gone) ────────────────
@@ -86,10 +98,26 @@ export async function resolveLocalPathsImpl(bindingIds: readonly string[]): Prom
   return verified;
 }
 
+/** One `rig_rigs` row, enriched with the two live-filesystem facts the rigs rail's row menu needs — neither is stored, both are cheap per-known-path checks (no scanning). */
+export type RecentRigRow = RigRigRow & {
+  /** `.rig/sync-paused.json`'s flag, read fresh — see `sync-paused.ts`. */
+  paused: boolean;
+  /** True when this rig's path is NOT inside the managed Rig home — gates the row menu's "Move to Rig folder" and the "custom location" affordance. */
+  outsideHome: boolean;
+};
+
 export const rigRecentController = createRPCController({
   /** Most-recently-opened rigs, newest first — feeds the Home screen's RIGS section. */
-  recentRigs: (limit = 10): Promise<RigRigRow[]> => {
-    return db.select().from(rigRigs).orderBy(desc(rigRigs.lastOpenedAt)).limit(limit);
+  recentRigs: async (limit = 10): Promise<RecentRigRow[]> => {
+    const rows = await db.select().from(rigRigs).orderBy(desc(rigRigs.lastOpenedAt)).limit(limit);
+    const home = await readRigHomeDir();
+    return Promise.all(
+      rows.map(async (row) => ({
+        ...row,
+        paused: await isRigSyncPaused(row.path),
+        outsideHome: !isInsideHome(row.path, home),
+      }))
+    );
   },
 
   resolveLocalPaths: ({ bindingIds }: { bindingIds: string[] }): Promise<Record<string, string>> =>

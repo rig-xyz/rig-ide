@@ -9,8 +9,14 @@
  */
 
 export type RigCreateRequest = {
-  /** The folder the user picked; the rig is created as a NEW subfolder of it. */
-  parentDir: string;
+  /**
+   * Rig home round: null/omitted is the DEFAULT flow — the rig lands in
+   * `<home>/<slug>` (the managed Rig home, collision-suffixed), no
+   * location question asked. Non-null only via "Advanced: choose
+   * location…", where the rig is created as a new subfolder of the
+   * user-picked folder instead.
+   */
+  parentDir: string | null;
   /** What the user typed — slugged into the folder/rig name (`rigSlug`). */
   name: string;
   /** Go live after init (`rig sync` — mints the relay binding, mirrors to workspace home). */

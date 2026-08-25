@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { deriveCreateFormState } from './create-form-state';
 
-const base = { name: 'Knee Ability', parentDir: '/Users/dylan/Code', sync: true, signedIn: true, busy: false };
+const base = {
+  name: 'Knee Ability',
+  parentDir: null,
+  advanced: false,
+  sync: true,
+  signedIn: true,
+  busy: false,
+};
 
 describe('deriveCreateFormState', () => {
-  it('is submittable with a valid name, a chosen folder, and nothing in flight', () => {
+  it('is submittable with just a valid name — the default flow lands in home, no folder needed', () => {
     expect(deriveCreateFormState(base)).toEqual({
       slug: 'knee-ability',
       showSlugPreview: true,
@@ -33,9 +40,21 @@ describe('deriveCreateFormState', () => {
     );
   });
 
-  it('blocks submit without a chosen folder or while creating', () => {
-    expect(deriveCreateFormState({ ...base, parentDir: null }).canSubmit).toBe(false);
+  it('Advanced open, no folder chosen yet — blocks submit', () => {
+    expect(deriveCreateFormState({ ...base, advanced: true, parentDir: null }).canSubmit).toBe(false);
+  });
+
+  it('Advanced open, a folder chosen — submittable again', () => {
+    expect(
+      deriveCreateFormState({ ...base, advanced: true, parentDir: '/Users/dylan/Code' }).canSubmit
+    ).toBe(true);
+  });
+
+  it('blocks submit while creating, regardless of Advanced', () => {
     expect(deriveCreateFormState({ ...base, busy: true }).canSubmit).toBe(false);
+    expect(
+      deriveCreateFormState({ ...base, advanced: true, parentDir: '/Users/dylan/Code', busy: true }).canSubmit
+    ).toBe(false);
   });
 
   it('gates sync on sign-in: intent stays visible, effect waits', () => {

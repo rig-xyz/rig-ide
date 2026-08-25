@@ -42,9 +42,11 @@ import { rigCommentsController } from './rig/comments';
 import { rigCommentsCacheController } from './rig/comments-cache-store';
 import { rigCreateController } from './rig/create';
 import { rigFilesController } from './rig/files';
+import { rigHomeController } from './rig/home';
 import { rigImportController } from './rig/import-doc';
 import { rigJoinController } from './rig/join';
 import { rigPulseController } from './rig/pulse';
+import { rigControlController } from './rig/rig-controls';
 import { rigRecentController } from './rig/recent-rigs';
 import { rigSessionsController } from './rig/sessions';
 import { rigSettingsController } from './rig/settings-instance';
@@ -156,6 +158,15 @@ export const rpcRouter = createRPCRouter({
     // see `bundled-cli.ts`'s own header comment for why this never spawns
     // either binary.
     bundledCli: rigBundledCliController,
+    // The managed Rig home directory — Settings' "Rig folder" row (get the
+    // current path, "Change…" to write a new one) and the create dialog's
+    // live "Will live in …" hint. See `home.ts`'s own header comment.
+    home: rigHomeController,
+    // `rig move`/`rig pause`/`rig resume` — the rigs-rail row menu's "Move
+    // to Rig folder" and sync pause/resume toggle. Its own key, like
+    // `join`/`create` above: one-shot actions driving the bundled CLI, not
+    // a data surface. See `rig-controls.ts`'s own header comment.
+    control: rigControlController,
   }),
   workspace: createRPCNamespace({
     gitWorktree: gitWorktreeController,

@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import {
   ArrowDownAZ,
   Check,
@@ -5,10 +6,13 @@ import {
   Clock,
   CloudOff,
   Download,
+  FolderInput,
   FolderOpen,
   FolderSearch,
   LayoutList,
   MoreHorizontal,
+  Pause,
+  Play,
   Plus,
   Users,
   type LucideIcon,
@@ -39,7 +43,6 @@ import {
   type HomeRigRow,
   type HomeRigSession,
 } from './home-sections';
-import { defaultJoinDir, joinTargetDir } from './join-flow';
 
 /**
  * Round: HOME RESTRUCTURE — the left region ("YOUR RIGS", the action
@@ -400,6 +403,16 @@ function useRowHighlight(isTarget: boolean): { ref: React.RefObject<HTMLDivEleme
  * connector, not just whitespace, so "this rig, then its sessions" reads
  * as one group at a glance instead of two stacked lines that happen to be
  * near each other.
+ *
+ * Rig home round: the open button now shares its row with a quiet `⋯`
+ * trigger (`LocalRigRowMenu`, same hover/focus-reveal convention as the
+ * relay-only row's own `RelayOnlyActionsMenu`) — "Move to Rig folder" for
+ * a row outside the managed home, and the pause/resume sync toggle. Paused
+ * replaces the relative-time subtext (same muted style, just a different
+ * fact — sync state outranks "when" once it's not currently syncing); an
+ * outside-home row also carries a quiet "custom location" chip, the same
+ * chip convention already used elsewhere in this app (role labels, the
+ * "optional" doc-import chip) rather than a new icon.
  */
 function LocalRigRow({
   row,
@@ -415,26 +428,42 @@ function LocalRigRow({
   isHighlightTarget: boolean;
 }) {
   const { ref, flashing } = useRowHighlight(isHighlightTarget);
+  const [error, setError] = useState<string | null>(null);
   const lastActivity = localRecencyKey(row);
   return (
     <div ref={ref} className="flex flex-col gap-1">
-      <button
-        type="button"
-        onClick={() => onOpenPath(row.path)}
-        title={row.path}
+      <div
         className={cn(
-          'flex items-center gap-2 rounded-control px-2 py-2 text-left transition-colors',
+          'group flex items-center gap-1 rounded-control transition-colors',
           flashing ? 'bg-accent-subtle' : 'hover:bg-bg-2'
         )}
       >
-        <FolderOpen className="text-text-muted size-3.5 shrink-0" strokeWidth={1.5} />
-        <span className="min-w-0 flex-1">
-          <span className="text-text-primary block truncate text-sm">{row.name ?? row.path.split('/').pop()}</span>
-          <span className="text-text-muted block truncate font-mono text-xs">
-            {relativeTime(lastActivity, Date.now())}
+        <button
+          type="button"
+          onClick={() => onOpenPath(row.path)}
+          title={row.path}
+          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left"
+        >
+          <FolderOpen className="text-text-muted size-3.5 shrink-0" strokeWidth={1.5} />
+          <span className="min-w-0 flex-1">
+            <span className="text-text-primary block truncate text-sm">
+              {row.name ?? row.path.split('/').pop()}
+            </span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="text-text-muted truncate font-mono text-xs">
+                {row.paused ? 'Paused' : relativeTime(lastActivity, Date.now())}
+              </span>
+              {row.outsideHome && (
+                <span className="bg-bg-2 text-text-muted rounded-chip shrink-0 px-1.5 py-0.5 font-mono text-xs">
+                  custom location
+                </span>
+              )}
+            </span>
           </span>
-        </span>
-      </button>
+        </button>
+        <LocalRigRowMenu row={row} onError={setError} />
+      </div>
+      {error && <p className="text-danger pl-6 text-xs">{error}</p>}
       {row.sessions.length > 0 && (
         <div className="ml-[7px] flex flex-col gap-1 border-l border-border-hairline pl-[19px]">
           {row.sessions.map((session) => (
@@ -448,6 +477,147 @@ function LocalRigRow({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The `⋯` trigger for a local row: "Move to Rig folder" (only when
+ * `row.outsideHome`) and the pause/resume sync toggle. Same portal
+ * positioning/dismiss convention as `RelayOnlyActionsMenu`. Both actions
+ * shell the CLI (`rig.control.move`/`.pause`/`.resume`, see
+ * `rig-controls.ts`) and, on success, invalidate the same `recentRigs`
+ * query key `home.tsx`'s own rail read uses — the row's next render picks
+ * up the new path/paused state from there rather than this component
+ * guessing at it locally.
+ */
+function LocalRigRowMenu({
+  row,
+  onError,
+}: {
+  row: Extract<HomeRigRow, { kind: 'local' }>;
+  onError: (message: string | null) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const rect = useAnchorRect(open, triggerRef, { gap: 4, estimatedHeight: 76, estimatedWidth: 170 });
+
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = () => setOpen(false);
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target)) return;
+      dismiss();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') dismiss();
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  const refreshRail = () => queryClient.invalidateQueries({ queryKey: ['rig', 'recent', 'list'] });
+
+  const move = async () => {
+    setOpen(false);
+    setBusy(true);
+    onError(null);
+    const result = await rpc.rig.control.move({ bindingId: row.bindingId, path: row.path });
+    setBusy(false);
+    if (!result.success) {
+      onError(result.error.message);
+      return;
+    }
+    void refreshRail();
+  };
+
+  const toggleSync = async () => {
+    setOpen(false);
+    setBusy(true);
+    onError(null);
+    const result = row.paused
+      ? await rpc.rig.control.resume({ path: row.path })
+      : await rpc.rig.control.pause({ path: row.path });
+    setBusy(false);
+    if (!result.success) {
+      onError(result.error.message);
+      return;
+    }
+    void refreshRail();
+  };
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={busy}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`More actions for "${row.name ?? row.path}"`}
+        className={cn(
+          'text-text-muted hover:text-text-primary focus-visible:outline-accent rounded-control mr-1 flex shrink-0 items-center justify-center p-1 transition-opacity focus-visible:outline-2 focus-visible:outline-offset-2',
+          busy ? 'pointer-events-none opacity-50' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+        )}
+      >
+        <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
+      </button>
+      {open &&
+        rect &&
+        createPortal(
+          <div
+            role="menu"
+            style={{
+              position: 'fixed',
+              width: Math.max(rect.width, 170),
+              maxHeight: rect.maxHeight,
+              overflowY: 'auto',
+              ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
+              ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
+            }}
+            className="border-border-hairline bg-bg-1 rounded-control shadow-soft z-50 border py-1"
+          >
+            {row.outsideHome && (
+              <button
+                type="button"
+                role="menuitem"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  void move();
+                }}
+                className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+              >
+                <FolderInput className="size-3.5 shrink-0" strokeWidth={1.5} />
+                Move to Rig folder
+              </button>
+            )}
+            <button
+              type="button"
+              role="menuitem"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                void toggleSync();
+              }}
+              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+            >
+              {row.paused ? (
+                <Play className="size-3.5 shrink-0" strokeWidth={1.5} />
+              ) : (
+                <Pause className="size-3.5 shrink-0" strokeWidth={1.5} />
+              )}
+              {row.paused ? 'Resume syncing' : 'Pause syncing'}
+            </button>
+          </div>,
+          document.body
+        )}
+    </>
   );
 }
 
@@ -488,9 +658,9 @@ function SessionSubRow({
  * same slot the "Open" button occupies for a row WITH a known local path,
  * opening a small menu with the same two actions:
  *
- * - "Download…" (any member, `canAutoJoin`) — the native picker, opened
- *   with a suggested destination visible only inside the dialog itself,
- *   then `rig attach` into whatever the user actually picked.
+ * - "Download" (any member, `canAutoJoin`) — rig home round: no picker,
+ *   `rig attach` with no `targetDir` lands the rig straight in
+ *   `<home>/<slug>`, one click.
  * - "Locate…" (any role) — "I already have this on my machine": the native
  *   picker, then `rpc.rig.join.locate` reads and verifies the picked
  *   folder's OWN `.rig/tap-binding.local.json` before anything is recorded.
@@ -652,25 +822,18 @@ function RelayOnlyActionsMenu({
     setDownloading(true);
     onError(null);
     try {
-      const picked = await rpc.app.openSelectDirectoryDialog({
-        title: 'Choose a folder',
-        message: `Where should "${row.name}" be set up?`,
-        // A starting suggestion only, seen nowhere but inside the dialog
-        // the user controls — never displayed as page text.
-        defaultPath: defaultJoinDir(row.name),
-      });
-      if (!picked) return;
-      const result = await rpc.rig.join.attach({
-        bindingId: row.bindingId,
-        targetDir: joinTargetDir(picked, row.name),
-      });
+      // Rig home round: no picker — `rig attach` lands the rig in
+      // `<home>/<slug>` on its own (no `targetDir`). Any failure (e.g. a
+      // collision with an existing binding) surfaces inline below, via the
+      // CLI's own `--json` error envelope message.
+      const result = await rpc.rig.join.attach({ bindingId: row.bindingId });
       if (!result.success) {
         onError(result.error.message);
         return;
       }
       onOpenPath(result.data.localPath);
     } catch (err) {
-      onError(err instanceof Error ? err.message : "Couldn't open the folder picker.");
+      onError(err instanceof Error ? err.message : 'Could not set up the rig locally.');
     } finally {
       setDownloading(false);
     }
@@ -749,7 +912,7 @@ function RelayOnlyActionsMenu({
                 className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
               >
                 <Download className="size-3.5 shrink-0" strokeWidth={1.5} />
-                Download…
+                Download
               </button>
             )}
             <button

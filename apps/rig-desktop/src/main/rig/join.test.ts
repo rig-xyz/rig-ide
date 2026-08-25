@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const mockApp = vi.hoisted(() => ({ isPackaged: false }));
 vi.mock('electron', () => ({ app: mockApp }));
 
-import { classifyAttachFailure, deriveLocateOutcome, parseAttachSuccess } from './join';
+import { buildAttachArgs, classifyAttachFailure, deriveLocateOutcome, parseAttachSuccess } from './join';
 
 afterEach(() => {
   mockApp.isPackaged = false;
@@ -129,5 +129,34 @@ describe('parseAttachSuccess', () => {
 
   it('unparseable output — null, not a thrown error', () => {
     expect(parseAttachSuccess('not json', '/fallback')).toBeNull();
+  });
+
+  it('no `dir` field and no fallback (the home-landing path, no --dir was passed) — null, not a fabricated path', () => {
+    expect(parseAttachSuccess('{"protocolVersion":1}', null)).toBeNull();
+  });
+
+  it('the envelope\'s own `dir` still wins even with no fallback to fall back on', () => {
+    const stdout = JSON.stringify({ protocolVersion: 1, dir: '/Users/dylan/Rig/my-rig', syncing: true });
+    expect(parseAttachSuccess(stdout, null)).toEqual({
+      localPath: '/Users/dylan/Rig/my-rig',
+      rigName: null,
+      syncing: true,
+    });
+  });
+});
+
+describe('buildAttachArgs', () => {
+  it('no targetDir (the default, rig-home-landing path) — `--dir` is OMITTED entirely, not passed empty', () => {
+    expect(buildAttachArgs('bnd_1', null)).toEqual(['attach', 'bnd_1', '--json']);
+  });
+
+  it('a targetDir (the "Advanced: choose location…" escape hatch) — `--dir <targetDir>` before `--json`', () => {
+    expect(buildAttachArgs('bnd_1', '/Users/dylan/Code/my-rig')).toEqual([
+      'attach',
+      'bnd_1',
+      '--dir',
+      '/Users/dylan/Code/my-rig',
+      '--json',
+    ]);
   });
 });

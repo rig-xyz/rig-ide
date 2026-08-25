@@ -4,11 +4,17 @@ import { join } from 'node:path';
 import { log } from '@main/lib/logger';
 
 /**
- * The rig CLI's own config file — the app reads it, never writes it.
+ * The rig CLI's own config file — this module only reads it.
  *
  * `~/.config/rig/config.json` is where `rig login` stores the `rpat_` relay PAT.
  * Shared by the comments client (`comments.ts`) and the sign-in flow
  * (`auth.ts`), which both need to know whether the user is signed in.
+ *
+ * `home.ts` is the one exception that WRITES to this same file (the
+ * managed rig home's `home` key, Settings' "Change…") — kept as its own
+ * module rather than added here since it targets the CLI's exact config
+ * path (no XDG variant, unlike the read side below) and always preserves
+ * unknown keys.
  */
 
 export function rigConfigPaths(): string[] {

@@ -83,6 +83,9 @@ export function SettingsModal({
           <Section label="Agents">
             <AgentsSection />
           </Section>
+          <Section label="Rig folder">
+            <RigHomeRow />
+          </Section>
           <Section label="About" containerRef={aboutRef}>
             <AboutSection />
           </Section>
@@ -313,6 +316,64 @@ function AgentsSection() {
             +{restRows.length} more available
           </button>
         ))}
+    </div>
+  );
+}
+
+/**
+ * Rig home round: the managed Rig folder — the current path (tilde-shortened,
+ * from `rpc.rig.home.get()`) and a "Change…" native picker that writes the
+ * new `home` key via `rpc.rig.home.set` (main preserves every other key
+ * already in `~/.config/rig/config.json`). Follows `AppUpdateRow`'s row
+ * shape below (outline Button size=xs). Fine print is explicit that this
+ * only affects where NEW rigs land — existing ones stay put (rig home never
+ * migrates anything on its own; that's what the row menu's "Move to Rig
+ * folder" is for).
+ */
+function RigHomeRow() {
+  const queryClient = useQueryClient();
+  const [changing, setChanging] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const { data } = useQuery({
+    queryKey: ['rig', 'home', 'get'],
+    queryFn: () => rpc.rig.home.get(),
+  });
+
+  const change = async () => {
+    setChanging(true);
+    setError(null);
+    try {
+      const picked = await rpc.app.openSelectDirectoryDialog({
+        title: 'Choose your Rig folder',
+        message: 'New rigs will be created here.',
+      });
+      if (!picked) return;
+      const result = await rpc.rig.home.set({ home: picked });
+      if (!result.success) {
+        setError(result.error.message);
+        return;
+      }
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'home'] });
+    } catch (pickError) {
+      setError(pickError instanceof Error ? pickError.message : "Couldn't open the folder picker.");
+    } finally {
+      setChanging(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between gap-4">
+        <p className="text-text-muted min-w-0 truncate font-mono text-xs" title={data?.home}>
+          {data?.displayPath ?? '…'}
+        </p>
+        <Button variant="outline" size="xs" onClick={() => void change()} disabled={changing} className="shrink-0">
+          {changing ? 'Changing…' : 'Change…'}
+        </Button>
+      </div>
+      {error && <p className="text-danger text-xs">{error}</p>}
+      <p className="text-text-muted text-xs">New rigs land here. Existing rigs stay where they are.</p>
     </div>
   );
 }

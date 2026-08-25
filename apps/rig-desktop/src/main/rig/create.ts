@@ -14,14 +14,18 @@ import {
 } from '@shared/rig/create';
 import { commandFailureMessage } from './auth-output';
 import { resolveCliBin } from './bundled-cli';
+import { ensureRigHomeDir, resolveHomeLandingDir } from './home';
 
 /**
  * Creates a rig by driving the bundled CLI headlessly — the same
  * spawn/timeout/parse conventions as `join.ts`'s `rig join` driver:
  *
- *   1. mkdir <parentDir>/<slug>  (the folder's basename IS the rig name —
- *      `rig init` has no --name flag; `createDefaultManifest` slugs the
- *      basename, and `rigSlug` is a fixpoint of that rule)
+ *   1. mkdir <parentDir>/<slug>, or `<home>/<slug>` (collision-suffixed)
+ *      when `parentDir` is omitted — the default, name-only flow (rig home
+ *      round; `parentDir` is now only the "Advanced: choose location…"
+ *      escape hatch). The folder's basename IS the rig name — `rig init`
+ *      has no --name flag; `createDefaultManifest` slugs the basename, and
+ *      `rigSlug` is a fixpoint of that rule.
  *   2. `rig init --json [--sync]` in that folder. Under --json even THROWN
  *      CLI errors (the dangerous-location guard, rig.toml collisions) come
  *      back as a parseable `{error: {code, message}}` envelope on stdout
@@ -85,12 +89,14 @@ export function parseRigCliOutput(stdout: string): ParsedCliOutput {
 
 // ── CLI driver ───────────────────────────────────────────────────────────────
 
-type SpawnOutcome =
+export type SpawnOutcome =
   | { kind: 'ran'; exitCode: number | null; stdout: string; stderr: string }
   | { kind: 'spawnFailed'; bin: string }
   | { kind: 'timedOut' };
 
-function runRig(args: string[], cwd: string, timeoutMs: number): Promise<SpawnOutcome> {
+// Exported: `rig-controls.ts` (`rig move`/`rig pause`/`rig resume`) reuses
+// this same spawn/timeout plumbing rather than a second copy.
+export function runRig(args: string[], cwd: string, timeoutMs: number): Promise<SpawnOutcome> {
   const bin = resolveCliBin();
   return new Promise((resolve) => {
     let stdout = '';
@@ -186,7 +192,14 @@ export const rigCreateController = createRPCController({
     const invalid = validateRigName(name);
     if (invalid) return err<RigCreateError>({ kind: 'invalidName', message: invalid });
     const slug = rigSlug(name);
-    const targetDir = joinPath(parentDir, slug);
+    // `parentDir` null/omitted is the default flow (rig home round): name
+    // only, landing in `<home>/<slug>` — collision-suffixed, same rule the
+    // CLI's own `rig join`/`rig attach` land by. A caller-picked `parentDir`
+    // (the "Advanced: choose location…" escape hatch) still nests the rig
+    // as `<parentDir>/<slug>`, unchanged from before.
+    const targetDir = parentDir
+      ? joinPath(parentDir, slug)
+      : resolveHomeLandingDir(await ensureRigHomeDir(), slug);
 
     if (existsSync(targetDir)) {
       return err<RigCreateError>({
