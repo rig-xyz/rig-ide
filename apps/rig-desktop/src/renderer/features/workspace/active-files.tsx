@@ -162,7 +162,7 @@ export function ActiveFiles({
         it is honestly just what changed last. One adaptive line beats a
         generic label that is wrong half the time.
       */}
-      <p className="text-text-muted px-4 text-xs font-medium">
+      <p className="text-text-muted px-4 font-mono text-xs tracking-wide uppercase">
         {activePaths.size > 0 ? 'Being worked on' : 'Recently updated'}
       </p>
       <div ref={scrollRef} className="carousel-scroll flex gap-2.5 px-4 pb-2">
@@ -223,17 +223,17 @@ function FileCard({
     <div
       data-card-key={card.relPath}
       className={cn(
-        // `bg-2` rather than `bg-1`: in dark mode `bg-1` sits a hair off the
-        // panel behind it and the card all but disappears, which is exactly
-        // the contrast light mode was getting for free.
-        'card-pop-in border-border-hairline bg-bg-2 rounded-card group relative flex w-[200px] shrink-0 flex-col border transition-colors',
-        'hover:border-border-strong'
+        // A hairline, not a fill. A filled tile reads as heavy in light
+        // mode and vanishes into the panel in dark; a border is legible in
+        // both and lets the row of cards stay quiet next to the tree.
+        'card-pop-in border-border-hairline rounded-card group relative flex w-[190px] shrink-0 flex-col border transition-colors',
+        'hover:border-border-strong hover:bg-bg-1'
       )}
     >
       <button
         type="button"
         onClick={onOpen}
-        className="rounded-card flex min-w-0 flex-1 flex-col gap-1.5 p-3 text-left"
+        className="rounded-card flex min-w-0 flex-1 flex-col gap-1 p-2.5 text-left"
       >
         <div className="flex min-w-0 items-center gap-1.5">
           <Icon className="text-text-secondary size-3.5 shrink-0" strokeWidth={1.5} />
@@ -251,23 +251,30 @@ function FileCard({
           folder, not the whole trail, and nothing at all for a file at the
           rig root ("Top level" told the reader nothing).
         */}
-        {folder && (
-          <span className={cn('text-text-muted min-w-0 truncate text-xs', active && 'active-shimmer-muted')}>
-            in {folder}
-          </span>
-        )}
-        <span className="text-text-muted mt-0.5 flex min-w-0 items-center gap-1.5 text-xs">
+        {/*
+          One meta line, not two: where it lives and when it changed read
+          as a single quiet sentence under the name rather than stacking
+          into a third and fourth row of text in a small card.
+        */}
+        <span
+          className={cn(
+            'text-text-muted flex min-w-0 items-center gap-1 text-xs',
+            active && 'active-shimmer-muted'
+          )}
+        >
           {active ? (
             <>
-              <RigMark size={12} className="shrink-0" />
+              <RigMark size={11} className="shrink-0" />
               <span className="truncate">Editing now</span>
               <span className="bg-accent pulse-dot size-[5px] shrink-0 rounded-full" />
             </>
           ) : (
             <>
-              {byAgent && <RigMark size={12} className="shrink-0 opacity-70" />}
+              {byAgent && <RigMark size={11} className="shrink-0 opacity-60" />}
               <span className="truncate">
-                {card.at === undefined ? 'Pinned' : relativeTime(card.at, Date.now())}
+                {[folder, card.at === undefined ? 'Pinned' : relativeTime(card.at, Date.now())]
+                  .filter(Boolean)
+                  .join(' · ')}
               </span>
             </>
           )}

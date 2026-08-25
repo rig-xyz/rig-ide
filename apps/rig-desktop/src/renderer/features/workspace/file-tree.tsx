@@ -97,8 +97,6 @@ import { ContextMenuItem, ContextMenuSeparator, RowContextMenu, useRowContextMen
  */
 
 const HIGHLIGHT_MS = 1400;
-/** How fresh a change has to be for a row to wear the "Recent" pill. */
-const RECENT_PILL_MS = 60 * 60 * 1000;
 
 /** The explorer's views. Content and capability are different kinds of thing, so they get tabs rather than a filter. */
 export type ExplorerTab = 'files' | 'skills';
@@ -449,32 +447,9 @@ export function FileTree({
   // a human's editor from the sync daemon).
   const recentWrites = useRecentWrites(root);
   const agentPaths = useMemo(() => new Set(recentWrites.map((w) => w.relPath)), [recentWrites]);
-  const mtimeByPath = useMemo(() => {
-    const map = new Map<string, number>();
-    const walk = (list: RigFileNode[]) => {
-      for (const node of list) {
-        if (node.kind === 'dir') walk(node.children ?? []);
-        else if (node.mtimeMs !== undefined) map.set(node.relPath, node.mtimeMs);
-      }
-    };
-    walk(data ?? []);
-    return map;
-  }, [data]);
-
   const statusFor = useCallback(
-    (relPath: string): RowStatus | null => {
-      // One column, one answer: the most specific true thing wins, so a
-      // row never has to choose between two badges.
-      if (agentPaths.has(relPath)) return { kind: 'agent' };
-      if (unseen.unseenFiles.has(relPath)) return { kind: 'new' };
-      const mtime = mtimeByPath.get(relPath);
-      // A tight window on purpose: the row already shows its own relative
-      // time, so the pill is reserved for "this just happened" rather than
-      // repeating the timestamp as a badge on half the tree.
-      if (mtime !== undefined && Date.now() - mtime < RECENT_PILL_MS) return { kind: 'recent' };
-      return null;
-    },
-    [agentPaths, mtimeByPath, unseen.unseenFiles]
+    (relPath: string): RowStatus | null => (agentPaths.has(relPath) ? { kind: 'agent' } : null),
+    [agentPaths]
   );
 
   // The `⋯` button opens the shared menu at the button's own corner rather
@@ -791,14 +766,21 @@ function TreeNode({
             <ChevronRight className="size-3.5 shrink-0" strokeWidth={1.5} />
           )}
           <FolderGlyph className="size-3.5 shrink-0" strokeWidth={1.5} />
-          <RowLabel text={displayName(node)} className="flex-1" />
+          <RowLabel
+            text={displayName(node)}
+            className={cn('flex-1', !open && !!unseenCount && 'text-text-primary font-medium')}
+          />
           {/*
-            A folder's pill stands in for the unseen rows hidden inside it,
-            so it disappears the moment those rows are on screen wearing
-            their own. Showing both at once was the inconsistency: the same
-            fact stated twice, at two levels.
+            A folder's mark stands in for the unseen rows hidden inside it,
+            so it disappears the moment those rows are on screen carrying
+            their own weight. Same fixed meta column as a file's timestamp,
+            so it lines up with everything else.
           */}
-          {!open && !!unseenCount && <RowStatusPill status={{ kind: 'new' }} className="unseen-dot-in mr-2" />}
+          <span className="flex w-14 shrink-0 justify-end pr-1">
+            {!open && !!unseenCount && (
+              <span className="unseen-dot-in bg-accent size-[5px] rounded-full" />
+            )}
+          </span>
         </button>
         {open &&
           (node.children ?? []).map((child) => (
@@ -846,23 +828,28 @@ function TreeNode({
         <RowLabel
           text={displayName(node)}
           title={rowTitleHint(node)}
-          className={cn(isUnseen && 'font-medium', status?.kind === 'agent' && 'active-shimmer')}
+          className={cn(isUnseen && 'text-text-primary font-medium', status && 'active-shimmer')}
         />
       </button>
-      {status && <RowStatusPill status={status} className="unseen-dot-in mr-2" />}
+      {status && <RowStatusPill status={status} className="mr-2" />}
       {/*
-        Time is the row's least important fact and the first thing worth
-        losing when the panel narrows, so it hides below a container width
-        rather than competing with the name and the pill for space.
-        Actions replace it on hover: a row never shows both.
+        One fixed-width meta column, right-aligned, on EVERY row — files
+        put their time here, folders their unseen mark, and because the
+        width never changes the whole tree lines up in a single column
+        instead of each row placing its own status wherever it happened to
+        land. Unseen needs no badge of its own: a medium-weight name and an
+        accent timestamp say it, the way an unread mail row does.
       */}
-      {node.mtimeMs !== undefined && (
-        <span className="text-text-muted hidden shrink-0 pr-1 text-xs tabular-nums @[15rem]:group-hover:hidden @[15rem]:inline">
-          {relativeTime(node.mtimeMs, Date.now())}
-        </span>
-      )}
+      <span
+        className={cn(
+          'w-14 shrink-0 pr-1 text-right text-xs tabular-nums group-hover:hidden',
+          isUnseen ? 'text-accent' : 'text-text-muted'
+        )}
+      >
+        {node.mtimeMs === undefined ? '' : relativeTime(node.mtimeMs, Date.now())}
+      </span>
       {isPinned && (
-        <Pin className="text-accent mr-1 size-3 shrink-0" strokeWidth={1.5} fill="currentColor" />
+        <Pin className="text-text-muted mr-1 size-3 shrink-0 group-hover:hidden" strokeWidth={1.5} fill="currentColor" />
       )}
       <button
         type="button"
@@ -871,7 +858,7 @@ function TreeNode({
           event.stopPropagation();
           onRowMenu(event, node);
         }}
-        className="rounded-control text-text-muted hover:bg-bg-1 hover:text-text-primary mr-1 hidden size-5 shrink-0 items-center justify-center group-hover:flex focus-visible:flex"
+        className="rounded-control text-text-muted hover:bg-bg-1 hover:text-text-primary mr-2 hidden size-5 shrink-0 items-center justify-center group-hover:flex focus-visible:flex"
       >
         <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
       </button>
@@ -947,9 +934,15 @@ function SkillsList({
             )}
           >
             <Sparkles className="text-accent size-3.5 shrink-0" strokeWidth={1.5} />
-            <RowLabel text={displayName(node)} title={rowTitleHint(node)} className="skill-label-shimmer" />
+            <RowLabel
+              text={displayName(node)}
+              title={rowTitleHint(node)}
+              className={cn('skill-label-shimmer', isUnseen && 'text-text-primary font-medium')}
+            />
             <div className="flex-1" />
-            {isUnseen && <RowStatusPill status={{ kind: 'new' }} className="unseen-dot-in mr-2" />}
+            <span className="flex w-14 shrink-0 justify-end pr-1">
+              {isUnseen && <span className="unseen-dot-in bg-accent size-[5px] rounded-full" />}
+            </span>
           </button>
         );
       })}

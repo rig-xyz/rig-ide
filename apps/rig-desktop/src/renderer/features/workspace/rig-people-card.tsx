@@ -51,9 +51,9 @@ export function RigPeopleCard({ root, bindingId }: { root: string; bindingId: st
   );
 
   return (
-    <div className="border-border-hairline bg-bg-1 rounded-card mx-4 mt-4 flex flex-col gap-3 border p-4">
+    <div className="mx-4 mt-4 flex flex-col gap-2.5">
       <p className="text-text-muted font-mono text-xs tracking-wide uppercase">People</p>
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2.5">
         {ordered.map((member) => {
           const line = lineFor(member.userId);
           return (
@@ -78,7 +78,7 @@ export function RigPeopleCard({ root, bindingId }: { root: string; bindingId: st
         })}
       </div>
       {rigLine && (
-        <div className="border-border-hairline flex flex-col gap-1 border-t pt-3">
+        <div className="border-border-hairline flex flex-col gap-0.5 border-t pt-2.5">
           <p className="text-text-secondary text-xs leading-relaxed">{rigLine}</p>
           <p className="text-text-muted text-xs">
             {refreshing
