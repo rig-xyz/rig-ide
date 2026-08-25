@@ -353,3 +353,68 @@
     color: var(--text-primary);
   }
 }
+
+/*
+ * PALETTE PREVIEW — slate × lavender (charter v2 candidate, 2026-08-25).
+ *
+ * An experiment, not a second theme: Settings → Appearance toggles
+ * `data-palette="slate-lavender"` on the root so Dylan can live in the
+ * candidate palette inside the real app instead of judging it from mocks.
+ * Once the charter decision lands this block either becomes the palette
+ * (values move into the blocks above) or is deleted whole — it must never
+ * grow into a parallel theme system.
+ *
+ * Four blocks mirror the four theme cases above so the preview wins in
+ * every combination of OS preference and explicit theme choice. Dark
+ * preview also carries the charter's proposed real dark shadow.
+ */
+:root[data-palette='slate-lavender'],
+:root[data-theme='dark'][data-palette='slate-lavender'] {
+  --bg-0: #0e1013;
+  --bg-1: #14171b;
+  --bg-2: #1b1f24;
+  --border-hairline: #262b31;
+  --border-strong: #3a4149;
+  --text-primary: #f5f7f9;
+  --text-secondary: #9aa4ae;
+  --text-muted: #6b7480;
+  --accent: #7d88e8;
+  --accent-subtle: rgba(125, 136, 232, 0.16);
+  --accent-ink: #101223;
+  --shimmer-highlight: #ffffff;
+  --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-palette='slate-lavender']:not([data-theme]) {
+    --bg-0: #f8f9fb;
+    --bg-1: #ffffff;
+    --bg-2: #eff1f4;
+    --border-hairline: #e3e6ea;
+    --border-strong: #d1d5db;
+    --text-primary: #16181d;
+    --text-secondary: #4d5560;
+    --text-muted: #9aa1ab;
+    --accent: #5560c8;
+    --accent-subtle: rgba(85, 96, 200, 0.12);
+    --accent-ink: #ffffff;
+    --shimmer-highlight: #b6bcc6;
+    --shadow-soft: 0 1px 2px rgba(22, 24, 29, 0.05), 0 10px 24px rgba(22, 24, 29, 0.07);
+  }
+}
+
+:root[data-theme='light'][data-palette='slate-lavender'] {
+  --bg-0: #f8f9fb;
+  --bg-1: #ffffff;
+  --bg-2: #eff1f4;
+  --border-hairline: #e3e6ea;
+  --border-strong: #d1d5db;
+  --text-primary: #16181d;
+  --text-secondary: #4d5560;
+  --text-muted: #9aa1ab;
+  --accent: #5560c8;
+  --accent-subtle: rgba(85, 96, 200, 0.12);
+  --accent-ink: #ffffff;
+  --shimmer-highlight: #b6bcc6;
+  --shadow-soft: 0 1px 2px rgba(22, 24, 29, 0.05), 0 10px 24px rgba(22, 24, 29, 0.07);
+}

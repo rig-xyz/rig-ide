@@ -126,24 +126,75 @@ function AppearanceSection({
   onSetPreference: (next: ThemePreference) => void;
 }) {
   return (
-    <div className="flex gap-1.5">
-      {THEME_OPTIONS.map(({ id, label, icon: Icon }) => (
-        <button
-          key={id}
-          type="button"
-          onClick={() => onSetPreference(id)}
-          aria-pressed={preference === id}
-          className={cn(
-            'border-border-hairline rounded-control flex flex-1 flex-col items-center gap-1.5 border px-2 py-2.5 text-xs transition-colors',
-            preference === id
-              ? 'bg-bg-2 text-text-primary'
-              : 'text-text-muted hover:bg-bg-2 hover:text-text-primary'
-          )}
-        >
-          <Icon className="size-4" strokeWidth={1.5} />
-          {label}
-        </button>
-      ))}
+    <div className="flex flex-col gap-3">
+      <div className="flex gap-1.5">
+        {THEME_OPTIONS.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => onSetPreference(id)}
+            aria-pressed={preference === id}
+            className={cn(
+              'border-border-hairline rounded-control flex flex-1 flex-col items-center gap-1.5 border px-2 py-2.5 text-xs transition-colors',
+              preference === id
+                ? 'bg-bg-2 text-text-primary'
+                : 'text-text-muted hover:bg-bg-2 hover:text-text-primary'
+            )}
+          >
+            <Icon className="size-4" strokeWidth={1.5} />
+            {label}
+          </button>
+        ))}
+      </div>
+      <PalettePreviewRow />
+    </div>
+  );
+}
+
+/** The candidate palette's key: mirrors `data-theme`'s localStorage pattern (index.html applies it pre-paint). */
+const PALETTE_STORAGE_KEY = 'rig-palette';
+const PALETTE_PREVIEW = 'slate-lavender';
+
+/**
+ * Charter v2 experiment (2026-08-25): the slate-and-lavender candidate
+ * palette, toggleable so the decision gets made by living in it rather
+ * than by comparing mocks. Deliberately NOT in the settings store: this
+ * is a temporary experiment keyed off localStorage plus a root attribute
+ * (the same mechanism the theme itself uses for pre-paint), and it gets
+ * deleted, or promoted into tokens.css proper, when the charter lands.
+ */
+function PalettePreviewRow() {
+  const [on, setOn] = useState(
+    () => document.documentElement.getAttribute('data-palette') === PALETTE_PREVIEW
+  );
+  const toggle = () => {
+    const next = !on;
+    setOn(next);
+    if (next) {
+      document.documentElement.setAttribute('data-palette', PALETTE_PREVIEW);
+      try {
+        localStorage.setItem(PALETTE_STORAGE_KEY, PALETTE_PREVIEW);
+      } catch {
+        /* preview just won't persist */
+      }
+    } else {
+      document.documentElement.removeAttribute('data-palette');
+      try {
+        localStorage.removeItem(PALETTE_STORAGE_KEY);
+      } catch {
+        /* nothing to clean */
+      }
+    }
+  };
+  return (
+    <div className="flex items-center justify-between">
+      <div>
+        <p className="text-text-primary text-sm">Palette preview</p>
+        <p className="text-text-muted text-xs">Slate and lavender, the charter v2 candidate. Experimental.</p>
+      </div>
+      <Button variant="outline" size="xs" onClick={toggle}>
+        {on ? 'Back to teal' : 'Try it'}
+      </Button>
     </div>
   );
 }
