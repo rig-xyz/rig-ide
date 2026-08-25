@@ -116,6 +116,25 @@ const FILE_SORT_ICONS: Record<FileTreeSort, typeof Clock> = {
 const SKILL_ROW_PADDING = 8 + 14 + 18;
 
 /**
+ * The unseen mark: one dot, in a fixed-width gutter at the START of every
+ * row, files and folders alike. A left gutter rather than the right meta
+ * column because the dot then sits at the same x on every row regardless
+ * of what else that row has to say, which is what makes a column of them
+ * scannable — the way an unread column in a mail client works.
+ *
+ * Not accent-coloured TEXT and not bold: green type reads as a link or a
+ * success state, and weight alone is too quiet to find. The gutter is
+ * always reserved, so a row never shifts when its dot appears or clears.
+ */
+function UnseenMark({ show }: { show: boolean }) {
+  return (
+    <span className="flex w-2.5 shrink-0 justify-center">
+      {show && <span className="unseen-dot-in bg-text-secondary size-[5px] rounded-full" />}
+    </span>
+  );
+}
+
+/**
  * A row's display name: ALWAYS the real filename, extension included. Files
  * in a rig are things agents write and reference by path and humans open in
  * other tools, so the filename is the identity, not a fallback for it. The
@@ -729,7 +748,7 @@ function TreeNode({
   // still-pending reveal.
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
   const absPath = `${root}/${node.relPath}`;
-  const indent = 12 + depth * 14;
+  const indent = 8 + depth * 14;
 
   // Computed for every node (not just dirs) so the two hooks below are
   // called unconditionally, in the same order, on every render — a file
@@ -765,22 +784,10 @@ function TreeNode({
           ) : (
             <ChevronRight className="size-3.5 shrink-0" strokeWidth={1.5} />
           )}
+          <UnseenMark show={!open && !!unseenCount} />
           <FolderGlyph className="size-3.5 shrink-0" strokeWidth={1.5} />
-          <RowLabel
-            text={displayName(node)}
-            className={cn('flex-1', !open && !!unseenCount && 'text-text-primary font-medium')}
-          />
-          {/*
-            A folder's mark stands in for the unseen rows hidden inside it,
-            so it disappears the moment those rows are on screen carrying
-            their own weight. Same fixed meta column as a file's timestamp,
-            so it lines up with everything else.
-          */}
-          <span className="flex w-14 shrink-0 justify-end pr-1">
-            {!open && !!unseenCount && (
-              <span className="unseen-dot-in bg-accent size-[5px] rounded-full" />
-            )}
-          </span>
+          <RowLabel text={displayName(node)} className="flex-1" />
+          <span className="w-14 shrink-0" />
         </button>
         {open &&
           (node.children ?? []).map((child) => (
@@ -824,12 +831,9 @@ function TreeNode({
         style={{ paddingLeft: indent + 18 }}
         className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-1 text-left"
       >
+        <UnseenMark show={isUnseen} />
         <Icon className="size-3.5 shrink-0" strokeWidth={1.5} />
-        <RowLabel
-          text={displayName(node)}
-          title={rowTitleHint(node)}
-          className={cn(isUnseen && 'text-text-primary font-medium', status && 'active-shimmer')}
-        />
+        <RowLabel text={displayName(node)} title={rowTitleHint(node)} className={cn(status && 'active-shimmer')} />
       </button>
       {status && <RowStatusPill status={status} className="mr-2" />}
       {/*
@@ -840,12 +844,7 @@ function TreeNode({
         land. Unseen needs no badge of its own: a medium-weight name and an
         accent timestamp say it, the way an unread mail row does.
       */}
-      <span
-        className={cn(
-          'w-14 shrink-0 pr-1 text-right text-xs tabular-nums group-hover:hidden',
-          isUnseen ? 'text-accent' : 'text-text-muted'
-        )}
-      >
+      <span className="text-text-muted w-14 shrink-0 pr-1 text-right text-xs tabular-nums group-hover:hidden">
         {node.mtimeMs === undefined ? '' : relativeTime(node.mtimeMs, Date.now())}
       </span>
       {isPinned && (
@@ -933,16 +932,11 @@ function SkillsList({
               active ? 'bg-bg-2 text-text-primary' : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
             )}
           >
+            <UnseenMark show={isUnseen} />
             <Sparkles className="text-accent size-3.5 shrink-0" strokeWidth={1.5} />
-            <RowLabel
-              text={displayName(node)}
-              title={rowTitleHint(node)}
-              className={cn('skill-label-shimmer', isUnseen && 'text-text-primary font-medium')}
-            />
+            <RowLabel text={displayName(node)} title={rowTitleHint(node)} className="skill-label-shimmer" />
             <div className="flex-1" />
-            <span className="flex w-14 shrink-0 justify-end pr-1">
-              {isUnseen && <span className="unseen-dot-in bg-accent size-[5px] rounded-full" />}
-            </span>
+            <span className="w-14 shrink-0" />
           </button>
         );
       })}

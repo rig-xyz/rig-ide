@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { computeAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
 import type { LucideIcon } from 'lucide-react';
@@ -45,15 +45,29 @@ export function RowContextMenu({
   children: React.ReactNode;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
+  /**
+   * The estimate decides whether the menu opens downward or flips up, so a
+   * stale one is exactly what makes a menu near the bottom edge render
+   * below the cursor and then scroll its own contents instead of flipping.
+   * The first pass uses a guess; once the menu is on screen its REAL
+   * height replaces it and the placement is recomputed, so a menu that
+   * grows (an extra item for files, say) can never clip.
+   */
+  const [measuredHeight, setMeasuredHeight] = useState<number | null>(null);
   const rect = useMemo(
     () =>
       computeAnchorRect(
         { top: point.y, bottom: point.y, left: point.x, right: point.x, width: 0 },
         { width: window.innerWidth, height: window.innerHeight },
-        { gap: 2, estimatedHeight: 220, estimatedWidth: 190, align: 'left' }
+        { gap: 2, estimatedHeight: measuredHeight ?? 320, estimatedWidth: 190, align: 'left' }
       ),
-    [point]
+    [point, measuredHeight]
   );
+
+  useLayoutEffect(() => {
+    const height = menuRef.current?.scrollHeight;
+    if (height && height !== measuredHeight) setMeasuredHeight(height);
+  }, [measuredHeight, children]);
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
