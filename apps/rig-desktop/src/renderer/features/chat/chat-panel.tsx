@@ -1,14 +1,5 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { tailMode } from '@emdash/chat-ui';
-import type { ChatCommands, ChatView } from '@renderer/lib/chat/chat-transcript';
-import { ChatTranscript } from '@renderer/lib/chat/chat-transcript';
-import { rpc } from '@renderer/lib/ipc';
-import { AgentIcon } from '@renderer/lib/ui/agent-icon';
-import { Button } from '@renderer/lib/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
-import { cn } from '@renderer/lib/utils';
-import type { RigFileNode } from '@shared/rig/files';
-import { classifyProseLink } from './classify-prose-link';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Check,
   History,
@@ -24,23 +15,32 @@ import {
 } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ChatCommands, ChatView } from '@renderer/lib/chat/chat-transcript';
+import { ChatTranscript } from '@renderer/lib/chat/chat-transcript';
+import { rpc } from '@renderer/lib/ipc';
 import { events } from '@renderer/lib/ipc';
+import { AgentIcon } from '@renderer/lib/ui/agent-icon';
+import { Button } from '@renderer/lib/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
+import { cn } from '@renderer/lib/utils';
+import type { RigFileNode } from '@shared/rig/files';
+import type { RigStoredSession } from '@shared/rig/sessions';
 import {
   rigSettingsChangedChannel,
   type RigOpenTabsState,
   type RigSettings,
 } from '@shared/rig/settings';
-import type { RigStoredSession } from '@shared/rig/sessions';
+import { classifyProseLink } from './classify-prose-link';
 import { deriveComposerDensity, type ComposerDensity } from './composer-density';
 import { deriveDefaultHarness } from './default-harness';
-import { canResumeSession } from './resume-capability';
-import { deriveTranscriptPanelMode, shouldShowResumeButton } from './resume-presentation';
-import { formatSessionFromLabel, relativeTime } from './session-history';
 import { HarnessPicker } from './harness-picker';
 import { MetaOptionPicker } from './meta-option-picker';
 import { PermissionModePicker } from './permission-mode-picker';
 import { ReplayStore } from './replay-store';
+import { canResumeSession } from './resume-capability';
+import { deriveTranscriptPanelMode, shouldShowResumeButton } from './resume-presentation';
 import { RigChatStore } from './rig-chat-store';
+import { formatSessionFromLabel, relativeTime } from './session-history';
 import {
   addSession,
   byRecency,
@@ -49,6 +49,8 @@ import {
   removeSession,
   type RigSessionSummary,
 } from './session-list';
+import { mergeRestoredConversationIds } from './session/restore-session-ids';
+import { rigSessionRegistry } from './session/rig-session-registry';
 import { openTabsStateEquals, toOpenTabsState } from './tab-restore';
 import {
   useAgentIdentities,
@@ -106,7 +108,7 @@ export const ChatPanel = observer(function ChatPanel({
   // `useAgentIdentities`'s own doc comment. `agents` stays the source for
   // anything about whether a session can actually be started right now.
   const identities = useAgentIdentities();
-  const storesRef = useRef(new Map<string, RigSession>());
+  const attachedIdsRef = useRef(new Set<string>());
   const [sessions, setSessions] = useState<RigSessionSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [providerId, setProviderId] = useState<string | null>(null);
@@ -132,7 +134,7 @@ export const ChatPanel = observer(function ChatPanel({
   // (`ZeroStateTranscript`) stays visible and useful the whole time this is
   // connecting in the background, exactly as it does today.
   const [eagerStore, setEagerStore] = useState<RigChatStore | null>(null);
-  const eagerPromotedRef = useRef(false);
+  const promotedEagerIdsRef = useRef(new Set<string>());
 
   // ── Zero-state default harness (harness-default round) ────────────────────
   // The previous rule — first agent of the first non-empty probe snapshot,
@@ -197,11 +199,14 @@ export const ChatPanel = observer(function ChatPanel({
     // one already in flight out from under the user — who can still switch
     // manually regardless.
     manualPickRef.current = true;
-    const stores = storesRef.current;
+    const attachedIds = attachedIdsRef.current;
+    const promotedEagerIds = promotedEagerIdsRef.current;
     const id = crypto.randomUUID();
-    const store = new RigChatStore(id, bindingId, root, providerId);
-    stores.set(id, store);
-    eagerPromotedRef.current = false;
+    const store = rigSessionRegistry.attach<RigChatStore>(
+      id,
+      () => new RigChatStore(id, bindingId, root, providerId)
+    );
+    attachedIds.add(id);
     setEagerStore(store);
     void store.bootstrap();
     return () => {
@@ -210,11 +215,11 @@ export const ChatPanel = observer(function ChatPanel({
       // the instant `activeId` stops being null because of the promotion
       // itself. Every OTHER path this cleanup fires on (provider changed,
       // an existing tab was selected instead, this rig closed) genuinely
-      // means the eager session was never used — dispose it and release
-      // its slot in `storesRef` too, so it's not double-disposed later.
-      if (eagerPromotedRef.current) return;
-      store.dispose();
-      stores.delete(id);
+      // means the eager session was never used — stop it and release its
+      // registry entry so it cannot leak an unused ACP session.
+      if (promotedEagerIds.delete(id)) return;
+      void rigSessionRegistry.stop(id);
+      attachedIds.delete(id);
       // Clear the state reference too (identity-checked — never clobber a
       // NEWER eager store some other effect run may already have set) so
       // no render can ever read model/effort/mode off an already-disposed
@@ -232,12 +237,12 @@ export const ChatPanel = observer(function ChatPanel({
    * deleted) is silently skipped, never shown as a fake tab.
    */
   useEffect(() => {
+    const attachedIds = attachedIdsRef.current;
     setSessions([]);
     setActiveId(null);
     setFollowUpIds(new Set());
     restoredForRef.current = null;
     lastWrittenRef.current = null;
-    const stores = storesRef.current;
     let cancelled = false;
 
     void (async () => {
@@ -253,8 +258,15 @@ export const ChatPanel = observer(function ChatPanel({
       // (see `ChatPanelProps.initialActiveSessionId`) — folded into the
       // restored id set (deduped) rather than replacing it, so this rig's
       // other previously-open tabs still come back too.
-      const idsToRestore = new Set(stored?.sessionIds ?? []);
-      if (initialActiveSessionId) idsToRestore.add(initialActiveSessionId);
+      const retainedLiveIds = rigSessionRegistry
+        .getActiveSessions<RigSession>()
+        .filter((store) => store.kind === 'live' && store.rigBindingId === bindingId)
+        .map((store) => store.conversationId);
+      const idsToRestore = mergeRestoredConversationIds(
+        stored?.sessionIds ?? [],
+        retainedLiveIds,
+        initialActiveSessionId
+      );
 
       if (idsToRestore.size === 0) {
         restoredForRef.current = bindingId;
@@ -264,21 +276,40 @@ export const ChatPanel = observer(function ChatPanel({
       const restored: RigSessionSummary[] = [];
       for (const sessionId of idsToRestore) {
         if (cancelled) return;
+        // A just-promoted live store can be ahead of the persistence RPC that
+        // creates its row. The registry is authoritative for an in-memory
+        // session, so restore it without requiring a round trip that may
+        // briefly return null.
+        const existing = rigSessionRegistry.get<RigSession>(sessionId);
+        if (existing?.kind === 'live') {
+          attachedIds.add(sessionId);
+          restored.push({
+            conversationId: sessionId,
+            providerId: existing.providerId,
+            createdAt: existing.createdAt,
+            kind: 'live',
+          });
+          continue;
+        }
+
         let session: RigStoredSession | null = null;
         try {
           session = await rpc.rig.sessions.getSession({ sessionId });
         } catch (error) {
           console.error('Rig chat: failed to load a restored session', { sessionId, error });
         }
+        if (cancelled) return;
         if (!session) continue;
-        const replay = new ReplayStore(sessionId);
-        storesRef.current.set(sessionId, replay);
-        void replay.load();
+        const store =
+          existing ??
+          rigSessionRegistry.attach<RigSession>(sessionId, () => new ReplayStore(sessionId));
+        attachedIds.add(sessionId);
+        if (store.kind === 'replay' && store.loading) void store.load();
         restored.push({
           conversationId: sessionId,
-          providerId: session.providerId,
+          providerId: store.kind === 'live' ? store.providerId : session.providerId,
           createdAt: session.createdAt,
-          kind: 'replay',
+          kind: store.kind,
         });
       }
       if (cancelled) return;
@@ -295,8 +326,18 @@ export const ChatPanel = observer(function ChatPanel({
 
     return () => {
       cancelled = true;
-      stores.forEach((store) => store.dispose());
-      stores.clear();
+      attachedIds.forEach((conversationId) => {
+        const store = rigSessionRegistry.get<RigSession>(conversationId);
+        if (store?.kind === 'replay') {
+          // Replays have no runtime to preserve and can be reconstructed
+          // from SQLite on remount. Keeping them globally would accumulate
+          // chat state for every historical rig visited in this window.
+          void rigSessionRegistry.stop(conversationId);
+        } else {
+          rigSessionRegistry.detach(conversationId);
+        }
+      });
+      attachedIds.clear();
     };
     // `initialActiveSessionId` is a real dependency, not suppressed — but in
     // practice it only ever changes in lockstep with `bindingId` (App.tsx
@@ -316,9 +357,11 @@ export const ChatPanel = observer(function ChatPanel({
     );
     if (lastWrittenRef.current && openTabsStateEquals(lastWrittenRef.current, next)) return;
     lastWrittenRef.current = next;
-    void rpc.rig.settings.set({ lastOpenTabsByRig: { [bindingId]: next } }).catch((error: unknown) => {
-      console.error('Rig chat: failed to persist open tabs', { bindingId, error });
-    });
+    void rpc.rig.settings
+      .set({ lastOpenTabsByRig: { [bindingId]: next } })
+      .catch((error: unknown) => {
+        console.error('Rig chat: failed to persist open tabs', { bindingId, error });
+      });
   }, [sessions, activeId, bindingId]);
 
   useEffect(() => {
@@ -360,8 +403,8 @@ export const ChatPanel = observer(function ChatPanel({
         lastHarnessByRig: { [bindingId]: providerId },
       });
       if (eagerStore && eagerStore.providerId === providerId) {
-        eagerPromotedRef.current = true;
         const store = eagerStore;
+        promotedEagerIdsRef.current.add(store.conversationId);
         setSessions((prev) =>
           addSession(prev, {
             conversationId: store.conversationId,
@@ -379,8 +422,11 @@ export const ChatPanel = observer(function ChatPanel({
       }
 
       const id = crypto.randomUUID();
-      const store = new RigChatStore(id, bindingId, root, providerId);
-      storesRef.current.set(id, store);
+      const store = rigSessionRegistry.attach<RigChatStore>(
+        id,
+        () => new RigChatStore(id, bindingId, root, providerId)
+      );
+      attachedIdsRef.current.add(id);
       setSessions((prev) =>
         addSession(prev, { conversationId: id, providerId, createdAt: Date.now(), kind: 'live' })
       );
@@ -398,19 +444,22 @@ export const ChatPanel = observer(function ChatPanel({
    * replayed) rather than creating a second store for the same id.
    */
   const openReplay = useCallback((stored: RigStoredSession) => {
-    if (!storesRef.current.has(stored.id)) {
-      const store = new ReplayStore(stored.id);
-      storesRef.current.set(stored.id, store);
-      setSessions((prev) =>
-        addSession(prev, {
-          conversationId: stored.id,
-          providerId: stored.providerId,
-          createdAt: stored.createdAt,
-          kind: 'replay',
-        })
-      );
-      void store.load();
-    }
+    const store = rigSessionRegistry.attach<RigSession>(
+      stored.id,
+      () => new ReplayStore(stored.id)
+    );
+    attachedIdsRef.current.add(stored.id);
+    if (store.kind === 'replay' && store.loading) void store.load();
+    setSessions((prev) =>
+      prev.some((session) => session.conversationId === stored.id)
+        ? prev
+        : addSession(prev, {
+            conversationId: stored.id,
+            providerId: store.kind === 'live' ? store.providerId : stored.providerId,
+            createdAt: stored.createdAt,
+            kind: store.kind,
+          })
+    );
     setActiveId(stored.id);
   }, []);
 
@@ -432,14 +481,18 @@ export const ChatPanel = observer(function ChatPanel({
     (replay: ReplayStore, initialText?: string) => {
       const stored = replay.session;
       if (!stored) return;
-      replay.dispose();
+      void rigSessionRegistry.stop(stored.id);
 
-      const live = new RigChatStore(stored.id, bindingId, root, stored.providerId, {
-        acpSessionId: stored.acpSessionId!,
-        title: stored.title,
-        titleSource: stored.titleSource,
-      });
-      storesRef.current.set(stored.id, live);
+      const live = rigSessionRegistry.attach<RigChatStore>(
+        stored.id,
+        () =>
+          new RigChatStore(stored.id, bindingId, root, stored.providerId, {
+            acpSessionId: stored.acpSessionId!,
+            title: stored.title,
+            titleSource: stored.titleSource,
+          })
+      );
+      attachedIdsRef.current.add(stored.id);
       setSessions((prev) =>
         addSession(removeSession(prev, stored.id), {
           conversationId: stored.id,
@@ -473,12 +526,15 @@ export const ChatPanel = observer(function ChatPanel({
         resumeReplay(replay, text);
         return;
       }
-      replay.dispose();
+      void rigSessionRegistry.stop(stored.id);
 
       const id = crypto.randomUUID();
-      const followUp = new RigChatStore(id, bindingId, root, stored.providerId);
-      storesRef.current.delete(stored.id);
-      storesRef.current.set(id, followUp);
+      const followUp = rigSessionRegistry.attach<RigChatStore>(
+        id,
+        () => new RigChatStore(id, bindingId, root, stored.providerId)
+      );
+      attachedIdsRef.current.delete(stored.id);
+      attachedIdsRef.current.add(id);
       setFollowUpIds((prev) => new Set(prev).add(id));
       setSessions((prev) =>
         addSession(removeSession(prev, stored.id), {
@@ -498,8 +554,8 @@ export const ChatPanel = observer(function ChatPanel({
 
   const closeSession = useCallback(
     (id: string) => {
-      storesRef.current.get(id)?.dispose();
-      storesRef.current.delete(id);
+      void rigSessionRegistry.stop(id);
+      attachedIdsRef.current.delete(id);
       setSessions((prev) => {
         const result = closeTab(prev, activeId, id);
         setActiveId(result.activeId);
@@ -510,14 +566,14 @@ export const ChatPanel = observer(function ChatPanel({
   );
 
   const ordered = byRecency(sessions);
-  const activeStore = activeId ? (storesRef.current.get(activeId) ?? null) : null;
+  const activeStore = activeId ? rigSessionRegistry.get<RigSession>(activeId) : null;
 
   return (
     <div className="flex h-full min-w-0 flex-col">
       <TabStrip
         sessions={ordered}
         activeId={activeId}
-        storesRef={storesRef}
+        registry={rigSessionRegistry}
         identities={identities}
         onSelect={setActiveId}
         onClose={closeSession}
@@ -575,7 +631,7 @@ export const ChatPanel = observer(function ChatPanel({
  * empty once the panel has been touched at all.
  */
 /** The title behind a tab, whichever kind of store backs it. */
-function sessionTitle(store: RigSession | undefined): string | null {
+function sessionTitle(store: RigSession | null | undefined): string | null {
   if (!store) return null;
   return store.kind === 'live' ? store.title : (store.session?.title ?? null);
 }
@@ -583,7 +639,7 @@ function sessionTitle(store: RigSession | undefined): string | null {
 const TabStrip = observer(function TabStrip({
   sessions,
   activeId,
-  storesRef,
+  registry,
   identities,
   onSelect,
   onClose,
@@ -592,7 +648,7 @@ const TabStrip = observer(function TabStrip({
 }: {
   sessions: RigSessionSummary[];
   activeId: string | null;
-  storesRef: React.RefObject<Map<string, RigSession>>;
+  registry: typeof rigSessionRegistry;
   identities: Map<string, AgentIdentity>;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
@@ -606,13 +662,13 @@ const TabStrip = observer(function TabStrip({
   const [editingId, setEditingId] = useState<string | null>(null);
 
   return (
-    <div className="border-border-hairline flex h-10 shrink-0 items-center border-b">
+    <div className="flex h-10 shrink-0 items-center border-b border-border-hairline">
       <div
         role="tablist"
-        className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 py-1.5 [mask-image:linear-gradient(to_right,transparent,black_12px,black_calc(100%-12px),transparent)]"
+        className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [mask-image:linear-gradient(to_right,transparent,black_12px,black_calc(100%-12px),transparent)] px-2 py-1.5"
       >
         {sessions.map((s) => {
-          const store = storesRef.current.get(s.conversationId);
+          const store = registry.get<RigSession>(s.conversationId);
           const label = deriveTabTitle(sessionTitle(store));
           const active = !inZeroState && s.conversationId === activeId;
           const icon = identities.get(s.providerId)?.icon;
@@ -643,7 +699,7 @@ const TabStrip = observer(function TabStrip({
                   is a genuinely different thing from a live one, not a
                   visual footnote. */}
               {s.kind === 'replay' && (
-                <History className="text-text-muted size-3 shrink-0" strokeWidth={1.5} />
+                <History className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
               )}
               {icon && <AgentIcon icon={icon} size={12} className="shrink-0" />}
               <span className="max-w-28 truncate">{label}</span>
@@ -656,14 +712,18 @@ const TabStrip = observer(function TabStrip({
             onSelect={() => {}}
             // Only closable back to a real session — with none, the
             // zero-state tab is the panel's one permanent tab.
-            onClose={sessions.length > 0 ? () => onSelect(byRecency(sessions)[0].conversationId) : undefined}
+            onClose={
+              sessions.length > 0
+                ? () => onSelect(byRecency(sessions)[0].conversationId)
+                : undefined
+            }
           >
-            <MessageSquare className="text-text-muted size-3 shrink-0" strokeWidth={1.5} />
+            <MessageSquare className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
             <span>New session</span>
           </Tab>
         )}
       </div>
-      <div className="border-border-hairline flex shrink-0 items-center gap-0.5 border-l px-1.5">
+      <div className="flex shrink-0 items-center gap-0.5 border-l border-border-hairline px-1.5">
         {/* Bare '+' is VS Code/browser-tab convention (design-system.md rule
             7's own carve-out) — kept icon-only, with a real tooltip since
             the brief calls it borderline. */}
@@ -736,7 +796,7 @@ function Tab({
           onClick={onClose}
           aria-label="Close session"
           title="Close session"
-          className="text-text-muted hover:text-text-primary shrink-0 opacity-0 group-hover:opacity-100"
+          className="shrink-0 text-text-muted opacity-0 group-hover:opacity-100 hover:text-text-primary"
         >
           <X className="size-3" strokeWidth={1.5} />
         </button>
@@ -802,7 +862,7 @@ function TabRenameInput({
           cancel();
         }
       }}
-      className="border-accent bg-bg-1 text-text-primary rounded-control h-[26px] w-28 shrink-0 border px-2 text-xs outline-none"
+      className="h-[26px] w-28 shrink-0 rounded-control border border-accent bg-bg-1 px-2 text-xs text-text-primary outline-none"
     />
   );
 }
@@ -834,8 +894,8 @@ function ZeroStateTranscript({
   if (agents.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-        <MessageSquare className="text-text-muted size-6" strokeWidth={1.5} />
-        <p className="text-text-muted text-sm">
+        <MessageSquare className="size-6 text-text-muted" strokeWidth={1.5} />
+        <p className="text-sm text-text-muted">
           {agentsLoading
             ? 'Checking for installed agents…'
             : 'No runnable agent found. Install one to start chatting.'}
@@ -847,11 +907,15 @@ function ZeroStateTranscript({
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-1 items-center justify-center">
-        <p className="text-text-muted font-mono text-xs">
+        <p className="font-mono text-xs text-text-muted">
           New session{rigName ? ` in ${rigName}` : ''}
         </p>
       </div>
-      <SessionHistoryList bindingId={bindingId} identities={identities} onOpenSession={onOpenSession} />
+      <SessionHistoryList
+        bindingId={bindingId}
+        identities={identities}
+        onOpenSession={onOpenSession}
+      />
     </div>
   );
 }
@@ -895,8 +959,8 @@ function SessionHistoryList({
   };
 
   return (
-    <div className="border-border-hairline shrink-0 border-t px-3 py-2">
-      <p className="text-text-muted px-1 pb-1 font-mono text-xs tracking-wide uppercase">
+    <div className="shrink-0 border-t border-border-hairline px-3 py-2">
+      <p className="px-1 pb-1 font-mono text-xs tracking-wide text-text-muted uppercase">
         Recent sessions
       </p>
       <div className="flex max-h-40 flex-col gap-0.5 overflow-y-auto">
@@ -919,7 +983,7 @@ function SessionHistoryList({
           return (
             <div
               key={session.id}
-              className="hover:bg-bg-2 group flex items-center gap-1.5 rounded-control px-1.5 py-1"
+              className="group flex items-center gap-1.5 rounded-control px-1.5 py-1 hover:bg-bg-2"
             >
               <button
                 type="button"
@@ -927,11 +991,11 @@ function SessionHistoryList({
                 className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
               >
                 {icon && <AgentIcon icon={icon} size={12} className="shrink-0" />}
-                <span className="text-text-secondary min-w-0 flex-1 truncate text-xs">
+                <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
                   {deriveTabTitle(session.title)}
                 </span>
               </button>
-              <span className="text-text-muted shrink-0 font-mono text-xs">
+              <span className="shrink-0 font-mono text-xs text-text-muted">
                 {relativeTime(session.updatedAt, Date.now())}
               </span>
               <button
@@ -942,7 +1006,7 @@ function SessionHistoryList({
                 }}
                 aria-label="Rename session"
                 title="Rename session"
-                className="text-text-muted hover:text-text-primary shrink-0 opacity-0 group-hover:opacity-100"
+                className="shrink-0 text-text-muted opacity-0 group-hover:opacity-100 hover:text-text-primary"
               >
                 <Pencil className="size-3" strokeWidth={1.5} />
               </button>
@@ -1008,7 +1072,10 @@ const Transcript = observer(function Transcript({
       // `setWindowOpenHandler` (main/utils/externalLinks.ts) then quietly
       // denies rather than popping a blank window.
       classifyLink: (href) =>
-        classifyProseLink(href, queryClient.getQueryData<RigFileNode[]>(['rig', 'files', 'list', cwd])),
+        classifyProseLink(
+          href,
+          queryClient.getQueryData<RigFileNode[]>(['rig', 'files', 'list', cwd])
+        ),
     }),
     [onOpenFile, cwd, queryClient]
   );
@@ -1030,8 +1097,8 @@ const Transcript = observer(function Transcript({
   if (panelMode.kind === 'fullPanelError') {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-        <p className="text-text-primary text-sm">Failed to load chat.</p>
-        <p className="text-text-muted text-xs">{errorMessage}</p>
+        <p className="text-sm text-text-primary">Failed to load chat.</p>
+        <p className="text-xs text-text-muted">{errorMessage}</p>
         {store.kind === 'live' && (
           <Button variant="outline" size="sm" onClick={() => store.retry()} className="mt-1">
             Retry
@@ -1043,7 +1110,7 @@ const Transcript = observer(function Transcript({
 
   if (panelMode.kind === 'fullPanelLoading') {
     return (
-      <div className="text-text-muted flex h-full items-center justify-center text-sm">
+      <div className="flex h-full items-center justify-center text-sm text-text-muted">
         Loading chat…
       </div>
     );
@@ -1052,23 +1119,24 @@ const Transcript = observer(function Transcript({
   return (
     <div className="flex h-full min-h-0 flex-col">
       {isFollowUp && (
-        <p className="text-text-muted shrink-0 pt-2 text-center font-mono text-xs">
+        <p className="shrink-0 pt-2 text-center font-mono text-xs text-text-muted">
           Follow-up session
         </p>
       )}
-      {store.kind === 'live' && store.resuming && (
-        // Quiet inline status, per Rule 9 — the transcript we already have
-        // stays fully visible underneath; the wire's `resumeSession` call
-        // is one atomic round trip with no incremental progress to show
-        // (see `AcpLiveSession.resume`'s doc comment), so this states the
-        // mode, not a percentage.
-        <p className="text-text-muted shrink-0 pt-2 text-center font-mono text-xs">
-          resuming session…
-        </p>
-      )}
+      {store.kind === 'live' &&
+        store.resuming && (
+          // Quiet inline status, per Rule 9 — the transcript we already have
+          // stays fully visible underneath; the wire's `resumeSession` call
+          // is one atomic round trip with no incremental progress to show
+          // (see `AcpLiveSession.resume`'s doc comment), so this states the
+          // mode, not a percentage.
+          <p className="shrink-0 pt-2 text-center font-mono text-xs text-text-muted">
+            resuming session…
+          </p>
+        )}
       {panelMode.inlineError && (
         <div className="flex shrink-0 items-center justify-center gap-2 px-3 py-1.5 text-center">
-          <span className="text-text-muted text-xs">{errorMessage}</span>
+          <span className="text-xs text-text-muted">{errorMessage}</span>
           {store.kind === 'live' && (
             <Button variant="outline" size="xs" onClick={() => store.retry()}>
               Retry
@@ -1178,7 +1246,9 @@ const Composer = observer(function Composer({
     !replayNotReady &&
     shouldShowResumeButton({
       hasReplaySession: replay !== null,
-      canResume: replay?.session ? canResumeSession(replay.session.providerId, replay.session.acpSessionId) : false,
+      canResume: replay?.session
+        ? canResumeSession(replay.session.providerId, replay.session.acpSessionId)
+        : false,
       hasTypedText: text.trim().length > 0,
     });
 
@@ -1221,15 +1291,17 @@ const Composer = observer(function Composer({
         // system: mono command text, `option.kind`-driven button variants,
         // no extra card chrome — Rule 9 reserves card chrome for file-edit
         // summaries).
-        <div className="border-border-hairline flex flex-col gap-2 border-b pb-3">
+        <div className="flex flex-col gap-2 border-b border-border-hairline pb-3">
           <span className="flex items-center gap-1.5">
             {/* Round F: the same shield glyph the transcript's own tool line
                 uses for its awaiting-permission state (chat-ui's
                 `IconShieldAlert`) — so the two surfaces read as the same ask.
                 Neutral muted, not chat-ui's one-off amber: this app's tokens
                 stay monochrome, teal is reserved for "alive," not alerts. */}
-            <ShieldAlert className="text-text-muted size-3.5 shrink-0" strokeWidth={1.5} />
-            <span className="text-text-secondary font-mono text-xs break-all">{permission.title}</span>
+            <ShieldAlert className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+            <span className="font-mono text-xs break-all text-text-secondary">
+              {permission.title}
+            </span>
           </span>
           <div className="flex flex-wrap gap-1.5">
             {permission.options.map((option) => {
@@ -1282,7 +1354,7 @@ const Composer = observer(function Composer({
           px-3 inset; vertical rhythm is 4/8/12-scale throughout, tight
           enough that the row sits close under the text rather than
           hanging off it. */}
-      <div className="focus-within:border-accent border-border-hairline bg-bg-1 rounded-card border transition-colors">
+      <div className="rounded-card border border-border-hairline bg-bg-1 transition-colors focus-within:border-accent">
         <textarea
           value={text}
           onChange={(e) => {
@@ -1293,7 +1365,7 @@ const Composer = observer(function Composer({
           placeholder={placeholder}
           disabled={disabled}
           rows={1}
-          className="field-sizing-content text-text-primary placeholder:text-text-muted max-h-40 w-full resize-none overflow-y-auto bg-transparent px-3 pt-2.5 pb-1 text-sm outline-none disabled:cursor-not-allowed"
+          className="field-sizing-content max-h-40 w-full resize-none overflow-y-auto bg-transparent px-3 pt-2.5 pb-1 text-sm text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed"
         />
 
         <div className="flex items-center justify-between gap-2 px-3 pb-2">
@@ -1305,7 +1377,7 @@ const Composer = observer(function Composer({
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             {store ? (
               selectedAgent && (
-                <span className="bg-bg-2 text-text-secondary flex shrink-0 items-center gap-1.5 rounded-control px-2 py-1 text-xs">
+                <span className="flex shrink-0 items-center gap-1.5 rounded-control bg-bg-2 px-2 py-1 text-xs text-text-secondary">
                   <AgentIcon icon={selectedAgent.icon} size={12} />
                   <span>{selectedAgent.name}</span>
                 </span>
@@ -1333,7 +1405,9 @@ const Composer = observer(function Composer({
               sessionConfigSource.modelOptions.length === 0 &&
               sessionConfigSource.effortOptions.length === 0 &&
               sessionConfigSource.permissionModeOptions.length === 0 && (
-                <span className="text-text-muted px-1.5 py-1 font-mono text-xs">loading options…</span>
+                <span className="px-1.5 py-1 font-mono text-xs text-text-muted">
+                  loading options…
+                </span>
               )}
             {/* Model/effort — live (or eagerly-connecting) session state,
                 not local state. Honest edges: a replay tab, or a
@@ -1355,14 +1429,16 @@ const Composer = observer(function Composer({
                 never reserves one — it's text metadata, not an identity),
                 so it's the one that disappears at `compact`, not the one
                 that shrinks. */}
-            {density === 'full' && sessionConfigSource && sessionConfigSource.effortOptions.length > 0 && (
-              <MetaOptionPicker
-                options={sessionConfigSource.effortOptions}
-                selectedId={sessionConfigSource.effort}
-                onChange={(id) => sessionConfigSource.setEffort(id)}
-                placeholder="Effort"
-              />
-            )}
+            {density === 'full' &&
+              sessionConfigSource &&
+              sessionConfigSource.effortOptions.length > 0 && (
+                <MetaOptionPicker
+                  options={sessionConfigSource.effortOptions}
+                  selectedId={sessionConfigSource.effort}
+                  onChange={(id) => sessionConfigSource.setEffort(id)}
+                  placeholder="Effort"
+                />
+              )}
             {/* Round: permission mode control — a safety state, not
                 metadata (deliberately its own component, not a third
                 `MetaOptionPicker`: escalation friction + a persistent
@@ -1391,7 +1467,7 @@ const Composer = observer(function Composer({
                 (composer declutter round). Lowest-priority information in
                 this row — the first thing to drop at `compact`. */}
             {density === 'full' && replay?.session && (
-              <span className="text-text-muted min-w-0 truncate font-mono text-xs">
+              <span className="min-w-0 truncate font-mono text-xs text-text-muted">
                 {formatSessionFromLabel(replay.session.createdAt)}
               </span>
             )}
@@ -1420,7 +1496,12 @@ const Composer = observer(function Composer({
               {resuming ? 'Resuming…' : 'Resume'}
             </Button>
           ) : (
-            <Button size="sm" onClick={submit} disabled={!text.trim() || disabled} aria-label="Send">
+            <Button
+              size="sm"
+              onClick={submit}
+              disabled={!text.trim() || disabled}
+              aria-label="Send"
+            >
               <Send className="size-3.5" strokeWidth={1.5} />
               Send
             </Button>
@@ -1429,7 +1510,9 @@ const Composer = observer(function Composer({
       </div>
 
       {live && live.queuedPrompts.length > 0 && (
-        <span className="text-text-muted font-mono text-xs">{live.queuedPrompts.length} queued</span>
+        <span className="font-mono text-xs text-text-muted">
+          {live.queuedPrompts.length} queued
+        </span>
       )}
       {/* Round F: legible instead of silent — a prompt sent before the
           session exists (still bootstrapping/resuming) used to just vanish;
@@ -1438,7 +1521,7 @@ const Composer = observer(function Composer({
           line above in practice: this only has anything to show before
           `live.session` exists, that one only once it does. */}
       {live && live.pendingResumeSubmitCount > 0 && (
-        <span className="text-text-muted font-mono text-xs">
+        <span className="font-mono text-xs text-text-muted">
           {live.pendingResumeSubmitCount} will send when resumed
         </span>
       )}

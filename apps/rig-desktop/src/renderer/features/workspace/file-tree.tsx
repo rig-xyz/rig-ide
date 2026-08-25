@@ -1,7 +1,12 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  Archive,
+  ArrowDownAZ,
+  EyeOff,
+  ArrowUpDown,
   Check,
   CheckCheck,
+  Clock,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -9,14 +14,16 @@ import {
   File,
   FileText,
   Folder,
+  Flame,
   FolderOpen,
   Loader2,
+  MoreHorizontal,
   Pencil,
   Pin,
   Sparkles,
   Table,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { events, rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
@@ -39,6 +46,8 @@ import {
 import { filterTree, searchTree, sortTree, type TreeViewContext } from '@shared/rig/tree-view';
 import { RenameFileDialog } from './rename-file-dialog';
 import { RowLabel } from './row-label';
+import { RowStatusPill, type RowStatus } from './row-status-pill';
+import { useRecentWrites } from './write-activity';
 import { ContextMenuItem, ContextMenuSeparator, RowContextMenu, useRowContextMenu } from './row-context-menu';
 
 /**
@@ -88,18 +97,39 @@ import { ContextMenuItem, ContextMenuSeparator, RowContextMenu, useRowContextMen
  */
 
 const HIGHLIGHT_MS = 1400;
+
+/** The explorer's views. Content and capability are different kinds of thing, so they get tabs rather than a filter. */
+export type ExplorerTab = 'files' | 'skills';
+
+/** Sort names describe the resulting ORDER, not the machinery behind it. */
+const FILE_SORT_LABELS: Record<FileTreeSort, string> = {
+  smart: 'Activity',
+  modified: 'Modified',
+  name: 'Name',
+};
+const FILE_SORT_ICONS: Record<FileTreeSort, typeof Clock> = {
+  smart: Flame,
+  modified: Clock,
+  name: ArrowDownAZ,
+};
 /** One level of nested indent, matching a depth-1 file row's own `indent + 18`. */
 const SKILL_ROW_PADDING = 8 + 14 + 18;
 
 /**
- * The document's display name: its extracted title, else the full filename
- * (extension included — Dylan keeps extensions). Exported: `suggested-files.tsx`
- * needs the exact same title logic for card titles (design doc §3, "same
- * title logic as tree").
+ * A row's display name: ALWAYS the real filename, extension included. Files
+ * in a rig are things agents write and reference by path and humans open in
+ * other tools, so the filename is the identity, not a fallback for it. The
+ * extracted document title is secondary (`rowTitleHint`, tooltip only).
+ * Exported so every surface naming a file agrees.
  */
-export function displayTitle(node: RigFileNode): string {
-  if (node.kind === 'dir') return node.name;
-  return node.title ?? node.name;
+export function displayName(node: RigFileNode): string {
+  return node.name;
+}
+
+/** The extracted document title, only when it says something the filename doesn't — the `RowLabel` tooltip's input. */
+export function rowTitleHint(node: RigFileNode): string | undefined {
+  if (node.kind === 'dir') return undefined;
+  return node.title ?? undefined;
 }
 
 /** Content-row icon by extension — reverted to the tree's original lucide line icons (icon asset pass deferred, see the design doc). Exported for `suggested-files.tsx`'s card type icon, same vocabulary as the tree row it points at. */
@@ -172,6 +202,8 @@ export function FileTree({
   sort = DEFAULT_FILE_TREE_VIEW.sort,
   filter = DEFAULT_FILE_TREE_VIEW.filter,
   search = '',
+  onChangeSort,
+  onToggleShowSystemFiles,
   onUnseenCountChange,
 }: {
   root: string;
@@ -215,10 +247,15 @@ export function FileTree({
   filter?: FileTreeFilter;
   /** v2 round (§3.1): the header search field's live query — title + filename, case-insensitive substring (`searchTree`). */
   search?: string;
+  /** v3: the sort control lives in the explorer's own tab strip, so changing it reports back up to whoever persists the choice. Omitted in tests, where the strip renders without it. */
+  onChangeSort?: (sort: FileTreeSort) => void;
+  /** v3: "Show system files" moved into the explorer's own view menu, beside sort. */
+  onToggleShowSystemFiles?: () => void;
   /** v2 round (§3.1): reports the CONTENT-ONLY unseen total (independent of `showSystemFiles`) up to the header's "N new" chip. */
   onUnseenCountChange?: (count: number) => void;
 }) {
   const queryClient = useQueryClient();
+  const [tab, setTab] = useState<ExplorerTab>('files');
   const queryKey = useMemo(() => rigFilesQueryKey(root), [root]);
   const [sawChange, setSawChange] = useState(false);
   const { data, isLoading, error } = useQuery({
@@ -380,33 +417,93 @@ export function FileTree({
   // v2 round (§3.3): the ONE row context menu, shared by every row and the
   // tree's own root (`target: null`) — right-clicking anywhere replaces the
   // old hover-button clutter and the header's own "Mark all as seen" row.
+  // v3 keeps the right-click AND gives each row a visible `⋯` trigger that
+  // opens the same menu: discoverable for anyone who never right-clicks,
+  // one implementation either way.
   const menu = useRowContextMenu<MenuTarget>();
   const [renameTarget, setRenameTarget] = useState<RigFileNode | null>(null);
 
+  // v3: the row status pill's live signal. Agent writes come from the
+  // transcript-derived write log; "recent" is anything changed on disk
+  // inside the window, deliberately unattributed (the watcher cannot tell
+  // a human's editor from the sync daemon).
+  const recentWrites = useRecentWrites(root);
+  const agentPaths = useMemo(() => new Set(recentWrites.map((w) => w.relPath)), [recentWrites]);
+  const statusFor = useCallback(
+    (relPath: string): RowStatus | null => {
+      if (agentPaths.has(relPath)) return { kind: 'agent' };
+      return null;
+    },
+    [agentPaths]
+  );
+
+  // The `⋯` button opens the shared menu at the button's own corner rather
+  // than the pointer, so it behaves like every other dropdown in the app.
+  const openRowMenu = useCallback(
+    (event: React.MouseEvent, node: RigFileNode) => {
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      menu.openAt({ x: rect.right - 4, y: rect.bottom + 2 }, node);
+    },
+    [menu]
+  );
+
+  const archive = (node: RigFileNode) => {
+    void rpc.rig.files.archive(root, `${root}/${node.relPath}`);
+  };
+
+  /**
+   * v3: the explorer's tab strip stays put through every state — a panel
+   * whose chrome disappears while it loads and reappears after reads as two
+   * different screens. Only the BODY swaps.
+   */
+  const tabs = (
+    <ExplorerTabs
+      tab={tab}
+      onChangeTab={setTab}
+      skillCount={skillFiles.length}
+      sort={sort}
+      onChangeSort={onChangeSort}
+      showSystemFiles={showSystemFiles}
+      onToggleShowSystemFiles={onToggleShowSystemFiles}
+    />
+  );
+
   if (isLoading) {
-    return <p className="text-text-muted px-3 py-2 text-xs">Loading files…</p>;
+    return (
+      <>
+        {tabs}
+        <p className="text-text-muted px-3 py-2 text-xs">Loading files…</p>
+      </>
+    );
   }
   if (error) {
     return (
-      <p className="text-danger px-3 py-2 text-xs">
-        {error instanceof Error ? error.message : 'Could not read this folder.'}
-      </p>
+      <>
+        {tabs}
+        <p className="text-danger px-3 py-2 text-xs">
+          {error instanceof Error ? error.message : 'Could not read this folder.'}
+        </p>
+      </>
     );
   }
-  if (!data || data.length === 0) {
+  if (!data || data.length === 0 || (contentTree.length === 0 && skillFiles.length === 0)) {
     if (justAttachedSyncing && !sawChange) {
       return (
-        <div className="flex flex-col items-center gap-2 px-3 py-8 text-center">
-          <Loader2 className="text-text-muted size-4 animate-spin" strokeWidth={1.5} />
-          <p className="text-text-muted text-xs">Syncing files…</p>
-        </div>
+        <>
+          {tabs}
+          <div className="flex flex-col items-center gap-2 px-3 py-8 text-center">
+            <Loader2 className="text-text-muted size-4 animate-spin" strokeWidth={1.5} />
+            <p className="text-text-muted text-xs">Syncing files…</p>
+          </div>
+        </>
       );
     }
-    return <p className="text-text-muted px-3 py-2 text-xs">Empty folder.</p>;
-  }
-
-  if (contentTree.length === 0 && skillFiles.length === 0) {
-    return <p className="text-text-muted px-3 py-2 text-xs">Empty folder.</p>;
+    return (
+      <>
+        {tabs}
+        <p className="text-text-muted px-3 py-2 text-xs">Empty folder.</p>
+      </>
+    );
   }
 
   const menuTarget = menu.state?.target ?? null;
@@ -414,35 +511,49 @@ export function FileTree({
 
   return (
     <>
+      {tabs}
       <div
-        className="flex flex-col py-1"
+        className="@container flex flex-col py-1"
         onContextMenu={(event) => {
           if (bindingId) menu.open(event, null);
         }}
       >
-        {viewTree.map((node) => (
-          <TreeNode
-            key={node.relPath}
-            node={node}
-            depth={0}
+        {tab === 'files' ? (
+          viewTree.length === 0 ? (
+            <p className="text-text-muted px-3 py-6 text-center text-xs">
+              {search ? `Nothing matching "${search}".` : 'Nothing here yet.'}
+            </p>
+          ) : (
+            viewTree.map((node) => (
+              <TreeNode
+                key={node.relPath}
+                node={node}
+                depth={0}
+                root={root}
+                activePath={activePath}
+                revealPath={revealPath ?? null}
+                onOpenFile={handleOpenFile}
+                onContextMenu={menu.open}
+                onRowMenu={openRowMenu}
+                statusFor={statusFor}
+                forceOpen={search.trim().length > 0}
+                unseenFiles={unseen.unseenFiles}
+                unseenCountByDir={unseen.unseenCountByDir}
+                pinned={pinned}
+              />
+            ))
+          )
+        ) : (
+          <SkillsList
+            files={skillFiles}
             root={root}
             activePath={activePath}
-            revealPath={revealPath ?? null}
+            search={search}
             onOpenFile={handleOpenFile}
             onContextMenu={menu.open}
-            unseenFiles={unseen.unseenFiles}
-            unseenCountByDir={unseen.unseenCountByDir}
-            pinned={pinned}
+            seenState={seenState}
           />
-        ))}
-        <SkillsSection
-          files={skillFiles}
-          root={root}
-          activePath={activePath}
-          onOpenFile={handleOpenFile}
-          onContextMenu={menu.open}
-          seenState={seenState}
-        />
+        )}
       </div>
 
       {menu.state &&
@@ -506,6 +617,20 @@ export function FileTree({
                       menu.close();
                     }}
                   />
+                  {/*
+                    Archive moves the entry into `_archive/` at the rig
+                    root — a real move everyone sharing the rig can see,
+                    not a private flag that would make a file vanish for
+                    one person and stay put for everyone else.
+                  */}
+                  <ContextMenuItem
+                    label="Archive"
+                    icon={Archive}
+                    onSelect={() => {
+                      archive(target);
+                      menu.close();
+                    }}
+                  />
                   <ContextMenuSeparator />
                   {target.kind === 'file' ? (
                     <ContextMenuItem
@@ -555,6 +680,9 @@ function TreeNode({
   revealPath,
   onOpenFile,
   onContextMenu,
+  onRowMenu,
+  statusFor,
+  forceOpen,
   unseenFiles,
   unseenCountByDir,
   pinned,
@@ -567,6 +695,12 @@ function TreeNode({
   onOpenFile: (absPath: string, relPath: string) => void;
   /** v2 round (§3.3): right-click anywhere on a row opens the shared context menu with THIS node as its target. */
   onContextMenu: (event: React.MouseEvent, node: RigFileNode) => void;
+  /** v3: the row's own hover `⋯` button opens the SAME menu, positioned at the button instead of the cursor. */
+  onRowMenu: (event: React.MouseEvent, node: RigFileNode) => void;
+  /** v3: this file's status pill, or null when nothing is happening to it. */
+  statusFor: (relPath: string) => RowStatus | null;
+  /** v3: while a search is active every folder renders open, so a match is never hidden inside a collapsed parent. */
+  forceOpen: boolean;
   /** File-navigator redesign (§4): every unseen FILE's relPath, for the row dot. */
   unseenFiles: Set<string>;
   /** Every DIR relPath with at least one unseen descendant, mapped to that count — v2 round: only the COUNT>0 presence is used now (a dot, never the number itself). */
@@ -589,7 +723,7 @@ function TreeNode({
   const isAncestorOfReveal =
     node.kind === 'dir' && revealPath !== null && revealPath.startsWith(`${node.relPath}/`);
   const isRevealTarget = revealPath !== null && revealPath === node.relPath;
-  const open = manualOpen ?? (depth < 1 || isAncestorOfReveal || isRevealTarget);
+  const open = forceOpen || (manualOpen ?? (depth < 1 || isAncestorOfReveal || isRevealTarget));
   const { ref: rowRef, flashing } = useRevealHighlight(isRevealTarget);
 
   if (node.kind === 'dir') {
@@ -617,7 +751,7 @@ function TreeNode({
             <ChevronRight className="size-3.5 shrink-0" strokeWidth={1.5} />
           )}
           <FolderGlyph className="size-3.5 shrink-0" strokeWidth={1.5} />
-          <RowLabel text={node.name} className="flex-1" />
+          <RowLabel text={displayName(node)} className="flex-1" />
           {!!unseenCount && <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />}
         </button>
         {open &&
@@ -631,6 +765,9 @@ function TreeNode({
               revealPath={revealPath}
               onOpenFile={onOpenFile}
               onContextMenu={onContextMenu}
+              onRowMenu={onRowMenu}
+              statusFor={statusFor}
+              forceOpen={forceOpen}
               unseenFiles={unseenFiles}
               unseenCountByDir={unseenCountByDir}
               pinned={pinned}
@@ -644,11 +781,12 @@ function TreeNode({
   const Icon = iconFor(node.name);
   const isUnseen = unseenFiles.has(node.relPath);
   const isPinned = pinned.includes(node.relPath);
+  const status = statusFor(node.relPath);
   return (
     <div
       onContextMenu={(event) => onContextMenu(event, node)}
       className={cn(
-        'rounded-control flex h-7 w-full items-center text-sm transition-colors',
+        'rounded-control group flex h-7 w-full items-center text-sm transition-colors',
         active ? 'bg-bg-2 text-text-primary' : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
       )}
     >
@@ -659,17 +797,39 @@ function TreeNode({
         className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-1 text-left"
       >
         <Icon className="size-3.5 shrink-0" strokeWidth={1.5} />
-        <RowLabel text={displayTitle(node)} filename={node.name} className={cn(isUnseen && 'font-medium')} />
+        <RowLabel
+          text={displayName(node)}
+          title={rowTitleHint(node)}
+          className={cn(isUnseen && 'font-medium', status?.kind === 'agent' && 'active-shimmer')}
+        />
         {isUnseen && <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />}
       </button>
+      {status && <RowStatusPill status={status} className="mr-1.5" />}
+      {/*
+        Time is the row's least important fact and the first thing worth
+        losing when the panel narrows, so it hides below a container width
+        rather than competing with the name and the pill for space.
+        Actions replace it on hover: a row never shows both.
+      */}
       {node.mtimeMs !== undefined && (
-        <span className="text-text-muted shrink-0 pr-2 text-xs tabular-nums">
+        <span className="text-text-muted hidden shrink-0 pr-2 text-xs tabular-nums @[15rem]:group-hover:hidden @[15rem]:inline">
           {relativeTime(node.mtimeMs, Date.now())}
         </span>
       )}
       {isPinned && (
-        <Pin className="text-accent mr-2 size-3 shrink-0" strokeWidth={1.5} fill="currentColor" />
+        <Pin className="text-accent mr-1 size-3 shrink-0" strokeWidth={1.5} fill="currentColor" />
       )}
+      <button
+        type="button"
+        aria-label="File actions"
+        onClick={(event) => {
+          event.stopPropagation();
+          onRowMenu(event, node);
+        }}
+        className="rounded-control text-text-muted hover:bg-bg-1 hover:text-text-primary mr-1 hidden size-5 shrink-0 items-center justify-center group-hover:flex focus-visible:flex"
+      >
+        <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
+      </button>
     </div>
   );
 }
@@ -689,10 +849,11 @@ function TreeNode({
  * meaningful. v2 round: unchanged apart from the same tooltip-only-when-
  * truncated rule (§3.3) every other row now follows.
  */
-function SkillsSection({
+function SkillsList({
   files,
   root,
   activePath,
+  search,
   onOpenFile,
   onContextMenu,
   seenState,
@@ -700,64 +861,192 @@ function SkillsSection({
   files: RigFileNode[];
   root: string;
   activePath: string | null;
+  /** The header's live query, applied here too so search works on whichever tab is open. */
+  search: string;
   onOpenFile: (absPath: string, relPath: string) => void;
   onContextMenu: (event: React.MouseEvent, node: RigFileNode) => void;
   /** File-navigator redesign (§4): same seen-state FileTree already fetched — null while it's still loading, or when there's no bindingId at all. */
   seenState: { baselineAt: number; seen: SeenMap } | null;
 }) {
-  const [open, setOpen] = useState(false);
-  if (files.length === 0) return null;
+  const query = search.trim().toLowerCase();
+  const sorted = [...files]
+    .filter((node) => !query || node.name.toLowerCase().includes(query) || (node.title ?? '').toLowerCase().includes(query))
+    .sort((a, b) => displayName(a).localeCompare(displayName(b)));
 
-  const sorted = [...files].sort((a, b) => displayTitle(a).localeCompare(displayTitle(b)));
-  const unseenCount = seenState
-    ? sorted.filter((node) => isFileUnseen(node.mtimeMs, seenState.seen[node.relPath], seenState.baselineAt)).length
-    : 0;
+  if (sorted.length === 0) {
+    return (
+      <p className="text-text-muted px-3 py-6 text-center text-xs">
+        {query ? `No skills matching "${query}".` : 'No skills in this rig yet.'}
+      </p>
+    );
+  }
 
   return (
-    <div className="mt-1">
+    <>
+      {sorted.map((node) => {
+        const absPath = `${root}/${node.relPath}`;
+        const active = absPath === activePath;
+        const isUnseen = seenState
+          ? isFileUnseen(node.mtimeMs, seenState.seen[node.relPath], seenState.baselineAt)
+          : false;
+        return (
+          <button
+            key={node.relPath}
+            type="button"
+            onClick={() => onOpenFile(absPath, node.relPath)}
+            onContextMenu={(event) => onContextMenu(event, node)}
+            style={{ paddingLeft: SKILL_ROW_PADDING }}
+            className={cn(
+              'rounded-control flex h-7 w-full items-center gap-1.5 pr-3 text-left text-sm transition-colors',
+              active ? 'bg-bg-2 text-text-primary' : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
+            )}
+          >
+            <Sparkles className="text-accent size-3.5 shrink-0" strokeWidth={1.5} />
+            <RowLabel text={displayName(node)} title={rowTitleHint(node)} className="skill-label-shimmer" />
+            {isUnseen && <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />}
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * The explorer's own chrome: which view of the rig you are looking at, and
+ * how it is ordered. Tabs rather than a filter menu because "all files" and
+ * "skills" are different KINDS of thing, not two filters over one list —
+ * skills are capability, files are content, and a tab strip says that
+ * without a word of explanation. Sort sits at the far right of the same
+ * row, labelled with its current value the way Finder's own sort control
+ * is, so nothing about the current view is hidden inside a popover.
+ */
+function ExplorerTabs({
+  tab,
+  onChangeTab,
+  skillCount,
+  sort,
+  onChangeSort,
+  showSystemFiles,
+  onToggleShowSystemFiles,
+}: {
+  tab: ExplorerTab;
+  onChangeTab: (tab: ExplorerTab) => void;
+  skillCount: number;
+  sort: FileTreeSort;
+  onChangeSort?: (sort: FileTreeSort) => void;
+  showSystemFiles: boolean;
+  /** v3: "Show system files" moved into the explorer's own view menu, beside sort. */
+  onToggleShowSystemFiles?: () => void;
+}) {
+  return (
+    <div className="border-border-hairline flex h-9 shrink-0 items-center gap-1 border-b px-2">
+      <TabButton active={tab === 'files'} onClick={() => onChangeTab('files')}>
+        All files
+      </TabButton>
+      {skillCount > 0 && (
+        <TabButton active={tab === 'skills'} onClick={() => onChangeTab('skills')}>
+          Skills
+        </TabButton>
+      )}
+      <div className="flex-1" />
+      {onChangeSort && (
+        <SortControl
+          sort={sort}
+          onChangeSort={onChangeSort}
+          showSystemFiles={showSystemFiles}
+          onToggleShowSystemFiles={onToggleShowSystemFiles}
+        />
+      )}
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        'rounded-control px-2 py-1 text-xs font-medium transition-colors',
+        active ? 'bg-bg-2 text-text-primary' : 'text-text-muted hover:text-text-primary'
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Sort, named by what it actually does to the list rather than by how
+ * clever it is: "Activity" puts what is being worked on at the top,
+ * "Modified" is plain recency, "Name" is A to Z. The trigger always shows
+ * the current value.
+ */
+function SortControl({
+  sort,
+  onChangeSort,
+  showSystemFiles,
+  onToggleShowSystemFiles,
+}: {
+  sort: FileTreeSort;
+  onChangeSort: (sort: FileTreeSort) => void;
+  /** Finder keeps "show hidden" in the same View menu as sort: both answer "what am I looking at", neither is an action on a file. */
+  showSystemFiles: boolean;
+  onToggleShowSystemFiles?: () => void;
+}) {
+  const menu = useRowContextMenu<null>();
+  return (
+    <>
       <button
         type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        style={{ paddingLeft: 8 }}
-        className="text-text-secondary hover:bg-bg-2 hover:text-text-primary flex w-full items-center gap-1.5 py-1 pr-3 text-left text-sm transition-colors"
+        onClick={(event) => {
+          const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+          menu.openAt({ x: rect.right, y: rect.bottom + 2 }, null);
+        }}
+        className="rounded-control text-text-muted hover:bg-bg-2 hover:text-text-primary flex shrink-0 items-center gap-1 px-1.5 py-1 text-xs transition-colors"
       >
-        {open ? (
-          <ChevronDown className="size-3.5 shrink-0" strokeWidth={1.5} />
-        ) : (
-          <ChevronRight className="size-3.5 shrink-0" strokeWidth={1.5} />
-        )}
-        <Sparkles className="text-accent size-3.5 shrink-0" strokeWidth={1.5} />
-        <span className="min-w-0 truncate">Skills</span>
-        {!!unseenCount && <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />}
+        <ArrowUpDown className="size-3 shrink-0" strokeWidth={1.5} />
+        {FILE_SORT_LABELS[sort]}
       </button>
-      {open &&
-        sorted.map((node) => {
-          const absPath = `${root}/${node.relPath}`;
-          const active = absPath === activePath;
-          const isUnseen = seenState
-            ? isFileUnseen(node.mtimeMs, seenState.seen[node.relPath], seenState.baselineAt)
-            : false;
-          return (
-            <button
-              key={node.relPath}
-              type="button"
-              onClick={() => onOpenFile(absPath, node.relPath)}
-              onContextMenu={(event) => onContextMenu(event, node)}
-              style={{ paddingLeft: SKILL_ROW_PADDING }}
-              className={cn(
-                'flex w-full items-center gap-1.5 py-1 pr-3 text-left text-sm transition-colors',
-                active
-                  ? 'bg-bg-2 text-text-primary'
-                  : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
-              )}
-            >
-              <Sparkles className="text-accent size-3.5 shrink-0" strokeWidth={1.5} />
-              <RowLabel text={displayTitle(node)} filename={node.name} className="skill-label-shimmer" />
-              {isUnseen && <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />}
-            </button>
-          );
-        })}
-    </div>
+      {menu.state && (
+        <RowContextMenu point={menu.state.point} onClose={menu.close}>
+          {(['smart', 'modified', 'name'] as const).map((option) => (
+            <ContextMenuItem
+              key={option}
+              label={FILE_SORT_LABELS[option]}
+              icon={sort === option ? Check : FILE_SORT_ICONS[option]}
+              onSelect={() => {
+                onChangeSort(option);
+                menu.close();
+              }}
+            />
+          ))}
+          {onToggleShowSystemFiles && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                label="Show system files"
+                icon={showSystemFiles ? Check : EyeOff}
+                onSelect={() => {
+                  onToggleShowSystemFiles();
+                  menu.close();
+                }}
+              />
+            </>
+          )}
+        </RowContextMenu>
+      )}
+    </>
   );
 }
 

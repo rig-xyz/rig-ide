@@ -1,5 +1,12 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArtifactView } from '@renderer/features/artifact/artifact-view';
+import {
+  ChevronRight,
+  Home as HomeIcon,
+  MessageSquare,
+  Search,
+  Settings as SettingsIcon,
+} from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BROWSER_STATE,
   isFileView,
@@ -7,41 +14,37 @@ import {
   pushFile,
   type ArtifactPanelState,
 } from '@renderer/features/artifact/artifact-panel-stack';
+import { ArtifactView } from '@renderer/features/artifact/artifact-view';
 import { ChatPanel } from '@renderer/features/chat/chat-panel';
 import { Home } from '@renderer/features/home/home';
 import { Onboarding } from '@renderer/features/onboarding/onboarding';
 import { deriveOnboardingSteps } from '@renderer/features/onboarding/onboarding-state';
-import { UserPill } from '@renderer/features/rig-account/user-pill';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
-import { AddMenu } from '@renderer/features/rig-import/add-menu';
+import { UserPill } from '@renderer/features/rig-account/user-pill';
+import { NewMenu } from '@renderer/features/rig-import/add-menu';
 import { ImportDocDialog } from '@renderer/features/rig-import/import-doc-dialog';
 import { RigShareButton } from '@renderer/features/rig-share/rig-share-button';
 import { InvitesBell } from '@renderer/features/shell/invites-bell';
-import { SettingsModal } from '@renderer/features/shell/settings-modal';
 import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
+import { SettingsModal } from '@renderer/features/shell/settings-modal';
 import { deriveTopbarContext, type TopbarContext } from '@renderer/features/shell/topbar-context';
 import { isUpdateReady, shouldAnnounceUpdate } from '@renderer/features/shell/update-status';
 import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
 import { FileTree } from '@renderer/features/workspace/file-tree';
-import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
+import { ActiveFiles } from '@renderer/features/workspace/active-files';
+import { RigPeopleCard } from '@renderer/features/workspace/rig-people-card';
 import { toast } from '@renderer/lib/hooks/use-toast';
-import { Button } from '@renderer/lib/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { events, rpc } from '@renderer/lib/ipc';
 import { consumeJustAttachedSyncing } from '@renderer/lib/just-attached';
+import { LatestRequestGate } from '@renderer/lib/latest-request-gate';
+import { Button } from '@renderer/lib/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
-import {
-  Check,
-  ChevronRight,
-  Home as HomeIcon,
-  MessageSquare,
-  MoreHorizontal,
-  Settings as SettingsIcon,
-} from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { relPathFromRoot } from '@shared/rig/file-navigator-categories';
 import { rigFileChangeChannel } from '@shared/rig/files';
 import {
+  DEFAULT_FILE_TREE_VIEW,
+  type FileTreeView,
   type RigSettings,
   type RigSettingsLegacyImport,
   rigSettingsChangedChannel,
@@ -181,7 +184,11 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function readStoredChatWidth(): number {
-  const fallback = clamp(window.innerWidth * CHAT_WIDTH_DEFAULT_RATIO, CHAT_WIDTH_MIN, CHAT_WIDTH_MAX);
+  const fallback = clamp(
+    window.innerWidth * CHAT_WIDTH_DEFAULT_RATIO,
+    CHAT_WIDTH_MIN,
+    CHAT_WIDTH_MAX
+  );
   try {
     const raw = Number(localStorage.getItem(CHAT_WIDTH_STORAGE_KEY));
     return Number.isFinite(raw) && raw > 0 ? clamp(raw, CHAT_WIDTH_MIN, CHAT_WIDTH_MAX) : fallback;
@@ -239,6 +246,7 @@ export function App() {
   // only `<main>` (Home/`FolderResult`) ever sets this away from false.
   const [mainScrolled, setMainScrolled] = useState(false);
   const [folder, setFolder] = useState<FolderState>({ status: 'empty' });
+  const openPathRequests = useRef(new LatestRequestGate());
   // First-sync round: the one root, if any, `openPath` just marked as
   // "attached with syncing on" (see `lib/just-attached.ts`) — read by
   // `FileBrowser`/`FileTree` to show a real syncing indicator instead of a
@@ -303,7 +311,10 @@ export function App() {
       setShowSystemFiles(settings.showSystemFiles);
     };
 
-    rpc.rig.settings.importLegacy(legacy).then(reconcile).catch(() => {});
+    rpc.rig.settings
+      .importLegacy(legacy)
+      .then(reconcile)
+      .catch(() => {});
     return events.on(rigSettingsChangedChannel, reconcile);
     // `applyThemeFromSettings` is stable (useTheme's own useCallback has
     // empty deps) — listed for exhaustive-deps honesty, not because it
@@ -315,11 +326,13 @@ export function App() {
   // like one picked by hand. Single window, v1: this always replaces
   // whatever rig is currently open rather than spawning a second window.
   const openPath = useCallback(async (picked: string, opts?: { activeSessionId?: string }) => {
+    const requestToken = openPathRequests.current.begin();
     setNav(BROWSER_STATE);
     setFolder({ status: 'detecting', path: picked });
     setPendingActiveSessionId(opts?.activeSessionId ?? null);
     try {
       const result = await rpc.rig.workspace.detect(picked);
+      if (!openPathRequests.current.isCurrent(requestToken)) return;
       setFolder({ status: 'detected', path: picked, result });
       // First-sync round: a plain open never marks this (`consumeJustAttachedSyncing`
       // returns false for any path nobody just ran `rig attach` for), so this
@@ -327,9 +340,12 @@ export function App() {
       // `lib/just-attached.ts`'s own header comment for why this is a
       // same-tick handoff rather than a prop threaded through `onOpenPath`.
       setSyncingRoot(
-        result.bound && consumeJustAttachedSyncing(result.workspaceRoot) ? result.workspaceRoot : null
+        result.bound && consumeJustAttachedSyncing(result.workspaceRoot)
+          ? result.workspaceRoot
+          : null
       );
     } catch (error) {
+      if (!openPathRequests.current.isCurrent(requestToken)) return;
       setFolder({
         status: 'error',
         path: picked,
@@ -390,7 +406,11 @@ export function App() {
 
   const bound =
     folder.status === 'detected' && folder.result.bound
-      ? { root: folder.result.workspaceRoot, name: folder.result.name, bindingId: folder.result.bindingId }
+      ? {
+          root: folder.result.workspaceRoot,
+          name: folder.result.name,
+          bindingId: folder.result.bindingId,
+        }
       : null;
 
   // A different rig opened (or the folder closed): the nav stack belongs to
@@ -418,7 +438,11 @@ export function App() {
       if (changedRoot !== root) return;
       void rpc.rig.workspace.readName(root).then((name) => {
         setFolder((prev) => {
-          if (prev.status !== 'detected' || !prev.result.bound || prev.result.workspaceRoot !== root) {
+          if (
+            prev.status !== 'detected' ||
+            !prev.result.bound ||
+            prev.result.workspaceRoot !== root
+          ) {
             return prev;
           }
           if (prev.result.name === name) return prev;
@@ -440,7 +464,9 @@ export function App() {
   // RIGS row or a fresh Open Folder…) restores them exactly as left, without
   // this needing to touch that state at all.
   const goHome = useCallback(() => {
+    openPathRequests.current.invalidate();
     setFolder({ status: 'empty' });
+    setSyncingRoot(null);
     setPendingActiveSessionId(null);
   }, []);
 
@@ -453,7 +479,22 @@ export function App() {
     setNav(pushFile(absPath));
   }, []);
 
-  const backToBrowser = useCallback(() => setNav(popToBrowser()), []);
+  // Card rail round (§3): a card click opens the file AND arms a reveal for
+  // when the user comes back to the tree — the two views are mutually
+  // exclusive panels, so "reveal" can't happen at the same instant as
+  // "open." `pushFile`'s own revealPath rides along on the `'file'` state
+  // until `backToBrowser` below carries it into the `popToBrowser` call
+  // that actually returns to the tree.
+  const openFileAndReveal = useCallback((absPath: string, relPath: string) => {
+    setNav(pushFile(absPath, relPath));
+  }, []);
+
+  // Carries a `'file'` state's own stashed revealPath (see `openFileAndReveal`
+  // above) forward into the browser it returns to — a plain open (no reveal
+  // armed) still returns with nothing to reveal, exactly as before.
+  const backToBrowser = useCallback(() => {
+    setNav((current) => popToBrowser(isFileView(current) ? current.revealPath : null));
+  }, []);
   const navigateToFolder = useCallback((relPath: string) => setNav(popToBrowser(relPath)), []);
 
   // Esc pops the artifact panel back to the file browser — but only when
@@ -506,7 +547,9 @@ export function App() {
     const sign = CHAT_PANEL_ORDER === 1 ? 1 : -1;
 
     const onMove = (moveEvent: PointerEvent) => {
-      setChatWidth(clamp(startWidth + sign * (moveEvent.clientX - startX), CHAT_WIDTH_MIN, CHAT_WIDTH_MAX));
+      setChatWidth(
+        clamp(startWidth + sign * (moveEvent.clientX - startX), CHAT_WIDTH_MIN, CHAT_WIDTH_MAX)
+      );
     };
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
@@ -581,12 +624,17 @@ export function App() {
             // icon) plus a real hover tooltip is the legible part.
             <div
               style={{ order: CHAT_PANEL_ORDER }}
-              className="border-border-hairline bg-bg-1 flex w-10 shrink-0 flex-col items-center border-r py-2"
+              className="flex w-10 shrink-0 flex-col items-center border-r border-border-hairline bg-bg-1 py-2"
             >
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <Button variant="ghost" size="icon-sm" onClick={toggleChatCollapsed} aria-label="Open chat">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={toggleChatCollapsed}
+                      aria-label="Open chat"
+                    >
                       <MessageSquare className="size-3.5" strokeWidth={1.5} />
                     </Button>
                   }
@@ -598,7 +646,7 @@ export function App() {
             <>
               <div
                 style={{ order: CHAT_PANEL_ORDER, width: chatWidth }}
-                className="bg-bg-1 flex shrink-0 flex-col overflow-hidden"
+                className="flex shrink-0 flex-col overflow-hidden bg-bg-1"
               >
                 <ChatPanel
                   root={bound.root}
@@ -621,12 +669,15 @@ export function App() {
                 aria-label="Resize chat panel"
                 className="group relative w-2.5 shrink-0 cursor-col-resize"
               >
-                <div className="bg-border-hairline group-hover:bg-accent/50 group-active:bg-accent/70 absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors" />
+                <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border-hairline transition-colors group-hover:bg-accent/50 group-active:bg-accent/70" />
               </div>
             </>
           )}
 
-          <div style={{ order: ARTIFACT_PANEL_ORDER }} className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div
+            style={{ order: ARTIFACT_PANEL_ORDER }}
+            className="flex min-h-0 min-w-0 flex-1 flex-col"
+          >
             {isFileView(nav) ? (
               <ArtifactView
                 key={nav.path}
@@ -638,9 +689,11 @@ export function App() {
             ) : (
               <FileBrowser
                 root={bound.root}
+                bindingId={bound.bindingId}
                 name={bound.name}
                 revealPath={nav.revealPath}
                 onOpenFile={openFile}
+                onOpenFileAndReveal={openFileAndReveal}
                 justAttachedSyncing={bound.root === syncingRoot}
                 showSystemFiles={showSystemFiles}
                 onToggleShowSystemFiles={toggleShowSystemFiles}
@@ -674,7 +727,11 @@ export function App() {
           className="min-h-0 flex-1 overflow-y-auto pt-10"
         >
           {folder.status === 'empty' ? (
-            <Home onOpenFolder={openFolder} onOpenPath={openPath} onContinueSession={continueSession} />
+            <Home
+              onOpenFolder={openFolder}
+              onOpenPath={openPath}
+              onContinueSession={continueSession}
+            />
           ) : (
             <div className="flex min-h-full items-center justify-center p-8">
               <FolderResult
@@ -775,7 +832,7 @@ function Topbar({
             : 'bg-bg-1 border-b border-transparent'
       )}
     >
-      <div className="text-text-muted flex min-w-0 items-center gap-1.5 text-xs">
+      <div className="flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
         {context.kind === 'rig' && (
           <>
             <Tooltip>
@@ -785,7 +842,7 @@ function Topbar({
                     type="button"
                     onClick={onGoHome}
                     aria-label="Home"
-                    className="text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex size-6 shrink-0 items-center justify-center transition-colors [-webkit-app-region:no-drag]"
+                    className="flex size-6 shrink-0 items-center justify-center rounded-control text-text-secondary transition-colors [-webkit-app-region:no-drag] hover:bg-bg-2 hover:text-text-primary"
                   >
                     <HomeIcon className="size-3.5" strokeWidth={1.5} />
                   </button>
@@ -816,7 +873,7 @@ function Topbar({
                 type="button"
                 onClick={() => onOpenSettings(updateReady)}
                 aria-label="Settings"
-                className="text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control relative flex size-7 items-center justify-center transition-colors"
+                className="relative flex size-7 items-center justify-center rounded-control text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
               >
                 <SettingsIcon size={15} strokeWidth={1.5} />
                 {/* Make-updates-visible round: same quiet accent-dot
@@ -824,7 +881,7 @@ function Topbar({
                     above — here just presence, no count, since "an update
                     is ready" isn't a quantity. */}
                 {updateReady && (
-                  <span className="bg-accent absolute top-0.5 right-0.5 size-1.5 rounded-full" />
+                  <span className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-accent" />
                 )}
               </button>
             }
@@ -861,25 +918,25 @@ function FolderResult({
     );
   }
   return (
-    <div className="border-border-hairline bg-bg-1 rounded-card flex w-full max-w-md flex-col gap-3 border p-5">
-      <div className="text-text-muted font-mono text-xs break-all">{folder.path}</div>
+    <div className="flex w-full max-w-md flex-col gap-3 rounded-card border border-border-hairline bg-bg-1 p-5">
+      <div className="font-mono text-xs break-all text-text-muted">{folder.path}</div>
 
       {folder.status === 'detecting' && (
-        <div className="text-text-secondary text-sm">Checking…</div>
+        <div className="text-sm text-text-secondary">Checking…</div>
       )}
 
-      {folder.status === 'error' && <div className="text-danger text-sm">{folder.message}</div>}
+      {folder.status === 'error' && <div className="text-sm text-danger">{folder.message}</div>}
 
       {/* `bound: true` is handled above `App` renders instead — only the
           not-a-rig and error outcomes ever reach this card. */}
       {folder.status === 'detected' && !folder.result.bound && (
-        <div className="text-text-secondary text-sm">not a rig</div>
+        <div className="text-sm text-text-secondary">not a rig</div>
       )}
 
       <button
         type="button"
         onClick={onOpenFolder}
-        className="border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control mt-1 self-start border px-3 py-1.5 text-sm transition-colors"
+        className="mt-1 self-start rounded-control border border-border-hairline px-3 py-1.5 text-sm text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
       >
         Open Folder…
       </button>
@@ -930,15 +987,15 @@ function UnsyncedRigCard({
   };
 
   return (
-    <div className="border-border-hairline bg-bg-1 rounded-card flex w-full max-w-md flex-col gap-3 border p-5">
-      <p className="text-text-primary text-sm font-medium">{name} isn’t synced yet.</p>
-      <p className="text-text-muted font-mono text-xs break-all">{unsynced.path}</p>
-      <p className="text-text-secondary text-sm">
+    <div className="flex w-full max-w-md flex-col gap-3 rounded-card border border-border-hairline bg-bg-1 p-5">
+      <p className="text-sm font-medium text-text-primary">{name} isn’t synced yet.</p>
+      <p className="font-mono text-xs break-all text-text-muted">{unsynced.path}</p>
+      <p className="text-sm text-text-secondary">
         Syncing turns on sharing, invites, and lets this app open it.
       </p>
       {!signedIn && (
         <div className="flex items-center gap-2">
-          <p className="text-text-muted min-w-0 text-xs">Syncing needs your Rig account.</p>
+          <p className="min-w-0 text-xs text-text-muted">Syncing needs your Rig account.</p>
           <Button
             variant="outline"
             size="xs"
@@ -949,7 +1006,7 @@ function UnsyncedRigCard({
           </Button>
         </div>
       )}
-      {error && <p className="text-danger text-xs">{error}</p>}
+      {error && <p className="text-xs text-danger">{error}</p>}
       <div className="flex items-center justify-end gap-2 pt-1">
         <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
           Cancel
@@ -984,17 +1041,23 @@ function UnsyncedRigCard({
  */
 function FileBrowser({
   root,
+  bindingId,
   name,
   revealPath,
   onOpenFile,
+  onOpenFileAndReveal,
   justAttachedSyncing,
   showSystemFiles,
   onToggleShowSystemFiles,
 }: {
   root: string;
+  /** File-navigator redesign (§4, seen-state): identifies this rig for `rig_seen_files`. */
+  bindingId: string;
   name: string | null;
   revealPath: string | null;
   onOpenFile: (absPath: string) => void;
+  /** Suggested group (§3.2): opens AND arms a tree reveal for the file's return trip — `SuggestedFiles`' own click handler. */
+  onOpenFileAndReveal: (absPath: string, relPath: string) => void;
   /** First-sync round — see `FileTree`'s own prop comment. */
   justAttachedSyncing: boolean;
   /** File-navigator redesign: System entries (`rig.toml`, `.rig/`, dotfiles) stay hidden until this is true. */
@@ -1002,15 +1065,116 @@ function FileBrowser({
   onToggleShowSystemFiles: () => void;
 }) {
   const [importOpen, setImportOpen] = useState(false);
+  // v2 round (§3.1): the header search field's live query — ephemeral UI
+  // state, not persisted (unlike `view` below), the same way a Finder
+  // window's search field forgets itself on close.
+  const [search, setSearch] = useState('');
+  // v2 round (§3.1): the header's contextual "N new" chip — CONTENT-ONLY
+  // (`FileTree`'s own `onUnseenCountChange`), independent of the current
+  // search/sort/filter view.
+  const [unseenCount, setUnseenCount] = useState(0);
+
+  // File-navigator redesign (§5, re-specced §3.4): the tree's own sort/
+  // filter choice, per rig — owned here (not inside `FileTree`/`FileSortMenu`
+  // separately) because both need the SAME value in the same render pass:
+  // the menu shows which option is checked, the tree applies it, and the
+  // chip toggles `filter` directly. Same fetch-then-subscribe shape as
+  // `showSystemFiles` above it in `App`, scoped to this rig's
+  // `fileTreeViewByRig[bindingId]` the way `pinnedPathsByRig` already is in
+  // `file-tree.tsx`/`suggested-files.tsx`.
+  const [view, setView] = useState<FileTreeView>(DEFAULT_FILE_TREE_VIEW);
+  useEffect(() => {
+    let alive = true;
+    void rpc.rig.settings.get().then((settings) => {
+      if (alive) setView(settings.fileTreeViewByRig[bindingId] ?? DEFAULT_FILE_TREE_VIEW);
+    });
+    const off = events.on(rigSettingsChangedChannel, (settings) => {
+      setView(settings.fileTreeViewByRig[bindingId] ?? DEFAULT_FILE_TREE_VIEW);
+    });
+    return () => {
+      alive = false;
+      off();
+    };
+  }, [bindingId]);
+
+  const onChangeView = useCallback(
+    (next: FileTreeView) => {
+      setView(next);
+      void rpc.rig.settings.set({ fileTreeViewByRig: { [bindingId]: next } });
+    },
+    [bindingId]
+  );
+
+  // v2 round (§3.1): the "N new" chip — click filters to unseen, click
+  // again clears. Reuses the same persisted `view.filter` the sort menu's
+  // own choices go through, so the chip and a future sort-menu equivalent
+  // can never disagree about the current filter state.
+  const toggleUnseenChip = useCallback(() => {
+    onChangeView({ ...view, filter: view.filter === 'unseen' ? 'all' : 'unseen' });
+  }, [view, onChangeView]);
+
+  // Seen-state (§4): `FileTree`'s own row clicks mark themselves seen
+  // directly (it already has each row's relPath). Everything else that can
+  // open a file from this header — `AddMenu`'s "New file", the import
+  // dialog — hands back only an absPath, so this one wrapper derives the
+  // relPath the same way `breadcrumb.ts` does and marks it too: a
+  // just-created or just-imported file the user is looking at right now
+  // shouldn't show up as "unseen" the next time they look at the tree.
+  const handleOpenFile = useCallback(
+    (absPath: string) => {
+      const relPath = relPathFromRoot(root, absPath);
+      if (relPath) void rpc.rig.seenState.markSeen({ bindingId, relPath });
+      onOpenFile(absPath);
+    },
+    [root, bindingId, onOpenFile]
+  );
+
+  // Suggested group: a row click already knows its own relPath (no
+  // derivation needed) — mark it seen the same way every other open does,
+  // then open AND reveal.
+  const handleOpenFileFromCard = useCallback(
+    (absPath: string, relPath: string) => {
+      void rpc.rig.seenState.markSeen({ bindingId, relPath });
+      onOpenFileAndReveal(absPath, relPath);
+    },
+    [bindingId, onOpenFileAndReveal]
+  );
+
   return (
     <div className="flex h-full min-w-0 flex-col overflow-y-auto">
-      <div className="border-border-hairline flex h-10 shrink-0 items-center justify-end border-b px-3">
+      <div className="border-border-hairline flex h-10 shrink-0 items-center gap-2 border-b px-3">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <div className="relative flex min-w-0 max-w-56 flex-1 items-center">
+            <Search className="text-text-muted pointer-events-none absolute left-2 size-3.5" strokeWidth={1.5} />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search files"
+              className="border-border-hairline bg-bg-1 text-text-primary placeholder:text-text-muted focus:border-border-strong w-full rounded-control border py-1.5 pr-2 pl-7 text-xs transition-colors outline-none"
+            />
+          </div>
+          {unseenCount > 0 && (
+            <button
+              type="button"
+              onClick={toggleUnseenChip}
+              aria-pressed={view.filter === 'unseen'}
+              className={cn(
+                'shrink-0 rounded-full px-2 py-1 text-xs font-medium transition-colors',
+                view.filter === 'unseen'
+                  ? 'bg-accent text-accent-ink'
+                  : 'bg-accent-subtle text-accent hover:opacity-80'
+              )}
+            >
+              {unseenCount} new
+            </button>
+          )}
+        </div>
         <div className="flex shrink-0 items-center gap-2">
-          <FileBrowserOptionsMenu
-            showSystemFiles={showSystemFiles}
-            onToggleShowSystemFiles={onToggleShowSystemFiles}
+          <NewMenu
+            root={root}
+            onOpenFile={handleOpenFile}
+            onOpenImportDialog={() => setImportOpen(true)}
           />
-          <AddMenu root={root} onOpenFile={onOpenFile} onOpenImportDialog={() => setImportOpen(true)} />
           <RigShareButton root={root} name={name} />
         </div>
       </div>
@@ -1018,112 +1182,26 @@ function FileBrowser({
         root={root}
         open={importOpen}
         onOpenChange={setImportOpen}
-        onImported={onOpenFile}
+        onImported={handleOpenFile}
       />
+      <RigPeopleCard root={root} bindingId={bindingId} />
+      <ActiveFiles root={root} bindingId={bindingId} onOpenFile={handleOpenFileFromCard} />
       <FileTree
         root={root}
+        bindingId={bindingId}
         activePath={null}
         revealPath={revealPath}
         onOpenFile={onOpenFile}
         justAttachedSyncing={justAttachedSyncing}
         showSystemFiles={showSystemFiles}
+        sort={view.sort}
+        filter={view.filter}
+        search={search}
+        onChangeSort={(next) => onChangeView({ ...view, sort: next })}
+        onToggleShowSystemFiles={onToggleShowSystemFiles}
+        onUnseenCountChange={setUnseenCount}
       />
     </div>
   );
 }
 
-/**
- * Founder-feedback round: the raw Eye/EyeOff toggle button that used to sit
- * bare in `FileBrowser`'s header didn't follow the app's own idiom — every
- * other header control that isn't a single obvious action (`AddMenu` here,
- * `RigsFilterSortMenu`/`RelayOnlyActionsMenu` in `rigs-rail.tsx`) is a
- * `MoreHorizontal`-triggered dropdown, portaled via the same
- * `useAnchorRect` + outside-pointerdown/Escape convention. "Show system
- * files" is a persisted, always-on-or-off setting rather than a one-shot
- * action, so it renders as a checked menu row (`role="menuitemcheckbox"`),
- * matching `rigs-rail.tsx`'s `MenuOptionRow` pattern rather than a plain
- * `menuitem`.
- */
-function FileBrowserOptionsMenu({
-  showSystemFiles,
-  onToggleShowSystemFiles,
-}: {
-  showSystemFiles: boolean;
-  onToggleShowSystemFiles: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const rect = useAnchorRect(open, triggerRef, { gap: 4, estimatedHeight: 50, estimatedWidth: 190 });
-
-  useEffect(() => {
-    if (!open) return;
-    const dismiss = () => setOpen(false);
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target)) return;
-      if (menuRef.current?.contains(target)) return;
-      dismiss();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') dismiss();
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
-
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="File view options"
-        title="View options"
-        className="text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex shrink-0 items-center justify-center p-1.5 transition-colors"
-      >
-        <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
-      </button>
-      {open &&
-        rect &&
-        createPortal(
-          <div
-            ref={menuRef}
-            role="menu"
-            style={{
-              position: 'fixed',
-              width: Math.max(rect.width, 190),
-              maxHeight: rect.maxHeight,
-              overflowY: 'auto',
-              ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
-              ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
-            }}
-            className="border-border-hairline bg-bg-1 rounded-control shadow-soft z-50 border py-1"
-          >
-            <button
-              type="button"
-              role="menuitemcheckbox"
-              aria-checked={showSystemFiles}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                onToggleShowSystemFiles();
-              }}
-              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
-            >
-              <span className="flex size-3.5 shrink-0 items-center justify-center">
-                {showSystemFiles && <Check className="size-3" strokeWidth={1.5} />}
-              </span>
-              Show system files
-            </button>
-          </div>,
-          document.body
-        )}
-    </>
-  );
-}

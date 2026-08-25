@@ -16,7 +16,13 @@ import type { LucideIcon } from 'lucide-react';
 
 export type ContextMenuPoint = { x: number; y: number };
 
-/** One place to open/close a single context menu shared by every row in a tree — only one can ever be open at a time, so the state lives at the tree's root rather than per-row. */
+/**
+ * One place to open/close a single context menu shared by every row in a
+ * tree — only one can ever be open at a time, so the state lives at the
+ * tree's root rather than per-row. `open` is the right-click path (menu at
+ * the pointer); `openAt` is the same menu summoned from a visible trigger
+ * like a row's `⋯` button, positioned at a point the caller measured.
+ */
 export function useRowContextMenu<T>() {
   const [state, setState] = useState<{ point: ContextMenuPoint; target: T } | null>(null);
   const open = (event: React.MouseEvent, target: T) => {
@@ -24,8 +30,9 @@ export function useRowContextMenu<T>() {
     event.stopPropagation();
     setState({ point: { x: event.clientX, y: event.clientY }, target });
   };
+  const openAt = (point: ContextMenuPoint, target: T) => setState({ point, target });
   const close = () => setState(null);
-  return { state, open, close };
+  return { state, open, openAt, close };
 }
 
 export function RowContextMenu({

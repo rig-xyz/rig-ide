@@ -1,5 +1,5 @@
 import { type FSWatcher, watch as fsWatch } from 'node:fs';
-import { access, open, readdir, readFile, rename as fsRename, stat, writeFile as fsWriteFile } from 'node:fs/promises';
+import { access, mkdir, open, readdir, readFile, rename as fsRename, stat, writeFile as fsWriteFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, sep } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
@@ -24,6 +24,8 @@ import { getFileTitle } from './file-title-cache';
  */
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
+/** Where the row menu's "Archive" moves things — one folder at the rig root, visible to everyone the rig is shared with. */
+const ARCHIVE_DIR = '_archive';
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.mdx']);
 /**
  * Entries the recursive listing never descends into or shows, regardless
@@ -47,14 +49,13 @@ function isIgnored(name: string): boolean {
 }
 
 /**
- * File-navigator redesign sort key: folders first, then files, both by
- * TITLE A-Z (locale compare) — a folder's title is just its name; a file's
- * is its extracted markdown title when present, else its filename, matching
- * the renderer's own display fallback (`file-tree.tsx`'s `displayTitle`)
- * exactly, so sort order and displayed order always agree.
+ * Sort key: folders first, then files, both by FILENAME A-Z (locale
+ * compare). Navigator v3 shows filenames rather than extracted titles, and
+ * sort order has to agree with what the row actually says, so this sorts on
+ * the same string the row displays (`file-tree.tsx`'s `displayName`).
  */
 function sortKey(node: RigFileNode): string {
-  return node.title ?? node.name;
+  return node.name;
 }
 
 async function listDir(absDir: string, root: string): Promise<RigFileNode[]> {
@@ -262,6 +263,85 @@ export const rigFilesController = createRPCController({
       }
       log.warn('Rig files: rename failed', { absPath, targetPath, error: String(error) });
       return err<RigFileRenameError>({ kind: 'ioError', message: 'Could not rename this.' });
+    }
+  },
+
+  /**
+   * Navigator v3 (row menu "Archive"): moves an entry into `_archive/` at
+   * the rig root, creating that folder on first use. Archiving is a real
+   * move on disk, not a hidden flag — the file stays in the rig, stays
+   * synced, and a collaborator sees it move rather than vanish, which is
+   * the honest behaviour for a folder everyone shares. Getting something
+   * back is a plain drag or a Rename away.
+   *
+   * `root` is passed explicitly rather than derived by walking up for a
+   * `rig.toml`, so the destination can never escape the workspace the
+   * caller is actually looking at. A name collision inside `_archive/`
+   * gets a numeric suffix instead of overwriting whatever is already
+   * archived under that name.
+   */
+  archive: async (root: string, absPath: string): Promise<Result<{ path: string }, RigFileRenameError>> => {
+    const relToRoot = relative(root, absPath);
+    if (!relToRoot || relToRoot.startsWith('..') || relToRoot.split(sep)[0] === ARCHIVE_DIR) {
+      return err<RigFileRenameError>({ kind: 'invalidName', message: 'That item cannot be archived.' });
+    }
+    const archiveDir = join(root, ARCHIVE_DIR);
+    try {
+      await mkdir(archiveDir, { recursive: true });
+    } catch (error) {
+      log.warn('Rig files: could not create archive folder', { archiveDir, error: String(error) });
+      return err<RigFileRenameError>({ kind: 'ioError', message: 'Could not create the archive folder.' });
+    }
+
+    const name = basename(absPath);
+    const ext = extname(name);
+    const stem = ext ? name.slice(0, -ext.length) : name;
+    let targetPath = join(archiveDir, name);
+    for (let n = 2; ; n += 1) {
+      const exists = await access(targetPath)
+        .then(() => true)
+        .catch(() => false);
+      if (!exists) break;
+      targetPath = join(archiveDir, `${stem}-${n}${ext}`);
+    }
+
+    try {
+      await fsRename(absPath, targetPath);
+      return ok({ path: targetPath });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (code === 'ENOENT') return err<RigFileRenameError>({ kind: 'notFound', message: 'Not found.' });
+      log.warn('Rig files: archive failed', { absPath, targetPath, error: String(error) });
+      return err<RigFileRenameError>({ kind: 'ioError', message: 'Could not archive this.' });
+    }
+  },
+
+  /**
+   * Navigator v3 (the New menu's "New folder"): creates one folder directly
+   * under `root`. `name` is a bare name, never a path, so a new folder can
+   * only ever land at the top level of the rig the user is looking at. An
+   * existing folder of that name is an error rather than a silent no-op:
+   * "New folder" that quietly selects someone else's folder is worse than
+   * one that says the name is taken.
+   */
+  makeDirectory: async (root: string, name: string): Promise<Result<{ path: string }, RigFileRenameError>> => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === '.' || trimmed === '..' || trimmed.includes('/') || trimmed.includes('\\')) {
+      return err<RigFileRenameError>({ kind: 'invalidName', message: 'That name is not valid.' });
+    }
+    const targetPath = join(root, trimmed);
+    const exists = await access(targetPath)
+      .then(() => true)
+      .catch(() => false);
+    if (exists) {
+      return err<RigFileRenameError>({ kind: 'alreadyExists', message: 'Something with that name already exists.' });
+    }
+    try {
+      await mkdir(targetPath);
+      return ok({ path: targetPath });
+    } catch (error) {
+      log.warn('Rig files: mkdir failed', { targetPath, error: String(error) });
+      return err<RigFileRenameError>({ kind: 'ioError', message: 'Could not create that folder.' });
     }
   },
 

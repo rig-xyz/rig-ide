@@ -271,3 +271,67 @@
     animation: unseen-dot-in 200ms ease-out;
   }
 }
+
+/*
+ * Navigator v3 — the active-files carousel.
+ *
+ * `.carousel-scroll`: horizontal scroll whose scrollbar is invisible at
+ * rest and appears only while the user is actually scrolling (JS adds
+ * `.is-scrolling` on scroll, drops it after a beat) or hovering the strip.
+ * macOS overlay-scrollbar behaviour, reproduced for the one surface that
+ * scrolls sideways — nothing here overlaps the app's global thin-scrollbar
+ * convention in `index.css`, it only decides WHEN the thumb is visible.
+ */
+.carousel-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 200ms ease-out;
+}
+.carousel-scroll::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  transition: background-color 200ms ease-out;
+}
+.carousel-scroll:hover,
+.carousel-scroll.is-scrolling {
+  scrollbar-color: var(--border-hairline) transparent;
+}
+.carousel-scroll:hover::-webkit-scrollbar-thumb,
+.carousel-scroll.is-scrolling::-webkit-scrollbar-thumb {
+  background-color: var(--border-hairline);
+}
+
+/*
+ * `.active-shimmer`: a file being written RIGHT NOW by an agent or a
+ * collaborator. State, not decoration — it runs only while that is true and
+ * stops the moment the write window closes, which is why it earns the
+ * gradient-through-text treatment the skills hover shimmer also uses.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .active-shimmer {
+    background-image: linear-gradient(
+      100deg,
+      var(--text-primary) 35%,
+      var(--accent) 50%,
+      var(--text-primary) 65%
+    );
+    background-size: 250% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    animation: skill-shimmer-sweep 2.6s ease-in-out infinite;
+  }
+  .active-shimmer-muted {
+    background-image: linear-gradient(
+      100deg,
+      var(--text-muted) 35%,
+      var(--accent) 50%,
+      var(--text-muted) 65%
+    );
+    background-size: 250% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    animation: skill-shimmer-sweep 2.6s ease-in-out infinite;
+  }
+}

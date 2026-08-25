@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Result } from '@emdash/shared';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Round: eager session activation — the persistence guard.
@@ -70,13 +70,29 @@ async function flush(times = 8): Promise<void> {
   for (let i = 0; i < times; i++) await Promise.resolve();
 }
 
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 type FakeSessionConfig = {
   modelOptions: { available: { id: string; name: string }[]; selected: string } | null;
   modeOptions: { available: { id: string; name: string }[]; selected: string } | null;
   efforts: { available: { id: string; name: string }[]; selected: string } | null;
 };
 
-function fakeLiveSession(overrides: { acpSessionId?: string | null; config?: FakeSessionConfig } = {}) {
+function fakeLiveSession(
+  overrides: { acpSessionId?: string | null; config?: FakeSessionConfig } = {}
+) {
   return {
     acpSessionId: overrides.acpSessionId ?? 'acp-live-1',
     sessionState: fakeValueSource({
@@ -85,16 +101,26 @@ function fakeLiveSession(overrides: { acpSessionId?: string | null; config?: Fak
       canCancel: false,
       pendingPermissions: [],
     }),
-    config: fakeValueSource(overrides.config ?? { modelOptions: null, modeOptions: null, efforts: null }),
+    config: fakeValueSource(
+      overrides.config ?? { modelOptions: null, modeOptions: null, efforts: null }
+    ),
     plan: fakeValueSource(null),
     activeTurn: fakeValueSource(null),
     getHistory: vi.fn().mockResolvedValue({ success: true, data: { turns: [], nextCursor: null } }),
-    sendPrompt: vi.fn().mockResolvedValue({ success: true, data: undefined } satisfies Result<unknown, unknown>),
-    queuePrompt: vi.fn().mockResolvedValue({ success: true, data: undefined } satisfies Result<unknown, unknown>),
+    sendPrompt: vi
+      .fn()
+      .mockResolvedValue({ success: true, data: undefined } satisfies Result<unknown, unknown>),
+    queuePrompt: vi
+      .fn()
+      .mockResolvedValue({ success: true, data: undefined } satisfies Result<unknown, unknown>),
     stopSession: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
-    setModelOption: vi.fn().mockResolvedValue({ success: true, data: undefined } satisfies Result<unknown, unknown>),
-    setModeOption: vi.fn().mockResolvedValue({ success: true, data: undefined } satisfies Result<unknown, unknown>),
+    setModelOption: vi
+      .fn()
+      .mockResolvedValue({ success: true, data: undefined } satisfies Result<unknown, unknown>),
+    setModeOption: vi
+      .fn()
+      .mockResolvedValue({ success: true, data: undefined } satisfies Result<unknown, unknown>),
   };
 }
 
@@ -104,7 +130,10 @@ vi.mock('@renderer/lib/acp/acp-live-session', () => ({
     resume: (...args: unknown[]) => mocks.acpResume(...(args as [])),
   },
   AcpStartError: class AcpStartError extends Error {},
-  asValueSource: (replica: { current: () => unknown; onChange: (cb: () => void) => () => void }) => ({
+  asValueSource: (replica: {
+    current: () => unknown;
+    onChange: (cb: () => void) => () => void;
+  }) => ({
     getSnapshot: () => replica.current(),
     subscribe: (cb: () => void) => replica.onChange(cb),
   }),
@@ -321,6 +350,113 @@ describe('RigChatStore — the rig_sessions row-creation guard', () => {
   });
 });
 
+describe('RigChatStore — lifecycle invalidation', () => {
+  it('ignores a stored-history completion after disposal', async () => {
+    const events = deferred<unknown[]>();
+    mocks.getEvents.mockReturnValue(events.promise);
+    const store = new RigChatStore('conv-dispose-history', 'bnd-1', '/rig', 'claude');
+    const bootstrap = store.bootstrap();
+
+    store.dispose();
+    events.resolve([
+      {
+        seq: 0,
+        at: 123,
+        turn: {
+          id: 'turn-late',
+          seq: 0,
+          initiator: 'user',
+          items: [{ kind: 'message', id: 'message-late', seq: 0, role: 'user', text: 'late' }],
+        },
+      },
+    ]);
+    await bootstrap;
+
+    expect(store.disposed).toBe(true);
+    expect(store.session).toBeNull();
+    expect(store.historyLoading).toBe(true);
+    expect(store.chatState.transcript.history.get()).toEqual([]);
+    expect(mocks.acpCreate).not.toHaveBeenCalled();
+    store.dispose();
+  });
+
+  it('disposes a create result that resolves after invalidation and never flushes held prompts', async () => {
+    const created = deferred<ReturnType<typeof fakeLiveSession>>();
+    mocks.acpCreate.mockReturnValue(created.promise);
+    const store = new RigChatStore('conv-dispose-create', 'bnd-1', '/rig', 'claude');
+    const bootstrap = store.bootstrap();
+    store.submitPrompt('held until create');
+    await flush();
+    store.dispose();
+
+    const session = fakeLiveSession();
+    created.resolve(session);
+    await bootstrap;
+
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+    expect(session.stopSession).toHaveBeenCalledTimes(1);
+    expect(session.sendPrompt).not.toHaveBeenCalled();
+    expect(store.session).toBeNull();
+    expect(store.pendingResumeSubmitCount).toBe(1);
+  });
+
+  it('disposes a resume result that resolves after invalidation', async () => {
+    const resumed = deferred<{
+      session: ReturnType<typeof fakeLiveSession>;
+      history: { turns: []; nextCursor: null };
+    }>();
+    mocks.acpResume.mockReturnValue(resumed.promise);
+    const store = new RigChatStore('conv-dispose-resume', 'bnd-1', '/rig', 'claude', {
+      acpSessionId: 'acp-resume-late',
+      title: 'Past session',
+    });
+    const bootstrap = store.bootstrap();
+    await flush();
+    store.dispose();
+
+    const session = fakeLiveSession({ acpSessionId: 'acp-resume-late' });
+    resumed.resolve({ session, history: { turns: [], nextCursor: null } });
+    await bootstrap;
+
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+    expect(session.stopSession).toHaveBeenCalledTimes(1);
+    expect(store.session).toBeNull();
+    expect(store.resuming).toBe(true);
+  });
+
+  it('disposes a created session when history resolves after invalidation', async () => {
+    const history = deferred<Result<{ turns: []; nextCursor: null }, unknown>>();
+    const session = fakeLiveSession();
+    session.getHistory.mockReturnValue(history.promise);
+    mocks.acpCreate.mockResolvedValue(session);
+    const store = new RigChatStore('conv-dispose-get-history', 'bnd-1', '/rig', 'claude');
+    const bootstrap = store.bootstrap();
+    await flush();
+    store.dispose();
+
+    history.resolve({ success: true, data: { turns: [], nextCursor: null } });
+    await bootstrap;
+
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+    expect(session.stopSession).toHaveBeenCalledTimes(1);
+    expect(store.session).toBeNull();
+  });
+
+  it('releases a created session when history acquisition fails before adoption', async () => {
+    const session = fakeLiveSession();
+    session.getHistory.mockResolvedValue({ success: false, error: new Error('history failed') });
+    mocks.acpCreate.mockResolvedValue(session);
+    const store = new RigChatStore('conv-history-failure', 'bnd-1', '/rig', 'claude');
+
+    await store.bootstrap();
+
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+    expect(session.stopSession).toHaveBeenCalledTimes(1);
+    expect(store.session).toBeNull();
+    expect(store.loadError?.kind).toBe('generic');
+  });
+});
+
 /**
  * Items 7 + 8, post-release usage round (Dylan): (7) permission mode now
  * persists per harness too — same `lastModelByHarness` pattern, but ONLY
@@ -411,6 +547,28 @@ describe('RigChatStore — model/effort/mode preference memory, end to end', () 
     store.dispose();
   });
 
+  it('does not initialize remembered preferences after disposal', async () => {
+    const settings = deferred<typeof EMPTY_SETTINGS>();
+    mocks.settingsGet.mockReturnValue(settings.promise);
+    const session = fakeLiveSession({ config: POPULATED_CONFIG });
+    mocks.acpCreate.mockResolvedValue(session);
+
+    const store = new RigChatStore('conv-pref-disposed', 'bnd-1', '/rig', 'claude');
+    await store.bootstrap();
+    store.dispose();
+
+    settings.resolve({
+      ...EMPTY_SETTINGS,
+      lastModelByHarness: { claude: 'haiku' },
+      lastEffortByHarness: { claude: 'high' },
+      lastModeByHarness: { claude: 'acceptEdits' },
+    });
+    await flush();
+
+    expect(session.setModelOption).not.toHaveBeenCalled();
+    expect(session.setModeOption).not.toHaveBeenCalled();
+  });
+
   it('setMode persists a safe pick — item 7, "safe round-trips"', async () => {
     mocks.settingsGet.mockResolvedValue(EMPTY_SETTINGS);
     const session = fakeLiveSession({ config: POPULATED_CONFIG });
@@ -424,7 +582,9 @@ describe('RigChatStore — model/effort/mode preference memory, end to end', () 
     store.setMode('acceptEdits');
     await flush();
 
-    expect(mocks.settingsSet).toHaveBeenCalledWith({ lastModeByHarness: { claude: 'acceptEdits' } });
+    expect(mocks.settingsSet).toHaveBeenCalledWith({
+      lastModeByHarness: { claude: 'acceptEdits' },
+    });
     store.dispose();
   });
 

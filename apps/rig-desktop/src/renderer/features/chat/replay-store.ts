@@ -27,6 +27,12 @@ export class ReplayStore {
   /** Null once `session` loads; a plain message on failure (deleted row, read error). */
   error: string | null = null;
   session: RigStoredSession | null = null;
+  private _disposed = false;
+  private _generation = 0;
+
+  get disposed(): boolean {
+    return this._disposed;
+  }
 
   constructor(readonly conversationId: string) {
     this.chatContext = getSharedChatContext();
@@ -42,20 +48,25 @@ export class ReplayStore {
   }
 
   async load(): Promise<void> {
+    if (this._disposed) return;
+    const generation = this._generation;
     try {
       const [session, events] = await Promise.all([
         rpc.rig.sessions.getSession({ sessionId: this.conversationId }),
         rpc.rig.sessions.getEvents({ sessionId: this.conversationId }),
       ]);
+      if (!this._isCurrent(generation)) return;
       if (!session) throw new Error('This session is no longer stored.');
       const { turns, atBySeq } = parseStoredEvents(events);
 
       runInAction(() => {
+        if (!this._isCurrent(generation)) return;
         this.session = session;
         this.chatState.transcript.history.seed(withTurnTimestamps(turns, atBySeq));
         this.loading = false;
       });
     } catch (error) {
+      if (!this._isCurrent(generation)) return;
       console.error('Rig chat: failed to load a stored session for replay', {
         sessionId: this.conversationId,
         error,
@@ -75,18 +86,28 @@ export class ReplayStore {
    * own the way `RigChatStore` has, since `session` already carries both.
    */
   rename(title: string): void {
+    if (this._disposed) return;
     const trimmed = title.trim();
     if (!trimmed || !this.session) return;
     this.session = { ...this.session, title: trimmed, titleSource: 'manual' };
-    void rpc.rig.sessions.rename({ sessionId: this.conversationId, title: trimmed }).catch((error: unknown) => {
-      console.error('Rig chat: failed to rename a stored session', {
-        sessionId: this.conversationId,
-        error,
+    void rpc.rig.sessions
+      .rename({ sessionId: this.conversationId, title: trimmed })
+      .catch((error: unknown) => {
+        console.error('Rig chat: failed to rename a stored session', {
+          sessionId: this.conversationId,
+          error,
+        });
       });
-    });
   }
 
   dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
+    this._generation += 1;
     this.chatState.dispose();
+  }
+
+  private _isCurrent(generation: number): boolean {
+    return !this._disposed && this._generation === generation;
   }
 }

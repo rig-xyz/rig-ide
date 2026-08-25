@@ -8,6 +8,7 @@ import {
 } from '@emdash/chat-ui';
 import type { QueuedPrompt, TranscriptTurn } from '@emdash/core/acp/client';
 import { action, computed, makeObservable, observable, reaction, runInAction } from 'mobx';
+import { recordFileWritesFromTurns } from '@renderer/features/workspace/write-activity';
 import { AcpLiveSession, AcpStartError, asValueSource } from '@renderer/lib/acp/acp-live-session';
 import { getSharedChatContext } from '@renderer/lib/chat/shared-chat-context';
 import { toast } from '@renderer/lib/hooks/use-toast';
@@ -100,6 +101,8 @@ export class RigChatStore {
 
   private _view: ChatView | null = null;
   private _bootstrapPromise: Promise<void> | null = null;
+  private _disposed = false;
+  private _generation = 0;
   private _unsubs: Array<() => void> = [];
   /**
    * Follow-up round — "remember my last model/effort pick per harness"
@@ -170,6 +173,10 @@ export class RigChatStore {
    * `decideSubmitDisposition` for the pure "hold vs send vs queue" call.
    */
   private _heldPrompts: string[] = [];
+
+  get disposed(): boolean {
+    return this._disposed;
+  }
 
   constructor(
     readonly conversationId: string,
@@ -247,32 +254,49 @@ export class RigChatStore {
    * apply is a guaranteed no-op.
    */
   private _initPreferenceMemory(): void {
-    void rpc.rig.settings.get().then((settings) => {
-      this._rememberedModelId = settings.lastModelByHarness[this.providerId] ?? null;
-      this._rememberedEffortId = settings.lastEffortByHarness[this.providerId] ?? null;
-      this._rememberedModeId = settings.lastModeByHarness[this.providerId] ?? null;
-      this._tryApplyRememberedModel();
-      this._tryApplyRememberedEffort();
-      this._tryApplyRememberedMode();
-      this._disposePreferenceReactions.push(
-        reaction(
-          () => this.modelOptions,
-          () => this._tryApplyRememberedModel()
-        ),
-        reaction(
-          () => this.effortOptions,
-          () => this._tryApplyRememberedEffort()
-        ),
-        reaction(
-          () => this.permissionModeOptions,
-          () => this._tryApplyRememberedMode()
-        )
-      );
-    });
+    const generation = this._generation;
+    void rpc.rig.settings
+      .get()
+      .then((settings) => {
+        if (!this._isCurrent(generation)) return;
+        this._rememberedModelId = settings.lastModelByHarness[this.providerId] ?? null;
+        this._rememberedEffortId = settings.lastEffortByHarness[this.providerId] ?? null;
+        this._rememberedModeId = settings.lastModeByHarness[this.providerId] ?? null;
+        this._tryApplyRememberedModel();
+        this._tryApplyRememberedEffort();
+        this._tryApplyRememberedMode();
+        this._disposePreferenceReactions.push(
+          reaction(
+            () => this.modelOptions,
+            () => this._tryApplyRememberedModel()
+          ),
+          reaction(
+            () => this.effortOptions,
+            () => this._tryApplyRememberedEffort()
+          ),
+          reaction(
+            () => this.permissionModeOptions,
+            () => this._tryApplyRememberedMode()
+          )
+        );
+      })
+      .catch((error: unknown) => {
+        if (this._isCurrent(generation)) {
+          console.error('Rig chat: failed to read remembered preferences', {
+            providerId: this.providerId,
+            error,
+          });
+        }
+      });
   }
 
   private _tryApplyRememberedModel(): void {
-    const id = deriveAutoApplyOption(this._rememberedModelId, this.modelOptions, this._appliedRememberedModel);
+    if (this._disposed) return;
+    const id = deriveAutoApplyOption(
+      this._rememberedModelId,
+      this.modelOptions,
+      this._appliedRememberedModel
+    );
     if (!id) return;
     this._appliedRememberedModel = true;
     this.setModel(id);
@@ -285,6 +309,7 @@ export class RigChatStore {
    * own danger check; a remembered id is safe by construction.
    */
   private _tryApplyRememberedMode(): void {
+    if (this._disposed) return;
     const id = deriveAutoApplyOption(
       this._rememberedModeId,
       this.permissionModeOptions,
@@ -296,7 +321,12 @@ export class RigChatStore {
   }
 
   private _tryApplyRememberedEffort(): void {
-    const id = deriveAutoApplyOption(this._rememberedEffortId, this.effortOptions, this._appliedRememberedEffort);
+    if (this._disposed) return;
+    const id = deriveAutoApplyOption(
+      this._rememberedEffortId,
+      this.effortOptions,
+      this._appliedRememberedEffort
+    );
     if (!id) return;
     this._appliedRememberedEffort = true;
     this.setEffort(id);
@@ -398,23 +428,25 @@ export class RigChatStore {
    * a prompt at a session that doesn't exist on the runtime yet.
    */
   bootstrap(): Promise<void> {
-    this._bootstrapPromise ??= this._runBootstrap();
+    if (this._disposed) return Promise.resolve();
+    this._bootstrapPromise ??= this._runBootstrap(this._generation);
     return this._bootstrapPromise;
   }
 
   retry(): void {
-    if (this.historyLoading || !this.loadError) return;
+    if (this._disposed || this.historyLoading || !this.loadError) return;
     this.historyLoading = true;
     this.loadError = null;
-    void this._runBootstrap();
+    void this._runBootstrap(this._generation);
   }
 
   bindView(view: ChatView | null): void {
+    if (this._disposed) return;
     this._view = view;
   }
 
   submitPrompt(text: string): void {
-    if (!text.trim()) return;
+    if (this._disposed || !text.trim()) return;
     const isWorking = this.affordances.isWorking;
 
     if (!isWorking) {
@@ -458,7 +490,8 @@ export class RigChatStore {
    * after `_runBootstrap` just assigned it).
    */
   private _dispatchPrompt(text: string, disposition: SubmitDisposition): void {
-    if (disposition === 'hold') return; // unreachable: callers only pass 'send' | 'queue' here.
+    if (this._disposed || disposition === 'hold') return; // unreachable: callers only pass 'send' | 'queue' here.
+    const generation = this._generation;
     // Row creation must land before any later write that targets this row
     // (the title persist right below, `appendEvents` later via
     // `_applyHistory`) — see `_ensureSessionRow`'s own doc comment. Chained
@@ -468,7 +501,10 @@ export class RigChatStore {
       const title = this._pendingTitleToPersist;
       this._pendingTitleToPersist = null;
       void ensured
-        .then(() => rpc.rig.sessions.setTitle({ sessionId: this.conversationId, title }))
+        .then(() => {
+          if (!this._isCurrent(generation)) return;
+          return rpc.rig.sessions.setTitle({ sessionId: this.conversationId, title });
+        })
         .catch((error: unknown) => {
           console.error('Rig chat: failed to persist session title', {
             sessionId: this.conversationId,
@@ -477,12 +513,17 @@ export class RigChatStore {
         });
     }
     const send =
-      disposition === 'queue' ? this.session?.queuePrompt({ text }) : this.session?.sendPrompt({ text });
+      disposition === 'queue'
+        ? this.session?.queuePrompt({ text })
+        : this.session?.sendPrompt({ text });
     void send
       ?.then((result) => {
+        if (!this._isCurrent(generation)) return;
         if (!result.success) this._toastError('Failed to send message', result.error);
       })
-      .catch((error: unknown) => this._toastError('Failed to send message', error));
+      .catch((error: unknown) => {
+        if (this._isCurrent(generation)) this._toastError('Failed to send message', error);
+      });
   }
 
   /**
@@ -558,13 +599,19 @@ export class RigChatStore {
    * back mid-generation), not assumed idle.
    */
   private _flushHeldPrompts(): void {
+    if (this._disposed) return;
     for (const text of this._heldPrompts.splice(0)) {
-      const disposition = decideSubmitDisposition({ sessionReady: true, isWorking: this.affordances.isWorking });
+      if (this._disposed) return;
+      const disposition = decideSubmitDisposition({
+        sessionReady: true,
+        isWorking: this.affordances.isWorking,
+      });
       this._dispatchPrompt(text, disposition);
     }
   }
 
   setDraftText(text: string): void {
+    if (this._disposed) return;
     this.draftText = text;
   }
 
@@ -580,6 +627,7 @@ export class RigChatStore {
    * the DB row correct.
    */
   rename(title: string): void {
+    if (this._disposed) return;
     const trimmed = title.trim();
     if (!trimmed) return;
     this.title = trimmed;
@@ -590,6 +638,7 @@ export class RigChatStore {
   }
 
   stop(): void {
+    if (this._disposed) return;
     void this.session
       ?.cancelTurn()
       .then((result) => {
@@ -606,6 +655,7 @@ export class RigChatStore {
    * the two callers apart.
    */
   setModel(model: string): void {
+    if (this._disposed) return;
     void rpc.rig.settings.set({ lastModelByHarness: { [this.providerId]: model } }).catch(() => {});
     void this.session
       ?.setModelOption('model', model)
@@ -627,8 +677,11 @@ export class RigChatStore {
    * persisted still starts at the adapter's own default, unchanged.
    */
   setMode(modeId: string): void {
+    if (this._disposed) return;
     if (shouldPersistMode(modeId)) {
-      void rpc.rig.settings.set({ lastModeByHarness: { [this.providerId]: modeId } }).catch(() => {});
+      void rpc.rig.settings
+        .set({ lastModeByHarness: { [this.providerId]: modeId } })
+        .catch(() => {});
     }
     void this.session
       ?.setModeOption(modeId)
@@ -640,7 +693,10 @@ export class RigChatStore {
 
   /** Same remember-for-next-time as `setModel` — see its own doc comment. */
   setEffort(effort: string): void {
-    void rpc.rig.settings.set({ lastEffortByHarness: { [this.providerId]: effort } }).catch(() => {});
+    if (this._disposed) return;
+    void rpc.rig.settings
+      .set({ lastEffortByHarness: { [this.providerId]: effort } })
+      .catch(() => {});
     void this.session
       ?.setModelOption('effort', effort)
       .then((result) => {
@@ -650,8 +706,10 @@ export class RigChatStore {
   }
 
   resolvePermission(optionId: string): void {
+    if (this._disposed) return;
     const request = this.permissionQueue[0];
     if (!request) return;
+    const generation = this._generation;
     // Immediate feedback (Round E) — set before the round trip, so the
     // click reads as progress rather than a dead click during whatever gap
     // there is before the runtime actually starts the tool.
@@ -659,6 +717,7 @@ export class RigChatStore {
     void this.session
       ?.resolvePermission(request.requestId, optionId)
       .then((result) => {
+        if (!this._isCurrent(generation)) return;
         if (!result.success) {
           // The request is still sitting in `permissionQueue` (nothing
           // resolved it), so without clearing this, the buttons would stay
@@ -669,6 +728,7 @@ export class RigChatStore {
         }
       })
       .catch((error: unknown) => {
+        if (!this._isCurrent(generation)) return;
         runInAction(() => (this._resolvingPermission = null));
         this._toastError('Failed to answer the permission request', error);
       });
@@ -684,6 +744,9 @@ export class RigChatStore {
    * that's already gone is not worth surfacing an error for.
    */
   dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
+    this._generation += 1;
     this._unsubs.splice(0).forEach((unsub) => unsub());
     this._disposePreferenceReactions.splice(0).forEach((dispose) => dispose());
     void this.session?.stopSession().catch(() => {});
@@ -691,13 +754,20 @@ export class RigChatStore {
     // The final flush: everything already committed was persisted turn by
     // turn as it happened (see `_applyHistory`) — this only moves the row's
     // status, so `listSessions`/the History UI stop showing it as live.
-    void rpc.rig.sessions.closeSession({ sessionId: this.conversationId }).catch((error: unknown) => {
-      console.error('Rig chat: failed to close session', { sessionId: this.conversationId, error });
-    });
+    void rpc.rig.sessions
+      .closeSession({ sessionId: this.conversationId })
+      .catch((error: unknown) => {
+        console.error('Rig chat: failed to close session', {
+          sessionId: this.conversationId,
+          error,
+        });
+      });
     this.chatState.dispose();
   }
 
-  private async _runBootstrap(): Promise<void> {
+  private async _runBootstrap(generation: number): Promise<void> {
+    if (!this._isCurrent(generation)) return;
+    let acquiredSession: AcpLiveSession | null = null;
     try {
       // Establish the persistence watermark from whatever's already stored
       // — needed either way, so `_applyHistory` below never re-appends
@@ -724,12 +794,16 @@ export class RigChatStore {
           });
           return [];
         });
+      if (!this._isCurrent(generation)) return;
       const { turns: storedTurns, atBySeq: storedAt } = parseStoredEvents(stored);
       if (storedTurns.length > 0) {
         runInAction(() => {
+          if (!this._isCurrent(generation)) return;
           for (const [seq, at] of storedAt) this._turnTimestamps.set(seq, at);
           this._lastPersistedSeq = nextLastSeq(this._lastPersistedSeq, storedTurns);
-          this.chatState.transcript.history.seed(withTurnTimestamps(storedTurns, this._turnTimestamps));
+          this.chatState.transcript.history.seed(
+            withTurnTimestamps(storedTurns, this._turnTimestamps)
+          );
           this.hasSeededHistory = true;
         });
       }
@@ -754,23 +828,45 @@ export class RigChatStore {
             ...this._startInput(),
             sessionId: resumeSessionId,
           });
+          if (!this._isCurrent(generation)) {
+            this._releaseAcquiredSession(resumed.session);
+            return;
+          }
+          acquiredSession = resumed.session;
           clientSession = resumed.session;
           turns = resumed.history.turns;
         } finally {
-          runInAction(() => {
-            this.resuming = false;
-          });
+          if (this._isCurrent(generation)) {
+            runInAction(() => {
+              if (this._isCurrent(generation)) this.resuming = false;
+            });
+          }
         }
       } else {
         clientSession = await AcpLiveSession.create(this.conversationId, this._startInput());
+        acquiredSession = clientSession;
+        if (!this._isCurrent(generation)) {
+          this._releaseAcquiredSession(clientSession);
+          return;
+        }
         const history = await clientSession.getHistory(undefined, 100);
+        if (!this._isCurrent(generation)) {
+          this._releaseAcquiredSession(clientSession);
+          return;
+        }
         if (!history.success) throw resultError(history.error);
         turns = history.data.turns;
       }
 
+      if (!this._isCurrent(generation)) {
+        this._releaseAcquiredSession(acquiredSession ?? clientSession);
+        return;
+      }
       runInAction(() => {
+        if (!this._isCurrent(generation)) return;
         this.session?.dispose();
         this.session = clientSession;
+        acquiredSession = null;
         this._subscribeLiveSession(clientSession);
         this.historyLoading = false;
         this.loadError = null;
@@ -794,6 +890,11 @@ export class RigChatStore {
       // dedup fix, independent of the UI-seeding half above.
       this._applyHistory(turns);
     } catch (error) {
+      this._releaseAcquiredSession(acquiredSession);
+      acquiredSession = null;
+      if (!this._isCurrent(generation)) {
+        return;
+      }
       console.error('Rig chat bootstrap failed', {
         conversationId: this.conversationId,
         cwd: this.cwd,
@@ -805,6 +906,16 @@ export class RigChatStore {
         this.loadError = toLoadError(error);
       });
     }
+  }
+
+  private _isCurrent(generation: number): boolean {
+    return !this._disposed && this._generation === generation;
+  }
+
+  private _releaseAcquiredSession(session: AcpLiveSession | null): void {
+    if (!session) return;
+    void session.stopSession().catch(() => {});
+    session.dispose();
   }
 
   /**
@@ -833,6 +944,7 @@ export class RigChatStore {
   }
 
   private _subscribeLiveSession(session: AcpLiveSession): void {
+    if (this._disposed) return;
     this._unsubs.splice(0).forEach((unsub) => unsub());
     const disconnectChatSession = connectSession(
       this.chatState,
@@ -849,9 +961,14 @@ export class RigChatStore {
   }
 
   private async _refreshHistory(): Promise<void> {
-    const history = await this.session?.getHistory(undefined, 100);
+    const generation = this._generation;
+    const session = this.session;
+    if (!session || !this._isCurrent(generation)) return;
+    const history = await session.getHistory(undefined, 100);
+    if (!this._isCurrent(generation) || this.session !== session) return;
     if (!history?.success) return;
     runInAction(() => {
+      if (!this._isCurrent(generation) || this.session !== session) return;
       this.chatState.session.setPendingPrompt(null);
     });
     this._applyHistory(history.data.turns);
@@ -871,8 +988,16 @@ export class RigChatStore {
    * batch's turns out of order behind it.
    */
   private _applyHistory(turns: readonly TranscriptTurn[]): void {
+    if (this._disposed) return;
+    const generation = this._generation;
     const fresh = newTurnsSince(turns, this._lastPersistedSeq);
     if (fresh.length > 0) {
+      // File-navigator redesign (§3, card rail "In progress"): the one
+      // place this store sees genuinely NEW turns (never replayed history)
+      // — the only honest source for "this session just wrote that file."
+      // See `workspace/write-activity.ts`'s own header comment for why
+      // this couldn't be observed from outside chat/ instead.
+      recordFileWritesFromTurns(fresh, this.cwd, this.conversationId);
       this._lastPersistedSeq = nextLastSeq(this._lastPersistedSeq, fresh);
       // A1 fix: chain onto `_ensureSessionRow`'s OWN memoized promise if
       // one is already in flight — the real risk case is fresh turns
@@ -885,14 +1010,18 @@ export class RigChatStore {
       // comment for why that invariant matters.
       const afterEnsure = this._ensureSessionRowPromise ?? Promise.resolve();
       void afterEnsure
-        .then(() =>
-          rpc.rig.sessions.appendEvents({
+        .then(() => {
+          if (!this._isCurrent(generation)) return null;
+          return rpc.rig.sessions.appendEvents({
             sessionId: this.conversationId,
             events: fresh.map((turn) => ({ seq: turn.seq, turn })),
-          })
-        )
-        .then(({ at }) => {
+          });
+        })
+        .then((result) => {
+          if (!result || !this._isCurrent(generation)) return;
+          const { at } = result;
           runInAction(() => {
+            if (!this._isCurrent(generation)) return;
             for (const turn of fresh) this._turnTimestamps.set(turn.seq, at);
             this.chatState.transcript.history.seed(
               withTurnTimestamps(this.chatState.transcript.history.get(), this._turnTimestamps)
@@ -900,6 +1029,7 @@ export class RigChatStore {
           });
         })
         .catch((error: unknown) => {
+          if (!this._isCurrent(generation)) return;
           console.error('Rig chat: dropped a batch of session events (not retried)', {
             sessionId: this.conversationId,
             seqs: fresh.map((t) => t.seq),
@@ -908,6 +1038,7 @@ export class RigChatStore {
         });
     }
     runInAction(() => {
+      if (!this._isCurrent(generation)) return;
       this.chatState.transcript.history.seed(withTurnTimestamps(turns, this._turnTimestamps));
       if (turns.length > 0) this.hasSeededHistory = true;
     });

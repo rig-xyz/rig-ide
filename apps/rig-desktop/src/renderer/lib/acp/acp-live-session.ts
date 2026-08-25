@@ -102,32 +102,48 @@ export class AcpLiveSession {
   }
 
   static async create(conversationId: string, input?: StartSessionInput): Promise<AcpLiveSession> {
-    const client = await getAcpRuntimeClient();
-    let acpSessionId: string | null = null;
-    if (input) {
-      const result = await withTimeout(
-        client.startSession({ input }),
-        'Timed out starting ACP session'
-      );
-      if (!result.success) {
-        throw new AcpStartError(result.error);
+    return runStaticOperation(
+      conversationId,
+      `create:${stableOperationIdentity(input)}`,
+      async () => {
+        const client = await getAcpRuntimeClient();
+        let started = false;
+        let acpSessionId: string | null = null;
+        let session: AcpLiveSession | undefined;
+        const runtimeCall = input
+          ? withTimeoutCall(
+              client.startSession({ input }),
+              'Timed out starting ACP session',
+              10_000,
+              (result) => (result.success ? stopConversation(client, conversationId) : undefined)
+            )
+          : undefined;
+
+        const result = (async () => {
+          try {
+            if (runtimeCall) {
+              const startResult = await runtimeCall.result;
+              if (!startResult.success) throw new AcpStartError(startResult.error);
+              started = true;
+              acpSessionId = startResult.data.sessionId;
+            }
+            session = new AcpLiveSession(conversationId, client, acpSessionId);
+            await waitForLiveModels(session);
+            return session;
+          } catch (error) {
+            await cleanupFailedStartup(client, conversationId, session, started);
+            throw error;
+          }
+        })();
+
+        return {
+          result,
+          settled: Promise.allSettled([result, runtimeCall?.settled ?? Promise.resolve()]).then(
+            () => undefined
+          ),
+        };
       }
-      acpSessionId = result.data.sessionId;
-    }
-    const session = new AcpLiveSession(conversationId, client, acpSessionId);
-    await withTimeout(
-      Promise.all([
-        session.sessionState.ready,
-        session.config.ready,
-        session.usage.ready,
-        session.plan.ready,
-        session.activeTurn.ready,
-        session.draft.ready,
-        session.terminals.ready,
-      ]),
-      'Timed out connecting ACP live models'
     );
-    return session;
   }
 
   /**
@@ -181,29 +197,47 @@ export class AcpLiveSession {
     conversationId: string,
     input: StartSessionInput & { sessionId: string }
   ): Promise<{ session: AcpLiveSession; history: HistoryPage }> {
-    const client = await getAcpRuntimeClient();
-    const result = await withTimeout(
-      client.resumeSession({ input }),
-      'Timed out resuming ACP session',
-      RESUME_TIMEOUT_MS
+    return runStaticOperation(
+      conversationId,
+      `resume:${stableOperationIdentity(input)}`,
+      async () => {
+        const client = await getAcpRuntimeClient();
+        let started = false;
+        let session: AcpLiveSession | undefined;
+        const runtimeCall = withTimeoutCall(
+          client.resumeSession({ input }),
+          'Timed out resuming ACP session',
+          RESUME_TIMEOUT_MS,
+          (result) => (result.success ? stopConversation(client, conversationId) : undefined)
+        );
+
+        const result = (async () => {
+          try {
+            const resumeResult = await runtimeCall.result;
+            if (!resumeResult.success) throw new AcpStartError(resumeResult.error);
+            started = true;
+            const liveSession = new AcpLiveSession(conversationId, client, input.sessionId);
+            session = liveSession;
+            await waitForLiveModels(liveSession);
+            return {
+              session: liveSession,
+              history: {
+                turns: resumeResult.data.turns,
+                nextCursor: resumeResult.data.nextCursor,
+              },
+            };
+          } catch (error) {
+            await cleanupFailedStartup(client, conversationId, session, started);
+            throw error;
+          }
+        })();
+
+        return {
+          result,
+          settled: Promise.allSettled([result, runtimeCall.settled]).then(() => undefined),
+        };
+      }
     );
-    if (!result.success) {
-      throw new AcpStartError(result.error);
-    }
-    const session = new AcpLiveSession(conversationId, client, input.sessionId);
-    await withTimeout(
-      Promise.all([
-        session.sessionState.ready,
-        session.config.ready,
-        session.usage.ready,
-        session.plan.ready,
-        session.activeTurn.ready,
-        session.draft.ready,
-        session.terminals.ready,
-      ]),
-      'Timed out connecting ACP live models'
-    );
-    return { session, history: { turns: result.data.turns, nextCursor: result.data.nextCursor } };
   }
 
   async start(input: StartSessionInput): Promise<Result<{ sessionId: string }, unknown>> {
@@ -365,6 +399,149 @@ function createReplicaState<T>(handle: LiveClientHandle<T>, schema: z.ZodType<T>
  * reports one to size it against.
  */
 const RESUME_TIMEOUT_MS = 120_000;
+
+type StaticOperationExecution<T> = {
+  result: Promise<T>;
+  settled: Promise<void>;
+};
+
+type PendingStaticOperation = {
+  identity: string;
+  result: Promise<unknown>;
+  settled: Promise<void>;
+};
+
+const pendingStaticOperations = new Map<string, PendingStaticOperation>();
+
+function runStaticOperation<T>(
+  conversationId: string,
+  identity: string,
+  operation: () => Promise<StaticOperationExecution<T>>
+): Promise<T> {
+  const existing = pendingStaticOperations.get(conversationId);
+  if (existing?.identity === identity) return existing.result as Promise<T>;
+
+  const predecessor = existing?.settled ?? Promise.resolve();
+  const execution = predecessor.then(operation);
+  const result = execution.then(({ result: operationResult }) => operationResult);
+  const settled = execution
+    .then(({ settled: operationSettled }) => operationSettled)
+    .then(
+      () => undefined,
+      () => undefined
+    );
+  const pending = { identity, result, settled } satisfies PendingStaticOperation;
+  pendingStaticOperations.set(conversationId, pending);
+  void settled.then(() => {
+    if (pendingStaticOperations.get(conversationId) === pending) {
+      pendingStaticOperations.delete(conversationId);
+    }
+  });
+  return result;
+}
+
+function stableOperationIdentity(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? String(value);
+  if (Array.isArray(value)) return `[${value.map(stableOperationIdentity).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableOperationIdentity(record[key])}`)
+    .join(',')}}`;
+}
+
+async function waitForLiveModels(session: AcpLiveSession): Promise<void> {
+  await withTimeout(
+    Promise.all([
+      session.sessionState.ready,
+      session.config.ready,
+      session.usage.ready,
+      session.plan.ready,
+      session.activeTurn.ready,
+      session.draft.ready,
+      session.terminals.ready,
+    ]),
+    'Timed out connecting ACP live models'
+  );
+}
+
+async function cleanupFailedStartup(
+  client: AcpRuntimeRpcClient,
+  conversationId: string,
+  session: AcpLiveSession | undefined,
+  started: boolean
+): Promise<void> {
+  const stopPromise = started ? stopConversation(client, conversationId) : undefined;
+  await Promise.allSettled([
+    stopPromise ?? Promise.resolve(),
+    session?.dispose() ?? Promise.resolve(),
+  ]);
+}
+
+async function stopConversation(
+  client: AcpRuntimeRpcClient,
+  conversationId: string
+): Promise<void> {
+  try {
+    const result = await client.stopSession({ conversationId });
+    // A failed stop is deliberately not retried. The startup attempt has one
+    // cleanup owner; retrying here could stop a later operation's session.
+    void result;
+  } catch {
+    // Cleanup is best effort when the runtime transport itself is unavailable.
+  }
+}
+
+type TimedCall<T> = {
+  result: Promise<T>;
+  settled: Promise<void>;
+};
+
+function withTimeoutCall<T>(
+  promise: Promise<T>,
+  message: string,
+  ms: number,
+  onLateResult: (value: T) => void | PromiseLike<void>
+): TimedCall<T> {
+  // A renderer timeout cannot abort the in-flight wire request. Keep its
+  // settlement attached so a late successful start/resume can be compensated
+  // with stopSession before another operation for this conversation begins.
+  let timedOut = false;
+  let lateCleanup: Promise<void> = Promise.resolve();
+  const underlying = promise.then(
+    (value) => {
+      if (timedOut) lateCleanup = Promise.resolve(onLateResult(value));
+      return value;
+    },
+    (error: unknown) => {
+      if (timedOut) lateCleanup = Promise.resolve();
+      throw error;
+    }
+  );
+  const result = new Promise<T>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      reject(new Error(message));
+    }, ms);
+    underlying.then(
+      (value) => {
+        window.clearTimeout(timeout);
+        if (!timedOut) resolve(value);
+      },
+      (error: unknown) => {
+        window.clearTimeout(timeout);
+        if (!timedOut) reject(error);
+      }
+    );
+  });
+  const settled = underlying
+    .then(
+      () => lateCleanup,
+      () => lateCleanup
+    )
+    .then(() => undefined);
+  return { result, settled };
+}
 
 function withTimeout<T>(promise: Promise<T>, message: string, ms = 10_000): Promise<T> {
   return new Promise<T>((resolve, reject) => {

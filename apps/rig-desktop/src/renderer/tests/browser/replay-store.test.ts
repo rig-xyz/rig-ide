@@ -34,6 +34,20 @@ vi.mock('@renderer/lib/ipc', () => ({
 
 const { ReplayStore } = await import('../../features/chat/replay-store');
 
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function storedSession(overrides: Partial<RigStoredSession> = {}): RigStoredSession {
   return {
     id: 'session-1',
@@ -111,6 +125,27 @@ describe('ReplayStore.load', () => {
 
     expect(store.loading).toBe(false);
     expect(store.error).toBeTruthy();
+    expect(store.chatState.transcript.history.get()).toEqual([]);
+    store.dispose();
+  });
+
+  it('ignores session and event completions after disposal', async () => {
+    const session = deferred<RigStoredSession | null>();
+    const events = deferred<RigSessionEventRecord[]>();
+    mocks.getSession.mockReturnValue(session.promise);
+    mocks.getEvents.mockReturnValue(events.promise);
+
+    const store = new ReplayStore('session-late');
+    const loading = store.load();
+    store.dispose();
+    session.resolve(storedSession({ id: 'session-late' }));
+    events.resolve([eventRecord(0, 111)]);
+    await loading;
+
+    expect(store.disposed).toBe(true);
+    expect(store.loading).toBe(true);
+    expect(store.error).toBeNull();
+    expect(store.session).toBeNull();
     expect(store.chatState.transcript.history.get()).toEqual([]);
     store.dispose();
   });

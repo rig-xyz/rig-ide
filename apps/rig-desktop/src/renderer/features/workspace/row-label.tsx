@@ -3,38 +3,43 @@ import { cn } from '@renderer/lib/utils';
 import { useTruncated } from './use-truncated';
 
 /**
- * Navigator v2 (`docs/file-navigator-design.md` §3.3): a tree/Suggested
- * row's name — a styled `Tooltip` appears ONLY when the visible text is
- * truncated (measured, `useTruncated`'s `scrollWidth` check) or when it's a
- * document TITLE standing in for a different real filename; otherwise no
- * tooltip at all, and never a native `title` attribute repeating what the
- * row already says.
+ * Navigator v3: a row's name is the REAL FILENAME, extension included —
+ * files here are things agents write, reference by path, and humans open in
+ * other tools, so the filename is the identity (Drive can lead with a
+ * document title because Drive has no filenames; we do). The extracted
+ * document title becomes secondary information, shown in the tooltip when
+ * it says something the filename doesn't.
+ *
+ * A styled `Tooltip` appears ONLY when the visible text is truncated
+ * (measured, `useTruncated`'s `scrollWidth` check) or when a distinct
+ * document title is worth surfacing. Never a native `title` attribute
+ * repeating what the row already says.
  */
 export function RowLabel({
   text,
-  filename,
+  title,
   className,
 }: {
-  /** The row's own displayed text — a document title, or the filename itself. */
+  /** The row's own displayed text — the filename. */
   text: string;
-  /** The real filename, shown in the tooltip only when it differs from `text`. */
-  filename?: string;
+  /** The document's extracted title, shown in the tooltip when it differs from the filename. */
+  title?: string;
   className?: string;
 }) {
   const { ref, truncated } = useTruncated<HTMLSpanElement>();
-  const titleDiffers = filename !== undefined && filename !== text;
+  const hasTitle = title !== undefined && title !== text;
   const span = (
     <span ref={ref} className={cn('min-w-0 truncate', className)}>
       {text}
     </span>
   );
 
-  if (!truncated && !titleDiffers) return span;
+  if (!truncated && !hasTitle) return span;
 
   return (
     <Tooltip>
       <TooltipTrigger render={span} />
-      <TooltipContent side="top">{titleDiffers ? filename : text}</TooltipContent>
+      <TooltipContent side="top">{hasTitle ? title : text}</TooltipContent>
     </Tooltip>
   );
 }

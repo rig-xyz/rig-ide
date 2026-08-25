@@ -1,4 +1,4 @@
-import { FilePlus, Link, Plus, Upload } from 'lucide-react';
+import { FilePlus, FolderPlus, Link, Plus, RefreshCw, Upload } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from '@renderer/lib/hooks/use-toast';
@@ -23,7 +23,7 @@ import { nextUntitledFileName } from './add-menu-logic';
  *   (`rpc.rig.importDoc.copyFile`, collision-safe naming via the same
  *   `wx`/uniqueness conventions `import-doc.ts` uses for its own writes).
  */
-export function AddMenu({
+export function NewMenu({
   root,
   onOpenFile,
   onOpenImportDialog,
@@ -36,7 +36,7 @@ export function AddMenu({
   const [busy, setBusy] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const rect = useAnchorRect(open, triggerRef, { gap: 4, estimatedHeight: 140, estimatedWidth: 200 });
+  const rect = useAnchorRect(open, triggerRef, { gap: 4, estimatedHeight: 220, estimatedWidth: 200 });
 
   useEffect(() => {
     if (!open) return;
@@ -74,6 +74,22 @@ export function AddMenu({
       return;
     }
     onOpenFile(absPath);
+  };
+
+  const newFolder = async () => {
+    setOpen(false);
+    const list = await rpc.rig.files.list(root);
+    if (!list.success) {
+      toast({ title: "Couldn't create the folder", description: list.error.message, variant: 'destructive' });
+      return;
+    }
+    const taken = new Set(list.data.filter((node) => node.kind === 'dir').map((node) => node.name));
+    let name = 'New folder';
+    for (let n = 2; taken.has(name); n += 1) name = `New folder ${n}`;
+    const result = await rpc.rig.files.makeDirectory(root, name);
+    if (!result.success) {
+      toast({ title: "Couldn't create the folder", description: result.error.message, variant: 'destructive' });
+    }
   };
 
   const fromFile = async () => {
@@ -124,11 +140,11 @@ export function AddMenu({
         disabled={busy}
         aria-haspopup="menu"
         aria-expanded={open}
-        title="Add a file"
+        title="Add something to this rig"
         className="border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex shrink-0 items-center gap-1 border bg-transparent px-2 py-1 text-xs transition-colors disabled:opacity-60"
       >
         <Plus className="size-3.5" strokeWidth={1.5} />
-        {busy ? 'Adding…' : 'Add'}
+        {busy ? 'Adding…' : 'New'}
       </button>
       {open &&
         rect &&
@@ -163,13 +179,12 @@ export function AddMenu({
               role="menuitem"
               onMouseDown={(event) => {
                 event.preventDefault();
-                setOpen(false);
-                onOpenImportDialog();
+                void newFolder();
               }}
               className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
             >
-              <Link className="size-3.5 shrink-0" strokeWidth={1.5} />
-              From Google Docs link…
+              <FolderPlus className="size-3.5 shrink-0" strokeWidth={1.5} />
+              New folder
             </button>
             <button
               type="button"
@@ -181,8 +196,40 @@ export function AddMenu({
               className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
             >
               <Upload className="size-3.5 shrink-0" strokeWidth={1.5} />
-              From file…
+              Import file…
             </button>
+            <div className="bg-border-hairline my-1 h-px" />
+            <button
+              type="button"
+              role="menuitem"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                setOpen(false);
+                onOpenImportDialog();
+              }}
+              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+            >
+              <Link className="size-3.5 shrink-0" strokeWidth={1.5} />
+              Import from Docs…
+            </button>
+            {/*
+              Named but not yet real. Shown disabled rather than hidden
+              because people ask for it constantly and an absent option
+              reads as "this product cannot do that", where a greyed one
+              with a date-free "coming soon" reads as "not yet". It must
+              never look clickable.
+            */}
+            <div
+              role="menuitem"
+              aria-disabled="true"
+              className="text-text-muted flex w-full cursor-default items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+            >
+              <RefreshCw className="size-3.5 shrink-0" strokeWidth={1.5} />
+              Sync with Drive
+              <span className="border-border-hairline text-text-muted ml-auto rounded-full border px-1.5 text-xs">
+                Soon
+              </span>
+            </div>
           </div>,
           document.body
         )}
