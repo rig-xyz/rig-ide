@@ -1,6 +1,6 @@
 import { type FSWatcher, watch as fsWatch } from 'node:fs';
-import { open, readdir, readFile, stat, writeFile as fsWriteFile } from 'node:fs/promises';
-import { basename, extname, join, relative, sep } from 'node:path';
+import { access, open, readdir, readFile, rename as fsRename, stat, writeFile as fsWriteFile } from 'node:fs/promises';
+import { basename, dirname, extname, join, relative, sep } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
@@ -12,6 +12,7 @@ import {
   type RigFileReadBinaryResult,
   type RigFileReadError,
   type RigFileReadResult,
+  type RigFileRenameError,
   type RigFileWriteError,
 } from '@shared/rig/files';
 import { getFileTitle } from './file-title-cache';
@@ -224,6 +225,43 @@ export const rigFilesController = createRPCController({
       return err<RigFileReadError>({ kind: 'ioError', message: 'Could not read this file.' });
     } finally {
       await handle?.close();
+    }
+  },
+
+  /**
+   * Navigator v2 (§3.3, row context menu "Rename"): renames an entry (file
+   * or folder) in place within its own parent directory — `newName` is a
+   * bare name, never a path, so the target can only ever land back in the
+   * SAME directory `absPath` is already in (no traversal to worry about
+   * beyond rejecting a name that tries to carry one). No overwrite: a
+   * pre-existing target is a hard error, never silently replaced. The
+   * tree's own live `fs.watch` already picks up the rename and refetches —
+   * nothing further to broadcast here.
+   */
+  rename: async (absPath: string, newName: string): Promise<Result<{ path: string }, RigFileRenameError>> => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === '.' || trimmed === '..' || trimmed.includes('/') || trimmed.includes('\\')) {
+      return err<RigFileRenameError>({ kind: 'invalidName', message: 'That name is not valid.' });
+    }
+    const targetPath = join(dirname(absPath), trimmed);
+    if (targetPath !== absPath) {
+      const exists = await access(targetPath)
+        .then(() => true)
+        .catch(() => false);
+      if (exists) {
+        return err<RigFileRenameError>({ kind: 'alreadyExists', message: 'Something with that name already exists.' });
+      }
+    }
+    try {
+      await fsRename(absPath, targetPath);
+      return ok({ path: targetPath });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (code === 'ENOENT') {
+        return err<RigFileRenameError>({ kind: 'notFound', message: 'Not found.' });
+      }
+      log.warn('Rig files: rename failed', { absPath, targetPath, error: String(error) });
+      return err<RigFileRenameError>({ kind: 'ioError', message: 'Could not rename this.' });
     }
   },
 

@@ -171,7 +171,7 @@ function normalizeSettings(parsed: unknown): RigSettings {
     hiddenByRig: isBooleanRecord(raw.hiddenByRig) ? raw.hiddenByRig : {},
     showSystemFiles: raw.showSystemFiles === true,
     pinnedPathsByRig: isStringArrayRecord(raw.pinnedPathsByRig) ? raw.pinnedPathsByRig : {},
-    fileTreeViewByRig: isFileTreeViewRecord(raw.fileTreeViewByRig) ? raw.fileTreeViewByRig : {},
+    fileTreeViewByRig: normalizeFileTreeViewRecord(raw.fileTreeViewByRig),
   };
 }
 
@@ -207,8 +207,8 @@ function isStringArrayRecord(value: unknown): value is Record<string, string[]> 
   return Object.values(value).every(isStringArray);
 }
 
-const FILE_TREE_SORTS = new Set(['workingSet', 'unseenFirst', 'alphabetical', 'newest']);
-const FILE_TREE_FILTERS = new Set(['all', 'agents', 'unseen']);
+const FILE_TREE_SORTS = new Set(['smart', 'modified', 'name']);
+const FILE_TREE_FILTERS = new Set(['all', 'unseen']);
 
 function isFileTreeView(value: unknown): value is FileTreeView {
   if (typeof value !== 'object' || value === null) return false;
@@ -221,9 +221,22 @@ function isFileTreeView(value: unknown): value is FileTreeView {
   );
 }
 
-function isFileTreeViewRecord(value: unknown): value is Record<string, FileTreeView> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  return Object.values(value).every(isFileTreeView);
+/**
+ * Navigator v2: sort values changed shape (`workingSet`/`unseenFirst`/
+ * `alphabetical`/`newest` → `smart`/`modified`/`name`) and `'agents'` left
+ * the filter enum entirely — a settings.json written by the round-1 build
+ * can still have old-shaped entries in here. Tolerant PER ENTRY (drop only
+ * the rig whose stored view no longer validates, defaulting just that one
+ * back to `DEFAULT_FILE_TREE_VIEW` on next read) rather than one bad entry
+ * wiping every rig's view choice.
+ */
+function normalizeFileTreeViewRecord(value: unknown): Record<string, FileTreeView> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  const out: Record<string, FileTreeView> = {};
+  for (const [bindingId, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (isFileTreeView(entry)) out[bindingId] = entry;
+  }
+  return out;
 }
 
 function isOpenTabsState(value: unknown): value is RigOpenTabsState {

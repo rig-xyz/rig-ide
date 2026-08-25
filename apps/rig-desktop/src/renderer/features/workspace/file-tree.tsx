@@ -1,20 +1,26 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  Check,
+  CheckCheck,
   ChevronDown,
   ChevronRight,
+  Copy,
+  ExternalLink,
   File,
   FileText,
   Folder,
   FolderOpen,
   Loader2,
+  Pencil,
   Pin,
   Sparkles,
   Table,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { relativeTime } from '@renderer/features/chat/session-history';
 import { events, rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
-import { classifyEntryCategory } from '@shared/rig/file-navigator-categories';
+import { classifyEntryCategory, filterToContentOnly } from '@shared/rig/file-navigator-categories';
 import { rigFileChangeChannel } from '@shared/rig/files';
 import type { RigFileNode } from '@shared/rig/files';
 import {
@@ -30,8 +36,10 @@ import {
   rigSeenStateChangedChannel,
   type SeenMap,
 } from '@shared/rig/seen-state';
-import { filterTree, sortTree, type TreeViewContext } from '@shared/rig/tree-view';
-import { useEverWrittenPaths } from './write-activity';
+import { filterTree, searchTree, sortTree, type TreeViewContext } from '@shared/rig/tree-view';
+import { RenameFileDialog } from './rename-file-dialog';
+import { RowLabel } from './row-label';
+import { ContextMenuItem, ContextMenuSeparator, RowContextMenu, useRowContextMenu } from './row-context-menu';
 
 /**
  * Real filesystem tree for the opened rig, via `rpc.rig.files.list` — a small,
@@ -65,6 +73,18 @@ import { useEverWrittenPaths } from './write-activity';
  * Sorting itself (folders first, then title A-Z) happens server-side in
  * `main/rig/files.ts`'s `listDir` — filtering here only ever REMOVES nodes,
  * never reorders what's left.
+ *
+ * v2 round (§3.3): row anatomy rebuilt onto a calmer Finder-style chassis —
+ * 28px rows, full-row rounded hover, medium weight + a 5px accent dot for
+ * unseen (never a naked count), right-aligned relative modified time for
+ * files. All row-level ACTIONS (Open, Pin to top, Copy path, Reveal in
+ * Finder, Rename, Mark (all) as seen) moved off hover buttons and into a
+ * single right-click context menu (`row-context-menu.tsx`) shared by every
+ * row and the tree's own root — no more per-row hover-pin button, no more
+ * header "Mark all as seen" (that action now lives in the root's own
+ * right-click menu). Tooltips (`row-label.tsx`) appear only when a row's
+ * text is actually truncated or stands in for a different real filename —
+ * never a native `title` attribute repeating the row's own visible text.
  */
 
 const HIGHLIGHT_MS = 1400;
@@ -73,7 +93,7 @@ const SKILL_ROW_PADDING = 8 + 14 + 18;
 
 /**
  * The document's display name: its extracted title, else the full filename
- * (extension included — Dylan keeps extensions). Exported: `card-rail.tsx`
+ * (extension included — Dylan keeps extensions). Exported: `suggested-files.tsx`
  * needs the exact same title logic for card titles (design doc §3, "same
  * title logic as tree").
  */
@@ -82,7 +102,7 @@ export function displayTitle(node: RigFileNode): string {
   return node.title ?? node.name;
 }
 
-/** Content-row icon by extension — reverted to the tree's original lucide line icons (icon asset pass deferred, see the design doc). Exported for `card-rail.tsx`'s card type icon, same vocabulary as the tree row it points at. */
+/** Content-row icon by extension — reverted to the tree's original lucide line icons (icon asset pass deferred, see the design doc). Exported for `suggested-files.tsx`'s card type icon, same vocabulary as the tree row it points at. */
 export function iconFor(name: string) {
   const ext = name.split('.').pop()?.toLowerCase();
   if (ext === 'md' || ext === 'mdx' || ext === 'txt') return FileText;
@@ -90,7 +110,7 @@ export function iconFor(name: string) {
   return File;
 }
 
-/** The listing's react-query key — shared with `card-rail.tsx` so both read the SAME cached `rpc.rig.files.list(root)` result rather than issuing a second, redundant call. */
+/** The listing's react-query key — shared with `suggested-files.tsx` so both read the SAME cached `rpc.rig.files.list(root)` result rather than issuing a second, redundant call. */
 export function rigFilesQueryKey(root: string): readonly ['rig', 'files', 'list', string] {
   return ['rig', 'files', 'list', root];
 }
@@ -138,6 +158,9 @@ function filterContentTree(nodes: RigFileNode[], showSystemFiles: boolean): RigF
   return out;
 }
 
+/** The row context menu's target: a real node, or `null` for the tree's own root (right-click on empty space). */
+type MenuTarget = RigFileNode | null;
+
 export function FileTree({
   root,
   bindingId = null,
@@ -148,6 +171,8 @@ export function FileTree({
   showSystemFiles = false,
   sort = DEFAULT_FILE_TREE_VIEW.sort,
   filter = DEFAULT_FILE_TREE_VIEW.filter,
+  search = '',
+  onUnseenCountChange,
 }: {
   root: string;
   /**
@@ -185,9 +210,13 @@ export function FileTree({
   justAttachedSyncing?: boolean;
   /** File-navigator redesign: System entries stay hidden until this is true (`App.tsx`'s `FileBrowser` header toggle). */
   showSystemFiles?: boolean;
-  /** File-navigator redesign (§5): the tree's own sort/filter choice (`App.tsx`'s `FileBrowserOptionsMenu`), per rig — defaults match `DEFAULT_FILE_TREE_VIEW` for the same reason `showSystemFiles` defaults `false`: existing tests mount `FileTree` without either. */
+  /** File-navigator redesign (§5, re-specced §3.4): the tree's own sort/filter choice (`App.tsx`'s header), per rig — defaults match `DEFAULT_FILE_TREE_VIEW` for the same reason `showSystemFiles` defaults `false`: existing tests mount `FileTree` without either. */
   sort?: FileTreeSort;
   filter?: FileTreeFilter;
+  /** v2 round (§3.1): the header search field's live query — title + filename, case-insensitive substring (`searchTree`). */
+  search?: string;
+  /** v2 round (§3.1): reports the CONTENT-ONLY unseen total (independent of `showSystemFiles`) up to the header's "N new" chip. */
+  onUnseenCountChange?: (count: number) => void;
 }) {
   const queryClient = useQueryClient();
   const queryKey = useMemo(() => rigFilesQueryKey(root), [root]);
@@ -228,9 +257,9 @@ export function FileTree({
   );
 
   // Seen-state (§4): baseline + last-viewed map for this rig, refetched on
-  // bindingId change and whenever a mark-seen elsewhere (e.g. "Mark all as
-  // seen" in `FileBrowserOptionsMenu`) broadcasts for the same bindingId.
-  // Quietly does nothing without a bindingId — see the prop's own comment.
+  // bindingId change and whenever a mark-seen elsewhere (e.g. a context
+  // menu's "Mark all as seen") broadcasts for the same bindingId. Quietly
+  // does nothing without a bindingId — see the prop's own comment.
   const [seenState, setSeenState] = useState<{ baselineAt: number; seen: SeenMap } | null>(null);
   useEffect(() => {
     if (!bindingId) {
@@ -272,26 +301,41 @@ export function FileTree({
     [contentTree, seenState]
   );
 
+  // v2 round (§3.1/§3.2): the header's "N new" chip needs a CONTENT-ONLY
+  // count, structurally independent of `showSystemFiles` — built off the
+  // raw listing through `filterToContentOnly`, not `contentTree` (which
+  // includes system entries once the toggle is on).
+  const contentUnseenCount = useMemo(() => {
+    if (!seenState || !data) return 0;
+    return computeUnseenSummary(filterToContentOnly(data), seenState.seen, seenState.baselineAt).unseenFiles.size;
+  }, [data, seenState]);
+  useEffect(() => {
+    onUnseenCountChange?.(contentUnseenCount);
+  }, [contentUnseenCount, onUnseenCountChange]);
+
   // File-navigator redesign (§5): sort/filter applied AFTER the content/
   // system split above, per `tree-view.ts`'s own header comment — filter
-  // what's shown, then order what's left. `agentWrittenFiles` reuses the
-  // same live write-observation slice the card rail's "in progress" cards
-  // already read (`write-activity.ts`); the dots' own `seenState`/`unseen`
-  // computed above are reused rather than refetched.
-  const agentWrittenFiles = useEverWrittenPaths(root);
+  // what's shown, then order what's left. v2 round: search narrows first
+  // (§3.1's live title+filename match), then the unseen chip's filter,
+  // then sort — order doesn't change the result (both filters intersect),
+  // just reads as one incremental narrowing pass.
   const viewTree = useMemo(() => {
     const ctx: TreeViewContext = {
       seen: seenState?.seen ?? {},
       unseenFiles: unseen.unseenFiles,
-      agentWrittenFiles,
       now: Date.now(),
     };
-    return sortTree(filterTree(contentTree, filter, ctx), sort, ctx);
-  }, [contentTree, filter, sort, seenState, unseen.unseenFiles, agentWrittenFiles]);
+    return sortTree(filterTree(searchTree(contentTree, search), filter, ctx), sort, ctx);
+  }, [contentTree, search, filter, sort, seenState, unseen.unseenFiles]);
 
   const markSeen = (relPath: string) => {
     if (!bindingId) return;
     void rpc.rig.seenState.markSeen({ bindingId, relPath });
+  };
+
+  const markAllSeen = (relPaths: string[]) => {
+    if (!bindingId) return;
+    void rpc.rig.seenState.markAllSeen({ bindingId, relPaths });
   };
 
   const handleOpenFile = (absPath: string, relPath: string) => {
@@ -299,13 +343,14 @@ export function FileTree({
     onOpenFile(absPath);
   };
 
-  // Card rail round (§3): pin state, so a file row can carry its own pin
-  // toggle (design doc: "a small pin action on hover" — investigated, rows
-  // have no context menu to hang this off instead). Same fetch/subscribe
-  // shape as seen-state above; `card-rail.tsx` keeps its own independent
-  // copy of the same settings slice rather than this being threaded down
-  // as a prop — small, duplicated effects over a shared one is this app's
-  // own convention (see `useRevealHighlight`'s header comment).
+  // Card rail round (§3), still true in v2: pin state, now consumed only by
+  // the row context menu's "Pin to top"/"Unpin" and each row's static pin
+  // glyph (no more per-row hover toggle button — see this file's own header
+  // comment). Same fetch/subscribe shape as seen-state above; `suggested-files.tsx`
+  // keeps its own independent copy of the same settings slice rather than
+  // this being threaded down as a prop — small, duplicated effects over a
+  // shared one is this app's own convention (see `useRevealHighlight`'s
+  // header comment).
   const [pinned, setPinned] = useState<string[]>([]);
   useEffect(() => {
     if (!bindingId) {
@@ -331,6 +376,12 @@ export function FileTree({
     setPinned(next);
     void rpc.rig.settings.set({ pinnedPathsByRig: { [bindingId]: next } });
   };
+
+  // v2 round (§3.3): the ONE row context menu, shared by every row and the
+  // tree's own root (`target: null`) — right-clicking anywhere replaces the
+  // old hover-button clutter and the header's own "Mark all as seen" row.
+  const menu = useRowContextMenu<MenuTarget>();
+  const [renameTarget, setRenameTarget] = useState<RigFileNode | null>(null);
 
   if (isLoading) {
     return <p className="text-text-muted px-3 py-2 text-xs">Loading files…</p>;
@@ -358,31 +409,141 @@ export function FileTree({
     return <p className="text-text-muted px-3 py-2 text-xs">Empty folder.</p>;
   }
 
+  const menuTarget = menu.state?.target ?? null;
+  const menuTargetIsPinned = menuTarget !== null && pinned.includes(menuTarget.relPath);
+
   return (
-    <div className="flex flex-col py-1">
-      {viewTree.map((node) => (
-        <TreeNode
-          key={node.relPath}
-          node={node}
-          depth={0}
+    <>
+      <div
+        className="flex flex-col py-1"
+        onContextMenu={(event) => {
+          if (bindingId) menu.open(event, null);
+        }}
+      >
+        {viewTree.map((node) => (
+          <TreeNode
+            key={node.relPath}
+            node={node}
+            depth={0}
+            root={root}
+            activePath={activePath}
+            revealPath={revealPath ?? null}
+            onOpenFile={handleOpenFile}
+            onContextMenu={menu.open}
+            unseenFiles={unseen.unseenFiles}
+            unseenCountByDir={unseen.unseenCountByDir}
+            pinned={pinned}
+          />
+        ))}
+        <SkillsSection
+          files={skillFiles}
           root={root}
           activePath={activePath}
-          revealPath={revealPath ?? null}
           onOpenFile={handleOpenFile}
-          unseenFiles={unseen.unseenFiles}
-          unseenCountByDir={unseen.unseenCountByDir}
-          pinned={pinned}
-          onTogglePin={togglePin}
+          onContextMenu={menu.open}
+          seenState={seenState}
         />
-      ))}
-      <SkillsSection
-        files={skillFiles}
-        root={root}
-        activePath={activePath}
-        onOpenFile={handleOpenFile}
-        seenState={seenState}
-      />
-    </div>
+      </div>
+
+      {menu.state &&
+        (() => {
+          const target = menu.state.target;
+          const absPath = target ? `${root}/${target.relPath}` : null;
+          return (
+            <RowContextMenu point={menu.state.point} onClose={menu.close}>
+              {target === null ? (
+                <ContextMenuItem
+                  label="Mark all as seen"
+                  icon={CheckCheck}
+                  onSelect={() => {
+                    markAllSeen(collectFileRelPaths(data));
+                    menu.close();
+                  }}
+                />
+              ) : (
+                <>
+                  {target.kind === 'file' && (
+                    <ContextMenuItem
+                      label="Open"
+                      icon={ExternalLink}
+                      onSelect={() => {
+                        handleOpenFile(absPath as string, target.relPath);
+                        menu.close();
+                      }}
+                    />
+                  )}
+                  {target.kind === 'file' && (
+                    <ContextMenuItem
+                      label={menuTargetIsPinned ? 'Unpin' : 'Pin to top'}
+                      icon={Pin}
+                      onSelect={() => {
+                        togglePin(target.relPath);
+                        menu.close();
+                      }}
+                    />
+                  )}
+                  <ContextMenuItem
+                    label="Copy path"
+                    icon={Copy}
+                    onSelect={() => {
+                      void rpc.app.clipboardWriteText(absPath as string);
+                      menu.close();
+                    }}
+                  />
+                  <ContextMenuItem
+                    label="Reveal in Finder"
+                    icon={FolderOpen}
+                    onSelect={() => {
+                      void rpc.app.showItemInFolder(absPath as string);
+                      menu.close();
+                    }}
+                  />
+                  <ContextMenuItem
+                    label="Rename"
+                    icon={Pencil}
+                    onSelect={() => {
+                      setRenameTarget(target);
+                      menu.close();
+                    }}
+                  />
+                  <ContextMenuSeparator />
+                  {target.kind === 'file' ? (
+                    <ContextMenuItem
+                      label="Mark as seen"
+                      icon={Check}
+                      onSelect={() => {
+                        markSeen(target.relPath);
+                        menu.close();
+                      }}
+                    />
+                  ) : (
+                    <ContextMenuItem
+                      label="Mark all seen"
+                      icon={CheckCheck}
+                      onSelect={() => {
+                        markAllSeen(collectFileRelPaths(target.children ?? []));
+                        menu.close();
+                      }}
+                    />
+                  )}
+                </>
+              )}
+            </RowContextMenu>
+          );
+        })()}
+
+      {renameTarget && (
+        <RenameFileDialog
+          open={renameTarget !== null}
+          onOpenChange={(open) => {
+            if (!open) setRenameTarget(null);
+          }}
+          absPath={`${root}/${renameTarget.relPath}`}
+          currentName={renameTarget.name}
+          onRenamed={() => setRenameTarget(null)}
+        />
+      )}
+    </>
   );
 }
 
@@ -393,10 +554,10 @@ function TreeNode({
   activePath,
   revealPath,
   onOpenFile,
+  onContextMenu,
   unseenFiles,
   unseenCountByDir,
   pinned,
-  onTogglePin,
 }: {
   node: RigFileNode;
   depth: number;
@@ -404,13 +565,14 @@ function TreeNode({
   activePath: string | null;
   revealPath: string | null;
   onOpenFile: (absPath: string, relPath: string) => void;
+  /** v2 round (§3.3): right-click anywhere on a row opens the shared context menu with THIS node as its target. */
+  onContextMenu: (event: React.MouseEvent, node: RigFileNode) => void;
   /** File-navigator redesign (§4): every unseen FILE's relPath, for the row dot. */
   unseenFiles: Set<string>;
-  /** Every DIR relPath with at least one unseen descendant, mapped to that count. */
+  /** Every DIR relPath with at least one unseen descendant, mapped to that count — v2 round: only the COUNT>0 presence is used now (a dot, never the number itself). */
   unseenCountByDir: Record<string, number>;
-  /** Card rail round (§3): currently-pinned relPaths, for the file row's hover pin toggle. */
+  /** Currently-pinned relPaths, for a file row's static pin glyph. */
   pinned: string[];
-  onTogglePin: (relPath: string) => void;
 }) {
   // `null` = no explicit user choice yet, fall back to the default
   // (top-level open, or forced open while it's an ancestor of the reveal
@@ -440,9 +602,10 @@ function TreeNode({
           ref={rowRef}
           type="button"
           onClick={() => setManualOpen(!open)}
+          onContextMenu={(event) => onContextMenu(event, node)}
           style={{ paddingLeft: indent }}
           className={cn(
-            'flex w-full items-center gap-1.5 py-1 pr-3 text-left text-sm transition-colors',
+            'rounded-control flex h-7 w-full items-center gap-1.5 pr-3 text-left text-sm transition-colors',
             flashing
               ? 'bg-accent-subtle text-text-primary'
               : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
@@ -454,10 +617,8 @@ function TreeNode({
             <ChevronRight className="size-3.5 shrink-0" strokeWidth={1.5} />
           )}
           <FolderGlyph className="size-3.5 shrink-0" strokeWidth={1.5} />
-          <span className="min-w-0 truncate">{node.name}</span>
-          {!!unseenCount && (
-            <span className="text-accent shrink-0 text-xs tabular-nums">{unseenCount}</span>
-          )}
+          <RowLabel text={node.name} className="flex-1" />
+          {!!unseenCount && <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />}
         </button>
         {open &&
           (node.children ?? []).map((child) => (
@@ -469,10 +630,10 @@ function TreeNode({
               activePath={activePath}
               revealPath={revealPath}
               onOpenFile={onOpenFile}
+              onContextMenu={onContextMenu}
               unseenFiles={unseenFiles}
               unseenCountByDir={unseenCountByDir}
               pinned={pinned}
-              onTogglePin={onTogglePin}
             />
           ))}
       </div>
@@ -485,38 +646,30 @@ function TreeNode({
   const isPinned = pinned.includes(node.relPath);
   return (
     <div
+      onContextMenu={(event) => onContextMenu(event, node)}
       className={cn(
-        'group flex w-full items-center text-sm transition-colors',
+        'rounded-control flex h-7 w-full items-center text-sm transition-colors',
         active ? 'bg-bg-2 text-text-primary' : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
       )}
     >
       <button
         type="button"
         onClick={() => onOpenFile(absPath, node.relPath)}
-        title={node.name}
         style={{ paddingLeft: indent + 18 }}
         className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-1 text-left"
       >
         <Icon className="size-3.5 shrink-0" strokeWidth={1.5} />
-        <span className="min-w-0 truncate">{displayTitle(node)}</span>
-        {isUnseen && <span className="bg-accent size-1.5 shrink-0 rounded-full" />}
+        <RowLabel text={displayTitle(node)} filename={node.name} className={cn(isUnseen && 'font-medium')} />
+        {isUnseen && <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />}
       </button>
-      {/* Card rail round (§3): "a small pin action on hover" — rows have no context menu to hang this off (investigated). Always visible once pinned, so unpinning doesn't require a hover-hunt. */}
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          onTogglePin(node.relPath);
-        }}
-        aria-label={isPinned ? 'Unpin' : 'Pin'}
-        title={isPinned ? 'Unpin' : 'Pin'}
-        className={cn(
-          'rounded-control mr-2 flex shrink-0 items-center justify-center p-1 transition-opacity',
-          isPinned ? 'text-accent opacity-100' : 'text-text-muted opacity-0 group-hover:opacity-100 hover:text-text-primary'
-        )}
-      >
-        <Pin className="size-3" strokeWidth={1.5} fill={isPinned ? 'currentColor' : 'none'} />
-      </button>
+      {node.mtimeMs !== undefined && (
+        <span className="text-text-muted shrink-0 pr-2 text-xs tabular-nums">
+          {relativeTime(node.mtimeMs, Date.now())}
+        </span>
+      )}
+      {isPinned && (
+        <Pin className="text-accent mr-2 size-3 shrink-0" strokeWidth={1.5} fill="currentColor" />
+      )}
     </div>
   );
 }
@@ -533,19 +686,22 @@ function TreeNode({
  * `renderer/tokens.css`, itself gated behind `prefers-reduced-motion`) — a
  * gradient sweep through the type via `background-clip: text` — the app's
  * one deliberate decorative motion, reserved for skills so it stays
- * meaningful.
+ * meaningful. v2 round: unchanged apart from the same tooltip-only-when-
+ * truncated rule (§3.3) every other row now follows.
  */
 function SkillsSection({
   files,
   root,
   activePath,
   onOpenFile,
+  onContextMenu,
   seenState,
 }: {
   files: RigFileNode[];
   root: string;
   activePath: string | null;
   onOpenFile: (absPath: string, relPath: string) => void;
+  onContextMenu: (event: React.MouseEvent, node: RigFileNode) => void;
   /** File-navigator redesign (§4): same seen-state FileTree already fetched — null while it's still loading, or when there's no bindingId at all. */
   seenState: { baselineAt: number; seen: SeenMap } | null;
 }) {
@@ -572,7 +728,7 @@ function SkillsSection({
         )}
         <Sparkles className="text-accent size-3.5 shrink-0" strokeWidth={1.5} />
         <span className="min-w-0 truncate">Skills</span>
-        {!!unseenCount && <span className="text-accent shrink-0 text-xs tabular-nums">{unseenCount}</span>}
+        {!!unseenCount && <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />}
       </button>
       {open &&
         sorted.map((node) => {
@@ -586,7 +742,7 @@ function SkillsSection({
               key={node.relPath}
               type="button"
               onClick={() => onOpenFile(absPath, node.relPath)}
-              title={node.name}
+              onContextMenu={(event) => onContextMenu(event, node)}
               style={{ paddingLeft: SKILL_ROW_PADDING }}
               className={cn(
                 'flex w-full items-center gap-1.5 py-1 pr-3 text-left text-sm transition-colors',
@@ -596,8 +752,8 @@ function SkillsSection({
               )}
             >
               <Sparkles className="text-accent size-3.5 shrink-0" strokeWidth={1.5} />
-              <span className="skill-label-shimmer min-w-0 truncate">{displayTitle(node)}</span>
-              {isUnseen && <span className="bg-accent size-1.5 shrink-0 rounded-full" />}
+              <RowLabel text={displayTitle(node)} filename={node.name} className="skill-label-shimmer" />
+              {isUnseen && <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />}
             </button>
           );
         })}

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as joinPath } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -88,6 +88,116 @@ describe('rigFilesController.readBinary', () => {
   it('a directory (not a file) — notFound, never attempts to read it as bytes', async () => {
     const dir = freshDir();
     const result = await rigFilesController.readBinary(dir, 4096);
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.kind).toBe('notFound');
+  });
+});
+
+/**
+ * Navigator v2 (§3.3's row context menu "Rename"): a minimal, real-filesystem
+ * `fs.rename` scoped to an entry's own parent directory. Same tmpdir-per-test
+ * convention as `readBinary` above.
+ */
+describe('rigFilesController.rename', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+  const freshDir = () => {
+    const dir = mkdtempSync(joinPath(tmpdir(), 'rig-files-rename-test-'));
+    dirs.push(dir);
+    return dir;
+  };
+
+  it('renames a file in place, within its own parent directory', async () => {
+    const dir = freshDir();
+    const original = joinPath(dir, 'draft.md');
+    writeFileSync(original, 'hello');
+
+    const result = await rigFilesController.rename(original, 'final.md');
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.path).toBe(joinPath(dir, 'final.md'));
+    expect(existsSync(original)).toBe(false);
+    expect(existsSync(joinPath(dir, 'final.md'))).toBe(true);
+  });
+
+  it('renames a folder in place too — fs.rename works identically on either', async () => {
+    const dir = freshDir();
+    const original = joinPath(dir, 'old-folder');
+    mkdirSync(original);
+    writeFileSync(joinPath(original, 'inside.md'), 'x');
+
+    const result = await rigFilesController.rename(original, 'new-folder');
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(existsSync(joinPath(dir, 'new-folder', 'inside.md'))).toBe(true);
+  });
+
+  it('never overwrites an existing target — alreadyExists, and the original is left untouched', async () => {
+    const dir = freshDir();
+    const original = joinPath(dir, 'draft.md');
+    const target = joinPath(dir, 'final.md');
+    writeFileSync(original, 'draft content');
+    writeFileSync(target, 'final content');
+
+    const result = await rigFilesController.rename(original, 'final.md');
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.kind).toBe('alreadyExists');
+    expect(existsSync(original)).toBe(true);
+  });
+
+  it('rejects an empty name', async () => {
+    const dir = freshDir();
+    const original = joinPath(dir, 'draft.md');
+    writeFileSync(original, 'hello');
+
+    const result = await rigFilesController.rename(original, '   ');
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.kind).toBe('invalidName');
+  });
+
+  it('rejects a name carrying a path separator — the traversal guard', async () => {
+    const dir = freshDir();
+    const original = joinPath(dir, 'draft.md');
+    writeFileSync(original, 'hello');
+
+    const result = await rigFilesController.rename(original, '../escaped.md');
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.kind).toBe('invalidName');
+  });
+
+  it('rejects a bare ".." or "." as a name', async () => {
+    const dir = freshDir();
+    const original = joinPath(dir, 'draft.md');
+    writeFileSync(original, 'hello');
+
+    for (const bad of ['..', '.']) {
+      const result = await rigFilesController.rename(original, bad);
+      expect(result.success).toBe(false);
+      if (result.success) continue;
+      expect(result.error.kind).toBe('invalidName');
+    }
+  });
+
+  it('renaming to the exact same name is a harmless no-op success', async () => {
+    const dir = freshDir();
+    const original = joinPath(dir, 'draft.md');
+    writeFileSync(original, 'hello');
+
+    const result = await rigFilesController.rename(original, 'draft.md');
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(existsSync(original)).toBe(true);
+  });
+
+  it('a missing source file — notFound, not a thrown exception', async () => {
+    const dir = freshDir();
+    const result = await rigFilesController.rename(joinPath(dir, 'nope.md'), 'renamed.md');
     expect(result.success).toBe(false);
     if (result.success) return;
     expect(result.error.kind).toBe('notFound');

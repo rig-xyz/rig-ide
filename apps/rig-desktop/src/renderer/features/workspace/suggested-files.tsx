@@ -1,28 +1,39 @@
 import { useQuery } from '@tanstack/react-query';
-import { Bot, Pin, X } from 'lucide-react';
+import { Pin, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { relativeTime } from '@renderer/features/chat/session-history';
 import { events, rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
-import { type Card, selectCards } from '@shared/rig/card-rail';
+import { type Card, selectCards, toContentOnlyPinned, toContentOnlyWrites } from '@shared/rig/card-rail';
+import { filterToContentOnly } from '@shared/rig/file-navigator-categories';
 import { rigSettingsChangedChannel } from '@shared/rig/settings';
 import type { RigFileNode } from '@shared/rig/files';
 import { computeUnseenSummary, rigSeenStateChangedChannel, type SeenMap } from '@shared/rig/seen-state';
-import { breadcrumbSegments } from '@renderer/features/artifact/breadcrumb';
 import { displayTitle, iconFor, rigFilesQueryKey } from './file-tree';
+import { reasonForCard } from './suggested-reason';
 import { useRecentWrites } from './write-activity';
 
 /**
- * File-navigator redesign (`docs/file-navigator-design.md` §3): the card
- * rail — Pinned, In progress, Fresh, populated by `selectCards` (pure,
- * `shared/rig/card-rail.ts`) from three real signals: `rpc.rig.settings`'s
- * `pinnedPathsByRig`, `write-activity.ts`'s live agent-write observations,
- * and slice 3's seen-state. Reads the SAME cached file listing `FileTree`
- * already queries (`rigFilesQueryKey`) — no second `rig.files.list` round
- * trip. Collapses to nothing when there are no cards.
+ * File-navigator redesign v2 (`docs/file-navigator-design.md` §3.2): the
+ * Suggested group — round-1's horizontally-scrolled tile rail, rebuilt onto
+ * the tree's own row chassis, vertical, capped at 3, wrapped in a single
+ * rounded container. Populated by `selectCards` (pure, `shared/rig/card-rail.ts`)
+ * from three real signals: `rpc.rig.settings`'s `pinnedPathsByRig`,
+ * `write-activity.ts`'s live agent-write observations, and seen-state — same
+ * three signals slice 3/4 already built, just re-presented per the v2 spec.
+ *
+ * CONTENT ONLY, structurally (§3.2, the round-1 bug this fixes: `daemon.log`
+ * surfacing as a suggestion): the raw listing is filtered through
+ * `filterToContentOnly` BEFORE `fresh` is ever derived from it, and
+ * pinned/in-progress candidates are run through `toContentOnlyPinned`/
+ * `toContentOnlyWrites` at the same input boundary before ever reaching
+ * `selectCards` — a system/skills path can never become a card, by
+ * construction, not by a render-time filter. Reads the SAME cached file
+ * listing `FileTree` already queries (`rigFilesQueryKey`) — no second
+ * `rig.files.list` round trip. Collapses to nothing when there are no cards
+ * (no empty shell).
  */
 
-const MAX_NON_PINNED = 5;
+const MAX_SUGGESTED = 3;
 
 function flattenFiles(nodes: RigFileNode[]): RigFileNode[] {
   const out: RigFileNode[] = [];
@@ -36,16 +47,7 @@ function flattenFiles(nodes: RigFileNode[]): RigFileNode[] {
   return out;
 }
 
-/** "folder / folder" for a file's relPath — empty for a rig-root file. Reuses the artifact header's own breadcrumb split (root='' so the whole relPath is treated as already-relative). */
-function folderBreadcrumb(relPath: string): string {
-  const segments = breadcrumbSegments('', relPath);
-  return segments
-    .slice(0, -1)
-    .map((s) => s.label)
-    .join(' / ');
-}
-
-export function CardRail({
+export function SuggestedFiles({
   root,
   bindingId,
   onOpenFile,
@@ -100,23 +102,26 @@ export function CardRail({
   const recentWrites = useRecentWrites(root);
   const [dismissedInProgress, setDismissedInProgress] = useState<Set<string>>(new Set());
 
+  // §3.2's content-only boundary: filter the tree FIRST, everything derived
+  // from it (nodeByPath, fresh) is content-only for free from then on.
+  const contentTree = useMemo(() => filterToContentOnly(data ?? []), [data]);
   const nodeByPath = useMemo(() => {
     const map = new Map<string, RigFileNode>();
-    for (const node of flattenFiles(data ?? [])) map.set(node.relPath, node);
+    for (const node of flattenFiles(contentTree)) map.set(node.relPath, node);
     return map;
-  }, [data]);
+  }, [contentTree]);
 
   const fresh = useMemo(() => {
-    if (!seenState || !data) return [];
-    const { unseenFiles } = computeUnseenSummary(data, seenState.seen, seenState.baselineAt);
+    if (!seenState) return [];
+    const { unseenFiles } = computeUnseenSummary(contentTree, seenState.seen, seenState.baselineAt);
     return [...unseenFiles].map((relPath) => ({
       relPath,
       at: nodeByPath.get(relPath)?.mtimeMs ?? seenState.baselineAt,
     }));
-  }, [data, seenState, nodeByPath]);
+  }, [contentTree, seenState, nodeByPath]);
 
   const inProgress = useMemo(
-    () => recentWrites.filter((w) => !dismissedInProgress.has(w.relPath)),
+    () => toContentOnlyWrites(recentWrites).filter((w) => !dismissedInProgress.has(w.relPath)),
     [recentWrites, dismissedInProgress]
   );
 
@@ -136,8 +141,19 @@ export function CardRail({
     }
   };
 
+  // §3.2: "at most 3 rows... cap 3" — a hard total cap (unlike slice 3's
+  // unbounded-pinned rail), so pinned/in-progress/fresh are all subject to
+  // it now. `selectCards` itself is untouched (`maxNonPinned` still only
+  // caps in-progress+fresh) — the outer `.slice` is the call-site's own cap,
+  // applied AFTER `selectCards` already orders pinned-first.
   const cards = useMemo(
-    () => selectCards({ pinnedRelPaths: pinned, inProgress, fresh, maxNonPinned: MAX_NON_PINNED }),
+    () =>
+      selectCards({
+        pinnedRelPaths: toContentOnlyPinned(pinned),
+        inProgress,
+        fresh,
+        maxNonPinned: MAX_SUGGESTED,
+      }).slice(0, MAX_SUGGESTED),
     [pinned, inProgress, fresh]
   );
 
@@ -150,30 +166,36 @@ export function CardRail({
   if (cards.length === 0) return null;
 
   return (
-    <div
-      ref={railRef}
-      className="border-border-hairline flex shrink-0 gap-2 overflow-x-auto border-b px-3 py-2"
-    >
-      {cards.map((card) => {
-        const node = nodeByPath.get(card.relPath);
-        const isPinned = pinned.includes(card.relPath);
-        return (
-          <CardItem
-            key={card.relPath}
-            card={card}
-            node={node}
-            isPinned={isPinned}
-            onOpen={() => onOpenFile(`${root}/${card.relPath}`, card.relPath)}
-            onTogglePin={() => togglePin(card.relPath)}
-            onDismiss={() => dismiss(card)}
-          />
-        );
-      })}
+    <div className="border-border-hairline bg-bg-1 mx-3 mt-2 shrink-0 overflow-hidden rounded-lg border">
+      <p className="text-text-muted px-3 pt-2 pb-1 text-[10px] font-medium tracking-wide uppercase">Suggested</p>
+      <div ref={railRef} className="flex flex-col pb-1">
+        {cards.map((card) => {
+          const node = nodeByPath.get(card.relPath);
+          const isPinned = pinned.includes(card.relPath);
+          return (
+            <SuggestedRow
+              key={card.relPath}
+              card={card}
+              node={node}
+              isPinned={isPinned}
+              onOpen={() => onOpenFile(`${root}/${card.relPath}`, card.relPath)}
+              onTogglePin={() => togglePin(card.relPath)}
+              onDismiss={() => dismiss(card)}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-function CardItem({
+/**
+ * Row anatomy (§3.2): type icon, title (medium weight), then a muted reason
+ * — same chassis as a tree row (full-row rounded hover), not a tile. Pin/
+ * dismiss glyphs appear only on hover, at the right edge — no per-row
+ * chrome at rest beyond the reason text itself.
+ */
+function SuggestedRow({
   card,
   node,
   isPinned,
@@ -190,14 +212,23 @@ function CardItem({
 }) {
   const title = node ? displayTitle(node) : card.relPath.split('/').pop() ?? card.relPath;
   const Icon = iconFor(node?.name ?? card.relPath);
-  const breadcrumb = folderBreadcrumb(card.relPath);
+  const reason = reasonForCard(card, Date.now());
 
   return (
-    <div
-      data-card-key={card.relPath}
-      className="card-pop-in group border-border-hairline bg-bg-1 hover:border-border-strong rounded-card relative flex w-44 shrink-0 flex-col gap-1 border p-2 text-left transition-colors"
-    >
-      <div className="absolute top-1 right-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+    <div data-card-key={card.relPath} className="card-pop-in group flex h-8 items-center gap-2 px-2">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="rounded-control hover:bg-bg-2 flex min-w-0 flex-1 items-center gap-2 px-1 py-1 text-left transition-colors"
+      >
+        <Icon className="text-text-secondary size-3.5 shrink-0" strokeWidth={1.5} />
+        <span className="text-text-primary min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
+        <span className="text-text-muted flex shrink-0 items-center gap-1 text-xs">
+          {reason.pulsing && <span className="bg-accent pulse-dot size-[5px] shrink-0 rounded-full" />}
+          {reason.text}
+        </span>
+      </button>
+      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
         <button
           type="button"
           onClick={(event) => {
@@ -226,35 +257,19 @@ function CardItem({
           <X className="size-3" strokeWidth={1.5} />
         </button>
       </div>
-
-      <button type="button" onClick={onOpen} className="flex min-w-0 flex-col gap-1 text-left">
-        <div className="flex items-center gap-1.5 pr-8">
-          <span className="relative flex shrink-0 items-center justify-center">
-            <Icon className="text-text-secondary size-3.5" strokeWidth={1.5} />
-            {card.type === 'in-progress' && (
-              <span className="bg-accent pulse-dot absolute -top-0.5 -right-0.5 size-1.5 rounded-full" />
-            )}
-          </span>
-          <span className="text-text-primary min-w-0 truncate text-xs font-medium">{title}</span>
-        </div>
-        {breadcrumb && <span className="text-text-muted truncate text-xs">{breadcrumb}</span>}
-        <span className="text-text-muted flex items-center gap-1 text-xs">
-          {card.sessionId && <Bot className="size-3 shrink-0" strokeWidth={1.5} />}
-          {card.at !== undefined ? relativeTime(card.at, Date.now()) : 'Pinned'}
-        </span>
-      </button>
     </div>
   );
 }
 
 /**
- * Minimal FLIP: measures each card's position before a reflow (keyed by
+ * Minimal FLIP: measures each row's position before a reflow (keyed by
  * `dep`, the ordered relPath list joined into one string — cheap identity
  * for "did the order change"), then on the next layout applies the inverse
  * transform and animates it back to identity. `prefers-reduced-motion`
  * skips the animated leg entirely — the DOM still reflows instantly, just
  * without the sibling glide. This is the app's only sibling-reflow
- * animation; new-card entrance is the separate `card-pop-in` CSS class.
+ * animation; new-row entrance is the separate `card-pop-in` CSS class, and
+ * the group's own appearance is `suggested-group-in`.
  */
 function useFlip(containerRef: React.RefObject<HTMLDivElement | null>, dep: string): void {
   const prevRects = useRef<Map<string, DOMRect>>(new Map());

@@ -1,12 +1,24 @@
 /**
  * File-navigator redesign (`docs/file-navigator-design.md` §3): pure
- * card-selection math for the card rail — no IO, no React, no timestamps of
- * its own. `renderer/features/workspace/card-rail.tsx` supplies the three
- * raw signals (pins from settings, in-progress writes from
- * `write-activity.ts`, fresh/unseen files from `seen-state.ts`) and this
- * decides which files become cards, in what order, with no file ever
+ * card-selection math for the Suggested group — no IO, no React, no
+ * timestamps of its own. `renderer/features/workspace/suggested-files.tsx`
+ * supplies the three raw signals (pins from settings, in-progress writes
+ * from `write-activity.ts`, fresh/unseen files from `seen-state.ts`) and
+ * this decides which files become cards, in what order, with no file ever
  * appearing twice across the three types.
+ *
+ * v2 round (§3.2): Suggested must be CONTENT only, by construction — a
+ * system or skills path (the round-1 bug: `daemon.log` surfacing as a
+ * suggestion) must never reach `selectCards` at all. `selectCards` itself
+ * stays a pure reshuffle of whatever candidates it's given (no path
+ * knowledge of its own); `toContentOnlyPinned`/`toContentOnlyWrites` below
+ * are the input-boundary guard the caller runs pinned/in-progress
+ * candidates through FIRST — fresh candidates need no separate guard here
+ * since the caller already builds them off a content-filtered tree
+ * (`shared/rig/file-navigator-categories.ts`'s `filterToContentOnly`).
  */
+
+import { classifyEntryCategory } from './file-navigator-categories';
 
 export type CardType = 'pinned' | 'in-progress' | 'fresh';
 
@@ -80,4 +92,14 @@ export function selectCards(input: SelectCardsInput): Card[] {
   }
 
   return [...pinnedCards, ...nonPinnedCards];
+}
+
+/** Content-only guard for pinned candidates (§3.2's selection boundary) — drops any pinned system/skills path before it can reach `selectCards`. */
+export function toContentOnlyPinned(pinnedRelPaths: readonly string[]): string[] {
+  return pinnedRelPaths.filter((relPath) => classifyEntryCategory(relPath) === 'content');
+}
+
+/** Content-only guard for in-progress candidates (§3.2's selection boundary) — same rule as `toContentOnlyPinned`, for write signals. */
+export function toContentOnlyWrites(writes: readonly WriteSignal[]): WriteSignal[] {
+  return writes.filter((write) => classifyEntryCategory(write.relPath) === 'content');
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RigFileNode } from './files';
-import { filterTree, frecencyScore, sortTree, type TreeViewContext } from './tree-view';
+import { filterTree, frecencyScore, searchTree, sortTree, type TreeViewContext } from './tree-view';
 
 function file(relPath: string, opts: { mtimeMs?: number; title?: string } = {}): RigFileNode {
   return { name: relPath.split('/').pop() ?? relPath, relPath, kind: 'file', ...opts };
@@ -14,7 +14,6 @@ function ctx(overrides: Partial<TreeViewContext> = {}): TreeViewContext {
   return {
     seen: {},
     unseenFiles: new Set(),
-    agentWrittenFiles: new Set(),
     now: 1_000_000,
     ...overrides,
   };
@@ -48,23 +47,23 @@ describe('frecencyScore', () => {
 });
 
 describe('sortTree', () => {
-  it('alphabetical sort ignores recency entirely, folders first, then A-Z by title', () => {
+  it('name sort ignores recency entirely, folders first, then A-Z by title', () => {
     const tree = [
       file('zebra.md', { mtimeMs: 500 }),
       dir('bravo', []),
       file('alpha.md', { mtimeMs: 10 }),
     ];
-    const sorted = sortTree(tree, 'alphabetical', ctx());
+    const sorted = sortTree(tree, 'name', ctx());
     expect(sorted.map((n) => n.relPath)).toEqual(['bravo', 'alpha.md', 'zebra.md']);
   });
 
-  it('newest sort orders files by raw mtime, most recent first', () => {
+  it('modified sort orders files by raw mtime, most recent first', () => {
     const tree = [file('old.md', { mtimeMs: 100 }), file('new.md', { mtimeMs: 900 })];
-    const sorted = sortTree(tree, 'newest', ctx());
+    const sorted = sortTree(tree, 'modified', ctx());
     expect(sorted.map((n) => n.relPath)).toEqual(['new.md', 'old.md']);
   });
 
-  it('working set blends a recent view into the ranking, not just raw mtime', () => {
+  it('smart blends a recent view into the ranking, not just raw mtime', () => {
     const now = 1_000_000;
     const tree = [
       file('changed-long-ago-viewed-now.md', { mtimeMs: 1 }),
@@ -72,24 +71,38 @@ describe('sortTree', () => {
     ];
     const sorted = sortTree(
       tree,
-      'workingSet',
+      'smart',
       ctx({ now, seen: { 'changed-long-ago-viewed-now.md': now } })
     );
     // the just-viewed file's recency can outrank a file merely changed moments ago.
     expect(sorted[0].relPath).toBe('changed-long-ago-viewed-now.md');
   });
 
-  it('unseen first groups unseen files ahead of seen ones regardless of recency', () => {
+  it('smart gives unseen files an outright boost ahead of seen ones, regardless of raw recency', () => {
     const tree = [
       file('seen-but-newer.md', { mtimeMs: 900 }),
       file('unseen-but-older.md', { mtimeMs: 100 }),
     ];
-    const sorted = sortTree(
-      tree,
-      'unseenFirst',
-      ctx({ unseenFiles: new Set(['unseen-but-older.md']) })
-    );
+    const sorted = sortTree(tree, 'smart', ctx({ unseenFiles: new Set(['unseen-but-older.md']) }));
     expect(sorted.map((n) => n.relPath)).toEqual(['unseen-but-older.md', 'seen-but-newer.md']);
+  });
+
+  it('smart is content-only: a system file never earns a ranking of its own, even when unseen and newer', () => {
+    const tree = [
+      file('.rig/daemon.log', { mtimeMs: 999 }),
+      file('notes.md', { mtimeMs: 1 }),
+    ];
+    const sorted = sortTree(tree, 'smart', ctx({ unseenFiles: new Set(['.rig/daemon.log']) }));
+    expect(sorted.map((n) => n.relPath)).toEqual(['notes.md', '.rig/daemon.log']);
+  });
+
+  it('smart is content-only for folder ranking too — a folder cannot be bubbled up by a hidden system descendant', () => {
+    const tree = [
+      dir('quiet', [file('quiet/real.md', { mtimeMs: 10 })]),
+      dir('.rig', [file('.rig/daemon.log', { mtimeMs: 999 })]),
+    ];
+    const sorted = sortTree(tree, 'smart', ctx());
+    expect(sorted.map((n) => n.relPath)).toEqual(['quiet', '.rig']);
   });
 
   it('a folder ranks by its single best (most relevant) descendant, at any depth', () => {
@@ -97,13 +110,13 @@ describe('sortTree', () => {
       dir('quiet', [file('quiet/old.md', { mtimeMs: 10 })]),
       dir('buzzing', [dir('buzzing/deep', [file('buzzing/deep/new.md', { mtimeMs: 999 })])]),
     ];
-    const sorted = sortTree(tree, 'newest', ctx());
+    const sorted = sortTree(tree, 'modified', ctx());
     expect(sorted.map((n) => n.relPath)).toEqual(['buzzing', 'quiet']);
   });
 
   it('folders always sort ahead of files within the same directory, in every sort mode', () => {
     const tree = [file('a-file.md', { mtimeMs: 999 }), dir('z-folder', [file('z-folder/x.md', { mtimeMs: 1 })])];
-    for (const sort of ['workingSet', 'unseenFirst', 'newest', 'alphabetical'] as const) {
+    for (const sort of ['smart', 'modified', 'name'] as const) {
       const sorted = sortTree(tree, sort, ctx());
       expect(sorted[0].kind).toBe('dir');
     }
@@ -111,14 +124,14 @@ describe('sortTree', () => {
 
   it('ties fall back to alphabetical order', () => {
     const tree = [file('b.md'), file('a.md')];
-    const sorted = sortTree(tree, 'newest', ctx());
+    const sorted = sortTree(tree, 'modified', ctx());
     expect(sorted.map((n) => n.relPath)).toEqual(['a.md', 'b.md']);
   });
 
   it('does not mutate the input tree', () => {
     const tree = [file('b.md', { mtimeMs: 1 }), file('a.md', { mtimeMs: 2 })];
     const original = [...tree];
-    sortTree(tree, 'newest', ctx());
+    sortTree(tree, 'modified', ctx());
     expect(tree).toEqual(original);
   });
 });
@@ -139,12 +152,6 @@ describe('filterTree', () => {
     expect(filtered.map((n) => n.relPath)).toEqual(['unseen.md']);
   });
 
-  it('"agents" keeps only files this app has observed an agent write to', () => {
-    const tree = [file('agent-written.md'), file('human-written.md')];
-    const filtered = filterTree(tree, 'agents', ctx({ agentWrittenFiles: new Set(['agent-written.md']) }));
-    expect(filtered.map((n) => n.relPath)).toEqual(['agent-written.md']);
-  });
-
   it('a folder with at least one matching descendant survives, non-matching siblings inside it do not', () => {
     const tree = [dir('mixed', [file('mixed/unseen.md'), file('mixed/seen.md')])];
     const filtered = filterTree(tree, 'unseen', ctx({ unseenFiles: new Set(['mixed/unseen.md']) }));
@@ -153,5 +160,31 @@ describe('filterTree', () => {
 
   it('an empty tree filters to an empty tree', () => {
     expect(filterTree([], 'unseen', ctx())).toEqual([]);
+  });
+});
+
+describe('searchTree', () => {
+  it('an empty query is a no-op passthrough', () => {
+    const tree = [file('a.md'), dir('b', [file('b/c.md')])];
+    expect(searchTree(tree, '  ')).toEqual(tree);
+  });
+
+  it('matches by filename, case-insensitively', () => {
+    const tree = [file('Positioning.md'), file('roadmap.md')];
+    expect(searchTree(tree, 'pos').map((n) => n.relPath)).toEqual(['Positioning.md']);
+  });
+
+  it('matches by document title too, not just filename', () => {
+    const tree = [file('untitled-1.md', { title: 'Q3 Roadmap' }), file('notes.md')];
+    expect(searchTree(tree, 'roadmap').map((n) => n.relPath)).toEqual(['untitled-1.md']);
+  });
+
+  it('keeps a folder only when it has a matching descendant, at any depth', () => {
+    const tree = [
+      dir('docs', [file('docs/readme.md'), file('docs/other.md')]),
+      dir('empty', [file('empty/nope.md')]),
+    ];
+    const filtered = searchTree(tree, 'readme');
+    expect(filtered).toEqual([dir('docs', [file('docs/readme.md')])]);
   });
 });

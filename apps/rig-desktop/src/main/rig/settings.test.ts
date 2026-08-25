@@ -417,7 +417,7 @@ describe('RigSettingsStore', () => {
     });
   });
 
-  describe('fileTreeViewByRig (working-set sort + filters round)', () => {
+  describe('fileTreeViewByRig (working-set sort + filters round; renamed sort/filter values in the navigator v2 round)', () => {
     it('defaults to an empty map before any rig has chosen a sort/filter', () => {
       const store = new RigSettingsStore(settingsPath);
       store.initialize();
@@ -427,32 +427,32 @@ describe('RigSettingsStore', () => {
     it('merges at the key level rather than replacing the map', () => {
       const store = new RigSettingsStore(settingsPath);
       store.initialize();
-      store.set({ fileTreeViewByRig: { 'binding-1': { sort: 'newest', filter: 'unseen' } } });
-      store.set({ fileTreeViewByRig: { 'binding-2': { sort: 'alphabetical', filter: 'all' } } });
+      store.set({ fileTreeViewByRig: { 'binding-1': { sort: 'modified', filter: 'unseen' } } });
+      store.set({ fileTreeViewByRig: { 'binding-2': { sort: 'name', filter: 'all' } } });
 
       expect(store.get().fileTreeViewByRig).toEqual({
-        'binding-1': { sort: 'newest', filter: 'unseen' },
-        'binding-2': { sort: 'alphabetical', filter: 'all' },
+        'binding-1': { sort: 'modified', filter: 'unseen' },
+        'binding-2': { sort: 'name', filter: 'all' },
       });
     });
 
     it('a rig\'s own choice is replaced wholesale by the next set() for that rig, without touching another\'s', () => {
       const store = new RigSettingsStore(settingsPath);
       store.initialize();
-      store.set({ fileTreeViewByRig: { 'binding-1': { sort: 'newest', filter: 'all' } } });
-      store.set({ fileTreeViewByRig: { 'binding-1': { sort: 'workingSet', filter: 'agents' } } });
+      store.set({ fileTreeViewByRig: { 'binding-1': { sort: 'modified', filter: 'all' } } });
+      store.set({ fileTreeViewByRig: { 'binding-1': { sort: 'smart', filter: 'unseen' } } });
 
-      expect(store.get().fileTreeViewByRig['binding-1']).toEqual({ sort: 'workingSet', filter: 'agents' });
+      expect(store.get().fileTreeViewByRig['binding-1']).toEqual({ sort: 'smart', filter: 'unseen' });
     });
 
     it('persists and round-trips through a second store instance', () => {
       const first = new RigSettingsStore(settingsPath);
       first.initialize();
-      first.set({ fileTreeViewByRig: { 'binding-1': { sort: 'unseenFirst', filter: 'unseen' } } });
+      first.set({ fileTreeViewByRig: { 'binding-1': { sort: 'smart', filter: 'unseen' } } });
 
       const second = new RigSettingsStore(settingsPath);
       second.initialize();
-      expect(second.get().fileTreeViewByRig).toEqual({ 'binding-1': { sort: 'unseenFirst', filter: 'unseen' } });
+      expect(second.get().fileTreeViewByRig).toEqual({ 'binding-1': { sort: 'smart', filter: 'unseen' } });
     });
 
     it('an existing settings.json that predates this field degrades to an empty map, not a throw', () => {
@@ -466,7 +466,7 @@ describe('RigSettingsStore', () => {
       expect(store.get().fileTreeViewByRig).toEqual({});
     });
 
-    it('a malformed value (unknown sort/filter) degrades to an empty map rather than passing through', () => {
+    it('a malformed entry (unknown sort/filter) degrades that entry alone, not a throw', () => {
       mkdirSync(join(dir, 'nested'), { recursive: true });
       writeFileSync(
         settingsPath,
@@ -475,6 +475,23 @@ describe('RigSettingsStore', () => {
       const store = new RigSettingsStore(settingsPath);
       store.initialize();
       expect(store.get().fileTreeViewByRig).toEqual({});
+    });
+
+    it('a round-1 settings.json (old sort/filter names) drops only the stale entries, keeping every valid one', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({
+          ...DEFAULT_RIG_SETTINGS,
+          fileTreeViewByRig: {
+            'binding-old': { sort: 'workingSet', filter: 'agents' }, // round-1 names, no longer valid
+            'binding-new': { sort: 'modified', filter: 'unseen' }, // already v2-shaped
+          },
+        })
+      );
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().fileTreeViewByRig).toEqual({ 'binding-new': { sort: 'modified', filter: 'unseen' } });
     });
   });
 

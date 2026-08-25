@@ -43,6 +43,19 @@ export type RigFileNode = {
 export type RigFileListError = { kind: 'notFound' | 'notADirectory' | 'ioError'; message: string };
 export type RigFileReadError = { kind: 'notFound' | 'tooLarge' | 'ioError'; message: string };
 export type RigFileWriteError = { kind: 'ioError'; message: string };
+/**
+ * Navigator v2 (§3.3's row context menu, "Rename"): a plain in-place
+ * `fs.rename` within the entry's own parent directory, new for files this
+ * round (folders reuse the same RPC — `fs.rename` works identically on
+ * either). `'invalidName'` covers an empty name or one carrying a path
+ * separator/`.`/`..` (the traversal guard — a bare filename can only ever
+ * land back in the same directory); `'alreadyExists'` is the "no overwrite"
+ * rule.
+ */
+export type RigFileRenameError = {
+  kind: 'invalidName' | 'alreadyExists' | 'notFound' | 'ioError';
+  message: string;
+};
 
 export type RigFileReadResult = { content: string; truncated: boolean };
 

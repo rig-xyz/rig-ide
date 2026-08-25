@@ -208,15 +208,15 @@
 }
 
 /*
- * File-navigator redesign (`docs/file-navigator-design.md` §3/§6): the card
- * rail's SYSTEM-driven motion — new-card entrance and the "agent actively
- * writing" pulse. Not decorative (rule 6's carve-out above stays true —
- * the skills shimmer remains the only ambient/hover one): both of these
- * fire only because something real happened (a card was newly selected, a
- * session wrote this file recently), never on their own schedule beyond
- * that. Sibling reflow (`card-rail.tsx`'s `useFlip`) is plain JS-driven
- * `transform`/`transition`, not CSS keyframes, and checks
- * `prefers-reduced-motion` itself before animating.
+ * File-navigator redesign (`docs/file-navigator-design.md` §3/§6, v2 round
+ * §3.5): the Suggested group's SYSTEM-driven motion — new-row entrance and
+ * the "agent actively writing" pulse. Not decorative (rule 6's carve-out
+ * above stays true — the skills shimmer remains the only ambient/hover
+ * one): both of these fire only because something real happened (a row was
+ * newly selected, a session wrote this file recently), never on their own
+ * schedule beyond that. Sibling reflow (`suggested-files.tsx`'s `useFlip`)
+ * is plain JS-driven `transform`/`transition`, not CSS keyframes, and
+ * checks `prefers-reduced-motion` itself before animating.
  */
 @keyframes card-pop-in {
   from {
@@ -248,5 +248,26 @@
 @media (prefers-reduced-motion: no-preference) {
   .pulse-dot {
     animation: pulse-dot 1.8s ease-in-out infinite;
+  }
+}
+
+/*
+ * v2 round (§3.5): "unseen dot fades on view" — a fade-in the moment the
+ * dot mounts (a file becomes unseen, or the row itself first renders
+ * unseen), state-driven like the rest of this file's motion, never on a
+ * timer of its own.
+ */
+@keyframes unseen-dot-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .unseen-dot-in {
+    animation: unseen-dot-in 200ms ease-out;
   }
 }

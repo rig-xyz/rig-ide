@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { selectCards } from './card-rail';
+import { selectCards, toContentOnlyPinned, toContentOnlyWrites } from './card-rail';
 
 describe('selectCards', () => {
   it('pinned files are always shown, first, ahead of in-progress and fresh', () => {
@@ -89,5 +89,29 @@ describe('selectCards', () => {
 
   it('an empty rig produces no cards', () => {
     expect(selectCards({ pinnedRelPaths: [], inProgress: [], fresh: [] })).toEqual([]);
+  });
+});
+
+describe('toContentOnlyPinned', () => {
+  it('drops system and skills paths, keeping content pins in order', () => {
+    expect(toContentOnlyPinned(['notes.md', 'rig.toml', 'AGENTS.md', '.rig/state.json', 'docs/plan.md'])).toEqual([
+      'notes.md',
+      'docs/plan.md',
+    ]);
+  });
+
+  it('an all-system/skills pin list yields no candidates', () => {
+    expect(toContentOnlyPinned(['.rig/state.json', 'AGENTS.md'])).toEqual([]);
+  });
+});
+
+describe('toContentOnlyWrites', () => {
+  it('drops writes to system/skills paths — the daemon.log-as-suggestion bug must be structurally impossible', () => {
+    const writes = [
+      { relPath: '.rig/daemon.log', at: 100, sessionId: 's1' },
+      { relPath: '.rig/state.local.db', at: 200, sessionId: 's1' },
+      { relPath: 'notes.md', at: 300, sessionId: 's1' },
+    ];
+    expect(toContentOnlyWrites(writes)).toEqual([{ relPath: 'notes.md', at: 300, sessionId: 's1' }]);
   });
 });

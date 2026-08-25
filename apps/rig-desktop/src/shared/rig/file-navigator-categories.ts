@@ -14,6 +14,8 @@
  * which are Skills above").
  */
 
+import type { RigFileNode } from './files';
+
 export type FileNavigatorCategory = 'content' | 'skills' | 'system';
 
 const SKILL_BASENAMES = new Set(['AGENTS.md', 'CLAUDE.md']);
@@ -47,4 +49,27 @@ export function classifyEntryCategory(relPath: string): FileNavigatorCategory {
 export function relPathFromRoot(root: string, absPath: string): string {
   const rel = absPath.startsWith(root) ? absPath.slice(root.length).replace(/^\/+/, '') : absPath;
   return rel;
+}
+
+/**
+ * Navigator v2 (`docs/file-navigator-design.md` §3.2): the strict content
+ * filter for anything that must be structurally immune to the "Show system
+ * files" toggle — Suggested candidates, the header's unseen chip count, and
+ * Smart sort's scoring inputs. Unlike the tree's own DISPLAY filter
+ * (`file-tree.tsx`'s `filterContentTree`, which reveals system files behind
+ * the toggle), this always drops both `skills` and `system` entries — the
+ * round-1 bug (`daemon.log`/`state.local.db` surfacing as a suggestion) must
+ * be structurally impossible at this boundary, not a render-time guard.
+ */
+export function filterToContentOnly(nodes: readonly RigFileNode[]): RigFileNode[] {
+  const out: RigFileNode[] = [];
+  for (const node of nodes) {
+    if (classifyEntryCategory(node.relPath) !== 'content') continue;
+    if (node.kind === 'dir') {
+      out.push({ ...node, children: filterToContentOnly(node.children ?? []) });
+    } else {
+      out.push(node);
+    }
+  }
+  return out;
 }

@@ -41,29 +41,32 @@ export type RigsRailView = {
 export const DEFAULT_RIGS_RAIL_VIEW: RigsRailView = { filter: 'all', sort: 'recent' };
 
 /**
- * File-navigator redesign (§5, working-set sort + filters): the file tree's
- * own sort/filter choice, per rig (unlike `rigsRailView` above, a person's
- * taste for "what am I working on" genuinely differs rig to rig). `'workingSet'`
- * is the default — frecency blending the user's own opens with file change
- * times (`shared/rig/tree-view.ts`'s `frecencyScore`, pure and tested).
+ * File-navigator redesign (§5, working-set sort + filters; renamed/re-specced
+ * §3.4 in the v2 round): the file tree's own sort/filter choice, per rig
+ * (unlike `rigsRailView` above, a person's taste for "what am I working on"
+ * genuinely differs rig to rig). `'smart'` is the default — frecency
+ * blending the user's own opens with file change times plus an unseen boost
+ * (`shared/rig/tree-view.ts`'s `frecencyScore`/`UNSEEN_BOOST`, pure and
+ * tested), content-only by construction. `'modified'`/`'name'` are the old
+ * `'newest'`/`'alphabetical'` renamed to match the header dropdown's own
+ * labels exactly (§3.1). The old standalone `'unseenFirst'` mode is gone —
+ * folded into Smart's boost instead.
  */
-export type FileTreeSort = 'workingSet' | 'unseenFirst' | 'alphabetical' | 'newest';
+export type FileTreeSort = 'smart' | 'modified' | 'name';
 /**
- * `'agents'` uses the SAME live write-observation slice 4's card rail
- * relies on (`renderer/features/workspace/write-activity.ts`) — this app
- * has no durable, queryable "which session wrote which file" index (see
- * that module's own header comment), so this filter can only ever reflect
- * writes this running app process has actually observed live since launch,
- * never a rig's full history or a restart-durable record.
+ * §3.1: the header's old All/Agents/Unseen radio group is gone — "Changed by
+ * agents" now surfaces as reasons inside Suggested, not as a tree filter, so
+ * `'agents'` is gone too. `'unseen'` is what the header's contextual "N new"
+ * chip toggles into.
  */
-export type FileTreeFilter = 'all' | 'agents' | 'unseen';
+export type FileTreeFilter = 'all' | 'unseen';
 
 export type FileTreeView = {
   sort: FileTreeSort;
   filter: FileTreeFilter;
 };
 
-export const DEFAULT_FILE_TREE_VIEW: FileTreeView = { sort: 'workingSet', filter: 'all' };
+export const DEFAULT_FILE_TREE_VIEW: FileTreeView = { sort: 'smart', filter: 'all' };
 
 export type RigSettings = {
   version: 1;
