@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { RigSessionEventRecord, RigStoredSession } from '@shared/rig/sessions';
+import type {
+  RigSessionEventRecord,
+  RigSessionEventsPage,
+  RigStoredSession,
+} from '@shared/rig/sessions';
 
 /**
  * The replay seam: `ReplayStore.load()` reads a stored session + its
@@ -18,7 +22,8 @@ import type { RigSessionEventRecord, RigStoredSession } from '@shared/rig/sessio
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn<() => Promise<RigStoredSession | null>>(),
-  getEvents: vi.fn<() => Promise<RigSessionEventRecord[]>>(),
+  getEventsPage:
+    vi.fn<(input: { afterSeq?: number; limit: number }) => Promise<RigSessionEventsPage>>(),
 }));
 
 vi.mock('@renderer/lib/ipc', () => ({
@@ -26,7 +31,7 @@ vi.mock('@renderer/lib/ipc', () => ({
     rig: {
       sessions: {
         getSession: () => mocks.getSession(),
-        getEvents: () => mocks.getEvents(),
+        getEventsPage: (input: { afterSeq?: number; limit: number }) => mocks.getEventsPage(input),
       },
     },
   },
@@ -76,6 +81,10 @@ function eventRecord(seq: number, at: number): RigSessionEventRecord {
   };
 }
 
+function mockEvents(events: RigSessionEventRecord[]): void {
+  mocks.getEventsPage.mockResolvedValue({ events, nextCursor: null });
+}
+
 afterEach(() => {
   vi.clearAllMocks();
 });
@@ -83,7 +92,7 @@ afterEach(() => {
 describe('ReplayStore.load', () => {
   it('seeds the transcript with the stored turns, stamped with their real at', async () => {
     mocks.getSession.mockResolvedValue(storedSession());
-    mocks.getEvents.mockResolvedValue([eventRecord(0, 111), eventRecord(1, 222)]);
+    mockEvents([eventRecord(0, 111), eventRecord(1, 222)]);
 
     const store = new ReplayStore('session-1');
     await store.load();
@@ -104,10 +113,7 @@ describe('ReplayStore.load', () => {
 
   it('drops a stored event whose JSON no longer matches the turn schema, keeping the rest', async () => {
     mocks.getSession.mockResolvedValue(storedSession());
-    mocks.getEvents.mockResolvedValue([
-      eventRecord(0, 111),
-      { seq: 1, at: 222, turn: { not: 'a turn' } },
-    ]);
+    mockEvents([eventRecord(0, 111), { seq: 1, at: 222, turn: { not: 'a turn' } }]);
 
     const store = new ReplayStore('session-1');
     await store.load();
@@ -118,7 +124,7 @@ describe('ReplayStore.load', () => {
 
   it('fails honestly when the session row is gone', async () => {
     mocks.getSession.mockResolvedValue(null);
-    mocks.getEvents.mockResolvedValue([]);
+    mockEvents([]);
 
     const store = new ReplayStore('session-1');
     await store.load();
@@ -131,15 +137,15 @@ describe('ReplayStore.load', () => {
 
   it('ignores session and event completions after disposal', async () => {
     const session = deferred<RigStoredSession | null>();
-    const events = deferred<RigSessionEventRecord[]>();
+    const events = deferred<RigSessionEventsPage>();
     mocks.getSession.mockReturnValue(session.promise);
-    mocks.getEvents.mockReturnValue(events.promise);
+    mocks.getEventsPage.mockReturnValue(events.promise);
 
     const store = new ReplayStore('session-late');
     const loading = store.load();
     store.dispose();
     session.resolve(storedSession({ id: 'session-late' }));
-    events.resolve([eventRecord(0, 111)]);
+    events.resolve({ events: [eventRecord(0, 111)], nextCursor: null });
     await loading;
 
     expect(store.disposed).toBe(true);

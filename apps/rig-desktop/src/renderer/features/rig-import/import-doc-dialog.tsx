@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { events, rpc } from '@renderer/lib/ipc';
 import { toast } from '@renderer/lib/hooks/use-toast';
+import { events, rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '@renderer/lib/ui/dialog';
 import { cn } from '@renderer/lib/utils';
@@ -94,19 +94,24 @@ function ImportDocForm({ root, onDone }: { root: string; onDone: (mdPath: string
     setBusy(true);
     setError(null);
     setProgress(null);
-    const result = await rpc.rig.importDoc.importDoc({ root, source: state.source });
-    if (closedRef.current) {
-      // The write already happened (or failed) server-side — say so
-      // quietly rather than navigating into a dialog the user closed.
-      if (result.success) toast({ title: 'Doc imported' });
-      return;
+    try {
+      const result = await rpc.rig.importDoc.importDoc({ root, source: state.source });
+      if (closedRef.current) {
+        // The write already happened (or failed) server-side — say so
+        // quietly rather than navigating into a dialog the user closed.
+        if (result.success) toast({ title: 'Doc imported' });
+        return;
+      }
+      if (!result.success) {
+        setError(result.error.message);
+        return;
+      }
+      onDone(result.data.mdPath);
+    } catch {
+      if (!closedRef.current) setError("Couldn't import this doc. Try again.");
+    } finally {
+      if (!closedRef.current) setBusy(false);
     }
-    setBusy(false);
-    if (!result.success) {
-      setError(result.error.message);
-      return;
-    }
-    onDone(result.data.mdPath);
   };
 
   if (busy) {
@@ -119,12 +124,12 @@ function ImportDocForm({ root, onDone }: { root: string; onDone: (mdPath: string
     return (
       <div className="flex flex-col gap-1.5 px-4 pb-4">
         <div className="flex items-center gap-2">
-          <span className="bg-accent size-1.5 shrink-0 animate-pulse rounded-full" />
-          <p className="text-text-primary text-sm">
+          <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
+          <p className="text-sm text-text-primary">
             Importing {progress?.title ?? importWorkingLabel(value)}…
           </p>
         </div>
-        <p className="text-text-muted pl-3.5 font-mono text-xs">
+        <p className="pl-3.5 font-mono text-xs text-text-muted">
           {IMPORT_PHASES.map((phase, index) => (
             <span key={phase}>
               {index > 0 && ' · '}
@@ -146,11 +151,11 @@ function ImportDocForm({ root, onDone }: { root: string; onDone: (mdPath: string
       }}
     >
       <ImportDocField value={value} state={state} disabled={busy} onChange={setValue} />
-      <p className="text-text-muted text-xs">
+      <p className="text-xs text-text-muted">
         Text, headings, lists, tables, links and images come across. Comments and suggestions
         don&rsquo;t survive export.
       </p>
-      {error && <p className="text-danger text-xs">{error}</p>}
+      {error && <p className="text-xs text-danger">{error}</p>}
       <div className="flex justify-end pt-1">
         <Button size="sm" onClick={() => void runImport()} disabled={!state.source}>
           Import

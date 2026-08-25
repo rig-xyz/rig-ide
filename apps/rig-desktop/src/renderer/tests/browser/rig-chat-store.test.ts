@@ -1,5 +1,6 @@
 import type { Result } from '@emdash/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RigSessionEventsPage } from '@shared/rig/sessions';
 
 /**
  * Round: eager session activation — the persistence guard.
@@ -25,8 +26,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   ensureSession: vi.fn<() => Promise<{ ok: true } | { ok: false; reason: string }>>(),
   setTitle: vi.fn<() => Promise<void>>(),
-  appendEvents: vi.fn<() => Promise<{ at: number }>>(),
-  getEvents: vi.fn<() => Promise<unknown[]>>(),
+  appendEvents: vi.fn<() => Promise<{ ok: true; at: number; persistedThroughSeq: number }>>(),
+  getEventsPage:
+    vi.fn<(input: { afterSeq?: number; limit: number }) => Promise<RigSessionEventsPage>>(),
   closeSession: vi.fn<() => Promise<void>>(),
   settingsGet: vi.fn<() => Promise<unknown>>(),
   settingsSet: vi.fn<() => Promise<unknown>>(),
@@ -41,7 +43,8 @@ vi.mock('@renderer/lib/ipc', () => ({
         ensureSession: (...args: unknown[]) => mocks.ensureSession(...(args as [])),
         setTitle: (...args: unknown[]) => mocks.setTitle(...(args as [])),
         appendEvents: (...args: unknown[]) => mocks.appendEvents(...(args as [])),
-        getEvents: (...args: unknown[]) => mocks.getEvents(...(args as [])),
+        getEventsPage: (...args: unknown[]) =>
+          mocks.getEventsPage(...(args as [{ afterSeq?: number; limit: number }])),
         closeSession: (...args: unknown[]) => mocks.closeSession(...(args as [])),
       },
       settings: {
@@ -157,12 +160,12 @@ const EMPTY_SETTINGS = {
 beforeEach(() => {
   // Sensible defaults every test can rely on without repeating itself;
   // individual tests override where the scenario needs something specific.
-  mocks.getEvents.mockResolvedValue([]);
+  mocks.getEventsPage.mockResolvedValue({ events: [], nextCursor: null });
   mocks.settingsGet.mockResolvedValue(EMPTY_SETTINGS);
   mocks.settingsSet.mockResolvedValue(EMPTY_SETTINGS);
   mocks.ensureSession.mockResolvedValue({ ok: true });
   mocks.setTitle.mockResolvedValue(undefined);
-  mocks.appendEvents.mockResolvedValue({ at: Date.now() });
+  mocks.appendEvents.mockResolvedValue({ ok: true, at: Date.now(), persistedThroughSeq: 0 });
   mocks.closeSession.mockResolvedValue(undefined);
   mocks.acpCreate.mockResolvedValue(fakeLiveSession());
   // `AcpLiveSession.resume()`'s real return shape is `{ session, history }`
@@ -185,10 +188,11 @@ describe('RigChatStore — the rig_sessions row-creation guard', () => {
 
     expect(mocks.ensureSession).not.toHaveBeenCalled();
 
-    store.dispose();
+    void store.dispose();
     // Closing an unused eager tab still cleans up (stopSession/dispose) —
     // `closeSession` is safe to call even though no row was ever ensured
     // (an UPDATE against a nonexistent row is a harmless no-op server-side).
+    await flush();
     expect(mocks.closeSession).toHaveBeenCalledWith({ sessionId: 'conv-1' });
     expect(mocks.ensureSession).not.toHaveBeenCalled();
   });
@@ -220,7 +224,7 @@ describe('RigChatStore — the rig_sessions row-creation guard', () => {
     await flush();
     expect(mocks.ensureSession).toHaveBeenCalledTimes(1);
 
-    store.dispose();
+    void store.dispose();
   });
 
   it('typing while the session is still bootstrapping (the held-prompt path) also ensures the row before persisting the title', async () => {
@@ -249,7 +253,7 @@ describe('RigChatStore — the rig_sessions row-creation guard', () => {
       mocks.setTitle.mock.invocationCallOrder[0]!
     );
 
-    store.dispose();
+    void store.dispose();
   });
 
   it('A1 — setTitle never fires ahead of a still-in-flight ensureSession, even when the RPC resolves out of order relative to when it was called', async () => {
@@ -280,7 +284,7 @@ describe('RigChatStore — the rig_sessions row-creation guard', () => {
     expect(mocks.setTitle).toHaveBeenCalledTimes(1);
     expect(mocks.setTitle).toHaveBeenCalledWith({ sessionId: 'conv-5', title: 'Race me' });
 
-    store.dispose();
+    void store.dispose();
   });
 
   it('A1 — a fresh turn (appendEvents) landing right after a dispatch also waits for the same in-flight ensureSession, closing the FK-violation race', async () => {
@@ -329,7 +333,7 @@ describe('RigChatStore — the rig_sessions row-creation guard', () => {
       events: [{ seq: 0, turn }],
     });
 
-    store.dispose();
+    void store.dispose();
   });
 
   it("a genuine resume (existing acpSessionId) does not ensure a row on its own — the row already exists from that session's earlier lifetime", async () => {
@@ -346,30 +350,33 @@ describe('RigChatStore — the rig_sessions row-creation guard', () => {
     await store.bootstrap();
 
     expect(mocks.ensureSession).not.toHaveBeenCalled();
-    store.dispose();
+    void store.dispose();
   });
 });
 
 describe('RigChatStore — lifecycle invalidation', () => {
   it('ignores a stored-history completion after disposal', async () => {
-    const events = deferred<unknown[]>();
-    mocks.getEvents.mockReturnValue(events.promise);
+    const events = deferred<RigSessionEventsPage>();
+    mocks.getEventsPage.mockReturnValue(events.promise);
     const store = new RigChatStore('conv-dispose-history', 'bnd-1', '/rig', 'claude');
     const bootstrap = store.bootstrap();
 
-    store.dispose();
-    events.resolve([
-      {
-        seq: 0,
-        at: 123,
-        turn: {
-          id: 'turn-late',
+    void store.dispose();
+    events.resolve({
+      events: [
+        {
           seq: 0,
-          initiator: 'user',
-          items: [{ kind: 'message', id: 'message-late', seq: 0, role: 'user', text: 'late' }],
+          at: 123,
+          turn: {
+            id: 'turn-late',
+            seq: 0,
+            initiator: 'user',
+            items: [{ kind: 'message', id: 'message-late', seq: 0, role: 'user', text: 'late' }],
+          },
         },
-      },
-    ]);
+      ],
+      nextCursor: null,
+    });
     await bootstrap;
 
     expect(store.disposed).toBe(true);
@@ -377,7 +384,7 @@ describe('RigChatStore — lifecycle invalidation', () => {
     expect(store.historyLoading).toBe(true);
     expect(store.chatState.transcript.history.get()).toEqual([]);
     expect(mocks.acpCreate).not.toHaveBeenCalled();
-    store.dispose();
+    void store.dispose();
   });
 
   it('disposes a create result that resolves after invalidation and never flushes held prompts', async () => {
@@ -387,7 +394,7 @@ describe('RigChatStore — lifecycle invalidation', () => {
     const bootstrap = store.bootstrap();
     store.submitPrompt('held until create');
     await flush();
-    store.dispose();
+    void store.dispose();
 
     const session = fakeLiveSession();
     created.resolve(session);
@@ -412,7 +419,7 @@ describe('RigChatStore — lifecycle invalidation', () => {
     });
     const bootstrap = store.bootstrap();
     await flush();
-    store.dispose();
+    void store.dispose();
 
     const session = fakeLiveSession({ acpSessionId: 'acp-resume-late' });
     resumed.resolve({ session, history: { turns: [], nextCursor: null } });
@@ -432,7 +439,7 @@ describe('RigChatStore — lifecycle invalidation', () => {
     const store = new RigChatStore('conv-dispose-get-history', 'bnd-1', '/rig', 'claude');
     const bootstrap = store.bootstrap();
     await flush();
-    store.dispose();
+    void store.dispose();
 
     history.resolve({ success: true, data: { turns: [], nextCursor: null } });
     await bootstrap;
@@ -509,7 +516,7 @@ describe('RigChatStore — model/effort/mode preference memory, end to end', () 
     expect(session.setModelOption).toHaveBeenCalledWith('effort', 'high');
     expect(session.setModeOption).toHaveBeenCalledWith('acceptEdits');
 
-    store.dispose();
+    void store.dispose();
   });
 
   it('nothing remembered for this harness — every option starts at whatever the adapter itself selected, no forced apply call', async () => {
@@ -524,7 +531,7 @@ describe('RigChatStore — model/effort/mode preference memory, end to end', () 
     expect(session.setModelOption).not.toHaveBeenCalled();
     expect(session.setModeOption).not.toHaveBeenCalled();
 
-    store.dispose();
+    void store.dispose();
   });
 
   it('a resumed session never applies a remembered preference — it already carries its own past choice', async () => {
@@ -544,7 +551,7 @@ describe('RigChatStore — model/effort/mode preference memory, end to end', () 
 
     expect(session.setModelOption).not.toHaveBeenCalled();
 
-    store.dispose();
+    void store.dispose();
   });
 
   it('does not initialize remembered preferences after disposal', async () => {
@@ -555,7 +562,7 @@ describe('RigChatStore — model/effort/mode preference memory, end to end', () 
 
     const store = new RigChatStore('conv-pref-disposed', 'bnd-1', '/rig', 'claude');
     await store.bootstrap();
-    store.dispose();
+    void store.dispose();
 
     settings.resolve({
       ...EMPTY_SETTINGS,
@@ -585,7 +592,7 @@ describe('RigChatStore — model/effort/mode preference memory, end to end', () 
     expect(mocks.settingsSet).toHaveBeenCalledWith({
       lastModeByHarness: { claude: 'acceptEdits' },
     });
-    store.dispose();
+    void store.dispose();
   });
 
   it('setMode never persists a dangerous pick — item 7, the whole point of the gate', async () => {
@@ -604,6 +611,6 @@ describe('RigChatStore — model/effort/mode preference memory, end to end', () 
     expect(mocks.settingsSet).not.toHaveBeenCalled();
     // The mode still applies to the live session — only the REMEMBERING is gated, never the pick itself.
     expect(session.setModeOption).toHaveBeenCalledWith('bypassPermissions');
-    store.dispose();
+    void store.dispose();
   });
 });

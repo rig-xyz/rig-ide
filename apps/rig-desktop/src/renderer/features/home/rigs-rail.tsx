@@ -23,13 +23,13 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { deriveTabTitle } from '@renderer/features/chat/session-list';
 import { relativeTime } from '@renderer/features/chat/session-history';
+import { deriveTabTitle } from '@renderer/features/chat/session-list';
 import type { AgentIdentity } from '@renderer/features/chat/use-runnable-agents';
 import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
-import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { events, rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
+import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import {
@@ -99,18 +99,21 @@ export function RigsRail({
   highlightBindingId?: string | null;
 }) {
   const { view, setView, hiddenBindingIds, setHidden } = useRigsRailSettings();
-  const visibleRows = sortHomeRigRows(filterHomeRigRows(rows, view.filter, hiddenBindingIds), view.sort);
+  const visibleRows = sortHomeRigRows(
+    filterHomeRigRows(rows, view.filter, hiddenBindingIds),
+    view.sort
+  );
 
   return (
-    <div className="lg:bg-bg-1 lg:rounded-card flex w-full flex-col gap-3 text-left lg:p-3">
+    <div className="flex w-full flex-col gap-3 text-left lg:rounded-card lg:bg-bg-1 lg:p-3">
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between px-1">
-          <p className="text-text-muted font-mono text-xs tracking-wide uppercase">Your rigs</p>
+          <p className="font-mono text-xs tracking-wide text-text-muted uppercase">Your rigs</p>
           <div className="-mr-1 flex items-center">
             <button
               type="button"
               onClick={onCreateRig}
-              className="text-text-muted hover:text-text-primary rounded-control flex items-center gap-1 px-1.5 py-0.5 text-xs transition-colors"
+              className="flex items-center gap-1 rounded-control px-1.5 py-0.5 text-xs text-text-muted transition-colors hover:text-text-primary"
             >
               <Plus className="size-3 shrink-0" strokeWidth={1.5} />
               New rig
@@ -118,7 +121,7 @@ export function RigsRail({
             <button
               type="button"
               onClick={onOpenFolder}
-              className="text-text-muted hover:text-text-primary rounded-control flex items-center gap-1 px-1.5 py-0.5 text-xs transition-colors"
+              className="flex items-center gap-1 rounded-control px-1.5 py-0.5 text-xs text-text-muted transition-colors hover:text-text-primary"
             >
               <FolderOpen className="size-3 shrink-0" strokeWidth={1.5} />
               Open
@@ -128,7 +131,7 @@ export function RigsRail({
         {rows.length > 0 && <RigsFilterSortMenu view={view} onChange={setView} />}
       </div>
       {visibleRows.length === 0 && rows.length > 0 ? (
-        <p className="text-text-muted px-1 text-xs">No rigs match this filter.</p>
+        <p className="px-1 text-xs text-text-muted">No rigs match this filter.</p>
       ) : (
         <div className="flex flex-col gap-2">
           {visibleRows.map((row) =>
@@ -141,7 +144,9 @@ export function RigsRail({
                 onOpenSession={onOpenSession}
                 isHighlightTarget={row.bindingId === highlightBindingId}
                 hidden={hiddenBindingIds.has(row.bindingId)}
-                onToggleHidden={() => setHidden(row.bindingId, !hiddenBindingIds.has(row.bindingId))}
+                onToggleHidden={() =>
+                  setHidden(row.bindingId, !hiddenBindingIds.has(row.bindingId))
+                }
               />
             ) : (
               <RelayOnlyRigRow
@@ -150,7 +155,9 @@ export function RigsRail({
                 onOpenPath={onOpenPath}
                 isHighlightTarget={row.bindingId === highlightBindingId}
                 hidden={hiddenBindingIds.has(row.bindingId)}
-                onToggleHidden={() => setHidden(row.bindingId, !hiddenBindingIds.has(row.bindingId))}
+                onToggleHidden={() =>
+                  setHidden(row.bindingId, !hiddenBindingIds.has(row.bindingId))
+                }
               />
             )
           )}
@@ -271,7 +278,11 @@ function RigsFilterSortMenu({
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const rect = useAnchorRect(open, triggerRef, { gap: 4, estimatedHeight: 220, estimatedWidth: 180 });
+  const rect = useAnchorRect(open, triggerRef, {
+    gap: 4,
+    estimatedHeight: 220,
+    estimatedWidth: 180,
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -301,7 +312,7 @@ function RigsFilterSortMenu({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="text-text-muted hover:text-text-primary hover:border-border-strong border-border-hairline bg-bg-2 rounded-chip ml-1 flex w-fit items-center gap-1 border px-2 py-0.5 font-mono text-xs transition-colors"
+        className="ml-1 flex w-fit items-center gap-1 rounded-chip border border-border-hairline bg-bg-2 px-2 py-0.5 font-mono text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text-primary"
       >
         {FILTER_LABELS[view.filter]} · {SORT_LABELS[view.sort]}
         <ChevronDown className="size-3 shrink-0" strokeWidth={1.5} />
@@ -320,9 +331,9 @@ function RigsFilterSortMenu({
               ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
               ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
             }}
-            className="border-border-hairline bg-bg-1 rounded-control shadow-soft z-50 border py-1"
+            className="z-50 rounded-control border border-border-hairline bg-bg-1 py-1 shadow-soft"
           >
-            <p className="text-text-muted px-2.5 pt-1 pb-0.5 font-mono text-xs tracking-wide uppercase">
+            <p className="px-2.5 pt-1 pb-0.5 font-mono text-xs tracking-wide text-text-muted uppercase">
               Filter
             </p>
             {(Object.keys(FILTER_LABELS) as RigsRailFilter[]).map((filter) => (
@@ -337,7 +348,7 @@ function RigsFilterSortMenu({
                 }}
               />
             ))}
-            <p className="text-text-muted border-border-hairline mt-1 border-t px-2.5 pt-1.5 pb-0.5 font-mono text-xs tracking-wide uppercase">
+            <p className="mt-1 border-t border-border-hairline px-2.5 pt-1.5 pb-0.5 font-mono text-xs tracking-wide text-text-muted uppercase">
               Sort
             </p>
             {(Object.keys(SORT_LABELS) as RigsRailSort[]).map((sort) => (
@@ -384,12 +395,12 @@ function MenuOptionRow({
         event.preventDefault();
         onSelect();
       }}
-      className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
     >
       <span className="flex size-3.5 shrink-0 items-center justify-center">
         {checked && <Check className="size-3" strokeWidth={1.5} />}
       </span>
-      {Icon && <Icon className="text-text-muted size-3.5 shrink-0" strokeWidth={1.5} />}
+      {Icon && <Icon className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />}
       {label}
     </button>
   );
@@ -408,7 +419,10 @@ const HIGHLIGHT_MS = 1400;
  * across both would cost more in indirection than the ~15 duplicated lines
  * save.
  */
-function useRowHighlight(isTarget: boolean): { ref: React.RefObject<HTMLDivElement | null>; flashing: boolean } {
+function useRowHighlight(isTarget: boolean): {
+  ref: React.RefObject<HTMLDivElement | null>;
+  flashing: boolean;
+} {
   const ref = useRef<HTMLDivElement | null>(null);
   const [flashing, setFlashing] = useState(false);
 
@@ -488,21 +502,26 @@ function LocalRigRow({
           title={row.path}
           className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left"
         >
-          <FolderOpen className="text-text-muted size-3.5 shrink-0" strokeWidth={1.5} />
+          <FolderOpen className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
           <span className="min-w-0 flex-1">
-            <span className="text-text-primary block truncate text-sm">
+            <span className="block truncate text-sm text-text-primary">
               {row.name ?? row.path.split('/').pop()}
             </span>
             <span className="flex min-w-0 items-center gap-1.5">
-              <span className="text-text-muted truncate font-mono text-xs">
+              <span className="truncate font-mono text-xs text-text-muted">
                 {row.paused ? 'Paused' : relativeTime(lastActivity, Date.now())}
               </span>
             </span>
           </span>
         </button>
-        <LocalRigRowMenu row={row} onError={setError} hidden={hidden} onToggleHidden={onToggleHidden} />
+        <LocalRigRowMenu
+          row={row}
+          onError={setError}
+          hidden={hidden}
+          onToggleHidden={onToggleHidden}
+        />
       </div>
-      {error && <p className="text-danger pl-6 text-xs">{error}</p>}
+      {error && <p className="pl-6 text-xs text-danger">{error}</p>}
       {row.sessions.length > 0 && (
         <div className="ml-[7px] flex flex-col gap-1 border-l border-border-hairline pl-[19px]">
           {row.sessions.map((session) => (
@@ -552,7 +571,11 @@ function LocalRigRowMenu({
   const [busy, setBusy] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const rect = useAnchorRect(open, triggerRef, { gap: 4, estimatedHeight: 230, estimatedWidth: 180 });
+  const rect = useAnchorRect(open, triggerRef, {
+    gap: 4,
+    estimatedHeight: 230,
+    estimatedWidth: 180,
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -579,28 +602,40 @@ function LocalRigRowMenu({
     setOpen(false);
     setBusy(true);
     onError(null);
-    const result = await rpc.rig.control.move({ bindingId: row.bindingId, path: row.path });
-    setBusy(false);
-    if (!result.success) {
-      onError(result.error.message);
-      return;
+    try {
+      const result = await rpc.rig.control.move({ bindingId: row.bindingId, path: row.path });
+      if (!result.success) {
+        onError(result.error.message);
+        return;
+      }
+      void refreshRail();
+    } catch {
+      onError("Couldn't move this rig. Try again.");
+    } finally {
+      setBusy(false);
     }
-    void refreshRail();
   };
 
   const toggleSync = async () => {
     setOpen(false);
     setBusy(true);
     onError(null);
-    const result = row.paused
-      ? await rpc.rig.control.resume({ path: row.path })
-      : await rpc.rig.control.pause({ path: row.path });
-    setBusy(false);
-    if (!result.success) {
-      onError(result.error.message);
-      return;
+    try {
+      const result = row.paused
+        ? await rpc.rig.control.resume({ path: row.path })
+        : await rpc.rig.control.pause({ path: row.path });
+      if (!result.success) {
+        onError(result.error.message);
+        return;
+      }
+      void refreshRail();
+    } catch {
+      onError(
+        row.paused ? "Couldn't resume this rig. Try again." : "Couldn't pause this rig. Try again."
+      );
+    } finally {
+      setBusy(false);
     }
-    void refreshRail();
   };
 
   const copyPath = async () => {
@@ -635,7 +670,9 @@ function LocalRigRowMenu({
         aria-label={`More actions for "${row.name ?? row.path}"`}
         className={cn(
           'text-text-muted hover:text-text-primary focus-visible:outline-accent rounded-control mr-1 flex shrink-0 items-center justify-center p-1 transition-opacity focus-visible:outline-2 focus-visible:outline-offset-2',
-          busy ? 'pointer-events-none opacity-50' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+          busy
+            ? 'pointer-events-none opacity-50'
+            : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
         )}
       >
         <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
@@ -653,7 +690,7 @@ function LocalRigRowMenu({
               ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
               ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
             }}
-            className="border-border-hairline bg-bg-1 rounded-control shadow-soft z-50 border py-1"
+            className="z-50 rounded-control border border-border-hairline bg-bg-1 py-1 shadow-soft"
           >
             {row.outsideHome && (
               <button
@@ -663,7 +700,7 @@ function LocalRigRowMenu({
                   event.preventDefault();
                   void move();
                 }}
-                className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
               >
                 <FolderInput className="size-3.5 shrink-0" strokeWidth={1.5} />
                 Move to Rig folder
@@ -676,7 +713,7 @@ function LocalRigRowMenu({
                 event.preventDefault();
                 void toggleSync();
               }}
-              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
             >
               {row.paused ? (
                 <Play className="size-3.5 shrink-0" strokeWidth={1.5} />
@@ -693,7 +730,7 @@ function LocalRigRowMenu({
                 setOpen(false);
                 setRenameOpen(true);
               }}
-              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
             >
               <Pencil className="size-3.5 shrink-0" strokeWidth={1.5} />
               Rename…
@@ -705,7 +742,7 @@ function LocalRigRowMenu({
                 event.preventDefault();
                 void copyPath();
               }}
-              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
             >
               <Copy className="size-3.5 shrink-0" strokeWidth={1.5} />
               Copy path
@@ -717,7 +754,7 @@ function LocalRigRowMenu({
                 event.preventDefault();
                 void revealInFinder();
               }}
-              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
             >
               <FolderOpen className="size-3.5 shrink-0" strokeWidth={1.5} />
               Reveal in Finder
@@ -730,7 +767,7 @@ function LocalRigRowMenu({
                 setOpen(false);
                 onToggleHidden();
               }}
-              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
             >
               {hidden ? (
                 <Eye className="size-3.5 shrink-0" strokeWidth={1.5} />
@@ -763,13 +800,13 @@ function SessionSubRow({
     <button
       type="button"
       onClick={onOpen}
-      className="hover:bg-bg-2 flex items-center gap-1.5 rounded-control px-2 py-1 text-left transition-colors"
+      className="flex items-center gap-1.5 rounded-control px-2 py-1 text-left transition-colors hover:bg-bg-2"
     >
       {icon && <AgentIcon icon={icon} size={12} className="shrink-0" />}
-      <span className="text-text-secondary min-w-0 flex-1 truncate text-[12px]">
+      <span className="min-w-0 flex-1 truncate text-[12px] text-text-secondary">
         {deriveTabTitle(session.title)}
       </span>
-      <span className="text-text-muted shrink-0 font-mono text-xs">
+      <span className="shrink-0 font-mono text-xs text-text-muted">
         {relativeTime(session.updatedAt, Date.now())}
       </span>
     </button>
@@ -843,7 +880,7 @@ function RelayOnlyRigRow({
                 <span
                   tabIndex={0}
                   aria-label={NOT_SET_UP_TOOLTIP}
-                  className="text-text-muted inline-flex size-3.5 shrink-0 items-center justify-center"
+                  className="inline-flex size-3.5 shrink-0 items-center justify-center text-text-muted"
                 >
                   {status.sharedSubtext ? (
                     <Users className="size-3.5" strokeWidth={1.5} />
@@ -856,12 +893,14 @@ function RelayOnlyRigRow({
             <TooltipContent side="top">{NOT_SET_UP_TOOLTIP}</TooltipContent>
           </Tooltip>
         ) : (
-          <FolderOpen className="text-text-muted size-3.5 shrink-0" strokeWidth={1.5} />
+          <FolderOpen className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
         )}
         <span className="min-w-0 flex-1">
-          <span className="text-text-primary block truncate text-sm">{row.name}</span>
+          <span className="block truncate text-sm text-text-primary">{row.name}</span>
           {row.disambiguator && (
-            <span className="text-text-muted block truncate font-mono text-xs">{row.disambiguator}</span>
+            <span className="block truncate font-mono text-xs text-text-muted">
+              {row.disambiguator}
+            </span>
           )}
           {status.kind === 'checking' ? (
             // D7 fix: the honest third state — never a guess at "shared
@@ -869,14 +908,14 @@ function RelayOnlyRigRow({
             // `resolveLocalPaths` had actually answered) or Download/
             // Locate offered before the app knows there's really nothing
             // to just re-open.
-            <span className="text-text-muted block truncate font-mono text-xs">checking…</span>
+            <span className="block truncate font-mono text-xs text-text-muted">checking…</span>
           ) : status.kind === 'localPath' ? (
-            <span className="text-text-muted block truncate font-mono text-xs">{status.path}</span>
+            <span className="block truncate font-mono text-xs text-text-muted">{status.path}</span>
           ) : (
             status.sharedSubtext && (
               // The leading glyph already carries Users for a shared row —
               // no second copy here.
-              <span className="text-text-muted block truncate text-xs">{status.sharedSubtext}</span>
+              <span className="block truncate text-xs text-text-muted">{status.sharedSubtext}</span>
             )
           )}
         </span>
@@ -884,7 +923,7 @@ function RelayOnlyRigRow({
           <button
             type="button"
             onClick={() => onOpenPath(status.path)}
-            className="text-accent flex shrink-0 items-center gap-1 text-xs transition-opacity hover:opacity-80"
+            className="flex shrink-0 items-center gap-1 text-xs text-accent transition-opacity hover:opacity-80"
           >
             Open
           </button>
@@ -900,7 +939,7 @@ function RelayOnlyRigRow({
           )
         )}
       </div>
-      {error && <p className="text-danger pl-6 text-xs">{error}</p>}
+      {error && <p className="pl-6 text-xs text-danger">{error}</p>}
     </div>
   );
 }
@@ -934,7 +973,11 @@ function RelayOnlyActionsMenu({
   const [locating, setLocating] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const busy = downloading || locating;
-  const rect = useAnchorRect(open, triggerRef, { gap: 4, estimatedHeight: 110, estimatedWidth: 150 });
+  const rect = useAnchorRect(open, triggerRef, {
+    gap: 4,
+    estimatedHeight: 110,
+    estimatedWidth: 150,
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -1015,14 +1058,16 @@ function RelayOnlyActionsMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Set up "${row.name}"`}
-        className={`text-text-muted hover:text-text-primary focus-visible:outline-accent rounded-control flex shrink-0 items-center justify-center p-1 transition-opacity focus-visible:outline-2 focus-visible:outline-offset-2 ${
+        className={`flex shrink-0 items-center justify-center rounded-control p-1 text-text-muted transition-opacity hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
           busy
             ? 'pointer-events-none opacity-100'
             : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
         }`}
       >
         {busy ? (
-          <span className="text-text-muted text-xs">{downloading ? 'Downloading…' : 'Locating…'}</span>
+          <span className="text-xs text-text-muted">
+            {downloading ? 'Downloading…' : 'Locating…'}
+          </span>
         ) : (
           <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
         )}
@@ -1040,7 +1085,7 @@ function RelayOnlyActionsMenu({
               ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
               ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
             }}
-            className="border-border-hairline bg-bg-1 rounded-control shadow-soft z-50 border py-1"
+            className="z-50 rounded-control border border-border-hairline bg-bg-1 py-1 shadow-soft"
           >
             {row.canAutoJoin && (
               <button
@@ -1052,7 +1097,7 @@ function RelayOnlyActionsMenu({
                   event.preventDefault();
                   void download();
                 }}
-                className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
               >
                 <Download className="size-3.5 shrink-0" strokeWidth={1.5} />
                 Download
@@ -1065,7 +1110,7 @@ function RelayOnlyActionsMenu({
                 event.preventDefault();
                 void locate();
               }}
-              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
             >
               <FolderSearch className="size-3.5 shrink-0" strokeWidth={1.5} />
               Locate…
@@ -1078,7 +1123,7 @@ function RelayOnlyActionsMenu({
                 setOpen(false);
                 onToggleHidden();
               }}
-              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
             >
               {hidden ? (
                 <Eye className="size-3.5 shrink-0" strokeWidth={1.5} />

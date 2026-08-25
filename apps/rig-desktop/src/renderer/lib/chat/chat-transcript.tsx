@@ -25,8 +25,15 @@
  * callbacks do not go stale after React re-renders.
  */
 
-import type { ChatCommands, ChatContext, ChatState, ChatView, ChatViewOptions } from '@emdash/chat-ui';
-import { createElement, useEffect, useRef } from 'react';
+import type {
+  ChatCommands,
+  ChatContext,
+  ChatState,
+  ChatView,
+  ChatViewOptions,
+} from '@emdash/chat-ui';
+import { createElement, useEffect, useRef, useState } from 'react';
+import { reportRendererFailure } from '@renderer/features/recovery/renderer-error-reporting';
 
 export type ChatTranscriptProps = Pick<
   ChatViewOptions,
@@ -63,35 +70,46 @@ export function ChatTranscript(props: ChatTranscriptProps): React.ReactElement {
   propsRef.current = props;
 
   const viewRef = useRef<ChatView | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
     if (!ref.current) return;
-    const p = propsRef.current;
     let disposed = false;
     let createdView: ChatView | null = null;
 
-    void import('@emdash/chat-ui').then(({ createChatView }) => {
-      if (disposed || !ref.current) return;
-      const view = createChatView({
-        context: p.context,
-        state: p.state,
-        parent: ref.current,
-        stickToBottom: p.stickToBottom,
-        pinUserMessages: p.pinUserMessages,
-        class: p.class,
-        contentClass: p.contentClass,
-        commands: p.commands ?? {},
-        padTop: p.padTop,
-        // Thread stable wrappers that read from propsRef at call time — never stale.
-        onReachStart: p.onReachStart ? () => propsRef.current.onReachStart?.() : undefined,
-        onAtBottomChange: p.onAtBottomChange
-          ? (b: boolean) => propsRef.current.onAtBottomChange?.(b)
-          : undefined,
-        onViewMounted: (v) => propsRef.current.onReady?.(v),
+    void import('@emdash/chat-ui')
+      .then(({ createChatView }) => {
+        if (disposed || !ref.current) return;
+        // The lazy import can settle after the active session changes. Read
+        // current props here so it cannot create a view for the transcript
+        // that originally started the import.
+        const p = propsRef.current;
+        const view = createChatView({
+          context: p.context,
+          state: p.state,
+          parent: ref.current,
+          stickToBottom: p.stickToBottom,
+          pinUserMessages: p.pinUserMessages,
+          class: p.class,
+          contentClass: p.contentClass,
+          commands: p.commands ?? {},
+          padTop: p.padTop,
+          // Thread stable wrappers that read from propsRef at call time — never stale.
+          onReachStart: p.onReachStart ? () => propsRef.current.onReachStart?.() : undefined,
+          onAtBottomChange: p.onAtBottomChange
+            ? (b: boolean) => propsRef.current.onAtBottomChange?.(b)
+            : undefined,
+          onViewMounted: (v) => propsRef.current.onReady?.(v),
+        });
+        createdView = view;
+        viewRef.current = view;
+      })
+      .catch((error: unknown) => {
+        if (disposed) return;
+        reportRendererFailure('unhandled-error', error);
+        setLoadError(true);
       });
-      createdView = view;
-      viewRef.current = view;
-    });
 
     return () => {
       disposed = true;
@@ -99,7 +117,7 @@ export function ChatTranscript(props: ChatTranscriptProps): React.ReactElement {
       viewRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadAttempt]);
 
   // Swap the underlying ChatState when props.state identity changes (setModel path).
   useEffect(() => {
@@ -118,6 +136,41 @@ export function ChatTranscript(props: ChatTranscriptProps): React.ReactElement {
     }
   }, [props.commands]);
 
+  if (loadError) {
+    return createElement(
+      'div',
+      {
+        className: props.className,
+        style: {
+          alignItems: 'center',
+          color: 'var(--text-secondary)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+          height: '100%',
+          justifyContent: 'center',
+          padding: 16,
+        },
+      },
+      createElement('span', null, 'Transcript could not load.'),
+      createElement(
+        'button',
+        {
+          type: 'button',
+          onClick: () => {
+            setLoadError(false);
+            setLoadAttempt((attempt) => attempt + 1);
+          },
+          style: {
+            border: '1px solid var(--border-hairline)',
+            borderRadius: 6,
+            padding: '4px 10px',
+          },
+        },
+        'Retry transcript'
+      )
+    );
+  }
   return createElement('div', {
     ref,
     style: { height: '100%', ...props.style },

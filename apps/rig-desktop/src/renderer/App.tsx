@@ -20,6 +20,13 @@ import { ChatPanel } from '@renderer/features/chat/chat-panel';
 import { Home } from '@renderer/features/home/home';
 import { Onboarding } from '@renderer/features/onboarding/onboarding';
 import { deriveOnboardingSteps } from '@renderer/features/onboarding/onboarding-state';
+import {
+  deriveRendererBootState,
+  type BootDependencyState,
+} from '@renderer/features/recovery/boot-state';
+import { RecoveryBoundary } from '@renderer/features/recovery/recovery-boundary';
+import { RecoverySurface } from '@renderer/features/recovery/recovery-surface';
+import { reportRendererFailure } from '@renderer/features/recovery/renderer-error-reporting';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { UserPill } from '@renderer/features/rig-account/user-pill';
 import { NewMenu } from '@renderer/features/rig-import/add-menu';
@@ -31,8 +38,8 @@ import { SettingsModal } from '@renderer/features/shell/settings-modal';
 import { deriveTopbarContext, type TopbarContext } from '@renderer/features/shell/topbar-context';
 import { isUpdateReady, shouldAnnounceUpdate } from '@renderer/features/shell/update-status';
 import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
-import { FileTree } from '@renderer/features/workspace/file-tree';
 import { ActiveFiles } from '@renderer/features/workspace/active-files';
+import { FileTree } from '@renderer/features/workspace/file-tree';
 import { RigPeopleCard } from '@renderer/features/workspace/rig-people-card';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
@@ -179,6 +186,7 @@ const CHAT_COLLAPSED_STORAGE_KEY = 'rig-chat-collapsed';
 const CHAT_PANEL_ORDER = 1;
 const ARTIFACT_PANEL_ORDER = CHAT_PANEL_ORDER === 1 ? 3 : 1;
 const CHAT_RESIZE_HANDLE_ORDER = 2;
+const RENDERER_BOOT_TIMEOUT_MS = 15_000;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -272,6 +280,10 @@ export function App() {
   // normal shell) while this is null, so a fresh boot never flashes the
   // wrong one before the real value is known.
   const [hasSeenOnboarding, setHasSeenOnboarding] = useState<boolean | null>(null);
+  const [settingsBootState, setSettingsBootState] = useState<BootDependencyState>('pending');
+  const [bootAttempt, setBootAttempt] = useState(0);
+  const [bootOverride, setBootOverride] = useState(false);
+  const [bootTimedOut, setBootTimedOut] = useState(false);
   // File-navigator redesign: the tree's "Show system files" toggle —
   // reconciled from main alongside the other plain preferences below,
   // rather than a second settings subscription in `FileBrowser`/`FileTree`.
@@ -290,6 +302,9 @@ export function App() {
   // whatever main says, never the reverse, since main owns the value once
   // this handshake has run.
   useEffect(() => {
+    let active = true;
+    setBootTimedOut(false);
+    const timeout = window.setTimeout(() => setBootTimedOut(true), RENDERER_BOOT_TIMEOUT_MS);
     const legacy: RigSettingsLegacyImport = {};
     try {
       const storedTheme = localStorage.getItem('rig-theme');
@@ -303,6 +318,7 @@ export function App() {
     }
 
     const reconcile = (settings: RigSettings) => {
+      if (!active) return;
       applyThemeFromSettings(settings.theme);
       if (settings.chatPanelWidth !== null) {
         setChatWidth(clamp(settings.chatPanelWidth, CHAT_WIDTH_MIN, CHAT_WIDTH_MAX));
@@ -310,17 +326,45 @@ export function App() {
       setChatCollapsed(settings.chatPanelCollapsed);
       setHasSeenOnboarding(settings.hasSeenOnboarding);
       setShowSystemFiles(settings.showSystemFiles);
+      setSettingsBootState('ready');
     };
 
     rpc.rig.settings
       .importLegacy(legacy)
       .then(reconcile)
-      .catch(() => {});
-    return events.on(rigSettingsChangedChannel, reconcile);
+      .catch((error: unknown) => {
+        if (!active) return;
+        setSettingsBootState('failed');
+        reportRendererFailure('unhandled-error', error);
+      });
+    const off = events.on(rigSettingsChangedChannel, reconcile);
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+      off();
+    };
     // `applyThemeFromSettings` is stable (useTheme's own useCallback has
     // empty deps) — listed for exhaustive-deps honesty, not because it
     // ever changes.
-  }, [applyThemeFromSettings]);
+  }, [applyThemeFromSettings, bootAttempt]);
+
+  const authBootState: BootDependencyState = authStatusQuery.isPending
+    ? 'pending'
+    : authStatusQuery.isError
+      ? 'failed'
+      : 'ready';
+  const rendererBootState = deriveRendererBootState({
+    settings: settingsBootState,
+    auth: authBootState,
+    override: bootOverride,
+    timedOut: bootTimedOut,
+  });
+  const retryBoot = useCallback(() => {
+    setBootOverride(false);
+    setSettingsBootState('pending');
+    setBootAttempt((attempt) => attempt + 1);
+    void authStatusQuery.refetch();
+  }, [authStatusQuery]);
 
   // Shared by the Open Folder… dialog and the native Open Recent flow below
   // — same detect-and-bind path either way, so a recent rig opens exactly
@@ -566,23 +610,33 @@ export function App() {
     window.addEventListener('pointerup', onUp);
   }, []);
 
-  const onboardingSteps =
-    hasSeenOnboarding === null || authStatusQuery.isLoading
-      ? null
-      : deriveOnboardingSteps({
-          hasSeenOnboarding,
-          signedIn: authStatusQuery.data?.signedIn ?? false,
-        });
-
   const onOnboardingComplete = useCallback(() => {
     setHasSeenOnboarding(true);
     void rpc.rig.settings.set({ hasSeenOnboarding: true });
   }, []);
 
-  // Nothing known yet (settings/auth-status still loading) — render
-  // nothing rather than guess; the wizard and the normal shell are both
-  // genuinely wrong answers for a frame here.
-  if (onboardingSteps === null) return null;
+  if (rendererBootState !== 'ready') {
+    return (
+      <RecoverySurface
+        state={rendererBootState}
+        detail={
+          rendererBootState === 'failed'
+            ? bootTimedOut
+              ? 'Startup did not finish before the deadline. Retry startup or reload the window.'
+              : 'Settings could not be loaded. Retry startup or reload the window.'
+            : 'Account status is temporarily unavailable. You can retry or continue with defaults.'
+        }
+        onRetry={retryBoot}
+        onContinue={rendererBootState === 'degraded' ? () => setBootOverride(true) : undefined}
+      />
+    );
+  }
+
+  const onboardingSteps = deriveOnboardingSteps({
+    hasSeenOnboarding: hasSeenOnboarding ?? true,
+    signedIn: authStatusQuery.data?.signedIn ?? false,
+  });
+
   if (onboardingSteps.length > 0) {
     return <Onboarding steps={onboardingSteps} onComplete={onOnboardingComplete} />;
   }
@@ -649,14 +703,16 @@ export function App() {
                 style={{ order: CHAT_PANEL_ORDER, width: chatWidth }}
                 className="flex shrink-0 flex-col overflow-hidden bg-bg-1"
               >
-                <ChatPanel
-                  root={bound.root}
-                  bindingId={bound.bindingId}
-                  name={bound.name}
-                  initialActiveSessionId={pendingActiveSessionId}
-                  onOpenFile={openFile}
-                  onToggleCollapse={toggleChatCollapsed}
-                />
+                <RecoveryBoundary scope="Chat panel">
+                  <ChatPanel
+                    root={bound.root}
+                    bindingId={bound.bindingId}
+                    name={bound.name}
+                    initialActiveSessionId={pendingActiveSessionId}
+                    onOpenFile={openFile}
+                    onToggleCollapse={toggleChatCollapsed}
+                  />
+                </RecoveryBoundary>
               </div>
               {/* The handle IS the panel divider (no separate border-r on the
                   chat wrapper above) — a wide, easy-to-grab hit area with a
@@ -978,13 +1034,18 @@ function UnsyncedRigCard({
   const turnOnSync = async () => {
     setBusy(true);
     setError(null);
-    const result = await rpc.rig.create.enableSync({ dir: unsynced.path });
-    setBusy(false);
-    if (!result.success) {
-      setError(result.error.message);
-      return;
+    try {
+      const result = await rpc.rig.create.enableSync({ dir: unsynced.path });
+      if (!result.success) {
+        setError(result.error.message);
+        return;
+      }
+      onRetryOpen(unsynced.path);
+    } catch {
+      setError("Couldn't turn on sync. Try again.");
+    } finally {
+      setBusy(false);
     }
-    onRetryOpen(unsynced.path);
   };
 
   return (
@@ -1149,15 +1210,18 @@ function FileBrowser({
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-y-auto">
-      <div className="border-border-hairline flex h-11 shrink-0 items-center gap-2 border-b px-4">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-hairline px-4">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          <div className="relative flex min-w-0 max-w-56 flex-1 items-center">
-            <Search className="text-text-muted pointer-events-none absolute left-2 size-3.5" strokeWidth={1.5} />
+          <div className="relative flex max-w-56 min-w-0 flex-1 items-center">
+            <Search
+              className="pointer-events-none absolute left-2 size-3.5 text-text-muted"
+              strokeWidth={1.5}
+            />
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search files"
-              className="border-border-hairline bg-bg-1 text-text-primary placeholder:text-text-muted focus:border-border-strong w-full rounded-control border py-1.5 pr-2 pl-7 text-xs transition-colors outline-none"
+              className="w-full rounded-control border border-border-hairline bg-bg-1 py-1.5 pr-2 pl-7 text-xs text-text-primary transition-colors outline-none placeholder:text-text-muted focus:border-border-strong"
             />
           </div>
           {unseenCount > 0 && (
@@ -1190,7 +1254,7 @@ function FileBrowser({
                       type="button"
                       onClick={onMarkAllSeen}
                       aria-label="Mark all as seen"
-                      className="text-text-muted hover:bg-bg-2 hover:text-text-primary rounded-control flex size-6 shrink-0 items-center justify-center transition-colors"
+                      className="flex size-6 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors hover:bg-bg-2 hover:text-text-primary"
                     >
                       <CheckCheck className="size-3.5" strokeWidth={1.5} />
                     </button>
@@ -1237,4 +1301,3 @@ function FileBrowser({
     </div>
   );
 }
-

@@ -2,6 +2,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactView } from '@renderer/features/artifact/artifact-view';
+import { ImageArtifact } from '@renderer/features/artifact/image-artifact';
 // Real tokens, not a stub — the mono/highlight assertions below check actual
 // resolved `--accent`/`--text-primary` CSS custom properties, which only
 // exist once this stylesheet (normally loaded once at app boot) is present.
@@ -63,8 +64,9 @@ vi.mock('@renderer/lib/ipc', () => ({
 }));
 
 beforeAll(() => {
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
-    true;
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
 /** Resolves on a macrotask, after any same-tick/microtask re-render churn has already settled — see the file-level comment on why this matters for the primary regression test. */
@@ -162,6 +164,18 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
 
     expect(host.textContent).not.toContain('Loading…');
     expect(host.querySelector('img')?.getAttribute('src')).toContain('data:image/png;base64,');
+  });
+
+  it('settles the image error state when reading the image rejects', async () => {
+    mocks.readBinary.mockRejectedValue(new Error('read failed'));
+
+    await act(async () => {
+      root.render(<ImageArtifact path="/repo/photo.png" mime="image/png" />);
+    });
+
+    await waitFor(() => !host.textContent?.includes('Loading…'));
+
+    expect(host.textContent).toContain("Couldn't read this image.");
   });
 
   it('renders the unsupported empty state instead of hanging on Loading… forever', async () => {

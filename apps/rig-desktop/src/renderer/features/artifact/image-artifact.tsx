@@ -37,18 +37,27 @@ export function ImageArtifact({ path, mime }: { path: string; mime: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    void rpc.rig.files.readBinary(path, MAX_IMAGE_BYTES).then((result) => {
-      if (cancelled) return;
-      if (!result.success) {
-        setState({ kind: 'error', message: result.error.message });
-        return;
-      }
-      if (result.data.truncated) {
-        setState({ kind: 'tooLarge', size: result.data.size });
-        return;
-      }
-      setState({ kind: 'ready', src: `data:${mime};base64,${result.data.data}`, size: result.data.size });
-    });
+    void rpc.rig.files
+      .readBinary(path, MAX_IMAGE_BYTES)
+      .then((result) => {
+        if (cancelled) return;
+        if (!result.success) {
+          setState({ kind: 'error', message: result.error.message });
+          return;
+        }
+        if (result.data.truncated) {
+          setState({ kind: 'tooLarge', size: result.data.size });
+          return;
+        }
+        setState({
+          kind: 'ready',
+          src: `data:${mime};base64,${result.data.data}`,
+          size: result.data.size,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ kind: 'error', message: "Couldn't read this image." });
+      });
     return () => {
       cancelled = true;
     };
@@ -60,7 +69,7 @@ export function ImageArtifact({ path, mime }: { path: string; mime: string }) {
 
   if (state.kind === 'loading') {
     return (
-      <div className="text-text-muted flex h-full items-center justify-center gap-2 text-sm">
+      <div className="flex h-full items-center justify-center gap-2 text-sm text-text-muted">
         <Loader2 className="size-4 animate-spin" strokeWidth={1.5} />
         Loading…
       </div>
@@ -70,8 +79,8 @@ export function ImageArtifact({ path, mime }: { path: string; mime: string }) {
   if (state.kind === 'error' || state.kind === 'tooLarge') {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center">
-        <ImageOff className="text-text-muted size-8" strokeWidth={1.5} />
-        <p className="text-text-secondary text-sm">
+        <ImageOff className="size-8 text-text-muted" strokeWidth={1.5} />
+        <p className="text-sm text-text-secondary">
           {state.kind === 'tooLarge'
             ? `Image too large to preview (${formatFileSize(state.size)}).`
             : `Could not open this image: ${state.message}`}
@@ -82,7 +91,7 @@ export function ImageArtifact({ path, mime }: { path: string; mime: string }) {
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-8">
-      <div className="bg-bg-2 rounded-card flex max-h-full max-w-full items-center justify-center overflow-hidden p-4">
+      <div className="flex max-h-full max-w-full items-center justify-center overflow-hidden rounded-card bg-bg-2 p-4">
         {/* alt="" — decorative content view; the filename is already in the header breadcrumb. */}
         <img
           src={state.src}
@@ -94,7 +103,7 @@ export function ImageArtifact({ path, mime }: { path: string; mime: string }) {
           }}
         />
       </div>
-      <p className="text-text-muted font-mono text-xs">
+      <p className="font-mono text-xs text-text-muted">
         {dimensions ? `${dimensions.width} × ${dimensions.height} px · ` : ''}
         {formatFileSize(state.size)}
         {extension ? ` · ${extension}` : ''}

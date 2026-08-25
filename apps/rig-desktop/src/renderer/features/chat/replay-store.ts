@@ -3,7 +3,7 @@ import { action, makeObservable, observable, runInAction } from 'mobx';
 import { getSharedChatContext } from '@renderer/lib/chat/shared-chat-context';
 import { rpc } from '@renderer/lib/ipc';
 import type { RigStoredSession } from '@shared/rig/sessions';
-import { parseStoredEvents, withTurnTimestamps } from './session-writer';
+import { loadAllSessionEvents, parseStoredEvents, withTurnTimestamps } from './session-writer';
 
 /**
  * A read-only view of a past `rig_sessions` row (`persistence-design.md`
@@ -53,7 +53,14 @@ export class ReplayStore {
     try {
       const [session, events] = await Promise.all([
         rpc.rig.sessions.getSession({ sessionId: this.conversationId }),
-        rpc.rig.sessions.getEvents({ sessionId: this.conversationId }),
+        loadAllSessionEvents(async ({ afterSeq, limit }) => {
+          const page = await rpc.rig.sessions.getEventsPage({
+            sessionId: this.conversationId,
+            afterSeq,
+            limit,
+          });
+          return { events: page.events, nextAfterSeq: page.nextCursor };
+        }),
       ]);
       if (!this._isCurrent(generation)) return;
       if (!session) throw new Error('This session is no longer stored.');

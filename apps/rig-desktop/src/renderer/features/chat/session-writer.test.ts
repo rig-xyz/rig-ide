@@ -1,8 +1,9 @@
 import type { TranscriptTurn } from '@emdash/core/acp/client';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   newTurnsSince,
   nextLastSeq,
+  loadAllSessionEvents,
   parseStoredEvents,
   shouldPersistTitle,
   withTurnTimestamps,
@@ -75,8 +76,14 @@ describe('newTurnsSince', () => {
   });
 
   it('preserves extra fields on each turn (not just seq)', () => {
-    const turns = [{ seq: 1, id: 'a' }, { seq: 0, id: 'b' }];
-    expect(newTurnsSince(turns, -1)).toEqual([{ seq: 0, id: 'b' }, { seq: 1, id: 'a' }]);
+    const turns = [
+      { seq: 1, id: 'a' },
+      { seq: 0, id: 'b' },
+    ];
+    expect(newTurnsSince(turns, -1)).toEqual([
+      { seq: 0, id: 'b' },
+      { seq: 1, id: 'a' },
+    ]);
   });
 });
 
@@ -97,7 +104,13 @@ describe('nextLastSeq', () => {
 describe('withTurnTimestamps', () => {
   it('stamps at onto the first user message of each turn it knows a time for', () => {
     const turns = [userTurn(0), userTurn(1)];
-    const stamped = withTurnTimestamps(turns, new Map([[0, 111], [1, 222]]));
+    const stamped = withTurnTimestamps(
+      turns,
+      new Map([
+        [0, 111],
+        [1, 222],
+      ])
+    );
     expect((stamped[0].items[0] as { at?: number }).at).toBe(111);
     expect((stamped[1].items[0] as { at?: number }).at).toBe(222);
   });
@@ -132,7 +145,12 @@ describe('parseStoredEvents', () => {
       { seq: 1, at: 222, turn: userTurn(1) },
     ]);
     expect(result.turns).toHaveLength(2);
-    expect(result.atBySeq).toEqual(new Map([[0, 111], [1, 222]]));
+    expect(result.atBySeq).toEqual(
+      new Map([
+        [0, 111],
+        [1, 222],
+      ])
+    );
   });
 
   it('drops a record whose stored JSON no longer matches the turn schema', () => {
@@ -146,6 +164,44 @@ describe('parseStoredEvents', () => {
 
   it('returns empty results for an empty input', () => {
     expect(parseStoredEvents([])).toEqual({ turns: [], atBySeq: new Map() });
+  });
+});
+
+describe('loadAllSessionEvents', () => {
+  it('loads all pages using the returned cursor', async () => {
+    const calls: Array<{ afterSeq?: number; limit: number }> = [];
+    const pages = [
+      { events: [0, 1], nextAfterSeq: 1 },
+      { events: [2, 3], nextAfterSeq: 3 },
+      { events: [4], nextAfterSeq: null },
+    ];
+    const events = await loadAllSessionEvents(async (input) => {
+      calls.push(input);
+      return pages[calls.length - 1]!;
+    });
+
+    expect(events).toEqual([0, 1, 2, 3, 4]);
+    expect(calls).toEqual([
+      { limit: 200 },
+      { afterSeq: 1, limit: 200 },
+      { afterSeq: 3, limit: 200 },
+    ]);
+  });
+
+  it('rejects a repeated or backwards cursor instead of looping forever', async () => {
+    await expect(
+      loadAllSessionEvents(async () => ({ events: [1], nextAfterSeq: 1 }))
+    ).rejects.toThrow('pagination cursor did not advance');
+  });
+
+  it('continues after an empty page when its cursor advances', async () => {
+    const fetchPage = vi
+      .fn()
+      .mockResolvedValueOnce({ events: [], nextAfterSeq: 10 })
+      .mockResolvedValueOnce({ events: [11], nextAfterSeq: null });
+
+    await expect(loadAllSessionEvents(fetchPage)).resolves.toEqual([11]);
+    expect(fetchPage).toHaveBeenCalledTimes(2);
   });
 });
 

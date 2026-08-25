@@ -1134,6 +1134,11 @@ const Transcript = observer(function Transcript({
             resuming session…
           </p>
         )}
+      {store.kind === 'live' && store.persistenceStatus === 'degraded' && (
+        <p className="shrink-0 pt-2 text-center font-mono text-xs text-text-muted">
+          history isn’t being saved yet — retrying…
+        </p>
+      )}
       {panelMode.inlineError && (
         <div className="flex shrink-0 items-center justify-center gap-2 px-3 py-1.5 text-center">
           <span className="text-xs text-text-muted">{errorMessage}</span>

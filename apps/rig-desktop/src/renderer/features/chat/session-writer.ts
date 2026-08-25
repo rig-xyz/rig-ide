@@ -85,6 +85,32 @@ export function withTurnTimestamps(
 
 export type StoredTurns = { turns: TranscriptTurn[]; atBySeq: Map<number, number> };
 
+export type SessionEventsPage<T> = {
+  events: readonly T[];
+  nextAfterSeq: number | null;
+};
+
+/** Reads every persisted event page while rejecting a non-advancing cursor. */
+export async function loadAllSessionEvents<T>(
+  fetchPage: (input: { afterSeq?: number; limit: number }) => Promise<SessionEventsPage<T>>,
+  limit = 200
+): Promise<T[]> {
+  const events: T[] = [];
+  const seenCursors = new Set<number>();
+  let afterSeq: number | undefined;
+  while (true) {
+    const page = await fetchPage({ ...(afterSeq === undefined ? {} : { afterSeq }), limit });
+    events.push(...page.events);
+    const nextAfterSeq = page.nextAfterSeq;
+    if (nextAfterSeq === null) return events;
+    if (seenCursors.has(nextAfterSeq) || (afterSeq !== undefined && nextAfterSeq <= afterSeq)) {
+      throw new Error('Session event pagination cursor did not advance');
+    }
+    seenCursors.add(nextAfterSeq);
+    afterSeq = nextAfterSeq;
+  }
+}
+
 /**
  * Turns a `getEvents` read back into what `RigChatStore` needs to seed
  * replay/resume: real `TranscriptTurn[]` plus the seq→at map

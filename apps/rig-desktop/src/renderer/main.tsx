@@ -1,6 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ReactDOM from 'react-dom/client';
 import { Toaster } from 'sonner';
+import { RecoveryBoundary } from '@renderer/features/recovery/recovery-boundary';
+import { installRendererErrorReporting } from '@renderer/features/recovery/renderer-error-reporting';
 import { TooltipProvider } from '@renderer/lib/ui/tooltip';
 import { App } from './App';
 import './index.css';
@@ -12,12 +14,15 @@ import '@emdash/chat-ui/style.css';
 import '@renderer/lib/chat/chat-theme.css';
 
 const queryClient = new QueryClient();
+installRendererErrorReporting();
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <App />
-      <Toaster position="bottom-right" theme="system" />
-    </TooltipProvider>
-  </QueryClientProvider>
+  <RecoveryBoundary scope="Application">
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <App />
+        <Toaster position="bottom-right" theme="system" />
+      </TooltipProvider>
+    </QueryClientProvider>
+  </RecoveryBoundary>
 );

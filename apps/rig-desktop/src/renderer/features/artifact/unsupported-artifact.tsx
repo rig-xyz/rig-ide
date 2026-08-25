@@ -23,14 +23,25 @@ export function UnsupportedArtifact({ path, size }: { path: string; size: number
   // detection today, but this stays correct if one ever does) falls back
   // to its own cheap read here.
   const [resolvedSize, setResolvedSize] = useState(size);
+  const [sizeUnavailable, setSizeUnavailable] = useState(false);
 
   useEffect(() => {
     if (resolvedSize !== null) return;
     let cancelled = false;
-    void rpc.rig.files.readBinary(path, 0).then((result) => {
-      if (cancelled || !result.success) return;
-      setResolvedSize(result.data.size);
-    });
+    setSizeUnavailable(false);
+    void rpc.rig.files
+      .readBinary(path, 0)
+      .then((result) => {
+        if (cancelled) return;
+        if (!result.success) {
+          setSizeUnavailable(true);
+          return;
+        }
+        setResolvedSize(result.data.size);
+      })
+      .catch(() => {
+        if (!cancelled) setSizeUnavailable(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -43,31 +54,43 @@ export function UnsupportedArtifact({ path, size }: { path: string; size: number
   const openInDefaultApp = async () => {
     const result = await rpc.app.openPath(path);
     if (!result.success) {
-      toast({ title: "Couldn't open this file", description: result.error, variant: 'destructive' });
+      toast({
+        title: "Couldn't open this file",
+        description: result.error,
+        variant: 'destructive',
+      });
     }
   };
 
   const revealInFinder = async () => {
     const result = await rpc.app.showItemInFolder(path);
     if (!result.success) {
-      toast({ title: "Couldn't reveal this file", description: result.error, variant: 'destructive' });
+      toast({
+        title: "Couldn't reveal this file",
+        description: result.error,
+        variant: 'destructive',
+      });
     }
   };
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
-      <FileQuestion className="text-text-muted size-8" strokeWidth={1.5} />
-      <p className="text-text-primary max-w-sm truncate text-sm font-medium">{filename}</p>
-      <p className="text-text-muted font-mono text-xs">
-        {resolvedSize !== null ? formatFileSize(resolvedSize) : '…'}
+      <FileQuestion className="size-8 text-text-muted" strokeWidth={1.5} />
+      <p className="max-w-sm truncate text-sm font-medium text-text-primary">{filename}</p>
+      <p className="font-mono text-xs text-text-muted">
+        {resolvedSize !== null
+          ? formatFileSize(resolvedSize)
+          : sizeUnavailable
+            ? 'Size unavailable'
+            : '…'}
         {extension ? ` · ${extension}` : ''}
       </p>
-      <p className="text-text-muted text-xs">No preview for this file type.</p>
+      <p className="text-xs text-text-muted">No preview for this file type.</p>
       <div className="flex items-center gap-4 pt-2">
         <button
           type="button"
           onClick={() => void openInDefaultApp()}
-          className="text-accent flex items-center gap-1.5 text-xs transition-opacity hover:opacity-80"
+          className="flex items-center gap-1.5 text-xs text-accent transition-opacity hover:opacity-80"
         >
           <ExternalLink className="size-3.5" strokeWidth={1.5} />
           Open in default app
@@ -75,7 +98,7 @@ export function UnsupportedArtifact({ path, size }: { path: string; size: number
         <button
           type="button"
           onClick={() => void revealInFinder()}
-          className="text-text-muted hover:text-text-primary flex items-center gap-1.5 text-xs transition-colors"
+          className="flex items-center gap-1.5 text-xs text-text-muted transition-colors hover:text-text-primary"
         >
           <FolderOpen className="size-3.5" strokeWidth={1.5} />
           Reveal in Finder

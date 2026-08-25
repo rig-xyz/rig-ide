@@ -1,8 +1,8 @@
 import { FilePlus, FolderPlus, Link, Plus, RefreshCw, Upload } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { toast } from '@renderer/lib/hooks/use-toast';
 import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
+import { toast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
 import { nextUntitledFileName } from './add-menu-logic';
 
@@ -36,7 +36,11 @@ export function NewMenu({
   const [busy, setBusy] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const rect = useAnchorRect(open, triggerRef, { gap: 4, estimatedHeight: 220, estimatedWidth: 200 });
+  const rect = useAnchorRect(open, triggerRef, {
+    gap: 4,
+    estimatedHeight: 220,
+    estimatedWidth: 200,
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -60,35 +64,71 @@ export function NewMenu({
 
   const newFile = async () => {
     setOpen(false);
-    const list = await rpc.rig.files.list(root);
-    if (!list.success) {
-      toast({ title: "Couldn't create the file", description: list.error.message, variant: 'destructive' });
-      return;
+    try {
+      const list = await rpc.rig.files.list(root);
+      if (!list.success) {
+        toast({
+          title: "Couldn't create the file",
+          description: list.error.message,
+          variant: 'destructive',
+        });
+        return;
+      }
+      const rootFileNames = list.data
+        .filter((node) => node.kind === 'file')
+        .map((node) => node.name);
+      const relPath = nextUntitledFileName(rootFileNames);
+      const absPath = `${root}/${relPath}`;
+      const result = await rpc.rig.files.write(absPath, '');
+      if (!result.success) {
+        toast({
+          title: "Couldn't create the file",
+          description: result.error.message,
+          variant: 'destructive',
+        });
+        return;
+      }
+      onOpenFile(absPath);
+    } catch {
+      toast({
+        title: "Couldn't create the file",
+        description: 'Try again.',
+        variant: 'destructive',
+      });
     }
-    const rootFileNames = list.data.filter((node) => node.kind === 'file').map((node) => node.name);
-    const relPath = nextUntitledFileName(rootFileNames);
-    const absPath = `${root}/${relPath}`;
-    const result = await rpc.rig.files.write(absPath, '');
-    if (!result.success) {
-      toast({ title: "Couldn't create the file", description: result.error.message, variant: 'destructive' });
-      return;
-    }
-    onOpenFile(absPath);
   };
 
   const newFolder = async () => {
     setOpen(false);
-    const list = await rpc.rig.files.list(root);
-    if (!list.success) {
-      toast({ title: "Couldn't create the folder", description: list.error.message, variant: 'destructive' });
-      return;
-    }
-    const taken = new Set(list.data.filter((node) => node.kind === 'dir').map((node) => node.name));
-    let name = 'New folder';
-    for (let n = 2; taken.has(name); n += 1) name = `New folder ${n}`;
-    const result = await rpc.rig.files.makeDirectory(root, name);
-    if (!result.success) {
-      toast({ title: "Couldn't create the folder", description: result.error.message, variant: 'destructive' });
+    try {
+      const list = await rpc.rig.files.list(root);
+      if (!list.success) {
+        toast({
+          title: "Couldn't create the folder",
+          description: list.error.message,
+          variant: 'destructive',
+        });
+        return;
+      }
+      const taken = new Set(
+        list.data.filter((node) => node.kind === 'dir').map((node) => node.name)
+      );
+      let name = 'New folder';
+      for (let n = 2; taken.has(name); n += 1) name = `New folder ${n}`;
+      const result = await rpc.rig.files.makeDirectory(root, name);
+      if (!result.success) {
+        toast({
+          title: "Couldn't create the folder",
+          description: result.error.message,
+          variant: 'destructive',
+        });
+      }
+    } catch {
+      toast({
+        title: "Couldn't create the folder",
+        description: 'Try again.',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -100,10 +140,10 @@ export function NewMenu({
         title: 'Add a file',
         message: 'Choose a file to add to this rig',
       });
-    } catch (error) {
+    } catch {
       toast({
         title: "Couldn't open the file picker",
-        description: error instanceof Error ? error.message : undefined,
+        description: 'Try again.',
         variant: 'destructive',
       });
       return;
@@ -111,24 +151,39 @@ export function NewMenu({
     if (!picked) return;
 
     setBusy(true);
-    if (/\.docx$/i.test(picked)) {
-      const result = await rpc.rig.importDoc.importDoc({ root, source: { kind: 'file', path: picked } });
-      setBusy(false);
-      if (!result.success) {
-        toast({ title: "Couldn't import that file", description: result.error.message, variant: 'destructive' });
+    try {
+      if (/\.docx$/i.test(picked)) {
+        const result = await rpc.rig.importDoc.importDoc({
+          root,
+          source: { kind: 'file', path: picked },
+        });
+        if (!result.success) {
+          toast({
+            title: "Couldn't import that file",
+            description: result.error.message,
+            variant: 'destructive',
+          });
+          return;
+        }
+        onOpenFile(result.data.mdPath);
         return;
       }
-      onOpenFile(result.data.mdPath);
-      return;
-    }
 
-    const result = await rpc.rig.importDoc.copyFile({ root, path: picked });
-    setBusy(false);
-    if (!result.success) {
-      toast({ title: "Couldn't add that file", description: result.error.message, variant: 'destructive' });
-      return;
+      const result = await rpc.rig.importDoc.copyFile({ root, path: picked });
+      if (!result.success) {
+        toast({
+          title: "Couldn't add that file",
+          description: result.error.message,
+          variant: 'destructive',
+        });
+        return;
+      }
+      onOpenFile(result.data.absPath);
+    } catch {
+      toast({ title: "Couldn't add that file", description: 'Try again.', variant: 'destructive' });
+    } finally {
+      setBusy(false);
     }
-    onOpenFile(result.data.absPath);
   };
 
   return (
@@ -141,7 +196,7 @@ export function NewMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         title="Add something to this rig"
-        className="border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex shrink-0 items-center gap-1 border bg-transparent px-2 py-1 text-xs transition-colors disabled:opacity-60"
+        className="flex shrink-0 items-center gap-1 rounded-control border border-border-hairline bg-transparent px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary disabled:opacity-60"
       >
         <Plus className="size-3.5" strokeWidth={1.5} />
         {busy ? 'Adding…' : 'New'}
@@ -160,7 +215,7 @@ export function NewMenu({
               ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
               ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
             }}
-            className="border-border-hairline bg-bg-1 rounded-control shadow-soft z-50 border py-1"
+            className="z-50 rounded-control border border-border-hairline bg-bg-1 py-1 shadow-soft"
           >
             <button
               type="button"
@@ -169,7 +224,7 @@ export function NewMenu({
                 event.preventDefault();
                 void newFile();
               }}
-              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
             >
               <FilePlus className="size-3.5 shrink-0" strokeWidth={1.5} />
               New file
@@ -181,7 +236,7 @@ export function NewMenu({
                 event.preventDefault();
                 void newFolder();
               }}
-              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
             >
               <FolderPlus className="size-3.5 shrink-0" strokeWidth={1.5} />
               New folder
@@ -193,12 +248,12 @@ export function NewMenu({
                 event.preventDefault();
                 void fromFile();
               }}
-              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
             >
               <Upload className="size-3.5 shrink-0" strokeWidth={1.5} />
               Import file…
             </button>
-            <div className="bg-border-hairline my-1 h-px" />
+            <div className="my-1 h-px bg-border-hairline" />
             <button
               type="button"
               role="menuitem"
@@ -207,7 +262,7 @@ export function NewMenu({
                 setOpen(false);
                 onOpenImportDialog();
               }}
-              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
             >
               <Link className="size-3.5 shrink-0" strokeWidth={1.5} />
               Import from Docs…
@@ -222,11 +277,11 @@ export function NewMenu({
             <div
               role="menuitem"
               aria-disabled="true"
-              className="text-text-muted flex w-full cursor-default items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+              className="flex w-full cursor-default items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-muted"
             >
               <RefreshCw className="size-3.5 shrink-0" strokeWidth={1.5} />
               Sync with Drive
-              <span className="border-border-hairline text-text-muted ml-auto rounded-full border px-1.5 text-xs">
+              <span className="ml-auto rounded-full border border-border-hairline px-1.5 text-xs text-text-muted">
                 Soon
               </span>
             </div>

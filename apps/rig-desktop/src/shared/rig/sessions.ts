@@ -46,6 +46,15 @@ export type RigSessionEventRecord = {
   turn: unknown;
 };
 
+export type RigAppendEventsResult =
+  | { ok: true; at: number; persistedThroughSeq: number | null }
+  | { ok: false; retryable: true; message: string };
+
+export type RigSessionEventsPage = {
+  events: RigSessionEventRecord[];
+  nextCursor: number | null;
+};
+
 /**
  * One `rig_sessions` row joined to its owning `rig_rigs` row — the shape the
  * home screen's CONTINUE section needs (round H1): a session on its own

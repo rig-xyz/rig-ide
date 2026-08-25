@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useRef, useState } from 'react';
-import { confirmOpenExternalLink } from '@renderer/lib/open-external-link';
 import { rpc } from '@renderer/lib/ipc';
+import { confirmOpenExternalLink } from '@renderer/lib/open-external-link';
 
 /**
  * Drives `rig login`: start it, open the URL it prints, and wait for it to
@@ -28,31 +28,34 @@ export function useRigSignIn(onSuccess?: () => void) {
     setUrl(null);
     setPhase('starting');
 
-    const started = await rpc.rig.auth.login();
-    if (skippedRef.current) return;
-    if (!started.success) {
-      setError(started.error.message);
-      setPhase('idle');
-      return;
-    }
-    setPhase('waiting');
-    if (started.data.url) {
-      setUrl(started.data.url);
-      confirmOpenExternalLink(started.data.url);
-    }
+    try {
+      const started = await rpc.rig.auth.login();
+      if (skippedRef.current) return;
+      if (!started.success) {
+        setError(started.error.message);
+        return;
+      }
+      setPhase('waiting');
+      if (started.data.url) {
+        setUrl(started.data.url);
+        confirmOpenExternalLink(started.data.url);
+      }
 
-    const finished = await rpc.rig.auth.awaitLogin();
-    if (skippedRef.current) return;
-    if (!finished.success) {
-      setError(finished.error.message);
-      setPhase('idle');
-      return;
-    }
+      const finished = await rpc.rig.auth.awaitLogin();
+      if (skippedRef.current) return;
+      if (!finished.success) {
+        setError(finished.error.message);
+        return;
+      }
 
-    setPhase('idle');
-    void queryClient.invalidateQueries({ queryKey: ['rig', 'auth', 'status'] });
-    void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
-    onSuccess?.();
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'auth', 'status'] });
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
+      onSuccess?.();
+    } catch {
+      if (!skippedRef.current) setError("Couldn't complete sign-in. Try again.");
+    } finally {
+      if (!skippedRef.current) setPhase('idle');
+    }
   }, [onSuccess, queryClient]);
 
   const cancel = useCallback(() => {

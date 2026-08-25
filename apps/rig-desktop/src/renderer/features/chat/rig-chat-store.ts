@@ -17,7 +17,9 @@ import type { RigSessionTitleSource } from '@shared/rig/sessions';
 import { deriveAutoApplyOption } from './model-preference';
 import { shouldPersistMode } from './permission-mode';
 import { decideSubmitDisposition, type SubmitDisposition } from './resume-presentation';
+import { SessionPersistenceQueue, type PersistenceQueueStatus } from './session-persistence-queue';
 import {
+  loadAllSessionEvents,
   newTurnsSince,
   nextLastSeq,
   parseStoredEvents,
@@ -98,10 +100,12 @@ export class RigChatStore {
    * doc comment on `AcpLiveSession.resume()`).
    */
   resuming = false;
+  persistenceStatus: PersistenceQueueStatus = 'idle';
 
   private _view: ChatView | null = null;
   private _bootstrapPromise: Promise<void> | null = null;
   private _disposed = false;
+  private _disposePromise: Promise<void> | null = null;
   private _generation = 0;
   private _unsubs: Array<() => void> = [];
   /**
@@ -127,10 +131,13 @@ export class RigChatStore {
   private readonly _resumeAcpSessionId: string | null;
   /**
    * Persistence watermark: the highest turn `seq` already round-tripped
-   * through `appendEvents`. -1 means nothing persisted yet. See
+   * through an `{ ok: true }` `appendEvents` acknowledgement. ACP turn
+   * sequences are ordered and complete, so the acknowledged high-water mark
+   * is safe for delta selection. -1 means nothing persisted yet. See
    * `session-writer.ts`'s `newTurnsSince`/`nextLastSeq`.
    */
   private _lastPersistedSeq = -1;
+  private readonly _persistenceQueue: SessionPersistenceQueue;
   /** Turn seq → the `at` main stamped when it was persisted — what the timestamps UI reads. */
   private readonly _turnTimestamps = new Map<number, number>();
   /**
@@ -198,6 +205,45 @@ export class RigChatStore {
     this._resumeAcpSessionId = resume?.acpSessionId ?? null;
     if (resume?.title) this.title = resume.title;
     if (resume?.titleSource) this.titleSource = resume.titleSource;
+    this._persistenceQueue = new SessionPersistenceQueue({
+      appendEvents: async (events) => {
+        // Re-run ensure for every attempt. A prior failed ensure is explicitly
+        // forgotten by `_ensureSessionRow`, so a retry must repair the FK
+        // parent before attempting its child events.
+        await this._ensureSessionRow();
+        return rpc.rig.sessions.appendEvents({
+          sessionId: this.conversationId,
+          events,
+        });
+      },
+      onAck: (events, at, persistedThroughSeq) => {
+        if (this._disposed) return;
+        runInAction(() => {
+          if (this._disposed) return;
+          // Advance from the batch we actually sent and received an ack for.
+          // The server watermark remains part of the RPC contract, but it
+          // must not make a future/gapped sequence look locally persisted.
+          if (persistedThroughSeq !== null && persistedThroughSeq < nextLastSeq(-1, events)) {
+            console.warn('Rig chat: append acknowledgement watermark lagged its batch', {
+              sessionId: this.conversationId,
+              persistedThroughSeq,
+              actualWatermark: nextLastSeq(-1, events),
+            });
+          }
+          this._lastPersistedSeq = nextLastSeq(this._lastPersistedSeq, events);
+          for (const event of events) this._turnTimestamps.set(event.seq, at);
+          this.chatState.transcript.history.seed(
+            withTurnTimestamps(this.chatState.transcript.history.get(), this._turnTimestamps)
+          );
+        });
+      },
+      onStatusChange: (status) => {
+        if (this._disposed) return;
+        runInAction(() => {
+          if (!this._disposed) this.persistenceStatus = status;
+        });
+      },
+    });
 
     makeObservable<this, '_resolvingPermission' | '_heldPrompts'>(this, {
       session: observable.ref,
@@ -208,6 +254,7 @@ export class RigChatStore {
       title: observable,
       hasSeededHistory: observable,
       resuming: observable,
+      persistenceStatus: observable,
       _resolvingPermission: observable.ref,
       _heldPrompts: observable.shallow,
       model: computed,
@@ -739,23 +786,33 @@ export class RigChatStore {
    * the runtime worker's process (`AcpLiveSession.stopSession`, the same
    * refcounted-per-(provider,cwd) release `main/rig/comment-agent.ts` makes
    * when a headless turn finishes) before tearing down the local wire
-   * subscriptions. Fire-and-forget like that call site: nothing here needs
-   * to block removing the tab on the network round trip, and a runtime
-   * that's already gone is not worth surfacing an error for.
+   * subscriptions. Runtime teardown remains synchronous; the returned
+   * promise only covers the bounded persistence flush and final close-status
+   * update, so registry shutdown can await those writes without holding up
+   * local removal.
    */
-  dispose(): void {
-    if (this._disposed) return;
+  dispose(): Promise<void> {
+    if (this._disposePromise) return this._disposePromise;
     this._disposed = true;
     this._generation += 1;
     this._unsubs.splice(0).forEach((unsub) => unsub());
     this._disposePreferenceReactions.splice(0).forEach((dispose) => dispose());
     void this.session?.stopSession().catch(() => {});
     this.session?.dispose();
-    // The final flush: everything already committed was persisted turn by
-    // turn as it happened (see `_applyHistory`) — this only moves the row's
-    // status, so `listSessions`/the History UI stop showing it as live.
-    void rpc.rig.sessions
-      .closeSession({ sessionId: this.conversationId })
+    // Wait briefly for ordered persistence before moving the row to closed.
+    // Runtime teardown above remains synchronous/idempotent; this bounded
+    // promise only controls when the status transition is sent.
+    this._disposePromise = this._persistenceQueue
+      .close(1_000)
+      .then((flushed) => {
+        if (!flushed) {
+          this._toastError(
+            'Some history wasn’t saved',
+            new Error('Some recent history could not be saved before the session closed.')
+          );
+        }
+        return rpc.rig.sessions.closeSession({ sessionId: this.conversationId });
+      })
       .catch((error: unknown) => {
         console.error('Rig chat: failed to close session', {
           sessionId: this.conversationId,
@@ -763,6 +820,7 @@ export class RigChatStore {
         });
       });
     this.chatState.dispose();
+    return this._disposePromise;
   }
 
   private async _runBootstrap(generation: number): Promise<void> {
@@ -785,18 +843,24 @@ export class RigChatStore {
       // snapshot regardless of what was seeded here — so painting the local
       // copy first is now purely a rendering head start, never a second
       // source that can double up.
-      const stored = await rpc.rig.sessions
-        .getEvents({ sessionId: this.conversationId })
-        .catch((error: unknown) => {
-          console.error('Rig chat: failed to read stored session events', {
-            sessionId: this.conversationId,
-            error,
-          });
-          return [];
+      const stored = await loadAllSessionEvents(async ({ afterSeq, limit }) => {
+        const page = await rpc.rig.sessions.getEventsPage({
+          sessionId: this.conversationId,
+          afterSeq,
+          limit,
         });
+        return { events: page.events, nextAfterSeq: page.nextCursor };
+      }).catch((error: unknown) => {
+        console.error('Rig chat: failed to read stored session events', {
+          sessionId: this.conversationId,
+          error,
+        });
+        return [];
+      });
       if (!this._isCurrent(generation)) return;
       const { turns: storedTurns, atBySeq: storedAt } = parseStoredEvents(stored);
       if (storedTurns.length > 0) {
+        this._persistenceQueue.markPersisted(storedTurns);
         runInAction(() => {
           if (!this._isCurrent(generation)) return;
           for (const [seq, at] of storedAt) this._turnTimestamps.set(seq, at);
@@ -976,16 +1040,11 @@ export class RigChatStore {
 
   /**
    * The one place committed turns become both persisted state and rendered
-   * state. Computes the delta since `_lastPersistedSeq` (pure logic in
-   * `session-writer.ts`), fires it off as one batched, fire-and-forget
-   * `appendEvents` call — persistence must never block or slow down the
-   * chat itself — and re-seeds the transcript immediately with whatever
-   * timestamps are already known. Once the batch's ack lands, the newly
-   * appended turns' timestamps backfill via a second, harmless re-seed.
-   *
-   * A dropped batch (main logs it; see `sessions.ts`) is not retried here —
-   * retrying into a since-appended later batch would risk writing an older
-   * batch's turns out of order behind it.
+   * state. Computes the delta since the last acknowledged sequence (pure
+   * logic in `session-writer.ts`), hands it to the ordered persistence queue,
+   * and re-seeds the transcript immediately with whatever timestamps are
+   * already known. The queue retries a failed batch before allowing later
+   * turns through; timestamps and the watermark advance only on `{ ok: true }`.
    */
   private _applyHistory(turns: readonly TranscriptTurn[]): void {
     if (this._disposed) return;
@@ -997,45 +1056,14 @@ export class RigChatStore {
       // — the only honest source for "this session just wrote that file."
       // See `workspace/write-activity.ts`'s own header comment for why
       // this couldn't be observed from outside chat/ instead.
-      recordFileWritesFromTurns(fresh, this.cwd, this.conversationId);
-      this._lastPersistedSeq = nextLastSeq(this._lastPersistedSeq, fresh);
-      // A1 fix: chain onto `_ensureSessionRow`'s OWN memoized promise if
-      // one is already in flight — the real risk case is fresh turns
-      // landing right after a dispatch, before that RPC has actually
-      // completed. Never CALLS `_ensureSessionRow()` itself here, only
-      // reads the field — a store that's never dispatched anything (a
-      // resumed session's pre-existing history, or an untouched eager one
-      // with nothing new to persist) must not trigger a fresh ensure just
-      // because history got applied; see `_ensureSessionRow`'s own doc
-      // comment for why that invariant matters.
-      const afterEnsure = this._ensureSessionRowPromise ?? Promise.resolve();
-      void afterEnsure
-        .then(() => {
-          if (!this._isCurrent(generation)) return null;
-          return rpc.rig.sessions.appendEvents({
-            sessionId: this.conversationId,
-            events: fresh.map((turn) => ({ seq: turn.seq, turn })),
-          });
-        })
-        .then((result) => {
-          if (!result || !this._isCurrent(generation)) return;
-          const { at } = result;
-          runInAction(() => {
-            if (!this._isCurrent(generation)) return;
-            for (const turn of fresh) this._turnTimestamps.set(turn.seq, at);
-            this.chatState.transcript.history.seed(
-              withTurnTimestamps(this.chatState.transcript.history.get(), this._turnTimestamps)
-            );
-          });
-        })
-        .catch((error: unknown) => {
-          if (!this._isCurrent(generation)) return;
-          console.error('Rig chat: dropped a batch of session events (not retried)', {
-            sessionId: this.conversationId,
-            seqs: fresh.map((t) => t.seq),
-            error,
-          });
-        });
+      const queued = this._persistenceQueue.enqueue(fresh.map((turn) => ({ seq: turn.seq, turn })));
+      if (queued.length > 0) {
+        recordFileWritesFromTurns(
+          queued.map((event) => event.turn as TranscriptTurn),
+          this.cwd,
+          this.conversationId
+        );
+      }
     }
     runInAction(() => {
       if (!this._isCurrent(generation)) return;

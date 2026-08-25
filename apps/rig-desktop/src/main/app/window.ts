@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { BrowserWindow, nativeTheme } from 'electron';
+import { BrowserWindow, dialog, nativeTheme } from 'electron';
 import devIcon from '@/assets/images/rig/rig-dev.png?asset';
 import { browserWebContentsRegistry } from '@main/core/browser/browser-webcontents-registry';
 import {
@@ -78,6 +79,7 @@ export function createMainWindow(): BrowserWindow {
   // Route external links to the user’s default browser
   registerExternalLinkHandlers(mainWindow, import.meta.env.DEV);
   registerBrowserWebviewHandlers(mainWindow);
+  registerRendererRecoveryHandlers(mainWindow);
 
   // Show when ready
   mainWindow.once('ready-to-show', () => {
@@ -112,6 +114,41 @@ export function createMainWindow(): BrowserWindow {
   });
 
   return mainWindow;
+}
+
+function registerRendererRecoveryHandlers(win: BrowserWindow): void {
+  win.webContents.on('render-process-gone', (_event, details) => {
+    if (details.reason === 'clean-exit' || win.isDestroyed()) return;
+
+    const recoveryId = randomUUID();
+    log.error('Renderer process exited unexpectedly', {
+      recoveryId,
+      reason: details.reason,
+      exitCode: details.exitCode,
+    });
+
+    // A React boundary cannot render after the renderer process itself has
+    // exited. Use a native prompt instead of silently leaving a blank window;
+    // reloading remains an explicit choice and therefore cannot create an
+    // automatic crash loop.
+    void dialog
+      .showMessageBox(win, {
+        type: 'error',
+        title: 'Rig needs to reload',
+        message: 'Rig’s interface stopped unexpectedly.',
+        detail: `Previously saved work remains on disk. Reload the window to recover.\n\nReference: ${recoveryId}`,
+        buttons: ['Reload Window', 'Not Now'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      })
+      .then(({ response }) => {
+        if (response === 0 && !win.isDestroyed()) win.reload();
+      })
+      .catch((error: unknown) => {
+        log.error('Failed to show renderer recovery prompt', { recoveryId, error });
+      });
+  });
 }
 
 export function getMainWindow(): BrowserWindow | null {

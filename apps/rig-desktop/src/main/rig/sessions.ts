@@ -1,12 +1,14 @@
-import { and, asc, desc, eq, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, ne } from 'drizzle-orm';
 import { db } from '@main/db/client';
 import { rigRigs, rigSessionEvents, rigSessions } from '@main/db/schema';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import type {
   RigRecentSession,
+  RigAppendEventsResult,
   RigSessionEventInput,
   RigSessionEventRecord,
+  RigSessionEventsPage,
   RigStoredSession,
 } from '@shared/rig/sessions';
 
@@ -22,7 +24,8 @@ import type {
  * renderer never reaches for its own clock to show a time.
  */
 
-const MAX_EVENTS_PER_SESSION = 200;
+const DEFAULT_EVENTS_PAGE_LIMIT = 100;
+const MAX_EVENTS_PAGE_LIMIT = 200;
 
 function toStoredSession(row: typeof rigSessions.$inferSelect): RigStoredSession {
   return {
@@ -35,6 +38,58 @@ function toStoredSession(row: typeof rigSessions.$inferSelect): RigStoredSession
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     acpSessionId: row.acpSessionId,
+  };
+}
+
+function boundedEventsPageLimit(limit: number | undefined): number {
+  if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_EVENTS_PAGE_LIMIT;
+  return Math.max(1, Math.min(Math.floor(limit), MAX_EVENTS_PAGE_LIMIT));
+}
+
+function parseEventRows(
+  sessionId: string,
+  rows: (typeof rigSessionEvents.$inferSelect)[]
+): RigSessionEventRecord[] {
+  const events: RigSessionEventRecord[] = [];
+  for (const row of rows) {
+    try {
+      events.push({ seq: row.seq, at: row.at, turn: JSON.parse(row.eventJson) });
+    } catch (error) {
+      log.warn('rig sessions: dropped an unparsable stored event', {
+        sessionId,
+        seq: row.seq,
+        error: String(error),
+      });
+    }
+  }
+  return events;
+}
+
+async function readEventsPage({
+  sessionId,
+  afterSeq,
+  limit,
+}: {
+  sessionId: string;
+  afterSeq?: number;
+  limit?: number;
+}): Promise<RigSessionEventsPage> {
+  const pageLimit = boundedEventsPageLimit(limit);
+  const rows = await db
+    .select()
+    .from(rigSessionEvents)
+    .where(
+      afterSeq === undefined
+        ? eq(rigSessionEvents.sessionId, sessionId)
+        : and(eq(rigSessionEvents.sessionId, sessionId), gt(rigSessionEvents.seq, afterSeq))
+    )
+    .orderBy(asc(rigSessionEvents.seq))
+    .limit(pageLimit + 1);
+  const hasMore = rows.length > pageLimit;
+  const pageRows = hasMore ? rows.slice(0, pageLimit) : rows;
+  return {
+    events: parseEventRows(sessionId, pageRows),
+    nextCursor: hasMore ? (pageRows[pageRows.length - 1]?.seq ?? null) : null,
   };
 }
 
@@ -134,8 +189,8 @@ export const rigSessionsController = createRPCController({
    * `(sessionId, seq)` makes a resend idempotent — a duplicate batch (e.g.
    * a retry racing an already-landed one) can never reorder events or
    * re-stamp one that already has an `at`. A write failure is logged and
-   * the batch is dropped, never silently retried (which could reorder a
-   * later, successful batch ahead of it).
+   * returned as an explicit retryable failure so the caller can preserve
+   * ordering while deciding when to retry.
    */
   appendEvents: async ({
     sessionId,
@@ -143,33 +198,40 @@ export const rigSessionsController = createRPCController({
   }: {
     sessionId: string;
     events: RigSessionEventInput[];
-  }): Promise<{ at: number }> => {
+  }): Promise<RigAppendEventsResult> => {
     const at = Date.now();
-    if (events.length === 0) return { at };
+    if (events.length === 0) return { ok: true, at, persistedThroughSeq: null };
+    const persistedThroughSeq = events.reduce(
+      (max, event) => Math.max(max, event.seq),
+      Number.NEGATIVE_INFINITY
+    );
     try {
-      await db
-        .insert(rigSessionEvents)
-        .values(
-          events.map((event) => ({
-            sessionId,
-            seq: event.seq,
-            at,
-            eventJson: JSON.stringify(event.turn),
-          }))
-        )
-        .onConflictDoNothing();
-      await db
-        .update(rigSessions)
-        .set({ updatedAt: at, status: 'active' })
-        .where(eq(rigSessions.id, sessionId));
+      db.transaction((tx) => {
+        tx.insert(rigSessionEvents)
+          .values(
+            events.map((event) => ({
+              sessionId,
+              seq: event.seq,
+              at,
+              eventJson: JSON.stringify(event.turn),
+            }))
+          )
+          .onConflictDoNothing()
+          .run();
+        tx.update(rigSessions)
+          .set({ updatedAt: at, status: 'active' })
+          .where(eq(rigSessions.id, sessionId))
+          .run();
+      });
+      return { ok: true, at, persistedThroughSeq };
     } catch (error) {
-      log.warn('rig sessions: dropped a batch of events (not retried)', {
+      log.warn('rig sessions: failed to persist a batch of events', {
         sessionId,
         seqs: events.map((e) => e.seq),
         error: String(error),
       });
+      return { ok: false, retryable: true, message: 'Could not persist session events.' };
     }
-    return { at };
   },
 
   /** Wired to session close/stop — the final status transition for this row. */
@@ -211,9 +273,9 @@ export const rigSessionsController = createRPCController({
    * never has to fan out a `getSession`-per-row follow-up just to label
    * where each one came from.
    */
-  listRecentAcrossRigs: async ({
-    limit = 5,
-  }: { limit?: number } = {}): Promise<RigRecentSession[]> => {
+  listRecentAcrossRigs: async ({ limit = 5 }: { limit?: number } = {}): Promise<
+    RigRecentSession[]
+  > => {
     const rows = await db
       .select({
         id: rigSessions.id,
@@ -239,24 +301,19 @@ export const rigSessionsController = createRPCController({
 
   /** A session's committed turns in order, for replay or for resume-seeding. */
   getEvents: async ({ sessionId }: { sessionId: string }): Promise<RigSessionEventRecord[]> => {
-    const rows = await db
-      .select()
-      .from(rigSessionEvents)
-      .where(eq(rigSessionEvents.sessionId, sessionId))
-      .orderBy(asc(rigSessionEvents.seq))
-      .limit(MAX_EVENTS_PER_SESSION);
     const events: RigSessionEventRecord[] = [];
-    for (const row of rows) {
-      try {
-        events.push({ seq: row.seq, at: row.at, turn: JSON.parse(row.eventJson) });
-      } catch (error) {
-        log.warn('rig sessions: dropped an unparsable stored event', {
-          sessionId,
-          seq: row.seq,
-          error: String(error),
-        });
-      }
+    let afterSeq: number | undefined;
+    for (;;) {
+      const page = await readEventsPage({
+        sessionId,
+        afterSeq,
+        limit: MAX_EVENTS_PAGE_LIMIT,
+      });
+      events.push(...page.events);
+      if (page.nextCursor === null) return events;
+      afterSeq = page.nextCursor;
     }
-    return events;
   },
+
+  getEventsPage: readEventsPage,
 });
