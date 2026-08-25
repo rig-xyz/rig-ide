@@ -1,14 +1,21 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  File,
+  FileText,
+  Folder,
+  FolderOpen,
+  Loader2,
+  Sparkles,
+  Table,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { detectByExtension } from '@renderer/features/artifact/file-type';
 import { events, rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
 import { classifyEntryCategory } from '@shared/rig/file-navigator-categories';
 import { rigFileChangeChannel } from '@shared/rig/files';
 import type { RigFileNode } from '@shared/rig/files';
-import { FILE_ICON_ASSETS, fileIconTypeFor, type FileIconType } from './file-icon';
-import { FolderIcon } from './folder-icon';
 
 /**
  * Real filesystem tree for the opened rig, via `rpc.rig.files.list` — a small,
@@ -31,8 +38,8 @@ import { FolderIcon } from './folder-icon';
  * File-navigator redesign (`docs/file-navigator-design.md` §1): rows now
  * show the document's TITLE (`node.title`, extracted+cached in main —
  * `main/rig/file-title-cache.ts`) in the sans stack, falling back to the
- * filename with its extension hidden; the real filename lives in the row's
- * tooltip. Entries split into three categories
+ * full filename, extension included; the real filename lives in the row's
+ * tooltip for when a title replaces it. Entries split into three categories
  * (`classifyEntryCategory`): Content renders as the normal tree below;
  * Skills (`.claude/skills`, `.agents/skills`, `.claude/commands`,
  * `AGENTS.md`/`CLAUDE.md` at any depth) are pulled out into one collapsed
@@ -48,32 +55,18 @@ const HIGHLIGHT_MS = 1400;
 /** One level of nested indent, matching a depth-1 file row's own `indent + 18`. */
 const SKILL_ROW_PADDING = 8 + 14 + 18;
 
-/** The document's display name: its extracted title, else the filename with a recognized extension hidden. */
+/** The document's display name: its extracted title, else the full filename (extension included — Dylan keeps extensions). */
 function displayTitle(node: RigFileNode): string {
   if (node.kind === 'dir') return node.name;
-  if (node.title) return node.title;
-  return stripRecognizedExtension(node.name);
+  return node.title ?? node.name;
 }
 
-/** Only strips a real `name.ext` shape for a RECOGNIZED extension — a dotfile like `.gitignore` or an unknown type is shown in full. */
-function stripRecognizedExtension(name: string): string {
-  if (!detectByExtension(name)) return name;
-  const dot = name.lastIndexOf('.');
-  if (dot <= 0) return name;
-  return name.slice(0, dot);
-}
-
-function FileIconImg({ type, className }: { type: FileIconType; className?: string }) {
-  const asset = FILE_ICON_ASSETS[type];
-  return (
-    <img
-      src={asset.src1x}
-      srcSet={`${asset.src1x} 1x, ${asset.src2x} 2x`}
-      alt=""
-      draggable={false}
-      className={className}
-    />
-  );
+/** Content-row icon by extension — reverted to the tree's original lucide line icons (icon asset pass deferred, see the design doc). */
+function iconFor(name: string) {
+  const ext = name.split('.').pop()?.toLowerCase();
+  if (ext === 'md' || ext === 'mdx' || ext === 'txt') return FileText;
+  if (ext === 'csv' || ext === 'tsv' || ext === 'xlsx') return Table;
+  return File;
 }
 
 /** Every `skills`-classified FILE, anywhere in the tree, flattened — folders that only contain skills are not themselves listed. */
@@ -272,6 +265,8 @@ function TreeNode({
   const { ref: rowRef, flashing } = useRevealHighlight(isRevealTarget);
 
   if (node.kind === 'dir') {
+    const FolderGlyph = open ? FolderOpen : Folder;
+
     return (
       <div>
         <button
@@ -291,7 +286,7 @@ function TreeNode({
           ) : (
             <ChevronRight className="size-3.5 shrink-0" strokeWidth={1.5} />
           )}
-          <FolderIcon open={open} className="size-[18px] shrink-0" />
+          <FolderGlyph className="size-3.5 shrink-0" strokeWidth={1.5} />
           <span className="min-w-0 truncate">{node.name}</span>
         </button>
         {open &&
@@ -311,6 +306,7 @@ function TreeNode({
   }
 
   const active = absPath === activePath;
+  const Icon = iconFor(node.name);
   return (
     <button
       type="button"
@@ -324,7 +320,7 @@ function TreeNode({
           : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
       )}
     >
-      <FileIconImg type={fileIconTypeFor(node.name)} className="size-[18px] shrink-0" />
+      <Icon className="size-3.5 shrink-0" strokeWidth={1.5} />
       <span className="min-w-0 truncate">{displayTitle(node)}</span>
     </button>
   );
@@ -337,10 +333,12 @@ function TreeNode({
  * asks for "a single Skills section," not a second parallel tree, and a
  * flat list keeps that section legible even when skills live at different
  * depths (`.claude/skills/<name>/SKILL.md`, a top-level `AGENTS.md`, a
- * `.claude/commands/*.md`). Each row gets the shimmer-on-hover
- * (`skill-row-shimmer`, defined in `renderer/tokens.css`, itself gated
- * behind `prefers-reduced-motion`) — the app's one deliberate decorative
- * motion, reserved for skills so it stays meaningful.
+ * `.claude/commands/*.md`). Each row's LABEL TEXT (not the row itself) gets
+ * the shimmer-on-hover (`skill-label-shimmer`, defined in
+ * `renderer/tokens.css`, itself gated behind `prefers-reduced-motion`) — a
+ * gradient sweep through the type via `background-clip: text` — the app's
+ * one deliberate decorative motion, reserved for skills so it stays
+ * meaningful.
  */
 function SkillsSection({
   files,
@@ -371,7 +369,7 @@ function SkillsSection({
         ) : (
           <ChevronRight className="size-3.5 shrink-0" strokeWidth={1.5} />
         )}
-        <FileIconImg type="skill" className="size-[18px] shrink-0" />
+        <Sparkles className="text-accent size-3.5 shrink-0" strokeWidth={1.5} />
         <span className="min-w-0 truncate">Skills</span>
       </button>
       {open &&
@@ -386,14 +384,14 @@ function SkillsSection({
               title={node.name}
               style={{ paddingLeft: SKILL_ROW_PADDING }}
               className={cn(
-                'skill-row-shimmer flex w-full items-center gap-1.5 py-1 pr-3 text-left text-sm transition-colors',
+                'flex w-full items-center gap-1.5 py-1 pr-3 text-left text-sm transition-colors',
                 active
                   ? 'bg-bg-2 text-text-primary'
                   : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
               )}
             >
-              <FileIconImg type="skill" className="size-[18px] shrink-0" />
-              <span className="min-w-0 truncate">{displayTitle(node)}</span>
+              <Sparkles className="text-accent size-3.5 shrink-0" strokeWidth={1.5} />
+              <span className="skill-label-shimmer min-w-0 truncate">{displayTitle(node)}</span>
             </button>
           );
         })}

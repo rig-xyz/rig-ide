@@ -60,11 +60,6 @@ function fileNode(name: string): RigFileNode {
   return { name, relPath: name, kind: 'file' };
 }
 
-// File-navigator redesign: rows now display the title (extension hidden
-// for a recognized type like `.md`) rather than the raw filename, so the
-// fixtures below use distinct base names and assert on the DISPLAYED
-// (extension-stripped) text, not the raw `x.md`/`y.md` name.
-
 async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

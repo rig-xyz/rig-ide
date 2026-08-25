@@ -23,6 +23,7 @@ import { deriveTopbarContext, type TopbarContext } from '@renderer/features/shel
 import { isUpdateReady, shouldAnnounceUpdate } from '@renderer/features/shell/update-status';
 import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
 import { FileTree } from '@renderer/features/workspace/file-tree';
+import { useAnchorRect } from '@renderer/lib/hooks/use-anchor-rect';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { Button } from '@renderer/lib/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
@@ -30,14 +31,15 @@ import { events, rpc } from '@renderer/lib/ipc';
 import { consumeJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { cn } from '@renderer/lib/utils';
 import {
+  Check,
   ChevronRight,
-  Eye,
-  EyeOff,
   Home as HomeIcon,
   MessageSquare,
+  MoreHorizontal,
   Settings as SettingsIcon,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { rigFileChangeChannel } from '@shared/rig/files';
 import {
   type RigSettings,
@@ -1004,28 +1006,10 @@ function FileBrowser({
     <div className="flex h-full min-w-0 flex-col overflow-y-auto">
       <div className="border-border-hairline flex h-10 shrink-0 items-center justify-end border-b px-3">
         <div className="flex shrink-0 items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={onToggleShowSystemFiles}
-                  aria-pressed={showSystemFiles}
-                  aria-label={showSystemFiles ? 'Hide system files' : 'Show system files'}
-                >
-                  {showSystemFiles ? (
-                    <Eye className="size-3.5" strokeWidth={1.5} />
-                  ) : (
-                    <EyeOff className="size-3.5" strokeWidth={1.5} />
-                  )}
-                </Button>
-              }
-            />
-            <TooltipContent side="bottom">
-              {showSystemFiles ? 'Hide system files' : 'Show system files'}
-            </TooltipContent>
-          </Tooltip>
+          <FileBrowserOptionsMenu
+            showSystemFiles={showSystemFiles}
+            onToggleShowSystemFiles={onToggleShowSystemFiles}
+          />
           <AddMenu root={root} onOpenFile={onOpenFile} onOpenImportDialog={() => setImportOpen(true)} />
           <RigShareButton root={root} name={name} />
         </div>
@@ -1045,5 +1029,101 @@ function FileBrowser({
         showSystemFiles={showSystemFiles}
       />
     </div>
+  );
+}
+
+/**
+ * Founder-feedback round: the raw Eye/EyeOff toggle button that used to sit
+ * bare in `FileBrowser`'s header didn't follow the app's own idiom — every
+ * other header control that isn't a single obvious action (`AddMenu` here,
+ * `RigsFilterSortMenu`/`RelayOnlyActionsMenu` in `rigs-rail.tsx`) is a
+ * `MoreHorizontal`-triggered dropdown, portaled via the same
+ * `useAnchorRect` + outside-pointerdown/Escape convention. "Show system
+ * files" is a persisted, always-on-or-off setting rather than a one-shot
+ * action, so it renders as a checked menu row (`role="menuitemcheckbox"`),
+ * matching `rigs-rail.tsx`'s `MenuOptionRow` pattern rather than a plain
+ * `menuitem`.
+ */
+function FileBrowserOptionsMenu({
+  showSystemFiles,
+  onToggleShowSystemFiles,
+}: {
+  showSystemFiles: boolean;
+  onToggleShowSystemFiles: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const rect = useAnchorRect(open, triggerRef, { gap: 4, estimatedHeight: 50, estimatedWidth: 190 });
+
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = () => setOpen(false);
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      dismiss();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') dismiss();
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="File view options"
+        title="View options"
+        className="text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex shrink-0 items-center justify-center p-1.5 transition-colors"
+      >
+        <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
+      </button>
+      {open &&
+        rect &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            style={{
+              position: 'fixed',
+              width: Math.max(rect.width, 190),
+              maxHeight: rect.maxHeight,
+              overflowY: 'auto',
+              ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
+              ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
+            }}
+            className="border-border-hairline bg-bg-1 rounded-control shadow-soft z-50 border py-1"
+          >
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={showSystemFiles}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                onToggleShowSystemFiles();
+              }}
+              className="hover:bg-bg-2 text-text-primary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+            >
+              <span className="flex size-3.5 shrink-0 items-center justify-center">
+                {showSystemFiles && <Check className="size-3" strokeWidth={1.5} />}
+              </span>
+              Show system files
+            </button>
+          </div>,
+          document.body
+        )}
+    </>
   );
 }

@@ -48,13 +48,9 @@ function isIgnored(name: string): boolean {
 /**
  * File-navigator redesign sort key: folders first, then files, both by
  * TITLE A-Z (locale compare) — a folder's title is just its name; a file's
- * is its extracted markdown title when present, else its filename (matching
- * the renderer's own display fallback closely enough that sort order and
- * displayed order agree in the overwhelming majority of cases — the one
- * gap, an extension-hidden display title diverging from this extension-ful
- * sort key, only shows up for two files sharing a base name with different
- * extensions, which is rare enough not to warrant duplicating the
- * extension-stripping logic here).
+ * is its extracted markdown title when present, else its filename, matching
+ * the renderer's own display fallback (`file-tree.tsx`'s `displayTitle`)
+ * exactly, so sort order and displayed order always agree.
  */
 function sortKey(node: RigFileNode): string {
   return node.title ?? node.name;
