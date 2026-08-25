@@ -17,7 +17,12 @@ import { cn } from '@renderer/lib/utils';
 import { classifyEntryCategory } from '@shared/rig/file-navigator-categories';
 import { rigFileChangeChannel } from '@shared/rig/files';
 import type { RigFileNode } from '@shared/rig/files';
-import { rigSettingsChangedChannel } from '@shared/rig/settings';
+import {
+  DEFAULT_FILE_TREE_VIEW,
+  rigSettingsChangedChannel,
+  type FileTreeFilter,
+  type FileTreeSort,
+} from '@shared/rig/settings';
 import {
   collectFileRelPaths,
   computeUnseenSummary,
@@ -25,6 +30,8 @@ import {
   rigSeenStateChangedChannel,
   type SeenMap,
 } from '@shared/rig/seen-state';
+import { filterTree, sortTree, type TreeViewContext } from '@shared/rig/tree-view';
+import { useEverWrittenPaths } from './write-activity';
 
 /**
  * Real filesystem tree for the opened rig, via `rpc.rig.files.list` — a small,
@@ -139,6 +146,8 @@ export function FileTree({
   onOpenFile,
   justAttachedSyncing = false,
   showSystemFiles = false,
+  sort = DEFAULT_FILE_TREE_VIEW.sort,
+  filter = DEFAULT_FILE_TREE_VIEW.filter,
 }: {
   root: string;
   /**
@@ -176,6 +185,9 @@ export function FileTree({
   justAttachedSyncing?: boolean;
   /** File-navigator redesign: System entries stay hidden until this is true (`App.tsx`'s `FileBrowser` header toggle). */
   showSystemFiles?: boolean;
+  /** File-navigator redesign (§5): the tree's own sort/filter choice (`App.tsx`'s `FileBrowserOptionsMenu`), per rig — defaults match `DEFAULT_FILE_TREE_VIEW` for the same reason `showSystemFiles` defaults `false`: existing tests mount `FileTree` without either. */
+  sort?: FileTreeSort;
+  filter?: FileTreeFilter;
 }) {
   const queryClient = useQueryClient();
   const queryKey = useMemo(() => rigFilesQueryKey(root), [root]);
@@ -260,6 +272,23 @@ export function FileTree({
     [contentTree, seenState]
   );
 
+  // File-navigator redesign (§5): sort/filter applied AFTER the content/
+  // system split above, per `tree-view.ts`'s own header comment — filter
+  // what's shown, then order what's left. `agentWrittenFiles` reuses the
+  // same live write-observation slice the card rail's "in progress" cards
+  // already read (`write-activity.ts`); the dots' own `seenState`/`unseen`
+  // computed above are reused rather than refetched.
+  const agentWrittenFiles = useEverWrittenPaths(root);
+  const viewTree = useMemo(() => {
+    const ctx: TreeViewContext = {
+      seen: seenState?.seen ?? {},
+      unseenFiles: unseen.unseenFiles,
+      agentWrittenFiles,
+      now: Date.now(),
+    };
+    return sortTree(filterTree(contentTree, filter, ctx), sort, ctx);
+  }, [contentTree, filter, sort, seenState, unseen.unseenFiles, agentWrittenFiles]);
+
   const markSeen = (relPath: string) => {
     if (!bindingId) return;
     void rpc.rig.seenState.markSeen({ bindingId, relPath });
@@ -331,7 +360,7 @@ export function FileTree({
 
   return (
     <div className="flex flex-col py-1">
-      {contentTree.map((node) => (
+      {viewTree.map((node) => (
         <TreeNode
           key={node.relPath}
           node={node}
