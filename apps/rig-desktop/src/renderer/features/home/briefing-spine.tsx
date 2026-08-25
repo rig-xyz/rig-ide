@@ -18,6 +18,7 @@ import type {
 } from '@shared/rig/pulse';
 import { resolveRigNameClick } from './home-sections';
 import { composeGreeting, firstNameOf } from './greeting';
+import { summarySegments } from './summary-segments';
 import {
   askErrorMessage,
   deriveAskSourceItems,
@@ -187,7 +188,13 @@ export function BriefingSpine({
           ) : state.kind === 'error' ? (
             <p className="text-text-muted font-mono text-xs">{state.message}</p>
           ) : (
-            <Header hour={hour} firstName={firstName} summary={state.kind === 'data' ? state.briefing.summary : ''} />
+            <Header
+              hour={hour}
+              firstName={firstName}
+              summary={state.kind === 'data' ? state.briefing.summary : ''}
+              rigs={state.kind === 'data' ? state.briefing.perRig : []}
+              onClickRig={onClickRig}
+            />
           )}
         </div>
         {state.kind === 'data' && (
@@ -224,13 +231,48 @@ export function BriefingSpine({
   );
 }
 
-/** Mono uppercase date kicker + a LOCALLY composed display greeting (see this file's own header comment) + the one summary sentence (still pulse's). */
-function Header({ hour, firstName, summary }: { hour: number; firstName: string | null; summary: string }) {
+/**
+ * Mono uppercase date kicker + a LOCALLY composed display greeting (see
+ * this file's own header comment) + the one summary sentence (still
+ * pulse's, but rendered through `summarySegments`: internal identifiers
+ * stripped, rig names turned into real links into the rig).
+ */
+function Header({
+  hour,
+  firstName,
+  summary,
+  rigs,
+  onClickRig,
+}: {
+  hour: number;
+  firstName: string | null;
+  summary: string;
+  rigs: readonly { bindingId: string; rigName: string }[];
+  onClickRig: (bindingId: string) => void;
+}) {
+  const segments = summarySegments(summary, rigs);
   return (
     <div className="flex flex-col gap-1">
       <p className="text-text-muted font-mono text-xs tracking-wide uppercase">{dateKicker()}</p>
       <h1 className="font-display text-text-primary text-2xl leading-snug">{composeGreeting(hour, firstName)}</h1>
-      {summary && <p className="text-text-muted text-sm leading-relaxed">{summary}</p>}
+      {segments.length > 0 && (
+        <p className="text-text-muted text-sm leading-relaxed">
+          {segments.map((segment, index) =>
+            segment.kind === 'rig' ? (
+              <button
+                key={`${segment.bindingId}-${index}`}
+                type="button"
+                onClick={() => onClickRig(segment.bindingId)}
+                className="text-text-primary hover:decoration-text-primary underline decoration-current/30 underline-offset-2 transition-colors"
+              >
+                {segment.text}
+              </button>
+            ) : (
+              <span key={index}>{segment.text}</span>
+            )
+          )}
+        </p>
+      )}
     </div>
   );
 }
