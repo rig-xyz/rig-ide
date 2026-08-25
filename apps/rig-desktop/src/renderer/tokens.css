@@ -42,6 +42,8 @@
   --accent: #5fa8a3;
   --accent-subtle: rgba(95, 168, 163, 0.14);
   --accent-ink: #04201d;
+  /** The specular band in `.active-shimmer` — brighter than the text it crosses. */
+  --shimmer-highlight: #ffffff;
   --success: #4ade80;
   --warning: #c98a52;
   --danger: #d9776b;
@@ -63,6 +65,7 @@
     --accent: #2f7a6d;
     --accent-subtle: rgba(47, 122, 109, 0.12);
     --accent-ink: #f4fbfa;
+  --shimmer-highlight: #b8bcc4;
     --success: #166534;
     --warning: #9c6a34;
     --danger: #b8483d;
@@ -87,6 +90,8 @@
   --accent: #5fa8a3;
   --accent-subtle: rgba(95, 168, 163, 0.14);
   --accent-ink: #04201d;
+  /** The specular band in `.active-shimmer` — brighter than the text it crosses. */
+  --shimmer-highlight: #ffffff;
   --success: #4ade80;
   --warning: #c98a52;
   --danger: #d9776b;
@@ -107,6 +112,7 @@
   --accent: #2f7a6d;
   --accent-subtle: rgba(47, 122, 109, 0.12);
   --accent-ink: #f4fbfa;
+  --shimmer-highlight: #b8bcc4;
   --success: #166534;
   --warning: #9c6a34;
   --danger: #b8483d;
@@ -181,31 +187,20 @@
  * never even downloads a hover state that would animate — the label still
  * reads fine via its plain text color, just without the sweep.
  */
-@keyframes skill-shimmer-sweep {
-  from {
-    background-position: -150% 0;
-  }
-  to {
-    background-position: 250% 0;
-  }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .skill-label-shimmer:hover {
-    background-image: linear-gradient(
-      100deg,
-      var(--text-primary) 30%,
-      var(--accent) 45%,
-      var(--accent) 55%,
-      var(--text-primary) 70%
-    );
-    background-size: 250% 100%;
-    background-clip: text;
-    -webkit-background-clip: text;
-    color: transparent;
-    animation: skill-shimmer-sweep 2.2s ease-in-out infinite;
-  }
-}
+/*
+ * File-navigator redesign (`docs/file-navigator-design.md` §1): the ONE
+ * deliberate decorative motion in the app — a slow specular sweep through a
+ * Skills row's LABEL TEXT on hover (`file-tree.tsx`'s `SkillsSection`),
+ * reserved for the category the design doc calls "not machinery — the
+ * magic" so it stays meaningful rather than becoming ambient noise. Text
+ * only, not the row: `background-clip: text` fills the label's glyphs with
+ * the sweeping gradient while the row's own `hover:bg-bg-2` background
+ * behaves exactly as any other row's. Deliberately NOT a Tailwind utility:
+ * the whole rule (including the hover selector) lives inside the
+ * `prefers-reduced-motion: no-preference` query so a reduced-motion user
+ * never even downloads a hover state that would animate — the label still
+ * reads fine via its plain text color, just without the sweep.
+ */
 
 /*
  * File-navigator redesign (`docs/file-navigator-design.md` §3/§6, v2 round
@@ -232,22 +227,6 @@
 @media (prefers-reduced-motion: no-preference) {
   .card-pop-in {
     animation: card-pop-in 180ms ease-out;
-  }
-}
-
-@keyframes pulse-dot {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .pulse-dot {
-    animation: pulse-dot 1.8s ease-in-out infinite;
   }
 }
 
@@ -302,36 +281,75 @@
 }
 
 /*
- * `.active-shimmer`: a file being written RIGHT NOW by an agent or a
- * collaborator. State, not decoration — it runs only while that is true and
- * stops the moment the write window closes, which is why it earns the
- * gradient-through-text treatment the skills hover shimmer also uses.
+ * `.active-shimmer`: a file being written RIGHT NOW by an agent. State,
+ * not decoration — it runs only while that is true and stops the moment
+ * the write window closes.
+ *
+ * METALLIC, not accent-coloured: a bright specular band travelling through
+ * otherwise normal text, the way light crosses brushed metal. Tinting the
+ * whole string green made it read as a link and fought every other use of
+ * the accent in this app.
+ *
+ * One shared duration and timing function for the sweep AND the companion
+ * dot below, so the two are in phase. They were running at 2.6s and 1.8s
+ * against each other, which is exactly what made the pair look broken
+ * rather than alive.
  */
-@media (prefers-reduced-motion: no-preference) {
-  .active-shimmer {
-    background-image: linear-gradient(
-      100deg,
-      var(--text-primary) 35%,
-      var(--accent) 50%,
-      var(--text-primary) 65%
-    );
-    background-size: 250% 100%;
-    background-clip: text;
-    -webkit-background-clip: text;
-    color: transparent;
-    animation: skill-shimmer-sweep 2.6s ease-in-out infinite;
+@keyframes active-sweep {
+  from {
+    background-position: 180% 0;
   }
+  to {
+    background-position: -80% 0;
+  }
+}
+
+@keyframes active-dot {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .active-shimmer,
   .active-shimmer-muted {
     background-image: linear-gradient(
       100deg,
-      var(--text-muted) 35%,
-      var(--accent) 50%,
-      var(--text-muted) 65%
+      var(--shimmer-base) 0%,
+      var(--shimmer-base) 38%,
+      var(--shimmer-highlight) 50%,
+      var(--shimmer-base) 62%,
+      var(--shimmer-base) 100%
     );
-    background-size: 250% 100%;
+    background-size: 220% 100%;
     background-clip: text;
     -webkit-background-clip: text;
     color: transparent;
-    animation: skill-shimmer-sweep 2.6s ease-in-out infinite;
+    animation: active-sweep 3.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  }
+  .active-shimmer {
+    --shimmer-base: var(--text-primary);
+  }
+  .active-shimmer-muted {
+    --shimmer-base: var(--text-muted);
+  }
+  .active-dot {
+    animation: active-dot 3.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  }
+}
+
+/*
+ * Reduced motion keeps the meaning without the movement: the text simply
+ * stays at full contrast and the dot stays lit.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .active-shimmer {
+    color: var(--text-primary);
   }
 }

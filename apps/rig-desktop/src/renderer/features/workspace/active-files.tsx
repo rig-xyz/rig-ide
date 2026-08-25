@@ -266,7 +266,7 @@ function FileCard({
             <>
               <RigMark size={11} className="shrink-0" />
               <span className="truncate">Editing now</span>
-              <span className="bg-accent pulse-dot size-[5px] shrink-0 rounded-full" />
+              <span className="bg-accent active-dot size-[5px] shrink-0 rounded-full" />
             </>
           ) : (
             <>

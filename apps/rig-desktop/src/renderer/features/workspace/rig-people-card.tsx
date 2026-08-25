@@ -8,23 +8,22 @@ import { relativeTime } from '@renderer/features/chat/session-history';
 import { usePulseBriefing } from '@renderer/features/home/use-pulse-briefing';
 
 /**
- * The workspace's PEOPLE section: who is in this rig and what each of them
- * has been doing. One section, one shape, the same as Home's `PeopleRail` —
- * label, then a row per person.
+ * The workspace's PEOPLE section: who is in this rig, and one line about
+ * what has been happening in it.
  *
- * It used to be four stacked blocks (label, a person, a divider, a rig-level
- * summary with its own timestamp line) which read as several unrelated
- * things in one box. The rig-level summary is gone from here entirely: the
- * files below already say what changed in this rig, and this section is
- * about people. What is left is one idea per row.
+ * Two rules learned the hard way. First, the line has to be about THIS rig
+ * — the briefing's per-person narration is account-wide and reads as
+ * generic filler when you are standing inside one rig, so `perRig` is the
+ * only part shown. Second, people and that line stay visually separate: an
+ * earlier version stacked the rig summary directly under a member's name
+ * and avatar, which read as something that person had said.
  *
  * The briefing is a cached narration the relay regenerates roughly every
- * three hours, so the header carries a refresh control (its age lives in
- * the tooltip). Without one, a summary that reads as current could be hours
- * old with no way to ask for a new one.
+ * three hours, and `usePulseBriefing` already forces a fresh one when it
+ * ages out. The refresh control is therefore a nudge for impatience, not
+ * the mechanism, and stays hidden until the section is hovered.
  */
 export function RigPeopleCard({ root, bindingId }: { root: string; bindingId: string | null }) {
-  void bindingId;
   const membersQuery = useQuery({
     queryKey: ['rig', 'share', 'members', root],
     queryFn: () => rpc.rig.share.members({ root }),
@@ -35,6 +34,16 @@ export function RigPeopleCard({ root, bindingId }: { root: string; bindingId: st
   const members = membersQuery.data?.success ? membersQuery.data.data.members : [];
   const briefing = state.kind === 'data' ? state.briefing : null;
   const generatedAt = briefing ? Date.parse(briefing.generatedAt) : NaN;
+  /**
+   * THIS rig's line, not the account-wide personal one. `perPerson` reads
+   * "across 3 rigs, CTO reviews, grammar cleanup" — true, and completely
+   * generic when you are standing inside one rig looking at its files.
+   * `perRig` is the only part of the briefing actually about the rig in
+   * front of you, so it is the only part shown here.
+   */
+  const rigLine = bindingId
+    ? (briefing?.perRig.find((item) => item.bindingId === bindingId)?.line ?? null)
+    : null;
 
   // A rig nobody shares is a rig with nothing to say about people. Local
   // rigs and unreachable-relay states both land here.
@@ -46,9 +55,14 @@ export function RigPeopleCard({ root, bindingId }: { root: string; bindingId: st
   );
 
   return (
-    <div className="mx-4 mt-4 flex flex-col gap-2.5">
-      <div className="flex items-center gap-2">
+    <div className="group/people mx-4 mt-4 flex flex-col gap-2">
+      <div className="flex items-center gap-1.5">
         <p className="text-text-muted font-mono text-xs tracking-wide uppercase">People</p>
+        {/*
+          The briefing refreshes itself when it ages out, so this is a
+          nudge, not the mechanism — it stays out of sight until you go
+          looking for it.
+        */}
         <Tooltip>
           <TooltipTrigger
             render={
@@ -57,7 +71,12 @@ export function RigPeopleCard({ root, bindingId }: { root: string; bindingId: st
                 onClick={() => void forceRefresh()}
                 disabled={refreshing}
                 aria-label="Refresh summary"
-                className="text-text-muted hover:bg-bg-2 hover:text-text-primary rounded-control flex size-5 items-center justify-center transition-colors disabled:opacity-60"
+                className={cn(
+                  'text-text-muted hover:bg-bg-2 hover:text-text-primary rounded-control flex size-5 items-center justify-center transition-opacity',
+                  refreshing
+                    ? 'opacity-100'
+                    : 'opacity-0 group-hover/people:opacity-100 focus-visible:opacity-100'
+                )}
               >
                 <RefreshCw className={cn('size-3', refreshing && 'animate-spin')} strokeWidth={1.5} />
               </button>
@@ -72,30 +91,37 @@ export function RigPeopleCard({ root, bindingId }: { root: string; bindingId: st
           </TooltipContent>
         </Tooltip>
       </div>
-      <div className="flex flex-col gap-2.5">
-        {ordered.map((member) => {
-          const line = briefing?.perPerson.find((p) => p.userId === member.userId)?.line ?? null;
-          return (
-            <div key={member.userId} className="flex items-start gap-2.5">
-              <IdentityAvatar
-                name={member.name}
-                avatarUrl={member.avatarUrl}
-                sizeClassName="size-6"
-                textClassName="text-xs"
-                className="mt-0.5"
-              />
-              <div className="min-w-0 flex-1">
-                <p className="text-text-primary text-xs font-medium">
-                  {member.userId === selfId ? 'You' : (member.name ?? member.email ?? 'Teammate')}
-                </p>
-                <p className="text-text-muted mt-0.5 text-xs leading-relaxed">
-                  {line ?? member.role}
-                </p>
-              </div>
-            </div>
-          );
-        })}
+      {/*
+        Faces in a row, names on hover: who is in this rig is a glance, not
+        a list to read. Keeping people and the rig's summary line visually
+        separate is deliberate — stacking the summary under one person's
+        name and avatar made it read as something they had said.
+      */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        {ordered.map((member) => (
+          <Tooltip key={member.userId}>
+            <TooltipTrigger
+              render={
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <IdentityAvatar
+                    name={member.name}
+                    avatarUrl={member.avatarUrl}
+                    sizeClassName="size-5"
+                    textClassName="text-xs"
+                  />
+                  <span className="text-text-secondary min-w-0 truncate text-xs">
+                    {member.userId === selfId ? 'You' : (member.name ?? member.email ?? 'Teammate')}
+                  </span>
+                </div>
+              }
+            />
+            <TooltipContent side="bottom">
+              {member.email ? `${member.email} · ${member.role}` : member.role}
+            </TooltipContent>
+          </Tooltip>
+        ))}
       </div>
+      {rigLine && <p className="text-text-muted text-xs leading-relaxed">{rigLine}</p>}
     </div>
   );
 }

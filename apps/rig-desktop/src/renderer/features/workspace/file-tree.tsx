@@ -20,7 +20,6 @@ import {
   MoreHorizontal,
   Pencil,
   Pin,
-  Sparkles,
   Table,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -39,7 +38,6 @@ import {
 import {
   collectFileRelPaths,
   computeUnseenSummary,
-  isFileUnseen,
   rigSeenStateChangedChannel,
   type SeenMap,
 } from '@shared/rig/seen-state';
@@ -98,9 +96,6 @@ import { ContextMenuItem, ContextMenuSeparator, RowContextMenu, useRowContextMen
 
 const HIGHLIGHT_MS = 1400;
 
-/** The explorer's views. Content and capability are different kinds of thing, so they get tabs rather than a filter. */
-export type ExplorerTab = 'files' | 'skills';
-
 /** Sort names describe the resulting ORDER, not the machinery behind it. */
 const FILE_SORT_LABELS: Record<FileTreeSort, string> = {
   smart: 'Activity',
@@ -112,8 +107,6 @@ const FILE_SORT_ICONS: Record<FileTreeSort, typeof Clock> = {
   modified: Clock,
   name: ArrowDownAZ,
 };
-/** One level of nested indent, matching a depth-1 file row's own `indent + 18`. */
-const SKILL_ROW_PADDING = 8 + 14 + 18;
 
 /**
  * The unseen mark: one dot, in a fixed-width gutter at the START of every
@@ -164,22 +157,6 @@ export function rigFilesQueryKey(root: string): readonly ['rig', 'files', 'list'
   return ['rig', 'files', 'list', root];
 }
 
-/** Every `skills`-classified FILE, anywhere in the tree, flattened — folders that only contain skills are not themselves listed. */
-function collectSkillFiles(nodes: RigFileNode[]): RigFileNode[] {
-  const out: RigFileNode[] = [];
-  const walk = (list: RigFileNode[]) => {
-    for (const node of list) {
-      if (node.kind === 'dir') {
-        walk(node.children ?? []);
-        continue;
-      }
-      if (classifyEntryCategory(node.relPath) === 'skills') out.push(node);
-    }
-  };
-  walk(nodes);
-  return out;
-}
-
 /**
  * The normal content tree: Skills entries are always pulled out (they
  * render in their own section, see `collectSkillFiles`); System entries
@@ -192,8 +169,13 @@ function filterContentTree(nodes: RigFileNode[], showSystemFiles: boolean): RigF
   const out: RigFileNode[] = [];
   for (const node of nodes) {
     const category = classifyEntryCategory(node.relPath);
-    if (category === 'skills') continue;
-    if (category === 'system' && !showSystemFiles) continue;
+    // Skills used to get their own tab and shimmer. A flat list of
+    // SKILL.md files told nobody anything useful, so the whole idea is
+    // withdrawn rather than half-shipped: skill files are machinery like
+    // everything else under a dot-folder, hidden unless you ask to see
+    // system files. Worth revisiting only with a real design for what a
+    // skill IS to a reader.
+    if ((category === 'skills' || category === 'system') && !showSystemFiles) continue;
 
     if (node.kind === 'dir') {
       const originalChildren = node.children ?? [];
@@ -277,7 +259,6 @@ export function FileTree({
   onProvideMarkAllSeen?: (fn: (() => void) | null) => void;
 }) {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<ExplorerTab>('files');
   const queryKey = useMemo(() => rigFilesQueryKey(root), [root]);
   const [sawChange, setSawChange] = useState(false);
   const { data, isLoading, error } = useQuery({
@@ -309,7 +290,6 @@ export function FileTree({
     };
   }, [root, queryClient, queryKey]);
 
-  const skillFiles = useMemo(() => collectSkillFiles(data ?? []), [data]);
   const contentTree = useMemo(
     () => filterContentTree(data ?? [], showSystemFiles),
     [data, showSystemFiles]
@@ -492,9 +472,6 @@ export function FileTree({
    */
   const tabs = (
     <ExplorerTabs
-      tab={tab}
-      onChangeTab={setTab}
-      skillCount={skillFiles.length}
       sort={sort}
       onChangeSort={onChangeSort}
       showSystemFiles={showSystemFiles}
@@ -520,7 +497,7 @@ export function FileTree({
       </>
     );
   }
-  if (!data || data.length === 0 || (contentTree.length === 0 && skillFiles.length === 0)) {
+  if (!data || data.length === 0 || contentTree.length === 0) {
     if (justAttachedSyncing && !sawChange) {
       return (
         <>
@@ -552,9 +529,8 @@ export function FileTree({
           if (bindingId) menu.open(event, null);
         }}
       >
-        {tab === 'files' ? (
-          viewTree.length === 0 ? (
-            <p className="text-text-muted px-3 py-6 text-center text-xs">
+        {viewTree.length === 0 ? (
+          <p className="text-text-muted px-3 py-6 text-center text-xs">
               {search ? `Nothing matching "${search}".` : 'Nothing here yet.'}
             </p>
           ) : (
@@ -570,23 +546,12 @@ export function FileTree({
                 onContextMenu={menu.open}
                 onRowMenu={openRowMenu}
                 statusFor={statusFor}
-                forceOpen={search.trim().length > 0}
+                forceOpen={search.trim().length > 0 || filter === 'unseen'}
                 unseenFiles={unseen.unseenFiles}
                 unseenCountByDir={unseen.unseenCountByDir}
                 pinned={pinned}
               />
-            ))
-          )
-        ) : (
-          <SkillsList
-            files={skillFiles}
-            root={root}
-            activePath={activePath}
-            search={search}
-            onOpenFile={handleOpenFile}
-            onContextMenu={menu.open}
-            seenState={seenState}
-          />
+          ))
         )}
       </div>
 
@@ -873,77 +838,13 @@ function TreeNode({
  * flat list keeps that section legible even when skills live at different
  * depths (`.claude/skills/<name>/SKILL.md`, a top-level `AGENTS.md`, a
  * `.claude/commands/*.md`). Each row's LABEL TEXT (not the row itself) gets
- * the shimmer-on-hover (`skill-label-shimmer`, defined in
+ * the live-write shimmer (`active-shimmer`, defined in
  * `renderer/tokens.css`, itself gated behind `prefers-reduced-motion`) — a
  * gradient sweep through the type via `background-clip: text` — the app's
  * one deliberate decorative motion, reserved for skills so it stays
  * meaningful. v2 round: unchanged apart from the same tooltip-only-when-
  * truncated rule (§3.3) every other row now follows.
  */
-function SkillsList({
-  files,
-  root,
-  activePath,
-  search,
-  onOpenFile,
-  onContextMenu,
-  seenState,
-}: {
-  files: RigFileNode[];
-  root: string;
-  activePath: string | null;
-  /** The header's live query, applied here too so search works on whichever tab is open. */
-  search: string;
-  onOpenFile: (absPath: string, relPath: string) => void;
-  onContextMenu: (event: React.MouseEvent, node: RigFileNode) => void;
-  /** File-navigator redesign (§4): same seen-state FileTree already fetched — null while it's still loading, or when there's no bindingId at all. */
-  seenState: { baselineAt: number; seen: SeenMap } | null;
-}) {
-  const query = search.trim().toLowerCase();
-  const sorted = [...files]
-    .filter((node) => !query || node.name.toLowerCase().includes(query) || (node.title ?? '').toLowerCase().includes(query))
-    .sort((a, b) => displayName(a).localeCompare(displayName(b)));
-
-  if (sorted.length === 0) {
-    return (
-      <p className="text-text-muted px-3 py-6 text-center text-xs">
-        {query ? `No skills matching "${query}".` : 'No skills in this rig yet.'}
-      </p>
-    );
-  }
-
-  return (
-    <>
-      {sorted.map((node) => {
-        const absPath = `${root}/${node.relPath}`;
-        const active = absPath === activePath;
-        const isUnseen = seenState
-          ? isFileUnseen(node.mtimeMs, seenState.seen[node.relPath], seenState.baselineAt)
-          : false;
-        return (
-          <button
-            key={node.relPath}
-            type="button"
-            onClick={() => onOpenFile(absPath, node.relPath)}
-            onContextMenu={(event) => onContextMenu(event, node)}
-            style={{ paddingLeft: SKILL_ROW_PADDING }}
-            className={cn(
-              'rounded-control flex h-7 w-full items-center gap-1.5 pr-2 text-left text-sm transition-colors',
-              active ? 'bg-bg-2 text-text-primary' : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
-            )}
-          >
-            <UnseenMark show={isUnseen} />
-            <Sparkles className="text-accent size-3.5 shrink-0" strokeWidth={1.5} />
-            <RowLabel text={displayName(node)} title={rowTitleHint(node)} className="skill-label-shimmer" />
-            <div className="flex-1" />
-            <span className="w-14 shrink-0" />
-          </button>
-        );
-      })}
-    </>
-  );
-}
-
 /**
  * The explorer's own chrome: which view of the rig you are looking at, and
  * how it is ordered. Tabs rather than a filter menu because "all files" and
@@ -954,17 +855,11 @@ function SkillsList({
  * is, so nothing about the current view is hidden inside a popover.
  */
 function ExplorerTabs({
-  tab,
-  onChangeTab,
-  skillCount,
   sort,
   onChangeSort,
   showSystemFiles,
   onToggleShowSystemFiles,
 }: {
-  tab: ExplorerTab;
-  onChangeTab: (tab: ExplorerTab) => void;
-  skillCount: number;
   sort: FileTreeSort;
   onChangeSort?: (sort: FileTreeSort) => void;
   showSystemFiles: boolean;
@@ -973,14 +868,6 @@ function ExplorerTabs({
 }) {
   return (
     <div className="border-border-hairline flex h-10 shrink-0 items-center gap-1 border-b px-3">
-      <TabButton active={tab === 'files'} onClick={() => onChangeTab('files')}>
-        All files
-      </TabButton>
-      {skillCount > 0 && (
-        <TabButton active={tab === 'skills'} onClick={() => onChangeTab('skills')}>
-          Skills
-        </TabButton>
-      )}
       <div className="flex-1" />
       {onChangeSort && (
         <SortControl
@@ -991,31 +878,6 @@ function ExplorerTabs({
         />
       )}
     </div>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      onClick={onClick}
-      className={cn(
-        'rounded-control px-2 py-1 text-xs font-medium transition-colors',
-        active ? 'bg-bg-2 text-text-primary' : 'text-text-muted hover:text-text-primary'
-      )}
-    >
-      {children}
-    </button>
   );
 }
 
