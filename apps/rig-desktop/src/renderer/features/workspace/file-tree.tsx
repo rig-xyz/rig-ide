@@ -97,6 +97,8 @@ import { ContextMenuItem, ContextMenuSeparator, RowContextMenu, useRowContextMen
  */
 
 const HIGHLIGHT_MS = 1400;
+/** How fresh a change has to be for a row to wear the "Recent" pill. */
+const RECENT_PILL_MS = 60 * 60 * 1000;
 
 /** The explorer's views. Content and capability are different kinds of thing, so they get tabs rather than a filter. */
 export type ExplorerTab = 'files' | 'skills';
@@ -205,6 +207,7 @@ export function FileTree({
   onChangeSort,
   onToggleShowSystemFiles,
   onUnseenCountChange,
+  onProvideMarkAllSeen,
 }: {
   root: string;
   /**
@@ -253,6 +256,8 @@ export function FileTree({
   onToggleShowSystemFiles?: () => void;
   /** v2 round (§3.1): reports the CONTENT-ONLY unseen total (independent of `showSystemFiles`) up to the header's "N new" chip. */
   onUnseenCountChange?: (count: number) => void;
+  /** v3: hands the header's "N new" chip a way to clear everything, using the listing this component already has. */
+  onProvideMarkAllSeen?: (fn: (() => void) | null) => void;
 }) {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<ExplorerTab>('files');
@@ -375,6 +380,21 @@ export function FileTree({
     void rpc.rig.seenState.markAllSeen({ bindingId, relPaths });
   };
 
+  useEffect(() => {
+    if (!onProvideMarkAllSeen) return;
+    if (!bindingId || !data) {
+      onProvideMarkAllSeen(null);
+      return;
+    }
+    const paths = collectFileRelPaths(data);
+    // Wrapped in a thunk: `setState` treats a bare function argument as an
+    // updater, so the callback has to arrive inside another function.
+    onProvideMarkAllSeen(() => () => {
+      void rpc.rig.seenState.markAllSeen({ bindingId, relPaths: paths });
+    });
+    return () => onProvideMarkAllSeen(null);
+  }, [bindingId, data, onProvideMarkAllSeen]);
+
   const handleOpenFile = (absPath: string, relPath: string) => {
     markSeen(relPath);
     onOpenFile(absPath);
@@ -429,12 +449,29 @@ export function FileTree({
   // a human's editor from the sync daemon).
   const recentWrites = useRecentWrites(root);
   const agentPaths = useMemo(() => new Set(recentWrites.map((w) => w.relPath)), [recentWrites]);
+  const mtimeByPath = useMemo(() => {
+    const map = new Map<string, number>();
+    const walk = (list: RigFileNode[]) => {
+      for (const node of list) {
+        if (node.kind === 'dir') walk(node.children ?? []);
+        else if (node.mtimeMs !== undefined) map.set(node.relPath, node.mtimeMs);
+      }
+    };
+    walk(data ?? []);
+    return map;
+  }, [data]);
+
   const statusFor = useCallback(
     (relPath: string): RowStatus | null => {
       if (agentPaths.has(relPath)) return { kind: 'agent' };
+      const mtime = mtimeByPath.get(relPath);
+      // A tight window on purpose: the row already shows its own relative
+      // time, so the pill is reserved for "this just happened" rather than
+      // repeating the timestamp as a badge on half the tree.
+      if (mtime !== undefined && Date.now() - mtime < RECENT_PILL_MS) return { kind: 'recent' };
       return null;
     },
-    [agentPaths]
+    [agentPaths, mtimeByPath]
   );
 
   // The `⋯` button opens the shared menu at the button's own corner rather
@@ -714,7 +751,7 @@ function TreeNode({
   // still-pending reveal.
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
   const absPath = `${root}/${node.relPath}`;
-  const indent = 8 + depth * 14;
+  const indent = 12 + depth * 14;
 
   // Computed for every node (not just dirs) so the two hooks below are
   // called unconditionally, in the same order, on every render — a file
@@ -752,7 +789,15 @@ function TreeNode({
           )}
           <FolderGlyph className="size-3.5 shrink-0" strokeWidth={1.5} />
           <RowLabel text={displayName(node)} className="flex-1" />
-          {!!unseenCount && <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />}
+          {/*
+            A folder's dot stands in for the unseen rows hidden inside it,
+            so it disappears the moment those rows are on screen carrying
+            their own dots. Showing both at once was the inconsistency:
+            the same fact stated twice, at two levels.
+          */}
+          {!open && !!unseenCount && (
+            <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />
+          )}
         </button>
         {open &&
           (node.children ?? []).map((child) => (
@@ -939,7 +984,7 @@ function ExplorerTabs({
   onToggleShowSystemFiles?: () => void;
 }) {
   return (
-    <div className="border-border-hairline flex h-9 shrink-0 items-center gap-1 border-b px-2">
+    <div className="border-border-hairline flex h-10 shrink-0 items-center gap-1 border-b px-3">
       <TabButton active={tab === 'files'} onClick={() => onChangeTab('files')}>
         All files
       </TabButton>

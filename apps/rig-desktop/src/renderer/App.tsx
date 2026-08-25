@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  CheckCheck,
   ChevronRight,
   Home as HomeIcon,
   MessageSquare,
@@ -1109,6 +1110,12 @@ function FileBrowser({
   // again clears. Reuses the same persisted `view.filter` the sort menu's
   // own choices go through, so the chip and a future sort-menu equivalent
   // can never disagree about the current filter state.
+  // Clearing from the chip needs the rig's full file list, which only the
+  // tree has fetched — it hands its own "mark everything seen" action up
+  // here rather than this component issuing a second listing call.
+  const [markAllSeen, setMarkAllSeen] = useState<(() => void) | null>(null);
+  const onMarkAllSeen = useCallback(() => markAllSeen?.(), [markAllSeen]);
+
   const toggleUnseenChip = useCallback(() => {
     onChangeView({ ...view, filter: view.filter === 'unseen' ? 'all' : 'unseen' });
   }, [view, onChangeView]);
@@ -1142,7 +1149,7 @@ function FileBrowser({
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-y-auto">
-      <div className="border-border-hairline flex h-10 shrink-0 items-center gap-2 border-b px-3">
+      <div className="border-border-hairline flex h-11 shrink-0 items-center gap-2 border-b px-4">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <div className="relative flex min-w-0 max-w-56 flex-1 items-center">
             <Search className="text-text-muted pointer-events-none absolute left-2 size-3.5" strokeWidth={1.5} />
@@ -1154,19 +1161,38 @@ function FileBrowser({
             />
           </div>
           {unseenCount > 0 && (
-            <button
-              type="button"
-              onClick={toggleUnseenChip}
-              aria-pressed={view.filter === 'unseen'}
+            /*
+              Two actions on one chip: the label filters to what is new,
+              the trailing check clears it. The check only appears on hover
+              or focus, so at rest this is a quiet count rather than a
+              control panel, and clearing is never a click away from being
+              discovered when you want it.
+            */
+            <div
               className={cn(
-                'shrink-0 rounded-full px-2 py-1 text-xs font-medium transition-colors',
-                view.filter === 'unseen'
-                  ? 'bg-accent text-accent-ink'
-                  : 'bg-accent-subtle text-accent hover:opacity-80'
+                'group flex shrink-0 items-center rounded-full text-xs font-medium transition-colors',
+                view.filter === 'unseen' ? 'bg-accent text-accent-ink' : 'bg-accent-subtle text-accent'
               )}
             >
-              {unseenCount} new
-            </button>
+              <button
+                type="button"
+                onClick={toggleUnseenChip}
+                aria-pressed={view.filter === 'unseen'}
+                title={view.filter === 'unseen' ? 'Show everything' : 'Show only what is new'}
+                className="rounded-full py-1 pr-1 pl-2.5 hover:opacity-80"
+              >
+                {unseenCount} new
+              </button>
+              <button
+                type="button"
+                onClick={onMarkAllSeen}
+                title="Mark all as seen"
+                aria-label="Mark all as seen"
+                className="w-0 overflow-hidden opacity-0 transition-all group-hover:w-6 group-hover:pr-1.5 group-hover:opacity-100 focus-visible:w-6 focus-visible:pr-1.5 focus-visible:opacity-100"
+              >
+                <CheckCheck className="size-3.5" strokeWidth={1.75} />
+              </button>
+            </div>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -1200,6 +1226,7 @@ function FileBrowser({
         onChangeSort={(next) => onChangeView({ ...view, sort: next })}
         onToggleShowSystemFiles={onToggleShowSystemFiles}
         onUnseenCountChange={setUnseenCount}
+        onProvideMarkAllSeen={setMarkAllSeen}
       />
     </div>
   );

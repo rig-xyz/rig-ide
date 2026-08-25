@@ -10,7 +10,7 @@ import { filterToContentOnly } from '@shared/rig/file-navigator-categories';
 import { rigSettingsChangedChannel } from '@shared/rig/settings';
 import type { RigFileNode } from '@shared/rig/files';
 import { iconFor, rigFilesQueryKey } from './file-tree';
-import { useRecentWrites } from './write-activity';
+import { useEverWrittenPaths, useRecentWrites } from './write-activity';
 
 /**
  * Navigator v3 — the ACTIVE FILES carousel, the workspace's answer to "where
@@ -50,11 +50,16 @@ function flattenFiles(nodes: RigFileNode[]): RigFileNode[] {
   return out;
 }
 
-/** `training/workouts/vo2.yaml` → `training / workouts`, the card's location line. Root-level files have none. */
-function parentTrail(relPath: string): string | null {
+/**
+ * `training/workouts/vo2.yaml` → `workouts`. The immediate folder is the
+ * part a reader actually uses to place a file; the full ancestor trail is
+ * noise in a 200px card, and a file at the rig root gets no location line
+ * at all rather than a meaningless one.
+ */
+function parentFolder(relPath: string): string | null {
   const segments = relPath.split('/');
   segments.pop();
-  return segments.length === 0 ? null : segments.join(' / ');
+  return segments.length === 0 ? null : (segments[segments.length - 1] ?? null);
 }
 
 export function ActiveFiles({
@@ -140,14 +145,27 @@ export function ActiveFiles({
   );
 
   const activePaths = useMemo(() => new Set(inProgress.map((w) => w.relPath)), [inProgress]);
+  // Authorship, as far as this app can honestly know it: every path an
+  // agent session has written since launch. A human's editor and the sync
+  // daemon are indistinguishable to the file watcher, so nothing else on a
+  // card claims a person.
+  const agentWritten = useEverWrittenPaths(root);
   const scrollRef = useScrollbarReveal();
 
   if (cards.length === 0) return null;
 
   return (
-    <div className="mt-3 flex shrink-0 flex-col gap-1.5">
-      <p className="text-text-muted px-3 text-xs font-medium">Active files</p>
-      <div ref={scrollRef} className="carousel-scroll flex gap-2 px-3 pb-1.5">
+    <div className="mt-4 flex shrink-0 flex-col gap-2">
+      {/*
+        The heading follows the content: while an agent is mid-write this
+        strip really is showing work in progress, and the rest of the time
+        it is honestly just what changed last. One adaptive line beats a
+        generic label that is wrong half the time.
+      */}
+      <p className="text-text-muted px-4 text-xs font-medium">
+        {activePaths.size > 0 ? 'Being worked on' : 'Recently updated'}
+      </p>
+      <div ref={scrollRef} className="carousel-scroll flex gap-2.5 px-4 pb-2">
         {cards.map((card) => {
           const node = nodeByPath.get(card.relPath);
           return (
@@ -156,6 +174,7 @@ export function ActiveFiles({
               card={card}
               node={node}
               active={activePaths.has(card.relPath)}
+              byAgent={agentWritten.has(card.relPath)}
               isPinned={pinned.includes(card.relPath)}
               onOpen={() => onOpenFile(`${root}/${card.relPath}`, card.relPath)}
               onTogglePin={() => togglePin(card.relPath)}
@@ -180,6 +199,7 @@ function FileCard({
   card,
   node,
   active,
+  byAgent,
   isPinned,
   onOpen,
   onTogglePin,
@@ -188,24 +208,32 @@ function FileCard({
   card: Card;
   node: RigFileNode | undefined;
   active: boolean;
+  /** An agent wrote this file at some point this session — the only authorship the client can honestly claim. */
+  byAgent: boolean;
   isPinned: boolean;
   onOpen: () => void;
   onTogglePin: () => void;
   onDismiss: () => void;
 }) {
   const name = node?.name ?? (card.relPath.split('/').pop() ?? card.relPath);
-  const trail = parentTrail(card.relPath);
+  const folder = parentFolder(card.relPath);
   const Icon = iconFor(name);
 
   return (
     <div
       data-card-key={card.relPath}
-      className="card-pop-in border-border-hairline bg-bg-1 rounded-card group relative flex w-[184px] shrink-0 flex-col"
+      className={cn(
+        // `bg-2` rather than `bg-1`: in dark mode `bg-1` sits a hair off the
+        // panel behind it and the card all but disappears, which is exactly
+        // the contrast light mode was getting for free.
+        'card-pop-in border-border-hairline bg-bg-2 rounded-card group relative flex w-[200px] shrink-0 flex-col border transition-colors',
+        'hover:border-border-strong'
+      )}
     >
       <button
         type="button"
         onClick={onOpen}
-        className="hover:bg-bg-2 rounded-card flex min-w-0 flex-1 flex-col gap-1 p-2.5 text-left transition-colors"
+        className="rounded-card flex min-w-0 flex-1 flex-col gap-1.5 p-3 text-left"
       >
         <div className="flex min-w-0 items-center gap-1.5">
           <Icon className="text-text-secondary size-3.5 shrink-0" strokeWidth={1.5} />
@@ -218,20 +246,30 @@ function FileCard({
             {name}
           </span>
         </div>
-        <span className={cn('text-text-muted min-w-0 truncate text-xs', active && 'active-shimmer-muted')}>
-          {trail ?? 'Top level'}
-        </span>
-        <span className="text-text-muted mt-1 flex min-w-0 items-center gap-1.5 text-xs">
+        {/*
+          Location only when there is one worth naming: the immediate
+          folder, not the whole trail, and nothing at all for a file at the
+          rig root ("Top level" told the reader nothing).
+        */}
+        {folder && (
+          <span className={cn('text-text-muted min-w-0 truncate text-xs', active && 'active-shimmer-muted')}>
+            in {folder}
+          </span>
+        )}
+        <span className="text-text-muted mt-0.5 flex min-w-0 items-center gap-1.5 text-xs">
           {active ? (
             <>
-              <RigMark size={11} className="shrink-0" />
-              <span className="truncate">Agent editing now</span>
+              <RigMark size={12} className="shrink-0" />
+              <span className="truncate">Editing now</span>
               <span className="bg-accent pulse-dot size-[5px] shrink-0 rounded-full" />
             </>
           ) : (
-            <span className="truncate">
-              {card.at === undefined ? 'Pinned' : `Edited ${relativeTime(card.at, Date.now())}`}
-            </span>
+            <>
+              {byAgent && <RigMark size={12} className="shrink-0 opacity-70" />}
+              <span className="truncate">
+                {card.at === undefined ? 'Pinned' : relativeTime(card.at, Date.now())}
+              </span>
+            </>
           )}
         </span>
       </button>
