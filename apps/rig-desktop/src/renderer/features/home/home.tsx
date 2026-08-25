@@ -165,7 +165,12 @@ export function Home({
     // The fix is content proximity, not bar decoration: `pt-3` only (12px,
     // still a real scale step, not zero) instead of the uniform `p-6`,
     // right/bottom/left unchanged.
-    <div className="flex min-h-full w-full flex-col gap-4 px-6 pt-3 pb-6">
+    // Glow v4: anchored to this panel's own top edge (under the topbar
+    // hairline), where a wash starting at full intensity reads as chrome —
+    // floating mid-content it read as a cut-off box. Ellipse radii sized so
+    // alpha hits zero before either horizontal edge. Padding widened per
+    // Dylan: the column was crowding the rail.
+    <div className="hero-glow flex min-h-full w-full flex-col gap-4 px-10 pt-4 pb-8">
       {regions.health && <HealthLine message={regions.health} onSignIn={signIn} signInPhase={signInPhase} />}
       <CreateRigDialog open={createOpen} onOpenChange={setCreateOpen} onOpenPath={onOpenPath} />
       {/*

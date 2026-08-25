@@ -171,13 +171,7 @@ export function BriefingSpine({
 
   return (
     <div className="flex w-full flex-col gap-6 text-left">
-      {/*
-        Charter v2 slice 6 (Resend discipline): ONE atmospheric accent glow
-        per surface, and Home's is here — a static radial wash behind the
-        greeting, never on chrome, never a second one further down. The
-        class lives in tokens.css so the treatment can't fork per surface.
-      */}
-      <div className="hero-glow flex items-start justify-between gap-2">
+      <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           {/*
            * E fix: the greeting used to render as soon as `state` resolved,

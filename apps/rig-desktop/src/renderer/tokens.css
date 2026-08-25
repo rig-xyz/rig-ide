@@ -498,14 +498,19 @@
 .hero-glow::before {
   content: '';
   position: absolute;
-  top: -24px;
+  top: 0;
   left: 0;
   right: 0;
-  height: 240px;
+  height: 260px;
+  /* Radii sized so alpha is ZERO before the box edges: center x=32%,
+     x-radius 30% → the left edge sits past 100% of the radius, the right
+     side dies around x=62%. Anchored at y=0, the full-intensity row
+     coincides with the panel's own top hairline — a chrome edge, not a
+     floating cut. */
   background: radial-gradient(
-    ellipse 52% 90% at 30% 0%,
+    ellipse 30% 95% at 32% 0%,
     color-mix(in oklab, var(--accent) 13%, transparent),
-    transparent 70%
+    transparent 72%
   );
   pointer-events: none;
 }
