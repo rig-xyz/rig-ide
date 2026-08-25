@@ -9,7 +9,7 @@ import { cn } from '@renderer/lib/utils';
  * stays neutral (hairline border + `bg-2` hover, never an accent wash).
  */
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-control border border-transparent text-sm font-medium whitespace-nowrap transition-colors outline-none select-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2",
+  "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-control border border-transparent text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,transform] outline-none select-none active:scale-[0.97] motion-reduce:active:scale-100 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2",
   {
     variants: {
       variant: {

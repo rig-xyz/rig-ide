@@ -34,6 +34,7 @@
   --bg-0: #09090b;
   --bg-1: #0f0f12;
   --bg-2: #18181b;
+  --bg-3: #1e1e22;
   --border-hairline: #27272a;
   --border-strong: #3f3f46;
   --text-primary: #fafafa;
@@ -47,7 +48,16 @@
   --success: #4ade80;
   --warning: #c98a52;
   --danger: #d9776b;
-  --shadow-soft: none;
+  /*
+   * Elevation (charter v2): three shadow roles. Cards get NONE (hairline +
+   * surface ladder carry them); `soft` is gentle lift for hovers and inline
+   * panels; `float` is menus/popovers; `modal` is dialogs. Dark gets REAL
+   * shadows now — `--shadow-soft: none` violated charter rule 6 (light and
+   * dark are equals) and left floating surfaces depthless by default.
+   */
+  --shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.55);
 }
 
 @media (prefers-color-scheme: light) {
@@ -57,6 +67,7 @@
     --bg-0: #f9f9fa;
     --bg-1: #ffffff;
     --bg-2: #f1f1f3;
+    --bg-3: #e9e9ec;
     --border-hairline: #e4e4e7;
     --border-strong: #d4d4d8;
     --text-primary: #18181b;
@@ -70,6 +81,8 @@
     --warning: #9c6a34;
     --danger: #b8483d;
     --shadow-soft: 0 1px 2px rgba(24, 24, 27, 0.05), 0 10px 24px rgba(24, 24, 27, 0.07);
+  --shadow-float: 0 1px 2px rgba(24, 24, 27, 0.06), 0 4px 12px rgba(24, 24, 27, 0.1);
+  --shadow-modal: 0 2px 6px rgba(24, 24, 27, 0.06), 0 16px 48px rgba(24, 24, 27, 0.14);
   }
 }
 
@@ -82,6 +95,7 @@
   --bg-0: #09090b;
   --bg-1: #0f0f12;
   --bg-2: #18181b;
+  --bg-3: #1e1e22;
   --border-hairline: #27272a;
   --border-strong: #3f3f46;
   --text-primary: #fafafa;
@@ -95,7 +109,16 @@
   --success: #4ade80;
   --warning: #c98a52;
   --danger: #d9776b;
-  --shadow-soft: none;
+  /*
+   * Elevation (charter v2): three shadow roles. Cards get NONE (hairline +
+   * surface ladder carry them); `soft` is gentle lift for hovers and inline
+   * panels; `float` is menus/popovers; `modal` is dialogs. Dark gets REAL
+   * shadows now — `--shadow-soft: none` violated charter rule 6 (light and
+   * dark are equals) and left floating surfaces depthless by default.
+   */
+  --shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.55);
 }
 
 :root[data-theme='light'] {
@@ -104,6 +127,7 @@
   --bg-0: #f9f9fa;
   --bg-1: #ffffff;
   --bg-2: #f1f1f3;
+  --bg-3: #e9e9ec;
   --border-hairline: #e4e4e7;
   --border-strong: #d4d4d8;
   --text-primary: #18181b;
@@ -117,6 +141,8 @@
   --warning: #9c6a34;
   --danger: #b8483d;
   --shadow-soft: 0 1px 2px rgba(24, 24, 27, 0.05), 0 10px 24px rgba(24, 24, 27, 0.07);
+  --shadow-float: 0 1px 2px rgba(24, 24, 27, 0.06), 0 4px 12px rgba(24, 24, 27, 0.1);
+  --shadow-modal: 0 2px 6px rgba(24, 24, 27, 0.06), 0 16px 48px rgba(24, 24, 27, 0.14);
 }
 
 /*
@@ -135,6 +161,8 @@
   --color-bg-0: var(--bg-0);
   --color-bg-1: var(--bg-1);
   --color-bg-2: var(--bg-2);
+  /* 4th surface step (charter v2): the elevation ladder's top — hover-on-elevated, keycap faces, deepest lifted chrome. */
+  --color-bg-3: var(--bg-3);
   --color-border-hairline: var(--border-hairline);
   --color-border-strong: var(--border-strong);
   --color-text-primary: var(--text-primary);
@@ -148,13 +176,22 @@
   --color-danger: var(--danger);
 
   --shadow-soft: var(--shadow-soft);
+  --shadow-float: var(--shadow-float);
+  --shadow-modal: var(--shadow-modal);
 
   /* Radii: 6px controls, 10px cards/bubbles, 999px chips only. */
   --radius-control: 6px;
   --radius-card: 10px;
   --radius-chip: 999px;
 
-  /* Type ramp 12/13/15/17/22/28. Body 15px/1.6. */
+  /*
+   * Type ramp 11/12/13/15/17/22/28. Body 15px/1.6. `2xs` (charter v2) is
+   * the ONE sanctioned micro step — mono uppercase kickers, keycaps, dense
+   * metadata; never body prose. Display steps (xl/2xl) carry negative
+   * tracking (charter v2) — every reference tracks display negative.
+   */
+  --text-2xs: 11px;
+  --text-2xs--line-height: 1.3;
   --text-xs: 12px;
   --text-xs--line-height: 1.4;
   --text-sm: 13px;
@@ -165,8 +202,10 @@
   --text-lg--line-height: 1.5;
   --text-xl: 22px;
   --text-xl--line-height: 1.3;
+  --text-xl--letter-spacing: -0.3px;
   --text-2xl: 28px;
   --text-2xl--line-height: 1.2;
+  --text-2xl--letter-spacing: -0.5px;
 
   /* Motion: 150ms ease-out, shy. No decorative animation. */
   --default-transition-duration: 150ms;
@@ -174,33 +213,14 @@
 }
 
 /*
- * File-navigator redesign (`docs/file-navigator-design.md` §1): the ONE
- * deliberate decorative motion in the app — a slow specular sweep through a
- * Skills row's LABEL TEXT on hover (`file-tree.tsx`'s `SkillsSection`),
- * reserved for the category the design doc calls "not machinery — the
- * magic" so it stays meaningful rather than becoming ambient noise. Text
- * only, not the row: `background-clip: text` fills the label's glyphs with
- * the sweeping gradient while the row's own `hover:bg-bg-2` background
- * behaves exactly as any other row's. Deliberately NOT a Tailwind utility:
- * the whole rule (including the hover selector) lives inside the
- * `prefers-reduced-motion: no-preference` query so a reduced-motion user
- * never even downloads a hover state that would animate — the label still
- * reads fine via its plain text color, just without the sweep.
+ * Live-write motion (charter v2, one-signal rule): `active-sweep` and
+ * `active-dot` below are THE signal that an agent is writing a file right
+ * now — text shimmer phase-locked with its dot on one shared duration and
+ * easing. State, never decoration: they run only while the write window is
+ * open. (An earlier skills-tab hover shimmer this comment used to describe
+ * was withdrawn with that feature.)
  */
-/*
- * File-navigator redesign (`docs/file-navigator-design.md` §1): the ONE
- * deliberate decorative motion in the app — a slow specular sweep through a
- * Skills row's LABEL TEXT on hover (`file-tree.tsx`'s `SkillsSection`),
- * reserved for the category the design doc calls "not machinery — the
- * magic" so it stays meaningful rather than becoming ambient noise. Text
- * only, not the row: `background-clip: text` fills the label's glyphs with
- * the sweeping gradient while the row's own `hover:bg-bg-2` background
- * behaves exactly as any other row's. Deliberately NOT a Tailwind utility:
- * the whole rule (including the hover selector) lives inside the
- * `prefers-reduced-motion: no-preference` query so a reduced-motion user
- * never even downloads a hover state that would animate — the label still
- * reads fine via its plain text color, just without the sweep.
- */
+
 
 /*
  * File-navigator redesign (`docs/file-navigator-design.md` §3/§6, v2 round
@@ -373,6 +393,7 @@
   --bg-0: #0e1013;
   --bg-1: #14171b;
   --bg-2: #1b1f24;
+  --bg-3: #232830;
   --border-hairline: #262b31;
   --border-strong: #3a4149;
   --text-primary: #f5f7f9;
@@ -382,7 +403,9 @@
   --accent-subtle: rgba(125, 136, 232, 0.16);
   --accent-ink: #101223;
   --shimmer-highlight: #ffffff;
-  --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.55);
 }
 
 @media (prefers-color-scheme: light) {
@@ -390,6 +413,7 @@
     --bg-0: #f8f9fb;
     --bg-1: #ffffff;
     --bg-2: #eff1f4;
+    --bg-3: #e7eaee;
     --border-hairline: #e3e6ea;
     --border-strong: #d1d5db;
     --text-primary: #16181d;
@@ -407,6 +431,7 @@
   --bg-0: #f8f9fb;
   --bg-1: #ffffff;
   --bg-2: #eff1f4;
+  --bg-3: #e7eaee;
   --border-hairline: #e3e6ea;
   --border-strong: #d1d5db;
   --text-primary: #16181d;
@@ -417,4 +442,40 @@
   --accent-ink: #ffffff;
   --shimmer-highlight: #b6bcc6;
   --shadow-soft: 0 1px 2px rgba(22, 24, 29, 0.05), 0 10px 24px rgba(22, 24, 29, 0.07);
+}
+
+/*
+ * Floating-surface entrance (charter v2 motion spec): 150ms, opacity plus a
+ * 2px settle — orientation, not theatre. Exits are instant on purpose:
+ * dismissal should never cost time. Gated so reduced-motion users get an
+ * instant, fully-opaque popup.
+ */
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .popover-in {
+    animation: popover-in 150ms ease-out;
+  }
+}
+
+/*
+ * Reduced-motion gate for Tailwind's built-in `animate-spin`/`animate-pulse`
+ * (they ship ungated; our own keyframes are all inside no-preference
+ * blocks). Spinners/skeletons convey "working" — reduced-motion users still
+ * get the element, just static.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin,
+  .animate-pulse {
+    animation: none;
+  }
 }

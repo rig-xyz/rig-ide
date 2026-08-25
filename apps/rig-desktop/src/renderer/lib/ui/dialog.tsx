@@ -22,7 +22,15 @@ function DialogBackdrop({ className, ...props }: DialogPrimitive.Backdrop.Props)
   return (
     <DialogPrimitive.Backdrop
       data-slot="dialog-backdrop"
-      className={cn('fixed inset-0 z-50 bg-black/30', className)}
+      className={cn(
+        // Charter v2 motion: backdrop fades 150ms both ways via Base UI's
+        // data-starting/ending-style hooks (they exist for exactly this and
+        // went unused until slice 1). transition-opacity keeps it
+        // interruptible; motion-reduce collapses it to instant.
+        'fixed inset-0 z-50 bg-black/30 transition-opacity duration-150 ease-out motion-reduce:transition-none',
+        'data-[starting-style]:opacity-0 data-[ending-style]:opacity-0',
+        className
+      )}
       {...props}
     />
   );
@@ -41,7 +49,14 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          'border-border-hairline bg-bg-1 rounded-card shadow-soft fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-4rem)] w-full max-w-md -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden border outline-none',
+          // shadow-modal (charter v2): dialogs sit at the top of the
+          // elevation ladder, above menus' shadow-float. Enter/exit: a
+          // 150ms fade + slight settle from scale(0.98), never from 0 —
+          // transitions (not keyframes) so a fast close mid-open reverses
+          // smoothly instead of jumping.
+          'border-border-hairline bg-bg-1 rounded-card shadow-modal fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-4rem)] w-full max-w-md -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden border outline-none',
+          'transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none',
+          'data-[starting-style]:opacity-0 data-[starting-style]:scale-[0.98] data-[ending-style]:opacity-0 data-[ending-style]:scale-[0.98]',
           className
         )}
         {...props}

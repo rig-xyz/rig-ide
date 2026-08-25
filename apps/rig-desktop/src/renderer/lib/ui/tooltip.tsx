@@ -36,6 +36,12 @@ function TooltipContent({
           data-slot="tooltip-content"
           className={cn(
             'bg-bg-2 text-text-primary border-border-hairline rounded-control z-50 w-fit max-w-xs border px-2.5 py-1.5 font-mono text-xs',
+            // Charter v2 motion: tooltips fade/settle in 150ms after their
+            // provider delay; Base UI keeps subsequent tooltips instant
+            // while a provider-group is warm, which is the Raycast/Emil
+            // behavior (first delayed + animated, siblings immediate).
+            'transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none',
+            'data-[starting-style]:opacity-0 data-[starting-style]:translate-y-0.5 data-[ending-style]:opacity-0',
             className
           )}
           {...props}
