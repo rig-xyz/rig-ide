@@ -12,7 +12,6 @@ import {
   FolderInput,
   FolderOpen,
   FolderSearch,
-  FolderSymlink,
   LayoutList,
   MoreHorizontal,
   Pause,
@@ -498,28 +497,6 @@ function LocalRigRow({
               <span className="text-text-muted truncate font-mono text-xs">
                 {row.paused ? 'Paused' : relativeTime(lastActivity, Date.now())}
               </span>
-              {row.outsideHome && (
-                // Chip-to-icon round (Dylan — "better visual"): a text chip
-                // reading "custom location" on every outside-home row added
-                // up at 15+ rigs; a quiet folder-path glyph (same
-                // muted-icon-with-tooltip convention `NOT_SET_UP_TOOLTIP`
-                // already uses below) is a secondary annotation, not a
-                // badge — the real path lives in the tooltip, not the row.
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span
-                        tabIndex={0}
-                        aria-label={`Stored outside the Rig folder, at ${row.path}`}
-                        className="text-text-muted inline-flex size-3 shrink-0 items-center justify-center"
-                      >
-                        <FolderSymlink className="size-3" strokeWidth={1.5} />
-                      </span>
-                    }
-                  />
-                  <TooltipContent side="top">{row.path}</TooltipContent>
-                </Tooltip>
-              )}
             </span>
           </span>
         </button>
