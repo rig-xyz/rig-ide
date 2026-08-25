@@ -6,6 +6,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/toolti
 import { cn } from '@renderer/lib/utils';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { usePulseBriefing } from '@renderer/features/home/use-pulse-briefing';
+import { stripRigPrefix } from '@renderer/features/home/summary-segments';
 
 /**
  * The workspace's PEOPLE section: who is in this rig, and one line about
@@ -41,9 +42,10 @@ export function RigPeopleCard({ root, bindingId }: { root: string; bindingId: st
    * `perRig` is the only part of the briefing actually about the rig in
    * front of you, so it is the only part shown here.
    */
-  const rigLine = bindingId
-    ? (briefing?.perRig.find((item) => item.bindingId === bindingId)?.line ?? null)
+  const rigEntry = bindingId
+    ? (briefing?.perRig.find((item) => item.bindingId === bindingId) ?? null)
     : null;
+  const rigLine = rigEntry ? stripRigPrefix(rigEntry.line, rigEntry.rigName) : null;
 
   // A rig nobody shares is a rig with nothing to say about people. Local
   // rigs and unreachable-relay states both land here.
@@ -92,36 +94,57 @@ export function RigPeopleCard({ root, bindingId }: { root: string; bindingId: st
         </Tooltip>
       </div>
       {/*
-        Faces in a row, names on hover: who is in this rig is a glance, not
-        a list to read. Keeping people and the rig's summary line visually
-        separate is deliberate — stacking the summary under one person's
-        name and avatar made it read as something they had said.
+        With one member the line reads as that person's own update, so it
+        runs inline after their name like a message and costs no extra row.
+        With several it cannot: the briefing has no per-person-per-rig
+        breakdown, and hanging one rig-level sentence off whichever name
+        happens to be first would attribute it to someone who may not have
+        done any of it. There it sits below the group, unattributed.
       */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        {ordered.map((member) => (
-          <Tooltip key={member.userId}>
-            <TooltipTrigger
-              render={
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <IdentityAvatar
-                    name={member.name}
-                    avatarUrl={member.avatarUrl}
-                    sizeClassName="size-5"
-                    textClassName="text-xs"
-                  />
-                  <span className="text-text-secondary min-w-0 truncate text-xs">
-                    {member.userId === selfId ? 'You' : (member.name ?? member.email ?? 'Teammate')}
-                  </span>
-                </div>
-              }
+      {ordered.length === 1 ? (
+        <p className="text-text-secondary text-xs leading-relaxed">
+          <span className="mr-1.5 inline-flex translate-y-0.5 items-center gap-1.5 align-baseline">
+            <IdentityAvatar
+              name={ordered[0].name}
+              avatarUrl={ordered[0].avatarUrl}
+              sizeClassName="size-5"
+              textClassName="text-xs"
             />
-            <TooltipContent side="bottom">
-              {member.email ? `${member.email} · ${member.role}` : member.role}
-            </TooltipContent>
-          </Tooltip>
-        ))}
-      </div>
-      {rigLine && <p className="text-text-muted text-xs leading-relaxed">{rigLine}</p>}
+            <span className="text-text-primary font-medium">
+              {ordered[0].userId === selfId ? 'You' : (ordered[0].name ?? ordered[0].email ?? 'Teammate')}
+            </span>
+          </span>
+          <span className="text-text-muted">{rigLine ?? ordered[0].role}</span>
+        </p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            {ordered.map((member) => (
+              <Tooltip key={member.userId}>
+                <TooltipTrigger
+                  render={
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <IdentityAvatar
+                        name={member.name}
+                        avatarUrl={member.avatarUrl}
+                        sizeClassName="size-5"
+                        textClassName="text-xs"
+                      />
+                      <span className="text-text-secondary min-w-0 truncate text-xs">
+                        {member.userId === selfId ? 'You' : (member.name ?? member.email ?? 'Teammate')}
+                      </span>
+                    </div>
+                  }
+                />
+                <TooltipContent side="bottom">
+                  {member.email ? `${member.email} · ${member.role}` : member.role}
+                </TooltipContent>
+              </Tooltip>
+            ))}
+          </div>
+          {rigLine && <p className="text-text-muted text-xs leading-relaxed">{rigLine}</p>}
+        </>
+      )}
     </div>
   );
 }

@@ -87,3 +87,19 @@ export function summarySegments(
 
   return segments;
 }
+
+/**
+ * The per-rig line arrives prefixed with the rig it is about
+ * ("rig-bike: Updated untitled-1.md today; …"). Inside that rig the prefix
+ * is redundant twice over — the surface is the rig, and its header already
+ * names it — and it forces the line onto a row of its own instead of
+ * reading as a sentence. Matched against the known name rather than "any
+ * word before a colon", so a line that legitimately opens with a clause
+ * ending in a colon is never truncated.
+ */
+export function stripRigPrefix(line: string, rigName: string | null | undefined): string {
+  if (!rigName) return line;
+  const prefix = `${rigName}:`;
+  if (!line.toLowerCase().startsWith(prefix.toLowerCase())) return line;
+  return line.slice(prefix.length).trimStart();
+}

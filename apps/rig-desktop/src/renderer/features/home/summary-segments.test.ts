@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stripIdentifiers, summarySegments } from './summary-segments';
+import { stripIdentifiers, stripRigPrefix, summarySegments } from './summary-segments';
 
 /**
  * The real case that prompted this: Dylan's own summary, IDs and all.
@@ -97,5 +97,29 @@ describe('summarySegments', () => {
   it('ignores a rig whose name is blank rather than matching every gap', () => {
     const segments = summarySegments('some work', [{ bindingId: 'b', rigName: '   ' }]);
     expect(segments).toEqual([{ kind: 'text', text: 'some work' }]);
+  });
+});
+
+describe('stripRigPrefix', () => {
+  it('drops the rig prefix so the line reads as a sentence', () => {
+    expect(stripRigPrefix('rig-bike: Updated untitled-1.md today.', 'rig-bike')).toBe(
+      'Updated untitled-1.md today.'
+    );
+  });
+
+  it('matches the prefix case-insensitively', () => {
+    expect(stripRigPrefix('Rig-Bike: three intents completed.', 'rig-bike')).toBe(
+      'three intents completed.'
+    );
+  });
+
+  it('leaves a line that opens with an unrelated clause intact', () => {
+    const line = 'Note: two intents remain open.';
+    expect(stripRigPrefix(line, 'rig-bike')).toBe(line);
+  });
+
+  it('leaves the line alone when the rig name is unknown', () => {
+    const line = 'rig-bike: something happened.';
+    expect(stripRigPrefix(line, null)).toBe(line);
   });
 });
