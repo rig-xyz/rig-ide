@@ -110,6 +110,15 @@ export type ChipConfig = {
   mentionIconW: number;
   /** Gap between mention icon and mention label text (px). */
   mentionIconGap: number;
+  /**
+   * Optical inset: chips pull their box this many px INTO the neighbouring
+   * word gap on each side (negative margin in CSS, subtracted from
+   * extraWidth in measurement). The layout gap at a chip boundary is
+   * exactly one space, but the chip's own padX stacks on top of it
+   * visually, reading as ~2.5 spaces (Dylan's screenshot, 2026-08-25);
+   * this restores the line's rhythm without shrinking chip padding.
+   */
+  chipOpticalInsetX: number;
 };
 
 // ── ChatConfig ────────────────────────────────────────────────────────────────
@@ -173,6 +182,7 @@ export const DEFAULT_CONFIG: ChatConfig = {
     mentionPadY: 2,
     mentionIconW: 12,
     mentionIconGap: 4,
+    chipOpticalInsetX: 1.5,
   },
 };
 
@@ -216,8 +226,8 @@ export function toFontConfig(config: ChatConfig): FontConfig {
     inlineCode: toVariantMetrics(r['inline-code'], mono),
     mention: toVariantMetrics(r.mention, sans),
     code: toVariantMetrics(r.code, mono),
-    inlineCodeExtraWidth: 2 * config.chips.inlineCodePadX,
-    mentionExtraWidth: 2 * config.chips.mentionPadX,
+    inlineCodeExtraWidth: 2 * (config.chips.inlineCodePadX - config.chips.chipOpticalInsetX),
+    mentionExtraWidth: 2 * (config.chips.mentionPadX - config.chips.chipOpticalInsetX),
     mentionIconW: config.chips.mentionIconW,
     mentionIconGap: config.chips.mentionIconGap,
   };
@@ -278,6 +288,7 @@ export type ThemeVarKey =
   | 'typeMentionFontFamily'
   | 'typeMentionFontSize'
   | 'typeMentionFontWeight'
+  | 'chipInsetX'
   | 'icPadX'
   | 'icPadY'
   | 'mentionPadX'
@@ -366,6 +377,8 @@ export function toThemeVars(config: ChatConfig): Record<ThemeVarKey, string> {
 
     mentionPadX: px(c.mentionPadX),
     mentionPadY: px(c.mentionPadY),
+
+    chipInsetX: px(c.chipOpticalInsetX),
   };
 }
 

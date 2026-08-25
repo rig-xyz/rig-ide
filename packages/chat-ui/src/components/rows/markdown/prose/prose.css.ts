@@ -85,6 +85,11 @@ export const pfInlineCode = style({
   // Fixed 16px chip height (body lineHeight 20px * 0.8), border-box so padding is included.
   // pf's top:50%/translateY(-50%) centers the chip in the 20px line band.
   height: `calc(${vars.typeBodyLineHeight} * 0.8)`,
+  // Optical inset (chipOpticalInsetX): the box eats slightly into the word
+  // gap on both sides so gap+padding reads as one space, not two and a
+  // half. Measurement subtracts the same value from extraWidth.
+  marginLeft: `calc(${vars.chipInsetX} * -1)`,
+  marginRight: `calc(${vars.chipInsetX} * -1)`,
   boxSizing: 'border-box',
   display: 'inline-flex',
   alignItems: 'center',
@@ -99,6 +104,11 @@ export const pfMention = style({
   // Fixed 16px chip height (body lineHeight 20px * 0.8), border-box so padding is included.
   // pf's top:50%/translateY(-50%) centers the chip in the 20px line band.
   height: `calc(${vars.typeBodyLineHeight} * 0.8)`,
+  // Optical inset (chipOpticalInsetX): the box eats slightly into the word
+  // gap on both sides so gap+padding reads as one space, not two and a
+  // half. Measurement subtracts the same value from extraWidth.
+  marginLeft: `calc(${vars.chipInsetX} * -1)`,
+  marginRight: `calc(${vars.chipInsetX} * -1)`,
   boxSizing: 'border-box',
   display: 'inline-flex',
   alignItems: 'center',

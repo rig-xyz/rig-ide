@@ -148,6 +148,7 @@ export const vars = createGlobalThemeContract(
     typeMentionFontWeight: 'chat-type-mention-font-weight',
 
     // ── Chip padding (runtime-settable by ChatRoot) ────────────────────────────
+    chipInsetX: 'chat-chip-inset-x',
     icPadX: 'chat-ic-pad-x',
     icPadY: 'chat-ic-pad-y',
     mentionPadX: 'chat-mention-pad-x',

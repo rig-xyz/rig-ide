@@ -87,3 +87,41 @@ describe('inline fragment spacing at style boundaries', () => {
     expect(gap2).toBeCloseTo(gap1, 1);
   });
 });
+
+describe('chip and emphasis boundaries from the 2026-08-25 transcript report', () => {
+  /**
+   * Dylan's knee-ability screenshot: mention/inline-code chips mid-sentence,
+   * an italic quoted string, and a bold date prefix all looked mis-spaced.
+   * The probe showed the ENGINE was already correct — every boundary is
+   * exactly one collapsed space — and the visual excess was the chip's own
+   * padX stacking on the gap (fixed by chipOpticalInsetX, asserted below).
+   * These pin the engine half so a future layout change can't regress it
+   * while the optical fix takes the blame.
+   */
+  const CASES: [string, string, string][] = [
+    ['inline-code chip mid-sentence', 'Your `@codex what do you think?` from 7/30 on the thread', '@codex what do you think?'],
+    ['short chip between words', 'three unanswered `@codex` pings', '@codex'],
+    ['italic quoted string after a colon', 'the share link: *"[s1-live-test] Posted through the share link."*', '"[s1-live-test] Posted through the share link."'],
+    ['text after a bold date prefix', '**8/13 3:34 PM** was when codex replied', 'was when codex replied'],
+  ];
+
+  for (const [label, md, fragmentText] of CASES) {
+    it(`${label}: a single source space lays out as a single space`, () => {
+      const gaps = fragmentGaps(md);
+      const target = gaps.find((f) => f.text === fragmentText);
+      expect(target, `fragment "${fragmentText}" in ${JSON.stringify(gaps.map((g) => g.text))}`).toBeDefined();
+      expect(target!.gapBefore).toBeGreaterThan(0);
+      expect(target!.gapBefore).toBeLessThan(spaceWidth(fonts.body.font) * 1.5);
+    });
+  }
+
+  it('chip occupied width subtracts the optical inset, so render and measurement agree', () => {
+    const { chips } = DEFAULT_CONFIG;
+    expect(fonts.inlineCodeExtraWidth).toBeCloseTo(2 * (chips.inlineCodePadX - chips.chipOpticalInsetX));
+    expect(fonts.mentionExtraWidth).toBeCloseTo(2 * (chips.mentionPadX - chips.chipOpticalInsetX));
+    // The inset must never exceed the padding, or chips would overlap text.
+    expect(chips.chipOpticalInsetX).toBeLessThan(chips.mentionPadX);
+    expect(chips.chipOpticalInsetX).toBeLessThan(chips.inlineCodePadX);
+  });
+});
+
