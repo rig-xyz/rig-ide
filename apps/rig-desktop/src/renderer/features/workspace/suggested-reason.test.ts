@@ -13,22 +13,22 @@ describe('reasonForCard', () => {
     expect(reasonForCard(card, 1_000_000)).toEqual({ text: 'Pinned', pulsing: false });
   });
 
-  it('a fresh card less than a day old reads "New today"', () => {
+  it('a fresh card shows its actual recency, never a vague "new" label', () => {
     const now = 1_000_000_000;
     const card: Card = { type: 'fresh', relPath: 'new.md', at: now - 60_000 };
-    expect(reasonForCard(card, now)).toEqual({ text: 'New today', pulsing: false });
+    expect(reasonForCard(card, now)).toEqual({ text: 'Updated 1m ago', pulsing: false });
   });
 
-  it('a fresh card a day or more old reads "Updated <relative time>"', () => {
+  it('an older fresh card reads "Updated <relative time>" too', () => {
     const now = 1_000_000_000;
     const twoDaysMs = 2 * 24 * 60 * 60 * 1000;
     const card: Card = { type: 'fresh', relPath: 'old.md', at: now - twoDaysMs };
     expect(reasonForCard(card, now)).toEqual({ text: 'Updated 2d ago', pulsing: false });
   });
 
-  it('a pinned card that also has a known recency follows the same age rule as fresh', () => {
+  it('a pinned card that also has a known recency shows that recency like fresh does', () => {
     const now = 1_000_000_000;
     const card: Card = { type: 'pinned', relPath: 'pinned.md', at: now - 30_000 };
-    expect(reasonForCard(card, now)).toEqual({ text: 'New today', pulsing: false });
+    expect(reasonForCard(card, now)).toEqual({ text: 'Updated now', pulsing: false });
   });
 });

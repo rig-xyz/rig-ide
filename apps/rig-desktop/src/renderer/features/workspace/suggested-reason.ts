@@ -9,8 +9,6 @@ import type { Card } from '@shared/rig/card-rail';
  * passed in), so `suggested-files.tsx` can call it straight from a render.
  */
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 export type SuggestedReason = { text: string; pulsing: boolean };
 
 export function reasonForCard(card: Card, now: number): SuggestedReason {
@@ -18,7 +16,9 @@ export function reasonForCard(card: Card, now: number): SuggestedReason {
   // Only a pinned card can have no recency at all (never written recently,
   // never flagged unseen) — see `Card`'s own `at` comment in `card-rail.ts`.
   if (card.at === undefined) return { text: 'Pinned', pulsing: false };
-  const ageMs = now - card.at;
-  if (ageMs < DAY_MS) return { text: 'New today', pulsing: false };
+  // Always the actual recency. No "New today": the card data can't
+  // distinguish created from modified, so "new" would be a guess, and a
+  // rolling-24h window isn't "today" anyway — a real time is strictly
+  // more informative than either.
   return { text: `Updated ${relativeTime(card.at, now)}`, pulsing: false };
 }
