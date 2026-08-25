@@ -463,7 +463,10 @@ export function FileTree({
 
   const statusFor = useCallback(
     (relPath: string): RowStatus | null => {
+      // One column, one answer: the most specific true thing wins, so a
+      // row never has to choose between two badges.
       if (agentPaths.has(relPath)) return { kind: 'agent' };
+      if (unseen.unseenFiles.has(relPath)) return { kind: 'new' };
       const mtime = mtimeByPath.get(relPath);
       // A tight window on purpose: the row already shows its own relative
       // time, so the pill is reserved for "this just happened" rather than
@@ -471,7 +474,7 @@ export function FileTree({
       if (mtime !== undefined && Date.now() - mtime < RECENT_PILL_MS) return { kind: 'recent' };
       return null;
     },
-    [agentPaths, mtimeByPath]
+    [agentPaths, mtimeByPath, unseen.unseenFiles]
   );
 
   // The `⋯` button opens the shared menu at the button's own corner rather
@@ -550,7 +553,7 @@ export function FileTree({
     <>
       {tabs}
       <div
-        className="@container flex flex-col py-1"
+        className="@container flex flex-col py-1 pr-2"
         onContextMenu={(event) => {
           if (bindingId) menu.open(event, null);
         }}
@@ -776,7 +779,7 @@ function TreeNode({
           onContextMenu={(event) => onContextMenu(event, node)}
           style={{ paddingLeft: indent }}
           className={cn(
-            'rounded-control flex h-7 w-full items-center gap-1.5 pr-3 text-left text-sm transition-colors',
+            'rounded-control flex h-7 w-full items-center gap-1.5 pr-2 text-left text-sm transition-colors',
             flashing
               ? 'bg-accent-subtle text-text-primary'
               : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
@@ -790,14 +793,12 @@ function TreeNode({
           <FolderGlyph className="size-3.5 shrink-0" strokeWidth={1.5} />
           <RowLabel text={displayName(node)} className="flex-1" />
           {/*
-            A folder's dot stands in for the unseen rows hidden inside it,
-            so it disappears the moment those rows are on screen carrying
-            their own dots. Showing both at once was the inconsistency:
-            the same fact stated twice, at two levels.
+            A folder's pill stands in for the unseen rows hidden inside it,
+            so it disappears the moment those rows are on screen wearing
+            their own. Showing both at once was the inconsistency: the same
+            fact stated twice, at two levels.
           */}
-          {!open && !!unseenCount && (
-            <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />
-          )}
+          {!open && !!unseenCount && <RowStatusPill status={{ kind: 'new' }} className="unseen-dot-in mr-2" />}
         </button>
         {open &&
           (node.children ?? []).map((child) => (
@@ -847,9 +848,8 @@ function TreeNode({
           title={rowTitleHint(node)}
           className={cn(isUnseen && 'font-medium', status?.kind === 'agent' && 'active-shimmer')}
         />
-        {isUnseen && <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />}
       </button>
-      {status && <RowStatusPill status={status} className="mr-1.5" />}
+      {status && <RowStatusPill status={status} className="unseen-dot-in mr-2" />}
       {/*
         Time is the row's least important fact and the first thing worth
         losing when the panel narrows, so it hides below a container width
@@ -857,7 +857,7 @@ function TreeNode({
         Actions replace it on hover: a row never shows both.
       */}
       {node.mtimeMs !== undefined && (
-        <span className="text-text-muted hidden shrink-0 pr-2 text-xs tabular-nums @[15rem]:group-hover:hidden @[15rem]:inline">
+        <span className="text-text-muted hidden shrink-0 pr-1 text-xs tabular-nums @[15rem]:group-hover:hidden @[15rem]:inline">
           {relativeTime(node.mtimeMs, Date.now())}
         </span>
       )}
@@ -942,13 +942,14 @@ function SkillsList({
             onContextMenu={(event) => onContextMenu(event, node)}
             style={{ paddingLeft: SKILL_ROW_PADDING }}
             className={cn(
-              'rounded-control flex h-7 w-full items-center gap-1.5 pr-3 text-left text-sm transition-colors',
+              'rounded-control flex h-7 w-full items-center gap-1.5 pr-2 text-left text-sm transition-colors',
               active ? 'bg-bg-2 text-text-primary' : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
             )}
           >
             <Sparkles className="text-accent size-3.5 shrink-0" strokeWidth={1.5} />
             <RowLabel text={displayName(node)} title={rowTitleHint(node)} className="skill-label-shimmer" />
-            {isUnseen && <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />}
+            <div className="flex-1" />
+            {isUnseen && <RowStatusPill status={{ kind: 'new' }} className="unseen-dot-in mr-2" />}
           </button>
         );
       })}

@@ -6,7 +6,12 @@ import { cn } from '@renderer/lib/utils';
  * Navigator v3: a file row's status pill — what is happening to this file,
  * stated in a word.
  *
- * Two kinds, because two are all the client can honestly know today:
+ * Three kinds, in priority order, all in ONE right-hand column so a row
+ * never states its state in two places at two alignments (the earlier
+ * mix of an inline dot on files and a right-aligned dot on folders was
+ * exactly that):
+ *   - `new`: unseen since you last looked. A pill, not a dot — the same
+ *     shape as everything else in the column.
  *   - `agent`: an agent session wrote this file inside the live write
  *     window (`write-activity.ts`), the only attribution the renderer can
  *     actually make.
@@ -20,7 +25,7 @@ import { cn } from '@renderer/lib/utils';
  * so a tree of rows would mean one round trip per row). Not faked in the
  * meantime.
  */
-export type RowStatus = { kind: 'agent' } | { kind: 'recent' };
+export type RowStatus = { kind: 'agent' } | { kind: 'new' } | { kind: 'recent' };
 
 export function RowStatusPill({ status, className }: { status: RowStatus; className?: string }) {
   if (status.kind === 'agent') {
@@ -33,6 +38,18 @@ export function RowStatusPill({ status, className }: { status: RowStatus; classN
       >
         <RigMark size={10} className="shrink-0" />
         Editing
+      </span>
+    );
+  }
+  if (status.kind === 'new') {
+    return (
+      <span
+        className={cn(
+          'bg-accent-subtle text-accent flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium',
+          className
+        )}
+      >
+        New
       </span>
     );
   }

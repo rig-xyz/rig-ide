@@ -1,27 +1,28 @@
 import { useQuery } from '@tanstack/react-query';
 import { rpc } from '@renderer/lib/ipc';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { usePulseBriefing } from '@renderer/features/home/use-pulse-briefing';
 
 /**
- * The workspace's PEOPLE card — Home's `PeopleRail` idea scoped to one rig:
- * who is in this rig, and what has been happening in it, in one line.
+ * The workspace's PEOPLE panel — Home's `PeopleRail` layout, scoped to one
+ * rig: the same uppercase label, the same avatar + name + narrated line
+ * stack, so the two surfaces read as one product rather than two designs.
  *
- * Two sources, deliberately:
- *   - WHO comes from the rig's own member list (`rig.share.members`), the
- *     same call the Share popover makes, so this is the real membership of
- *     THIS rig rather than everyone the account has ever worked with.
- *   - WHAT comes from the pulse briefing's `perRig` entry for this binding.
- *     The briefing has no per-rig-per-person breakdown, so we do NOT invent
- *     one (no fabricated "Hugo edited X" lines): one honest rig-level
- *     sentence, attributed to no one in particular, over per-person fiction.
+ * The layout matters for accuracy, not just consistency. An earlier version
+ * put the rig's own activity summary directly beneath a single member's
+ * name and avatar, which read as if that person had said it. People and
+ * their lines belong together; the rig-level summary is a separate
+ * statement about the rig and sits apart, with its age attached.
  *
- * `usePulseBriefing` carries the freshness contract — the relay caches a
- * briefing for ~3h and regenerates only on request, so the hook forces a
- * regeneration whenever what it got back is past that. The card states how
- * old the line is rather than presenting it as live.
+ * Sources, deliberately kept distinct:
+ *   - WHO: the rig's own member list (`rig.share.members`), the same call
+ *     the Share popover makes, so it is this rig's membership.
+ *   - EACH PERSON'S LINE: the pulse briefing's `perPerson` entry for that
+ *     user. Account-wide, so it is introduced as such rather than implied
+ *     to be about this rig. A member the briefing says nothing about gets
+ *     no invented line.
+ *   - THE RIG'S LINE: the briefing's `perRig` entry for this binding.
  */
 export function RigPeopleCard({ root, bindingId }: { root: string; bindingId: string | null }) {
   const membersQuery = useQuery({
@@ -32,50 +33,53 @@ export function RigPeopleCard({ root, bindingId }: { root: string; bindingId: st
   const { state, refreshing } = usePulseBriefing();
 
   const members = membersQuery.data?.success ? membersQuery.data.data.members : [];
-  const entry =
-    state.kind === 'data' && bindingId
-      ? (state.briefing.perRig.find((item) => item.bindingId === bindingId) ?? null)
-      : null;
-  const generatedAt = state.kind === 'data' ? Date.parse(state.briefing.generatedAt) : NaN;
+  const briefing = state.kind === 'data' ? state.briefing : null;
+  const rigLine = bindingId
+    ? (briefing?.perRig.find((item) => item.bindingId === bindingId)?.line ?? null)
+    : null;
+  const lineFor = (userId: string) => briefing?.perPerson.find((p) => p.userId === userId)?.line ?? null;
+  const generatedAt = briefing ? Date.parse(briefing.generatedAt) : NaN;
 
   // A rig nobody shares is a rig with nothing to say about people. Local
   // rigs and unreachable-relay states both land here.
   if (members.length === 0) return null;
 
+  // "You" first, matching Home.
+  const selfId = briefing?.perPerson.find((p) => p.isSelf)?.userId ?? null;
+  const ordered = [...members].sort(
+    (a, b) => Number(b.userId === selfId) - Number(a.userId === selfId)
+  );
+
   return (
     <div className="border-border-hairline bg-bg-1 rounded-card mx-4 mt-4 flex flex-col gap-3 border p-4">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
-        {members.map((member) => (
-          <Tooltip key={member.userId}>
-            <TooltipTrigger
-              render={
-                <div className="flex min-w-0 items-center gap-2">
-                  <IdentityAvatar
-                    name={member.name}
-                    avatarUrl={member.avatarUrl}
-                    sizeClassName="size-6"
-                    textClassName="text-[10px]"
-                  />
-                  <span className="text-text-secondary min-w-0 truncate text-xs">
-                    {member.name ?? member.email ?? 'Teammate'}
-                  </span>
-                </div>
-              }
-            />
-            <TooltipContent side="bottom">
-              {member.email ? `${member.email} · ${member.role}` : member.role}
-            </TooltipContent>
-          </Tooltip>
-        ))}
+      <p className="text-text-muted font-mono text-xs tracking-wide uppercase">People</p>
+      <div className="flex flex-col gap-3">
+        {ordered.map((member) => {
+          const line = lineFor(member.userId);
+          return (
+            <div key={member.userId} className="flex items-start gap-2.5">
+              <IdentityAvatar
+                name={member.name}
+                avatarUrl={member.avatarUrl}
+                sizeClassName="size-6"
+                textClassName="text-xs"
+                className="mt-0.5"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-text-primary text-xs font-medium">
+                  {member.userId === selfId ? 'You' : (member.name ?? member.email ?? 'Teammate')}
+                </p>
+                <p className="text-text-muted mt-0.5 text-xs leading-relaxed">
+                  {line ?? member.role}
+                </p>
+              </div>
+            </div>
+          );
+        })}
       </div>
-      {entry?.line && (
-        <div className="flex flex-col gap-1">
-          <p className="text-text-secondary text-xs leading-relaxed">{entry.line}</p>
-          {/*
-            Says how old the summary is rather than implying it is live: it
-            is a cached narration, refreshed when it ages out, and a reader
-            deserves to know which.
-          */}
+      {rigLine && (
+        <div className="border-border-hairline flex flex-col gap-1 border-t pt-3">
+          <p className="text-text-secondary text-xs leading-relaxed">{rigLine}</p>
           <p className="text-text-muted text-xs">
             {refreshing
               ? 'Updating summary'

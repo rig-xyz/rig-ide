@@ -1162,37 +1162,43 @@ function FileBrowser({
           </div>
           {unseenCount > 0 && (
             /*
-              Two actions on one chip: the label filters to what is new,
-              the trailing check clears it. The check only appears on hover
-              or focus, so at rest this is a quiet count rather than a
-              control panel, and clearing is never a click away from being
-              discovered when you want it.
+              Two separate controls, not one that mutates on hover: the
+              chip filters to what is new, and a distinct button beside it
+              clears. An affordance that grows out of another one moves the
+              thing you were aiming at, which is why the earlier version
+              felt broken.
             */
-            <div
-              className={cn(
-                'group flex shrink-0 items-center rounded-full text-xs font-medium transition-colors',
-                view.filter === 'unseen' ? 'bg-accent text-accent-ink' : 'bg-accent-subtle text-accent'
-              )}
-            >
+            <>
               <button
                 type="button"
                 onClick={toggleUnseenChip}
                 aria-pressed={view.filter === 'unseen'}
                 title={view.filter === 'unseen' ? 'Show everything' : 'Show only what is new'}
-                className="rounded-full py-1 pr-1 pl-2.5 hover:opacity-80"
+                className={cn(
+                  'shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
+                  view.filter === 'unseen'
+                    ? 'bg-accent text-accent-ink'
+                    : 'bg-accent-subtle text-accent hover:opacity-80'
+                )}
               >
                 {unseenCount} new
               </button>
-              <button
-                type="button"
-                onClick={onMarkAllSeen}
-                title="Mark all as seen"
-                aria-label="Mark all as seen"
-                className="w-0 overflow-hidden opacity-0 transition-all group-hover:w-6 group-hover:pr-1.5 group-hover:opacity-100 focus-visible:w-6 focus-visible:pr-1.5 focus-visible:opacity-100"
-              >
-                <CheckCheck className="size-3.5" strokeWidth={1.75} />
-              </button>
-            </div>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      onClick={onMarkAllSeen}
+                      aria-label="Mark all as seen"
+                      className="text-text-muted hover:bg-bg-2 hover:text-text-primary rounded-control flex size-6 shrink-0 items-center justify-center transition-colors"
+                    >
+                      <CheckCheck className="size-3.5" strokeWidth={1.5} />
+                    </button>
+                  }
+                />
+                <TooltipContent side="bottom">Mark all as seen</TooltipContent>
+              </Tooltip>
+            </>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
