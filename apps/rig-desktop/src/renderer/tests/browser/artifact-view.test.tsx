@@ -110,13 +110,7 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
   async function renderArtifact(path: string): Promise<void> {
     await act(async () => {
       root.render(
-        <ArtifactView
-          root="/repo"
-          rootId="repo-1"
-          path={path}
-          onClose={() => {}}
-          onNavigateFolder={() => {}}
-        />
+        <ArtifactView root="/repo" rootId="repo-1" path={path} onNavigateFolder={() => {}} />
       );
     });
   }

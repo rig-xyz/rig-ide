@@ -159,6 +159,31 @@ export function ArtefactPane({
         </div>
         <div className="border-border-hairline flex shrink-0 items-center gap-0.5 border-l px-1.5">
           {overflowing && plusButton}
+          {/* Feedback round 5: the navigator's door lives at TAB level, not
+              on each file's header — it opens files, so it belongs with the
+              tabs they open into, and the focus tab gets it for free. */}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  ref={filesRef}
+                  type="button"
+                  // A control that opens a surface closes it too — toggle,
+                  // never re-open.
+                  onClick={() =>
+                    navigator === 'files' ? setNavigator(null) : openNavigator('files')
+                  }
+                  aria-haspopup="dialog"
+                  aria-expanded={navigator === 'files'}
+                  aria-label="Files"
+                  className="hover:bg-bg-2 hover:text-text-primary flex size-6 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors"
+                >
+                  <FolderTree className="size-3.5" strokeWidth={1.5} />
+                </button>
+              }
+            />
+            <TooltipContent side="bottom">Files</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
@@ -170,6 +195,7 @@ export function ArtefactPane({
         onClose={() => setNavigator(null)}
         onOpenFile={onOpenFile}
         revealDir={revealDir}
+        align="right"
       />
 
       <div className="min-h-0 flex-1">
@@ -181,25 +207,7 @@ export function ArtefactPane({
             root={root}
             rootId={rootId}
             path={active.path}
-            onClose={() => onCloseTab(state.active)}
             onNavigateFolder={(relPath) => openNavigator('files', relPath)}
-            navigator={
-              <button
-                ref={filesRef}
-                type="button"
-                // A control that opens a surface closes it too — toggle,
-                // never re-open.
-                onClick={() =>
-                  navigator === 'files' ? setNavigator(null) : openNavigator('files')
-                }
-                aria-haspopup="dialog"
-                aria-expanded={navigator === 'files'}
-                className="border-border-hairline hover:bg-bg-2 hover:text-text-primary flex shrink-0 items-center gap-1 rounded-control border bg-transparent px-2 py-1 text-xs text-text-secondary transition-colors"
-              >
-                <FolderTree className="size-3.5" strokeWidth={1.5} />
-                Files
-              </button>
-            }
           />
         )}
       </div>

@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Loader2, Sparkles } from 'lucide-react';
+import { ChevronRight, Loader2, MessageSquare, Sparkles } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { commentDecorations } from '@renderer/features/docs/comments/comment-decorations';
@@ -10,6 +10,8 @@ import {
 } from '@renderer/features/docs/comments/comments-store';
 import { DocEditor } from '@renderer/features/docs/doc-editor';
 import { DocTabResource } from '@renderer/features/docs/doc-file-sync';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
+import { cn } from '@renderer/lib/utils';
 import { classifyEntryCategory, relPathFromRoot } from '@shared/rig/file-navigator-categories';
 import { breadcrumbSegments, type BreadcrumbSegment } from './breadcrumb';
 import type { EditorLanguage } from './file-type';
@@ -43,21 +45,15 @@ export const ArtifactView = observer(function ArtifactView({
   root,
   rootId,
   path,
-  onClose,
   onNavigateFolder,
-  navigator,
 }: {
   /** The bound rig's workspace root — scopes the file watcher. */
   root: string;
   rootId: string;
   /** Absolute path of the file being viewed. */
   path: string;
-  /** Plain pop, no target — the header's Back button. */
-  onClose: () => void;
-  /** Pop to the navigator AND reveal this folder (relPath) — folder breadcrumb segments. */
+  /** Open the navigator revealing this folder — folder breadcrumb segments. (Feedback round 5: the Files button itself lives on the tab strip now, one level up; closing is the tab's ×.) */
   onNavigateFolder: (relPath: string) => void;
-  /** Session-first viewer: the artefact pane's Files button, rendered at the header's FAR RIGHT (feedback round 2). Its presence also suppresses the standalone Back button — the tab strip's × owns closing. */
-  navigator?: React.ReactNode;
 }) {
   const fileInfo = useFileType(root, rootId, path);
   const crumbs = useMemo(() => breadcrumbSegments(root, path), [root, path]);
@@ -77,7 +73,6 @@ export const ArtifactView = observer(function ArtifactView({
         root={root}
         rootId={rootId}
         path={path}
-        navigator={navigator}
         crumbs={crumbs}
         language={type.category === 'markdown' ? 'markdown' : type.language}
         // Comments/Share stay markdown-only this round — see this file's
@@ -88,7 +83,6 @@ export const ArtifactView = observer(function ArtifactView({
         commentsEnabled={type.category === 'markdown'}
         showShare={type.category === 'markdown'}
         isSkill={isSkill}
-        onClose={onClose}
         onNavigateFolder={onNavigateFolder}
       />
     );
@@ -96,13 +90,7 @@ export const ArtifactView = observer(function ArtifactView({
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
-      <ArtifactHeaderBar
-        path={path}
-        crumbs={crumbs}
-        onClose={onClose}
-        onNavigateFolder={onNavigateFolder}
-        navigator={navigator}
-      />
+      <ArtifactHeaderBar path={path} crumbs={crumbs} onNavigateFolder={onNavigateFolder} />
       <div className="relative min-h-0 flex-1 overflow-y-auto">
         {type === null ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-text-muted">
@@ -135,39 +123,19 @@ export const ArtifactView = observer(function ArtifactView({
 function ArtifactHeaderBar({
   path,
   crumbs,
-  onClose,
   onNavigateFolder,
   trailing,
-  navigator,
   status,
 }: {
   path: string;
   crumbs: readonly BreadcrumbSegment[];
-  onClose: () => void;
   onNavigateFolder: (relPath: string) => void;
   trailing?: React.ReactNode;
-  /** The artefact pane's Files button — far right (feedback round 2); its presence suppresses the standalone Back button. */
-  navigator?: React.ReactNode;
   /** The transient save-status indicator, sitting right beside the file name. */
   status?: React.ReactNode;
 }) {
   return (
     <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border-hairline px-4">
-      {/* Real button chrome (round 14): outlined ghost, radius 6, so this
-          reads as a control you press — distinct from the breadcrumb path
-          you read. Only rendered standalone (no tab strip) — with tabs,
-          the × owns closing and the path starts the row. */}
-      {!navigator && (
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Back to files"
-          className="flex shrink-0 items-center gap-1 rounded-control border border-border-hairline bg-transparent px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
-        >
-          <ChevronLeft className="size-3.5" strokeWidth={1.5} />
-          Back
-        </button>
-      )}
       <div className="flex min-w-0 items-center gap-1 text-xs" title={path}>
         {crumbs.map((segment, index) => (
           <span key={`${segment.kind}:${index}`} className="flex min-w-0 items-center gap-1">
@@ -197,7 +165,6 @@ function ArtifactHeaderBar({
       {status}
       <span className="flex-1" />
       {trailing}
-      {navigator}
     </div>
   );
 }
@@ -275,9 +242,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   commentsEnabled,
   showShare,
   isSkill,
-  onClose,
   onNavigateFolder,
-  navigator,
 }: {
   root: string;
   rootId: string;
@@ -288,12 +253,14 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   showShare: boolean;
   /** File-navigator redesign: shows the "Skill · teaches your agents" banner below the header. */
   isSkill: boolean;
-  onClose: () => void;
   onNavigateFolder: (relPath: string) => void;
-  /** See `ArtifactView`'s own prop comment. */
-  navigator?: React.ReactNode;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // Feedback round 5: comments can step aside per document — Docs
+  // grammar. Session-local, defaults shown; the anchors stay marked in the
+  // text (they are document state), only the rail and the selection
+  // affordance retire.
+  const [showComments, setShowComments] = useState(true);
 
   // Built together, synchronously, so the comments decoration extension is
   // already in `extensionFactories` before `DocEditor`'s own mount effect
@@ -318,7 +285,6 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   }, [path, root, rootId, commentsEnabled]);
 
   useEffect(() => {
-    comments?.setVisible(true);
     return () => {
       if (comments) disposeDocComments(resource);
       resource.dispose();
@@ -328,6 +294,12 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
     // come from the same `useMemo` above, recreated only on a full remount
     // per `key={path}`), so listing it doesn't change when this fires.
   }, [resource, comments]);
+
+  // Visibility is its own effect, NOT folded into the dispose effect above
+  // — toggling must never re-run that cleanup and tear down the resource.
+  useEffect(() => {
+    comments?.setVisible(showComments);
+  }, [comments, showComments]);
 
   useEffect(() => {
     comments?.syncMarkers();
@@ -358,16 +330,14 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
     return () => document.removeEventListener('mousedown', handleClickAway, true);
   }, [comments]);
 
-  const showMargin = comments !== null && shouldShowMargin(comments);
+  const showMargin = comments !== null && showComments && shouldShowMargin(comments);
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
       <ArtifactHeaderBar
         path={path}
         crumbs={crumbs}
-        onClose={onClose}
         onNavigateFolder={onNavigateFolder}
-        navigator={navigator}
         status={<SaveStatus resource={resource} />}
         trailing={
           <>
@@ -380,6 +350,31 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
               >
                 Updated on disk · Reload
               </button>
+            )}
+            {comments && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      onClick={() => setShowComments((v) => !v)}
+                      aria-pressed={showComments}
+                      aria-label={showComments ? 'Hide comments' : 'Show comments'}
+                      className={cn(
+                        'flex size-6 items-center justify-center rounded-control transition-colors',
+                        showComments
+                          ? 'bg-bg-2 text-text-primary'
+                          : 'text-text-muted hover:bg-bg-2 hover:text-text-primary'
+                      )}
+                    >
+                      <MessageSquare className="size-3.5" strokeWidth={1.5} />
+                    </button>
+                  }
+                />
+                <TooltipContent side="bottom">
+                  {showComments ? 'Hide comments' : 'Show comments'}
+                </TooltipContent>
+              </Tooltip>
             )}
             {showShare && <ShareButton absPath={path} />}
           </>
@@ -422,7 +417,9 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 getView={() => resource.editorRef.current?.getView() ?? null}
               />
             )}
-            {comments && <CommentSelectionButton resource={resource} store={comments} />}
+            {comments && showComments && (
+              <CommentSelectionButton resource={resource} store={comments} />
+            )}
           </>
         )}
       </div>

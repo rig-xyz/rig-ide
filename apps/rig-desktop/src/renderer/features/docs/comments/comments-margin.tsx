@@ -979,7 +979,7 @@ const ReplyComposer = observer(function ReplyComposer({
         disabled={disabled || offline}
         onChange={setDraft}
         onSubmit={() => void send()}
-        placeholder={offline ? 'Reconnect to comment' : 'Reply, or @claude…'}
+        placeholder={offline ? 'Reconnect to comment' : 'Reply — @ to mention'}
         rows={1}
         className="max-h-32 min-h-8 py-1.5 text-sm"
       />
@@ -1034,7 +1034,10 @@ const NewThreadCard = observer(function NewThreadCard({ store }: { store: DocCom
   }, [agents, draft, quote, store]);
 
   return (
-    <Card active>
+    // `muted`: the focused textarea inside already wears the accent focus
+    // border — an accent card around an accent input read as a double
+    // outline (feedback round 5). One accent line, on the thing focused.
+    <Card active muted>
       <p
         className="border-border-strong text-text-muted line-clamp-2 border-l-2 pl-2 text-xs"
         title={quote}
@@ -1057,7 +1060,7 @@ const NewThreadCard = observer(function NewThreadCard({ store }: { store: DocCom
             onChange={setDraft}
             onSubmit={() => void send()}
             onEscape={store.closeComposer}
-            placeholder="Comment, or @claude…"
+            placeholder="Add a comment — @ to mention"
             rows={2}
             className="max-h-40 min-h-14 py-1.5 text-sm"
           />
