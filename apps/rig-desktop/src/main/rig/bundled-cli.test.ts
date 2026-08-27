@@ -1,5 +1,26 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { dedupeByRealPath, shapeLocalInstalls, type ProbedInstall } from './bundled-cli';
+import {
+  dedupeByRealPath,
+  ensureCodexSkillHome,
+  shapeLocalInstalls,
+  type ProbedInstall,
+} from './bundled-cli';
+
+describe('ensureCodexSkillHome', () => {
+  it('creates the standard Codex user-skill root for a first-time install', () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rig-codex-skill-home-'));
+    try {
+      const expected = path.join(homeDir, '.agents');
+      expect(ensureCodexSkillHome(homeDir)).toBe(expected);
+      expect(fs.statSync(expected).isDirectory()).toBe(true);
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('dedupeByRealPath', () => {
   it('keeps every entry when none share a real target', () => {
@@ -32,7 +53,11 @@ describe('dedupeByRealPath', () => {
 
 describe('shapeLocalInstalls', () => {
   it('no candidates — everything null, no note', () => {
-    expect(shapeLocalInstalls([])).toEqual({ local: null, localPath: null, multipleInstalls: null });
+    expect(shapeLocalInstalls([])).toEqual({
+      local: null,
+      localPath: null,
+      multipleInstalls: null,
+    });
   });
 
   it('one candidate — reports it, no multi-install note (nothing to disagree with)', () => {

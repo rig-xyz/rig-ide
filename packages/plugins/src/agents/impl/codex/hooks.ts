@@ -64,8 +64,15 @@ function getHooks(config: Record<string, unknown>): Record<string, unknown[]> {
   return (config.hooks ?? {}) as Record<string, unknown[]>;
 }
 
+const CODEX_MANAGED_HOOK_EVENTS = [
+  'Stop',
+  'PermissionRequest',
+  'SessionStart',
+  'UserPromptSubmit',
+] as const;
+
 function hasCodexEmdashHooks(hooks: Record<string, unknown[]>): boolean {
-  return ['Stop', 'PermissionRequest', 'SessionStart'].some((k) => {
+  return CODEX_MANAGED_HOOK_EVENTS.every((k) => {
     const entries = Array.isArray(hooks[k]) ? hooks[k] : [];
     return entries.some((e) => JSON.stringify(e).includes(EMDASH_MARKER));
   });
@@ -97,16 +104,16 @@ async function migrateLegacyHooks(
   };
 }
 
-function makeCodexSessionStartCommand(): string {
-  const post = makeHookPostCommand('session-start', 'stdin', {});
+function makeCodexStdinCommand(eventType: 'session-start' | 'start' | 'stop'): string {
+  const post = makeHookPostCommand(eventType, 'stdin', {});
   if (process.platform === 'win32') return post;
   return `INPUT="\${1:-$(cat)}"; printf '%s' "$INPUT" | ${post}`;
 }
 
 /**
- * Codex sends `{ type: 'agent-turn-complete' }` as its stop signal instead
- * of a plain 'stop' event type, and uses fixed `notification_type` values
- * in its hook payloads rather than piping JSON.
+ * Permission prompts use Rig's fixed notification body. Lifecycle hooks pipe
+ * Codex's native JSON so the generic parser can retain the provider session id
+ * and final assistant message.
  */
 function parseCodexHookEvent(eventType: string, body: Record<string, unknown>): CanonicalHookEvent {
   if (eventType === 'session-start') {
@@ -133,9 +140,10 @@ function parseCodexHookEvent(eventType: string, body: Record<string, unknown>): 
 }
 
 export function buildCodexHookConfig() {
-  const stopCmd = makeNotificationHookCommand('idle_prompt');
+  const stopCmd = makeCodexStdinCommand('stop');
   const permCmd = makeNotificationHookCommand('permission_prompt');
-  const sessionCmd = makeCodexSessionStartCommand();
+  const sessionCmd = makeCodexStdinCommand('session-start');
+  const promptCmd = makeCodexStdinCommand('start');
 
   return {
     async readHooks(fs: PluginFs): Promise<HookRegistration[]> {
@@ -157,6 +165,7 @@ export function buildCodexHookConfig() {
         ['Stop', stopCmd],
         ['PermissionRequest', permCmd],
         ['SessionStart', sessionCmd],
+        ['UserPromptSubmit', promptCmd],
       ] as [string, string][]) {
         const existing = Array.isArray(hooks[key]) ? hooks[key] : [];
         hooks[key] = [

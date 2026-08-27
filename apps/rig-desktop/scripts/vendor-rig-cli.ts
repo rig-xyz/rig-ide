@@ -61,6 +61,7 @@ if (existsSync(vendoredPkgJson) && existsSync(vendoredTapdPkgJson)) {
       version?: string;
     };
     if (version === RIG_CLI_VERSION && tapdVersion === TAPD_VERSION) {
+      verifySkillInstaller();
       writeShims();
       console.log(
         `vendor-rig-cli: @rigxyz/cli@${RIG_CLI_VERSION} + @rigxyz/tapd@${TAPD_VERSION} already vendored, refreshed shims only`
@@ -72,7 +73,9 @@ if (existsSync(vendoredPkgJson) && existsSync(vendoredTapdPkgJson)) {
   }
 }
 
-console.log(`vendor-rig-cli: vendoring @rigxyz/cli@${RIG_CLI_VERSION} + @rigxyz/tapd@${TAPD_VERSION}`);
+console.log(
+  `vendor-rig-cli: vendoring @rigxyz/cli@${RIG_CLI_VERSION} + @rigxyz/tapd@${TAPD_VERSION}`
+);
 
 const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'rig-cli-vendor-'));
 try {
@@ -111,7 +114,9 @@ try {
   }
   const installedTapd = path.join(tmpDir, 'node_modules', '@rigxyz', 'tapd');
   if (!existsSync(path.join(installedTapd, 'package.json'))) {
-    fail(`npm install did not produce ${installedTapd}/package.json — was @rigxyz/tapd@${TAPD_VERSION} hoisted top-level?`);
+    fail(
+      `npm install did not produce ${installedTapd}/package.json — was @rigxyz/tapd@${TAPD_VERSION} hoisted top-level?`
+    );
   }
 
   rmSync(rigCliDir, { recursive: true, force: true });
@@ -164,6 +169,7 @@ try {
     );
   }
 
+  verifySkillInstaller();
   writeShims();
 
   // Verify with the build machine's system node (end users don't need one).
@@ -228,6 +234,55 @@ function stripFiles(dir: string): void {
       unlinkSync(full);
     }
   }
+}
+
+/**
+ * The packaged app runs this postinstall itself because electron-builder uses
+ * --ignore-scripts. Keep the Codex global skill target and native Rig comment
+ * workflow as part of the signed-build contract, not an unchecked CLI detail.
+ */
+function verifySkillInstaller(): void {
+  const postinstallPath = path.join(rigCliDir, 'bin', 'postinstall.mjs');
+  if (!existsSync(postinstallPath)) {
+    fail(`expected rig skill installer at ${postinstallPath}`);
+  }
+
+  const probeHome = mkdtempSync(path.join(os.tmpdir(), 'rig-skill-probe-'));
+  const codexSkillPath = path.join(probeHome, '.agents', 'skills', 'rig', 'SKILL.md');
+  try {
+    mkdirSync(path.join(probeHome, '.agents'), { recursive: true });
+    execFileSync('node', [postinstallPath], {
+      encoding: 'utf-8',
+      env: {
+        ...process.env,
+        HOME: probeHome,
+        USERPROFILE: probeHome,
+        RIG_SKIP_SKILL_INSTALL: '0',
+      },
+    });
+  } catch (error) {
+    fail(
+      `vendored rig postinstall failed its isolated Codex skill probe (${error instanceof Error ? error.message : String(error)})`
+    );
+  }
+  if (!existsSync(codexSkillPath)) {
+    fail(`vendored rig postinstall did not create the Codex skill at ${codexSkillPath}`);
+  }
+
+  const source = readFileSync(codexSkillPath, 'utf-8');
+  const requirements = [
+    ['native comment reader', 'rig comments'],
+    ['native comment writer', 'rig comment'],
+    ['agent authorship flags', '--agent --model'],
+    ['managed-skill collision marker', 'managed by @rigxyz/cli'],
+  ] as const;
+  for (const [label, fragment] of requirements) {
+    if (!source.includes(fragment)) {
+      fail(`vendored rig skill installer is missing ${label} (${JSON.stringify(fragment)})`);
+    }
+  }
+  rmSync(probeHome, { recursive: true, force: true });
+  console.log('vendor-rig-cli: OK — Codex rig skill install contract present');
 }
 
 function writeShims(): void {

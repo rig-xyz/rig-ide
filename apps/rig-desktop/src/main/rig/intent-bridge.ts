@@ -2,9 +2,11 @@ import { basename } from 'node:path';
 import {
   planStateSchema,
   sessionSummarySchema,
+  transcriptTurnSchema,
   type PlanEntryStatus,
   type PlanState,
   type SessionSummary,
+  type TranscriptTurn,
 } from '@emdash/core/acp';
 import type { Unsubscribe } from '@emdash/shared';
 import { ReplicaState } from '@emdash/wire';
@@ -19,18 +21,20 @@ import {
   type RigUiStatus,
 } from '@shared/rig/contract';
 import { findBindingConfig, type RigBindingLocation } from './binding';
+import { intentContextFromTurn } from './intent-context';
 import { clearAcpSessionStart, getAcpSessionStart } from './session-registry';
 
 const POLL_INTERVAL_MS = 2_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 const IN_PROGRESS_SUMMARY = 'in progress';
-const PLAN_RETRY_BASE_MS = 500;
-const PLAN_RETRY_MAX_MS = 5_000;
-const PLAN_RETRY_WINDOW_MS = 60_000;
+const TOPIC_RETRY_BASE_MS = 500;
+const TOPIC_RETRY_MAX_MS = 5_000;
+const TOPIC_RETRY_WINDOW_MS = 60_000;
 
 type SessionSummaryList = Record<string, SessionSummary>;
 const sessionSummaryListSchema = z.record(z.string(), sessionSummarySchema);
 const planReplicaSchema = planStateSchema.nullable();
+const activeTurnReplicaSchema = transcriptTurnSchema.nullable();
 
 type RelayIntent = {
   id: string;
@@ -54,10 +58,15 @@ type ConversationTracker = {
   conversationId: string;
   providerId: string;
   cwd: string | null;
-  /** Binding lookup runs once, on the first non-null plan. */
+  /** Binding lookup runs once, on the first prompt or non-null plan. */
   bindingResolved: boolean;
   binding: RigBindingLocation | null;
   sessionIntentId: string | null;
+  promptTitleApplied: boolean;
+  lastSummaryText: string | null;
+  activeTurnSeq: number | null;
+  liveAssistantText: string | null;
+  summarizedTurnSeq: number | null;
   sawPlan: boolean;
   ended: boolean;
   children: Map<string, ChildIntent>;
@@ -69,6 +78,12 @@ type ConversationTracker = {
   planRetryStartedAt: number | null;
   planAttachWarned: boolean;
   planGaveUp: boolean;
+  activeTurnReplica: ReplicaState<TranscriptTurn | null> | null;
+  activeTurnRetryTimer: NodeJS.Timeout | null;
+  activeTurnRetryAttempts: number;
+  activeTurnRetryStartedAt: number | null;
+  activeTurnAttachWarned: boolean;
+  activeTurnGaveUp: boolean;
 };
 
 class RigIntentBridge {
@@ -102,8 +117,14 @@ class RigIntentBridge {
         clearTimeout(tracker.planRetryTimer);
         tracker.planRetryTimer = null;
       }
+      if (tracker.activeTurnRetryTimer) {
+        clearTimeout(tracker.activeTurnRetryTimer);
+        tracker.activeTurnRetryTimer = null;
+      }
       if (tracker.planReplica) void tracker.planReplica.dispose();
       tracker.planReplica = null;
+      if (tracker.activeTurnReplica) void tracker.activeTurnReplica.dispose();
+      tracker.activeTurnReplica = null;
     }
     this.conversations.clear();
     if (this.summariesReplica) {
@@ -154,6 +175,7 @@ class RigIntentBridge {
       const tracker = this.conversations.get(summary.conversationId);
       if (tracker) {
         this.maybeAttachPlan(tracker, summary);
+        this.maybeAttachActiveTurn(tracker, summary);
       } else {
         this.track(summary);
       }
@@ -173,6 +195,11 @@ class RigIntentBridge {
       bindingResolved: false,
       binding: null,
       sessionIntentId: null,
+      promptTitleApplied: false,
+      lastSummaryText: null,
+      activeTurnSeq: null,
+      liveAssistantText: null,
+      summarizedTurnSeq: null,
       sawPlan: false,
       ended: false,
       children: new Map(),
@@ -183,9 +210,16 @@ class RigIntentBridge {
       planRetryStartedAt: null,
       planAttachWarned: false,
       planGaveUp: false,
+      activeTurnReplica: null,
+      activeTurnRetryTimer: null,
+      activeTurnRetryAttempts: 0,
+      activeTurnRetryStartedAt: null,
+      activeTurnAttachWarned: false,
+      activeTurnGaveUp: false,
     };
     this.conversations.set(summary.conversationId, tracker);
     this.maybeAttachPlan(tracker, summary);
+    this.maybeAttachActiveTurn(tracker, summary);
   }
 
   /**
@@ -241,18 +275,92 @@ class RigIntentBridge {
   private schedulePlanRetry(tracker: ConversationTracker): void {
     if (this.disposed || tracker.ended || tracker.planReplica || tracker.planRetryTimer) return;
     tracker.planRetryStartedAt ??= Date.now();
-    if (Date.now() - tracker.planRetryStartedAt > PLAN_RETRY_WINDOW_MS) {
+    if (Date.now() - tracker.planRetryStartedAt > TOPIC_RETRY_WINDOW_MS) {
       tracker.planGaveUp = true;
       log.warn('Rig intent bridge gave up following session plan', {
         conversationId: tracker.conversationId,
       });
       return;
     }
-    const delay = Math.min(PLAN_RETRY_BASE_MS * 2 ** tracker.planRetryAttempts, PLAN_RETRY_MAX_MS);
+    const delay = Math.min(
+      TOPIC_RETRY_BASE_MS * 2 ** tracker.planRetryAttempts,
+      TOPIC_RETRY_MAX_MS
+    );
     tracker.planRetryAttempts += 1;
     tracker.planRetryTimer = setTimeout(() => {
       tracker.planRetryTimer = null;
       this.attachPlan(tracker);
+    }, delay);
+  }
+
+  /** Follow the provider-neutral transcript so providers without ACP plans still expose intent. */
+  private maybeAttachActiveTurn(tracker: ConversationTracker, summary: SessionSummary): void {
+    if (tracker.ended || tracker.activeTurnReplica || tracker.activeTurnGaveUp) return;
+    if (summary.lifecycle === 'starting') return;
+    if (tracker.activeTurnRetryTimer) {
+      clearTimeout(tracker.activeTurnRetryTimer);
+      tracker.activeTurnRetryTimer = null;
+    }
+    this.attachActiveTurn(tracker);
+  }
+
+  private attachActiveTurn(tracker: ConversationTracker): void {
+    const client = this.client;
+    if (!client || this.disposed || tracker.ended || tracker.activeTurnReplica) return;
+    const replica = new ReplicaState<TranscriptTurn | null>(
+      client.session.state({ conversationId: tracker.conversationId }, 'activeTurn'),
+      {
+        schema: activeTurnReplicaSchema,
+        onChange: (turn) => this.enqueue(tracker, () => this.reconcileTurn(tracker, turn)),
+      }
+    );
+    tracker.activeTurnReplica = replica;
+    replica.ready.then(
+      () => {
+        log.info('Rig intent bridge: following active session turn', {
+          conversationId: tracker.conversationId,
+        });
+      },
+      (error: unknown) => {
+        if (tracker.activeTurnReplica === replica) tracker.activeTurnReplica = null;
+        void replica.dispose();
+        if (!tracker.activeTurnAttachWarned) {
+          tracker.activeTurnAttachWarned = true;
+          log.warn('Rig intent bridge failed to follow active session turn; retrying', {
+            conversationId: tracker.conversationId,
+            error: String(error),
+          });
+        }
+        this.scheduleActiveTurnRetry(tracker);
+      }
+    );
+  }
+
+  private scheduleActiveTurnRetry(tracker: ConversationTracker): void {
+    if (
+      this.disposed ||
+      tracker.ended ||
+      tracker.activeTurnReplica ||
+      tracker.activeTurnRetryTimer
+    ) {
+      return;
+    }
+    tracker.activeTurnRetryStartedAt ??= Date.now();
+    if (Date.now() - tracker.activeTurnRetryStartedAt > TOPIC_RETRY_WINDOW_MS) {
+      tracker.activeTurnGaveUp = true;
+      log.warn('Rig intent bridge gave up following active session turn', {
+        conversationId: tracker.conversationId,
+      });
+      return;
+    }
+    const delay = Math.min(
+      TOPIC_RETRY_BASE_MS * 2 ** tracker.activeTurnRetryAttempts,
+      TOPIC_RETRY_MAX_MS
+    );
+    tracker.activeTurnRetryAttempts += 1;
+    tracker.activeTurnRetryTimer = setTimeout(() => {
+      tracker.activeTurnRetryTimer = null;
+      this.attachActiveTurn(tracker);
     }, delay);
   }
 
@@ -265,9 +373,17 @@ class RigIntentBridge {
       clearTimeout(tracker.planRetryTimer);
       tracker.planRetryTimer = null;
     }
+    if (tracker.activeTurnRetryTimer) {
+      clearTimeout(tracker.activeTurnRetryTimer);
+      tracker.activeTurnRetryTimer = null;
+    }
     if (tracker.planReplica) {
       void tracker.planReplica.dispose();
       tracker.planReplica = null;
+    }
+    if (tracker.activeTurnReplica) {
+      void tracker.activeTurnReplica.dispose();
+      tracker.activeTurnReplica = null;
     }
     this.enqueue(tracker, () => this.finish(tracker));
   }
@@ -285,40 +401,18 @@ class RigIntentBridge {
     if (tracker.ended) return;
     if (!plan) {
       // The plan live state starts null; only a null AFTER a real plan means done.
-      if (tracker.sawPlan) await this.finish(tracker);
+      if (tracker.sawPlan) {
+        await this.captureSettledTurn(tracker);
+        await this.finish(tracker);
+      }
       return;
     }
     tracker.sawPlan = true;
 
-    if (!tracker.bindingResolved) {
-      tracker.bindingResolved = true;
-      tracker.binding = tracker.cwd ? findBindingConfig(tracker.cwd) : null;
-      if (tracker.binding) {
-        this.setActiveBinding(tracker.binding);
-      } else {
-        log.info('Rig intent bridge: no rig workspace binding for session', {
-          conversationId: tracker.conversationId,
-          cwd: tracker.cwd,
-        });
-        if (!this.activeBinding) {
-          this.emitSnapshot({
-            connected: false,
-            error: 'No rig workspace binding (.rig/tap-binding.local.json) found for this session',
-            intents: [],
-          });
-        }
-      }
-    }
-    const binding = tracker.binding;
+    const binding = this.resolveBinding(tracker);
     if (!binding) return;
 
-    if (!tracker.sessionIntentId) {
-      const created = await this.createIntent(binding, {
-        agent: tracker.providerId || 'agent',
-        title: `Agent session — ${basename(binding.workspaceRoot)}`,
-      });
-      tracker.sessionIntentId = created.id;
-    }
+    const sessionIntentId = await this.ensureSessionIntent(tracker, binding, null);
 
     const seen = new Set<string>();
     for (const entry of plan.entries) {
@@ -329,7 +423,7 @@ class RigIntentBridge {
         const created = await this.createIntent(binding, {
           agent: tracker.providerId || 'agent',
           title: entry.content,
-          parentIntentId: tracker.sessionIntentId,
+          parentIntentId: sessionIntentId,
         });
         child = { id: created.id, entryStatus: 'pending', terminal: null };
         tracker.children.set(entry.content, child);
@@ -358,6 +452,125 @@ class RigIntentBridge {
       child.terminal = 'closed';
     }
     child.entryStatus = next;
+  }
+
+  /**
+   * A prompt is the universal intent signal. ACP plans remain useful detail,
+   * but Codex and other providers may complete a turn without ever publishing one.
+   */
+  private async reconcileTurn(
+    tracker: ConversationTracker,
+    turn: TranscriptTurn | null
+  ): Promise<void> {
+    if (tracker.ended) return;
+
+    if (turn) {
+      tracker.activeTurnSeq = turn.seq;
+      const context = intentContextFromTurn(turn);
+      if (context.summaryText) tracker.liveAssistantText = context.summaryText;
+
+      const binding = this.resolveBinding(tracker);
+      if (!binding) return;
+      await this.ensureSessionIntent(tracker, binding, context.title);
+      return;
+    }
+
+    await this.captureSettledTurn(tracker);
+  }
+
+  private async captureSettledTurn(tracker: ConversationTracker): Promise<void> {
+    const turnSeq = tracker.activeTurnSeq;
+    if (turnSeq === null || tracker.summarizedTurnSeq === turnSeq) return;
+
+    const binding = this.resolveBinding(tracker);
+    if (!binding || !tracker.sessionIntentId) return;
+
+    const summaryText =
+      (await this.readCommittedTurnSummary(tracker, turnSeq)) ?? tracker.liveAssistantText;
+    if (summaryText && summaryText !== tracker.lastSummaryText) {
+      await this.patchIntent(binding, tracker.sessionIntentId, { summaryText });
+      tracker.lastSummaryText = summaryText;
+    }
+    tracker.summarizedTurnSeq = turnSeq;
+    tracker.activeTurnSeq = null;
+    tracker.liveAssistantText = null;
+  }
+
+  private async readCommittedTurnSummary(
+    tracker: ConversationTracker,
+    turnSeq: number
+  ): Promise<string | null> {
+    const client = this.client;
+    if (!client) return null;
+    try {
+      const result = await client.getHistory({
+        conversationId: tracker.conversationId,
+        before: turnSeq + 1,
+        limit: 1,
+      });
+      if (!result.success) {
+        log.warn('Rig intent bridge could not read settled turn context', {
+          conversationId: tracker.conversationId,
+          turnSeq,
+          error: result.error,
+        });
+        return null;
+      }
+      const settled = result.data.turns.find((candidate) => candidate.seq === turnSeq);
+      return settled ? intentContextFromTurn(settled).summaryText : null;
+    } catch (error) {
+      log.warn('Rig intent bridge failed to read settled turn context', {
+        conversationId: tracker.conversationId,
+        turnSeq,
+        error: String(error),
+      });
+      return null;
+    }
+  }
+
+  private resolveBinding(tracker: ConversationTracker): RigBindingLocation | null {
+    if (tracker.bindingResolved) return tracker.binding;
+
+    tracker.bindingResolved = true;
+    tracker.binding = tracker.cwd ? findBindingConfig(tracker.cwd) : null;
+    if (tracker.binding) {
+      this.setActiveBinding(tracker.binding);
+    } else {
+      log.info('Rig intent bridge: no rig workspace binding for session', {
+        conversationId: tracker.conversationId,
+        cwd: tracker.cwd,
+      });
+      if (!this.activeBinding) {
+        this.emitSnapshot({
+          connected: false,
+          error: 'No rig workspace binding (.rig/tap-binding.local.json) found for this session',
+          intents: [],
+        });
+      }
+    }
+    return tracker.binding;
+  }
+
+  private async ensureSessionIntent(
+    tracker: ConversationTracker,
+    binding: RigBindingLocation,
+    promptTitle: string | null
+  ): Promise<string> {
+    if (!tracker.sessionIntentId) {
+      const created = await this.createIntent(binding, {
+        agent: tracker.providerId || 'agent',
+        title: promptTitle ?? `Agent session — ${basename(binding.workspaceRoot)}`,
+      });
+      tracker.sessionIntentId = created.id;
+      tracker.promptTitleApplied = promptTitle !== null;
+      return created.id;
+    }
+
+    if (promptTitle && !tracker.promptTitleApplied) {
+      await this.patchIntent(binding, tracker.sessionIntentId, { title: promptTitle });
+      tracker.promptTitleApplied = true;
+    }
+    return tracker.sessionIntentId;
   }
 
   /** Session ended (plan cleared or session gone) — close the session intent and open children. */

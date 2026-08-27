@@ -69,6 +69,50 @@ describe('buildCodexHookConfig', () => {
     expect(config).toContain('echo user-prompt');
     expect(config).toContain('notification_type');
     expect(config).toContain('session-start');
+    expect(config).toContain('X-Emdash-Event-Type: start');
+    expect(config).toContain('X-Emdash-Event-Type: stop');
+    await expect(hooks.getHooksInstalled(fs)).resolves.toBe(true);
+  });
+
+  it('repairs a partial managed hook installation', async () => {
+    const fs = createMemoryFs({
+      [CODEX_CONFIG_PATH]: `[[hooks.Stop]]
+hooks = [{ type = "command", command = "curl http://127.0.0.1:$EMDASH_HOOK_PORT/hook" }]
+`,
+    });
+    const hooks = buildCodexHookConfig();
+
+    await expect(hooks.getHooksInstalled(fs)).resolves.toBe(false);
+    await hooks.writeHooks(fs, []);
+    await expect(hooks.getHooksInstalled(fs)).resolves.toBe(true);
+
+    const config = await fs.read(CODEX_CONFIG_PATH);
+    expect(config).toContain('[[hooks.UserPromptSubmit]]');
+    expect(config).toContain('[[hooks.SessionStart]]');
+    expect(config).toContain('[[hooks.PermissionRequest]]');
+  });
+
+  it('normalizes Codex prompt and stop payloads without dropping final context', () => {
+    const hooks = buildCodexHookConfig();
+
+    expect(hooks.parseHookEvent?.('start', { prompt: 'Investigate session persistence' })).toEqual({
+      kind: 'status',
+      type: 'start',
+      lastAssistantMessage: undefined,
+      title: undefined,
+      message: undefined,
+    });
+    expect(
+      hooks.parseHookEvent?.('stop', {
+        last_assistant_message: 'Fixed the session resume race and added coverage.',
+      })
+    ).toEqual({
+      kind: 'status',
+      type: 'stop',
+      lastAssistantMessage: 'Fixed the session resume race and added coverage.',
+      title: undefined,
+      message: undefined,
+    });
   });
 
   it('keeps legacy hooks.json when writing config.toml fails', async () => {

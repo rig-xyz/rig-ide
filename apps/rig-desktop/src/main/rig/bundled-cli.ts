@@ -13,6 +13,7 @@
  */
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
@@ -127,8 +128,9 @@ export function logRigVersionSkew(): void {
 /**
  * Runs the vendored CLI's postinstall script once per launch (fire-and-forget).
  * A DMG install never runs npm, so without this agents never get the
- * ~/.claude/skills/rig skill. The script is internally idempotent (skill-version
- * marker) and a silent no-op when ~/.claude does not exist.
+ * Rig skill in ~/.claude/skills/rig and ~/.agents/skills/rig (Codex). The script
+ * is internally idempotent and collision-safe. Rig creates Codex's standard
+ * ~/.agents home first so first-time Codex users are not skipped.
  */
 export function installBundledRigSkill(): void {
   if (!bundledRigBinDir()) return;
@@ -141,6 +143,7 @@ export function installBundledRigSkill(): void {
     return;
   }
 
+  ensureCodexSkillHome();
   execFile(
     process.execPath,
     [postinstall],
@@ -151,12 +154,27 @@ export function installBundledRigSkill(): void {
     },
     (err) => {
       if (err) {
-        log.warn('[bundled-cli] rig skill install failed', { error: err.message });
+        log.warn('[bundled-cli] Rig agent skill install failed', { error: err.message });
       } else {
-        log.info('[bundled-cli] rig skill install completed');
+        log.info('[bundled-cli] Rig agent skill install completed');
       }
     }
   );
+}
+
+/** Ensure the standard Codex user-skill root exists before the CLI installer runs. */
+export function ensureCodexSkillHome(homeDir = os.homedir()): string | null {
+  const agentsDir = path.join(homeDir, '.agents');
+  try {
+    fs.mkdirSync(agentsDir, { recursive: true });
+    return agentsDir;
+  } catch (error) {
+    log.warn('[bundled-cli] Could not create Codex agent skill home', {
+      path: agentsDir,
+      error: String(error),
+    });
+    return null;
+  }
 }
 
 /** All matches for an executable `name` across process.env.PATH, in PATH order — the same order the OS's own PATH resolution would try them in. */
@@ -328,7 +346,9 @@ async function probeLocalInstalls(name: 'rig' | 'tapd'): Promise<{
   multipleInstalls: MultipleInstalls | null;
 }> {
   const binDir = bundledRigBinDir();
-  const paths = dedupeByRealPath(findOnPath(name).filter((entry) => path.dirname(entry) !== binDir));
+  const paths = dedupeByRealPath(
+    findOnPath(name).filter((entry) => path.dirname(entry) !== binDir)
+  );
   const candidates: ProbedInstall[] = await Promise.all(
     paths.map(async (p) => ({ path: p, version: await probeVersion(p) }))
   );
