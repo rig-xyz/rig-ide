@@ -14,7 +14,11 @@ import { telemetryService } from '@main/lib/telemetry';
 import { registerExternalLinkHandlers } from '@main/utils/externalLinks';
 import { PRODUCT_NAME } from '@shared/app-identity';
 import type { Theme } from '@shared/core/app-settings';
-import { windowMaximizeChangedChannel } from '@shared/events/appEvents';
+import {
+  nativeMenuCommandStateChannel,
+  windowMaximizeChangedChannel,
+} from '@shared/events/appEvents';
+import { DISABLED_NATIVE_MENU_STATE } from './native-menu-state';
 import { APP_ORIGIN } from './protocol';
 
 let mainWindow: BrowserWindow | null = null;
@@ -117,7 +121,14 @@ export function createMainWindow(): BrowserWindow {
 }
 
 function registerRendererRecoveryHandlers(win: BrowserWindow): void {
+  // Renderer-owned commands must not stay deceptively enabled while its
+  // document is reloading or after its process has gone away. The renderer
+  // will publish its real capabilities again once React remounts.
+  win.webContents.on('did-start-loading', () => {
+    events.emit(nativeMenuCommandStateChannel, DISABLED_NATIVE_MENU_STATE);
+  });
   win.webContents.on('render-process-gone', (_event, details) => {
+    events.emit(nativeMenuCommandStateChannel, DISABLED_NATIVE_MENU_STATE);
     if (details.reason === 'clean-exit' || win.isDestroyed()) return;
 
     const recoveryId = randomUUID();

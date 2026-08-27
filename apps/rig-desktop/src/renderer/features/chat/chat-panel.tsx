@@ -102,6 +102,8 @@ export interface ChatPanelProps {
   collapsed?: boolean;
   /** Rail clicks land here after selecting — the shell flips back to the split. */
   onExpand?: () => void;
+  /** Registers the exact close action used by the visible active session tab. */
+  onNativeCloseActionChange?: (action: (() => void) | null) => void;
 }
 
 export const ChatPanel = observer(function ChatPanel({
@@ -113,6 +115,7 @@ export const ChatPanel = observer(function ChatPanel({
   onOpenFile,
   collapsed = false,
   onExpand,
+  onNativeCloseActionChange,
 }: ChatPanelProps) {
   const { agents, isLoading: agentsLoading } = useRunnableAgents();
   // Icon/name display, decoupled from `agents`' probe gate — see
@@ -578,6 +581,25 @@ export const ChatPanel = observer(function ChatPanel({
     [activeId]
   );
 
+  const closeActiveSessionTab = useCallback(() => {
+    if (activeId) {
+      closeSession(activeId);
+      return;
+    }
+    const previous = byRecency(sessions)[0];
+    if (previous) setActiveId(previous.conversationId);
+  }, [activeId, closeSession, sessions]);
+
+  // Cmd-W takes the same path as the visible tab close control. The
+  // zero-state tab is only closeable when a real session exists to return
+  // to, matching `TabStrip` below.
+  useEffect(() => {
+    if (!onNativeCloseActionChange) return;
+    const canClose = activeId !== null || sessions.length > 0;
+    onNativeCloseActionChange(canClose ? closeActiveSessionTab : null);
+    return () => onNativeCloseActionChange(null);
+  }, [activeId, closeActiveSessionTab, onNativeCloseActionChange, sessions.length]);
+
   const ordered = byRecency(sessions);
   const activeStore = activeId ? rigSessionRegistry.get<RigSession>(activeId) : null;
 
@@ -805,10 +827,12 @@ function SessionRail({
         />
         <TooltipContent side="right">Open chat</TooltipContent>
       </Tooltip>
-      {sessions.length > 0 && <div className="bg-border-hairline my-1 h-px w-6 shrink-0" />}
+      {sessions.length > 0 && <div className="my-1 h-px w-6 shrink-0 bg-border-hairline" />}
       {sessions.map((s) => {
         const active = s.conversationId === activeId;
-        const title = deriveTabTitle(sessionTitle(rigSessionRegistry.get<RigSession>(s.conversationId)));
+        const title = deriveTabTitle(
+          sessionTitle(rigSessionRegistry.get<RigSession>(s.conversationId))
+        );
         const icon = identities.get(s.providerId)?.icon;
         return (
           <Tooltip key={s.conversationId}>

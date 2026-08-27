@@ -1,7 +1,7 @@
 # Rig Resilience Roadmap
 
 Status: accepted for implementation
-Last updated: 2026-08-25
+Last updated: 2026-08-27
 Scope: the "now" and "next" resilience work; broader collaboration features are intentionally excluded
 
 ## Implementation Status
@@ -17,7 +17,12 @@ Scope: the "now" and "next" resilience work; broader collaboration features are 
   remains before release sign-off.
 - M3.1: implementation complete in the working tree on 2026-08-25. Opaque root capabilities,
   relative-only file/import operations, canonical containment, capability-scoped watchers, and
-  adversarial path tests pass. M3.2 and M4 are not started.
+  adversarial path tests pass.
+- M4.3: implementation complete in the working tree on 2026-08-27. Native command availability,
+  Settings, focused-tab Close, Undo/Redo, update, feedback, and confirmed Quit are wired and tested;
+  rejected sign-in, create/sync, file, import, and image operations settle visibly. A packaged-app
+  pass over the real macOS menu remains before release sign-off. M3.2, M4.1, and M4.2 are not
+  started.
 
 The current wire protocol cannot cancel a truly never-settling ACP start or resume request. Renderer
 operations are now safely serialized and late successes are cleaned up before a retry starts, but a
@@ -400,3 +405,8 @@ Primary source areas:
   semantics, generation-guarded stores, exception-safe ACP startup/resume, and latest-wins rig
   navigation. Kept app shutdown under the existing bounded main-process ACP cleanup rather than
   marking resumable sessions closed from renderer unload.
+- 2026-08-27: Implemented M4.3 with renderer-reported native menu capability state, focused-pane
+  Close Tab behavior, editable-target Undo/Redo, shared update and feedback actions, and a native
+  Cmd-Q confirmation that enters the existing bounded shutdown path. Kept unavailable commands
+  disabled and added transport-rejection coverage for create, sync, file rename, import, sign-in,
+  and image reads.

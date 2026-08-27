@@ -20,8 +20,24 @@ export const menuCheckForUpdatesChannel = defineEvent<void>('menu:check-for-upda
 export const menuUndoChannel = defineEvent<void>('menu:undo');
 export const menuRedoChannel = defineEvent<void>('menu:redo');
 export const menuCloseTabChannel = defineEvent<void>('menu:close-tab');
-export const menuQuitRequestedChannel = defineEvent<void>('menu:quit-requested');
 export const menuGiveFeedbackChannel = defineEvent<void>('menu:give-feedback');
+
+export type NativeMenuUpdateAction = 'unavailable' | 'check' | 'busy' | 'restart';
+
+/** Renderer-owned availability for native commands whose targets live in React. */
+export type NativeMenuCommandState = {
+  settings: boolean;
+  closeTab: boolean;
+  undo: boolean;
+  redo: boolean;
+  update: NativeMenuUpdateAction;
+  feedback: boolean;
+};
+
+// Renderer → main. Main keeps commands disabled until the renderer reports
+// that the corresponding visible action can genuinely run.
+export const nativeMenuCommandStateChannel =
+  defineEvent<NativeMenuCommandState>('menu:command-state');
 
 /** Emitted by main process when the window maximize state changes (Linux custom controls). */
 export const windowMaximizeChangedChannel = defineEvent<{ maximized: boolean }>(

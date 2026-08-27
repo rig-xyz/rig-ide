@@ -6,9 +6,14 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 const mocks = vi.hoisted(() => ({
   login: vi.fn(),
   awaitLogin: vi.fn(),
+  authStatus: vi.fn(),
+  createRig: vi.fn(),
+  enableSync: vi.fn(),
+  getRigHome: vi.fn(),
   importDoc: vi.fn(),
   openSelectDocumentFileDialog: vi.fn(),
   readBinary: vi.fn(),
+  renameFile: vi.fn(),
 }));
 
 vi.mock('@renderer/lib/ipc', () => ({
@@ -17,12 +22,21 @@ vi.mock('@renderer/lib/ipc', () => ({
       auth: {
         login: (...args: unknown[]) => mocks.login(...args),
         awaitLogin: (...args: unknown[]) => mocks.awaitLogin(...args),
+        status: (...args: unknown[]) => mocks.authStatus(...args),
+      },
+      create: {
+        create: (...args: unknown[]) => mocks.createRig(...args),
+        enableSync: (...args: unknown[]) => mocks.enableSync(...args),
+      },
+      home: {
+        get: (...args: unknown[]) => mocks.getRigHome(...args),
       },
       importDoc: {
         importDoc: (...args: unknown[]) => mocks.importDoc(...args),
       },
       files: {
         readBinary: (...args: unknown[]) => mocks.readBinary(...args),
+        rename: (...args: unknown[]) => mocks.renameFile(...args),
       },
     },
     app: {
@@ -38,7 +52,9 @@ vi.mock('@renderer/lib/open-external-link', () => ({
 }));
 
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
+import { CreateRigDialog } from '@renderer/features/rig-create/create-rig-dialog';
 import { ImportDocDialog } from '@renderer/features/rig-import/import-doc-dialog';
+import { RenameFileDialog } from '@renderer/features/workspace/rename-file-dialog';
 
 beforeAll(() => {
   (
@@ -59,6 +75,14 @@ function SignInHarness() {
   );
 }
 
+async function setInputValue(input: HTMLInputElement | null, value: string): Promise<void> {
+  const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+  await act(async () => {
+    valueSetter?.call(input, value);
+    input?.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
 describe('renderer rejection paths settle their busy state', () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -69,9 +93,16 @@ describe('renderer rejection paths settle their busy state', () => {
     root = createRoot(host);
     mocks.login.mockReset();
     mocks.awaitLogin.mockReset();
+    mocks.authStatus.mockReset();
+    mocks.createRig.mockReset();
+    mocks.enableSync.mockReset();
+    mocks.getRigHome.mockReset();
     mocks.importDoc.mockReset();
     mocks.openSelectDocumentFileDialog.mockReset();
     mocks.readBinary.mockReset();
+    mocks.renameFile.mockReset();
+    mocks.authStatus.mockResolvedValue({ signedIn: true });
+    mocks.getRigHome.mockResolvedValue({ displayPath: '~/Rig' });
   });
 
   afterEach(async () => {
@@ -161,5 +192,108 @@ describe('renderer rejection paths settle their busy state', () => {
     expect(document.body.textContent).not.toContain('Importing');
     expect(document.body.textContent).toContain("Couldn't import this doc");
     expect(onImported).not.toHaveBeenCalled();
+  });
+
+  it('clears create busy state when the create transport rejects', async () => {
+    mocks.createRig.mockRejectedValue(new Error('transport failed'));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <CreateRigDialog open onOpenChange={vi.fn()} onOpenPath={vi.fn()} />
+        </QueryClientProvider>
+      );
+      await Promise.resolve();
+    });
+
+    await setInputValue(document.body.querySelector<HTMLInputElement>('#rig-name'), 'team-roadmap');
+    const createButton = [...document.body.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === 'Create rig'
+    );
+    await act(async () => {
+      createButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).not.toContain('Creating…');
+    expect(document.body.textContent).toContain("Couldn't create this rig. Try again.");
+  });
+
+  it('clears sync busy state when the sync transport rejects', async () => {
+    mocks.createRig.mockResolvedValue({
+      success: true,
+      data: {
+        path: '/tmp/team-roadmap',
+        rootId: null,
+        rigName: 'team-roadmap',
+        synced: false,
+        homeUrl: null,
+        syncError: null,
+      },
+    });
+    mocks.enableSync.mockRejectedValue(new Error('transport failed'));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <CreateRigDialog open onOpenChange={vi.fn()} onOpenPath={vi.fn()} />
+        </QueryClientProvider>
+      );
+      await Promise.resolve();
+    });
+
+    await setInputValue(document.body.querySelector<HTMLInputElement>('#rig-name'), 'team-roadmap');
+    const createButton = [...document.body.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === 'Create rig'
+    );
+    await act(async () => {
+      createButton?.click();
+      await Promise.resolve();
+    });
+    const syncButton = [...document.body.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === 'Turn on sync'
+    );
+    await act(async () => {
+      syncButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).not.toContain('Turning on…');
+    expect(document.body.textContent).toContain("Couldn't turn on sync. Try again.");
+  });
+
+  it('clears file-operation busy state when rename transport rejects', async () => {
+    mocks.renameFile.mockRejectedValue(new Error('transport failed'));
+
+    await act(async () => {
+      root.render(
+        <RenameFileDialog
+          open
+          onOpenChange={vi.fn()}
+          absPath="/repo/notes.md"
+          root="/repo"
+          rootId="root-1"
+          currentName="notes.md"
+          onRenamed={vi.fn()}
+        />
+      );
+    });
+
+    await setInputValue(
+      document.body.querySelector<HTMLInputElement>('#rig-file-rename'),
+      'brief.md'
+    );
+    const saveButton = [...document.body.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === 'Save'
+    );
+    await act(async () => {
+      saveButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).not.toContain('Saving…');
+    expect(document.body.textContent).toContain("Couldn't rename this item. Try again.");
   });
 });

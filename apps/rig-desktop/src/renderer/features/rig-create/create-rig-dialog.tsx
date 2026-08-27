@@ -102,20 +102,25 @@ function CreateRigForm({
     if (!createdLocal) return;
     setLateSyncBusy(true);
     setLateSyncError(null);
-    const result = await rpc.rig.create.enableSync({ dir: createdLocal.path });
-    if (closedRef.current) {
-      // The write already happened (or failed) server-side — say so
-      // quietly rather than navigating into a dialog the user closed.
-      if (result.success) toast({ title: `Synced “${createdLocal.rigName}”` });
-      return;
+    try {
+      const result = await rpc.rig.create.enableSync({ dir: createdLocal.path });
+      if (closedRef.current) {
+        // The write already happened (or failed) server-side — say so
+        // quietly rather than navigating into a dialog the user closed.
+        if (result.success) toast({ title: `Synced “${createdLocal.rigName}”` });
+        return;
+      }
+      if (!result.success) {
+        setLateSyncError(result.error.message);
+        return;
+      }
+      onClose();
+      onOpenPath(createdLocal.path);
+    } catch {
+      if (!closedRef.current) setLateSyncError("Couldn't turn on sync. Try again.");
+    } finally {
+      if (!closedRef.current) setLateSyncBusy(false);
     }
-    setLateSyncBusy(false);
-    if (!result.success) {
-      setLateSyncError(result.error.message);
-      return;
-    }
-    onClose();
-    onOpenPath(createdLocal.path);
   };
 
   const authQuery = useQuery({
@@ -160,14 +165,23 @@ function CreateRigForm({
   const create = async () => {
     setBusy(true);
     setError(null);
-    const result = await rpc.rig.create.create({
-      // Default flow: null — main lands the rig in `<home>/<slug>` on its
-      // own. Advanced: the folder the user picked (`form.canSubmit`
-      // already requires one before this can be reached).
-      parentDir: advanced ? parentDir : null,
-      name,
-      sync: form.syncEffective,
-    });
+    let result: Awaited<ReturnType<typeof rpc.rig.create.create>>;
+    try {
+      result = await rpc.rig.create.create({
+        // Default flow: null — main lands the rig in `<home>/<slug>` on its
+        // own. Advanced: the folder the user picked (`form.canSubmit`
+        // already requires one before this can be reached).
+        parentDir: advanced ? parentDir : null,
+        name,
+        sync: form.syncEffective,
+      });
+    } catch {
+      if (!closedRef.current) {
+        setBusy(false);
+        setError("Couldn't create this rig. Try again.");
+      }
+      return;
+    }
     if (!result.success) {
       // Closed mid-flight: nothing left to show an error IN (the dialog's
       // gone) and nothing to retry from here — drop it silently, per the

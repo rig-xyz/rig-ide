@@ -27,10 +27,18 @@ import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { RigShareButton } from '@renderer/features/rig-share/rig-share-button';
 import { InvitesBell } from '@renderer/features/shell/invites-bell';
 import { LayoutSwitcher, type RigLayout } from '@renderer/features/shell/layout-switcher';
+import {
+  deriveNativeCloseTarget,
+  type FocusedRigPane,
+} from '@renderer/features/shell/native-close-target';
 import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
 import { SettingsModal } from '@renderer/features/shell/settings-modal';
 import { deriveTopbarContext, type TopbarContext } from '@renderer/features/shell/topbar-context';
 import { isUpdateReady, shouldAnnounceUpdate } from '@renderer/features/shell/update-status';
+import {
+  deriveNativeUpdateMenuAction,
+  useNativeMenuEvents,
+} from '@renderer/features/shell/use-native-menu-events';
 import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
 import { PinnedCard } from '@renderer/features/workspace/pinned-card';
 import { toast } from '@renderer/lib/hooks/use-toast';
@@ -215,6 +223,11 @@ export function App() {
     setSettingsOpen(true);
   }, []);
   const updateStatus = useUpdateStatus();
+  const updateSupportedQuery = useQuery({
+    queryKey: ['rig', 'updates', 'supported'],
+    queryFn: () => rpc.update.isSupported(),
+    staleTime: Infinity,
+  });
   // The "ready" toast — exactly once per version (`shouldAnnounceUpdate`,
   // pure/tested), regardless of whether Settings is ever opened. Marks the
   // version announced the moment the toast is SHOWN, not on dismiss, which
@@ -261,6 +274,13 @@ export function App() {
   // by the topbar's `LayoutSwitcher`. Per-session, deliberately not
   // persisted — same as the fold states it replaces.
   const [rigLayout, setRigLayout] = useState<RigLayout>('chat');
+  const [focusedRigPane, setFocusedRigPane] = useState<FocusedRigPane>('chat');
+  const chatNativeCloseRef = useRef<(() => void) | null>(null);
+  const [canCloseChatTab, setCanCloseChatTab] = useState(false);
+  const registerChatNativeClose = useCallback((action: (() => void) | null) => {
+    chatNativeCloseRef.current = action;
+    setCanCloseChatTab(Boolean(action));
+  }, []);
   const [chatWidth, setChatWidth] = useState<number>(readStoredChatWidth);
   const chatWidthRef = useRef(chatWidth);
   chatWidthRef.current = chatWidth;
@@ -450,6 +470,7 @@ export function App() {
   useEffect(() => {
     setArtefact(NO_TABS);
     setRigLayout('chat');
+    setFocusedRigPane('chat');
   }, [bound?.root]);
 
   // Title-reactivity round: `bound.name` (the topbar/`RigSwitcher`'s title,
@@ -533,12 +554,14 @@ export function App() {
         if (relPath) void rpc.rig.seenState.markSeen({ bindingId: boundBindingId, relPath });
       }
       setRigLayout((current) => (current === 'chat' ? 'split' : current));
+      setFocusedRigPane('artifact');
       setArtefact((current) => openFileTab(current, absPath));
     },
     [boundRoot, boundBindingId]
   );
   const openFocus = useCallback(() => {
     setRigLayout((current) => (current === 'chat' ? 'split' : current));
+    setFocusedRigPane('artifact');
     setArtefact((current) => openFocusTab(current));
   }, []);
 
@@ -549,6 +572,8 @@ export function App() {
     if (next !== 'chat') {
       setArtefact((current) => (current.tabs.length > 0 ? current : openFocusTab(current)));
     }
+    if (next === 'chat') setFocusedRigPane('chat');
+    if (next === 'files') setFocusedRigPane('artifact');
     setRigLayout(next);
   }, []);
 
@@ -611,6 +636,57 @@ export function App() {
     void rpc.rig.settings.set({ hasSeenOnboarding: true });
   }, []);
 
+  const onboardingSteps = deriveOnboardingSteps({
+    hasSeenOnboarding: hasSeenOnboarding ?? true,
+    signedIn: authStatusQuery.data?.signedIn ?? false,
+  });
+  const canOpenNativeSettings = rendererBootState === 'ready' && onboardingSteps.length === 0;
+  const nativeCloseTarget = deriveNativeCloseTarget({
+    settingsOpen,
+    hasRig: bound !== null,
+    layout: rigLayout,
+    focusedPane: focusedRigPane,
+    hasArtifactTab: artefact.tabs.length > 0,
+    hasChatTab: canCloseChatTab,
+  });
+  const closeNativeTarget = useCallback(() => {
+    switch (nativeCloseTarget) {
+      case 'settings':
+        setSettingsOpen(false);
+        return;
+      case 'artifact':
+        setArtefact((current) => closeActiveTab(current));
+        return;
+      case 'chat':
+        chatNativeCloseRef.current?.();
+        return;
+      case null:
+        return;
+    }
+  }, [nativeCloseTarget]);
+  const openNativeSettings = useCallback(() => openSettings(false), [openSettings]);
+  const nativeUpdateAction = deriveNativeUpdateMenuAction(
+    updateSupportedQuery.data,
+    updateStatus.state.status
+  );
+  const runNativeUpdateAction = useCallback(() => {
+    if (nativeUpdateAction === 'restart') {
+      updateStatus.restart();
+      return;
+    }
+    openSettings(true);
+    updateStatus.check();
+  }, [nativeUpdateAction, openSettings, updateStatus]);
+
+  useNativeMenuEvents({
+    canOpenSettings: canOpenNativeSettings,
+    canCloseTab: nativeCloseTarget !== null,
+    updateAction: nativeUpdateAction,
+    onOpenSettings: openNativeSettings,
+    onCloseTab: closeNativeTarget,
+    onUpdateAction: runNativeUpdateAction,
+  });
+
   if (rendererBootState !== 'ready') {
     return (
       <RecoverySurface
@@ -627,11 +703,6 @@ export function App() {
       />
     );
   }
-
-  const onboardingSteps = deriveOnboardingSteps({
-    hasSeenOnboarding: hasSeenOnboarding ?? true,
-    signedIn: authStatusQuery.data?.signedIn ?? false,
-  });
 
   if (onboardingSteps.length > 0) {
     return <Onboarding steps={onboardingSteps} onComplete={onOnboardingComplete} />;
@@ -690,7 +761,12 @@ export function App() {
         // three layouts, so `ChatPanel` never remounts when it changes.
         <div className="flex min-h-0 flex-1 pt-10">
           <div
-            style={{ order: CHAT_PANEL_ORDER, width: rigLayout === 'split' ? chatWidth : undefined }}
+            style={{
+              order: CHAT_PANEL_ORDER,
+              width: rigLayout === 'split' ? chatWidth : undefined,
+            }}
+            onPointerDownCapture={() => setFocusedRigPane('chat')}
+            onFocusCapture={() => setFocusedRigPane('chat')}
             className={cn(
               'relative flex shrink-0 flex-col overflow-hidden bg-bg-1',
               rigLayout === 'chat' && 'min-w-0 flex-1',
@@ -706,7 +782,11 @@ export function App() {
                 initialActiveSessionId={pendingActiveSessionId}
                 onOpenFile={openFile}
                 collapsed={rigLayout === 'files'}
-                onExpand={() => setRigLayout('split')}
+                onExpand={() => {
+                  setFocusedRigPane('chat');
+                  setRigLayout('split');
+                }}
+                onNativeCloseActionChange={registerChatNativeClose}
               />
             </RecoveryBoundary>
             {rigLayout === 'chat' && (
@@ -742,6 +822,8 @@ export function App() {
           {rigLayout !== 'chat' && (
             <div
               style={{ order: ARTIFACT_PANEL_ORDER }}
+              onPointerDownCapture={() => setFocusedRigPane('artifact')}
+              onFocusCapture={() => setFocusedRigPane('artifact')}
               className="flex min-h-0 min-w-0 flex-1 flex-col"
             >
               <ArtefactPane
@@ -1093,4 +1175,3 @@ function UnsyncedRigCard({
     </div>
   );
 }
-
