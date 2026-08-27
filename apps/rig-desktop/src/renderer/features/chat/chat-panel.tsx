@@ -94,7 +94,8 @@ export interface ChatPanelProps {
    */
   initialActiveSessionId?: string | null;
   onOpenFile?: (absPath: string) => void;
-  onToggleCollapse: () => void;
+  /** Session-first viewer: absent when the session owns the full window (no split to collapse into) — the strip's collapse button hides. */
+  onToggleCollapse?: () => void;
 }
 
 export const ChatPanel = observer(function ChatPanel({
@@ -657,7 +658,7 @@ const TabStrip = observer(function TabStrip({
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onNewTab: () => void;
-  onToggleCollapse: () => void;
+  onToggleCollapse?: () => void;
 }) {
   const inZeroState = activeId === null;
   // Round S2+: double-click a tab to rename it, editor convention (select-
@@ -741,16 +742,20 @@ const TabStrip = observer(function TabStrip({
           />
           <TooltipContent side="bottom">New session</TooltipContent>
         </Tooltip>
-        {/* Collapse: universal chrome, stays icon-only per the same rule. */}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onToggleCollapse}
-          aria-label="Collapse chat panel"
-          title="Collapse chat panel"
-        >
-          <PanelLeftClose className="size-3.5" strokeWidth={1.5} />
-        </Button>
+        {/* Collapse: universal chrome, stays icon-only per the same rule.
+            Hidden when the session owns the full window — there is nothing
+            to collapse into (see ChatPanelProps). */}
+        {onToggleCollapse && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onToggleCollapse}
+            aria-label="Collapse chat panel"
+            title="Collapse chat panel"
+          >
+            <PanelLeftClose className="size-3.5" strokeWidth={1.5} />
+          </Button>
+        )}
       </div>
     </div>
   );

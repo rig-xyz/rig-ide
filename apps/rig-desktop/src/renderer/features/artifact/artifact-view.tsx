@@ -46,6 +46,7 @@ export const ArtifactView = observer(function ArtifactView({
   path,
   onClose,
   onNavigateFolder,
+  leading,
 }: {
   /** The bound rig's workspace root — scopes the file watcher. */
   root: string;
@@ -56,6 +57,8 @@ export const ArtifactView = observer(function ArtifactView({
   onClose: () => void;
   /** Pop to the navigator AND reveal this folder (relPath) — folder breadcrumb segments. */
   onNavigateFolder: (relPath: string) => void;
+  /** Session-first viewer: replaces the Back button (the tab strip's × owns closing now) — the artefact pane passes its Files navigator button here. */
+  leading?: React.ReactNode;
 }) {
   const fileInfo = useFileType(root, rootId, path);
   const crumbs = useMemo(() => breadcrumbSegments(root, path), [root, path]);
@@ -75,6 +78,7 @@ export const ArtifactView = observer(function ArtifactView({
         root={root}
         rootId={rootId}
         path={path}
+        leading={leading}
         crumbs={crumbs}
         language={type.category === 'markdown' ? 'markdown' : type.language}
         // Comments/Share stay markdown-only this round — see this file's
@@ -98,6 +102,7 @@ export const ArtifactView = observer(function ArtifactView({
         crumbs={crumbs}
         onClose={onClose}
         onNavigateFolder={onNavigateFolder}
+        leading={leading}
       />
       <div className="relative min-h-0 flex-1 overflow-y-auto">
         {type === null ? (
@@ -134,27 +139,32 @@ function ArtifactHeaderBar({
   onClose,
   onNavigateFolder,
   trailing,
+  leading,
 }: {
   path: string;
   crumbs: readonly BreadcrumbSegment[];
   onClose: () => void;
   onNavigateFolder: (relPath: string) => void;
   trailing?: React.ReactNode;
+  /** Session-first viewer: supplied by the artefact pane in place of the Back button. */
+  leading?: React.ReactNode;
 }) {
   return (
     <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border-hairline px-4">
       {/* Real button chrome (round 14): outlined ghost, radius 6, so this
           reads as a control you press — distinct from the breadcrumb path
           you read, which starts fresh after the gap below. */}
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="Back to files"
-        className="flex shrink-0 items-center gap-1 rounded-control border border-border-hairline bg-transparent px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
-      >
-        <ChevronLeft className="size-3.5" strokeWidth={1.5} />
-        Back
-      </button>
+      {leading ?? (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Back to files"
+          className="flex shrink-0 items-center gap-1 rounded-control border border-border-hairline bg-transparent px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
+        >
+          <ChevronLeft className="size-3.5" strokeWidth={1.5} />
+          Back
+        </button>
+      )}
       <div className="flex min-w-0 items-center gap-1 text-xs" title={path}>
         {crumbs.map((segment, index) => (
           <span key={`${segment.kind}:${index}`} className="flex min-w-0 items-center gap-1">
@@ -217,6 +227,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   isSkill,
   onClose,
   onNavigateFolder,
+  leading,
 }: {
   root: string;
   rootId: string;
@@ -229,6 +240,8 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   isSkill: boolean;
   onClose: () => void;
   onNavigateFolder: (relPath: string) => void;
+  /** See `ArtifactView`'s own prop comment. */
+  leading?: React.ReactNode;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -304,6 +317,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
         crumbs={crumbs}
         onClose={onClose}
         onNavigateFolder={onNavigateFolder}
+        leading={leading}
         trailing={
           <>
             {resource.hasDiskUpdate && (

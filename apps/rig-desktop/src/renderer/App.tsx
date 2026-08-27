@@ -1,21 +1,21 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  CheckCheck,
   ChevronRight,
   Home as HomeIcon,
   MessageSquare,
-  Search,
   Settings as SettingsIcon,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ArtefactPane } from '@renderer/features/artifact/artefact-pane';
 import {
-  BROWSER_STATE,
-  isFileView,
-  popToBrowser,
-  pushFile,
-  type ArtifactPanelState,
-} from '@renderer/features/artifact/artifact-panel-stack';
-import { ArtifactView } from '@renderer/features/artifact/artifact-view';
+  closeActiveTab,
+  closeTab,
+  activateTab,
+  NO_TABS,
+  openFileTab,
+  openFocusTab,
+  type ArtefactTabsState,
+} from '@renderer/features/artifact/artefact-tabs';
 import { ChatPanel } from '@renderer/features/chat/chat-panel';
 import { Home } from '@renderer/features/home/home';
 import { Onboarding } from '@renderer/features/onboarding/onboarding';
@@ -29,8 +29,6 @@ import { RecoverySurface } from '@renderer/features/recovery/recovery-surface';
 import { reportRendererFailure } from '@renderer/features/recovery/renderer-error-reporting';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { UserPill } from '@renderer/features/rig-account/user-pill';
-import { NewMenu } from '@renderer/features/rig-import/add-menu';
-import { ImportDocDialog } from '@renderer/features/rig-import/import-doc-dialog';
 import { RigShareButton } from '@renderer/features/rig-share/rig-share-button';
 import { InvitesBell } from '@renderer/features/shell/invites-bell';
 import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
@@ -38,9 +36,7 @@ import { SettingsModal } from '@renderer/features/shell/settings-modal';
 import { deriveTopbarContext, type TopbarContext } from '@renderer/features/shell/topbar-context';
 import { isUpdateReady, shouldAnnounceUpdate } from '@renderer/features/shell/update-status';
 import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
-import { ActiveFiles } from '@renderer/features/workspace/active-files';
-import { FileTree } from '@renderer/features/workspace/file-tree';
-import { RigPeopleCard } from '@renderer/features/workspace/rig-people-card';
+import { PinnedCard } from '@renderer/features/workspace/pinned-card';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
 import { consumeJustAttachedSyncing } from '@renderer/lib/just-attached';
@@ -51,8 +47,6 @@ import { cn } from '@renderer/lib/utils';
 import { relPathFromRoot } from '@shared/rig/file-navigator-categories';
 import { rigFileChangeChannel } from '@shared/rig/files';
 import {
-  DEFAULT_FILE_TREE_VIEW,
-  type FileTreeView,
   type RigSettings,
   type RigSettingsLegacyImport,
   rigSettingsChangedChannel,
@@ -270,7 +264,10 @@ export function App() {
   // later plain "Open Folder…" on the SAME rig can't inherit a stale target
   // from an earlier Continue click.
   const [pendingActiveSessionId, setPendingActiveSessionId] = useState<string | null>(null);
-  const [nav, setNav] = useState<ArtifactPanelState>(BROWSER_STATE);
+  // Session-first viewer: the artefact pane's tabs. Empty means the pane
+  // doesn't exist — the session owns the window and the pinned card floats
+  // over it (state A). See `features/artifact/artefact-tabs.ts`.
+  const [artefact, setArtefact] = useState<ArtefactTabsState>(NO_TABS);
   const [chatCollapsed, setChatCollapsed] = useState<boolean>(readStoredChatCollapsed);
   const [chatWidth, setChatWidth] = useState<number>(readStoredChatWidth);
   const chatWidthRef = useRef(chatWidth);
@@ -284,10 +281,6 @@ export function App() {
   const [bootAttempt, setBootAttempt] = useState(0);
   const [bootOverride, setBootOverride] = useState(false);
   const [bootTimedOut, setBootTimedOut] = useState(false);
-  // File-navigator redesign: the tree's "Show system files" toggle —
-  // reconciled from main alongside the other plain preferences below,
-  // rather than a second settings subscription in `FileBrowser`/`FileTree`.
-  const [showSystemFiles, setShowSystemFiles] = useState(false);
   const authStatusQuery = useQuery({
     queryKey: ['rig', 'auth', 'status'],
     queryFn: () => rpc.rig.auth.status(),
@@ -325,7 +318,6 @@ export function App() {
       }
       setChatCollapsed(settings.chatPanelCollapsed);
       setHasSeenOnboarding(settings.hasSeenOnboarding);
-      setShowSystemFiles(settings.showSystemFiles);
       setSettingsBootState('ready');
     };
 
@@ -372,7 +364,7 @@ export function App() {
   // whatever rig is currently open rather than spawning a second window.
   const openPath = useCallback(async (picked: string, opts?: { activeSessionId?: string }) => {
     const requestToken = openPathRequests.current.begin();
-    setNav(BROWSER_STATE);
+    setArtefact(NO_TABS);
     setFolder({ status: 'detecting', path: picked });
     setPendingActiveSessionId(opts?.activeSessionId ?? null);
     try {
@@ -462,10 +454,10 @@ export function App() {
         }
       : null;
 
-  // A different rig opened (or the folder closed): the nav stack belongs to
+  // A different rig opened (or the folder closed): the open tabs belong to
   // the previous root.
   useEffect(() => {
-    setNav(BROWSER_STATE);
+    setArtefact(NO_TABS);
   }, [bound?.root]);
 
   // Title-reactivity round: `bound.name` (the topbar/`RigSwitcher`'s title,
@@ -534,37 +526,32 @@ export function App() {
   // Round (beyond-markdown): every file opens now — `ArtifactView` itself
   // routes on real type detection (markdown/text/image/unsupported, see
   // `file-type.ts`), down to a designed empty state for anything it
-  // genuinely can't preview. This used to gate on `.md` and toast "No
-  // preview yet" for everything else; that blanket refusal is gone.
-  const openFile = useCallback((absPath: string) => {
-    setNav(pushFile(absPath));
-  }, []);
+  // genuinely can't preview.
+  //
+  // Session-first viewer: every open funnels through here (chat file
+  // chips, the pinned card, the navigator, the focus view) into a TAB —
+  // and marks the file seen, since opening it is exactly what "seen"
+  // means. The old open-vs-reveal split is gone with the resident tree.
+  const boundBindingId = bound?.bindingId ?? null;
+  const boundRoot = bound?.root ?? null;
+  const openFile = useCallback(
+    (absPath: string) => {
+      if (boundRoot && boundBindingId) {
+        const relPath = relPathFromRoot(boundRoot, absPath);
+        if (relPath) void rpc.rig.seenState.markSeen({ bindingId: boundBindingId, relPath });
+      }
+      setArtefact((current) => openFileTab(current, absPath));
+    },
+    [boundRoot, boundBindingId]
+  );
+  const openFocus = useCallback(() => setArtefact((current) => openFocusTab(current)), []);
 
-  // Card rail round (§3): a card click opens the file AND arms a reveal for
-  // when the user comes back to the tree — the two views are mutually
-  // exclusive panels, so "reveal" can't happen at the same instant as
-  // "open." `pushFile`'s own revealPath rides along on the `'file'` state
-  // until `backToBrowser` below carries it into the `popToBrowser` call
-  // that actually returns to the tree.
-  const openFileAndReveal = useCallback((absPath: string, relPath: string) => {
-    setNav(pushFile(absPath, relPath));
-  }, []);
-
-  // Carries a `'file'` state's own stashed revealPath (see `openFileAndReveal`
-  // above) forward into the browser it returns to — a plain open (no reveal
-  // armed) still returns with nothing to reveal, exactly as before.
-  const backToBrowser = useCallback(() => {
-    setNav((current) => popToBrowser(isFileView(current) ? current.revealPath : null));
-  }, []);
-  const navigateToFolder = useCallback((relPath: string) => setNav(popToBrowser(relPath)), []);
-
-  // Esc pops the artifact panel back to the file browser — but only when
-  // focus isn't inside something that already owns Escape (the CM6 editor,
-  // the comment composer's mention dropdown — see comments-margin.tsx).
-  // ArtifactView's behavior contract is frozen, so this lives here rather
-  // than inside it.
+  // Esc closes the active tab (the split collapses back to the full
+  // session when the last one goes) — but only when focus isn't inside
+  // something that already owns Escape (the CM6 editor, the comment
+  // composer's mention dropdown — see comments-margin.tsx).
   useEffect(() => {
-    if (!isFileView(nav)) return;
+    if (artefact.tabs.length === 0) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       const target = event.target;
@@ -574,19 +561,11 @@ export function App() {
       ) {
         return;
       }
-      backToBrowser();
+      setArtefact((current) => closeActiveTab(current));
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [nav, backToBrowser]);
-
-  const toggleShowSystemFiles = useCallback(() => {
-    setShowSystemFiles((current) => {
-      const next = !current;
-      void rpc.rig.settings.set({ showSystemFiles: next });
-      return next;
-    });
-  }, []);
+  }, [artefact.tabs.length]);
 
   const toggleChatCollapsed = useCallback(() => {
     setChatCollapsed((current) => {
@@ -668,6 +647,10 @@ export function App() {
         onOpenPath={openPath}
         onOpenFolder={openFolder}
         updateReady={isUpdateReady(updateStatus.state)}
+        // Session-first viewer: rig-level Share lives in the topbar now —
+        // the panel header that used to carry it went with the resident
+        // file browser.
+        shareSlot={bound ? <RigShareButton root={bound.root} name={bound.name} /> : undefined}
       />
       <SettingsModal
         open={settingsOpen}
@@ -686,8 +669,14 @@ export function App() {
         // absolute overlay instead of a flow sibling. `scrolled` above is
         // hardcoded false for this branch — its `variant: 'rig'` bar wears
         // a static hairline instead (see `Topbar`'s own comment).
+        // Session-first viewer: with no tabs, the SESSION owns the window
+        // and the rig's state floats over it as the pinned card. Opening
+        // anything splits — chat narrows to its stored width, the artefact
+        // pane takes the rest, and the card retires (its content is one
+        // tab-close away). The chat wrapper is the same element in both
+        // states so `ChatPanel` never remounts when the split opens.
         <div className="flex min-h-0 flex-1 pt-10">
-          {chatCollapsed ? (
+          {artefact.tabs.length > 0 && chatCollapsed ? (
             // A slim strip in the chat panel's own spot, not a topbar
             // button: collapsing doesn't relocate where chat lives, it just
             // narrows it — the reopen control belongs where the eye already
@@ -714,68 +703,78 @@ export function App() {
               </Tooltip>
             </div>
           ) : (
+            <div
+              style={{
+                order: CHAT_PANEL_ORDER,
+                width: artefact.tabs.length > 0 ? chatWidth : undefined,
+              }}
+              className={cn(
+                'relative flex shrink-0 flex-col overflow-hidden bg-bg-1',
+                artefact.tabs.length === 0 && 'min-w-0 flex-1'
+              )}
+            >
+              <RecoveryBoundary scope="Chat panel">
+                <ChatPanel
+                  root={bound.root}
+                  rootId={bound.rootId}
+                  bindingId={bound.bindingId}
+                  name={bound.name}
+                  initialActiveSessionId={pendingActiveSessionId}
+                  onOpenFile={openFile}
+                  // Collapsing only means something when there's a split to
+                  // give the space to — at rest the button hides.
+                  onToggleCollapse={artefact.tabs.length > 0 ? toggleChatCollapsed : undefined}
+                />
+              </RecoveryBoundary>
+              {artefact.tabs.length === 0 && (
+                <PinnedCard
+                  root={bound.root}
+                  rootId={bound.rootId}
+                  bindingId={bound.bindingId}
+                  name={bound.name}
+                  syncing={bound.root === syncingRoot}
+                  onOpenFile={(absPath) => openFile(absPath)}
+                  onOpenFocus={openFocus}
+                />
+              )}
+            </div>
+          )}
+
+          {artefact.tabs.length > 0 && (
             <>
+              {!chatCollapsed && (
+                // The handle IS the panel divider (no separate border-r on
+                // the chat wrapper above) — a wide, easy-to-grab hit area
+                // with a thin centered line so it reads as a hairline at
+                // rest and only widens visually on hover/drag.
+                <div
+                  style={{ order: CHAT_RESIZE_HANDLE_ORDER }}
+                  onPointerDown={onChatResizeStart}
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Resize chat panel"
+                  className="group relative w-2.5 shrink-0 cursor-col-resize"
+                >
+                  <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border-hairline transition-colors group-hover:bg-accent/50 group-active:bg-accent/70" />
+                </div>
+              )}
               <div
-                style={{ order: CHAT_PANEL_ORDER, width: chatWidth }}
-                className="flex shrink-0 flex-col overflow-hidden bg-bg-1"
+                style={{ order: ARTIFACT_PANEL_ORDER }}
+                className="flex min-h-0 min-w-0 flex-1 flex-col"
               >
-                <RecoveryBoundary scope="Chat panel">
-                  <ChatPanel
-                    root={bound.root}
-                    rootId={bound.rootId}
-                    bindingId={bound.bindingId}
-                    name={bound.name}
-                    initialActiveSessionId={pendingActiveSessionId}
-                    onOpenFile={openFile}
-                    onToggleCollapse={toggleChatCollapsed}
-                  />
-                </RecoveryBoundary>
-              </div>
-              {/* The handle IS the panel divider (no separate border-r on the
-                  chat wrapper above) — a wide, easy-to-grab hit area with a
-                  thin centered line so it reads as a hairline at rest and
-                  only widens visually on hover/drag. */}
-              <div
-                style={{ order: CHAT_RESIZE_HANDLE_ORDER }}
-                onPointerDown={onChatResizeStart}
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="Resize chat panel"
-                className="group relative w-2.5 shrink-0 cursor-col-resize"
-              >
-                <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border-hairline transition-colors group-hover:bg-accent/50 group-active:bg-accent/70" />
+                <ArtefactPane
+                  root={bound.root}
+                  rootId={bound.rootId}
+                  bindingId={bound.bindingId}
+                  state={artefact}
+                  onActivateTab={(index) => setArtefact((current) => activateTab(current, index))}
+                  onCloseTab={(index) => setArtefact((current) => closeTab(current, index))}
+                  onOpenFile={(absPath) => openFile(absPath)}
+                  onOpenFocus={openFocus}
+                />
               </div>
             </>
           )}
-
-          <div
-            style={{ order: ARTIFACT_PANEL_ORDER }}
-            className="flex min-h-0 min-w-0 flex-1 flex-col"
-          >
-            {isFileView(nav) ? (
-              <ArtifactView
-                key={nav.path}
-                root={bound.root}
-                rootId={bound.rootId}
-                path={nav.path}
-                onClose={backToBrowser}
-                onNavigateFolder={navigateToFolder}
-              />
-            ) : (
-              <FileBrowser
-                root={bound.root}
-                rootId={bound.rootId}
-                bindingId={bound.bindingId}
-                name={bound.name}
-                revealPath={nav.revealPath}
-                onOpenFile={openFile}
-                onOpenFileAndReveal={openFileAndReveal}
-                justAttachedSyncing={bound.root === syncingRoot}
-                showSystemFiles={showSystemFiles}
-                onToggleShowSystemFiles={toggleShowSystemFiles}
-              />
-            )}
-          </div>
         </div>
       ) : (
         // Round H2 feedback: `items-center justify-center` directly on the
@@ -833,6 +832,7 @@ function Topbar({
   onOpenPath,
   onOpenFolder,
   updateReady,
+  shareSlot,
 }: {
   context: TopbarContext;
   /** Which bottom-edge treatment the bar wears (Dylan's seam call, this
@@ -863,6 +863,8 @@ function Topbar({
    * itself the moment `isUpdateReady` goes false again (after install).
    */
   updateReady: boolean;
+  /** Session-first viewer: the rig-level Share button (rig view only) — rendered in the right cluster, leading the account/gear icons. */
+  shareSlot?: React.ReactNode;
 }) {
   return (
     // The window is `titleBarStyle: 'hiddenInset'` (main/app/window.ts) — no
@@ -937,6 +939,7 @@ function Topbar({
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+        {shareSlot}
         <UserPill compact />
         {/* Invites addressed to me — renders nothing signed out; accent
             count dot only when invites exist (a live indicator, within the
@@ -1100,278 +1103,3 @@ function UnsyncedRigCard({
   );
 }
 
-/**
- * Root level of the artifact panel's nested nav (`docs/collab-pivot-spec.md`
- * §4.2, restructured per the two-panel brief): the real file tree of the
- * opened rig, full-panel rather than a persistent sidebar. Reuses `FileTree`
- * as-is — it was already unstyled-for-width (file rows in a flex column, no
- * fixed width of its own; the old `w-60` lived on the sidebar `<aside>` this
- * replaces) — just wrapped in a full-height, full-width container with the
- * same rig-name header the old sidebar had.
- *
- * Header-dedup round, take 3: no navigation in this header at all — the
- * topbar's mini-breadcrumb owns up-navigation (its house button) AND rig
- * switching now (`RigSwitcher`), so this row carries only the rig-level
- * actions: Share and Add. Path crumbs only ever appear in `ArtifactView`'s
- * breadcrumb (folders › file).
- *
- * Add-menu round: "Import" (a single click straight into the Google
- * Docs/.docx dialog) became "Add" — new file, Google Docs link, or any
- * other file, one menu (`AddMenu`). "Open…" moved off this header entirely
- * — the topbar's `RigSwitcher` carries the native-picker escape hatch now.
- */
-/**
- * Structure pass (impeccable, "one quiet header"): search rests as an icon
- * and expands into the input on demand — Raycast/Finder grammar. Expanded
- * whenever it has focus OR text, so an active filter can never hide its
- * own control; Escape clears and collapses. Width animates via max-width
- * transition (transform-free, cheap), gated for reduced motion.
- */
-function SearchToggle({ value, onChange }: { value: string; onChange: (next: string) => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const open = expanded || value.length > 0;
-
-  useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
-
-  if (!open) {
-    return (
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        aria-label="Search files"
-        onClick={() => setExpanded(true)}
-      >
-        <Search className="size-3.5" strokeWidth={1.5} />
-      </Button>
-    );
-  }
-  return (
-    <div className="popover-in relative flex max-w-56 min-w-0 flex-1 items-center">
-      <Search
-        className="pointer-events-none absolute left-2 size-3.5 text-text-muted"
-        strokeWidth={1.5}
-      />
-      <input
-        ref={inputRef}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        onBlur={() => {
-          if (value.length === 0) setExpanded(false);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            onChange('');
-            setExpanded(false);
-          }
-        }}
-        placeholder="Search files"
-        className="w-full rounded-control border border-border-hairline bg-bg-1 py-1.5 pr-2 pl-7 text-xs text-text-primary transition-colors outline-none placeholder:text-text-muted focus:border-border-strong"
-      />
-    </div>
-  );
-}
-
-function FileBrowser({
-  root,
-  rootId,
-  bindingId,
-  name,
-  revealPath,
-  onOpenFile,
-  onOpenFileAndReveal,
-  justAttachedSyncing,
-  showSystemFiles,
-  onToggleShowSystemFiles,
-}: {
-  root: string;
-  rootId: string;
-  /** File-navigator redesign (§4, seen-state): identifies this rig for `rig_seen_files`. */
-  bindingId: string;
-  name: string | null;
-  revealPath: string | null;
-  onOpenFile: (absPath: string) => void;
-  /** Suggested group (§3.2): opens AND arms a tree reveal for the file's return trip — `SuggestedFiles`' own click handler. */
-  onOpenFileAndReveal: (absPath: string, relPath: string) => void;
-  /** First-sync round — see `FileTree`'s own prop comment. */
-  justAttachedSyncing: boolean;
-  /** File-navigator redesign: System entries (`rig.toml`, `.rig/`, dotfiles) stay hidden until this is true. */
-  showSystemFiles: boolean;
-  onToggleShowSystemFiles: () => void;
-}) {
-  const [importOpen, setImportOpen] = useState(false);
-  // v2 round (§3.1): the header search field's live query — ephemeral UI
-  // state, not persisted (unlike `view` below), the same way a Finder
-  // window's search field forgets itself on close.
-  const [search, setSearch] = useState('');
-  // v2 round (§3.1): the header's contextual "N new" chip — CONTENT-ONLY
-  // (`FileTree`'s own `onUnseenCountChange`), independent of the current
-  // search/sort/filter view.
-  const [unseenCount, setUnseenCount] = useState(0);
-
-  // File-navigator redesign (§5, re-specced §3.4): the tree's own sort/
-  // filter choice, per rig — owned here (not inside `FileTree`/`FileSortMenu`
-  // separately) because both need the SAME value in the same render pass:
-  // the menu shows which option is checked, the tree applies it, and the
-  // chip toggles `filter` directly. Same fetch-then-subscribe shape as
-  // `showSystemFiles` above it in `App`, scoped to this rig's
-  // `fileTreeViewByRig[bindingId]` the way `pinnedPathsByRig` already is in
-  // `file-tree.tsx`/`suggested-files.tsx`.
-  const [view, setView] = useState<FileTreeView>(DEFAULT_FILE_TREE_VIEW);
-  useEffect(() => {
-    let alive = true;
-    void rpc.rig.settings.get().then((settings) => {
-      if (alive) setView(settings.fileTreeViewByRig[bindingId] ?? DEFAULT_FILE_TREE_VIEW);
-    });
-    const off = events.on(rigSettingsChangedChannel, (settings) => {
-      setView(settings.fileTreeViewByRig[bindingId] ?? DEFAULT_FILE_TREE_VIEW);
-    });
-    return () => {
-      alive = false;
-      off();
-    };
-  }, [bindingId]);
-
-  const onChangeView = useCallback(
-    (next: FileTreeView) => {
-      setView(next);
-      void rpc.rig.settings.set({ fileTreeViewByRig: { [bindingId]: next } });
-    },
-    [bindingId]
-  );
-
-  // v2 round (§3.1): the "N new" chip — click filters to unseen, click
-  // again clears. Reuses the same persisted `view.filter` the sort menu's
-  // own choices go through, so the chip and a future sort-menu equivalent
-  // can never disagree about the current filter state.
-  // Clearing from the chip needs the rig's full file list, which only the
-  // tree has fetched — it hands its own "mark everything seen" action up
-  // here rather than this component issuing a second listing call.
-  const [markAllSeen, setMarkAllSeen] = useState<(() => void) | null>(null);
-  const onMarkAllSeen = useCallback(() => markAllSeen?.(), [markAllSeen]);
-
-  const toggleUnseenChip = useCallback(() => {
-    onChangeView({ ...view, filter: view.filter === 'unseen' ? 'all' : 'unseen' });
-  }, [view, onChangeView]);
-
-  // Seen-state (§4): `FileTree`'s own row clicks mark themselves seen
-  // directly (it already has each row's relPath). Everything else that can
-  // open a file from this header — `AddMenu`'s "New file", the import
-  // dialog — hands back only an absPath, so this one wrapper derives the
-  // relPath the same way `breadcrumb.ts` does and marks it too: a
-  // just-created or just-imported file the user is looking at right now
-  // shouldn't show up as "unseen" the next time they look at the tree.
-  const handleOpenFile = useCallback(
-    (absPath: string) => {
-      const relPath = relPathFromRoot(root, absPath);
-      if (relPath) void rpc.rig.seenState.markSeen({ bindingId, relPath });
-      onOpenFile(absPath);
-    },
-    [root, bindingId, onOpenFile]
-  );
-
-  // Suggested group: a row click already knows its own relPath (no
-  // derivation needed) — mark it seen the same way every other open does,
-  // then open AND reveal.
-  const handleOpenFileFromCard = useCallback(
-    (absPath: string, relPath: string) => {
-      void rpc.rig.seenState.markSeen({ bindingId, relPath });
-      onOpenFileAndReveal(absPath, relPath);
-    },
-    [bindingId, onOpenFileAndReveal]
-  );
-
-  return (
-    <div className="flex h-full min-w-0 flex-col overflow-y-auto">
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border-hairline px-6">
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          <SearchToggle value={search} onChange={setSearch} />
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <RigShareButton root={root} name={name} />
-        </div>
-      </div>
-      <ImportDocDialog
-        root={root}
-        rootId={rootId}
-        open={importOpen}
-        onOpenChange={setImportOpen}
-        onImported={handleOpenFile}
-      />
-      <RigPeopleCard
-        root={root}
-        rootId={rootId}
-        bindingId={bindingId}
-        onOpenFile={handleOpenFileFromCard}
-      />
-      <ActiveFiles
-        root={root}
-        rootId={rootId}
-        bindingId={bindingId}
-        onOpenFile={handleOpenFileFromCard}
-      />
-      <FileTree
-        root={root}
-        rootId={rootId}
-        bindingId={bindingId}
-        activePath={null}
-        revealPath={revealPath}
-        onOpenFile={onOpenFile}
-        justAttachedSyncing={justAttachedSyncing}
-        showSystemFiles={showSystemFiles}
-        sort={view.sort}
-        filter={view.filter}
-        search={search}
-        onChangeSort={(next) => onChangeView({ ...view, sort: next })}
-        onToggleShowSystemFiles={onToggleShowSystemFiles}
-        onUnseenCountChange={setUnseenCount}
-        onProvideMarkAllSeen={setMarkAllSeen}
-        toolbarLeading={
-          unseenCount > 0 && (
-            <>
-              <button
-                type="button"
-                onClick={toggleUnseenChip}
-                aria-pressed={view.filter === 'unseen'}
-                title={view.filter === 'unseen' ? 'Show everything' : 'Show only what is new'}
-                className={cn(
-                  'popover-in shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
-                  view.filter === 'unseen'
-                    ? 'bg-accent text-accent-ink'
-                    : 'bg-accent-subtle text-accent hover:opacity-80'
-                )}
-              >
-                {unseenCount} new
-              </button>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      onClick={onMarkAllSeen}
-                      aria-label="Mark all as seen"
-                      className="flex size-6 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors hover:bg-bg-2 hover:text-text-primary"
-                    >
-                      <CheckCheck className="size-3.5" strokeWidth={1.5} />
-                    </button>
-                  }
-                />
-                <TooltipContent side="bottom">Mark all as seen</TooltipContent>
-              </Tooltip>
-            </>
-          )
-        }
-        toolbarTrailing={
-          <NewMenu
-              root={root}
-              rootId={rootId}
-              onOpenFile={handleOpenFile}
-            onOpenImportDialog={() => setImportOpen(true)}
-          />
-        }
-      />
-    </div>
-  );
-}

@@ -97,7 +97,8 @@ export function RigShareButton({ root, name }: { root: string; name: string | nu
   );
 }
 
-function RigSharePopoverContent({ root, name }: { root: string; name: string | null }) {
+/** Exported for the pinned card's People row — same surface, second anchor. */
+export function RigSharePopoverContent({ root, name }: { root: string; name: string | null }) {
   const queryClient = useQueryClient();
 
   const authQuery = useQuery({
