@@ -105,6 +105,11 @@ export function FocusView({
   const recentWrites = useRecentWrites(root);
   const agentWritten = useEverWrittenPaths(root);
   const [filter, setFilter] = useState<'all' | 'unseen'>('all');
+  // The cap exists so a huge rig doesn't stack dozens of sections at once
+  // — but the way past it belongs HERE, not in a pointer to another
+  // surface (feedback round 3). One click reveals the rest; collapsed
+  // sections cost nothing until expanded, so this is safe at any size.
+  const [showAll, setShowAll] = useState(false);
   /** Per-file explicit open/closed choices, layered over the defaults. */
   const [toggled, setToggled] = useState<Map<string, boolean>>(new Map());
 
@@ -128,8 +133,11 @@ export function FocusView({
     const filtered = files
       .sort((a, b) => rank(a.relPath) - rank(b.relPath) || (b.mtimeMs ?? 0) - (a.mtimeMs ?? 0))
       .filter((node) => filter === 'all' || unseenFiles.has(node.relPath));
-    return { sections: filtered.slice(0, MAX_SECTIONS), total: filtered.length };
-  }, [contentTree, activePaths, unseenFiles, filter]);
+    return {
+      sections: showAll ? filtered : filtered.slice(0, MAX_SECTIONS),
+      total: filtered.length,
+    };
+  }, [contentTree, activePaths, unseenFiles, filter, showAll]);
 
   const markViewed = (relPath: string) => {
     void rpc.rig.seenState.markSeen({ bindingId, relPath });
@@ -292,9 +300,13 @@ export function FocusView({
               );
             })}
             {total > sections.length && (
-              <p className="px-4 py-3 text-center font-mono text-2xs text-text-muted">
-                +{total - sections.length} more — open them from Files
-              </p>
+              <button
+                type="button"
+                onClick={() => setShowAll(true)}
+                className="hover:bg-bg-1 hover:text-text-primary w-full px-4 py-3 text-center font-mono text-2xs text-text-muted transition-colors"
+              >
+                Show {total - sections.length} more
+              </button>
             )}
           </>
         )}

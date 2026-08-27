@@ -985,11 +985,14 @@ function Topbar({
               onOpenPath={onOpenPath}
               onOpenFolder={onOpenFolder}
             />
+            {/* Feedback round 3: Share belongs WITH the rig it shares —
+                beside the name, not in the account cluster where its
+                avatar stack collided with the user's own avatar. */}
+            <span className="ml-1.5 [-webkit-app-region:no-drag]">{shareSlot}</span>
           </>
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
-        {shareSlot}
         <UserPill compact />
         {/* Invites addressed to me — renders nothing signed out; accent
             count dot only when invites exist (a live indicator, within the
