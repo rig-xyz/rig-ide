@@ -69,3 +69,18 @@ export function closeTab(state: ArtefactTabsState, index: number): ArtefactTabsS
 export function closeActiveTab(state: ArtefactTabsState): ArtefactTabsState {
   return closeTab(state, state.active);
 }
+
+/**
+ * Move the tab at `from` to position `to` (drag-reorder). The ACTIVE TAB
+ * IS AN IDENTITY, not an index — whatever was active stays active wherever
+ * it lands, including when it's the one being dragged.
+ */
+export function moveTab(state: ArtefactTabsState, from: number, to: number): ArtefactTabsState {
+  if (from === to) return state;
+  if (from < 0 || from >= state.tabs.length || to < 0 || to >= state.tabs.length) return state;
+  const activeRef = state.tabs[state.active];
+  const tabs = [...state.tabs];
+  const [moved] = tabs.splice(from, 1);
+  tabs.splice(to, 0, moved);
+  return { tabs, active: tabs.indexOf(activeRef) };
+}

@@ -169,6 +169,9 @@ export function Popover({
         width: Math.max(rect.width, minWidth),
         maxHeight: rect.maxHeight,
         overflowY: 'auto',
+        // Motion round: the entrance scales from the anchored corner, not
+        // the center — popovers should grow out of their trigger.
+        transformOrigin: `${rect.placement === 'below' ? 'top' : 'bottom'} ${rect.align}`,
         ...(rect.placement === 'below' ? { top: rect.top } : { bottom: rect.bottom }),
         ...(rect.align === 'left' ? { left: rect.left } : { right: rect.right }),
       }}

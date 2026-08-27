@@ -2,12 +2,20 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight, Cloud, Diff, Loader2, Sparkles, Users } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { relativeTime } from '@renderer/features/chat/session-history';
+import {
+  fileLinks,
+  stripRigPrefix,
+  summarySegments,
+  type SummarySegment,
+} from '@renderer/features/home/summary-segments';
+import { usePulseBriefing } from '@renderer/features/home/use-pulse-briefing';
 import { NewMenu } from '@renderer/features/rig-import/add-menu';
 import { ImportDocDialog } from '@renderer/features/rig-import/import-doc-dialog';
 import { RigSharePopoverContent } from '@renderer/features/rig-share/rig-share-button';
 import { events, rpc } from '@renderer/lib/ipc';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { Popover, PopoverMenuItem } from '@renderer/lib/ui/popover';
+import type { ContextMenuPoint } from '@renderer/lib/ui/popover-types';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
@@ -49,6 +57,7 @@ import { useEverWrittenPaths, useRecentWrites } from './write-activity';
  */
 
 const COLLAPSED_KEY = 'rig-pinned-card-collapsed';
+const SUMMARY_OPEN_KEY = 'rig-changes-summary-open';
 const MAX_ACTIVITY_ROWS = 5;
 const CHANGED_RECENTLY_MS = 24 * 60 * 60 * 1000;
 
@@ -58,6 +67,30 @@ function readCollapsed(): boolean {
   } catch {
     return false;
   }
+}
+
+/** Feedback round 1: the Changes summary defaults to SHOWN; only an explicit collapse is remembered. */
+function readSummaryOpen(): boolean {
+  try {
+    return localStorage.getItem(SUMMARY_OPEN_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Feedback round 1: skill files are almost all literally named `SKILL.md`
+ * — the identity lives in the folder (`.claude/skills/<name>/SKILL.md`) or
+ * the document's own title. Name the skill, not its file.
+ */
+function skillDisplayName(node: RigFileNode): string {
+  if (node.title) return node.title;
+  const segments = node.relPath.split('/');
+  const base = segments[segments.length - 1] ?? node.name;
+  if (/^skill\.md$/i.test(base) && segments.length >= 2) {
+    return segments[segments.length - 2] ?? node.name;
+  }
+  return node.name;
 }
 
 function flattenFiles(nodes: readonly RigFileNode[]): RigFileNode[] {
@@ -219,10 +252,42 @@ export function PinnedCard({
     onOpenFile(`${root}/${relPath}`, relPath);
   };
 
-  const peopleRef = useRef<HTMLButtonElement>(null);
-  const skillsRef = useRef<HTMLButtonElement>(null);
-  const [peopleOpen, setPeopleOpen] = useState(false);
-  const [skillsOpen, setSkillsOpen] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [summaryOpen, setSummaryOpen] = useState(readSummaryOpen);
+  const toggleSummary = () => {
+    setSummaryOpen((current) => {
+      try {
+        localStorage.setItem(SUMMARY_OPEN_KEY, String(!current));
+      } catch {
+        // localStorage unavailable — just won't persist.
+      }
+      return !current;
+    });
+  };
+
+  // Feedback round 1: row popovers open to the LEFT of the card — dropped
+  // below a mid-card row they cover the card's own rows; above, they clip
+  // at the window's top edge. Point anchor: top-aligned with the row,
+  // right edge just outside the card.
+  const [peopleAnchor, setPeopleAnchor] = useState<ContextMenuPoint | null>(null);
+  const [skillsAnchor, setSkillsAnchor] = useState<ContextMenuPoint | null>(null);
+  const leftOfCard = (row: HTMLElement): ContextMenuPoint => {
+    const cardLeft =
+      cardRef.current?.getBoundingClientRect().left ?? row.getBoundingClientRect().left;
+    return { x: cardLeft - 8, y: row.getBoundingClientRect().top - 4 };
+  };
+
+  // The rig's one-line story — the same per-rig pulse line Home narrates,
+  // shown under the Changes row (default open, collapse remembered). File
+  // names in it are live links.
+  const { state: briefingState } = usePulseBriefing();
+  const briefing = briefingState.kind === 'data' ? briefingState.briefing : null;
+  const rigEntry = briefing?.perRig.find((item) => item.bindingId === bindingId) ?? null;
+  const rigLine = rigEntry ? stripRigPrefix(rigEntry.line, rigEntry.rigName) : null;
+  const summarySegs: SummarySegment[] = useMemo(
+    () => (rigLine ? summarySegments(rigLine, fileLinks(contentFiles)) : []),
+    [rigLine, contentFiles]
+  );
 
   if (collapsed) {
     return (
@@ -230,7 +295,7 @@ export function PinnedCard({
         type="button"
         onClick={toggleCollapsed}
         aria-label="Show rig details"
-        className="border-border-hairline bg-bg-1 shadow-float hover:bg-bg-2 absolute top-[52px] right-4 z-20 flex items-center gap-1.5 rounded-chip border py-1 pr-2.5 pl-2 transition-colors"
+        className="card-pop-in border-border-hairline bg-bg-1 shadow-float hover:bg-bg-2 absolute top-[52px] right-4 z-20 flex origin-top-right items-center gap-1.5 rounded-chip border py-1 pr-2.5 pl-2 transition-colors"
       >
         <span className={cn('size-1.5 rounded-full', syncing ? 'bg-warning' : 'bg-success')} />
         <span className="max-w-36 truncate text-xs text-text-primary">{name ?? 'This rig'}</span>
@@ -244,7 +309,10 @@ export function PinnedCard({
   }
 
   return (
-    <div className="border-border-hairline bg-bg-1 shadow-float absolute top-[52px] right-4 z-20 flex w-[276px] flex-col rounded-card border p-2">
+    <div
+      ref={cardRef}
+      className="card-pop-in border-border-hairline bg-bg-1 shadow-float absolute top-[52px] right-4 z-20 flex w-[276px] origin-top-right flex-col rounded-card border p-2"
+    >
       <div className="flex h-6 items-center px-2">
         <p className="font-mono text-2xs tracking-wide text-text-muted uppercase">Rig</p>
         <div className="ml-auto flex items-center gap-0.5">
@@ -290,29 +358,72 @@ export function PinnedCard({
       />
 
       {/* ── RIG rows — one grammar: icon · label ····· value ── */}
-      <button
-        type="button"
-        onClick={onOpenFocus}
-        className="hover:bg-bg-2 flex h-7 items-center gap-2 rounded-control px-2 text-left transition-colors"
-      >
-        <Diff className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
-        <span className="text-xs text-text-primary">Changes</span>
-        <span className="ml-auto flex items-center gap-1.5">
-          {changedRecently === 0 && unseenFiles.size === 0 ? (
-            <span className="text-2xs text-text-muted">Up to date</span>
-          ) : (
-            <>
+      {/* Changes is a disclosure: the row toggles the rig's one-line pulse
+          story beneath it; the unseen chip is the jump to the focus view. */}
+      <div className="hover:bg-bg-2 flex h-7 items-center rounded-control transition-colors">
+        <button
+          type="button"
+          onClick={toggleSummary}
+          aria-expanded={summaryOpen}
+          className="flex h-full min-w-0 flex-1 items-center gap-2 pl-2 text-left"
+        >
+          <Diff className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+          <span className="text-xs text-text-primary">Changes</span>
+          <span className="ml-auto flex shrink-0 items-center">
+            {changedRecently === 0 && unseenFiles.size === 0 ? (
+              <span className="text-2xs text-text-muted">Up to date</span>
+            ) : (
               <span className="font-mono text-2xs text-text-muted">{changedRecently} today</span>
-              {unseenFiles.size > 0 && (
-                <span className="bg-accent-subtle text-accent rounded-chip px-1.5 font-mono text-2xs">
-                  {unseenFiles.size} unseen
-                </span>
-              )}
-            </>
+            )}
+          </span>
+        </button>
+        {unseenFiles.size > 0 && (
+          <button
+            type="button"
+            onClick={onOpenFocus}
+            title="Read what's new in the focus view"
+            className="bg-accent-subtle text-accent ml-1.5 shrink-0 rounded-chip px-1.5 font-mono text-2xs transition-opacity hover:opacity-80"
+          >
+            {unseenFiles.size} unseen
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={toggleSummary}
+          tabIndex={-1}
+          aria-hidden
+          className="flex h-full shrink-0 items-center pr-2 pl-1.5"
+        >
+          <ChevronRight
+            className={cn(
+              'size-3 shrink-0 text-text-muted transition-transform',
+              summaryOpen && 'rotate-90'
+            )}
+            strokeWidth={1.5}
+          />
+        </button>
+      </div>
+      {summaryOpen && summarySegs.length > 0 && (
+        <p className="popover-in px-2 pt-0.5 pb-1.5 text-xs leading-relaxed text-text-muted">
+          {summarySegs.map((segment, index) =>
+            segment.kind === 'link' && segment.target.kind === 'file' ? (
+              <button
+                key={`${segment.text}-${index}`}
+                type="button"
+                onClick={() => {
+                  const relPath = (segment.target as { kind: 'file'; relPath: string }).relPath;
+                  openFile(relPath);
+                }}
+                className="text-text-secondary hover:text-text-primary underline decoration-current/30 underline-offset-2 transition-colors"
+              >
+                {segment.text}
+              </button>
+            ) : (
+              <span key={index}>{segment.text}</span>
+            )
           )}
-          <ChevronRight className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
-        </span>
-      </button>
+        </p>
+      )}
 
       <Tooltip>
         <TooltipTrigger
@@ -344,11 +455,21 @@ export function PinnedCard({
       {skillFiles.length > 0 && (
         <>
           <button
-            ref={skillsRef}
             type="button"
-            onClick={() => setSkillsOpen((v) => !v)}
+            // The popover's own outside-mousedown dismissal runs before this
+            // click — swallowing the mousedown here is what makes a second
+            // click on the row a TOGGLE instead of an instant re-open.
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              // Captured BEFORE the updater runs: React nulls
+              // `currentTarget` once the event finishes dispatching, and
+              // the updater executes after that (the recovery-surface
+              // crash this row shipped with).
+              const row = event.currentTarget;
+              setSkillsAnchor((current) => (current ? null : leftOfCard(row)));
+            }}
             aria-haspopup="menu"
-            aria-expanded={skillsOpen}
+            aria-expanded={skillsAnchor !== null}
             className="hover:bg-bg-2 flex h-7 items-center gap-2 rounded-control px-2 text-left transition-colors"
           >
             <Sparkles className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
@@ -359,12 +480,12 @@ export function PinnedCard({
             </span>
           </button>
           <Popover
-            anchor={skillsRef}
-            open={skillsOpen}
-            onClose={() => setSkillsOpen(false)}
+            anchor={skillsAnchor ?? { x: 0, y: 0 }}
+            open={skillsAnchor !== null}
+            onClose={() => setSkillsAnchor(null)}
             role="menu"
             align="right"
-            gap={4}
+            gap={0}
             estimatedWidth={230}
             minWidth={230}
             ariaLabel="Skills in this rig"
@@ -373,9 +494,9 @@ export function PinnedCard({
               <PopoverMenuItem
                 key={node.relPath}
                 icon={iconFor(node.name)}
-                label={node.name}
+                label={skillDisplayName(node)}
                 onSelect={() => {
-                  setSkillsOpen(false);
+                  setSkillsAnchor(null);
                   openFile(node.relPath);
                 }}
               />
@@ -387,11 +508,16 @@ export function PinnedCard({
       {members.length > 0 && (
         <>
           <button
-            ref={peopleRef}
             type="button"
-            onClick={() => setPeopleOpen((v) => !v)}
+            // Same toggle-not-reopen mousedown swallow — and the same
+            // capture-before-updater rule — as the Skills row.
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              const row = event.currentTarget;
+              setPeopleAnchor((current) => (current ? null : leftOfCard(row)));
+            }}
             aria-haspopup="dialog"
-            aria-expanded={peopleOpen}
+            aria-expanded={peopleAnchor !== null}
             className="hover:bg-bg-2 flex h-7 items-center gap-2 rounded-control px-2 text-left transition-colors"
           >
             <Users className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
@@ -418,12 +544,12 @@ export function PinnedCard({
             </span>
           </button>
           <Popover
-            anchor={peopleRef}
-            open={peopleOpen}
-            onClose={() => setPeopleOpen(false)}
+            anchor={peopleAnchor ?? { x: 0, y: 0 }}
+            open={peopleAnchor !== null}
+            onClose={() => setPeopleAnchor(null)}
             role="dialog"
             align="right"
-            gap={6}
+            gap={0}
             estimatedWidth={320}
             minWidth={320}
             ariaLabel="People in this rig"

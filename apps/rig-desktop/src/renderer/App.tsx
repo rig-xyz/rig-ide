@@ -3,6 +3,7 @@ import {
   ChevronRight,
   Home as HomeIcon,
   MessageSquare,
+  PanelRightOpen,
   Settings as SettingsIcon,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -11,6 +12,7 @@ import {
   closeActiveTab,
   closeTab,
   activateTab,
+  moveTab,
   NO_TABS,
   openFileTab,
   openFocusTab,
@@ -268,6 +270,11 @@ export function App() {
   // doesn't exist — the session owns the window and the pinned card floats
   // over it (state A). See `features/artifact/artefact-tabs.ts`.
   const [artefact, setArtefact] = useState<ArtefactTabsState>(NO_TABS);
+  // Feedback round 1: the pane can also FOLD without losing its tabs — the
+  // session takes the window back and a slim right-edge strip (mirroring
+  // the chat panel's own collapsed strip) holds the way back in. Any open
+  // (file or focus) unfolds it. Per-session, deliberately not persisted.
+  const [artefactCollapsed, setArtefactCollapsed] = useState(false);
   const [chatCollapsed, setChatCollapsed] = useState<boolean>(readStoredChatCollapsed);
   const [chatWidth, setChatWidth] = useState<number>(readStoredChatWidth);
   const chatWidthRef = useRef(chatWidth);
@@ -458,6 +465,7 @@ export function App() {
   // the previous root.
   useEffect(() => {
     setArtefact(NO_TABS);
+    setArtefactCollapsed(false);
   }, [bound?.root]);
 
   // Title-reactivity round: `bound.name` (the topbar/`RigSwitcher`'s title,
@@ -540,18 +548,23 @@ export function App() {
         const relPath = relPathFromRoot(boundRoot, absPath);
         if (relPath) void rpc.rig.seenState.markSeen({ bindingId: boundBindingId, relPath });
       }
+      setArtefactCollapsed(false);
       setArtefact((current) => openFileTab(current, absPath));
     },
     [boundRoot, boundBindingId]
   );
-  const openFocus = useCallback(() => setArtefact((current) => openFocusTab(current)), []);
+  const openFocus = useCallback(() => {
+    setArtefactCollapsed(false);
+    setArtefact((current) => openFocusTab(current));
+  }, []);
 
   // Esc closes the active tab (the split collapses back to the full
   // session when the last one goes) — but only when focus isn't inside
   // something that already owns Escape (the CM6 editor, the comment
-  // composer's mention dropdown — see comments-margin.tsx).
+  // composer's mention dropdown — see comments-margin.tsx). A folded pane
+  // ignores Esc: closing tabs you can't see is a trap.
   useEffect(() => {
-    if (artefact.tabs.length === 0) return;
+    if (artefact.tabs.length === 0 || artefactCollapsed) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       const target = event.target;
@@ -565,7 +578,11 @@ export function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [artefact.tabs.length]);
+  }, [artefact.tabs.length, artefactCollapsed]);
+
+  // The split is open only while there are tabs AND the pane isn't folded
+  // away — every layout branch below keys off this one truth.
+  const splitOpen = artefact.tabs.length > 0 && !artefactCollapsed;
 
   const toggleChatCollapsed = useCallback(() => {
     setChatCollapsed((current) => {
@@ -676,7 +693,7 @@ export function App() {
         // tab-close away). The chat wrapper is the same element in both
         // states so `ChatPanel` never remounts when the split opens.
         <div className="flex min-h-0 flex-1 pt-10">
-          {artefact.tabs.length > 0 && chatCollapsed ? (
+          {splitOpen && chatCollapsed ? (
             // A slim strip in the chat panel's own spot, not a topbar
             // button: collapsing doesn't relocate where chat lives, it just
             // narrows it — the reopen control belongs where the eye already
@@ -706,11 +723,11 @@ export function App() {
             <div
               style={{
                 order: CHAT_PANEL_ORDER,
-                width: artefact.tabs.length > 0 ? chatWidth : undefined,
+                width: splitOpen ? chatWidth : undefined,
               }}
               className={cn(
                 'relative flex shrink-0 flex-col overflow-hidden bg-bg-1',
-                artefact.tabs.length === 0 && 'min-w-0 flex-1'
+                !splitOpen && 'min-w-0 flex-1'
               )}
             >
               <RecoveryBoundary scope="Chat panel">
@@ -723,10 +740,10 @@ export function App() {
                   onOpenFile={openFile}
                   // Collapsing only means something when there's a split to
                   // give the space to — at rest the button hides.
-                  onToggleCollapse={artefact.tabs.length > 0 ? toggleChatCollapsed : undefined}
+                  onToggleCollapse={splitOpen ? toggleChatCollapsed : undefined}
                 />
               </RecoveryBoundary>
-              {artefact.tabs.length === 0 && (
+              {!splitOpen && (
                 <PinnedCard
                   root={bound.root}
                   rootId={bound.rootId}
@@ -740,7 +757,38 @@ export function App() {
             </div>
           )}
 
-          {artefact.tabs.length > 0 && (
+          {artefact.tabs.length > 0 && artefactCollapsed && (
+            // The folded pane's strip — same grammar as the chat panel's
+            // collapsed strip, on the opposite edge. The badge says the
+            // tabs are still there.
+            <div
+              style={{ order: ARTIFACT_PANEL_ORDER }}
+              className="flex w-10 shrink-0 flex-col items-center border-l border-border-hairline bg-bg-1 py-2"
+            >
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => setArtefactCollapsed(false)}
+                      aria-label="Open files panel"
+                    >
+                      <PanelRightOpen className="size-3.5" strokeWidth={1.5} />
+                    </Button>
+                  }
+                />
+                <TooltipContent side="left">
+                  {artefact.tabs.length === 1 ? '1 open tab' : `${artefact.tabs.length} open tabs`}
+                </TooltipContent>
+              </Tooltip>
+              <span className="mt-1 font-mono text-2xs text-text-muted">
+                {artefact.tabs.length}
+              </span>
+            </div>
+          )}
+
+          {splitOpen && (
             <>
               {!chatCollapsed && (
                 // The handle IS the panel divider (no separate border-r on
@@ -769,8 +817,10 @@ export function App() {
                   state={artefact}
                   onActivateTab={(index) => setArtefact((current) => activateTab(current, index))}
                   onCloseTab={(index) => setArtefact((current) => closeTab(current, index))}
+                  onMoveTab={(from, to) => setArtefact((current) => moveTab(current, from, to))}
                   onOpenFile={(absPath) => openFile(absPath)}
                   onOpenFocus={openFocus}
+                  onCollapse={() => setArtefactCollapsed(true)}
                 />
               </div>
             </>

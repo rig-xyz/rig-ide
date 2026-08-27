@@ -1,5 +1,5 @@
-import { FolderTree, Plus, Rows3, X } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { FolderTree, PanelRightClose, Plus, Rows3, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { iconFor } from '@renderer/features/workspace/file-tree';
 import { Popover, PopoverMenuItem } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
@@ -17,6 +17,13 @@ import { NavigatorPopover } from './navigator-popover';
  * navigator popover (the tree's new home). Same tab grammar as the chat
  * panel's session strip — bg-2 + text shift marks active, close on hover,
  * no colored rails.
+ *
+ * The (+) sits INLINE after the last tab (browser convention — the eye
+ * adds a tab where tabs end) until the strip overflows, at which point it
+ * retreats to the pinned right cluster so it can never scroll out of
+ * reach. The right cluster also carries the pane's collapse control —
+ * mirroring the chat strip's own, so both halves of the split fold the
+ * same way. Tabs drag-reorder (HTML5 DnD, live reorder on drag-over).
  */
 
 export function ArtefactPane({
@@ -26,8 +33,10 @@ export function ArtefactPane({
   state,
   onActivateTab,
   onCloseTab,
+  onMoveTab,
   onOpenFile,
   onOpenFocus,
+  onCollapse,
 }: {
   root: string;
   rootId: string;
@@ -35,17 +44,33 @@ export function ArtefactPane({
   state: ArtefactTabsState;
   onActivateTab: (index: number) => void;
   onCloseTab: (index: number) => void;
+  onMoveTab: (from: number, to: number) => void;
   /** Opens (or re-activates) an editor tab; relPath rides along for seen-state. */
   onOpenFile: (absPath: string, relPath: string) => void;
   onOpenFocus: () => void;
+  /** Folds the pane away (tabs kept) — the session takes the window back. */
+  onCollapse: () => void;
 }) {
   const plusRef = useRef<HTMLButtonElement>(null);
   const filesRef = useRef<HTMLButtonElement>(null);
+  const tablistRef = useRef<HTMLDivElement>(null);
   const [plusOpen, setPlusOpen] = useState(false);
   // Which anchor the navigator hangs off: the (+) menu's "Open file…" or
   // the active editor tab's Files button. One popover, two doors.
   const [navigator, setNavigator] = useState<'plus' | 'files' | null>(null);
   const [revealDir, setRevealDir] = useState<string | null>(null);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  // Inline (+) until the strip genuinely overflows — measured, not guessed.
+  const [overflowing, setOverflowing] = useState(false);
+  useEffect(() => {
+    const el = tablistRef.current;
+    if (!el) return;
+    const measure = () => setOverflowing(el.scrollWidth > el.clientWidth + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [state.tabs.length]);
 
   const active = state.tabs[state.active] ?? null;
 
@@ -54,88 +79,83 @@ export function ArtefactPane({
     setNavigator(anchor);
   };
 
+  const plusButton = (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            ref={plusRef}
+            type="button"
+            onClick={() => {
+              setNavigator(null);
+              setPlusOpen((v) => !v);
+            }}
+            aria-haspopup="menu"
+            aria-expanded={plusOpen}
+            aria-label="New tab"
+            className="hover:bg-bg-2 hover:text-text-primary flex size-6 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors"
+          >
+            <Plus className="size-3.5" strokeWidth={1.5} />
+          </button>
+        }
+      />
+      <TooltipContent side="bottom">New tab</TooltipContent>
+    </Tooltip>
+  );
+
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+    <div className="pane-in flex h-full min-w-0 flex-1 flex-col overflow-hidden">
       <div className="border-border-hairline flex h-10 shrink-0 items-center border-b">
         <div
+          ref={tablistRef}
           role="tablist"
           className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 py-1.5 [mask-image:linear-gradient(to_right,transparent,black_12px,black_calc(100%-12px),transparent)]"
         >
           {state.tabs.map((tab, index) => {
-            if (tab.kind === 'focus') {
-              return (
-                <PaneTab
-                  key="focus"
-                  active={index === state.active}
-                  onSelect={() => onActivateTab(index)}
-                  onClose={() => onCloseTab(index)}
-                >
-                  <Rows3 className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
-                  <span>Focus</span>
-                </PaneTab>
-              );
-            }
-            const name = tab.path.split('/').pop() ?? tab.path;
-            const Icon = iconFor(name);
+            const isFocus = tab.kind === 'focus';
+            const name = isFocus ? 'Focus' : (tab.path.split('/').pop() ?? tab.path);
+            const Icon = isFocus ? Rows3 : iconFor(name);
             return (
               <PaneTab
-                key={tab.path}
+                key={isFocus ? 'focus' : tab.path}
                 active={index === state.active}
+                dragging={dragIndex === index}
                 onSelect={() => onActivateTab(index)}
                 onClose={() => onCloseTab(index)}
+                onDragStart={() => setDragIndex(index)}
+                onDragOverTab={() => {
+                  if (dragIndex === null || dragIndex === index) return;
+                  onMoveTab(dragIndex, index);
+                  setDragIndex(index);
+                }}
+                onDragEnd={() => setDragIndex(null)}
               >
                 <Icon className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
                 <span className="max-w-32 truncate">{name}</span>
               </PaneTab>
             );
           })}
+          {!overflowing && plusButton}
         </div>
-        <div className="border-border-hairline flex shrink-0 items-center border-l px-1.5">
+        <div className="border-border-hairline flex shrink-0 items-center gap-0.5 border-l px-1.5">
+          {overflowing && plusButton}
+          {/* Mirrors the chat strip's collapse control — the split's two
+              halves fold the same way, from their own inner edge. */}
           <Tooltip>
             <TooltipTrigger
               render={
                 <button
-                  ref={plusRef}
                   type="button"
-                  onClick={() => setPlusOpen((v) => !v)}
-                  aria-haspopup="menu"
-                  aria-expanded={plusOpen}
-                  aria-label="New tab"
+                  onClick={onCollapse}
+                  aria-label="Collapse files panel"
                   className="hover:bg-bg-2 hover:text-text-primary flex size-6 items-center justify-center rounded-control text-text-muted transition-colors"
                 >
-                  <Plus className="size-3.5" strokeWidth={1.5} />
+                  <PanelRightClose className="size-3.5" strokeWidth={1.5} />
                 </button>
               }
             />
-            <TooltipContent side="bottom">New tab</TooltipContent>
+            <TooltipContent side="bottom">Collapse files panel</TooltipContent>
           </Tooltip>
-          <Popover
-            anchor={plusRef}
-            open={plusOpen}
-            onClose={() => setPlusOpen(false)}
-            role="menu"
-            align="right"
-            gap={4}
-            estimatedWidth={190}
-            minWidth={190}
-          >
-            <PopoverMenuItem
-              icon={FolderTree}
-              label="Open file…"
-              onSelect={() => {
-                setPlusOpen(false);
-                openNavigator('plus');
-              }}
-            />
-            <PopoverMenuItem
-              icon={Rows3}
-              label="Focus view"
-              onSelect={() => {
-                setPlusOpen(false);
-                onOpenFocus();
-              }}
-            />
-          </Popover>
         </div>
       </div>
 
@@ -164,7 +184,11 @@ export function ArtefactPane({
               <button
                 ref={filesRef}
                 type="button"
-                onClick={() => openNavigator('files')}
+                // A control that opens a surface closes it too — toggle,
+                // never re-open.
+                onClick={() =>
+                  navigator === 'files' ? setNavigator(null) : openNavigator('files')
+                }
                 aria-haspopup="dialog"
                 aria-expanded={navigator === 'files'}
                 className="border-border-hairline hover:bg-bg-2 hover:text-text-primary flex shrink-0 items-center gap-1 rounded-control border bg-transparent px-2 py-1 text-xs text-text-secondary transition-colors"
@@ -176,6 +200,34 @@ export function ArtefactPane({
           />
         )}
       </div>
+
+      <Popover
+        anchor={plusRef}
+        open={plusOpen}
+        onClose={() => setPlusOpen(false)}
+        role="menu"
+        align="right"
+        gap={4}
+        estimatedWidth={190}
+        minWidth={190}
+      >
+        <PopoverMenuItem
+          icon={FolderTree}
+          label="Open file…"
+          onSelect={() => {
+            setPlusOpen(false);
+            openNavigator('plus');
+          }}
+        />
+        <PopoverMenuItem
+          icon={Rows3}
+          label="Focus view"
+          onSelect={() => {
+            setPlusOpen(false);
+            onOpenFocus();
+          }}
+        />
+      </Popover>
     </div>
   );
 }
@@ -183,24 +235,43 @@ export function ArtefactPane({
 /** Same visual grammar as the chat panel's session tabs — one look for "a tab" everywhere. */
 function PaneTab({
   active,
+  dragging,
   onSelect,
   onClose,
+  onDragStart,
+  onDragOverTab,
+  onDragEnd,
   children,
 }: {
   active: boolean;
+  dragging: boolean;
   onSelect: () => void;
   onClose: () => void;
+  onDragStart: () => void;
+  onDragOverTab: () => void;
+  onDragEnd: () => void;
   children: React.ReactNode;
 }) {
   return (
     <div
       role="tab"
       aria-selected={active}
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = 'move';
+        onDragStart();
+      }}
+      onDragOver={(event) => {
+        event.preventDefault();
+        onDragOverTab();
+      }}
+      onDragEnd={onDragEnd}
       className={cn(
         'group flex shrink-0 items-center gap-1.5 rounded-control px-2 py-1 text-xs transition-colors',
         active
           ? 'bg-bg-2 text-text-primary'
-          : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary'
+          : 'text-text-secondary hover:bg-bg-2 hover:text-text-primary',
+        dragging && 'opacity-50'
       )}
     >
       <button type="button" onClick={onSelect} className="flex min-w-0 items-center gap-1.5">

@@ -4,6 +4,7 @@ import {
   activeTab,
   closeActiveTab,
   closeTab,
+  moveTab,
   NO_TABS,
   openFileTab,
   openFocusTab,
@@ -73,6 +74,32 @@ describe('closeTab', () => {
     const state = open('/rig/a.md');
     expect(closeTab(state, 5)).toBe(state);
     expect(closeTab(state, -1)).toBe(state);
+  });
+});
+
+describe('moveTab', () => {
+  it('moves a tab and keeps the active tab active by identity', () => {
+    // Active is c (index 2); drag a (index 0) to the end.
+    const state = moveTab(open('/rig/a.md', '/rig/b.md', '/rig/c.md'), 0, 2);
+    expect(state.tabs.map((t) => (t.kind === 'file' ? t.path : 'focus'))).toEqual([
+      '/rig/b.md',
+      '/rig/c.md',
+      '/rig/a.md',
+    ]);
+    expect(activeTab(state)).toEqual({ kind: 'file', path: '/rig/c.md' });
+  });
+
+  it('a dragged active tab stays active at its new position', () => {
+    const state = moveTab(activateTab(open('/rig/a.md', '/rig/b.md', '/rig/c.md'), 0), 0, 2);
+    expect(state.active).toBe(2);
+    expect(activeTab(state)).toEqual({ kind: 'file', path: '/rig/a.md' });
+  });
+
+  it('ignores no-op and out-of-range moves', () => {
+    const state = open('/rig/a.md', '/rig/b.md');
+    expect(moveTab(state, 1, 1)).toBe(state);
+    expect(moveTab(state, 0, 5)).toBe(state);
+    expect(moveTab(state, -1, 0)).toBe(state);
   });
 });
 

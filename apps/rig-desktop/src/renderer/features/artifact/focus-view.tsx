@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronRight, RefreshCw } from 'lucide-react';
+import { CheckCheck, ChevronRight, FoldVertical, MoreHorizontal, UnfoldVertical } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { DocEditor } from '@renderer/features/docs/doc-editor';
 import { DocTabResource } from '@renderer/features/docs/doc-file-sync';
 import { useEverWrittenPaths, useRecentWrites } from '@renderer/features/workspace/write-activity';
 import { events, rpc } from '@renderer/lib/ipc';
+import { Popover, PopoverMenuItem, PopoverSeparator } from '@renderer/lib/ui/popover';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
@@ -69,6 +70,17 @@ export function FocusView({
       return result.data;
     },
   });
+  // Feedback round 1: no Refresh button — the view follows the disk on its
+  // own. The listing invalidates on every fs event under this root (the
+  // watch registration lives in App.tsx), and each expanded section's
+  // document already reloads itself when clean.
+  useEffect(() => {
+    const key = rigFilesQueryKey(root, rootId);
+    return events.on(rigFileChangeChannel, ({ rootId: changed }) => {
+      if (changed !== rootId) return;
+      void queryClient.invalidateQueries({ queryKey: key });
+    });
+  }, [root, rootId, queryClient]);
 
   const [seenState, setSeenState] = useState<{ baselineAt: number; seen: SeenMap } | null>(null);
   useEffect(() => {
@@ -121,6 +133,26 @@ export function FocusView({
     );
   };
 
+  const optionsRef = useRef<HTMLButtonElement>(null);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const markAllViewed = () => {
+    const relPaths = [...unseenFiles];
+    if (relPaths.length === 0) return;
+    void rpc.rig.seenState.markAllSeen({ bindingId, relPaths });
+    const now = Date.now();
+    setSeenState((prev) =>
+      prev
+        ? {
+            ...prev,
+            seen: { ...prev.seen, ...Object.fromEntries(relPaths.map((p) => [p, now])) },
+          }
+        : prev
+    );
+  };
+  const setAllExpanded = (expanded: boolean) => {
+    setToggled(new Map(sections.map((node) => [node.relPath, expanded])));
+  };
+
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
       <div className="border-border-hairline flex h-10 shrink-0 items-center gap-2.5 border-b px-4">
@@ -139,21 +171,58 @@ export function FocusView({
             <TooltipTrigger
               render={
                 <button
+                  ref={optionsRef}
                   type="button"
-                  onClick={() =>
-                    void queryClient.invalidateQueries({
-                      queryKey: rigFilesQueryKey(root, rootId),
-                    })
-                  }
-                  aria-label="Refresh"
+                  onClick={() => setOptionsOpen((v) => !v)}
+                  aria-haspopup="menu"
+                  aria-expanded={optionsOpen}
+                  aria-label="View options"
                   className="hover:bg-bg-2 hover:text-text-primary flex size-6 items-center justify-center rounded-control text-text-muted transition-colors"
                 >
-                  <RefreshCw className="size-3.5" strokeWidth={1.5} />
+                  <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
                 </button>
               }
             />
-            <TooltipContent side="bottom">Refresh</TooltipContent>
+            <TooltipContent side="bottom">View options</TooltipContent>
           </Tooltip>
+          <Popover
+            anchor={optionsRef}
+            open={optionsOpen}
+            onClose={() => setOptionsOpen(false)}
+            role="menu"
+            align="right"
+            gap={4}
+            estimatedWidth={200}
+            minWidth={200}
+            ariaLabel="Focus view options"
+          >
+            <PopoverMenuItem
+              icon={CheckCheck}
+              label="Mark all as viewed"
+              disabled={unseenFiles.size === 0}
+              onSelect={() => {
+                setOptionsOpen(false);
+                markAllViewed();
+              }}
+            />
+            <PopoverSeparator />
+            <PopoverMenuItem
+              icon={UnfoldVertical}
+              label="Expand all"
+              onSelect={() => {
+                setOptionsOpen(false);
+                setAllExpanded(true);
+              }}
+            />
+            <PopoverMenuItem
+              icon={FoldVertical}
+              label="Collapse all"
+              onSelect={() => {
+                setOptionsOpen(false);
+                setAllExpanded(false);
+              }}
+            />
+          </Popover>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -354,7 +423,7 @@ const FocusBody = observer(function FocusBody({
     );
   }
   return (
-    <div className="pb-4">
+    <div className="popover-in pb-4">
       <DocEditor
         key={resource.path}
         ref={resource.editorRef}
