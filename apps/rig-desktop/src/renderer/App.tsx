@@ -1,11 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  ChevronRight,
-  Home as HomeIcon,
-  MessageSquare,
-  PanelRightOpen,
-  Settings as SettingsIcon,
-} from 'lucide-react';
+import { ChevronRight, Home as HomeIcon, Settings as SettingsIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArtefactPane } from '@renderer/features/artifact/artefact-pane';
 import {
@@ -33,6 +27,7 @@ import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { UserPill } from '@renderer/features/rig-account/user-pill';
 import { RigShareButton } from '@renderer/features/rig-share/rig-share-button';
 import { InvitesBell } from '@renderer/features/shell/invites-bell';
+import { LayoutSwitcher, type RigLayout } from '@renderer/features/shell/layout-switcher';
 import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
 import { SettingsModal } from '@renderer/features/shell/settings-modal';
 import { deriveTopbarContext, type TopbarContext } from '@renderer/features/shell/topbar-context';
@@ -202,14 +197,6 @@ function readStoredChatWidth(): number {
   }
 }
 
-function readStoredChatCollapsed(): boolean {
-  try {
-    return localStorage.getItem(CHAT_COLLAPSED_STORAGE_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
 type FolderState =
   | { status: 'empty' }
   | { status: 'detecting'; path: string }
@@ -270,12 +257,11 @@ export function App() {
   // doesn't exist — the session owns the window and the pinned card floats
   // over it (state A). See `features/artifact/artefact-tabs.ts`.
   const [artefact, setArtefact] = useState<ArtefactTabsState>(NO_TABS);
-  // Feedback round 1: the pane can also FOLD without losing its tabs — the
-  // session takes the window back and a slim right-edge strip (mirroring
-  // the chat panel's own collapsed strip) holds the way back in. Any open
-  // (file or focus) unfolds it. Per-session, deliberately not persisted.
-  const [artefactCollapsed, setArtefactCollapsed] = useState(false);
-  const [chatCollapsed, setChatCollapsed] = useState<boolean>(readStoredChatCollapsed);
+  // Layout-switcher round: replaces the old `artefactCollapsed`/
+  // `chatCollapsed` booleans (which could disagree) with one enum, driven
+  // by the topbar's `LayoutSwitcher`. Per-session, deliberately not
+  // persisted — same as the fold states it replaces.
+  const [rigLayout, setRigLayout] = useState<RigLayout>('chat');
   const [chatWidth, setChatWidth] = useState<number>(readStoredChatWidth);
   const chatWidthRef = useRef(chatWidth);
   chatWidthRef.current = chatWidth;
@@ -323,7 +309,6 @@ export function App() {
       if (settings.chatPanelWidth !== null) {
         setChatWidth(clamp(settings.chatPanelWidth, CHAT_WIDTH_MIN, CHAT_WIDTH_MAX));
       }
-      setChatCollapsed(settings.chatPanelCollapsed);
       setHasSeenOnboarding(settings.hasSeenOnboarding);
       setSettingsBootState('ready');
     };
@@ -465,7 +450,7 @@ export function App() {
   // the previous root.
   useEffect(() => {
     setArtefact(NO_TABS);
-    setArtefactCollapsed(false);
+    setRigLayout('chat');
   }, [bound?.root]);
 
   // Title-reactivity round: `bound.name` (the topbar/`RigSwitcher`'s title,
@@ -548,23 +533,33 @@ export function App() {
         const relPath = relPathFromRoot(boundRoot, absPath);
         if (relPath) void rpc.rig.seenState.markSeen({ bindingId: boundBindingId, relPath });
       }
-      setArtefactCollapsed(false);
+      setRigLayout((current) => (current === 'chat' ? 'split' : current));
       setArtefact((current) => openFileTab(current, absPath));
     },
     [boundRoot, boundBindingId]
   );
   const openFocus = useCallback(() => {
-    setArtefactCollapsed(false);
+    setRigLayout((current) => (current === 'chat' ? 'split' : current));
     setArtefact((current) => openFocusTab(current));
+  }, []);
+
+  // Layout-switcher round: switching to split/files with no tabs open has
+  // nothing to show there yet — the direct door is the focus view, same as
+  // the pinned card's own "Focus" action.
+  const applyLayout = useCallback((next: RigLayout) => {
+    if (next !== 'chat') {
+      setArtefact((current) => (current.tabs.length > 0 ? current : openFocusTab(current)));
+    }
+    setRigLayout(next);
   }, []);
 
   // Esc closes the active tab (the split collapses back to the full
   // session when the last one goes) — but only when focus isn't inside
   // something that already owns Escape (the CM6 editor, the comment
-  // composer's mention dropdown — see comments-margin.tsx). A folded pane
-  // ignores Esc: closing tabs you can't see is a trap.
+  // composer's mention dropdown — see comments-margin.tsx). The chat-only
+  // layout ignores Esc: closing tabs you can't see is a trap.
   useEffect(() => {
-    if (artefact.tabs.length === 0 || artefactCollapsed) return;
+    if (artefact.tabs.length === 0 || rigLayout === 'chat') return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       const target = event.target;
@@ -578,24 +573,14 @@ export function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [artefact.tabs.length, artefactCollapsed]);
+  }, [artefact.tabs.length, rigLayout]);
 
-  // The split is open only while there are tabs AND the pane isn't folded
-  // away — every layout branch below keys off this one truth.
-  const splitOpen = artefact.tabs.length > 0 && !artefactCollapsed;
-
-  const toggleChatCollapsed = useCallback(() => {
-    setChatCollapsed((current) => {
-      const next = !current;
-      try {
-        localStorage.setItem(CHAT_COLLAPSED_STORAGE_KEY, String(next));
-      } catch {
-        // localStorage unavailable — collapse state just won't persist.
-      }
-      void rpc.rig.settings.set({ chatPanelCollapsed: next });
-      return next;
-    });
-  }, []);
+  // Closing the last tab collapses the split — there's nothing left for
+  // split/files to show. Guarded by the `rigLayout !== 'chat'` check itself
+  // so this never loops once already 'chat'.
+  useEffect(() => {
+    if (artefact.tabs.length === 0 && rigLayout !== 'chat') setRigLayout('chat');
+  }, [artefact.tabs.length, rigLayout]);
 
   const onChatResizeStart = useCallback((event: React.PointerEvent) => {
     event.preventDefault();
@@ -668,6 +653,15 @@ export function App() {
         // the panel header that used to carry it went with the resident
         // file browser.
         shareSlot={bound ? <RigShareButton root={bound.root} name={bound.name} /> : undefined}
+        layoutSlot={
+          bound ? (
+            <LayoutSwitcher
+              layout={rigLayout}
+              hiddenTabCount={rigLayout === 'chat' ? artefact.tabs.length : 0}
+              onChange={applyLayout}
+            />
+          ) : undefined
+        }
       />
       <SettingsModal
         open={settingsOpen}
@@ -686,144 +680,83 @@ export function App() {
         // absolute overlay instead of a flow sibling. `scrolled` above is
         // hardcoded false for this branch — its `variant: 'rig'` bar wears
         // a static hairline instead (see `Topbar`'s own comment).
-        // Session-first viewer: with no tabs, the SESSION owns the window
-        // and the rig's state floats over it as the pinned card. Opening
-        // anything splits — chat narrows to its stored width, the artefact
-        // pane takes the rest, and the card retires (its content is one
-        // tab-close away). The chat wrapper is the same element in both
-        // states so `ChatPanel` never remounts when the split opens.
+        // Layout-switcher round: `rigLayout` replaces the old
+        // `artefactCollapsed`/`chatCollapsed` pair (which could disagree)
+        // with one enum, driven by the topbar's `LayoutSwitcher`. 'chat' is
+        // the session owning the window with the rig's state floating over
+        // it as the pinned card; 'split' narrows chat to its stored width
+        // and gives the artefact pane the rest; 'files' folds chat down to
+        // `ChatPanel`'s own session rail and gives the artefact pane
+        // everything else. The chat wrapper is the same element across all
+        // three layouts, so `ChatPanel` never remounts when it changes.
         <div className="flex min-h-0 flex-1 pt-10">
-          {splitOpen && chatCollapsed ? (
-            // A slim strip in the chat panel's own spot, not a topbar
-            // button: collapsing doesn't relocate where chat lives, it just
-            // narrows it — the reopen control belongs where the eye already
-            // returns to. The chat glyph (not the generic panel-toggle
-            // icon) plus a real hover tooltip is the legible part.
+          <div
+            style={{ order: CHAT_PANEL_ORDER, width: rigLayout === 'split' ? chatWidth : undefined }}
+            className={cn(
+              'relative flex shrink-0 flex-col overflow-hidden bg-bg-1',
+              rigLayout === 'chat' && 'min-w-0 flex-1',
+              rigLayout === 'files' && 'border-border-hairline w-10 border-r'
+            )}
+          >
+            <RecoveryBoundary scope="Chat panel">
+              <ChatPanel
+                root={bound.root}
+                rootId={bound.rootId}
+                bindingId={bound.bindingId}
+                name={bound.name}
+                initialActiveSessionId={pendingActiveSessionId}
+                onOpenFile={openFile}
+                collapsed={rigLayout === 'files'}
+                onExpand={() => setRigLayout('split')}
+              />
+            </RecoveryBoundary>
+            {rigLayout === 'chat' && (
+              <PinnedCard
+                root={bound.root}
+                rootId={bound.rootId}
+                bindingId={bound.bindingId}
+                name={bound.name}
+                syncing={bound.root === syncingRoot}
+                onOpenFile={(absPath) => openFile(absPath)}
+                onOpenFocus={openFocus}
+              />
+            )}
+          </div>
+
+          {rigLayout === 'split' && (
+            // The handle IS the panel divider (no separate border-r on the
+            // chat wrapper above) — a wide, easy-to-grab hit area with a
+            // thin centered line so it reads as a hairline at rest and only
+            // widens visually on hover/drag.
             <div
-              style={{ order: CHAT_PANEL_ORDER }}
-              className="flex w-10 shrink-0 flex-col items-center border-r border-border-hairline bg-bg-1 py-2"
+              style={{ order: CHAT_RESIZE_HANDLE_ORDER }}
+              onPointerDown={onChatResizeStart}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize chat panel"
+              className="group relative w-2.5 shrink-0 cursor-col-resize"
             >
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={toggleChatCollapsed}
-                      aria-label="Open chat"
-                    >
-                      <MessageSquare className="size-3.5" strokeWidth={1.5} />
-                    </Button>
-                  }
-                />
-                <TooltipContent side="right">Open chat</TooltipContent>
-              </Tooltip>
-            </div>
-          ) : (
-            <div
-              style={{
-                order: CHAT_PANEL_ORDER,
-                width: splitOpen ? chatWidth : undefined,
-              }}
-              className={cn(
-                'relative flex shrink-0 flex-col overflow-hidden bg-bg-1',
-                !splitOpen && 'min-w-0 flex-1'
-              )}
-            >
-              <RecoveryBoundary scope="Chat panel">
-                <ChatPanel
-                  root={bound.root}
-                  rootId={bound.rootId}
-                  bindingId={bound.bindingId}
-                  name={bound.name}
-                  initialActiveSessionId={pendingActiveSessionId}
-                  onOpenFile={openFile}
-                  // Collapsing only means something when there's a split to
-                  // give the space to — at rest the button hides.
-                  onToggleCollapse={splitOpen ? toggleChatCollapsed : undefined}
-                />
-              </RecoveryBoundary>
-              {!splitOpen && (
-                <PinnedCard
-                  root={bound.root}
-                  rootId={bound.rootId}
-                  bindingId={bound.bindingId}
-                  name={bound.name}
-                  syncing={bound.root === syncingRoot}
-                  onOpenFile={(absPath) => openFile(absPath)}
-                  onOpenFocus={openFocus}
-                />
-              )}
+              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border-hairline transition-colors group-hover:bg-accent/50 group-active:bg-accent/70" />
             </div>
           )}
 
-          {artefact.tabs.length > 0 && artefactCollapsed && (
-            // The folded pane's strip — same grammar as the chat panel's
-            // collapsed strip, on the opposite edge. The badge says the
-            // tabs are still there.
+          {rigLayout !== 'chat' && (
             <div
               style={{ order: ARTIFACT_PANEL_ORDER }}
-              className="flex w-10 shrink-0 flex-col items-center border-l border-border-hairline bg-bg-1 py-2"
+              className="flex min-h-0 min-w-0 flex-1 flex-col"
             >
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => setArtefactCollapsed(false)}
-                      aria-label="Open files panel"
-                    >
-                      <PanelRightOpen className="size-3.5" strokeWidth={1.5} />
-                    </Button>
-                  }
-                />
-                <TooltipContent side="left">
-                  {artefact.tabs.length === 1 ? '1 open tab' : `${artefact.tabs.length} open tabs`}
-                </TooltipContent>
-              </Tooltip>
-              <span className="mt-1 font-mono text-2xs text-text-muted">
-                {artefact.tabs.length}
-              </span>
+              <ArtefactPane
+                root={bound.root}
+                rootId={bound.rootId}
+                bindingId={bound.bindingId}
+                state={artefact}
+                onActivateTab={(index) => setArtefact((current) => activateTab(current, index))}
+                onCloseTab={(index) => setArtefact((current) => closeTab(current, index))}
+                onMoveTab={(from, to) => setArtefact((current) => moveTab(current, from, to))}
+                onOpenFile={(absPath) => openFile(absPath)}
+                onOpenFocus={openFocus}
+              />
             </div>
-          )}
-
-          {splitOpen && (
-            <>
-              {!chatCollapsed && (
-                // The handle IS the panel divider (no separate border-r on
-                // the chat wrapper above) — a wide, easy-to-grab hit area
-                // with a thin centered line so it reads as a hairline at
-                // rest and only widens visually on hover/drag.
-                <div
-                  style={{ order: CHAT_RESIZE_HANDLE_ORDER }}
-                  onPointerDown={onChatResizeStart}
-                  role="separator"
-                  aria-orientation="vertical"
-                  aria-label="Resize chat panel"
-                  className="group relative w-2.5 shrink-0 cursor-col-resize"
-                >
-                  <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border-hairline transition-colors group-hover:bg-accent/50 group-active:bg-accent/70" />
-                </div>
-              )}
-              <div
-                style={{ order: ARTIFACT_PANEL_ORDER }}
-                className="flex min-h-0 min-w-0 flex-1 flex-col"
-              >
-                <ArtefactPane
-                  root={bound.root}
-                  rootId={bound.rootId}
-                  bindingId={bound.bindingId}
-                  state={artefact}
-                  onActivateTab={(index) => setArtefact((current) => activateTab(current, index))}
-                  onCloseTab={(index) => setArtefact((current) => closeTab(current, index))}
-                  onMoveTab={(from, to) => setArtefact((current) => moveTab(current, from, to))}
-                  onOpenFile={(absPath) => openFile(absPath)}
-                  onOpenFocus={openFocus}
-                  onCollapse={() => setArtefactCollapsed(true)}
-                />
-              </div>
-            </>
           )}
         </div>
       ) : (
@@ -883,6 +816,7 @@ function Topbar({
   onOpenFolder,
   updateReady,
   shareSlot,
+  layoutSlot,
 }: {
   context: TopbarContext;
   /** Which bottom-edge treatment the bar wears (Dylan's seam call, this
@@ -915,6 +849,8 @@ function Topbar({
   updateReady: boolean;
   /** Session-first viewer: the rig-level Share button (rig view only) — rendered in the right cluster, leading the account/gear icons. */
   shareSlot?: React.ReactNode;
+  /** Layout-switcher round: the chat/split/files segmented control (rig view only) — rendered in the right cluster, ahead of the account/gear icons. */
+  layoutSlot?: React.ReactNode;
 }) {
   return (
     // The window is `titleBarStyle: 'hiddenInset'` (main/app/window.ts) — no
@@ -993,6 +929,7 @@ function Topbar({
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+        {layoutSlot}
         <UserPill compact />
         {/* Invites addressed to me — renders nothing signed out; accent
             count dot only when invites exist (a live indicator, within the

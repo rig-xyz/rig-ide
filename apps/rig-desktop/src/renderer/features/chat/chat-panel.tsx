@@ -4,7 +4,6 @@ import {
   Check,
   History,
   MessageSquare,
-  PanelLeftClose,
   Pencil,
   Play,
   Plus,
@@ -63,8 +62,8 @@ type RigSession = RigChatStore | ReplayStore;
 
 /**
  * The chat panel: real ACP sessions against the opened rig's own folder,
- * presented editor-style — one row of tabs (harness icon + title, `+` and
- * collapse at the strip's own right edge). No separate identity header (the
+ * presented editor-style — one row of tabs (harness icon + title, `+`
+ * pinned to the strip's own right edge). No separate identity header (the
  * active tab already carries that) and, per round 13, no separate
  * new-session screen either: the zero-state is a transcript-less composer.
  *
@@ -94,8 +93,15 @@ export interface ChatPanelProps {
    */
   initialActiveSessionId?: string | null;
   onOpenFile?: (absPath: string) => void;
-  /** Session-first viewer: absent when the session owns the full window (no split to collapse into) — the strip's collapse button hides. */
-  onToggleCollapse?: () => void;
+  /**
+   * Layout-switcher round: in the `files` layout the panel renders as a
+   * slim SESSION RAIL — one icon per open session — instead of the full
+   * transcript. The panel stays mounted across every layout, so nothing
+   * about the live sessions is interrupted by switching.
+   */
+  collapsed?: boolean;
+  /** Rail clicks land here after selecting — the shell flips back to the split. */
+  onExpand?: () => void;
 }
 
 export const ChatPanel = observer(function ChatPanel({
@@ -105,7 +111,8 @@ export const ChatPanel = observer(function ChatPanel({
   name,
   initialActiveSessionId,
   onOpenFile,
-  onToggleCollapse,
+  collapsed = false,
+  onExpand,
 }: ChatPanelProps) {
   const { agents, isLoading: agentsLoading } = useRunnableAgents();
   // Icon/name display, decoupled from `agents`' probe gate — see
@@ -378,7 +385,9 @@ export const ChatPanel = observer(function ChatPanel({
     });
     observerInstance.observe(el);
     return () => observerInstance.disconnect();
-  }, []);
+    // `collapsed`: the rail renders no composer, so a panel that mounted
+    // collapsed has no element to observe — re-run when it expands.
+  }, [collapsed]);
 
   /**
    * Typing + Send in the zero-state starts the session — make it the
@@ -572,6 +581,24 @@ export const ChatPanel = observer(function ChatPanel({
   const ordered = byRecency(sessions);
   const activeStore = activeId ? rigSessionRegistry.get<RigSession>(activeId) : null;
 
+  // Layout-switcher round: the `files` layout keeps this panel mounted as
+  // a slim rail of the open sessions — every session one click from being
+  // back in front, none of them interrupted by the layout change.
+  if (collapsed) {
+    return (
+      <SessionRail
+        sessions={ordered}
+        activeId={activeId}
+        identities={identities}
+        onSelectSession={(id) => {
+          setActiveId(id);
+          onExpand?.();
+        }}
+        onExpand={() => onExpand?.()}
+      />
+    );
+  }
+
   return (
     <div className="flex h-full min-w-0 flex-col">
       <TabStrip
@@ -582,7 +609,6 @@ export const ChatPanel = observer(function ChatPanel({
         onSelect={setActiveId}
         onClose={closeSession}
         onNewTab={() => setActiveId(null)}
-        onToggleCollapse={onToggleCollapse}
       />
 
       <div className="flex min-h-0 flex-1 flex-col">
@@ -634,10 +660,10 @@ export const ChatPanel = observer(function ChatPanel({
 
 /**
  * One row: the tab strip (scrollable, fade-masked edges, never wraps) and
- * the strip-level controls (`+`, collapse) pinned to its own right side —
- * editor/browser-tab convention. The zero-state (`activeId === null`)
- * renders as its own tab rather than a hidden mode, so the strip is never
- * empty once the panel has been touched at all.
+ * the strip-level `+` pinned to its own right side — editor/browser-tab
+ * convention. The zero-state (`activeId === null`) renders as its own tab
+ * rather than a hidden mode, so the strip is never empty once the panel has
+ * been touched at all.
  */
 /** The title behind a tab, whichever kind of store backs it. */
 function sessionTitle(store: RigSession | null | undefined): string | null {
@@ -653,7 +679,6 @@ const TabStrip = observer(function TabStrip({
   onSelect,
   onClose,
   onNewTab,
-  onToggleCollapse,
 }: {
   sessions: RigSessionSummary[];
   activeId: string | null;
@@ -662,7 +687,6 @@ const TabStrip = observer(function TabStrip({
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onNewTab: () => void;
-  onToggleCollapse?: () => void;
 }) {
   const inZeroState = activeId === null;
   // Round S2+: double-click a tab to rename it, editor convention (select-
@@ -746,24 +770,78 @@ const TabStrip = observer(function TabStrip({
           />
           <TooltipContent side="bottom">New session</TooltipContent>
         </Tooltip>
-        {/* Collapse: universal chrome, stays icon-only per the same rule.
-            Hidden when the session owns the full window — there is nothing
-            to collapse into (see ChatPanelProps). */}
-        {onToggleCollapse && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onToggleCollapse}
-            aria-label="Collapse chat panel"
-            title="Collapse chat panel"
-          >
-            <PanelLeftClose className="size-3.5" strokeWidth={1.5} />
-          </Button>
-        )}
       </div>
     </div>
   );
 });
+
+/**
+ * Layout-switcher round: the `files` layout's slim rail replacement for the
+ * full tab strip — one icon per open session plus an expand button back to
+ * the split, so nothing about switching layouts interrupts a live session.
+ */
+function SessionRail({
+  sessions,
+  activeId,
+  identities,
+  onSelectSession,
+  onExpand,
+}: {
+  sessions: RigSessionSummary[];
+  activeId: string | null;
+  identities: Map<string, AgentIdentity>;
+  onSelectSession: (id: string) => void;
+  onExpand: () => void;
+}) {
+  return (
+    <div className="flex h-full w-full flex-col items-center gap-1 py-2">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button variant="ghost" size="icon-sm" onClick={onExpand} aria-label="Open chat">
+              <MessageSquare className="size-3.5" strokeWidth={1.5} />
+            </Button>
+          }
+        />
+        <TooltipContent side="right">Open chat</TooltipContent>
+      </Tooltip>
+      {sessions.length > 0 && <div className="bg-border-hairline my-1 h-px w-6 shrink-0" />}
+      {sessions.map((s) => {
+        const active = s.conversationId === activeId;
+        const title = deriveTabTitle(sessionTitle(rigSessionRegistry.get<RigSession>(s.conversationId)));
+        const icon = identities.get(s.providerId)?.icon;
+        return (
+          <Tooltip key={s.conversationId}>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={() => onSelectSession(s.conversationId)}
+                  aria-label={title}
+                  className={cn(
+                    'flex size-7 shrink-0 items-center justify-center rounded-control transition-colors',
+                    active
+                      ? 'bg-bg-2 text-text-primary'
+                      : 'text-text-muted hover:bg-bg-2 hover:text-text-primary'
+                  )}
+                >
+                  {s.kind === 'replay' ? (
+                    <History className="size-3.5" strokeWidth={1.5} />
+                  ) : icon ? (
+                    <AgentIcon icon={icon} size={14} />
+                  ) : (
+                    <MessageSquare className="size-3.5" strokeWidth={1.5} />
+                  )}
+                </button>
+              }
+            />
+            <TooltipContent side="right">{title}</TooltipContent>
+          </Tooltip>
+        );
+      })}
+    </div>
+  );
+}
 
 function Tab({
   active,

@@ -1,4 +1,4 @@
-import { FolderTree, PanelRightClose, Plus, Rows3, X } from 'lucide-react';
+import { FolderTree, Plus, Rows3, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { iconFor } from '@renderer/features/workspace/file-tree';
 import { Popover, PopoverMenuItem } from '@renderer/lib/ui/popover';
@@ -21,9 +21,7 @@ import { NavigatorPopover } from './navigator-popover';
  * The (+) sits INLINE after the last tab (browser convention — the eye
  * adds a tab where tabs end) until the strip overflows, at which point it
  * retreats to the pinned right cluster so it can never scroll out of
- * reach. The right cluster also carries the pane's collapse control —
- * mirroring the chat strip's own, so both halves of the split fold the
- * same way. Tabs drag-reorder (HTML5 DnD, live reorder on drag-over).
+ * reach. Tabs drag-reorder (HTML5 DnD, live reorder on drag-over).
  */
 
 export function ArtefactPane({
@@ -36,7 +34,6 @@ export function ArtefactPane({
   onMoveTab,
   onOpenFile,
   onOpenFocus,
-  onCollapse,
 }: {
   root: string;
   rootId: string;
@@ -48,8 +45,6 @@ export function ArtefactPane({
   /** Opens (or re-activates) an editor tab; relPath rides along for seen-state. */
   onOpenFile: (absPath: string, relPath: string) => void;
   onOpenFocus: () => void;
-  /** Folds the pane away (tabs kept) — the session takes the window back. */
-  onCollapse: () => void;
 }) {
   const plusRef = useRef<HTMLButtonElement>(null);
   const filesRef = useRef<HTMLButtonElement>(null);
@@ -164,23 +159,6 @@ export function ArtefactPane({
         </div>
         <div className="border-border-hairline flex shrink-0 items-center gap-0.5 border-l px-1.5">
           {overflowing && plusButton}
-          {/* Mirrors the chat strip's collapse control — the split's two
-              halves fold the same way, from their own inner edge. */}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  onClick={onCollapse}
-                  aria-label="Collapse files panel"
-                  className="hover:bg-bg-2 hover:text-text-primary flex size-6 items-center justify-center rounded-control text-text-muted transition-colors"
-                >
-                  <PanelRightClose className="size-3.5" strokeWidth={1.5} />
-                </button>
-              }
-            />
-            <TooltipContent side="bottom">Collapse files panel</TooltipContent>
-          </Tooltip>
         </div>
       </div>
 
