@@ -105,11 +105,11 @@ const config: Configuration = {
     perMachine: false,
   },
   npmRebuild: false,
-  // Encrypt Chromium's on-disk cookie store (in-app browser logins) with OS-level
-  // keys, like Chrome does. One-way: never disable once shipped or existing
-  // cookie stores become unreadable.
+  // Rig Canary has no renderer browser/cookie consumers. Keep this inherited
+  // fuse off so Chromium does not request a Safe Storage Keychain item merely
+  // because the app started. Do not delete the existing Keychain item here.
   electronFuses: {
-    enableCookieEncryption: true,
+    enableCookieEncryption: false,
   },
 };
 

@@ -118,11 +118,13 @@ const config: Configuration = {
     perMachine: false,
   },
   npmRebuild: false,
-  // Encrypt Chromium's on-disk cookie store (in-app browser logins) with OS-level
-  // keys, like Chrome does. One-way: never disable once shipped or existing
-  // cookie stores become unreadable.
+  // Rig has no renderer browser/cookie consumers. Enabling this inherited
+  // Electron fuse made Chromium request the "Rig Safe Storage" macOS Keychain
+  // item at startup even though the product never reads a cookie. Keep the
+  // fuse explicitly off; existing cookie data is intentionally unused, and we
+  // leave the Keychain item itself untouched so this change deletes no secrets.
   electronFuses: {
-    enableCookieEncryption: true,
+    enableCookieEncryption: false,
   },
 };
 
