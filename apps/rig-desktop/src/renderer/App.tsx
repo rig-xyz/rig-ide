@@ -24,7 +24,6 @@ import { RecoveryBoundary } from '@renderer/features/recovery/recovery-boundary'
 import { RecoverySurface } from '@renderer/features/recovery/recovery-surface';
 import { reportRendererFailure } from '@renderer/features/recovery/renderer-error-reporting';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
-import { UserPill } from '@renderer/features/rig-account/user-pill';
 import { RigShareButton } from '@renderer/features/rig-share/rig-share-button';
 import { InvitesBell } from '@renderer/features/shell/invites-bell';
 import { LayoutSwitcher, type RigLayout } from '@renderer/features/shell/layout-switcher';
@@ -929,8 +928,10 @@ function Topbar({
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+        {/* Feedback round 4: no account avatar here — the identity surface
+            lives in Settings, and the pill beside Share's own avatar stack
+            read as a second, mystery identity. */}
         {layoutSlot}
-        <UserPill compact />
         {/* Invites addressed to me — renders nothing signed out; accent
             count dot only when invites exist (a live indicator, within the
             accent budget). Sits between the avatar and the gear. */}

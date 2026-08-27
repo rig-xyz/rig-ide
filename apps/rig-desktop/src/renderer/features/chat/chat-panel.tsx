@@ -995,13 +995,14 @@ function ZeroStateTranscript({
     );
   }
 
+  // One composed center: the title with its history right beneath it, on
+  // the composer's own column — not a full-width strip orphaned at the
+  // bottom edge of a full-bleed window (feedback round 4).
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex flex-1 items-center justify-center">
-        <p className="font-mono text-xs text-text-muted">
-          New session{rigName ? ` in ${rigName}` : ''}
-        </p>
-      </div>
+    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-5 px-6">
+      <p className="font-mono text-xs text-text-muted">
+        New session{rigName ? ` in ${rigName}` : ''}
+      </p>
       <SessionHistoryList
         bindingId={bindingId}
         identities={identities}
@@ -1050,11 +1051,11 @@ function SessionHistoryList({
   };
 
   return (
-    <div className="shrink-0 border-t border-border-hairline px-3 py-2">
-      <p className="px-1 pb-1 font-mono text-xs tracking-wide text-text-muted uppercase">
-        Recent sessions
+    <div className="w-full max-w-2xl shrink-0">
+      <p className="px-1.5 pb-1 font-mono text-2xs tracking-wide text-text-muted uppercase">
+        Recent
       </p>
-      <div className="flex max-h-40 flex-col gap-0.5 overflow-y-auto">
+      <div className="flex max-h-44 flex-col gap-0.5 overflow-y-auto">
         {sessions.map((session) => {
           if (editingId === session.id) {
             return (
