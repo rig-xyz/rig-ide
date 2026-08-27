@@ -43,9 +43,50 @@ export function NavigatorPopover({
   onOpenFile: (absPath: string, relPath: string) => void;
   /** Breadcrumb folder clicks land here — that folder (and its ancestors) start expanded. */
   revealDir?: string | null;
-  /** The pinned card anchors this at a point left of itself (`align: 'right'`, gap 0); pane buttons keep the default. */
   align?: 'left' | 'right';
   gap?: number;
+}) {
+  return (
+    <Popover
+      anchor={anchor}
+      open={open}
+      onClose={onClose}
+      role="dialog"
+      align={align}
+      gap={gap}
+      estimatedWidth={264}
+      minWidth={264}
+      ariaLabel="Open a file"
+      className="p-2"
+    >
+      <NavigatorContent
+        root={root}
+        rootId={rootId}
+        revealDir={revealDir}
+        onOpenFile={(absPath, relPath) => {
+          onOpenFile(absPath, relPath);
+          onClose();
+        }}
+      />
+    </Popover>
+  );
+}
+
+/**
+ * The navigator's guts — mounted either inside the popover above (the
+ * artefact pane's Files button) or inline in the pinned card's Files
+ * expansion. Mount = open: filter state is born fresh each time.
+ */
+export function NavigatorContent({
+  root,
+  rootId,
+  onOpenFile,
+  revealDir = null,
+}: {
+  root: string;
+  rootId: string;
+  onOpenFile: (absPath: string, relPath: string) => void;
+  revealDir?: string | null;
 }) {
   const { data, isPending, isError, refetch } = useQuery({
     queryKey: rigFilesQueryKey(root, rootId),
@@ -54,18 +95,14 @@ export function NavigatorPopover({
       if (!result.success) throw new Error(result.error.message);
       return result.data;
     },
-    enabled: open,
   });
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // A fresh open is a fresh question — stale filter text from last time
-  // would silently hide most of the rig. A reveal target (breadcrumb
-  // folder click) seeds its whole ancestor chain expanded.
+  // Fresh mount, fresh question — and a reveal target (breadcrumb folder
+  // click) seeds its whole ancestor chain expanded.
   useEffect(() => {
-    if (!open) return;
-    setQuery('');
     inputRef.current?.focus();
     if (revealDir) {
       const chain = new Set<string>();
@@ -73,7 +110,7 @@ export function NavigatorPopover({
       for (let i = 1; i <= segments.length; i++) chain.add(segments.slice(0, i).join('/'));
       setExpanded((prev) => new Set([...prev, ...chain]));
     }
-  }, [open, revealDir]);
+  }, [revealDir]);
 
   const tree = useMemo(() => filterToContentOnly(data ?? []), [data]);
   const matches = useMemo(() => {
@@ -94,22 +131,10 @@ export function NavigatorPopover({
 
   const openFile = (node: RigFileNode) => {
     onOpenFile(`${root}/${node.relPath}`, node.relPath);
-    onClose();
   };
 
   return (
-    <Popover
-      anchor={anchor}
-      open={open}
-      onClose={onClose}
-      role="dialog"
-      align={align}
-      gap={gap}
-      estimatedWidth={264}
-      minWidth={264}
-      ariaLabel="Open a file"
-      className="p-2"
-    >
+    <>
       <div className="border-border-hairline focus-within:border-border-strong mb-1.5 flex items-center gap-1.5 rounded-control border px-2 py-1.5">
         <Search className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
         <input
@@ -180,7 +205,7 @@ export function NavigatorPopover({
           onOpenFile={openFile}
         />
       )}
-    </Popover>
+    </>
   );
 }
 

@@ -205,7 +205,7 @@ export function ArtefactPane({
             path={active.path}
             onClose={() => onCloseTab(state.active)}
             onNavigateFolder={(relPath) => openNavigator('files', relPath)}
-            leading={
+            navigator={
               <button
                 ref={filesRef}
                 type="button"

@@ -608,7 +608,11 @@ export const ChatPanel = observer(function ChatPanel({
             />
           )}
         </div>
-        <div ref={composerRef} className="p-3">
+        {/* Session-first round 2: the composer tracks the transcript's own
+            42rem column (chat-ui's CONTAINER_WIDTH) instead of stretching
+            edge to edge in the full-bleed session — in the narrowed split
+            the cap simply never bites. */}
+        <div ref={composerRef} className="mx-auto w-full max-w-2xl p-3">
           <Composer
             key={activeStore?.conversationId ?? 'zero-state'}
             store={activeStore}

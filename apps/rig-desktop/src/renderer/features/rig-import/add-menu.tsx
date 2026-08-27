@@ -27,14 +27,11 @@ export function NewMenu({
   rootId,
   onOpenFile,
   onOpenImportDialog,
-  compact = false,
 }: {
   root: string;
   rootId: string;
   onOpenFile: (absPath: string) => void;
   onOpenImportDialog: () => void;
-  /** Session-first viewer: icon-only ghost trigger for the pinned card's header, where the bordered "New" chip would out-shout the card's uniform rows. Same menu either way. */
-  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -174,14 +171,10 @@ export function NewMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         title="Add something to this rig"
-        className={
-          compact
-            ? 'flex size-5 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors hover:bg-bg-2 hover:text-text-primary disabled:opacity-60'
-            : 'flex shrink-0 items-center gap-1 rounded-control border border-border-hairline bg-bg-1 px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary disabled:opacity-60'
-        }
+        className="flex shrink-0 items-center gap-1 rounded-control border border-border-hairline bg-bg-1 px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary disabled:opacity-60"
       >
         <Plus className="size-3.5" strokeWidth={1.5} />
-        {!compact && (busy ? 'Adding…' : 'New')}
+        {busy ? 'Adding…' : 'New'}
       </button>
       <Popover
         anchor={triggerRef}

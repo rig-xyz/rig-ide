@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight, Loader2, Sparkles } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { commentDecorations } from '@renderer/features/docs/comments/comment-decorations';
 import { CommentSelectionButton } from '@renderer/features/docs/comments/comment-selection';
 import { MarginRail, shouldShowMargin } from '@renderer/features/docs/comments/comments-margin';
@@ -10,7 +10,6 @@ import {
 } from '@renderer/features/docs/comments/comments-store';
 import { DocEditor } from '@renderer/features/docs/doc-editor';
 import { DocTabResource } from '@renderer/features/docs/doc-file-sync';
-import { cn } from '@renderer/lib/utils';
 import { classifyEntryCategory, relPathFromRoot } from '@shared/rig/file-navigator-categories';
 import { breadcrumbSegments, type BreadcrumbSegment } from './breadcrumb';
 import type { EditorLanguage } from './file-type';
@@ -46,7 +45,7 @@ export const ArtifactView = observer(function ArtifactView({
   path,
   onClose,
   onNavigateFolder,
-  leading,
+  navigator,
 }: {
   /** The bound rig's workspace root — scopes the file watcher. */
   root: string;
@@ -57,8 +56,8 @@ export const ArtifactView = observer(function ArtifactView({
   onClose: () => void;
   /** Pop to the navigator AND reveal this folder (relPath) — folder breadcrumb segments. */
   onNavigateFolder: (relPath: string) => void;
-  /** Session-first viewer: replaces the Back button (the tab strip's × owns closing now) — the artefact pane passes its Files navigator button here. */
-  leading?: React.ReactNode;
+  /** Session-first viewer: the artefact pane's Files button, rendered at the header's FAR RIGHT (feedback round 2). Its presence also suppresses the standalone Back button — the tab strip's × owns closing. */
+  navigator?: React.ReactNode;
 }) {
   const fileInfo = useFileType(root, rootId, path);
   const crumbs = useMemo(() => breadcrumbSegments(root, path), [root, path]);
@@ -78,7 +77,7 @@ export const ArtifactView = observer(function ArtifactView({
         root={root}
         rootId={rootId}
         path={path}
-        leading={leading}
+        navigator={navigator}
         crumbs={crumbs}
         language={type.category === 'markdown' ? 'markdown' : type.language}
         // Comments/Share stay markdown-only this round — see this file's
@@ -102,7 +101,7 @@ export const ArtifactView = observer(function ArtifactView({
         crumbs={crumbs}
         onClose={onClose}
         onNavigateFolder={onNavigateFolder}
-        leading={leading}
+        navigator={navigator}
       />
       <div className="relative min-h-0 flex-1 overflow-y-auto">
         {type === null ? (
@@ -139,22 +138,26 @@ function ArtifactHeaderBar({
   onClose,
   onNavigateFolder,
   trailing,
-  leading,
+  navigator,
+  status,
 }: {
   path: string;
   crumbs: readonly BreadcrumbSegment[];
   onClose: () => void;
   onNavigateFolder: (relPath: string) => void;
   trailing?: React.ReactNode;
-  /** Session-first viewer: supplied by the artefact pane in place of the Back button. */
-  leading?: React.ReactNode;
+  /** The artefact pane's Files button — far right (feedback round 2); its presence suppresses the standalone Back button. */
+  navigator?: React.ReactNode;
+  /** The transient save-status indicator, sitting right beside the file name. */
+  status?: React.ReactNode;
 }) {
   return (
     <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border-hairline px-4">
       {/* Real button chrome (round 14): outlined ghost, radius 6, so this
           reads as a control you press — distinct from the breadcrumb path
-          you read, which starts fresh after the gap below. */}
-      {leading ?? (
+          you read. Only rendered standalone (no tab strip) — with tabs,
+          the × owns closing and the path starts the row. */}
+      {!navigator && (
         <button
           type="button"
           onClick={onClose}
@@ -172,11 +175,14 @@ function ArtifactHeaderBar({
               <ChevronRight className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
             )}
             {segment.kind === 'file' ? (
-              <span className="min-w-0 truncate font-mono text-text-primary">{segment.label}</span>
+              // The document's name reads as a TITLE, not an identifier —
+              // sans, not mono (feedback round 2).
+              <span className="min-w-0 truncate font-medium text-text-primary">
+                {segment.label}
+              </span>
             ) : (
               // Folder crumbs only — no root crumb of any kind (take 3):
-              // the topbar's mini-breadcrumb owns Home, and the Back
-              // button beside this path is the way to the navigator.
+              // the topbar's mini-breadcrumb owns Home.
               <button
                 type="button"
                 onClick={() => onNavigateFolder(segment.relPath)}
@@ -188,10 +194,54 @@ function ArtifactHeaderBar({
           </span>
         ))}
       </div>
+      {status}
+      <span className="flex-1" />
       {trailing}
+      {navigator}
     </div>
   );
 }
+
+/**
+ * Feedback round 2: saving is a moment, not a resident label. While the
+ * debounced autosave is in flight (or an edit is waiting for it) a quiet
+ * pulsing dot says "Saving…"; when it lands, a green dot says "Saved" for
+ * a breath and then the header goes back to just the document's name.
+ * (The wireframe's colored-circle grammar — the same dot the Cloud row
+ * uses for "Backed up".)
+ */
+const SaveStatus = observer(function SaveStatus({ resource }: { resource: DocTabResource }) {
+  const state = resource.saveState;
+  const [justSaved, setJustSaved] = useState(false);
+  const previous = useRef(state);
+  useEffect(() => {
+    if (previous.current !== 'saved' && state === 'saved') {
+      setJustSaved(true);
+      const timer = window.setTimeout(() => setJustSaved(false), 1600);
+      previous.current = state;
+      return () => window.clearTimeout(timer);
+    }
+    previous.current = state;
+  }, [state]);
+
+  if (state !== 'saved') {
+    return (
+      <span className="flex shrink-0 items-center gap-1.5 text-2xs text-text-muted">
+        <span className="bg-accent size-1.5 animate-pulse rounded-full" />
+        Saving…
+      </span>
+    );
+  }
+  if (justSaved) {
+    return (
+      <span className="popover-in flex shrink-0 items-center gap-1.5 text-2xs text-text-muted">
+        <span className="bg-success size-1.5 rounded-full" />
+        Saved
+      </span>
+    );
+  }
+  return null;
+});
 
 /**
  * Markdown AND other editable text/code/config share this one pane —
@@ -227,7 +277,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   isSkill,
   onClose,
   onNavigateFolder,
-  leading,
+  navigator,
 }: {
   root: string;
   rootId: string;
@@ -241,7 +291,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   onClose: () => void;
   onNavigateFolder: (relPath: string) => void;
   /** See `ArtifactView`'s own prop comment. */
-  leading?: React.ReactNode;
+  navigator?: React.ReactNode;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -317,7 +367,8 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
         crumbs={crumbs}
         onClose={onClose}
         onNavigateFolder={onNavigateFolder}
-        leading={leading}
+        navigator={navigator}
+        status={<SaveStatus resource={resource} />}
         trailing={
           <>
             {resource.hasDiskUpdate && (
@@ -330,15 +381,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 Updated on disk · Reload
               </button>
             )}
-            {showShare && <ShareButton absPath={path} className="ml-auto" />}
-            {/* When Share is hidden (non-markdown), the Saved indicator takes the `ml-auto` Share would otherwise own, so it still sits flush right. */}
-            <span className={cn('text-text-muted shrink-0 text-xs', !showShare && 'ml-auto')}>
-              {resource.saveState === 'saved'
-                ? 'Saved'
-                : resource.saveState === 'saving'
-                  ? 'Saving…'
-                  : 'Unsaved'}
-            </span>
+            {showShare && <ShareButton absPath={path} />}
           </>
         }
       />

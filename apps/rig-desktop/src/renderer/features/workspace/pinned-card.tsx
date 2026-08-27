@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight, Cloud, Diff, FolderTree, Loader2, Sparkles, Users } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { NavigatorPopover } from '@renderer/features/artifact/navigator-popover';
+import { useEffect, useMemo, useState } from 'react';
+import { NavigatorContent } from '@renderer/features/artifact/navigator-popover';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import {
   fileLinks,
@@ -15,8 +15,6 @@ import { ImportDocDialog } from '@renderer/features/rig-import/import-doc-dialog
 import { RigSharePopoverContent } from '@renderer/features/rig-share/rig-share-button';
 import { events, rpc } from '@renderer/lib/ipc';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
-import { Popover, PopoverMenuItem } from '@renderer/lib/ui/popover';
-import type { ContextMenuPoint } from '@renderer/lib/ui/popover-types';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
@@ -36,31 +34,34 @@ import { useEverWrittenPaths, useRecentWrites } from './write-activity';
  * the full-bleed session instead of owning a panel. Two sections in one
  * row grammar (label left, status right, 28px tall):
  *
- *   RIG — state claims: Changes (recency + unseen), Cloud (sync), Skills,
- *   People. Rows render only while they have something true to say
- *   (Skills disappears at zero), and each one's affordance is the row
- *   itself — popovers anchor to rows, heavy content never lives on the
- *   card.
+ *   RIG — state claims: Changes (recency + the pulse story), Files (the
+ *   browse door), Cloud (backup), Skills, People. Rows render only while
+ *   they have something true to say (Skills disappears at zero; People
+ *   stays for a solo rig because that IS the invite moment).
  *
  *   ACTIVITY — the working set, same selection engine as the old carousel
- *   (`selectCards`: writes-in-progress, then pinned, then freshest).
- *   Shimmer is the ONE live-write signal (charter one-signal rule); the
- *   accent dot marks unseen; the rig mark is the only authorship the app
- *   can honestly claim (see `write-activity.ts`).
+ *   (`selectCards`). Shimmer is the ONE live-write signal; the accent dot
+ *   marks new; the rig mark is the only authorship the app can honestly
+ *   claim (see `write-activity.ts`).
  *
- * Collapses to a slim chip (name + unseen count + sync dot) — persisted
- * in localStorage like the other purely-cosmetic layout preferences.
+ * Feedback round 2: rows EXPAND IN PLACE — an accordion, exactly one
+ * section open — instead of popovers hanging off the card. The card is
+ * itself a floating surface; float-on-float detached each row's content
+ * from the row that named it, and two could stack open at once. Inline
+ * disclosure keeps the content under its label, and one-open-at-a-time
+ * gives replace-not-stack for free. Popovers remain only for true
+ * transient menus (the New menu inside the Files section).
  *
- * NOT here, deliberately: a Comments row (there is no rig-wide open-
- * comments listing yet — per-file only, see `main/rig/comments.ts`) and
- * per-person attribution on activity rows (needs the relay's per-change
- * actor). Both are wired to appear as plain rows when their data exists.
+ * Collapses to a slim chip (name + new count + sync dot) — persisted in
+ * localStorage like the other purely-cosmetic layout preferences.
  */
 
 const COLLAPSED_KEY = 'rig-pinned-card-collapsed';
 const SUMMARY_OPEN_KEY = 'rig-changes-summary-open';
 const MAX_ACTIVITY_ROWS = 5;
 const CHANGED_RECENTLY_MS = 24 * 60 * 60 * 1000;
+
+type CardSection = 'changes' | 'files' | 'skills' | 'people';
 
 function readCollapsed(): boolean {
   try {
@@ -139,6 +140,25 @@ export function PinnedCard({
     });
   };
 
+  // The accordion: exactly one section open. Only the Changes preference
+  // persists (its summary defaults open); the rest are transient looks.
+  const [expanded, setExpanded] = useState<CardSection | null>(
+    readSummaryOpen() ? 'changes' : null
+  );
+  const toggleSection = (section: CardSection) => {
+    setExpanded((current) => {
+      const next = current === section ? null : section;
+      if (section === 'changes') {
+        try {
+          localStorage.setItem(SUMMARY_OPEN_KEY, String(next === 'changes'));
+        } catch {
+          // localStorage unavailable — just won't persist.
+        }
+      }
+      return next;
+    });
+  };
+
   const filesKey = rigFilesQueryKey(root, rootId);
   const { data } = useQuery({
     queryKey: filesKey,
@@ -150,8 +170,7 @@ export function PinnedCard({
   });
   // The listing goes stale the moment anything under the root changes —
   // App.tsx already holds the watch registration for this rootId; this is
-  // just the read side. (The old tree did the same invalidation; with it
-  // unmounted in the at-rest state, the card owns it.)
+  // just the read side.
   useEffect(() => {
     const key = rigFilesQueryKey(root, rootId);
     return events.on(rigFileChangeChannel, ({ rootId: changed }) => {
@@ -169,7 +188,7 @@ export function PinnedCard({
 
   // Seen-state, same source as the old tree: baseline + per-file marks,
   // refreshed whenever the filesystem stirs (a synced-down edit is exactly
-  // what should flip a row to unseen).
+  // what should flip a row to new).
   const [seenState, setSeenState] = useState<{ baselineAt: number; seen: SeenMap } | null>(null);
   useEffect(() => {
     let alive = true;
@@ -254,37 +273,8 @@ export function PinnedCard({
     onOpenFile(`${root}/${relPath}`, relPath);
   };
 
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [summaryOpen, setSummaryOpen] = useState(readSummaryOpen);
-  const toggleSummary = () => {
-    setSummaryOpen((current) => {
-      try {
-        localStorage.setItem(SUMMARY_OPEN_KEY, String(!current));
-      } catch {
-        // localStorage unavailable — just won't persist.
-      }
-      return !current;
-    });
-  };
-
-  // Feedback round 1: row popovers open to the LEFT of the card — dropped
-  // below a mid-card row they cover the card's own rows; above, they clip
-  // at the window's top edge. Point anchor: top-aligned with the row,
-  // right edge just outside the card.
-  const [peopleAnchor, setPeopleAnchor] = useState<ContextMenuPoint | null>(null);
-  const [skillsAnchor, setSkillsAnchor] = useState<ContextMenuPoint | null>(null);
-  // P1 (impeccable): the browse door AT REST — without this, reaching a
-  // file outside the working set required opening the split first.
-  const [navAnchor, setNavAnchor] = useState<ContextMenuPoint | null>(null);
-  const leftOfCard = (row: HTMLElement): ContextMenuPoint => {
-    const cardLeft =
-      cardRef.current?.getBoundingClientRect().left ?? row.getBoundingClientRect().left;
-    return { x: cardLeft - 8, y: row.getBoundingClientRect().top - 4 };
-  };
-
   // The rig's one-line story — the same per-rig pulse line Home narrates,
-  // shown under the Changes row (default open, collapse remembered). File
-  // names in it are live links.
+  // shown under the Changes row. File names in it are live links.
   const { state: briefingState } = usePulseBriefing();
   const briefing = briefingState.kind === 'data' ? briefingState.briefing : null;
   const rigEntry = briefing?.perRig.find((item) => item.bindingId === bindingId) ?? null;
@@ -314,42 +304,24 @@ export function PinnedCard({
   }
 
   return (
-    <div
-      ref={cardRef}
-      className="card-pop-in border-border-hairline bg-bg-1 shadow-float absolute top-[52px] right-4 z-20 flex w-[276px] origin-top-right flex-col rounded-card border p-2"
-    >
-      <div className="flex h-6 items-center px-2">
+    <div className="card-pop-in border-border-hairline bg-bg-1 shadow-float absolute top-[52px] right-4 z-20 flex max-h-[calc(100vh-140px)] w-[304px] origin-top-right flex-col overflow-y-auto rounded-card border p-2">
+      <div className="flex h-6 shrink-0 items-center px-2">
         <p className="font-mono text-2xs tracking-wide text-text-muted uppercase">Rig</p>
-        <div className="ml-auto flex items-center gap-0.5">
-          <NewMenu
-            root={root}
-            rootId={rootId}
-            compact
-            onOpenFile={(absPath) => {
-              const relPath = absPath.startsWith(`${root}/`)
-                ? absPath.slice(root.length + 1)
-                : null;
-              if (relPath) openFile(relPath);
-              else onOpenFile(absPath, '');
-            }}
-            onOpenImportDialog={() => setImportOpen(true)}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={toggleCollapsed}
+                aria-label="Hide rig details"
+                className="hover:bg-bg-2 hover:text-text-primary ml-auto flex size-5 items-center justify-center rounded-control text-text-muted transition-colors"
+              >
+                <ChevronRight className="size-3.5" strokeWidth={1.5} />
+              </button>
+            }
           />
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  onClick={toggleCollapsed}
-                  aria-label="Hide rig details"
-                  className="hover:bg-bg-2 hover:text-text-primary flex size-5 items-center justify-center rounded-control text-text-muted transition-colors"
-                >
-                  <ChevronRight className="size-3.5" strokeWidth={1.5} />
-                </button>
-              }
-            />
-            <TooltipContent side="bottom">Hide</TooltipContent>
-          </Tooltip>
-        </div>
+          <TooltipContent side="bottom">Hide</TooltipContent>
+        </Tooltip>
       </div>
       <ImportDocDialog
         root={root}
@@ -362,14 +334,13 @@ export function PinnedCard({
         }}
       />
 
-      {/* ── RIG rows — one grammar: icon · label ····· value ── */}
-      {/* Changes is a disclosure: the row toggles the rig's one-line pulse
-          story beneath it; the unseen chip is the jump to the focus view. */}
-      <div className="hover:bg-bg-2 flex h-7 items-center rounded-control pr-2 transition-colors">
+      {/* ── RIG rows — one grammar: icon · label ····· value · chevron.
+          Every row is a disclosure; its content expands IN PLACE. ── */}
+      <div className="hover:bg-bg-2 flex h-7 shrink-0 items-center rounded-control pr-2 transition-colors">
         <button
           type="button"
-          onClick={toggleSummary}
-          aria-expanded={summaryOpen}
+          onClick={() => toggleSection('changes')}
+          aria-expanded={expanded === 'changes'}
           className="flex h-full min-w-0 flex-1 items-center gap-2 pl-2 text-left"
         >
           <Diff className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
@@ -385,7 +356,7 @@ export function PinnedCard({
             <ChevronRight
               className={cn(
                 'size-3 shrink-0 text-text-muted transition-transform',
-                summaryOpen && 'rotate-90'
+                expanded === 'changes' && 'rotate-90'
               )}
               strokeWidth={1.5}
             />
@@ -408,8 +379,8 @@ export function PinnedCard({
           </Tooltip>
         )}
       </div>
-      {summaryOpen && summarySegs.length > 0 && (
-        <p className="popover-in px-2 pt-0.5 pb-1.5 text-xs leading-relaxed text-text-muted">
+      {expanded === 'changes' && summarySegs.length > 0 && (
+        <p className="popover-in shrink-0 px-2 pt-0.5 pb-1.5 text-xs leading-relaxed text-text-muted">
           {summarySegs.map((segment, index) =>
             segment.kind === 'link' && segment.target.kind === 'file' ? (
               <button
@@ -433,37 +404,54 @@ export function PinnedCard({
       {/* P1: the browse door — every file in the rig, reachable at rest. */}
       <button
         type="button"
-        onMouseDown={(event) => event.stopPropagation()}
-        onClick={(event) => {
-          const row = event.currentTarget;
-          setNavAnchor((current) => (current ? null : leftOfCard(row)));
-        }}
-        aria-haspopup="dialog"
-        aria-expanded={navAnchor !== null}
-        className="hover:bg-bg-2 flex h-7 items-center gap-2 rounded-control px-2 text-left transition-colors"
+        onClick={() => toggleSection('files')}
+        aria-expanded={expanded === 'files'}
+        className="hover:bg-bg-2 flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-left transition-colors"
       >
         <FolderTree className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
         <span className="text-xs text-text-primary">Files</span>
         <span className="ml-auto flex items-center gap-1.5">
           <span className="font-mono text-2xs text-text-muted">{contentFiles.length}</span>
-          <ChevronRight className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
+          <ChevronRight
+            className={cn(
+              'size-3 shrink-0 text-text-muted transition-transform',
+              expanded === 'files' && 'rotate-90'
+            )}
+            strokeWidth={1.5}
+          />
         </span>
       </button>
-      <NavigatorPopover
-        root={root}
-        rootId={rootId}
-        anchor={navAnchor ?? { x: 0, y: 0 }}
-        open={navAnchor !== null}
-        onClose={() => setNavAnchor(null)}
-        onOpenFile={(_absPath, relPath) => openFile(relPath)}
-        align="right"
-        gap={0}
-      />
+      {expanded === 'files' && (
+        <div className="popover-in shrink-0 px-1 pb-1">
+          <NavigatorContent
+            root={root}
+            rootId={rootId}
+            onOpenFile={(_absPath, relPath) => openFile(relPath)}
+          />
+          {/* Creation lives WITH the files it creates (feedback round 2:
+              the header + was placeless). The menu itself stays a popover
+              — that's a true transient menu's grammar. */}
+          <div className="mt-1.5 flex items-center px-1">
+            <NewMenu
+              root={root}
+              rootId={rootId}
+              onOpenFile={(absPath) => {
+                const relPath = absPath.startsWith(`${root}/`)
+                  ? absPath.slice(root.length + 1)
+                  : null;
+                if (relPath) openFile(relPath);
+                else onOpenFile(absPath, '');
+              }}
+              onOpenImportDialog={() => setImportOpen(true)}
+            />
+          </div>
+        </div>
+      )}
 
       <Tooltip>
         <TooltipTrigger
           render={
-            <div className="flex h-7 items-center gap-2 rounded-control px-2">
+            <div className="flex h-7 shrink-0 items-center gap-2 rounded-control px-2">
               <Cloud className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
               <span className="text-xs text-text-primary">Cloud</span>
               <span className="ml-auto flex items-center gap-1.5">
@@ -491,52 +479,41 @@ export function PinnedCard({
         <>
           <button
             type="button"
-            // The popover's own outside-mousedown dismissal runs before this
-            // click — swallowing the mousedown here is what makes a second
-            // click on the row a TOGGLE instead of an instant re-open.
-            onMouseDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              // Captured BEFORE the updater runs: React nulls
-              // `currentTarget` once the event finishes dispatching, and
-              // the updater executes after that (the recovery-surface
-              // crash this row shipped with).
-              const row = event.currentTarget;
-              setSkillsAnchor((current) => (current ? null : leftOfCard(row)));
-            }}
-            aria-haspopup="menu"
-            aria-expanded={skillsAnchor !== null}
-            className="hover:bg-bg-2 flex h-7 items-center gap-2 rounded-control px-2 text-left transition-colors"
+            onClick={() => toggleSection('skills')}
+            aria-expanded={expanded === 'skills'}
+            className="hover:bg-bg-2 flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-left transition-colors"
           >
             <Sparkles className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
             <span className="text-xs text-text-primary">Skills</span>
             <span className="ml-auto flex items-center gap-1.5">
               <span className="font-mono text-2xs text-text-muted">{skillFiles.length}</span>
-              <ChevronRight className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
+              <ChevronRight
+                className={cn(
+                  'size-3 shrink-0 text-text-muted transition-transform',
+                  expanded === 'skills' && 'rotate-90'
+                )}
+                strokeWidth={1.5}
+              />
             </span>
           </button>
-          <Popover
-            anchor={skillsAnchor ?? { x: 0, y: 0 }}
-            open={skillsAnchor !== null}
-            onClose={() => setSkillsAnchor(null)}
-            role="menu"
-            align="right"
-            gap={0}
-            estimatedWidth={230}
-            minWidth={230}
-            ariaLabel="Skills in this rig"
-          >
-            {skillFiles.map((node) => (
-              <PopoverMenuItem
-                key={node.relPath}
-                icon={iconFor(node.name)}
-                label={skillDisplayName(node)}
-                onSelect={() => {
-                  setSkillsAnchor(null);
-                  openFile(node.relPath);
-                }}
-              />
-            ))}
-          </Popover>
+          {expanded === 'skills' && (
+            <div className="popover-in shrink-0 pb-1">
+              {skillFiles.map((node) => {
+                const Icon = iconFor(node.name);
+                return (
+                  <button
+                    key={node.relPath}
+                    type="button"
+                    onClick={() => openFile(node.relPath)}
+                    className="hover:bg-bg-2 flex h-7 w-full items-center gap-1.5 rounded-control py-1 pr-2 pl-8 text-left text-xs text-text-secondary transition-colors hover:text-text-primary"
+                  >
+                    <Icon className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+                    <span className="min-w-0 truncate">{skillDisplayName(node)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </>
       )}
 
@@ -547,16 +524,9 @@ export function PinnedCard({
         <>
           <button
             type="button"
-            // Same toggle-not-reopen mousedown swallow — and the same
-            // capture-before-updater rule — as the Skills row.
-            onMouseDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              const row = event.currentTarget;
-              setPeopleAnchor((current) => (current ? null : leftOfCard(row)));
-            }}
-            aria-haspopup="dialog"
-            aria-expanded={peopleAnchor !== null}
-            className="hover:bg-bg-2 flex h-7 items-center gap-2 rounded-control px-2 text-left transition-colors"
+            onClick={() => toggleSection('people')}
+            aria-expanded={expanded === 'people'}
+            className="hover:bg-bg-2 flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-left transition-colors"
           >
             <Users className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
             <span className="text-xs text-text-primary">People</span>
@@ -582,30 +552,28 @@ export function PinnedCard({
                   )}
                 </span>
               )}
-              <ChevronRight className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
+              <ChevronRight
+                className={cn(
+                  'size-3 shrink-0 text-text-muted transition-transform',
+                  expanded === 'people' && 'rotate-90'
+                )}
+                strokeWidth={1.5}
+              />
             </span>
           </button>
-          <Popover
-            anchor={peopleAnchor ?? { x: 0, y: 0 }}
-            open={peopleAnchor !== null}
-            onClose={() => setPeopleAnchor(null)}
-            role="dialog"
-            align="right"
-            gap={0}
-            estimatedWidth={320}
-            minWidth={320}
-            ariaLabel="People in this rig"
-          >
-            <RigSharePopoverContent root={root} name={name} />
-          </Popover>
+          {expanded === 'people' && (
+            <div className="popover-in shrink-0 pb-1">
+              <RigSharePopoverContent root={root} name={name} />
+            </div>
+          )}
         </>
       )}
 
       {/* ── ACTIVITY — the working set, same geometry, no icon column ── */}
       {activity.length > 0 && (
         <>
-          <div className="bg-border-hairline mx-2 my-1.5 h-px" />
-          <p className="flex h-6 items-center px-2 font-mono text-2xs tracking-wide text-text-muted uppercase">
+          <div className="bg-border-hairline mx-2 my-1.5 h-px shrink-0" />
+          <p className="flex h-6 shrink-0 items-center px-2 font-mono text-2xs tracking-wide text-text-muted uppercase">
             Activity
           </p>
           {activity.map((card) => {
@@ -617,7 +585,7 @@ export function PinnedCard({
                 key={card.relPath}
                 type="button"
                 onClick={() => openFile(card.relPath)}
-                className="hover:bg-bg-2 flex h-7 items-center gap-1.5 rounded-control px-2 text-left transition-colors"
+                className="hover:bg-bg-2 flex h-7 shrink-0 items-center gap-1.5 rounded-control px-2 text-left transition-colors"
               >
                 {unseen && (
                   <span className="unseen-dot-in bg-accent size-[5px] shrink-0 rounded-full" />
@@ -651,7 +619,7 @@ export function PinnedCard({
           <button
             type="button"
             onClick={onOpenFocus}
-            className="hover:bg-bg-2 flex h-6 items-center rounded-control px-2 text-left text-2xs text-text-muted transition-colors hover:text-text-primary"
+            className="hover:bg-bg-2 flex h-6 shrink-0 items-center rounded-control px-2 text-left text-2xs text-text-muted transition-colors hover:text-text-primary"
           >
             View all
           </button>

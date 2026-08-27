@@ -134,9 +134,12 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
     expect(host.textContent).not.toContain('Loading…');
     const content = host.querySelector('.cm-content');
     expect(content?.textContent).toContain('key = "value"');
-    // The header's Saved indicator and the body must agree — both reflecting
-    // the same, actually-completed load, not the header's frozen default.
-    expect(host.textContent).toContain('Saved');
+    // The header and the body must agree the load actually completed.
+    // Session-first round 2: "Saved" is a transient moment now, not a
+    // resident label — a completed, untouched load shows NO save status at
+    // all. What would betray the frozen-default bug today is a stuck
+    // "Saving…" indicator.
+    expect(host.textContent).not.toContain('Saving…');
 
     // Follow-up from Dylan: rig.toml was rendering as unformatted
     // proportional-font prose. Pin both halves of the fix — mono/code
