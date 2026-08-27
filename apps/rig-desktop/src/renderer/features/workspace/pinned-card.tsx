@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronRight, Cloud, Diff, Loader2, Sparkles, Users } from 'lucide-react';
+import { ChevronRight, Cloud, Diff, FolderTree, Loader2, Sparkles, Users } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { NavigatorPopover } from '@renderer/features/artifact/navigator-popover';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import {
   fileLinks,
@@ -244,8 +245,9 @@ export function PinnedCard({
   );
 
   const openFile = (relPath: string) => {
-    void rpc.rig.seenState.markSeen({ bindingId, relPath });
-    // Optimistic: the dot clears now, not after the next fs event.
+    // App.tsx's openFile owns the markSeen RPC (one semantic, one owner) —
+    // this is only the optimistic local update so the dot clears now, not
+    // after the next fs event.
     setSeenState((prev) =>
       prev ? { ...prev, seen: { ...prev.seen, [relPath]: Date.now() } } : prev
     );
@@ -271,6 +273,9 @@ export function PinnedCard({
   // right edge just outside the card.
   const [peopleAnchor, setPeopleAnchor] = useState<ContextMenuPoint | null>(null);
   const [skillsAnchor, setSkillsAnchor] = useState<ContextMenuPoint | null>(null);
+  // P1 (impeccable): the browse door AT REST — without this, reaching a
+  // file outside the working set required opening the split first.
+  const [navAnchor, setNavAnchor] = useState<ContextMenuPoint | null>(null);
   const leftOfCard = (row: HTMLElement): ContextMenuPoint => {
     const cardLeft =
       cardRef.current?.getBoundingClientRect().left ?? row.getBoundingClientRect().left;
@@ -360,7 +365,7 @@ export function PinnedCard({
       {/* ── RIG rows — one grammar: icon · label ····· value ── */}
       {/* Changes is a disclosure: the row toggles the rig's one-line pulse
           story beneath it; the unseen chip is the jump to the focus view. */}
-      <div className="hover:bg-bg-2 flex h-7 items-center rounded-control transition-colors">
+      <div className="hover:bg-bg-2 flex h-7 items-center rounded-control pr-2 transition-colors">
         <button
           type="button"
           onClick={toggleSummary}
@@ -369,39 +374,39 @@ export function PinnedCard({
         >
           <Diff className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
           <span className="text-xs text-text-primary">Changes</span>
-          <span className="ml-auto flex shrink-0 items-center">
+          <span className="ml-auto flex shrink-0 items-center gap-1.5">
             {changedRecently === 0 && unseenFiles.size === 0 ? (
               <span className="text-2xs text-text-muted">Up to date</span>
-            ) : (
+            ) : changedRecently > 0 ? (
+              // "0 today" beside a new-count is pure noise — the chip
+              // alone carries that state.
               <span className="font-mono text-2xs text-text-muted">{changedRecently} today</span>
-            )}
+            ) : null}
+            <ChevronRight
+              className={cn(
+                'size-3 shrink-0 text-text-muted transition-transform',
+                summaryOpen && 'rotate-90'
+              )}
+              strokeWidth={1.5}
+            />
           </span>
         </button>
         {unseenFiles.size > 0 && (
-          <button
-            type="button"
-            onClick={onOpenFocus}
-            title="Read what's new in the focus view"
-            className="bg-accent-subtle text-accent ml-1.5 shrink-0 rounded-chip px-1.5 font-mono text-2xs transition-opacity hover:opacity-80"
-          >
-            {unseenFiles.size} unseen
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={onOpenFocus}
+                  className="bg-accent-subtle text-accent ml-1.5 shrink-0 rounded-chip px-1.5 font-mono text-2xs transition-opacity hover:opacity-80"
+                >
+                  {unseenFiles.size} new
+                </button>
+              }
+            />
+            <TooltipContent side="left">Read what’s new</TooltipContent>
+          </Tooltip>
         )}
-        <button
-          type="button"
-          onClick={toggleSummary}
-          tabIndex={-1}
-          aria-hidden
-          className="flex h-full shrink-0 items-center pr-2 pl-1.5"
-        >
-          <ChevronRight
-            className={cn(
-              'size-3 shrink-0 text-text-muted transition-transform',
-              summaryOpen && 'rotate-90'
-            )}
-            strokeWidth={1.5}
-          />
-        </button>
       </div>
       {summaryOpen && summarySegs.length > 0 && (
         <p className="popover-in px-2 pt-0.5 pb-1.5 text-xs leading-relaxed text-text-muted">
@@ -425,6 +430,36 @@ export function PinnedCard({
         </p>
       )}
 
+      {/* P1: the browse door — every file in the rig, reachable at rest. */}
+      <button
+        type="button"
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          const row = event.currentTarget;
+          setNavAnchor((current) => (current ? null : leftOfCard(row)));
+        }}
+        aria-haspopup="dialog"
+        aria-expanded={navAnchor !== null}
+        className="hover:bg-bg-2 flex h-7 items-center gap-2 rounded-control px-2 text-left transition-colors"
+      >
+        <FolderTree className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+        <span className="text-xs text-text-primary">Files</span>
+        <span className="ml-auto flex items-center gap-1.5">
+          <span className="font-mono text-2xs text-text-muted">{contentFiles.length}</span>
+          <ChevronRight className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
+        </span>
+      </button>
+      <NavigatorPopover
+        root={root}
+        rootId={rootId}
+        anchor={navAnchor ?? { x: 0, y: 0 }}
+        open={navAnchor !== null}
+        onClose={() => setNavAnchor(null)}
+        onOpenFile={(_absPath, relPath) => openFile(relPath)}
+        align="right"
+        gap={0}
+      />
+
       <Tooltip>
         <TooltipTrigger
           render={
@@ -435,12 +470,12 @@ export function PinnedCard({
                 {syncing ? (
                   <>
                     <Loader2 className="size-3 animate-spin text-text-muted" strokeWidth={1.5} />
-                    <span className="text-2xs text-text-muted">Syncing…</span>
+                    <span className="text-2xs text-text-muted">Downloading…</span>
                   </>
                 ) : (
                   <>
                     <span className="size-1.5 rounded-full bg-success" />
-                    <span className="text-2xs text-text-muted">Synced</span>
+                    <span className="text-2xs text-text-muted">Backed up</span>
                   </>
                 )}
               </span>
@@ -448,7 +483,7 @@ export function PinnedCard({
           }
         />
         <TooltipContent side="left">
-          {syncing ? 'Downloading this rig’s files' : 'Mirrored to your rig relay'}
+          {syncing ? 'Downloading this rig’s files' : 'Backed up to Rig’s cloud'}
         </TooltipContent>
       </Tooltip>
 
@@ -505,7 +540,10 @@ export function PinnedCard({
         </>
       )}
 
-      {members.length > 0 && (
+      {/* Rendered whenever membership is KNOWN — including "just you".
+          A fresh solo rig is exactly the invite-your-cofounder moment;
+          honest silence there hid the product's wedge (impeccable). */}
+      {membersQuery.data?.success && (
         <>
           <button
             type="button"
@@ -523,23 +561,27 @@ export function PinnedCard({
             <Users className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
             <span className="text-xs text-text-primary">People</span>
             <span className="ml-auto flex items-center gap-1.5">
-              <span className="flex items-center">
-                {members.slice(0, 3).map((member, index) => (
-                  <IdentityAvatar
-                    key={member.userId}
-                    name={member.name ?? member.email}
-                    avatarUrl={member.avatarUrl}
-                    sizeClassName="size-4"
-                    textClassName="text-2xs"
-                    className={cn('ring-bg-1 ring-1', index > 0 && '-ml-1')}
-                  />
-                ))}
-                {members.length > 3 && (
-                  <span className="bg-bg-2 text-text-muted ring-bg-1 -ml-1 flex size-4 shrink-0 items-center justify-center rounded-chip font-mono text-2xs ring-1">
-                    +{members.length - 3}
-                  </span>
-                )}
-              </span>
+              {members.length === 0 ? (
+                <span className="text-accent text-2xs font-medium">Invite</span>
+              ) : (
+                <span className="flex items-center">
+                  {members.slice(0, 3).map((member, index) => (
+                    <IdentityAvatar
+                      key={member.userId}
+                      name={member.name ?? member.email}
+                      avatarUrl={member.avatarUrl}
+                      sizeClassName="size-4"
+                      textClassName="text-2xs"
+                      className={cn('ring-bg-1 ring-1', index > 0 && '-ml-1')}
+                    />
+                  ))}
+                  {members.length > 3 && (
+                    <span className="bg-bg-2 text-text-muted ring-bg-1 -ml-1 flex size-4 shrink-0 items-center justify-center rounded-chip font-mono text-2xs ring-1">
+                      +{members.length - 3}
+                    </span>
+                  )}
+                </span>
+              )}
               <ChevronRight className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
             </span>
           </button>

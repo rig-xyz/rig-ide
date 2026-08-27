@@ -129,8 +129,14 @@ export function Popover({
     if (!open || role !== 'menu') return;
     const pop = popRef.current;
     if (!pop) return;
+    // `:not([disabled])`: a disabled item still carries its role, but arrow
+    // focus dying on it reads as the menu breaking (impeccable critique).
     const items = () =>
-      Array.from(pop.querySelectorAll<HTMLElement>('[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"]'));
+      Array.from(
+        pop.querySelectorAll<HTMLElement>(
+          '[role="menuitem"]:not([disabled]),[role="menuitemradio"]:not([disabled]),[role="menuitemcheckbox"]:not([disabled])'
+        )
+      );
     const first = items()[0];
     first?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
@@ -214,7 +220,7 @@ export function PopoverMenuItem({
       aria-checked={role === 'menuitem' ? undefined : selected}
       onClick={onSelect}
       className={cn(
-        'flex w-full items-center gap-2 rounded-[5px] px-2.5 py-1.5 text-left text-sm transition-colors',
+        'flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-sm transition-colors',
         'focus-visible:bg-bg-2 outline-none',
         danger ? 'hover:bg-bg-2 text-danger' : 'hover:bg-bg-2 text-text-primary',
         disabled && 'text-text-muted pointer-events-none'

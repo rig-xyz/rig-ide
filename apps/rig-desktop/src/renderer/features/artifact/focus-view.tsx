@@ -1,3 +1,5 @@
+import { EditorState } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCheck, ChevronRight, FoldVertical, MoreHorizontal, UnfoldVertical } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
@@ -62,7 +64,7 @@ export function FocusView({
   bindingId: string;
 }) {
   const queryClient = useQueryClient();
-  const { data } = useQuery({
+  const { data, isPending, isError, refetch } = useQuery({
     queryKey: rigFilesQueryKey(root, rootId),
     queryFn: async () => {
       const result = await rpc.rig.files.list({ rootId });
@@ -116,14 +118,17 @@ export function FocusView({
   );
   const activePaths = useMemo(() => new Set(recentWrites.map((w) => w.relPath)), [recentWrites]);
 
-  const sections = useMemo(() => {
+  // `total` is the honest size of the filtered set; `sections` is the
+  // rendered slice. The header owns admitting the difference (impeccable
+  // P2: "10 files · 14 unseen" over a silent cap was incoherent).
+  const { sections, total } = useMemo(() => {
     const files = flattenFiles(contentTree).filter((node) => node.mtimeMs !== undefined);
     const rank = (relPath: string) =>
       activePaths.has(relPath) ? 0 : unseenFiles.has(relPath) ? 1 : 2;
-    return files
+    const filtered = files
       .sort((a, b) => rank(a.relPath) - rank(b.relPath) || (b.mtimeMs ?? 0) - (a.mtimeMs ?? 0))
-      .filter((node) => filter === 'all' || unseenFiles.has(node.relPath))
-      .slice(0, MAX_SECTIONS);
+      .filter((node) => filter === 'all' || unseenFiles.has(node.relPath));
+    return { sections: filtered.slice(0, MAX_SECTIONS), total: filtered.length };
   }, [contentTree, activePaths, unseenFiles, filter]);
 
   const markViewed = (relPath: string) => {
@@ -156,16 +161,18 @@ export function FocusView({
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
       <div className="border-border-hairline flex h-10 shrink-0 items-center gap-2.5 border-b px-4">
-        <span className="text-xs font-medium text-text-primary">Working set</span>
+        <span className="text-xs font-medium text-text-primary">Recent files</span>
         <span className="font-mono text-2xs text-text-muted">
-          {sections.length} files{unseenFiles.size > 0 && ` · ${unseenFiles.size} unseen`}
+          {sections.length < total ? `${sections.length} of ${total}` : `${total} files`}
+          {unseenFiles.size > 0 && ` · ${unseenFiles.size} new`}
         </span>
         <div className="ml-auto flex items-center gap-1">
-          <FilterPill active={filter === 'unseen'} onClick={() => setFilter('unseen')}>
-            Unseen
-          </FilterPill>
+          {/* Default (All) first — the resting state highlights the first pill. */}
           <FilterPill active={filter === 'all'} onClick={() => setFilter('all')}>
             All
+          </FilterPill>
+          <FilterPill active={filter === 'unseen'} onClick={() => setFilter('unseen')}>
+            New
           </FilterPill>
           <Tooltip>
             <TooltipTrigger
@@ -198,7 +205,10 @@ export function FocusView({
           >
             <PopoverMenuItem
               icon={CheckCheck}
-              label="Mark all as viewed"
+              // The count admits the scope: ALL new files, shown or not.
+              label={
+                unseenFiles.size > 0 ? `Mark all ${unseenFiles.size} as viewed` : 'Mark all as viewed'
+              }
               disabled={unseenFiles.size === 0}
               onSelect={() => {
                 setOptionsOpen(false);
@@ -226,38 +236,67 @@ export function FocusView({
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {sections.length === 0 ? (
+        {/* Loading, error, and empty are THREE states (impeccable P3):
+            "No files" over a failed read tells a founder their files are
+            gone — the scariest wrong message this surface could show. */}
+        {isPending ? (
+          <div className="flex flex-col gap-2 px-4 py-4" aria-label="Loading files">
+            <div className="bg-bg-2 h-8 animate-pulse rounded-control" />
+            <div className="bg-bg-2 h-8 w-4/5 animate-pulse rounded-control" />
+            <div className="bg-bg-2 h-8 w-3/5 animate-pulse rounded-control" />
+          </div>
+        ) : isError ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2">
+            <p className="text-sm text-text-muted">Couldn’t read this rig’s files.</p>
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="border-border-hairline hover:bg-bg-2 hover:text-text-primary rounded-control border px-3 py-1 text-xs text-text-secondary transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        ) : sections.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-text-muted">
-            {filter === 'unseen' ? 'Nothing unseen — all caught up.' : 'No files here yet.'}
+            {filter === 'unseen'
+              ? 'Nothing new — all caught up.'
+              : 'No files yet — add one, or ask the agent to write.'}
           </div>
         ) : (
-          sections.map((node) => {
-            const active = activePaths.has(node.relPath);
-            const unseen = unseenFiles.has(node.relPath);
-            // Default: what deserves attention is open, the viewed tail is
-            // closed. An explicit click wins over the default either way.
-            const expanded = toggled.get(node.relPath) ?? (active || unseen);
-            return (
-              <FocusSection
-                key={node.relPath}
-                root={root}
-                rootId={rootId}
-                node={node}
-                active={active}
-                unseen={unseen}
-                byAgent={agentWritten.has(node.relPath)}
-                expanded={expanded}
-                onToggle={() =>
-                  setToggled((prev) => {
-                    const next = new Map(prev);
-                    next.set(node.relPath, !expanded);
-                    return next;
-                  })
-                }
-                onMarkViewed={() => markViewed(node.relPath)}
-              />
-            );
-          })
+          <>
+            {sections.map((node) => {
+              const active = activePaths.has(node.relPath);
+              const unseen = unseenFiles.has(node.relPath);
+              // Default: what deserves attention is open, the viewed tail is
+              // closed. An explicit click wins over the default either way.
+              const expanded = toggled.get(node.relPath) ?? (active || unseen);
+              return (
+                <FocusSection
+                  key={node.relPath}
+                  root={root}
+                  rootId={rootId}
+                  node={node}
+                  active={active}
+                  unseen={unseen}
+                  byAgent={agentWritten.has(node.relPath)}
+                  expanded={expanded}
+                  onToggle={() =>
+                    setToggled((prev) => {
+                      const next = new Map(prev);
+                      next.set(node.relPath, !expanded);
+                      return next;
+                    })
+                  }
+                  onMarkViewed={() => markViewed(node.relPath)}
+                />
+              );
+            })}
+            {total > sections.length && (
+              <p className="px-4 py-3 text-center font-mono text-2xs text-text-muted">
+                +{total - sections.length} more — open them from Files
+              </p>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -340,7 +379,10 @@ function FocusSection({
             {active ? (
               <>
                 <RigMark size={10} className="shrink-0" />
-                writing…
+                {/* Dylan's call (critique round): stay an editor everywhere,
+                    but SAY when a section is read-only — here, while the
+                    agent holds the pen. */}
+                writing… · read-only
               </>
             ) : (
               <>
@@ -360,7 +402,7 @@ function FocusSection({
           </button>
         )}
       </div>
-      {expanded && <FocusBody root={root} rootId={rootId} relPath={node.relPath} />}
+      {expanded && <FocusBody root={root} rootId={rootId} relPath={node.relPath} readOnly={active} />}
     </section>
   );
 }
@@ -374,10 +416,13 @@ const FocusBody = observer(function FocusBody({
   root,
   rootId,
   relPath,
+  readOnly = false,
 }: {
   root: string;
   rootId: string;
   relPath: string;
+  /** While the agent holds the pen: the document stays visible and live, but a skimming scroll can't type into a mid-thought edit. */
+  readOnly?: boolean;
 }) {
   const absPath = `${root}/${relPath}`;
   const fileInfo = useFileType(root, rootId, absPath);
@@ -425,14 +470,24 @@ const FocusBody = observer(function FocusBody({
   return (
     <div className="popover-in pb-4">
       <DocEditor
-        key={resource.path}
+        // readOnly rides the key: CM6 editability is baked at state
+        // construction here, and the write window opening/closing is rare
+        // enough that a remount is the honest simple mechanism.
+        key={`${resource.path}:${readOnly ? 'ro' : 'rw'}`}
         ref={resource.editorRef}
         path={resource.path}
         initialContent={resource.content}
         language={language}
         onChange={resource.handleEditorChange}
         onSave={() => void resource.flush()}
-        extraExtensions={resource.extensionFactories}
+        extraExtensions={
+          readOnly
+            ? [
+                ...resource.extensionFactories,
+                () => [EditorState.readOnly.of(true), EditorView.editable.of(false)],
+              ]
+            : resource.extensionFactories
+        }
       />
     </div>
   );

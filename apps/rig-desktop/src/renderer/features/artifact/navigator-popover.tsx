@@ -31,6 +31,8 @@ export function NavigatorPopover({
   onClose,
   onOpenFile,
   revealDir = null,
+  align = 'left',
+  gap = 6,
 }: {
   root: string;
   rootId: string;
@@ -41,8 +43,11 @@ export function NavigatorPopover({
   onOpenFile: (absPath: string, relPath: string) => void;
   /** Breadcrumb folder clicks land here — that folder (and its ancestors) start expanded. */
   revealDir?: string | null;
+  /** The pinned card anchors this at a point left of itself (`align: 'right'`, gap 0); pane buttons keep the default. */
+  align?: 'left' | 'right';
+  gap?: number;
 }) {
-  const { data } = useQuery({
+  const { data, isPending, isError, refetch } = useQuery({
     queryKey: rigFilesQueryKey(root, rootId),
     queryFn: async () => {
       const result = await rpc.rig.files.list({ rootId });
@@ -98,7 +103,8 @@ export function NavigatorPopover({
       open={open}
       onClose={onClose}
       role="dialog"
-      gap={6}
+      align={align}
+      gap={gap}
       estimatedWidth={264}
       minWidth={264}
       ariaLabel="Open a file"
@@ -117,12 +123,47 @@ export function NavigatorPopover({
           className="w-full bg-transparent text-xs text-text-primary outline-none placeholder:text-text-muted"
         />
       </div>
-      {matches ? (
+      {/* Loading, error, and empty are THREE states (impeccable P3) — a
+          founder reading "No files" over a failed read believes their
+          files are gone. */}
+      {isPending ? (
+        <div className="flex flex-col gap-1 px-1 py-1" aria-label="Loading files">
+          <div className="bg-bg-2 h-6 animate-pulse rounded-control" />
+          <div className="bg-bg-2 h-6 w-4/5 animate-pulse rounded-control" />
+          <div className="bg-bg-2 h-6 w-3/5 animate-pulse rounded-control" />
+        </div>
+      ) : isError ? (
+        <div className="flex items-center gap-2 px-2 py-3">
+          <p className="text-xs text-text-muted">Couldn’t read this rig’s files.</p>
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            className="border-border-hairline hover:bg-bg-2 hover:text-text-primary ml-auto shrink-0 rounded-control border px-2 py-0.5 text-2xs text-text-secondary transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      ) : matches ? (
         matches.length === 0 ? (
           <p className="px-2 py-3 text-xs text-text-muted">No files match.</p>
         ) : (
-          matches.slice(0, 30).map((node) => <FileRow key={node.relPath} node={node} withPath onOpen={() => openFile(node)} />)
+          matches
+            .slice(0, 30)
+            .map((node, index) => (
+              <FileRow
+                key={node.relPath}
+                node={node}
+                withPath
+                // Enter opens the FIRST match — show which row that is.
+                highlighted={index === 0}
+                onOpen={() => openFile(node)}
+              />
+            ))
         )
+      ) : tree.length === 0 ? (
+        <p className="px-2 py-3 text-xs text-text-muted">
+          No files yet — add one, or ask the agent to write.
+        </p>
       ) : (
         <TreeLevel
           nodes={tree}
@@ -164,7 +205,7 @@ function TreeLevel({
             <button
               type="button"
               onClick={() => onToggleDir(node.relPath)}
-              className="hover:bg-bg-2 flex h-7 w-full items-center gap-1.5 rounded-[5px] px-2 text-left text-xs text-text-secondary transition-colors"
+              className="hover:bg-bg-2 flex h-7 w-full items-center gap-1.5 rounded-control px-2 text-left text-xs text-text-secondary transition-colors"
               style={{ paddingLeft: 8 + depth * 14 }}
             >
               <ChevronRight
@@ -198,12 +239,15 @@ function FileRow({
   node,
   depth = 0,
   withPath = false,
+  highlighted = false,
   onOpen,
 }: {
   node: RigFileNode;
   depth?: number;
   /** Filter results show where the match lives; the tree's indentation already says it. */
   withPath?: boolean;
+  /** The row Enter would open (the first filter match). */
+  highlighted?: boolean;
   onOpen: () => void;
 }) {
   const Icon = iconFor(node.name);
@@ -214,7 +258,10 @@ function FileRow({
     <button
       type="button"
       onClick={onOpen}
-      className="hover:bg-bg-2 flex h-7 w-full items-center gap-1.5 rounded-[5px] px-2 text-left text-xs transition-colors"
+      className={cn(
+        'hover:bg-bg-2 flex h-7 w-full items-center gap-1.5 rounded-control px-2 text-left text-xs transition-colors',
+        highlighted && 'bg-bg-2'
+      )}
       style={{ paddingLeft: withPath ? 8 : 8 + depth * 14 + 14 }}
     >
       <Icon className="size-3.5 shrink-0 text-text-secondary" strokeWidth={1.5} />

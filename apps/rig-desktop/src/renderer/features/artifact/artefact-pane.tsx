@@ -109,17 +109,39 @@ export function ArtefactPane({
         <div
           ref={tablistRef}
           role="tablist"
+          aria-label="Open files"
+          // Roving arrows across the strip — the same traversal every menu
+          // already has, so tabs aren't a mouse-only surface.
+          onKeyDown={(event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            const delta = event.key === 'ArrowRight' ? 1 : -1;
+            const next = (state.active + delta + state.tabs.length) % state.tabs.length;
+            onActivateTab(next);
+            const buttons = tablistRef.current?.querySelectorAll<HTMLElement>('[data-pane-tab]');
+            buttons?.[next]?.focus();
+          }}
           className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 py-1.5 [mask-image:linear-gradient(to_right,transparent,black_12px,black_calc(100%-12px),transparent)]"
         >
           {state.tabs.map((tab, index) => {
             const isFocus = tab.kind === 'focus';
             const name = isFocus ? 'Focus' : (tab.path.split('/').pop() ?? tab.path);
             const Icon = isFocus ? Rows3 : iconFor(name);
+            // Two `notes.md` from different folders are identical chips —
+            // disambiguate duplicates with the parent folder (VS Code rule).
+            const duplicate =
+              !isFocus &&
+              state.tabs.some(
+                (other) =>
+                  other !== tab && other.kind === 'file' && other.path.split('/').pop() === name
+              );
+            const parent = isFocus ? null : (tab.path.split('/').slice(-2, -1)[0] ?? null);
             return (
               <PaneTab
                 key={isFocus ? 'focus' : tab.path}
                 active={index === state.active}
                 dragging={dragIndex === index}
+                title={isFocus ? undefined : tab.path}
                 onSelect={() => onActivateTab(index)}
                 onClose={() => onCloseTab(index)}
                 onDragStart={() => setDragIndex(index)}
@@ -132,6 +154,9 @@ export function ArtefactPane({
               >
                 <Icon className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
                 <span className="max-w-32 truncate">{name}</span>
+                {duplicate && parent && (
+                  <span className="max-w-20 truncate text-2xs text-text-muted">{parent}</span>
+                )}
               </PaneTab>
             );
           })}
@@ -236,6 +261,7 @@ export function ArtefactPane({
 function PaneTab({
   active,
   dragging,
+  title,
   onSelect,
   onClose,
   onDragStart,
@@ -245,6 +271,8 @@ function PaneTab({
 }: {
   active: boolean;
   dragging: boolean;
+  /** Full path — real names truncate at max-w-32, the tooltip disambiguates. */
+  title?: string;
   onSelect: () => void;
   onClose: () => void;
   onDragStart: () => void;
@@ -254,8 +282,6 @@ function PaneTab({
 }) {
   return (
     <div
-      role="tab"
-      aria-selected={active}
       draggable
       onDragStart={(event) => {
         event.dataTransfer.effectAllowed = 'move';
@@ -274,7 +300,17 @@ function PaneTab({
         dragging && 'opacity-50'
       )}
     >
-      <button type="button" onClick={onSelect} className="flex min-w-0 items-center gap-1.5">
+      {/* The BUTTON carries the tab role — the wrapper is drag chrome. */}
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active}
+        data-pane-tab
+        tabIndex={active ? 0 : -1}
+        title={title}
+        onClick={onSelect}
+        className="flex min-w-0 items-center gap-1.5 outline-none"
+      >
         {children}
       </button>
       <button
@@ -282,7 +318,7 @@ function PaneTab({
         onClick={onClose}
         aria-label="Close tab"
         title="Close tab"
-        className="shrink-0 text-text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:text-text-primary"
+        className="shrink-0 text-text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:text-text-primary focus-visible:opacity-100 group-focus-within:opacity-100"
       >
         <X className="size-3" strokeWidth={1.5} />
       </button>
