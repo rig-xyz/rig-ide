@@ -51,12 +51,21 @@ async function listDir(absDir: string, root: string): Promise<RigFileNode[]> {
     // reads may follow a verified in-root link, but recursive listing must
     // never walk a link into another tree or a cycle.
     if (entry.isDirectory()) {
-      nodes.push({
-        name: entry.name,
-        relPath,
-        kind: 'dir',
-        children: await listDir(absPath, root),
-      });
+      // Same race rule as the stat below: an entry that vanishes between
+      // the parent's readdir and our walk into it (an agent deleting or
+      // renaming a folder mid-listing) is skipped, never a reason to fail
+      // the WHOLE listing — that surfaced as an intermittent "Couldn't
+      // read this rig's files" during agent write bursts.
+      try {
+        nodes.push({
+          name: entry.name,
+          relPath,
+          kind: 'dir',
+          children: await listDir(absPath, root),
+        });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+      }
     } else if (entry.isFile()) {
       const node: RigFileNode = { name: entry.name, relPath, kind: 'file' };
       try {

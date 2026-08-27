@@ -150,14 +150,15 @@ export function NavigatorContent({
       </div>
       {/* Loading, error, and empty are THREE states (impeccable P3) — a
           founder reading "No files" over a failed read believes their
-          files are gone. */}
+          files are gone. Error only with NOTHING to render: a refetch
+          that loses a race keeps the last good listing on screen. */}
       {isPending ? (
         <div className="flex flex-col gap-1 px-1 py-1" aria-label="Loading files">
           <div className="bg-bg-2 h-6 animate-pulse rounded-control" />
           <div className="bg-bg-2 h-6 w-4/5 animate-pulse rounded-control" />
           <div className="bg-bg-2 h-6 w-3/5 animate-pulse rounded-control" />
         </div>
-      ) : isError ? (
+      ) : isError && !data ? (
         <div className="flex items-center gap-2 px-2 py-3">
           <p className="text-xs text-text-muted">Couldn’t read this rig’s files.</p>
           <button

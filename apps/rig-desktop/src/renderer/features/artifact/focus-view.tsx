@@ -246,14 +246,18 @@ export function FocusView({
       <div className="min-h-0 flex-1 overflow-y-auto">
         {/* Loading, error, and empty are THREE states (impeccable P3):
             "No files" over a failed read tells a founder their files are
-            gone — the scariest wrong message this surface could show. */}
+            gone — the scariest wrong message this surface could show.
+            The error surfaces only when there is NOTHING to render: a
+            refetch that loses a race (react-query keeps the last good
+            data) must not replace a perfectly readable listing with an
+            alarm. */}
         {isPending ? (
           <div className="flex flex-col gap-2 px-4 py-4" aria-label="Loading files">
             <div className="bg-bg-2 h-8 animate-pulse rounded-control" />
             <div className="bg-bg-2 h-8 w-4/5 animate-pulse rounded-control" />
             <div className="bg-bg-2 h-8 w-3/5 animate-pulse rounded-control" />
           </div>
-        ) : isError ? (
+        ) : isError && !data ? (
           <div className="flex h-full flex-col items-center justify-center gap-2">
             <p className="text-sm text-text-muted">Couldn’t read this rig’s files.</p>
             <button
