@@ -138,6 +138,29 @@ export function buildAnchor(
   return { ok: true, anchor: { exact: quote, prefix, suffix } };
 }
 
+/**
+ * Build an anchor from a SOURCE range that is already known good — the
+ * Preview position index's `rangeToSource` (docs/preview-mode-spec.md
+ * "Selection → anchor") maps a DOM selection to real offsets in the current
+ * buffer, so unlike `buildAnchor` there is nothing to verify: a slice of
+ * `fileText` is verbatim by construction, markers and all (a selection
+ * spanning into a `**bold**` span yields an `exact` that includes the `**`).
+ * Never refuses — a range never needs to.
+ */
+export function buildAnchorFromRange(
+  fileText: string,
+  start: number,
+  end: number,
+  { contextLen = 32 }: { contextLen?: number } = {}
+): RigCommentAnchor {
+  const text = String(fileText ?? '');
+  const s = Math.max(0, Math.min(start, text.length));
+  const e = Math.max(s, Math.min(end, text.length));
+  const prefix = text.slice(Math.max(0, s - contextLen), s);
+  const suffix = text.slice(e, e + contextLen);
+  return { exact: text.slice(s, e), prefix, suffix };
+}
+
 type Threadable = { id: string; parentId: string | null };
 
 export type ThreadGroup<M extends Threadable> = { root: M; replies: M[] };

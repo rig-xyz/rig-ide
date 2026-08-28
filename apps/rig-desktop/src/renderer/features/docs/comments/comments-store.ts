@@ -10,15 +10,16 @@ import {
   type RigCommentsError,
 } from '@shared/rig/comments';
 import type { DocTabResource } from '../doc-file-sync';
-import { buildAnchor, groupThreads, reanchor } from './anchors';
+import { buildAnchor, buildAnchorFromRange, groupThreads, reanchor } from './anchors';
 import {
   type CommentsCacheEntry,
   isOfflineError,
   parseCommentsCache,
   toCacheEntry,
 } from './comments-cache';
-import { setCommentMarkers, type CommentMarker } from './comment-decorations';
+import { cm6SurfaceAdapter, type CommentMarker } from './comment-decorations';
 import { nextPendingReveal, shouldClearReveal, type PendingReveal } from './pending-reveal';
+import type { CommentSurfaceAdapter } from './surface-adapter';
 
 /**
  * Relay-backed comment threads for one doc tab. Ported from emdash's
@@ -278,6 +279,17 @@ export class DocCommentsStore {
   /** Quote captured from the selection while a new-thread composer is open. */
   composerQuote: string | null = null;
   /**
+   * The pre-located SOURCE range for `composerQuote`, when the opener
+   * already resolved one — the Preview selection→anchor path
+   * (docs/preview-mode-spec.md "Selection → anchor"), via the position
+   * index's `rangeToSource`. `create` builds the anchor straight from this
+   * slice (`buildAnchorFromRange`) instead of re-searching for the quote
+   * text, which may repeat elsewhere in the document. Null for the Edit-mode
+   * path (`CommentSelectionButton`), which never has one — `create` falls
+   * back to `buildAnchor`'s verbatim search exactly as before.
+   */
+  private _composerLocated: { start: number; end: number } | null = null;
+  /**
    * The thread the reader is currently reading, shared by the document and the
    * margin so both can point at the same conversation: the anchored passage and
    * its card take the same accent, and each side scrolls the other into view.
@@ -301,6 +313,22 @@ export class DocCommentsStore {
    * without needing to click. Cleared on pointer-leave, never persisted.
    */
   hoveredThreadId: string | null = null;
+  /**
+   * Bumped whenever the CURRENTLY active surface's own readiness or
+   * measurability changes independent of every other observable here — a
+   * Preview index rebuild settling (fonts, KaTeX, an `<img>`), the preview
+   * root resizing, or a CM6⇄Preview adapter swap (`setSurfaceAdapter`,
+   * below). `MarginRail`'s layout effect depends on this, so a card that
+   * measured itself against a surface that WASN'T ready or settled yet —
+   * the cold-open and mode-switch races this polish round fixes
+   * (docs/preview-mode-spec.md polish: margin card misaligned on cold
+   * open; active state/position mismatch across a mode switch) — gets a
+   * corrected pass the moment the surface actually is, rather than
+   * waiting for an unrelated `items`/`activeIndex` change that might
+   * never come.
+   */
+  surfaceEpoch = 0;
+
   /** Ids with an in-flight mutation, so cards can disable their controls. */
   pending = new Set<string>();
   /** Thread root id → the agent turn running (or failed) for it. */
@@ -353,9 +381,17 @@ export class DocCommentsStore {
   private _revealSeq = 0;
   private readonly _stopContentReaction: () => void;
   private readonly _stopPermissionEvents: () => void;
+  /**
+   * Which surface paints anchor markers and answers the margin's y-position
+   * queries — CM6 by default (this store has always driven the editor
+   * directly); swapped to the Preview surface adapter while Preview mode is
+   * showing (`setSurfaceAdapter`). See `surface-adapter.ts`.
+   */
+  private _surface: CommentSurfaceAdapter;
 
   constructor(resource: DocTabResource) {
     this._resource = resource;
+    this._surface = cm6SurfaceAdapter(() => this._resource.editorRef.current?.getView() ?? null);
 
     makeObservable<
       this,
@@ -371,6 +407,7 @@ export class DocCommentsStore {
       activeThreadId: observable,
       pendingReveal: observable.ref,
       hoveredThreadId: observable,
+      surfaceEpoch: observable,
       pending: observable.shallow,
       agentReplies: observable.shallow,
       agentPermissions: observable.shallow,
@@ -390,6 +427,7 @@ export class DocCommentsStore {
       markThreadSeen: action.bound,
       jumpToFirstUnread: action.bound,
       clearPendingReveal: action.bound,
+      requestSurfaceRelayout: action.bound,
       _reanchor: action,
       _applyMessages: action,
       _fail: action,
@@ -611,8 +649,15 @@ export class DocCommentsStore {
     }
   }
 
-  openComposer(quote: string): void {
+  /**
+   * @param located The exact SOURCE range `quote` came from, when the
+   *   opener already resolved one (Preview's selection→anchor path via the
+   *   position index). Omit for the Edit-mode path — `create` falls back to
+   *   `buildAnchor`'s verbatim search, same as always.
+   */
+  openComposer(quote: string, located?: { start: number; end: number }): void {
     this.composerQuote = quote;
+    this._composerLocated = located ?? null;
     this.setActiveThread(null);
     // The reader is about to act on a state we previously gave up on — a
     // `rig login` or a relay hiccup may well have been fixed since.
@@ -621,6 +666,24 @@ export class DocCommentsStore {
 
   closeComposer(): void {
     this.composerQuote = null;
+    this._composerLocated = null;
+  }
+
+  /**
+   * The precise SOURCE range `composerQuote` came from, when the opener
+   * already resolved one (Preview's selection→anchor path via the
+   * position index) — read by `MarginRail` for the composer card's own
+   * anchor Y, instead of the `documentContent.indexOf(composerQuote)`
+   * search it used to fall back to unconditionally. That search could land
+   * on an earlier duplicate of the same quote text elsewhere in the
+   * document; this is the exact offset the selection actually came from,
+   * and the same one `create` posts the anchor from — the composer card
+   * lands exactly where the eventual comment will. Null for the Edit-mode
+   * path (`CommentSelectionButton`), which never resolves one — the margin
+   * falls back to the plain search for that case, same as always.
+   */
+  get composerLocated(): { start: number; end: number } | null {
+    return this._composerLocated;
   }
 
   /**
@@ -683,6 +746,35 @@ export class DocCommentsStore {
     this._paintMarkers(this.threads, this._resource.content.length);
   }
 
+  /**
+   * Swap which surface paints markers and answers margin y-position
+   * queries — called by the Preview pane's comments wiring while it is
+   * showing, with `null` to restore the CM6 default on unmount/mode switch
+   * (`docs/preview-mode-spec.md` "Margin rail"). Repaints immediately so the
+   * newly active surface doesn't wait for the next re-anchor.
+   */
+  setSurfaceAdapter(adapter: CommentSurfaceAdapter | null): void {
+    this._surface =
+      adapter ?? cm6SurfaceAdapter(() => this._resource.editorRef.current?.getView() ?? null);
+    this._paintMarkers(this.threads, this._resource.content.length);
+    // `MarginRail`'s own layout effect may already have run THIS commit
+    // against the surface being replaced — it's a child, so its effects
+    // fire before this one (a parent effect) does. Bumping the epoch here
+    // schedules the corrected pass, now that `surface` answers with the
+    // one that's actually current.
+    this.requestSurfaceRelayout();
+  }
+
+  /** The surface currently painting markers — read by `MarginRail` for y-position queries. */
+  get surface(): CommentSurfaceAdapter {
+    return this._surface;
+  }
+
+  /** Request a margin re-layout without touching anything else — see `surfaceEpoch`. */
+  requestSurfaceRelayout(): void {
+    this.surfaceEpoch += 1;
+  }
+
   // ── reads ──────────────────────────────────────────────────────────────────
 
   async refresh(): Promise<void> {
@@ -699,15 +791,22 @@ export class DocCommentsStore {
   // ── writes ─────────────────────────────────────────────────────────────────
 
   /**
-   * Post a new thread anchored to `quote`. Refuses a quote that isn't verbatim
-   * text of the current buffer — the guardrail the CLI and hub also enforce.
+   * Post a new thread anchored to `quote`. When the composer was opened with
+   * a pre-located SOURCE range (`openComposer`'s `located`), the anchor is
+   * built straight from that slice (`buildAnchorFromRange` — never refuses,
+   * exact by construction). Otherwise falls back to `buildAnchor`'s verbatim
+   * search, refusing a quote that isn't verbatim text of the current buffer
+   * — the guardrail the CLI and hub also enforce.
    *
    * `mention` makes the post the opening move of an agent turn: the comment is
    * still the reader's, and the answer arrives as a separate agent-authored
    * reply once the turn finishes.
    */
   async create(quote: string, body: string, mention?: AgentMention): Promise<boolean> {
-    const built = buildAnchor(this._resource.content, quote);
+    const located = this._composerLocated;
+    const built = located
+      ? { ok: true as const, anchor: buildAnchorFromRange(this._resource.content, located.start, located.end) }
+      : buildAnchor(this._resource.content, quote);
     if (!built.ok) {
       toast({
         title: "Couldn't anchor that comment",
@@ -729,6 +828,7 @@ export class DocCommentsStore {
         newId = result.data.id;
         runInAction(() => {
           this.composerQuote = null;
+          this._composerLocated = null;
           this.activeThreadId = result.data.id;
         });
         // A brand-new thread has no history: the posted comment is the thread.
@@ -1174,8 +1274,7 @@ export class DocCommentsStore {
   }
 
   private _paintMarkers(threads: CommentThread[], docLength: number): void {
-    const view = this._resource.editorRef.current?.getView();
-    if (!view) return;
+    if (!this._surface.ready()) return;
     const markers: CommentMarker[] = [];
     for (const thread of threads) {
       if (thread.index === null || !thread.root.anchor) continue;
@@ -1190,7 +1289,7 @@ export class DocCommentsStore {
         active: thread.root.id === this.activeThreadId,
       });
     }
-    view.dispatch({ effects: setCommentMarkers.of(markers) });
+    this._surface.paintMarkers(markers);
   }
 
   private _startPolling(): void {

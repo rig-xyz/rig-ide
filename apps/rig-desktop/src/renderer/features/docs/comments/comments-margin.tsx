@@ -22,7 +22,6 @@ import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { Textarea } from '@renderer/lib/ui/textarea';
 import { cn } from '@renderer/lib/utils';
-import type { EditorView } from '@codemirror/view';
 import type { AgentIconAsset } from '@shared/core/agents/agent-payload';
 import type { RigCommentMessage, RigCommentPermissionRequest } from '@shared/rig/comments';
 import { shortenQuote } from './anchors';
@@ -38,6 +37,7 @@ import {
 } from './comments-store';
 import { layoutMarginCards, MARGIN_CARD_GAP, type MarginLayoutItem } from './margin-layout';
 import { minimalScrollDelta } from './pending-reveal';
+import type { CommentSurfaceAdapter } from './surface-adapter';
 import {
   findMention,
   MENTION_TOKEN,
@@ -586,6 +586,7 @@ const Card = observer(function Card({
   hovered,
   muted,
   compact,
+  hasAnchor = true,
   onActivate,
 }: {
   children: React.ReactNode;
@@ -594,6 +595,16 @@ const Card = observer(function Card({
   hovered?: boolean;
   muted?: boolean;
   compact?: boolean;
+  /**
+   * Whether this card currently has a real, locatable anchor position — an
+   * orphaned/unresolved thread, or a composer whose quote couldn't be
+   * found, has none. Gates the active connector: pointing a "this connects
+   * to the document" line at nothing reads as a stray, disconnected
+   * artifact rather than a broken confirmation. Defaults `true` since most
+   * callers (every `ThreadCard`/`NewThreadCard`) do have one and pass it
+   * explicitly; the default only matters for a future caller that doesn't.
+   */
+  hasAnchor?: boolean;
   onActivate?: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -638,7 +649,7 @@ const Card = observer(function Card({
         muted && !active && 'opacity-70'
       )}
     >
-      {active && <ActiveConnector muted={muted} />}
+      {active && hasAnchor && <ActiveConnector muted={muted} />}
       {children}
     </div>
   );
@@ -852,6 +863,7 @@ const ThreadCard = observer(function ThreadCard({
       hovered={hovered}
       muted={thread.resolved}
       compact={collapsed}
+      hasAnchor={thread.index !== null}
       onActivate={() => store.setActiveThread(root.id)}
     >
       <button
@@ -1016,7 +1028,14 @@ function stateNotice(store: DocCommentsStore): string | null {
   }
 }
 
-const NewThreadCard = observer(function NewThreadCard({ store }: { store: DocCommentsStore }) {
+const NewThreadCard = observer(function NewThreadCard({
+  store,
+  hasAnchor,
+}: {
+  store: DocCommentsStore;
+  /** Whether the composer's quote currently resolves to a real document position — see `Card`'s own doc comment. */
+  hasAnchor: boolean;
+}) {
   const [draft, setDraft] = useState('');
   const quote = store.composerQuote ?? '';
   const agents = useMentionableAgents();
@@ -1037,7 +1056,7 @@ const NewThreadCard = observer(function NewThreadCard({ store }: { store: DocCom
     // `muted`: the focused textarea inside already wears the accent focus
     // border — an accent card around an accent input read as a double
     // outline (feedback round 5). One accent line, on the thing focused.
-    <Card active muted>
+    <Card active muted hasAnchor={hasAnchor}>
       <p
         className="border-border-strong text-text-muted line-clamp-2 border-l-2 pl-2 text-xs"
         title={quote}
@@ -1120,7 +1139,15 @@ function useMarginLayout(
   /** Index into `items` of the active/composer card, when there is one — see `layoutMarginCards`'s priority mode. */
   activeIndex: number | null,
   containerRef: RefObject<HTMLDivElement | null>,
-  getView: () => EditorView | null
+  surface: CommentSurfaceAdapter,
+  /**
+   * `store.surfaceEpoch` — bumped whenever the surface's own readiness or
+   * measurability changes independent of `items`/`activeIndex` (a Preview
+   * settle trigger, a CM6⇄Preview adapter swap). Included as a dependency
+   * below purely to force the layout effect to re-run then; the recompute
+   * itself always re-reads `surface` fresh.
+   */
+  surfaceEpoch: number
 ): {
   tops: Map<string, number>;
   setCardRef: (key: string) => (el: HTMLDivElement | null) => void;
@@ -1136,16 +1163,24 @@ function useMarginLayout(
 
   const recompute = useCallback(() => {
     const container = containerRef.current;
-    const view = getView();
-    if (!container || !view) return;
+    if (!container || !surface.ready()) return;
 
     const containerRect = container.getBoundingClientRect();
     const scrollTop = container.scrollTop;
-    const docLength = view.state.doc.length;
+    const docLength = surface.docLength();
 
     const layoutItems: MarginLayoutItem[] = itemsRef.current.map((item) => {
       const pos = item.index !== null ? Math.min(item.index, docLength) : null;
-      const coords = pos !== null ? view.coordsAtPos(pos) : null;
+      const coords = pos !== null ? surface.coordsAtPos(pos) : null;
+      // The one alignment rule, lived in exactly one place rather than once
+      // per surface: a card's top is its anchor's `coords.top`, rebased
+      // onto the scroll container. `cm6SurfaceAdapter` and
+      // `previewSurfaceAdapter` both answer `coordsAtPos` with "the rect of
+      // the anchor's first character" (CM6's own `coordsAtPos`; the
+      // Preview index's `sourceToDom(pos, pos + 1)`) — so this formula
+      // reads the same point off either one, and switching Edit ⇄ Preview
+      // can't move a card relative to its anchor just because the two
+      // adapters computed "top" differently.
       const anchorTop = coords !== null ? coords.top - containerRect.top + scrollTop : null;
       const height = cardRefs.current.get(item.key)?.offsetHeight ?? DEFAULT_CARD_HEIGHT;
       return { key: item.key, anchorTop, height };
@@ -1153,7 +1188,7 @@ function useMarginLayout(
 
     const next = layoutMarginCards(layoutItems, MARGIN_CARD_GAP, activeIndexRef.current);
     setTops((prev) => (mapsEqual(prev, next) ? prev : next));
-  }, [containerRef, getView]);
+  }, [containerRef, surface]);
 
   const scheduleRecompute = useCallback(() => {
     if (rafRef.current !== null) return;
@@ -1164,11 +1199,21 @@ function useMarginLayout(
   }, [recompute]);
 
   // The item list itself changed (new/removed thread, filter, composer
-  // open/close) — or the active card did, which changes the whole layout
-  // mode: recompute synchronously, before paint.
+  // open/close) — the active card did, which changes the whole layout
+  // mode — or the surface just became (or stopped being) trustworthy
+  // (`surfaceEpoch`): recompute synchronously, before paint.
   useLayoutEffect(() => {
     recompute();
-  }, [items, activeIndex, recompute]);
+    // Settle pass: a card that just mounted (the composer opening on a
+    // fresh selection, a new thread arriving) can measure a beat before
+    // its own layout has fully settled — a native selection still
+    // collapsing, a just-swapped surface not yet answering with real
+    // rects. One rAF-deferred follow-up, the same batching
+    // `scheduleRecompute` already uses for ResizeObserver-driven reflows,
+    // corrects it without waiting for an unrelated event (hovering the
+    // anchor, say) to trigger another pass.
+    scheduleRecompute();
+  }, [items, activeIndex, surfaceEpoch, recompute, scheduleRecompute]);
 
   useEffect(() => {
     const ro = new ResizeObserver(() => scheduleRecompute());
@@ -1184,7 +1229,7 @@ function useMarginLayout(
         rafRef.current = null;
       }
     };
-    // containerRef/getView are stable for the lifetime of the artifact view.
+    // containerRef/surface are stable for the lifetime of the artifact view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1209,13 +1254,17 @@ function useMarginLayout(
 export const MarginRail = observer(function MarginRail({
   store,
   containerRef,
-  getView,
 }: {
   store: DocCommentsStore;
   /** The shared scroll container both the doc and this rail live in — see `artifact-view.tsx`. */
   containerRef: RefObject<HTMLDivElement | null>;
-  getView: () => EditorView | null;
 }) {
+  // Whichever surface is currently painting markers — CM6 by default, the
+  // Preview surface adapter while Preview is showing (`DocCommentsStore
+  // .setSurfaceAdapter`, `surface-adapter.ts`). Read fresh each render
+  // rather than cached: `MarginRail` is already an `observer()`, so it
+  // re-renders on every relevant store change regardless.
+  const surface = store.surface;
   const [showResolved, setShowResolved] = useState(false);
 
   const listed = store.visibleThreads;
@@ -1229,19 +1278,23 @@ export const MarginRail = observer(function MarginRail({
     listed.length === 0 && resolved.length === 0 && store.composerQuote === null;
 
   // The composer positions itself the same way a thread card would: at the Y
-  // of the (still-unposted) quote it was opened on. The quote is guaranteed
-  // verbatim text in the document (the anchoring guardrail `buildAnchor`
-  // enforces on submit), so a plain search finds it — the same trust a
-  // thread's own anchor gets before it has replies to disambiguate with.
-  // First match only, unlike a posted anchor's prefix/suffix disambiguation:
-  // if the exact selection repeats verbatim elsewhere in the doc, the
-  // composer may visually align to the wrong occurrence. Cosmetic only — the
-  // anchor actually posted on submit is the real selection, not this lookup.
+  // of the (still-unposted) quote it was opened on. Preview's selection→
+  // anchor path already resolved the exact SOURCE offset the selection came
+  // from (`store.composerLocated`) — use it directly, the same exact-offset
+  // path `create` posts the anchor from, so the card lands exactly where the
+  // eventual comment will. The Edit-mode path (`CommentSelectionButton`)
+  // never resolves one, so it falls back to a plain search — the same trust
+  // a thread's own anchor gets before it has replies to disambiguate with,
+  // first match only: if the exact selection repeats verbatim elsewhere in
+  // the doc, the composer may visually align to the wrong occurrence.
+  // Cosmetic only — the anchor actually posted on submit is the real
+  // selection, not this lookup.
   const composerIndex = useMemo(() => {
     if (store.composerQuote === null) return null;
+    if (store.composerLocated !== null) return store.composerLocated.start;
     const index = store.documentContent.indexOf(store.composerQuote);
     return index === -1 ? null : index;
-  }, [store.composerQuote, store.documentContent]);
+  }, [store.composerQuote, store.composerLocated, store.documentContent]);
 
   const items = useMemo<RailItem[]>(() => {
     const out: RailItem[] = [];
@@ -1274,7 +1327,13 @@ export const MarginRail = observer(function MarginRail({
     return index === -1 ? null : index;
   }, [items, store.activeThreadId]);
 
-  const { tops, setCardRef } = useMarginLayout(items, activeIndex, containerRef, getView);
+  const { tops, setCardRef } = useMarginLayout(
+    items,
+    activeIndex,
+    containerRef,
+    surface,
+    store.surfaceEpoch
+  );
 
   // The single consumer of `pendingReveal` — the only place in the docs
   // feature that scrolls anything, and the only reveal rule there is: ensure
@@ -1292,17 +1351,16 @@ export const MarginRail = observer(function MarginRail({
   const pendingReveal = store.pendingReveal;
   useEffect(() => {
     if (!pendingReveal) return;
-    const view = getView();
     const container = containerRef.current;
     const thread = store.threads.find((t) => t.root.id === pendingReveal.threadId);
     if (
-      view &&
+      surface.ready() &&
       container &&
       thread &&
       thread.index !== null &&
-      thread.index <= view.state.doc.length
+      thread.index <= surface.docLength()
     ) {
-      const coords = view.coordsAtPos(thread.index);
+      const coords = surface.coordsAtPos(thread.index);
       if (coords) {
         // Same content-coordinate space `useMarginLayout`'s own anchor-Y math
         // uses: viewport-relative CM6 coords, rebased onto the container's
@@ -1320,7 +1378,7 @@ export const MarginRail = observer(function MarginRail({
       }
     }
     store.clearPendingReveal(pendingReveal.token);
-    // store/getView/containerRef are stable for the artifact view's lifetime;
+    // store/surface/containerRef are stable for the artifact view's lifetime;
     // re-running this effect is driven entirely by `pendingReveal` changing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingReveal]);
@@ -1386,7 +1444,9 @@ export const MarginRail = observer(function MarginRail({
           )}
           style={{ top: tops.get(item.key) ?? 0 }}
         >
-          {item.kind === 'composer' && <NewThreadCard store={store} />}
+          {item.kind === 'composer' && (
+            <NewThreadCard store={store} hasAnchor={item.index !== null} />
+          )}
           {item.kind === 'thread' && <ThreadCard store={store} thread={item.thread} />}
           {item.kind === 'resolved-toggle' && (
             <button

@@ -1,6 +1,13 @@
-import { ChevronRight, Loader2, MessageSquare, Sparkles } from 'lucide-react';
+import {
+  ChevronRight,
+  Code as CodeIcon,
+  Eye,
+  Loader2,
+  MessageSquare,
+  Sparkles,
+} from 'lucide-react';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { commentDecorations } from '@renderer/features/docs/comments/comment-decorations';
 import { CommentSelectionButton } from '@renderer/features/docs/comments/comment-selection';
 import { MarginRail, shouldShowMargin } from '@renderer/features/docs/comments/comments-margin';
@@ -10,12 +17,16 @@ import {
 } from '@renderer/features/docs/comments/comments-store';
 import { DocEditor } from '@renderer/features/docs/doc-editor';
 import { DocTabResource } from '@renderer/features/docs/doc-file-sync';
+import { PreviewCommentSelectionButton } from '@renderer/features/docs/preview/preview-comment-selection';
+import { usePreviewComments } from '@renderer/features/docs/preview/use-preview-comments';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import { classifyEntryCategory, relPathFromRoot } from '@shared/rig/file-navigator-categories';
 import { breadcrumbSegments, type BreadcrumbSegment } from './breadcrumb';
 import type { EditorLanguage } from './file-type';
 import { ImageArtifact } from './image-artifact';
+import { getPreviewMode, setPreviewMode, type PreviewMode } from './preview-mode-memory';
+import { PreviewPane, type PreviewHandle } from './preview-pane';
 import { ShareButton } from './share-popover';
 import { UnsupportedArtifact } from './unsupported-artifact';
 import { useFileType } from './use-file-type';
@@ -194,7 +205,7 @@ const SaveStatus = observer(function SaveStatus({ resource }: { resource: DocTab
   if (state !== 'saved') {
     return (
       <span className="flex shrink-0 items-center gap-1.5 text-2xs text-text-muted">
-        <span className="bg-accent size-1.5 animate-pulse rounded-full" />
+        <span className="size-1.5 animate-pulse rounded-full bg-accent" />
         Saving…
       </span>
     );
@@ -202,13 +213,69 @@ const SaveStatus = observer(function SaveStatus({ resource }: { resource: DocTab
   if (justSaved) {
     return (
       <span className="popover-in flex shrink-0 items-center gap-1.5 text-2xs text-text-muted">
-        <span className="bg-success size-1.5 rounded-full" />
+        <span className="size-1.5 rounded-full bg-success" />
         Saved
       </span>
     );
   }
   return null;
 });
+
+/**
+ * Preview ⇄ Edit segmented toggle (`preview-mode-spec.md` "Shape") —
+ * markdown-only, rendered by `EditableArtifactPane` only when `language ===
+ * 'markdown'`. Same segmented-icon-toggle grammar as the topbar's
+ * `LayoutSwitcher` (`features/shell/layout-switcher.tsx`): a
+ * `radiogroup`/`radio` pair in a bordered pill, the selected segment lifted
+ * to `bg-bg-2`, rather than inventing a second toggle visual language.
+ */
+function PreviewModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: PreviewMode;
+  onChange: (next: PreviewMode) => void;
+}) {
+  const segments: { value: PreviewMode; label: string; Icon: typeof Eye }[] = [
+    { value: 'preview', label: 'Preview', Icon: Eye },
+    { value: 'edit', label: 'Edit', Icon: CodeIcon },
+  ];
+  return (
+    <div
+      role="radiogroup"
+      aria-label="View mode"
+      className="flex items-center gap-0.5 rounded-control border border-border-hairline bg-bg-1 p-0.5"
+    >
+      {segments.map(({ value, label, Icon }) => {
+        const selected = mode === value;
+        return (
+          <Tooltip key={value}>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  aria-label={label}
+                  onClick={() => onChange(value)}
+                  className={cn(
+                    'flex h-6 w-7 items-center justify-center rounded-control transition-colors',
+                    selected
+                      ? 'bg-bg-2 text-text-primary'
+                      : 'text-text-muted hover:bg-bg-2/60 hover:text-text-primary'
+                  )}
+                >
+                  <Icon className="size-3.5" strokeWidth={1.5} />
+                </button>
+              }
+            />
+            <TooltipContent side="bottom">{label}</TooltipContent>
+          </Tooltip>
+        );
+      })}
+    </div>
+  );
+}
 
 /**
  * Markdown AND other editable text/code/config share this one pane —
@@ -256,11 +323,49 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   onNavigateFolder: (relPath: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<PreviewHandle | null>(null);
   // Feedback round 5: comments can step aside per document — Docs
   // grammar. Session-local, defaults shown; the anchors stay marked in the
   // text (they are document state), only the rail and the selection
   // affordance retire.
   const [showComments, setShowComments] = useState(true);
+
+  // Preview ⇄ Edit (`preview-mode-spec.md` "Shape"): markdown-only, Preview
+  // by default, remembered per file for the session via `preview-mode-memory`.
+  // A non-markdown text/code/config file never leaves Edit — the toggle
+  // itself is hidden below, and this initializer never consults the memory
+  // module for one, so its render path stays byte-for-byte what it was
+  // before this file existed.
+  const isMarkdown = language === 'markdown';
+  const [mode, setModeState] = useState<PreviewMode>(() =>
+    isMarkdown ? getPreviewMode(path) : 'edit'
+  );
+  // Scroll position survives a toggle only approximately (spec's own
+  // wording): captured as a fraction of the scrollable range right before
+  // the mode flips, then reapplied once the new pane has laid out. A ratio,
+  // not a pixel offset, because Preview and Edit almost never agree on
+  // total document height.
+  const pendingScrollRatio = useRef<number | null>(null);
+  const setMode = useCallback(
+    (next: PreviewMode) => {
+      const el = containerRef.current;
+      if (el) {
+        const scrollable = el.scrollHeight - el.clientHeight;
+        pendingScrollRatio.current = scrollable > 0 ? el.scrollTop / scrollable : 0;
+      }
+      setPreviewMode(path, next);
+      setModeState(next);
+    },
+    [path]
+  );
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    const ratio = pendingScrollRatio.current;
+    if (!el || ratio === null) return;
+    pendingScrollRatio.current = null;
+    const scrollable = el.scrollHeight - el.clientHeight;
+    el.scrollTop = scrollable > 0 ? ratio * scrollable : 0;
+  }, [mode]);
 
   // Built together, synchronously, so the comments decoration extension is
   // already in `extensionFactories` before `DocEditor`'s own mount effect
@@ -301,9 +406,31 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
     comments?.setVisible(showComments);
   }, [comments, showComments]);
 
+  // `mode` belongs in the deps: toggling Preview ⇄ Edit unmounts and
+  // remounts `DocEditor`, and the fresh EditorView has no markers until
+  // someone paints them — without this, a comment's highlight and margin
+  // card only reappeared on the next content change. Child effects run
+  // before parent effects, so by the time this fires on an Edit remount the
+  // view is already mounted; firing on a Preview flip is a no-op
+  // (`_paintMarkers` bails when there's no view).
   useEffect(() => {
     comments?.syncMarkers();
-  }, [comments]);
+  }, [comments, mode]);
+
+  // Comments layer wiring for Preview mode (`preview-mode-spec.md` rollout
+  // step 3): registers the Preview surface adapter on the store, paints
+  // open threads' anchors via the CSS Custom Highlight API, and hit-tests
+  // clicks/hover — the Preview-mode counterpart to `commentDecorations`'s
+  // CM6 event handlers above. `active` is false in Edit mode (or with
+  // comments off), so this never contends with CM6 for the store's surface.
+  usePreviewComments({
+    active: mode === 'preview' && comments !== null && showComments,
+    getRoot: () => previewRef.current?.getRoot() ?? null,
+    getIndex: () => previewRef.current?.getIndex() ?? null,
+    sourceLength: resource.content.length,
+    store: comments,
+  });
+
 
   // Click-away dismisses the active thread — Docs behavior: the focused
   // comment "goes away" the moment you click anywhere that isn't its own
@@ -324,12 +451,26 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
       if (target.closest('.cm-rigComment, .cm-rigCommentGlyph')) return;
       // Any margin card, or the composer — both live in the rail's subtree.
       if (target.closest('[data-comments-rail]')) return;
+      // Preview's highlights are painted via the CSS Custom Highlight API —
+      // no DOM element to `closest()` against. `usePreviewComments`'s own
+      // click handler is the sole authority for clicks inside the preview
+      // document (it sets or clears the active thread itself); this
+      // click-away must not race it.
+      const previewRoot = previewRef.current?.getRoot();
+      if (previewRoot?.contains(target)) return;
       comments.setActiveThread(null);
     };
     document.addEventListener('mousedown', handleClickAway, true);
     return () => document.removeEventListener('mousedown', handleClickAway, true);
   }, [comments]);
 
+  // The margin rail now renders in both modes (`preview-mode-spec.md`
+  // rollout step 3) — `MarginRail` itself reads whichever surface adapter
+  // is currently registered (`store.surface`) for card y-positions, CM6 in
+  // Edit and the Preview surface adapter in Preview (`usePreviewComments`
+  // above). The store keeps running underneath regardless of mode (polling,
+  // `_reanchor`, …) — only the painted UI steps aside, same as it already
+  // does for `showComments`.
   const showMargin = comments !== null && showComments && shouldShowMargin(comments);
 
   return (
@@ -351,7 +492,10 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 Updated on disk · Reload
               </button>
             )}
-            {comments && (
+            {isMarkdown && <PreviewModeToggle mode={mode} onChange={setMode} />}
+            {/* Hidden in Preview along with the margin/composer it controls
+                — a toggle for UI that isn't rendered has nothing to do. */}
+            {comments && mode === 'edit' && (
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -399,26 +543,41 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
           </div>
         ) : (
           <>
-            <DocEditor
-              key={resource.path}
-              ref={resource.editorRef}
-              path={resource.path}
-              initialContent={resource.content}
-              language={language}
-              onChange={resource.handleEditorChange}
-              onSave={() => void resource.flush()}
-              onSelectionChange={resource.handleSelectionChange}
-              extraExtensions={resource.extensionFactories}
-            />
-            {showMargin && comments && (
-              <MarginRail
-                store={comments}
-                containerRef={containerRef}
-                getView={() => resource.editorRef.current?.getView() ?? null}
+            {mode === 'preview' ? (
+              // Only reachable for markdown — the initializer above never
+              // sets `mode` to `'preview'` for anything else. Reads
+              // `resource.content` directly — the same observable
+              // DocEditor writes on every keystroke and `_absorb` writes on
+              // every external (agent/disk) edit, so this re-renders live
+              // whether the change came from typing before the toggle or
+              // from an agent writing mid-read. No CM6 involved: Preview is
+              // read-only, so there's nothing here for `resource.editorRef`
+              // to point at.
+              <PreviewPane ref={previewRef} content={resource.content} />
+            ) : (
+              <DocEditor
+                key={resource.path}
+                ref={resource.editorRef}
+                path={resource.path}
+                initialContent={resource.content}
+                language={language}
+                onChange={resource.handleEditorChange}
+                onSave={() => void resource.flush()}
+                onSelectionChange={resource.handleSelectionChange}
+                extraExtensions={resource.extensionFactories}
               />
             )}
-            {comments && showComments && (
+            {showMargin && comments && <MarginRail store={comments} containerRef={containerRef} />}
+            {mode === 'edit' && comments && showComments && (
               <CommentSelectionButton resource={resource} store={comments} />
+            )}
+            {mode === 'preview' && comments && showComments && (
+              <PreviewCommentSelectionButton
+                getRoot={() => previewRef.current?.getRoot() ?? null}
+                getIndex={() => previewRef.current?.getIndex() ?? null}
+                content={resource.content}
+                store={comments}
+              />
             )}
           </>
         )}

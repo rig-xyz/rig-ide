@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAnchor, groupThreads, reanchor } from './anchors';
+import { buildAnchor, buildAnchorFromRange, groupThreads, reanchor } from './anchors';
 
 /**
  * Ported from emdash's `src/renderer/tests/doc-comment-anchors.test.ts`.
@@ -75,6 +75,44 @@ describe('buildAnchor', () => {
 
     expect(buildAnchor(text, 'Words split over two')).toEqual({ ok: false, whitespaceOnly: true });
     expect(buildAnchor(text, 'not in the document')).toEqual({ ok: false, whitespaceOnly: false });
+  });
+});
+
+describe('buildAnchorFromRange', () => {
+  it('slices exact/prefix/suffix straight from the given offsets, verbatim', () => {
+    const text = `${'a'.repeat(50)}QUOTE${'b'.repeat(50)}`;
+    const start = text.indexOf('QUOTE');
+    const built = buildAnchorFromRange(text, start, start + 'QUOTE'.length);
+
+    expect(built).toEqual({ exact: 'QUOTE', prefix: 'a'.repeat(32), suffix: 'b'.repeat(32) });
+  });
+
+  it('never refuses — a range spanning markdown markers is verbatim by construction', () => {
+    // Unlike `buildAnchor`, a selection crossing into a `**bold**` span
+    // (docs/preview-mode-spec.md's own headline example) is fine: the
+    // slice IS the markers, so there is nothing to verify.
+    const text = 'Ship it **today**, not tomorrow.';
+    const start = text.indexOf('it ');
+    const end = text.indexOf('today') + 'today'.length;
+
+    const built = buildAnchorFromRange(text, start, end);
+
+    expect(built.exact).toBe('it **today');
+    expect(text.slice(start, end)).toBe(built.exact);
+  });
+
+  it('clamps out-of-range offsets to the document bounds', () => {
+    const text = 'short';
+    expect(buildAnchorFromRange(text, -5, 3)).toEqual({ exact: 'sho', prefix: '', suffix: 'rt' });
+    expect(buildAnchorFromRange(text, 2, 999)).toEqual({ exact: 'ort', prefix: 'sh', suffix: '' });
+  });
+
+  it('caps prefix/suffix at contextLen real surrounding chars, same as buildAnchor', () => {
+    const text = `${'x'.repeat(10)}QUOTE${'y'.repeat(10)}`;
+    const start = text.indexOf('QUOTE');
+    const built = buildAnchorFromRange(text, start, start + 'QUOTE'.length, { contextLen: 5 });
+
+    expect(built).toEqual({ exact: 'QUOTE', prefix: 'xxxxx', suffix: 'yyyyy' });
   });
 });
 

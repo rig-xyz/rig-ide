@@ -1,5 +1,6 @@
 import { StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType } from '@codemirror/view';
+import type { CommentSurfaceAdapter } from './surface-adapter';
 
 /**
  * The in-editor half of the comments layer: a subtle underline over each
@@ -297,4 +298,26 @@ export function commentDecorations(
       },
     }),
   ];
+}
+
+// ── surface adapter ─────────────────────────────────────────────────────────
+
+/**
+ * The CM6 `CommentSurfaceAdapter` (see `surface-adapter.ts`) — Edit mode's
+ * side of the seam, a direct wrap of the `EditorView` calls
+ * `DocCommentsStore`/`MarginRail` made before the adapter existed. Behavior
+ * is unchanged: `paintMarkers` dispatches the same `setCommentMarkers`
+ * effect, `coordsAtPos`/`docLength` proxy the same `EditorView` methods.
+ */
+export function cm6SurfaceAdapter(getView: () => EditorView | null): CommentSurfaceAdapter {
+  return {
+    ready: () => getView() !== null,
+    docLength: () => getView()?.state.doc.length ?? 0,
+    coordsAtPos: (pos) => getView()?.coordsAtPos(pos) ?? null,
+    paintMarkers: (markers) => {
+      const view = getView();
+      if (!view) return;
+      view.dispatch({ effects: setCommentMarkers.of(markers) });
+    },
+  };
 }
