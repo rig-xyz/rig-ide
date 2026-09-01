@@ -22,6 +22,7 @@
     "dev": "LOG_LEVEL=debug EMDASH_LOG_FILE=.emdash-logs/emdash.log electron-vite dev",
     "dev:debug": "VITE_LOG_LEVEL=debug LOG_LEVEL=debug EMDASH_LOG_FILE=.emdash-logs/emdash.log electron-vite dev",
     "dev:context-manual": "bash scripts/run-agent-context-manual.sh",
+    "dev:fresh-user": "sh scripts/run-fresh-user.sh",
     "dev:main": "electron-vite dev --watch main",
     "dev:renderer": "electron-vite dev --watch renderer",
     "db:generate": "drizzle-kit generate",
