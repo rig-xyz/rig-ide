@@ -3,7 +3,11 @@ import type { InstallCommandError } from '@emdash/core/deps/runtime';
 import { err, ok, type Result } from '@emdash/shared';
 import type { AgentConfigInstallCommandRunner } from '../runtime/types';
 
-const ANSI_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+// Strips CSI sequences (e.g. SGR color codes) and charset-designation
+// sequences (e.g. `ESC ( B`) — login shells commonly emit the latter during
+// startup (prompt/theme setup), and it would otherwise leak into buffered
+// install output shown to users.
+const ANSI_RE = /\u001b(?:\[[0-?]*[ -/]*[@-~]|[()#][0-9A-Za-z])/g;
 const MAX_INSTALL_OUTPUT_BUFFER = 10 * 1024 * 1024;
 
 export function createExecInstallCommandRunner(options: {

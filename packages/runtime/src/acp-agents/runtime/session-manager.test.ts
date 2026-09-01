@@ -275,7 +275,12 @@ describe('AcpRuntime session manager', () => {
 
     h.lastChild.emitExit(42);
 
-    expect(rt.getSessionState('conv-close').lifecycle).toBe('closed');
+    // The exit event resolves through a `.then` on the connection's
+    // `processClosed` promise (acp-agent-connection.ts), so the runtime's
+    // lifecycle flip lands a microtask after `emitExit` returns, not
+    // synchronously — same contract asserted with `vi.waitFor` in
+    // connection/acp-agent-connection.test.ts and connection/source.test.ts.
+    await vi.waitFor(() => expect(rt.getSessionState('conv-close').lifecycle).toBe('closed'));
     expect(rt.sessionLiveModels('conv-close')).toBeNull();
     expect(rt.sessionsListLiveModel().states.list.snapshot().data).toEqual({});
   });
@@ -293,7 +298,7 @@ describe('AcpRuntime session manager', () => {
 
     h.lastChild.emitExit(42);
 
-    expect(rt.getSessionState('conv-a').lifecycle).toBe('closed');
+    await vi.waitFor(() => expect(rt.getSessionState('conv-a').lifecycle).toBe('closed'));
     expect(rt.getSessionState('conv-b').lifecycle).toBe('closed');
     expect(rt.sessionLiveModels('conv-a')).toBeNull();
     expect(rt.sessionLiveModels('conv-b')).toBeNull();

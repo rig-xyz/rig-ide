@@ -9,7 +9,12 @@ function createRunner() {
   });
 }
 
-describe('createExecInstallCommandRunner', () => {
+// Each case spawns a REAL login shell (`$SHELL -lc`, by design — installs must
+// see the user's own PATH), whose startup on a machine with a heavy shell rc
+// (nvm/conda/theme init) can alone take ~5s: right at vitest's default
+// ceiling, so these flaked under load. The product has no such limit; only
+// the test ceiling was wrong.
+describe('createExecInstallCommandRunner', { timeout: 30_000 }, () => {
   it('succeeds when the command exits cleanly', async () => {
     const result = await createRunner()('printf "installed"');
 
