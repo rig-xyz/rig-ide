@@ -28,6 +28,10 @@ const acpWorker = lazyWorker(
     contract: acpApiContract,
     entry: desktopWorkerPath('acp'),
     scope: acpRuntimeScope,
+    // Same cold-start headroom as the agent-config worker (see its host):
+    // a loaded machine can miss the 10s wire default, and every chat and
+    // comment-agent session depends on this worker.
+    readyTimeoutMs: 30_000,
     env: {
       ...process.env,
       EMDASH_ACP_ATTACHMENTS_DIR: join(app.getPath('userData'), 'acp-attachments'),

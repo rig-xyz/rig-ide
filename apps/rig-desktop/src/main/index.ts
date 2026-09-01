@@ -184,12 +184,8 @@ void app.whenReady().then(async () => {
   agentHookService.initialize().catch((e) => {
     log.error('Failed to start agent event service:', e);
   });
-  initializeAcpRuntimeProcess().catch((e) => {
-    log.error('Failed to start ACP runtime process:', e);
-  });
-  initializeAgentConfigRuntimeProcess().catch((e) => {
-    log.error('Failed to start agent-config runtime process:', e);
-  });
+  startRuntimeWithRetry('ACP runtime process', initializeAcpRuntimeProcess);
+  startRuntimeWithRetry('agent-config runtime process', initializeAgentConfigRuntimeProcess);
   acpAgentStatusBridge.initialize();
   registerRigBridge();
 
@@ -249,3 +245,37 @@ void app.whenReady().then(async () => {
 });
 
 registerQuitHandler();
+
+/**
+ * Start a runtime worker, retrying with backoff when the start fails —
+ * typically "Runtime did not become ready within Nms" on a slow or loaded
+ * cold start. Both workers' `lazyWorker` memoizers drop a failed spawn, so
+ * each retry is a genuine fresh start. Without this, one slow boot left the
+ * renderer wire for the agent-config worker (every provider sign-in) never
+ * installed for the whole app session, surfacing as a raw
+ * "No handler registered for 'agent-config-wire:connect'" in the sign-in
+ * dialog — observed on the fresh-user regression run.
+ */
+function startRuntimeWithRetry(
+  label: string,
+  start: () => Promise<unknown>,
+  retryDelaysMs: readonly number[] = [5_000, 15_000, 30_000]
+): void {
+  void (async () => {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await start();
+        if (attempt > 0) log.info(`Started ${label} after ${attempt} retr${attempt === 1 ? 'y' : 'ies'}`);
+        return;
+      } catch (error) {
+        const delayMs = retryDelaysMs[attempt];
+        if (delayMs === undefined) {
+          log.error(`Failed to start ${label} (giving up after ${attempt} retries):`, error);
+          return;
+        }
+        log.warn(`Failed to start ${label}; retrying in ${delayMs}ms:`, error);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+  })();
+}

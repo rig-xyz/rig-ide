@@ -19,9 +19,29 @@ export type AgentConfigRuntimeRpcClient = ReturnType<typeof createAgentConfigCli
 
 let clientPromise: Promise<AgentConfigRuntimeRpcClient> | null = null;
 
+/**
+ * Shown in place of the raw IPC failure ("No handler registered for
+ * 'agent-config-wire:connect'") when the main process hasn't installed the
+ * channel yet — the agent-config worker is still starting, or its start
+ * failed and is being retried (`main/index.ts`). A user saw the raw form on
+ * the fresh-user regression run's provider sign-in dialog.
+ */
+export const AGENT_RUNTIME_UNAVAILABLE_MESSAGE =
+  'Agent sign-in isn’t available yet — the agent runtime is still starting. Try again in a few seconds; if it keeps failing, restart Rig.';
+
 export function getAgentConfigRuntimeClient(): Promise<AgentConfigRuntimeRpcClient> {
-  clientPromise ??= createAgentConfigRuntimeClient();
+  // A failed connect must not be memoized: the main process retries a slow
+  // worker start with backoff, so the next attempt from here may succeed.
+  clientPromise ??= createAgentConfigRuntimeClient().catch((error: unknown) => {
+    clientPromise = null;
+    throw isMissingHandlerError(error) ? new Error(AGENT_RUNTIME_UNAVAILABLE_MESSAGE) : error;
+  });
   return clientPromise;
+}
+
+function isMissingHandlerError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('No handler registered');
 }
 
 export function resetAgentConfigRuntimeClient(): void {

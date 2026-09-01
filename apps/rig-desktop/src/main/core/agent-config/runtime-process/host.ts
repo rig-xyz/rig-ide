@@ -20,6 +20,12 @@ const agentConfigWorker = lazyWorker(
     entry: desktopWorkerPath('agent-config'),
     scope: agentConfigRuntimeScope,
     env: process.env,
+    // Cold start on a loaded or slow machine (utility process boot, module
+    // graph, native module loads) can exceed the 10s wire default — seen on
+    // the fresh-user regression run right after a dist rebuild. Every
+    // provider sign-in depends on this worker, so give it real headroom;
+    // `main/index.ts` also retries a failed start with backoff.
+    readyTimeoutMs: 30_000,
   }),
   {
     onSpawned: (handle) => installRendererWire(handle.client),
