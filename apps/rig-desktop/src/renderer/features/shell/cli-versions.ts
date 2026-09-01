@@ -4,7 +4,7 @@
  * my bundled and local installs conflict?", not just to name the bundle).
  *
  * "In use" is decided by the app's own shim-first resolution
- * (`ensureBundledRigBinInPath` prepends the bundled bin dir to PATH, and
+ * (`ensurePreferredRigBinInPath` prepends the bundled bin dir to PATH, and
  * `resolveCliBin` — the one function `auth.ts`/`join.ts`/`create.ts` all
  * spawn through — resolves the bundled shim by absolute path first):
  * bundled ALWAYS wins when present; only when nothing is bundled does the

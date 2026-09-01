@@ -4,10 +4,36 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   dedupeByRealPath,
+  devRigBinDir,
   ensureCodexSkillHome,
   shapeLocalInstalls,
   type ProbedInstall,
 } from './bundled-cli';
+
+describe('devRigBinDir', () => {
+  it('accepts an absolute executable rig shim only in dev mode', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rig-dev-cli-bin-'));
+    const executable = path.join(dir, process.platform === 'win32' ? 'rig.cmd' : 'rig');
+    try {
+      fs.writeFileSync(executable, '#!/bin/sh\nexit 0\n');
+      fs.chmodSync(executable, 0o755);
+      expect(devRigBinDir({ RIG_DEV_CLI_DIR: dir }, true)).toBe(dir);
+      expect(devRigBinDir({ RIG_DEV_CLI_DIR: dir }, false)).toBeNull();
+      expect(devRigBinDir({ RIG_DEV_CLI_DIR: 'relative/bin' }, true)).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a directory without an executable rig shim', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rig-dev-cli-empty-'));
+    try {
+      expect(devRigBinDir({ RIG_DEV_CLI_DIR: dir }, true)).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('ensureCodexSkillHome', () => {
   it('creates the standard Codex user-skill root for a first-time install', () => {

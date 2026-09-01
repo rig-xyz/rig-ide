@@ -50,6 +50,8 @@ const mocks = vi.hoisted(() => ({
   commentsCacheSet: vi.fn<(args: unknown) => Promise<unknown>>(),
   commentsResolveTarget: vi.fn<(args: unknown) => Promise<unknown>>(),
   commentsList: vi.fn<(args: unknown) => Promise<unknown>>(),
+  commentsCreate: vi.fn<(args: unknown) => Promise<unknown>>(),
+  contextCreateTarget: vi.fn<(args: unknown) => Promise<unknown>>(),
 }));
 
 vi.mock('@renderer/lib/ipc', () => ({
@@ -67,11 +69,15 @@ vi.mock('@renderer/lib/ipc', () => ({
         cacheSet: (...args: unknown[]) => mocks.commentsCacheSet(args[0]),
         resolveTarget: (...args: unknown[]) => mocks.commentsResolveTarget(args[0]),
         list: (...args: unknown[]) => mocks.commentsList(args[0]),
+        create: (...args: unknown[]) => mocks.commentsCreate(args[0]),
         // Only reached once a thread actually renders a `ThreadCard`
         // (`comments-margin.tsx`'s `useThreadAgent`/`useMentionableAgents`) —
         // none of the earlier tests in this file populate any threads, only
         // the new Preview↔Edit round-trip regression test below does.
         listMembers: vi.fn(async () => ({ success: true, data: { members: [] } })),
+      },
+      context: {
+        createTarget: (...args: unknown[]) => mocks.contextCreateTarget(args[0]),
       },
     },
     agents: {
@@ -139,6 +145,11 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
       error: { kind: 'notBound', message: 'Not bound' },
     });
     mocks.commentsList.mockReset().mockResolvedValue({ success: true, data: { messages: [] } });
+    mocks.commentsCreate.mockReset();
+    mocks.contextCreateTarget.mockReset().mockResolvedValue({
+      success: true,
+      data: { targetRef: 'test-target' },
+    });
   });
 
   afterEach(async () => {
@@ -303,6 +314,63 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
     // Edit is CM6, byte-for-byte the raw source — no rendered heading.
     expect(host.querySelector('.cm-content')?.textContent).toContain('# Hello');
     expect(host.querySelector('h1')).toBeNull();
+  });
+
+  it('turns one Preview selection into both a comment affordance and a passage context target', async () => {
+    const sourceSelection = 'The Q3\nforecast is $4.2m.';
+    mocks.read.mockResolvedValue({
+      success: true,
+      data: { content: `# Forecast\n\n${sourceSelection}\n`, truncated: false },
+    });
+    mocks.commentsResolveTarget.mockResolvedValue({
+      success: true,
+      data: {
+        target: {
+          bindingId: 'binding-1',
+          relayUrl: 'https://relay.example',
+          relPath: 'forecast.md',
+        },
+        selfUserId: 'user-1',
+      },
+    });
+
+    await renderArtifact('/repo/forecast.md');
+    await waitFor(() => loadingGone(host));
+
+    const paragraphText = Array.from(host.querySelectorAll('p'))
+      .flatMap((paragraph) => Array.from(paragraph.childNodes))
+      .find(
+        (node): node is Text =>
+          node.nodeType === Node.TEXT_NODE && node.textContent?.includes('The Q3') === true
+      );
+    expect(paragraphText).toBeTruthy();
+
+    await act(async () => {
+      const range = document.createRange();
+      range.selectNodeContents(paragraphText!);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    });
+
+    await waitFor(() =>
+      mocks.contextCreateTarget.mock.calls.some(([input]) => {
+        const anchor = (input as { anchor?: { exact?: string } }).anchor;
+        return anchor?.exact === sourceSelection;
+      })
+    );
+    const commentButton = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Comment'
+    );
+    expect(commentButton).toBeTruthy();
+
+    await act(async () => commentButton!.click());
+    await waitFor(
+      () =>
+        host.querySelector('[data-comments-rail]')?.textContent?.includes('The Q3') === true &&
+        host.querySelector('textarea[placeholder="Add a comment — @ to mention"]') !== null
+    );
   });
 
   it('repaints CM6 markers and the margin after a Preview → Edit round-trip, with no content change (preview-mode-spec.md rollout step 3)', async () => {

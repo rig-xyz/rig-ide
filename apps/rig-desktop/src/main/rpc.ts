@@ -40,18 +40,19 @@ import { rigBundledCliController } from './rig/bundled-cli';
 import { rigCommentAgentController } from './rig/comment-agent';
 import { rigCommentsController } from './rig/comments';
 import { rigCommentsCacheController } from './rig/comments-cache-store';
+import { rigContextController } from './rig/context';
 import { rigCreateController } from './rig/create';
 import { rigFilesController } from './rig/files';
 import { rigHomeController } from './rig/home';
 import { rigImportController } from './rig/import-doc';
 import { rigJoinController } from './rig/join';
 import { rigPulseController } from './rig/pulse';
-import { rigControlController } from './rig/rig-controls';
 import { rigRecentController } from './rig/recent-rigs';
+import { rigControlController } from './rig/rig-controls';
+import { rigShareController } from './rig/rig-share';
 import { rigSeenStateController } from './rig/seen-state';
 import { rigSessionsController } from './rig/sessions';
 import { rigSettingsController } from './rig/settings-instance';
-import { rigShareController } from './rig/rig-share';
 import { rigShareLinksController } from './rig/share-links';
 import { rigWorkspaceController } from './rig/workspace';
 
@@ -91,7 +92,14 @@ export const rpcRouter = createRPCRouter({
     // `askAgent` and the `rig_comments_cache` reads/writes sit alongside the
     // relay reads/writes they build on, so the renderer sees one comments
     // surface rather than three.
-    comments: { ...rigCommentsController, ...rigCommentAgentController, ...rigCommentsCacheController },
+    comments: {
+      ...rigCommentsController,
+      ...rigCommentAgentController,
+      ...rigCommentsCacheController,
+    },
+    // Prompt-scoped document locators. Main validates the renderer's root
+    // capability and bound manifest path before anything reaches an agent.
+    context: rigContextController,
     // Account sign-in is its own surface: it drives the `rig` CLI rather than
     // the relay, and everything else rig-related depends on it having run.
     auth: rigAuthController,

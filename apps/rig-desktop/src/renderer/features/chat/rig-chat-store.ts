@@ -6,13 +6,15 @@ import {
   type ChatState,
   type ChatView,
 } from '@emdash/chat-ui';
-import type { QueuedPrompt, TranscriptTurn } from '@emdash/core/acp/client';
+import type { PromptInput, QueuedPrompt, TranscriptTurn } from '@emdash/core/acp/client';
 import { action, computed, makeObservable, observable, reaction, runInAction } from 'mobx';
+import { activeDocumentContextRegistry } from '@renderer/features/docs/context/active-document-context';
 import { recordFileWritesFromTurns } from '@renderer/features/workspace/write-activity';
 import { AcpLiveSession, AcpStartError, asValueSource } from '@renderer/lib/acp/acp-live-session';
 import { getSharedChatContext } from '@renderer/lib/chat/shared-chat-context';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
+import { formatRigContextHiddenContext } from '@shared/rig/context';
 import type { RigSessionTitleSource } from '@shared/rig/sessions';
 import { deriveAutoApplyOption } from './model-preference';
 import { shouldPersistMode } from './permission-mode';
@@ -179,7 +181,7 @@ export class RigChatStore {
    * `_runBootstrap` assigns `this.session`. See `resume-presentation.ts`'s
    * `decideSubmitDisposition` for the pure "hold vs send vs queue" call.
    */
-  private _heldPrompts: string[] = [];
+  private _heldPrompts: PromptInput[] = [];
 
   get disposed(): boolean {
     return this._disposed;
@@ -495,6 +497,11 @@ export class RigChatStore {
   submitPrompt(text: string): void {
     if (this._disposed || !text.trim()) return;
     const isWorking = this.affordances.isWorking;
+    const targetRef = activeDocumentContextRegistry.getTargetRef(this.cwd);
+    const hiddenContext = targetRef
+      ? formatRigContextHiddenContext(targetRef, this.rigBindingId)
+      : undefined;
+    const prompt: PromptInput = hiddenContext ? { text, hiddenContext } : { text };
 
     if (!isWorking) {
       const optimisticId = `optimistic:user:${Date.now()}`;
@@ -523,10 +530,10 @@ export class RigChatStore {
     // during the same window, in order) the moment the session connects.
     const disposition = decideSubmitDisposition({ sessionReady: this.session !== null, isWorking });
     if (disposition === 'hold') {
-      this._heldPrompts.push(text);
+      this._heldPrompts.push(prompt);
       return;
     }
-    this._dispatchPrompt(text, disposition);
+    this._dispatchPrompt(prompt, disposition);
   }
 
   /**
@@ -536,7 +543,7 @@ export class RigChatStore {
    * once `decideSubmitDisposition` has already confirmed it, or right
    * after `_runBootstrap` just assigned it).
    */
-  private _dispatchPrompt(text: string, disposition: SubmitDisposition): void {
+  private _dispatchPrompt(prompt: PromptInput, disposition: SubmitDisposition): void {
     if (this._disposed || disposition === 'hold') return; // unreachable: callers only pass 'send' | 'queue' here.
     const generation = this._generation;
     // Row creation must land before any later write that targets this row
@@ -561,8 +568,8 @@ export class RigChatStore {
     }
     const send =
       disposition === 'queue'
-        ? this.session?.queuePrompt({ text })
-        : this.session?.sendPrompt({ text });
+        ? this.session?.queuePrompt(prompt)
+        : this.session?.sendPrompt(prompt);
     void send
       ?.then((result) => {
         if (!this._isCurrent(generation)) return;
@@ -647,13 +654,13 @@ export class RigChatStore {
    */
   private _flushHeldPrompts(): void {
     if (this._disposed) return;
-    for (const text of this._heldPrompts.splice(0)) {
+    for (const prompt of this._heldPrompts.splice(0)) {
       if (this._disposed) return;
       const disposition = decideSubmitDisposition({
         sessionReady: true,
         isWorking: this.affordances.isWorking,
       });
-      this._dispatchPrompt(text, disposition);
+      this._dispatchPrompt(prompt, disposition);
     }
   }
 

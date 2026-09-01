@@ -12,6 +12,7 @@ import { appScope } from '@main/app/app-scope';
 import { setSessionId } from '@main/core/conversations/set-session-id';
 import { providerOverrideSettings } from '@main/core/settings/provider-settings-service';
 import { log } from '@main/lib/logger';
+import { resolveCliBin } from '@main/rig/bundled-cli';
 import { noteAcpSessionStart } from '@main/rig/session-registry';
 import { desktopWorkerPath } from '@main/worker-manifest';
 
@@ -30,6 +31,10 @@ const acpWorker = lazyWorker(
     env: {
       ...process.env,
       EMDASH_ACP_ATTACHMENTS_DIR: join(app.getPath('userData'), 'acp-attachments'),
+      // The agent's command shell may rebuild PATH from a login profile. Give
+      // prompt-scoped Rig context reads an explicit app-selected executable so
+      // an older global install cannot silently replace the bundled/dev CLI.
+      RIG_CLI_PATH: resolveCliBin(),
     },
   }),
   {

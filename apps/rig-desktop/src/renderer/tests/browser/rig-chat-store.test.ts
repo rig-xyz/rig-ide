@@ -1,5 +1,7 @@
 import type { Result } from '@emdash/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { activeDocumentContextRegistry } from '@renderer/features/docs/context/active-document-context';
+import { encodeRigContextTarget } from '@shared/rig/context';
 import type { RigSessionEventsPage } from '@shared/rig/sessions';
 
 /**
@@ -85,6 +87,21 @@ function deferred<T>(): {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+function contextTargetRef(
+  workspaceBindingId: string,
+  path: string,
+  exact: string | null = null
+): string {
+  const encoded = encodeRigContextTarget({
+    version: 1,
+    workspaceBindingId,
+    path,
+    anchor: exact === null ? null : { exact },
+  });
+  if (!encoded.success) throw new Error(encoded.error.message);
+  return encoded.data;
 }
 
 type FakeSessionConfig = {
@@ -350,6 +367,107 @@ describe('RigChatStore — the rig_sessions row-creation guard', () => {
     await store.bootstrap();
 
     expect(mocks.ensureSession).not.toHaveBeenCalled();
+    void store.dispose();
+  });
+});
+
+describe('RigChatStore — prompt-scoped document context', () => {
+  it('attaches the active document target as hidden context without changing the visible prompt', async () => {
+    const targetRef = contextTargetRef('bnd-context', 'brief.md', 'Selected rationale');
+    const document = activeDocumentContextRegistry.activate('/rig-context');
+    document.setWholeDocumentRef(targetRef);
+    const session = fakeLiveSession();
+    mocks.acpCreate.mockResolvedValue(session);
+    const store = new RigChatStore('conv-context', 'bnd-context', '/rig-context', 'claude');
+
+    await store.bootstrap();
+    store.submitPrompt('Why is this here?');
+    await flush();
+
+    expect(session.sendPrompt).toHaveBeenCalledWith({
+      text: 'Why is this here?',
+      hiddenContext: expect.stringContaining(targetRef),
+    });
+
+    document.dispose();
+    void store.dispose();
+  });
+
+  it('pins a held prompt to the target active at submit time, even if navigation changes before ACP connects', async () => {
+    const firstRef = contextTargetRef('bnd-context', 'first.md', 'First passage');
+    const secondRef = contextTargetRef('bnd-context', 'second.md', 'Second passage');
+    const document = activeDocumentContextRegistry.activate('/rig-context-held');
+    document.setWholeDocumentRef(firstRef);
+    const created = deferred<ReturnType<typeof fakeLiveSession>>();
+    const session = fakeLiveSession();
+    mocks.acpCreate.mockReturnValue(created.promise);
+    const store = new RigChatStore(
+      'conv-context-held',
+      'bnd-context',
+      '/rig-context-held',
+      'codex'
+    );
+    const bootstrap = store.bootstrap();
+
+    store.submitPrompt('Who decided this?');
+    document.setWholeDocumentRef(secondRef);
+    created.resolve(session);
+    await bootstrap;
+    await flush();
+
+    const sent = session.sendPrompt.mock.calls[0]?.[0];
+    expect(sent).toMatchObject({ text: 'Who decided this?' });
+    expect(sent?.hiddenContext).toContain(firstRef);
+    expect(sent?.hiddenContext).not.toContain(secondRef);
+
+    document.dispose();
+    void store.dispose();
+  });
+
+  it('captures a fresh target for a prompt sent after resuming an existing ACP session', async () => {
+    const targetRef = contextTargetRef('bnd-context', 'review.md');
+    const document = activeDocumentContextRegistry.activate('/rig-context-resume');
+    document.setWholeDocumentRef(targetRef);
+    const session = fakeLiveSession({ acpSessionId: 'acp-context-resumed' });
+    mocks.acpResume.mockResolvedValue({
+      session,
+      history: { turns: [], nextCursor: null },
+    });
+    const store = new RigChatStore(
+      'conv-context-resumed',
+      'bnd-context',
+      '/rig-context-resume',
+      'codex',
+      { acpSessionId: 'acp-context-resumed', title: 'Existing review' }
+    );
+
+    await store.bootstrap();
+    store.submitPrompt('What changed since the earlier decision?');
+    await flush();
+
+    expect(session.sendPrompt).toHaveBeenCalledWith({
+      text: 'What changed since the earlier decision?',
+      hiddenContext: expect.stringContaining(targetRef),
+    });
+
+    document.dispose();
+    void store.dispose();
+  });
+
+  it('does not attach another rig target or a target with a mismatched binding', async () => {
+    const document = activeDocumentContextRegistry.activate('/rig-other');
+    document.setWholeDocumentRef(contextTargetRef('bnd-other', 'other.md'));
+    const session = fakeLiveSession();
+    mocks.acpCreate.mockResolvedValue(session);
+    const store = new RigChatStore('conv-context-isolated', 'bnd-context', '/rig-other', 'claude');
+
+    await store.bootstrap();
+    store.submitPrompt('Explain this');
+    await flush();
+
+    expect(session.sendPrompt).toHaveBeenCalledWith({ text: 'Explain this' });
+
+    document.dispose();
     void store.dispose();
   });
 });

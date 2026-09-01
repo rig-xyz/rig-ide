@@ -21,6 +21,7 @@ import {
   type RigUiStatus,
 } from '@shared/rig/contract';
 import { findBindingConfig, type RigBindingLocation } from './binding';
+import { disposeReplicaSafely } from './intent-bridge-lifecycle';
 import { intentContextFromTurn } from './intent-context';
 import { clearAcpSessionStart, getAcpSessionStart } from './session-registry';
 
@@ -121,14 +122,14 @@ class RigIntentBridge {
         clearTimeout(tracker.activeTurnRetryTimer);
         tracker.activeTurnRetryTimer = null;
       }
-      if (tracker.planReplica) void tracker.planReplica.dispose();
+      if (tracker.planReplica) void disposeReplicaSafely(tracker.planReplica);
       tracker.planReplica = null;
-      if (tracker.activeTurnReplica) void tracker.activeTurnReplica.dispose();
+      if (tracker.activeTurnReplica) void disposeReplicaSafely(tracker.activeTurnReplica);
       tracker.activeTurnReplica = null;
     }
     this.conversations.clear();
     if (this.summariesReplica) {
-      void this.summariesReplica.dispose();
+      void disposeReplicaSafely(this.summariesReplica);
       this.summariesReplica = null;
     }
   }
@@ -150,7 +151,7 @@ class RigIntentBridge {
     );
     await replica.ready;
     if (this.disposed) {
-      void replica.dispose();
+      void disposeReplicaSafely(replica);
       return;
     }
     this.summariesReplica = replica;
@@ -162,7 +163,7 @@ class RigIntentBridge {
       this.endConversation(conversationId);
     }
     if (this.summariesReplica) {
-      void this.summariesReplica.dispose();
+      void disposeReplicaSafely(this.summariesReplica);
       this.summariesReplica = null;
     }
     this.client = null;
@@ -259,7 +260,7 @@ class RigIntentBridge {
       },
       (error: unknown) => {
         if (tracker.planReplica === replica) tracker.planReplica = null;
-        void replica.dispose();
+        void disposeReplicaSafely(replica);
         if (!tracker.planAttachWarned) {
           tracker.planAttachWarned = true;
           log.warn('Rig intent bridge failed to follow session plan; retrying', {
@@ -323,7 +324,7 @@ class RigIntentBridge {
       },
       (error: unknown) => {
         if (tracker.activeTurnReplica === replica) tracker.activeTurnReplica = null;
-        void replica.dispose();
+        void disposeReplicaSafely(replica);
         if (!tracker.activeTurnAttachWarned) {
           tracker.activeTurnAttachWarned = true;
           log.warn('Rig intent bridge failed to follow active session turn; retrying', {
@@ -378,11 +379,11 @@ class RigIntentBridge {
       tracker.activeTurnRetryTimer = null;
     }
     if (tracker.planReplica) {
-      void tracker.planReplica.dispose();
+      void disposeReplicaSafely(tracker.planReplica);
       tracker.planReplica = null;
     }
     if (tracker.activeTurnReplica) {
-      void tracker.activeTurnReplica.dispose();
+      void disposeReplicaSafely(tracker.activeTurnReplica);
       tracker.activeTurnReplica = null;
     }
     this.enqueue(tracker, () => this.finish(tracker));

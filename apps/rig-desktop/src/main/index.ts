@@ -46,12 +46,12 @@ import {
 import { log } from './lib/logger';
 import { withRpcLogging } from './lib/rpc-logging';
 import { telemetryService } from './lib/telemetry';
+import { wireAgentRunnabilityPersistence } from './rig/agent-runnability';
 import {
-  ensureBundledRigBinInPath,
+  ensurePreferredRigBinInPath,
   installBundledRigSkill,
   logRigVersionSkew,
 } from './rig/bundled-cli';
-import { wireAgentRunnabilityPersistence } from './rig/agent-runnability';
 import { registerRigBridge } from './rig/intent-bridge';
 import { rigSettingsStore } from './rig/settings-instance';
 import { bufferOpenFilePath } from './rig/workspace';
@@ -112,6 +112,8 @@ if (import.meta.env.DEV) {
   } catch (err) {
     log.warn('Failed to set dock icon:', err);
   }
+  const devOpenPath = process.env.RIG_DEV_OPEN_PATH?.trim();
+  if (devOpenPath) bufferOpenFilePath(devOpenPath);
 }
 
 app.on('window-all-closed', () => {
@@ -128,10 +130,10 @@ app.on('activate', () => {
 
 void app.whenReady().then(async () => {
   // resolveUserEnv never throws (it falls back to process.env internally), so
-  // the bundled-rig PATH prepend below runs on both its success and failure
+  // the preferred-rig PATH prepend below runs on both its success and failure
   // paths — and must run after it, because it rebuilds PATH from the login shell.
   await resolveUserEnv();
-  ensureBundledRigBinInPath();
+  ensurePreferredRigBinInPath();
   logRigVersionSkew();
   installBundledRigSkill();
 

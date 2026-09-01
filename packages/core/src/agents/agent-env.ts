@@ -91,6 +91,15 @@ export const AGENT_ENV_VARS = [
   'QWEN_MODEL',
   'QWEN_RUNTIME_DIR',
   'QWEN_SANDBOX',
+  // Rig context plumbing (agent-queryable-context): the workspace-scoped CLI
+  // an agent session should prefer over any global install, plus the relay
+  // endpoint/auth the context manual fixture exports — the feature CLI reads
+  // RIG_RELAY_TOKEN/RIG_RELAY_URL from env (rig-doc-context src/config.mjs).
+  // Note: Codex's own shell_environment_policy default-excludes *TOKEN* names
+  // from the model shell; the CLI's binding-file auth is the fallback there.
+  'RIG_CLI_PATH',
+  'RIG_RELAY_TOKEN',
+  'RIG_RELAY_URL',
   'XAI_API_KEY',
   'ZAI_API_KEY',
 ] as const;

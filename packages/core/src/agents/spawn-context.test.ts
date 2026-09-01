@@ -10,6 +10,9 @@ describe('createSpawnContextResolver', () => {
         PATH: '/bin',
         SHELL: '/bin/zsh',
         ANTHROPIC_API_KEY: 'secret',
+        RIG_CLI_PATH: '/app/rig-bin/rig',
+        RIG_RELAY_TOKEN: 'relay-token',
+        RIG_RELAY_URL: 'https://relay.example',
         UNRELATED: 'ignored',
       },
       homeDir: '/fallback',
@@ -27,6 +30,9 @@ describe('createSpawnContextResolver', () => {
         PATH: '/bin',
         SHELL: '/bin/zsh',
         ANTHROPIC_API_KEY: 'secret',
+        RIG_CLI_PATH: '/app/rig-bin/rig',
+        RIG_RELAY_TOKEN: 'relay-token',
+        RIG_RELAY_URL: 'https://relay.example',
       },
     });
     expect(result.data.agentEnv).not.toHaveProperty('UNRELATED');

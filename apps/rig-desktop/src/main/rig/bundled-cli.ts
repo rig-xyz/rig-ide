@@ -1,5 +1,5 @@
 /**
- * Bundled @rigxyz/cli support (packaged builds only).
+ * Bundled @rigxyz/cli support plus an explicit local-dev override.
  *
  * scripts/vendor-rig-cli.ts vendors the CLI and two POSIX shims into the app's
  * Contents/Resources (see extraResources in electron-builder.config.ts):
@@ -7,9 +7,11 @@
  *   <resources>/rig-bin/   `rig` and `tapd` shims that run it via the app's
  *                          embedded Node (ELECTRON_RUN_AS_NODE) — no system Node.
  *
- * This module prepends rig-bin to process.env.PATH at startup so every agent
- * session, PTY, and child process spawned by the app finds a working `rig`.
- * The bundled CLI deliberately wins over any globally installed one.
+ * This module prepends the selected rig-bin directory to process.env.PATH at
+ * startup so every agent session, PTY, and child process spawned by the app
+ * finds the same `rig`. Packaged builds always prefer the bundled CLI. Dev
+ * builds may opt into a directory containing a `rig` executable with
+ * RIG_DEV_CLI_DIR; otherwise they keep using the developer's global install.
  */
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
@@ -35,6 +37,31 @@ export function bundledRigBinDir(): string | null {
 }
 
 /**
+ * Resolve an explicit dev-only CLI directory. Packaged builds ignore the
+ * override even if the environment contains it, so a downloaded app cannot
+ * be redirected to an arbitrary executable this way.
+ */
+export function devRigBinDir(
+  env: NodeJS.ProcessEnv = process.env,
+  devMode: boolean = import.meta.env.DEV
+): string | null {
+  if (!devMode) return null;
+  const dir = env.RIG_DEV_CLI_DIR?.trim();
+  if (!dir || !path.isAbsolute(dir)) return null;
+  const executable = path.join(dir, process.platform === 'win32' ? 'rig.cmd' : 'rig');
+  try {
+    fs.accessSync(executable, fs.constants.X_OK);
+    return fs.statSync(dir).isDirectory() ? dir : null;
+  } catch {
+    return null;
+  }
+}
+
+function preferredRigBinDir(): string | null {
+  return bundledRigBinDir() ?? devRigBinDir();
+}
+
+/**
  * THE resolution every CLI driver spawn goes through — `rig login`/`logout`
  * (`auth.ts`), `rig attach` (`join.ts`), `rig init`/`sync` (`create.ts`).
  * Previously each of those files kept its own identical copy; now there is
@@ -42,15 +69,12 @@ export function bundledRigBinDir(): string | null {
  * SAME function to know what a driver would actually run, instead of a
  * separately-maintained PATH walk that could silently drift from it.
  *
- * Packaged builds: the bundled shim's absolute path, bypassing PATH
- * entirely. Dev builds (no bundled dir): the bare name, left for the OS to
- * resolve off `process.env.PATH` — the exact same global every driver spawn
- * passes as `env: process.env`, itself set once at boot by
- * `resolveUserEnv()` (a login-shell `PATH` capture) then
- * `ensureBundledRigBinInPath()`'s bundled-dir prepend.
+ * Packaged builds and explicit dev overrides: the selected shim's absolute
+ * path, bypassing PATH entirely. Ordinary dev builds: the bare name, left for
+ * the OS to resolve off `process.env.PATH`.
  */
 export function resolveCliBin(name: 'rig' | 'tapd' = 'rig'): string {
-  const binDir = bundledRigBinDir();
+  const binDir = preferredRigBinDir();
   if (binDir) {
     const shim = path.join(binDir, name);
     if (fs.existsSync(shim)) return shim;
@@ -59,15 +83,14 @@ export function resolveCliBin(name: 'rig' | 'tapd' = 'rig'): string {
 }
 
 /**
- * Prepends the bundled rig-bin dir to process.env.PATH (if not already first)
- * so the bundled CLI shadows any global install. Must run AFTER resolveUserEnv()
- * — that call rebuilds PATH from the login shell on both its success and
- * failure paths, and a prepend done earlier would be lost.
+ * Prepends the selected rig-bin dir to process.env.PATH (if not already first)
+ * so the packaged shim or explicit dev override shadows any global install.
+ * Must run AFTER resolveUserEnv() because that call rebuilds PATH.
  *
  * Returns the prepended dir, or null when not packaged / already present.
  */
-export function ensureBundledRigBinInPath(): string | null {
-  const binDir = bundledRigBinDir();
+export function ensurePreferredRigBinInPath(): string | null {
+  const binDir = preferredRigBinDir();
   if (!binDir) return null;
 
   const entries = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
@@ -75,7 +98,10 @@ export function ensureBundledRigBinInPath(): string | null {
 
   const rest = entries.filter((entry) => entry !== binDir);
   process.env.PATH = [binDir, ...rest].join(path.delimiter);
-  log.info('[bundled-cli] Prepended bundled rig bin dir to PATH', { binDir });
+  log.info('[rig-cli] Prepended preferred rig bin dir to PATH', {
+    binDir,
+    source: bundledRigBinDir() ? 'bundled' : 'dev-override',
+  });
   return binDir;
 }
 
@@ -333,7 +359,7 @@ function probeVersion(binPath: string): Promise<string | null> {
 
 /**
  * The user's OWN installations of `name` — every PATH match that is NOT the
- * bundled shim dir (which `ensureBundledRigBinInPath` puts first, so a
+ * bundled shim dir (which `ensurePreferredRigBinInPath` puts first, so a
  * plain PATH resolution would always answer "bundled"; this probe exists
  * precisely to see past it), deduped by real target and each probed for its
  * own version. `candidates[0]` is the one a dev build's `resolveCliBin`

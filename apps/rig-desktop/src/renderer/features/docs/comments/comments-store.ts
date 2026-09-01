@@ -2,7 +2,9 @@ import { action, makeObservable, observable, reaction, runInAction } from 'mobx'
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
 import {
+  rigCommentAgentProgressChannel,
   rigCommentPermissionsChannel,
+  type RigCommentAgentActivity,
   type RigCommentMessage,
   type RigCommentPermissionRequest,
   type RigCommentTarget,
@@ -11,13 +13,13 @@ import {
 } from '@shared/rig/comments';
 import type { DocTabResource } from '../doc-file-sync';
 import { buildAnchor, buildAnchorFromRange, groupThreads, reanchor } from './anchors';
+import { cm6SurfaceAdapter, type CommentMarker } from './comment-decorations';
 import {
   type CommentsCacheEntry,
   isOfflineError,
   parseCommentsCache,
   toCacheEntry,
 } from './comments-cache';
-import { cm6SurfaceAdapter, type CommentMarker } from './comment-decorations';
 import { nextPendingReveal, shouldClearReveal, type PendingReveal } from './pending-reveal';
 import type { CommentSurfaceAdapter } from './surface-adapter';
 
@@ -147,13 +149,16 @@ export type PendingAgentReply = {
   agentName: string;
   /** Null while the turn is running; a one-line explanation once it has failed. */
   error: string | null;
+  /** Live assistant prose accumulated from the headless ACP turn. */
+  text: string;
+  /** Coarse, reader-safe activity; never thinking text, commands, or tool output. */
+  activity: RigCommentAgentActivity;
   /** Kept so the card's Retry can re-run the exact same request. */
   request: AgentReplyRequest;
   /**
    * `Date.now()` when this attempt started — reset on every `retryAgentReply`,
-   * since a retry is a fresh attempt. Backs the card's elapsed-time tick, the
-   * only feedback during a long non-streaming stretch (codex; Claude's
-   * pre-first-token thinking) where nothing else on screen changes.
+   * since a retry is a fresh attempt. Backs the card's elapsed-time tick before
+   * the first progress update and beside streamed activity thereafter.
    */
   startedAt: number;
 };
@@ -162,6 +167,7 @@ type AgentReplyRequest = {
   parentId: string;
   providerId: string;
   quote: string | null;
+  anchor: RigCommentMessage['anchor'];
   thread: RigCommentThreadEntry[];
 };
 
@@ -381,6 +387,7 @@ export class DocCommentsStore {
   private _revealSeq = 0;
   private readonly _stopContentReaction: () => void;
   private readonly _stopPermissionEvents: () => void;
+  private readonly _stopProgressEvents: () => void;
   /**
    * Which surface paints anchor markers and answers the margin's y-position
    * queries — CM6 by default (this store has always driven the editor
@@ -456,6 +463,18 @@ export class DocCommentsStore {
       runInAction(() => {
         if (update.requests.length === 0) this.agentPermissions.delete(update.rootId);
         else this.agentPermissions.set(update.rootId, update.requests);
+      });
+    });
+    this._stopProgressEvents = events.on(rigCommentAgentProgressChannel, (update) => {
+      if (this._disposed || update.absPath !== this.path) return;
+      const pending = this.agentReplies.get(update.rootId);
+      if (!pending || pending.error !== null) return;
+      runInAction(() => {
+        this.agentReplies.set(update.rootId, {
+          ...pending,
+          activity: update.activity,
+          text: update.text,
+        });
       });
     });
 
@@ -634,6 +653,7 @@ export class DocCommentsStore {
     this._disposed = true;
     this._stopContentReaction();
     this._stopPermissionEvents();
+    this._stopProgressEvents();
     this._stopPolling();
   }
 
@@ -805,7 +825,10 @@ export class DocCommentsStore {
   async create(quote: string, body: string, mention?: AgentMention): Promise<boolean> {
     const located = this._composerLocated;
     const built = located
-      ? { ok: true as const, anchor: buildAnchorFromRange(this._resource.content, located.start, located.end) }
+      ? {
+          ok: true as const,
+          anchor: buildAnchorFromRange(this._resource.content, located.start, located.end),
+        }
       : buildAnchor(this._resource.content, quote);
     if (!built.ok) {
       toast({
@@ -837,6 +860,7 @@ export class DocCommentsStore {
             parentId: result.data.id,
             providerId: mention.providerId,
             quote,
+            anchor: result.data.anchor,
             thread: [toThreadEntry(result.data)],
           });
         }
@@ -878,6 +902,7 @@ export class DocCommentsStore {
           parentId: rootId,
           providerId: mention.providerId,
           quote: thread?.root.anchor?.exact ?? null,
+          anchor: thread?.root.anchor ?? null,
           thread: [...prior, result.data].map(toThreadEntry),
         });
       }
@@ -978,7 +1003,14 @@ export class DocCommentsStore {
     const rootId = request.parentId;
     const startedAt = Date.now();
     runInAction(() => {
-      this.agentReplies.set(rootId, { agentName, error: null, request, startedAt });
+      this.agentReplies.set(rootId, {
+        agentName,
+        error: null,
+        text: '',
+        activity: 'working',
+        request,
+        startedAt,
+      });
     });
     this._retunePolling();
 
@@ -988,6 +1020,7 @@ export class DocCommentsStore {
         parentId: request.parentId,
         providerId: request.providerId,
         quote: request.quote,
+        anchor: request.anchor,
         thread: request.thread,
       });
       if (this._disposed) return;
@@ -996,7 +1029,15 @@ export class DocCommentsStore {
         if (result.success) {
           this.agentReplies.delete(rootId);
         } else {
-          this.agentReplies.set(rootId, { agentName, error: result.error.message, request, startedAt });
+          const pending = this.agentReplies.get(rootId);
+          this.agentReplies.set(rootId, {
+            agentName,
+            error: result.error.message,
+            text: pending?.text ?? '',
+            activity: pending?.activity ?? 'working',
+            request,
+            startedAt,
+          });
         }
       });
       this._retunePolling();
@@ -1065,9 +1106,18 @@ export class DocCommentsStore {
     // failure here must never surface as a comments error.
     if (this.target) {
       const lastSyncedAt = new Date().toISOString();
-      const entry = toCacheEntry(this.target.bindingId, this.target.relPath, messages, lastSyncedAt);
+      const entry = toCacheEntry(
+        this.target.bindingId,
+        this.target.relPath,
+        messages,
+        lastSyncedAt
+      );
       void rpc.rig.comments
-        .cacheSet({ absPath: this.path, messages: entry.messages, lastSyncedAt: entry.lastSyncedAt })
+        .cacheSet({
+          absPath: this.path,
+          messages: entry.messages,
+          lastSyncedAt: entry.lastSyncedAt,
+        })
         .catch(() => {});
       this.lastSyncedAt = lastSyncedAt;
     }

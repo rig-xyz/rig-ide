@@ -165,6 +165,8 @@ export type RigCommentAgentRequest = {
   model?: string | null;
   /** The passage the thread is anchored to, when it still has one. */
   quote?: string | null;
+  /** Full quote anchor for prompt-scoped provenance retrieval. */
+  anchor?: RigCommentAnchor | null;
   /** The thread so far, oldest first, ending with the comment that mentioned the agent. */
   thread: RigCommentThreadEntry[];
 };
@@ -222,6 +224,26 @@ export type RigCommentPermissionUpdate = {
 
 export const rigCommentPermissionsChannel =
   defineEvent<RigCommentPermissionUpdate>('rig:comment-permissions');
+
+export type RigCommentAgentActivity =
+  | 'working'
+  | 'thinking'
+  | 'checking-context'
+  | 'using-tool'
+  | 'writing';
+
+/** Live, reader-safe projection of one headless comment turn. */
+export type RigCommentAgentProgressUpdate = {
+  absPath: string;
+  rootId: string;
+  activity: RigCommentAgentActivity;
+  /** Assistant prose accumulated so far; never thinking or tool output. */
+  text: string;
+};
+
+export const rigCommentAgentProgressChannel = defineEvent<RigCommentAgentProgressUpdate>(
+  'rig:comment-agent-progress'
+);
 
 /** Max body length the relay accepts (400 `body_too_long` beyond it). */
 export const RIG_COMMENT_BODY_MAX = 8000;

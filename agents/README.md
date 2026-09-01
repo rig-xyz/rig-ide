@@ -25,6 +25,10 @@ This directory is the system of record for agent-facing repo guidance. Keep topi
 - `roadmaps/`
   - written technical strategies, sequenced implementation plans, and acceptance criteria
   - [`rig-resilience.md`](roadmaps/rig-resilience.md) — current plan for session resilience, recovery, filesystem safety, performance, and desktop completeness
+  - [`agent-queryable-context.md`](roadmaps/agent-queryable-context.md) — Stage 1 design for
+    explaining document passages from existing anchors, Tap provenance, and CLI retrieval
+  - [`agent-queryable-context-verification.md`](roadmaps/agent-queryable-context-verification.md) —
+    reproducible cross-repository verification record and remaining provider acceptance work
 
 ## Maintenance Rules
 

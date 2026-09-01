@@ -15,6 +15,7 @@ import {
   attachDocComments,
   disposeDocComments,
 } from '@renderer/features/docs/comments/comments-store';
+import { useRigDocumentContext } from '@renderer/features/docs/context/use-rig-document-context';
 import { DocEditor } from '@renderer/features/docs/doc-editor';
 import { DocTabResource } from '@renderer/features/docs/doc-file-sync';
 import { PreviewCommentSelectionButton } from '@renderer/features/docs/preview/preview-comment-selection';
@@ -431,6 +432,18 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
     store: comments,
   });
 
+  // Prompt-scoped provenance target: the chat panel is a sibling, so this
+  // hook publishes only the main-validated locator for the active document
+  // and its latest Edit/Preview selection. No document text crosses that
+  // boundary, and an unavailable target never blocks chat submission.
+  useRigDocumentContext({
+    root,
+    rootId,
+    resource,
+    mode,
+    getPreviewRoot: () => previewRef.current?.getRoot() ?? null,
+    getPreviewIndex: () => previewRef.current?.getIndex() ?? null,
+  });
 
   // Click-away dismisses the active thread — Docs behavior: the focused
   // comment "goes away" the moment you click anywhere that isn't its own

@@ -466,11 +466,9 @@ function formatElapsed(ms: number): string {
 }
 
 /**
- * A live "replying · 1m 40s" tick, in mono metadata per the design system's
- * "mono for metadata, always" rule. The only feedback during a long
- * non-streaming stretch (codex; Claude's pre-first-token thinking), where
- * nothing else in the card changes — without it the reader has no way to
- * tell a slow turn from a stuck one.
+ * A live "working · 1m 40s" tick, in mono metadata per the design system's
+ * "mono for metadata, always" rule. It remains useful beside streaming text:
+ * the reader can distinguish a slow but active turn from a newly stalled one.
  */
 function ElapsedTick({ since }: { since: number }) {
   const [now, setNow] = useState(() => Date.now());
@@ -498,6 +496,11 @@ const AgentReplyCard = observer(function AgentReplyCard({
     // rather than beside it, now that the message can run to several lines.
     return (
       <div className="border-border-strong text-warning mt-2.5 rounded-control border border-dashed px-2 py-1.5 text-xs">
+        {pending.text && (
+          <div className="mb-2 max-h-48 overflow-y-auto text-text-primary">
+            <CommentMarkdown content={pending.text} />
+          </div>
+        )}
         <p className="min-w-0 break-words whitespace-pre-wrap">{pending.error}</p>
         <div className="mt-1.5 flex items-center gap-2">
           <button
@@ -520,20 +523,31 @@ const AgentReplyCard = observer(function AgentReplyCard({
   }
 
   const waiting = permissions.length > 0;
+  const activity = waiting
+    ? 'Permission needed'
+    : pending.activity === 'thinking'
+      ? 'Thinking'
+      : pending.activity === 'checking-context'
+        ? 'Checking Rig context'
+        : pending.activity === 'using-tool'
+          ? 'Using a tool'
+          : 'Working';
   return (
-    <div className="border-border-strong text-text-muted mt-2.5 rounded-control border border-dashed px-2 py-1.5 text-xs">
+    <div className="border-border-hairline text-text-muted mt-2.5 border-t pt-2 text-xs">
       <div className="flex min-w-0 items-center gap-1.5">
         <RigMark size={11} className="shrink-0" />
-        <span className={cn('min-w-0 truncate', !waiting && 'animate-pulse')}>
-          {waiting ? (
-            `${pending.agentName} needs permission`
-          ) : (
-            <>
-              {pending.agentName} is replying · <ElapsedTick since={pending.startedAt} />
-            </>
-          )}
+        <span className="min-w-0 truncate">
+          {pending.agentName} · {activity}
+        </span>
+        <span className="ml-auto shrink-0">
+          <ElapsedTick since={pending.startedAt} />
         </span>
       </div>
+      {pending.text && (
+        <p className="text-text-muted mt-1.5 line-clamp-4 text-xs leading-relaxed whitespace-pre-wrap">
+          {pending.text}
+        </p>
+      )}
       {permissions.map((request) => (
         <PermissionRequestRow
           key={request.requestId}
