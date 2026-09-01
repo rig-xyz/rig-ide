@@ -3,9 +3,22 @@ import type { AgentPluginHost, IAcpBehavior } from '@emdash/core/agents/plugins'
 import { err, isErr, isOk } from '@emdash/shared';
 import { noopLogger } from '@emdash/shared/logger';
 import { acquireAsResult } from '@emdash/wire/util';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeAcpAgent, FakeAcpProcessHost, testPluginHost } from '../acp-test-support';
-import { createAcpConnectionSource, isAcpConnectionError, makeAcpConnectionKey } from './source';
+import {
+  CONNECTION_GRACE_MS,
+  createAcpConnectionSource,
+  isAcpConnectionError,
+  makeAcpConnectionKey,
+} from './source';
+
+/**
+ * Fakes ONLY the timer the keep-warm grace window uses — `waitForTeardown`'s
+ * `setImmediate` (and the fakes' own microtask plumbing) must stay real.
+ */
+function useGraceTimers(): void {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+}
 
 function makeBehavior(agent: FakeAcpAgent): IAcpBehavior {
   return {
@@ -42,7 +55,12 @@ function sourceDeps(
 }
 
 describe('createAcpConnectionSource', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('dedupes acquisitions by provider/workspace and refcounts release', async () => {
+    useGraceTimers();
     const agent = new FakeAcpAgent();
     const host = new FakeAcpProcessHost();
     const source = createAcpConnectionSource(sourceDeps(host));
@@ -60,10 +78,42 @@ describe('createAcpConnectionSource', () => {
     expect(host.lastHandle.kill).not.toHaveBeenCalled();
     expect(source.peek(key)).not.toBeUndefined();
 
+    // The last release starts the keep-warm grace window, not a teardown —
+    // the pooled process must survive until the window lapses so a prompt
+    // follow-up @mention reuses it instead of paying a fresh spawn.
     await second.data.release();
+    expect(host.lastHandle.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(CONNECTION_GRACE_MS);
     expect(host.lastHandle.kill).toHaveBeenCalledWith('SIGTERM');
     await waitForTeardown();
     expect(source.peek(key)).toBeUndefined();
+  });
+
+  it('reuses the live process for an acquire inside the grace window', async () => {
+    useGraceTimers();
+    const agent = new FakeAcpAgent();
+    const host = new FakeAcpProcessHost();
+    const source = createAcpConnectionSource(sourceDeps(host));
+    const key = makeAcpConnectionKey('claude', 'ws-1');
+
+    const first = await acquireAsResult(source, key, acquireInput(agent), isAcpConnectionError);
+    expect(isOk(first)).toBe(true);
+    if (!isOk(first)) return;
+    await first.data.release();
+    await vi.advanceTimersByTimeAsync(CONNECTION_GRACE_MS / 2);
+
+    const second = await acquireAsResult(source, key, acquireInput(agent), isAcpConnectionError);
+    expect(isOk(second)).toBe(true);
+    if (!isOk(second)) return;
+    // Same pooled process, no second spawn — and the pending teardown is
+    // cancelled: well past the original window, the process still lives.
+    expect(host.allHandles).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(CONNECTION_GRACE_MS);
+    expect(host.lastHandle.kill).not.toHaveBeenCalled();
+
+    await second.data.release();
+    await vi.advanceTimersByTimeAsync(CONNECTION_GRACE_MS);
+    expect(host.lastHandle.kill).toHaveBeenCalledWith('SIGTERM');
   });
 
   it('provisions separate workspaces independently', async () => {

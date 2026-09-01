@@ -1,6 +1,7 @@
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { isOk } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
+import { CONNECTION_GRACE_MS } from '../connection/source';
 import { FakeAcpTerminalProcess, makeAcpHarness, makeStartInput } from '../acp-test-support';
 import { AcpRuntime } from './runtime';
 
@@ -25,22 +26,33 @@ describe('AcpRuntime session manager', () => {
   });
 
   it('shares one process for conversations in the same provider/workspace and releases on last stop', async () => {
-    const h = makeAcpHarness();
-    const rt = new AcpRuntime(h.deps);
-    h.agent.newSession
-      .mockResolvedValueOnce({ sessionId: 'session-a' })
-      .mockResolvedValueOnce({ sessionId: 'session-b' });
+    // Only the keep-warm grace window's own timer is faked — everything else
+    // (the harness's microtask plumbing) stays real.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const h = makeAcpHarness();
+      const rt = new AcpRuntime(h.deps);
+      h.agent.newSession
+        .mockResolvedValueOnce({ sessionId: 'session-a' })
+        .mockResolvedValueOnce({ sessionId: 'session-b' });
 
-    await rt.startSession(makeStartInput({ conversationId: 'conv-a', workspaceId: 'ws-1' }));
-    await rt.startSession(makeStartInput({ conversationId: 'conv-b', workspaceId: 'ws-1' }));
+      await rt.startSession(makeStartInput({ conversationId: 'conv-a', workspaceId: 'ws-1' }));
+      await rt.startSession(makeStartInput({ conversationId: 'conv-b', workspaceId: 'ws-1' }));
 
-    expect(h.children).toHaveLength(1);
-    rt.stopSession('conv-a');
-    expect(h.lastChild.kill).not.toHaveBeenCalled();
-    rt.stopSession('conv-b');
-    await vi.waitFor(() => {
+      expect(h.children).toHaveLength(1);
+      rt.stopSession('conv-a');
+      expect(h.lastChild.kill).not.toHaveBeenCalled();
+      // The last stop starts the connection pool's keep-warm grace window
+      // (`connection/source.ts` CONNECTION_GRACE_MS) rather than killing the
+      // process — a prompt follow-up session on the same workspace reuses
+      // it. Only the window lapsing tears the process down.
+      rt.stopSession('conv-b');
+      expect(h.lastChild.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(CONNECTION_GRACE_MS);
       expect(h.lastChild.kill).toHaveBeenCalledWith('SIGTERM');
-    });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('publishes activeTurn patches without root replacement during incremental text growth', async () => {

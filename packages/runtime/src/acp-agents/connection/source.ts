@@ -55,6 +55,19 @@ export type AcpConnectionSource = ManagedSource<
   AcquireAcpConnectionInput
 >;
 
+/**
+ * How long a pooled provider process outlives its last lease. Without a
+ * grace period (`graceMs` defaults to 0), a headless comment-agent turn's
+ * `stopSession` drops the refcount to zero and tears the process down
+ * immediately — so the NEXT @mention on the same workspace pays the full
+ * provider spawn + ACP initialize again, the dominant fixed cost in
+ * mention-to-first-token latency. 45s covers the a-reader-is-replying
+ * cadence of a comment thread while keeping an idle provider process from
+ * lingering long; an acquire during the grace window cancels the teardown
+ * and reuses the live process (`managed-source.ts` `acquireLease`).
+ */
+export const CONNECTION_GRACE_MS = 45_000;
+
 export function createAcpConnectionSource(
   deps: CreateAcpConnectionSourceDeps
 ): AcpConnectionSource {
@@ -64,6 +77,7 @@ export function createAcpConnectionSource(
     AcquireAcpConnectionInput
   >({
     key: (key) => key,
+    graceMs: CONNECTION_GRACE_MS,
     create: (key, input, scope) => provisionAcpConnection(deps, key, input, scope),
     onError: (error, key) => {
       deps.logger.warn('AcpConnectionSource: provisioning failed', {
