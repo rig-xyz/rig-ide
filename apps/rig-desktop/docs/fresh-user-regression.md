@@ -2,7 +2,7 @@
 
 The ordered first-run journey a brand-new beta user hits, for a human tester
 to run through and tick off. Launch with the harness in
-`scripts/run-fresh-user.sh` (`pnpm run dev:fresh-user` from
+`scripts/run-fresh-user.sh` (`corepack pnpm run dev:fresh-user` from
 `apps/rig-desktop/`) — it isolates every persistent location rig-desktop and
 the bundled rig CLI touch (the "Isolated:" block it prints on every launch is
 the live, authoritative list; its `--help` and source comments explain the
@@ -10,13 +10,13 @@ reasoning behind each one) and seeds nothing: no rig config/tokens, no
 managed `~/Rig` home, no global `rig` on PATH, no app database, no app
 settings, no prior workspaces, no cached provider state.
 
-Run `pnpm run dev:fresh-user` (equivalently `sh scripts/run-fresh-user.sh`)
+Run `corepack pnpm run dev:fresh-user` (equivalently `sh scripts/run-fresh-user.sh`)
 from `apps/rig-desktop/` for the default journey below. See **Flags** at the
 bottom for `--no-providers`, `--loopback`, and `--no-launch`.
 
 ## First-run journey
 
-- [ ] **Launch.** `pnpm run dev:fresh-user`. Expect: `@emdash/core` and
+- [ ] **Launch.** `corepack pnpm run dev:fresh-user`. Expect: `@emdash/core` and
       `@emdash/plugins` rebuild, then an "Isolated:" summary printing the
       temp root and what's redirected there, then the Electron window opens.
 - [ ] **First screen.** No prior rig, no prior sign-in — expect a genuinely
@@ -69,9 +69,9 @@ To see a second person join and see the first person's comments, run the
 harness TWICE, each with its own temp root, and use the invite link from run
 1 in run 2:
 
-1. Terminal A: `pnpm run dev:fresh-user`. Sign in, create a rig, leave a
+1. Terminal A: `corepack pnpm run dev:fresh-user`. Sign in, create a rig, leave a
    comment, generate an invite link (see journey above).
-2. Terminal B, a SEPARATE shell: `pnpm run dev:fresh-user` again — each
+2. Terminal B, a SEPARATE shell: `corepack pnpm run dev:fresh-user` again — each
    invocation gets its own `mktemp -d` temp root, so the two are fully
    independent (separate `HOME`, separate userData, separate app DB). Sign in
    as a different account (a second email/Clerk identity — the real relay
