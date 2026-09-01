@@ -11,11 +11,6 @@
           if (stored === 'light' || stored === 'dark') {
             document.documentElement.setAttribute('data-theme', stored);
           }
-          // Charter v2 palette experiment — same pre-paint mirror as the
-          // theme, deleted (or promoted) when the palette decision lands.
-          if (localStorage.getItem('rig-palette') === 'slate-lavender') {
-            document.documentElement.setAttribute('data-palette', 'slate-lavender');
-          }
         } catch (_) {}
       })();
     </script>

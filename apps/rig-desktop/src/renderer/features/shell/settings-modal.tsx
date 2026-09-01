@@ -146,55 +146,6 @@ function AppearanceSection({
           </button>
         ))}
       </div>
-      <PalettePreviewRow />
-    </div>
-  );
-}
-
-/** The candidate palette's key: mirrors `data-theme`'s localStorage pattern (index.html applies it pre-paint). */
-const PALETTE_STORAGE_KEY = 'rig-palette';
-const PALETTE_PREVIEW = 'slate-lavender';
-
-/**
- * Charter v2 experiment (2026-08-25): the slate-and-lavender candidate
- * palette, toggleable so the decision gets made by living in it rather
- * than by comparing mocks. Deliberately NOT in the settings store: this
- * is a temporary experiment keyed off localStorage plus a root attribute
- * (the same mechanism the theme itself uses for pre-paint), and it gets
- * deleted, or promoted into tokens.css proper, when the charter lands.
- */
-function PalettePreviewRow() {
-  const [on, setOn] = useState(
-    () => document.documentElement.getAttribute('data-palette') === PALETTE_PREVIEW
-  );
-  const toggle = () => {
-    const next = !on;
-    setOn(next);
-    if (next) {
-      document.documentElement.setAttribute('data-palette', PALETTE_PREVIEW);
-      try {
-        localStorage.setItem(PALETTE_STORAGE_KEY, PALETTE_PREVIEW);
-      } catch {
-        /* preview just won't persist */
-      }
-    } else {
-      document.documentElement.removeAttribute('data-palette');
-      try {
-        localStorage.removeItem(PALETTE_STORAGE_KEY);
-      } catch {
-        /* nothing to clean */
-      }
-    }
-  };
-  return (
-    <div className="flex items-center justify-between">
-      <div>
-        <p className="text-text-primary text-sm">Palette preview</p>
-        <p className="text-text-muted text-xs">Slate and lavender, the charter v2 candidate. Experimental.</p>
-      </div>
-      <Button variant="outline" size="xs" onClick={toggle}>
-        {on ? 'Back to teal' : 'Try it'}
-      </Button>
     </div>
   );
 }

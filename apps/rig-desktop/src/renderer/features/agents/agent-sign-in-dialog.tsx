@@ -50,9 +50,9 @@ const TERMINAL_SEED_WIDTH = 640;
 const LOGIN_TERMINAL_THEME: ITerminalOptions['theme'] = {
   background: 'var(--bg-0)',
   foreground: '#fafafa',
-  cursor: '#5fa8a3',
+  cursor: '#7d88e8',
   cursorAccent: '#09090b',
-  selectionBackground: 'rgba(95, 168, 163, 0.3)',
+  selectionBackground: 'rgba(125, 136, 232, 0.3)',
   selectionForeground: '#fafafa',
 };
 
