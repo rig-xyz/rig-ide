@@ -5,20 +5,29 @@ import type {
 } from '@shared/rig/comments';
 
 /**
- * Auto-approving the one permission request the comment-agent flow itself
- * asks the model to make: the read-only `rig context` CLI lookup that
- * `comment-agent-prompt.ts`'s hidden context tells Claude and Codex to run
- * whenever a reviewer asks "why is this here?" (see
- * `formatRigContextHiddenContext` in `@shared/rig/context`).
+ * Two independent auto-approve paths for a headless comment-agent turn's
+ * pending permission requests, both applied in `comment-agent.ts`'s
+ * `publishPermissions` before anything reaches the thread card:
  *
- * Codex's sandbox auto-runs workspace commands, so this never surfaces there.
- * Claude's ACP provider relays every tool permission through
- * `comment-agent.ts`'s `followPermissions`/`publishPermissions`, which posts
- * an Allow/Reject card — including an "Always allow all Bash" option and the
- * raw command line — straight into the comment thread. For this one lookup
- * that is a UX defect, not a safeguard: it is a read against Rig/Tap's own
- * provenance data, by design safe, and a non-technical reader has no way to
- * evaluate a base64 target string. Every other tool call still prompts.
+ * 1. `partitionAutoApprovable` — always on, and scoped to exactly one shape:
+ *    the read-only `rig context` CLI lookup that `comment-agent-prompt.ts`'s
+ *    hidden context tells Claude and Codex to run whenever a reviewer asks
+ *    "why is this here?" (see `formatRigContextHiddenContext` in
+ *    `@shared/rig/context`). Codex's sandbox auto-runs workspace commands, so
+ *    this never surfaces there. Claude's ACP provider relays every tool
+ *    permission through `comment-agent.ts`'s `followPermissions`/
+ *    `publishPermissions`, which posts an Allow/Reject card — including an
+ *    "Always allow all Bash" option and the raw command line — straight into
+ *    the comment thread. For this one lookup that is a UX defect, not a
+ *    safeguard: it is a read against Rig/Tap's own provenance data, by design
+ *    safe, and a non-technical reader has no way to evaluate a base64 target
+ *    string.
+ *
+ * 2. `partitionGloballyApprovable` — gated on the "Auto-approve agent
+ *    actions" app setting (off by default, `settings-modal.tsx`'s Agents
+ *    section), applied to everything the first path left visible. When the
+ *    reader has turned it on, no permission card is ever shown for a
+ *    comment-thread agent — every request grants immediately.
  */
 
 /**
@@ -132,6 +141,39 @@ export function autoApproveOptionId(request: RigCommentPermissionRequest): strin
 
 /**
  * Splits one batch of pending requests into the ones a human must still see
+ * and the ones an `approveOptionId` predicate resolved on the spot, calling
+ * `resolve` once per newly auto-approved request. `alreadyResolved` guards
+ * against resolving the same request twice: the session's `pendingPermissions`
+ * state can re-emit an auto-approved request before its resolution
+ * round-trip has removed it, and a request pending resolution must stay off
+ * the published list either way. Shared by both auto-approve paths below —
+ * the read-only `rig context` predicate and the global setting's
+ * approve-everything one — so "skip resolving a request twice" and "leave it
+ * visible when there's no plain option to grant" are written, and tested,
+ * exactly once.
+ */
+function partitionWithApprover(
+  requests: readonly RigCommentPermissionRequest[],
+  alreadyResolved: Set<string>,
+  resolve: (requestId: string, optionId: string) => void,
+  approveOptionId: (request: RigCommentPermissionRequest) => string | null
+): RigCommentPermissionRequest[] {
+  const visible: RigCommentPermissionRequest[] = [];
+  for (const request of requests) {
+    if (alreadyResolved.has(request.requestId)) continue;
+    const optionId = approveOptionId(request);
+    if (optionId) {
+      alreadyResolved.add(request.requestId);
+      resolve(request.requestId, optionId);
+      continue;
+    }
+    visible.push(request);
+  }
+  return visible;
+}
+
+/**
+ * Splits one batch of pending requests into the ones a human must still see
  * and the ones just auto-approved, calling `resolve` once per newly
  * auto-approved request. `alreadyResolved` guards against resolving the same
  * request twice: the session's `pendingPermissions` state can re-emit an
@@ -143,16 +185,28 @@ export function partitionAutoApprovable(
   alreadyResolved: Set<string>,
   resolve: (requestId: string, optionId: string) => void
 ): RigCommentPermissionRequest[] {
-  const visible: RigCommentPermissionRequest[] = [];
-  for (const request of requests) {
-    if (alreadyResolved.has(request.requestId)) continue;
-    const optionId = autoApproveOptionId(request);
-    if (optionId) {
-      alreadyResolved.add(request.requestId);
-      resolve(request.requestId, optionId);
-      continue;
-    }
-    visible.push(request);
-  }
-  return visible;
+  return partitionWithApprover(requests, alreadyResolved, resolve, autoApproveOptionId);
+}
+
+/**
+ * The global "Auto-approve agent actions" setting (Settings → Agents) applied
+ * to whatever `partitionAutoApprovable` left visible: every one of those
+ * requests is resolved immediately via its own `allow_once` option — never
+ * `allow_always`, for the same reason `autoApproveOptionId` above never picks
+ * it — and none of them reach the thread card. Unlike the read-only-context
+ * predicate, there is no per-request shape check: the setting itself is the
+ * human's standing consent, made once in Settings rather than per tool call.
+ * A request that offers no `allow_once` at all (only `allow_always`, say) is
+ * left visible rather than granted through the broader option — the same
+ * restraint `autoApproveOptionId` applies, and the point of the "never
+ * `allow_always`" rule everywhere in this module.
+ */
+export function partitionGloballyApprovable(
+  requests: readonly RigCommentPermissionRequest[],
+  alreadyResolved: Set<string>,
+  resolve: (requestId: string, optionId: string) => void
+): RigCommentPermissionRequest[] {
+  return partitionWithApprover(requests, alreadyResolved, resolve, (request) =>
+    allowOnceOptionId(request.options)
+  );
 }

@@ -37,7 +37,7 @@ import {
 } from './comments-store';
 import { layoutMarginCards, MARGIN_CARD_GAP, type MarginLayoutItem } from './margin-layout';
 import { minimalScrollDelta } from './pending-reveal';
-import { alwaysAllowLabel, rawPermissionDetailText, summarizePermissionDetail } from './permission-summary';
+import { plainAllowOptionId, rawPermissionDetailText, summarizePermissionDetail } from './permission-summary';
 import type { CommentSurfaceAdapter } from './surface-adapter';
 import {
   findMention,
@@ -396,11 +396,22 @@ function MentionTextarea({
  * collaborator reads, and a base64 target ref or a full shell command is
  * noise, not information, to that reader. The exact command/path/URL is
  * still one click away behind "Show details", in monospace, for anyone who
- * wants it. Allow/Reject stay real buttons; "always allow" is relabeled with
- * its actual scope spelled out and rendered as a quiet text link beneath
- * them — never the default, never as prominent as the one-shot choices.
+ * wants it.
+ *
+ * Allow/Reject stay real buttons. The provider's own persistent grant
+ * (`allow_always` — Claude's own labels read "Always Allow all Bash" etc.,
+ * session-scoped and silently gone the moment this headless turn's session
+ * ends) is never rendered and never invoked: the relay it actually promises
+ * — skipping the ask on future turns too — only exists through the app-wide
+ * "Auto-approve agent actions" setting (`settings-modal.tsx`,
+ * `main/rig/comment-agent-auto-approve.ts`'s `partitionGloballyApprovable`).
+ * A request offering that option instead shows one quiet text link that
+ * turns the real setting on and grants THIS request through its own
+ * `allow_once` option — never `allow_always` — so the reader gets an honest
+ * "yes, and stop asking from now on" rather than a promise the next mention's
+ * fresh session would silently break.
  */
-const PermissionRequestRow = observer(function PermissionRequestRow({
+export const PermissionRequestRow = observer(function PermissionRequestRow({
   store,
   rootId,
   request,
@@ -416,7 +427,15 @@ const PermissionRequestRow = observer(function PermissionRequestRow({
   const rawDetail = rawPermissionDetailText(request.detail);
 
   const oneShot = request.options.filter((option) => option.kind !== 'allow_always');
-  const persistent = request.options.filter((option) => option.kind === 'allow_always');
+  const offersPersistentOption = request.options.some((option) => option.kind === 'allow_always');
+  const plainOptionId = plainAllowOptionId(request.options);
+
+  const enableAutoApprove = () => {
+    void rpc.rig.settings.set({ autoApproveAgentActions: true });
+    if (plainOptionId) {
+      store.resolveAgentPermission(rootId, request.requestId, plainOptionId);
+    }
+  };
 
   return (
     <div className="border-border-hairline mt-1.5 border-t pt-1.5">
@@ -455,20 +474,19 @@ const PermissionRequestRow = observer(function PermissionRequestRow({
           </Button>
         ))}
       </div>
-      {persistent.map((option) => (
+      {offersPersistentOption && (
         <button
-          key={option.optionId}
           type="button"
           disabled={busy}
           className="text-text-muted hover:text-text-primary mt-1 block text-xs underline-offset-2 hover:underline disabled:opacity-50"
           onClick={(event) => {
             event.stopPropagation();
-            store.resolveAgentPermission(rootId, request.requestId, option.optionId);
+            enableAutoApprove();
           }}
         >
-          {alwaysAllowLabel(request.detail)}
+          Always allow — turn on auto-approve for agents
         </button>
-      ))}
+      )}
     </div>
   );
 });

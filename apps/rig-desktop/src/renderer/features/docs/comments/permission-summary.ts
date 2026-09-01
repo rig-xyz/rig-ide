@@ -1,4 +1,4 @@
-import type { RigCommentPermissionDetail } from '@shared/rig/comments';
+import type { RigCommentPermissionDetail, RigCommentPermissionOption } from '@shared/rig/comments';
 
 /**
  * Turns a headless comment-agent's permission request into text a
@@ -189,23 +189,15 @@ export function rawPermissionDetailText(detail: RigCommentPermissionDetail | und
 }
 
 /**
- * Sober, explicit replacement for whatever label the session gave an
- * `allow_always` option (Claude's own is "Always Allow all Bash" / "Always
- * Allow all Write" — accurate but stated from the tool's point of view, not
- * the reader's). Scoped by detail kind rather than the provider's wording, so
- * it reads the same regardless of which agent is asking.
+ * The one-shot option to grant when a reader clicks the card's quiet
+ * "Always allow — turn on auto-approve for agents" link, instead of the
+ * provider's own persistent `allow_always` option (`comments-margin.tsx`'s
+ * `PermissionRequestRow` never invokes that option id — see its own comment).
+ * Mirrors `comment-agent-auto-approve.ts`'s main-process `allowOnceOptionId`:
+ * only `allow_once` counts as "the plain grant", so a request offering no
+ * one-shot option at all yields null and the caller falls back to leaving
+ * the ordinary buttons as the only way to answer.
  */
-export function alwaysAllowLabel(detail: RigCommentPermissionDetail | undefined): string {
-  switch (detail?.kind) {
-    case 'execute':
-      return 'Always allow — applies to all commands this agent runs, beyond this thread';
-    case 'edit':
-      return 'Always allow — applies to all edits this agent makes, beyond this thread';
-    case 'read':
-      return 'Always allow — applies to all files this agent reads, beyond this thread';
-    case 'fetch':
-      return 'Always allow — applies to all pages this agent fetches, beyond this thread';
-    default:
-      return 'Always allow — applies to everything this agent does, beyond this thread';
-  }
+export function plainAllowOptionId(options: readonly RigCommentPermissionOption[]): string | null {
+  return options.find((option) => option.kind === 'allow_once')?.optionId ?? null;
 }

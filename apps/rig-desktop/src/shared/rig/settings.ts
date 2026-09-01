@@ -182,6 +182,20 @@ export type RigSettings = {
   pinnedPathsByRig: Record<string, string[]>;
   /** File-navigator redesign (§5): the tree's own sort/filter choice, per rig — see `FileTreeView`'s own comment. */
   fileTreeViewByRig: Record<string, FileTreeView>;
+  /**
+   * Comment-agent permission relay: when true, every tool-call permission a
+   * headless `@mention` turn raises is resolved immediately with its plain
+   * `allow_once` option (never the provider's `allow_always`) instead of
+   * being posted to the thread — see `main/rig/comment-agent.ts`'s
+   * `publishPermissions`. A plain global preference, replaced wholesale on
+   * `set()`, not merged — same shape as `theme`/`showSystemFiles` above, not
+   * per-rig: this is a machine-wide risk tradeoff, not a workspace taste.
+   * Default `false` — comment text arrives from collaborators and is
+   * untrusted, so an agent acting on it without asking is opt-in only. See
+   * `main/rig/comment-agent-auto-approve.ts`'s existing read-only `rig
+   * context` auto-approve, which stays active regardless of this setting.
+   */
+  autoApproveAgentActions: boolean;
 };
 
 export const DEFAULT_RIG_SETTINGS: RigSettings = {
@@ -204,6 +218,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   showSystemFiles: false,
   pinnedPathsByRig: {},
   fileTreeViewByRig: {},
+  autoApproveAgentActions: false,
 };
 
 /** The subset of legacy localStorage values the renderer can hand to `importLegacy`. */

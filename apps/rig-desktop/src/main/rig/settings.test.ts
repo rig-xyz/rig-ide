@@ -504,6 +504,46 @@ describe('RigSettingsStore', () => {
     });
   });
 
+  describe('autoApproveAgentActions (global auto-approve setting)', () => {
+    it('defaults to false before anything is ever set', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().autoApproveAgentActions).toBe(false);
+    });
+
+    it('set() persists and round-trips through a second store instance', () => {
+      const first = new RigSettingsStore(settingsPath);
+      first.initialize();
+      first.set({ autoApproveAgentActions: true });
+
+      const second = new RigSettingsStore(settingsPath);
+      second.initialize();
+      expect(second.get().autoApproveAgentActions).toBe(true);
+    });
+
+    it('an existing settings.json that predates this field degrades to false, not a throw', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({ version: 1, theme: null, chatPanelWidth: null, chatPanelCollapsed: false, lastHarnessByRig: {}, lastOpenTabsByRig: {} })
+      );
+      const store = new RigSettingsStore(settingsPath);
+      expect(() => store.initialize()).not.toThrow();
+      expect(store.get().autoApproveAgentActions).toBe(false);
+    });
+
+    it('a malformed value (wrong type) degrades to false rather than passing through', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({ ...DEFAULT_RIG_SETTINGS, autoApproveAgentActions: 'yes' })
+      );
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().autoApproveAgentActions).toBe(false);
+    });
+  });
+
   it('degrades a corrupt settings.json to defaults instead of throwing', () => {
     mkdirSync(join(dir, 'nested'), { recursive: true });
     writeFileSync(settingsPath, 'not json');

@@ -172,6 +172,7 @@ function normalizeSettings(parsed: unknown): RigSettings {
     showSystemFiles: raw.showSystemFiles === true,
     pinnedPathsByRig: isStringArrayRecord(raw.pinnedPathsByRig) ? raw.pinnedPathsByRig : {},
     fileTreeViewByRig: normalizeFileTreeViewRecord(raw.fileTreeViewByRig),
+    autoApproveAgentActions: raw.autoApproveAgentActions === true,
   };
 }
 

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { RigCommentPermissionDetail } from '@shared/rig/comments';
-import { alwaysAllowLabel, rawPermissionDetailText, summarizePermissionDetail } from './permission-summary';
+import { plainAllowOptionId, rawPermissionDetailText, summarizePermissionDetail } from './permission-summary';
 
 // The same realistic base64url target ref `comment-agent-auto-approve.test.ts`
 // uses — the actual shape of the one Bash command this app's own hidden
@@ -199,20 +198,27 @@ describe('rawPermissionDetailText', () => {
   });
 });
 
-describe('alwaysAllowLabel', () => {
-  it.each<[RigCommentPermissionDetail['kind'], string]>([
-    ['execute', 'Always allow — applies to all commands this agent runs, beyond this thread'],
-    ['edit', 'Always allow — applies to all edits this agent makes, beyond this thread'],
-    ['read', 'Always allow — applies to all files this agent reads, beyond this thread'],
-    ['fetch', 'Always allow — applies to all pages this agent fetches, beyond this thread'],
-    ['other', 'Always allow — applies to everything this agent does, beyond this thread'],
-  ])('is sober and scope-explicit for kind %s', (kind, expected) => {
-    expect(alwaysAllowLabel({ kind })).toBe(expected);
+describe('plainAllowOptionId', () => {
+  it('picks the allow_once option, ignoring allow_always and reject options', () => {
+    expect(
+      plainAllowOptionId([
+        { optionId: 'opt_allow_once', name: 'Yes', kind: 'allow_once' },
+        { optionId: 'opt_allow_always', name: "Yes, don't ask again", kind: 'allow_always' },
+        { optionId: 'opt_reject', name: 'No', kind: 'reject_once' },
+      ])
+    ).toBe('opt_allow_once');
   });
 
-  it('is scope-explicit even with no detail at all', () => {
-    expect(alwaysAllowLabel(undefined)).toBe(
-      'Always allow — applies to everything this agent does, beyond this thread'
-    );
+  it('never picks allow_always, even when it is the only allow option offered', () => {
+    expect(
+      plainAllowOptionId([
+        { optionId: 'opt_allow_always', name: "Yes, don't ask again", kind: 'allow_always' },
+        { optionId: 'opt_reject', name: 'No', kind: 'reject_once' },
+      ])
+    ).toBeNull();
+  });
+
+  it('returns null when there is no allow_once option at all', () => {
+    expect(plainAllowOptionId([{ optionId: 'opt_reject', name: 'No', kind: 'reject_once' }])).toBeNull();
   });
 });

@@ -82,6 +82,7 @@ export function SettingsModal({
           </Section>
           <Section label="Agents">
             <AgentsSection />
+            <AutoApproveAgentActionsRow />
           </Section>
           <Section label="Rig folder">
             <RigHomeRow />
@@ -318,6 +319,70 @@ function AgentsSection() {
             +{restRows.length} more available
           </button>
         ))}
+    </div>
+  );
+}
+
+/**
+ * Auto-approve round: the provider's own "Always allow" is session-scoped,
+ * and every `@mention` in a comment thread spawns a fresh headless session
+ * (`main/rig/comment-agent.ts`) — a reader who clicked it once got no
+ * lasting effect and no sign anything had gone wrong. This is the real,
+ * persistent switch instead: when on, `comment-agent.ts`'s
+ * `publishPermissions` resolves every pending permission request from a
+ * comment-thread agent immediately, without posting a card — see
+ * `main/rig/comment-agent-auto-approve.ts`. The permission card's own
+ * "Always allow" link (`comments-margin.tsx`'s `PermissionRequestRow`) turns
+ * this on directly; this row is the other way in, and the only way back off.
+ * Default off, and the description states the real scope plainly: comment
+ * text arrives from collaborators and is untrusted input to whatever the
+ * agent does with it.
+ */
+function AutoApproveAgentActionsRow() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['rig', 'settings', 'autoApproveAgentActions'],
+    queryFn: () => rpc.rig.settings.get(),
+  });
+  const enabled = data?.autoApproveAgentActions ?? false;
+
+  const toggle = () => {
+    void rpc.rig.settings.set({ autoApproveAgentActions: !enabled }).then(() => {
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'settings', 'autoApproveAgentActions'] });
+    });
+  };
+
+  return (
+    <div className="border-border-hairline mt-1 flex items-start justify-between gap-3 border-t pt-3">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <label htmlFor="auto-approve-agent-actions" className="text-text-primary text-xs font-medium">
+          Auto-approve agent actions
+        </label>
+        <p className="text-text-muted text-xs">
+          Agents mentioned in comment threads act without asking for approval. Applies to every
+          workspace on this machine — comment text from collaborators is untrusted, so leave this
+          off if you share workspaces with people you don't fully trust.
+        </p>
+      </div>
+      <button
+        id="auto-approve-agent-actions"
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        aria-label="Auto-approve agent actions"
+        onClick={toggle}
+        className={cn(
+          'relative mt-0.5 h-4 w-7 shrink-0 rounded-full transition-colors',
+          enabled ? 'bg-border-strong' : 'bg-bg-2 border-border-hairline border'
+        )}
+      >
+        <span
+          className={cn(
+            'bg-bg-1 absolute top-0.5 left-0.5 size-3 rounded-full transition-transform',
+            enabled && 'translate-x-3'
+          )}
+        />
+      </button>
     </div>
   );
 }

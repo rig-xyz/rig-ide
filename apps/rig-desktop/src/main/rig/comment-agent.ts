@@ -23,7 +23,7 @@ import {
   type RigCommentPermissionRequest,
   type RigCommentsError,
 } from '@shared/rig/comments';
-import { partitionAutoApprovable } from './comment-agent-auto-approve';
+import { partitionAutoApprovable, partitionGloballyApprovable } from './comment-agent-auto-approve';
 import { createTurnDeadline, type TurnOutcome } from './comment-agent-lifecycle';
 import {
   assistantText,
@@ -33,6 +33,7 @@ import {
 import { composeCommentAgentPrompt } from './comment-agent-prompt';
 import { resolveCommentDispatchContext, rigCommentsController } from './comments';
 import { checkRelayTrust } from './relay-trust';
+import { rigSettingsStore } from './settings-instance';
 
 /**
  * Answering an `@agent` mention in a doc comment thread.
@@ -57,7 +58,10 @@ import { checkRelayTrust } from './relay-trust';
  * `comment-agent-prompt.ts`). Surfacing an Allow/Reject card with a raw
  * base64 command line for a by-design-safe evidence read is a UX defect, not
  * a safeguard — `partitionAutoApprovable` (`comment-agent-auto-approve.ts`)
- * resolves it immediately instead. Every other tool call still prompts.
+ * resolves it immediately instead. Every other tool call prompts, unless the
+ * reader has turned on Settings → Agents → "Auto-approve agent actions", in
+ * which case `partitionGloballyApprovable` resolves those too — see
+ * `publishPermissions` below.
  *
  * Every wait here is still bounded — see `awaitTurnEnd`, where the inactivity
  * clock stops for exactly as long as a human is the one being waited on.
@@ -526,42 +530,64 @@ export const rigCommentAgentController = createRPCController({
     const autoApprovedRequestIds = new Set<string>();
 
     /**
-     * One publish path for both consumers: the card that draws the buttons, and
-     * the clock that must not run while they are unanswered. Read-only
-     * `rig context` lookups are filtered out and resolved directly here,
-     * through the same `resolvePermission` mechanism the card's own Allow
-     * button uses below — see the module doc comment and
-     * `comment-agent-auto-approve.ts`.
+     * Resolves one auto-approved request through the same `resolvePermission`
+     * mechanism the card's own Allow button uses below, logging at debug
+     * (never a card, per the caller) and warning only on the round-trip
+     * itself failing. `label` names which auto-approve path is granting the
+     * request, for that log line only.
      */
-    const publishPermissions = (requests: RigCommentPermissionRequest[]): void => {
-      const visible = partitionAutoApprovable(
-        requests,
-        autoApprovedRequestIds,
-        (requestId, optionId) => {
-          log.debug('Rig comment agent: auto-approving a read-only context lookup', {
+    const resolveAutoApproved = (label: string, requestId: string, optionId: string): void => {
+      log.debug(`Rig comment agent: ${label}`, { conversationId, requestId });
+      void client.resolvePermission({ conversationId, requestId, optionId }).then(
+        (resolved) => {
+          if (!resolved.success) {
+            log.warn(`Rig comment agent: could not auto-approve — ${label}`, {
+              conversationId,
+              requestId,
+              error: String(resolved.error.type),
+            });
+          }
+        },
+        (error: unknown) => {
+          log.warn(`Rig comment agent: could not auto-approve — ${label}`, {
             conversationId,
             requestId,
+            error: String(error),
           });
-          void client.resolvePermission({ conversationId, requestId, optionId }).then(
-            (resolved) => {
-              if (!resolved.success) {
-                log.warn('Rig comment agent: could not auto-approve a read-only context lookup', {
-                  conversationId,
-                  requestId,
-                  error: String(resolved.error.type),
-                });
-              }
-            },
-            (error: unknown) => {
-              log.warn('Rig comment agent: could not auto-approve a read-only context lookup', {
-                conversationId,
-                requestId,
-                error: String(error),
-              });
-            }
-          );
         }
       );
+    };
+
+    /**
+     * One publish path for both consumers: the card that draws the buttons, and
+     * the clock that must not run while they are unanswered. Read-only
+     * `rig context` lookups are always filtered out and resolved directly
+     * here (see the module doc comment and `comment-agent-auto-approve.ts`).
+     * When the reader has turned on Settings → Agents → "Auto-approve agent
+     * actions" (`rigSettingsStore`), everything `partitionAutoApprovable` left
+     * visible is resolved the same way too, via `partitionGloballyApprovable`
+     * — so `visible` ends up empty and no card is ever published for this
+     * turn. Read fresh on every publish rather than cached at turn start: a
+     * reader who flips the setting mid-turn (from the card's own "Always
+     * allow" link, or from Settings) sees it take effect on this turn's very
+     * next pending request, not just the next mention.
+     */
+    const publishPermissions = (requests: RigCommentPermissionRequest[]): void => {
+      const afterContextAutoApprove = partitionAutoApprovable(
+        requests,
+        autoApprovedRequestIds,
+        (requestId, optionId) =>
+          resolveAutoApproved('auto-approving a read-only context lookup', requestId, optionId)
+      );
+      const visible = rigSettingsStore.get().autoApproveAgentActions
+        ? partitionGloballyApprovable(afterContextAutoApprove, autoApprovedRequestIds, (requestId, optionId) =>
+            resolveAutoApproved(
+              'auto-approving via the global "Auto-approve agent actions" setting',
+              requestId,
+              optionId
+            )
+          )
+        : afterContextAutoApprove;
       turn.setAwaitingPermission(visible.length > 0);
       events.emit(rigCommentPermissionsChannel, {
         absPath,

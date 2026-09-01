@@ -4,6 +4,7 @@ import {
   autoApproveOptionId,
   isReadOnlyContextCommand,
   partitionAutoApprovable,
+  partitionGloballyApprovable,
 } from './comment-agent-auto-approve';
 
 // A realistic base64url target ref, the same shape `encodeRigContextTarget` produces.
@@ -239,5 +240,63 @@ describe('partitionAutoApprovable', () => {
 
     expect(visible).toEqual([editRequest]);
     expect(resolve).toHaveBeenCalledExactlyOnceWith('req_context', 'opt_allow_once');
+  });
+});
+
+describe('partitionGloballyApprovable', () => {
+  it('auto-resolves any request kind via its allow_once option, with no command-shape check', () => {
+    const resolve = vi.fn();
+    const editRequest = permissionRequest({
+      requestId: 'req_edit',
+      detail: { kind: 'edit', path: 'docs/forecast.md', summary: '+3 −1' },
+    });
+
+    const visible = partitionGloballyApprovable([editRequest], new Set(), resolve);
+
+    expect(visible).toEqual([]);
+    expect(resolve).toHaveBeenCalledExactlyOnceWith('req_edit', 'opt_allow_once');
+  });
+
+  it('never picks allow_always, even when it is the only allow option offered', () => {
+    const resolve = vi.fn();
+    const request = permissionRequest({
+      options: [
+        { optionId: 'opt_allow_always', name: "Yes, don't ask again", kind: 'allow_always' },
+        { optionId: 'opt_reject', name: 'No', kind: 'reject_once' },
+      ],
+    });
+
+    const visible = partitionGloballyApprovable([request], new Set(), resolve);
+
+    expect(visible).toEqual([request]);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('does not resolve the same request twice while it is still pending resolution', () => {
+    const resolve = vi.fn();
+    const alreadyResolved = new Set<string>();
+    const request = permissionRequest({ requestId: 'req_1' });
+
+    partitionGloballyApprovable([request], alreadyResolved, resolve);
+    const visible = partitionGloballyApprovable([request], alreadyResolved, resolve);
+
+    expect(visible).toEqual([]);
+    expect(resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves every request in a mixed batch that each offer allow_once', () => {
+    const resolve = vi.fn();
+    const first = permissionRequest({ requestId: 'req_1' });
+    const second = permissionRequest({
+      requestId: 'req_2',
+      detail: { kind: 'fetch', url: 'https://example.com' },
+    });
+
+    const visible = partitionGloballyApprovable([first, second], new Set(), resolve);
+
+    expect(visible).toEqual([]);
+    expect(resolve).toHaveBeenCalledTimes(2);
+    expect(resolve).toHaveBeenCalledWith('req_1', 'opt_allow_once');
+    expect(resolve).toHaveBeenCalledWith('req_2', 'opt_allow_once');
   });
 });
