@@ -347,6 +347,12 @@ export class DocCommentsStore {
    * which main announces with an empty set.
    */
   agentPermissions = new Map<string, RigCommentPermissionRequest[]>();
+  /**
+   * Thread root id → the headless turn's working directory, mirrored
+   * alongside `agentPermissions` so the card can render an edit/read's path
+   * workspace-relative. Same lifetime as the entry it accompanies.
+   */
+  agentPermissionWorkspaceRoots = new Map<string, string | null>();
 
   /**
    * Threads the reader has folded down to their summary line. Persisted: a
@@ -418,6 +424,7 @@ export class DocCommentsStore {
       pending: observable.shallow,
       agentReplies: observable.shallow,
       agentPermissions: observable.shallow,
+      agentPermissionWorkspaceRoots: observable.shallow,
       collapsedThreads: observable.shallow,
       expandedThreads: observable.shallow,
       seenAt: observable.shallow,
@@ -461,8 +468,13 @@ export class DocCommentsStore {
     this._stopPermissionEvents = events.on(rigCommentPermissionsChannel, (update) => {
       if (this._disposed || update.absPath !== this.path) return;
       runInAction(() => {
-        if (update.requests.length === 0) this.agentPermissions.delete(update.rootId);
-        else this.agentPermissions.set(update.rootId, update.requests);
+        if (update.requests.length === 0) {
+          this.agentPermissions.delete(update.rootId);
+          this.agentPermissionWorkspaceRoots.delete(update.rootId);
+        } else {
+          this.agentPermissions.set(update.rootId, update.requests);
+          this.agentPermissionWorkspaceRoots.set(update.rootId, update.workspaceRoot);
+        }
       });
     });
     this._stopProgressEvents = events.on(rigCommentAgentProgressChannel, (update) => {
@@ -931,6 +943,11 @@ export class DocCommentsStore {
   /** What this thread's agent is currently blocked on, if anything. */
   agentPermissionsFor(rootId: string): RigCommentPermissionRequest[] {
     return this.agentPermissions.get(rootId) ?? [];
+  }
+
+  /** The headless turn's working directory, for rendering its permission cards' paths workspace-relative. */
+  agentPermissionsWorkspaceRootFor(rootId: string): string | null {
+    return this.agentPermissionWorkspaceRoots.get(rootId) ?? null;
   }
 
   /**

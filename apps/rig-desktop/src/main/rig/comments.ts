@@ -124,6 +124,32 @@ export function resolveCommentWorkspaceRoot(absPath: string): string | null {
   return resolveRootLocation(absPath)?.root ?? null;
 }
 
+/**
+ * `resolveCommentTarget` and `resolveCommentWorkspaceRoot` together, off a
+ * single `resolveRootLocation` walk instead of two. `comment-agent.ts`'s
+ * `askAgent` is the one caller that needs both for the same `absPath` on
+ * dispatch — every other caller only needs one and keeps using the
+ * single-purpose exports above, which stay the source of truth this builds on.
+ */
+export function resolveCommentDispatchContext(
+  absPath: string
+): { target: RigCommentTarget; cwd: string } | null {
+  const resolved = resolveRootLocation(absPath);
+  if (!resolved) return null;
+
+  const relPath = relative(resolved.root, resolve(absPath)).split(sep).join('/');
+  if (!relPath || relPath.startsWith('..')) return null;
+
+  return {
+    target: {
+      bindingId: resolved.location.config.bindingId,
+      relayUrl: resolved.location.config.relayUrl,
+      relPath,
+    },
+    cwd: resolved.root,
+  };
+}
+
 // ── relay ────────────────────────────────────────────────────────────────────
 
 type Resolved = { target: RigCommentTarget; token: string };

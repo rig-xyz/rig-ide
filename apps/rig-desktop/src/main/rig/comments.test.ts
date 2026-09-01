@@ -2,7 +2,12 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { resolveCommentTarget, resolveCommentWorkspaceRoot, toMessage } from './comments';
+import {
+  resolveCommentDispatchContext,
+  resolveCommentTarget,
+  resolveCommentWorkspaceRoot,
+  toMessage,
+} from './comments';
 
 /**
  * Pure resolution-logic coverage for the P0 fix: `askAgent`'s dispatch cwd
@@ -51,7 +56,7 @@ function makeBoundRig(): { root: string; file: string } {
 }
 
 describe('resolveCommentWorkspaceRoot', () => {
-  it('resolves a file under a bound rig to that rig\'s workspace root — the agent dispatch cwd', () => {
+  it("resolves a file under a bound rig to that rig's workspace root — the agent dispatch cwd", () => {
     const { root, file } = makeBoundRig();
     expect(resolveCommentWorkspaceRoot(file)).toBe(root);
   });
@@ -65,7 +70,7 @@ describe('resolveCommentWorkspaceRoot', () => {
   });
 });
 
-describe('askAgent\'s notBound branch, via the resolvers it is a direct return off of', () => {
+describe("askAgent's notBound branch, via the resolvers it is a direct return off of", () => {
   it('agrees with resolveCommentTarget: an unbound path fails the same way for both', () => {
     // `askAgent` (comment-agent.ts) does:
     //   const target = resolveCommentTarget(absPath);
@@ -94,6 +99,34 @@ describe('askAgent\'s notBound branch, via the resolvers it is a direct return o
       relPath: 'docs/spec.md',
     });
     expect(resolveCommentWorkspaceRoot(file)).toBe(root);
+  });
+});
+
+describe('resolveCommentDispatchContext', () => {
+  it('returns null for a file outside any rig binding, same as the two resolvers it replaces in askAgent', () => {
+    const outside = realpathSync(mkdtempSync(join(tmpdir(), 'rig-comment-agent-unbound-')));
+    tempDirs.push(outside);
+    const file = join(outside, 'notes.md');
+    writeFileSync(file, 'hello\n');
+
+    expect(resolveCommentDispatchContext(file)).toBeNull();
+  });
+
+  it('returns the same target and cwd as calling resolveCommentTarget and resolveCommentWorkspaceRoot separately', () => {
+    const { root, file } = makeBoundRig();
+
+    expect(resolveCommentDispatchContext(file)).toEqual({
+      target: resolveCommentTarget(file),
+      cwd: resolveCommentWorkspaceRoot(file),
+    });
+    expect(resolveCommentDispatchContext(file)).toEqual({
+      target: {
+        bindingId: 'binding-test-1',
+        relayUrl: 'https://relay.example.test',
+        relPath: 'docs/spec.md',
+      },
+      cwd: root,
+    });
   });
 });
 
@@ -147,7 +180,12 @@ describe('toMessage: author.kind coercion (guest authorship)', () => {
 
   it('a guest author keeps its own name/avatarUrl fields verbatim — no member enrichment happens here', () => {
     const message = toMessage(
-      rawMessage({ userId: null, name: 'Guest Name', avatarUrl: 'https://example.test/a.png', kind: 'guest' })
+      rawMessage({
+        userId: null,
+        name: 'Guest Name',
+        avatarUrl: 'https://example.test/a.png',
+        kind: 'guest',
+      })
     );
     expect(message?.author.name).toBe('Guest Name');
     expect(message?.author.avatarUrl).toBe('https://example.test/a.png');

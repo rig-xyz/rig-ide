@@ -37,6 +37,7 @@ import {
 } from './comments-store';
 import { layoutMarginCards, MARGIN_CARD_GAP, type MarginLayoutItem } from './margin-layout';
 import { minimalScrollDelta } from './pending-reveal';
+import { alwaysAllowLabel, rawPermissionDetailText, summarizePermissionDetail } from './permission-summary';
 import type { CommentSurfaceAdapter } from './surface-adapter';
 import {
   findMention,
@@ -386,42 +387,57 @@ function MentionTextarea({
   );
 }
 
-/** A tool call the thread's agent is waiting to be allowed to make. */
+/**
+ * A tool call the thread's agent is waiting to be allowed to make.
+ *
+ * Leads with a plain-English headline (`summarizePermissionDetail`) rather
+ * than the raw tool-call title a technical chat pane can get away with — this
+ * card sits in a Google-Docs-style comment thread a non-technical
+ * collaborator reads, and a base64 target ref or a full shell command is
+ * noise, not information, to that reader. The exact command/path/URL is
+ * still one click away behind "Show details", in monospace, for anyone who
+ * wants it. Allow/Reject stay real buttons; "always allow" is relabeled with
+ * its actual scope spelled out and rendered as a quiet text link beneath
+ * them — never the default, never as prominent as the one-shot choices.
+ */
 const PermissionRequestRow = observer(function PermissionRequestRow({
   store,
   rootId,
   request,
+  workspaceRoot,
 }: {
   store: DocCommentsStore;
   rootId: string;
   request: RigCommentPermissionRequest;
+  workspaceRoot: string | null;
 }) {
   const busy = store.isPending(request.requestId);
-  const detail = request.detail;
-  const detailText =
-    detail?.kind === 'execute'
-      ? (detail.command ?? null)
-      : detail?.path
-        ? detail.summary
-          ? `${detail.path}  ${detail.summary}`
-          : detail.path
-        : null;
+  const { headline, secondary } = summarizePermissionDetail(request.detail, workspaceRoot);
+  const rawDetail = rawPermissionDetailText(request.detail);
 
   const oneShot = request.options.filter((option) => option.kind !== 'allow_always');
   const persistent = request.options.filter((option) => option.kind === 'allow_always');
 
   return (
     <div className="border-border-hairline mt-1.5 border-t pt-1.5">
-      <p className="text-text-primary truncate text-xs" title={request.title}>
-        {request.title}
-      </p>
-      {detailText !== null && (
-        <p
-          className="bg-bg-0 text-text-primary mt-1 line-clamp-6 rounded-control px-1.5 py-1 font-mono text-xs break-all whitespace-pre-wrap"
-          title={detailText}
-        >
-          {detailText}
+      <p className="text-text-primary text-xs">{headline}</p>
+      {secondary !== undefined && (
+        <p className="text-text-muted mt-0.5 truncate text-xs" title={secondary}>
+          {secondary}
         </p>
+      )}
+      {request.reason !== undefined && (
+        <p className="text-text-muted mt-0.5 text-xs italic">{request.reason}</p>
+      )}
+      {rawDetail !== null && (
+        <details className="mt-1">
+          <summary className="text-text-muted hover:text-text-primary cursor-pointer text-xs">
+            Show details
+          </summary>
+          <p className="bg-bg-0 text-text-primary mt-1 line-clamp-6 rounded-control px-1.5 py-1 font-mono text-xs break-all whitespace-pre-wrap">
+            {rawDetail}
+          </p>
+        </details>
       )}
       <div className="mt-1 flex flex-wrap gap-1">
         {oneShot.map((option) => (
@@ -450,7 +466,7 @@ const PermissionRequestRow = observer(function PermissionRequestRow({
             store.resolveAgentPermission(rootId, request.requestId, option.optionId);
           }}
         >
-          {option.name} — applies beyond this thread
+          {alwaysAllowLabel(request.detail)}
         </button>
       ))}
     </div>
@@ -554,6 +570,7 @@ const AgentReplyCard = observer(function AgentReplyCard({
           store={store}
           rootId={rootId}
           request={request}
+          workspaceRoot={store.agentPermissionsWorkspaceRootFor(rootId)}
         />
       ))}
     </div>

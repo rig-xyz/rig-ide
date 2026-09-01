@@ -31,11 +31,7 @@ import {
   type CommentAgentProgress,
 } from './comment-agent-progress';
 import { composeCommentAgentPrompt } from './comment-agent-prompt';
-import {
-  resolveCommentTarget,
-  resolveCommentWorkspaceRoot,
-  rigCommentsController,
-} from './comments';
+import { resolveCommentDispatchContext, rigCommentsController } from './comments';
 import { checkRelayTrust } from './relay-trust';
 
 /**
@@ -198,7 +194,13 @@ function toPermissionDetail(toolCall: ToolCallItem): RigCommentPermissionDetail 
     case 'delete-file-tool-call':
       return { kind: 'edit', path: toolCall.path, summary: 'delete file' };
     case 'read-tool-call':
-      return { kind: 'other', ...(toolCall.path ? { path: toolCall.path } : {}) };
+      return { kind: 'read', ...(toolCall.path ? { path: toolCall.path } : {}) };
+    case 'web-fetch-tool-call':
+      return { kind: 'fetch', url: toolCall.url };
+    case 'mcp-tool-call':
+      return { kind: 'other', name: toolCall.tool };
+    case 'unknown-tool-call':
+      return { kind: 'other', ...(toolCall.name ? { name: toolCall.name } : {}) };
     default:
       return { kind: 'other' };
   }
@@ -215,6 +217,10 @@ function toPermissionRequests(
     requestId: request.requestId,
     title: request.toolCall.title,
     detail: toPermissionDetail(request.toolCall),
+    // `inputSummary` is the provider's own gloss on why it's making this call
+    // (Claude's `rawInput.description`, e.g. "Read top-of-file comments") —
+    // the closest thing the payload carries to the agent explaining itself.
+    ...(request.toolCall.inputSummary ? { reason: request.toolCall.inputSummary } : {}),
     options: request.options.map((option) => ({
       optionId: option.optionId,
       name: option.name,
@@ -449,13 +455,18 @@ export const rigCommentAgentController = createRPCController({
     }
 
     // Fail before spawning anything if the file's comments aren't postable.
-    const target = resolveCommentTarget(absPath);
-    if (!target) {
+    // One combined lookup instead of two: `resolveCommentTarget` and
+    // `resolveCommentWorkspaceRoot` both walk up from the same directory to
+    // find the same binding, and this is the one call site that needs both
+    // results for the same `absPath` (see `resolveCommentDispatchContext`).
+    const dispatchContext = resolveCommentDispatchContext(absPath);
+    if (!dispatchContext) {
       return err<RigCommentsError>({
         kind: 'notBound',
         message: "This workspace isn't synced to a rig",
       });
     }
+    const { target } = dispatchContext;
     // Same trust gate the posting path enforces (`comments.ts`): the reply
     // could never be posted, so don't run a whole agent turn to find out.
     const trust = checkRelayTrust(target.relayUrl);
@@ -474,13 +485,7 @@ export const rigCommentAgentController = createRPCController({
     // as the ACP connection-sharing key (`workspaceId`, below): headless
     // turns dispatched in the same rig with the same provider share one agent
     // process, same as the emdash task system's `workspaceId` always did.
-    const cwd = resolveCommentWorkspaceRoot(absPath);
-    if (!cwd) {
-      return err<RigCommentsError>({
-        kind: 'notBound',
-        message: "This workspace isn't synced to a rig",
-      });
-    }
+    const cwd = dispatchContext.cwd;
     const workspaceId = cwd;
 
     const conversationId = randomUUID();
@@ -558,7 +563,12 @@ export const rigCommentAgentController = createRPCController({
         }
       );
       turn.setAwaitingPermission(visible.length > 0);
-      events.emit(rigCommentPermissionsChannel, { absPath, rootId: parentId, requests: visible });
+      events.emit(rigCommentPermissionsChannel, {
+        absPath,
+        rootId: parentId,
+        requests: visible,
+        workspaceRoot: cwd,
+      });
     };
     const publishProgress = (update: CommentAgentProgress): void => {
       events.emit(rigCommentAgentProgressChannel, {
@@ -631,13 +641,22 @@ export const rigCommentAgentController = createRPCController({
         return err(agentError('The agent stopped with an error before answering.'));
       }
 
-      // Before `readAnswer`, which may poll for seconds: a later `config_option_update`
-      // that omits the model category resets `modelOptions` to null.
-      const usedModel = (await readSessionModel(client, conversationId)) ?? model;
+      // Started together rather than back-to-back: `readSessionModel` is one
+      // round trip and `readAnswer` may poll for seconds, so awaiting them in
+      // sequence only delays the answer by the model read for no benefit.
+      // Firing `readSessionModel` immediately (rather than after `readAnswer`
+      // settles) still matters for correctness, not just speed — a later
+      // `config_option_update` that omits the model category resets
+      // `modelOptions` to null, so the read has to win the race against that,
+      // and starting it up front gives it the same head start it had before.
+      const [sessionModel, historyAnswer] = await Promise.all([
+        readSessionModel(client, conversationId),
+        readAnswer(client, conversationId),
+      ]);
+      const usedModel = sessionModel ?? model;
 
       const answer =
-        (await readAnswer(client, conversationId)) ??
-        (outcome === 'completed' ? progress.latestText() || null : null);
+        historyAnswer ?? (outcome === 'completed' ? progress.latestText() || null : null);
       if (!answer) {
         return err(
           agentError(
@@ -670,7 +689,12 @@ export const rigCommentAgentController = createRPCController({
       // The card outlives the turn by a moment: clear its buttons explicitly, so
       // a request abandoned by `stopSession` can never be left dangling in the
       // margin with nothing behind it.
-      events.emit(rigCommentPermissionsChannel, { absPath, rootId: parentId, requests: [] });
+      events.emit(rigCommentPermissionsChannel, {
+        absPath,
+        rootId: parentId,
+        requests: [],
+        workspaceRoot: cwd,
+      });
       // Release this conversation's lease on the shared per-provider/workspace
       // agent process. It is refcounted, so a foreground session in the same
       // worktree keeps the process alive; only the last holder shuts it down.

@@ -184,18 +184,26 @@ export type RigCommentPermissionOption = {
  * What is actually being approved, beyond the tool call's display title.
  *
  * The decision-relevant line — the command an execute would run, the path an
- * edit would touch — travels here so the approval card can show it verbatim.
- * Deliberately compact: a line-count summary rather than a diff, so the
- * payload stays small over the events channel.
+ * edit or read would touch, the URL a fetch would hit — travels here so the
+ * approval card can show it verbatim (behind a disclosure — see
+ * `comments-margin.tsx`'s `PermissionRequestRow`) and so the human-readable
+ * headline (`renderer/features/docs/comments/permission-summary.ts`) has
+ * something typed to summarize instead of parsing the raw title. Deliberately
+ * compact: a line-count summary rather than a diff, so the payload stays
+ * small over the events channel.
  */
 export type RigCommentPermissionDetail = {
-  kind: 'execute' | 'edit' | 'other';
+  kind: 'execute' | 'edit' | 'read' | 'fetch' | 'other';
   /** The exact command line, for `execute`. */
   command?: string;
-  /** The file the call touches, when it names one. */
+  /** The file the call touches, for `edit`/`read`. */
   path?: string;
-  /** Compact edit summary, e.g. `+12 −3` (line counts) or `delete file`. */
+  /** Compact edit summary, e.g. `+12 −3` (line counts) or `delete file`, for `edit`. */
   summary?: string;
+  /** The URL the call would fetch, for `fetch`. */
+  url?: string;
+  /** Tool name/id a provider gave an otherwise-untyped call, for `other`. */
+  name?: string;
 };
 
 /** A tool call the headless thread agent is waiting for a human to approve. */
@@ -205,6 +213,8 @@ export type RigCommentPermissionRequest = {
   title: string;
   /** Structured detail of the call, when the typed tool call carries any. */
   detail?: RigCommentPermissionDetail;
+  /** The agent's own stated reason for the call, when the provider gave one (e.g. Claude's `rawInput.description`). */
+  reason?: string;
   options: RigCommentPermissionOption[];
 };
 
@@ -220,6 +230,8 @@ export type RigCommentPermissionUpdate = {
   absPath: string;
   rootId: string;
   requests: RigCommentPermissionRequest[];
+  /** The headless turn's working directory, so the card can render an edit/read's path workspace-relative. Null when it couldn't be resolved. */
+  workspaceRoot: string | null;
 };
 
 export const rigCommentPermissionsChannel =
