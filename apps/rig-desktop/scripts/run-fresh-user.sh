@@ -161,7 +161,7 @@ echo "Rebuilding @emdash/core and @emdash/plugins (stale dists are a real bug cl
 corepack pnpm --dir "$REPO_ROOT" --filter @emdash/core --filter @emdash/plugins build
 
 # ---------------------------------------------------------------------------
-# PATH: drop any directory that currently resolves `rig` (always) and, with
+# PATH: hide any `rig` currently resolvable on PATH (always) and, with
 # --no-providers, `claude`/`codex` too. Best-effort only: src/main/utils/
 # userEnv.ts's resolveUserEnv() re-derives PATH from the user's REAL login
 # shell at Electron boot (`$SHELL -ilc 'env'`), which can reintroduce
@@ -181,20 +181,39 @@ strip_names="rig"
 if [ "$NO_PROVIDERS" = 1 ]; then
   strip_names="rig claude codex"
 fi
+# Hide the BINARY, never the directory: under nvm a global `rig` sits in the
+# same bin dir as node/corepack/npm, so dropping that directory took node
+# itself away and the launch died with `env: corepack: No such file or
+# directory`. A directory that resolves a stripped name is replaced on PATH
+# by a mirror dir of symlinks to every other executable it holds.
+MIRROR_ROOT="$TMP_ROOT/path-mirror"
 NEW_PATH=""
 OLD_IFS=$IFS
 IFS=:
 for dir in $PATH; do
   IFS=$OLD_IFS
   [ -n "$dir" ] || continue
-  keep=1
+  needs_mirror=0
   for name in $strip_names; do
     if [ -x "$dir/$name" ]; then
-      keep=0
+      needs_mirror=1
       break
     fi
   done
-  if [ "$keep" = 1 ]; then
+  if [ "$needs_mirror" = 1 ]; then
+    mirror="$MIRROR_ROOT/$(printf '%s' "$dir" | tr '/' '_')"
+    mkdir -p "$mirror"
+    for entry in "$dir"/*; do
+      [ -x "$entry" ] || continue
+      base=$(basename "$entry")
+      skip=0
+      for name in $strip_names; do
+        [ "$base" = "$name" ] && skip=1
+      done
+      [ "$skip" = 1 ] || ln -s "$entry" "$mirror/$base"
+    done
+    NEW_PATH="${NEW_PATH:+$NEW_PATH:}$mirror"
+  else
     NEW_PATH="${NEW_PATH:+$NEW_PATH:}$dir"
   fi
   IFS=:
@@ -292,9 +311,15 @@ echo ""
 # of the same name. Logs land in apps/rig-desktop/.emdash-logs/emdash.log
 # regardless of this harness; not further isolated.
 cd "$APP_DIR"
+# corepack keeps its downloaded package managers under $HOME/.cache/node/
+# corepack — with HOME isolated it would find an empty cache and try to
+# re-download pnpm (prompting, in the background, forever). Point it at the
+# real cache explicitly; `$HOME` here is still the developer's real home.
 env \
   HOME="$HOME_DIR" \
   PATH="$NEW_PATH" \
+  COREPACK_HOME="${COREPACK_HOME:-$HOME/.cache/node/corepack}" \
+  COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
   RIG_DEV_USER_DATA_DIR="$USER_DATA_DIR" \
   RIG_DEV_CLI_DIR="$CLI_BIN_DIR" \
   TELEMETRY_ENABLED=false \
