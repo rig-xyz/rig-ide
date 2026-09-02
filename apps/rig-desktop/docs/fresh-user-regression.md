@@ -23,10 +23,20 @@ bottom for `--no-providers`, `--loopback`, and `--no-launch`.
       screen and nothing else: the mark, one line of copy, and exactly one
       button, **Start fresh** (no recent-rigs list, no "Welcome back", no
       sign-in, no provider setup).
-- [ ] **Create first rig.** Click **Start fresh**. Expect it to create
-      immediately — no dialog, no name/location/sync questions — and land
-      inside the isolated `~/Rig` (i.e. `<temp root>/home/Rig/untitled-rig`,
-      not your real `~/Rig`) open on `Start here.md` in Preview.
+- [ ] **Create first rig.** Click **Start fresh**. Since this is a genuinely
+      fresh profile you're signed out, so this is the FIRST thing a real new
+      user experiences: the button should become **Waiting for sign-in…**
+      (disabled) with one quiet line beneath, "Rig is collaborative — sign
+      in to start," and the browser should open to `rig login`'s real
+      Clerk sign-up/sign-in flow. "Quick" means exactly that: no dialog, no
+      name/location/sync questions on this side, sign in the browser, and
+      the app continues on its own the moment it lands — no second click
+      back in the app. Expect it to then create immediately and land inside
+      the isolated `~/Rig` (i.e. `<temp root>/home/Rig/untitled-rig`, not
+      your real `~/Rig`) open on `Start here.md` in Preview. If sign-in is
+      cancelled or fails, expect the button to return to idle **Start
+      fresh** with a short, honest error line beneath it — not a stuck
+      spinner.
 - [ ] **Rename inline.** Expect the rig name in the topbar to already be
       auto-focused in edit mode with its text selected; type a name and
       press Enter. Expect the folder itself to be renamed (confirm via
@@ -54,12 +64,11 @@ bottom for `--no-providers`, `--loopback`, and `--no-launch`.
       present and anchored immediately — no re-sync delay, nothing dropped.
 - [ ] **Share the rig.** Click the topbar **Share** button. Do this against
       the REAL relay (no `--loopback` — see the flag note below for why).
-      The rig is still local-only at this point, so expect the popover
-      itself to drive sign-in: a real Clerk sign-up/sign-in flow via
-      `rig login`, ending in a signed-in state. Right after signing in,
-      expect the SAME click's consent to turn sync on for this rig (no
-      separate toggle, no second screen) and the invite-link UI to appear
-      in the same popover.
+      You signed in at Start fresh, and one-click create synced the rig
+      invisibly, so expect the popover to go STRAIGHT to the invite-link UI
+      — no sign-in, no toggle, no second screen. (To exercise the
+      local-only path — *Sign in to share* / "Sharing turns on sync for
+      this rig" — open a never-synced folder via the rig switcher instead.)
 - [ ] **Generate an invite link.** Expect a copyable link tied to the rig you
       created.
 - [ ] **Import a Google Doc.** From the file navigator (the artefact pane's

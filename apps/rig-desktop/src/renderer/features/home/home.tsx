@@ -18,6 +18,7 @@ import {
 import { PeopleRail } from './people-rail';
 import { shouldShowPulseSection } from './pulse-state';
 import { RigsRail } from './rigs-rail';
+import { deriveWelcomePhase, type WelcomePhase } from './welcome-state';
 
 /**
  * Round: HOME RESTRUCTURE — Dylan-approved IA, structurally referencing
@@ -103,6 +104,34 @@ export function Home({
     queryFn: () => rpc.rig.auth.status(),
   });
   const signedIn = authQuery.data?.signedIn ?? false;
+
+  // Onboarding-flow spec, Decisions ("Sign-in on Start fresh, option A"): a
+  // signed-out click on Welcome's "Start fresh" (or the rail's "New rig",
+  // same `createRig` above) runs the existing `rig login` round-trip first
+  // — `onSuccess` continues straight into `createRig()` with no second
+  // click. A signed-in click skips this hook entirely (see
+  // `startFreshOrCreate` below) and behaves exactly as before.
+  const {
+    signIn: signInThenCreateRig,
+    phase: createSignInPhase,
+    error: createSignInError,
+  } = useRigSignIn(() => void createRig());
+
+  const startFreshOrCreate = useCallback(() => {
+    if (signedIn) {
+      void createRig();
+    } else {
+      void signInThenCreateRig();
+    }
+  }, [signedIn, createRig, signInThenCreateRig]);
+
+  const welcomePhase: WelcomePhase = deriveWelcomePhase({
+    authLoading: authQuery.isLoading,
+    signedIn,
+    signInPhase: createSignInPhase,
+    signInError: createSignInError,
+    creating,
+  });
 
   const workspacesQuery = useQuery({
     queryKey: ['rig', 'account', 'workspaces'],
@@ -192,7 +221,7 @@ export function Home({
     // agent", no dialog. One line, one button.
     return (
       <div className="flex min-h-full w-full items-center justify-center p-8">
-        <Welcome onStartFresh={() => void createRig()} busy={creating} />
+        <Welcome phase={welcomePhase} authLoading={authQuery.isLoading} onStartFresh={startFreshOrCreate} />
       </div>
     );
   }
@@ -262,7 +291,7 @@ export function Home({
             onOpenPath={onOpenPath}
             onOpenSession={onContinueSession}
             onOpenFolder={onOpenFolder}
-            onCreateRig={() => void createRig()}
+            onCreateRig={startFreshOrCreate}
             highlightBindingId={highlightBindingId}
           />
         </div>
@@ -279,11 +308,31 @@ export function Home({
 /**
  * First run (docs/onboarding-flow-spec.md §1) — no rigs anywhere yet, for
  * anyone (local or shared). Exactly one primary action, per the spec's
- * "one action" principle: no secondary links, no sign-in, no provider
- * setup, no health line. Sign-in, sync, and Google-Doc import are all
- * reachable later (Share, an @mention, the file navigator) — never here.
+ * "one action" principle: no secondary links, no provider setup, no health
+ * line. Sync and Google-Doc import stay reachable later (Share, the file
+ * navigator) — never here.
+ *
+ * Sign-in is the one exception (Decisions, "Sign-in on Start fresh"): a
+ * signed-out click runs the existing browser round-trip before creating, so
+ * this component is thin over `welcome-state.ts`'s `deriveWelcomePhase` —
+ * it only maps a phase to copy/disabled, `home.tsx` owns every transition.
+ * `authLoading` is passed separately from `phase` on purpose: while auth
+ * status is still in flight the phase stays `'idle'` (no copy change, per
+ * spec), but the button must still be momentarily disabled so a signed-out
+ * guess never flashes as a clickable "Start fresh" for a signed-in user.
  */
-function Welcome({ onStartFresh, busy }: { onStartFresh: () => void; busy: boolean }) {
+function Welcome({
+  phase,
+  authLoading,
+  onStartFresh,
+}: {
+  phase: WelcomePhase;
+  authLoading: boolean;
+  onStartFresh: () => void;
+}) {
+  const disabled = phase.kind !== 'idle' || authLoading;
+  const label =
+    phase.kind === 'signingIn' ? 'Waiting for sign-in…' : phase.kind === 'creating' ? 'Starting…' : 'Start fresh';
   return (
     <div className="flex w-full max-w-sm flex-col items-center gap-5 text-center">
       <RigMark size={40} className="text-text-primary" />
@@ -293,11 +342,15 @@ function Welcome({ onStartFresh, busy }: { onStartFresh: () => void; busy: boole
       <button
         type="button"
         onClick={onStartFresh}
-        disabled={busy}
+        disabled={disabled}
         className="bg-accent text-accent-ink rounded-control px-5 py-2 text-sm font-medium transition-colors hover:opacity-90 disabled:pointer-events-none disabled:opacity-60"
       >
-        {busy ? 'Starting…' : 'Start fresh'}
+        {label}
       </button>
+      {phase.kind === 'signingIn' && (
+        <p className="text-text-muted text-xs">Rig is collaborative — sign in to start.</p>
+      )}
+      {phase.kind === 'error' && <p className="text-danger text-xs">{phase.message}</p>}
     </div>
   );
 }
