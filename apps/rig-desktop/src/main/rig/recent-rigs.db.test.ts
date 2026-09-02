@@ -14,7 +14,8 @@ vi.mock('@main/db/client', () => ({
   },
 }));
 
-const { resolveLocalPathsImpl } = await import('./recent-rigs');
+const { getRigAccountId, getRigPathsForAccount, recordRigOpened, resolveLocalPathsImpl } =
+  await import('./recent-rigs');
 
 let fixture: Awaited<ReturnType<typeof openFixture>>;
 let home: string;
@@ -85,5 +86,99 @@ describe('resolveLocalPathsImpl', () => {
 
     const result = await resolveLocalPathsImpl(['bnd_something_else']);
     expect(result).toEqual({});
+  });
+});
+
+/**
+ * Accounts & rigs round (onboarding-flow-spec.md, "Accounts & rigs") — the
+ * registry writer's account stamping. `workspace.ts`'s `detect` is the one
+ * call site (open, create-with-sync, join, and enableSync all re-open
+ * through it — see that file's own header comment), so these exercise
+ * `recordRigOpened` directly with the three `accountId` inputs `detect`
+ * can pass: a known id (signed in), `null` (confidently signed out), and
+ * `undefined` (couldn't tell — a relay hiccup while signed in).
+ */
+describe('recordRigOpened — account stamping', () => {
+  it('a brand-new row stamps the given account id', async () => {
+    await recordRigOpened({ path: '/tmp/rig', bindingId: 'bnd_new', name: null, accountId: 'usr_a' });
+
+    const [row] = await fixture.db.select().from(rigRigs);
+    expect(row.accountId).toBe('usr_a');
+  });
+
+  it('a brand-new row stamps null when signed out', async () => {
+    await recordRigOpened({ path: '/tmp/rig', bindingId: 'bnd_new', name: null, accountId: null });
+
+    const [row] = await fixture.db.select().from(rigRigs);
+    expect(row.accountId).toBeNull();
+  });
+
+  it('a brand-new row stamps null when the caller omits accountId entirely (couldn\'t tell)', async () => {
+    await recordRigOpened({ path: '/tmp/rig', bindingId: 'bnd_new', name: null });
+
+    const [row] = await fixture.db.select().from(rigRigs);
+    expect(row.accountId).toBeNull();
+  });
+
+  it('re-opening under a different known account overwrites the stamped id', async () => {
+    await recordRigOpened({ path: '/tmp/rig', bindingId: 'bnd_existing', name: null, accountId: 'usr_a' });
+    await recordRigOpened({ path: '/tmp/rig', bindingId: 'bnd_existing', name: null, accountId: 'usr_b' });
+
+    expect(await getRigAccountId('bnd_existing')).toBe('usr_b');
+  });
+
+  it('re-opening signed out overwrites a previously-stamped account with null', async () => {
+    await recordRigOpened({ path: '/tmp/rig', bindingId: 'bnd_existing', name: null, accountId: 'usr_a' });
+    await recordRigOpened({ path: '/tmp/rig', bindingId: 'bnd_existing', name: null, accountId: null });
+
+    expect(await getRigAccountId('bnd_existing')).toBeNull();
+  });
+
+  it('re-opening with accountId omitted (unknown) leaves the existing stamped account untouched', async () => {
+    await recordRigOpened({ path: '/tmp/rig', bindingId: 'bnd_existing', name: null, accountId: 'usr_a' });
+    await recordRigOpened({ path: '/tmp/rig', bindingId: 'bnd_existing', name: null });
+
+    expect(await getRigAccountId('bnd_existing')).toBe('usr_a');
+  });
+});
+
+describe('getRigAccountId', () => {
+  it('returns undefined for a bindingId with no row at all', async () => {
+    expect(await getRigAccountId('bnd_nowhere')).toBeUndefined();
+  });
+
+  it('returns null for a row with no account stamped (legacy/signed-out)', async () => {
+    await fixture.db.insert(rigRigs).values({
+      id: 'r1',
+      path: '/tmp/rig',
+      bindingId: 'bnd_legacy',
+      firstOpenedAt: 1,
+      lastOpenedAt: 1,
+    });
+    expect(await getRigAccountId('bnd_legacy')).toBeNull();
+  });
+
+  it("returns the row's stamped account id", async () => {
+    await fixture.db.insert(rigRigs).values({
+      id: 'r1',
+      path: '/tmp/rig',
+      bindingId: 'bnd_owned',
+      accountId: 'usr_a',
+      firstOpenedAt: 1,
+      lastOpenedAt: 1,
+    });
+    expect(await getRigAccountId('bnd_owned')).toBe('usr_a');
+  });
+});
+
+describe('getRigPathsForAccount', () => {
+  it("resolves every local path recorded for the account, none of another account's", async () => {
+    await fixture.db.insert(rigRigs).values([
+      { id: 'r1', path: '/rigs/one', bindingId: 'bnd1', accountId: 'usr_a', firstOpenedAt: 1, lastOpenedAt: 1 },
+      { id: 'r2', path: '/rigs/two', bindingId: 'bnd2', accountId: 'usr_b', firstOpenedAt: 1, lastOpenedAt: 1 },
+      { id: 'r3', path: '/rigs/three', bindingId: 'bnd3', accountId: 'usr_a', firstOpenedAt: 1, lastOpenedAt: 1 },
+    ]);
+
+    expect(await getRigPathsForAccount('usr_a')).toEqual(['/rigs/one', '/rigs/three']);
   });
 });

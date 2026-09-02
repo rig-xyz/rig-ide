@@ -143,6 +143,48 @@ export function toBinding(value: unknown, relayHost: string): RigWorkspaceBindin
 }
 
 /**
+ * Accounts & rigs round (onboarding-flow-spec.md, "Accounts & rigs"): the
+ * three states callers outside the RPC boundary actually need to branch
+ * on — `main/rig/recent-rigs.ts`'s `recordRigOpened` (what to stamp on a
+ * `rig_rigs` row), `main/rig/workspace.ts`'s `detect` (the foreign-account
+ * check), and `main/rig/auth.ts`'s logout/login pause/resume hooks. Unlike
+ * `me()`'s `Result<RigUser, RigAccountError>`, these callers don't care
+ * which relay error kind occurred — only whether "signed out" is
+ * confidently known (no token on disk at all, no network call needed) or
+ * merely unresolvable right now (`'unknown'`: relay unreachable,
+ * untrusted, or a malformed response) — a distinction `resolveContext`'s
+ * `NOT_SIGNED_IN` vs. every other `RigAccountError` kind already draws.
+ * Callers MUST treat `'unknown'` as "can't tell," never as `'signedOut'`:
+ * a transient relay hiccup must never look like a sign-out and pause
+ * someone's own rigs or block them from opening one.
+ */
+export type CurrentAccountId = { status: 'signedOut' } | { status: 'known'; id: string } | { status: 'unknown' };
+
+/** See `CurrentAccountId`'s own doc comment for why this exists alongside `me()`. */
+export async function getCurrentAccountId(): Promise<CurrentAccountId> {
+  const ctx = await resolveContext();
+  if (isError(ctx)) {
+    return ctx.kind === 'notSignedIn' ? { status: 'signedOut' } : { status: 'unknown' };
+  }
+
+  let response: Response;
+  try {
+    response = await relayGet(ctx, '/v1/me');
+  } catch {
+    return { status: 'unknown' };
+  }
+  if (!response.ok) return { status: 'unknown' };
+
+  try {
+    const data = asRecord(await response.json());
+    const user = toUser(data?.user);
+    return user ? { status: 'known', id: user.id } : { status: 'unknown' };
+  } catch {
+    return { status: 'unknown' };
+  }
+}
+
+/**
  * Every method returns a Result and never throws across the IPC boundary, so
  * the renderer can always render *something*. No PAT ever appears in a log
  * line.

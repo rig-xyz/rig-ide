@@ -4,10 +4,11 @@ import { app } from 'electron';
 import * as toml from 'smol-toml';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
-import { deriveUnboundDetection, type RigWorkspaceDetection } from '@shared/rig/workspace';
+import { deriveUnboundDetection, isForeignAccountRow, type RigWorkspaceDetection } from '@shared/rig/workspace';
+import { getCurrentAccountId } from './account';
 import { findBindingConfig } from './binding';
 import { rigFileRootRegistry } from './file-root-registry';
-import { recordRigOpened } from './recent-rigs';
+import { getRigAccountId, recordRigOpened } from './recent-rigs';
 
 // Set by the macOS `open-file` handler in `main/index.ts`, which fires as
 // soon as the process launches — often before a window (and its renderer)
@@ -57,7 +58,9 @@ export const rigWorkspaceController = createRPCController({
    * renderer is waiting on to render the workspace.
    */
   detect: async (folderPath: string): Promise<RigWorkspaceDetection> => {
-    if (!folderPath || typeof folderPath !== 'string') return { bound: false, unsynced: null };
+    if (!folderPath || typeof folderPath !== 'string') {
+      return { bound: false, unsynced: null, foreignAccount: null };
+    }
     const location = findBindingConfig(folderPath);
     if (!location) {
       return deriveUnboundDetection({
@@ -68,11 +71,32 @@ export const rigWorkspaceController = createRPCController({
     }
     const name = readRigName(location.workspaceRoot);
 
+    // Accounts & rigs round: who's signed in right now, and who this row
+    // was last opened by — both read BEFORE the upsert below, since that
+    // upsert is what stamps the CURRENT identity onto the row and would
+    // erase the very mismatch this is checking for.
+    const current = await getCurrentAccountId();
+    let existingAccountId: string | null | undefined;
+    try {
+      existingAccountId = await getRigAccountId(location.config.bindingId);
+    } catch (error) {
+      log.warn('rig: failed to read this rig’s recorded account', { error: String(error) });
+      existingAccountId = undefined; // can't tell — never treated as foreign
+    }
+    if (isForeignAccountRow(existingAccountId, current)) {
+      return {
+        bound: false,
+        unsynced: null,
+        foreignAccount: { path: location.workspaceRoot, name },
+      };
+    }
+
     try {
       await recordRigOpened({
         path: location.workspaceRoot,
         bindingId: location.config.bindingId,
         name,
+        accountId: current.status === 'known' ? current.id : current.status === 'signedOut' ? null : undefined,
       });
     } catch (error) {
       log.warn('rig: failed to record recent rig', { error: String(error) });

@@ -1,11 +1,12 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
+import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { commandFailureMessage } from './auth-output';
 import { runRig, type SpawnOutcome } from './create';
 import { extractJsonObjects, parseJsonErrorEnvelope } from './join';
-import { updateRigName, updateRigPath } from './recent-rigs';
+import { existsAsDirectory, getRigPathsForAccount, updateRigName, updateRigPath } from './recent-rigs';
 import { setTomlRigName } from './rig-toml';
 import { isRigSyncPaused } from './sync-paused';
 
@@ -84,6 +85,54 @@ async function toggleSync(
   const failure = spawnOutcomeToMessage(verb, outcome);
   if (failure) return err(failure);
   return ok({ paused: await isRigSyncPaused(path) });
+}
+
+/**
+ * Accounts & rigs round (onboarding-flow-spec.md, "Accounts & rigs") —
+ * `auth.ts`'s logout (pause) and login (resume) hooks: every local rig
+ * `getRigPathsForAccount` has on record for `accountId`, toggled the same
+ * way the row menu's own pause/resume does. Idempotent (pausing an
+ * already-paused rig, or resuming an already-running one, is just what
+ * `rig pause`/`rig resume` already do) and best-effort throughout — a rig
+ * folder that's since been deleted or moved is skipped and logged, and
+ * ANY failure here (a bad spawn, a missing CLI, a lookup error) is caught
+ * and logged rather than thrown, so it can never fail the logout/login
+ * this rides along with.
+ */
+async function togglePathsForAccount(verb: 'pause' | 'resume', accountId: string): Promise<void> {
+  let paths: string[];
+  try {
+    paths = await getRigPathsForAccount(accountId);
+  } catch (error) {
+    log.warn(`rig: failed to look up rigs to ${verb} for the signed-out/in account`, {
+      error: String(error),
+    });
+    return;
+  }
+  for (const path of paths) {
+    try {
+      if (!(await existsAsDirectory(path))) {
+        log.info(`rig: skipping ${verb} — rig folder no longer exists`, { path });
+        continue;
+      }
+      const result = await toggleSync(verb, path);
+      if (!result.success) {
+        log.warn(`rig: failed to ${verb} rig`, { path, error: result.error.message });
+      }
+    } catch (error) {
+      log.warn(`rig: failed to ${verb} rig`, { path, error: String(error) });
+    }
+  }
+}
+
+/** `auth.ts`'s logout hook: pause every local rig recorded for `accountId`. */
+export function pauseRigsForAccount(accountId: string): Promise<void> {
+  return togglePathsForAccount('pause', accountId);
+}
+
+/** `auth.ts`'s login hook: resume every local rig recorded for `accountId`. */
+export function resumeRigsForAccount(accountId: string): Promise<void> {
+  return togglePathsForAccount('resume', accountId);
 }
 
 /**

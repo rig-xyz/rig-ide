@@ -30,6 +30,8 @@ export type HomeLocalRig = {
   paused: boolean;
   /** Rig home round — true when this rig's path is outside the managed Rig home; gates "Move to Rig folder" and the "custom location" affordance. */
   outsideHome: boolean;
+  /** Accounts & rigs round — the account that bound or last opened this row; null for a legacy row or one written while signed out. See `filterLocalRigsByAccount`. */
+  accountId: string | null;
 };
 
 /** One cross-rig recent session, as read from `rpc.rig.sessions.listRecentAcrossRigs`. */
@@ -354,6 +356,30 @@ export function groupSessionsByRig(
  */
 export function localRecencyKey(row: { lastOpenedAt: number; sessions: readonly HomeRigSession[] }): number {
   return row.sessions.reduce((max, s) => Math.max(max, s.updatedAt), row.lastOpenedAt);
+}
+
+/**
+ * Accounts & rigs round (onboarding-flow-spec.md, "Accounts & rigs"): the
+ * rail's account boundary — `home.tsx` filters `localRigs` through this
+ * before it ever reaches `deriveHomeRegions`/`buildHomeRigRows`, so every
+ * downstream consumer (the rail itself, the pulse briefing's "your rigs")
+ * agrees. A row with `accountId: null` (legacy, or written while signed
+ * out) is always visible — it gets backfilled to the current account on
+ * its next open (`recent-rigs.ts`'s `recordRigOpened`), never hidden in
+ * the meantime. `signedInAccountId` is three-valued: `undefined` means
+ * "don't know yet" (signed in, but the `['rig','account','me']` query
+ * hasn't resolved) — filtering on a guess would flash rows away and back,
+ * so nothing is hidden until there's a real answer; `null` means
+ * confidently signed out, which per spec shows null rows ONLY (any
+ * non-null `accountId` belongs to whichever account signed in last, not
+ * "no one"); a string is the signed-in account's own id.
+ */
+export function filterLocalRigsByAccount<T extends { accountId: string | null }>(
+  rows: readonly T[],
+  signedInAccountId: string | null | undefined
+): T[] {
+  if (signedInAccountId === undefined) return [...rows];
+  return rows.filter((r) => r.accountId === null || r.accountId === signedInAccountId);
 }
 
 /**

@@ -22,7 +22,23 @@ import { defineEvent } from '../lib/ipc/events';
  * at "not a rig". Null = genuinely not a rig; that path is unchanged.
  */
 export type RigWorkspaceDetection =
-  | { bound: false; unsynced: { path: string; name: string | null } | null }
+  | {
+      bound: false;
+      unsynced: { path: string; name: string | null } | null;
+      /**
+       * Accounts & rigs round (onboarding-flow-spec.md, "Accounts & rigs"):
+       * set when `folderPath` IS a bound, relay-synced rig, but its
+       * `rig_rigs` row belongs to a different, confidently-known account
+       * than whoever is signed in right now (see `isForeignAccountRow`).
+       * `detect` stops short of recording the open or registering the file
+       * root when this is set — opening it under the wrong identity would
+       * just fail relay-side with confusing errors, so the renderer shows
+       * an honest card instead. Mutually exclusive with `unsynced` — a rig
+       * can't be both un-synced (no binding at all) and
+       * foreign-account-bound.
+       */
+      foreignAccount: { path: string; name: string | null } | null;
+    }
   | {
       bound: true;
       bindingId: string;
@@ -47,8 +63,41 @@ export function deriveUnboundDetection(facts: {
   pickedHasRigToml: boolean;
   pickedName: string | null;
 }): Extract<RigWorkspaceDetection, { bound: false }> {
-  if (!facts.pickedHasRigToml) return { bound: false, unsynced: null };
-  return { bound: false, unsynced: { path: facts.pickedPath, name: facts.pickedName } };
+  if (!facts.pickedHasRigToml) return { bound: false, unsynced: null, foreignAccount: null };
+  return {
+    bound: false,
+    unsynced: { path: facts.pickedPath, name: facts.pickedName },
+    foreignAccount: null,
+  };
+}
+
+/**
+ * Accounts & rigs round: whether the LOCAL `rig_rigs` row's own recorded
+ * account — the identity that bound or last opened this rig, see
+ * `recent-rigs.ts`'s own upsert comment — is confidently a DIFFERENT one
+ * from whoever is signed in right now. `existingAccountId` is `undefined`
+ * when there's no local row at all (nothing recorded yet — never foreign,
+ * `detect` proceeds to create one) and `null` when a row exists but no
+ * account was ever stamped on it (a legacy row, or one written while
+ * signed out — shown to everyone until an open while signed in backfills
+ * it, per the spec). `current` is `main/rig/account.ts`'s own three-state
+ * read of "who's signed in right now" — `'unknown'` (couldn't reach the
+ * relay to check) always resolves to `false`: a transient relay hiccup
+ * must never block someone from opening their own already-synced rig, the
+ * same fail-open rule `resolveLocalPathsImpl` and `recordRigOpened`'s own
+ * best-effort callers already follow for network trouble. `'signedOut'`
+ * DOES count as foreign against any non-null `existingAccountId` — signing
+ * back in as whichever account owns the row is exactly the honest card's
+ * point.
+ */
+export function isForeignAccountRow(
+  existingAccountId: string | null | undefined,
+  current: { status: 'signedOut' } | { status: 'known'; id: string } | { status: 'unknown' }
+): boolean {
+  if (!existingAccountId) return false;
+  if (current.status === 'unknown') return false;
+  const currentId = current.status === 'known' ? current.id : null;
+  return currentId !== existingAccountId;
 }
 
 /**

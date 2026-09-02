@@ -527,6 +527,17 @@ export const rigRigs = sqliteTable(
     bindingId: text('binding_id').notNull(),
     /** From `rig.toml`'s `[rig].name` at last open; null if the file had none. */
     name: text('name'),
+    /**
+     * Accounts & rigs round (onboarding-flow-spec.md, "Accounts & rigs"):
+     * the stable id (`main/rig/account.ts`'s `RigUser.id`) of whoever bound
+     * or last opened this rig through this app — null for a legacy row
+     * (predates this column) or one written while signed out. The rail
+     * (`home.tsx`) shows only rows matching the signed-in account plus
+     * null rows; `auth.ts` pauses/resumes rows by this column on
+     * logout/login. See `recent-rigs.ts`'s `recordRigOpened`, the one
+     * writer, for how it gets stamped.
+     */
+    accountId: text('account_id'),
     firstOpenedAt: integer('first_opened_at').notNull(),
     lastOpenedAt: integer('last_opened_at').notNull(),
     openCount: integer('open_count').notNull().default(1),

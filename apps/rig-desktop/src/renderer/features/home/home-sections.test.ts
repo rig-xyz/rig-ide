@@ -7,6 +7,7 @@ import {
   deriveWorkspacesState,
   disambiguateByName,
   filterHomeRigRows,
+  filterLocalRigsByAccount,
   groupSessionsByRig,
   localRecencyKey,
   resolveRigNameClick,
@@ -15,8 +16,24 @@ import {
   type HomeRigRow,
 } from './home-sections';
 
-const RIG_A = { bindingId: 'b1', name: 'Alpha', path: '/a', lastOpenedAt: 100, paused: false, outsideHome: false };
-const RIG_B = { bindingId: 'b2', name: 'Beta', path: '/b', lastOpenedAt: 200, paused: false, outsideHome: false };
+const RIG_A = {
+  bindingId: 'b1',
+  name: 'Alpha',
+  path: '/a',
+  lastOpenedAt: 100,
+  paused: false,
+  outsideHome: false,
+  accountId: null,
+};
+const RIG_B = {
+  bindingId: 'b2',
+  name: 'Beta',
+  path: '/b',
+  lastOpenedAt: 200,
+  paused: false,
+  outsideHome: false,
+  accountId: null,
+};
 const SESSION_A = {
   id: 's1',
   providerId: 'claude',
@@ -229,6 +246,7 @@ describe('buildHomeRigRows', () => {
       lastOpenedAt: 50,
       paused: false,
       outsideHome: false,
+      accountId: null,
     };
     const rows = buildHomeRigRows(
       [RIG_A, staleOpenButRecentChat], // RIG_A.lastOpenedAt = 100
@@ -628,5 +646,28 @@ describe('sortHomeRigRows', () => {
   it('name sorts alphabetically across every kind mixed together', () => {
     const rows = [SHARED_NOT_SET_UP, LOCAL_ROW, OWNED_NOT_SET_UP]; // Gamma, Alpha, Beta
     expect(sortHomeRigRows(rows, 'name').map((r) => r.name)).toEqual(['Alpha', 'Beta', 'Gamma']);
+  });
+});
+
+describe('filterLocalRigsByAccount', () => {
+  const mine = { bindingId: 'b1', accountId: 'usr_me' };
+  const legacy = { bindingId: 'b2', accountId: null };
+  const theirs = { bindingId: 'b3', accountId: 'usr_them' };
+  const rows = [mine, legacy, theirs];
+
+  it('signed in — shows this account\'s rows plus legacy/unknown null rows; hides another account\'s', () => {
+    expect(filterLocalRigsByAccount(rows, 'usr_me')).toEqual([mine, legacy]);
+  });
+
+  it('signed out (confidently null) — shows null rows only, not any account\'s rows', () => {
+    expect(filterLocalRigsByAccount(rows, null)).toEqual([legacy]);
+  });
+
+  it('unknown (signed in, but the account id hasn\'t resolved yet) — never hides anything on a guess', () => {
+    expect(filterLocalRigsByAccount(rows, undefined)).toEqual(rows);
+  });
+
+  it('an account with no rows at all is just an empty result, not an error', () => {
+    expect(filterLocalRigsByAccount([], 'usr_me')).toEqual([]);
   });
 });

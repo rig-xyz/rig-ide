@@ -1148,6 +1148,16 @@ function FolderResult({
   onRetryOpen: (path: string) => void;
   onCancel: () => void;
 }) {
+  // Accounts & rigs round (onboarding-flow-spec.md, "Accounts & rigs"): a
+  // rig whose `rig_rigs` row belongs to a different, known account —
+  // `detect` already stopped short of opening it (no root registered, no
+  // relay errors to chase down); this is the honest stop instead of
+  // pretending it's just "not a rig."
+  if (folder.status === 'detected' && !folder.result.bound && folder.result.foreignAccount) {
+    return (
+      <ForeignAccountCard foreignAccount={folder.result.foreignAccount} onRetryOpen={onRetryOpen} onCancel={onCancel} />
+    );
+  }
   // Loose-ends round: a LOCAL-ONLY rig (rig.toml, no binding — see
   // `deriveUnboundDetection`) is an interstitial with a real action, not a
   // dead end. Plain non-rig folders keep the unchanged card below.
@@ -1261,6 +1271,49 @@ function UnsyncedRigCard({
         </Button>
         <Button size="sm" onClick={() => void turnOnSync()} disabled={busy || !signedIn}>
           {busy ? 'Turning on…' : 'Turn on sync'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Accounts & rigs round (onboarding-flow-spec.md, "Accounts & rigs"): the
+ * honest stop for a rig bound to a different, known account —
+ * `main/rig/workspace.ts`'s `detect` already refused to open it, so there
+ * is no workspace to render here, only the real action (sign in as that
+ * account) and a way back. Deliberately no "Turn on sync" step like
+ * `UnsyncedRigCard` above — this rig is already synced, it's the SIGNED-IN
+ * IDENTITY that's wrong, so signing in alone is enough; a successful
+ * sign-in just re-runs `onRetryOpen`, and `detect` either opens it (signed
+ * in as the right account now) or shows this card again honestly (signed
+ * in as yet another account).
+ */
+function ForeignAccountCard({
+  foreignAccount,
+  onRetryOpen,
+  onCancel,
+}: {
+  foreignAccount: { path: string; name: string | null };
+  onRetryOpen: (path: string) => void;
+  onCancel: () => void;
+}) {
+  const { signIn, phase: signInPhase } = useRigSignIn(() => onRetryOpen(foreignAccount.path));
+  const name = foreignAccount.name ?? 'This rig';
+
+  return (
+    <div className="flex w-full max-w-md flex-col gap-3 rounded-card border border-border-hairline bg-bg-1 p-5">
+      <p className="text-sm font-medium text-text-primary">
+        {name} belongs to another account&rsquo;s workspace.
+      </p>
+      <p className="font-mono text-xs break-all text-text-muted">{foreignAccount.path}</p>
+      <p className="text-sm text-text-secondary">Sign in as that account to sync and comment.</p>
+      <div className="flex items-center justify-end gap-2 pt-1">
+        <Button variant="ghost" size="sm" onClick={onCancel} disabled={signInPhase !== 'idle'}>
+          Cancel
+        </Button>
+        <Button size="sm" onClick={() => void signIn()} disabled={signInPhase !== 'idle'}>
+          {signInPhase === 'idle' ? 'Sign in' : 'Waiting…'}
         </Button>
       </div>
     </div>

@@ -19,6 +19,17 @@ export async function recordRigOpened(input: {
   path: string;
   bindingId: string;
   name: string | null;
+  /**
+   * Accounts & rigs round: the signed-in account's stable id to stamp on
+   * this row — `null` when signed out, or `undefined` when the caller
+   * couldn't confidently tell (a relay hiccup while signed in — see
+   * `account.ts`'s `CurrentAccountId`). `undefined` leaves whatever
+   * account this row already had untouched (on both insert and update it
+   * still needs SOME value, so a brand-new row from an `undefined` caller
+   * starts out null, same as a legacy row) rather than clobbering good
+   * data with a guess.
+   */
+  accountId?: string | null;
 }): Promise<void> {
   const now = Date.now();
   await db
@@ -28,6 +39,7 @@ export async function recordRigOpened(input: {
       path: input.path,
       bindingId: input.bindingId,
       name: input.name,
+      accountId: input.accountId ?? null,
       firstOpenedAt: now,
       lastOpenedAt: now,
       openCount: 1,
@@ -39,8 +51,44 @@ export async function recordRigOpened(input: {
         name: input.name,
         lastOpenedAt: now,
         openCount: sql`${rigRigs.openCount} + 1`,
+        ...(input.accountId !== undefined ? { accountId: input.accountId } : {}),
       },
     });
+}
+
+/**
+ * The account currently recorded for `bindingId`'s row — `undefined` when
+ * there's no row at all (never opened locally before), distinct from
+ * `null` (a row exists but has no account stamped: a legacy row, or one
+ * written while signed out). Used by `workspace.ts`'s `detect` to decide
+ * whether opening this folder would be opening someone else's account's
+ * rig — see `shared/rig/workspace.ts`'s `isForeignAccountRow`.
+ */
+export async function getRigAccountId(bindingId: string): Promise<string | null | undefined> {
+  const [row] = await db
+    .select({ accountId: rigRigs.accountId })
+    .from(rigRigs)
+    .where(eq(rigRigs.bindingId, bindingId))
+    .limit(1);
+  return row ? row.accountId : undefined;
+}
+
+/**
+ * The pure half of "which rigs does `auth.ts`'s logout/login pause/resume —
+ * a plain filter+map, kept separate from the db read below so it's
+ * unit-testable without touching sqlite.
+ */
+export function selectRigPathsForAccount(
+  rows: readonly { accountId: string | null; path: string }[],
+  accountId: string
+): string[] {
+  return rows.filter((r) => r.accountId === accountId).map((r) => r.path);
+}
+
+/** Every local path recorded for `accountId` — `auth.ts`'s logout (pause) and login (resume) hooks. */
+export async function getRigPathsForAccount(accountId: string): Promise<string[]> {
+  const rows = await db.select({ accountId: rigRigs.accountId, path: rigRigs.path }).from(rigRigs);
+  return selectRigPathsForAccount(rows, accountId);
 }
 
 /**
@@ -81,7 +129,8 @@ export async function updateRigName(bindingId: string, newName: string): Promise
 // have, and this reads + verifies its OWN `.rig/tap-binding.local.json` —
 // one directory, chosen and confirmed by the person, never discovered).
 
-async function existsAsDirectory(path: string): Promise<boolean> {
+/** Exported for `rig-controls.ts`'s account-scoped pause/resume — same existence check, same "don't fail on a since-deleted folder" tolerance. */
+export async function existsAsDirectory(path: string): Promise<boolean> {
   try {
     return (await stat(path)).isDirectory();
   } catch {

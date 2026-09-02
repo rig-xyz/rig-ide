@@ -10,6 +10,7 @@ import {
   buildHomeRigRows,
   deriveHomeRegions,
   deriveWorkspacesState,
+  filterLocalRigsByAccount,
   type HomeHealthMessage,
   type HomeLocalRig,
   type HomeRecentSession,
@@ -138,6 +139,16 @@ export function Home({
     enabled: signedIn,
   });
 
+  // Accounts & rigs round: same query key `user-pill.tsx` already uses for
+  // the topbar identity pill, so this shares that cache/subscription
+  // rather than firing a second `/v1/me` — only the rail's own account
+  // filter (`filterLocalRigsByAccount` below) reads it here.
+  const meQuery = useQuery({
+    queryKey: ['rig', 'account', 'me'],
+    queryFn: () => rpc.rig.account.me(),
+    enabled: signedIn,
+  });
+
   // Bumped well past the old CONTINUE section's cap of 7 — every local rig
   // needs to genuinely appear in ITS OWN row now, not just the most
   // recently opened handful, or a rig that fell outside the limit would
@@ -164,14 +175,31 @@ export function Home({
 
   const localReady = !agentsLoading && !localRigsQuery.isLoading && !recentSessionsQuery.isLoading;
 
-  const localRigs: HomeLocalRig[] = (localRigsQuery.data ?? []).map((r) => ({
-    bindingId: r.bindingId,
-    name: r.name,
-    path: r.path,
-    lastOpenedAt: r.lastOpenedAt,
-    paused: r.paused,
-    outsideHome: r.outsideHome,
-  }));
+  // Accounts & rigs round: `undefined` while signed in but `meQuery` hasn't
+  // resolved yet (never filter on a guess), `null` once confidently signed
+  // out, else the signed-in account's own id — see
+  // `filterLocalRigsByAccount`'s own doc comment for what each does below.
+  const currentAccountId: string | null | undefined = !signedIn
+    ? null
+    : meQuery.data?.success
+      ? meQuery.data.data.id
+      : undefined;
+
+  // Filtered once, here, so every consumer below (the rail, and the pulse
+  // briefing's own "your rigs" via `BriefingSpine`) agrees on the same
+  // account boundary rather than each re-deriving it.
+  const localRigs: HomeLocalRig[] = filterLocalRigsByAccount(
+    (localRigsQuery.data ?? []).map((r) => ({
+      bindingId: r.bindingId,
+      name: r.name,
+      path: r.path,
+      lastOpenedAt: r.lastOpenedAt,
+      paused: r.paused,
+      outsideHome: r.outsideHome,
+      accountId: r.accountId,
+    })),
+    currentAccountId
+  );
   const recentSessions: HomeRecentSession[] = recentSessionsQuery.data ?? [];
   const workspaces = deriveWorkspacesState(signedIn, {
     isLoading: workspacesQuery.isLoading,

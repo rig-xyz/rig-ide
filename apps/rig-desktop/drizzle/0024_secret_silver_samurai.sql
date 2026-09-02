@@ -1,0 +1,1 @@
+ALTER TABLE `rig_rigs` ADD `account_id` text;

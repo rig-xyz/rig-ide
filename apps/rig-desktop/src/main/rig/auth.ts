@@ -3,9 +3,11 @@ import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import type { RigAuthError, RigAuthStatus, RigLoginStarted } from '@shared/rig/auth';
+import { getCurrentAccountId } from './account';
 import { extractRigAuthUrl, loginFailureMessage, logoutFailureMessage } from './auth-output';
 import { resolveCliBin } from './bundled-cli';
 import { readRelayToken } from './config';
+import { pauseRigsForAccount, resumeRigsForAccount } from './rig-controls';
 
 /**
  * Signing in to Rig by driving the bundled `rig login`.
@@ -135,13 +137,32 @@ function startLogin(): LoginSession {
     }
     // Exit 0 without a URL means the CLI was already signed in — still success.
     if (code === 0) {
-      settleDone(ok(undefined));
+      // Accounts & rigs round: resume every local rig this now-signed-in
+      // account owns before resolving `awaitLogin()` — best-effort and
+      // never rejects (see its own comment), so this never turns a
+      // successful `rig login` into a failed one.
+      void resumeSignedInAccountRigs()
+        .catch((error) => log.warn('rig: failed to resume rigs after login', { error: String(error) }))
+        .finally(() => settleDone(ok(undefined)));
       return;
     }
     settleDone(err<RigAuthError>({ kind: 'failed', message: loginFailureMessage(output, code) }));
   });
 
   return current;
+}
+
+/**
+ * `startLogin`'s `child.on('close')` success branch: the PAT is on disk by
+ * now, so `getCurrentAccountId` can resolve the real id. Best-effort and
+ * swallows every failure itself (a relay hiccup right after signing in
+ * must never surface as a login failure) — `resumeRigsForAccount` is
+ * already best-effort internally, so this only guards `getCurrentAccountId`
+ * resolving to anything other than `'known'`.
+ */
+async function resumeSignedInAccountRigs(): Promise<void> {
+  const current = await getCurrentAccountId();
+  if (current.status === 'known') await resumeRigsForAccount(current.id);
 }
 
 /** Stops an in-flight login — used both by the explicit `cancel` RPC and by `logout`. */
@@ -234,9 +255,23 @@ export const rigAuthController = createRPCController({
   /**
    * Signs out machine-wide via `rig logout --plain`. Cancels any in-flight
    * login first so signing out never leaves an orphan child process behind.
+   *
+   * Accounts & rigs round: the signing-out account's id has to be read
+   * BEFORE `runLogout()` clears the PAT off disk — afterward,
+   * `getCurrentAccountId` can only ever answer `'signedOut'`. Pausing is
+   * awaited (not fire-and-forget) so the app never leaves this account's
+   * rigs syncing in the background for a window after `logout` resolves,
+   * but it's still best-effort throughout (`pauseRigsForAccount` never
+   * throws) — a pause failure never turns a successful logout into a
+   * failed one.
    */
   logout: async (): Promise<Result<void, RigAuthError>> => {
     cancelInFlightLogin();
-    return runLogout();
+    const current = await getCurrentAccountId();
+    const result = await runLogout();
+    if (result.success && current.status === 'known') {
+      await pauseRigsForAccount(current.id);
+    }
+    return result;
   },
 });
