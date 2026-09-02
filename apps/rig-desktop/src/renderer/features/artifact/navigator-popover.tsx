@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { ChevronRight, Search } from 'lucide-react';
+import { ChevronRight, Link, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { iconFor, rigFilesQueryKey } from '@renderer/features/workspace/file-tree';
+import { ImportDocDialog } from '@renderer/features/rig-import/import-doc-dialog';
 import { rpc } from '@renderer/lib/ipc';
 import { Popover, type PopoverAnchor } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/lib/utils';
@@ -21,6 +22,13 @@ import type { RigFileNode } from '@shared/rig/files';
  * no seen-state dots, no pinning — those live on the pinned card and the
  * focus view now. This surface answers exactly one question: "open which
  * file?"
+ *
+ * Onboarding-flow spec: the "Import a Google Doc" footer action is this
+ * popover's own entrance to the existing import flow (`ImportDocDialog`,
+ * unchanged) — no longer only reachable from inside rig creation. The
+ * dialog is rendered as a SIBLING of the `Popover` below, not a child of
+ * it: `Popover` unmounts its children the instant it closes, and opening
+ * the import dialog closes this popover in the same click.
  */
 
 export function NavigatorPopover({
@@ -46,29 +54,58 @@ export function NavigatorPopover({
   align?: 'left' | 'right';
   gap?: number;
 }) {
+  const [importOpen, setImportOpen] = useState(false);
+
   return (
-    <Popover
-      anchor={anchor}
-      open={open}
-      onClose={onClose}
-      role="dialog"
-      align={align}
-      gap={gap}
-      estimatedWidth={264}
-      minWidth={264}
-      ariaLabel="Open a file"
-      className="p-2"
-    >
-      <NavigatorContent
+    <>
+      <Popover
+        anchor={anchor}
+        open={open}
+        onClose={onClose}
+        role="dialog"
+        align={align}
+        gap={gap}
+        estimatedWidth={264}
+        minWidth={264}
+        ariaLabel="Open a file"
+        className="p-2"
+      >
+        <NavigatorContent
+          root={root}
+          rootId={rootId}
+          revealDir={revealDir}
+          onOpenFile={(absPath, relPath) => {
+            onOpenFile(absPath, relPath);
+            onClose();
+          }}
+        />
+        <div className="border-border-hairline mt-1 border-t pt-1">
+          <button
+            type="button"
+            onClick={() => {
+              // A control that opens a surface closes the one it replaces —
+              // same rule the artefact pane's own (+) menu follows.
+              onClose();
+              setImportOpen(true);
+            }}
+            className="hover:bg-bg-2 flex h-7 w-full items-center gap-1.5 rounded-control px-2 text-left text-xs text-text-secondary transition-colors"
+          >
+            <Link className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+            Import a Google Doc
+          </button>
+        </div>
+      </Popover>
+      <ImportDocDialog
         root={root}
         rootId={rootId}
-        revealDir={revealDir}
-        onOpenFile={(absPath, relPath) => {
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={(absPath) => {
+          const relPath = absPath.startsWith(`${root}/`) ? absPath.slice(root.length + 1) : '';
           onOpenFile(absPath, relPath);
-          onClose();
         }}
       />
-    </Popover>
+    </>
   );
 }
 

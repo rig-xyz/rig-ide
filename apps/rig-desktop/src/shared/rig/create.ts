@@ -21,6 +21,13 @@ export type RigCreateRequest = {
   name: string;
   /** Go live after init (`rig sync` — mints the relay binding, mirrors to workspace home). */
   sync: boolean;
+  /**
+   * Onboarding flow round (docs/onboarding-flow-spec.md §2/3): writes the
+   * first-run landing doc (`Start here.md`) into the new rig, main-side,
+   * before it opens. Optional and defaulted off so the older create dialog
+   * (which seeds nothing) is unaffected.
+   */
+  seedDoc?: boolean;
 };
 
 /** `rig sync`'s JSON error envelope, verbatim — e.g. `not_logged_in`, or the 50MB quota message. */
@@ -43,6 +50,8 @@ export type RigCreateResult = {
   synced: boolean;
   homeUrl: string | null;
   syncError: RigCreateSyncError | null;
+  /** Absolute path to the seeded landing doc, when `seedDoc` was requested and the write succeeded; null otherwise. */
+  docPath: string | null;
 };
 
 export type RigCreateError = {

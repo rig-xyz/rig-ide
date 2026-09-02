@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import { rigSlug, validateRigName } from '@shared/rig/create';
-import { parseRigCliOutput } from './create';
+import { parseRigCliOutput, startHereDocContent, writeSeedDoc } from './create';
 
 describe('parseRigCliOutput', () => {
   it('parses a success body (rig init --json)', () => {
@@ -90,5 +93,37 @@ describe('validateRigName', () => {
     expect(validateRigName('   ')).toBe('Give the rig a name.');
     expect(validateRigName('!!!')).toBe('The name needs at least one letter or number.');
     expect(validateRigName('Knee Ability')).toBeNull();
+  });
+});
+
+describe('startHereDocContent', () => {
+  it('names the onboarding flow\'s three real actions (docs/onboarding-flow-spec.md §3)', () => {
+    const content = startHereDocContent();
+    expect(content).toContain('# Welcome to your rig');
+    expect(content).toContain('leave a comment');
+    expect(content).toContain('@claude');
+    expect(content).toContain('@codex');
+    expect(content).toContain('**Share**');
+  });
+});
+
+describe('writeSeedDoc', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writes the landing doc into the target directory and returns its path', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rig-create-seed-doc-'));
+    dirs.push(dir);
+    const docPath = await writeSeedDoc(dir);
+    expect(docPath).toBe(join(dir, 'Start here.md'));
+    expect(readFileSync(join(dir, 'Start here.md'), 'utf8')).toBe(startHereDocContent());
+  });
+
+  it('is best-effort — a bad target directory returns null instead of throwing', async () => {
+    await expect(
+      writeSeedDoc(join(tmpdir(), 'rig-create-seed-doc-nonexistent', 'nested'))
+    ).resolves.toBeNull();
   });
 });

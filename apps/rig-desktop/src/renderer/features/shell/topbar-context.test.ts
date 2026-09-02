@@ -7,18 +7,20 @@ describe('deriveTopbarContext', () => {
   });
 
   it('drives the [⌂] › rig-name mini-breadcrumb once a rig is bound', () => {
-    expect(deriveTopbarContext({ name: 'rig', bindingId: 'b1' })).toEqual({
+    expect(deriveTopbarContext({ name: 'rig', bindingId: 'b1', path: '/rigs/rig' })).toEqual({
       kind: 'rig',
       name: 'rig',
       bindingId: 'b1',
+      path: '/rigs/rig',
     });
   });
 
   it('falls back to "Unnamed rig" when the bound rig has no name', () => {
-    expect(deriveTopbarContext({ name: null, bindingId: 'b1' })).toEqual({
+    expect(deriveTopbarContext({ name: null, bindingId: 'b1', path: '/rigs/rig' })).toEqual({
       kind: 'rig',
       name: 'Unnamed rig',
       bindingId: 'b1',
+      path: '/rigs/rig',
     });
   });
 });

@@ -7,11 +7,13 @@
  * below the bar carry none). Pure so the "nothing on Home / crumb once
  * bound" rule is a tested fact, not a read of App.tsx's JSX.
  */
-export type TopbarContext = { kind: 'none' } | { kind: 'rig'; name: string; bindingId: string };
+export type TopbarContext =
+  | { kind: 'none' }
+  | { kind: 'rig'; name: string; bindingId: string; path: string };
 
 export function deriveTopbarContext(
-  bound: { name: string | null; bindingId: string } | null
+  bound: { name: string | null; bindingId: string; path: string } | null
 ): TopbarContext {
   if (!bound) return { kind: 'none' };
-  return { kind: 'rig', name: bound.name ?? 'Unnamed rig', bindingId: bound.bindingId };
+  return { kind: 'rig', name: bound.name ?? 'Unnamed rig', bindingId: bound.bindingId, path: bound.path };
 }

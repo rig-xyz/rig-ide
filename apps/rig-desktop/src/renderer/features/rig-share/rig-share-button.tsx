@@ -13,6 +13,7 @@ import { cn } from '@renderer/lib/utils';
 import type { RigInviteMinted, RigInviteRole, RigMember } from '@shared/rig/rig-share';
 import { deriveAvatarStack } from './avatar-stack';
 import { mintedInviteMatchesRole, shapePendingInvites, suggestCollaborators } from './invite-state';
+import { deriveSharePopoverPhase } from './share-sync-state';
 
 /**
  * The rig-level Share button in the file browser header: its trigger shows
@@ -30,6 +31,16 @@ import { mintedInviteMatchesRole, shapePendingInvites, suggestCollaborators } fr
  * user-plane mint sends NO email even for an email-constrained invite — the
  * minted link is the deliverable, and the UI says so rather than pretending
  * an email went out.
+ *
+ * Onboarding-flow spec, Rollout step 2 ("deferred share/sync"): a rig
+ * created local-only has no relay binding yet, so `rig.share.members`
+ * answers `notBound` — this popover IS the deferred moment, decided only
+ * when someone actually opens it. `deriveSharePopoverPhase` turns
+ * (signed-in?, that error) into what to show: signed out still offers
+ * sign-in first; signed in and local-only offers to turn sync on right
+ * here (that click is the consent — `rpc.rig.create.enableSync`, the same
+ * driver the old create dialog's own "Turn on sync" used); signed in and
+ * already-synced renders exactly as before.
  */
 export function RigShareButton({ root, name }: { root: string; name: string | null }) {
   const [open, setOpen] = useState(false);
@@ -100,6 +111,8 @@ export function RigShareButton({ root, name }: { root: string; name: string | nu
 /** Exported for the pinned card's People row — same surface, second anchor. */
 export function RigSharePopoverContent({ root, name }: { root: string; name: string | null }) {
   const queryClient = useQueryClient();
+  const [enablingSync, setEnablingSync] = useState(false);
+  const [enableSyncError, setEnableSyncError] = useState<string | null>(null);
 
   const authQuery = useQuery({
     queryKey: ['rig', 'auth', 'status'],
@@ -118,25 +131,60 @@ export function RigSharePopoverContent({ root, name }: { root: string; name: str
     void queryClient.invalidateQueries({ queryKey: membersKey });
   });
 
-  if (authQuery.isLoading) return null;
+  const membersError = membersQuery.data && !membersQuery.data.success ? membersQuery.data.error : null;
+  const phase = deriveSharePopoverPhase({
+    authLoading: authQuery.isLoading,
+    signedIn,
+    membersError,
+  });
 
-  if (!signedIn) {
+  if (phase.kind === 'loading') return null;
+
+  if (phase.kind === 'signedOut') {
     return (
       <div className="flex flex-col gap-2 p-3">
-        <p className="text-text-muted text-xs">Sign in to Rig to see who's on this rig.</p>
+        <p className="text-text-muted text-xs">Sign in to Rig to share this rig.</p>
         <Button variant="outline" size="xs" onClick={() => void signIn()} disabled={signInPhase !== 'idle'}>
-          {signInPhase === 'idle' ? 'Sign in to Rig' : 'Waiting for sign-in…'}
+          {signInPhase === 'idle' ? 'Sign in to share' : 'Waiting for sign-in…'}
         </Button>
       </div>
     );
   }
 
-  const membersError = membersQuery.data && !membersQuery.data.success ? membersQuery.data.error : null;
-  if (membersError) {
-    const offline = isOfflineError(membersError);
+  // Local-only: signed in, but this workspace has no relay binding yet
+  // (`rig.share.members` answers `notBound`). Enabling sync HERE, on this
+  // click, is the consent the onboarding spec asks for — no separate
+  // toggle, no new screen. A success just re-fetches `members`, which then
+  // finds the fresh binding and falls through to the normal owner/invite
+  // rendering below.
+  if (phase.kind === 'localOnly') {
+    const turnOnSync = async () => {
+      setEnablingSync(true);
+      setEnableSyncError(null);
+      const result = await rpc.rig.create.enableSync({ dir: root });
+      setEnablingSync(false);
+      if (!result.success) {
+        setEnableSyncError(result.error.message);
+        return;
+      }
+      void queryClient.invalidateQueries({ queryKey: membersKey });
+    };
+
     return (
-      <p className={cn('text-text-muted p-3 text-xs', offline && 'font-mono')}>
-        {offline ? 'offline · members unavailable' : membersError.message}
+      <div className="flex flex-col gap-2 p-3">
+        <p className="text-text-muted text-xs">Sharing turns on sync for this rig.</p>
+        {enableSyncError && <p className="text-danger text-xs">{enableSyncError}</p>}
+        <Button size="xs" onClick={() => void turnOnSync()} disabled={enablingSync}>
+          {enablingSync ? 'Turning on…' : 'Share'}
+        </Button>
+      </div>
+    );
+  }
+
+  if (phase.kind === 'offline' || phase.kind === 'error') {
+    return (
+      <p className={cn('text-text-muted p-3 text-xs', phase.kind === 'offline' && 'font-mono')}>
+        {phase.kind === 'offline' ? 'offline · members unavailable' : phase.message}
       </p>
     );
   }

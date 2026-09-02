@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { motion, useReducedMotion } from 'framer-motion';
 import { ChevronRight, Home as HomeIcon, Settings as SettingsIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArtefactPane } from '@renderer/features/artifact/artefact-pane';
@@ -265,6 +266,22 @@ export function App() {
   // later plain "Open Folder…" on the SAME rig can't inherit a stale target
   // from an earlier Continue click.
   const [pendingActiveSessionId, setPendingActiveSessionId] = useState<string | null>(null);
+  // Onboarding flow round (docs/onboarding-flow-spec.md §2/3/5): the
+  // just-created rig's landing doc, opened once `openPath`'s `detect()`
+  // resolves bound (see the effect below) — same "carry the extra target
+  // across the async round trip" pattern `pendingActiveSessionId` already
+  // uses. `justCreatedRig` additionally arms the topbar's inline
+  // auto-rename and the artefact pane's one-time landing fade; both are
+  // consumed (and cleared) by what they drive, never by a timeout.
+  const [pendingOpenAbsPath, setPendingOpenAbsPath] = useState<string | null>(null);
+  const [justCreatedRig, setJustCreatedRig] = useState(false);
+  // Motion round (docs/onboarding-flow-spec.md §5): one reveal, the FIRST
+  // time the landing doc's pane mounts — set alongside opening it (below),
+  // cleared once the fade has actually played so a later file/tab switch
+  // never replays it. `prefersReducedMotion` (framer-motion's own
+  // `matchMedia` hook) skips the transform/fade entirely, per the spec.
+  const [showLandingFade, setShowLandingFade] = useState(false);
+  const prefersReducedMotion = useReducedMotion();
   // Session-first viewer: the artefact pane's tabs. Empty means the pane
   // doesn't exist — the session owns the window and the pinned card floats
   // over it (state A). See `features/artifact/artefact-tabs.ts`.
@@ -416,6 +433,19 @@ export function App() {
     [openPath]
   );
 
+  // Onboarding flow round: Home's one-click create hands back the new
+  // rig's path and its seeded landing doc — opens it the normal way,
+  // arming the doc-open (below) and the topbar's inline auto-rename
+  // (`RigSwitcher`'s `autoEdit`) for once it actually binds.
+  const openCreatedRig = useCallback(
+    (path: string, docAbsPath: string | null) => {
+      setPendingOpenAbsPath(docAbsPath);
+      setJustCreatedRig(true);
+      void openPath(path);
+    },
+    [openPath]
+  );
+
   const openFolder = useCallback(async () => {
     let picked: string | undefined;
     try {
@@ -534,6 +564,9 @@ export function App() {
     setFolder({ status: 'empty' });
     setSyncingRoot(null);
     setPendingActiveSessionId(null);
+    setPendingOpenAbsPath(null);
+    setJustCreatedRig(false);
+    setShowLandingFade(false);
   }, []);
 
   // Round (beyond-markdown): every file opens now — `ArtifactView` itself
@@ -559,6 +592,19 @@ export function App() {
     },
     [boundRoot, boundBindingId]
   );
+
+  // Onboarding flow round: once the just-created rig actually binds, open
+  // its landing doc the same way any other file-open does (Preview is
+  // already the default for markdown, `preview-mode-memory.ts`) — this is
+  // the async round trip `openCreatedRig` above armed `pendingOpenAbsPath`
+  // for.
+  useEffect(() => {
+    if (!boundRoot || !pendingOpenAbsPath) return;
+    openFile(pendingOpenAbsPath);
+    setPendingOpenAbsPath(null);
+    setShowLandingFade(true);
+  }, [boundRoot, pendingOpenAbsPath, openFile]);
+
   const openFocus = useCallback(() => {
     setRigLayout((current) => (current === 'chat' ? 'split' : current));
     setFocusedRigPane('artifact');
@@ -711,7 +757,9 @@ export function App() {
   return (
     <div className="relative flex h-full flex-col">
       <Topbar
-        context={deriveTopbarContext(bound)}
+        context={deriveTopbarContext(
+          bound ? { name: bound.name, bindingId: bound.bindingId, path: bound.root } : null
+        )}
         variant={bound ? 'rig' : 'home'}
         scrolled={!bound && mainScrolled}
         onGoHome={goHome}
@@ -719,6 +767,8 @@ export function App() {
         onOpenPath={openPath}
         onOpenFolder={openFolder}
         updateReady={isUpdateReady(updateStatus.state)}
+        autoEditRigName={justCreatedRig}
+        onAutoEditRigNameHandled={() => setJustCreatedRig(false)}
         // Session-first viewer: rig-level Share lives in the topbar now —
         // the panel header that used to carry it went with the resident
         // file browser.
@@ -819,26 +869,54 @@ export function App() {
             </div>
           )}
 
-          {rigLayout !== 'chat' && (
-            <div
-              style={{ order: ARTIFACT_PANEL_ORDER }}
-              onPointerDownCapture={() => setFocusedRigPane('artifact')}
-              onFocusCapture={() => setFocusedRigPane('artifact')}
-              className="flex min-h-0 min-w-0 flex-1 flex-col"
-            >
-              <ArtefactPane
-                root={bound.root}
-                rootId={bound.rootId}
-                bindingId={bound.bindingId}
-                state={artefact}
-                onActivateTab={(index) => setArtefact((current) => activateTab(current, index))}
-                onCloseTab={(index) => setArtefact((current) => closeTab(current, index))}
-                onMoveTab={(from, to) => setArtefact((current) => moveTab(current, from, to))}
-                onOpenFile={(absPath) => openFile(absPath)}
-                onOpenFocus={openFocus}
-              />
-            </div>
-          )}
+          {rigLayout !== 'chat' &&
+            (() => {
+              const pane = (
+                <ArtefactPane
+                  root={bound.root}
+                  rootId={bound.rootId}
+                  bindingId={bound.bindingId}
+                  state={artefact}
+                  onActivateTab={(index) => setArtefact((current) => activateTab(current, index))}
+                  onCloseTab={(index) => setArtefact((current) => closeTab(current, index))}
+                  onMoveTab={(from, to) => setArtefact((current) => moveTab(current, from, to))}
+                  onOpenFile={(absPath) => openFile(absPath)}
+                  onOpenFocus={openFocus}
+                />
+              );
+              // Motion round: the landing doc's pane fades up on its first
+              // mount after creation (docs/onboarding-flow-spec.md §5) — a
+              // plain opacity reveal, no transform, skipped entirely under
+              // reduced motion. `showLandingFade` is one-shot: cleared the
+              // moment the fade finishes, so switching tabs later never
+              // replays it.
+              if (showLandingFade && !prefersReducedMotion) {
+                return (
+                  <motion.div
+                    style={{ order: ARTIFACT_PANEL_ORDER }}
+                    onPointerDownCapture={() => setFocusedRigPane('artifact')}
+                    onFocusCapture={() => setFocusedRigPane('artifact')}
+                    className="flex min-h-0 min-w-0 flex-1 flex-col"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.25, ease: 'easeOut' }}
+                    onAnimationComplete={() => setShowLandingFade(false)}
+                  >
+                    {pane}
+                  </motion.div>
+                );
+              }
+              return (
+                <div
+                  style={{ order: ARTIFACT_PANEL_ORDER }}
+                  onPointerDownCapture={() => setFocusedRigPane('artifact')}
+                  onFocusCapture={() => setFocusedRigPane('artifact')}
+                  className="flex min-h-0 min-w-0 flex-1 flex-col"
+                >
+                  {pane}
+                </div>
+              );
+            })()}
         </div>
       ) : (
         // Round H2 feedback: `items-center justify-center` directly on the
@@ -870,6 +948,7 @@ export function App() {
               onOpenFolder={openFolder}
               onOpenPath={openPath}
               onContinueSession={continueSession}
+              onRigCreated={openCreatedRig}
             />
           ) : (
             <div className="flex min-h-full items-center justify-center p-8">
@@ -898,6 +977,8 @@ function Topbar({
   updateReady,
   shareSlot,
   layoutSlot,
+  autoEditRigName,
+  onAutoEditRigNameHandled,
 }: {
   context: TopbarContext;
   /** Which bottom-edge treatment the bar wears (Dylan's seam call, this
@@ -932,6 +1013,10 @@ function Topbar({
   shareSlot?: React.ReactNode;
   /** Layout-switcher round: the chat/split/files segmented control (rig view only) — rendered in the right cluster, ahead of the account/gear icons. */
   layoutSlot?: React.ReactNode;
+  /** Onboarding flow round: true immediately after this rig was just created — passed through to `RigSwitcher`'s `autoEdit`. */
+  autoEditRigName?: boolean;
+  /** Called once `autoEditRigName`'s inline rename has been entered, so `App` can drop the flag. */
+  onAutoEditRigNameHandled?: () => void;
 }) {
   return (
     // The window is `titleBarStyle: 'hiddenInset'` (main/app/window.ts) — no
@@ -997,10 +1082,16 @@ function Topbar({
             </Tooltip>
             <ChevronRight className="size-3 shrink-0" strokeWidth={1.5} />
             <RigSwitcher
+              // Keyed so switching to a genuinely different rig remounts
+              // this fresh — `autoEdit` must only ever fire once per rig.
+              key={context.bindingId}
               bindingId={context.bindingId}
+              path={context.path}
               name={context.name}
               onOpenPath={onOpenPath}
               onOpenFolder={onOpenFolder}
+              autoEdit={autoEditRigName}
+              onAutoEditHandled={onAutoEditRigNameHandled}
             />
             {/* Feedback round 3: Share belongs WITH the rig it shares —
                 beside the name, not in the account cluster where its

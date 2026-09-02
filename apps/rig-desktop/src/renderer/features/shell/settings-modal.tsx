@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ExternalLink, Monitor, Moon, Sun } from 'lucide-react';
+import { ExternalLink, Monitor, Moon, Sun, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { AgentAuthTrailing } from '@renderer/features/agents/agent-auth-trailing';
 import { useAgentIdentities, type AgentIdentity } from '@renderer/features/chat/use-runnable-agents';
@@ -389,13 +389,22 @@ function AutoApproveAgentActionsRow() {
 
 /**
  * Rig home round: the managed Rig folder — the current path (tilde-shortened,
- * from `rpc.rig.home.get()`) and a "Change…" native picker that writes the
- * new `home` key via `rpc.rig.home.set` (main preserves every other key
- * already in `~/.config/rig/config.json`). Follows `AppUpdateRow`'s row
- * shape below (outline Button size=xs). Fine print is explicit that this
- * only affects where NEW rigs land — existing ones stay put (rig home never
- * migrates anything on its own; that's what the row menu's "Move to Rig
- * folder" is for).
+ * from `rpc.rig.home.get()`) and a native picker that writes the new `home`
+ * key via `rpc.rig.home.set` (main preserves every other key already in
+ * `~/.config/rig/config.json`). Follows `AppUpdateRow`'s row shape below
+ * (outline Button size=xs). Fine print is explicit that this only affects
+ * where NEW rigs land — existing ones stay put (rig home never migrates
+ * anything on its own; that's what the row menu's "Move to Rig folder" is
+ * for).
+ *
+ * Onboarding-flow spec: this is now the ONLY place location comes up at
+ * all — the create flow never asks. "Advanced: choose location…" and its
+ * warning are relocated verbatim from the old create dialog's own escape
+ * hatch; `rpc.rig.home.set` carries no location guard of its own (it just
+ * writes the config key and `mkdir -p`s it), so the real enforcement is
+ * still `rig init`'s own dangerous-location check at the moment a rig is
+ * actually created there — this line is only the same honest heads-up the
+ * create dialog gave.
  */
 function RigHomeRow() {
   const queryClient = useQueryClient();
@@ -436,11 +445,18 @@ function RigHomeRow() {
           {data?.displayPath ?? '…'}
         </p>
         <Button variant="outline" size="xs" onClick={() => void change()} disabled={changing} className="shrink-0">
-          {changing ? 'Changing…' : 'Change…'}
+          {changing ? 'Choosing…' : 'Advanced: choose location…'}
         </Button>
       </div>
       {error && <p className="text-danger text-xs">{error}</p>}
       <p className="text-text-muted text-xs">New rigs land here. Existing rigs stay where they are.</p>
+      {/* Same at-your-own-risk copy the create dialog's own "Advanced"
+          escape hatch used — the CLI's own guard (dangerous location,
+          non-empty target) is the real enforcement; this is the heads-up. */}
+      <p className="flex items-start gap-1.5 text-xs text-text-muted">
+        <TriangleAlert className="mt-0.5 size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
+        At your own risk — rig won’t merge into a non-empty folder.
+      </p>
     </div>
   );
 }

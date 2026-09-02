@@ -19,27 +19,27 @@ bottom for `--no-providers`, `--loopback`, and `--no-launch`.
 - [ ] **Launch.** `corepack pnpm run dev:fresh-user`. Expect: `@emdash/core` and
       `@emdash/plugins` rebuild, then an "Isolated:" summary printing the
       temp root and what's redirected there, then the Electron window opens.
-- [ ] **First screen.** No prior rig, no prior sign-in — expect a genuinely
-      empty first-run state (no recent-rigs list, no "Welcome back").
-- [ ] **Sign-in / sign-up.** Do this against the REAL relay (no `--loopback`
-      — see the flag note below for why). Expect a real Clerk sign-up/sign-in
-      flow via `rig login`, ending in a signed-in state the app can read back
-      (Settings or the account surface shows the new account).
-- [ ] **Provider sign-in (Claude/Codex).** Sign in to whichever provider(s)
-      you have installed. Since `HOME` is isolated, this is a REAL first-time
-      sign-in even if you're already signed in to Claude/Codex on this
-      machine outside the harness — expect the provider's own auth flow, not
-      a silently-already-signed-in state.
-- [ ] **Create first rig.** Expect it to land inside the isolated `~/Rig`
-      (i.e. `<temp root>/home/Rig`, not your real `~/Rig`) — confirm via the
-      app's own "will live in …" hint or Settings → "Rig folder", not just by
-      trusting it.
-- [ ] **Open a markdown doc.** Expect: Preview mode by default, the purple
-      palette, and no palette setting anywhere in the UI to change it.
+- [ ] **First screen.** No prior rig, no prior sign-in — expect the Welcome
+      screen and nothing else: the mark, one line of copy, and exactly one
+      button, **Start fresh** (no recent-rigs list, no "Welcome back", no
+      sign-in, no provider setup).
+- [ ] **Create first rig.** Click **Start fresh**. Expect it to create
+      immediately — no dialog, no name/location/sync questions — and land
+      inside the isolated `~/Rig` (i.e. `<temp root>/home/Rig/untitled-rig`,
+      not your real `~/Rig`) open on `Start here.md` in Preview.
+- [ ] **Rename inline.** Expect the rig name in the topbar to already be
+      auto-focused in edit mode with its text selected; type a name and
+      press Enter. Expect the folder itself to be renamed (confirm via
+      Settings → "Rig folder" or the rig switcher), not just the on-screen
+      label.
 - [ ] **Select text, leave a comment.** Expect the comment to anchor to the
       selection and render in the margin.
-- [ ] **@claude or @codex mention** in a comment thread. Expect a fresh
-      headless session to spawn and reply in-thread.
+- [ ] **@claude or @codex mention** in a comment thread. Since `HOME` is
+      isolated, this is a REAL first-time provider sign-in even if you're
+      already signed in to Claude/Codex on this machine outside the
+      harness — expect the provider's own auth flow to open right there,
+      inline with the mention, then a fresh headless session to spawn and
+      reply in-thread.
 - [ ] **"Why is this here?"** — ask the mentioned agent about a passage.
       Expect a prose answer that cites provenance; the underlying
       `rig context trace` tool call must NOT surface as a raw tool-call card
@@ -52,10 +52,24 @@ bottom for `--no-providers`, `--loopback`, and `--no-launch`.
       acknowledgement) — check the two paths separately if you have time.
 - [ ] **Toggle Edit mode.** Expect every comment left in Preview to still be
       present and anchored immediately — no re-sync delay, nothing dropped.
-- [ ] **Share the doc.** Expect a functioning share action from the doc or
-      rig-level UI.
+- [ ] **Share the rig.** Click the topbar **Share** button. Do this against
+      the REAL relay (no `--loopback` — see the flag note below for why).
+      The rig is still local-only at this point, so expect the popover
+      itself to drive sign-in: a real Clerk sign-up/sign-in flow via
+      `rig login`, ending in a signed-in state. Right after signing in,
+      expect the SAME click's consent to turn sync on for this rig (no
+      separate toggle, no second screen) and the invite-link UI to appear
+      in the same popover.
 - [ ] **Generate an invite link.** Expect a copyable link tied to the rig you
       created.
+- [ ] **Import a Google Doc.** From the file navigator (the artefact pane's
+      Files button), use "Import a Google Doc" — paste a Docs link or
+      choose a `.docx`. Expect it to import into the CURRENT rig and open
+      the resulting file.
+- [ ] **Advanced location, in Settings.** Settings → "Rig folder" should
+      show the current home path and an "Advanced: choose location…"
+      picker with the same at-your-own-risk warning the old create dialog
+      had — confirm creation itself never asks about location anymore.
 - [ ] **Second isolated profile joins and sees comments** (optional, see
       **Two-profile run** below).
 - [ ] **Quit and relaunch** (same temp root, same command — do NOT delete the

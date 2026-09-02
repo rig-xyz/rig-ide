@@ -1,10 +1,10 @@
-import { useQuery } from '@tanstack/react-query';
-import { FolderOpen, LogIn, Plus, Sparkles } from 'lucide-react';
-import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { LogIn } from 'lucide-react';
+import { useCallback, useRef, useState } from 'react';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
 import { useRigSignIn, type RigSignInPhase } from '@renderer/features/rig-account/use-rig-sign-in';
-import { CreateRigDialog } from '@renderer/features/rig-create/create-rig-dialog';
 import { rpc } from '@renderer/lib/ipc';
+import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { cn } from '@renderer/lib/utils';
 import { BriefingSpine } from './briefing-spine';
 import {
@@ -26,8 +26,8 @@ import { RigsRail } from './rigs-rail';
  *
  *   LEFT   — `RigsRail`, the action zone: ONE rig-centric list (kills the
  *            old separate CONTINUE + RIGS sections and the mid-page "Open
- *            a rig" hero — the hero survives ONLY in the true empty state,
- *            below).
+ *            a rig" hero — the true empty state below is now the first-run
+ *            `Welcome` screen instead, see onboarding-flow-spec.md).
  *   CENTER — `BriefingSpine`, the pulse briefing (kicker, greeting,
  *            summary, ask, WHAT'S NEW).
  *   RIGHT  — `PeopleRail`, per-person pulse lines. Absent (no chrome) when
@@ -36,21 +36,62 @@ import { RigsRail } from './rigs-rail';
  * `showPulse` (`shouldShowPulseSection`, UNCHANGED semantics) gates the
  * center/right regions together — signed-out and "solo" (no relay
  * bindings) render the rigs rail alone, which works standalone by design.
- * The true empty state (no rigs anywhere) pre-empts everything else: just
- * the icon/title/Open-Folder hero, same as before this round.
+ * The true empty state (no rigs anywhere) pre-empts everything else: the
+ * first-run `Welcome` screen, one line and one button
+ * (docs/onboarding-flow-spec.md §1).
  */
 export function Home({
   onOpenFolder,
   onOpenPath,
   onContinueSession,
+  onRigCreated,
 }: {
   onOpenFolder: () => void;
   onOpenPath: (path: string) => void;
   onContinueSession: (path: string, sessionId: string) => void;
+  /**
+   * Onboarding flow round (docs/onboarding-flow-spec.md §2): fires once the
+   * one-click create (Welcome's "Start fresh", or the rail's "New rig")
+   * actually created a rig — `App.tsx` opens it and arms the topbar's
+   * inline auto-rename and the landing-doc open.
+   */
+  onRigCreated: (path: string, docPath: string | null) => void;
 }) {
   const { agents, isLoading: agentsLoading } = useRunnableAgents();
   const identities = useAgentIdentities();
-  const [createOpen, setCreateOpen] = useState(false);
+  const queryClient = useQueryClient();
+  // Re-entrancy guard, not React state — a second click while the first
+  // create is still in flight should just no-op, not start a second rig.
+  const creatingRef = useRef(false);
+  const [creating, setCreating] = useState(false);
+
+  // One-click create (onboarding-flow-spec.md §2): Welcome's "Start fresh"
+  // and the rail's "New rig" both drive this exact same request — no
+  // dialog, no name field. "Untitled rig" is collision-suffixed by main
+  // (rig-home-design.md) and lands in the managed `~/Rig` home; the seed
+  // doc is written main-side (`seedDoc: true`) so there is something real
+  // to land on.
+  const createRig = useCallback(async () => {
+    if (creatingRef.current) return;
+    creatingRef.current = true;
+    setCreating(true);
+    try {
+      const result = await rpc.rig.create.create({
+        parentDir: null,
+        name: 'Untitled rig',
+        sync: true,
+        seedDoc: true,
+      });
+      if (!result.success) return; // best-effort — no dialog left to surface the error in
+      if (result.data.rootId) void rpc.rig.files.releaseRoot({ rootId: result.data.rootId });
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'recent'] });
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
+      onRigCreated(result.data.path, result.data.docPath);
+    } finally {
+      creatingRef.current = false;
+      setCreating(false);
+    }
+  }, [queryClient, onRigCreated]);
   // Pulse round: which rigs-rail row a WHAT'S NEW/ACROSS YOUR RIGS rig-name
   // link (no local match) should scroll to/flash — lives here, not in
   // either `BriefingSpine` or `RigsRail` alone, since it's the one piece of
@@ -145,14 +186,13 @@ export function Home({
     // `min-h-full` (not `h-full`) + no overflow of its own — `main` (the
     // parent, in `App.tsx`) is what scrolls; matches round H2's own fix
     // for the classic flexbox-centering-clips-the-top bug.
+    //
+    // Onboarding flow round: this is now the ONLY first-run surface
+    // (docs/onboarding-flow-spec.md §1) — no Open Folder…, no "ask your
+    // agent", no dialog. One line, one button.
     return (
       <div className="flex min-h-full w-full items-center justify-center p-8">
-        <EmptyHero
-          agentReady={agents.length > 0}
-          onOpenFolder={onOpenFolder}
-          onCreateRig={() => setCreateOpen(true)}
-        />
-        <CreateRigDialog open={createOpen} onOpenChange={setCreateOpen} onOpenPath={onOpenPath} />
+        <Welcome onStartFresh={() => void createRig()} busy={creating} />
       </div>
     );
   }
@@ -172,7 +212,6 @@ export function Home({
     // Dylan: the column was crowding the rail.
     <div className="hero-glow flex min-h-full w-full flex-col gap-4 px-10 pt-4 pb-8">
       {regions.health && <HealthLine message={regions.health} onSignIn={signIn} signInPhase={signInPhase} />}
-      <CreateRigDialog open={createOpen} onOpenChange={setCreateOpen} onOpenPath={onOpenPath} />
       {/*
        * D6 fix: below `lg` (this app's own window can go as narrow as
        * 700px, well under the 1024px `lg` breakpoint — this is the COMMON
@@ -223,7 +262,7 @@ export function Home({
             onOpenPath={onOpenPath}
             onOpenSession={onContinueSession}
             onOpenFolder={onOpenFolder}
-            onCreateRig={() => setCreateOpen(true)}
+            onCreateRig={() => void createRig()}
             highlightBindingId={highlightBindingId}
           />
         </div>
@@ -238,52 +277,27 @@ export function Home({
 }
 
 /**
- * The true empty state — no rigs anywhere, for anyone (local or shared).
- * The ONLY place the old bare "Open a rig" hero survives: icon, title,
- * Open Folder + New rig side by side (create-a-rig round), and (an agent
- * is ready but there's nothing to point it at yet) the "ask your agent"
- * close.
+ * First run (docs/onboarding-flow-spec.md §1) — no rigs anywhere yet, for
+ * anyone (local or shared). Exactly one primary action, per the spec's
+ * "one action" principle: no secondary links, no sign-in, no provider
+ * setup, no health line. Sign-in, sync, and Google-Doc import are all
+ * reachable later (Share, an @mention, the file navigator) — never here.
  */
-function EmptyHero({
-  agentReady,
-  onOpenFolder,
-  onCreateRig,
-}: {
-  agentReady: boolean;
-  onOpenFolder: () => void;
-  onCreateRig: () => void;
-}) {
+function Welcome({ onStartFresh, busy }: { onStartFresh: () => void; busy: boolean }) {
   return (
-    <div className="flex w-full max-w-sm flex-col items-center gap-4 text-center">
-      <FolderOpen size={32} strokeWidth={1.5} className="text-text-muted" />
-      <h1 className="font-display text-text-primary text-xl">Open a rig</h1>
-      {agentReady && (
-        <button
-          type="button"
-          onClick={onOpenFolder}
-          className="text-text-muted hover:text-text-primary flex items-center gap-1.5 text-xs transition-colors"
-        >
-          <Sparkles className="size-3.5 shrink-0" strokeWidth={1.5} />
-          Ask your agent to set up a rig
-        </button>
-      )}
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onOpenFolder}
-          className="bg-accent text-accent-ink rounded-control px-4 py-2 text-sm font-medium transition-colors hover:opacity-90"
-        >
-          Open Folder…
-        </button>
-        <button
-          type="button"
-          onClick={onCreateRig}
-          className="border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex items-center gap-1.5 border px-4 py-2 text-sm transition-colors"
-        >
-          <Plus className="size-4 shrink-0" strokeWidth={1.5} />
-          New rig
-        </button>
-      </div>
+    <div className="flex w-full max-w-sm flex-col items-center gap-5 text-center">
+      <RigMark size={40} className="text-text-primary" />
+      <p className="font-display text-text-primary text-lg">
+        Collaborate with your agents, and everyone else&rsquo;s.
+      </p>
+      <button
+        type="button"
+        onClick={onStartFresh}
+        disabled={busy}
+        className="bg-accent text-accent-ink rounded-control px-5 py-2 text-sm font-medium transition-colors hover:opacity-90 disabled:pointer-events-none disabled:opacity-60"
+      >
+        {busy ? 'Starting…' : 'Start fresh'}
+      </button>
     </div>
   );
 }

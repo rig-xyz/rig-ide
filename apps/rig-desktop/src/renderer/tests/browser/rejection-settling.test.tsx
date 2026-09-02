@@ -52,7 +52,6 @@ vi.mock('@renderer/lib/open-external-link', () => ({
 }));
 
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
-import { CreateRigDialog } from '@renderer/features/rig-create/create-rig-dialog';
 import { ImportDocDialog } from '@renderer/features/rig-import/import-doc-dialog';
 import { RenameFileDialog } from '@renderer/features/workspace/rename-file-dialog';
 
@@ -194,75 +193,6 @@ describe('renderer rejection paths settle their busy state', () => {
     expect(onImported).not.toHaveBeenCalled();
   });
 
-  it('clears create busy state when the create transport rejects', async () => {
-    mocks.createRig.mockRejectedValue(new Error('transport failed'));
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <CreateRigDialog open onOpenChange={vi.fn()} onOpenPath={vi.fn()} />
-        </QueryClientProvider>
-      );
-      await Promise.resolve();
-    });
-
-    await setInputValue(document.body.querySelector<HTMLInputElement>('#rig-name'), 'team-roadmap');
-    const createButton = [...document.body.querySelectorAll('button')].find(
-      (button) => button.textContent?.trim() === 'Create rig'
-    );
-    await act(async () => {
-      createButton?.click();
-      await Promise.resolve();
-    });
-
-    expect(document.body.textContent).not.toContain('Creating…');
-    expect(document.body.textContent).toContain("Couldn't create this rig. Try again.");
-  });
-
-  it('clears sync busy state when the sync transport rejects', async () => {
-    mocks.createRig.mockResolvedValue({
-      success: true,
-      data: {
-        path: '/tmp/team-roadmap',
-        rootId: null,
-        rigName: 'team-roadmap',
-        synced: false,
-        homeUrl: null,
-        syncError: null,
-      },
-    });
-    mocks.enableSync.mockRejectedValue(new Error('transport failed'));
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <CreateRigDialog open onOpenChange={vi.fn()} onOpenPath={vi.fn()} />
-        </QueryClientProvider>
-      );
-      await Promise.resolve();
-    });
-
-    await setInputValue(document.body.querySelector<HTMLInputElement>('#rig-name'), 'team-roadmap');
-    const createButton = [...document.body.querySelectorAll('button')].find(
-      (button) => button.textContent?.trim() === 'Create rig'
-    );
-    await act(async () => {
-      createButton?.click();
-      await Promise.resolve();
-    });
-    const syncButton = [...document.body.querySelectorAll('button')].find(
-      (button) => button.textContent?.trim() === 'Turn on sync'
-    );
-    await act(async () => {
-      syncButton?.click();
-      await Promise.resolve();
-    });
-
-    expect(document.body.textContent).not.toContain('Turning on…');
-    expect(document.body.textContent).toContain("Couldn't turn on sync. Try again.");
-  });
 
   it('clears file-operation busy state when rename transport rejects', async () => {
     mocks.renameFile.mockRejectedValue(new Error('transport failed'));

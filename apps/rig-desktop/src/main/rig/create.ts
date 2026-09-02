@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, rmdirSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { join as joinPath } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
@@ -186,6 +187,46 @@ export async function enableSyncInDir(
   return ok({ homeUrl: typeof workspace?.homeUrl === 'string' ? workspace.homeUrl : null });
 }
 
+// ── seed doc (onboarding flow round) ──────────────────────────────────────────
+
+const START_HERE_FILENAME = 'Start here.md';
+
+/**
+ * The seeded first document's content (docs/onboarding-flow-spec.md §3,
+ * "Landing: a doc, not an empty state") — three lines that are each a real
+ * action on a real surface, not a generic empty state. Exported for direct
+ * unit testing.
+ */
+export function startHereDocContent(): string {
+  return [
+    '# Welcome to your rig',
+    '',
+    'Select any sentence and leave a comment.',
+    '',
+    'Mention **@claude** or **@codex** in a comment to bring an agent in.',
+    '',
+    "When you're ready, **Share** to invite your team.",
+    '',
+  ].join('\n');
+}
+
+/**
+ * Writes the landing doc into a freshly created rig, before it opens.
+ * Best-effort, same rule the optional Google-Doc import already follows
+ * (`create-rig-dialog.tsx`): a write failure never fails creation itself —
+ * the rig is real either way, it would just open with no starter doc.
+ */
+export async function writeSeedDoc(targetDir: string): Promise<string | null> {
+  const docPath = joinPath(targetDir, START_HERE_FILENAME);
+  try {
+    await writeFile(docPath, startHereDocContent(), 'utf8');
+    return docPath;
+  } catch (error) {
+    log.warn('Rig create: could not write the seed doc', { error: String(error) });
+    return null;
+  }
+}
+
 // ── controller ───────────────────────────────────────────────────────────────
 
 async function withRegisteredRoot(
@@ -205,6 +246,7 @@ export const rigCreateController = createRPCController({
     parentDir,
     name,
     sync,
+    seedDoc,
   }: RigCreateRequest): Promise<Result<RigCreateResult, RigCreateError>> => {
     const invalid = validateRigName(name);
     if (invalid) return err<RigCreateError>({ kind: 'invalidName', message: invalid });
@@ -254,6 +296,9 @@ export const rigCreateController = createRPCController({
     const rigName =
       initBody?.kind === 'ok' && typeof initBody.body.name === 'string' ? initBody.body.name : slug;
 
+    // Seeded before any sync attempt, so a first `rig sync` mirrors it too.
+    const docPath = seedDoc ? await writeSeedDoc(targetDir) : null;
+
     if (!sync) {
       return ok(
         await withRegisteredRoot({
@@ -262,6 +307,7 @@ export const rigCreateController = createRPCController({
           synced: false,
           homeUrl: null,
           syncError: null,
+          docPath,
         })
       );
     }
@@ -276,6 +322,7 @@ export const rigCreateController = createRPCController({
           synced: false,
           homeUrl: null,
           syncError: live.error,
+          docPath,
         })
       );
     }
@@ -286,6 +333,7 @@ export const rigCreateController = createRPCController({
         synced: true,
         homeUrl: live.data.homeUrl,
         syncError: null,
+        docPath,
       })
     );
   },
