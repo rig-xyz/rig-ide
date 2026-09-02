@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url';
  *  These two must move together: @rigxyz/cli depends on @rigxyz/tapd via the
  *  floating range `^0.6.0`, so left unpinned tapd drifts independently of the
  *  CLI pin below it. Pin both explicitly and bump them in the same change. */
-const RIG_CLI_VERSION = '0.12.0';
+const RIG_CLI_VERSION = '0.13.0';
 const TAPD_VERSION = '0.6.3';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
