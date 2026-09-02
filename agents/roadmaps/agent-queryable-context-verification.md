@@ -245,3 +245,24 @@ flight. `corepack pnpm exec vitest run --project node` (full rig-desktop node su
 this fix and does not account for the hidden context prompt's quoted `"$RIG_CLI_PATH"` form; fails
 identically on the pre-fix tree). `npx tsgo --noEmit` from `apps/rig-desktop`: clean. `oxlint` and
 `oxfmt --check` over every file this fix touches: clean.
+
+## Addendum: 2026-09-02 — deployed-relay golden (acceptance item 5)
+
+Relay deployed to `tap-relay` (Fly, version 52, both machines healthy;
+`/healthz` 200; the two new routes answer 401 unauthenticated). From this
+machine's real account against the deployed relay, the feature CLI
+(`0.13.0`, pre-publish) ran `rig context trace` on a real bound rig
+(`~/Rig/rig-bike`, `untitled-1.md`):
+
+- A recently typed passage resolved its introduction to `chg_3938`
+  (`before: orphan`, `after: anchored`) — the golden attribution shape,
+  end to end through production.
+- 2 anchored comments and 17 provenance entries came back — every
+  relay-backed read succeeded.
+- An older passage reported `introduction: unavailable` because one
+  retained version (`chg_3918`) is "not readable text" (a non-text change
+  in that file's history). Honest partial, as designed; refinement filed:
+  the introduction search should skip non-text retained versions rather
+  than declaring the whole introduction unavailable.
+
+Items 3 (T0–T2 corpus gate) and 4 (usefulness review) remain open.
