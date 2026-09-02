@@ -478,3 +478,46 @@
 .hero-glow > * {
   position: relative;
 }
+
+/*
+ * Welcome's hero CTA ("Start fresh", `home.tsx`). Accent-filled pill with a
+ * top-highlight gradient and a resting accent glow, both `color-mix`'d off
+ * `--accent` (house pattern — see `.hero-glow` above), plus a hover lift.
+ * Calm at rest whenever the button is `:disabled` (waiting-for-sign-in,
+ * starting, or the auth-loading guard in `home.tsx`) — gradient and glow
+ * drop out, leaving the flat `bg-accent` fill `disabled:opacity-60` already
+ * dims, so the busy states read as inert rather than still inviting a
+ * click.
+ */
+.welcome-cta {
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--accent) 100%, white 20%),
+    var(--accent)
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 25%, transparent),
+    0 8px 24px color-mix(in oklab, var(--accent) 45%, transparent);
+  transition:
+    transform 150ms ease-out,
+    box-shadow 150ms ease-out,
+    opacity 150ms ease-out;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .welcome-cta:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow:
+      inset 0 1px 0 color-mix(in oklab, white 25%, transparent),
+      0 10px 28px color-mix(in oklab, var(--accent) 55%, transparent);
+  }
+}
+.welcome-cta:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 15%, transparent),
+    0 4px 14px color-mix(in oklab, var(--accent) 35%, transparent);
+}
+.welcome-cta:disabled {
+  background-image: none;
+  box-shadow: none;
+}

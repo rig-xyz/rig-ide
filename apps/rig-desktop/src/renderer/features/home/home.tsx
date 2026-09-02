@@ -1,10 +1,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { LogIn } from 'lucide-react';
+import { Loader2, LogIn } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
 import { useRigSignIn, type RigSignInPhase } from '@renderer/features/rig-account/use-rig-sign-in';
 import { rpc } from '@renderer/lib/ipc';
-import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { cn } from '@renderer/lib/utils';
 import { BriefingSpine } from './briefing-spine';
 import {
@@ -331,20 +330,22 @@ function Welcome({
   onStartFresh: () => void;
 }) {
   const disabled = phase.kind !== 'idle' || authLoading;
+  const waiting = phase.kind === 'signingIn' || phase.kind === 'creating';
   const label =
     phase.kind === 'signingIn' ? 'Waiting for sign-in…' : phase.kind === 'creating' ? 'Starting…' : 'Start fresh';
   return (
-    <div className="flex w-full max-w-sm flex-col items-center gap-5 text-center">
-      <RigMark size={40} className="text-text-primary" />
-      <p className="font-display text-text-primary text-lg">
+    <div className="flex w-full max-w-sm flex-col items-center gap-8 text-center">
+      <RigAppIcon size={112} className="shadow-soft" />
+      <p className="font-display text-text-primary text-xl">
         Collaborate with your agents, and everyone else&rsquo;s.
       </p>
       <button
         type="button"
         onClick={onStartFresh}
         disabled={disabled}
-        className="bg-accent text-accent-ink rounded-control px-5 py-2 text-sm font-medium transition-colors hover:opacity-90 disabled:pointer-events-none disabled:opacity-60"
+        className="welcome-cta bg-accent text-accent-ink focus-visible:outline-accent inline-flex items-center gap-2 rounded-chip px-6 py-3 text-base font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-60"
       >
+        {waiting && <Loader2 className="size-4 animate-spin" strokeWidth={1.5} />}
         {label}
       </button>
       {phase.kind === 'signingIn' && (
@@ -352,6 +353,47 @@ function Welcome({
       )}
       {phase.kind === 'error' && <p className="text-danger text-xs">{phase.message}</p>}
     </div>
+  );
+}
+
+/**
+ * The shipped app icon (`src/assets/images/rig/rig-icon.svg`, baked into
+ * `rig.icns`/`rig.png` for the bundle and Dock) — inlined the same way as
+ * `RigMark` (`@renderer/lib/ui/rig-mark`, the bare glyph used for agent
+ * identity elsewhere) rather than imported as a file: nothing in this
+ * renderer imports static assets from `src/assets/` today, and inlining
+ * keeps this a self-contained, zero-risk change. Colors are the shipped
+ * asset's own fixed palette, not theme tokens — an app icon reads the same
+ * regardless of the app's light/dark theme, same as the Dock icon it
+ * mirrors.
+ */
+function RigAppIcon({ size = 112, className }: { size?: number; className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 1024 1024"
+      fill="none"
+      className={className}
+      aria-hidden
+    >
+      <rect x="100" y="100" width="824" height="824" rx="184" ry="184" fill="#09090B" />
+      <rect
+        x="100.5"
+        y="100.5"
+        width="823"
+        height="823"
+        rx="183.5"
+        ry="183.5"
+        fill="none"
+        stroke="#27272A"
+        strokeWidth="1"
+      />
+      <g transform="translate(277, 277) scale(1.8359)">
+        <path d="M 256 256 L 128 256 L 0 128 L 128 128 Z M 256 128 L 128 128 L 0 0 L 128 0 Z" fill="#D4D4D8" />
+      </g>
+    </svg>
   );
 }
 
