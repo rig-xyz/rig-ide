@@ -1,3 +1,4 @@
+import { app } from 'electron';
 import type { IDisposable, IInitializable } from '@emdash/shared';
 import _electronUpdater, {
   type ProgressInfo,
@@ -28,6 +29,11 @@ const ALLOW_DOWNGRADE = false;
 const CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const STARTUP_DELAY_MS = 30 * 1000; // 30 seconds
 const INSTALL_RESTART_GUARD_TIMEOUT_MS = 2 * 60 * 1000;
+// Minimum time between a check genuinely resolving and the next
+// focus-triggered one — a beta tester alt-tabbing back into the app
+// repeatedly (or one who beat the 30s startup check by clicking "Check for
+// updates" immediately) shouldn't re-hit the update server every time.
+const FOCUS_CHECK_THROTTLE_MS = 15 * 60 * 1000; // 15 minutes
 
 /**
  * Dev-mode full update cycle (RIG_UPDATER_DEV=1)
@@ -61,6 +67,26 @@ const INSTALL_RESTART_GUARD_TIMEOUT_MS = 2 * 60 * 1000;
  * only a runtime check.
  */
 export const isDevUpdaterEnabled = import.meta.env.DEV && process.env.RIG_UPDATER_DEV === '1';
+
+/**
+ * Pure throttle decision for a focus-triggered check — no `this`, no
+ * Electron, so it's unit-testable directly. `lastCheckedAt` is the ms epoch
+ * of the last check that genuinely RESOLVED (mirrors `recordCheckResolved`'s
+ * own definition below, not "when a check started").
+ */
+export function shouldCheckOnFocus({
+  lastCheckedAt,
+  now,
+  inFlight,
+}: {
+  lastCheckedAt: number | null;
+  now: number;
+  inFlight: boolean;
+}): boolean {
+  if (inFlight) return false;
+  if (lastCheckedAt === null) return true;
+  return now - lastCheckedAt >= FOCUS_CHECK_THROTTLE_MS;
+}
 
 export interface UpdateState {
   status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'error';
@@ -107,6 +133,7 @@ class UpdateService implements IInitializable, IDisposable {
     this.setupAutoUpdater();
     this.setupEventListeners();
     this.active = true;
+    app.on('browser-window-focus', this.handleWindowFocus);
 
     log.info('AutoUpdateService initialized', {
       version: this.updateState.currentVersion,
@@ -115,6 +142,29 @@ class UpdateService implements IInitializable, IDisposable {
 
     this.scheduleNextCheck(STARTUP_DELAY_MS);
   }
+
+  /**
+   * A tester who launches and immediately clicks "Check for updates" beats
+   * the 30s startup delay — and after that, nothing re-checks until the
+   * next hourly tick. Re-checking on focus closes that gap for the common
+   * "alt-tab back into the app" case, throttled by `shouldCheckOnFocus` so
+   * repeated focusing doesn't hammer the update server. Only registered
+   * once `initialize()` reaches this point, which already requires
+   * `!import.meta.env.DEV` (unless `RIG_UPDATER_DEV=1`) — so this never
+   * fires in a plain dev session.
+   */
+  private handleWindowFocus = (): void => {
+    const should = shouldCheckOnFocus({
+      lastCheckedAt: rigSettingsStore.get().updateLastCheckedAt,
+      now: Date.now(),
+      inFlight: this.currentCheckPromise !== null,
+    });
+    if (!should) return;
+
+    this.checkForUpdates().catch((e) => {
+      log.error('Focus-triggered update check failed:', e);
+    });
+  };
 
   private setupAutoUpdater(): void {
     if (isDevUpdaterEnabled) {
@@ -406,6 +456,7 @@ class UpdateService implements IInitializable, IDisposable {
       clearTimeout(this.installRestartGuardTimer);
       this.installRestartGuardTimer = undefined;
     }
+    app.removeListener('browser-window-focus', this.handleWindowFocus);
   }
 }
 
