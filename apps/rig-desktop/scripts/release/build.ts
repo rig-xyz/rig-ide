@@ -8,7 +8,7 @@ import { Arch, Platform, build as electronBuild } from 'electron-builder';
 import type { Configuration } from 'electron-builder';
 import { duplicateChannelManifests, resolvePublishChannels } from './lib/artifacts.ts';
 import { GITHUB_OWNER, GITHUB_REPO } from './lib/config.ts';
-import { exec } from './lib/exec.ts';
+import { exec, execOrNull } from './lib/exec.ts';
 import { fail, info, step, warn } from './lib/log.ts';
 import { resolveReleaseVersion } from './lib/version.ts';
 import type { ReleaseChannel } from './lib/version.ts';
@@ -86,6 +86,16 @@ exec(`corepack pnpm --filter @rigxyz/desktop deploy --legacy --prod ${deployDir}
   cwd: workspaceRoot,
   echo: true,
 });
+
+// pnpm deploy stages the app's production dependency tree, but it neither
+// honours `patchedDependencies` nor, with `--legacy`, reliably the lockfile
+// (observed: the tree held codex-acp 1.8.0 while the lockfile pins a patched
+// 1.0.2 — the packaged app would have shipped an untested adapter WITHOUT the
+// Codex sandbox fix). Every vendored patch is therefore verified against the
+// deploy tree here and applied if pnpm didn't: a version mismatch or a patch
+// that won't apply fails the build rather than shipping silent drift.
+step('Verifying vendored dependency patches in the deploy tree');
+verifyDeployPatches(deployDir);
 
 step('Vendoring bundled @rigxyz/cli');
 exec('node --experimental-strip-types scripts/vendor-rig-cli.ts', { echo: true });
@@ -247,5 +257,36 @@ async function uploadManifestsToGithubDraft(
       },
     });
     info(`Uploaded ${name} to draft release ${tag}`);
+  }
+}
+
+function verifyDeployPatches(deployDir: string): void {
+  const rootPkg = JSON.parse(readFileSync(join(workspaceRoot, 'package.json'), 'utf8')) as {
+    pnpm?: { patchedDependencies?: Record<string, string> };
+  };
+  const patched = rootPkg.pnpm?.patchedDependencies ?? {};
+  for (const [spec, patchRel] of Object.entries(patched)) {
+    const at = spec.lastIndexOf('@');
+    const name = spec.slice(0, at);
+    const version = spec.slice(at + 1);
+    const pkgDir = join(deployDir, 'node_modules', name);
+    const installed = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as {
+      version: string;
+    };
+    if (installed.version !== version) {
+      fail(
+        `${name}: deploy tree has ${installed.version}, patch and lockfile expect ${version} — pin the dependency exactly and re-run pnpm install`
+      );
+    }
+    const patchFile = join(workspaceRoot, patchRel);
+    // Already applied (pnpm did it): a reverse dry-run succeeds. Otherwise apply.
+    const applied = execOrNull(`patch -p1 -R --dry-run -s -d ${pkgDir} < ${patchFile}`) !== null;
+    if (!applied) {
+      exec(`patch -p1 -N -s -d ${pkgDir} < ${patchFile}`);
+      if (execOrNull(`patch -p1 -R --dry-run -s -d ${pkgDir} < ${patchFile}`) === null) {
+        fail(`${name}: patch ${patchRel} did not apply cleanly to the deploy tree`);
+      }
+    }
+    info(`${name}@${version}: patch ${applied ? 'already applied' : 'applied'} in deploy tree`);
   }
 }
