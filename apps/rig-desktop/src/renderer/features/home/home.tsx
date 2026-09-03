@@ -196,6 +196,7 @@ export function Home({
       lastOpenedAt: r.lastOpenedAt,
       paused: r.paused,
       outsideHome: r.outsideHome,
+      notARigAnymore: r.notARigAnymore,
       accountId: r.accountId,
     })),
     currentAccountId

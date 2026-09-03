@@ -390,37 +390,60 @@ export function App() {
   // — same detect-and-bind path either way, so a recent rig opens exactly
   // like one picked by hand. Single window, v1: this always replaces
   // whatever rig is currently open rather than spawning a second window.
-  const openPath = useCallback(async (picked: string, opts?: { activeSessionId?: string }) => {
-    const requestToken = openPathRequests.current.begin();
-    setArtefact(NO_TABS);
-    setFolder({ status: 'detecting', path: picked });
-    setPendingActiveSessionId(opts?.activeSessionId ?? null);
-    try {
-      const result = await rpc.rig.workspace.detect(picked);
-      if (!openPathRequests.current.isCurrent(requestToken)) {
-        if (result.bound) void rpc.rig.files.releaseRoot({ rootId: result.rootId });
-        return;
+  const openPath = useCallback(
+    async (picked: string, opts?: { activeSessionId?: string; launchRestore?: boolean }) => {
+      const requestToken = openPathRequests.current.begin();
+      setArtefact(NO_TABS);
+      setFolder({ status: 'detecting', path: picked });
+      setPendingActiveSessionId(opts?.activeSessionId ?? null);
+      try {
+        const result = await rpc.rig.workspace.detect(picked);
+        if (!openPathRequests.current.isCurrent(requestToken)) {
+          if (result.bound) void rpc.rig.files.releaseRoot({ rootId: result.rootId });
+          return;
+        }
+        // Dead-end fix — don't restore into it: a plain "not a rig" result
+        // (no `unsynced`/`foreignAccount` recovery action, genuinely just
+        // not a rig anymore) reached ONLY via `opts.launchRestore` — the
+        // cold-launch replay of a remembered rig, never a real click — must
+        // not dead-end the launch into the not-a-rig card. Landing on Home
+        // instead is honest: the rail still shows the stale row (flagged by
+        // `home-sections.ts`'s `notARigAnymore`) so the user can remove it,
+        // and this ONLY applies to the silent launch-restore path — an
+        // explicit "Open Recent" click while already running (the
+        // `rigOpenRecentChannel` listener below) still shows the card,
+        // since that's a real action the user just took.
+        if (
+          opts?.launchRestore &&
+          !result.bound &&
+          result.unsynced === null &&
+          result.foreignAccount === null
+        ) {
+          setFolder({ status: 'empty' });
+          return;
+        }
+        setFolder({ status: 'detected', path: picked, result });
+        // First-sync round: a plain open never marks this (`consumeJustAttachedSyncing`
+        // returns false for any path nobody just ran `rig attach` for), so this
+        // is a no-op for the overwhelming majority of opens — see
+        // `lib/just-attached.ts`'s own header comment for why this is a
+        // same-tick handoff rather than a prop threaded through `onOpenPath`.
+        setSyncingRoot(
+          result.bound && consumeJustAttachedSyncing(result.workspaceRoot)
+            ? result.workspaceRoot
+            : null
+        );
+      } catch (error) {
+        if (!openPathRequests.current.isCurrent(requestToken)) return;
+        setFolder({
+          status: 'error',
+          path: picked,
+          message: error instanceof Error ? error.message : 'Could not check this folder.',
+        });
       }
-      setFolder({ status: 'detected', path: picked, result });
-      // First-sync round: a plain open never marks this (`consumeJustAttachedSyncing`
-      // returns false for any path nobody just ran `rig attach` for), so this
-      // is a no-op for the overwhelming majority of opens — see
-      // `lib/just-attached.ts`'s own header comment for why this is a
-      // same-tick handoff rather than a prop threaded through `onOpenPath`.
-      setSyncingRoot(
-        result.bound && consumeJustAttachedSyncing(result.workspaceRoot)
-          ? result.workspaceRoot
-          : null
-      );
-    } catch (error) {
-      if (!openPathRequests.current.isCurrent(requestToken)) return;
-      setFolder({
-        status: 'error',
-        path: picked,
-        message: error instanceof Error ? error.message : 'Could not check this folder.',
-      });
-    }
-  }, []);
+    },
+    []
+  );
 
   // Home's rig rail: open a session's rig via the same `openPath` every
   // other entry point uses, with the session id riding along so
@@ -475,7 +498,10 @@ export function App() {
     rpc.rig.workspace
       .consumePendingOpenFile()
       .then((path) => {
-        if (path) void openPath(path);
+        // Dead-end fix: this is the one silent, launch-time replay (see
+        // `openPath`'s own `launchRestore` handling) — never a click the
+        // user just made.
+        if (path) void openPath(path, { launchRestore: true });
       })
       .catch(() => {});
     return events.on(rigOpenRecentChannel, (path) => {
@@ -1160,7 +1186,7 @@ function FolderResult({
   }
   // Loose-ends round: a LOCAL-ONLY rig (rig.toml, no binding — see
   // `deriveUnboundDetection`) is an interstitial with a real action, not a
-  // dead end. Plain non-rig folders keep the unchanged card below.
+  // dead end. Plain non-rig folders keep going below.
   if (folder.status === 'detected' && !folder.result.bound && folder.result.unsynced) {
     return (
       <UnsyncedRigCard
@@ -1169,6 +1195,14 @@ function FolderResult({
         onCancel={onCancel}
       />
     );
+  }
+  // Dead-end fix: the genuinely plain "not a rig" outcome — no binding, no
+  // rig.toml either — is its own card now too, same as the two cases
+  // above, rather than falling into the generic wrapper below with a bare
+  // label and a single Open Folder… button (the old dead end for a stale
+  // `rig_rigs` row whose folder stopped being a rig).
+  if (folder.status === 'detected' && !folder.result.bound) {
+    return <NotARigCard path={folder.path} onOpenFolder={onOpenFolder} onCancel={onCancel} />;
   }
   return (
     <div className="flex w-full max-w-md flex-col gap-3 rounded-card border border-border-hairline bg-bg-1 p-5">
@@ -1180,16 +1214,91 @@ function FolderResult({
 
       {folder.status === 'error' && <div className="text-sm text-danger">{folder.message}</div>}
 
-      {/* `bound: true` is handled above `App` renders instead — only the
-          not-a-rig and error outcomes ever reach this card. */}
-      {folder.status === 'detected' && !folder.result.bound && (
-        <div className="text-sm text-text-secondary">not a rig</div>
-      )}
-
       <button
         type="button"
         onClick={onOpenFolder}
         className="mt-1 self-start rounded-control border border-border-hairline px-3 py-1.5 text-sm text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
+      >
+        Open Folder…
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Dead-end fix: the plain "not a rig" card — no binding, no `rig.toml`
+ * either, so this genuinely isn't (or isn't anymore) a rig. Used to be a
+ * bare label and a single Open Folder… button with no way back and no way
+ * to forget a stale `rig_rigs` row for a folder that stopped being a rig
+ * (moved, deleted, repurposed) since it was last opened here — a real dead
+ * end for the remembered-rig case (`App.tsx`'s launch-restore path, when it
+ * isn't already caught earlier and skipped straight to Home).
+ *
+ * "Back to Home" is the primary action (`onCancel`, the same `goHome`
+ * every other card here uses). "Remove from your rigs" only appears when
+ * `path` matches a known `rig_rigs` row — reads the same `['rig','recent',
+ * 'list']` query Home/`RigSwitcher` already use (shares their cache when
+ * warm), since a folder nobody ever opened as a rig through this app has
+ * nothing to forget. Open Folder… stays the tertiary escape hatch, same
+ * style as the generic card above.
+ */
+function NotARigCard({
+  path,
+  onOpenFolder,
+  onCancel,
+}: {
+  path: string;
+  onOpenFolder: () => void;
+  onCancel: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const recentQuery = useQuery({
+    queryKey: ['rig', 'recent', 'list'],
+    queryFn: () => rpc.rig.recent.recentRigs(50),
+  });
+  const knownRow = recentQuery.data?.find((row) => row.path === path);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const forget = async () => {
+    if (!knownRow) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await rpc.rig.recent.forget({ bindingId: knownRow.bindingId });
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'recent', 'list'] });
+      onCancel();
+    } catch {
+      setError("Couldn't remove this rig. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex w-full max-w-md flex-col gap-3 rounded-card border border-border-hairline bg-bg-1 p-5">
+      {/* "anymore" only when we remember it as one — a folder nobody ever
+          opened as a rig here simply isn't one. */}
+      <p className="text-sm font-medium text-text-primary">
+        {knownRow ? 'This folder isn’t a rig anymore.' : 'This folder isn’t a rig.'}
+      </p>
+      <p className="font-mono text-xs break-all text-text-muted">{path}</p>
+      {error && <p className="text-xs text-danger">{error}</p>}
+      <div className="flex items-center justify-end gap-2 pt-1">
+        {knownRow && (
+          <Button variant="ghost" size="sm" onClick={() => void forget()} disabled={busy}>
+            {busy ? 'Removing…' : 'Remove from your rigs'}
+          </Button>
+        )}
+        <Button size="sm" onClick={onCancel} disabled={busy}>
+          Back to Home
+        </Button>
+      </div>
+      <button
+        type="button"
+        onClick={onOpenFolder}
+        disabled={busy}
+        className="self-start rounded-control border border-border-hairline px-3 py-1.5 text-sm text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary disabled:pointer-events-none disabled:opacity-50"
       >
         Open Folder…
       </button>

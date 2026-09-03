@@ -23,6 +23,7 @@ const RIG_A = {
   lastOpenedAt: 100,
   paused: false,
   outsideHome: false,
+  notARigAnymore: false,
   accountId: null,
 };
 const RIG_B = {
@@ -32,6 +33,7 @@ const RIG_B = {
   lastOpenedAt: 200,
   paused: false,
   outsideHome: false,
+  notARigAnymore: false,
   accountId: null,
 };
 const SESSION_A = {
@@ -183,6 +185,7 @@ describe('buildHomeRigRows', () => {
         lastOpenedAt: 100,
         paused: false,
         outsideHome: false,
+        notARigAnymore: false,
         sessions: [SESSION_A].map((s) => ({ id: s.id, providerId: s.providerId, title: s.title, updatedAt: s.updatedAt })),
       },
     ]);
@@ -246,6 +249,7 @@ describe('buildHomeRigRows', () => {
       lastOpenedAt: 50,
       paused: false,
       outsideHome: false,
+      notARigAnymore: false,
       accountId: null,
     };
     const rows = buildHomeRigRows(
@@ -281,6 +285,7 @@ describe('buildHomeRigRows', () => {
         lastOpenedAt: 100,
         paused: false,
         outsideHome: false,
+        notARigAnymore: false,
         sessions: [],
       },
     ]);
@@ -321,13 +326,13 @@ describe('buildHomeRigRows', () => {
     expect(disambiguators).toEqual(['created May 12', 'created Jun 3']);
   });
 
-  it('carries paused/outsideHome through from the local rig row, untouched', () => {
+  it('carries paused/outsideHome/notARigAnymore through from the local rig row, untouched', () => {
     const rows = buildHomeRigRows(
-      [{ ...RIG_A, paused: true, outsideHome: true }],
+      [{ ...RIG_A, paused: true, outsideHome: true, notARigAnymore: true }],
       { status: 'skipped' },
       []
     );
-    expect(rows[0]).toMatchObject({ paused: true, outsideHome: true });
+    expect(rows[0]).toMatchObject({ paused: true, outsideHome: true, notARigAnymore: true });
   });
 
   it('a relay-only row with a discovered local path carries it, from the localPaths map', () => {
@@ -545,6 +550,7 @@ const LOCAL_ROW: HomeRigRow = {
   sessions: [],
   paused: false,
   outsideHome: false,
+  notARigAnymore: false,
 };
 const OWNED_NOT_SET_UP: HomeRigRow = {
   kind: 'relayOnly',

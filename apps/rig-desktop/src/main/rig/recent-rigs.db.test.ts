@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openFixture } from '@tooling/utils/db';
@@ -14,8 +14,15 @@ vi.mock('@main/db/client', () => ({
   },
 }));
 
-const { getRigAccountId, getRigPathsForAccount, recordRigOpened, resolveLocalPathsImpl } =
-  await import('./recent-rigs');
+const {
+  forgetRig,
+  getRigAccountId,
+  getRigPathsForAccount,
+  hasRigMarker,
+  recentRigsImpl,
+  recordRigOpened,
+  resolveLocalPathsImpl,
+} = await import('./recent-rigs');
 
 let fixture: Awaited<ReturnType<typeof openFixture>>;
 let home: string;
@@ -180,5 +187,145 @@ describe('getRigPathsForAccount', () => {
     ]);
 
     expect(await getRigPathsForAccount('usr_a')).toEqual(['/rigs/one', '/rigs/three']);
+  });
+});
+
+/**
+ * Dead-end fix (rail-honesty round): whether a recorded path still carries
+ * a rig marker at all — `recentRigsImpl`'s `notARigAnymore` flag and the
+ * not-a-rig card's "Remove from your rigs" both key off this.
+ */
+describe('hasRigMarker', () => {
+  it('true for a folder with its own rig.toml (a local-only or synced rig manifest)', async () => {
+    const dir = join(home, 'with-toml');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'rig.toml'), '[rig]\nname = "x"\n');
+    expect(await hasRigMarker(dir)).toBe(true);
+  });
+
+  it('true for a folder with a .rig/ directory, even with no rig.toml', async () => {
+    const dir = join(home, 'with-dot-rig');
+    mkdirSync(join(dir, '.rig'), { recursive: true });
+    expect(await hasRigMarker(dir)).toBe(true);
+  });
+
+  it('false for a folder that exists but carries neither marker', async () => {
+    const dir = join(home, 'plain-folder');
+    mkdirSync(dir, { recursive: true });
+    expect(await hasRigMarker(dir)).toBe(false);
+  });
+
+  it('false for a folder that no longer exists at all — same tolerant default as existsAsDirectory', async () => {
+    expect(await hasRigMarker(join(home, 'never-existed'))).toBe(false);
+  });
+
+  it('false when rig.toml exists but is a directory, not a file (a stray, not a real manifest)', async () => {
+    const dir = join(home, 'toml-is-a-dir');
+    mkdirSync(join(dir, 'rig.toml'), { recursive: true });
+    expect(await hasRigMarker(dir)).toBe(false);
+  });
+});
+
+/**
+ * Dead-end fix: the "Remove from your rigs" action — a plain, local-only
+ * delete. `rig-controls.ts`'s move/pause/resume all shell the CLI first;
+ * this deliberately doesn't — there is no folder-side undo for a row whose
+ * folder may already be gone.
+ */
+describe('forgetRig', () => {
+  it('deletes the row for the given bindingId', async () => {
+    await fixture.db.insert(rigRigs).values({
+      id: 'r1',
+      path: '/rigs/gone',
+      bindingId: 'bnd_stale',
+      firstOpenedAt: 1,
+      lastOpenedAt: 1,
+    });
+
+    await forgetRig('bnd_stale');
+
+    const rows = await fixture.db.select().from(rigRigs);
+    expect(rows).toEqual([]);
+  });
+
+  it('never touches a different bindingId\'s row', async () => {
+    await fixture.db.insert(rigRigs).values([
+      { id: 'r1', path: '/rigs/stale', bindingId: 'bnd_stale', firstOpenedAt: 1, lastOpenedAt: 1 },
+      { id: 'r2', path: '/rigs/keep', bindingId: 'bnd_keep', firstOpenedAt: 1, lastOpenedAt: 1 },
+    ]);
+
+    await forgetRig('bnd_stale');
+
+    const rows = await fixture.db.select().from(rigRigs);
+    expect(rows.map((r) => r.bindingId)).toEqual(['bnd_keep']);
+  });
+
+  it('a bindingId with no row at all is simply a no-op — never throws', async () => {
+    await expect(forgetRig('bnd_nowhere')).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * Rail-honesty round: `recentRigsImpl`'s own `notARigAnymore` enrichment —
+ * `resolveLocalPathsImpl`'s neighboring describe block above covers the
+ * separate "known local paths for a binding" read; this covers the row
+ * list `home.tsx`'s rail actually renders.
+ */
+describe('recentRigsImpl — notARigAnymore enrichment', () => {
+  it('false for a row whose path still has a rig.toml', async () => {
+    const dir = join(home, 'still-a-rig');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'rig.toml'), '[rig]\nname = "x"\n');
+    await fixture.db.insert(rigRigs).values({
+      id: 'r1',
+      path: dir,
+      bindingId: 'bnd_healthy',
+      firstOpenedAt: 1,
+      lastOpenedAt: 1,
+    });
+
+    const [row] = await recentRigsImpl();
+    expect(row).toMatchObject({ bindingId: 'bnd_healthy', notARigAnymore: false });
+  });
+
+  it('true for a row whose folder exists but lost its rig markers — the stale-registry-entry bug', async () => {
+    const dir = join(home, 'repurposed-folder');
+    mkdirSync(dir, { recursive: true });
+    await fixture.db.insert(rigRigs).values({
+      id: 'r1',
+      path: dir,
+      bindingId: 'bnd_stale',
+      firstOpenedAt: 1,
+      lastOpenedAt: 1,
+    });
+
+    const [row] = await recentRigsImpl();
+    expect(row).toMatchObject({ bindingId: 'bnd_stale', notARigAnymore: true });
+  });
+
+  it('true for a row whose folder was deleted entirely, same as one merely repurposed', async () => {
+    await fixture.db.insert(rigRigs).values({
+      id: 'r1',
+      path: join(home, 'deleted-entirely'),
+      bindingId: 'bnd_deleted',
+      firstOpenedAt: 1,
+      lastOpenedAt: 1,
+    });
+
+    const [row] = await recentRigsImpl();
+    expect(row).toMatchObject({ bindingId: 'bnd_deleted', notARigAnymore: true });
+  });
+
+  it('never filters a notARigAnymore row out of the list — only flags it', async () => {
+    await fixture.db.insert(rigRigs).values({
+      id: 'r1',
+      path: join(home, 'still-listed'),
+      bindingId: 'bnd_still_listed',
+      firstOpenedAt: 1,
+      lastOpenedAt: 1,
+    });
+
+    const rows = await recentRigsImpl();
+    expect(rows.map((r) => r.bindingId)).toContain('bnd_still_listed');
   });
 });

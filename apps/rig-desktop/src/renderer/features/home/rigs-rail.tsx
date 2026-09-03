@@ -474,7 +474,17 @@ function LocalRigRow({
             </span>
             <span className="flex min-w-0 items-center gap-1.5">
               <span className="truncate font-mono text-xs text-text-muted">
-                {row.paused ? 'Paused' : relativeTime(lastActivity, Date.now())}
+                {/* Dead-end fix — rail-honesty round: a row whose folder no
+                    longer carries a rig marker at all wins over both other
+                    states here (paused syncing, or a plain healthy relative
+                    time) — this is the more fundamental fact about the row,
+                    and the same muted subtext language "Paused" already
+                    uses, no separate icon/tooltip needed. */}
+                {row.notARigAnymore
+                  ? 'Not a rig anymore'
+                  : row.paused
+                    ? 'Paused'
+                    : relativeTime(lastActivity, Date.now())}
               </span>
             </span>
           </span>

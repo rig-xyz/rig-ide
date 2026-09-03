@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import { desc, eq, sql } from 'drizzle-orm';
 import { db } from '@main/db/client';
 import { rigRigs, type RigRigRow } from '@main/db/schema';
@@ -158,28 +159,86 @@ export async function resolveLocalPathsImpl(bindingIds: readonly string[]): Prom
   return verified;
 }
 
-/** One `rig_rigs` row, enriched with the two live-filesystem facts the rigs rail's row menu needs — neither is stored, both are cheap per-known-path checks (no scanning). */
+/** One `rig_rigs` row, enriched with the three live-filesystem facts the rigs rail's row menu needs — none are stored, all are cheap per-known-path checks (no scanning). */
 export type RecentRigRow = RigRigRow & {
   /** `.rig/sync-paused.json`'s flag, read fresh — see `sync-paused.ts`. */
   paused: boolean;
   /** True when this rig's path is NOT inside the managed Rig home — gates the row menu's "Move to Rig folder" and the "custom location" affordance. */
   outsideHome: boolean;
+  /**
+   * Dead-end fix — true when `path` no longer carries a rig marker at all
+   * (see `hasRigMarker`): the folder was moved, deleted, or simply stopped
+   * being a rig (its `.rig`/`rig.toml` removed) since it was last opened
+   * here, without the row ever being cleaned up. Never used to filter the
+   * row out — only to render it honestly (`rigs-rail.tsx`) and to gate the
+   * not-a-rig card's "Remove from your rigs" (`recentRigs`'s own doc
+   * comment on why known-local stays `rig_rigs`-only, filesystem scan
+   * removed entirely).
+   */
+  notARigAnymore: boolean;
 };
+
+/**
+ * Whether `path` itself still carries a rig marker — `rig.toml` (a
+ * local-only or synced rig's own manifest) or a `.rig/` directory (holds
+ * `tap-binding.local.json` for a synced one, but its bare presence already
+ * says "this was set up as a rig"). Checked directly in `path`, no
+ * ancestor walk — unlike `binding.ts`'s `findBindingConfig`, which answers
+ * a different question ("is this an ANCESTOR's rig"), this is "is `path`
+ * ITSELF still one." Existence-verified like `existsAsDirectory` above: a
+ * stat that throws (deleted, moved, permissions) just means "no marker,"
+ * never a thrown error.
+ */
+export async function hasRigMarker(path: string): Promise<boolean> {
+  const [tomlIsFile, dotRigIsDir] = await Promise.all([
+    stat(join(path, 'rig.toml'))
+      .then((s) => s.isFile())
+      .catch(() => false),
+    stat(join(path, '.rig'))
+      .then((s) => s.isDirectory())
+      .catch(() => false),
+  ]);
+  return tomlIsFile || dotRigIsDir;
+}
+
+/**
+ * `recentRigs`'s own body, pulled out for direct testing (same reason
+ * `resolveLocalPathsImpl` above is its own function) — most-recently-opened
+ * rigs, newest first, each enriched with `paused`/`outsideHome` plus
+ * (dead-end fix) `notARigAnymore` from `hasRigMarker`.
+ */
+export async function recentRigsImpl(limit = 10): Promise<RecentRigRow[]> {
+  const rows = await db.select().from(rigRigs).orderBy(desc(rigRigs.lastOpenedAt)).limit(limit);
+  const home = await readRigHomeDir();
+  return Promise.all(
+    rows.map(async (row) => ({
+      ...row,
+      paused: await isRigSyncPaused(row.path),
+      outsideHome: !isInsideHome(row.path, home),
+      notARigAnymore: !(await hasRigMarker(row.path)),
+    }))
+  );
+}
+
+/**
+ * Deletes a `rig_rigs` row outright — the not-a-rig card's "Remove from
+ * your rigs" (`App.tsx`'s `FolderResult`), for a stale row whose folder no
+ * longer detects as a rig (moved, deleted, or repurposed since it was last
+ * opened here). Local bookkeeping only: never touches the folder on disk,
+ * never calls the relay or the CLI — nothing to undo if this rig really is
+ * still out there under a different path.
+ */
+export async function forgetRig(bindingId: string): Promise<void> {
+  await db.delete(rigRigs).where(eq(rigRigs.bindingId, bindingId));
+}
 
 export const rigRecentController = createRPCController({
   /** Most-recently-opened rigs, newest first — feeds the Home screen's RIGS section. */
-  recentRigs: async (limit = 10): Promise<RecentRigRow[]> => {
-    const rows = await db.select().from(rigRigs).orderBy(desc(rigRigs.lastOpenedAt)).limit(limit);
-    const home = await readRigHomeDir();
-    return Promise.all(
-      rows.map(async (row) => ({
-        ...row,
-        paused: await isRigSyncPaused(row.path),
-        outsideHome: !isInsideHome(row.path, home),
-      }))
-    );
-  },
+  recentRigs: recentRigsImpl,
 
   resolveLocalPaths: ({ bindingIds }: { bindingIds: string[] }): Promise<Record<string, string>> =>
     resolveLocalPathsImpl(bindingIds),
+
+  /** The not-a-rig card's "Remove from your rigs". */
+  forget: ({ bindingId }: { bindingId: string }): Promise<void> => forgetRig(bindingId),
 });

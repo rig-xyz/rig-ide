@@ -30,6 +30,8 @@ export type HomeLocalRig = {
   paused: boolean;
   /** Rig home round — true when this rig's path is outside the managed Rig home; gates "Move to Rig folder" and the "custom location" affordance. */
   outsideHome: boolean;
+  /** Dead-end fix — true when `path` no longer carries a rig marker at all (`recent-rigs.ts`'s `hasRigMarker`); see `HomeRigRow`'s own doc comment. */
+  notARigAnymore: boolean;
   /** Accounts & rigs round — the account that bound or last opened this row; null for a legacy row or one written while signed out. See `filterLocalRigsByAccount`. */
   accountId: string | null;
 };
@@ -184,6 +186,17 @@ export type HomeRigRow =
       sessions: readonly HomeRigSession[];
       paused: boolean;
       outsideHome: boolean;
+      /**
+       * Dead-end fix (rail-honesty round) — true when this row's folder no
+       * longer carries a rig marker at all (`recent-rigs.ts`'s
+       * `hasRigMarker`): moved, deleted, or repurposed since it was last
+       * opened here. `rigs-rail.tsx`'s `LocalRigRow` swaps the usual
+       * "Paused"/last-activity subtext for a quiet honest hint instead of
+       * letting the row keep looking healthy — this never filters the row
+       * out, since that would hide the one way to forget it (the not-a-rig
+       * card's "Remove from your rigs").
+       */
+      notARigAnymore: boolean;
     }
   | {
       kind: 'relayOnly';
@@ -423,6 +436,7 @@ export function buildHomeRigRows(
       sessions: sessionsByRig.get(r.bindingId) ?? [],
       paused: r.paused,
       outsideHome: r.outsideHome,
+      notARigAnymore: r.notARigAnymore,
     }))
     .sort((a, b) => localRecencyKey(b) - localRecencyKey(a));
 
