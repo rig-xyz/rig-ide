@@ -373,7 +373,9 @@ function PickBackUpLine({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <p className="text-text-primary text-sm leading-relaxed">{item.why || item.title}</p>
+      {/* Markdown, not plain text: `why` falls back to the intent summary,
+          which agents write in markdown (bold, lists, backticked paths). */}
+      <SafeMarkdown content={item.why || item.title} />
       <p className="text-text-muted font-mono text-xs">
         <RigNameLink bindingId={item.bindingId} name={item.rigName} onClick={onClickRig} />
         {' · '}
@@ -425,7 +427,7 @@ function PerRigLine({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <p className="text-text-primary text-sm leading-relaxed">{item.line}</p>
+      <SafeMarkdown content={item.line} />
       <p className="text-text-muted font-mono text-xs">
         <RigNameLink bindingId={item.bindingId} name={item.rigName} onClick={onClickRig} />
         {item.at && (
