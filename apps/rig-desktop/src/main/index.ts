@@ -76,8 +76,10 @@ if (process.platform === 'linux') {
 registerAppScheme();
 
 initializeFileLogger();
-registerProcessErrorLogging(log);
-registerRendererLogHandler(ipcMain);
+registerProcessErrorLogging(log, (kind, error) => telemetryService.trackError(kind, error));
+registerRendererLogHandler(ipcMain, (errorName) =>
+  telemetryService.trackError('renderer', { name: errorName })
+);
 
 // macOS: a rig folder chosen from the Dock icon's "Recent" list (or, once
 // `menu.ts`'s `recentDocuments` role is wired, File → Open Recent).

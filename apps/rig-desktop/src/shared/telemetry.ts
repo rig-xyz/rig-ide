@@ -172,6 +172,17 @@ export type TelemetryEventProperties = {
     error_type?: string;
   };
   error: { error_type: string; scope: string };
+
+  // Rig-native events — see `main/lib/telemetry.ts`'s `trackError` for
+  // `app_error`, and the various `main/rig/*` call sites for the rest.
+  app_error: { error_type: string; source: 'main-uncaught' | 'main-rejection' | 'renderer'; $exception_fingerprint: string };
+  rig_opened: { source: 'recent' | 'create' | 'join' | 'deeplink' | 'other' };
+  rig_created: EmptyProps;
+  agent_dispatched: { provider: string };
+  comment_posted: { author_kind: 'user' | 'agent' };
+  invite_sent: EmptyProps;
+  invite_accepted: EmptyProps;
+  document_saved: EmptyProps;
 };
 
 export type TelemetryEvent = keyof TelemetryEventProperties;

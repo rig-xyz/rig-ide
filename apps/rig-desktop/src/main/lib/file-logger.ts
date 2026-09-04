@@ -85,14 +85,26 @@ export async function getDiagnosticLogAttachment() {
   };
 }
 
-export function registerProcessErrorLogging(logger: { error(...input: unknown[]): void }) {
+/**
+ * `onError` is injected rather than imported: this module sits underneath
+ * `@main/lib/logger` (and therefore `@main/db/kv`), which `lib/telemetry.ts`
+ * itself depends on — a static import of the telemetry service here would be
+ * circular. The caller (`main/index.ts`) wires it to
+ * `telemetryService.trackError`.
+ */
+export function registerProcessErrorLogging(
+  logger: { error(...input: unknown[]): void },
+  onError?: (kind: 'main-uncaught' | 'main-rejection', error: unknown) => void
+) {
   process.on('uncaughtException', (error) => {
     logger.error('Uncaught exception', error);
+    onError?.('main-uncaught', error);
     flushAndExit();
   });
 
   process.on('unhandledRejection', (reason) => {
     logger.error('Unhandled rejection', reason);
+    onError?.('main-rejection', reason);
     flushAndExit();
   });
 }
@@ -105,13 +117,22 @@ function flushAndExit() {
   void flush.finally(() => process.exit(1));
 }
 
-export function registerRendererLogHandler(ipcMain: Electron.IpcMain) {
+/** `onRendererError` is injected for the same circular-import reason as `registerProcessErrorLogging`'s `onError`. */
+export function registerRendererLogHandler(
+  ipcMain: Electron.IpcMain,
+  onRendererError?: (errorName: string) => void
+) {
   ipcMain.on('emdash:renderer-log', (event, payload: unknown) => {
     if (!isTrustedRendererSender(event.senderFrame)) return;
     if (!isWithinPayloadLimit(payload)) return;
     const parsed = parseRendererLog(payload);
     if (!parsed) return;
     writeRendererLogEntry(parsed);
+    // The one sender on this channel (`renderer-error-reporting.ts`) is always a
+    // content-free failure report — `{kind, errorName}` and nothing else. Main
+    // never sees a stack here, so the fingerprint collapses to sha256(kind + name).
+    const rendererErrorName = extractRendererFailureName(parsed.input);
+    if (rendererErrorName) onRendererError?.(rendererErrorName);
   });
 }
 
@@ -160,6 +181,16 @@ function parseRendererLog(
 
 function isLevel(value: unknown): value is LogLevel {
   return value === 'debug' || value === 'info' || value === 'warn' || value === 'error';
+}
+
+/** The `errorName` from a `reportRendererFailure` payload (see `renderer-error-reporting.ts`), if this entry is one. */
+function extractRendererFailureName(input: unknown[]): string | null {
+  const first = input[0];
+  if (!first || typeof first !== 'object') return null;
+  const record = first as Record<string, unknown>;
+  return typeof record.kind === 'string' && typeof record.errorName === 'string'
+    ? record.errorName
+    : null;
 }
 
 /** Exported for diagnostic attachment (used in the diagnostics controller). */

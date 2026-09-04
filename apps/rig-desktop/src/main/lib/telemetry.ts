@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { IDisposable, IInitializable } from '@emdash/shared';
 import { app } from 'electron';
 import { KV } from '@main/db/kv';
@@ -17,11 +17,74 @@ type TelemetryKVSchema = {
   lastHeartbeatTs: string;
 };
 
-const LIB_NAME = 'emdash';
+const LIB_NAME = 'rig-desktop';
 const isViteDevBuild = import.meta.env.DEV;
 const MAX_EVENT_TS_MS = 9_999_999_999_999;
 const MAX_DURATION_MS = 30 * 24 * 60 * 60 * 1_000;
 const MAX_GENERIC_NUMBER = 1_000_000;
+/** Default write key + host: our own relay speaks PostHog's wire protocol (see `docs/`). */
+const DEFAULT_API_KEY = 'rig-desktop-v1';
+const DEFAULT_HOST = 'https://userig.xyz/api/telemetry';
+/** Hard cap on `app_error` events per session — a crash loop must never flood the endpoint. */
+const MAX_ERROR_EVENTS_PER_SESSION = 20;
+/** Stack frames included in an error fingerprint — enough to disambiguate, never the whole trace. */
+const FINGERPRINT_STACK_FRAMES = 3;
+
+// ---------------------------------------------------------------------------
+// Error fingerprinting — content-free by construction: no message, no raw
+// stack, no directory paths ever leave the machine. Exported for unit tests.
+// ---------------------------------------------------------------------------
+
+function errorName(error: unknown): string {
+  const raw =
+    error instanceof Error && error.name
+      ? error.name
+      : typeof (error as { name?: unknown } | null)?.name === 'string'
+        ? ((error as { name: string }).name as string)
+        : 'UnknownError';
+  return raw.slice(0, 80) || 'UnknownError';
+}
+
+/** One `at ...` stack line reduced to `basename:function` — never a directory path or line/col. */
+function parseStackFrame(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('at ')) return null;
+  const rest = trimmed.slice(3).trim();
+  const match = rest.match(/^(.*?)\s*\(([^)]+)\)$/);
+  const fnRaw = match ? match[1] : '';
+  const location = match ? match[2] : rest;
+  const fn = (fnRaw || 'anonymous').replace(/[^A-Za-z0-9_.$<>]/g, '').slice(0, 60) || 'anonymous';
+  const withoutLineCol = location.replace(/:\d+:\d+$/, '');
+  const base = withoutLineCol.split(/[\\/]/).pop() || withoutLineCol;
+  return `${base}:${fn}`;
+}
+
+/**
+ * Up to `FINGERPRINT_STACK_FRAMES` stack frames, each stripped to
+ * `basename:function`. Empty for anything that isn't a real `Error` with a
+ * stack — e.g. the renderer's content-free failure report, which only ever
+ * carries a `kind`/`errorName` pair, never a stack.
+ */
+function stackFrames(error: unknown): string[] {
+  if (!(error instanceof Error) || typeof error.stack !== 'string') return [];
+  const frames: string[] = [];
+  for (const line of error.stack.split('\n').slice(1)) {
+    if (frames.length >= FINGERPRINT_STACK_FRAMES) break;
+    const frame = parseStackFrame(line);
+    if (frame) frames.push(frame);
+  }
+  return frames;
+}
+
+/** sha256(kind + name + frames), first 16 hex chars. Never includes the error message. */
+function fingerprint(kind: string, name: string, frames: string[]): string {
+  return createHash('sha256')
+    .update(kind + name + frames.join(''))
+    .digest('hex')
+    .slice(0, 16);
+}
+
+export const __testing = { errorName, stackFrames, fingerprint };
 
 class TelemetryService implements IInitializable, IDisposable {
   private enabled = true;
@@ -32,10 +95,7 @@ class TelemetryService implements IInitializable, IDisposable {
   private userOptOut: boolean | undefined;
   private sessionId: string | undefined;
   private lastActiveDate: string | undefined;
-  private cachedGithubUsername: string | null = null;
-  private cachedAccountId: string | null = null;
-  private cachedEmail: string | null = null;
-  private cachedFeatureFlags: Record<string, boolean> = {};
+  private errorEventCount = 0;
   private heartbeatInterval: ReturnType<typeof setInterval> | undefined;
   private readonly kv = new KV<TelemetryKVSchema>('telemetry');
 
@@ -71,12 +131,12 @@ class TelemetryService implements IInitializable, IDisposable {
       source: 'desktop_app',
       electron_version: process.versions.electron,
       platform: process.platform,
+      os: process.platform,
       arch: process.arch,
       is_dev: !app.isPackaged,
       install_source: this.installSource ?? (app.isPackaged ? 'dmg' : 'dev'),
+      session_id: this.sessionId ?? null,
       $lib: LIB_NAME,
-      ...(this.cachedGithubUsername ? { github_username: this.cachedGithubUsername } : {}),
-      ...(this.cachedAccountId ? { account_id: this.cachedAccountId } : {}),
     };
   }
 
@@ -131,8 +191,7 @@ class TelemetryService implements IInitializable, IDisposable {
       'state',
       'success',
       'error_type',
-      'github_username',
-      'account_id',
+      'author_kind',
       'enabled',
       'app',
       'applied_migrations_bucket',
@@ -226,68 +285,6 @@ class TelemetryService implements IInitializable, IDisposable {
     }
   }
 
-  private async posthogIdentify(username: string, email?: string): Promise<void> {
-    if (!this.isEnabled() || !username) return;
-    try {
-      const u = (this.host ?? '').replace(/\/$/, '') + '/capture/';
-      const body = {
-        api_key: this.apiKey,
-        event: '$identify',
-        properties: {
-          distinct_id: this.instanceId,
-          $set: {
-            ...(email ? { email } : {}),
-            ...this.getBaseProps(),
-          },
-        },
-      };
-      await fetch(u, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(5_000),
-      }).catch(() => undefined);
-    } catch {
-      // swallow errors; telemetry must never crash the app
-    }
-  }
-
-  private async posthogDecide(): Promise<void> {
-    if (!this.isEnabled() || !this.instanceId) return;
-    try {
-      const u = (this.host ?? '').replace(/\/$/, '') + '/decide/?v=3';
-      const body = {
-        api_key: this.apiKey,
-        distinct_id: this.instanceId,
-        person_properties: {
-          ...(this.cachedGithubUsername ? { github_username: this.cachedGithubUsername } : {}),
-          ...(this.cachedAccountId ? { account_id: this.cachedAccountId } : {}),
-          ...(this.cachedEmail ? { email: this.cachedEmail } : {}),
-        },
-      };
-      const response = await fetch(u, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (response.ok) {
-        const data = (await response.json()) as { featureFlags?: Record<string, unknown> };
-        const flags = data.featureFlags ?? {};
-        const parsed: Record<string, boolean> = {};
-        for (const [key, value] of Object.entries(flags)) {
-          if (typeof value === 'boolean') {
-            parsed[key] = value;
-          } else if (value === 'true' || value === 'false') {
-            parsed[key] = value === 'true';
-          }
-        }
-        this.cachedFeatureFlags = parsed;
-      }
-    } catch {
-      // swallow errors; telemetry must never crash the app
-    }
-  }
-
   // ---------------------------------------------------------------------------
   // Daily active user
   // ---------------------------------------------------------------------------
@@ -318,9 +315,14 @@ class TelemetryService implements IInitializable, IDisposable {
     const enabledEnv = (appEnv.runtime.TELEMETRY_ENABLED ?? 'true').toLowerCase();
     this.enabled =
       !isViteDevBuild && enabledEnv !== 'false' && enabledEnv !== '0' && enabledEnv !== 'no';
-    // build value wins (prod); dev fallback used locally without VITE_ vars set
-    this.apiKey = appEnv.build.VITE_POSTHOG_KEY ?? appEnv.dev.POSTHOG_PROJECT_API_KEY;
-    this.host = this.normalizeHost(appEnv.build.VITE_POSTHOG_HOST ?? appEnv.dev.POSTHOG_HOST);
+    // build value wins (prod); dev fallback used locally without VITE_ vars set; our own
+    // relay is the default so a packaged build reports without any release-env change —
+    // switching to PostHog later is just setting the two VITE_ vars at build time.
+    this.apiKey =
+      appEnv.build.VITE_POSTHOG_KEY ?? appEnv.dev.POSTHOG_PROJECT_API_KEY ?? DEFAULT_API_KEY;
+    this.host = this.normalizeHost(
+      appEnv.build.VITE_POSTHOG_HOST ?? appEnv.dev.POSTHOG_HOST ?? DEFAULT_HOST
+    );
     this.installSource = options?.installSource ?? appEnv.runtime.INSTALL_SOURCE;
     this.sessionId = randomUUID();
 
@@ -394,32 +396,6 @@ class TelemetryService implements IInitializable, IDisposable {
     await Promise.all([this.kv.del('lastSessionId'), this.kv.del('lastHeartbeatTs')]);
   }
 
-  /**
-   * Associate the current anonymous session with a known identity. Called via
-   * the accountChanged hook when sign-in succeeds or on cold boot if a session
-   * is already stored. Triggers a PostHog identify and a decide call to refresh
-   * cached feature flags.
-   */
-  async identify(username: string, userId: string, email: string): Promise<void> {
-    if (!username) return;
-    this.cachedGithubUsername = username;
-    this.cachedAccountId = userId;
-    this.cachedEmail = email;
-    await this.posthogIdentify(username, email);
-    await this.posthogDecide();
-  }
-
-  /**
-   * Clear the cached identity and feature flags. Called via the accountCleared
-   * hook when the user signs out.
-   */
-  clearIdentity(): void {
-    this.cachedGithubUsername = null;
-    this.cachedAccountId = null;
-    this.cachedEmail = null;
-    this.cachedFeatureFlags = {};
-  }
-
   capture<E extends TelemetryEvent>(
     event: E,
     properties?: TelemetryProperties<E> | Record<string, unknown>
@@ -467,9 +443,14 @@ class TelemetryService implements IInitializable, IDisposable {
     return this.instanceId;
   }
 
-  setTelemetryEnabledViaUser(enabledFlag: boolean): void {
+  /** User-facing opt-out toggle (Settings → "Share anonymous usage data"). Persists immediately. */
+  setEnabled(enabledFlag: boolean): void {
     this.userOptOut = !enabledFlag;
     void this.kv.set('enabled', String(enabledFlag));
+  }
+
+  isUserEnabled(): boolean {
+    return this.userOptOut !== true;
   }
 
   async checkAndReportDailyActiveUser(): Promise<void> {
@@ -477,11 +458,12 @@ class TelemetryService implements IInitializable, IDisposable {
   }
 
   /**
-   * Returns the current set of evaluated feature flags. In dev mode, FLAG_*
-   * environment variables (e.g. FLAG_my_flag=true) override any PostHog values.
+   * Anonymous-only: there is no PostHog `decide` call feeding this any more, so
+   * there is nothing to evaluate in a packaged build. Dev builds keep the local
+   * FLAG_* env override so a flag can still be exercised without a server.
    */
   getFeatureFlags(): Record<string, boolean> {
-    if (!isViteDevBuild) return this.cachedFeatureFlags;
+    if (!isViteDevBuild) return {};
 
     const overrides: Record<string, boolean> = {};
     for (const [key, value] of Object.entries(process.env)) {
@@ -490,7 +472,28 @@ class TelemetryService implements IInitializable, IDisposable {
         overrides[flagName] = value === 'true' || value === '1';
       }
     }
-    return { ...this.cachedFeatureFlags, ...overrides };
+    return overrides;
+  }
+
+  /**
+   * Records a content-free error: `error_type` (the error's name, never its
+   * message) and a fingerprint derived from the kind plus up to
+   * `FINGERPRINT_STACK_FRAMES` stack frames, each reduced to `basename:function`
+   * — no directory paths, no message, no raw stack ever leaves the machine.
+   * Capped at `MAX_ERROR_EVENTS_PER_SESSION` so a crash loop can't flood the
+   * endpoint.
+   */
+  trackError(kind: 'main-uncaught' | 'main-rejection' | 'renderer', error: unknown): void {
+    if (!this.isEnabled()) return;
+    if (this.errorEventCount >= MAX_ERROR_EVENTS_PER_SESSION) return;
+    this.errorEventCount++;
+
+    const name = errorName(error);
+    this.capture('app_error', {
+      error_type: name,
+      source: kind,
+      $exception_fingerprint: fingerprint(kind, name, stackFrames(error)),
+    });
   }
 }
 
