@@ -87,6 +87,9 @@ export function SettingsModal({
           <Section label="Rig folder">
             <RigHomeRow />
           </Section>
+          <Section label="Privacy">
+            <TelemetryRow />
+          </Section>
           <Section label="About" containerRef={aboutRef}>
             <AboutSection />
           </Section>
@@ -380,6 +383,62 @@ function AutoApproveAgentActionsRow() {
           className={cn(
             'bg-bg-1 absolute top-0.5 left-0.5 size-3 rounded-full transition-transform',
             enabled && 'translate-x-3'
+          )}
+        />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Anonymous usage + error telemetry — see `main/lib/telemetry.ts`'s own
+ * header comment for exactly what leaves the machine (no document contents,
+ * names, or emails, ever). Same switch shape as
+ * `AutoApproveAgentActionsRow` above (no new colored accents), but its own
+ * `Section` rather than appended under another one, since this is the
+ * settings surface's own privacy control. Default on.
+ */
+function TelemetryRow() {
+  const queryClient = useQueryClient();
+  const { data: enabled } = useQuery({
+    queryKey: ['rig', 'telemetry', 'enabled'],
+    queryFn: () => rpc.telemetry.isUserEnabled(),
+  });
+  const checked = enabled ?? true;
+
+  const toggle = () => {
+    void rpc.telemetry.setEnabled(!checked).then(() => {
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'telemetry', 'enabled'] });
+    });
+  };
+
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <label htmlFor="telemetry-enabled" className="text-text-primary text-xs font-medium">
+          Share anonymous usage data
+        </label>
+        <p className="text-text-muted text-xs">
+          Counts like daily use, which agents you dispatch, and error types. No document
+          contents, names, or emails ever leave your machine.
+        </p>
+      </div>
+      <button
+        id="telemetry-enabled"
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label="Share anonymous usage data"
+        onClick={toggle}
+        className={cn(
+          'relative mt-0.5 h-4 w-7 shrink-0 rounded-full transition-colors',
+          checked ? 'bg-border-strong' : 'bg-bg-2 border-border-hairline border'
+        )}
+      >
+        <span
+          className={cn(
+            'bg-bg-1 absolute top-0.5 left-0.5 size-3 rounded-full transition-transform',
+            checked && 'translate-x-3'
           )}
         />
       </button>
