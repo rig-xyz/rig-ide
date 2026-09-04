@@ -1,8 +1,16 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { rigSlug, validateRigName } from '@shared/rig/create';
+
+// `create.ts` now calls `telemetryService.capture` on a successful `rig
+// init` — mocked so this plain-Node vitest project never has to reach
+// `@main/db/client` (electron.app.getPath()) at import time.
+vi.mock('@main/lib/telemetry', () => ({
+  telemetryService: { capture: vi.fn() },
+}));
+
 import { parseRigCliOutput, startHereDocContent, writeSeedDoc } from './create';
 
 describe('parseRigCliOutput', () => {

@@ -4,6 +4,7 @@ import { writeFile } from 'node:fs/promises';
 import { join as joinPath } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
+import { telemetryService } from '@main/lib/telemetry';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import {
   rigSlug,
@@ -292,6 +293,7 @@ export const rigCreateController = createRPCController({
       return err(initError);
     }
 
+    telemetryService.capture('rig_created', {});
     const initBody = init.kind === 'ran' ? parseRigCliOutput(init.stdout) : null;
     const rigName =
       initBody?.kind === 'ok' && typeof initBody.body.name === 'string' ? initBody.body.name : slug;

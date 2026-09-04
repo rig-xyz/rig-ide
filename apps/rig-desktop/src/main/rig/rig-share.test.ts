@@ -1,4 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// `rig-share.ts` now calls `telemetryService.capture` on invite send/accept —
+// mocked so this plain-Node vitest project never has to reach
+// `@main/db/client` (electron.app.getPath()) at import time.
+vi.mock('@main/lib/telemetry', () => ({
+  telemetryService: { capture: vi.fn() },
+}));
+
 import { deriveSelfRole, toEmailOutcome, toInvite, toMyInvite } from './rig-share';
 
 // Realistic id shapes: the relay's members rows carry BOTH a tap user id

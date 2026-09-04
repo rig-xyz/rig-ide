@@ -56,7 +56,11 @@ import {
   type RigSettingsLegacyImport,
   rigSettingsChangedChannel,
 } from '@shared/rig/settings';
-import { rigOpenRecentChannel, type RigWorkspaceDetection } from '@shared/rig/workspace';
+import {
+  rigOpenRecentChannel,
+  type RigOpenSource,
+  type RigWorkspaceDetection,
+} from '@shared/rig/workspace';
 
 type Theme = 'dark' | 'light';
 /** What Settings' Appearance section offers: the two explicit themes, or
@@ -391,13 +395,16 @@ export function App() {
   // like one picked by hand. Single window, v1: this always replaces
   // whatever rig is currently open rather than spawning a second window.
   const openPath = useCallback(
-    async (picked: string, opts?: { activeSessionId?: string; launchRestore?: boolean }) => {
+    async (
+      picked: string,
+      opts?: { activeSessionId?: string; launchRestore?: boolean; source?: RigOpenSource }
+    ) => {
       const requestToken = openPathRequests.current.begin();
       setArtefact(NO_TABS);
       setFolder({ status: 'detecting', path: picked });
       setPendingActiveSessionId(opts?.activeSessionId ?? null);
       try {
-        const result = await rpc.rig.workspace.detect(picked);
+        const result = await rpc.rig.workspace.detect(picked, opts?.source);
         if (!openPathRequests.current.isCurrent(requestToken)) {
           if (result.bound) void rpc.rig.files.releaseRoot({ rootId: result.rootId });
           return;
@@ -451,7 +458,7 @@ export function App() {
   // `pendingActiveSessionId` above and `ChatPanel`'s `initialActiveSessionId`).
   const continueSession = useCallback(
     (path: string, sessionId: string) => {
-      void openPath(path, { activeSessionId: sessionId });
+      void openPath(path, { activeSessionId: sessionId, source: 'recent' });
     },
     [openPath]
   );
@@ -464,7 +471,7 @@ export function App() {
     (path: string, docAbsPath: string | null) => {
       setPendingOpenAbsPath(docAbsPath);
       setJustCreatedRig(true);
-      void openPath(path);
+      void openPath(path, { source: 'create' });
     },
     [openPath]
   );

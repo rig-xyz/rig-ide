@@ -1,5 +1,6 @@
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
+import { telemetryService } from '@main/lib/telemetry';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import type {
   RigInvite,
@@ -445,6 +446,7 @@ export const rigShareController = createRPCController({
       if (!invite || !url) {
         return err<RigShareError>({ kind: 'relay', message: `Could not ${action}.` });
       }
+      telemetryService.capture('invite_sent', {});
       return ok({ invite, url, email: toEmailOutcome(data?.email) });
     } catch (error) {
       return err(transportError(action, error));
@@ -574,6 +576,7 @@ export const rigShareController = createRPCController({
       if (!bindingId) {
         return err<RigShareError>({ kind: 'relay', message: `Could not ${action}.` });
       }
+      telemetryService.capture('invite_accepted', {});
       return ok({ bindingId, becameMember: asRecord(data?.member) !== null });
     } catch (error) {
       return err(transportError(action, error));

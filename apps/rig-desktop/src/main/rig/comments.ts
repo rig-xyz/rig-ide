@@ -2,6 +2,7 @@ import { statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
+import { telemetryService } from '@main/lib/telemetry';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import {
   RIG_COMMENT_ANCHOR_EXACT_MAX,
@@ -616,7 +617,13 @@ async function postMessage(
     return err(transportError(action, error));
   }
   if (!response.ok) return err(await relayError(response, action));
-  return readMessage(response, action);
+  const result = await readMessage(response, action);
+  if (result.success) {
+    telemetryService.capture('comment_posted', {
+      author_kind: body.authorKind === 'agent' ? 'agent' : 'user',
+    });
+  }
+  return result;
 }
 
 async function readMessage(response: Response, action: string): Promise<MessageResult> {

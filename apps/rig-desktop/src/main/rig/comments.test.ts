@@ -1,7 +1,16 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// `comments.ts` now calls `telemetryService.capture` on a posted message —
+// mocked here for the same reason `comment-agent.ts` is avoided below:
+// `@main/lib/telemetry` reaches `@main/db/client` (electron.app.getPath()) at
+// import time, which this plain-Node vitest project doesn't have.
+vi.mock('@main/lib/telemetry', () => ({
+  telemetryService: { capture: vi.fn() },
+}));
+
 import {
   resolveCommentDispatchContext,
   resolveCommentTarget,

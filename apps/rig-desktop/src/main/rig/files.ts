@@ -13,6 +13,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { err, ok, type Result } from '@emdash/shared';
 import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
+import { telemetryService } from '@main/lib/telemetry';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import {
   rigFileChangeChannel,
@@ -203,6 +204,18 @@ function errorDetails(error: unknown): { code?: string } {
   return { code: typed?.code };
 }
 
+/** `document_saved` is debounced to at most once per file per minute — a typing session autosaves far more often than that. */
+const DOCUMENT_SAVED_DEBOUNCE_MS = 60_000;
+const lastDocumentSavedCapture = new Map<string, number>();
+function captureDocumentSaved(rootId: string, relativePath: string): void {
+  const key = `${rootId}:${relativePath}`;
+  const now = Date.now();
+  const last = lastDocumentSavedCapture.get(key);
+  if (last !== undefined && now - last < DOCUMENT_SAVED_DEBOUNCE_MS) return;
+  lastDocumentSavedCapture.set(key, now);
+  telemetryService.capture('document_saved', {});
+}
+
 export const rigFilesController = createRPCController({
   list: async ({
     rootId,
@@ -273,7 +286,9 @@ export const rigFilesController = createRPCController({
     try {
       await fsWriteFile(target.data, content, 'utf8');
       const normalized = rigFileRootRegistry.normalizeRelative(relativePath);
-      return ok({ relativePath: normalized.success ? normalized.data : relativePath });
+      const savedRelativePath = normalized.success ? normalized.data : relativePath;
+      captureDocumentSaved(rootId, savedRelativePath);
+      return ok({ relativePath: savedRelativePath });
     } catch (error) {
       log.warn('Rig files: write failed', errorDetails(error));
       return failure({ kind: 'ioError', message: 'Could not save this file.' });

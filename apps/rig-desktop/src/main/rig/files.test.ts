@@ -9,7 +9,17 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({ capture: vi.fn() }));
+
+// `files.ts` now calls `telemetryService.capture('document_saved', …)` on a
+// successful write — mocked so this plain-Node vitest project never has to
+// reach `@main/db/client` (electron.app.getPath()) at import time.
+vi.mock('@main/lib/telemetry', () => ({
+  telemetryService: { capture: mocks.capture },
+}));
+
 import { rigFileRootRegistry } from './file-root-registry';
 import { rigFilesController } from './files';
 
@@ -117,6 +127,24 @@ describe('rigFilesController', () => {
         content: 'saved',
       })
     ).resolves.toEqual({ success: true, data: { relativePath: 'notes/saved.md' } });
+  });
+
+  it('debounces document_saved to once per file per minute', async () => {
+    mocks.capture.mockClear();
+    const { dir, rootId } = await root();
+    mkdirSync(join(dir, 'notes'));
+    const write = () =>
+      rigFilesController.write({ rootId, relativePath: 'notes/saved.md', content: 'x' });
+
+    await write();
+    await write();
+    await write();
+    expect(mocks.capture).toHaveBeenCalledTimes(1);
+    expect(mocks.capture).toHaveBeenCalledWith('document_saved', {});
+
+    // A different file, same root — its own independent debounce window.
+    await rigFilesController.write({ rootId, relativePath: 'notes/other.md', content: 'y' });
+    expect(mocks.capture).toHaveBeenCalledTimes(2);
   });
 
   it('creates a directory and rejects rename traversal', async () => {

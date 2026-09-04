@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gt, ne } from 'drizzle-orm';
 import { db } from '@main/db/client';
 import { rigRigs, rigSessionEvents, rigSessions } from '@main/db/schema';
 import { log } from '@main/lib/logger';
+import { telemetryService } from '@main/lib/telemetry';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import type {
   RigRecentSession,
@@ -140,6 +141,7 @@ export const rigSessionsController = createRPCController({
           target: rigSessions.id,
           set: { acpSessionId, updatedAt: now, status: 'active' },
         });
+      telemetryService.capture('agent_dispatched', { provider: providerId });
       return { ok: true };
     } catch (error) {
       log.warn('rig sessions: failed to ensure session row', { sessionId, error: String(error) });

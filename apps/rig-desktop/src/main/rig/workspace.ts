@@ -3,8 +3,14 @@ import { join } from 'node:path';
 import { app } from 'electron';
 import * as toml from 'smol-toml';
 import { log } from '@main/lib/logger';
+import { telemetryService } from '@main/lib/telemetry';
 import { createRPCController } from '@shared/lib/ipc/rpc';
-import { deriveUnboundDetection, isForeignAccountRow, type RigWorkspaceDetection } from '@shared/rig/workspace';
+import {
+  deriveUnboundDetection,
+  isForeignAccountRow,
+  type RigOpenSource,
+  type RigWorkspaceDetection,
+} from '@shared/rig/workspace';
 import { getCurrentAccountId } from './account';
 import { findBindingConfig } from './binding';
 import { rigFileRootRegistry } from './file-root-registry';
@@ -57,7 +63,7 @@ export const rigWorkspaceController = createRPCController({
    * best-effort; a failure there must never block the detection result the
    * renderer is waiting on to render the workspace.
    */
-  detect: async (folderPath: string): Promise<RigWorkspaceDetection> => {
+  detect: async (folderPath: string, source?: RigOpenSource): Promise<RigWorkspaceDetection> => {
     if (!folderPath || typeof folderPath !== 'string') {
       return { bound: false, unsynced: null, foreignAccount: null };
     }
@@ -116,6 +122,7 @@ export const rigWorkspaceController = createRPCController({
       throw new Error('Could not open this rig securely.');
     }
 
+    telemetryService.capture('rig_opened', { source: source ?? 'other' });
     return {
       bound: true,
       bindingId: location.config.bindingId,

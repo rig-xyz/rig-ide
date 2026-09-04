@@ -5,6 +5,9 @@ import { defineEvent } from '../lib/ipc/events';
  * lookup (`main/rig/workspace.ts`) and the renderer's "Open Folder…" flow.
  */
 
+/** How a rig came to be opened — the `rig_opened` telemetry event's `source`. */
+export type RigOpenSource = 'recent' | 'create' | 'join' | 'deeplink' | 'other';
+
 /**
  * What the shell shows after "Open Folder…": whether the picked directory
  * (or one of its ancestors) is bound to a rig, and if so, the rig's name.
