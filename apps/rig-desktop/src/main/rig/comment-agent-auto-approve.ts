@@ -5,8 +5,8 @@ import type {
 } from '@shared/rig/comments';
 
 /**
- * Two independent auto-approve paths for a headless comment-agent turn's
- * pending permission requests, both applied in `comment-agent.ts`'s
+ * Three independent paths for a headless comment-agent turn's pending
+ * permission requests, all applied in `comment-agent.ts`'s
  * `publishPermissions` before anything reaches the thread card:
  *
  * 1. `partitionAutoApprovable` — always on, and scoped to exactly one shape:
@@ -28,6 +28,11 @@ import type {
  *    section), applied to everything the first path left visible. When the
  *    reader has turned it on, no permission card is ever shown for a
  *    comment-thread agent — every request grants immediately.
+ *
+ * 3. `partitionPaintbrushAutoDecline` — for a paintbrush turn only,
+ *    applied INSTEAD of the two above (a paintbrush prompt already forbids
+ *    tool edits, so there is nothing here to ever approve): every request
+ *    is declined immediately rather than shown.
  */
 
 /**
@@ -208,5 +213,37 @@ export function partitionGloballyApprovable(
 ): RigCommentPermissionRequest[] {
   return partitionWithApprover(requests, alreadyResolved, resolve, (request) =>
     allowOnceOptionId(request.options)
+  );
+}
+
+/**
+ * The option id to decline `request` with — `reject_once` only, for the
+ * same reason `allowOnceOptionId` never picks `_always`: this refuses just
+ * the one call, not the session's whole standing policy. Null when a
+ * request offers no such option at all (an exotic provider shape), in
+ * which case the caller falls back to leaving it for a human rather than
+ * granting the broader option.
+ */
+function rejectOnceOptionId(options: readonly RigCommentPermissionOption[]): string | null {
+  return options.find((option) => option.kind === 'reject_once')?.optionId ?? null;
+}
+
+/**
+ * The run-that-never-landed fix (`docs/document-focus-design.md` §2
+ * punch-list finding 5): a paintbrush turn's prompt already forbids tool
+ * edits (`comment-agent-prompt.ts`) — a permission request reaching this
+ * turn at all means the model tried to touch the workspace anyway, which
+ * the reviewer never asked to approve. Every request is declined on the
+ * spot rather than published to the thread card, so a paintbrush run can
+ * never sit on an invisible "Working…" that is actually just waiting on a
+ * human who was never shown anything to approve.
+ */
+export function partitionPaintbrushAutoDecline(
+  requests: readonly RigCommentPermissionRequest[],
+  alreadyResolved: Set<string>,
+  resolve: (requestId: string, optionId: string) => void
+): RigCommentPermissionRequest[] {
+  return partitionWithApprover(requests, alreadyResolved, resolve, (request) =>
+    rejectOnceOptionId(request.options)
   );
 }

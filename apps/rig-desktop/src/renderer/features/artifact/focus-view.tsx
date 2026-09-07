@@ -4,9 +4,25 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCheck, ChevronRight, FoldVertical, MoreHorizontal, UnfoldVertical } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { relativeTime } from '@renderer/features/chat/session-history';
+import type { DocSelectionRect } from '@renderer/features/docs/doc-editor';
 import { DocEditor } from '@renderer/features/docs/doc-editor';
 import { DocTabResource } from '@renderer/features/docs/doc-file-sync';
+import {
+  NewThreadCard,
+  ThreadCard,
+} from '@renderer/features/docs/comments/comments-margin';
+import {
+  attachDocComments,
+  disposeDocComments,
+  type AgentMention,
+} from '@renderer/features/docs/comments/comments-store';
+import { isPaintbrushArmed } from '@renderer/features/docs/paintbrush/paintbrush-gating';
+import { paintbrushDecorations } from '@renderer/features/docs/paintbrush/paintbrush-decorations';
+import { PaintbrushControl } from '@renderer/features/docs/paintbrush/paintbrush-control';
+import { usePaintbrushEditorSync } from '@renderer/features/docs/paintbrush/use-paintbrush-editor-sync';
+import { usePaintbrushMode } from '@renderer/features/docs/paintbrush/use-paintbrush';
 import { useEverWrittenPaths, useRecentWrites } from '@renderer/features/workspace/write-activity';
 import { events, rpc } from '@renderer/lib/ipc';
 import { Popover, PopoverMenuItem, PopoverSeparator } from '@renderer/lib/ui/popover';
@@ -38,6 +54,18 @@ import { useFileType } from './use-file-type';
  * Deliberately not here (v1): the margin comment rail — its anchor
  * geometry assumes one document per scroll container; comments stay in
  * the editor tab for now.
+ *
+ * Paintbrush (`docs/document-focus-design.md` §2 punch list, finding 6 —
+ * "paintbrush in the stack") IS here, via a FLOATING CARD instead of a
+ * margin: the header gets the same `PaintbrushControl` orb the editor tab
+ * does, and a selection released inside an expanded, editable section
+ * opens the same composer/thread components the margin rail uses
+ * (`ThreadCard`/`NewThreadCard`, exported from `comments-margin.tsx` —
+ * reused, not forked) as a popover anchored to the selection's rect,
+ * clamped to the viewport. Deferred this pass: browsing a file's OTHER,
+ * non-paintbrush comment threads from the stack — there is still no
+ * margin to list them in, only the single thread a stroke just started or
+ * reactivated.
  */
 
 const MAX_SECTIONS = 10;
@@ -104,6 +132,11 @@ export function FocusView({
 
   const recentWrites = useRecentWrites(root);
   const agentWritten = useEverWrittenPaths(root);
+  // Paintbrush (see this file's own doc comment): one mode/agent choice
+  // for the whole stack, exactly like the editor tab's header — armed
+  // here, a selection release in any expanded section below opens the
+  // floating card.
+  const paintbrush = usePaintbrushMode();
   const [filter, setFilter] = useState<'all' | 'unseen'>('all');
   // The cap exists so a huge rig doesn't stack dozens of sections at once
   // — but the way past it belongs HERE, not in a pointer to another
@@ -175,6 +208,16 @@ export function FocusView({
           {unseenFiles.size > 0 && ` · ${unseenFiles.size} new`}
         </span>
         <div className="ml-auto flex items-center gap-1">
+          <PaintbrushControl
+            on={paintbrush.on}
+            toggle={paintbrush.toggle}
+            agents={paintbrush.agents}
+            selected={paintbrush.selected}
+            selectAgent={paintbrush.selectAgent}
+            streaming={false}
+            showCoachMark={paintbrush.showCoachMark}
+            dismissCoachMark={paintbrush.dismissCoachMark}
+          />
           {/* Default (All) first — the resting state highlights the first pill. */}
           <FilterPill active={filter === 'all'} onClick={() => setFilter('all')}>
             All
@@ -300,6 +343,7 @@ export function FocusView({
                     })
                   }
                   onMarkViewed={() => markViewed(node.relPath)}
+                  paintbrush={{ on: paintbrush.on, mention: paintbrush.mention }}
                 />
               );
             })}
@@ -353,6 +397,7 @@ function FocusSection({
   expanded,
   onToggle,
   onMarkViewed,
+  paintbrush,
 }: {
   root: string;
   rootId: string;
@@ -363,6 +408,7 @@ function FocusSection({
   expanded: boolean;
   onToggle: () => void;
   onMarkViewed: () => void;
+  paintbrush: { on: boolean; mention: AgentMention | null };
 }) {
   return (
     <section className="border-border-hairline border-b">
@@ -418,27 +464,43 @@ function FocusSection({
           </button>
         )}
       </div>
-      {expanded && <FocusBody root={root} rootId={rootId} relPath={node.relPath} readOnly={active} />}
+      {expanded && (
+        <FocusBody
+          root={root}
+          rootId={rootId}
+          relPath={node.relPath}
+          readOnly={active}
+          paintbrush={paintbrush}
+        />
+      )}
     </section>
   );
 }
 
 /**
  * One section's live document — same `DocTabResource`/`DocEditor` pair the
- * editor tab uses, minus header chrome and comments. Mounted only while
- * its section is expanded, so a big rig never pays for ten live editors.
+ * editor tab uses, minus header chrome and the margin rail. Mounted only
+ * while its section is expanded, so a big rig never pays for ten live
+ * editors. Paintbrush wiring (comments store attach, the CM6 overlay
+ * decoration, the floating card) lives in `FocusBodyEditor` below, kept as
+ * its own child component so those hooks only ever run once `resource` is
+ * a real, non-null `DocTabResource` — this component's own `resource` can
+ * still be null (an unsupported type, still loading), which plain hooks
+ * can't conditionally skip around.
  */
 const FocusBody = observer(function FocusBody({
   root,
   rootId,
   relPath,
   readOnly = false,
+  paintbrush,
 }: {
   root: string;
   rootId: string;
   relPath: string;
   /** While the agent holds the pen: the document stays visible and live, but a skimming scroll can't type into a mid-thought edit. */
   readOnly?: boolean;
+  paintbrush: { on: boolean; mention: AgentMention | null };
 }) {
   const absPath = `${root}/${relPath}`;
   const fileInfo = useFileType(root, rootId, absPath);
@@ -484,7 +546,126 @@ const FocusBody = observer(function FocusBody({
     );
   }
   return (
-    <div className="popover-in pb-4">
+    <FocusBodyEditor
+      resource={resource}
+      language={language}
+      readOnly={readOnly}
+      // Paintbrush stays markdown-only, matching the editor tab
+      // (`artifact-view.tsx`'s `commentsEnabled`), and never while the
+      // agent holds the pen — selecting into a mid-write buffer to start
+      // a stroke would race the very write it's reading.
+      paintbrushEligible={language === 'markdown' && !readOnly}
+      paintbrush={paintbrush}
+    />
+  );
+});
+
+/**
+ * The document editor plus the paintbrush wiring for one stack section.
+ * Split out of `FocusBody` so every hook below can assume a real
+ * `resource` — see that component's own doc comment.
+ */
+const FocusBodyEditor = observer(function FocusBodyEditor({
+  resource,
+  language,
+  readOnly,
+  paintbrushEligible,
+  paintbrush,
+}: {
+  resource: DocTabResource;
+  language: EditorLanguage;
+  readOnly: boolean;
+  paintbrushEligible: boolean;
+  paintbrush: { on: boolean; mention: AgentMention | null };
+}) {
+  // Attached synchronously in a `useMemo` (not an effect) for the same
+  // reason `artifact-view.tsx`'s `EditableArtifactPane` does it that way:
+  // the paintbrush CM6 extension must already be in `extensionFactories`
+  // before `DocEditor`'s own mount effect reads it, which runs before this
+  // component's own effects do (child-before-parent), not after.
+  //
+  // `decorationsPushed` guards against `paintbrushEligible` flipping back
+  // on more than once over this component's life (`readOnly` toggling as
+  // the agent starts/stops writing this same section again) — without it,
+  // each re-eligible pass would push another `paintbrushDecorations()`
+  // factory onto the SAME resource's `extensionFactories`, double-painting
+  // (then triple-, then...) the same overlay on every later mount.
+  const decorationsPushed = useRef(false);
+  const comments = useMemo(() => {
+    if (!paintbrushEligible) return null;
+    const store = attachDocComments(resource);
+    if (!decorationsPushed.current) {
+      resource.extensionFactories.push(() => paintbrushDecorations());
+      decorationsPushed.current = true;
+    }
+    return store;
+  }, [paintbrushEligible, resource]);
+
+  useEffect(() => {
+    if (!comments) return;
+    comments.setVisible(true);
+    return () => disposeDocComments(resource);
+  }, [comments, resource]);
+
+  const paintbrushOverlay = comments?.paintbrushOverlay ?? null;
+  usePaintbrushEditorSync(resource, 'edit', paintbrushOverlay);
+
+  const armed = isPaintbrushArmed(paintbrush) && !readOnly && comments !== null;
+  const [pendingRect, setPendingRect] = useState<DocSelectionRect | null>(null);
+
+  useEffect(() => {
+    if (!comments) return;
+    return resource.subscribeSelection((selection) => {
+      if (!armed) return;
+      if (selection.text.trim().length === 0 || selection.rect === null) return;
+      // CM6 selections carry exact source offsets — build the anchor
+      // straight from them (`buildAnchorFromRange`, inside `openComposer`
+      // → `create`), never a verbatim-text search, same as the editor
+      // tab's `CommentSelectionButton`.
+      setPendingRect(selection.rect);
+      comments.openComposer(
+        selection.text,
+        { start: selection.from, end: selection.to },
+        paintbrush.mention
+      );
+    });
+  }, [comments, resource, armed, paintbrush.mention]);
+
+  // The floating card shows for the composer (a stroke just started) OR
+  // the one paintbrush thread just created/reactivated — never the whole
+  // thread history (deferred, see this file's own doc comment).
+  const showFloatingCard =
+    comments !== null &&
+    (comments.composerQuote !== null ||
+      (comments.activeThreadId !== null && comments.isPaintbrushThread(comments.activeThreadId)));
+
+  useEffect(() => {
+    if (!showFloatingCard) setPendingRect(null);
+  }, [showFloatingCard]);
+
+  // Click-away closes the card — the only dismissal path besides Cancel
+  // (wired inside `NewThreadCard` itself) and Resolve (inside `ThreadCard`,
+  // which only clears `activeThreadId` if it resolves the ACTIVE thread —
+  // safe either way since `setActiveThread` is idempotent).
+  useEffect(() => {
+    if (!showFloatingCard || !comments) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest('[data-paintbrush-floating-card]')) return;
+      comments.setActiveThread(null);
+      comments.closeComposer();
+    };
+    document.addEventListener('mousedown', handlePointerDown, true);
+    return () => document.removeEventListener('mousedown', handlePointerDown, true);
+  }, [showFloatingCard, comments]);
+
+  const activeThread =
+    comments !== null && comments.activeThreadId !== null
+      ? comments.threads.find((t) => t.root.id === comments.activeThreadId)
+      : undefined;
+
+  return (
+    <div className="popover-in relative pb-4">
       <DocEditor
         // readOnly rides the key: CM6 editability is baked at state
         // construction here, and the write window opening/closing is rare
@@ -496,6 +677,7 @@ const FocusBody = observer(function FocusBody({
         language={language}
         onChange={resource.handleEditorChange}
         onSave={() => void resource.flush()}
+        onSelectionChange={comments ? resource.handleSelectionChange : undefined}
         extraExtensions={
           readOnly
             ? [
@@ -505,6 +687,60 @@ const FocusBody = observer(function FocusBody({
             : resource.extensionFactories
         }
       />
+      {comments && showFloatingCard && pendingRect && (
+        <PaintbrushFloatingCard anchorRect={pendingRect}>
+          {comments.composerQuote !== null ? (
+            <NewThreadCard store={comments} hasAnchor />
+          ) : activeThread ? (
+            <ThreadCard store={comments} thread={activeThread} />
+          ) : null}
+        </PaintbrushFloatingCard>
+      )}
     </div>
   );
 });
+
+/**
+ * The composer/thread popover for a stack section's paintbrush stroke —
+ * portaled to `document.body`, `position: fixed`, anchored beside the
+ * selection rect and clamped to the viewport (zero layout shift, same
+ * discipline as the editor tab's own paintbrush additions). Content is
+ * whichever of `NewThreadCard`/`ThreadCard` (`comments-margin.tsx`,
+ * exported for exactly this reuse — never forked) the caller passes.
+ */
+function PaintbrushFloatingCard({
+  anchorRect,
+  children,
+}: {
+  anchorRect: DocSelectionRect;
+  children: React.ReactNode;
+}) {
+  const CARD_WIDTH = 300;
+  const GAP = 6;
+  const EDGE = 8;
+
+  const left = Math.min(Math.max(anchorRect.left, EDGE), window.innerWidth - CARD_WIDTH - EDGE);
+  const below = anchorRect.bottom + GAP;
+  // A rough own-height guess (favors "below" unless there's clearly no
+  // room) — the card's outer wrapper caps `maxHeight` to whatever room is
+  // actually left either way, so a wrong guess here costs a scrollbar
+  // inside the card, never an off-screen one.
+  const fitsBelow = below + 120 + EDGE <= window.innerHeight;
+  const top = fitsBelow ? below : Math.max(EDGE, anchorRect.top - GAP);
+  const maxHeight = fitsBelow ? window.innerHeight - top - EDGE : anchorRect.top - GAP - EDGE;
+
+  return createPortal(
+    <div
+      // No border/background/shadow of its own — `NewThreadCard`/
+      // `ThreadCard` already render the full card shell (`Card` in
+      // `comments-margin.tsx`); this is purely a positioning wrapper, or
+      // the two would double up into a card-inside-a-card look.
+      data-paintbrush-floating-card
+      className="fixed z-50 overflow-y-auto"
+      style={{ left, top, width: CARD_WIDTH, maxHeight }}
+    >
+      {children}
+    </div>,
+    document.body
+  );
+}

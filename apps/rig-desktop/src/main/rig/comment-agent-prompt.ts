@@ -78,7 +78,20 @@ export function composeCommentAgentPrompt(
     'Answer concisely and directly: a few sentences of plain prose, no preamble and no sign-off. This is a comment in a review thread, not a report.'
   );
 
-  return { text: question?.body.trim() ?? '', hiddenContext: context.join('\n') };
+  const rawText = question?.body.trim() ?? '';
+  // Compliance (punch-list finding 5): a hidden-context instruction alone
+  // was not enough — Claude asked "what would you like the title to be?"
+  // despite the hidden block already forbidding clarifying questions. The
+  // VISIBLE prompt (what the reviewer typed) is what the model actually
+  // answers to, so the same directive is restated there too, compactly,
+  // on every paintbrush turn — the opening stroke and every follow-up
+  // alike (`request.paintbrush` is threaded through for both, see
+  // `comments-store.ts`'s `reply`).
+  const text = request.paintbrush
+    ? `Paintbrush stroke on the selected passage. Reply with the replacement block; if wording is unspecified, choose it yourself — do not ask. Instruction: ${rawText}`
+    : rawText;
+
+  return { text, hiddenContext: context.join('\n') };
 }
 
 function buildRigContextBlock(

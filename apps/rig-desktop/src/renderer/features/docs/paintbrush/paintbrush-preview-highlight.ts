@@ -2,32 +2,39 @@ import type { PositionIndex } from '../preview/position-index';
 import type { PaintbrushOverlay } from './paintbrush-decorations';
 
 /**
- * The Preview-mode twin of `paintbrush-decorations.ts`'s RESTING mark —
- * the softer tint painted over the brushed span while its composer is
- * open, via the CSS Custom Highlight API, exactly the mechanism
- * `preview/comment-highlights.ts` already uses for comment anchors. Kept
- * as its own independent highlight bucket rather than folded into that
- * module's `CommentMarker` pipeline, for the same zero-regression reason
- * `paintbrush-decorations.ts` stays out of `comment-decorations.ts`.
+ * The Preview-mode twin of `paintbrush-decorations.ts`'s marks — the softer
+ * tint painted over the brushed span while its composer is open, and the
+ * streaming pulse while a stroke is in flight, both via the CSS Custom
+ * Highlight API, exactly the mechanism `preview/comment-highlights.ts`
+ * already uses for comment anchors. Kept as its own independent highlight
+ * bucket rather than folded into that module's `CommentMarker` pipeline,
+ * for the same zero-regression reason `paintbrush-decorations.ts` stays
+ * out of `comment-decorations.ts`.
  *
- * STREAMING is deliberately NOT handled here any more (punch-list finding
- * 2a): `::highlight()` pseudo-elements cannot animate reliably across
- * Chromium versions, so a stroke's "inner mono pulse" while it streams
- * degraded to, at best, a static tint here — invisible motion is not a
- * pulse. `paintbrush-preview-streaming-overlay.tsx` now owns that instead,
- * as real positioned DOM elements over the rendered rects
- * (`index.sourceToDom` → `Range.getClientRects()`), which CAN animate.
- * This module keeps the cheap, correct, non-animated Custom Highlight for
- * exactly what it's good at: the RESTING tint while a composer is simply
- * open on a selection, nothing streaming.
+ * Rebuilt (punch-list finding 1 — "streaming pulse, verified mechanism"):
+ * a `::highlight()` pseudo-element cannot itself take an `animation`, but
+ * IS a normal inheriting box for a *registered* (`@property`) custom
+ * property animated on an ancestor — verified in Chromium. The streaming
+ * bucket's background is therefore just `var(--rig-brush-pulse)`; the
+ * actual keyframe lives once, globally, in `renderer/index.css`
+ * (`.rig-brush-pulsing`, toggled on the shared scroll container by
+ * `artifact-view.tsx` while any stroke is streaming) — the CM6 Edit-mode
+ * streaming mark (`paintbrush-decorations.ts`) reads the exact same custom
+ * property, so both surfaces pulse in lockstep off one keyframe. This
+ * module no longer needs its own animation or its own reduced-motion
+ * handling — both live with the keyframe, once.
  */
 
 const STYLE_ID = 'rig-paintbrush-preview-highlight-styles';
 const RESTING_KEY = 'rig-paintbrush';
+const STREAMING_KEY = 'rig-paintbrush-streaming';
 
 const HIGHLIGHT_CSS = `
 ::highlight(${RESTING_KEY}) {
   background-color: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+::highlight(${STREAMING_KEY}) {
+  background-color: var(--rig-brush-pulse);
 }
 `;
 
@@ -46,7 +53,7 @@ function ensureStyles(): void {
 }
 
 export type PaintbrushPreviewPainter = {
-  /** Replace the painted RESTING overlay — at most one range in practice (the composer's live selection). Never called with a streaming overlay; the caller filters that out. */
+  /** Replace the painted overlay set — at most one range in practice (the composer's live selection, or the one streaming stroke), split into the resting/streaming highlight buckets by each overlay's own `streaming` flag. */
   paint(overlays: readonly PaintbrushOverlay[]): void;
   dispose(): void;
 };
@@ -54,40 +61,54 @@ export type PaintbrushPreviewPainter = {
 export function createPaintbrushPreviewPainter(
   getIndex: () => PositionIndex | null
 ): PaintbrushPreviewPainter {
-  let painted = false;
+  let restingPainted = false;
+  let streamingPainted = false;
 
   return {
     paint(overlays) {
       if (!highlightApiSupported()) return;
       const index = getIndex();
       const resting: Range[] = [];
+      const streaming: Range[] = [];
       if (index) {
         for (const overlay of overlays) {
-          if (overlay.streaming) continue; // Handled by the streaming overlay component instead.
           const ranges = index
             .sourceToDom(overlay.from, overlay.to)
             ?.filter((range) => range.toString().trim() !== '');
-          if (ranges) resting.push(...ranges);
+          if (!ranges) continue;
+          (overlay.streaming ? streaming : resting).push(...ranges);
         }
       }
 
       if (resting.length === 0) {
-        if (painted) {
+        if (restingPainted) {
           CSS.highlights.delete(RESTING_KEY);
-          painted = false;
+          restingPainted = false;
         }
-        return;
+      } else {
+        ensureStyles();
+        CSS.highlights.set(RESTING_KEY, new Highlight(...resting));
+        restingPainted = true;
       }
 
-      ensureStyles();
-      CSS.highlights.set(RESTING_KEY, new Highlight(...resting));
-      painted = true;
+      if (streaming.length === 0) {
+        if (streamingPainted) {
+          CSS.highlights.delete(STREAMING_KEY);
+          streamingPainted = false;
+        }
+      } else {
+        ensureStyles();
+        CSS.highlights.set(STREAMING_KEY, new Highlight(...streaming));
+        streamingPainted = true;
+      }
     },
 
     dispose() {
       if (!highlightApiSupported()) return;
       CSS.highlights.delete(RESTING_KEY);
-      painted = false;
+      CSS.highlights.delete(STREAMING_KEY);
+      restingPainted = false;
+      streamingPainted = false;
     },
   };
 }

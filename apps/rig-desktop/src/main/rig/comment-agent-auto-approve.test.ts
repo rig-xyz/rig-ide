@@ -5,6 +5,7 @@ import {
   isReadOnlyContextCommand,
   partitionAutoApprovable,
   partitionGloballyApprovable,
+  partitionPaintbrushAutoDecline,
 } from './comment-agent-auto-approve';
 
 // A realistic base64url target ref, the same shape `encodeRigContextTarget` produces.
@@ -298,5 +299,63 @@ describe('partitionGloballyApprovable', () => {
     expect(resolve).toHaveBeenCalledTimes(2);
     expect(resolve).toHaveBeenCalledWith('req_1', 'opt_allow_once');
     expect(resolve).toHaveBeenCalledWith('req_2', 'opt_allow_once');
+  });
+});
+
+describe('partitionPaintbrushAutoDecline', () => {
+  it('declines a request via its reject_once option and never surfaces it', () => {
+    const resolve = vi.fn();
+    const request = permissionRequest({ requestId: 'req_edit' });
+
+    const visible = partitionPaintbrushAutoDecline([request], new Set(), resolve);
+
+    expect(visible).toEqual([]);
+    expect(resolve).toHaveBeenCalledExactlyOnceWith('req_edit', 'opt_reject');
+  });
+
+  it('never picks allow_once or allow_always, even when reject_once is absent', () => {
+    const resolve = vi.fn();
+    const request = permissionRequest({
+      options: [
+        { optionId: 'opt_allow_once', name: 'Yes', kind: 'allow_once' },
+        { optionId: 'opt_allow_always', name: "Yes, don't ask again", kind: 'allow_always' },
+      ],
+    });
+
+    const visible = partitionPaintbrushAutoDecline([request], new Set(), resolve);
+
+    expect(visible).toEqual([request]);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('declines every request kind — an edit, a fetch, an execute — with no shape check at all', () => {
+    const resolve = vi.fn();
+    const edit = permissionRequest({
+      requestId: 'req_edit',
+      detail: { kind: 'edit', path: 'docs/forecast.md', summary: '+3 −1' },
+    });
+    const fetchReq = permissionRequest({
+      requestId: 'req_fetch',
+      detail: { kind: 'fetch', url: 'https://example.com' },
+    });
+
+    const visible = partitionPaintbrushAutoDecline([edit, fetchReq], new Set(), resolve);
+
+    expect(visible).toEqual([]);
+    expect(resolve).toHaveBeenCalledTimes(2);
+    expect(resolve).toHaveBeenCalledWith('req_edit', 'opt_reject');
+    expect(resolve).toHaveBeenCalledWith('req_fetch', 'opt_reject');
+  });
+
+  it('does not resolve the same request twice while it is still pending resolution', () => {
+    const resolve = vi.fn();
+    const alreadyResolved = new Set<string>();
+    const request = permissionRequest({ requestId: 'req_1' });
+
+    partitionPaintbrushAutoDecline([request], alreadyResolved, resolve);
+    const visible = partitionPaintbrushAutoDecline([request], alreadyResolved, resolve);
+
+    expect(visible).toEqual([]);
+    expect(resolve).toHaveBeenCalledTimes(1);
   });
 });

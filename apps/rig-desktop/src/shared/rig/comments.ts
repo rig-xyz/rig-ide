@@ -199,6 +199,19 @@ export function getCommentProposal(meta: Record<string, unknown> | null): Commen
   return typeof replacement === 'string' && replacement.length > 0 ? { replacement } : null;
 }
 
+/**
+ * Whether a comment thread's root carries `meta.paintbrush: true` — set at
+ * creation time (`comments-store.ts`'s `create`) so a paintbrush thread's
+ * paintbrush-ness survives a fresh session (a reload, a different window),
+ * not just this session's renderer-local `_paintbrushThreadIds` set. Both
+ * are consulted together (`DocCommentsStore.isPaintbrushThread`) so a
+ * relay/meta write failure never regresses to the general `@mention`
+ * behavior for the very thread that just requested paintbrush mode.
+ */
+export function isPaintbrushMeta(meta: Record<string, unknown> | null): boolean {
+  return meta?.paintbrush === true;
+}
+
 /** One way to settle a permission request, exactly as the agent offered it. */
 export type RigCommentPermissionOption = {
   optionId: string;

@@ -40,13 +40,15 @@ const overlayField = StateField.define<readonly PaintbrushOverlay[]>({
 
 const RESTING = Decoration.mark({ class: 'cm-paintbrushOverlay' });
 /**
- * The RESTING tint only — CM6's own streaming visual now lives entirely in
- * `cm-paintbrushStreaming`'s CSS below (an inset-shadow "inner mono pulse"
- * keyframe, not Tailwind's plain opacity `animate-pulse`): a bare
- * `animate-pulse` on a mark with no background of its own doesn't read at
- * all (finding 2b of the paintbrush v1 punch list — nothing to fade
- * between), so the streaming mark now carries its OWN background/inset
- * glow for the animation to act on.
+ * The streaming mark (punch-list finding 1 — "streaming pulse, verified
+ * mechanism"): its background is `var(--rig-brush-pulse)`, the SAME
+ * registered custom property the Preview streaming highlight
+ * (`paintbrush-preview-highlight.ts`) reads — animated once, globally, by
+ * `.rig-brush-pulsing` in `renderer/index.css`. A plain CM6 mark is an
+ * ordinary DOM element, so it repaints on its own as the inherited custom
+ * property changes value each keyframe tick; nothing here needs its own
+ * `animation` or its own reduced-motion handling any more — both live
+ * with the keyframe, once.
  */
 const STREAMING = Decoration.mark({ class: 'cm-paintbrushOverlay cm-paintbrushStreaming' });
 
@@ -69,50 +71,11 @@ const paintbrushTheme = EditorView.theme({
     boxDecorationBreak: 'clone',
     WebkitBoxDecorationBreak: 'clone',
   },
+  '.cm-paintbrushStreaming': {
+    backgroundColor: 'var(--rig-brush-pulse)',
+  },
 });
 
-// The streaming mark's own animated background/inset glow — kept as a
-// plain injected stylesheet rather than folded into `paintbrushTheme`
-// above: CM6's `EditorView.theme` (via `style-mod`) has no clean way to
-// declare a top-level `@keyframes` block, and the Preview-mode twin of
-// this decoration (`paintbrush-preview-highlight.ts`) already injects its
-// own styles the same way — same mechanism, same "inner mono pulse" feel,
-// on both surfaces.
-const STREAMING_STYLE_ID = 'rig-paintbrush-cm-streaming-styles';
-const STREAMING_CSS = `
-.cm-paintbrushStreaming {
-  background-color: color-mix(in srgb, var(--text-muted) 22%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-muted) 30%, transparent);
-}
-@media (prefers-reduced-motion: no-preference) {
-  .cm-paintbrushStreaming {
-    animation: rig-paintbrush-cm-pulse 1.75s ease-in-out infinite;
-  }
-}
-@keyframes rig-paintbrush-cm-pulse {
-  0%, 100% {
-    background-color: color-mix(in srgb, var(--text-muted) 16%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-muted) 22%, transparent);
-  }
-  50% {
-    background-color: color-mix(in srgb, var(--text-muted) 40%, transparent);
-    box-shadow: inset 0 0 6px 1px color-mix(in srgb, var(--text-muted) 55%, transparent);
-  }
-}
-`;
-
-function ensureStreamingStyles(): void {
-  if (typeof document === 'undefined') return;
-  let style = document.getElementById(STREAMING_STYLE_ID) as HTMLStyleElement | null;
-  if (!style) {
-    style = document.createElement('style');
-    style.id = STREAMING_STYLE_ID;
-    document.head.appendChild(style);
-  }
-  if (style.textContent !== STREAMING_CSS) style.textContent = STREAMING_CSS;
-}
-
 export function paintbrushDecorations(): Extension {
-  ensureStreamingStyles();
   return [overlayField, overlayDecorations(), paintbrushTheme];
 }

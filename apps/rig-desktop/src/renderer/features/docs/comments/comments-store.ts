@@ -2,6 +2,7 @@ import { action, makeObservable, observable, reaction, runInAction } from 'mobx'
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
 import {
+  isPaintbrushMeta,
   rigCommentAgentProgressChannel,
   rigCommentPermissionsChannel,
   type RigCommentAgentActivity,
@@ -916,6 +917,14 @@ export class DocCommentsStore {
         absPath: this.path,
         body,
         anchor: built.anchor,
+        // Persisted so paintbrush-ness survives a fresh session (a reload,
+        // a different window) — `_paintbrushThreadIds` below is this
+        // session's fast-path mirror of the same fact, not its only
+        // record. The run-that-never-landed fix (`docs/document-focus-
+        // design.md` §2 punch list, finding 5) depends on a FOLLOW-UP
+        // turn still knowing this thread is a paintbrush stroke, which a
+        // renderer-local-only Set could never survive.
+        ...(paintbrush ? { meta: { paintbrush: true } } : {}),
       });
       if (result.success) {
         newId = result.data.id;
@@ -957,6 +966,13 @@ export class DocCommentsStore {
    * follow-up continues the conversation without re-`@`-ing it. Either way the
    * dispatch decision is the caller's; this only refuses the one case that
    * would loop, an agent-authored post answering itself.
+   *
+   * `paintbrush` threads through on EVERY follow-up turn, not just the
+   * opening stroke (`isPaintbrushThread`) — the run-that-never-landed fix
+   * (`docs/document-focus-design.md` §2 punch list, finding 5): a
+   * follow-up that ran the general "make the edit with your tools" prompt
+   * hit a tool-permission wait with no visible prompt in the card and hung
+   * for minutes. Every turn on a paintbrush thread must stay proposal-mode.
    */
   async reply(rootId: string, body: string, mention?: AgentMention): Promise<boolean> {
     return this._mutate(rootId, async () => {
@@ -976,6 +992,7 @@ export class DocCommentsStore {
           quote: thread?.root.anchor?.exact ?? null,
           anchor: thread?.root.anchor ?? null,
           thread: [...prior, result.data].map(toThreadEntry),
+          paintbrush: this.isPaintbrushThread(rootId),
         });
       }
       return result;
@@ -1065,9 +1082,20 @@ export class DocCommentsStore {
     return this.pending.has(id);
   }
 
-  /** Whether a thread was opened as a paintbrush stroke this session — see `_paintbrushThreadIds`. */
+  /**
+   * Whether a thread is a paintbrush stroke — checked two ways, either
+   * sufficient: this session's own `_paintbrushThreadIds` (set the moment
+   * `create` dispatches the opening stroke, before the relay round-trip
+   * even lands) and the root comment's persisted `meta.paintbrush` (true
+   * across a reload or a different window, once `create`'s write has
+   * landed and a `refresh()` has pulled it back in). Consulting both means
+   * a relay/meta hiccup can never quietly regress a thread back to the
+   * general `@mention` prompt on its very next turn.
+   */
   isPaintbrushThread(rootId: string): boolean {
-    return this._paintbrushThreadIds.has(rootId);
+    if (this._paintbrushThreadIds.has(rootId)) return true;
+    const thread = this.threads.find((t) => t.root.id === rootId);
+    return thread !== undefined && isPaintbrushMeta(thread.root.meta);
   }
 
   /**
@@ -1077,7 +1105,7 @@ export class DocCommentsStore {
    * making `comments-margin.tsx` reach into `agentReplies` directly.
    */
   isPaintbrushStreaming(rootId: string): boolean {
-    if (!this._paintbrushThreadIds.has(rootId)) return false;
+    if (!this.isPaintbrushThread(rootId)) return false;
     const reply = this.agentReplies.get(rootId);
     return reply !== undefined && reply.error === null;
   }
@@ -1104,7 +1132,7 @@ export class DocCommentsStore {
       };
     }
     for (const thread of this.threads) {
-      if (!this._paintbrushThreadIds.has(thread.root.id)) continue;
+      if (!this.isPaintbrushThread(thread.root.id)) continue;
       const reply = this.agentReplies.get(thread.root.id);
       if (reply && reply.error === null && thread.index !== null && thread.root.anchor) {
         return {

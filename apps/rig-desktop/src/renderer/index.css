@@ -1,5 +1,56 @@
 @import 'tailwindcss';
 @import './tokens.css';
+
+/*
+ * Paintbrush streaming pulse (`docs/document-focus-design.md` §2, step 4):
+ * one animated custom property, shared by both surfaces that render a
+ * streaming stroke — the Preview `::highlight()` pseudo-element
+ * (`features/docs/paintbrush/paintbrush-preview-highlight.ts`) and the CM6
+ * Edit-mode mark (`features/docs/paintbrush/paintbrush-decorations.ts`).
+ *
+ * VERIFIED in Chromium: a `::highlight()` pseudo-element cannot itself take
+ * an `animation` — CSS Custom Highlight API pseudo-elements aren't part of
+ * the DOM tree an `animation`/`@keyframes` can target — but it DOES inherit
+ * a registered (`@property`) custom property that's being animated on an
+ * ancestor, because that inheritance runs through the ordinary DOM tree the
+ * highlighted text itself lives in. `.rig-brush-pulsing` goes on the
+ * shared scroll container that is the common ancestor of the CM6 editor
+ * and the Preview root (`artifact-view.tsx`'s `containerRef`) while any
+ * paintbrush stroke is streaming — one class, one keyframe, both surfaces
+ * repaint together.
+ *
+ * `initial-value` cannot reference `var(--accent)` — the `@property` spec
+ * requires a "computationally independent" value with no other custom
+ * property in it — so it's a plain safe default; the real tint only ever
+ * appears via the keyframe below (or the reduced-motion override), which
+ * are ordinary declarations and may use `var()` freely.
+ */
+@property --rig-brush-pulse {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
+
+.rig-brush-pulsing {
+  animation: rig-brush-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes rig-brush-pulse {
+  0%,
+  100% {
+    --rig-brush-pulse: color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  50% {
+    --rig-brush-pulse: color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rig-brush-pulsing {
+    animation: none;
+    --rig-brush-pulse: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+}
 /* xterm's own layout/layering CSS (`.xterm-screen`, `.xterm-viewport`,
  * `.xterm-cursor-layer`, `.xterm-helper-textarea`, …) — REQUIRED, not
  * optional: without it xterm's internal layers have no positioning at all,

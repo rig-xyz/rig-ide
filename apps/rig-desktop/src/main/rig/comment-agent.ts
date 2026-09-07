@@ -24,7 +24,11 @@ import {
   type RigCommentsError,
 } from '@shared/rig/comments';
 import { classifyProviderAnswer } from './comment-agent-answer-classify';
-import { partitionAutoApprovable, partitionGloballyApprovable } from './comment-agent-auto-approve';
+import {
+  partitionAutoApprovable,
+  partitionGloballyApprovable,
+  partitionPaintbrushAutoDecline,
+} from './comment-agent-auto-approve';
 import { createTurnDeadline, type TurnOutcome } from './comment-agent-lifecycle';
 import {
   assistantText,
@@ -630,6 +634,31 @@ export const rigCommentAgentController = createRPCController({
      * next pending request, not just the next mention.
      */
     const publishPermissions = (requests: RigCommentPermissionRequest[]): void => {
+      // Paintbrush turns never edit files (the prompt already forbids
+      // tools) — a permission request reaching this turn at all means the
+      // model tried anyway, and the reviewer never gets a chance to approve
+      // it: decline every one immediately instead of publishing a card, and
+      // never pause the idle clock for it, so a paintbrush run can never
+      // sit on an invisible tool-approval wait (the run-that-never-landed
+      // fix, `docs/document-focus-design.md` §2 punch-list finding 5).
+      if (request.paintbrush) {
+        partitionPaintbrushAutoDecline(requests, autoApprovedRequestIds, (requestId, optionId) =>
+          resolveAutoApproved(
+            'auto-declining a tool call — paintbrush turns never edit files',
+            requestId,
+            optionId
+          )
+        );
+        turn.setAwaitingPermission(false);
+        events.emit(rigCommentPermissionsChannel, {
+          absPath,
+          rootId: parentId,
+          requests: [],
+          workspaceRoot: cwd,
+        });
+        return;
+      }
+
       const afterContextAutoApprove = partitionAutoApprovable(
         requests,
         autoApprovedRequestIds,
@@ -744,10 +773,20 @@ export const rigCommentAgentController = createRPCController({
       const rawAnswer =
         historyAnswer ?? (outcome === 'completed' ? progress.latestText() || null : null);
       if (!rawAnswer) {
+        // The per-stroke inactivity timeout (`IDLE_TIMEOUT_MS`, above) is
+        // what actually ends a paintbrush run that never lands — permission
+        // waits can no longer pause it (see `publishPermissions`), so
+        // 90 seconds with no new progress event is the only way this
+        // outcome fires for a paintbrush turn. The card must always reach a
+        // terminal state; this is that state's message, distinct from the
+        // general one so a reviewer knows to retry rather than wonder what
+        // "did not answer in time" even means for a stroke.
         return err(
           agentError(
             outcome === 'timeout'
-              ? 'The agent did not answer in time.'
+              ? request.paintbrush
+                ? 'This stroke took too long and was stopped — try again or narrow the selection.'
+                : 'The agent did not answer in time.'
               : 'The agent finished without writing an answer.'
           )
         );

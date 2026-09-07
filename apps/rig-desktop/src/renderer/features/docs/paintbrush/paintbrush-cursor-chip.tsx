@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { PaintbrushOrb } from './paintbrush-orb';
 
 /**
  * The v1 data-URI cursor (`paintbrush-decorations.ts`'s old `PAINTBRUSH_CURSOR`)
@@ -13,10 +14,19 @@ import { createPortal } from 'react-dom';
  * surface (never while the composer is open — the caller's own `active`
  * already folds that in, same fade-out the spec asks for).
  *
+ * Rebuilt (punch-list finding 3 — "one orb, everywhere"): a plain purple
+ * CSS circle read as an unrelated indicator next to the header's own
+ * `ThinkingOrb`. This now renders the exact same `PaintbrushOrb` — the
+ * `searching` animation, one shared tint — at a small size, so the chip
+ * and the header read as one system rather than two.
+ *
  * Position updates are rAF-throttled: a raw `pointermove` handler can fire
  * far faster than a frame, and there is nothing to gain from re-rendering
  * more often than the screen can show.
  */
+
+/** Small enough to trail the pointer without competing with the caret; big enough that the orb's animation still reads. */
+const CHIP_SIZE = 16;
 export function PaintbrushCursorChip({
   active,
   containerRef,
@@ -64,17 +74,10 @@ export function PaintbrushCursorChip({
 
   return createPortal(
     <div
-      aria-hidden
-      className="pointer-events-none fixed z-50 size-3 rounded-full"
-      style={{
-        left: pos.x + OFFSET,
-        top: pos.y + OFFSET,
-        background:
-          'radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--accent) 90%, white), var(--accent))',
-        boxShadow: '0 0 6px 1px color-mix(in srgb, var(--accent) 55%, transparent)',
-      }}
+      className="pointer-events-none fixed z-50"
+      style={{ left: pos.x + OFFSET, top: pos.y + OFFSET }}
     >
-      <div className="absolute inset-0 animate-ping rounded-full bg-accent opacity-40 motion-reduce:hidden" />
+      <PaintbrushOrb spin="idle" size={CHIP_SIZE} />
     </div>,
     document.body
   );

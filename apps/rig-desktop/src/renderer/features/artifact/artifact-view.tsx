@@ -20,7 +20,6 @@ import { DocEditor } from '@renderer/features/docs/doc-editor';
 import { DocTabResource } from '@renderer/features/docs/doc-file-sync';
 import { PaintbrushControl } from '@renderer/features/docs/paintbrush/paintbrush-control';
 import { PaintbrushCursorChip } from '@renderer/features/docs/paintbrush/paintbrush-cursor-chip';
-import { PaintbrushStreamingOverlay } from '@renderer/features/docs/paintbrush/paintbrush-preview-streaming-overlay';
 import { paintbrushDecorations } from '@renderer/features/docs/paintbrush/paintbrush-decorations';
 import { usePaintbrushEditorSync } from '@renderer/features/docs/paintbrush/use-paintbrush-editor-sync';
 import { usePaintbrushMode } from '@renderer/features/docs/paintbrush/use-paintbrush';
@@ -600,10 +599,18 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
         ref={containerRef}
         className={cn(
           'relative min-h-0 flex-1 overflow-y-auto transition-shadow duration-200 ease-out motion-reduce:transition-none',
-          // Document-level armed cue (punch-list finding 4): a quiet inset
-          // ring on the pane's own edge — always-visible confirmation that
-          // doesn't depend on the reader looking at the header control.
-          isMarkdown && paintbrush.on && 'ring-1 ring-inset ring-accent/25'
+          // Document-level armed cue (punch-list finding 4): `box-shadow`
+          // via Tailwind's `ring` utility, deliberately — never a border,
+          // padding, or outline, none of which may affect this container's
+          // box (layout-shift audit, punch-list finding B). `ring-inset`
+          // keeps it inside the element's own border-box either way, but
+          // `box-shadow` costs nothing in layout regardless of inset/outset.
+          isMarkdown && paintbrush.on && 'ring-1 ring-inset ring-accent/25',
+          // Streaming pulse (punch-list finding 1): this container is the
+          // shared ancestor of both the CM6 editor and the Preview root, so
+          // toggling ONE class here drives both surfaces' streaming marks
+          // off the same animated custom property — see `renderer/index.css`.
+          paintbrushOverlay?.streaming && 'rig-brush-pulsing'
         )}
       >
         {resource.isLoading ? (
@@ -638,14 +645,6 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 onSave={() => void resource.flush()}
                 onSelectionChange={resource.handleSelectionChange}
                 extraExtensions={resource.extensionFactories}
-              />
-            )}
-            {mode === 'preview' && comments !== null && (
-              <PaintbrushStreamingOverlay
-                active
-                getRoot={() => previewRef.current?.getRoot() ?? null}
-                getIndex={() => previewRef.current?.getIndex() ?? null}
-                overlay={paintbrushOverlay}
               />
             )}
             {showMargin && comments && <MarginRail store={comments} containerRef={containerRef} />}

@@ -1,27 +1,18 @@
 import { ChevronDown } from 'lucide-react';
-import { ThinkingOrb } from 'thinking-orbs';
 import { useRef, useState } from 'react';
 import type { RunnableAgent } from '@renderer/features/chat/use-runnable-agents';
 import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { Popover } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
-
-/** Cheap and read once — this is a decorative nicety, not something that needs to react live to a mid-session OS setting change. */
-function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
+import { PaintbrushOrb } from './paintbrush-orb';
 
 /**
- * `thinking-orbs`'s only two tuned presets are 20 and 64 CSS px (see its
- * own `OrbSize` doc) — 24 isn't one of them. Discoverability round
- * (punch-list finding 4) asks for "~24px in the header", so the CANVAS
- * stays at the tuned 20px preset (a scaled-up untuned size would just be a
- * blurrier orb, not a bigger one) and a small CSS `scale` on its wrapper
- * gets the on-screen footprint to the requested ~24px instead.
+ * Discoverability round (punch-list finding 4) asks for "~24px in the
+ * header" — bigger than `PaintbrushOrb`'s own default (the library's tuned
+ * 20px inline preset), so this is the one caller that overrides `size`.
  */
-const ORB_CANVAS_SIZE = 20;
-const ORB_DISPLAY_SCALE = 24 / ORB_CANVAS_SIZE;
+const ORB_DISPLAY_SIZE = 24;
 
 /**
  * The paintbrush header control (`docs/document-focus-design.md` §2, step
@@ -34,11 +25,11 @@ const ORB_DISPLAY_SCALE = 24 / ORB_CANVAS_SIZE;
  * the whole pill picks up an accent tint AND a text label — "Paintbrush"
  * before an agent is chosen, the agent's own name once one is — so a
  * reader who glances at the header (not just whoever is hovering it) can
- * tell the mode is live. `orbState` carries three readable states of its
- * own: paused/muted while off, `searching` while armed and idle (matches
- * the "select text to start" invitation), and `working` — a genuinely
- * different animation, not just a re-tinted copy of `searching` — while a
- * stroke is actually streaming against the document.
+ * tell the mode is live. The orb (`PaintbrushOrb` — punch-list finding 3,
+ * "one orb, everywhere") is the SAME `searching` animation in all three
+ * states: paused and dimmed while off, resting pace while armed and idle
+ * (matches the "select text to start" invitation), and faster (never a
+ * different animation) while a stroke is actually streaming.
  *
  * The first time the mode is ever turned on, `showCoachMark` opens a small
  * dismissable popover explaining what just happened — the "what is a
@@ -69,9 +60,8 @@ export function PaintbrushControl({
   const [open, setOpen] = useState(false);
   const controlRef = useRef<HTMLDivElement>(null);
   const chevronRef = useRef<HTMLButtonElement>(null);
-  const reducedMotion = prefersReducedMotion();
 
-  const orbState = !on ? 'breathing' : streaming ? 'working' : 'searching';
+  const orbSpin = !on ? 'off' : streaming ? 'streaming' : 'idle';
   const label = selected ? selected.name : 'Paintbrush';
   const tooltip = on
     ? `Paintbrush on · ${selected ? selected.name : 'choose an agent'} — select text to start`
@@ -96,19 +86,7 @@ export function PaintbrushControl({
                 onClick={toggle}
                 className="flex items-center gap-1.5 rounded-control py-1 pr-2 pl-1"
               >
-                <span
-                  className="flex shrink-0 items-center justify-center"
-                  style={{ width: ORB_CANVAS_SIZE * ORB_DISPLAY_SCALE, height: ORB_CANVAS_SIZE * ORB_DISPLAY_SCALE }}
-                >
-                  <span style={{ transform: `scale(${ORB_DISPLAY_SCALE})` }}>
-                    <ThinkingOrb
-                      state={orbState}
-                      size={ORB_CANVAS_SIZE}
-                      paused={!on || reducedMotion}
-                      aria-hidden
-                    />
-                  </span>
-                </span>
+                <PaintbrushOrb spin={orbSpin} size={ORB_DISPLAY_SIZE} />
                 {/* Armed state must be obvious from a glance, not just a hover
                     tooltip — the word "Paintbrush", or the agent's own name
                     once chosen, sits right beside the orb whenever the mode

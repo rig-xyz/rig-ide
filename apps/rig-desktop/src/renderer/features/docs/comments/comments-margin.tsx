@@ -30,6 +30,7 @@ import {
   type RigCommentPermissionRequest,
 } from '@shared/rig/comments';
 import { canApplyProposal } from '../paintbrush/paintbrush-apply';
+import { PaintbrushOrb } from '../paintbrush/paintbrush-orb';
 import { shortenQuote } from './anchors';
 import { offlineChipLabel } from './comments-cache';
 import {
@@ -528,6 +529,13 @@ const AgentReplyCard = observer(function AgentReplyCard({
 }) {
   const pending = store.agentReplyFor(rootId);
   const permissions = store.agentPermissionsFor(rootId);
+  // One orb, everywhere (punch-list finding 3): a streaming paintbrush
+  // thread's card shows the exact same orb the header pill and the
+  // pointer chip do, rather than the plain rig mark — a reader watching
+  // a stroke land sees one consistent "the agent is working" indicator
+  // across every surface. An ordinary `@mention` thread keeps the rig
+  // mark; this is scoped to paintbrush, not a general reply-card redesign.
+  const paintbrushStreaming = store.isPaintbrushStreaming(rootId);
   if (pending === null) return null;
 
   if (pending.error !== null) {
@@ -575,7 +583,11 @@ const AgentReplyCard = observer(function AgentReplyCard({
   return (
     <div className="border-border-hairline text-text-muted mt-2.5 border-t pt-2 text-xs">
       <div className="flex min-w-0 items-center gap-1.5">
-        <RigMark size={11} className="shrink-0" />
+        {paintbrushStreaming ? (
+          <PaintbrushOrb spin="streaming" size={14} />
+        ) : (
+          <RigMark size={11} className="shrink-0" />
+        )}
         <span className="min-w-0 truncate">
           {pending.agentName} · {activity}
         </span>
@@ -1019,7 +1031,7 @@ function MoreRepliesButton({
   );
 }
 
-const ThreadCard = observer(function ThreadCard({
+export const ThreadCard = observer(function ThreadCard({
   store,
   thread,
 }: {
@@ -1216,7 +1228,7 @@ function stateNotice(store: DocCommentsStore): string | null {
   }
 }
 
-const NewThreadCard = observer(function NewThreadCard({
+export const NewThreadCard = observer(function NewThreadCard({
   store,
   hasAnchor,
 }: {
