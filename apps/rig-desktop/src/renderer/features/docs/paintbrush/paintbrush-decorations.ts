@@ -20,7 +20,6 @@ import { Decoration, EditorView } from '@codemirror/view';
 export type PaintbrushOverlay = { from: number; to: number; streaming: boolean };
 
 export const setPaintbrushOverlay = StateEffect.define<readonly PaintbrushOverlay[]>();
-export const setPaintbrushArmed = StateEffect.define<boolean>();
 
 const overlayField = StateField.define<readonly PaintbrushOverlay[]>({
   create: () => [],
@@ -39,21 +38,17 @@ const overlayField = StateField.define<readonly PaintbrushOverlay[]>({
   },
 });
 
-const armedField = StateField.define<boolean>({
-  create: () => false,
-  update(armed, tr) {
-    for (const effect of tr.effects) {
-      if (effect.is(setPaintbrushArmed)) return effect.value;
-    }
-    return armed;
-  },
-});
-
 const RESTING = Decoration.mark({ class: 'cm-paintbrushOverlay' });
-// Tailwind's `animate-pulse` is already reduced-motion-gated globally
-// (`tokens.css`) — reused here rather than a bespoke keyframe so this one
-// gate covers every pulse in the app, this one included.
-const STREAMING = Decoration.mark({ class: 'cm-paintbrushOverlay cm-paintbrushStreaming animate-pulse' });
+/**
+ * The RESTING tint only — CM6's own streaming visual now lives entirely in
+ * `cm-paintbrushStreaming`'s CSS below (an inset-shadow "inner mono pulse"
+ * keyframe, not Tailwind's plain opacity `animate-pulse`): a bare
+ * `animate-pulse` on a mark with no background of its own doesn't read at
+ * all (finding 2b of the paintbrush v1 punch list — nothing to fade
+ * between), so the streaming mark now carries its OWN background/inset
+ * glow for the animation to act on.
+ */
+const STREAMING = Decoration.mark({ class: 'cm-paintbrushOverlay cm-paintbrushStreaming' });
 
 function overlayDecorations(): Extension {
   return EditorView.decorations.compute([overlayField], (state) => {
@@ -67,30 +62,6 @@ function overlayDecorations(): Extension {
   });
 }
 
-/**
- * A small tracked-orb cursor while the mode is armed — cheaper than a
- * pointer-following React element (spec's own call: "pick the cheaper, less
- * janky one"), since it costs the browser nothing per frame. `armedField`
- * drives a class on `.cm-content` via `contentAttributes`, so this needs no
- * imperative DOM writes from the React layer at all.
- */
-function cursorAttributes(): Extension {
-  return EditorView.contentAttributes.compute([armedField], (state) =>
-    state.field(armedField) ? { class: 'cm-paintbrushArmed' } : ({} as Record<string, string>)
-  );
-}
-
-/**
- * A small tinted orb cursor, shared between Edit (CM6, via the theme below)
- * and Preview (`artifact-view.tsx` sets it directly on the preview root's
- * inline style — Preview has no CM6 theme to hook into). One literal color
- * baked into the data URI, not a CSS var: a `cursor: url(...)` value is
- * resolved once at parse time and cannot reference `var(--accent)`, so this
- * picks a fixed accent-adjacent tone that reads reasonably in both themes
- * rather than one that's exactly on-brand in only one of them.
- */
-export const PAINTBRUSH_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Ccircle cx='8' cy='8' r='5.5' fill='%236b6bf0' fill-opacity='0.85' stroke='white' stroke-width='1.5'/%3E%3C/svg%3E") 8 8, text`;
-
 const paintbrushTheme = EditorView.theme({
   '.cm-paintbrushOverlay': {
     backgroundColor: 'color-mix(in srgb, var(--accent) 20%, transparent)',
@@ -98,14 +69,50 @@ const paintbrushTheme = EditorView.theme({
     boxDecorationBreak: 'clone',
     WebkitBoxDecorationBreak: 'clone',
   },
-  '.cm-paintbrushStreaming': {
-    backgroundColor: 'color-mix(in srgb, var(--text-muted) 30%, transparent)',
-  },
-  '.cm-paintbrushArmed': {
-    cursor: PAINTBRUSH_CURSOR,
-  },
 });
 
+// The streaming mark's own animated background/inset glow — kept as a
+// plain injected stylesheet rather than folded into `paintbrushTheme`
+// above: CM6's `EditorView.theme` (via `style-mod`) has no clean way to
+// declare a top-level `@keyframes` block, and the Preview-mode twin of
+// this decoration (`paintbrush-preview-highlight.ts`) already injects its
+// own styles the same way — same mechanism, same "inner mono pulse" feel,
+// on both surfaces.
+const STREAMING_STYLE_ID = 'rig-paintbrush-cm-streaming-styles';
+const STREAMING_CSS = `
+.cm-paintbrushStreaming {
+  background-color: color-mix(in srgb, var(--text-muted) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-muted) 30%, transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cm-paintbrushStreaming {
+    animation: rig-paintbrush-cm-pulse 1.75s ease-in-out infinite;
+  }
+}
+@keyframes rig-paintbrush-cm-pulse {
+  0%, 100% {
+    background-color: color-mix(in srgb, var(--text-muted) 16%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-muted) 22%, transparent);
+  }
+  50% {
+    background-color: color-mix(in srgb, var(--text-muted) 40%, transparent);
+    box-shadow: inset 0 0 6px 1px color-mix(in srgb, var(--text-muted) 55%, transparent);
+  }
+}
+`;
+
+function ensureStreamingStyles(): void {
+  if (typeof document === 'undefined') return;
+  let style = document.getElementById(STREAMING_STYLE_ID) as HTMLStyleElement | null;
+  if (!style) {
+    style = document.createElement('style');
+    style.id = STREAMING_STYLE_ID;
+    document.head.appendChild(style);
+  }
+  if (style.textContent !== STREAMING_CSS) style.textContent = STREAMING_CSS;
+}
+
 export function paintbrushDecorations(): Extension {
-  return [overlayField, armedField, overlayDecorations(), cursorAttributes(), paintbrushTheme];
+  ensureStreamingStyles();
+  return [overlayField, overlayDecorations(), paintbrushTheme];
 }

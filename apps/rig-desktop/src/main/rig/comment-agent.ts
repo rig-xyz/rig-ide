@@ -23,6 +23,7 @@ import {
   type RigCommentPermissionRequest,
   type RigCommentsError,
 } from '@shared/rig/comments';
+import { classifyProviderAnswer } from './comment-agent-answer-classify';
 import { partitionAutoApprovable, partitionGloballyApprovable } from './comment-agent-auto-approve';
 import { createTurnDeadline, type TurnOutcome } from './comment-agent-lifecycle';
 import {
@@ -430,6 +431,55 @@ async function readSessionModel(
   }
 }
 
+/**
+ * The FULL model picker state (not just the selected one `readSessionModel`
+ * reports) — backs the graceful-provider-failure retry below. Null when the
+ * provider exposes no model selector at all, same as `readSessionModel`'s
+ * own null case.
+ */
+async function readModelChoices(
+  client: AcpRuntimeClient,
+  conversationId: string
+): Promise<{ selected: string | null; available: readonly { id: string; name: string }[] } | null> {
+  try {
+    const snapshot = await client.session.state({ conversationId }, 'config').snapshot();
+    const modelOptions = snapshot.data.modelOptions;
+    if (!modelOptions) return null;
+    return { selected: modelOptions.selected, available: modelOptions.available };
+  } catch (error) {
+    log.warn('Rig comment agent: could not read the session model options', {
+      conversationId,
+      error: String(error),
+    });
+    return null;
+  }
+}
+
+/**
+ * The first alternative model worth a one-shot retry after a
+ * model-unsupported failure — never the sentinel/policy options
+ * (`MODEL_SENTINELS`, "default"/"auto"/…) and never the SAME model that
+ * just failed (`currentModel`, whichever of the requested/session-reported
+ * model is known). Null when there is nothing safe to substitute, in which
+ * case the caller reports the original failure rather than guessing.
+ */
+function pickModelSubstitute(
+  choices: { selected: string | null; available: readonly { id: string; name: string }[] } | null,
+  currentModel: string | null
+): string | null {
+  if (!choices) return null;
+  const exclude = new Set(
+    [choices.selected, currentModel]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .map((value) => value.trim().toLowerCase())
+  );
+  const substitute = choices.available.find((option) => {
+    const id = option.id.trim().toLowerCase();
+    return !MODEL_SENTINELS.has(id) && !exclude.has(id);
+  });
+  return substitute?.id ?? null;
+}
+
 // ── controller ───────────────────────────────────────────────────────────────
 
 export const rigCommentAgentController = createRPCController({
@@ -519,7 +569,13 @@ export const rigCommentAgentController = createRPCController({
     liveTurns.set(parentId, conversationId);
 
     // Subscribe before the turn can start, so a fast agent cannot finish first.
-    const turn = awaitTurnEnd(conversationId);
+    // `let`, not `const`: a model-unsupported retry (see the classifier
+    // below) swaps this for a fresh deadline bound to the SAME
+    // conversation's second turn — every reference below reads `turn`
+    // fresh rather than closing over one turn's methods, so the retry's
+    // own idle/absolute clock is what activity and permission waits
+    // actually extend.
+    let turn = awaitTurnEnd(conversationId);
     let permissions: { dispose: () => void } | null = null;
     let progress: { dispose: () => void; latestText: () => string } | null = null;
 
@@ -661,7 +717,10 @@ export const rigCommentAgentController = createRPCController({
       // Only now do the per-session live topics exist — attaching any earlier
       // fails with UNKNOWN_TOPIC (same constraint the intent bridge works under).
       permissions = followPermissions(client, conversationId, publishPermissions);
-      progress = followProgress(client, conversationId, publishProgress, turn.noteActivity);
+      // Wrapped rather than passed as a bound method reference: `turn` may
+      // be reassigned to a retry deadline mid-turn (see below), and this
+      // must always tick the CURRENT one.
+      progress = followProgress(client, conversationId, publishProgress, () => turn.noteActivity());
 
       const outcome = await turn.outcome;
       if (outcome === 'error') {
@@ -680,7 +739,7 @@ export const rigCommentAgentController = createRPCController({
         readSessionModel(client, conversationId),
         readAnswer(client, conversationId),
       ]);
-      const usedModel = sessionModel ?? model;
+      let usedModel = sessionModel ?? model;
 
       const rawAnswer =
         historyAnswer ?? (outcome === 'completed' ? progress.latestText() || null : null);
@@ -693,12 +752,85 @@ export const rigCommentAgentController = createRPCController({
           )
         );
       }
+
+      // Graceful provider failure (paintbrush v1 punch list, finding 5): a
+      // provider's own hard failure — most commonly the codex-acp adapter's
+      // bundled Codex rejecting the user's globally-configured model — can
+      // surface as plain assistant TEXT (`Warning:` chatter plus a raw JSON
+      // error body) rather than a real ACP error, so it would otherwise be
+      // posted to the thread verbatim. `classifyProviderAnswer` is pure and
+      // detects that shape; see its own doc comment for the root cause.
+      let classification = classifyProviderAnswer(rawAnswer);
+      if (classification.strippedWarnings.length > 0) {
+        log.debug('Rig comment agent: stripped leading provider warnings from an answer', {
+          conversationId,
+          warnings: classification.strippedWarnings,
+        });
+      }
+
+      // Best-effort, ONE-SHOT retry: only for the model-unsupported class,
+      // and only when the session actually offers another real model to
+      // fall back to. Never loops — `classification` is reassigned at most
+      // once here, and a retry that itself fails (to switch models, to send,
+      // or to answer cleanly) just falls through to reporting the ORIGINAL
+      // failure below, exactly as if no retry had been attempted.
+      if (classification.kind === 'failure' && classification.reason === 'model-unsupported') {
+        const choices = await readModelChoices(client, conversationId);
+        const substitute = pickModelSubstitute(choices, usedModel);
+        if (substitute) {
+          const switched = await client.setModelOption({
+            conversationId,
+            dimension: 'model',
+            value: substitute,
+          });
+          if (switched.success) {
+            const sent = await client.sendPrompt({ conversationId, prompt: { text, hiddenContext } });
+            if (sent.success) {
+              // A fresh deadline for the SECOND turn — `turn` is reassigned
+              // (not shadowed), so every existing reference to it (the
+              // progress ticker above, `publishPermissions` below, and this
+              // function's own `finally`) now tracks the retry instead.
+              turn = awaitTurnEnd(conversationId);
+              const retryOutcome = await turn.outcome;
+              if (retryOutcome !== 'error') {
+                const [retryModel, retryHistoryAnswer] = await Promise.all([
+                  readSessionModel(client, conversationId),
+                  readAnswer(client, conversationId),
+                ]);
+                const retryRaw =
+                  retryHistoryAnswer ??
+                  (retryOutcome === 'completed' ? progress.latestText() || null : null);
+                const retryClassification = retryRaw ? classifyProviderAnswer(retryRaw) : null;
+                if (retryClassification && retryClassification.kind === 'ok') {
+                  log.info('Rig comment agent: retried a paintbrush stroke on a substitute model', {
+                    conversationId,
+                    from: usedModel,
+                    to: substitute,
+                  });
+                  classification = {
+                    kind: 'ok',
+                    text: `(retried with ${substitute} after ${usedModel ?? 'the configured model'} could not run this stroke)\n\n${retryClassification.text}`,
+                    strippedWarnings: retryClassification.strippedWarnings,
+                  };
+                  usedModel = retryModel ?? substitute;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (classification.kind === 'failure') {
+        return err(agentError(classification.message));
+      }
+      const cleanAnswer = classification.text;
+
       // Paintbrush strokes ask the agent for a structured replacement
       // alongside its prose (`comment-agent-prompt.ts`); every other mention
       // path posts the transcript answer verbatim, same as always.
       const { body: answer, proposal } = request.paintbrush
-        ? extractProposal(rawAnswer)
-        : { body: rawAnswer, proposal: null };
+        ? extractProposal(cleanAnswer)
+        : { body: cleanAnswer, proposal: null };
 
       return await rigCommentsController.reply({
         absPath,

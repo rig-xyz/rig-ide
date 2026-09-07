@@ -398,3 +398,55 @@ describe('selections crossing formatting boundaries', () => {
     expect(mapped && source.slice(mapped.start, mapped.end)).toBe('start *ita');
   });
 });
+
+describe('selection overrun at a block boundary', () => {
+  it('a heading selected all the way to the start of the next block does not swallow the next block\'s marker', () => {
+    const source = '# idk man\n\n- first bullet\n';
+    const { root, document } = renderPreviewDom(source);
+    const index = buildPositionIndex(root, source);
+    const heading = root.querySelector('h1')!;
+    const headingText = heading.firstChild as Text; // "idk man"
+    const bulletText = locate(root, 'first bullet');
+    const range = document.createRange();
+    range.setStart(headingText, 0);
+    // The drag release lands exactly at the start of the next block's own
+    // text node — offset 0, nothing of the bullet actually selected.
+    range.setEnd(bulletText.node, 0);
+    const mapped = index.rangeToSource(range);
+    expect(mapped && source.slice(mapped.start, mapped.end)).toBe('idk man');
+  });
+
+  it('a heading selected to the start of the next block via its <li> container (element boundary, not a text node)', () => {
+    const source = '# idk man\n\n- first bullet\n';
+    const { root, document } = renderPreviewDom(source);
+    const index = buildPositionIndex(root, source);
+    const heading = root.querySelector('h1')!;
+    const headingText = heading.firstChild as Text;
+    const li = root.querySelector('li')!;
+    const range = document.createRange();
+    range.setStart(headingText, 0);
+    // Ends on the <li> element itself, before any of its children — the
+    // Range-spec "child index" form of a boundary rather than a Text node.
+    range.setEnd(li, 0);
+    const mapped = index.rangeToSource(range);
+    expect(mapped && source.slice(mapped.start, mapped.end)).toBe('idk man');
+  });
+
+  it('mid-paragraph selection well short of any block boundary is unaffected', () => {
+    const source = 'one two three four five';
+    const { root, document } = renderPreviewDom(source);
+    const index = buildPositionIndex(root, source);
+    const range = rangeOf(document, root, 'two three');
+    const mapped = index.rangeToSource(range);
+    expect(mapped && source.slice(mapped.start, mapped.end)).toBe('two three');
+  });
+
+  it('a selection entirely inside one text node is unaffected', () => {
+    const source = 'a single plain paragraph of text';
+    const { root, document } = renderPreviewDom(source);
+    const index = buildPositionIndex(root, source);
+    const range = rangeOf(document, root, 'plain paragraph');
+    const mapped = index.rangeToSource(range);
+    expect(mapped && source.slice(mapped.start, mapped.end)).toBe('plain paragraph');
+  });
+});

@@ -174,6 +174,7 @@ function normalizeSettings(parsed: unknown): RigSettings {
     fileTreeViewByRig: normalizeFileTreeViewRecord(raw.fileTreeViewByRig),
     autoApproveAgentActions: raw.autoApproveAgentActions === true,
     paintbrushAgent: typeof raw.paintbrushAgent === 'string' ? raw.paintbrushAgent : null,
+    paintbrushCoachMarkSeen: raw.paintbrushCoachMarkSeen === true,
   };
 }
 

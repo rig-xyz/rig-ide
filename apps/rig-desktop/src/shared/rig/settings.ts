@@ -207,6 +207,15 @@ export type RigSettings = {
    * is per-window UI state and is never persisted here at all.
    */
   paintbrushAgent: string | null;
+  /**
+   * Discoverability round (punch-list finding 4): whether the first-use
+   * coach mark ("Paintbrush is on. Select any text...") has already been
+   * shown once, ever — a plain global preference through the SAME
+   * persistence mechanism as `paintbrushAgent` above (`rpc.rig.settings`),
+   * not per-rig: seeing the mode explained once is enough regardless of
+   * which rig it happened in. `false` until the mode is ever turned on.
+   */
+  paintbrushCoachMarkSeen: boolean;
 };
 
 export const DEFAULT_RIG_SETTINGS: RigSettings = {
@@ -231,6 +240,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   fileTreeViewByRig: {},
   autoApproveAgentActions: false,
   paintbrushAgent: null,
+  paintbrushCoachMarkSeen: false,
 };
 
 /** The subset of legacy localStorage values the renderer can hand to `importLegacy`. */

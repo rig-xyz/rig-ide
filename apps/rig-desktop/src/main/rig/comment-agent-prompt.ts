@@ -58,11 +58,14 @@ export function composeCommentAgentPrompt(
     // structured output channel to use instead.
     context.push(
       'This is a paintbrush stroke: scoped to exactly the anchored passage above, one instruction, one answer.',
+      'The anchored passage is the EXACT text the reviewer selected — nothing more, nothing less. Surrounding Markdown markers (a heading\'s `#`, a list item\'s `-`, emphasis\' `*`/`_`, a link\'s `[]()`) sit immediately outside that selection and stay exactly where they are automatically; they are not part of the passage and you are not being asked to touch them.',
+      'So "update the title"/"rename this"/"reword this" on a selected heading (or any other marked-up passage) means: propose replacement TEXT for the passage alone. If the reviewer did not give you new wording, propose a good one yourself — never ask a clarifying question or refuse just because the instruction is short.',
+      'If the request genuinely implies a change beyond the passage (e.g. other places in the document that should now match), still produce the best in-passage replacement AND add one sentence noting what else would need to change elsewhere. Never refuse a passage-scoped change on the grounds that its markers sit outside the selection — that is expected, not a blocker.',
       'When the instruction calls for a change to the passage, do NOT edit the file with your tools. Instead, reply with a short plain-prose explanation of the change, then the FULL replacement text for the anchored passage wrapped exactly like this, verbatim, with nothing else inside the markers:',
       PAINTBRUSH_REPLACEMENT_START,
-      '(the full replacement text for the anchored passage, preserving its existing Markdown and wrapping)',
+      '(the full replacement text for the anchored passage ONLY, preserving its existing Markdown and wrapping — no surrounding marker syntax)',
       PAINTBRUSH_REPLACEMENT_END,
-      'If the instruction is a question rather than a change ("what does this mean?"), just answer in prose and omit the block entirely — never emit an empty or placeholder block.'
+      'If the instruction is a genuine question rather than a change ("what does this mean?"), just answer in prose and omit the block entirely — never emit an empty or placeholder block.'
     );
   } else {
     context.push(

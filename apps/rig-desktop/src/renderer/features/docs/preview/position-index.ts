@@ -458,12 +458,75 @@ export function buildPositionIndex(root: HTMLElement, source: string): PositionI
     return mapForward(run, resolved.offset);
   }
 
+  /**
+   * A drag that ends exactly at the start of the NEXT block hands us a
+   * Range whose end names that next block's own leaf text node at
+   * `endOffset: 0` — nothing in it is actually selected. Mapped naively
+   * through `domToSource`, that boundary lands past the next block's OWN
+   * marker syntax (`alignSimpleLeaf`'s `innerStart` — a heading's `# `, a
+   * list item's `- `), because that is the first position its own Run
+   * actually covers. `source.slice(start, end)` then silently swallows
+   * that marker text: it sits BEFORE `end`, inside the slice, even though
+   * the drag never touched the next block at all (a selected heading
+   * "idk man" ending at the following bullet's start came back as
+   * "idk man\n\n- ").
+   *
+   * Recovered by walking backward from the boundary to the last real text
+   * node that is still genuinely inside the selection, and mapping to the
+   * END of that node's own aligned span instead — the same
+   * `prevTextInDocument` walk `resolveBoundary` already uses for the
+   * mirror-image (backward) case, reused here as a public tail on
+   * `rangeToSource` rather than duplicated.
+   */
+  function endOfLastMappedTextBefore(boundary: Node): number | null {
+    let candidate = prevTextInDocument(boundary, root);
+    while (candidate) {
+      const mapped = domToSource(candidate, candidate.data.length);
+      if (mapped !== null) return mapped;
+      candidate = prevTextInDocument(candidate, root);
+    }
+    return null;
+  }
+
+  /**
+   * Drop trailing whitespace from a RECOVERED span only — never on the
+   * ordinary path. A leaf's own aligned span can end on a run of source
+   * whitespace with no rendered counterpart (a heading line's trailing
+   * blank lines before the next block), and the recovery above walks to
+   * the END of that leaf's whole matched length, whitespace included; this
+   * trims it back off. Applying this to every ordinary (non-recovered)
+   * `end` is NOT safe: a leaf can legitimately have a real skipped-marker
+   * boundary (a blockquote's per-line `> `, mid-run) sitting right at
+   * `end`, whose OWN un-rendered characters (a space) look identical to
+   * "trailing whitespace" but are load-bearing for `sourceToDom`'s
+   * backward mapping — trimming those miscounts the round trip by exactly
+   * the marker's width. Recovered ends never have that hazard: they are
+   * by construction the boundary of one whole leaf, past any such skip.
+   */
+  function trimTrailingWhitespace(from: number, to: number): number {
+    let end = to;
+    while (end > from && /\s/.test(source[end - 1]!)) end--;
+    return end;
+  }
+
   function rangeToSource(range: Range | PlainDomRange): SourceRange | null {
     const startNode = 'startContainer' in range ? range.startContainer : range.startNode;
     const endNode = 'endContainer' in range ? range.endContainer : range.endNode;
+    const endOffset = range.endOffset;
     const start = domToSource(startNode, range.startOffset);
-    const end = domToSource(endNode, range.endOffset);
-    if (start === null || end === null || end < start) return null;
+    if (start === null) return null;
+
+    let end = domToSource(endNode, endOffset);
+    // Structural signature of the overrun: a boundary naming a DIFFERENT
+    // node than the start at offset 0 (nothing of that node selected), or
+    // — belt and braces — a "mapped" end that comes out before start,
+    // the clearest possible sign it landed in an unrelated, earlier run.
+    const overran = (endOffset === 0 && endNode !== startNode) || (end !== null && end < start);
+    if (overran) {
+      const recovered = endOfLastMappedTextBefore(endNode);
+      if (recovered !== null) end = trimTrailingWhitespace(start, recovered);
+    }
+    if (end === null || end < start) return null;
     return { start, end };
   }
 

@@ -1,30 +1,22 @@
 import { useEffect } from 'react';
 import type { DocTabResource } from '../doc-file-sync';
-import {
-  setPaintbrushArmed,
-  setPaintbrushOverlay,
-  type PaintbrushOverlay,
-} from './paintbrush-decorations';
+import { setPaintbrushOverlay, type PaintbrushOverlay } from './paintbrush-decorations';
 
 /**
- * Pushes paintbrush mode/overlay state into the mounted CM6 view — the
- * Edit-mode half of the wiring (`paintbrush-decorations.ts`'s extension is
- * dumb by design: it paints whatever it's handed, same as
- * `comment-decorations.ts`'s `setCommentMarkers`). A no-op while Preview is
- * showing — there is no view to dispatch to; `use-paintbrush-preview-overlay.ts`
- * is Preview's own counterpart.
+ * Pushes the paintbrush overlay into the mounted CM6 view — the Edit-mode
+ * half of the wiring (`paintbrush-decorations.ts`'s extension is dumb by
+ * design: it paints whatever it's handed, same as `comment-decorations.ts`'s
+ * `setCommentMarkers`). A no-op while Preview is showing — there is no view
+ * to dispatch to; `use-paintbrush-preview-overlay.ts` is Preview's own
+ * counterpart. (No longer takes an `armed` flag: v1's armed-cursor CM6 theme
+ * class is gone — the orb chip that replaced it, `paintbrush-cursor-chip.tsx`,
+ * is a plain React overlay that needs nothing dispatched into CM6 state.)
  */
 export function usePaintbrushEditorSync(
   resource: DocTabResource,
   mode: 'preview' | 'edit',
-  armed: boolean,
   overlay: PaintbrushOverlay | null
 ): void {
-  useEffect(() => {
-    if (mode !== 'edit') return;
-    resource.editorRef.current?.getView()?.dispatch({ effects: setPaintbrushArmed.of(armed) });
-  }, [resource, mode, armed]);
-
   // `overlay` is a fresh object literal every render (`DocCommentsStore
   // .paintbrushOverlay`'s own doc comment — a plain getter, not `computed`)
   // — depend on its primitive fields instead of its identity, so this

@@ -614,6 +614,65 @@ const INTERACTIVE = 'button, a, input, textarea, select, [role="button"], [conte
  * and the synchronized highlight; this is a small extra confirmation for the
  * one card that's currently selected, not a standing map of every thread.
  */
+/**
+ * A streaming paintbrush stroke's card gets a "beam" — a slow, rotating
+ * conic-gradient ring traveling around its border (punch-list finding 2c;
+ * the design doc's own reference feel, "border-beam pulse-inner/mono").
+ * Injected as a plain stylesheet rather than Tailwind classes: a rotating
+ * conic-gradient ring needs a `mask-composite: exclude` pseudo-element and
+ * a `@keyframes` block, neither expressible as utility classes. `z-index:
+ * -1` on the pseudo (with `isolation: isolate` on the card) keeps the ring
+ * OUTSIDE the card's own opaque background, so only the 1px annulus at
+ * the edge — the actual "beam" — shows through.
+ */
+const BEAM_STYLE_ID = 'rig-paintbrush-beam-styles';
+const BEAM_CSS = `
+.rig-paintbrush-beam {
+  position: relative;
+  isolation: isolate;
+}
+.rig-paintbrush-beam::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    color-mix(in srgb, var(--accent) 85%, transparent) 35deg,
+    transparent 80deg,
+    transparent 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .rig-paintbrush-beam::before {
+    animation: rig-paintbrush-beam-spin 2.4s linear infinite;
+  }
+}
+@keyframes rig-paintbrush-beam-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+`;
+
+function ensureBeamStyles(): void {
+  if (typeof document === 'undefined') return;
+  let style = document.getElementById(BEAM_STYLE_ID) as HTMLStyleElement | null;
+  if (!style) {
+    style = document.createElement('style');
+    style.id = BEAM_STYLE_ID;
+    document.head.appendChild(style);
+  }
+  if (style.textContent !== BEAM_CSS) style.textContent = BEAM_CSS;
+}
+
 function ActiveConnector({ muted }: { muted?: boolean }) {
   const [shown, setShown] = useState(false);
   useEffect(() => {
@@ -642,6 +701,7 @@ const Card = observer(function Card({
   muted,
   compact,
   hasAnchor = true,
+  beaming,
   onActivate,
 }: {
   children: React.ReactNode;
@@ -660,9 +720,14 @@ const Card = observer(function Card({
    * explicitly; the default only matters for a future caller that doesn't.
    */
   hasAnchor?: boolean;
+  /** A paintbrush stroke is streaming against this card's thread — see `ensureBeamStyles`. */
+  beaming?: boolean;
   onActivate?: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (beaming) ensureBeamStyles();
+  }, [beaming]);
 
   // The active card nudges toward the document — the Docs "this one's mine"
   // cue. It does NOT scroll itself into view: that used to live here, guarded
@@ -701,7 +766,8 @@ const Card = observer(function Card({
         // (screenshot). Opacity now only applies while a resolved thread is
         // NOT the active one — secondary in the list, full legibility once
         // it's the one in focus.
-        muted && !active && 'opacity-70'
+        muted && !active && 'opacity-70',
+        beaming && 'rig-paintbrush-beam'
       )}
     >
       {active && hasAnchor && <ActiveConnector muted={muted} />}
@@ -984,6 +1050,7 @@ const ThreadCard = observer(function ThreadCard({
       muted={thread.resolved}
       compact={collapsed}
       hasAnchor={thread.index !== null}
+      beaming={!collapsed && store.isPaintbrushStreaming(root.id)}
       onActivate={() => store.setActiveThread(root.id)}
     >
       <button

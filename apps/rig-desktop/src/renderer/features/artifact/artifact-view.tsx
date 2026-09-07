@@ -19,10 +19,9 @@ import { useRigDocumentContext } from '@renderer/features/docs/context/use-rig-d
 import { DocEditor } from '@renderer/features/docs/doc-editor';
 import { DocTabResource } from '@renderer/features/docs/doc-file-sync';
 import { PaintbrushControl } from '@renderer/features/docs/paintbrush/paintbrush-control';
-import {
-  PAINTBRUSH_CURSOR,
-  paintbrushDecorations,
-} from '@renderer/features/docs/paintbrush/paintbrush-decorations';
+import { PaintbrushCursorChip } from '@renderer/features/docs/paintbrush/paintbrush-cursor-chip';
+import { PaintbrushStreamingOverlay } from '@renderer/features/docs/paintbrush/paintbrush-preview-streaming-overlay';
+import { paintbrushDecorations } from '@renderer/features/docs/paintbrush/paintbrush-decorations';
 import { usePaintbrushEditorSync } from '@renderer/features/docs/paintbrush/use-paintbrush-editor-sync';
 import { usePaintbrushMode } from '@renderer/features/docs/paintbrush/use-paintbrush';
 import { usePaintbrushPreviewOverlay } from '@renderer/features/docs/paintbrush/use-paintbrush-preview-overlay';
@@ -458,26 +457,19 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // stroke streaming), so both hooks are inert until a stroke actually
   // happens.
   const paintbrushOverlay = comments?.paintbrushOverlay ?? null;
-  usePaintbrushEditorSync(resource, mode, paintbrush.on, paintbrushOverlay);
+  usePaintbrushEditorSync(resource, mode, paintbrushOverlay);
   usePaintbrushPreviewOverlay({
     active: mode === 'preview' && comments !== null,
     getIndex: () => previewRef.current?.getIndex() ?? null,
     overlay: paintbrushOverlay,
   });
 
-  // Cursor affordance while armed (spec: "pick the cheaper, less janky
-  // one" — a CSS cursor over a pointer-tracked element). Edit mode gets its
-  // own via `paintbrush-decorations.ts`'s `contentAttributes`; Preview has
-  // no CM6 theme to hook into, so this sets it directly on the rendered root.
-  useEffect(() => {
-    if (mode !== 'preview') return;
-    const root = previewRef.current?.getRoot();
-    if (!root) return;
-    root.style.cursor = paintbrush.on ? PAINTBRUSH_CURSOR : '';
-    return () => {
-      root.style.cursor = '';
-    };
-  }, [mode, paintbrush.on]);
+  // Cursor affordance while armed (punch-list finding 3): the document
+  // keeps its plain native text cursor — no CSS override in either mode —
+  // and a small tinted orb chip tracks the pointer instead, faded out
+  // while the composer is open (nothing useful to arm against once a
+  // stroke is already being typed).
+  const paintbrushComposerOpen = comments?.composerQuote != null;
 
   // Prompt-scoped provenance target: the chat panel is a sibling, so this
   // hook publishes only the main-validated locator for the active document
@@ -559,6 +551,9 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 agents={paintbrush.agents}
                 selected={paintbrush.selected}
                 selectAgent={paintbrush.selectAgent}
+                streaming={paintbrushOverlay?.streaming ?? false}
+                showCoachMark={paintbrush.showCoachMark}
+                dismissCoachMark={paintbrush.dismissCoachMark}
               />
             )}
             {isMarkdown && <PreviewModeToggle mode={mode} onChange={setMode} />}
@@ -601,7 +596,16 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
         </div>
       )}
 
-      <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto">
+      <div
+        ref={containerRef}
+        className={cn(
+          'relative min-h-0 flex-1 overflow-y-auto transition-shadow duration-200 ease-out motion-reduce:transition-none',
+          // Document-level armed cue (punch-list finding 4): a quiet inset
+          // ring on the pane's own edge — always-visible confirmation that
+          // doesn't depend on the reader looking at the header control.
+          isMarkdown && paintbrush.on && 'ring-1 ring-inset ring-accent/25'
+        )}
+      >
         {resource.isLoading ? (
           <div className="flex h-full items-center justify-center text-sm text-text-muted">
             Loading…
@@ -636,6 +640,14 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 extraExtensions={resource.extensionFactories}
               />
             )}
+            {mode === 'preview' && comments !== null && (
+              <PaintbrushStreamingOverlay
+                active
+                getRoot={() => previewRef.current?.getRoot() ?? null}
+                getIndex={() => previewRef.current?.getIndex() ?? null}
+                overlay={paintbrushOverlay}
+              />
+            )}
             {showMargin && comments && <MarginRail store={comments} containerRef={containerRef} />}
             {mode === 'edit' && comments && showComments && (
               <CommentSelectionButton
@@ -656,6 +668,10 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
           </>
         )}
       </div>
+      <PaintbrushCursorChip
+        active={paintbrush.on && !paintbrushComposerOpen}
+        containerRef={containerRef}
+      />
     </div>
   );
 });

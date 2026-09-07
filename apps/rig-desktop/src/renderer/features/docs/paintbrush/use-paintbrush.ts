@@ -30,6 +30,14 @@ export function usePaintbrushMode(): {
   selectAgent(id: string): void;
   /** `selected`, reshaped for `DocCommentsStore.create`/`openComposer` — null until an agent is actually chosen. */
   mention: AgentMention | null;
+  /**
+   * Discoverability round (punch-list finding 4): true while the mode is
+   * armed and the reader has never dismissed the first-use coach mark —
+   * `PaintbrushControl` renders it anchored to the header pill.
+   */
+  showCoachMark: boolean;
+  /** Persists `paintbrushCoachMarkSeen` so the coach mark never shows again this install. */
+  dismissCoachMark(): void;
 } {
   const [on, setOn] = useState(false);
   const { agents } = useRunnableAgents();
@@ -58,5 +66,28 @@ export function usePaintbrushMode(): {
     ? { providerId: selected.id, name: selected.name }
     : null;
 
-  return { on, toggle: () => setOn((v) => !v), agents, selected, selectAgent, mention };
+  // Optimistic local flag ahead of the settings round trip landing — a
+  // reader dismissing the coach mark must not see it flash back for the
+  // frame or two before `rig.settings.set` resolves and this query
+  // refetches.
+  const [dismissedLocally, setDismissedLocally] = useState(false);
+  const coachMarkSeen = (settings?.paintbrushCoachMarkSeen ?? false) || dismissedLocally;
+  const showCoachMark = on && !coachMarkSeen;
+  const dismissCoachMark = useCallback(() => {
+    setDismissedLocally(true);
+    void rpc.rig.settings.set({ paintbrushCoachMarkSeen: true }).then(() => {
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'settings', 'paintbrushAgent'] });
+    });
+  }, [queryClient]);
+
+  return {
+    on,
+    toggle: () => setOn((v) => !v),
+    agents,
+    selected,
+    selectAgent,
+    mention,
+    showCoachMark,
+    dismissCoachMark,
+  };
 }

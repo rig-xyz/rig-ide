@@ -1071,6 +1071,18 @@ export class DocCommentsStore {
   }
 
   /**
+   * Whether a paintbrush thread's stroke is CURRENTLY streaming — the same
+   * live-turn condition `paintbrushOverlay` checks below, exposed for the
+   * margin card's own "beam" treatment (punch-list finding 2c) rather than
+   * making `comments-margin.tsx` reach into `agentReplies` directly.
+   */
+  isPaintbrushStreaming(rootId: string): boolean {
+    if (!this._paintbrushThreadIds.has(rootId)) return false;
+    const reply = this.agentReplies.get(rootId);
+    return reply !== undefined && reply.error === null;
+  }
+
+  /**
    * The one span, if any, the paintbrush overlay (`features/docs/paintbrush`)
    * should currently paint: the pending composer's own brushed selection
    * (not yet a thread), or the anchor of whichever paintbrush thread is

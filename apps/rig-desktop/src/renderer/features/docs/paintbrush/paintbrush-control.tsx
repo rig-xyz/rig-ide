@@ -12,26 +12,39 @@ function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-const ORB_SIZE = 20;
+/**
+ * `thinking-orbs`'s only two tuned presets are 20 and 64 CSS px (see its
+ * own `OrbSize` doc) — 24 isn't one of them. Discoverability round
+ * (punch-list finding 4) asks for "~24px in the header", so the CANVAS
+ * stays at the tuned 20px preset (a scaled-up untuned size would just be a
+ * blurrier orb, not a bigger one) and a small CSS `scale` on its wrapper
+ * gets the on-screen footprint to the requested ~24px instead.
+ */
+const ORB_CANVAS_SIZE = 20;
+const ORB_DISPLAY_SCALE = 24 / ORB_CANVAS_SIZE;
 
 /**
  * The paintbrush header control (`docs/document-focus-design.md` §2, step
- * 1): an animated orb that arms/disarms paintbrush mode, with a dropdown
- * (chevron) choosing which configured agent strokes are sent to. Sits to the
- * LEFT of `PreviewModeToggle` in `artifact-view.tsx`.
+ * 1; discoverability pass per the paintbrush v1 punch list, finding 4): an
+ * animated orb that arms/disarms paintbrush mode, with a dropdown
+ * (chevron) choosing which configured agent strokes are sent to. Sits to
+ * the LEFT of `PreviewModeToggle` in `artifact-view.tsx`.
  *
- * Orb: `thinking-orbs` (MIT, zero deps, React 18+ peer — license and specs
- * checked before adding; see the paintbrush build report). Its `breathing`
- * state is the tuned "gentle idle" animation this button asks for; `paused`
- * freezes it on a single frame rather than removing the canvas, so the
- * button doesn't visually jump when the mode toggles off.
+ * Armed state is now unmissable, not just a color change on a tiny orb:
+ * the whole pill picks up an accent tint AND a text label — "Paintbrush"
+ * before an agent is chosen, the agent's own name once one is — so a
+ * reader who glances at the header (not just whoever is hovering it) can
+ * tell the mode is live. `orbState` carries three readable states of its
+ * own: paused/muted while off, `searching` while armed and idle (matches
+ * the "select text to start" invitation), and `working` — a genuinely
+ * different animation, not just a re-tinted copy of `searching` — while a
+ * stroke is actually streaming against the document.
  *
- * Pill: only once a mode AND an agent are both chosen — otherwise the
- * control stays a single circular orb button, matching the "quiet until
- * meaningful" shape the rest of the header chrome (`comments`/`Share`
- * buttons) already follows. Width/opacity of the model segment transitions
- * over the house motion budget (150–250ms, state-driven, `motion-reduce`
- * gated — `file-navigator-design.md` §3.5).
+ * The first time the mode is ever turned on, `showCoachMark` opens a small
+ * dismissable popover explaining what just happened — the "what is a
+ * paintbrush?" gap the punch list called out. Persisted (never shown
+ * again once dismissed) via `rig.settings`'s `paintbrushCoachMarkSeen`,
+ * the same mechanism `use-paintbrush.ts` already uses for the agent choice.
  */
 export function PaintbrushControl({
   on,
@@ -39,23 +52,38 @@ export function PaintbrushControl({
   agents,
   selected,
   selectAgent,
+  streaming,
+  showCoachMark,
+  dismissCoachMark,
 }: {
   on: boolean;
   toggle: () => void;
   agents: RunnableAgent[];
   selected: RunnableAgent | null;
   selectAgent: (id: string) => void;
+  /** A paintbrush thread's stroke is currently streaming against the document — the orb reflects it. */
+  streaming: boolean;
+  showCoachMark: boolean;
+  dismissCoachMark: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const controlRef = useRef<HTMLDivElement>(null);
   const chevronRef = useRef<HTMLButtonElement>(null);
-  const expanded = on && selected !== null;
+  const reducedMotion = prefersReducedMotion();
+
+  const orbState = !on ? 'breathing' : streaming ? 'working' : 'searching';
+  const label = selected ? selected.name : 'Paintbrush';
+  const tooltip = on
+    ? `Paintbrush on · ${selected ? selected.name : 'choose an agent'} — select text to start`
+    : 'Paintbrush: select any text and tell an agent what to do with it';
 
   return (
-    <div className="flex items-center">
+    <div className="relative flex items-center">
       <div
+        ref={controlRef}
         className={cn(
-          'flex items-center rounded-control border border-border-hairline transition-[background-color] duration-200 ease-out motion-reduce:transition-none',
-          expanded ? 'bg-bg-2' : 'bg-bg-1'
+          'flex items-center rounded-control border transition-colors duration-200 ease-out motion-reduce:transition-none',
+          on ? 'border-accent/40 bg-accent-subtle' : 'border-border-hairline bg-bg-1'
         )}
       >
         <Tooltip>
@@ -66,53 +94,36 @@ export function PaintbrushControl({
                 aria-pressed={on}
                 aria-label={on ? 'Turn off the paintbrush' : 'Turn on the paintbrush'}
                 onClick={toggle}
-                className="flex size-6 shrink-0 items-center justify-center rounded-control"
+                className="flex items-center gap-1.5 rounded-control py-1 pr-2 pl-1"
               >
-                <ThinkingOrb
-                  state="breathing"
-                  size={ORB_SIZE}
-                  paused={!on || prefersReducedMotion()}
-                  aria-hidden
-                />
+                <span
+                  className="flex shrink-0 items-center justify-center"
+                  style={{ width: ORB_CANVAS_SIZE * ORB_DISPLAY_SCALE, height: ORB_CANVAS_SIZE * ORB_DISPLAY_SCALE }}
+                >
+                  <span style={{ transform: `scale(${ORB_DISPLAY_SCALE})` }}>
+                    <ThinkingOrb
+                      state={orbState}
+                      size={ORB_CANVAS_SIZE}
+                      paused={!on || reducedMotion}
+                      aria-hidden
+                    />
+                  </span>
+                </span>
+                {/* Armed state must be obvious from a glance, not just a hover
+                    tooltip — the word "Paintbrush", or the agent's own name
+                    once chosen, sits right beside the orb whenever the mode
+                    is on. */}
+                {on && (
+                  <span className="popover-in flex items-center gap-1 text-xs font-medium text-accent">
+                    {selected && <AgentIcon icon={selected.icon} size={12} className="shrink-0" />}
+                    {label}
+                  </span>
+                )}
               </button>
             }
           />
-          <TooltipContent side="bottom">
-            {on ? 'Paintbrush on — select text to prompt an agent' : 'Turn on the paintbrush'}
-          </TooltipContent>
+          <TooltipContent side="bottom">{tooltip}</TooltipContent>
         </Tooltip>
-
-        {/* The model segment: rendered only once armed with a chosen agent —
-            width/opacity transition in rather than popping, so arming reads
-            as one continuous gesture. */}
-        <div
-          className={cn(
-            'grid overflow-hidden transition-[grid-template-columns,opacity] duration-200 ease-out motion-reduce:transition-none',
-            expanded ? 'grid-cols-[1fr] opacity-100' : 'grid-cols-[0fr] opacity-0'
-          )}
-        >
-          <div className="min-w-0 overflow-hidden">
-            {selected && (
-              <div className="flex items-center gap-1 border-l border-border-hairline py-1 pr-1 pl-1.5">
-                <Tooltip>
-                  {/* `TooltipTrigger`'s `render` needs a ref-forwardable host
-                      element to anchor to — `AgentIcon` is a plain function
-                      component, so it's wrapped in a `span` rather than
-                      passed directly (matches this codebase's own
-                      `render={<span>...</span>}` convention elsewhere). */}
-                  <TooltipTrigger
-                    render={
-                      <span className="inline-flex shrink-0">
-                        <AgentIcon icon={selected.icon} size={13} />
-                      </span>
-                    }
-                  />
-                  <TooltipContent side="bottom">{selected.name}</TooltipContent>
-                </Tooltip>
-              </div>
-            )}
-          </div>
-        </div>
 
         <button
           ref={chevronRef}
@@ -121,7 +132,10 @@ export function PaintbrushControl({
           aria-expanded={open}
           aria-label="Choose the paintbrush agent"
           onClick={() => setOpen((v) => !v)}
-          className="flex size-6 shrink-0 items-center justify-center rounded-control text-text-muted hover:text-text-primary"
+          className={cn(
+            'flex size-6 shrink-0 items-center justify-center rounded-control',
+            on ? 'text-accent/70 hover:text-accent' : 'text-text-muted hover:text-text-primary'
+          )}
         >
           <ChevronDown className="size-3" strokeWidth={1.5} />
         </button>
@@ -162,6 +176,31 @@ export function PaintbrushControl({
             </button>
           ))
         )}
+      </Popover>
+
+      <Popover
+        anchor={controlRef}
+        open={showCoachMark}
+        onClose={dismissCoachMark}
+        role="dialog"
+        align="left"
+        estimatedWidth={260}
+        minWidth={240}
+        ariaLabel="About the paintbrush"
+      >
+        <div className="max-w-64 px-2.5 py-2 text-xs text-text-secondary">
+          <p>
+            Paintbrush is on. Select any text in the document and describe a change or ask a
+            question. Edits come back as suggestions you apply.
+          </p>
+          <button
+            type="button"
+            onClick={dismissCoachMark}
+            className="mt-2 text-xs font-medium text-accent hover:underline"
+          >
+            Got it
+          </button>
+        </div>
       </Popover>
     </div>
   );
