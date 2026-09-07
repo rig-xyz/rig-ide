@@ -169,7 +169,35 @@ export type RigCommentAgentRequest = {
   anchor?: RigCommentAnchor | null;
   /** The thread so far, oldest first, ending with the comment that mentioned the agent. */
   thread: RigCommentThreadEntry[];
+  /**
+   * This turn is a paintbrush stroke (`renderer/features/docs/paintbrush`):
+   * the reviewer selected the anchored passage and armed an agent on it,
+   * rather than plainly `@mention`-ing one into an existing conversation.
+   * Changes the prompt (`main/rig/comment-agent-prompt.ts`) to ask for a
+   * structured replacement instead of a direct tool edit, and the answer is
+   * parsed for one (`main/rig/comment-agent-proposal.ts`). Defaults to
+   * false/absent for every existing `@mention` call site — those keep
+   * today's direct-tool-edit behavior unchanged.
+   */
+  paintbrush?: boolean;
 };
+
+/** A reply's structured proposed replacement for the anchored range — see `main/rig/comment-agent-proposal.ts`. */
+export type CommentProposal = { replacement: string };
+
+/**
+ * Reads `meta.proposal` off a comment message, when the agent emitted a
+ * structured replacement for the thread's anchored range (paintbrush
+ * outcome). `meta` is freeform (this module's own note above), so this
+ * narrows defensively: a foreign or malformed value degrades to "no
+ * proposal" rather than throwing.
+ */
+export function getCommentProposal(meta: Record<string, unknown> | null): CommentProposal | null {
+  const raw = meta?.proposal;
+  if (typeof raw !== 'object' || raw === null) return null;
+  const replacement = (raw as Record<string, unknown>).replacement;
+  return typeof replacement === 'string' && replacement.length > 0 ? { replacement } : null;
+}
 
 /** One way to settle a permission request, exactly as the agent offered it. */
 export type RigCommentPermissionOption = {

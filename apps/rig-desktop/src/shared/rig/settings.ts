@@ -196,6 +196,17 @@ export type RigSettings = {
    * context` auto-approve, which stays active regardless of this setting.
    */
   autoApproveAgentActions: boolean;
+  /**
+   * Paintbrush (`renderer/features/docs/paintbrush`): the provider id last
+   * chosen in the header's agent dropdown — a plain global preference,
+   * replaced wholesale on `set()`, same shape as `lastHarness` above (not
+   * per-rig: which agent someone reaches for to edit inline isn't a
+   * workspace taste). `null` until the reader ever opens the dropdown.
+   * Deliberately separate from `lastHarness`/`lastHarnessByRig`, which are
+   * the CHAT panel's own harness memory — paintbrush mode itself (on/off)
+   * is per-window UI state and is never persisted here at all.
+   */
+  paintbrushAgent: string | null;
 };
 
 export const DEFAULT_RIG_SETTINGS: RigSettings = {
@@ -219,6 +230,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   pinnedPathsByRig: {},
   fileTreeViewByRig: {},
   autoApproveAgentActions: false,
+  paintbrushAgent: null,
 };
 
 /** The subset of legacy localStorage values the renderer can hand to `importLegacy`. */

@@ -21,9 +21,15 @@ import { CommentMarkdown } from '@renderer/lib/ui/comment-markdown';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { Textarea } from '@renderer/lib/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import type { AgentIconAsset } from '@shared/core/agents/agent-payload';
-import type { RigCommentMessage, RigCommentPermissionRequest } from '@shared/rig/comments';
+import {
+  getCommentProposal,
+  type RigCommentMessage,
+  type RigCommentPermissionRequest,
+} from '@shared/rig/comments';
+import { canApplyProposal } from '../paintbrush/paintbrush-apply';
 import { shortenQuote } from './anchors';
 import { offlineChipLabel } from './comments-cache';
 import {
@@ -849,6 +855,71 @@ function CommentBody({ message, active }: { message: RigCommentMessage; active: 
   );
 }
 
+/**
+ * Paintbrush outcome (`docs/document-focus-design.md` §2, step 5): a reply
+ * carrying `meta.proposal` gets an Apply button that splices the proposed
+ * replacement over the thread's anchored range. Renders nothing for an
+ * ordinary reply — the vast majority, unchanged.
+ *
+ * Resolvability is checked with the same pure, anchor-only logic
+ * `DocCommentsStore.applyProposal` re-checks before actually splicing
+ * (`canApplyProposal`) — computed fresh on every render (cheap: a string
+ * search over the live buffer, no CM6 involved) so the button's
+ * enabled/disabled state never drifts from what clicking it would actually
+ * do. An anchor that can no longer be resolved (the passage changed since
+ * the stroke) disables Apply with an explanatory tooltip rather than ever
+ * guessing a position.
+ */
+const ProposalApplyRow = observer(function ProposalApplyRow({
+  store,
+  thread,
+  reply,
+}: {
+  store: DocCommentsStore;
+  thread: CommentThread;
+  reply: RigCommentMessage;
+}) {
+  const proposal = getCommentProposal(reply.meta);
+  if (!proposal) return null;
+
+  if (store.isProposalApplied(reply.id)) {
+    return (
+      <span className="bg-bg-2 text-text-muted mt-1.5 inline-flex w-fit items-center rounded-chip px-1.5 py-0.5 font-mono text-xs">
+        Applied
+      </span>
+    );
+  }
+
+  const canApply = canApplyProposal(store.documentContent, thread.root.anchor);
+  const apply = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    store.applyProposal(thread.root.id, reply.id, proposal.replacement);
+  };
+
+  return (
+    <div className="mt-1.5 flex flex-col gap-1.5">
+      {/* Apply must be informed consent: the reader sees exactly what will
+          replace the anchored passage — the reply prose alone doesn't carry
+          the replacement (the sentinel block is stripped before posting). */}
+      <div className="border-border bg-bg-2 text-text max-h-40 overflow-y-auto whitespace-pre-wrap rounded border px-2 py-1.5 text-xs">
+        {proposal.replacement}
+      </div>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button size="xs" variant="secondary" disabled={!canApply} onClick={apply}>
+              Apply
+            </Button>
+          }
+        />
+        {!canApply && (
+          <TooltipContent side="bottom">text has changed — apply manually</TooltipContent>
+        )}
+      </Tooltip>
+    </div>
+  );
+});
+
 function lastSpeaker(thread: CommentThread): string {
   const last = thread.replies[thread.replies.length - 1] ?? thread.root;
   return last.author.kind === 'agent' ? 'rig' : last.author.name || 'someone';
@@ -976,6 +1047,7 @@ const ThreadCard = observer(function ThreadCard({
                   className={cn(!(index === 0 && foldedAway > 0) && 'border-border-hairline border-t pt-2.5')}
                 >
                   <CommentBody message={reply} active={active} />
+                  <ProposalApplyRow store={store} thread={thread} reply={reply} />
                 </div>
               ))}
             </div>
@@ -1089,6 +1161,12 @@ const NewThreadCard = observer(function NewThreadCard({
   const quote = store.composerQuote ?? '';
   const agents = useMentionableAgents();
   const people = usePeopleMentions(store.path);
+  const icons = useAgentIcons();
+  // A paintbrush stroke arms the composer with its agent directly
+  // (`docs/document-focus-design.md` §2, step 3) — the reader only types
+  // the instruction, never `@agent`, so `@`-mention parsing is skipped
+  // entirely for this composer.
+  const paintbrushAgent = store.composerPaintbrushAgent;
 
   const blocked = store.state !== 'ready' && store.state !== 'error' && store.state !== 'loading';
   const notice = stateNotice(store);
@@ -1097,9 +1175,10 @@ const NewThreadCard = observer(function NewThreadCard({
   const send = useCallback(async () => {
     const text = draft.trim();
     if (!text) return;
-    const posted = await store.create(quote, text, findMention(text, agents));
+    const mention = paintbrushAgent ?? findMention(text, agents);
+    const posted = await store.create(quote, text, mention, paintbrushAgent !== null);
     if (posted) setDraft('');
-  }, [agents, draft, quote, store]);
+  }, [agents, draft, paintbrushAgent, quote, store]);
 
   return (
     // `muted`: the focused textarea inside already wears the accent focus
@@ -1119,19 +1198,47 @@ const NewThreadCard = observer(function NewThreadCard({
         <p className="text-text-muted mt-2 text-xs">{notice}</p>
       ) : (
         <div className="mt-2">
-          <MentionTextarea
-            autoFocus
-            value={draft}
-            agents={agents}
-            people={people}
-            disabled={busy}
-            onChange={setDraft}
-            onSubmit={() => void send()}
-            onEscape={store.closeComposer}
-            placeholder="Add a comment — @ to mention"
-            rows={2}
-            className="max-h-40 min-h-14 py-1.5 text-sm"
-          />
+          {paintbrushAgent && (
+            <div className="bg-bg-2 text-text-secondary mb-1.5 inline-flex w-fit items-center gap-1.5 rounded-chip px-2 py-1 text-xs">
+              {icons.get(paintbrushAgent.providerId) !== undefined && (
+                <AgentIcon icon={icons.get(paintbrushAgent.providerId)!} size={12} className="shrink-0" />
+              )}
+              <span>{paintbrushAgent.name}</span>
+            </div>
+          )}
+          {paintbrushAgent ? (
+            <Textarea
+              autoFocus
+              value={draft}
+              disabled={busy}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  void send();
+                } else if (event.key === 'Escape') {
+                  store.closeComposer();
+                }
+              }}
+              placeholder={`Tell ${paintbrushAgent.name} what to change…`}
+              rows={2}
+              className="max-h-40 min-h-14 py-1.5 text-sm"
+            />
+          ) : (
+            <MentionTextarea
+              autoFocus
+              value={draft}
+              agents={agents}
+              people={people}
+              disabled={busy}
+              onChange={setDraft}
+              onSubmit={() => void send()}
+              onEscape={store.closeComposer}
+              placeholder="Add a comment — @ to mention"
+              rows={2}
+              className="max-h-40 min-h-14 py-1.5 text-sm"
+            />
+          )}
         </div>
       )}
 

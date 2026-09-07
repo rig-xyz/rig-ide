@@ -2,6 +2,7 @@ import { MessageSquarePlus } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { DocCommentsStore } from '../comments/comments-store';
+import { isPaintbrushArmed, type PaintbrushArming } from '../paintbrush/paintbrush-gating';
 import type { PositionIndex } from './position-index';
 
 /**
@@ -24,16 +25,20 @@ export function PreviewCommentSelectionButton({
   getIndex,
   content,
   store,
+  paintbrush,
 }: {
   getRoot: () => HTMLElement | null;
   getIndex: () => PositionIndex | null;
   /** The FULL document content (frontmatter included) — `rangeToSource`'s offsets are shifted into this same coordinate space; see `preview-pane.tsx`. */
   content: string;
   store: DocCommentsStore;
+  /** See `comments/comment-selection.tsx`'s `CommentSelectionButton` — same gate, same auto-open behavior, Preview's own selection source. */
+  paintbrush?: PaintbrushArming;
 }) {
   const [pending, setPending] = useState<{ range: Range; text: string; rect: DOMRect } | null>(
     null
   );
+  const armed = isPaintbrushArmed(paintbrush);
 
   useEffect(() => {
     const handleMouseUp = () => {
@@ -49,11 +54,20 @@ export function PreviewCommentSelectionButton({
         setPending(null);
         return;
       }
+      if (armed) {
+        const index = getIndex();
+        const mapped = index ? index.rangeToSource(range) : null;
+        if (mapped) store.openComposer(content.slice(mapped.start, mapped.end), mapped, paintbrush!.mention);
+        else store.openComposer(text, undefined, paintbrush!.mention);
+        selection.removeAllRanges();
+        setPending(null);
+        return;
+      }
       setPending({ range: range.cloneRange(), text, rect: range.getBoundingClientRect() });
     };
     document.addEventListener('mouseup', handleMouseUp);
     return () => document.removeEventListener('mouseup', handleMouseUp);
-  }, [getRoot]);
+  }, [getRoot, armed, paintbrush, getIndex, content, store]);
 
   // Any scroll (the shared scroll container included) staled the rect —
   // same dismiss-rather-than-chase rule as the Edit-mode button.

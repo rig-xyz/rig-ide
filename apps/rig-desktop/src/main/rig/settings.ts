@@ -173,6 +173,7 @@ function normalizeSettings(parsed: unknown): RigSettings {
     pinnedPathsByRig: isStringArrayRecord(raw.pinnedPathsByRig) ? raw.pinnedPathsByRig : {},
     fileTreeViewByRig: normalizeFileTreeViewRecord(raw.fileTreeViewByRig),
     autoApproveAgentActions: raw.autoApproveAgentActions === true,
+    paintbrushAgent: typeof raw.paintbrushAgent === 'string' ? raw.paintbrushAgent : null,
   };
 }
 

@@ -31,6 +31,7 @@ import {
   type CommentAgentProgress,
 } from './comment-agent-progress';
 import { composeCommentAgentPrompt } from './comment-agent-prompt';
+import { extractProposal } from './comment-agent-proposal';
 import { resolveCommentDispatchContext, rigCommentsController } from './comments';
 import { checkRelayTrust } from './relay-trust';
 import { rigSettingsStore } from './settings-instance';
@@ -681,9 +682,9 @@ export const rigCommentAgentController = createRPCController({
       ]);
       const usedModel = sessionModel ?? model;
 
-      const answer =
+      const rawAnswer =
         historyAnswer ?? (outcome === 'completed' ? progress.latestText() || null : null);
-      if (!answer) {
+      if (!rawAnswer) {
         return err(
           agentError(
             outcome === 'timeout'
@@ -692,13 +693,23 @@ export const rigCommentAgentController = createRPCController({
           )
         );
       }
+      // Paintbrush strokes ask the agent for a structured replacement
+      // alongside its prose (`comment-agent-prompt.ts`); every other mention
+      // path posts the transcript answer verbatim, same as always.
+      const { body: answer, proposal } = request.paintbrush
+        ? extractProposal(rawAnswer)
+        : { body: rawAnswer, proposal: null };
 
       return await rigCommentsController.reply({
         absPath,
         parentId,
         body: answer,
         authorKind: 'agent',
-        meta: { agent: agentLabel(providerId), ...(usedModel ? { model: usedModel } : {}) },
+        meta: {
+          agent: agentLabel(providerId),
+          ...(usedModel ? { model: usedModel } : {}),
+          ...(proposal ? { proposal } : {}),
+        },
       });
     } catch (error) {
       log.warn('Rig comment agent: mention failed', {

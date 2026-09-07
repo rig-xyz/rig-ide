@@ -101,6 +101,7 @@
     "pidusage": "^4.0.1",
     "smol-toml": "^1.6.0",
     "ssh2": "^1.17.0",
+    "thinking-orbs": "^0.3.1",
     "ts-pattern": "^5.9.0",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2",

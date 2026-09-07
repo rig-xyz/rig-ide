@@ -12,6 +12,7 @@ import {
   type RigCommentsError,
 } from '@shared/rig/comments';
 import type { DocTabResource } from '../doc-file-sync';
+import { resolveProposalApply } from '../paintbrush/paintbrush-apply';
 import { buildAnchor, buildAnchorFromRange, groupThreads, reanchor } from './anchors';
 import { cm6SurfaceAdapter, type CommentMarker } from './comment-decorations';
 import {
@@ -169,6 +170,8 @@ type AgentReplyRequest = {
   quote: string | null;
   anchor: RigCommentMessage['anchor'];
   thread: RigCommentThreadEntry[];
+  /** See `RigCommentAgentRequest.paintbrush` — threaded straight through to `askAgent`. */
+  paintbrush?: boolean;
 };
 
 /** How the agent should see one earlier message of the thread. */
@@ -296,6 +299,39 @@ export class DocCommentsStore {
    */
   private _composerLocated: { start: number; end: number } | null = null;
   /**
+   * The agent a paintbrush stroke armed the new-thread composer with
+   * (`docs/document-focus-design.md` §2, step 3) — set only by
+   * `openComposer`'s third argument, which only the paintbrush selection
+   * components ever pass. Null for every plain comment composer, exactly
+   * today's behavior: the margin reads this to render the agent as a chip
+   * instead of the ordinary `@ to mention` composer, and `create` reads it
+   * to mark the resulting thread a paintbrush thread (`isPaintbrushThread`)
+   * without the reader ever typing `@agent` themselves.
+   */
+  composerPaintbrushAgent: AgentMention | null = null;
+  /**
+   * Thread root ids created as paintbrush strokes, this session only — not
+   * persisted (a paintbrush thread reads like any other comment thread once
+   * its stroke settles; see `docs/document-focus-design.md` §2, step 6:
+   * "Two honest outcomes... it simply stays a comment thread"). Backs the
+   * transient softer-tint/streaming-pulse overlay only; the durable outcome
+   * (a proposal a reader can Apply) is read straight off the persisted
+   * reply's `meta.proposal`, not this set.
+   */
+  private readonly _paintbrushThreadIds = new Set<string>();
+  /**
+   * Reply ids whose proposal has been applied, this session only — v1's
+   * renderer-local outcome record (`docs/document-focus-design.md` §2, step
+   * 6: "persist via message meta if a write path exists, else renderer-local
+   * state for v1 with a TODO"). TODO: promote to `meta` on the reply once
+   * there's a write path for patching an existing message's meta rather than
+   * only creating new ones. Observable (unlike `_paintbrushThreadIds` above,
+   * a transient painting concern that always changes alongside some other
+   * observed field): `ProposalApplyRow` reads this on its own, with nothing
+   * else forcing a re-render when it flips.
+   */
+  appliedProposals = new Set<string>();
+  /**
    * The thread the reader is currently reading, shared by the document and the
    * margin so both can point at the same conversation: the anchored passage and
    * its card take the same accent, and each side scrolls the other into view.
@@ -417,6 +453,8 @@ export class DocCommentsStore {
       lastSyncedAt: observable,
       selfUserId: observable,
       composerQuote: observable,
+      composerPaintbrushAgent: observable.ref,
+      appliedProposals: observable.shallow,
       activeThreadId: observable,
       pendingReveal: observable.ref,
       hoveredThreadId: observable,
@@ -432,6 +470,7 @@ export class DocCommentsStore {
       setFilter: action.bound,
       openComposer: action.bound,
       closeComposer: action.bound,
+      applyProposal: action.bound,
       setActiveThread: action.bound,
       setHoveredThread: action.bound,
       dismissAgentReply: action.bound,
@@ -686,10 +725,18 @@ export class DocCommentsStore {
    *   opener already resolved one (Preview's selection→anchor path via the
    *   position index). Omit for the Edit-mode path — `create` falls back to
    *   `buildAnchor`'s verbatim search, same as always.
+   * @param paintbrushAgent The agent a paintbrush stroke armed this composer
+   *   with (`CommentSelectionButton`/`PreviewCommentSelectionButton`, gated
+   *   on paintbrush mode being on) — null for every plain comment composer.
    */
-  openComposer(quote: string, located?: { start: number; end: number }): void {
+  openComposer(
+    quote: string,
+    located?: { start: number; end: number },
+    paintbrushAgent?: AgentMention | null
+  ): void {
     this.composerQuote = quote;
     this._composerLocated = located ?? null;
+    this.composerPaintbrushAgent = paintbrushAgent ?? null;
     this.setActiveThread(null);
     // The reader is about to act on a state we previously gave up on — a
     // `rig login` or a relay hiccup may well have been fixed since.
@@ -699,6 +746,7 @@ export class DocCommentsStore {
   closeComposer(): void {
     this.composerQuote = null;
     this._composerLocated = null;
+    this.composerPaintbrushAgent = null;
   }
 
   /**
@@ -833,8 +881,18 @@ export class DocCommentsStore {
    * `mention` makes the post the opening move of an agent turn: the comment is
    * still the reader's, and the answer arrives as a separate agent-authored
    * reply once the turn finishes.
+   *
+   * @param paintbrush This thread is a paintbrush stroke rather than a plain
+   *   `@mention` — asks the agent for a structured proposal instead of a
+   *   direct tool edit (`RigCommentAgentRequest.paintbrush`) and marks the
+   *   resulting thread for the transient brush overlay (`isPaintbrushThread`).
    */
-  async create(quote: string, body: string, mention?: AgentMention): Promise<boolean> {
+  async create(
+    quote: string,
+    body: string,
+    mention?: AgentMention,
+    paintbrush?: boolean
+  ): Promise<boolean> {
     const located = this._composerLocated;
     const built = located
       ? {
@@ -868,12 +926,14 @@ export class DocCommentsStore {
         });
         // A brand-new thread has no history: the posted comment is the thread.
         if (mention) {
+          if (paintbrush) this._paintbrushThreadIds.add(result.data.id);
           this._runAgent(mention.name, {
             parentId: result.data.id,
             providerId: mention.providerId,
             quote,
             anchor: result.data.anchor,
             thread: [toThreadEntry(result.data)],
+            paintbrush,
           });
         }
       }
@@ -1005,6 +1065,75 @@ export class DocCommentsStore {
     return this.pending.has(id);
   }
 
+  /** Whether a thread was opened as a paintbrush stroke this session — see `_paintbrushThreadIds`. */
+  isPaintbrushThread(rootId: string): boolean {
+    return this._paintbrushThreadIds.has(rootId);
+  }
+
+  /**
+   * The one span, if any, the paintbrush overlay (`features/docs/paintbrush`)
+   * should currently paint: the pending composer's own brushed selection
+   * (not yet a thread), or the anchor of whichever paintbrush thread is
+   * actively streaming. At most one non-null result in practice — opening a
+   * new composer clears `activeThreadId`, and a stroke's turn is dispatched
+   * synchronously with its own thread's creation — so the first match wins
+   * rather than this collecting a list.
+   */
+  get paintbrushOverlay(): { from: number; to: number; streaming: boolean } | null {
+    if (
+      this.composerQuote !== null &&
+      this.composerPaintbrushAgent !== null &&
+      this._composerLocated !== null
+    ) {
+      return {
+        from: this._composerLocated.start,
+        to: this._composerLocated.end,
+        streaming: false,
+      };
+    }
+    for (const thread of this.threads) {
+      if (!this._paintbrushThreadIds.has(thread.root.id)) continue;
+      const reply = this.agentReplies.get(thread.root.id);
+      if (reply && reply.error === null && thread.index !== null && thread.root.anchor) {
+        return {
+          from: thread.index,
+          to: thread.index + thread.root.anchor.exact.length,
+          streaming: true,
+        };
+      }
+    }
+    return null;
+  }
+
+  /** Whether a reply's proposal has been applied this session — see `appliedProposals`. */
+  isProposalApplied(replyId: string): boolean {
+    return this.appliedProposals.has(replyId);
+  }
+
+  /**
+   * Splice a reply's proposed replacement over the thread's anchored
+   * range, through the normal `DocTabResource` write path — never a raw
+   * disk write from here (`never-clobber discipline`,
+   * `docs/document-focus-design.md` §2, step 6). Re-resolves the anchor
+   * against the CURRENT buffer via the same quote ladder every other
+   * reanchor in this app uses (`resolveProposalApply`, pure) rather than
+   * trusting wherever the stroke originally landed — the buffer may have
+   * moved while the agent was working. Returns false (and applies nothing)
+   * when the anchor can no longer be resolved to an exact offset; the
+   * caller (`ProposalApplyRow`) is expected to have already disabled the
+   * button in that case via the same pure check (`canApplyProposal`), so
+   * this is a defensive re-check, not the reader's only signal.
+   */
+  applyProposal(rootId: string, replyId: string, replacement: string): boolean {
+    const thread = this.threads.find((t) => t.root.id === rootId);
+    if (!thread) return false;
+    const result = resolveProposalApply(this._resource.content, thread.root.anchor, replacement);
+    if (!result.ok) return false;
+    this._resource.applyProgrammaticEdit(result.nextContent);
+    this.appliedProposals.add(replyId);
+    return true;
+  }
+
   // ── internals ──────────────────────────────────────────────────────────────
 
   /**
@@ -1039,6 +1168,7 @@ export class DocCommentsStore {
         quote: request.quote,
         anchor: request.anchor,
         thread: request.thread,
+        paintbrush: request.paintbrush,
       });
       if (this._disposed) return;
 

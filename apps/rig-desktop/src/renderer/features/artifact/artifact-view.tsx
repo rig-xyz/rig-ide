@@ -18,6 +18,14 @@ import {
 import { useRigDocumentContext } from '@renderer/features/docs/context/use-rig-document-context';
 import { DocEditor } from '@renderer/features/docs/doc-editor';
 import { DocTabResource } from '@renderer/features/docs/doc-file-sync';
+import { PaintbrushControl } from '@renderer/features/docs/paintbrush/paintbrush-control';
+import {
+  PAINTBRUSH_CURSOR,
+  paintbrushDecorations,
+} from '@renderer/features/docs/paintbrush/paintbrush-decorations';
+import { usePaintbrushEditorSync } from '@renderer/features/docs/paintbrush/use-paintbrush-editor-sync';
+import { usePaintbrushMode } from '@renderer/features/docs/paintbrush/use-paintbrush';
+import { usePaintbrushPreviewOverlay } from '@renderer/features/docs/paintbrush/use-paintbrush-preview-overlay';
 import { PreviewCommentSelectionButton } from '@renderer/features/docs/preview/preview-comment-selection';
 import { usePreviewComments } from '@renderer/features/docs/preview/use-preview-comments';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
@@ -331,6 +339,12 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // affordance retire.
   const [showComments, setShowComments] = useState(true);
 
+  // Paintbrush (`docs/document-focus-design.md` §2): the header orb's own
+  // mode/agent state — v1 scope is markdown-only (`isMarkdown` below gates
+  // where the control renders and where selection release auto-opens the
+  // composer), same as comments themselves.
+  const paintbrush = usePaintbrushMode();
+
   // Preview ⇄ Edit (`preview-mode-spec.md` "Shape"): markdown-only, Preview
   // by default, remembered per file for the session via `preview-mode-memory`.
   // A non-markdown text/code/config file never leaves Edit — the toggle
@@ -383,6 +397,11 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
           (id) => store.setHoveredThread(id)
         )
       );
+      // Paintbrush's own independent decoration layer (`docs/document-focus-
+      // design.md` §2) — deliberately a SEPARATE extension from
+      // `commentDecorations` above, painting nothing until
+      // `usePaintbrushEditorSync` below ever dispatches an overlay.
+      doc.extensionFactories.push(() => paintbrushDecorations());
     }
     return { resource: doc, comments: store };
     // Recreated only when the open file actually changes — `key={path}` on
@@ -431,6 +450,34 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
     sourceLength: resource.content.length,
     store: comments,
   });
+
+  // Paintbrush's own overlay wiring, one hook per surface — mirrors the
+  // comments layer's Edit/Preview split above exactly (CM6 decoration vs.
+  // CSS Custom Highlight painter). `comments.paintbrushOverlay` is null
+  // whenever there's nothing to paint (mode off, no composer open, no
+  // stroke streaming), so both hooks are inert until a stroke actually
+  // happens.
+  const paintbrushOverlay = comments?.paintbrushOverlay ?? null;
+  usePaintbrushEditorSync(resource, mode, paintbrush.on, paintbrushOverlay);
+  usePaintbrushPreviewOverlay({
+    active: mode === 'preview' && comments !== null,
+    getIndex: () => previewRef.current?.getIndex() ?? null,
+    overlay: paintbrushOverlay,
+  });
+
+  // Cursor affordance while armed (spec: "pick the cheaper, less janky
+  // one" — a CSS cursor over a pointer-tracked element). Edit mode gets its
+  // own via `paintbrush-decorations.ts`'s `contentAttributes`; Preview has
+  // no CM6 theme to hook into, so this sets it directly on the rendered root.
+  useEffect(() => {
+    if (mode !== 'preview') return;
+    const root = previewRef.current?.getRoot();
+    if (!root) return;
+    root.style.cursor = paintbrush.on ? PAINTBRUSH_CURSOR : '';
+    return () => {
+      root.style.cursor = '';
+    };
+  }, [mode, paintbrush.on]);
 
   // Prompt-scoped provenance target: the chat panel is a sibling, so this
   // hook publishes only the main-validated locator for the active document
@@ -504,6 +551,15 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
               >
                 Updated on disk · Reload
               </button>
+            )}
+            {isMarkdown && comments && (
+              <PaintbrushControl
+                on={paintbrush.on}
+                toggle={paintbrush.toggle}
+                agents={paintbrush.agents}
+                selected={paintbrush.selected}
+                selectAgent={paintbrush.selectAgent}
+              />
             )}
             {isMarkdown && <PreviewModeToggle mode={mode} onChange={setMode} />}
             {/* Hidden in Preview along with the margin/composer it controls
@@ -582,7 +638,11 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
             )}
             {showMargin && comments && <MarginRail store={comments} containerRef={containerRef} />}
             {mode === 'edit' && comments && showComments && (
-              <CommentSelectionButton resource={resource} store={comments} />
+              <CommentSelectionButton
+                resource={resource}
+                store={comments}
+                paintbrush={{ on: paintbrush.on, mention: paintbrush.mention }}
+              />
             )}
             {mode === 'preview' && comments && showComments && (
               <PreviewCommentSelectionButton
@@ -590,6 +650,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 getIndex={() => previewRef.current?.getIndex() ?? null}
                 content={resource.content}
                 store={comments}
+                paintbrush={{ on: paintbrush.on, mention: paintbrush.mention }}
               />
             )}
           </>

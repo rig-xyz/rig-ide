@@ -117,6 +117,7 @@ export class DocTabResource {
       handleEditorChange: action.bound,
       setViewMode: action.bound,
       dismissDiskUpdate: action.bound,
+      applyProgrammaticEdit: action.bound,
     });
 
     void rpc.rig.files.watch({ rootId: this.rootId });
@@ -188,6 +189,27 @@ export class DocTabResource {
     }
     if (this.saveState !== 'unsaved') return;
     await this._write();
+  }
+
+  /**
+   * Apply a content change originating from THIS APP (not disk) — the
+   * paintbrush proposal's Apply button, so far the only caller. Unlike
+   * `_absorb` (below — reflects content ALREADY on disk into the buffer,
+   * with no further write), this is a genuine edit: it goes out through the
+   * normal debounced save path exactly as a keystroke would, so
+   * autosave/own-write-suppression behave identically and the write never
+   * bypasses `DocTabResource`. Splices through CM6's cursor-preserving
+   * `applyExternal` when the editor is mounted (Edit mode) for the
+   * flash/cursor-preserving benefit; in Preview mode there is no CM6 to
+   * splice through, so this only updates the mirror `content` — Preview's
+   * own render already reflects it live off that same observable.
+   */
+  applyProgrammaticEdit(content: string): void {
+    if (content === this.content) return;
+    this.editorRef.current?.applyExternal(content);
+    this.content = content;
+    this.saveState = 'unsaved';
+    this._scheduleSave();
   }
 
   /** Drops local changes and takes whatever is on disk. Backs the reload pill. */

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { DocSelectionRect } from '../doc-editor';
 import type { DocTabResource } from '../doc-file-sync';
+import { isPaintbrushArmed, type PaintbrushArming } from '../paintbrush/paintbrush-gating';
 import type { DocCommentsStore } from './comments-store';
 
 /**
@@ -33,11 +34,22 @@ function place(rect: DocSelectionRect): { top: number; left: number } {
 export function CommentSelectionButton({
   resource,
   store,
+  paintbrush,
 }: {
   resource: DocTabResource;
   store: DocCommentsStore;
+  /**
+   * Paintbrush mode (`docs/document-focus-design.md` §2, step 2-3): while
+   * armed, a selection release auto-opens the composer pre-populated with
+   * `mention` instead of showing this floating button — `mention` is null
+   * until the reader has actually chosen an agent in the header dropdown,
+   * in which case this behaves exactly as it always has (mode alone, with
+   * no agent picked yet, is not enough to change anything here).
+   */
+  paintbrush?: PaintbrushArming;
 }) {
   const [pending, setPending] = useState<Pending | null>(null);
+  const armed = isPaintbrushArmed(paintbrush);
 
   useEffect(
     () =>
@@ -46,9 +58,20 @@ export function CommentSelectionButton({
           setPending(null);
           return;
         }
+        if (armed) {
+          // CM6 selections already carry exact source offsets — build the
+          // anchor straight from them (`buildAnchorFromRange`, never
+          // refuses) rather than falling back to a verbatim-text search.
+          store.openComposer(
+            selection.text,
+            { start: selection.from, end: selection.to },
+            paintbrush!.mention
+          );
+          return;
+        }
         setPending({ quote: selection.text, rect: selection.rect });
       }),
-    [resource]
+    [resource, armed, paintbrush, store]
   );
 
   // Any scroll (the editor's own scroller included) staled the rect.
