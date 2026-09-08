@@ -19,7 +19,10 @@
   }
 }
 
-.cm-editor .cm-paintbrushStreaming {
+/* Edit mode: the sweep rides the CM6 mark itself. Preview mode: the same
+ * sweep on rectangles behind the text (`paintbrush-preview-sweep.tsx`). */
+.cm-editor .cm-paintbrushStreaming,
+.rig-brush-sweep {
   background-image: linear-gradient(
     100deg,
     transparent 0%,
@@ -32,11 +35,30 @@
   animation: rig-brush-shimmer 1.6s linear infinite;
 }
 
+.rig-brush-sweep-host {
+  position: relative;
+  isolation: isolate;
+}
+
+.rig-brush-sweep-layer {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.rig-brush-sweep {
+  position: absolute;
+  border-radius: 4px;
+  background-color: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .cm-editor .cm-paintbrushStreaming {
+  .cm-editor .cm-paintbrushStreaming,
+  .rig-brush-sweep {
     animation: none;
     background-image: none;
-    background-color: color-mix(in srgb, var(--accent) 18%, transparent);
+    background-color: color-mix(in srgb, var(--accent) 22%, transparent);
   }
 }
 /* xterm's own layout/layering CSS (`.xterm-screen`, `.xterm-viewport`,

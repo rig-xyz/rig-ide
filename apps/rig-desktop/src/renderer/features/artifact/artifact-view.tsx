@@ -23,6 +23,7 @@ import { PaintbrushCursorChip } from '@renderer/features/docs/paintbrush/paintbr
 import { paintbrushDecorations } from '@renderer/features/docs/paintbrush/paintbrush-decorations';
 import { usePaintbrushEditorSync } from '@renderer/features/docs/paintbrush/use-paintbrush-editor-sync';
 import { usePaintbrushMode } from '@renderer/features/docs/paintbrush/use-paintbrush';
+import { PaintbrushPreviewSweep } from '@renderer/features/docs/paintbrush/paintbrush-preview-sweep';
 import { usePaintbrushPreviewOverlay } from '@renderer/features/docs/paintbrush/use-paintbrush-preview-overlay';
 import { PreviewCommentSelectionButton } from '@renderer/features/docs/preview/preview-comment-selection';
 import { usePreviewComments } from '@renderer/features/docs/preview/use-preview-comments';
@@ -648,6 +649,14 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 resource={resource}
                 store={comments}
                 paintbrush={{ on: paintbrush.on, mention: paintbrush.mention }}
+              />
+            )}
+            {mode === 'preview' && comments && (
+              <PaintbrushPreviewSweep
+                active={mode === 'preview'}
+                getRoot={() => previewRef.current?.getRoot() ?? null}
+                getIndex={() => previewRef.current?.getIndex() ?? null}
+                overlay={paintbrushOverlay}
               />
             )}
             {mode === 'preview' && comments && showComments && (
