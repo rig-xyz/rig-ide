@@ -68,18 +68,18 @@ function overlayDecorations(): Extension {
   });
 }
 
-// The streaming SHIMMER (a gradient sweep) lives in `renderer/index.css` as
-// `.cm-editor .cm-paintbrushStreaming`, not here: it needs `@keyframes` and
-// a reduced-motion `@media` override, both awkward inside a CM6 theme.
+// The paintbrush paints NO tint of its own: the comments layer already
+// marks the selected/anchored passage (`comment-decorations.ts`), and a
+// second tint on top read as a saturated purple slab. The only paintbrush
+// paint is the streaming SWEEP, which lives in `renderer/index.css` as
+// `.cm-editor .cm-paintbrushStreaming` (it needs `@keyframes` and a
+// reduced-motion `@media` override, both awkward inside a CM6 theme). The
+// resting/ready marks stay as class hooks only.
 const paintbrushTheme = EditorView.theme({
   '.cm-paintbrushOverlay': {
-    backgroundColor: 'color-mix(in srgb, var(--accent) 16%, transparent)',
     borderRadius: '4px',
     boxDecorationBreak: 'clone',
     WebkitBoxDecorationBreak: 'clone',
-  },
-  '.cm-paintbrushReady': {
-    backgroundColor: 'color-mix(in srgb, var(--accent) 22%, transparent)',
   },
 });
 

@@ -47,10 +47,10 @@
   pointer-events: none;
 }
 
+/* Gradient only: the comments layer already tints the passage underneath. */
 .rig-brush-sweep {
   position: absolute;
   border-radius: 4px;
-  background-color: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -58,7 +58,7 @@
   .rig-brush-sweep {
     animation: none;
     background-image: none;
-    background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+    background-color: color-mix(in srgb, var(--accent) 10%, transparent);
   }
 }
 /* xterm's own layout/layering CSS (`.xterm-screen`, `.xterm-viewport`,

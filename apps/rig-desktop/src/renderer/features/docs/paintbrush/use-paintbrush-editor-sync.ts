@@ -7,7 +7,7 @@ import { setPaintbrushOverlay, type PaintbrushOverlay } from './paintbrush-decor
  * half of the wiring (`paintbrush-decorations.ts`'s extension is dumb by
  * design: it paints whatever it's handed, same as `comment-decorations.ts`'s
  * `setCommentMarkers`). A no-op while Preview is showing — there is no view
- * to dispatch to; `use-paintbrush-preview-overlay.ts` is Preview's own
+ * to dispatch to; `paintbrush-preview-sweep.tsx` is Preview's own
  * counterpart. (No longer takes an `armed` flag: v1's armed-cursor CM6 theme
  * class is gone — the orb chip that replaced it, `paintbrush-cursor-chip.tsx`,
  * is a plain React overlay that needs nothing dispatched into CM6 state.)

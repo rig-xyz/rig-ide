@@ -24,7 +24,6 @@ import { paintbrushDecorations } from '@renderer/features/docs/paintbrush/paintb
 import { usePaintbrushEditorSync } from '@renderer/features/docs/paintbrush/use-paintbrush-editor-sync';
 import { usePaintbrushMode } from '@renderer/features/docs/paintbrush/use-paintbrush';
 import { PaintbrushPreviewSweep } from '@renderer/features/docs/paintbrush/paintbrush-preview-sweep';
-import { usePaintbrushPreviewOverlay } from '@renderer/features/docs/paintbrush/use-paintbrush-preview-overlay';
 import { PreviewCommentSelectionButton } from '@renderer/features/docs/preview/preview-comment-selection';
 import { usePreviewComments } from '@renderer/features/docs/preview/use-preview-comments';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
@@ -450,19 +449,14 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
     store: comments,
   });
 
-  // Paintbrush's own overlay wiring, one hook per surface — mirrors the
-  // comments layer's Edit/Preview split above exactly (CM6 decoration vs.
-  // CSS Custom Highlight painter). `comments.paintbrushOverlay` is null
-  // whenever there's nothing to paint (mode off, no composer open, no
-  // stroke streaming), so both hooks are inert until a stroke actually
-  // happens.
+  // Paintbrush overlay wiring. The paintbrush paints no tint of its own (the
+  // comments layer already marks the passage); its only paint is the
+  // streaming sweep — a CM6 mark in Edit mode (`usePaintbrushEditorSync`),
+  // rectangles behind the text in Preview (`PaintbrushPreviewSweep`, in the
+  // JSX below). `comments.paintbrushOverlay` is null whenever there's
+  // nothing to track, so both are inert until a stroke actually happens.
   const paintbrushOverlay = comments?.paintbrushOverlay ?? null;
   usePaintbrushEditorSync(resource, mode, paintbrushOverlay);
-  usePaintbrushPreviewOverlay({
-    active: mode === 'preview' && comments !== null,
-    getIndex: () => previewRef.current?.getIndex() ?? null,
-    overlay: paintbrushOverlay,
-  });
 
   // Cursor affordance while armed (punch-list finding 3): the document
   // keeps its plain native text cursor — no CSS override in either mode —
