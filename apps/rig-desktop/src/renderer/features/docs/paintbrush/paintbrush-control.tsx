@@ -66,40 +66,45 @@ export function PaintbrushControl({
 
   const orbSpin = !on ? 'off' : streaming ? 'streaming' : 'idle';
   const agentName = selected?.name ?? 'an agent';
-  const tooltip = on
-    ? `${FEATURE_NAME} is on. Highlight any text and type what you want changed.`
-    : `${FEATURE_NAME}. Turn on, then highlight any text and type what you want changed.`;
 
   // Sized and styled exactly like the neighboring Preview/Edit toggle: same
   // shell, same inner padding, and the SAME neutral selected fill (bg-bg-2)
   // when on, so the header reads as one row of controls. The orb is the
-  // switch, the agent's logo is the only label (its name shows on hover and
-  // in the menu), and hovering the orb names the feature.
+  // switch; hovering the control unfolds the feature's name beside it
+  // (inside the pill, not a tooltip), and the agent's logo is the only
+  // other label, with its name on hover and in the menu.
   return (
     <div className="relative flex items-center">
       <div
         ref={controlRef}
-        className="flex items-center gap-0.5 rounded-control border border-border-hairline bg-bg-1 p-0.5"
+        className="group flex items-center gap-0.5 rounded-control border border-border-hairline bg-bg-1 p-0.5"
       >
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-pressed={on}
-                aria-label={on ? `Turn off ${FEATURE_NAME}` : `Turn on ${FEATURE_NAME}`}
-                onClick={toggle}
-                className={cn(
-                  'flex items-center rounded-control px-1.5 py-1 transition-colors duration-200 ease-out motion-reduce:transition-none',
-                  on ? 'bg-bg-2' : 'hover:bg-bg-2/60'
-                )}
-              >
-                <PaintbrushOrb spin={orbSpin} size={ORB_DISPLAY_SIZE} />
-              </button>
-            }
-          />
-          <TooltipContent side="bottom">{tooltip}</TooltipContent>
-        </Tooltip>
+        <button
+          type="button"
+          aria-pressed={on}
+          aria-label={on ? `Turn off ${FEATURE_NAME}` : `Turn on ${FEATURE_NAME}`}
+          onClick={toggle}
+          className={cn(
+            'flex items-center rounded-control px-1.5 py-1 transition-colors duration-200 ease-out motion-reduce:transition-none',
+            on ? 'bg-bg-2' : 'hover:bg-bg-2/60'
+          )}
+        >
+          <PaintbrushOrb spin={orbSpin} size={ORB_DISPLAY_SIZE} />
+          {/* The name unfolds from behind the orb while the pill is hovered
+              or keyboard-focused, and folds away again; width and opacity
+              animate together so the row grows smoothly rather than popping. */}
+          <span
+            className={cn(
+              'max-w-0 overflow-hidden text-xs font-medium whitespace-nowrap opacity-0',
+              'transition-[max-width,opacity,margin] duration-200 ease-out motion-reduce:transition-none',
+              'group-focus-within:ml-1.5 group-focus-within:max-w-40 group-focus-within:opacity-100',
+              'group-hover:ml-1.5 group-hover:max-w-40 group-hover:opacity-100',
+              on ? 'text-text-primary' : 'text-text-muted'
+            )}
+          >
+            {FEATURE_NAME}
+          </span>
+        </button>
 
         <Tooltip>
           <TooltipTrigger
