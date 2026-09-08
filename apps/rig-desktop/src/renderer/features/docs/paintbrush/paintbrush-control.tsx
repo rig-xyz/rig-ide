@@ -95,7 +95,7 @@ export function PaintbrushControl({
               animate together so the row grows smoothly rather than popping. */}
           <span
             className={cn(
-              'max-w-0 overflow-hidden text-xs font-medium whitespace-nowrap opacity-0',
+              'max-w-0 overflow-hidden text-xs font-normal whitespace-nowrap opacity-0',
               'transition-[max-width,opacity,margin] duration-200 ease-out motion-reduce:transition-none',
               'group-focus-within:ml-1.5 group-focus-within:max-w-40 group-focus-within:opacity-100',
               'group-hover:ml-1.5 group-hover:max-w-40 group-hover:opacity-100',

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ThinkingOrb } from 'thinking-orbs';
+import { useTheme } from '@renderer/lib/hooks/use-theme';
 import { cn } from '@renderer/lib/utils';
 
 /**
@@ -79,6 +80,10 @@ export function PaintbrushOrb({
   className?: string;
 }) {
   const reducedMotion = usePrefersReducedMotion();
+  // The library would otherwise resolve the theme itself (and in this app
+  // lands on the OS scheme, painting light ink onto a light UI — the orb
+  // vanished in light mode). Hand it the app's applied theme instead.
+  const theme = useTheme();
   const scale = size / CANVAS_SIZE;
   const paused = spin === 'off' || reducedMotion;
 
@@ -93,7 +98,13 @@ export function PaintbrushOrb({
       style={{ width: size, height: size, filter: TINT_FILTER }}
     >
       <span style={{ transform: `scale(${scale})` }}>
-        <ThinkingOrb state="searching" size={CANVAS_SIZE} speed={SPEED[spin]} paused={paused} />
+        <ThinkingOrb
+          state="searching"
+          size={CANVAS_SIZE}
+          speed={SPEED[spin]}
+          paused={paused}
+          theme={theme}
+        />
       </span>
     </span>
   );
