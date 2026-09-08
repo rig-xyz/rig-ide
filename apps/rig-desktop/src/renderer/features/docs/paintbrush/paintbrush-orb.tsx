@@ -92,7 +92,7 @@ export function PaintbrushOrb({
       aria-hidden
       className={cn(
         'inline-flex shrink-0 items-center justify-center',
-        spin === 'off' && 'opacity-60',
+        spin === 'off' && 'opacity-55',
         className
       )}
       style={{ width: size, height: size, filter: TINT_FILTER }}

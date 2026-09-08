@@ -86,10 +86,23 @@ export function PaintbrushControl({
           onClick={toggle}
           className={cn(
             'flex items-center rounded-control px-1.5 py-1 transition-colors duration-200 ease-out motion-reduce:transition-none',
-            on ? 'bg-bg-2' : 'hover:bg-bg-2/60'
+            // On: the toggle's neutral fill plus a neutral inset outline —
+            // bg-bg-2 alone is close to invisible on the light theme.
+            on ? 'bg-bg-2 ring-1 ring-inset ring-border-strong' : 'hover:bg-bg-2/60'
           )}
         >
-          <PaintbrushOrb spin={orbSpin} size={ORB_DISPLAY_SIZE} />
+          <span className="relative flex items-center">
+            <PaintbrushOrb spin={orbSpin} size={ORB_DISPLAY_SIZE} />
+            {/* A small status dot on the orb's shoulder while on: the app's
+                existing "live" vocabulary (unread threads, an agent editing
+                now), readable in both themes without tinting the control. */}
+            {on && (
+              <span
+                aria-hidden
+                className="bg-accent absolute -top-0.5 -right-0.5 size-1.5 rounded-chip ring-2 ring-bg-2"
+              />
+            )}
+          </span>
           {/* The name unfolds from behind the orb while the pill is hovered
               or keyboard-focused, and folds away again; width and opacity
               animate together so the row grows smoothly rather than popping. */}

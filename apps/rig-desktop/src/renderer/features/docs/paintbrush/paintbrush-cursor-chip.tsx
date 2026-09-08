@@ -26,7 +26,7 @@ import { PaintbrushOrb } from './paintbrush-orb';
  */
 
 /** Small enough to trail the pointer without competing with the caret; big enough that the orb's animation still reads. */
-const CHIP_SIZE = 16;
+const CHIP_SIZE = 18;
 export function PaintbrushCursorChip({
   active,
   containerRef,
@@ -84,9 +84,11 @@ export function PaintbrushCursorChip({
 
   return createPortal(
     // A solid little disc behind the orb: on its own, the orb's fine dots
-    // vanish against body text — the chip has to read over any background.
+    // vanish against body text — the chip has to read over any background,
+    // including a white page in the light theme (hence the stronger
+    // surface and border, not the hairline).
     <div
-      className="border-border-hairline bg-bg-1 pointer-events-none fixed z-50 flex items-center justify-center rounded-full border p-0.5 shadow-soft"
+      className="border-border-strong bg-bg-2 pointer-events-none fixed z-50 flex items-center justify-center rounded-full border p-0.5 shadow-soft"
       style={{ left: pos.x + OFFSET, top: pos.y + OFFSET }}
     >
       <PaintbrushOrb spin="idle" size={CHIP_SIZE} />
