@@ -182,7 +182,40 @@ export type RigCommentAgentRequest = {
   paintbrush?: boolean;
 };
 
-/** A reply's structured proposed replacement for the anchored range — see `main/rig/comment-agent-proposal.ts`. */
+/**
+ * Sentinel markers the paintbrush prompt asks the agent to wrap a replacement
+ * in — parsed main-side (`main/rig/comment-agent-proposal.ts`). Shared so the
+ * renderer can keep them out of the reader's sight while a stroke streams.
+ */
+export const PAINTBRUSH_REPLACEMENT_START = '<<<RIG_PAINTBRUSH_REPLACEMENT>>>';
+export const PAINTBRUSH_REPLACEMENT_END = '<<<END_RIG_PAINTBRUSH_REPLACEMENT>>>';
+
+/**
+ * What the margin shows of a stroke's live text while it streams: the prose
+ * before any replacement block, then a fixed "drafting" line once the block
+ * begins. The raw markers (or a half-typed prefix of one at the tail of the
+ * stream) never reach the reader.
+ */
+export function paintbrushStreamingPreview(text: string): string {
+  const drafting = 'Drafting the replacement…';
+  const start = text.indexOf(PAINTBRUSH_REPLACEMENT_START);
+  if (start !== -1) {
+    const prose = text.slice(0, start).trim();
+    return prose.length > 0 ? `${prose}\n\n${drafting}` : drafting;
+  }
+  for (let len = PAINTBRUSH_REPLACEMENT_START.length - 1; len >= 3; len--) {
+    if (text.endsWith(PAINTBRUSH_REPLACEMENT_START.slice(0, len))) {
+      return text.slice(0, text.length - len).trimEnd();
+    }
+  }
+  return text;
+}
+
+/**
+ * A reply's structured proposed replacement for the anchored range — see
+ * `main/rig/comment-agent-proposal.ts`. An empty `replacement` is a real
+ * proposal: delete the passage.
+ */
 export type CommentProposal = { replacement: string };
 
 /**
@@ -196,7 +229,7 @@ export function getCommentProposal(meta: Record<string, unknown> | null): Commen
   const raw = meta?.proposal;
   if (typeof raw !== 'object' || raw === null) return null;
   const replacement = (raw as Record<string, unknown>).replacement;
-  return typeof replacement === 'string' && replacement.length > 0 ? { replacement } : null;
+  return typeof replacement === 'string' ? { replacement } : null;
 }
 
 /**

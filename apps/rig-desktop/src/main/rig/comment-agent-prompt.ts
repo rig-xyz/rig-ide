@@ -65,7 +65,8 @@ export function composeCommentAgentPrompt(
       PAINTBRUSH_REPLACEMENT_START,
       '(the full replacement text for the anchored passage ONLY, preserving its existing Markdown and wrapping — no surrounding marker syntax)',
       PAINTBRUSH_REPLACEMENT_END,
-      'If the instruction is a genuine question rather than a change ("what does this mean?"), just answer in prose and omit the block entirely — never emit an empty or placeholder block.'
+      'If the instruction asks to REMOVE or delete the passage, emit the block with nothing between the markers — an empty block means "delete the passage".',
+      'If the instruction is a genuine question rather than a change ("what does this mean?"), just answer in prose and omit the block entirely — never emit a placeholder block.'
     );
   } else {
     context.push(

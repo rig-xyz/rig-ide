@@ -56,7 +56,17 @@ export function PaintbrushCursorChip({
       rafRef.current = requestAnimationFrame(flush);
     };
 
-    const handleMove = (event: PointerEvent) => schedule({ x: event.clientX, y: event.clientY });
+    // The chip is a "you can brush here" hint for the document text — over
+    // the margin, a card, a button or a field it is just clutter (it was
+    // sitting on top of the reply box), so it hides there.
+    const handleMove = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest(HIDE_OVER)) {
+        schedule(null);
+        return;
+      }
+      schedule({ x: event.clientX, y: event.clientY });
+    };
     const handleLeave = () => schedule(null);
 
     container.addEventListener('pointermove', handleMove);
@@ -73,8 +83,10 @@ export function PaintbrushCursorChip({
   if (!active || pos === null) return null;
 
   return createPortal(
+    // A solid little disc behind the orb: on its own, the orb's fine dots
+    // vanish against body text — the chip has to read over any background.
     <div
-      className="pointer-events-none fixed z-50"
+      className="border-border-hairline bg-bg-1 pointer-events-none fixed z-50 flex items-center justify-center rounded-full border p-0.5 shadow-soft"
       style={{ left: pos.x + OFFSET, top: pos.y + OFFSET }}
     >
       <PaintbrushOrb spin="idle" size={CHIP_SIZE} />
@@ -85,3 +97,7 @@ export function PaintbrushCursorChip({
 
 /** Down-and-right so the chip never sits under (or obscures) the cursor it's tracking. */
 const OFFSET = 14;
+
+/** Surfaces the chip must never float over — anything that isn't the document's own text. */
+const HIDE_OVER =
+  'button, a, input, textarea, select, [role="dialog"], [role="menu"], [data-paintbrush-floating-card], [data-comments-rail]';

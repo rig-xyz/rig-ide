@@ -28,7 +28,12 @@ import type { PaintbrushOverlay } from './paintbrush-decorations';
 const STYLE_ID = 'rig-paintbrush-preview-highlight-styles';
 const RESTING_KEY = 'rig-paintbrush';
 const STREAMING_KEY = 'rig-paintbrush-streaming';
+const READY_KEY = 'rig-paintbrush-ready';
+const BUCKETS = [RESTING_KEY, STREAMING_KEY, READY_KEY] as const;
+type Bucket = (typeof BUCKETS)[number];
 
+// `::highlight()` supports only color, background-color and text-decoration
+// — the ready state's underline is exactly the one extra thing it allows.
 const HIGHLIGHT_CSS = `
 ::highlight(${RESTING_KEY}) {
   background-color: color-mix(in srgb, var(--accent) 20%, transparent);
@@ -36,7 +41,18 @@ const HIGHLIGHT_CSS = `
 ::highlight(${STREAMING_KEY}) {
   background-color: var(--rig-brush-pulse);
 }
+::highlight(${READY_KEY}) {
+  background-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+}
 `;
+
+function bucketFor(overlay: PaintbrushOverlay): Bucket {
+  if (overlay.streaming) return STREAMING_KEY;
+  if (overlay.ready) return READY_KEY;
+  return RESTING_KEY;
+}
 
 function highlightApiSupported(): boolean {
   return typeof window !== 'undefined' && typeof CSS !== 'undefined' && 'highlights' in CSS;
@@ -61,54 +77,46 @@ export type PaintbrushPreviewPainter = {
 export function createPaintbrushPreviewPainter(
   getIndex: () => PositionIndex | null
 ): PaintbrushPreviewPainter {
-  let restingPainted = false;
-  let streamingPainted = false;
+  const painted = new Set<Bucket>();
 
   return {
     paint(overlays) {
       if (!highlightApiSupported()) return;
       const index = getIndex();
-      const resting: Range[] = [];
-      const streaming: Range[] = [];
+      const byBucket: Record<Bucket, Range[]> = {
+        [RESTING_KEY]: [],
+        [STREAMING_KEY]: [],
+        [READY_KEY]: [],
+      };
       if (index) {
         for (const overlay of overlays) {
           const ranges = index
             .sourceToDom(overlay.from, overlay.to)
             ?.filter((range) => range.toString().trim() !== '');
           if (!ranges) continue;
-          (overlay.streaming ? streaming : resting).push(...ranges);
+          byBucket[bucketFor(overlay)].push(...ranges);
         }
       }
 
-      if (resting.length === 0) {
-        if (restingPainted) {
-          CSS.highlights.delete(RESTING_KEY);
-          restingPainted = false;
+      for (const bucket of BUCKETS) {
+        const ranges = byBucket[bucket];
+        if (ranges.length === 0) {
+          if (painted.has(bucket)) {
+            CSS.highlights.delete(bucket);
+            painted.delete(bucket);
+          }
+        } else {
+          ensureStyles();
+          CSS.highlights.set(bucket, new Highlight(...ranges));
+          painted.add(bucket);
         }
-      } else {
-        ensureStyles();
-        CSS.highlights.set(RESTING_KEY, new Highlight(...resting));
-        restingPainted = true;
-      }
-
-      if (streaming.length === 0) {
-        if (streamingPainted) {
-          CSS.highlights.delete(STREAMING_KEY);
-          streamingPainted = false;
-        }
-      } else {
-        ensureStyles();
-        CSS.highlights.set(STREAMING_KEY, new Highlight(...streaming));
-        streamingPainted = true;
       }
     },
 
     dispose() {
       if (!highlightApiSupported()) return;
-      CSS.highlights.delete(RESTING_KEY);
-      CSS.highlights.delete(STREAMING_KEY);
-      restingPainted = false;
-      streamingPainted = false;
+      for (const bucket of BUCKETS) CSS.highlights.delete(bucket);
+      painted.clear();
     },
   };
 }

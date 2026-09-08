@@ -32,16 +32,16 @@
 }
 
 .rig-brush-pulsing {
-  animation: rig-brush-pulse 1.6s ease-in-out infinite;
+  animation: rig-brush-pulse 1.4s ease-in-out infinite;
 }
 
 @keyframes rig-brush-pulse {
   0%,
   100% {
-    --rig-brush-pulse: color-mix(in srgb, var(--accent) 18%, transparent);
+    --rig-brush-pulse: color-mix(in srgb, var(--accent) 16%, transparent);
   }
   50% {
-    --rig-brush-pulse: color-mix(in srgb, var(--accent) 60%, transparent);
+    --rig-brush-pulse: color-mix(in srgb, var(--accent) 58%, transparent);
   }
 }
 

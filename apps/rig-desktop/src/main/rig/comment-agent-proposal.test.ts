@@ -46,11 +46,15 @@ describe('extractProposal', () => {
     expect(extractProposal(answer)).toEqual({ body: answer, proposal: null });
   });
 
-  it('never proposes an empty replacement', () => {
-    const answer = `Nothing to change.\n${PAINTBRUSH_REPLACEMENT_START}\n${PAINTBRUSH_REPLACEMENT_END}`;
+  it('treats an empty block as a proposal to delete the passage', () => {
+    const answer = `Removing it.\n${PAINTBRUSH_REPLACEMENT_START}\n${PAINTBRUSH_REPLACEMENT_END}`;
     expect(extractProposal(answer)).toEqual({
-      body: 'Nothing to change.',
-      proposal: null,
+      body: 'Removing it.',
+      proposal: { replacement: '' },
+    });
+    expect(extractProposal(`${PAINTBRUSH_REPLACEMENT_START}\n${PAINTBRUSH_REPLACEMENT_END}`)).toEqual({
+      body: 'Proposed removing the selected passage.',
+      proposal: { replacement: '' },
     });
   });
 });

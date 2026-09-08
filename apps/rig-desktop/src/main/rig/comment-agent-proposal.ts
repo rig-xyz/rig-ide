@@ -18,8 +18,9 @@
  * `meta.proposal`, `shared/rig/comments.ts`'s `getCommentProposal`).
  */
 
-export const PAINTBRUSH_REPLACEMENT_START = '<<<RIG_PAINTBRUSH_REPLACEMENT>>>';
-export const PAINTBRUSH_REPLACEMENT_END = '<<<END_RIG_PAINTBRUSH_REPLACEMENT>>>';
+import { PAINTBRUSH_REPLACEMENT_END, PAINTBRUSH_REPLACEMENT_START } from '@shared/rig/comments';
+
+export { PAINTBRUSH_REPLACEMENT_END, PAINTBRUSH_REPLACEMENT_START };
 
 /**
  * Breaks sentinel-marker occurrences in UNTRUSTED text before it is embedded
@@ -63,7 +64,14 @@ export function extractProposal(answer: string): ExtractedAnswer {
   return {
     // A block-only answer (no surrounding prose) still needs something to
     // post as the visible reply — the thread must never show an empty comment.
-    body: body.length > 0 ? body : 'Proposed a change to the selected passage.',
-    proposal: replacement.length > 0 ? { replacement } : null,
+    body:
+      body.length > 0
+        ? body
+        : replacement.length > 0
+          ? 'Proposed a change to the selected passage.'
+          : 'Proposed removing the selected passage.',
+    // An empty block is a real proposal — "delete the passage" — not a
+    // missing one (the prompt tells the agent exactly that).
+    proposal: { replacement },
   };
 }

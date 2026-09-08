@@ -28,5 +28,5 @@ export function usePaintbrushEditorSync(
       ?.getView()
       ?.dispatch({ effects: setPaintbrushOverlay.of(overlay ? [overlay] : []) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resource, mode, overlay?.from, overlay?.to, overlay?.streaming]);
+  }, [resource, mode, overlay?.from, overlay?.to, overlay?.streaming, overlay?.ready]);
 }

@@ -26,6 +26,7 @@ import { cn } from '@renderer/lib/utils';
 import type { AgentIconAsset } from '@shared/core/agents/agent-payload';
 import {
   getCommentProposal,
+  paintbrushStreamingPreview,
   type RigCommentMessage,
   type RigCommentPermissionRequest,
 } from '@shared/rig/comments';
@@ -597,7 +598,10 @@ const AgentReplyCard = observer(function AgentReplyCard({
       </div>
       {pending.text && (
         <p className="text-text-muted mt-1.5 line-clamp-4 text-xs leading-relaxed whitespace-pre-wrap">
-          {pending.text}
+          {/* A stroke's live text may contain the replacement block's raw
+              sentinel markers mid-stream — the reader gets the prose and a
+              "drafting" line, never the markers. */}
+          {paintbrushStreaming ? paintbrushStreamingPreview(pending.text) : pending.text}
         </p>
       )}
       {permissions.map((request) => (
@@ -626,65 +630,6 @@ const INTERACTIVE = 'button, a, input, textarea, select, [role="button"], [conte
  * and the synchronized highlight; this is a small extra confirmation for the
  * one card that's currently selected, not a standing map of every thread.
  */
-/**
- * A streaming paintbrush stroke's card gets a "beam" — a slow, rotating
- * conic-gradient ring traveling around its border (punch-list finding 2c;
- * the design doc's own reference feel, "border-beam pulse-inner/mono").
- * Injected as a plain stylesheet rather than Tailwind classes: a rotating
- * conic-gradient ring needs a `mask-composite: exclude` pseudo-element and
- * a `@keyframes` block, neither expressible as utility classes. `z-index:
- * -1` on the pseudo (with `isolation: isolate` on the card) keeps the ring
- * OUTSIDE the card's own opaque background, so only the 1px annulus at
- * the edge — the actual "beam" — shows through.
- */
-const BEAM_STYLE_ID = 'rig-paintbrush-beam-styles';
-const BEAM_CSS = `
-.rig-paintbrush-beam {
-  position: relative;
-  isolation: isolate;
-}
-.rig-paintbrush-beam::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  z-index: -1;
-  border-radius: inherit;
-  padding: 1px;
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg,
-    color-mix(in srgb, var(--accent) 85%, transparent) 35deg,
-    transparent 80deg,
-    transparent 360deg
-  );
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .rig-paintbrush-beam::before {
-    animation: rig-paintbrush-beam-spin 2.4s linear infinite;
-  }
-}
-@keyframes rig-paintbrush-beam-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-`;
-
-function ensureBeamStyles(): void {
-  if (typeof document === 'undefined') return;
-  let style = document.getElementById(BEAM_STYLE_ID) as HTMLStyleElement | null;
-  if (!style) {
-    style = document.createElement('style');
-    style.id = BEAM_STYLE_ID;
-    document.head.appendChild(style);
-  }
-  if (style.textContent !== BEAM_CSS) style.textContent = BEAM_CSS;
-}
-
 function ActiveConnector({ muted }: { muted?: boolean }) {
   const [shown, setShown] = useState(false);
   useEffect(() => {
@@ -713,7 +658,8 @@ const Card = observer(function Card({
   muted,
   compact,
   hasAnchor = true,
-  beaming,
+  brush,
+  streaming,
   onActivate,
 }: {
   children: React.ReactNode;
@@ -732,14 +678,13 @@ const Card = observer(function Card({
    * explicitly; the default only matters for a future caller that doesn't.
    */
   hasAnchor?: boolean;
-  /** A paintbrush stroke is streaming against this card's thread — see `ensureBeamStyles`. */
-  beaming?: boolean;
+  /** A paintbrush thread: carries a thin accent rule on its left edge so it reads as a stroke, not a plain comment. */
+  brush?: boolean;
+  /** A paintbrush stroke is streaming against this card's thread — the border warms to the accent while it works. */
+  streaming?: boolean;
   onActivate?: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (beaming) ensureBeamStyles();
-  }, [beaming]);
 
   // The active card nudges toward the document — the Docs "this one's mine"
   // cue. It does NOT scroll itself into view: that used to live here, guarded
@@ -779,7 +724,8 @@ const Card = observer(function Card({
         // NOT the active one — secondary in the list, full legibility once
         // it's the one in focus.
         muted && !active && 'opacity-70',
-        beaming && 'rig-paintbrush-beam'
+        brush && 'border-l-2 border-l-accent/60',
+        streaming && !active && 'border-accent/50'
       )}
     >
       {active && hasAnchor && <ActiveConnector muted={muted} />}
@@ -960,11 +906,36 @@ const ProposalApplyRow = observer(function ProposalApplyRow({
   const proposal = getCommentProposal(reply.meta);
   if (!proposal) return null;
 
+  const isDeletion = proposal.replacement === '';
+
   if (store.isProposalApplied(reply.id)) {
+    const canRevert = store.canRevertProposal(reply.id);
     return (
-      <span className="bg-bg-2 text-text-muted mt-1.5 inline-flex w-fit items-center rounded-chip px-1.5 py-0.5 font-mono text-xs">
-        Applied
-      </span>
+      <div className="mt-1.5 flex items-center gap-2">
+        <span className="bg-bg-2 text-text-muted inline-flex items-center rounded-chip px-1.5 py-0.5 font-mono text-xs">
+          {isDeletion ? 'Removed' : 'Applied'}
+        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                disabled={!canRevert}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  store.revertProposal(reply.id);
+                }}
+                className="text-text-muted hover:text-text-primary text-xs underline disabled:no-underline disabled:opacity-50"
+              >
+                Revert
+              </button>
+            }
+          />
+          {!canRevert && (
+            <TooltipContent side="bottom">text has changed since — revert manually</TooltipContent>
+          )}
+        </Tooltip>
+      </div>
     );
   }
 
@@ -979,14 +950,19 @@ const ProposalApplyRow = observer(function ProposalApplyRow({
       {/* Apply must be informed consent: the reader sees exactly what will
           replace the anchored passage — the reply prose alone doesn't carry
           the replacement (the sentinel block is stripped before posting). */}
-      <div className="border-border bg-bg-2 text-text max-h-40 overflow-y-auto whitespace-pre-wrap rounded border px-2 py-1.5 text-xs">
-        {proposal.replacement}
+      <div
+        className={cn(
+          'border-accent/40 bg-bg-2 max-h-40 overflow-y-auto rounded border px-2 py-1.5 text-xs whitespace-pre-wrap',
+          isDeletion ? 'text-text-muted italic' : 'text-text'
+        )}
+      >
+        {isDeletion ? 'Removes the selected passage.' : proposal.replacement}
       </div>
       <Tooltip>
         <TooltipTrigger
           render={
             <Button size="xs" variant="secondary" disabled={!canApply} onClick={apply}>
-              Apply
+              {isDeletion ? 'Remove passage' : 'Apply'}
             </Button>
           }
         />
@@ -1062,7 +1038,8 @@ export const ThreadCard = observer(function ThreadCard({
       muted={thread.resolved}
       compact={collapsed}
       hasAnchor={thread.index !== null}
-      beaming={!collapsed && store.isPaintbrushStreaming(root.id)}
+      brush={store.isPaintbrushThread(root.id)}
+      streaming={!collapsed && store.isPaintbrushStreaming(root.id)}
       onActivate={() => store.setActiveThread(root.id)}
     >
       <button
@@ -1092,6 +1069,9 @@ export const ThreadCard = observer(function ThreadCard({
         >
           {summary}
         </span>
+        {store.isPaintbrushThread(root.id) && (
+          <PaintbrushOrb spin="off" size={12} className="mt-px shrink-0 opacity-90" />
+        )}
         {collapsed && (
           <span className="text-text-muted shrink-0 font-mono text-xs">
             {lastSpeaker(thread)} · {replies.length + 1}

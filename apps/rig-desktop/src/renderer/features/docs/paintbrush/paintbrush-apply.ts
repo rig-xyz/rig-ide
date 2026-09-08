@@ -16,7 +16,7 @@ import type { RigCommentAnchor } from '@shared/rig/comments';
  * genuine orphan, not guessed at.
  */
 export type ProposalApplyResult =
-  | { ok: true; from: number; to: number; nextContent: string }
+  | { ok: true; from: number; to: number; original: string; nextContent: string }
   | { ok: false; reason: 'no-anchor' | 'orphan' };
 
 export function resolveProposalApply(
@@ -29,13 +29,87 @@ export function resolveProposalApply(
   if (located.status !== 'anchored' || located.index === undefined) {
     return { ok: false, reason: 'orphan' };
   }
-  const from = located.index;
-  const to = from + anchor.exact.length;
+  let from = located.index;
+  let to = from + anchor.exact.length;
+  if (replacement === '') {
+    ({ from, to } = expandDeletionToLines(content, from, to));
+  }
   return {
     ok: true,
     from,
     to,
+    original: content.slice(from, to),
     nextContent: content.slice(0, from) + replacement + content.slice(to),
+  };
+}
+
+/**
+ * A deletion that would leave its line(s) holding nothing but Markdown
+ * markers (`# `, `- `, `> `, `1. `) removes the whole line(s) instead —
+ * "remove the title" must not leave a bare `# ` behind. A deletion inside a
+ * sentence stays exactly as narrow as the passage.
+ */
+function expandDeletionToLines(
+  content: string,
+  from: number,
+  to: number
+): { from: number; to: number } {
+  const lineStart = from === 0 ? 0 : content.lastIndexOf('\n', from - 1) + 1;
+  const newlineAfter = content.indexOf('\n', to);
+  const lineEnd = newlineAfter === -1 ? content.length : newlineAfter;
+  const leftover = content.slice(lineStart, from) + content.slice(to, lineEnd);
+  if (!/^[\s#>*+-]*(?:\d+\.)?\s*$/.test(leftover)) return { from, to };
+  if (newlineAfter !== -1) return { from: lineStart, to: newlineAfter + 1 };
+  return { from: lineStart === 0 ? 0 : lineStart - 1, to: lineEnd };
+}
+
+/**
+ * What `revertProposal` needs to undo an applied stroke later: the text it
+ * replaced, the text it put there, and a little context on either side so
+ * the applied span can be re-located exactly even when the replacement is
+ * empty (a deletion) or repeats elsewhere in the document.
+ */
+export type AppliedProposalRecord = {
+  original: string;
+  replacement: string;
+  prefix: string;
+  suffix: string;
+};
+
+const REVERT_CONTEXT = 32;
+
+export function recordProposalApply(
+  nextContent: string,
+  from: number,
+  replacement: string,
+  original: string
+): AppliedProposalRecord {
+  return {
+    original,
+    replacement,
+    prefix: nextContent.slice(Math.max(0, from - REVERT_CONTEXT), from),
+    suffix: nextContent.slice(from + replacement.length, from + replacement.length + REVERT_CONTEXT),
+  };
+}
+
+/**
+ * Put the original passage back over an applied replacement — only when the
+ * applied span (with its recorded context) is still found exactly once in
+ * the current buffer. Anything else is refused rather than guessed at, the
+ * same rule as applying.
+ */
+export function resolveProposalRevert(
+  content: string,
+  record: AppliedProposalRecord
+): { ok: true; nextContent: string } | { ok: false } {
+  const needle = record.prefix + record.replacement + record.suffix;
+  if (needle.length === 0) return { ok: false };
+  const first = content.indexOf(needle);
+  if (first === -1 || content.indexOf(needle, first + 1) !== -1) return { ok: false };
+  const at = first + record.prefix.length;
+  return {
+    ok: true,
+    nextContent: content.slice(0, at) + record.original + content.slice(at + record.replacement.length),
   };
 }
 

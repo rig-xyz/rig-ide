@@ -13,7 +13,12 @@ import {
   type RigCommentsError,
 } from '@shared/rig/comments';
 import type { DocTabResource } from '../doc-file-sync';
-import { resolveProposalApply } from '../paintbrush/paintbrush-apply';
+import {
+  recordProposalApply,
+  resolveProposalApply,
+  resolveProposalRevert,
+  type AppliedProposalRecord,
+} from '../paintbrush/paintbrush-apply';
 import { buildAnchor, buildAnchorFromRange, groupThreads, reanchor } from './anchors';
 import { cm6SurfaceAdapter, type CommentMarker } from './comment-decorations';
 import {
@@ -331,7 +336,7 @@ export class DocCommentsStore {
    * observed field): `ProposalApplyRow` reads this on its own, with nothing
    * else forcing a re-render when it flips.
    */
-  appliedProposals = new Set<string>();
+  appliedProposals = new Map<string, AppliedProposalRecord>();
   /**
    * The thread the reader is currently reading, shared by the document and the
    * margin so both can point at the same conversation: the anchored passage and
@@ -472,6 +477,7 @@ export class DocCommentsStore {
       openComposer: action.bound,
       closeComposer: action.bound,
       applyProposal: action.bound,
+      revertProposal: action.bound,
       setActiveThread: action.bound,
       setHoveredThread: action.bound,
       dismissAgentReply: action.bound,
@@ -1119,7 +1125,7 @@ export class DocCommentsStore {
    * synchronously with its own thread's creation — so the first match wins
    * rather than this collecting a list.
    */
-  get paintbrushOverlay(): { from: number; to: number; streaming: boolean } | null {
+  get paintbrushOverlay(): { from: number; to: number; streaming: boolean; ready?: boolean } | null {
     if (
       this.composerQuote !== null &&
       this.composerPaintbrushAgent !== null &&
@@ -1142,12 +1148,53 @@ export class DocCommentsStore {
         };
       }
     }
+    // Nothing streaming: the span of the newest proposal still waiting to be
+    // applied (steady accent — "this is what Apply will touch").
+    for (const thread of this.threads) {
+      if (thread.resolved || thread.index === null || !thread.root.anchor) continue;
+      if (!this.isPaintbrushThread(thread.root.id)) continue;
+      const last = thread.replies[thread.replies.length - 1];
+      if (!last || this.appliedProposals.has(last.id)) continue;
+      const raw = last.meta?.proposal;
+      const hasProposal =
+        typeof raw === 'object' &&
+        raw !== null &&
+        typeof (raw as Record<string, unknown>).replacement === 'string';
+      if (!hasProposal) continue;
+      return {
+        from: thread.index,
+        to: thread.index + thread.root.anchor.exact.length,
+        streaming: false,
+        ready: true,
+      };
+    }
     return null;
   }
 
   /** Whether a reply's proposal has been applied this session — see `appliedProposals`. */
   isProposalApplied(replyId: string): boolean {
     return this.appliedProposals.has(replyId);
+  }
+
+  /** Whether an applied proposal can still be put back — its applied span must be found exactly once. */
+  canRevertProposal(replyId: string): boolean {
+    const record = this.appliedProposals.get(replyId);
+    return record !== undefined && resolveProposalRevert(this._resource.content, record).ok;
+  }
+
+  /**
+   * Undo `applyProposal`: the original passage goes back over the applied
+   * replacement, through the same write path. Refused (returns false) when
+   * the applied span can't be re-located exactly once — never guessed at.
+   */
+  revertProposal(replyId: string): boolean {
+    const record = this.appliedProposals.get(replyId);
+    if (!record) return false;
+    const result = resolveProposalRevert(this._resource.content, record);
+    if (!result.ok) return false;
+    this._resource.applyProgrammaticEdit(result.nextContent);
+    this.appliedProposals.delete(replyId);
+    return true;
   }
 
   /**
@@ -1170,7 +1217,10 @@ export class DocCommentsStore {
     const result = resolveProposalApply(this._resource.content, thread.root.anchor, replacement);
     if (!result.ok) return false;
     this._resource.applyProgrammaticEdit(result.nextContent);
-    this.appliedProposals.add(replyId);
+    this.appliedProposals.set(
+      replyId,
+      recordProposalApply(result.nextContent, result.from, replacement, result.original)
+    );
     return true;
   }
 

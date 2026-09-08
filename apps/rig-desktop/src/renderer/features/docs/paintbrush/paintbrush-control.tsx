@@ -62,18 +62,21 @@ export function PaintbrushControl({
   const chevronRef = useRef<HTMLButtonElement>(null);
 
   const orbSpin = !on ? 'off' : streaming ? 'streaming' : 'idle';
-  const label = selected ? selected.name : 'Paintbrush';
   const tooltip = on
     ? `Paintbrush on · ${selected ? selected.name : 'choose an agent'} — select text to start`
     : 'Paintbrush: select any text and tell an agent what to do with it';
 
+  // A two-tone pill, always: the orb segment (toggle, labeled so it is never
+  // an unexplained glyph) and a gray agent segment (the model, plus the menu
+  // chevron). Armed = the orb segment picks up the accent; off = both
+  // segments neutral, the label still reads "Paintbrush".
   return (
     <div className="relative flex items-center">
       <div
         ref={controlRef}
         className={cn(
-          'flex items-center rounded-control border transition-colors duration-200 ease-out motion-reduce:transition-none',
-          on ? 'border-accent/40 bg-accent-subtle' : 'border-border-hairline bg-bg-1'
+          'flex items-stretch overflow-hidden rounded-control border transition-colors duration-200 ease-out motion-reduce:transition-none',
+          on ? 'border-accent/40' : 'border-border-hairline'
         )}
       >
         <Tooltip>
@@ -84,19 +87,15 @@ export function PaintbrushControl({
                 aria-pressed={on}
                 aria-label={on ? 'Turn off the paintbrush' : 'Turn on the paintbrush'}
                 onClick={toggle}
-                className="flex items-center gap-1.5 rounded-control py-1 pr-2 pl-1"
+                className={cn(
+                  'flex items-center gap-1.5 py-1 pr-2 pl-1.5 transition-colors duration-200 ease-out motion-reduce:transition-none',
+                  on
+                    ? 'bg-accent-subtle text-accent'
+                    : 'bg-bg-1 text-text-muted hover:text-text-primary'
+                )}
               >
                 <PaintbrushOrb spin={orbSpin} size={ORB_DISPLAY_SIZE} />
-                {/* Armed state must be obvious from a glance, not just a hover
-                    tooltip — the word "Paintbrush", or the agent's own name
-                    once chosen, sits right beside the orb whenever the mode
-                    is on. */}
-                {on && (
-                  <span className="popover-in flex items-center gap-1 text-xs font-medium text-accent">
-                    {selected && <AgentIcon icon={selected.icon} size={12} className="shrink-0" />}
-                    {label}
-                  </span>
-                )}
+                <span className="text-xs font-medium">{on ? 'Paintbrush on' : 'Paintbrush'}</span>
               </button>
             }
           />
@@ -111,11 +110,20 @@ export function PaintbrushControl({
           aria-label="Choose the paintbrush agent"
           onClick={() => setOpen((v) => !v)}
           className={cn(
-            'flex size-6 shrink-0 items-center justify-center rounded-control',
-            on ? 'text-accent/70 hover:text-accent' : 'text-text-muted hover:text-text-primary'
+            'flex items-center gap-1 border-l py-1 pr-1.5 pl-2 text-xs transition-colors duration-200 ease-out motion-reduce:transition-none',
+            'bg-bg-2 hover:text-text-primary',
+            on ? 'border-accent/30 text-text-primary' : 'border-border-hairline text-text-muted'
           )}
         >
-          <ChevronDown className="size-3" strokeWidth={1.5} />
+          {selected ? (
+            <>
+              <AgentIcon icon={selected.icon} size={12} className="shrink-0" />
+              <span className="max-w-28 truncate">{selected.name}</span>
+            </>
+          ) : (
+            <span>Choose agent</span>
+          )}
+          <ChevronDown className="size-3 shrink-0" strokeWidth={1.5} />
         </button>
       </div>
 

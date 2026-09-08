@@ -27,7 +27,7 @@ export function usePaintbrushPreviewOverlay({
   useLayoutEffect(() => {
     painter.paint(active && overlay ? [overlay] : []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, overlay?.from, overlay?.to, overlay?.streaming, painter]);
+  }, [active, overlay?.from, overlay?.to, overlay?.streaming, overlay?.ready, painter]);
 
   useLayoutEffect(() => () => painter.dispose(), [painter]);
 }

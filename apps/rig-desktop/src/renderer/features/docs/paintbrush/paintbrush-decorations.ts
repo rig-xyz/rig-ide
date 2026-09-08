@@ -17,7 +17,13 @@ import { Decoration, EditorView } from '@codemirror/view';
  * one box with a jagged mid-line edge.
  */
 
-export type PaintbrushOverlay = { from: number; to: number; streaming: boolean };
+export type PaintbrushOverlay = {
+  from: number;
+  to: number;
+  streaming: boolean;
+  /** A proposal is waiting to be applied against this span — steady accent, no pulse. */
+  ready?: boolean;
+};
 
 export const setPaintbrushOverlay = StateEffect.define<readonly PaintbrushOverlay[]>();
 
@@ -51,6 +57,14 @@ const RESTING = Decoration.mark({ class: 'cm-paintbrushOverlay' });
  * with the keyframe, once.
  */
 const STREAMING = Decoration.mark({ class: 'cm-paintbrushOverlay cm-paintbrushStreaming' });
+/** A proposal is ready to apply: steady accent tint with an underline — "this is the span the Apply button will touch". */
+const READY = Decoration.mark({ class: 'cm-paintbrushOverlay cm-paintbrushReady' });
+
+function markFor(overlay: PaintbrushOverlay): Decoration {
+  if (overlay.streaming) return STREAMING;
+  if (overlay.ready) return READY;
+  return RESTING;
+}
 
 function overlayDecorations(): Extension {
   return EditorView.decorations.compute([overlayField], (state) => {
@@ -59,7 +73,7 @@ function overlayDecorations(): Extension {
     const docLength = state.doc.length;
     const ranges = overlays
       .filter((overlay) => overlay.from < overlay.to && overlay.to <= docLength)
-      .map((overlay) => (overlay.streaming ? STREAMING : RESTING).range(overlay.from, overlay.to));
+      .map((overlay) => markFor(overlay).range(overlay.from, overlay.to));
     return Decoration.set(ranges, true);
   });
 }
@@ -73,6 +87,10 @@ const paintbrushTheme = EditorView.theme({
   },
   '.cm-paintbrushStreaming': {
     backgroundColor: 'var(--rig-brush-pulse)',
+  },
+  '.cm-paintbrushReady': {
+    backgroundColor: 'color-mix(in srgb, var(--accent) 28%, transparent)',
+    boxShadow: 'inset 0 -2px 0 var(--accent)',
   },
 });
 

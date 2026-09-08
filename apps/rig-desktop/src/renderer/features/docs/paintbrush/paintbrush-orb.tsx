@@ -47,7 +47,10 @@ export type PaintbrushOrbSpin =
   /** A stroke is actively streaming: same animation, just faster (`speed`, not a different state). */
   | 'streaming';
 
-const SPEED: Record<PaintbrushOrbSpin, number> = { off: 1, idle: 1, streaming: 1.8 };
+// Calm by default: the library's own speed 1 reads as frantic at header
+// size. Streaming is only a little livelier than idle — the pulse on the
+// text carries "working"; the orb should never look like it's panicking.
+const SPEED: Record<PaintbrushOrbSpin, number> = { off: 0.4, idle: 0.5, streaming: 0.85 };
 
 function usePrefersReducedMotion(): boolean {
   const [reduced, setReduced] = useState(
@@ -84,7 +87,7 @@ export function PaintbrushOrb({
       aria-hidden
       className={cn(
         'inline-flex shrink-0 items-center justify-center',
-        spin === 'off' && 'opacity-40',
+        spin === 'off' && 'opacity-60',
         className
       )}
       style={{ width: size, height: size, filter: TINT_FILTER }}
