@@ -14,6 +14,9 @@ import { PaintbrushOrb } from './paintbrush-orb';
  */
 const ORB_DISPLAY_SIZE = 16;
 
+/** The user-facing name of the feature (the code keeps calling it the paintbrush). */
+const FEATURE_NAME = 'Smart Highlighter';
+
 /**
  * The paintbrush header control (`docs/document-focus-design.md` §2, step
  * 1; discoverability pass per the paintbrush v1 punch list, finding 4): an
@@ -64,21 +67,19 @@ export function PaintbrushControl({
   const orbSpin = !on ? 'off' : streaming ? 'streaming' : 'idle';
   const agentName = selected?.name ?? 'an agent';
   const tooltip = on
-    ? `Editing with ${agentName}. Highlight any text and type what you want changed.`
-    : `Edit with ${agentName}. Turn on, then highlight any text and type what you want changed.`;
+    ? `${FEATURE_NAME} is on. Highlight any text and type what you want changed.`
+    : `${FEATURE_NAME}. Turn on, then highlight any text and type what you want changed.`;
 
-  // Sized and styled exactly like the neighboring Preview/Edit toggle (same
-  // shell, same inner padding), so the header reads as one row of controls.
-  // No word for the feature anywhere: the orb is the switch, the agent is
-  // the label, and the tooltip says what it does in plain terms.
+  // Sized and styled exactly like the neighboring Preview/Edit toggle: same
+  // shell, same inner padding, and the SAME neutral selected fill (bg-bg-2)
+  // when on, so the header reads as one row of controls. The orb is the
+  // switch, the agent's logo is the only label (its name shows on hover and
+  // in the menu), and hovering the orb names the feature.
   return (
     <div className="relative flex items-center">
       <div
         ref={controlRef}
-        className={cn(
-          'flex items-center gap-0.5 rounded-control border bg-bg-1 p-0.5 transition-colors duration-200 ease-out motion-reduce:transition-none',
-          on ? 'border-accent/40' : 'border-border-hairline'
-        )}
+        className="flex items-center gap-0.5 rounded-control border border-border-hairline bg-bg-1 p-0.5"
       >
         <Tooltip>
           <TooltipTrigger
@@ -86,11 +87,11 @@ export function PaintbrushControl({
               <button
                 type="button"
                 aria-pressed={on}
-                aria-label={on ? `Stop editing with ${agentName}` : `Edit with ${agentName}`}
+                aria-label={on ? `Turn off ${FEATURE_NAME}` : `Turn on ${FEATURE_NAME}`}
                 onClick={toggle}
                 className={cn(
                   'flex items-center rounded-control px-1.5 py-1 transition-colors duration-200 ease-out motion-reduce:transition-none',
-                  on ? 'bg-accent-subtle' : 'hover:bg-bg-2'
+                  on ? 'bg-bg-2' : 'hover:bg-bg-2/60'
                 )}
               >
                 <PaintbrushOrb spin={orbSpin} size={ORB_DISPLAY_SIZE} />
@@ -100,29 +101,35 @@ export function PaintbrushControl({
           <TooltipContent side="bottom">{tooltip}</TooltipContent>
         </Tooltip>
 
-        <button
-          ref={chevronRef}
-          type="button"
-          aria-haspopup="menu"
-          aria-expanded={open}
-          aria-label="Choose which agent edits"
-          onClick={() => setOpen((v) => !v)}
-          className={cn(
-            'flex items-center gap-1 rounded-control px-1.5 py-1 text-xs transition-colors duration-200 ease-out motion-reduce:transition-none',
-            'hover:bg-bg-2 hover:text-text-primary',
-            on ? 'text-text-primary' : 'text-text-muted'
-          )}
-        >
-          {selected ? (
-            <>
-              <AgentIcon icon={selected.icon} size={12} className="shrink-0" />
-              <span className="max-w-28 truncate">{selected.name}</span>
-            </>
-          ) : (
-            <span>Choose agent</span>
-          )}
-          <ChevronDown className="size-3 shrink-0" strokeWidth={1.5} />
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                ref={chevronRef}
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={open}
+                aria-label={`${agentName}. Choose which agent edits`}
+                onClick={() => setOpen((v) => !v)}
+                className={cn(
+                  'flex items-center gap-1 rounded-control px-1.5 py-1 text-xs transition-colors duration-200 ease-out motion-reduce:transition-none',
+                  'hover:bg-bg-2/60 hover:text-text-primary',
+                  on ? 'text-text-primary' : 'text-text-muted'
+                )}
+              >
+                {selected ? (
+                  <AgentIcon icon={selected.icon} size={14} className="shrink-0" />
+                ) : (
+                  <span>Choose agent</span>
+                )}
+                <ChevronDown className="size-3 shrink-0" strokeWidth={1.5} />
+              </button>
+            }
+          />
+          <TooltipContent side="bottom">
+            {selected ? `${selected.name}. Choose which agent edits.` : 'Choose which agent edits.'}
+          </TooltipContent>
+        </Tooltip>
       </div>
 
       <Popover
@@ -170,9 +177,10 @@ export function PaintbrushControl({
         align="left"
         estimatedWidth={260}
         minWidth={240}
-        ariaLabel="How editing with an agent works"
+        ariaLabel={`How ${FEATURE_NAME} works`}
       >
         <div className="max-w-64 px-2.5 py-2 text-xs text-text-secondary">
+          <p className="mb-1 font-medium text-text-primary">{FEATURE_NAME}</p>
           <p>
             Highlight any text in the document and type what you want changed.{' '}
             {selected ? selected.name : 'The agent'} suggests an edit in the margin. Apply it, or
