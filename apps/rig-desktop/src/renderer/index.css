@@ -2,53 +2,41 @@
 @import './tokens.css';
 
 /*
- * Paintbrush streaming pulse (`docs/document-focus-design.md` §2, step 4):
- * one animated custom property, shared by both surfaces that render a
- * streaming stroke — the Preview `::highlight()` pseudo-element
- * (`features/docs/paintbrush/paintbrush-preview-highlight.ts`) and the CM6
- * Edit-mode mark (`features/docs/paintbrush/paintbrush-decorations.ts`).
- *
- * VERIFIED in Chromium: a `::highlight()` pseudo-element cannot itself take
- * an `animation` — CSS Custom Highlight API pseudo-elements aren't part of
- * the DOM tree an `animation`/`@keyframes` can target — but it DOES inherit
- * a registered (`@property`) custom property that's being animated on an
- * ancestor, because that inheritance runs through the ordinary DOM tree the
- * highlighted text itself lives in. `.rig-brush-pulsing` goes on the
- * shared scroll container that is the common ancestor of the CM6 editor
- * and the Preview root (`artifact-view.tsx`'s `containerRef`) while any
- * paintbrush stroke is streaming — one class, one keyframe, both surfaces
- * repaint together.
- *
- * `initial-value` cannot reference `var(--accent)` — the `@property` spec
- * requires a "computationally independent" value with no other custom
- * property in it — so it's a plain safe default; the real tint only ever
- * appears via the keyframe below (or the reduced-motion override), which
- * are ordinary declarations and may use `var()` freely.
+ * Paintbrush streaming shimmer, Edit mode (`docs/document-focus-design.md`
+ * §2, step 4): the CM6 streaming mark is an ordinary span, so it can carry
+ * a real gradient sweep. Preview mode cannot (`::highlight()` takes no
+ * gradients) and builds the same sweep out of per-character highlight
+ * buckets instead, see `paintbrush-preview-highlight.ts`. The sweep sits on
+ * top of the mark's own resting tint (`paintbrush-decorations.ts`), so the
+ * gradient itself is transparent except for its crest.
  */
-@property --rig-brush-pulse {
-  syntax: '<color>';
-  inherits: true;
-  initial-value: transparent;
+@keyframes rig-brush-shimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
 }
 
-.rig-brush-pulsing {
-  animation: rig-brush-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes rig-brush-pulse {
-  0%,
-  100% {
-    --rig-brush-pulse: color-mix(in srgb, var(--accent) 16%, transparent);
-  }
-  50% {
-    --rig-brush-pulse: color-mix(in srgb, var(--accent) 58%, transparent);
-  }
+.cm-editor .cm-paintbrushStreaming {
+  background-image: linear-gradient(
+    100deg,
+    transparent 0%,
+    transparent 38%,
+    color-mix(in srgb, var(--accent) 28%, transparent) 50%,
+    transparent 62%,
+    transparent 100%
+  );
+  background-size: 250% 100%;
+  animation: rig-brush-shimmer 1.6s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rig-brush-pulsing {
+  .cm-editor .cm-paintbrushStreaming {
     animation: none;
-    --rig-brush-pulse: color-mix(in srgb, var(--accent) 35%, transparent);
+    background-image: none;
+    background-color: color-mix(in srgb, var(--accent) 18%, transparent);
   }
 }
 /* xterm's own layout/layering CSS (`.xterm-screen`, `.xterm-viewport`,

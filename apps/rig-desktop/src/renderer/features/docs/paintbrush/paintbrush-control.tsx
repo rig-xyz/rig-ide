@@ -12,7 +12,7 @@ import { PaintbrushOrb } from './paintbrush-orb';
  * header" — bigger than `PaintbrushOrb`'s own default (the library's tuned
  * 20px inline preset), so this is the one caller that overrides `size`.
  */
-const ORB_DISPLAY_SIZE = 24;
+const ORB_DISPLAY_SIZE = 16;
 
 /**
  * The paintbrush header control (`docs/document-focus-design.md` §2, step
@@ -62,20 +62,21 @@ export function PaintbrushControl({
   const chevronRef = useRef<HTMLButtonElement>(null);
 
   const orbSpin = !on ? 'off' : streaming ? 'streaming' : 'idle';
+  const agentName = selected?.name ?? 'an agent';
   const tooltip = on
-    ? `Paintbrush on · ${selected ? selected.name : 'choose an agent'} — select text to start`
-    : 'Paintbrush: select any text and tell an agent what to do with it';
+    ? `Editing with ${agentName}. Highlight any text and type what you want changed.`
+    : `Edit with ${agentName}. Turn on, then highlight any text and type what you want changed.`;
 
-  // A two-tone pill, always: the orb segment (toggle, labeled so it is never
-  // an unexplained glyph) and a gray agent segment (the model, plus the menu
-  // chevron). Armed = the orb segment picks up the accent; off = both
-  // segments neutral, the label still reads "Paintbrush".
+  // Sized and styled exactly like the neighboring Preview/Edit toggle (same
+  // shell, same inner padding), so the header reads as one row of controls.
+  // No word for the feature anywhere: the orb is the switch, the agent is
+  // the label, and the tooltip says what it does in plain terms.
   return (
     <div className="relative flex items-center">
       <div
         ref={controlRef}
         className={cn(
-          'flex items-stretch overflow-hidden rounded-control border transition-colors duration-200 ease-out motion-reduce:transition-none',
+          'flex items-center gap-0.5 rounded-control border bg-bg-1 p-0.5 transition-colors duration-200 ease-out motion-reduce:transition-none',
           on ? 'border-accent/40' : 'border-border-hairline'
         )}
       >
@@ -85,17 +86,14 @@ export function PaintbrushControl({
               <button
                 type="button"
                 aria-pressed={on}
-                aria-label={on ? 'Turn off the paintbrush' : 'Turn on the paintbrush'}
+                aria-label={on ? `Stop editing with ${agentName}` : `Edit with ${agentName}`}
                 onClick={toggle}
                 className={cn(
-                  'flex items-center gap-1.5 py-1 pr-2 pl-1.5 transition-colors duration-200 ease-out motion-reduce:transition-none',
-                  on
-                    ? 'bg-accent-subtle text-accent'
-                    : 'bg-bg-1 text-text-muted hover:text-text-primary'
+                  'flex items-center rounded-control px-1.5 py-1 transition-colors duration-200 ease-out motion-reduce:transition-none',
+                  on ? 'bg-accent-subtle' : 'hover:bg-bg-2'
                 )}
               >
                 <PaintbrushOrb spin={orbSpin} size={ORB_DISPLAY_SIZE} />
-                <span className="text-xs font-medium">{on ? 'Paintbrush on' : 'Paintbrush'}</span>
               </button>
             }
           />
@@ -107,12 +105,12 @@ export function PaintbrushControl({
           type="button"
           aria-haspopup="menu"
           aria-expanded={open}
-          aria-label="Choose the paintbrush agent"
+          aria-label="Choose which agent edits"
           onClick={() => setOpen((v) => !v)}
           className={cn(
-            'flex items-center gap-1 border-l py-1 pr-1.5 pl-2 text-xs transition-colors duration-200 ease-out motion-reduce:transition-none',
-            'bg-bg-2 hover:text-text-primary',
-            on ? 'border-accent/30 text-text-primary' : 'border-border-hairline text-text-muted'
+            'flex items-center gap-1 rounded-control px-1.5 py-1 text-xs transition-colors duration-200 ease-out motion-reduce:transition-none',
+            'hover:bg-bg-2 hover:text-text-primary',
+            on ? 'text-text-primary' : 'text-text-muted'
           )}
         >
           {selected ? (
@@ -172,12 +170,13 @@ export function PaintbrushControl({
         align="left"
         estimatedWidth={260}
         minWidth={240}
-        ariaLabel="About the paintbrush"
+        ariaLabel="How editing with an agent works"
       >
         <div className="max-w-64 px-2.5 py-2 text-xs text-text-secondary">
           <p>
-            Paintbrush is on. Select any text in the document and describe a change or ask a
-            question. Edits come back as suggestions you apply.
+            Highlight any text in the document and type what you want changed.{' '}
+            {selected ? selected.name : 'The agent'} suggests an edit in the margin. Apply it, or
+            keep it as a comment.
           </p>
           <button
             type="button"

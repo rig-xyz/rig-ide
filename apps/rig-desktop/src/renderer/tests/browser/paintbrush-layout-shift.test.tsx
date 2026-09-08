@@ -184,12 +184,14 @@ describe('paintbrush mode toggle — zero layout shift on the document container
       width: restingComputed.width,
     };
 
-    const findToggle = (label: string) =>
+    // The toggle is the one `aria-pressed` button in the header; found by
+    // state, not by its label, so copy changes can't break a layout test.
+    const findToggle = (pressed: 'true' | 'false') =>
       Array.from(host.querySelectorAll('button')).find(
-        (button) => button.getAttribute('aria-label') === label
+        (button) => button.getAttribute('aria-pressed') === pressed
       );
 
-    const armButton = findToggle('Turn on the paintbrush');
+    const armButton = findToggle('false');
     expect(armButton).toBeTruthy();
     await act(async () => {
       armButton!.click();
@@ -214,7 +216,7 @@ describe('paintbrush mode toggle — zero layout shift on the document container
     // have landed inside the scroll container either.
     expect(container.querySelector('[role="dialog"]')).toBeNull();
 
-    const disarmButton = findToggle('Turn off the paintbrush');
+    const disarmButton = findToggle('true');
     expect(disarmButton).toBeTruthy();
     await act(async () => {
       disarmButton!.click();

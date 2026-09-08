@@ -658,7 +658,6 @@ const Card = observer(function Card({
   muted,
   compact,
   hasAnchor = true,
-  brush,
   streaming,
   onActivate,
 }: {
@@ -678,8 +677,6 @@ const Card = observer(function Card({
    * explicitly; the default only matters for a future caller that doesn't.
    */
   hasAnchor?: boolean;
-  /** A paintbrush thread: carries a thin accent rule on its left edge so it reads as a stroke, not a plain comment. */
-  brush?: boolean;
   /** A paintbrush stroke is streaming against this card's thread — the border warms to the accent while it works. */
   streaming?: boolean;
   onActivate?: () => void;
@@ -724,7 +721,6 @@ const Card = observer(function Card({
         // NOT the active one — secondary in the list, full legibility once
         // it's the one in focus.
         muted && !active && 'opacity-70',
-        brush && 'border-l-2 border-l-accent/60',
         streaming && !active && 'border-accent/50'
       )}
     >
@@ -932,7 +928,7 @@ const ProposalApplyRow = observer(function ProposalApplyRow({
             }
           />
           {!canRevert && (
-            <TooltipContent side="bottom">text has changed since — revert manually</TooltipContent>
+            <TooltipContent side="bottom">The text has changed since, so this can't be put back automatically.</TooltipContent>
           )}
         </Tooltip>
       </div>
@@ -967,7 +963,7 @@ const ProposalApplyRow = observer(function ProposalApplyRow({
           }
         />
         {!canApply && (
-          <TooltipContent side="bottom">text has changed — apply manually</TooltipContent>
+          <TooltipContent side="bottom">The text has changed, so this can't be applied automatically.</TooltipContent>
         )}
       </Tooltip>
     </div>
@@ -1038,7 +1034,6 @@ export const ThreadCard = observer(function ThreadCard({
       muted={thread.resolved}
       compact={collapsed}
       hasAnchor={thread.index !== null}
-      brush={store.isPaintbrushThread(root.id)}
       streaming={!collapsed && store.isPaintbrushStreaming(root.id)}
       onActivate={() => store.setActiveThread(root.id)}
     >

@@ -3,9 +3,9 @@ import { Decoration, EditorView } from '@codemirror/view';
 
 /**
  * The Edit-mode half of the paintbrush overlay (`docs/document-focus-design.md`
- * §2, steps 2 & 4): a softer, rounder highlight over the brushed span while
- * its composer is open, and an inner mono pulse while an agent stroke is
- * streaming against it. Registered per doc tab exactly like the comments
+ * §2, steps 2 & 4): a soft, rounded tint over the brushed span while its
+ * composer is open, a firmer tint while a proposal waits to be applied, and
+ * a shimmer while a stroke streams. Registered per doc tab exactly like the comments
  * layer's own `comment-decorations.ts` (`doc-extensions.ts`'s registry
  * pattern), but deliberately its OWN independent extension rather than a
  * new `CommentMarker` variant — the existing comment marker pipeline stays
@@ -45,19 +45,9 @@ const overlayField = StateField.define<readonly PaintbrushOverlay[]>({
 });
 
 const RESTING = Decoration.mark({ class: 'cm-paintbrushOverlay' });
-/**
- * The streaming mark (punch-list finding 1 — "streaming pulse, verified
- * mechanism"): its background is `var(--rig-brush-pulse)`, the SAME
- * registered custom property the Preview streaming highlight
- * (`paintbrush-preview-highlight.ts`) reads — animated once, globally, by
- * `.rig-brush-pulsing` in `renderer/index.css`. A plain CM6 mark is an
- * ordinary DOM element, so it repaints on its own as the inherited custom
- * property changes value each keyframe tick; nothing here needs its own
- * `animation` or its own reduced-motion handling any more — both live
- * with the keyframe, once.
- */
+/** A stroke is streaming: the resting tint plus a gradient sweep (`renderer/index.css`). */
 const STREAMING = Decoration.mark({ class: 'cm-paintbrushOverlay cm-paintbrushStreaming' });
-/** A proposal is ready to apply: steady accent tint with an underline — "this is the span the Apply button will touch". */
+/** A proposal is waiting to be applied: a slightly firmer, steady tint. */
 const READY = Decoration.mark({ class: 'cm-paintbrushOverlay cm-paintbrushReady' });
 
 function markFor(overlay: PaintbrushOverlay): Decoration {
@@ -78,19 +68,18 @@ function overlayDecorations(): Extension {
   });
 }
 
+// The streaming SHIMMER (a gradient sweep) lives in `renderer/index.css` as
+// `.cm-editor .cm-paintbrushStreaming`, not here: it needs `@keyframes` and
+// a reduced-motion `@media` override, both awkward inside a CM6 theme.
 const paintbrushTheme = EditorView.theme({
   '.cm-paintbrushOverlay': {
-    backgroundColor: 'color-mix(in srgb, var(--accent) 20%, transparent)',
+    backgroundColor: 'color-mix(in srgb, var(--accent) 16%, transparent)',
     borderRadius: '4px',
     boxDecorationBreak: 'clone',
     WebkitBoxDecorationBreak: 'clone',
   },
-  '.cm-paintbrushStreaming': {
-    backgroundColor: 'var(--rig-brush-pulse)',
-  },
   '.cm-paintbrushReady': {
-    backgroundColor: 'color-mix(in srgb, var(--accent) 28%, transparent)',
-    boxShadow: 'inset 0 -2px 0 var(--accent)',
+    backgroundColor: 'color-mix(in srgb, var(--accent) 22%, transparent)',
   },
 });
 

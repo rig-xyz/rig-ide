@@ -605,12 +605,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
           // box (layout-shift audit, punch-list finding B). `ring-inset`
           // keeps it inside the element's own border-box either way, but
           // `box-shadow` costs nothing in layout regardless of inset/outset.
-          isMarkdown && paintbrush.on && 'ring-1 ring-inset ring-accent/25',
-          // Streaming pulse (punch-list finding 1): this container is the
-          // shared ancestor of both the CM6 editor and the Preview root, so
-          // toggling ONE class here drives both surfaces' streaming marks
-          // off the same animated custom property — see `renderer/index.css`.
-          paintbrushOverlay?.streaming && 'rig-brush-pulsing'
+          isMarkdown && paintbrush.on && 'ring-1 ring-inset ring-accent/25'
         )}
       >
         {resource.isLoading ? (

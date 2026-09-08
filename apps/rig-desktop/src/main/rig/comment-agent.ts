@@ -785,7 +785,7 @@ export const rigCommentAgentController = createRPCController({
           agentError(
             outcome === 'timeout'
               ? request.paintbrush
-                ? 'This stroke took too long and was stopped — try again or narrow the selection.'
+                ? 'This stroke took too long and was stopped. Try again, or highlight a smaller passage.'
                 : 'The agent did not answer in time.'
               : 'The agent finished without writing an answer.'
           )
