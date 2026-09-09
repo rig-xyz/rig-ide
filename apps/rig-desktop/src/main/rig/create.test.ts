@@ -105,10 +105,10 @@ describe('validateRigName', () => {
 });
 
 describe('startHereDocContent', () => {
-  it('names the onboarding flow\'s three real actions (docs/onboarding-flow-spec.md §3)', () => {
+  it('names the four things a newcomer needs to know (Dylan, 2026-09-09)', () => {
     const content = startHereDocContent();
-    expect(content).toContain('# Welcome to your rig');
-    expect(content).toContain('leave a comment');
+    expect(content).toContain('# Start here');
+    expect(content).toContain('add a comment');
     expect(content).toContain('@claude');
     expect(content).toContain('@codex');
     expect(content).toContain('**Share**');

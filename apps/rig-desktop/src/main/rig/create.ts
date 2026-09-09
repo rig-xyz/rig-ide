@@ -199,14 +199,20 @@ const START_HERE_FILENAME = 'Start here.md';
  * unit testing.
  */
 export function startHereDocContent(): string {
+  // Short and plain: what a newcomer needs to know, nothing illustrative
+  // (Dylan, 2026-09-09). Four facts, each a real surface they will meet.
   return [
-    '# Welcome to your rig',
+    '# Start here',
     '',
-    'Select any sentence and leave a comment.',
+    'Your rig is a folder. Everything in it is a real file: yours, on your computer, and shared with the people you invite.',
     '',
-    'Mention **@claude** or **@codex** in a comment to bring an agent in.',
+    '**Agents work on your documents.** Select a sentence, add a comment, and mention **@claude** or **@codex**. The edit lands in the file.',
     '',
-    "When you're ready, **Share** to invite your team.",
+    '**Your team sees the same thing.** Press **Share** to invite people. They get the same files, comments, and history.',
+    '',
+    '**Nothing gets lost.** Every change keeps who made it, what changed, and why.',
+    '',
+    'Have a doc already? Import it from Google Docs in the file navigator.',
     '',
   ].join('\n');
 }
