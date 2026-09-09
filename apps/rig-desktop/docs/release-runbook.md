@@ -215,6 +215,18 @@ to `0.4.0` for this release.
     byte-for-byte (version + per-file sha512/size) against the local
     `release/` output
 
+**3.7b — Do not probe a new artifact URL before the upload has finished.**
+`dl.userig.xyz` is an R2 custom domain behind Cloudflare's cache, and a 404
+for a not-yet-uploaded key gets cached at the edge with
+`cache-control: max-age=14400` (4 hours). On 0.4.1 the zip was HEADed a
+moment too early and every auto-update download then 404'd for the cache
+lifetime while the manifest and DMG were fine. Only run `verify-manifest.ts`
+after `upload-r2.ts` has printed `Uploaded` for every file; to peek at the
+origin safely, add a cache-busting query (`?cb=<timestamp>`). If a 404 does
+get cached, purge those URLs in the Cloudflare dashboard (zone userig.xyz →
+Caching → Purge by URL) — the tokens in `hub/worker/.env` and the wrangler
+login lack `Zone.Cache Purge`, so the API purge fails with code 10000.
+
 **3.8 — Publish the GitHub release.**
 - **Command:** `GH_TOKEN=<token> node --experimental-strip-types scripts/release/finalize-release.ts --channel stable`
 - **Working directory:** `apps/rig-desktop`
