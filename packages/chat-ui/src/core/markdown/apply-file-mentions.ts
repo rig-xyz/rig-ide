@@ -53,9 +53,27 @@ function linkTextRun(run: Extract<InlineRun, { kind: 'text' }>, matcher: LinkFil
   if (segments.length === 0 || totalLength(segments) !== run.text.length) return [run];
   if (segments.length === 1 && !segments[0].path) return [run];
 
-  const out: InlineRun[] = [];
+  const out: Extract<InlineRun, { kind: 'text' }>[] = [];
   for (const seg of segments) {
     if (seg.text.length === 0) continue;
+    // A plain (unlinked) segment that is ENTIRELY whitespace is folded into
+    // the PREVIOUS run's own text when that run is also plain (unlinked) —
+    // e.g. a matcher that (needlessly) chops the plain text around a match
+    // into extra pieces at word boundaries. Never folds into a LINKED
+    // previous run — that would silently grow the clickable/href text past
+    // what actually matched. A lone space wedged between two back-to-back
+    // matches ("file1.md file2.md") is left as its own run either way; it
+    // has no unlinked neighbour to fold into, and pretext's own item-
+    // boundary gap-collapsing already lays that out identically to inline
+    // whitespace (see `inline-spacing.contract.test.tsx`). Not a
+    // correctness fix by itself — just fewer places a future change to
+    // that collapsing logic could disagree with itself.
+    const prev = out[out.length - 1];
+    const isPlainWhitespace = !seg.path && /^\s+$/.test(seg.text);
+    if (isPlainWhitespace && prev && !prev.href) {
+      prev.text += seg.text;
+      continue;
+    }
     out.push({ ...run, text: seg.text, href: seg.path });
   }
   return out.length > 0 ? out : [run];

@@ -116,4 +116,57 @@ describe('applyFileMentionLinks', () => {
     expect(second).not.toBe(first);
     expect(second).toEqual(first);
   });
+
+  it('leaves a lone space between two back-to-back mentions as its own run (neither neighbour is plain text to fold into)', () => {
+    const matchTwoFiles = (text: string): FileMentionSegment[] => {
+      const segs: FileMentionSegment[] = [];
+      let cursor = 0;
+      for (const m of text.matchAll(/file1\.md|file2\.md/g)) {
+        const idx = m.index!;
+        if (idx > cursor) segs.push({ text: text.slice(cursor, idx) });
+        segs.push({ text: m[0], path: m[0] });
+        cursor = idx + m[0].length;
+      }
+      if (cursor < text.length) segs.push({ text: text.slice(cursor) });
+      return segs;
+    };
+    const blocks: Block[] = [prose('a', [textRun('see file1.md file2.md now')])];
+    const linked = applyFileMentionLinks(blocks, matchTwoFiles);
+    const runs = (linked[0] as ProseBlock).runs as InlineText[];
+    expect(runs.map((r) => [r.text, r.href])).toEqual([
+      ['see ', undefined],
+      ['file1.md', 'file1.md'],
+      [' ', undefined],
+      ['file2.md', 'file2.md'],
+      [' now', undefined],
+    ]);
+  });
+
+  it('folds a plain whitespace-only segment into the preceding plain run instead of becoming its own run', () => {
+    // A (deliberately over-eager) matcher that chops the plain text either
+    // side of the one real match into extra whitespace-only segments —
+    // exercises the merge without depending on any particular real matcher
+    // ever producing this shape.
+    const matchWithExtraSplits = (text: string): FileMentionSegment[] => {
+      const needle = 'docs/notes.md';
+      const idx = text.indexOf(needle);
+      if (idx === -1) return [{ text }];
+      return [
+        { text: text.slice(0, idx - 1) },
+        { text: text.slice(idx - 1, idx) }, // the single boundary space, its own segment
+        { text: needle, path: needle },
+        { text: text.slice(idx + needle.length) },
+      ].filter((s) => s.text.length > 0);
+    };
+    const blocks: Block[] = [prose('a', [textRun('see docs/notes.md now')])];
+    const linked = applyFileMentionLinks(blocks, matchWithExtraSplits);
+    const runs = (linked[0] as ProseBlock).runs as InlineText[];
+    // Same 3-run shape as the non-split matcher above — the whitespace
+    // segment never surfaces as a run of its own.
+    expect(runs.map((r) => [r.text, r.href])).toEqual([
+      ['see ', undefined],
+      ['docs/notes.md', 'docs/notes.md'],
+      [' now', undefined],
+    ]);
+  });
 });

@@ -157,6 +157,31 @@ export const inlineCodeChip = style({
   background: vars.codeInlineBg,
 });
 
+/**
+ * Applied ALONGSIDE `inlineCodeChip` (never instead of it) when the span is a
+ * clickable file mention (`InlineCode.href` — see `apply-file-mentions.ts`) —
+ * a plain inline-code chip and a linked one must stay pixel-identical in
+ * size (no measurement impact — color/decoration only, chip padding/inset
+ * stays owned by `pfInlineCode`), so a non-clickable code span never looks
+ * clickable and vice versa. Otherwise a linked code chip read as plain,
+ * static code (Dylan: "the filename was clickable but not very visible") —
+ * link accent color + a dotted underline (distinct from a real prose link's
+ * solid underline, so a clickable path still reads as code, not prose) plus
+ * a hover tint mixed from the same two tokens already in play here.
+ */
+export const inlineCodeChipLink = style({
+  color: vars.link,
+  textDecoration: 'underline',
+  textDecorationStyle: 'dotted',
+  textUnderlineOffset: '0.2em',
+  cursor: 'pointer',
+  selectors: {
+    '&:hover': {
+      background: `color-mix(in srgb, ${vars.link} 18%, ${vars.codeInlineBg})`,
+    },
+  },
+});
+
 /** Fallback for unknown mentionKind values. */
 export const mentionChip = style({
   borderRadius: vars.radiusSm,

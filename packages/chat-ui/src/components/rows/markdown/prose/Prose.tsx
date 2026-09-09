@@ -21,6 +21,7 @@ import {
   bulletColor,
   commandChip,
   inlineCodeChip,
+  inlineCodeChipLink,
   linkFragment,
   mentionChip,
   mentionChipByKind,
@@ -51,7 +52,13 @@ function fragKey(run: InlineRun, variant: string): string {
 
 function fragVisualClass(run: InlineRun, variant: string): string {
   if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(variant)) return '';
-  if (run.kind === 'code') return inlineCodeChip;
+  if (run.kind === 'code') {
+    // A linked code chip (a backtick-quoted file mention) keeps the same
+    // chip chrome (background/padding/inset — no width change, see
+    // inlineCodeChipLink's own doc comment) but adds link color + a dotted
+    // underline so it doesn't read as plain, non-interactive code.
+    return (run as InlineCode).href ? `${inlineCodeChip} ${inlineCodeChipLink}` : inlineCodeChip;
+  }
   if (run.kind === 'mention') {
     const mention = run as InlineMention;
     // Slash-command chips use a dedicated style.
