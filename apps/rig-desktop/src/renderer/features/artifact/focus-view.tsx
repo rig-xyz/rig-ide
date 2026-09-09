@@ -1,7 +1,14 @@
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCheck, ChevronRight, FoldVertical, MoreHorizontal, UnfoldVertical } from 'lucide-react';
+import {
+  CheckCheck,
+  ChevronRight,
+  FoldVertical,
+  MoreHorizontal,
+  SquareArrowOutUpRight,
+  UnfoldVertical,
+} from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -86,10 +93,13 @@ export function FocusView({
   root,
   rootId,
   bindingId,
+  onOpenFile,
 }: {
   root: string;
   rootId: string;
   bindingId: string;
+  /** Dylan's ask: a section header button that opens that file in its own tab (the same `onOpenFile` the file tree uses). */
+  onOpenFile?: (absPath: string, relPath: string) => void;
 }) {
   const queryClient = useQueryClient();
   const { data, isPending, isError, refetch } = useQuery({
@@ -343,6 +353,9 @@ export function FocusView({
                     })
                   }
                   onMarkViewed={() => markViewed(node.relPath)}
+                  onOpenAsTab={
+                    onOpenFile ? () => onOpenFile(`${root}/${node.relPath}`, node.relPath) : null
+                  }
                   paintbrush={{ on: paintbrush.on, mention: paintbrush.mention }}
                 />
               );
@@ -397,6 +410,7 @@ function FocusSection({
   expanded,
   onToggle,
   onMarkViewed,
+  onOpenAsTab,
   paintbrush,
 }: {
   root: string;
@@ -408,6 +422,8 @@ function FocusSection({
   expanded: boolean;
   onToggle: () => void;
   onMarkViewed: () => void;
+  /** Opens this file in its own tab on the right; null when the host can't open tabs. */
+  onOpenAsTab: (() => void) | null;
   paintbrush: { on: boolean; mention: AgentMention | null };
 }) {
   return (
@@ -461,6 +477,17 @@ function FocusSection({
             className="border-border-hairline hover:bg-bg-2 hover:text-text-primary shrink-0 rounded-control border px-2 py-0.5 text-2xs text-text-muted transition-colors"
           >
             Mark as viewed
+          </button>
+        )}
+        {onOpenAsTab && (
+          <button
+            type="button"
+            onClick={onOpenAsTab}
+            title="Open in its own tab"
+            aria-label={`Open ${node.name} in its own tab`}
+            className="hover:bg-bg-2 hover:text-text-primary text-text-muted shrink-0 rounded-control p-1 transition-colors"
+          >
+            <SquareArrowOutUpRight size={12} strokeWidth={1.5} />
           </button>
         )}
       </div>

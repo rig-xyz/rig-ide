@@ -200,7 +200,7 @@ export function ArtefactPane({
 
       <div className="min-h-0 flex-1">
         {active === null ? null : active.kind === 'focus' ? (
-          <FocusView root={root} rootId={rootId} bindingId={bindingId} />
+          <FocusView root={root} rootId={rootId} bindingId={bindingId} onOpenFile={onOpenFile} />
         ) : (
           <ArtifactView
             key={active.path}
