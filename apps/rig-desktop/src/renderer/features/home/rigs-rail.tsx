@@ -21,7 +21,11 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  getSessionAttentionFacts,
+  subscribeSessionAttention,
+} from '@renderer/features/chat/session-attention-store';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { deriveTabTitle } from '@renderer/features/chat/session-list';
 import type { AgentIdentity } from '@renderer/features/chat/use-runnable-agents';
@@ -48,6 +52,11 @@ import {
   type HomeRigSession,
 } from './home-sections';
 import { RenameRigDialog } from './rename-rig-dialog';
+import {
+  deriveRowAttentionStatus,
+  deriveSessionAttentionStatus,
+  type SessionAttentionStatus,
+} from './session-attention';
 
 /**
  * Round: HOME RESTRUCTURE — the left region ("YOUR RIGS", the action
@@ -403,6 +412,55 @@ function useRowHighlight(isTarget: boolean): {
 }
 
 /**
+ * One session's live working/unread/idle status. This component tree
+ * isn't a MobX `observer` (nothing else here reads observable state), so
+ * `useSyncExternalStore` is the bridge to `session-attention-store.ts`'s
+ * module-level facts rather than pulling in `mobx-react-lite` for one
+ * value — see that module's own header comment for why this can read a
+ * session's live status even when its rig isn't the one currently open.
+ */
+function useSessionAttentionStatus(conversationId: string): SessionAttentionStatus {
+  const subscribe = useCallback(
+    (onChange: () => void) => subscribeSessionAttention(conversationId, onChange),
+    [conversationId]
+  );
+  const getSnapshot = useCallback(
+    () => deriveSessionAttentionStatus(getSessionAttentionFacts(conversationId)),
+    [conversationId]
+  );
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
+
+/**
+ * A rig row's own status — the loudest status among its (possibly capped
+ * or entirely absent) session sub-rows, so `LocalRigRow` stays informative
+ * on its own. Keyed on the joined id list rather than the array reference,
+ * so a same-content re-render of `row.sessions` doesn't resubscribe.
+ */
+function useRowAttentionStatus(sessionIds: readonly string[]): SessionAttentionStatus {
+  const key = sessionIds.join(' ');
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const unsubs = sessionIds.map((id) => subscribeSessionAttention(id, onChange));
+      return () => unsubs.forEach((unsub) => unsub());
+    },
+    // `key` (the joined ids) is the real dependency — `sessionIds` itself
+    // is a fresh array every render and would resubscribe every time.
+    // oxlint-disable-next-line react/exhaustive-deps
+    [key]
+  );
+  const getSnapshot = useCallback(
+    () =>
+      deriveRowAttentionStatus(
+        sessionIds.map((id) => deriveSessionAttentionStatus(getSessionAttentionFacts(id)))
+      ),
+    // oxlint-disable-next-line react/exhaustive-deps -- see `subscribe` above.
+    [key]
+  );
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
+
+/**
  * A local rig. Round 2 (Dylan: drop the path, show last-activity — "what is
  * most useful are the sessions and the last edited time... so users know
  * when something changed"): the subtext line is now `localRecencyKey`
@@ -453,6 +511,7 @@ function LocalRigRow({
   const { ref, flashing } = useRowHighlight(isHighlightTarget);
   const [error, setError] = useState<string | null>(null);
   const lastActivity = localRecencyKey(row);
+  const rowAttention = useRowAttentionStatus(row.sessions.map((session) => session.id));
   return (
     <div ref={ref} className="flex flex-col gap-1">
       <div
@@ -470,6 +529,18 @@ function LocalRigRow({
           <FolderOpen className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm text-text-primary">
+              {/* Attention round: the row's own dot — visible even when its
+                  session sub-rows are capped or absent, see
+                  `useRowAttentionStatus`'s own doc comment. */}
+              {rowAttention !== 'idle' && (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'mr-1.5 inline-block size-1.5 shrink-0 rounded-full bg-accent align-middle',
+                    rowAttention === 'working' && 'animate-pulse'
+                  )}
+                />
+              )}
               {row.name ?? row.path.split('/').pop()}
             </span>
             <span className="flex min-w-0 items-center gap-1.5">
@@ -731,18 +802,33 @@ function SessionSubRow({
   onOpen: () => void;
 }) {
   const icon = identities.get(session.providerId)?.icon;
+  const attention = useSessionAttentionStatus(session.id);
   return (
     <button
       type="button"
       onClick={onOpen}
       className="flex items-center gap-1.5 rounded-control px-2 py-1 text-left transition-colors hover:bg-bg-2"
     >
+      {attention !== 'idle' && (
+        <span
+          aria-hidden="true"
+          className={cn(
+            'size-1.5 shrink-0 rounded-full bg-accent',
+            attention === 'working' && 'animate-pulse'
+          )}
+        />
+      )}
       {icon && <AgentIcon icon={icon} size={12} className="shrink-0" />}
-      <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+      <span
+        className={cn(
+          'min-w-0 flex-1 truncate text-xs',
+          attention === 'unread' ? 'font-medium text-text-primary' : 'text-text-secondary'
+        )}
+      >
         {deriveTabTitle(session.title)}
       </span>
       <span className="shrink-0 font-mono text-xs text-text-muted">
-        {relativeTime(session.updatedAt, Date.now())}
+        {attention === 'working' ? 'working…' : relativeTime(session.updatedAt, Date.now())}
       </span>
     </button>
   );

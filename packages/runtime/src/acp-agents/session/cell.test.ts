@@ -324,3 +324,94 @@ describe('SessionCell idle turns and queue commands', () => {
     expect(cell.sessionState.queuedPrompts.map((prompt) => prompt.id)).toEqual([second.id]);
   });
 });
+
+/**
+ * Bug investigation — "a failed turn in Claude Plan Mode leaves the session
+ * unusable": these pin down that the CELL and its state MACHINE are not the
+ * source of that bug. A rejected `agent.prompt()` (what happens when the
+ * bundled Claude adapter's underlying SDK query dies — see
+ * `machine.ts`'s `TurnEnded` handling) settles the turn as `errored` and
+ * returns the machine straight to `phase: 'ready'`, exactly like any other
+ * settled turn — nothing here gets stuck, and every later command the cell
+ * accepts (`Prompt`, `SetMode`) is dispatched through to the agent exactly
+ * as before the failure. The real bug lives one layer up: the bundled
+ * adapter's `session.queryClosed` guard rejects EVERY later call with the
+ * same "session ended" error once the underlying query has died (even
+ * though its process hasn't exited), and `SessionManager` has no signal for
+ * that short of the process actually exiting (`onProcessClosed`) — so it
+ * keeps routing new commands into the same broken adapter session forever.
+ * `rig-chat-store.ts`'s `_recoverDeadSession` is the fix, at the renderer
+ * layer that actually owns re-establishing a session.
+ */
+describe('SessionCell recovery after a failed turn', () => {
+  it('settles a rejected prompt as an errored turn and returns to ready for the next one', async () => {
+    const { cell, agent } = makeCell();
+    agent.prompt = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('The Claude Agent session has ended.'))
+      .mockResolvedValueOnce({ stopReason: 'end_turn' });
+
+    const first = await cell.prompt({ text: 'first' });
+    expect(first).toMatchObject({ success: false, error: { type: 'prompt_failed' } });
+    expect(cell.history().committed.at(-1)?.outcome).toEqual({
+      kind: 'error',
+      reason: 'prompt_failed',
+    });
+
+    // The machine itself is healthy immediately after the errored turn —
+    // this is the crux of the investigation: nothing at this layer is stuck.
+    expect(cell.sessionState.lifecycle).toBe('ready');
+    expect(cell.sessionState.canSubmit).toBe(true);
+
+    const second = await cell.prompt({ text: 'second' });
+    expect(second).toEqual({ success: true, data: { queued: false } });
+    expect(agent.prompt).toHaveBeenCalledTimes(2);
+  });
+
+  it('still dispatches setMode through to the agent after a failed turn', async () => {
+    const { cell, agent } = makeCell();
+    agent.prompt = vi.fn().mockRejectedValueOnce(new Error('session ended'));
+    cell.applySessionMeta({
+      configOptions: [
+        {
+          id: 'mode',
+          name: 'Mode',
+          category: 'mode',
+          type: 'select',
+          currentValue: 'plan',
+          options: [
+            { value: 'plan', name: 'Plan' },
+            { value: 'default', name: 'Default' },
+          ],
+        },
+      ],
+    });
+
+    const failedPrompt = await cell.prompt({ text: 'hello' });
+    expect(failedPrompt.success).toBe(false);
+
+    agent.setSessionConfigOption = vi.fn().mockResolvedValue({
+      configOptions: [
+        {
+          id: 'mode',
+          name: 'Mode',
+          category: 'mode',
+          type: 'select',
+          currentValue: 'default',
+          options: [
+            { value: 'plan', name: 'Plan' },
+            { value: 'default', name: 'Default' },
+          ],
+        },
+      ],
+    });
+
+    const modeResult = await cell.setMode('default');
+    expect(isOk(modeResult)).toBe(true);
+    expect(agent.setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      configId: 'mode',
+      value: 'default',
+    });
+  });
+});

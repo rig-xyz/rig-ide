@@ -96,3 +96,35 @@ export class RigSessionRegistry<Store extends RigSessionStore> {
 
 /** Process-local ownership for all rig chat panels. */
 export const rigSessionRegistry = new RigSessionRegistry<RigSessionStore>();
+
+/**
+ * Zero-state composer draft cache — keyed by rig binding id.
+ *
+ * A zero-state tab (no message sent yet) has no `RigChatStore` of its own
+ * to carry `draftText`: the eager store backing it (`chat-panel.tsx`'s
+ * eager-store effect) is deliberately torn down via `rigSessionRegistry.stop`
+ * the moment the panel loses this rig (navigating Home) or the zero-state
+ * tab stops being active (switching tabs) — so an abandoned zero-state tab
+ * never leaks a live, connecting ACP session. That teardown was also
+ * silently discarding whatever the user had typed, since the composer's
+ * `text` lived only in React state scoped to that one Composer instance.
+ * This tiny module-level map survives the teardown: `chat-panel.tsx`'s
+ * Composer reads/writes it directly whenever there is no store yet, keyed
+ * by the rig's `bindingId` (there is at most one zero-state tab per rig at
+ * a time, so that key is stable across the store recreating with a fresh
+ * random conversation id every time).
+ */
+const zeroStateDrafts = new Map<string, string>();
+
+export function getZeroStateDraft(bindingId: string): string {
+  return zeroStateDrafts.get(bindingId) ?? '';
+}
+
+export function setZeroStateDraft(bindingId: string, text: string): void {
+  if (text) zeroStateDrafts.set(bindingId, text);
+  else zeroStateDrafts.delete(bindingId);
+}
+
+export function clearZeroStateDraft(bindingId: string): void {
+  zeroStateDrafts.delete(bindingId);
+}

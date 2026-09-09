@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { rigFilesQueryKey } from '@renderer/features/workspace/file-tree';
 import type { ChatCommands, ChatView } from '@renderer/lib/chat/chat-transcript';
 import { ChatTranscript } from '@renderer/lib/chat/chat-transcript';
 import { rpc } from '@renderer/lib/ipc';
@@ -33,12 +34,14 @@ import { classifyProseLink } from './classify-prose-link';
 import { deriveComposerDensity, type ComposerDensity } from './composer-density';
 import { deriveDefaultHarness } from './default-harness';
 import { HarnessPicker } from './harness-picker';
+import { buildFileMentionIndex, linkFileMentions as matchFileMentions } from './link-file-mentions';
 import { MetaOptionPicker } from './meta-option-picker';
 import { PermissionModePicker } from './permission-mode-picker';
 import { ReplayStore } from './replay-store';
 import { canResumeSession } from './resume-capability';
 import { deriveTranscriptPanelMode, shouldShowResumeButton } from './resume-presentation';
 import { RigChatStore } from './rig-chat-store';
+import { noteSessionSeen } from './session-attention-store';
 import { formatSessionFromLabel, relativeTime } from './session-history';
 import {
   addSession,
@@ -49,7 +52,12 @@ import {
   type RigSessionSummary,
 } from './session-list';
 import { mergeRestoredConversationIds } from './session/restore-session-ids';
-import { rigSessionRegistry } from './session/rig-session-registry';
+import {
+  clearZeroStateDraft,
+  getZeroStateDraft,
+  rigSessionRegistry,
+  setZeroStateDraft,
+} from './session/rig-session-registry';
 import { openTabsStateEquals, toOpenTabsState } from './tab-restore';
 import {
   useAgentIdentities,
@@ -378,6 +386,15 @@ export const ChatPanel = observer(function ChatPanel({
       });
   }, [sessions, activeId, bindingId]);
 
+  // Attention round: clears Home's "unread" dot for this session the moment
+  // its tab is the one actually visible here — not merely selected while
+  // `collapsed` renders it as an icon in the session rail instead of the
+  // real transcript. See `session-attention-store.ts`'s own header comment.
+  useEffect(() => {
+    if (!activeId || collapsed) return;
+    noteSessionSeen(activeId);
+  }, [activeId, collapsed]);
+
   useEffect(() => {
     const el = composerRef.current;
     if (!el) return;
@@ -644,6 +661,7 @@ export const ChatPanel = observer(function ChatPanel({
               onOpenFile={onOpenFile}
               composerHeight={composerHeight}
               isFollowUp={followUpIds.has(activeStore.conversationId)}
+              onNewTab={() => setActiveId(null)}
             />
           ) : (
             <ZeroStateTranscript
@@ -671,6 +689,7 @@ export const ChatPanel = observer(function ChatPanel({
             onStartSession={startSession}
             onSubmitReplay={submitInReplay}
             onResume={resumeReplay}
+            bindingId={bindingId}
             density={deriveComposerDensity(composerWidth)}
             eagerStore={eagerStore}
           />
@@ -1150,6 +1169,7 @@ const Transcript = observer(function Transcript({
   onOpenFile,
   composerHeight,
   isFollowUp,
+  onNewTab,
 }: {
   store: RigSession;
   cwd: string;
@@ -1158,6 +1178,14 @@ const Transcript = observer(function Transcript({
   composerHeight: number;
   /** One-time muted notice above an empty transcript — a lazy-resume follow-up, not a continuation. */
   isFollowUp: boolean;
+  /**
+   * Bug fix (Fable session): the "Start a new session" action on a session
+   * recovery failure (`store.sessionRecovery`, see `rig-chat-store.ts`'s
+   * `_recoverDeadSession`) — same target as the tab strip's own `+`. The
+   * broken tab is deliberately left in place (its transcript, including the
+   * failed turn, stays visible and reachable) rather than closed outright.
+   */
+  onNewTab: () => void;
 }) {
   const viewRef = useRef<ChatView | null>(null);
 
@@ -1175,6 +1203,27 @@ const Transcript = observer(function Transcript({
   }, [composerHeight]);
 
   const queryClient = useQueryClient();
+
+  // Subscribed (not a point-in-time getQueryData snapshot) so a newly
+  // created file — file-tree.tsx's own watcher already invalidates this
+  // exact query key on any change under the root — flows into a fresh
+  // `fileMentionIndex` below and re-renders the transcript with the mention
+  // now linked, no polling needed. queryFn mirrors file-tree.tsx's own so
+  // this still resolves even when the file tree panel isn't mounted; react-
+  // query dedupes the fetch when it is.
+  const { data: rigFiles } = useQuery({
+    queryKey: rigFilesQueryKey(cwd, rootId),
+    queryFn: async () => {
+      const result = await rpc.rig.files.list({ rootId });
+      if (!result.success) throw new Error(result.error.message);
+      return result.data;
+    },
+  });
+
+  const fileMentionIndex = useMemo(
+    () => buildFileMentionIndex(rigFiles ?? [], cwd),
+    [rigFiles, cwd]
+  );
 
   const commands = useMemo<ChatCommands>(
     () => ({
@@ -1194,8 +1243,12 @@ const Transcript = observer(function Transcript({
           href,
           queryClient.getQueryData<RigFileNode[]>(['rig', 'files', 'list', cwd, rootId])
         ),
+      // Auto-links plain-text file mentions in assistant prose and tool-call
+      // headers ("Done — I created \"notes.md\"…") the same way a real
+      // markdown link resolves above — see `link-file-mentions.ts`.
+      linkFileMentions: (text) => matchFileMentions(text, fileMentionIndex),
     }),
-    [onOpenFile, cwd, rootId, queryClient]
+    [onOpenFile, cwd, rootId, queryClient, fileMentionIndex]
   );
 
   const errorMessage = store.kind === 'live' ? store.loadError?.message : store.error;
@@ -1257,6 +1310,29 @@ const Transcript = observer(function Transcript({
           history isn’t being saved yet — retrying…
         </p>
       )}
+      {store.kind === 'live' && store.sessionRecovery?.kind === 'recovering' && (
+        // Quiet, same shape as `resuming` above — a send or mode change just
+        // failed twice in a row (the adapter's underlying session died, most
+        // often after a failed turn), and the store is silently reconnecting
+        // before retrying whatever the user just tried.
+        <p className="shrink-0 pt-2 text-center font-mono text-xs text-text-muted">
+          reconnecting…
+        </p>
+      )}
+      {store.kind === 'live' && store.sessionRecovery?.kind === 'failed' && (
+        // The one honest failure state per the bug fix: the automatic
+        // reconnect above didn't work (or isn't possible for this
+        // provider/session). The failed turn itself stays in the transcript
+        // below — this banner never hides it, and closing/leaving this tab
+        // is never forced; "Start a new session" only moves the user to the
+        // zero-state composer, same target as the tab strip's own `+`.
+        <div className="flex shrink-0 items-center justify-center gap-2 px-3 py-1.5 text-center">
+          <span className="text-danger text-xs">{store.sessionRecovery.message}</span>
+          <Button variant="outline" size="xs" onClick={onNewTab}>
+            Start a new session
+          </Button>
+        </div>
+      )}
       {panelMode.inlineError && (
         <div className="flex shrink-0 items-center justify-center gap-2 px-3 py-1.5 text-center">
           <span className="text-xs text-text-muted">{errorMessage}</span>
@@ -1317,6 +1393,7 @@ const Composer = observer(function Composer({
   onStartSession,
   onSubmitReplay,
   onResume,
+  bindingId,
   density,
   eagerStore,
 }: {
@@ -1329,6 +1406,14 @@ const Composer = observer(function Composer({
   onSubmitReplay: (store: ReplayStore, text: string) => void;
   /** Round: eager session activation — the explicit Resume affordance, no text required. */
   onResume: (store: ReplayStore) => void;
+  /**
+   * The open rig's binding id — the key for the zero-state draft cache
+   * (`session/rig-session-registry.ts`'s `getZeroStateDraft`/
+   * `setZeroStateDraft`). Needed because `store` is null for the whole
+   * zero-state window (before a message is ever sent), so there is no
+   * `RigChatStore.draftText` to fall back on there.
+   */
+  bindingId: string;
   /** Composer overlap round — the bottom row's degradation tier, measured off the composer's own rendered width (`composer-density.ts`). */
   density: ComposerDensity;
   /**
@@ -1351,7 +1436,14 @@ const Composer = observer(function Composer({
   // never reaches this (session-scoped only, per the mode-control brief).
   const sessionConfigSource = live ?? (!store ? eagerStore : null);
 
-  const [text, setText] = useState(live?.draftText ?? '');
+  // Bug: composer draft lost on navigation — `store` is null for the whole
+  // zero-state window, so there is no `RigChatStore.draftText` to seed from;
+  // fall back to the zero-state draft cache (`session/rig-session-registry.ts`),
+  // which survives the eager store being torn down and recreated with a
+  // fresh conversation id every time this Composer instance remounts.
+  const [text, setText] = useState(
+    () => live?.draftText ?? (!store ? getZeroStateDraft(bindingId) : '')
+  );
   const affordances = live?.affordances ?? { isWorking: false, canSubmit: true, canCancel: false };
   const permission = live?.permissionQueue[0] ?? null;
   const resolvingPermissionOptionId = live?.resolvingPermissionOptionId ?? null;
@@ -1384,9 +1476,12 @@ const Composer = observer(function Composer({
     } else if (replay) {
       onSubmitReplay(replay, trimmed);
     } else {
+      // Promoting the zero-state draft into a real session — the cached
+      // draft is now stale (the real store's own `draftText` takes over).
+      clearZeroStateDraft(bindingId);
       onStartSession(trimmed);
     }
-  }, [live, replay, text, onStartSession, onSubmitReplay]);
+  }, [live, replay, text, onStartSession, onSubmitReplay, bindingId]);
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1481,8 +1576,13 @@ const Composer = observer(function Composer({
         <textarea
           value={text}
           onChange={(e) => {
-            setText(e.target.value);
-            live?.setDraftText(e.target.value);
+            const value = e.target.value;
+            setText(value);
+            if (live) live.setDraftText(value);
+            // Zero-state: no store yet to own a draft — see this
+            // Composer's `text` initializer for why the cache (not
+            // `live.setDraftText`) is the source of truth here.
+            else if (!store) setZeroStateDraft(bindingId, value);
           }}
           onKeyDown={onKeyDown}
           placeholder={placeholder}

@@ -18,8 +18,11 @@ import { formatRigContextHiddenContext } from '@shared/rig/context';
 import type { RigSessionTitleSource } from '@shared/rig/sessions';
 import { deriveAutoApplyOption } from './model-preference';
 import { shouldPersistMode } from './permission-mode';
+import { canResumeSession } from './resume-capability';
 import { decideSubmitDisposition, type SubmitDisposition } from './resume-presentation';
+import { noteSessionOutput } from './session-attention-store';
 import { SessionPersistenceQueue, type PersistenceQueueStatus } from './session-persistence-queue';
+import { extractErrorMessage, isSessionFailureError } from './session/session-recovery';
 import {
   loadAllSessionEvents,
   newTurnsSince,
@@ -58,6 +61,14 @@ type PermissionQueueItem = {
 export type RigChatLoadError =
   | { kind: 'auth_required'; message: string }
   | { kind: 'generic'; message: string };
+
+/**
+ * Bug fix (a failed turn leaving the session unusable): the ONE honest,
+ * non-repeating status for a session that's mid-transparent-reconnect or has
+ * given up on one — see `_recoverDeadSession`'s own doc comment for the full
+ * investigation. `null` the rest of the time (nothing to show).
+ */
+export type RigSessionRecoveryState = { kind: 'recovering' } | { kind: 'failed'; message: string };
 
 export class RigChatStore {
   /** Discriminant shared with `ReplayStore` — `chat-panel.tsx`'s tabs hold either. */
@@ -103,6 +114,8 @@ export class RigChatStore {
    */
   resuming = false;
   persistenceStatus: PersistenceQueueStatus = 'idle';
+  /** See `RigSessionRecoveryState` and `_recoverDeadSession`'s doc comment. */
+  sessionRecovery: RigSessionRecoveryState | null = null;
 
   private _view: ChatView | null = null;
   private _bootstrapPromise: Promise<void> | null = null;
@@ -182,6 +195,21 @@ export class RigChatStore {
    * `decideSubmitDisposition` for the pure "hold vs send vs queue" call.
    */
   private _heldPrompts: PromptInput[] = [];
+  /**
+   * Set the first time a send/mode/model/effort call fails with a shape
+   * that could mean the adapter's underlying session died (see
+   * `session/session-recovery.ts`'s `isSessionFailureError`), cleared the
+   * moment any such call next succeeds. A SINGLE failure of that shape is
+   * an ordinary turn/config failure (rate limit, refusal, a bad model
+   * pick, …) and must not trigger a reconnect on its own — this flag is
+   * what turns a SECOND consecutive one into the actual "the session looks
+   * dead" signal `_onActionFailed` acts on. See `_recoverDeadSession`'s own
+   * doc comment for the full investigation behind why this two-strike rule
+   * exists instead of reacting to the first failure.
+   */
+  private _suspectSessionDead = false;
+  /** Guards `_recoverDeadSession` against overlapping reconnect attempts. */
+  private _recovering = false;
 
   get disposed(): boolean {
     return this._disposed;
@@ -257,6 +285,7 @@ export class RigChatStore {
       hasSeededHistory: observable,
       resuming: observable,
       persistenceStatus: observable,
+      sessionRecovery: observable.ref,
       _resolvingPermission: observable.ref,
       _heldPrompts: observable.shallow,
       model: computed,
@@ -573,10 +602,19 @@ export class RigChatStore {
     void send
       ?.then((result) => {
         if (!this._isCurrent(generation)) return;
-        if (!result.success) this._toastError('Failed to send message', result.error);
+        if (result.success) {
+          this._onActionSucceeded();
+          return;
+        }
+        this._onActionFailed('Failed to send message', result.error, () =>
+          this._dispatchPrompt(prompt, disposition)
+        );
       })
       .catch((error: unknown) => {
-        if (this._isCurrent(generation)) this._toastError('Failed to send message', error);
+        if (!this._isCurrent(generation)) return;
+        this._onActionFailed('Failed to send message', error, () =>
+          this._dispatchPrompt(prompt, disposition)
+        );
       });
   }
 
@@ -714,9 +752,15 @@ export class RigChatStore {
     void this.session
       ?.setModelOption('model', model)
       .then((result) => {
-        if (!result.success) this._toastError('Failed to change model', result.error);
+        if (result.success) {
+          this._onActionSucceeded();
+          return;
+        }
+        this._onActionFailed('Failed to change model', result.error, () => this.setModel(model));
       })
-      .catch((error: unknown) => this._toastError('Failed to change model', error));
+      .catch((error: unknown) =>
+        this._onActionFailed('Failed to change model', error, () => this.setModel(model))
+      );
   }
 
   /**
@@ -740,9 +784,17 @@ export class RigChatStore {
     void this.session
       ?.setModeOption(modeId)
       .then((result) => {
-        if (!result.success) this._toastError('Failed to change session mode', result.error);
+        if (result.success) {
+          this._onActionSucceeded();
+          return;
+        }
+        this._onActionFailed('Failed to change session mode', result.error, () =>
+          this.setMode(modeId)
+        );
       })
-      .catch((error: unknown) => this._toastError('Failed to change session mode', error));
+      .catch((error: unknown) =>
+        this._onActionFailed('Failed to change session mode', error, () => this.setMode(modeId))
+      );
   }
 
   /** Same remember-for-next-time as `setModel` — see its own doc comment. */
@@ -754,9 +806,15 @@ export class RigChatStore {
     void this.session
       ?.setModelOption('effort', effort)
       .then((result) => {
-        if (!result.success) this._toastError('Failed to change effort', result.error);
+        if (result.success) {
+          this._onActionSucceeded();
+          return;
+        }
+        this._onActionFailed('Failed to change effort', result.error, () => this.setEffort(effort));
       })
-      .catch((error: unknown) => this._toastError('Failed to change effort', error));
+      .catch((error: unknown) =>
+        this._onActionFailed('Failed to change effort', error, () => this.setEffort(effort))
+      );
   }
 
   resolvePermission(optionId: string): void {
@@ -1058,6 +1116,7 @@ export class RigChatStore {
     const generation = this._generation;
     const fresh = newTurnsSince(turns, this._lastPersistedSeq);
     if (fresh.length > 0) {
+      noteSessionOutput(this.conversationId);
       // File-navigator redesign (§3, card rail "In progress"): the one
       // place this store sees genuinely NEW turns (never replayed history)
       // — the only honest source for "this session just wrote that file."
@@ -1082,9 +1141,138 @@ export class RigChatStore {
   private _toastError(title: string, error: unknown): void {
     toast({
       title,
-      description: error instanceof Error ? error.message : undefined,
+      description: extractErrorMessage(error),
       variant: 'destructive',
     });
+  }
+
+  /**
+   * Called after any send/mode/model/effort call resolves successfully.
+   * Clears the two-strike dead-session tracker (`_suspectSessionDead`'s own
+   * doc comment) and, if a recovery banner was still showing, clears that
+   * too — a session that looked dead healed on its own (e.g. a queued retry
+   * landed after all).
+   */
+  private _onActionSucceeded(): void {
+    if (this._disposed) return;
+    this._suspectSessionDead = false;
+    if (this.sessionRecovery) runInAction(() => (this.sessionRecovery = null));
+  }
+
+  /**
+   * Called after any send/mode/model/effort call fails. A single failure
+   * shaped like it could mean a dead adapter session (`isSessionFailureError`)
+   * is still just toasted, exactly as before — on its own that's just an
+   * ordinary turn/config failure (rate limit, refusal, a bad pick, …). Only
+   * a SECOND one in a row, with nothing that succeeded in between, is
+   * treated as the actual "the session died" signal and triggers the
+   * transparent reconnect — see `_recoverDeadSession`'s doc comment for why
+   * that two-strike rule is the real signal, not the first failure.
+   */
+  private _onActionFailed(toastTitle: string, error: unknown, retry: () => void): void {
+    if (this._disposed) return;
+    if (isSessionFailureError(error)) {
+      if (this._suspectSessionDead) {
+        void this._recoverDeadSession(retry);
+        return;
+      }
+      this._suspectSessionDead = true;
+    }
+    this._toastError(toastTitle, error);
+  }
+
+  /**
+   * Bug fix — "a failed turn in Claude Plan Mode leaves the session
+   * unusable". Investigation traced the actual failure chain to the bundled
+   * Claude adapter (`@agentclientprotocol/claude-agent-acp`): a turn/query
+   * failure that isn't a plain per-turn `is_error` result (`failActive`, see
+   * the adapter's `runConsumer`) can end its SDK query stream without the
+   * agent PROCESS exiting (`closeQueryStream`) — its `session.queryClosed`
+   * guard then rejects every LATER `prompt`/`setSessionMode`/
+   * `setSessionConfigOption` call for that ACP session with the same
+   * "session has ended" error, forever. Because the process itself never
+   * exits, `SessionManager.onProcessClosed` — the only thing that would
+   * otherwise remove a dead record — never fires
+   * (packages/runtime/src/acp-agents/runtime/session-manager.ts), so the
+   * runtime keeps forwarding every later call into the SAME broken adapter
+   * session. And the rig-runtime's own session machine
+   * (packages/runtime/src/acp-agents/machine/machine.ts) reports
+   * `phase: 'ready'` throughout regardless — a settled turn always returns
+   * there, error or not — so nothing about `canSubmit`/`sessionState` ever
+   * signals the problem; only the actual RPC calls keep failing.
+   *
+   * The runtime ALSO short-circuits `start()`/`resumeSession()` for a
+   * conversation id it still has any record for, even a dead one
+   * (`SessionManager.start`'s `existing` check), so reconnecting under the
+   * SAME conversation id first needs that stale record gone —
+   * `stopSession()` below is exactly `SessionManager.stop()`, which both
+   * asks the adapter to tear the broken session down (`agent.closeSession`,
+   * which clears its `queryClosed` entry) and removes the runtime's own
+   * record. Only then does the `resume()` that follows actually attach a
+   * fresh SDK query for this conversation's on-disk transcript, instead of
+   * just handing back the same broken session id.
+   *
+   * Not resumable at all (`canResumeSession` — no captured `acpSessionId`,
+   * or a provider this app can't honestly `loadSession` for) skips straight
+   * to the one honest failure state rather than guessing with a fresh,
+   * context-less session. The failed turn itself is never touched — it
+   * stays in the transcript either way; this only ever affects whether the
+   * COMPOSER and mode picker keep working afterward.
+   */
+  private async _recoverDeadSession(retry: () => void): Promise<void> {
+    if (this._disposed || this._recovering) return;
+    const dead = this.session;
+    const acpSessionId = dead?.acpSessionId ?? null;
+    if (!canResumeSession(this.providerId, acpSessionId)) {
+      runInAction(() => {
+        this.sessionRecovery = {
+          kind: 'failed',
+          message: 'This session can’t be reconnected automatically.',
+        };
+      });
+      return;
+    }
+    this._recovering = true;
+    const generation = this._generation;
+    runInAction(() => {
+      this.sessionRecovery = { kind: 'recovering' };
+    });
+    try {
+      if (dead) await dead.stopSession().catch(() => {});
+      const resumed = await AcpLiveSession.resume(this.conversationId, {
+        ...this._startInput(),
+        sessionId: acpSessionId!,
+      });
+      if (!this._isCurrent(generation)) {
+        this._releaseAcquiredSession(resumed.session);
+        return;
+      }
+      runInAction(() => {
+        if (!this._isCurrent(generation)) return;
+        this.session?.dispose();
+        this.session = resumed.session;
+        this._subscribeLiveSession(resumed.session);
+        this._suspectSessionDead = false;
+        this.sessionRecovery = null;
+      });
+      this._applyHistory(resumed.history.turns);
+      retry();
+    } catch (error) {
+      if (!this._isCurrent(generation)) return;
+      console.error('Rig chat: failed to recover a dead session', {
+        conversationId: this.conversationId,
+        error,
+      });
+      runInAction(() => {
+        this.sessionRecovery = {
+          kind: 'failed',
+          message:
+            extractErrorMessage(error) ?? 'Reconnecting failed — start a new session to keep going.',
+        };
+      });
+    } finally {
+      this._recovering = false;
+    }
   }
 }
 
