@@ -483,11 +483,11 @@ function FocusSection({
           <button
             type="button"
             onClick={onOpenAsTab}
-            title="Open in its own tab"
-            aria-label={`Open ${node.name} in its own tab`}
-            className="hover:bg-bg-2 hover:text-text-primary text-text-muted shrink-0 rounded-control p-1 transition-colors"
+            title={`Open ${node.name} in its own tab`}
+            className="border-border-hairline hover:bg-bg-2 hover:text-text-primary flex shrink-0 items-center gap-1 rounded-control border px-2 py-0.5 text-2xs text-text-muted transition-colors"
           >
-            <SquareArrowOutUpRight size={12} strokeWidth={1.5} />
+            <SquareArrowOutUpRight size={10} strokeWidth={1.5} />
+            Open in tab
           </button>
         )}
       </div>
@@ -709,9 +709,10 @@ const FocusBodyEditor = observer(function FocusBodyEditor({
           readOnly
             ? [
                 ...resource.extensionFactories,
+                focusBottomPadding,
                 () => [EditorState.readOnly.of(true), EditorView.editable.of(false)],
               ]
-            : resource.extensionFactories
+            : [...resource.extensionFactories, focusBottomPadding]
         }
       />
       {comments && showFloatingCard && pendingRect && (
@@ -735,6 +736,16 @@ const FocusBodyEditor = observer(function FocusBodyEditor({
  * whichever of `NewThreadCard`/`ThreadCard` (`comments-margin.tsx`,
  * exported for exactly this reuse — never forked) the caller passes.
  */
+/**
+ * The shared editor theme pads every document's bottom with 60vh of
+ * overscroll so a single artifact can be scrolled past its last line. Focus
+ * stacks several documents in one scroll container, where that reads as a
+ * screen of dead space under each expanded section (Dylan) — override it to
+ * one normal step here; the feed itself is what scrolls.
+ */
+const focusBottomPadding = () =>
+  EditorView.theme({ '.cm-content': { paddingBottom: '24px' } });
+
 function PaintbrushFloatingCard({
   anchorRect,
   children,
