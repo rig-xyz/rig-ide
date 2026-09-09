@@ -24,6 +24,7 @@
  *   • timer ticks
  */
 
+import type { FileMentionSegment } from '@/commands';
 import type { ChatCaches } from './caches';
 import type { ChatTheme } from './theme';
 
@@ -61,6 +62,15 @@ export type Measured<L = unknown> = {
  *                 When `expandedId === item.id` the card is measured at the
  *                 expanded max-height; all other user messages use the collapsed
  *                 max-height. Only affects user-role message units.
+ * `linkFileMentions` — optional, mirrors `ChatCommands.linkFileMentions` for
+ *                 the current render/measure pass. Lane A because splitting a
+ *                 run to promote a file mention into a link can change where
+ *                 text wraps. NOT threaded through `ChatCaches.parseBlocks`
+ *                 (see `core/markdown/apply-file-mentions.ts`'s header
+ *                 comment for why) — callers apply it via
+ *                 `applyFileMentionLinks(blocks, ctx.linkFileMentions)` after
+ *                 retrieving blocks from the cache, so measure() and render()
+ *                 always agree on the same function reference for one pass.
  */
 export type MeasureCtx = {
   theme: ChatTheme;
@@ -70,6 +80,7 @@ export type MeasureCtx = {
   caches: ChatCaches;
   measureEpoch?: number;
   expandedId?: string | null;
+  linkFileMentions?: (text: string) => ReadonlyArray<FileMentionSegment>;
 };
 
 /**

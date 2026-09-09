@@ -42,7 +42,7 @@ export type ChatCommands = {
   onOpenFile?: (arg: {
     path: string;
     itemId: string;
-    source: 'diff' | 'file-op' | 'resource-link' | 'prose-link';
+    source: 'diff' | 'file-op' | 'resource-link' | 'prose-link' | 'tool-header';
   }) => void;
 
   /**
@@ -73,6 +73,21 @@ export type ChatCommands = {
    * or `{ kind: 'external' }` to keep the default external-link behavior.
    */
   classifyLink?: (href: string) => { kind: 'workspace-file'; path: string } | { kind: 'external' };
+
+  /**
+   * Scan a plain-text inline run (paragraph/heading/list/quote text, or the
+   * content of an inline code span) for workspace-file mentions — a bare
+   * relative path, a filename wrapped in quotes, or an absolute path under
+   * the workspace root — and return it split into segments so chat-ui can
+   * promote the matching pieces into clickable file links (same click
+   * behavior as a rendered markdown link: routes through `onOpenFile` with
+   * `source: 'prose-link'`). Also consulted for a tool-call header's raw
+   * command/title text (`source: 'tool-header'`).
+   *
+   * Never called for text inside a fenced code block. Optional — omitting
+   * it preserves today's behavior (no auto-linking of plain-text mentions).
+   */
+  linkFileMentions?: (text: string) => ReadonlyArray<FileMentionSegment>;
 
   /**
    * Called when the user clicks a Mermaid diagram block preview.
@@ -131,6 +146,18 @@ export type ChatCommands = {
   getReactions?: (
     itemId: string
   ) => ReadonlyArray<{ emoji: string; count: number; mine: boolean }> | null;
+};
+
+/**
+ * One slice of a `linkFileMentions` scan: `path` set means "clickable
+ * workspace-file mention", unset means "plain text". Concatenating every
+ * segment's `text` in order MUST reconstruct the original input string
+ * exactly — chat-ui falls back to treating the whole input as unlinked
+ * plain text when a host implementation doesn't uphold that.
+ */
+export type FileMentionSegment = {
+  text: string;
+  path?: string;
 };
 
 export type ScrollToItemOptions = {

@@ -1,16 +1,19 @@
+import { useCommands } from '@components/contexts/CommandsContext';
 import { ROW_H } from '@components/engine/row-metrics';
 import { CollapsibleCard } from '@components/primitives/CollapsibleCard';
 import { IconTerminal } from '@components/primitives/icons';
 import { measureProseNaturalWidth } from '@components/rows/markdown/prose/layout';
+import { linkFragment } from '@components/rows/markdown/prose/prose.css';
 import type { MeasureCtx, RenderCtx } from '@core/define';
 import type { ProseBlock } from '@core/markdown/document';
 import { defineUnit } from '@core/units';
 import { stripAnsi } from '@lib/ansi';
 import { vars } from '@styles/theme.css';
-import { Show, createMemo } from 'solid-js';
+import { For, Show, createMemo } from 'solid-js';
 import type { ChatExecute } from '@/model';
 import { executeSubtext } from './execute.css';
 import { ExecuteBody, type ExecuteDisplayLine } from './Execute';
+import { commandHeaderSegments } from './execute.presenter';
 
 export { executeFromItem } from './execute.presenter';
 
@@ -42,23 +45,8 @@ function commandLines(command: string): string[] {
   return (command || '…').split('\n');
 }
 
-/** Command header cap — long enough to stay recognizable, short enough to stay a chip. */
-const HEADER_COMMAND_MAX = 60;
 /** Live-ticker / inputSummary subtext cap. */
 const SUBTEXT_MAX = 90;
-
-/**
- * The header's collapsed label: "Ran <first line of the command>", truncated.
- * Literal, not semantic — this names what ran, it does not try to guess what
- * it did (that's what the ✓/✗ glyph and the expanded body are for).
- */
-function commandFragment(command: string): string {
-  const firstLine = (command || '').trim().split('\n')[0]?.trim();
-  if (!firstLine) return 'command';
-  return firstLine.length > HEADER_COMMAND_MAX
-    ? `${firstLine.slice(0, HEADER_COMMAND_MAX - 1)}…`
-    : firstLine;
-}
 
 /**
  * Output lines, ANSI-stripped for display — the render path only (data/
@@ -171,7 +159,11 @@ function executeUnitH(item: ChatExecute, ctx: MeasureCtx, vars: ExecuteVars): nu
 }
 
 function ExecuteUnitRender(props: { data: ChatExecute; ctx: RenderCtx; vars: ExecuteVars }) {
+  const commands = useCommands();
   const mCtx = () => props.ctx.measureCtx?.();
+  const headerSegments = createMemo(() =>
+    commandHeaderSegments(props.data.command, commands().linkFileMentions)
+  );
   // Inverted semantics: stored "collapsed" bool = "expanded".
   const isExpanded = () => props.ctx.viewState.isCollapsed(props.data.id);
   const subtext = createMemo(() => collapsedSubtext(props.data));
@@ -223,7 +215,30 @@ function ExecuteUnitRender(props: { data: ChatExecute; ctx: RenderCtx; vars: Exe
               'white-space': 'nowrap',
             }}
           >
-            {commandFragment(props.data.command)}
+            <For each={headerSegments()}>
+              {(seg) =>
+                seg.path ? (
+                  <span
+                    class={linkFragment}
+                    onClick={(e) => {
+                      // Header row toggles collapse via a data-collapse-id click
+                      // delegation listener up the tree — stop it so clicking the
+                      // file mention opens the file instead of toggling the row.
+                      e.stopPropagation();
+                      commands().onOpenFile?.({
+                        path: seg.path!,
+                        itemId: props.data.id,
+                        source: 'tool-header',
+                      });
+                    }}
+                  >
+                    {seg.text}
+                  </span>
+                ) : (
+                  <>{seg.text}</>
+                )
+              }
+            </For>
           </span>
         </span>
       }

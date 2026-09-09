@@ -33,6 +33,7 @@
  *   Mismatch check is suppressed while animating (expected mid-tween).
  */
 
+import { useCommands } from '@components/contexts/CommandsContext';
 import { useDebug } from '@components/contexts/debug-context';
 import { ActionPill } from '@components/primitives/ActionPill';
 import { ReactionChips, ThreadBadge } from '@components/primitives/ReactionChips';
@@ -148,6 +149,7 @@ export type UnitRowProps = {
 
 export function UnitRow(props: UnitRowProps) {
   const debug = useDebug();
+  const commands = useCommands();
   let rowEl: HTMLElement | undefined;
 
   const def = createMemo(() => UNIT_REGISTRY[props.unit.kind]);
@@ -166,6 +168,7 @@ export function UnitRow(props: UnitRowProps) {
     caches: props.caches,
     measureEpoch: props.measureEpoch,
     expandedId: props.expandedId,
+    linkFileMentions: commands().linkFileMentions,
   });
 
   const contentH = createMemo(() => {
@@ -293,6 +296,7 @@ export function UnitRow(props: UnitRowProps) {
     // While collapsing a user-message card: hold expandedId so the expanded
     // render is kept alive during the tween.
     expandedId: collapsing() ? rowItemId() : props.expandedId,
+    linkFileMentions: commands().linkFileMentions,
   });
 
   // ── Animated clip ─────────────────────────────────────────────────────────

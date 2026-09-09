@@ -6,6 +6,7 @@ import { ReactionChips } from '@components/primitives/ReactionChips';
 import type { StackLayout } from '@core/compose';
 import type { MeasureCtx, Measured, RenderCtx } from '@core/define';
 import { layoutBlockStack } from '@core/layout/block-stack';
+import { applyFileMentionLinks } from '@core/markdown/apply-file-mentions';
 import type { Block } from '@core/markdown/document';
 import { blockPlainText } from '@core/markdown/plain-text';
 import type { SegmentCtx } from '@core/units';
@@ -95,9 +96,12 @@ export function measureMessage(item: ChatMessage, ctx: MeasureCtx, vars: Message
   }
 
   // assistant / thought
-  const blocks = item.streaming
-    ? ctx.caches.parseBlocksStreaming(item.id, item.text)
-    : ctx.caches.parseBlocks(item.id, item.text);
+  const blocks = applyFileMentionLinks(
+    item.streaming
+      ? ctx.caches.parseBlocksStreaming(item.id, item.text)
+      : ctx.caches.parseBlocks(item.id, item.text),
+    ctx.linkFileMentions
+  );
   const footer = item.role === 'assistant' ? vars.footerH : 0;
   if (blocks.length === 0) {
     return ctx.theme.fonts.body.lineHeight + footer;
@@ -119,9 +123,12 @@ function AssistantRender(props: { data: ChatMessage; ctx: RenderCtx; vars: Messa
   const parsed = createMemo(() => {
     const ctx = mCtx();
     if (!ctx) return { blocks: [] as Block[], settledCount: 0 };
-    const blocks = props.data.streaming
-      ? ctx.caches.parseBlocksStreaming(props.data.id, props.data.text)
-      : ctx.caches.parseBlocks(props.data.id, props.data.text);
+    const blocks = applyFileMentionLinks(
+      props.data.streaming
+        ? ctx.caches.parseBlocksStreaming(props.data.id, props.data.text)
+        : ctx.caches.parseBlocks(props.data.id, props.data.text),
+      ctx.linkFileMentions
+    );
     const settledCount = props.data.streaming
       ? ctx.caches.settledBlockCount(props.data.id)
       : blocks.length;

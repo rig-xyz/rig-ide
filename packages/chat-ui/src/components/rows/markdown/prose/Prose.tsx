@@ -15,7 +15,7 @@ import type {
   ProseLaidOut,
 } from '@core/layout/layout-types';
 import { mentionDisplayText } from '@core/markdown/document';
-import type { InlineMention, InlineRun } from '@core/markdown/document';
+import type { InlineCode, InlineMention, InlineRun } from '@core/markdown/document';
 import { For, Match, Show, Switch, createMemo, onMount } from 'solid-js';
 import {
   bulletColor,
@@ -121,6 +121,41 @@ function ProseFragment(props: {
     };
 
     // Links are not word-animated (href spans are not appended incrementally).
+    return (
+      <a
+        class={cls}
+        style={{ left: `${props.frag.x}px` }}
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={handleClick}
+      >
+        {props.frag.text}
+      </a>
+    );
+  }
+
+  if (props.run.kind === 'code' && (props.run as InlineCode).href) {
+    // A backtick-quoted file mention (`ChatCommands.linkFileMentions` matched
+    // the ENTIRE code span, e.g. `` `notes.md` ``) — keeps the inline-code
+    // chip's monospace styling (cls already carries it, same as the plain
+    // code branch below) but becomes clickable, same click contract as a
+    // prose-link text run.
+    const href = (props.run as InlineCode).href!;
+    const classification = () => commands().classifyLink?.(href);
+
+    const handleClick = (e: MouseEvent) => {
+      const result = classification();
+      if (result?.kind === 'workspace-file') {
+        e.preventDefault();
+        commands().onOpenFile?.({
+          path: result.path,
+          itemId: props.blockId,
+          source: 'prose-link',
+        });
+      }
+    };
+
     return (
       <a
         class={cls}

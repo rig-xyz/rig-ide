@@ -665,6 +665,7 @@ export function ChatRoot(props: ChatRootProps) {
         caches: caches(),
         measureEpoch: measureEpoch(),
         expandedId: expandedUserId(),
+        linkFileMentions: commands().linkFileMentions,
       };
       // lastWidth > 0 iff onCleanup wrote a snapshot on a prior dispose.
       // Skip the Map.get pass entirely on cold mounts (empty heightmap).
@@ -1273,6 +1274,7 @@ export function ChatRoot(props: ChatRootProps) {
         caches: caches(),
         measureEpoch: measureEpoch(),
         expandedId: expandedUserId(),
+        linkFileMentions: commands().linkFileMentions,
       };
       const contentH = unitDef.measure(u.data, ctx, unitDef.vars ?? {});
       const h = unitReservedHeight(u, contentH);
@@ -1417,6 +1419,7 @@ export function ChatRoot(props: ChatRootProps) {
       isCollapsed: () => false,
       expanded: () => false,
       caches: caches(),
+      linkFileMentions: commands().linkFileMentions,
     };
     const count = prependedUnits.length;
     virt.prepend(count, (i) => {

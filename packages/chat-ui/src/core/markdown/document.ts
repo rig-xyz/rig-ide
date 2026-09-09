@@ -25,10 +25,17 @@ export type InlineText = {
   href?: string;
 };
 
-/** Inline code span — rendered with extra chrome (padding). */
+/**
+ * Inline code span — rendered with extra chrome (padding). `href` is set
+ * only when the ENTIRE span's text is a resolved workspace-file mention
+ * (`ChatCommands.linkFileMentions`, e.g. `` `notes.md` ``) — the code chip
+ * keeps its monospace styling but becomes clickable, same target/click
+ * behavior as a prose-link `InlineText`.
+ */
 export type InlineCode = {
   kind: 'code';
   text: string;
+  href?: string;
 };
 
 /** Mention chip — rendered with badge-style chrome (padding + bg). */
