@@ -4,9 +4,9 @@
  * text and would otherwise be posted to the thread verbatim.
  *
  * Root cause (verified against the paintbrush v1 punch list): this app
- * bundles `@agentclientprotocol/codex-acp@1.0.2` (pnpm-patched — see
- * `patches/@agentclientprotocol__codex-acp@1.0.2.patch`), which pins its
- * own `@openai/codex@0.142.4`, independent of whatever `codex` the user
+ * bundles `@agentclientprotocol/codex-acp` (pnpm-patched — see
+ * `patches/@agentclientprotocol__codex-acp@1.10.0.patch`), which pins its
+ * own `@openai/codex` (`BUNDLED_CODEX_VERSION`), independent of whatever `codex` the user
  * has on `PATH`. That bundled binary still reads the user's global
  * `~/.codex/config.toml` — including its `model` entry — so a config
  * pointing at a model only a NEWER Codex understands (the report's
@@ -16,20 +16,18 @@
  * for this: it prints `Warning: ...` diagnostic lines and then the raw
  * JSON error body as plain assistant TEXT, so `readAnswer`
  * (`comment-agent.ts`) posts the whole blob as the reply, warnings and
- * all. `npm view @agentclientprotocol/codex-acp versions`/`@latest
- * dependencies` shows 1.1.14 is the first published version pinning
- * `@openai/codex@^0.147.0` (current `latest`, 1.10.0, pins ^0.153.3) —
- * bumping past the patched 1.0.2 would fix this at the source, but needs
- * the pnpm patch revalidated against the new version first, so this
- * module only degrades the SYMPTOM gracefully in the meantime; see the
- * build report for the full version list.
+ * all. The original repro ran on codex-acp 1.0.2 / codex 0.142.4; the pin
+ * has since been bumped to codex-acp 1.10.0 (codex 0.153.4), which fixed
+ * that particular model at the source, but the same failure shape recurs
+ * whenever the user's config outruns the bundled Codex again, so this
+ * module keeps degrading the SYMPTOM gracefully.
  *
  * Pure string work — no ACP, no I/O — the same "no I/O, just text" shape
  * `comment-agent-proposal.ts` already is, and unit-testable the same way.
  */
 
 /** The Codex version this app currently bundles via the pinned, patched `codex-acp`. */
-const BUNDLED_CODEX_VERSION = '0.142.4';
+const BUNDLED_CODEX_VERSION = '0.153.4';
 
 const WARNING_LINE = /^warning:/i;
 

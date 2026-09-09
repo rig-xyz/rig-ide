@@ -1,8 +1,8 @@
 diff --git a/dist/index.js b/dist/index.js
-index f15585a172e7443da1235ad8beb2509cc4925ae7..4f523fbfb17d6e35ed7982e692119a050d8f6045 100755
+index 58ec2616386c0c48e8da8c30fb11cc95b270017d..9de070ae633bc0f2b2c55c40475956dd7a053e46 100755
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -24207,7 +24207,7 @@ var AgentMode = class _AgentMode {
+@@ -27240,7 +27240,7 @@ var AgentMode = class _AgentMode {
      {
        type: "workspaceWrite",
        writableRoots: [],

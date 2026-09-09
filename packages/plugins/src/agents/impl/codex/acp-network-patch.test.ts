@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * Tripwire for the vendored codex-acp sandbox patch
- * (`patches/@agentclientprotocol__codex-acp@1.0.2.patch`, see
+ * (`patches/@agentclientprotocol__codex-acp@1.10.0.patch`, see
  * `agents/roadmaps/agent-queryable-context-verification.md`'s addendum).
  *
  * The adapter hardcodes its "Agent" mode as workspace-write with
@@ -24,7 +24,7 @@ describe('codex-acp vendored network patch', () => {
     const entry = _require.resolve('@agentclientprotocol/codex-acp/dist/index.js');
     const src = readFileSync(entry, 'utf8');
     const agentMode = src.match(
-      /"agent",\s*"Agent",[\s\S]{0,400}?networkAccess:\s*(true|false)/
+      /"agent",\s*"[^"]*",[\s\S]{0,400}?networkAccess:\s*(true|false)/
     );
     expect(agentMode?.[1], 'Agent mode sandbox policy in codex-acp dist').toBe('true');
   });

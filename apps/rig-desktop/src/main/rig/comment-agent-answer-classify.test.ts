@@ -50,7 +50,7 @@ describe('classifyProviderAnswer', () => {
     if (result.kind !== 'failure') throw new Error('unreachable');
     expect(result.reason).toBe('model-unsupported');
     expect(result.message).toContain('gpt-6-astra');
-    expect(result.message).toContain('0.142.4');
+    expect(result.message).toContain('0.153.4');
     expect(result.message).toContain('~/.codex/config.toml');
   });
 
@@ -127,7 +127,7 @@ describe('classifyProviderAnswer — the real Codex 0.142.4 / gpt-6-astra transc
     if (result.kind !== 'failure') return;
     expect(result.reason).toBe('model-unsupported');
     expect(result.message).toContain('gpt-6-astra');
-    expect(result.message).toContain('0.142.4');
+    expect(result.message).toContain('0.153.4');
     expect(result.strippedWarnings).toHaveLength(2);
   });
 });
