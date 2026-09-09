@@ -360,8 +360,8 @@ importers:
   apps/rig-desktop:
     dependencies:
       '@agentclientprotocol/sdk':
-        specifier: ^1.1.0
-        version: 1.1.0(zod@4.4.3)
+        specifier: ^1.4.0
+        version: 1.4.0(zod@4.4.3)
       '@codemirror/commands':
         specifier: ^6.10.4
         version: 6.10.4
@@ -900,8 +900,8 @@ importers:
   packages/core:
     dependencies:
       '@agentclientprotocol/sdk':
-        specifier: ^1.1.0
-        version: 1.1.0(zod@4.4.3)
+        specifier: ^1.4.0
+        version: 1.4.0(zod@4.4.3)
       '@emdash/shared':
         specifier: workspace:*
         version: link:../shared
@@ -949,14 +949,14 @@ importers:
   packages/plugins:
     dependencies:
       '@agentclientprotocol/claude-agent-acp':
-        specifier: ^0.54.1
-        version: 0.54.1(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
+        specifier: 0.75.1
+        version: 0.75.1(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
       '@agentclientprotocol/codex-acp':
         specifier: 1.10.0
         version: 1.10.0(patch_hash=a4120c8db64b908f4c906395718faee4fd94b957adf68b50d450fbd527b08af1)
       '@agentclientprotocol/sdk':
-        specifier: ^1.1.0
-        version: 1.1.0(zod@4.4.3)
+        specifier: ^1.4.0
+        version: 1.4.0(zod@4.4.3)
       '@emdash/core':
         specifier: workspace:*
         version: link:../core
@@ -1034,8 +1034,8 @@ importers:
   packages/runtime:
     dependencies:
       '@agentclientprotocol/sdk':
-        specifier: ^1.1.0
-        version: 1.1.0(zod@4.4.3)
+        specifier: ^1.4.0
+        version: 1.4.0(zod@4.4.3)
       '@emdash/core':
         specifier: workspace:*
         version: link:../core
@@ -1247,8 +1247,8 @@ packages:
   '@adobe/css-tools@4.5.0':
     resolution: {integrity: sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q==}
 
-  '@agentclientprotocol/claude-agent-acp@0.54.1':
-    resolution: {integrity: sha512-pvCPsjSUWvMah6PdyljHWoE1VhT5rR0VJ3pD8tyobCwJlReYNpgdXnIk5zLQqFRhwifAyRUUSsazsSpbBRFkuA==}
+  '@agentclientprotocol/claude-agent-acp@0.75.1':
+    resolution: {integrity: sha512-Un6I4BRkhpCFS3I7kr5C/lkAm8Nc3VuGZU2YQ3xIpJAIxV94iWO0Q2CH2QABxMERpONRu4Le6XC9V+5PImQZ2A==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -1269,8 +1269,8 @@ packages:
   '@antfu/install-pkg@1.1.0':
     resolution: {integrity: sha512-MGQsmw10ZyI+EJo45CdSER4zEb+p31LpDAFp2Z3gkSd1yqVZGi0Ebx++YTEMonJy4oChEMLsxZ64j8FH6sSqtQ==}
 
-  '@anthropic-ai/claude-agent-sdk@0.3.197':
-    resolution: {integrity: sha512-XNIi8W1tb+QfMkcK+5kepOC6BsxG8wtupd72H+pIPzIJypVQhHy7FoX+KBMtTRYwtl+5dsjKyABhjWXebeUilw==}
+  '@anthropic-ai/claude-agent-sdk@0.3.257':
+    resolution: {integrity: sha512-Se55zXv48IYLg/WzoXzpbPLcq86suwDSbRUoNb69l4dkovorqS/47Xuy7MUo/gPNwwcPB4a+aqbXbshU33dcdQ==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.93.0'
@@ -10056,10 +10056,10 @@ snapshots:
 
   '@adobe/css-tools@4.5.0': {}
 
-  '@agentclientprotocol/claude-agent-acp@0.54.1(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))':
+  '@agentclientprotocol/claude-agent-acp@0.75.1(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))':
     dependencies:
-      '@agentclientprotocol/sdk': 1.1.0(zod@4.4.3)
-      '@anthropic-ai/claude-agent-sdk': 0.3.197(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
+      '@agentclientprotocol/sdk': 1.4.0(zod@4.4.3)
+      '@anthropic-ai/claude-agent-sdk': 0.3.257(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
       zod: 4.4.3
     transitivePeerDependencies:
       - '@anthropic-ai/sdk'
@@ -10087,7 +10087,7 @@ snapshots:
       package-manager-detector: 1.6.0
       tinyexec: 1.2.4
 
-  '@anthropic-ai/claude-agent-sdk@0.3.197(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)':
+  '@anthropic-ai/claude-agent-sdk@0.3.257(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)':
     dependencies:
       '@anthropic-ai/sdk': 0.106.0(zod@4.4.3)
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)

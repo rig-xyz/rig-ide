@@ -49,7 +49,7 @@
     "typecheck": "tsgo --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^1.1.0",
+    "@agentclientprotocol/sdk": "^1.4.0",
     "@emdash/core": "workspace:*",
     "@emdash/shared": "workspace:*",
     "@emdash/wire": "workspace:*",
