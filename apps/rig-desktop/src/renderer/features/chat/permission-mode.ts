@@ -7,9 +7,10 @@
  * Danger classification is investigated, not guessed — confirmed against
  * both bundled ACP adapters' real source:
  *
- *   - `@agentclientprotocol/claude-agent-acp` (`buildAvailableModes`)
- *     advertises `auto`, `default`, `acceptEdits`, `plan`, `dontAsk`, and
- *     (gated, not available running as root) `bypassPermissions` —
+ *   - `@agentclientprotocol/claude-agent-acp` 0.75.1 (`buildAvailableModes`,
+ *     dist/session-mode.js) advertises `default`, `acceptEdits`, `plan`,
+ *     `auto`, and (gated behind ALLOW_BYPASS) `bypassPermissions`; `dontAsk`
+ *     is still accepted by `parseMode` but no longer advertised —
  *     "Bypass all permission checks." That last one is the only mode whose
  *     own description says no confirmation happens at all; every other
  *     mode still prompts, restricts, or denies rather than silently acting.
