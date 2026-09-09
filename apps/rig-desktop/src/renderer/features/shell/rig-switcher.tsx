@@ -65,13 +65,25 @@ export function RigSwitcher({
     onAutoEditHandled?.();
   }, [autoEdit, onAutoEditHandled]);
 
+  // Feedback round, Part A: signed out, no account owns anything shown here
+  // — the switcher's OWN list of other rigs to jump to must be empty, same
+  // as Home's rail (`home.tsx`'s new signed-out gate). The currently-open
+  // rig's own trigger (name/icon below) is untouched — that's just context,
+  // not a rig list — and "Open folder…" stays reachable regardless, since
+  // browsing to a local folder needs no account.
+  const authQuery = useQuery({
+    queryKey: ['rig', 'auth', 'status'],
+    queryFn: () => rpc.rig.auth.status(),
+  });
+  const signedIn = authQuery.data?.signedIn ?? false;
+
   const recentQuery = useQuery({
     queryKey: ['rig', 'recent', 'list'],
     queryFn: () => rpc.rig.recent.recentRigs(50),
-    enabled: open,
+    enabled: open && signedIn,
     staleTime: 5_000,
   });
-  const rows = recentQuery.data ?? [];
+  const rows = signedIn ? (recentQuery.data ?? []) : [];
 
   if (editing) {
     const row = (

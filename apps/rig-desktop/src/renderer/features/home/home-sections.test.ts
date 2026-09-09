@@ -661,7 +661,7 @@ describe('filterLocalRigsByAccount', () => {
   const theirs = { bindingId: 'b3', accountId: 'usr_them' };
   const rows = [mine, legacy, theirs];
 
-  it('signed in — shows this account\'s rows plus legacy/unknown null rows; hides another account\'s', () => {
+  it('signed in, no legacyVisibility given — defaults to showing legacy rows too (back-compat)', () => {
     expect(filterLocalRigsByAccount(rows, 'usr_me')).toEqual([mine, legacy]);
   });
 
@@ -675,5 +675,35 @@ describe('filterLocalRigsByAccount', () => {
 
   it('an account with no rows at all is just an empty result, not an error', () => {
     expect(filterLocalRigsByAccount([], 'usr_me')).toEqual([]);
+  });
+
+  describe('legacyVisibility (Part B — precise ownership via relay workspaces)', () => {
+    it('showAll — a legacy row is shown regardless of whether it is in the owned set', () => {
+      expect(filterLocalRigsByAccount(rows, 'usr_me', { kind: 'showAll' })).toEqual([mine, legacy]);
+    });
+
+    it("ownedOnly — shows a legacy row whose bindingId IS one of the account's own workspaces", () => {
+      expect(
+        filterLocalRigsByAccount(rows, 'usr_me', { kind: 'ownedOnly', bindingIds: new Set(['b2']) })
+      ).toEqual([mine, legacy]);
+    });
+
+    it("ownedOnly — hides a legacy row whose bindingId is NOT one of the account's own workspaces", () => {
+      expect(filterLocalRigsByAccount(rows, 'usr_me', { kind: 'ownedOnly', bindingIds: new Set() })).toEqual([
+        mine,
+      ]);
+    });
+
+    it('never shows another account\'s own (non-null) row, regardless of legacyVisibility', () => {
+      expect(
+        filterLocalRigsByAccount(rows, 'usr_me', { kind: 'ownedOnly', bindingIds: new Set(['b3']) })
+      ).toEqual([mine]);
+    });
+
+    it('signed out — legacyVisibility is ignored entirely; null rows always show', () => {
+      expect(filterLocalRigsByAccount(rows, null, { kind: 'ownedOnly', bindingIds: new Set() })).toEqual([
+        legacy,
+      ]);
+    });
   });
 });

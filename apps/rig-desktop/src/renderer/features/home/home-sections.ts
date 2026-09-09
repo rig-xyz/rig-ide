@@ -372,27 +372,50 @@ export function localRecencyKey(row: { lastOpenedAt: number; sessions: readonly 
 }
 
 /**
+ * How a legacy (`accountId: null`) row is treated once the signed-in
+ * account's own relay workspace list is actually known — Part B of the
+ * feedback round (docs/onboarding-flow-spec.md, "Accounts & rigs": a row
+ * with `accountId: null` used to show for EVERY account, which is exactly
+ * the bug Dylan reported — signing out, or signing in as someone else,
+ * still showed a rig bound before this column existed). The precise
+ * ownership signal is `rpc.rig.account.workspaces()`: a legacy row whose
+ * bindingId appears there is genuinely this account's own; one that
+ * doesn't belongs to somebody/something else's history. `'showAll'` is the
+ * deliberately safe fallback for the two states where that signal can't be
+ * trusted yet — workspaces still loading (never flash a row away then back
+ * once it resolves) and workspaces unreachable (can't fairly judge
+ * ownership while offline) — see `deriveWorkspacesState`.
+ */
+export type LegacyRowVisibility =
+  | { kind: 'showAll' }
+  | { kind: 'ownedOnly'; bindingIds: ReadonlySet<string> };
+
+/**
  * Accounts & rigs round (onboarding-flow-spec.md, "Accounts & rigs"): the
  * rail's account boundary — `home.tsx` filters `localRigs` through this
  * before it ever reaches `deriveHomeRegions`/`buildHomeRigRows`, so every
  * downstream consumer (the rail itself, the pulse briefing's "your rigs")
- * agrees. A row with `accountId: null` (legacy, or written while signed
- * out) is always visible — it gets backfilled to the current account on
- * its next open (`recent-rigs.ts`'s `recordRigOpened`), never hidden in
- * the meantime. `signedInAccountId` is three-valued: `undefined` means
- * "don't know yet" (signed in, but the `['rig','account','me']` query
- * hasn't resolved) — filtering on a guess would flash rows away and back,
- * so nothing is hidden until there's a real answer; `null` means
- * confidently signed out, which per spec shows null rows ONLY (any
- * non-null `accountId` belongs to whichever account signed in last, not
- * "no one"); a string is the signed-in account's own id.
+ * agrees. `signedInAccountId` is three-valued: `undefined` means "don't
+ * know yet" (signed in, but the `['rig','account','me']` query hasn't
+ * resolved) — filtering on a guess would flash rows away and back, so
+ * nothing is hidden until there's a real answer; `null` means confidently
+ * signed out, which per spec shows null (legacy) rows only (any non-null
+ * `accountId` belongs to whichever account signed in last, not "no one");
+ * a string is the signed-in account's own id, in which case a legacy row
+ * is shown only per `legacyVisibility` (Part B — defaults to `'showAll'`
+ * for callers/tests that don't care about that distinction).
  */
-export function filterLocalRigsByAccount<T extends { accountId: string | null }>(
+export function filterLocalRigsByAccount<T extends { accountId: string | null; bindingId: string }>(
   rows: readonly T[],
-  signedInAccountId: string | null | undefined
+  signedInAccountId: string | null | undefined,
+  legacyVisibility: LegacyRowVisibility = { kind: 'showAll' }
 ): T[] {
   if (signedInAccountId === undefined) return [...rows];
-  return rows.filter((r) => r.accountId === null || r.accountId === signedInAccountId);
+  return rows.filter((r) => {
+    if (r.accountId !== null) return r.accountId === signedInAccountId;
+    if (signedInAccountId === null) return true;
+    return legacyVisibility.kind === 'showAll' || legacyVisibility.bindingIds.has(r.bindingId);
+  });
 }
 
 /**

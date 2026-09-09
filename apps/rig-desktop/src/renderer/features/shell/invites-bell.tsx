@@ -8,7 +8,14 @@ import { Button } from '@renderer/lib/ui/button';
 import { Popover } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import type { RigMyInvite } from '@shared/rig/rig-share';
-import { deriveBellState, shapeMyInvites, type MyInviteRow } from './invites-inbox';
+import {
+  deriveBellState,
+  emptyInvitesMessage,
+  MY_INVITES_KEY_PREFIX,
+  myInvitesQueryKey,
+  shapeMyInvites,
+  type MyInviteRow,
+} from './invites-inbox';
 
 /**
  * The topbar invites bell — invites addressed to ME (`rig.share.listMyInvites`,
@@ -25,9 +32,17 @@ import { deriveBellState, shapeMyInvites, type MyInviteRow } from './invites-inb
  * points at Home; it offers "Set up locally" right there, driving the same
  * `rpc.rig.join.attach` flow Home's "Download" uses (member-gated, no
  * invite secret needed), opening the result the normal way on success.
+ *
+ * Feedback round fix: the query key is now account-scoped
+ * (`invites-inbox.ts`'s `myInvitesQueryKey`) — the old bare key had no
+ * account dimension, so switching signed-in accounts mid-session could
+ * still show a PREVIOUS account's cached "no invites" rather than an
+ * honest fresh read (see that module's own header comment for the bug
+ * report this traces to). The empty state also now names which email the
+ * search actually ran against (`emptyInvitesMessage`), via the same
+ * `rpc.rig.account.me()` read the topbar identity pill already makes.
  */
 
-const MY_INVITES_KEY = ['rig', 'share', 'myInvites'] as const;
 const POLL_INTERVAL_MS = 5 * 60_000;
 
 export function InvitesBell({ onOpenPath }: { onOpenPath: (path: string) => void }) {
@@ -40,8 +55,16 @@ export function InvitesBell({ onOpenPath }: { onOpenPath: (path: string) => void
   });
   const signedIn = authQuery.data?.signedIn ?? false;
 
+  const meQuery = useQuery({
+    queryKey: ['rig', 'account', 'me'],
+    queryFn: () => rpc.rig.account.me(),
+    enabled: signedIn,
+  });
+  const me = meQuery.data?.success ? meQuery.data.data : null;
+  const accountId = me?.id ?? null;
+
   const invitesQuery = useQuery({
-    queryKey: MY_INVITES_KEY,
+    queryKey: myInvitesQueryKey(accountId),
     queryFn: () => rpc.rig.share.listMyInvites(),
     enabled: signedIn,
     refetchInterval: POLL_INTERVAL_MS,
@@ -100,6 +123,7 @@ export function InvitesBell({ onOpenPath }: { onOpenPath: (path: string) => void
           // actually resolved unsuccessfully; `isError` covers a
           // transport-level failure (the query function itself threw).
           error={invitesQuery.isError || invitesQuery.data?.success === false}
+          email={me?.email ?? null}
           onOpenPath={onOpenPath}
         />
       </Popover>
@@ -110,10 +134,12 @@ export function InvitesBell({ onOpenPath }: { onOpenPath: (path: string) => void
 function InvitesPopoverContent({
   invites,
   error,
+  email,
   onOpenPath,
 }: {
   invites: RigMyInvite[] | null;
   error: boolean;
+  email: string | null;
   onOpenPath: (path: string) => void;
 }) {
   if (invites === null) {
@@ -125,7 +151,7 @@ function InvitesPopoverContent({
   }
   const rows = shapeMyInvites(invites);
   if (rows.length === 0) {
-    return <p className="text-text-muted p-3 text-xs">No pending invites.</p>;
+    return <p className="text-text-muted p-3 text-xs">{emptyInvitesMessage(email)}</p>;
   }
   return (
     <div className="flex flex-col gap-1 p-2">
@@ -157,7 +183,7 @@ function InviteRow({ row, onOpenPath }: { row: MyInviteRow; onOpenPath: (path: s
     // list, and this invite will drop from the next list read. The joined
     // row stays visible until then so the outcome is legible.
     void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
-    void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY });
+    void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY_PREFIX });
   };
 
   const decline = async () => {
@@ -170,7 +196,7 @@ function InviteRow({ row, onOpenPath }: { row: MyInviteRow; onOpenPath: (path: s
       return;
     }
     // No ceremony: the per-user hide is done; the row disappears with the list.
-    void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY });
+    void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY_PREFIX });
   };
 
   const setUpLocally = async () => {

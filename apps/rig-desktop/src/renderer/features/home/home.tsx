@@ -1,9 +1,16 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, LogIn } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
 import { useRigSignIn, type RigSignInPhase } from '@renderer/features/rig-account/use-rig-sign-in';
+import {
+  MY_INVITES_KEY_PREFIX,
+  myInvitesQueryKey,
+  shapeMyInvites,
+  type MyInviteRow,
+} from '@renderer/features/shell/invites-inbox';
 import { rpc } from '@renderer/lib/ipc';
+import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { cn } from '@renderer/lib/utils';
 import { BriefingSpine } from './briefing-spine';
 import {
@@ -14,6 +21,7 @@ import {
   type HomeHealthMessage,
   type HomeLocalRig,
   type HomeRecentSession,
+  type LegacyRowVisibility,
 } from './home-sections';
 import { PeopleRail } from './people-rail';
 import { shouldShowPulseSection } from './pulse-state';
@@ -185,6 +193,50 @@ export function Home({
       ? meQuery.data.data.id
       : undefined;
 
+  // Part C (feedback round): Home's own read of "invites addressed to me" —
+  // shares the exact same account-scoped cache key the topbar bell uses
+  // (`invites-inbox.ts`'s `myInvitesQueryKey`), so the two rarely cost two
+  // separate relay round trips. Feeds only the empty-state's inline invite
+  // banner below; the bell stays the primary surface.
+  const myInvitesQuery = useQuery({
+    queryKey: myInvitesQueryKey(currentAccountId ?? null),
+    queryFn: () => rpc.rig.share.listMyInvites(),
+    enabled: signedIn,
+  });
+  const pendingInvite: MyInviteRow | null = myInvitesQuery.data?.success
+    ? (shapeMyInvites(myInvitesQuery.data.data.invites)[0] ?? null)
+    : null;
+
+  const workspaces = deriveWorkspacesState(signedIn, {
+    isLoading: workspacesQuery.isLoading,
+    data: workspacesQuery.data,
+  });
+
+  // Part B (feedback round, docs/onboarding-flow-spec.md "Accounts &
+  // rigs"): a legacy row only counts as this account's own once its
+  // bindingId shows up in the account's OWN relay workspaces —
+  // `deriveWorkspacesState`'s `'ok'` already carries exactly that list.
+  // `'loading'`/`'unreachable'` fall back to `'showAll'` (never hide a
+  // legacy row on a guess, or while offline) — see
+  // `filterLocalRigsByAccount`'s own doc comment. `ownedBindingIdsKey` is a
+  // stable, sorted-and-joined string of the same ids — react hooks can't
+  // usefully depend on `workspaces.bindings` itself (a fresh array every
+  // render) or a `Set` built from it (same problem), so the backfill
+  // effect below depends on this instead, via the memoized `ownedBindingIds`.
+  const ownedBindingIdsKey =
+    workspaces.status === 'ok'
+      ? [...workspaces.bindings]
+          .map((b) => b.bindingId)
+          .sort()
+          .join(',')
+      : '';
+  const ownedBindingIds = useMemo(
+    () => new Set(ownedBindingIdsKey ? ownedBindingIdsKey.split(',') : []),
+    [ownedBindingIdsKey]
+  );
+  const legacyVisibility: LegacyRowVisibility =
+    workspaces.status === 'ok' ? { kind: 'ownedOnly', bindingIds: ownedBindingIds } : { kind: 'showAll' };
+
   // Filtered once, here, so every consumer below (the rail, and the pulse
   // briefing's own "your rigs" via `BriefingSpine`) agrees on the same
   // account boundary rather than each re-deriving it.
@@ -199,13 +251,31 @@ export function Home({
       notARigAnymore: r.notARigAnymore,
       accountId: r.accountId,
     })),
-    currentAccountId
+    currentAccountId,
+    legacyVisibility
   );
   const recentSessions: HomeRecentSession[] = recentSessionsQuery.data ?? [];
-  const workspaces = deriveWorkspacesState(signedIn, {
-    isLoading: workspacesQuery.isLoading,
-    data: workspacesQuery.data,
-  });
+
+  // Backfill half of Part B: once a legacy row is CONFIRMED as this
+  // account's own (its bindingId is in `legacyVisibility`'s `ownedOnly`
+  // set), stamp `accountId` on it for good so it stops depending on
+  // re-deriving ownership from the relay on every future render. Best-
+  // effort and idempotent (`backfillAccountId`'s own doc comment) — the ref
+  // just avoids re-issuing the same call every render for bindingIds
+  // already sent this session.
+  const backfilledBindingIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (workspaces.status !== 'ok' || typeof currentAccountId !== 'string') return;
+    const toBackfill = (localRigsQuery.data ?? [])
+      .filter(
+        (r) =>
+          r.accountId === null && ownedBindingIds.has(r.bindingId) && !backfilledBindingIds.current.has(r.bindingId)
+      )
+      .map((r) => r.bindingId);
+    if (toBackfill.length === 0) return;
+    for (const bindingId of toBackfill) backfilledBindingIds.current.add(bindingId);
+    void rpc.rig.recent.backfillAccountId({ bindingIds: toBackfill, accountId: currentAccountId });
+  }, [workspaces.status, ownedBindingIds, currentAccountId, localRigsQuery.data]);
 
   const localBindingIds = new Set(localRigs.map((r) => r.bindingId));
   const relayOnlyBindingIds =
@@ -239,6 +309,25 @@ export function Home({
       : { status: workspaces.status }
   );
 
+  // Feedback round, Part A: signing out (or never having signed in on this
+  // launch) must not leave any rig visible on Home — a single generic gate
+  // replaces the whole screen the moment auth confidently resolves to
+  // signed-out. `authQuery.isLoading` guards against flashing this gate
+  // during the brief window auth status is still unknown (`signedIn`
+  // defaults to `false` then too, same as before this round) — that
+  // existing loading behavior is unchanged. A genuinely fresh machine (no
+  // local rigs, no sessions — the first-run empty state) keeps the
+  // onboarding spec's Welcome instead: its one button already signs in
+  // before creating, and "Start fresh" is the honest verb there, not
+  // "Sign in to see your rigs" when there is nothing to see yet.
+  if (!authQuery.isLoading && !signedIn && !regions.showEmptyState) {
+    return (
+      <div className="flex min-h-full w-full items-center justify-center p-8">
+        <SignedOutGate signInPhase={signInPhase} onSignIn={signIn} />
+      </div>
+    );
+  }
+
   if (regions.showEmptyState) {
     // `min-h-full` (not `h-full`) + no overflow of its own — `main` (the
     // parent, in `App.tsx`) is what scrolls; matches round H2's own fix
@@ -247,9 +336,16 @@ export function Home({
     // Onboarding flow round: this is now the ONLY first-run surface
     // (docs/onboarding-flow-spec.md §1) — no Open Folder…, no "ask your
     // agent", no dialog. One line, one button.
+    //
+    // Part C (feedback round): an account with zero rigs but a pending
+    // invite gets it surfaced right here too, not only behind the topbar
+    // bell — `pendingInvite` is null whenever there isn't one (no invites,
+    // or the read hasn't resolved yet), so this never changes layout for
+    // the plain first-run case.
     return (
-      <div className="flex min-h-full w-full items-center justify-center p-8">
+      <div className="flex min-h-full w-full flex-col items-center justify-center gap-6 p-8">
         <Welcome phase={welcomePhase} authLoading={authQuery.isLoading} onStartFresh={startFreshOrCreate} />
+        {pendingInvite && <PendingInviteInline invite={pendingInvite} onOpenPath={onOpenPath} />}
       </div>
     );
   }
@@ -381,6 +477,99 @@ function Welcome({
         <p className="text-text-muted text-xs">Rig is collaborative — sign in to start.</p>
       )}
       {phase.kind === 'error' && <p className="text-danger text-xs">{phase.message}</p>}
+    </div>
+  );
+}
+
+/**
+ * Feedback round, Part A — the ONLY thing Home renders while signed out
+ * (docs/onboarding-flow-spec.md's "Accounts & rigs": files are yours,
+ * memberships are per account, so a signed-out window has no account to
+ * show rigs FOR). Deliberately as thin as `Welcome` itself — same icon,
+ * same `.welcome-cta` button styling — but a different verb: this never
+ * creates anything, it only runs the same `useRigSignIn` round-trip the
+ * topbar's own sign-in affordance uses. Once sign-in lands, `authQuery`/
+ * `signedIn` flip and `home.tsx` re-renders past this gate on its own — no
+ * local phase to track here beyond `signInPhase` itself.
+ */
+function SignedOutGate({ signInPhase, onSignIn }: { signInPhase: RigSignInPhase; onSignIn: () => void }) {
+  const waiting = signInPhase !== 'idle';
+  return (
+    <div className="flex w-full max-w-sm flex-col items-center gap-8 text-center">
+      <RigAppIcon size={112} className="shadow-soft" />
+      <p className="font-display text-text-primary text-xl">Sign in to see your rigs</p>
+      <button
+        type="button"
+        onClick={() => void onSignIn()}
+        disabled={waiting}
+        className="welcome-cta bg-accent text-accent-ink focus-visible:outline-accent inline-flex items-center gap-2 rounded-chip px-6 py-3 text-base font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-60"
+      >
+        {waiting && <Loader2 className="size-4 animate-spin" strokeWidth={1.5} />}
+        {waiting ? 'Waiting for sign-in…' : 'Sign in'}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Feedback round, Part C — an account with zero rigs but a pending invite
+ * gets it surfaced right on the empty state, not only behind the topbar
+ * bell (`invites-bell.tsx`'s `InviteRow`). Deliberately does NOT replay
+ * that row's own two-step accept/"Set up locally" flow: with nothing else
+ * on screen, one click doing accept-then-attach end to end is the more
+ * honest "one line + one button" than a second interstitial state would
+ * be. Mirrors `InviteRow`'s two relay calls exactly (`acceptMyInvite` then
+ * `join.attach`) — a failure in the SECOND one still leaves the invite
+ * accepted server-side, so this quietly falls back to idle rather than
+ * showing an error; the `['rig','account']` invalidate below means the
+ * next render already knows about the binding either way (it'll show as
+ * relay-only in the rail once `regions.showEmptyState` flips).
+ */
+function PendingInviteInline({
+  invite,
+  onOpenPath,
+}: {
+  invite: MyInviteRow;
+  onOpenPath: (path: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [phase, setPhase] = useState<'idle' | 'working' | 'error'>('idle');
+  const [error, setError] = useState<string | null>(null);
+
+  const accept = async () => {
+    setPhase('working');
+    setError(null);
+    const accepted = await rpc.rig.share.acceptMyInvite({ id: invite.id });
+    if (!accepted.success) {
+      setPhase('error');
+      setError(accepted.error.message);
+      return;
+    }
+    void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
+    void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY_PREFIX });
+    const attached = await rpc.rig.join.attach({ bindingId: invite.bindingId });
+    if (!attached.success) {
+      setPhase('idle');
+      return;
+    }
+    markJustAttachedSyncing(attached.data.localPath, attached.data.syncing);
+    onOpenPath(attached.data.localPath);
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <p className="text-text-muted text-sm">
+        {invite.inviterLabel} invited you to {invite.rigName} ·{' '}
+        <button
+          type="button"
+          onClick={() => void accept()}
+          disabled={phase === 'working'}
+          className="text-accent hover:opacity-80 disabled:pointer-events-none disabled:opacity-50"
+        >
+          {phase === 'working' ? 'Accepting…' : 'Accept'}
+        </button>
+      </p>
+      {phase === 'error' && error && <p className="text-danger text-xs">{error}</p>}
     </div>
   );
 }

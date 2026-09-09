@@ -15,6 +15,7 @@ vi.mock('@main/db/client', () => ({
 }));
 
 const {
+  backfillAccountIdImpl,
   forgetRig,
   getRigAccountId,
   getRigPathsForAccount,
@@ -146,6 +147,87 @@ describe('recordRigOpened — account stamping', () => {
     await recordRigOpened({ path: '/tmp/rig', bindingId: 'bnd_existing', name: null });
 
     expect(await getRigAccountId('bnd_existing')).toBe('usr_a');
+  });
+});
+
+/**
+ * Part B backfill (feedback round, docs/onboarding-flow-spec.md "Accounts &
+ * rigs") — `home.tsx` calls this once it's confirmed a legacy row's
+ * bindingId is one of the signed-in account's own relay workspaces.
+ */
+describe('backfillAccountIdImpl', () => {
+  it('stamps accountId on a legacy row whose bindingId is in the list', async () => {
+    await fixture.db.insert(rigRigs).values({
+      id: 'r1',
+      path: '/tmp/rig',
+      bindingId: 'bnd_legacy',
+      firstOpenedAt: 1,
+      lastOpenedAt: 1,
+    });
+
+    await backfillAccountIdImpl(['bnd_legacy'], 'usr_a');
+
+    expect(await getRigAccountId('bnd_legacy')).toBe('usr_a');
+  });
+
+  it('never clobbers a row that already has a different account stamped', async () => {
+    await fixture.db.insert(rigRigs).values({
+      id: 'r1',
+      path: '/tmp/rig',
+      bindingId: 'bnd_owned',
+      accountId: 'usr_b',
+      firstOpenedAt: 1,
+      lastOpenedAt: 1,
+    });
+
+    await backfillAccountIdImpl(['bnd_owned'], 'usr_a');
+
+    expect(await getRigAccountId('bnd_owned')).toBe('usr_b');
+  });
+
+  it('is idempotent — calling it again with the same bindingIds is a no-op', async () => {
+    await fixture.db.insert(rigRigs).values({
+      id: 'r1',
+      path: '/tmp/rig',
+      bindingId: 'bnd_legacy',
+      firstOpenedAt: 1,
+      lastOpenedAt: 1,
+    });
+
+    await backfillAccountIdImpl(['bnd_legacy'], 'usr_a');
+    await backfillAccountIdImpl(['bnd_legacy'], 'usr_a');
+
+    expect(await getRigAccountId('bnd_legacy')).toBe('usr_a');
+  });
+
+  it('a bindingId with no row at all is simply ignored — never throws', async () => {
+    await expect(backfillAccountIdImpl(['bnd_nowhere'], 'usr_a')).resolves.toBeUndefined();
+  });
+
+  it('an empty bindingIds list is a no-op', async () => {
+    await fixture.db.insert(rigRigs).values({
+      id: 'r1',
+      path: '/tmp/rig',
+      bindingId: 'bnd_legacy',
+      firstOpenedAt: 1,
+      lastOpenedAt: 1,
+    });
+
+    await backfillAccountIdImpl([], 'usr_a');
+
+    expect(await getRigAccountId('bnd_legacy')).toBeNull();
+  });
+
+  it('only stamps the bindingIds asked for, leaving other legacy rows untouched', async () => {
+    await fixture.db.insert(rigRigs).values([
+      { id: 'r1', path: '/tmp/one', bindingId: 'bnd_one', firstOpenedAt: 1, lastOpenedAt: 1 },
+      { id: 'r2', path: '/tmp/two', bindingId: 'bnd_two', firstOpenedAt: 1, lastOpenedAt: 1 },
+    ]);
+
+    await backfillAccountIdImpl(['bnd_one'], 'usr_a');
+
+    expect(await getRigAccountId('bnd_one')).toBe('usr_a');
+    expect(await getRigAccountId('bnd_two')).toBeNull();
   });
 });
 

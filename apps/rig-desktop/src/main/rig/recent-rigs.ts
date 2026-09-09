@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { db } from '@main/db/client';
 import { rigRigs, type RigRigRow } from '@main/db/schema';
 import { createRPCController } from '@shared/lib/ipc/rpc';
@@ -232,6 +232,27 @@ export async function forgetRig(bindingId: string): Promise<void> {
   await db.delete(rigRigs).where(eq(rigRigs.bindingId, bindingId));
 }
 
+/**
+ * Backfill half of Part B (feedback round, docs/onboarding-flow-spec.md
+ * "Accounts & rigs"): `home.tsx` recognizes a legacy (`accountId: null`)
+ * row as the signed-in account's own once its bindingId shows up in that
+ * account's relay workspaces (`rpc.rig.account.workspaces()`) — this
+ * stamps `accountId` onto every such row so future reads stop depending on
+ * re-deriving ownership from the relay every render. Idempotent: the
+ * `WHERE accountId IS NULL` guard means a row that's already stamped (by
+ * this, by `recordRigOpened`, or by a previous call with the same
+ * bindingIds) is left untouched — this can never clobber a DIFFERENT
+ * account's own stamp, and calling it repeatedly with the same input is a
+ * no-op after the first time.
+ */
+export async function backfillAccountIdImpl(bindingIds: readonly string[], accountId: string): Promise<void> {
+  if (bindingIds.length === 0) return;
+  await db
+    .update(rigRigs)
+    .set({ accountId })
+    .where(and(isNull(rigRigs.accountId), inArray(rigRigs.bindingId, [...bindingIds])));
+}
+
 export const rigRecentController = createRPCController({
   /** Most-recently-opened rigs, newest first — feeds the Home screen's RIGS section. */
   recentRigs: recentRigsImpl,
@@ -241,4 +262,8 @@ export const rigRecentController = createRPCController({
 
   /** The not-a-rig card's "Remove from your rigs". */
   forget: ({ bindingId }: { bindingId: string }): Promise<void> => forgetRig(bindingId),
+
+  /** `home.tsx`'s Part B backfill, once a legacy row is confirmed as the signed-in account's own. */
+  backfillAccountId: ({ bindingIds, accountId }: { bindingIds: string[]; accountId: string }): Promise<void> =>
+    backfillAccountIdImpl(bindingIds, accountId),
 });
