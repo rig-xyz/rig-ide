@@ -43,30 +43,27 @@
  *
  * This module is PURE: no IO, no Electron/IPC imports — `buildFileMentionIndex`
  * takes the SAME `RigFileNode[]` tree `classifyProseLink`/`file-tree.tsx` use.
+ *
+ * The actual scan-and-boundary engine (`linkFileMentions` itself, plus the
+ * `FileMentionSegment`/`FileMentionIndex` shapes) now lives in the neutral
+ * `@renderer/lib/file-mentions` — moved there so the Home pulse narration's
+ * OWN file-mention linking (`features/home/pulse-file-mentions.ts`, a
+ * different candidate source: resolved main-side rather than from an
+ * already-loaded tree) can reuse it instead of forking a second matcher.
+ * Re-exported here unchanged so this module's own callers (and its test
+ * file) don't need to know that split happened.
  */
 
 import type { RigFileNode } from '@shared/rig/files';
+import {
+  linkFileMentions,
+  type FileMentionCandidate,
+  type FileMentionIndex,
+  type FileMentionSegment,
+} from '@renderer/lib/file-mentions';
 import { detectByExtension } from '../artifact/file-type';
 
-export type FileMentionSegment = {
-  text: string;
-  /** Set when this segment is a clickable file mention; a workspace-relative path. */
-  path?: string;
-};
-
-type Candidate = {
-  /** The literal string to search for. */
-  pattern: string;
-  /** The workspace-relative path a match resolves to. */
-  relPath: string;
-};
-
-export type FileMentionIndex = {
-  readonly candidates: readonly Candidate[];
-};
-
-/** Characters that mean "this position is a continuation of a longer token, not a clean boundary." */
-const CONTINUATION = /[A-Za-z0-9_/-]/;
+export { linkFileMentions, type FileMentionSegment, type FileMentionIndex };
 
 function isLinkableFile(relPath: string): boolean {
   const detected = detectByExtension(relPath);
@@ -106,7 +103,7 @@ export function buildFileMentionIndex(
   }
 
   const root = workspaceRoot?.replace(/\/+$/, '');
-  const candidates: Candidate[] = [];
+  const candidates: FileMentionCandidate[] = [];
   const seen = new Set<string>();
   const add = (pattern: string, relPath: string): void => {
     // Same pattern string can legitimately resolve two different ways only
@@ -134,61 +131,4 @@ export function buildFileMentionIndex(
   candidates.sort((a, b) => b.pattern.length - a.pattern.length);
 
   return { candidates };
-}
-
-function leftBoundaryOk(text: string, start: number): boolean {
-  if (start === 0) return true;
-  const ch = text[start - 1];
-  return !(CONTINUATION.test(ch) || ch === '.');
-}
-
-function rightBoundaryOk(text: string, end: number): boolean {
-  const ch = text[end];
-  if (ch === undefined) return true;
-  if (CONTINUATION.test(ch)) return false;
-  if (ch === '.') {
-    // A single trailing period reads as end-of-sentence punctuation UNLESS
-    // it's immediately followed by more word characters (a real extension
-    // continuation, e.g. matching "notes.md" inside "notes.md.bak").
-    const next = text[end + 1];
-    return !(next !== undefined && /[A-Za-z0-9]/.test(next));
-  }
-  return true;
-}
-
-/**
- * Scans `text` for workspace-file mentions and returns it split into
- * segments — `path` set means "clickable", unset means "plain text".
- * Concatenating every segment's `text` in order always reconstructs `text`
- * exactly. Never called on text inside a fenced code block (chat-ui's own
- * contract — see `packages/chat-ui/src/commands.ts`).
- */
-export function linkFileMentions(text: string, index: FileMentionIndex): FileMentionSegment[] {
-  if (!text || index.candidates.length === 0) return [{ text }];
-
-  const segments: FileMentionSegment[] = [];
-  let cursor = 0;
-
-  while (cursor < text.length) {
-    let matched: { start: number; end: number; relPath: string } | null = null;
-
-    for (const { pattern, relPath } of index.candidates) {
-      const idx = text.indexOf(pattern, cursor);
-      if (idx === -1) continue;
-      if (matched && idx >= matched.start) continue; // already have an earlier (or equal-and-longer) match
-      if (!leftBoundaryOk(text, idx)) continue;
-      const end = idx + pattern.length;
-      if (!rightBoundaryOk(text, end)) continue;
-      if (!matched || idx < matched.start) matched = { start: idx, end, relPath };
-    }
-
-    if (!matched) break;
-
-    if (matched.start > cursor) segments.push({ text: text.slice(cursor, matched.start) });
-    segments.push({ text: text.slice(matched.start, matched.end), path: matched.relPath });
-    cursor = matched.end;
-  }
-
-  if (cursor < text.length) segments.push({ text: text.slice(cursor) });
-  return segments.length > 0 ? segments : [{ text }];
 }

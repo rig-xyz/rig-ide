@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight, Circle, FolderOpen, Send, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { rpc } from '@renderer/lib/ipc';
 import { SafeMarkdown } from '@renderer/lib/ui/comment-markdown';
@@ -18,6 +18,7 @@ import type {
 } from '@shared/rig/pulse';
 import { resolveRigNameClick } from './home-sections';
 import { composeGreeting, firstNameOf } from './greeting';
+import { extractFileMentionCandidates, linkPulseFileMentions } from './pulse-file-mentions';
 import { rigLinks, summarySegments } from './summary-segments';
 import {
   askErrorMessage,
@@ -83,7 +84,14 @@ export function BriefingSpine({
    * `bindingId` (confirmed against the wire shape, not assumed).
    */
   localRigs: readonly { bindingId: string; path: string; name: string | null }[];
-  onOpenPath: (path: string) => void;
+  /**
+   * File-mention round: widened to take an optional `openFilePath` (an
+   * absolute path) alongside the rig path — `onOpenFile` below is the only
+   * caller that ever passes one. The real function behind this prop
+   * (`App.tsx`'s `openPath`) already accepts it; this is just this
+   * component being honest about the shape it actually calls.
+   */
+  onOpenPath: (path: string, opts?: { openFilePath?: string }) => void;
   /** Scrolls to/flashes the matching row in `RigsRail` (`home.tsx`'s own state) — the relay-only half of a rig-name link. */
   onHighlightRig: (bindingId: string) => void;
 }) {
@@ -147,6 +155,25 @@ export function BriefingSpine({
       else onHighlightRig(action.bindingId);
     },
     [localRigs, onOpenPath, onHighlightRig]
+  );
+
+  // File-mention round: a mention click (`SafeMarkdown`'s `onOpenRigFile`,
+  // from a link `linkPulseFileMentions` produced) opens THAT rig with THAT
+  // file, the same "carry the extra target across the async detect() round
+  // trip" hand-off `App.tsx`'s `pendingOpenAbsPath` already provides for
+  // the just-created-rig landing doc — `openFilePath` below is exactly
+  // that. A binding with no local row here is relay-only; there's no local
+  // path to open a file into, so this is a silent no-op — the mention
+  // never resolved to a link in the first place for a relay-only rig
+  // (`PickBackUpLine`/`PerRigLine`'s own `hasLocalPath` gate), so this
+  // branch is defensive, not a real path.
+  const onOpenFile = useCallback(
+    (bindingId: string, relPath: string) => {
+      const rig = localRigs.find((r) => r.bindingId === bindingId);
+      if (!rig) return;
+      onOpenPath(rig.path, { openFilePath: `${rig.path}/${relPath}` });
+    },
+    [localRigs, onOpenPath]
   );
 
   // Ask-sources round: the ask response has no rig name of its own, only a
@@ -219,8 +246,18 @@ export function BriefingSpine({
 
       {state.kind === 'data' ? (
         <>
-          <WhatsNew briefing={state.briefing} onClickRig={onClickRig} />
-          <AcrossYourRigs perRig={state.briefing.perRig} onClickRig={onClickRig} />
+          <WhatsNew
+            briefing={state.briefing}
+            onClickRig={onClickRig}
+            localRigs={localRigs}
+            onOpenFile={onOpenFile}
+          />
+          <AcrossYourRigs
+            perRig={state.briefing.perRig}
+            onClickRig={onClickRig}
+            localRigs={localRigs}
+            onOpenFile={onOpenFile}
+          />
         </>
       ) : (
         state.kind === 'empty' && (
@@ -325,9 +362,13 @@ function HeaderSkeleton() {
 function WhatsNew({
   briefing,
   onClickRig,
+  localRigs,
+  onOpenFile,
 }: {
   briefing: RigPulseBriefing;
   onClickRig: (bindingId: string) => void;
+  localRigs: readonly { bindingId: string; path: string; name: string | null }[];
+  onOpenFile: (bindingId: string, relPath: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const now = Date.now();
@@ -342,9 +383,26 @@ function WhatsNew({
       <p className="text-text-muted font-mono text-xs tracking-wide uppercase">What&apos;s new</p>
       <div className="flex flex-col gap-3">
         {shown.map((p) => (
-          <PickBackUpLine key={p.intentId} item={p} now={now} onClickRig={onClickRig} />
+          <PickBackUpLine
+            key={p.intentId}
+            item={p}
+            now={now}
+            onClickRig={onClickRig}
+            localRigs={localRigs}
+            onOpenFile={onOpenFile}
+          />
         ))}
-        {expanded && older.map((p) => <PickBackUpLine key={p.intentId} item={p} now={now} onClickRig={onClickRig} />)}
+        {expanded &&
+          older.map((p) => (
+            <PickBackUpLine
+              key={p.intentId}
+              item={p}
+              now={now}
+              onClickRig={onClickRig}
+              localRigs={localRigs}
+              onOpenFile={onOpenFile}
+            />
+          ))}
       </div>
       {older.length > 0 && !expanded && (
         <button
@@ -366,16 +424,24 @@ function PickBackUpLine({
   item,
   now,
   onClickRig,
+  localRigs,
+  onOpenFile,
 }: {
   item: RigPulsePickBackUp;
   now: number;
   onClickRig: (bindingId: string) => void;
+  localRigs: readonly { bindingId: string; path: string; name: string | null }[];
+  onOpenFile: (bindingId: string, relPath: string) => void;
 }) {
+  // Markdown, not plain text: `why` falls back to the intent summary,
+  // which agents write in markdown (bold, lists, backticked paths) — and,
+  // file-mention round, sometimes names a real file in the rig.
+  const text = item.why || item.title;
+  const content = usePulseFileMentions(item.bindingId, text, localRigs);
+
   return (
     <div className="flex flex-col gap-1">
-      {/* Markdown, not plain text: `why` falls back to the intent summary,
-          which agents write in markdown (bold, lists, backticked paths). */}
-      <SafeMarkdown content={item.why || item.title} />
+      <SafeMarkdown content={content} onOpenRigFile={onOpenFile} />
       <p className="text-text-muted font-mono text-xs">
         <RigNameLink bindingId={item.bindingId} name={item.rigName} onClick={onClickRig} />
         {' · '}
@@ -383,6 +449,37 @@ function PickBackUpLine({
       </p>
     </div>
   );
+}
+
+/**
+ * File-mention round, shared by `PickBackUpLine`/`PerRigLine`: extracts
+ * candidate filenames from `text` (`pulse-file-mentions.ts`'s own
+ * tokenizer — cheap, no IO), resolves them against `bindingId`'s rig with
+ * ONE batched `rpc.rig.fileMentions.resolve` call, and returns `text` with
+ * every resolved mention turned into a `rigfile:` link — unresolved
+ * mentions, and every mention on a relay-only rig (no known local path to
+ * ask `resolve` to walk), are left exactly as written. `staleTime: 30_000`
+ * mirrors the main-side per-bindingId walk cache
+ * (`main/rig/file-mentions.ts`) so a burst of rows for the same rig doesn't
+ * even re-hit the RPC, let alone the filesystem.
+ */
+function usePulseFileMentions(
+  bindingId: string,
+  text: string,
+  localRigs: readonly { bindingId: string }[]
+): string {
+  const hasLocalPath = localRigs.some((r) => r.bindingId === bindingId);
+  const candidates = useMemo(
+    () => (hasLocalPath ? extractFileMentionCandidates(text) : []),
+    [hasLocalPath, text]
+  );
+  const mentionsQuery = useQuery({
+    queryKey: ['rig', 'fileMentions', bindingId, candidates],
+    queryFn: () => rpc.rig.fileMentions.resolve({ bindingId, candidates }),
+    enabled: hasLocalPath && candidates.length > 0,
+    staleTime: 30_000,
+  });
+  return mentionsQuery.data ? linkPulseFileMentions(text, bindingId, mentionsQuery.data) : text;
 }
 
 /**
@@ -397,9 +494,13 @@ function PickBackUpLine({
 function AcrossYourRigs({
   perRig,
   onClickRig,
+  localRigs,
+  onOpenFile,
 }: {
   perRig: readonly RigPulsePerRig[];
   onClickRig: (bindingId: string) => void;
+  localRigs: readonly { bindingId: string; path: string; name: string | null }[];
+  onOpenFile: (bindingId: string, relPath: string) => void;
 }) {
   if (perRig.length === 0) return null;
   const now = Date.now();
@@ -409,7 +510,14 @@ function AcrossYourRigs({
       <p className="text-text-muted font-mono text-xs tracking-wide uppercase">Across your rigs</p>
       <div className="flex flex-col gap-3">
         {perRig.map((p) => (
-          <PerRigLine key={p.bindingId} item={p} now={now} onClickRig={onClickRig} />
+          <PerRigLine
+            key={p.bindingId}
+            item={p}
+            now={now}
+            onClickRig={onClickRig}
+            localRigs={localRigs}
+            onOpenFile={onOpenFile}
+          />
         ))}
       </div>
     </div>
@@ -420,14 +528,20 @@ function PerRigLine({
   item,
   now,
   onClickRig,
+  localRigs,
+  onOpenFile,
 }: {
   item: RigPulsePerRig;
   now: number;
   onClickRig: (bindingId: string) => void;
+  localRigs: readonly { bindingId: string; path: string; name: string | null }[];
+  onOpenFile: (bindingId: string, relPath: string) => void;
 }) {
+  const content = usePulseFileMentions(item.bindingId, item.line, localRigs);
+
   return (
     <div className="flex flex-col gap-1">
-      <SafeMarkdown content={item.line} />
+      <SafeMarkdown content={content} onOpenRigFile={onOpenFile} />
       <p className="text-text-muted font-mono text-xs">
         <RigNameLink bindingId={item.bindingId} name={item.rigName} onClick={onClickRig} />
         {item.at && (

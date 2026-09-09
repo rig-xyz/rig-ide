@@ -1,5 +1,5 @@
-import ReactMarkdown from 'react-markdown';
-import rehypeSanitize from 'rehype-sanitize';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
 import { rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
@@ -21,7 +21,61 @@ import { markMentions } from './mark-mentions';
  * @-mention bolding on top for comment bodies specifically — the ONLY
  * difference between the two, so a second markdown dependency never gets
  * added just because a caller doesn't want mention-bolding.
+ *
+ * File-mention round (Home pulse's WHAT'S NEW/ACROSS YOUR RIGS narration,
+ * `features/home/pulse-file-mentions.ts`): a link whose href is
+ * `rigfile:<bindingId>/<relPath>` (that module's own output) is a mention
+ * of a file INSIDE a rig, not an external URL — `rpc.app.openExternal` must
+ * never see one of these. `onOpenRigFile` is the optional escape hatch for
+ * that one href scheme; every other href keeps the plain external-link
+ * behavior below, unchanged.
  */
+
+/** Parses a `rigfile:<bindingId>/<relPath>` href — `null` for anything else, including a malformed one. */
+function parseRigFileHref(href: string): { bindingId: string; relPath: string } | null {
+  const prefix = 'rigfile:';
+  if (!href.startsWith(prefix)) return null;
+  const rest = href.slice(prefix.length);
+  const slash = rest.indexOf('/');
+  if (slash === -1) return null;
+  const bindingId = rest.slice(0, slash);
+  try {
+    return { bindingId, relPath: decodeURIComponent(rest.slice(slash + 1)) };
+  } catch {
+    return null;
+  }
+}
+
+/** The rig-name link's own accent + dotted-underline convention (`home/briefing-spine.tsx`'s `RigNameLink`) — a rig-file link reads as the same family, not a plain external link's solid underline. */
+const RIG_FILE_LINK_CLASS = 'decoration-dotted underline-offset-2';
+
+/**
+ * `rehype-sanitize`'s own default schema only allows `http`/`https`/`irc`/
+ * `ircs`/`mailto`/`xmpp` as an `href` protocol — anything else (including
+ * `rigfile:`) is silently stripped before `SafeMarkdown`'s `a` component
+ * ever sees it. Extending the SAME default schema (not replacing it) with
+ * `rigfile` is the minimal fix: every other sanitization rule stays
+ * exactly as strict as it already was.
+ */
+const SANITIZE_SCHEMA = {
+  ...defaultSchema,
+  protocols: {
+    ...defaultSchema.protocols,
+    href: [...(defaultSchema.protocols?.href ?? []), 'rigfile'],
+  },
+};
+
+/**
+ * `react-markdown` ALSO runs its own URL allowlist on top of
+ * `rehype-sanitize` (`defaultUrlTransform`, checked again at render time —
+ * `SANITIZE_SCHEMA` above alone isn't enough), with the same
+ * http/https/irc/ircs/mailto/xmpp list and no way to extend it. A
+ * `rigfile:` href passes through unchanged; everything else still gets
+ * `defaultUrlTransform`'s own scrutiny.
+ */
+function urlTransform(value: string): string {
+  return value.startsWith('rigfile:') ? value : defaultUrlTransform(value);
+}
 
 const MARKDOWN_BODY_CLASS = cn(
   'break-words text-sm leading-relaxed text-text-primary',
@@ -43,24 +97,42 @@ const MARKDOWN_BODY_CLASS = cn(
  * picking up `markMentions`' comment-specific @-mention bolding, which has
  * no meaning for an LLM-narrated answer.
  */
-export function SafeMarkdown({ content, className }: { content: string; className?: string }) {
+export function SafeMarkdown({
+  content,
+  className,
+  onOpenRigFile,
+}: {
+  content: string;
+  className?: string;
+  /** Handles a `rigfile:<bindingId>/<relPath>` link — see this file's own header comment. */
+  onOpenRigFile?: (bindingId: string, relPath: string) => void;
+}) {
   return (
     <div className={cn(MARKDOWN_BODY_CLASS, className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeSanitize]}
+        rehypePlugins={[[rehypeSanitize, SANITIZE_SCHEMA]]}
+        urlTransform={urlTransform}
         components={{
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              onClick={(event) => {
-                event.preventDefault();
-                if (href) void rpc.app.openExternal(href);
-              }}
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            const rigFile = href ? parseRigFileHref(href) : null;
+            return (
+              <a
+                href={href}
+                className={rigFile ? RIG_FILE_LINK_CLASS : undefined}
+                onClick={(event) => {
+                  event.preventDefault();
+                  if (rigFile) {
+                    onOpenRigFile?.(rigFile.bindingId, rigFile.relPath);
+                    return;
+                  }
+                  if (href) void rpc.app.openExternal(href);
+                }}
+              >
+                {children}
+              </a>
+            );
+          },
         }}
       >
         {content}
