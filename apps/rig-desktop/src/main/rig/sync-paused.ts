@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join as joinPath } from 'node:path';
 
 /**
@@ -22,4 +22,31 @@ export async function isRigSyncPaused(rigPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Delete-a-rig round: stamps a `reason` onto `.rig/sync-paused.json` right
+ * after `rig pause` has already written its own `{paused: true, pausedAt}`
+ * (the CLI's own `writeSyncPaused` in `collab.mjs` — no `reason` field,
+ * and no CLI flag to pass one through) — `main/rig/rig-controls.ts`'s
+ * `stopSyncForDeletion` calls this as a best-effort follow-up write, so a
+ * rig being deleted/left records WHY it stopped syncing, mirroring the
+ * relay lane's own `reason: 'deleted'` (tapd stopping itself on a 410).
+ * Preserves the `pausedAt` `rig pause` just wrote when it can read it back;
+ * falls back to a fresh timestamp otherwise (missing/malformed file) — same
+ * tolerant default `isRigSyncPaused` uses.
+ */
+export async function writeSyncPausedReason(rigPath: string, reason: string): Promise<void> {
+  const file = joinPath(rigPath, '.rig', 'sync-paused.json');
+  let pausedAt = new Date().toISOString();
+  try {
+    const parsed: unknown = JSON.parse(await readFile(file, 'utf8'));
+    if (typeof parsed === 'object' && parsed !== null) {
+      const existing = (parsed as Record<string, unknown>).pausedAt;
+      if (typeof existing === 'string') pausedAt = existing;
+    }
+  } catch {
+    // missing/malformed — a fresh pausedAt is the honest fallback.
+  }
+  await writeFile(file, `${JSON.stringify({ paused: true, pausedAt, reason }, null, 2)}\n`, 'utf8');
 }

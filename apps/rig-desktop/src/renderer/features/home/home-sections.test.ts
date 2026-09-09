@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { deriveDeleteRigMode, deriveRigMenuLabel } from '@shared/rig/delete-rig';
 import {
   buildHomeRigRows,
   canAutoJoin,
@@ -186,6 +187,7 @@ describe('buildHomeRigRows', () => {
         paused: false,
         outsideHome: false,
         notARigAnymore: false,
+        role: 'owner',
         sessions: [SESSION_A].map((s) => ({ id: s.id, providerId: s.providerId, title: s.title, updatedAt: s.updatedAt })),
       },
     ]);
@@ -286,6 +288,7 @@ describe('buildHomeRigRows', () => {
         paused: false,
         outsideHome: false,
         notARigAnymore: false,
+        role: null,
         sessions: [],
       },
     ]);
@@ -551,6 +554,7 @@ const LOCAL_ROW: HomeRigRow = {
   paused: false,
   outsideHome: false,
   notARigAnymore: false,
+  role: 'owner',
 };
 const OWNED_NOT_SET_UP: HomeRigRow = {
   kind: 'relayOnly',
@@ -705,5 +709,52 @@ describe('filterLocalRigsByAccount', () => {
         legacy,
       ]);
     });
+  });
+});
+
+describe('a local row\'s role → the row menu\'s Delete/Leave label (delete-a-rig round)', () => {
+  it('an owned local row gets a role of "owner" once workspaces resolves, and the menu reads "Delete rig…"', () => {
+    const [row] = buildHomeRigRows(
+      [RIG_A],
+      {
+        status: 'ok',
+        bindings: [
+          { bindingId: 'b1', name: 'Alpha (relay name)', lastSyncedAt: null, role: 'owner', createdAt: '' },
+        ],
+      },
+      []
+    );
+    expect(row.role).toBe('owner');
+    expect(deriveRigMenuLabel(deriveDeleteRigMode(row.role))).toBe('Delete rig…');
+  });
+
+  it('a local row this account is a non-owner member of gets "Leave rig…"', () => {
+    const [row] = buildHomeRigRows(
+      [RIG_A],
+      {
+        status: 'ok',
+        bindings: [{ bindingId: 'b1', name: 'Alpha (relay name)', lastSyncedAt: null, role: 'editor', createdAt: '' }],
+      },
+      []
+    );
+    expect(row.role).toBe('editor');
+    expect(deriveRigMenuLabel(deriveDeleteRigMode(row.role))).toBe('Leave rig…');
+  });
+
+  it('workspaces not resolved (skipped/loading/unreachable) leaves role null — the menu still reads "Delete rig…", not Leave', () => {
+    for (const workspaces of [{ status: 'skipped' as const }, { status: 'loading' as const }, { status: 'unreachable' as const }]) {
+      const [row] = buildHomeRigRows([RIG_A], workspaces, []);
+      expect(row.role).toBeNull();
+      expect(deriveRigMenuLabel(deriveDeleteRigMode(row.role))).toBe('Delete rig…');
+    }
+  });
+
+  it("a local row whose bindingId isn't in the resolved workspaces list also gets a null role", () => {
+    const [row] = buildHomeRigRows(
+      [RIG_A],
+      { status: 'ok', bindings: [{ bindingId: 'some-other-binding', name: 'Other', lastSyncedAt: null, role: 'owner', createdAt: '' }] },
+      []
+    );
+    expect(row.role).toBeNull();
   });
 });

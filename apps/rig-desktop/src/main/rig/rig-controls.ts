@@ -8,7 +8,7 @@ import { runRig, type SpawnOutcome } from './create';
 import { extractJsonObjects, parseJsonErrorEnvelope } from './join';
 import { existsAsDirectory, getRigPathsForAccount, updateRigName, updateRigPath } from './recent-rigs';
 import { setTomlRigName } from './rig-toml';
-import { isRigSyncPaused } from './sync-paused';
+import { isRigSyncPaused, writeSyncPausedReason } from './sync-paused';
 
 /**
  * Drives `rig move` and `rig pause`/`rig resume` — the rigs-rail row
@@ -85,6 +85,31 @@ async function toggleSync(
   const failure = spawnOutcomeToMessage(verb, outcome);
   if (failure) return err(failure);
   return ok({ paused: await isRigSyncPaused(path) });
+}
+
+/**
+ * Delete-a-rig round: the first step of `main/rig/delete-rig.ts`'s
+ * `deleteRigImpl` — stops tapd for this one rig ahead of deleting or
+ * leaving its binding, reusing the exact same `rig pause` this row menu's
+ * "Pause syncing" already drives, then stamps `.rig/sync-paused.json`'s
+ * `reason` to `'deleted'` (best-effort; a failure there is logged, never
+ * thrown — `rig pause` itself already succeeded, which is what actually
+ * stops syncing). Run whether or not the relay call after it succeeds, so a
+ * failed delete/leave still leaves the rig genuinely not syncing rather
+ * than racing tapd while the row's fate is still undecided.
+ */
+export async function stopSyncForDeletion(path: string): Promise<Result<{ paused: boolean }, { message: string }>> {
+  const result = await toggleSync('pause', path);
+  if (!result.success) return result;
+  try {
+    await writeSyncPausedReason(path, 'deleted');
+  } catch (error) {
+    log.warn('rig: failed to stamp the sync-pause reason ahead of deleting this rig', {
+      path,
+      error: String(error),
+    });
+  }
+  return result;
 }
 
 /**

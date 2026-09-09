@@ -14,6 +14,8 @@ import {
   type ArtefactTabsState,
 } from '@renderer/features/artifact/artefact-tabs';
 import { ChatPanel } from '@renderer/features/chat/chat-panel';
+import { relativeTime } from '@renderer/features/chat/session-history';
+import { markBindingDeleted } from '@renderer/features/home/deleted-rig-store';
 import { Home } from '@renderer/features/home/home';
 import { Onboarding } from '@renderer/features/onboarding/onboarding';
 import { deriveOnboardingSteps } from '@renderer/features/onboarding/onboarding-state';
@@ -397,12 +399,29 @@ export function App() {
   const openPath = useCallback(
     async (
       picked: string,
-      opts?: { activeSessionId?: string; launchRestore?: boolean; source?: RigOpenSource }
+      opts?: {
+        activeSessionId?: string;
+        launchRestore?: boolean;
+        source?: RigOpenSource;
+        /**
+         * Home pulse's file-mention round: an absolute path to open in the
+         * artifact pane once this rig actually binds — the pulse
+         * narration's own "open THIS file, in THAT rig" click
+         * (`briefing-spine.tsx`'s `onOpenFile`). Reuses the exact same
+         * hand-off `openCreatedRig` above already arms
+         * (`pendingOpenAbsPath` + the effect below that consumes it), so
+         * only set when actually given: unconditionally resetting it here
+         * on EVERY call would clobber `openCreatedRig`'s own `setPendingOpenAbsPath`,
+         * which already ran (synchronously, same tick) by the time this body executes.
+         */
+        openFilePath?: string;
+      }
     ) => {
       const requestToken = openPathRequests.current.begin();
       setArtefact(NO_TABS);
       setFolder({ status: 'detecting', path: picked });
       setPendingActiveSessionId(opts?.activeSessionId ?? null);
+      if (opts?.openFilePath) setPendingOpenAbsPath(opts.openFilePath);
       try {
         const result = await rpc.rig.workspace.detect(picked, opts?.source);
         if (!openPathRequests.current.isCurrent(requestToken)) {
@@ -527,6 +546,48 @@ export function App() {
           bindingId: folder.result.bindingId,
         }
       : null;
+
+  // Delete-a-rig round: the currently-open rig's own binding-deleted check.
+  // Same query key `rig-people-card.tsx`/`pinned-card.tsx` already use for
+  // this exact call (`['rig','share','members', root]`) — react-query
+  // dedupes rather than firing a second relay round trip. `relayError`
+  // (`main/rig/rig-share.ts`) is the ONE place a 410 is parsed for every
+  // binding-scoped call in that module, so `members` failing with
+  // `kind: 'bindingDeleted'` is enough to know this rig is gone, regardless
+  // of which call actually noticed it first.
+  const bindingStatusQuery = useQuery({
+    queryKey: ['rig', 'share', 'members', bound?.root ?? ''],
+    queryFn: () => rpc.rig.share.members({ root: bound?.root ?? '' }),
+    enabled: !!bound?.root,
+    staleTime: 60_000,
+  });
+  const bindingDeleted =
+    bound && bindingStatusQuery.data && !bindingStatusQuery.data.success && bindingStatusQuery.data.error.kind === 'bindingDeleted'
+      ? {
+          deletedAt: bindingStatusQuery.data.error.deletedAt ?? '',
+          deletedBy: bindingStatusQuery.data.error.deletedBy ?? { name: null, email: null },
+        }
+      : null;
+  // Opportunistic mirror into `deleted-rig-store.ts`, so a row for this
+  // SAME binding in the rigs rail (Home, once this closes back to it) can
+  // show "Deleted by <name>" too — see that module's own doc comment on
+  // why this is opportunistic rather than a proactive scan. Depends on the
+  // primitive fields, not the `bound`/`bindingDeleted` objects themselves
+  // (fresh references every render) — `markBindingDeleted` is idempotent
+  // for an unchanged `deletedAt` regardless, this just avoids re-running
+  // the effect on every unrelated render.
+  const boundBindingIdForDeletion = bound?.bindingId ?? null;
+  const deletedAtForDeletion = bindingDeleted?.deletedAt ?? null;
+  const deletedByNameForDeletion = bindingDeleted?.deletedBy.name ?? null;
+  const deletedByEmailForDeletion = bindingDeleted?.deletedBy.email ?? null;
+  useEffect(() => {
+    if (boundBindingIdForDeletion && deletedAtForDeletion) {
+      markBindingDeleted(boundBindingIdForDeletion, {
+        deletedAt: deletedAtForDeletion,
+        deletedBy: { name: deletedByNameForDeletion, email: deletedByEmailForDeletion },
+      });
+    }
+  }, [boundBindingIdForDeletion, deletedAtForDeletion, deletedByNameForDeletion, deletedByEmailForDeletion]);
 
   // A different rig opened (or the folder closed): the open tabs belong to
   // the previous root.
@@ -823,7 +884,24 @@ export function App() {
         onSetThemePreference={setThemePreference}
         focusAbout={focusAboutOnOpen}
       />
-      {bound ? (
+      {bound && bindingDeleted ? (
+        // Delete-a-rig round: the owner (or another member) deleted this
+        // binding out from under us while it was open — replaces the
+        // normal panes entirely, same "this isn't a workspace to render
+        // right now" logic `FolderResult`'s own honest-stop cards use for
+        // `foreignAccount`/`unsynced`, just for a rig that WAS open rather
+        // than one that never opened at all.
+        <div className="flex min-h-0 flex-1 items-center justify-center p-8 pt-10">
+          <DeletedRigCard
+            bindingId={bound.bindingId}
+            path={bound.root}
+            name={bound.name}
+            deletedAt={bindingDeleted.deletedAt}
+            deletedByName={bindingDeleted.deletedBy.name ?? bindingDeleted.deletedBy.email}
+            onBackToHome={goHome}
+          />
+        </div>
+      ) : bound ? (
         // The bar sits above ChatPanel/FileBrowser/ArtifactView here, but
         // none of them scroll directly beneath it — each owns its own
         // header chrome (FileBrowser/ArtifactView's own breadcrumb bar,
@@ -1430,6 +1508,94 @@ function ForeignAccountCard({
         </Button>
         <Button size="sm" onClick={() => void signIn()} disabled={signInPhase !== 'idle'}>
           {signInPhase === 'idle' ? 'Sign in' : 'Waiting…'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Delete-a-rig round: the honest stop for a rig that WAS open in this
+ * window and just got deleted by someone else — `bindingDeleted` (this
+ * file's own `bindingStatusQuery`) already refused to render the normal
+ * panes for it, same "there is no workspace to show right now" logic
+ * `ForeignAccountCard`/`UnsyncedRigCard` use above, just for a rig that was
+ * genuinely open a moment ago rather than one that never opened at all.
+ *
+ * "Remove from your rigs" drives the exact same `rpc.rig.rigs.delete` the
+ * rigs-rail row menu's dialog does, with `mode: 'local'` — the relay
+ * binding is already gone (that's why this card exists at all), so this
+ * only ever runs the local half: stop syncing (idempotent — tapd likely
+ * already stopped itself, see the relay lane's own `reason: 'deleted'`),
+ * forget the `rig_rigs` row, and optionally trash the folder. A success
+ * navigates Home (`onBackToHome`, the same `goHome` every other card here
+ * uses) since there is nothing left to show at this path anymore.
+ */
+function DeletedRigCard({
+  bindingId,
+  path,
+  name,
+  deletedAt,
+  deletedByName,
+  onBackToHome,
+}: {
+  bindingId: string;
+  path: string;
+  name: string | null;
+  deletedAt: string;
+  deletedByName: string | null;
+  onBackToHome: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [trash, setTrash] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const parsedDeletedAt = Date.parse(deletedAt);
+  const displayName = name ?? 'This rig';
+
+  const remove = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await rpc.rig.rigs.delete({ bindingId, path, mode: 'local', trashFolder: trash });
+      if (!result.success) {
+        setError(result.error.message);
+        return;
+      }
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'recent', 'list'] });
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'account', 'workspaces'] });
+      onBackToHome();
+    } catch {
+      setError("Couldn't remove this rig. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex w-full max-w-md flex-col gap-3 rounded-card border border-border-hairline bg-bg-1 p-5">
+      <p className="text-sm font-medium text-text-primary">
+        {displayName} was deleted{deletedByName ? ` by ${deletedByName}` : ''}
+        {Number.isNaN(parsedDeletedAt) ? '' : ` · ${relativeTime(parsedDeletedAt, Date.now())}`}.
+      </p>
+      <p className="font-mono text-xs break-all text-text-muted">{path}</p>
+      <label className="flex items-center gap-2 text-sm text-text-secondary">
+        <input
+          type="checkbox"
+          checked={trash}
+          onChange={(event) => setTrash(event.target.checked)}
+          disabled={busy}
+          className="size-3.5 rounded-control border border-border-hairline accent-danger"
+        />
+        Also move the folder to the Trash
+      </label>
+      {error && <p className="text-xs text-danger">{error}</p>}
+      <div className="flex items-center justify-end gap-2 pt-1">
+        <Button variant="ghost" size="sm" onClick={() => void remove()} disabled={busy}>
+          {busy ? 'Removing…' : 'Remove from your rigs'}
+        </Button>
+        <Button size="sm" onClick={onBackToHome} disabled={busy}>
+          Back to Home
         </Button>
       </div>
     </div>

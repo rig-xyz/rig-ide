@@ -42,6 +42,8 @@ import { rigCommentsController } from './rig/comments';
 import { rigCommentsCacheController } from './rig/comments-cache-store';
 import { rigContextController } from './rig/context';
 import { rigCreateController } from './rig/create';
+import { rigDeleteController } from './rig/delete-rig';
+import { rigFileMentionsController } from './rig/file-mentions';
 import { rigFilesController } from './rig/files';
 import { rigHomeController } from './rig/home';
 import { rigImportController } from './rig/import-doc';
@@ -119,6 +121,12 @@ export const rpcRouter = createRPCRouter({
     // own folder — see `shared/rig/files.ts` for why this doesn't reuse the
     // emdash project/workspace-registry `workspace.files` surface below.
     files: rigFilesController,
+    // Home pulse's file-mention linking (WHAT'S NEW/ACROSS YOUR RIGS
+    // narration, `renderer/features/home/pulse-file-mentions.ts`): resolves
+    // a candidate filename against a rig this device may not have open at
+    // all, so it can't reuse `files` above (which needs an acquired root).
+    // See `file-mentions.ts`'s own header comment.
+    fileMentions: rigFileMentionsController,
     // Main-owned app preferences (`userData/settings.json`) — see
     // `persistence-design.md`'s "Preferences" layer. Deliberately separate
     // from the `appSettings` surface above, which is Emdash's inherited
@@ -182,6 +190,13 @@ export const rpcRouter = createRPCRouter({
     // `join`/`create` above: one-shot actions driving the bundled CLI, not
     // a data surface. See `rig-controls.ts`'s own header comment.
     control: rigControlController,
+    // Delete/leave a rig — the rigs-rail row menu's "Delete rig…"/"Leave
+    // rig…" (`delete-rig-dialog.tsx`). Its own key rather than folded into
+    // `control` above: a destructive, multi-step orchestration (stop sync,
+    // call the relay, forget the local row, optionally trash the folder)
+    // with its own failure taxonomy, not a plain one-shot CLI wrapper. See
+    // `delete-rig.ts`'s own header comment.
+    rigs: rigDeleteController,
   }),
   workspace: createRPCNamespace({
     gitWorktree: gitWorktreeController,

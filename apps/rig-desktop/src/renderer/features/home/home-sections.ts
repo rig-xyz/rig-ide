@@ -197,6 +197,16 @@ export type HomeRigRow =
        * card's "Remove from your rigs").
        */
       notARigAnymore: boolean;
+      /**
+       * Delete-a-rig round: this account's role on the binding, straight
+       * off `rpc.rig.account.workspaces()` (matched by `bindingId` in
+       * `buildHomeRigRows`) — `null` while that call hasn't resolved yet
+       * (loading/unreachable/skipped) or when this bindingId genuinely
+       * isn't in the list (kicked, or a stale local record). The row
+       * menu's "Delete rig…"/"Leave rig…" derives from this — see
+       * `@shared/rig/delete-rig.ts`'s `deriveDeleteRigMode`.
+       */
+      role: string | null;
     }
   | {
       kind: 'relayOnly';
@@ -448,6 +458,13 @@ export function buildHomeRigRows(
 ): HomeRigRow[] {
   const sessionsByRig = groupSessionsByRig(recentSessions);
   const localByBinding = new Set(localRigs.map((r) => r.bindingId));
+  // Delete-a-rig round: the only place a local row learns its own role —
+  // matched by bindingId against the same `workspaces` this function
+  // already reads for the relay-only rows below.
+  const roleByBinding =
+    workspaces.status === 'ok'
+      ? new Map(workspaces.bindings.map((b) => [b.bindingId, b.role]))
+      : new Map<string, string>();
 
   const localRows: HomeRigRow[] = localRigs
     .map((r) => ({
@@ -460,6 +477,7 @@ export function buildHomeRigRows(
       paused: r.paused,
       outsideHome: r.outsideHome,
       notARigAnymore: r.notARigAnymore,
+      role: roleByBinding.get(r.bindingId) ?? null,
     }))
     .sort((a, b) => localRecencyKey(b) - localRecencyKey(a));
 

@@ -11,14 +11,26 @@
 
 import type { RigCommentMember } from './comments';
 
-/** Same failure vocabulary as `share-links.ts`'s, minus the file-specific `notFound`. */
+/**
+ * Same failure vocabulary as `share-links.ts`'s, minus the file-specific
+ * `notFound`, plus `'bindingDeleted'` (delete-a-rig round): every
+ * binding-scoped relay route answers 410 `{error: 'binding_deleted', ...}`
+ * once the binding's owner has deleted it — parsed in exactly one place,
+ * `main/rig/rig-share.ts`'s `relayError`, so every call in this module
+ * (`members`, `listInvites`, `createInvite`, `revokeInvite`) surfaces it the
+ * same way rather than reading as a generic `'relay'` failure.
+ */
 export type RigShareError = {
-  kind: 'notBound' | 'unauthenticated' | 'untrustedRelay' | 'forbidden' | 'relay';
+  kind: 'notBound' | 'unauthenticated' | 'untrustedRelay' | 'forbidden' | 'relay' | 'bindingDeleted';
   message: string;
   /** HTTP status, when the relay answered. */
   status?: number;
   /** The offending relay host, for `untrustedRelay`. */
   host?: string;
+  /** Only set when `kind === 'bindingDeleted'`. */
+  deletedAt?: string;
+  /** Only set when `kind === 'bindingDeleted'`. */
+  deletedBy?: { name: string | null; email: string | null };
 };
 
 /** Re-exported so the share popover doesn't reach into the comments contract for a person. */

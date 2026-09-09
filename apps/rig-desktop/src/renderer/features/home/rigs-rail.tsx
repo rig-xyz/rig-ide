@@ -13,11 +13,13 @@ import {
   FolderOpen,
   FolderSearch,
   LayoutList,
+  LogOut,
   MoreHorizontal,
   Pause,
   Pencil,
   Play,
   Plus,
+  Trash2,
   Users,
   type LucideIcon,
 } from 'lucide-react';
@@ -35,6 +37,7 @@ import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { Popover } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
+import { deriveDeleteRigMode, deriveRigMenuLabel } from '@shared/rig/delete-rig';
 import {
   DEFAULT_RIGS_RAIL_VIEW,
   rigSettingsChangedChannel,
@@ -42,6 +45,8 @@ import {
   type RigsRailSort,
   type RigsRailView,
 } from '@shared/rig/settings';
+import { DeleteRigDialog } from './delete-rig-dialog';
+import { getDeletedRigInfo, subscribeDeletedRigs } from './deleted-rig-store';
 import {
   deriveRelayOnlyRowStatus,
   filterHomeRigRows,
@@ -432,6 +437,15 @@ function useSessionAttentionStatus(conversationId: string): SessionAttentionStat
 }
 
 /**
+ * Delete-a-rig round: this row's `deleted-rig-store.ts` entry, if this
+ * session has learned (opportunistically — see that module's own doc
+ * comment) that the row's binding was deleted by someone else.
+ */
+function useDeletedRigInfo(bindingId: string) {
+  return useSyncExternalStore(subscribeDeletedRigs, () => getDeletedRigInfo(bindingId));
+}
+
+/**
  * A rig row's own status — the loudest status among its (possibly capped
  * or entirely absent) session sub-rows, so `LocalRigRow` stays informative
  * on its own. Keyed on the joined id list rather than the array reference,
@@ -512,6 +526,7 @@ function LocalRigRow({
   const [error, setError] = useState<string | null>(null);
   const lastActivity = localRecencyKey(row);
   const rowAttention = useRowAttentionStatus(row.sessions.map((session) => session.id));
+  const deletedInfo = useDeletedRigInfo(row.bindingId);
   return (
     <div ref={ref} className="flex flex-col gap-1">
       <div
@@ -551,11 +566,17 @@ function LocalRigRow({
                     time) — this is the more fundamental fact about the row,
                     and the same muted subtext language "Paused" already
                     uses, no separate icon/tooltip needed. */}
-                {row.notARigAnymore
-                  ? 'Not a rig anymore'
-                  : row.paused
-                    ? 'Paused'
-                    : relativeTime(lastActivity, Date.now())}
+                {/* Delete-a-rig round: a confirmed deletion by someone
+                    else wins over every other subtext here too — same
+                    slot, same "the more fundamental fact about the row"
+                    reasoning as `notARigAnymore` above. */}
+                {deletedInfo
+                  ? `Deleted by ${deletedInfo.deletedBy.name ?? deletedInfo.deletedBy.email ?? 'someone else'}`
+                  : row.notARigAnymore
+                    ? 'Not a rig anymore'
+                    : row.paused
+                      ? 'Paused'
+                      : relativeTime(lastActivity, Date.now())}
               </span>
             </span>
           </span>
@@ -616,7 +637,9 @@ function LocalRigRowMenu({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const deleteMode = deriveDeleteRigMode(row.role);
 
   const refreshRail = () => queryClient.invalidateQueries({ queryKey: ['rig', 'recent', 'list'] });
 
@@ -681,6 +704,15 @@ function LocalRigRowMenu({
         path={row.path}
         currentName={row.name}
         onRenamed={() => void refreshRail()}
+      />
+      <DeleteRigDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        bindingId={row.bindingId}
+        path={row.path}
+        name={row.name}
+        role={row.role}
+        onDeleted={() => void refreshRail()}
       />
       <button
         ref={triggerRef}
@@ -786,6 +818,29 @@ function LocalRigRowMenu({
               nothing touched on disk for the rig itself) — the label
               says so directly rather than leaving that ambiguous. */}
           {hidden ? 'Unhide' : 'Hide from this list'}
+        </button>
+        {/* Delete-a-rig round: last item, separated by a hairline, danger
+            styling throughout — the one destructive action in this menu.
+            Label/mode come from `row.role` (this account's role on the
+            binding, from `rpc.rig.account.workspaces()` — see
+            `home-sections.ts`'s own doc comment on when it's `null`). */}
+        <div className="my-1 border-t border-border-hairline" />
+        <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          onClick={() => {
+            setOpen(false);
+            setDeleteOpen(true);
+          }}
+          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-danger hover:bg-danger/10"
+        >
+          {deleteMode === 'leave' ? (
+            <LogOut className="size-3.5 shrink-0" strokeWidth={1.5} />
+          ) : (
+            <Trash2 className="size-3.5 shrink-0" strokeWidth={1.5} />
+          )}
+          {deriveRigMenuLabel(deleteMode)}
         </button>
       </Popover>
     </>
@@ -990,8 +1045,10 @@ function RelayOnlyActionsMenu({
   const [open, setOpen] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const busy = downloading || locating;
+  const deleteMode = deriveDeleteRigMode(row.role);
 
   const download = async () => {
     setOpen(false);
@@ -1045,6 +1102,14 @@ function RelayOnlyActionsMenu({
 
   return (
     <>
+      <DeleteRigDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        bindingId={row.bindingId}
+        path={null}
+        name={row.name}
+        role={row.role}
+      />
       <button
         ref={triggerRef}
         type="button"
@@ -1114,6 +1179,27 @@ function RelayOnlyActionsMenu({
             <EyeOff className="size-3.5 shrink-0" strokeWidth={1.5} />
           )}
           {hidden ? 'Unhide' : 'Hide from this list'}
+        </button>
+        {/* Delete-a-rig round — same danger-styled, hairline-separated
+            item `LocalRigRowMenu` carries; `path: null` above (no known
+            local folder for this row) skips the trash step entirely. */}
+        <div className="my-1 border-t border-border-hairline" />
+        <button
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
+          onClick={() => {
+            setOpen(false);
+            setDeleteOpen(true);
+          }}
+          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-danger hover:bg-danger/10"
+        >
+          {deleteMode === 'leave' ? (
+            <LogOut className="size-3.5 shrink-0" strokeWidth={1.5} />
+          ) : (
+            <Trash2 className="size-3.5 shrink-0" strokeWidth={1.5} />
+          )}
+          {deriveRigMenuLabel(deleteMode)}
         </button>
       </Popover>
     </>

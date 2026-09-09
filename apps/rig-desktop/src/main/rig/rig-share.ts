@@ -104,9 +104,12 @@ type AccountResolved = { url: string; token: string };
  * Account-plane context for the `/v1/me/invites` routes (the topbar bell):
  * no binding, no workspace root — the relay URL is the account-level one
  * (`RIG_RELAY_URL` or the default), the `join.ts`/`account.ts` precedent —
- * behind the same trust gate + PAT read as everything else here.
+ * behind the same trust gate + PAT read as everything else here. Exported
+ * for `main/rig/delete-rig.ts` — the account-plane `DELETE`/`leave` calls
+ * need this same trust-gated context, not a per-workspace one (there's no
+ * workspace root for a relay-only row).
  */
-async function resolveAccountContext(): Promise<AccountResolved | RigShareError> {
+export async function resolveAccountContext(): Promise<AccountResolved | RigShareError> {
   const url = resolveRelayUrl();
   const trust = checkRelayTrust(url);
   if (!trust.trusted) {
@@ -121,14 +124,18 @@ async function resolveAccountContext(): Promise<AccountResolved | RigShareError>
   return { url, token };
 }
 
-function isAccountError(value: AccountResolved | RigShareError): value is RigShareError {
+/** Exported for `main/rig/delete-rig.ts` — see `resolveAccountContext`'s own doc comment. */
+export function isAccountError(value: AccountResolved | RigShareError): value is RigShareError {
   return 'kind' in value;
 }
 
-function accountFetch(
+export type { AccountResolved };
+
+/** Exported for `main/rig/delete-rig.ts`'s `DELETE`/`leave` calls — see `resolveAccountContext`'s own doc comment. */
+export function accountFetch(
   ctx: AccountResolved,
   suffix: string,
-  init: { method: 'GET' | 'POST'; body?: unknown }
+  init: { method: 'GET' | 'POST' | 'DELETE'; body?: unknown }
 ): Promise<Response> {
   return fetch(`${ctx.url.replace(/\/+$/, '')}/v1/me${suffix}`, {
     method: init.method,
@@ -142,18 +149,57 @@ function accountFetch(
   });
 }
 
-/** Turns a non-2xx relay response into a message the UI can show in one line. */
+/**
+ * Delete-a-rig round: `{deletedAt, deletedBy}` out of a 410's JSON body —
+ * `null` when the body isn't actually the `binding_deleted` shape (an older
+ * relay's plain 410, or a malformed body), in which case the caller falls
+ * through to the generic `'relay'` handling below. Exported for direct unit
+ * testing, the `toInvite`/`toMember` precedent.
+ */
+export function parseBindingDeletedBody(
+  body: unknown
+): { deletedAt: string; deletedBy: { name: string | null; email: string | null } } | null {
+  const raw = asRecord(body);
+  if (!raw || raw.error !== 'binding_deleted') return null;
+  const deletedBy = asRecord(raw.deletedBy);
+  return {
+    deletedAt: typeof raw.deletedAt === 'string' ? raw.deletedAt : '',
+    deletedBy: {
+      name: typeof deletedBy?.name === 'string' ? deletedBy.name : null,
+      email: typeof deletedBy?.email === 'string' ? deletedBy.email : null,
+    },
+  };
+}
+
+/**
+ * Turns a non-2xx relay response into a message the UI can show in one
+ * line. Delete-a-rig round: this is the ONE place a 410 is parsed for every
+ * binding-scoped call in this module (`members`, `listInvites`,
+ * `createInvite`, `revokeInvite`) — each surfaces `kind: 'bindingDeleted'`
+ * the same way rather than the generic `'relay'` fallback, so the renderer
+ * can recognize "this rig was deleted" regardless of which call noticed it
+ * first.
+ */
 async function relayError(response: Response, action: string): Promise<RigShareError> {
-  let code: string | null = null;
+  let body: unknown = null;
   try {
-    const body: unknown = await response.json();
-    if (typeof body === 'object' && body !== null) {
-      const raw = (body as Record<string, unknown>).error;
-      if (typeof raw === 'string') code = raw;
-    }
+    body = await response.json();
   } catch {
     // non-JSON body; the status alone has to do
   }
+  if (response.status === 410) {
+    const deleted = parseBindingDeletedBody(body);
+    if (deleted) {
+      return {
+        kind: 'bindingDeleted',
+        message: 'This rig was deleted.',
+        status: 410,
+        deletedAt: deleted.deletedAt,
+        deletedBy: deleted.deletedBy,
+      };
+    }
+  }
+  const code = typeof asRecord(body)?.error === 'string' ? (asRecord(body)?.error as string) : null;
   if (response.status === 403) {
     return { kind: 'forbidden', message: `You don't have permission to ${action} on this rig.` };
   }
