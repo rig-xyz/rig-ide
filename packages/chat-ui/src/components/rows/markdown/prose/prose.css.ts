@@ -52,7 +52,10 @@ export const pfBoldItalic = style({
 export const pfLink = style({
   fontSize: vars.typeBodyFontSize,
   fontWeight: vars.typeBodyLinkFontWeight,
-  fontFamily: vars.typeBodyFontFamily,
+  // The link ROLE's family, not the body's: to-rich-items.ts measures link
+  // runs with fonts.link (built from roles['body-link']), so render must
+  // read the same var or measured and rendered widths drift apart.
+  fontFamily: vars.typeBodyLinkFontFamily,
   // color, text-decoration, cursor — applied in Prose.tsx via visual classes
 });
 
