@@ -4,6 +4,7 @@ import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import type { RigAttachError, RigJoinResult, RigLocateError } from '@shared/rig/join';
+import { resolveCliAccountEnv } from './account';
 import { commandFailureMessage } from './auth-output';
 import { findBindingConfig } from './binding';
 import { resolveCliBin } from './bundled-cli';
@@ -203,11 +204,16 @@ export function buildAttachArgs(bindingId: string, targetDir: string | null): st
  * home (`<home>/<slug>`) exactly as `rig join`/`rig attach` from a
  * terminal would.
  */
-function spawnAttach(
+async function spawnAttach(
   bindingId: string,
   targetDir: string | null
 ): Promise<Result<RigJoinResult, RigAttachError>> {
   const bin = resolveCliBin();
+  // Account round: same reasoning as `create.ts`'s `runRig` — overwrite
+  // RIG_RELAY_TOKEN/RIG_RELAY_URL with whatever the app is signed in as,
+  // read fresh right before this spawn, so `rig attach` never joins under a
+  // stale account inherited from the shell.
+  const env = { ...process.env, ...(await resolveCliAccountEnv()) };
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
@@ -222,7 +228,7 @@ function spawnAttach(
 
     const child = spawn(bin, buildAttachArgs(bindingId, targetDir), {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: process.env,
+      env,
     });
 
     const timer = setTimeout(() => {

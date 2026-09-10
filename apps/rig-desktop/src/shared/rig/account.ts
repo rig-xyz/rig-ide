@@ -53,4 +53,11 @@ export type RigWorkspaceBinding = {
 export type RigAccountError =
   | { kind: 'notSignedIn'; message: string }
   | { kind: 'untrustedRelay'; host: string; message: string }
+  /**
+   * The relay rejected the token itself (401 `invalid_token`) — the account
+   * signal that drives `deriveSignedIn`'s signed-out transition, distinct
+   * from `notSignedIn` (no token was even sent) and from a generic `relay`
+   * failure (some other status/transport problem).
+   */
+  | { kind: 'invalidToken'; message: string }
   | { kind: 'relay'; status?: number; message: string };

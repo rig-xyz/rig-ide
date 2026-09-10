@@ -14,6 +14,7 @@ import {
   type RigCreateResult,
   type RigCreateSyncError,
 } from '@shared/rig/create';
+import { resolveCliAccountEnv } from './account';
 import { commandFailureMessage } from './auth-output';
 import { resolveCliBin } from './bundled-cli';
 import { rigFileRootRegistry } from './file-root-registry';
@@ -99,8 +100,14 @@ export type SpawnOutcome =
 
 // Exported: `rig-controls.ts` (`rig move`/`rig pause`/`rig resume`) reuses
 // this same spawn/timeout plumbing rather than a second copy.
-export function runRig(args: string[], cwd: string, timeoutMs: number): Promise<SpawnOutcome> {
+export async function runRig(args: string[], cwd: string, timeoutMs: number): Promise<SpawnOutcome> {
   const bin = resolveCliBin();
+  // Account round: overwrite RIG_RELAY_TOKEN/RIG_RELAY_URL with whatever the
+  // app itself is signed in as, read fresh right before this spawn — never
+  // let this directly-driven CLI invocation (rig init/sync, and every
+  // rig-controls.ts move/pause/resume through this same function) run as a
+  // stale account inherited from the shell. See `resolveCliAccountEnv`.
+  const env = { ...process.env, ...(await resolveCliAccountEnv()) };
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
@@ -113,7 +120,7 @@ export function runRig(args: string[], cwd: string, timeoutMs: number): Promise<
       resolve(value);
     };
 
-    const child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+    const child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env });
 
     const timer = setTimeout(() => {
       if (!child.killed) child.kill();

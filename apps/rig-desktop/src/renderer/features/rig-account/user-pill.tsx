@@ -7,6 +7,7 @@ import { Button } from '@renderer/lib/ui/button';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { Popover } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
+import { deriveSignedIn } from './auth-state';
 import { useRigSignIn } from './use-rig-sign-in';
 
 /**
@@ -40,13 +41,25 @@ export function UserPill({ compact = false }: { compact?: boolean }) {
     queryKey: ['rig', 'auth', 'status'],
     queryFn: () => rpc.rig.auth.status(),
   });
-  const signedIn = status?.signedIn ?? false;
+  const authStatusSignedIn = status?.signedIn ?? false;
 
+  // Enabled off the raw `auth.status` signal, not the derived `signedIn`
+  // below — see `home.tsx`'s identical `meQuery`/`signedIn` pair for why
+  // (this query's own result is one of the inputs to `signedIn`, so gating
+  // it on that would be circular).
   const meQuery = useQuery({
     queryKey: ['rig', 'account', 'me'],
     queryFn: () => rpc.rig.account.me(),
-    enabled: signedIn,
+    enabled: authStatusSignedIn,
   });
+
+  // `auth.status`'s `signedIn` only means "a token file exists" — a
+  // rejected token (401 `invalid_token` from the `me` query) downgrades
+  // this back to signed out, same as `home.tsx`. See `deriveSignedIn`.
+  const signedIn = deriveSignedIn(
+    authStatusSignedIn,
+    meQuery.data?.success === false ? meQuery.data.error : undefined
+  );
 
   const { phase, signIn } = useRigSignIn();
 

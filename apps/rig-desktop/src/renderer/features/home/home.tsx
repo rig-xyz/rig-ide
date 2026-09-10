@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, LogIn } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
+import { deriveSignedIn } from '@renderer/features/rig-account/auth-state';
 import { useRigSignIn, type RigSignInPhase } from '@renderer/features/rig-account/use-rig-sign-in';
 import {
   MY_INVITES_KEY_PREFIX,
@@ -111,7 +112,29 @@ export function Home({
     queryKey: ['rig', 'auth', 'status'],
     queryFn: () => rpc.rig.auth.status(),
   });
-  const signedIn = authQuery.data?.signedIn ?? false;
+  const authStatusSignedIn = authQuery.data?.signedIn ?? false;
+
+  // Accounts & rigs round: same query key `user-pill.tsx` already uses for
+  // the topbar identity pill, so this shares that cache/subscription rather
+  // than firing a second `/v1/me` — only the rail's own account filter
+  // (`filterLocalRigsByAccount` below) reads it here. Enabled off the RAW
+  // `auth.status` signal (a token file exists), not the derived `signedIn`
+  // below — `signedIn` itself depends on this query's own result (a
+  // rejected token downgrades it back to signed-out), so gating it on that
+  // would be circular.
+  const meQuery = useQuery({
+    queryKey: ['rig', 'account', 'me'],
+    queryFn: () => rpc.rig.account.me(),
+    enabled: authStatusSignedIn,
+  });
+
+  // `auth.status`'s `signedIn` only means "a token file exists" — see
+  // `deriveSignedIn`'s own doc comment for why a 401 `invalid_token` from
+  // the `me` query above downgrades this back to signed-out.
+  const signedIn = deriveSignedIn(
+    authStatusSignedIn,
+    meQuery.data?.success === false ? meQuery.data.error : undefined
+  );
 
   // Onboarding-flow spec, Decisions ("Sign-in on Start fresh, option A"): a
   // signed-out click on Welcome's "Start fresh" (or the rail's "New rig",
@@ -144,16 +167,6 @@ export function Home({
   const workspacesQuery = useQuery({
     queryKey: ['rig', 'account', 'workspaces'],
     queryFn: () => rpc.rig.account.workspaces(),
-    enabled: signedIn,
-  });
-
-  // Accounts & rigs round: same query key `user-pill.tsx` already uses for
-  // the topbar identity pill, so this shares that cache/subscription
-  // rather than firing a second `/v1/me` — only the rail's own account
-  // filter (`filterLocalRigsByAccount` below) reads it here.
-  const meQuery = useQuery({
-    queryKey: ['rig', 'account', 'me'],
-    queryFn: () => rpc.rig.account.me(),
     enabled: signedIn,
   });
 

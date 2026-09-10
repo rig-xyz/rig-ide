@@ -32,6 +32,35 @@ export function resolveRelayUrl(envUrl: string | undefined = process.env.RIG_REL
   return envUrl?.trim() || DEFAULT_RELAY_URL;
 }
 
+/**
+ * The account identity to inject into a spawned CLI process's own
+ * environment — both the direct `rig` CLI (`create.ts`, `join.ts`,
+ * `rig-controls.ts` via `create.ts`'s `runRig`) and the ACP-driven agent CLI
+ * (comment `@mention` sessions, via the ACP host) — so a spawned CLI always
+ * acts as the SAME account as the app, never a stale `RIG_RELAY_TOKEN` it
+ * happened to inherit from the user's shell.
+ *
+ * The rig CLI's own token reader (`src/config.mjs`'s `getRelayToken`)
+ * deliberately prefers its environment over its config file (scripts/CI set
+ * it on purpose) — so agreement with the app can only come from the app
+ * overwriting that env var itself with whatever `readRelayToken()` resolves,
+ * not from asking the CLI to adopt the app's config-file-first precedence.
+ *
+ * Read fresh on every call — same reasoning as `readRelayToken` — so a
+ * mid-session sign-in takes effect on the very next spawn, no restart
+ * needed. `RIG_RELAY_TOKEN` is omitted entirely (not set to an empty
+ * string) when there's no token yet: an unauthenticated spawn should see
+ * whatever the environment already provided, not an explicit override to
+ * nothing.
+ */
+export async function resolveCliAccountEnv(): Promise<Record<string, string>> {
+  const token = await readRelayToken();
+  return {
+    RIG_RELAY_URL: resolveRelayUrl(),
+    ...(token ? { RIG_RELAY_TOKEN: token } : {}),
+  };
+}
+
 const NOT_SIGNED_IN: RigAccountError = {
   kind: 'notSignedIn',
   message: 'Not signed in to Rig.',
@@ -92,6 +121,14 @@ async function relayError(response: Response, action: string): Promise<RigAccoun
     if (typeof raw === 'string') code = raw;
   } catch {
     // non-JSON body; the status alone has to do
+  }
+  // The relay's signal that the token on disk is dead (revoked, expired, or
+  // simply not what it thinks the caller is anymore) — distinct from every
+  // other relay error because the renderer treats it as "signed out," not
+  // just "this one request failed" (see `deriveSignedIn` in
+  // `renderer/features/rig-account/auth-state.ts`, driven by the `me` query).
+  if (response.status === 401 && code === 'invalid_token') {
+    return { kind: 'invalidToken', message: 'Your sign-in has expired. Sign in again.' };
   }
   return {
     kind: 'relay',

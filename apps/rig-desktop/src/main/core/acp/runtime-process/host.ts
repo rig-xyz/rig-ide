@@ -12,6 +12,7 @@ import { appScope } from '@main/app/app-scope';
 import { setSessionId } from '@main/core/conversations/set-session-id';
 import { providerOverrideSettings } from '@main/core/settings/provider-settings-service';
 import { log } from '@main/lib/logger';
+import { resolveCliAccountEnv } from '@main/rig/account';
 import { resolveCliBin } from '@main/rig/bundled-cli';
 import { noteAcpSessionStart } from '@main/rig/session-registry';
 import { desktopWorkerPath } from '@main/worker-manifest';
@@ -93,14 +94,27 @@ function withRigSessionCapture(client: AcpRuntimeClient): AcpRuntimeClient {
  * DB access, so this main-process choke point resolves the config and threads it to
  * the provider spawn. Any env on the incoming (renderer-facing) input is discarded and
  * replaced, so the spawn environment can only come from trusted main-process settings.
+ *
+ * Account round: also merges in `resolveCliAccountEnv()` — RIG_RELAY_TOKEN/
+ * RIG_RELAY_URL for whatever account the app is signed in as right now, read
+ * fresh on EVERY session start (not once at worker boot, when this worker's
+ * own env was last snapshotted). Merged on top of `providerConfig.env`
+ * rather than left for the worker's own inherited env to supply, so the
+ * agent CLI a comment `@mention` spawns always acts as the same account as
+ * the app — never a stale token the worker process happened to inherit —
+ * and a mid-session sign-in takes effect on the very next session with no
+ * restart needed.
  */
 function withProviderEnv(client: AcpRuntimeClient): AcpRuntimeClient {
   const enrich = async <T extends { input: AcpStartInputWire }>(input: T): Promise<T> => {
-    const providerConfig = await providerOverrideSettings.getItem(input.input.providerId);
+    const [providerConfig, accountEnv] = await Promise.all([
+      providerOverrideSettings.getItem(input.input.providerId),
+      resolveCliAccountEnv(),
+    ]);
     // Spawn env must originate solely from the trusted main-process settings. Overwrite
     // (never merge) any env supplied by the renderer-facing caller so the renderer cannot
     // inject variables such as PATH/HOME/proxy vars into provider process spawning.
-    return { ...input, input: { ...input.input, env: providerConfig?.env } };
+    return { ...input, input: { ...input.input, env: { ...providerConfig?.env, ...accountEnv } } };
   };
   return {
     ...client,

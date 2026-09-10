@@ -17,7 +17,7 @@ import type {
 } from '@shared/rig/rig-share';
 import { rigJoinPageUrl } from '@shared/urls';
 import { resolveRelayUrl } from './account';
-import { readSelfUserId, toMember } from './comments';
+import { notAMemberMessage, readSelfUserId, toMember } from './comments';
 import { findBindingConfig } from './binding';
 import { readRelayToken } from './config';
 import { checkRelayTrust } from './relay-trust';
@@ -180,7 +180,15 @@ export function parseBindingDeletedBody(
  * can recognize "this rig was deleted" regardless of which call noticed it
  * first.
  */
-async function relayError(response: Response, action: string): Promise<RigShareError> {
+/**
+ * `target` is omitted by the account-plane call sites (`listMyInvites`,
+ * `acceptMyInvite`, `declineMyInvite` — no workspace binding is involved),
+ * which keeps their 404 message exactly as before; the workspace-bound call
+ * sites (`members`, `listInvites`, `createInvite`, `revokeInvite`) pass
+ * `ctx.target` so the same-account bug fix in `comments.ts`'s
+ * `notAMemberMessage` applies here too.
+ */
+async function relayError(response: Response, action: string, target?: Target): Promise<RigShareError> {
   let body: unknown = null;
   try {
     body = await response.json();
@@ -205,7 +213,10 @@ async function relayError(response: Response, action: string): Promise<RigShareE
   }
   // The relay answers 404 (not 403) for a binding you aren't a member of.
   if (response.status === 404) {
-    return { kind: 'relay', status: 404, message: "This rig isn't available to you." };
+    const message = target
+      ? await notAMemberMessage({ ...target, relPath: '' }, "This rig isn't available to you.")
+      : "This rig isn't available to you.";
+    return { kind: 'relay', status: 404, message };
   }
   return {
     kind: 'relay',
@@ -345,7 +356,7 @@ export const rigShareController = createRPCController({
     } catch (error) {
       return err(transportError(action, error));
     }
-    if (!response.ok) return err(await relayError(response, action));
+    if (!response.ok) return err(await relayError(response, action, ctx.target));
 
     try {
       const data = asRecord(await response.json());
@@ -430,7 +441,7 @@ export const rigShareController = createRPCController({
     } catch (error) {
       return err(transportError(action, error));
     }
-    if (!response.ok) return err(await relayError(response, action));
+    if (!response.ok) return err(await relayError(response, action, ctx.target));
 
     try {
       const data = asRecord(await response.json());
@@ -477,7 +488,7 @@ export const rigShareController = createRPCController({
     } catch (error) {
       return err(transportError(action, error));
     }
-    if (!response.ok) return err(await relayError(response, action));
+    if (!response.ok) return err(await relayError(response, action, ctx.target));
 
     try {
       const data = asRecord(await response.json());
@@ -523,7 +534,7 @@ export const rigShareController = createRPCController({
     } catch (error) {
       return err(transportError(action, error));
     }
-    if (!response.ok) return err(await relayError(response, action));
+    if (!response.ok) return err(await relayError(response, action, ctx.target));
 
     try {
       const data = asRecord(await response.json());

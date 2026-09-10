@@ -218,7 +218,7 @@ function membersUrl({ target }: Resolved): string {
 }
 
 /** Turns a non-2xx relay response into a message the UI can show in one line. */
-async function relayError(response: Response, action: string): Promise<RigCommentsError> {
+async function relayError(response: Response, action: string, target: RigCommentTarget): Promise<RigCommentsError> {
   let code: string | null = null;
   try {
     const body: unknown = await response.json();
@@ -231,7 +231,8 @@ async function relayError(response: Response, action: string): Promise<RigCommen
   }
   // The relay answers 404 (not 403) for a binding you aren't a member of.
   if (response.status === 404) {
-    return { kind: 'relay', status: 404, message: "This rig's comments aren't available to you." };
+    const message = await notAMemberMessage(target, "This rig's comments aren't available to you.");
+    return { kind: 'relay', status: 404, message };
   }
   return {
     kind: 'relay',
@@ -388,31 +389,28 @@ function validateBody(body: string): RigCommentsError | null {
 
 // ── self identity ────────────────────────────────────────────────────────────
 
-/**
- * Successful lookups only, keyed by relay + token: the id a token maps to
- * never changes, but a transient failure must be retried on the next resolve.
- */
-const selfUserIdCache = new Map<string, string>();
+type SelfIdentity = { userId: string; email: string | null };
 
 /**
- * Who the signed-in user is on this relay, as `GET /v1/me` reports it.
- *
- * Returns the Clerk user id — the same id the relay stamps as `author.userId`
- * on every message this account posts — so the renderer can tell its own
- * agent-authored replies from a collaborator's. Null on any failure: the
- * renderer then treats no agent message as its own, which is the safe default.
- *
- * Exported for `rig-share.ts` (self-role derivation in the share popover) —
- * only `relayUrl` (and the trust gate's `bindingId`) are read off `target`,
- * so a root-keyed caller may pass `relPath: ''`.
+ * Successful lookups only, keyed by relay + token: the identity a token maps
+ * to never changes, but a transient failure must be retried on the next
+ * resolve.
  */
-export async function readSelfUserId(target: RigCommentTarget): Promise<string | null> {
+const selfIdentityCache = new Map<string, SelfIdentity>();
+
+/**
+ * Who the signed-in user is on this relay, as `GET /v1/me` reports it —
+ * both the Clerk user id (`readSelfUserId`'s contract) and, when the relay
+ * sends one, their email (for `notAMemberMessage`). One fetch backs both;
+ * null on any failure.
+ */
+async function readSelfIdentity(target: RigCommentTarget): Promise<SelfIdentity | null> {
   if (gateRelayTrust(target) !== null) return null;
   const token = await readRelayToken();
   if (!token) return null;
 
   const key = `${target.relayUrl}|${token}`;
-  const cached = selfUserIdCache.get(key);
+  const cached = selfIdentityCache.get(key);
   if (cached !== undefined) return cached;
 
   try {
@@ -426,12 +424,47 @@ export async function readSelfUserId(target: RigCommentTarget): Promise<string |
     const user = asRecord(data?.user);
     const clerkUserId = user?.clerkUserId;
     if (typeof clerkUserId !== 'string' || clerkUserId.length === 0) return null;
-    selfUserIdCache.set(key, clerkUserId);
-    return clerkUserId;
+    const email = typeof user?.email === 'string' && user.email.length > 0 ? user.email : null;
+    const identity: SelfIdentity = { userId: clerkUserId, email };
+    selfIdentityCache.set(key, identity);
+    return identity;
   } catch (error) {
     log.warn('Rig comments: could not read the signed-in relay user', { error: String(error) });
     return null;
   }
+}
+
+/**
+ * Who the signed-in user is on this relay — the Clerk user id, the same id
+ * the relay stamps as `author.userId` on every message this account posts —
+ * so the renderer can tell its own agent-authored replies from a
+ * collaborator's. Null on any failure: the renderer then treats no agent
+ * message as its own, which is the safe default.
+ *
+ * Exported for `rig-share.ts` (self-role derivation in the share popover) —
+ * only `relayUrl` (and the trust gate's `bindingId`) are read off `target`,
+ * so a root-keyed caller may pass `relPath: ''`.
+ */
+export async function readSelfUserId(target: RigCommentTarget): Promise<string | null> {
+  return (await readSelfIdentity(target))?.userId ?? null;
+}
+
+/**
+ * The 404 "you aren't a member of this binding" message, personalized with
+ * the signed-in account's email when it's known — reused by `rig-share.ts`'s
+ * own equivalent 404 mapping so both name the same account for the same
+ * failure. This is the fix for the two-account bug: a tester who is validly
+ * signed in (their token itself is fine) but not a member of THIS rig used
+ * to see a generic "not available to you" with no hint about WHICH signed-in
+ * account that refers to. Falls back to `fallback` when the email can't be
+ * resolved (an older relay, a transient `/v1/me` failure) — never blocks on
+ * or fails the original 404 over this.
+ */
+export async function notAMemberMessage(target: RigCommentTarget, fallback: string): Promise<string> {
+  const identity = await readSelfIdentity(target);
+  return identity?.email
+    ? `You're signed in as ${identity.email}, which isn't a member of this rig.`
+    : fallback;
 }
 
 // ── controller ───────────────────────────────────────────────────────────────
@@ -472,7 +505,7 @@ export const rigCommentsController = createRPCController({
     } catch (error) {
       return err(transportError('load comments', error));
     }
-    if (!response.ok) return err(await relayError(response, 'load comments'));
+    if (!response.ok) return err(await relayError(response, 'load comments', ctx.target));
 
     try {
       const data = asRecord(await response.json());
@@ -567,7 +600,7 @@ export const rigCommentsController = createRPCController({
     } catch (error) {
       return err(transportError(action, error));
     }
-    if (!response.ok) return err(await relayError(response, action));
+    if (!response.ok) return err(await relayError(response, action, ctx.target));
     return readMessage(response, action);
   },
 
@@ -588,7 +621,7 @@ export const rigCommentsController = createRPCController({
     } catch (error) {
       return err(transportError(action, error));
     }
-    if (!response.ok) return err(await relayError(response, action));
+    if (!response.ok) return err(await relayError(response, action, ctx.target));
 
     try {
       const data = asRecord(await response.json());
@@ -616,7 +649,7 @@ async function postMessage(
   } catch (error) {
     return err(transportError(action, error));
   }
-  if (!response.ok) return err(await relayError(response, action));
+  if (!response.ok) return err(await relayError(response, action, ctx.target));
   const result = await readMessage(response, action);
   if (result.success) {
     telemetryService.capture('comment_posted', {

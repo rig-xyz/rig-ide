@@ -11,12 +11,20 @@ vi.mock('@main/lib/telemetry', () => ({
   telemetryService: { capture: vi.fn() },
 }));
 
+// `notAMemberMessage`/`readSelfUserId` read the token via `./config` — mocked
+// so their tests can drive it directly rather than touching a real config
+// file on disk.
+vi.mock('./config', () => ({ readRelayToken: vi.fn() }));
+
 import {
   resolveCommentDispatchContext,
   resolveCommentTarget,
   resolveCommentWorkspaceRoot,
+  notAMemberMessage,
+  readSelfUserId,
   toMessage,
 } from './comments';
+import { readRelayToken } from './config';
 
 /**
  * Pure resolution-logic coverage for the P0 fix: `askAgent`'s dispatch cwd
@@ -198,5 +206,81 @@ describe('toMessage: author.kind coercion (guest authorship)', () => {
     );
     expect(message?.author.name).toBe('Guest Name');
     expect(message?.author.avatarUrl).toBe('https://example.test/a.png');
+  });
+});
+
+/**
+ * The two-account bug fix: a tester validly signed in (their token itself is
+ * fine) but not a member of a given rig used to see a generic "not available
+ * to you" 404 message with no hint about WHICH signed-in account that
+ * refers to. `notAMemberMessage` personalizes it with the account's email
+ * when `/v1/me` can supply one, falling back to the generic message
+ * otherwise — never blocking or failing over that lookup.
+ */
+describe('notAMemberMessage', () => {
+  const target = { bindingId: 'binding-1', relayUrl: 'https://tap-relay.fly.dev', relPath: 'docs/spec.md' };
+  const fallback = "This rig's comments aren't available to you.";
+
+  afterEach(() => {
+    vi.mocked(readRelayToken).mockReset();
+    vi.unstubAllGlobals();
+  });
+
+  // Each test uses its OWN token: `readSelfIdentity`'s success cache is
+  // keyed by `relayUrl|token`, and every test here shares the same
+  // `relayUrl` — a repeated token would silently serve a previous test's
+  // cached identity instead of hitting the stubbed fetch below.
+
+  it('names the signed-in account by email when /v1/me resolves one', async () => {
+    vi.mocked(readRelayToken).mockResolvedValue('rpat_test_token_1');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ user: { clerkUserId: 'clerk_1', email: 'dylan@example.com' } }),
+      })
+    );
+
+    expect(await notAMemberMessage(target, fallback)).toBe(
+      "You're signed in as dylan@example.com, which isn't a member of this rig."
+    );
+  });
+
+  it('falls back to the generic message when the relay has no email for this account', async () => {
+    vi.mocked(readRelayToken).mockResolvedValue('rpat_test_token_2');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ user: { clerkUserId: 'clerk_2' } }),
+      })
+    );
+
+    expect(await notAMemberMessage(target, fallback)).toBe(fallback);
+  });
+
+  it('falls back to the generic message when there is no token at all', async () => {
+    vi.mocked(readRelayToken).mockResolvedValue(null);
+    expect(await notAMemberMessage(target, fallback)).toBe(fallback);
+  });
+
+  it('falls back to the generic message when /v1/me itself fails — never blocks the 404 on this', async () => {
+    vi.mocked(readRelayToken).mockResolvedValue('rpat_test_token_3');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }));
+
+    expect(await notAMemberMessage(target, fallback)).toBe(fallback);
+  });
+
+  it('readSelfUserId keeps returning just the Clerk id, unaffected by the email addition', async () => {
+    vi.mocked(readRelayToken).mockResolvedValue('rpat_test_token_4');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ user: { clerkUserId: 'clerk_4', email: 'dylan@example.com' } }),
+      })
+    );
+
+    expect(await readSelfUserId(target)).toBe('clerk_4');
   });
 });
