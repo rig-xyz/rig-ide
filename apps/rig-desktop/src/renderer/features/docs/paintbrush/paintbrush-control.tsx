@@ -138,7 +138,7 @@ export function PaintbrushControl({
                 {selected ? (
                   <AgentIcon icon={selected.icon} size={14} className="shrink-0" />
                 ) : (
-                  <span>Choose agent</span>
+                  <span className="whitespace-nowrap">Choose agent</span>
                 )}
                 <ChevronDown className="size-3 shrink-0" strokeWidth={1.5} />
               </button>
