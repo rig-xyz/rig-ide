@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
-import { ChevronRight, Home as HomeIcon, Settings as SettingsIcon } from 'lucide-react';
+import { ChevronRight, Home as HomeIcon, MessageSquare, Settings as SettingsIcon, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArtefactPane } from '@renderer/features/artifact/artefact-pane';
 import {
@@ -36,6 +36,8 @@ import {
 } from '@renderer/features/shell/native-close-target';
 import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
 import { SettingsModal } from '@renderer/features/shell/settings-modal';
+import { RoomView } from '@renderer/features/spaces/components/room-view';
+import { useSpacesEnabled } from '@renderer/features/spaces/use-spaces-enabled';
 import { deriveTopbarContext, type TopbarContext } from '@renderer/features/shell/topbar-context';
 import { isUpdateReady, shouldAnnounceUpdate } from '@renderer/features/shell/update-status';
 import {
@@ -298,6 +300,12 @@ export function App() {
   // persisted — same as the fold states it replaces.
   const [rigLayout, setRigLayout] = useState<RigLayout>('chat');
   const [focusedRigPane, setFocusedRigPane] = useState<FocusedRigPane>('chat');
+  // Spaces (lane 2): the Room UI, built against a recorded feed — a dev
+  // entry point only, gated by `spacesEnabled` (Settings → Experimental).
+  // Per-window, deliberately not persisted; closes back to whatever layout
+  // was already showing rather than replacing it.
+  const spacesEnabled = useSpacesEnabled();
+  const [roomPreviewOpen, setRoomPreviewOpen] = useState(false);
   const chatNativeCloseRef = useRef<(() => void) | null>(null);
   const [canCloseChatTab, setCanCloseChatTab] = useState(false);
   const registerChatNativeClose = useCallback((action: (() => void) | null) => {
@@ -869,14 +877,51 @@ export function App() {
         shareSlot={bound ? <RigShareButton root={bound.root} name={bound.name} /> : undefined}
         layoutSlot={
           bound ? (
-            <LayoutSwitcher
-              layout={rigLayout}
-              hiddenTabCount={rigLayout === 'chat' ? artefact.tabs.length : 0}
-              onChange={applyLayout}
-            />
+            <div className="flex items-center gap-1.5">
+              <LayoutSwitcher
+                layout={rigLayout}
+                hiddenTabCount={rigLayout === 'chat' ? artefact.tabs.length : 0}
+                onChange={applyLayout}
+              />
+              {spacesEnabled && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label="Room (preview)"
+                        onClick={() => setRoomPreviewOpen(true)}
+                        className="hover:bg-bg-2 flex size-7 items-center justify-center rounded-control text-text-muted transition-colors [-webkit-app-region:no-drag]"
+                      >
+                        <MessageSquare className="size-3.5" strokeWidth={1.5} />
+                      </button>
+                    }
+                  />
+                  <TooltipContent side="bottom">Room (preview)</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           ) : undefined
         }
       />
+      {bound && spacesEnabled && roomPreviewOpen && (
+        // Dev entry point only (Spaces lane 2): the Room UI over a recorded
+        // feed, no relay dependency. Overlays the whole rig pane instead of
+        // plugging into `rigLayout` — `FixtureRoomSource` owns its own
+        // scripted state and has nothing to do with the artefact/chat tab
+        // machinery underneath.
+        <div className="bg-bg-0 absolute inset-0 top-10 z-40 flex flex-col">
+          <button
+            type="button"
+            aria-label="Close Room preview"
+            onClick={() => setRoomPreviewOpen(false)}
+            className="hover:bg-bg-2 absolute top-2 right-3 z-50 flex size-7 items-center justify-center rounded-control text-text-muted transition-colors"
+          >
+            <X className="size-4" strokeWidth={1.5} />
+          </button>
+          <RoomView />
+        </div>
+      )}
       <SettingsModal
         open={settingsOpen}
         onOpenChange={setSettingsOpen}

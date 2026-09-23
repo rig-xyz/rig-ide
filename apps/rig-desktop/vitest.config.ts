@@ -121,6 +121,14 @@ const toolingAlias = {
 
 export default defineConfig({
   resolve: { alias },
+  // Spaces (lane 2) round: `motion/react` (the Room transcript's enter/
+  // layout animation) is a real dependency but wasn't imported by any test
+  // before `spaces-room.test.tsx`, so Vite's optimizer only discovered it
+  // mid-run and reloaded — which, once, invalidated React's module identity
+  // for every OTHER browser test already mid-import in that same run
+  // ("Cannot read properties of null (reading 'useContext')" in unrelated
+  // files). Pre-bundling it here avoids that cold-start reload entirely.
+  optimizeDeps: { include: ['motion/react', 'react/jsx-dev-runtime', 'react/jsx-runtime'] },
   test: {
     projects: [
       {
