@@ -426,7 +426,7 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
       const result = await request(
         ctxResult.data,
         'GET',
-        `/v1/bindings/${bindingId}/members`,
+        `/v1/me/bindings/${bindingId}/members`,
         'load room members'
       );
       if (!result.success) return err(result.error);

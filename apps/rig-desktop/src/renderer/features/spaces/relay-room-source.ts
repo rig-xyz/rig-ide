@@ -290,7 +290,7 @@ export class RelayRoomSource implements RoomSource {
   /** Loads the initial snapshot (member roster + recent messages + each referenced run's full event log) before the realtime connection is ever opened. */
   private async bootstrap(): Promise<void> {
     const [members, messages] = await Promise.all([
-      this.getJson<{ members?: unknown }>(`/v1/bindings/${this.opts.bindingId}/members`),
+      this.getJson<{ members?: unknown }>(`/v1/me/bindings/${this.opts.bindingId}/members`),
       this.getJson<{ messages?: unknown }>(
         `/v1/me/bindings/${this.opts.bindingId}/messages?latest=${this.opts.bootstrapMessageCount}`
       ),

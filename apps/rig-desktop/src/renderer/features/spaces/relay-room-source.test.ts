@@ -75,7 +75,7 @@ const BINDING = 'b1';
 function membersRoute(): Route {
   return {
     method: 'GET',
-    path: `/v1/bindings/${BINDING}/members`,
+    path: `/v1/me/bindings/${BINDING}/members`,
     respond: () => ({
       members: [{ userId: 'u1', name: 'Alice', role: 'owner' }],
     }),
@@ -131,7 +131,7 @@ describe('RelayRoomSource', () => {
     expect(source.getSnapshot().messages[0].body).toBe('hello room');
     expect(source.getSnapshot().members.map((m) => m.id)).toEqual(['u1']);
     expect(provider!.connectCalls).toBe(1);
-    expect(requests.some((r) => r.path === `/v1/bindings/${BINDING}/members`)).toBe(true);
+    expect(requests.some((r) => r.path === `/v1/me/bindings/${BINDING}/members`)).toBe(true);
   });
 
   it('the first message of kind "session" synthesizes session_started plus its full event backlog', async () => {
