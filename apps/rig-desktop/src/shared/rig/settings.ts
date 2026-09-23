@@ -228,6 +228,15 @@ export type RigSettings = {
    * feature never shipped to anyone before this field existed.
    */
   smartHighlighterEnabled: boolean;
+  /**
+   * Spaces (lane 2): the Room UI is feature-flagged behind Settings →
+   * Experimental the same way `smartHighlighterEnabled` above is — same
+   * persistence mechanism (`rpc.rig.settings`), a plain global preference,
+   * not per-rig. Default `false`; an existing settings.json that predates
+   * this field also loads it as `false` (`main/rig/settings.ts`'s
+   * `normalizeSettings`).
+   */
+  spacesEnabled: boolean;
 };
 
 export const DEFAULT_RIG_SETTINGS: RigSettings = {
@@ -254,6 +263,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   paintbrushAgent: null,
   paintbrushCoachMarkSeen: false,
   smartHighlighterEnabled: false,
+  spacesEnabled: false,
 };
 
 /** The subset of legacy localStorage values the renderer can hand to `importLegacy`. */
