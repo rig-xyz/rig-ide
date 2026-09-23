@@ -53,6 +53,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
+    "@hocuspocus/provider": "^4",
     "@codemirror/commands": "^6.10.4",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.11",
@@ -105,6 +106,7 @@
     "ts-pattern": "^5.9.0",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2",
+    "yjs": "^13.6.33",
     "zod": "^4.3.6"
   },
   "devDependencies": {
