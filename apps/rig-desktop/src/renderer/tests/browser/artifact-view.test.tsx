@@ -79,6 +79,15 @@ vi.mock('@renderer/lib/ipc', () => ({
       context: {
         createTarget: (...args: unknown[]) => mocks.contextCreateTarget(args[0]),
       },
+      // The paintbrush header control reads this unconditionally, even off
+      // its own react-query path (`use-paintbrush.ts`'s `enabled` gate calls
+      // `rpc.rig.settings.get()` directly in an effect) — needs to exist so
+      // that call doesn't throw, regardless of whether any test here ever
+      // exercises paintbrush itself.
+      settings: {
+        get: vi.fn(async () => ({})),
+        set: vi.fn(async () => ({ success: true, data: undefined })),
+      },
     },
     agents: {
       list: vi.fn(async () => []),

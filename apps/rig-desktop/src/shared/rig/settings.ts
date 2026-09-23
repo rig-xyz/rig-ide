@@ -216,6 +216,18 @@ export type RigSettings = {
    * which rig it happened in. `false` until the mode is ever turned on.
    */
   paintbrushCoachMarkSeen: boolean;
+  /**
+   * Experimental round: Smart Highlighter (the paintbrush) is feature-flagged
+   * behind Settings → Experimental so the branch that builds it can land on
+   * `main` without shipping it to users yet — same persistence mechanism as
+   * `paintbrushAgent`/`paintbrushCoachMarkSeen` above (`rpc.rig.settings`), a
+   * plain global preference, not per-rig. Default `false`; an existing
+   * settings.json that predates this field also loads it as `false`
+   * (`main/rig/settings.ts`'s `normalizeSettings`) — unlike `hasSeenOnboarding`,
+   * there is no "the file's own presence implies opt-in" case here, since this
+   * feature never shipped to anyone before this field existed.
+   */
+  smartHighlighterEnabled: boolean;
 };
 
 export const DEFAULT_RIG_SETTINGS: RigSettings = {
@@ -241,6 +253,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   autoApproveAgentActions: false,
   paintbrushAgent: null,
   paintbrushCoachMarkSeen: false,
+  smartHighlighterEnabled: false,
 };
 
 /** The subset of legacy localStorage values the renderer can hand to `importLegacy`. */

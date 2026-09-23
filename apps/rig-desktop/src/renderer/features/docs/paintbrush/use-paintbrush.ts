@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { rpc } from '@renderer/lib/ipc';
+import { events, rpc } from '@renderer/lib/ipc';
 import { useRunnableAgents, type RunnableAgent } from '@renderer/features/chat/use-runnable-agents';
+import { rigSettingsChangedChannel } from '@shared/rig/settings';
 import type { AgentMention } from '../comments/comments-store';
 
 /**
@@ -19,8 +20,18 @@ import type { AgentMention } from '../comments/comments-store';
  * are two different questions that happen to often share an answer.
  */
 export function usePaintbrushMode(): {
-  /** Whether the header's orb is armed. */
+  /**
+   * Whether the Experimental → Smart Highlighter setting is on at all — the
+   * feature-flag gate (`shared/rig/settings.ts`'s `smartHighlighterEnabled`,
+   * default `false`). Every entry point (the header control, the cursor
+   * chip, the CM6 decoration extension) checks this before rendering or
+   * registering, not just `on` below — `on` alone would let a control
+   * rendered before the setting was ever read flash into an armable state.
+   */
+  enabled: boolean;
+  /** Whether the header's orb is armed. Always false while `enabled` is false. */
   on: boolean;
+  /** No-ops while `enabled` is false — arming is impossible with the setting off. */
   toggle(): void;
   /** Every agent this machine can actually run right now, for the dropdown. */
   agents: RunnableAgent[];
@@ -42,6 +53,31 @@ export function usePaintbrushMode(): {
   const [on, setOn] = useState(false);
   const { agents } = useRunnableAgents();
   const queryClient = useQueryClient();
+
+  // The feature-flag gate — read live via `rigSettingsChangedChannel`
+  // rather than the react-query cache below, since the Experimental
+  // toggle lives in a completely different part of the tree (the Settings
+  // modal) and must reach every open document immediately, no restart.
+  const [enabled, setEnabled] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void rpc.rig.settings.get().then((current) => {
+      if (alive) setEnabled(current.smartHighlighterEnabled);
+    });
+    const off = events.on(rigSettingsChangedChannel, (next) => {
+      setEnabled(next.smartHighlighterEnabled);
+    });
+    return () => {
+      alive = false;
+      off();
+    };
+  }, []);
+
+  // Turning the setting off while the mode happens to be armed must disarm
+  // it immediately — no stale armed state surviving a setting flip.
+  useEffect(() => {
+    if (!enabled) setOn(false);
+  }, [enabled]);
 
   const { data: settings } = useQuery({
     queryKey: ['rig', 'settings', 'paintbrushAgent'],
@@ -81,8 +117,12 @@ export function usePaintbrushMode(): {
   }, [queryClient]);
 
   return {
+    enabled,
     on,
-    toggle: () => setOn((v) => !v),
+    toggle: () => {
+      if (!enabled) return;
+      setOn((v) => !v);
+    },
     agents,
     selected,
     selectAgent,

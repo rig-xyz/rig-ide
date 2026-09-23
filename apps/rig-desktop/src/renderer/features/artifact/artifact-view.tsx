@@ -398,8 +398,16 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
       // Paintbrush's own independent decoration layer (`docs/document-focus-
       // design.md` §2) — deliberately a SEPARATE extension from
       // `commentDecorations` above, painting nothing until
-      // `usePaintbrushEditorSync` below ever dispatches an overlay.
-      doc.extensionFactories.push(() => paintbrushDecorations());
+      // `usePaintbrushEditorSync` below ever dispatches an overlay. Also
+      // skipped entirely while Smart Highlighter is off
+      // (`smartHighlighterEnabled`) — reads `paintbrush.enabled` directly
+      // rather than through the deps array below on purpose: this whole
+      // `resource`/`comments` pair must NOT be torn down and recreated
+      // (losing the live CM6 view) just because the Experimental toggle
+      // flipped elsewhere, and the extension is a structural no-op anyway
+      // while arming itself stays impossible (`usePaintbrushMode`).
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      if (paintbrush.enabled) doc.extensionFactories.push(() => paintbrushDecorations());
     }
     return { resource: doc, comments: store };
     // Recreated only when the open file actually changes — `key={path}` on
@@ -538,7 +546,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 Updated on disk · Reload
               </button>
             )}
-            {isMarkdown && comments && (
+            {isMarkdown && comments && paintbrush.enabled && (
               <PaintbrushControl
                 on={paintbrush.on}
                 toggle={paintbrush.toggle}
@@ -665,10 +673,12 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
           </>
         )}
       </div>
-      <PaintbrushCursorChip
-        active={paintbrush.on && !paintbrushComposerOpen}
-        containerRef={containerRef}
-      />
+      {paintbrush.enabled && (
+        <PaintbrushCursorChip
+          active={paintbrush.on && !paintbrushComposerOpen}
+          containerRef={containerRef}
+        />
+      )}
     </div>
   );
 });

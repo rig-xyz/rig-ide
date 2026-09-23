@@ -90,6 +90,9 @@ export function SettingsModal({
           <Section label="Privacy">
             <TelemetryRow />
           </Section>
+          <Section label="Experimental">
+            <SmartHighlighterRow />
+          </Section>
           <Section label="About" containerRef={aboutRef}>
             <AboutSection />
           </Section>
@@ -439,6 +442,66 @@ function TelemetryRow() {
           className={cn(
             'bg-bg-1 absolute top-0.5 left-0.5 size-3 rounded-full transition-transform',
             checked && 'translate-x-3'
+          )}
+        />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Experimental round: Smart Highlighter (the paintbrush, `renderer/features/
+ * docs/paintbrush`) lands behind this toggle so the branch that built it can
+ * merge to `main` without shipping it to users yet — off by default
+ * (`shared/rig/settings.ts`'s `smartHighlighterEnabled`). Same switch shape
+ * as `AutoApproveAgentActionsRow`/`TelemetryRow` above (no new colored
+ * accents), its own `Section` for the same reason `TelemetryRow` gets one:
+ * this is the settings surface's own home for feature-flagged work, not an
+ * addendum to another section. Read live everywhere the mode can arm
+ * (`docs/paintbrush/use-paintbrush.ts`'s `usePaintbrushMode`) via
+ * `rigSettingsChangedChannel`, so flipping this off disarms an already-open
+ * document immediately — no restart.
+ */
+function SmartHighlighterRow() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['rig', 'settings', 'smartHighlighterEnabled'],
+    queryFn: () => rpc.rig.settings.get(),
+  });
+  const enabled = data?.smartHighlighterEnabled ?? false;
+
+  const toggle = () => {
+    void rpc.rig.settings.set({ smartHighlighterEnabled: !enabled }).then(() => {
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'settings', 'smartHighlighterEnabled'] });
+    });
+  };
+
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <label htmlFor="smart-highlighter-enabled" className="text-text-primary text-xs font-medium">
+          Smart Highlighter
+        </label>
+        <p className="text-text-muted text-xs">
+          Select text in a document and have an agent edit it in place.
+        </p>
+      </div>
+      <button
+        id="smart-highlighter-enabled"
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        aria-label="Smart Highlighter"
+        onClick={toggle}
+        className={cn(
+          'relative mt-0.5 h-4 w-7 shrink-0 rounded-full transition-colors',
+          enabled ? 'bg-border-strong' : 'bg-bg-2 border-border-hairline border'
+        )}
+      >
+        <span
+          className={cn(
+            'bg-bg-1 absolute top-0.5 left-0.5 size-3 rounded-full transition-transform',
+            enabled && 'translate-x-3'
           )}
         />
       </button>

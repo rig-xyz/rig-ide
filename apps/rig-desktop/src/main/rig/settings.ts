@@ -175,6 +175,7 @@ function normalizeSettings(parsed: unknown): RigSettings {
     autoApproveAgentActions: raw.autoApproveAgentActions === true,
     paintbrushAgent: typeof raw.paintbrushAgent === 'string' ? raw.paintbrushAgent : null,
     paintbrushCoachMarkSeen: raw.paintbrushCoachMarkSeen === true,
+    smartHighlighterEnabled: raw.smartHighlighterEnabled === true,
   };
 }
 
