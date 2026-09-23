@@ -919,7 +919,7 @@ export function App() {
           >
             <X className="size-4" strokeWidth={1.5} />
           </button>
-          <RoomView />
+          <RoomView bindingId={bound.bindingId} spaceName={bound.name ?? 'Room'} />
         </div>
       )}
       <SettingsModal

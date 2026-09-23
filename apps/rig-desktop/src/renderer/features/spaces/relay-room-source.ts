@@ -28,7 +28,8 @@
  * a live, chatty realtime connection through IPC just to keep the token in
  * main would be a much bigger change than lane 3's remaining budget allows.
  * The token itself is handed to the renderer, once, by a new minimal main
- * RPC (`rig.spaces.getConnectionInfo`, see `main/rig/spaces-connection.ts`)
+ * RPC (`rig.spacesConnection.getConnectionInfo`, see
+ * `main/rig/spaces-connection.ts`)
  * — never persisted renderer-side beyond this instance's lifetime, never
  * logged. This is a deliberate, reviewable tradeoff, not an oversight; see
  * `NOTES.md`'s "Open questions" for the alternative (a main-owned realtime
@@ -478,12 +479,20 @@ export class RelayRoomSource implements RoomSource {
 
   // ── outgoing ────────────────────────────────────────────────────────────
 
-  /** Posts a plain-text chat message. The room's own realtime notification round-trips it back through `catchUp()` — this never optimistically applies it locally, so the message the UI shows is always exactly what the relay stored. */
-  async send(text: string): Promise<void> {
-    await this.postJson(`/v1/me/bindings/${this.opts.bindingId}/messages`, {
-      body: text,
-      kind: 'text',
-    });
+  /**
+   * Posts a plain-text chat message. The room's own realtime notification
+   * round-trips it back through `catchUp()` — this never optimistically
+   * applies it locally, so the message the UI shows is always exactly what
+   * the relay stored. Returns the new message's id (for `requestOwnAgent`'s
+   * `sourceMessageId`), or `null` if the post failed.
+   */
+  async send(text: string): Promise<string | null> {
+    const result = await this.postJson<{ message?: { id?: unknown } }>(
+      `/v1/me/bindings/${this.opts.bindingId}/messages`,
+      { body: text, kind: 'text' }
+    );
+    const id = result?.message?.id;
+    return typeof id === 'string' ? id : null;
   }
 
   /**
@@ -533,7 +542,7 @@ export class RelayRoomSource implements RoomSource {
     }
   }
 
-  private async postJson(path: string, body: unknown): Promise<void> {
+  private async postJson<T>(path: string, body: unknown): Promise<T | null> {
     try {
       const response = await this.fetchImpl(`${this.opts.relayUrl}${path}`, {
         method: 'POST',
@@ -546,9 +555,12 @@ export class RelayRoomSource implements RoomSource {
       });
       if (!response.ok) {
         this.log('Rig spaces: relay post failed', { path, status: response.status });
+        return null;
       }
+      return (await response.json()) as T;
     } catch (error) {
       this.log('Rig spaces: relay post errored', { path, error: String(error) });
+      return null;
     }
   }
 }
