@@ -66,15 +66,21 @@ const NOT_SIGNED_IN: RigAccountError = {
   message: 'Not signed in to Rig.',
 };
 
-type Resolved = { url: string; token: string };
+export type Resolved = { url: string; token: string };
 
 /**
  * The trust gate on the user's PAT (see `relay-trust.ts`), applied to
  * `resolveRelayUrl()` before the token is ever read. The only place a
  * `Resolved` — and with it the token — is minted, so every relay call in this
  * module is behind it.
+ *
+ * Exported for `rig/spaces/*` (lane 3): the session publisher, request
+ * claimer, and space connection-info RPC all need the exact same
+ * trust-gated `{url, token}` this module already resolves for `me()`/
+ * `workspaces()` — re-deriving the trust gate a second time would risk the
+ * two copies drifting apart.
  */
-async function resolveContext(): Promise<Resolved | RigAccountError> {
+export async function resolveContext(): Promise<Resolved | RigAccountError> {
   const url = resolveRelayUrl();
   const trust = checkRelayTrust(url);
   if (!trust.trusted) {
@@ -92,7 +98,7 @@ async function resolveContext(): Promise<Resolved | RigAccountError> {
   return { url, token };
 }
 
-function isError(value: Resolved | RigAccountError): value is RigAccountError {
+export function isError(value: Resolved | RigAccountError): value is RigAccountError {
   return 'kind' in value;
 }
 

@@ -1,0 +1,205 @@
+import { log } from '@main/lib/logger';
+import type { AgentRequest, SpacesRelayApi } from './relay-api';
+
+/**
+ * Spaces (lane 3): claims queued `agent_requests` addressed to this user and
+ * hands each one to a caller-supplied dispatcher.
+ *
+ * Deliberately dumb about WHAT running an agent means — `dispatch` is
+ * injected so this module has zero knowledge of ACP, `getAcpRuntimeClient`,
+ * or headless-turn plumbing. That keeps the claim-then-advance state
+ * machine (the part with a real correctness property — "exactly once,
+ * even racing another device") unit-testable against a hand-written fake
+ * `SpacesRelayApi`, with no runtime/Electron dependency at all.
+ *
+ * The claim itself is atomic SERVER-SIDE (`SPACES_NOTES.md`: `claim` is one
+ * `UPDATE ... WHERE status = 'queued'`); a lost race comes back as a 409,
+ * shaped here as `{kind:'relay', status:409}` by `SpacesRelayApi`. This
+ * module's job is just to recognize that shape and do nothing — never
+ * retry, never treat it as a transient failure.
+ */
+
+export type ClaimDispatchResult = { runId: string } | { failed: true; reason?: string };
+
+export type ClaimAndDispatchOptions = {
+  api: SpacesRelayApi;
+  /** This device's id (minted via the relay's device-registration route, per lane 4's own notes — out of this lane's scope to mint). */
+  deviceId: string;
+  /**
+   * Starts the local agent for one claimed request. Returns the new run's
+   * id on success, or `{failed: true}` if the local dispatch itself could
+   * not start (a bad provider, a workspace that no longer exists, etc.) —
+   * distinct from a claim conflict, which never reaches this callback.
+   */
+  dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
+};
+
+function isConflict(error: { kind: string; status?: number }): boolean {
+  return error.kind === 'relay' && error.status === 409;
+}
+
+/**
+ * Lists this user's queued requests and attempts to claim + dispatch each
+ * one. Requests already claimed by another device (the 409 case) are
+ * skipped silently — "another device won" is the expected, common case in
+ * a multi-device account, not an error.
+ */
+export async function claimAndDispatchQueued(options: ClaimAndDispatchOptions): Promise<void> {
+  const { api, deviceId, dispatch } = options;
+  const queued = await api.listAgentRequests('queued');
+  if (!queued.success) {
+    log.warn('Rig spaces: could not list queued agent requests', {
+      error: queued.error.message,
+    });
+    return;
+  }
+
+  for (const request of queued.data) {
+    await claimOne(api, deviceId, dispatch, request);
+  }
+}
+
+/**
+ * Claims and dispatches exactly one request. Exported separately from
+ * `claimAndDispatchQueued` so `agent_request_created` (a single stateless
+ * event naming one request) doesn't have to re-list the whole queue to
+ * react to it — the caller can pass a request it already has if it has one
+ * (e.g. it just fetched it to get `targetAgent`/`prompt`), or fall back to
+ * a fresh list-and-find.
+ */
+export async function claimOne(
+  api: SpacesRelayApi,
+  deviceId: string,
+  dispatch: ClaimAndDispatchOptions['dispatch'],
+  request: AgentRequest
+): Promise<void> {
+  const claimed = await api.claimAgentRequest(request.bindingId, request.id, deviceId);
+  if (!claimed.success) {
+    if (isConflict(claimed.error)) {
+      log.debug('Rig spaces: lost the claim race for an agent request — another device won', {
+        requestId: request.id,
+      });
+    } else {
+      log.warn('Rig spaces: could not claim an agent request', {
+        requestId: request.id,
+        error: claimed.error.message,
+      });
+    }
+    return;
+  }
+
+  let result: ClaimDispatchResult;
+  try {
+    result = await dispatch(claimed.data);
+  } catch (error) {
+    result = { failed: true, reason: String(error) };
+  }
+
+  if ('failed' in result) {
+    log.warn('Rig spaces: local dispatch of a claimed agent request failed', {
+      requestId: request.id,
+      reason: result.reason,
+    });
+    const patched = await api.patchAgentRequest(request.bindingId, request.id, {
+      status: 'failed',
+    });
+    if (!patched.success) {
+      log.warn('Rig spaces: could not mark a failed agent request as failed', {
+        requestId: request.id,
+        error: patched.error.message,
+      });
+    }
+    return;
+  }
+
+  const running = await api.patchAgentRequest(request.bindingId, request.id, {
+    status: 'running',
+    runId: result.runId,
+  });
+  if (!running.success) {
+    log.warn('Rig spaces: claimed and started a request but could not mark it running', {
+      requestId: request.id,
+      runId: result.runId,
+      error: running.error.message,
+    });
+  }
+}
+
+/**
+ * Advances a claimed-and-started request to its terminal status once the
+ * local run ends. Kept separate from `claimOne` because the run's actual
+ * end is observed later, asynchronously, by whatever is following the ACP
+ * session (the session publisher's own `finish()` — see `NOTES.md`), not
+ * synchronously within `dispatch()`.
+ */
+export async function markRequestSettled(
+  api: SpacesRelayApi,
+  request: Pick<AgentRequest, 'bindingId' | 'id'>,
+  status: 'done' | 'failed'
+): Promise<void> {
+  const patched = await api.patchAgentRequest(request.bindingId, request.id, { status });
+  if (!patched.success) {
+    log.warn('Rig spaces: could not mark a settled agent request', {
+      requestId: request.id,
+      status,
+      error: patched.error.message,
+    });
+  }
+}
+
+/**
+ * Polls the queue on an interval and on demand (`checkNow`) — the two
+ * triggers `NOTES.md`/the build doc call for: "on connect and on
+ * `agent_request_created` events targeting this user." A poll already in
+ * flight is never overlapped with another.
+ */
+export class RequestClaimPoller {
+  private readonly options: ClaimAndDispatchOptions;
+  private readonly intervalMs: number;
+  private readonly scheduleInterval: (cb: () => void, ms: number) => unknown;
+  private readonly cancelInterval: (handle: unknown) => void;
+  private timer: unknown = null;
+  private checking = false;
+  /** Set while `checking` if `checkNow()` was called again mid-check, so that call isn't lost. */
+  private recheckRequested = false;
+
+  constructor(
+    options: ClaimAndDispatchOptions & {
+      intervalMs?: number;
+      setInterval?: (cb: () => void, ms: number) => unknown;
+      clearInterval?: (handle: unknown) => void;
+    }
+  ) {
+    this.options = options;
+    this.intervalMs = options.intervalMs ?? 15_000;
+    this.scheduleInterval = options.setInterval ?? ((cb, ms) => setInterval(cb, ms));
+    this.cancelInterval = options.clearInterval ?? ((handle) => clearInterval(handle as NodeJS.Timeout));
+  }
+
+  start(): void {
+    if (this.timer !== null) return;
+    this.timer = this.scheduleInterval(() => void this.checkNow(), this.intervalMs);
+    void this.checkNow(); // also check immediately on connect
+  }
+
+  stop(): void {
+    if (this.timer !== null) this.cancelInterval(this.timer);
+    this.timer = null;
+  }
+
+  async checkNow(): Promise<void> {
+    if (this.checking) {
+      this.recheckRequested = true;
+      return;
+    }
+    this.checking = true;
+    try {
+      do {
+        this.recheckRequested = false;
+        await claimAndDispatchQueued(this.options);
+      } while (this.recheckRequested);
+    } finally {
+      this.checking = false;
+    }
+  }
+}
