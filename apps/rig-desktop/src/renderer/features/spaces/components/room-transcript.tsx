@@ -30,7 +30,8 @@ function renderItem(
   snapshot: RoomSnapshot,
   ownId: string,
   onStopSession?: (runId: string) => void,
-  onResolvePermission?: (runId: string, requestId: string, optionId: string) => void
+  onResolvePermission?: (runId: string, requestId: string, optionId: string) => void,
+  onOpenFile?: (relPath: string) => void
 ) {
   switch (message.meta.kind) {
     case 'text':
@@ -38,7 +39,7 @@ function renderItem(
     case 'invite':
       return <InviteRow message={message} snapshot={snapshot} />;
     case 'comment_mirror':
-      return <CommentMirrorLine message={message} />;
+      return <CommentMirrorLine message={message} snapshot={snapshot} onOpenFile={onOpenFile} />;
     case 'system':
       if (message.meta.event === 'joined') return <JoinRow message={message} snapshot={snapshot} />;
       if (message.meta.event === 'day_divider') return <DayDivider message={message} />;
@@ -79,11 +80,14 @@ export function RoomTranscript({
   ownId,
   onStopSession,
   onResolvePermission,
+  onOpenFile,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
   onStopSession?: (runId: string) => void;
   onResolvePermission?: (runId: string, requestId: string, optionId: string) => void;
+  /** Opens a space file (relative path) in the editor, e.g. from a doc comment line. */
+  onOpenFile?: (relPath: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
@@ -123,7 +127,7 @@ export function RoomTranscript({
       <div className="mx-auto flex max-w-[44rem] flex-col gap-3 px-5 pt-6 pb-3">
         <AnimatePresence initial={false}>
           {snapshot.messages.map((message) => {
-            const node = renderItem(message, snapshot, ownId, onStopSession, onResolvePermission);
+            const node = renderItem(message, snapshot, ownId, onStopSession, onResolvePermission, onOpenFile);
             if (!node) return null;
             return (
               <motion.div

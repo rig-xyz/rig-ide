@@ -247,6 +247,44 @@ describe('RelayRoomSource', () => {
     expect(source.getSnapshot().members[0]).toMatchObject({ id: 'usr_1', name: 'dylan', initial: 'D' });
   });
 
+  it('keeps doc comments in the room as comment lines tied to their file and passage', async () => {
+    const fake = makeFakeRelay();
+    fake.queueMessages([
+      message({ id: 'c1', seq: 1, body: 'Why the drop?', path: 'signups.md', parentId: null, quote: '| W2 | 34 |' }),
+      message({
+        id: 'c2',
+        seq: 2,
+        body: 'A tracking bug, fixed by Alice.',
+        path: 'signups.md',
+        parentId: 'c1',
+        quote: null,
+        author: { userId: 'u1', name: null, avatarUrl: null, kind: 'agent' },
+        meta: { model: 'claude-sonnet-5' },
+      }),
+    ]);
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: () => new FakeProvider(),
+    });
+    source.play();
+    await flush();
+
+    const [first, reply] = source.getSnapshot().messages;
+    expect(first.meta).toEqual({ kind: 'comment_mirror', commentId: 'c1', path: 'signups.md', quote: '| W2 | 34 |' });
+    expect(reply.meta).toEqual({
+      kind: 'comment_mirror',
+      commentId: 'c1',
+      path: 'signups.md',
+      quote: '| W2 | 34 |',
+      isReply: true,
+      replyFromAgent: 'claude',
+    });
+  });
+
   it('opens the connection with a ticket minted through the relay client, not a static token', async () => {
     const fake = makeFakeRelay();
     fake.queueMessages([]);

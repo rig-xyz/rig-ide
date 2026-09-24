@@ -216,7 +216,10 @@ export async function roomContextLines(
     if (row.id === request.sourceMessageId) continue;
     const who = names.get(row.author.userId ?? '') ?? row.author.name ?? 'someone';
     const runId = row.kind === 'session' && typeof row.meta?.runId === 'string' ? row.meta.runId : null;
-    if (row.kind === 'text') {
+    if (row.path) {
+      const on = row.quote ? ` on “${clip(row.quote, 160)}”` : '';
+      lines.push(`${who} ${row.parentId ? 'replied to a comment' : 'commented'} in ${row.path}${on}: ${clip(row.body)}`);
+    } else if (row.kind === 'text') {
       lines.push(`${who}: ${clip(row.body)}`);
     } else if (runId && runId !== currentRunId) {
       lines.push(`${who} asked their agent: ${clip(row.body)}`);

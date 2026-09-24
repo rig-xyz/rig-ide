@@ -147,6 +147,8 @@ export type MessageMeta =
       quote: string;
       /** Present on the second message of a thread — the agent's reply, not the human's original comment. Its owner is `RoomMessage.authorId`. */
       replyFromAgent?: AgentKind;
+      /** A reply in the comment thread rather than the thread's first comment. */
+      isReply?: boolean;
     }
   | { kind: 'system'; event: string };
 

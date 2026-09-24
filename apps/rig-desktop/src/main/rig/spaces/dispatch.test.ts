@@ -789,6 +789,7 @@ describe('room context for the agent', () => {
         ok([
           { id: 'a', seq: 1, author: { userId: 'clerk_s', name: null, avatarUrl: null, kind: 'user' }, kind: 'text', body: 'Hey guys', meta: null, createdAt: '' },
           { id: 'b', seq: 2, author: { userId: 'clerk_d', name: null, avatarUrl: null, kind: 'user' }, kind: 'session', body: '@claude review signups.md', meta: { runId: 'run-old' }, createdAt: '' },
+          { id: 'k', seq: 2.5, author: { userId: 'clerk_d', name: null, avatarUrl: null, kind: 'user' }, kind: 'text', body: 'Why the drop?', meta: null, createdAt: '', path: 'signups.md', parentId: null, quote: '| W2 | 34 | 22 |' },
           { id: 'src', seq: 3, author: { userId: 'clerk_s', name: null, avatarUrl: null, kind: 'user' }, kind: 'text', body: '@claude summarize', meta: null, createdAt: '' },
           { id: 'c', seq: 4, author: { userId: 'clerk_s', name: null, avatarUrl: null, kind: 'user' }, kind: 'session', body: '@claude summarize', meta: { runId: 'run-now' }, createdAt: '' },
         ]),
@@ -804,6 +805,7 @@ describe('room context for the agent', () => {
       'Sam: Hey guys',
       'dylan asked their agent: @claude review signups.md',
       "dylan's agent replied: Only two weeks of data.",
+      'dylan commented in signups.md on “| W2 | 34 | 22 |”: Why the drop?',
     ]);
     const context = spacesHiddenContext(makeRequest(), lines);
     expect(context).toContain('<room_messages>');

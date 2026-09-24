@@ -90,6 +90,10 @@ export type RoomMessageRow = {
   body: string;
   meta: Record<string, unknown> | null;
   createdAt: string;
+  /** Set on doc comments (the comments layer shares this table): the file, the thread parent, and the anchored passage. */
+  path?: string | null;
+  parentId?: string | null;
+  quote?: string | null;
 };
 
 export interface SpacesRelayApi {
@@ -177,6 +181,12 @@ export interface SpacesRelayApi {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+/** The exact passage a doc comment is anchored to, if any. */
+function anchorQuote(anchor: unknown): string | null {
+  const exact = asRecord(anchor)?.exact;
+  return typeof exact === 'string' ? exact : null;
 }
 
 function transportError(action: string, error: unknown): RelayApiError {
@@ -534,7 +544,7 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
       const raw = asRecord(result.data)?.messages;
       const messages = Array.isArray(raw)
         ? raw
-            .map((m) => {
+            .map((m): RoomMessageRow | null => {
               const row = asRecord(m);
               if (!row || typeof row.id !== 'string') return null;
               const author = asRecord(row.author);
@@ -551,6 +561,9 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
                 body: typeof row.body === 'string' ? row.body : '',
                 meta: asRecord(row.meta),
                 createdAt: String(row.createdAt ?? ''),
+                path: typeof row.path === 'string' ? row.path : null,
+                parentId: typeof row.parentId === 'string' ? row.parentId : null,
+                quote: anchorQuote(row.anchor),
               };
             })
             .filter((m): m is RoomMessageRow => m !== null)

@@ -228,9 +228,37 @@ export function ConnectorCard({
 }
 
 /** Comment-mirror line — a comment on a document that reached an agent, or that agent's reply. */
-export function CommentMirrorLine({ message }: { message: RoomMessage }) {
+/**
+ * A doc comment (or a reply in its thread), shown in the room where it
+ * happened: who, on which file (click to open it), the passage it's
+ * anchored to, and what they said. Replies skip the quote; the thread's
+ * first comment already showed it.
+ */
+export function CommentMirrorLine({
+  message,
+  snapshot,
+  onOpenFile,
+}: {
+  message: RoomMessage;
+  snapshot: RoomSnapshot;
+  onOpenFile?: (relPath: string) => void;
+}) {
   if (message.meta.kind !== 'comment_mirror') return null;
-  const { path, quote, replyFromAgent } = message.meta;
+  const { path, quote, replyFromAgent, isReply } = message.meta;
+  const author = memberOf(snapshot, message.authorId);
+  const who = author?.name ?? message.authorId;
+  const fileChip = onOpenFile ? (
+    <button
+      type="button"
+      onClick={() => onOpenFile(path)}
+      className="bg-bg-2 hover:bg-bg-3 rounded-control px-1 font-mono text-xs text-text-primary transition-colors"
+      title={`Open ${path}`}
+    >
+      {path}
+    </button>
+  ) : (
+    <span className="bg-bg-2 rounded-control px-1 font-mono text-xs text-text-primary">{path}</span>
+  );
   return (
     <div className="flex flex-col gap-1.5 px-0.5" data-testid="comment-mirror-line">
       <div className="flex items-center gap-2 text-xs text-text-secondary">
@@ -239,16 +267,18 @@ export function CommentMirrorLine({ message }: { message: RoomMessage }) {
         ) : (
           <MessageSquareQuote className="size-3.5 text-text-muted" strokeWidth={1.5} />
         )}
-        {replyFromAgent ? (
-          <span>replied in the thread</span>
-        ) : (
-          <span>
-            commented on <span className="bg-bg-2 rounded-control px-1 font-mono text-xs text-text-primary">{path}</span>
-          </span>
-        )}
+        <span className="min-w-0 truncate">
+          <b className="font-medium text-text-primary">
+            {replyFromAgent ? `${who}'s ${replyFromAgent === 'claude' ? 'Claude' : 'Codex'}` : who}
+          </b>{' '}
+          {isReply ? 'replied on' : 'commented on'} {fileChip}
+        </span>
+        <span className="ml-auto shrink-0 font-mono text-2xs text-text-muted">{message.time}</span>
       </div>
-      {!replyFromAgent && (
-        <p className="border-border-strong ml-[22px] border-l-2 pl-2.5 text-xs text-text-muted italic">“{quote}”</p>
+      {!isReply && quote && (
+        <p className="border-border-strong ml-[22px] line-clamp-2 border-l-2 pl-2.5 text-xs text-text-muted italic">
+          “{quote}”
+        </p>
       )}
       <p className="ml-[22px] text-sm text-text-primary">{message.body}</p>
     </div>

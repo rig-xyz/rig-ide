@@ -919,7 +919,14 @@ export function App() {
           >
             <X className="size-4" strokeWidth={1.5} />
           </button>
-          <RoomView bindingId={bound.bindingId} spaceName={bound.name ?? 'Room'} />
+          <RoomView
+            bindingId={bound.bindingId}
+            spaceName={bound.name ?? 'Room'}
+            onOpenFile={(relPath) => {
+              setRoomPreviewOpen(false);
+              openFile(`${bound.root.replace(/\/+$/, '')}/${relPath}`);
+            }}
+          />
         </div>
       )}
       <SettingsModal

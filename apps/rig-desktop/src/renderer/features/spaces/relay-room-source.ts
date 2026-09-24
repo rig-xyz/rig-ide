@@ -490,11 +490,16 @@ export class RelayRoomSource implements RoomSource {
       await this.ingestRun(runId, authorId);
     }
 
+    // Doc comments share the message table (they carry a `path`). Keep them
+    // in the room, rendered as comment lines tied to their file and passage.
+    const comment = row.path ? this.commentMeta(row) : null;
+    const kind = (comment ? 'comment_mirror' : row.kind) as MessageKind;
+
     this.applyLocal({
       type: 'message_created',
       id: row.id,
       seq: row.seq,
-      kind: row.kind as MessageKind,
+      kind,
       message: {
         id: row.id,
         seq: row.seq,
@@ -502,7 +507,7 @@ export class RelayRoomSource implements RoomSource {
         createdAt: row.createdAt,
         time: formatTime(row.createdAt),
         body: row.body || undefined,
-        meta: toMessageMeta(row.kind, meta),
+        meta: comment ?? toMessageMeta(row.kind, meta),
       },
     });
   }
@@ -581,6 +586,20 @@ export class RelayRoomSource implements RoomSource {
     });
   }
 
+  private commentMeta(row: RoomMessageRow): import('./types').MessageMeta {
+    const parent = row.parentId ? this.snapshot.messages.find((m) => m.id === row.parentId) : undefined;
+    const parentQuote = parent?.meta.kind === 'comment_mirror' ? parent.meta.quote : '';
+    const agent = row.author.kind === 'agent' ? agentOfPost(row.meta) : undefined;
+    return {
+      kind: 'comment_mirror',
+      commentId: row.parentId ?? row.id,
+      path: row.path ?? '',
+      quote: row.quote ?? parentQuote,
+      ...(row.parentId ? { isReply: true } : {}),
+      ...(agent === 'claude' || agent === 'codex' ? { replyFromAgent: agent } : {}),
+    };
+  }
+
   setTyping(isTyping: boolean): void {
     this.provider?.awareness?.setLocalStateField('typing', isTyping);
   }
@@ -597,6 +616,14 @@ function formatTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+/** Which agent wrote an agent-authored post: `meta.agent` when set, else inferred from `meta.model`. */
+function agentOfPost(meta: Record<string, unknown> | null): AgentKind | undefined {
+  if (meta?.agent === 'claude' || meta?.agent === 'codex') return meta.agent;
+  const model = typeof meta?.model === 'string' ? meta.model.toLowerCase() : '';
+  if (/claude|sonnet|opus|haiku/.test(model)) return 'claude';
+  return model ? 'codex' : undefined;
 }
 
 function toMessageMeta(

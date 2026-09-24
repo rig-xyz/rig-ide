@@ -57,7 +57,16 @@ function detectOwnAgentMention(
   return ownsIt ? agent : null;
 }
 
-export function RoomView({ bindingId, spaceName }: { bindingId: string; spaceName: string }) {
+export function RoomView({
+  bindingId,
+  spaceName,
+  onOpenFile,
+}: {
+  bindingId: string;
+  spaceName: string;
+  /** Opens a space file (relative path) in the editor. */
+  onOpenFile?: (relPath: string) => void;
+}) {
   const [useFixtures, setUseFixtures] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [source, setSource] = useState<RoomSource | null>(null);
@@ -207,6 +216,7 @@ export function RoomView({ bindingId, spaceName }: { bindingId: string; spaceNam
             ownId={selfUserId}
             onStopSession={handleStopSession}
             onResolvePermission={handleResolvePermission}
+            onOpenFile={onOpenFile}
           />
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
             <Composer
