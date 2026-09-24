@@ -9,6 +9,7 @@ import {
   createHttpSpacesRelayApi,
   type AgentRequest,
   type RelayApiError,
+  type RoomInviteRow,
   type RoomMemberRow,
   type RoomMessageRow,
   type SessionAgent,
@@ -104,6 +105,8 @@ export const rigSpacesConnectionController = createRPCController({
   }): Promise<Result<{ ticket: string; expiresAt: string }, RelayApiError>> =>
     api.mintRealtimeTicket(input.bindingId),
 
+  listInvites: async (input: { bindingId: string }): Promise<Result<RoomInviteRow[], RelayApiError>> =>
+    api.listInvites ? api.listInvites(input.bindingId) : ok([]),
   listSkills: async (input: { bindingId: string }): Promise<SpaceSkill[]> => {
     // Lazy: the rigs table module opens the app database at load, which this
     // module's other callers (and its tests) don't need.

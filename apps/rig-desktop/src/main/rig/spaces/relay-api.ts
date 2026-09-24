@@ -80,6 +80,15 @@ export type RoomMemberRow = {
   role: string;
 };
 
+/** One invite as the Room shows it: who invited, whom (email) or a link, at what role. */
+export type RoomInviteRow = {
+  id: string;
+  inviterUserId: string | null;
+  email: string | null;
+  role: string;
+  revoked: boolean;
+};
+
 export type BindingDevice = { id: string; bindingId: string };
 
 export type RoomMessageRow = {
@@ -169,6 +178,8 @@ export interface SpacesRelayApi {
   ): Promise<Result<{ ticket: string; expiresAt: string }, RelayApiError>>;
 
   listMembers(bindingId: string): Promise<Result<RoomMemberRow[], RelayApiError>>;
+  /** A space's pending invites (any member of a space may read them). */
+  listInvites?(bindingId: string): Promise<Result<RoomInviteRow[], RelayApiError>>;
   listMessages(
     bindingId: string,
     query: { latest?: number; after?: string }
@@ -511,6 +522,30 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         return err<RelayApiError>({ kind: 'relay', message: 'Could not open a live connection.' });
       }
       return ok({ ticket, expiresAt });
+    },
+
+    async listInvites(bindingId) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(ctxResult.data, 'GET', `/v1/me/bindings/${bindingId}/invites`, 'load invites');
+      if (!result.success) return err(result.error);
+      const raw = asRecord(result.data)?.invites;
+      const invites = Array.isArray(raw)
+        ? raw
+            .map((i): RoomInviteRow | null => {
+              const row = asRecord(i);
+              if (!row || typeof row.id !== 'string') return null;
+              return {
+                id: row.id,
+                inviterUserId: typeof row.inviterUserId === 'string' ? row.inviterUserId : null,
+                email: typeof row.emailConstraint === 'string' ? row.emailConstraint : null,
+                role: typeof row.role === 'string' ? row.role : 'editor',
+                revoked: typeof row.revokedAt === 'string',
+              };
+            })
+            .filter((i): i is RoomInviteRow => i !== null)
+        : [];
+      return ok(invites);
     },
 
     async listMembers(bindingId) {

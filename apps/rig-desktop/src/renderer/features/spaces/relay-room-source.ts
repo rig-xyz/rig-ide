@@ -39,6 +39,7 @@ import type {
   AgentRequest,
   RelayApiError,
   RoomMemberRow,
+  RoomInviteRow,
   RoomMessageRow,
   SessionAgent,
   SessionEventRow,
@@ -120,6 +121,8 @@ export interface RelayRoomClient {
   listMembers(bindingId: string): Promise<Result<RoomMemberRow[], RelayApiError>>;
   /** The space's own skills on this device (its folder's `.claude/skills`), for the `/` palette. */
   listSkills?(bindingId: string): Promise<Array<{ cmd: string; name: string; desc: string }>>;
+  /** The space's invites, for the Room's invite cards. */
+  listInvites?(bindingId: string): Promise<Result<RoomInviteRow[], RelayApiError>>;
   listMessages(
     bindingId: string,
     query: { latest?: number; after?: string }
@@ -370,6 +373,7 @@ export class RelayRoomSource implements RoomSource {
     if (skills?.length) {
       this.snapshot = { ...this.snapshot, skills: skills.map((skill) => ({ ...skill, addedBy: '' })) };
     }
+    await this.refreshInvites();
 
     if (messages.success) {
       for (const row of messages.data) await this.ingestWireMessage(row);
@@ -508,6 +512,10 @@ export class RelayRoomSource implements RoomSource {
       await this.ingestRun(runId, authorId);
     }
 
+    if (row.kind === 'invite' && typeof meta.inviteId === 'string' && !this.snapshot.invitesById[meta.inviteId]) {
+      await this.refreshInvites();
+    }
+
     // Doc comments share the message table (they carry a `path`). Keep them
     // in the room, rendered as comment lines tied to their file and passage.
     // A reply in a doc comment thread carries no path of its own; it takes
@@ -611,6 +619,25 @@ export class RelayRoomSource implements RoomSource {
       prompt,
       ...(sourceMessageId ? { sourceMessageId } : {}),
     });
+  }
+
+  /** Loads the space's invites into `invitesById`; an invite counts as joined once a member has its email. */
+  private async refreshInvites(): Promise<void> {
+    const result = await this.opts.relay.listInvites?.(this.opts.bindingId).catch(() => null);
+    if (!result?.success) return;
+    const memberEmails = new Set(this.snapshot.members.map((m) => m.email.toLowerCase()).filter(Boolean));
+    const invitesById: RoomSnapshot['invitesById'] = { ...this.snapshot.invitesById };
+    for (const invite of result.data) {
+      invitesById[invite.id] = {
+        id: invite.id,
+        by: invite.inviterUserId ?? '',
+        who: invite.email ?? '',
+        email: invite.email,
+        role: invite.role,
+        status: invite.email && memberEmails.has(invite.email.toLowerCase()) ? 'joined' : 'sent',
+      };
+    }
+    this.snapshot = { ...this.snapshot, invitesById };
   }
 
   private commentMeta(row: RoomMessageRow): import('./types').MessageMeta {

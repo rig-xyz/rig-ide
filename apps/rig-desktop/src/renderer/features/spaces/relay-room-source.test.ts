@@ -346,6 +346,40 @@ describe('RelayRoomSource', () => {
     ]);
   });
 
+  it('fills invite cards from the relay: email, role, and joined once a member has that email', async () => {
+    const fake = makeFakeRelay();
+    fake.setMembers([
+      member({ userId: 'u1', name: 'Dylan', email: 'dylan@play.local' }),
+      member({ userId: 'u2', name: 'Sam', email: 'sam@play.local' }),
+    ]);
+    fake.queueMessages([
+      message({ id: 'i1', seq: 1, kind: 'invite', body: 'invited sam@play.local', meta: { inviteId: 'inv_sam' } }),
+      message({ id: 'i2', seq: 2, kind: 'invite', body: 'invited carol@play.local', meta: { inviteId: 'inv_carol' } }),
+    ]);
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: {
+        ...fake.relay,
+        listInvites: async () => ({
+          success: true,
+          data: [
+            { id: 'inv_sam', inviterUserId: 'u1', email: 'sam@play.local', role: 'editor', revoked: false },
+            { id: 'inv_carol', inviterUserId: 'u2', email: 'carol@play.local', role: 'viewer', revoked: false },
+          ],
+        }),
+      },
+      createProvider: () => new FakeProvider(),
+    });
+    source.play();
+    await flush();
+    const invites = source.getSnapshot().invitesById;
+    expect(invites.inv_sam).toMatchObject({ email: 'sam@play.local', role: 'editor', status: 'joined', by: 'u1' });
+    expect(invites.inv_carol).toMatchObject({ email: 'carol@play.local', role: 'viewer', status: 'sent', by: 'u2' });
+  });
+
   it('opens the connection with a ticket minted through the relay client, not a static token', async () => {
     const fake = makeFakeRelay();
     fake.queueMessages([]);

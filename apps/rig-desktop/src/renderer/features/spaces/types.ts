@@ -177,8 +177,12 @@ export interface RoomMessage {
 export interface RoomInvite {
   id: string;
   by: PersonId;
+  /** A member id (scripted demo) or, for a live invite, the invitee's email ('' for an open link). */
   who: PersonId;
   status: 'sent' | 'joined';
+  /** Live invites only: the invited email (null for an open link) and role. */
+  email?: string | null;
+  role?: string;
 }
 
 // ────────── room events (the append-only feed a RoomSource replays) ──────────

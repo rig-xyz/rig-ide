@@ -162,8 +162,18 @@ export function InviteRow({ message, snapshot }: { message: RoomMessage; snapsho
   if (message.meta.kind !== 'invite') return null;
   const invite = snapshot.invitesById[message.meta.inviteId];
   const by = memberOf(snapshot, message.authorId);
-  const who = invite ? memberOf(snapshot, invite.who) : undefined;
+  // Scripted demo: `who` is a member id. Live: the invitee's email ('' for an
+  // open link); once they join, the member with that email.
+  const email = invite?.email ?? null;
+  const who = invite
+    ? (memberOf(snapshot, invite.who) ??
+      (email ? snapshot.members.find((m) => m.email.toLowerCase() === email.toLowerCase()) : undefined))
+    : undefined;
+  const isLive = invite?.role !== undefined;
   const joined = invite?.status === 'joined';
+  const label = who?.name ?? email ?? (invite ? 'Anyone with the link' : message.body);
+  const role = invite?.role === 'viewer' ? 'can view' : 'can edit';
+  const status = joined ? 'Joined' : isLive && !email ? 'Invite link created' : 'Invite sent by email';
   return (
     <div className="border-border-hairline bg-bg-1 flex max-w-[420px] flex-col gap-2.5 rounded-card border p-3">
       <p className="text-xs text-text-muted">
@@ -171,29 +181,32 @@ export function InviteRow({ message, snapshot }: { message: RoomMessage; snapsho
       </p>
       <div className="flex items-center gap-2.5">
         <IdentityAvatar
-          name={who?.name ?? invite?.who ?? '?'}
+          name={label ?? '?'}
           avatarUrl={null}
           sizeClassName={cn('size-8', !joined && 'opacity-45')}
           textClassName="text-xs"
         />
         <div className="flex min-w-0 flex-col">
-          <b className="text-sm font-medium text-text-primary">{who?.name ?? invite?.who}</b>
-          <span className="font-mono text-2xs text-text-muted">{who?.email}</span>
+          <b className="truncate text-sm font-medium text-text-primary">{label}</b>
+          {who?.email && who.email !== label && (
+            <span className="font-mono text-2xs text-text-muted">{who.email}</span>
+          )}
         </div>
-        <span className="bg-bg-2 ml-auto rounded-chip px-2 py-1 font-mono text-2xs text-text-secondary">
-          can edit
-        </span>
+        <span className="bg-bg-2 ml-auto rounded-chip px-2 py-1 font-mono text-2xs text-text-secondary">{role}</span>
       </div>
       <div className="border-border-hairline flex items-center gap-2 border-t pt-2.5 text-xs text-text-secondary">
         <span className={cn('size-1.5 shrink-0 rounded-full', joined ? 'bg-success' : 'bg-text-muted')} />
-        {joined ? 'Joined' : 'Invite sent by email'}
-        <button
-          type="button"
-          className="border-border-hairline hover:bg-bg-2 ml-auto flex h-6 items-center gap-1.5 rounded-control border px-2 text-xs text-text-primary transition-colors"
-        >
-          <Copy className="size-3" strokeWidth={1.5} />
-          Copy link
-        </button>
+        {status}
+        {/* The relay never exposes a live invite's secret, so only the demo can copy a link. */}
+        {!isLive && (
+          <button
+            type="button"
+            className="border-border-hairline hover:bg-bg-2 ml-auto flex h-6 items-center gap-1.5 rounded-control border px-2 text-xs text-text-primary transition-colors"
+          >
+            <Copy className="size-3" strokeWidth={1.5} />
+            Copy link
+          </button>
+        )}
       </div>
     </div>
   );
