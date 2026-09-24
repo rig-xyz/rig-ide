@@ -689,6 +689,7 @@ Tick items off here as they land.
 - [ ] The agent busy dot never lights (no live `agent_busy_changed`).
 
 **Open. Medium:**
+- [ ] Session scope and cost: a one-line answer loads ~51k tokens of context (~$0.37). Decide when a request reuses the persistent session and when it starts a fresh, lean one (Dylan, 2026-09-23). Trim what each turn loads (global instructions, skills, tool lists).
 - [ ] Space memory: persistent sessions are in-memory only (`sessionId: null`), so a restart gives a fresh agent. The agent also never sees recent room messages; add the last N, quoted as untrusted data.
 - [ ] "Why 41 → 34": wire `rig history` and the provenance route across the whole space; add a Sources row on the card.
 - [ ] Skills in the space card and the `/` palette: expose the manifest's `.claude/skills/*` through a route.
