@@ -696,11 +696,11 @@ Tick items off here as they land.
 - [x] Session scope decided (Sep 24): one session per person, per model, per space; Claude compacts; personal setup kept; named agents post-MVP.
 - [ ] Cost: ~36–51k tokens a turn. A per-turn token log, then trimming, is still open.
 - [x] Space memory across restarts: each persistent session's agent session id is saved in `userData/spaces-sessions.json`, and a restart resumes it (ACP `session/load`). Verified live: `[session/load] resume=<id>`, 2 messages replayed. Agents also see the last 20 room messages.
-- [ ] "Why 41 → 34": wire `rig history` and the provenance route across the whole space; add a Sources row on the card.
+- [ ] "Why 41 → 34": wire `rig history` and the provenance route across the whole space. (The card's Sources row, files the agent read, shipped 2026-09-24; numbered inline citations still need the agent to cite in a set format.)
 - [x] The space's skills in the `/` palette (read from its `.claude/skills`).
 - [x] Invites: space editors can invite; every invite shows as a live card in the Room; agents invite via `rig share` (the request is the go-ahead).
 - [x] Doc comment `@claude` in a space goes to your room agent; approvals in margin and card.
-- [ ] Replying to a card (`parentId` dropped; no reply UI).
+- [x] Replying to a card: quote-replies on any message or agent answer (text `meta.replyTo`), 2026-09-24.
 - [ ] Attach button and doc import aren't wired.
 
 - [x] Download opens an existing copy at its destination (`<home>/<slug>`) instead of making name-2 (no folder scanning).
