@@ -168,6 +168,16 @@ describe('projectSessionCard — against real exported fixtures', () => {
     expect(effectiveRunStatus('failed', { status: 'done' })).toBe('done');
   });
 
+  it('picks up the run model and a failure reason', () => {
+    const card = projectSessionCard([
+      { seq: 1, kind: 'run_model', payload: { model: 'claude-sonnet-5' } },
+      { seq: 2, kind: 'turn_ended', payload: { status: 'failed', reason: "couldn't start the agent" } },
+    ]);
+    expect(card.model).toBe('claude-sonnet-5');
+    expect(card.status).toBe('failed');
+    expect(card.failureReason).toBe("couldn't start the agent");
+  });
+
   it('an empty event log projects to the fresh-card defaults', () => {
     const card = projectSessionCard([]);
     expect(card).toEqual(newSessionCard());

@@ -95,6 +95,10 @@ export type SessionStatus = 'running' | 'waiting' | 'done' | 'stopped' | 'failed
 /** The pure projection of a run's event log — what the session card renders. */
 export interface SessionCard {
   status: SessionStatus;
+  /** The model the agent ran, once it reports one. */
+  model: string | null;
+  /** Why the run failed, when it says. */
+  failureReason: string | null;
   currentStep: { toolCallId: string; title?: string; kind?: string } | null;
   outputs: SessionOutput[];
   steps: SessionStep[];

@@ -118,6 +118,23 @@ describe('claimOne / claimAndDispatchQueued', () => {
     expect(store.get('req1')?.status).toBe('failed');
   });
 
+  it('says so in the Room when a request fails to start', async () => {
+    const store = makeSharedStore([makeRequest()]);
+    const posted: Array<{ body: string; kind?: string; meta?: Record<string, unknown> }> = [];
+    const api = { ...store.apiFor(), postMessage: async (_b: string, input: (typeof posted)[number]) => {
+      posted.push(input);
+      return ok({} as never);
+    } };
+    await claimOne(api, 'device-a', async () => ({ failed: true, reason: "this space's folder isn't open on this device" }), makeRequest());
+    expect(posted).toEqual([
+      {
+        body: "Claude couldn't start: this space's folder isn't open on this device",
+        kind: 'system',
+        meta: { event: 'agent_failed' },
+      },
+    ]);
+  });
+
   it('marks the request failed when dispatch throws', async () => {
     const store = makeSharedStore([makeRequest()]);
     await claimOne(

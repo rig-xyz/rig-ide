@@ -70,6 +70,7 @@ export function SessionCard({
   const card = useMemo(() => projectSessionCard(events), [events]);
   const status = effectiveRunStatus(meta.status, card);
   const running = status === 'running';
+  const model = card.model ?? (meta.model && meta.model !== 'unknown' ? meta.model : null);
   // Approvals belong to the agent's owner: their card gets the prompt,
   // everyone else at most one muted line while it's pending, nothing once
   // it's decided. The full detail stays in the step log.
@@ -98,9 +99,7 @@ export function SessionCard({
           />
         </span>
         <b className="text-sm font-medium text-text-primary">{AGENT_NAME[meta.agent]}</b>
-        {meta.model && meta.model !== 'unknown' && (
-          <span className="font-mono text-xs text-text-muted">{meta.model}</span>
-        )}
+        {model && <span className="font-mono text-xs text-text-muted">{model}</span>}
         <span className="ml-auto font-mono text-xs text-text-muted">
           {formatElapsed(meta.startedAt, meta.endedAt)}
         </span>
@@ -167,6 +166,11 @@ export function SessionCard({
             </span>
           </div>
         ))}
+        {status === 'failed' && !card.finalAnswer && (
+          <p className="text-xs text-text-muted" data-testid="session-failed-line">
+            Couldn't finish{card.failureReason ? ` — ${card.failureReason}` : '.'}
+          </p>
+        )}
         {card.finalAnswer && (
           <SafeMarkdown
             content={card.finalAnswer}

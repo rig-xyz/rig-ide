@@ -140,6 +140,15 @@ export async function claimOne(
         error: patched.error.message,
       });
     }
+    // Say so in the Room: otherwise the request just vanishes.
+    const agentName = request.targetAgent === 'codex' ? 'Codex' : 'Claude';
+    await api
+      .postMessage(request.bindingId, {
+        body: `${agentName} couldn't start: ${result.reason}`,
+        kind: 'system',
+        meta: { event: 'agent_failed' },
+      })
+      .catch(() => undefined);
     return;
   }
 

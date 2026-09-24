@@ -1,4 +1,4 @@
-import { Copy, MessageSquareQuote, Plug, UserPlus } from 'lucide-react';
+import { CircleAlert, Copy, MessageSquareQuote, Plug, UserPlus } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
@@ -320,9 +320,10 @@ export function SystemRow({ message, snapshot }: { message: RoomMessage; snapsho
     const by = memberOf(snapshot, message.authorId)?.name ?? message.authorId;
     return <ConnectorCard addedBy={by} connectors={snapshot.connectors} />;
   }
+  const Icon = message.meta.event === 'agent_failed' ? CircleAlert : UserPlus;
   return (
     <div className="flex items-center gap-2 px-0.5 text-xs text-text-secondary">
-      <UserPlus className="size-3.5 text-text-muted" strokeWidth={1.5} />
+      <Icon className="size-3.5 text-text-muted" strokeWidth={1.5} />
       {message.body}
       <span className="ml-auto font-mono text-2xs text-text-muted">{message.time}</span>
     </div>

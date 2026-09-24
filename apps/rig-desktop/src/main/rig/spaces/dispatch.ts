@@ -100,6 +100,8 @@ export interface SpacesAcpSessions {
   ): Promise<() => void>;
   /** Resolves one pending permission request by choosing one of its own option ids. */
   resolvePermission(conversationId: string, requestId: string, optionId: string): Promise<void>;
+  /** The model the session is running, when the agent reports one. */
+  readModel?(conversationId: string): Promise<string | null>;
 }
 
 type PersistentKey = string;
@@ -379,7 +381,8 @@ export function createSpacesDispatcher(deps: {
         if (!turn || turn.turnId !== raw.turnId) return;
         session.current = null;
         releaseHeldPermissions(session, turn);
-        void finalizeTurn(turn, statusForEndedTurn(turn, raw.stopReason));
+        const ended = statusForEndedTurn(turn, raw.stopReason);
+        void finalizeTurn(turn, ended, ended === 'failed' ? 'the agent stopped with an error' : undefined);
         return;
       }
       case 'acp_update': {
@@ -394,10 +397,10 @@ export function createSpacesDispatcher(deps: {
     }
   }
 
-  async function finalizeTurn(turn: QueuedTurn, status: SessionStatus): Promise<void> {
+  async function finalizeTurn(turn: QueuedTurn, status: SessionStatus, reason?: string): Promise<void> {
     // The card flips out of "running" on this event (run status changes
     // aren't broadcast to the Room), so it must land before `finish`.
-    turn.publisher.record('turn_ended', { status });
+    turn.publisher.record('turn_ended', reason ? { status, reason } : { status });
     await turn.publisher.finish(status);
     deps.store?.clearInFlight?.(turn.runId);
     if (turn.requestId) {
@@ -575,7 +578,7 @@ export function createSpacesDispatcher(deps: {
   /** Starts one turn in the owner's persistent session for the space: a relay run, its card, and the prompt. */
   async function startTurn(spec: TurnSpec): Promise<Result<{ runId: string }, string>> {
     const cwd = await deps.resolveWorkspace(spec.bindingId);
-    if (!cwd) return err(`No local workspace on this device is bound to ${spec.bindingId}`);
+    if (!cwd) return err("this space's folder isn't open on this device");
 
     const t0 = Date.now();
     // The run must exist on the relay BEFORE this returns — `runId` is a
@@ -622,11 +625,14 @@ export function createSpacesDispatcher(deps: {
       ms: Date.now() - t0,
     });
     if (!sessionResult.success) {
-      publisher.record('turn_ended', { status: 'failed', reason: sessionResult.error });
+      publisher.record('turn_ended', { status: 'failed', reason: `couldn't start the agent (${sessionResult.error})` });
       await publisher.finish('failed');
       return err(sessionResult.error);
     }
     const session = sessionResult.data;
+    // Shown in the card header; the relay run was created before the session existed.
+    const model = await deps.acp.readModel?.(session.conversationId).catch(() => null);
+    if (model) publisher.record('run_model', { model });
     deps.store?.markInFlight?.(created.data.id, spec.bindingId);
     const turn: QueuedTurn = {
       requestId: spec.requestId,
@@ -658,13 +664,13 @@ export function createSpacesDispatcher(deps: {
         if (idx === -1) return; // already started; its turn_end settles it
         session.pending.splice(idx, 1);
         log.warn('Rig spaces dispatch: the runtime rejected a prompt', { runId: turn.runId, reason });
-        void finalizeTurn(turn, 'failed');
+        void finalizeTurn(turn, 'failed', `the agent refused the prompt (${reason})`);
       }
     );
     if (!queued.success) {
       const idx = session.pending.indexOf(turn);
       if (idx !== -1) session.pending.splice(idx, 1);
-      void finalizeTurn(turn, 'failed');
+      void finalizeTurn(turn, 'failed', queued.error);
       return err(queued.error);
     }
     // Stamp the turnId even if a fast `turn_start` already claimed this
@@ -897,6 +903,17 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
         });
       });
       return () => void replica.dispose();
+    },
+
+    async readModel(conversationId) {
+      const client = await getClient();
+      try {
+        const snapshot = await client.session.state({ conversationId }, 'config').snapshot();
+        const selected = snapshot.data.modelOptions?.selected?.trim() ?? '';
+        return selected && selected.toLowerCase() !== 'default' ? selected : null;
+      } catch {
+        return null;
+      }
     },
 
     async resolvePermission(conversationId, requestId, optionId) {

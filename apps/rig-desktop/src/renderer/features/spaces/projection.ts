@@ -44,6 +44,8 @@ export function newSessionCard(): SessionCard {
     finalAnswer: '',
     permissions: { pending: [], decided: [] },
     lastSeq: 0,
+    model: null,
+    failureReason: null,
   };
 }
 
@@ -238,6 +240,10 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
       });
       break;
     }
+    case 'run_model': {
+      if (typeof p.model === 'string' && p.model) state.model = p.model;
+      break;
+    }
     case 'turn_ended': {
       // The live dispatcher records the run's final `status`; recorded
       // fixtures only carry an ACP `stopReason`.
@@ -249,6 +255,7 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
             ? 'stopped'
             : 'done';
       state.status = status;
+      if (status === 'failed' && typeof p.reason === 'string' && p.reason) state.failureReason = p.reason;
       state.currentStep = null;
       break;
     }
