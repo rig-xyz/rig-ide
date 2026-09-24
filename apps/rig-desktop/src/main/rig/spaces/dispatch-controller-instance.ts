@@ -77,9 +77,11 @@ export async function runCommentTurnInRoom(spec: {
     log.info('Rig spaces: doc mention goes to the standalone agent (Spaces not running)');
     return null;
   }
+  log.info('Rig spaces: doc mention — checking whether this is a space', { bindingId: spec.bindingId });
   const workspaces = await rigAccountController.workspaces();
   const isSpace =
     workspaces.success && workspaces.data.some((b) => b.id === spec.bindingId && b.kind === 'space');
+  log.info('Rig spaces: doc mention — space check done', { isSpace, ok: workspaces.success });
   if (!isSpace) return null;
   const me = await relayApi.whoami();
   if (!me.success) {

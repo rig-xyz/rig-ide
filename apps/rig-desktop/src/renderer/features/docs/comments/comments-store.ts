@@ -1,4 +1,4 @@
-import { action, makeObservable, observable, reaction, runInAction } from 'mobx';
+import { action, makeObservable, observable, reaction, runInAction, toJS } from 'mobx';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
 import {
@@ -1251,15 +1251,29 @@ export class DocCommentsStore {
     this._retunePolling();
 
     void (async () => {
-      const result = await rpc.rig.comments.askAgent({
+      const result = await rpc.rig.comments
+        .askAgent({
         absPath: this.path,
         parentId: request.parentId,
         providerId: request.providerId,
         quote: request.quote,
-        anchor: request.anchor,
-        thread: request.thread,
+        // Plain copies: the thread and anchor can be MobX observables (a
+        // reply mention builds them from the live store), which IPC cannot
+        // clone ("An object could not be cloned"), so the call never left
+        // the renderer and the card sat on "Working" forever.
+        anchor: toJS(request.anchor),
+        thread: toJS(request.thread),
         paintbrush: request.paintbrush,
-      });
+      })
+        // A call that never reaches main must still end the card, not leave
+        // it "Working" forever.
+        .catch((error: unknown) => {
+          console.error('Rig comments: could not reach the agent', error);
+          return {
+            success: false as const,
+            error: { kind: 'agent' as const, message: 'The agent could not be reached.' },
+          };
+        });
       if (this._disposed) return;
 
       runInAction(() => {

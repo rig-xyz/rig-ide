@@ -566,6 +566,7 @@ export const rigCommentAgentController = createRPCController({
     // conversation and its own earlier work. The run shows in the Room
     // (approvals on its card); its answer is posted here as the reply.
     // Paintbrush strokes keep the standalone agent (structured proposals).
+    log.info('Rig comment agent: mention received', { parentId, providerId, paintbrush: !!request.paintbrush });
     const roomAgent: 'claude' | 'codex' | null =
       providerId === 'claude' ? 'claude' : providerId === 'codex' ? 'codex' : null;
     if (!request.paintbrush && roomAgent) {
