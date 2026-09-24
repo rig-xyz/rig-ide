@@ -56,6 +56,32 @@ export function optionLabel(dimension: Dimension, option: Option): string {
   return option.name;
 }
 
+/** "claude-opus-4-7" → "Opus 4.7", "claude-fable-5-1[1m]" → "Fable 5.1 (1M)"; other ids as they are. */
+export function prettyModelId(id: string): string {
+  const match = /^claude-([a-z]+)-(\d+)(?:-(\d+))?(\[1m\])?$/i.exec(id);
+  if (!match) return id;
+  const [, family, major, minor, oneM] = match;
+  const name = `${family!.charAt(0).toUpperCase()}${family!.slice(1)} ${major}${minor ? `.${minor}` : ''}`;
+  return oneM ? `${name} (1M)` : name;
+}
+
+/**
+ * The option a setting is on. The agent can be set to a model it no longer
+ * lists (a remembered default from an older CLI): that still shows, by its
+ * readable name, marked as no longer offered, rather than as nothing.
+ */
+function currentOption(dimension: Dimension, group: NonNullable<AgentConfig[Dimension]>): (Option & { stale?: boolean }) | null {
+  if (!group.selected) return null;
+  const listed = group.options.find((o) => o.id === group.selected);
+  if (listed) return listed;
+  return {
+    id: group.selected,
+    name: dimension === 'model' ? prettyModelId(group.selected) : group.selected,
+    description: 'No longer offered by this agent; pick another to switch.',
+    stale: true,
+  };
+}
+
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
   if (n >= 1000) return `${Math.round(n / 1000)}k`;
@@ -137,7 +163,7 @@ function ChoiceChips({
     }, 280);
   };
 
-  const chip = (option: Option) => {
+  const chip = (option: Option & { stale?: boolean }) => {
     const selected = option.id === group.selected;
     const dangerous = dimension === 'mode' && isDangerousMode(option.id);
     const armed = armedId === option.id;
@@ -169,14 +195,15 @@ function ChoiceChips({
             : dangerous
               ? 'text-warning hover:bg-warning/10'
               : 'text-text-muted hover:bg-text-primary/[0.06] hover:text-text-primary',
-          armed && 'bg-warning/15 text-warning'
+          armed && 'bg-warning/15 text-warning',
+          'stale' in option && option.stale && 'italic'
         )}
       >
         {armed ? 'Confirm?' : optionLabel(dimension, option)}
       </button>
     );
   };
-  const current = group.options.find((o) => o.id === group.selected);
+  const current = currentOption(dimension, group);
   const others = group.options.filter((o) => o.id !== group.selected);
 
   if (!revealOnHover) {
@@ -187,6 +214,7 @@ function ChoiceChips({
         aria-label={DIMENSION_TITLE[dimension]}
         data-testid={`agent-choices-${dimension}`}
       >
+        {current?.stale && chip(current)}
         {group.options.map(chip)}
       </span>
     );
@@ -252,10 +280,19 @@ function useAgentConfig(agent: AgentKind) {
   };
   const label = (dimension: Dimension): string | null => {
     const group = config?.[dimension];
-    const option = group?.options.find((o) => o.id === group.selected);
+    const option = group ? currentOption(dimension, group) : null;
     return option ? optionLabel(dimension, option) : null;
   };
-  return { api, config, error, busy, warm, pick, label };
+  const retry = () => {
+    setError(null);
+    setConfig(null);
+    if (!api) return;
+    void api.load(agent).then((loaded) => {
+      if ('error' in loaded) setError(loaded.error);
+      else setConfig(loaded);
+    });
+  };
+  return { api, config, error, busy, warm, pick, label, retry };
 }
 
 /**
@@ -366,7 +403,7 @@ export function AgentConfigRow({
   lastModel: string | null;
   usage: SessionCard['usage'];
 }) {
-  const { api, config, error, busy, warm, pick, label } = useAgentConfig(agent);
+  const { api, config, error, busy, warm, pick, label, retry } = useAgentConfig(agent);
   const [expanded, setExpanded] = useState(false);
   const [everywhere, setEverywhere] = useState(false);
 
@@ -429,7 +466,14 @@ export function AgentConfigRow({
       </button>
       {expanded && (
         <div className="popover-in flex flex-col gap-1.5 py-1.5 pr-1 pl-2" data-testid="agent-config">
-          {error && <p className="text-xs text-danger">{error}</p>}
+          {error && (
+            <p className="flex items-center gap-2 text-xs text-text-muted">
+              <span className="min-w-0 truncate">{error}</span>
+              <button type="button" onClick={retry} className="shrink-0 text-accent hover:underline">
+                Retry
+              </button>
+            </p>
+          )}
           {!config && !error && <span className="h-6 animate-pulse rounded-full bg-text-primary/[0.05]" aria-hidden />}
           {settingRow('model')}
           {settingRow('mode')}

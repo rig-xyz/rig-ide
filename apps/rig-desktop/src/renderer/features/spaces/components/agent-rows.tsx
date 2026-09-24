@@ -1,7 +1,7 @@
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { AgentKind, RoomSnapshot } from '../types';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
-import { AgentConfigRow } from './agent-settings';
+import { AgentConfigRow, prettyModelId } from './agent-settings';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 
 /**
@@ -11,39 +11,66 @@ import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
  * matter here; everyone's runs show up in the room as session cards.
  */
 export function AgentRows({ snapshot, selfUserId }: { snapshot: RoomSnapshot; selfUserId: string }) {
-  const mine = snapshot.agents.filter((a) => a.owner === selfUserId);
-  if (mine.length === 0) return null;
   const runs = Object.values(snapshot.sessionMetaByRun);
-  // The model your agent last ran here, until its own list is loaded.
-  const lastModel = (kind: AgentKind): string | null => {
-    const latest = runs
-      .filter((m) => m.owner === selfUserId && m.agent === kind)
-      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))[0];
+  const runsOf = (owner: string, kind: AgentKind) =>
+    runs
+      .filter((m) => m.owner === owner && m.agent === kind)
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+  const cardOf = (runId: string) => projectSessionCard(snapshot.sessionEventsByRun[runId] ?? []);
+  const isWorking = (owner: string, kind: AgentKind) =>
+    runsOf(owner, kind).some((meta) => effectiveRunStatus(meta.status, cardOf(meta.id)) === 'running');
+  // The model an agent last ran here, as its latest run reported it.
+  const lastModel = (owner: string, kind: AgentKind): string | null => {
+    const latest = runsOf(owner, kind)[0];
     if (!latest) return null;
-    return projectSessionCard(snapshot.sessionEventsByRun[latest.id] ?? []).model ?? (latest.model !== 'unknown' ? latest.model : null);
+    const model = cardOf(latest.id).model ?? (latest.model !== 'unknown' ? latest.model : null);
+    return model ? prettyModelId(model) : null;
   };
+
+  const mine = snapshot.agents.filter((a) => a.owner === selfUserId);
+  // Everyone else's agents that have worked in this space: shown so you know
+  // what they run, but only their owner can change them.
+  const theirs = new Map<string, { owner: string; agent: AgentKind }>();
+  for (const meta of runs) {
+    if (meta.owner === selfUserId) continue;
+    theirs.set(`${meta.owner}:${meta.agent}`, { owner: meta.owner, agent: meta.agent });
+  }
+  if (mine.length === 0 && theirs.size === 0) return null;
+
   return (
     <>
       {mine.map((agent) => {
-        const busy = runs.some(
-          (meta) =>
-            meta.owner === selfUserId &&
-            meta.agent === agent.agent &&
-            effectiveRunStatus(meta.status, projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? [])) ===
-              'running'
-        );
-        const latest = runs
-          .filter((m) => m.owner === selfUserId && m.agent === agent.agent)
-          .sort((x, y) => Date.parse(y.startedAt) - Date.parse(x.startedAt))[0];
+        const latest = runsOf(selfUserId, agent.agent)[0];
         return (
           <AgentConfigRow
             key={agent.agent}
             agent={agent.agent}
             avatar={<AgentAvatar agent={agent.agent} owner={snapshot.members.find((m) => m.id === selfUserId)} size="sm" />}
-            busy={busy ? <DotMatrix state="thinking" size="sm" /> : null}
-            lastModel={lastModel(agent.agent) ?? (agent.model || null)}
-            usage={latest ? projectSessionCard(snapshot.sessionEventsByRun[latest.id] ?? []).usage : null}
+            busy={isWorking(selfUserId, agent.agent) ? <DotMatrix state="thinking" size="sm" /> : null}
+            lastModel={lastModel(selfUserId, agent.agent) ?? (agent.model || null)}
+            usage={latest ? cardOf(latest.id).usage : null}
           />
+        );
+      })}
+      {[...theirs.values()].map(({ owner, agent }) => {
+        const member = snapshot.members.find((m) => m.id === owner);
+        const ownerName = member?.name ?? owner;
+        return (
+          <div
+            key={`${owner}:${agent}`}
+            className="flex h-7 shrink-0 items-center gap-2 rounded-control px-2"
+            title={`Only ${ownerName} can change ${ownerName}'s ${AGENT_NAME[agent]}`}
+            data-testid="space-agent-row-theirs"
+          >
+            <AgentAvatar agent={agent} owner={member} size="sm" />
+            <span className="min-w-0 truncate text-xs text-text-secondary">
+              {ownerName}'s {AGENT_NAME[agent]}
+            </span>
+            <span className="ml-auto flex min-w-0 items-center gap-1.5 text-2xs text-text-muted">
+              {isWorking(owner, agent) && <DotMatrix state="thinking" size="sm" />}
+              <span className="truncate">{lastModel(owner, agent) ?? ''}</span>
+            </span>
+          </div>
         );
       })}
     </>

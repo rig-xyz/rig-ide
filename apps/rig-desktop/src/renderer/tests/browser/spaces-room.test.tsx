@@ -6,8 +6,10 @@ import { ConversationMap } from '@renderer/features/spaces/components/conversati
 import {
   AgentConfigRow,
   AgentSettingsContext,
+  prettyModelId,
   type AgentSettingsApi,
 } from '@renderer/features/spaces/components/agent-settings';
+import { AgentRows } from '@renderer/features/spaces/components/agent-rows';
 import { groupThreads, RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
 import { RoomView } from '@renderer/features/spaces/components/room-view';
 import { SessionCard } from '@renderer/features/spaces/components/session-card';
@@ -728,6 +730,38 @@ describe('Session card — plan and thinking', () => {
     await act(async () => click(chip('mode', 'Confirm?')));
     await act(async () => click(chip('effort', 'Low')));
     expect(changes).toEqual([{ mode: 'acceptEdits' }, { mode: 'bypassPermissions' }, { effort: 'low' }]);
+  });
+
+  it('names a model the agent no longer lists instead of showing nothing, and lists others\' agents read-only', async () => {
+    expect(prettyModelId('claude-opus-4-7')).toBe('Opus 4.7');
+    expect(prettyModelId('claude-fable-5-1[1m]')).toBe('Fable 5.1 (1M)');
+    expect(prettyModelId('gpt-6-sol')).toBe('gpt-6-sol');
+
+    const api: AgentSettingsApi = {
+      load: async () => ({
+        model: { selected: 'claude-opus-4-7', options: [{ id: 'sonnet', name: 'Sonnet' }] },
+        effort: null,
+        mode: { selected: 'default', options: [{ id: 'default', name: 'Manual' }] },
+      }),
+      change: async () => ({ error: 'unused' }),
+    };
+    const snapshot = replayedSnapshot();
+    await act(async () => {
+      root.render(
+        <AgentSettingsContext.Provider value={api}>
+          <AgentRows snapshot={snapshot} selfUserId="bob" />
+        </AgentSettingsContext.Provider>
+      );
+    });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="space-agent-row"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="agent-choices-model"]')?.textContent).toContain('Opus 4.7'));
+    // Other people's agents that worked here: shown, not changeable.
+    const theirs = host.querySelectorAll<HTMLElement>('[data-testid="space-agent-row-theirs"]');
+    expect(theirs.length).toBeGreaterThan(0);
+    expect(theirs[0]!.querySelector('button')).toBeNull();
+    expect(theirs[0]!.title).toMatch(/^Only .+ can change/);
   });
 
   it('offers Retry on a failed run and Continue on a stopped one, as new turns for your agent', async () => {

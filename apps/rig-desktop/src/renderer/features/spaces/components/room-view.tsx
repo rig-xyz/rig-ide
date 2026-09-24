@@ -52,6 +52,8 @@ function createRelayRoomClient(): RelayRoomClient {
 const ROOM_WIDE_PX = 1080;
 /** How long before asking again to settle a run this device couldn't settle yet. */
 const SETTLE_RETRY_MS = 20_000;
+/** How long to wait for an agent's settings before offering Retry. */
+const AGENT_CONFIG_TIMEOUT_MS = 20_000;
 /** The transcript's centered column (44rem plus its side padding). */
 const TRANSCRIPT_COLUMN_PX = 728;
 /** The floating panel's lane at the right edge: its 304px plus a margin. */
@@ -269,11 +271,11 @@ export function RoomView({
             load: (agent) => {
               const cached = configCache.current.get(agent);
               if (cached) return cached;
-              const pending = rpc.rig.spacesDispatch
-                .agentConfig({ bindingId, agent })
-                .catch(() => null)
+              // Reaching the agent can hang (a session that won't start): give up after a while.
+              const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), AGENT_CONFIG_TIMEOUT_MS));
+              const pending = Promise.race([rpc.rig.spacesDispatch.agentConfig({ bindingId, agent }).catch(() => null), timeout])
                 .then((result) => {
-                  if (!result) return { error: "Couldn't reach this agent's settings." };
+                  if (!result) return { error: `Couldn't reach your ${agent === 'claude' ? 'Claude' : 'Codex'}'s settings.` };
                   return result.success ? result.data : { error: result.error };
                 })
                 .then((loaded) => {
