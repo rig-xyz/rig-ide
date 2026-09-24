@@ -3,7 +3,11 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Composer } from '@renderer/features/spaces/components/composer';
 import { ConversationMap } from '@renderer/features/spaces/components/conversation-map';
-import { AgentSettingsContext, type AgentSettingsApi } from '@renderer/features/spaces/components/agent-settings';
+import {
+  AgentConfigRow,
+  AgentSettingsContext,
+  type AgentSettingsApi,
+} from '@renderer/features/spaces/components/agent-settings';
 import { groupThreads, RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
 import { RoomView } from '@renderer/features/spaces/components/room-view';
 import { SessionCard } from '@renderer/features/spaces/components/session-card';
@@ -618,17 +622,24 @@ describe('Session card — plan and thinking', () => {
     expect(opened).toEqual(['/w/signups.md']);
   });
 
-  it("shows your agent's settings on its latest turn and changes them from the menu", async () => {
+  it("opens your agent's settings card from the space panel row and changes them there", async () => {
     const changes: unknown[] = [];
     let mode = 'default';
     const config = () => ({
-      model: { selected: 'opus', options: [{ id: 'opus', name: 'Opus 5.5' }, { id: 'sonnet', name: 'Sonnet 5' }] },
-      effort: null,
+      model: {
+        selected: 'default',
+        options: [
+          { id: 'default', name: 'Default (recommended)', description: 'Opus 4.7 with 1M context · Most capable for complex work' },
+          { id: 'sonnet', name: 'Sonnet', description: 'Sonnet 4.6 · Best for everyday tasks' },
+        ],
+      },
+      effort: { selected: 'high', options: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] },
       mode: {
         selected: mode,
         options: [
-          { id: 'default', name: 'Ask first', description: 'Asks before edits and commands' },
-          { id: 'acceptEdits', name: 'Auto-edit' },
+          { id: 'default', name: 'Manual', description: 'Always ask before making changes' },
+          { id: 'acceptEdits', name: 'Accept edits' },
+          { id: 'bypassPermissions', name: 'Bypass permissions' },
         ],
       },
     });
@@ -640,32 +651,38 @@ describe('Session card — plan and thinking', () => {
         return config();
       },
     };
-    const done: SessionEvent[] = [
-      { seq: 1, kind: 'usage_update', payload: { size: 1000000, used: 46000 } },
-      { seq: 2, kind: 'turn_ended', payload: { status: 'done' } },
-    ];
     await act(async () => {
       root.render(
         <AgentSettingsContext.Provider value={api}>
-          <SessionCard meta={{ ...meta, status: 'done' }} events={done} owner={undefined} viewerIsOwner showSettings />
+          <AgentConfigRow
+            agent="claude"
+            avatar={null}
+            busy={null}
+            lastModel={null}
+            usage={{ used: 46000, size: 1000000, costUsd: null }}
+          />
         </AgentSettingsContext.Provider>
       );
     });
-    expect(host.querySelector('[data-testid="agent-settings"]')).not.toBeNull();
-    expect(host.querySelector('[aria-label="Context 5% used"]')).not.toBeNull();
+    // The row names the model the default resolves to, not "Default (recommended)".
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="space-agent-row"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="agent-config-card"]')?.textContent).toContain('Permissions'));
+    const card = document.querySelector('[data-testid="agent-config-card"]')!;
+    expect(card.textContent).toContain('Opus 4.7 (1M)');
+    expect(card.textContent).not.toContain('Default (recommended)');
+    expect(host.querySelector('[data-testid="space-agent-row"]')?.textContent).toContain('Opus 4.7 (1M) · Manual');
 
-    await act(async () => {
-      host.querySelector<HTMLButtonElement>('[data-testid="agent-setting-mode"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="agent-setting-menu-mode"]')?.textContent).toContain('Auto-edit'));
-    const autoEdit = [...document.querySelectorAll<HTMLButtonElement>('[data-testid="agent-setting-menu-mode"] button')].find((b) =>
-      b.textContent?.includes('Auto-edit')
-    )!;
-    await act(async () => {
-      autoEdit.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
+    const click = (el: Element) => el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const optionButton = (text: string) => [...card.querySelectorAll('button')].find((b) => b.textContent?.includes(text))!;
+    await act(async () => click(optionButton('Accept edits')));
+    // A mode that acts without asking needs a second click.
+    await act(async () => click(optionButton('Bypass permissions')));
     expect(changes).toEqual([{ mode: 'acceptEdits' }]);
-    await vi.waitFor(() => expect(host.querySelector('[data-testid="agent-setting-mode"]')?.textContent).toContain('Auto-edit'));
+    await act(async () => click(optionButton('Bypass permissions')));
+    await act(async () => click([...card.querySelectorAll('[role="radio"]')].find((b) => b.textContent === 'Low')!));
+    expect(changes).toEqual([{ mode: 'acceptEdits' }, { mode: 'bypassPermissions' }, { effort: 'low' }]);
   });
 
   it('offers Retry on a failed run and Continue on a stopped one, as new turns for your agent', async () => {

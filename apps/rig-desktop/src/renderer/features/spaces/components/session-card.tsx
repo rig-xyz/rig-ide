@@ -37,7 +37,6 @@ import type {
   SessionRunMeta,
   SessionStep,
 } from '../types';
-import { AgentSettings } from './agent-settings';
 import { AGENT_NAME, AgentAvatar } from './identity';
 import { SessionTrace } from './session-trace';
 import { excerptOf, ROW_GRID, RowActions, RowTime } from './transcript-items';
@@ -496,7 +495,6 @@ export function SessionCard({
   onRerun,
   prompt,
   otherAgents = [],
-  showSettings = false,
 }: {
   meta: SessionRunMeta;
   events: SessionEvent[];
@@ -523,8 +521,6 @@ export function SessionCard({
   prompt?: string;
   /** Your other agents, offered by Retry. */
   otherAgents?: AgentKind[];
-  /** Show your agent's settings (model, permissions, context) in the header: its latest turn in the Room. */
-  showSettings?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [traceOpen, setTraceOpen] = useState(false);
@@ -601,11 +597,6 @@ export function SessionCard({
               {[model, mine ? 'yours' : `${ownerName}'s`].filter(Boolean).join(' · ')}
             </span>
             <RowTime message={{ createdAt: meta.startedAt }} />
-            {mine && showSettings && (
-              <span className="ml-auto self-center">
-                <AgentSettings agent={meta.agent} model={model} usage={card.usage} />
-              </span>
-            )}
           </div>
         )}
 

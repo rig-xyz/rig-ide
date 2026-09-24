@@ -1,7 +1,7 @@
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { AgentKind, RoomSnapshot } from '../types';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
-import { AgentSettings } from './agent-settings';
+import { AgentConfigRow } from './agent-settings';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 
 /**
@@ -32,19 +32,18 @@ export function AgentRows({ snapshot, selfUserId }: { snapshot: RoomSnapshot; se
             effectiveRunStatus(meta.status, projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? [])) ===
               'running'
         );
+        const latest = runs
+          .filter((m) => m.owner === selfUserId && m.agent === agent.agent)
+          .sort((x, y) => Date.parse(y.startedAt) - Date.parse(x.startedAt))[0];
         return (
-          <div
+          <AgentConfigRow
             key={agent.agent}
-            className="flex h-7 shrink-0 items-center gap-2 rounded-control px-2"
-            data-testid="space-agent-row"
-          >
-            <AgentAvatar agent={agent.agent} owner={snapshot.members.find((m) => m.id === selfUserId)} size="sm" />
-            <span className="text-xs text-text-primary">{AGENT_NAME[agent.agent]}</span>
-            <span className="ml-auto flex items-center gap-1.5 text-2xs text-text-muted">
-              {busy && <DotMatrix state="thinking" size="sm" />}
-              <AgentSettings agent={agent.agent} model={lastModel(agent.agent) ?? (agent.model || null)} compact />
-            </span>
-          </div>
+            agent={agent.agent}
+            avatar={<AgentAvatar agent={agent.agent} owner={snapshot.members.find((m) => m.id === selfUserId)} size="sm" />}
+            busy={busy ? <DotMatrix state="thinking" size="sm" /> : null}
+            lastModel={lastModel(agent.agent) ?? (agent.model || null)}
+            usage={latest ? projectSessionCard(snapshot.sessionEventsByRun[latest.id] ?? []).usage : null}
+          />
         );
       })}
     </>
