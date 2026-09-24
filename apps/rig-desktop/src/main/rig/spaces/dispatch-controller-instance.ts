@@ -59,11 +59,17 @@ export const spacesDispatchController = new SpacesDispatchController(realDeps())
  * `@claude` reaches in the Room. Returns null when this isn't a space (or
  * Spaces is off), so the caller keeps the standalone comment agent.
  */
+/** Answers an approval on a room-agent turn from the doc margin (same path as the Room card). */
+export async function resolveRoomTurnPermission(runId: string, requestId: string, optionId: string): Promise<boolean> {
+  return spacesDispatchController.resolvePermission(runId, requestId, optionId);
+}
+
 export async function runCommentTurnInRoom(spec: {
   bindingId: string;
   agent: 'claude' | 'codex';
   prompt: string;
   hiddenContext: string;
+  onPermissionsChanged?: Parameters<SpacesDispatchController['runLocal']>[0]['onPermissionsChanged'];
 }): Promise<Awaited<ReturnType<SpacesDispatchController['runLocal']>> | null> {
   if (!spacesDispatchController.isRunning()) return null;
   const workspaces = await rigAccountController.workspaces();
@@ -78,6 +84,7 @@ export async function runCommentTurnInRoom(spec: {
     agent: spec.agent,
     prompt: spec.prompt,
     extraHiddenContext: spec.hiddenContext,
+    onPermissionsChanged: spec.onPermissionsChanged,
   });
 }
 

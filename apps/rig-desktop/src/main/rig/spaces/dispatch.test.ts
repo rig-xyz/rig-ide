@@ -924,3 +924,27 @@ describe('runLocal (doc comments in a space)', () => {
   });
 });
 
+describe('runLocal approvals mirrored to the caller (doc margin)', () => {
+  it('reports pending approvals as they arrive and clears them once answered', async () => {
+    const { api } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const { runLocal, resolvePermission } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+    const seen: string[][] = [];
+    const started = await runLocal({
+      bindingId: 'binding-1',
+      ownerUserId: 'owner-1',
+      agent: 'claude',
+      prompt: 'Why did organic drop?',
+      onPermissionsChanged: (pending) => seen.push(pending.map((p) => p.requestId)),
+    });
+    if (!started.success) throw new Error(started.error);
+    const conversationId = fake.started[0].conversationId;
+    fake.emitTurnStart(conversationId, fake.queued[0].turnId);
+    fake.emitPermissionRequest(conversationId, makePermissionRequest());
+    expect(seen.at(-1)).toEqual(['perm-1']);
+
+    await resolvePermission(started.data.runId, 'perm-1', 'allow-once');
+    expect(seen.at(-1)).toEqual([]);
+  });
+});
+

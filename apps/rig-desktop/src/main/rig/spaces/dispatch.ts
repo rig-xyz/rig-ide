@@ -130,6 +130,8 @@ type QueuedTurn = {
   answer: { messageId: unknown; text: string };
   /** Called once the turn is settled, with its status and final answer. */
   onSettled?: (status: SessionStatus, answer: string) => void;
+  /** Called whenever this turn's pending approvals change (e.g. to mirror them in a doc's margin). */
+  onPermissionsChanged?: (pending: AcpPermissionRequest[]) => void;
   /**
    * Set once `queuePrompt` resolves. May already be set by `claimTurn`
    * (below) before that happens — a `turn_start` marker can legitimately
@@ -277,6 +279,13 @@ function collectAnswer(turn: QueuedTurn, update: Record<string, unknown>): void 
   turn.answer.text += content.text;
 }
 
+/** Tells a turn's listener which of its approvals are still waiting. */
+function notifyPermissions(session: PersistentSession, turn: QueuedTurn): void {
+  if (!turn.onPermissionsChanged) return;
+  const pending = [...session.heldPermissions.values()].filter((held) => held.turn === turn).map((held) => held.request);
+  turn.onPermissionsChanged(pending);
+}
+
 function keyFor(bindingId: string, ownerUserId: string, agent: SessionAgent): PersistentKey {
   return `${bindingId}::${ownerUserId}::${agent}`;
 }
@@ -341,6 +350,7 @@ export function createSpacesDispatcher(deps: {
     agent: SessionAgent;
     prompt: string;
     extraHiddenContext?: string;
+    onPermissionsChanged?: (pending: AcpPermissionRequest[]) => void;
   }) => Promise<Result<{ runId: string; done: Promise<{ status: SessionStatus; answer: string }> }, string>>;
   /** Answers a held permission request on one of this device's runs. Returns false if this device holds no such request for that run, or the option isn't one it offered. */
   resolvePermission: (runId: string, requestId: string, optionId: string) => Promise<boolean>;
@@ -416,6 +426,7 @@ export function createSpacesDispatcher(deps: {
       return;
     }
     session.heldPermissions.set(request.requestId, { request, turn });
+    notifyPermissions(session, turn);
     turn.publisher.record('permission_requested', {
       requestId: request.requestId,
       toolCall: { toolCallId: request.toolCall.toolCallId, title: request.toolCall.title },
@@ -449,6 +460,7 @@ export function createSpacesDispatcher(deps: {
       session.heldPermissions.delete(requestId);
       recordPermissionDecided(turn, held.request, null, 'cancelled');
     }
+    notifyPermissions(session, turn);
   }
 
   async function resolvePermission(runId: string, requestId: string, optionId: string): Promise<boolean> {
@@ -458,6 +470,7 @@ export function createSpacesDispatcher(deps: {
       const option = held.request.options.find((o) => o.optionId === optionId);
       if (!option) return false;
       session.heldPermissions.delete(requestId);
+      notifyPermissions(session, held.turn);
       // Recorded before resolving: once the tool runs, the turn can end (and
       // its publisher finish) before the resolve call even returns.
       recordPermissionDecided(
@@ -546,6 +559,7 @@ export function createSpacesDispatcher(deps: {
     /** Extra hidden context for this turn (e.g. a doc comment thread), after the space context. */
     extraHiddenContext?: string;
     onSettled?: QueuedTurn['onSettled'];
+    onPermissionsChanged?: QueuedTurn['onPermissionsChanged'];
   };
 
   /** Starts one turn in the owner's persistent session for the space: a relay run, its card, and the prompt. */
@@ -596,6 +610,7 @@ export function createSpacesDispatcher(deps: {
       turnId: null,
       answer: { messageId: null, text: '' },
       onSettled: spec.onSettled,
+      onPermissionsChanged: spec.onPermissionsChanged,
     };
     session.pending.push(turn);
 
@@ -657,6 +672,7 @@ export function createSpacesDispatcher(deps: {
     agent: SessionAgent;
     prompt: string;
     extraHiddenContext?: string;
+    onPermissionsChanged?: (pending: AcpPermissionRequest[]) => void;
   }): Promise<Result<{ runId: string; done: Promise<{ status: SessionStatus; answer: string }> }, string>> {
     let settle!: (value: { status: SessionStatus; answer: string }) => void;
     const done = new Promise<{ status: SessionStatus; answer: string }>((resolve) => (settle = resolve));

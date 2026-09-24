@@ -9,7 +9,7 @@ import {
 import { err, ok, type Result } from '@emdash/shared';
 import { ReplicaState } from '@emdash/wire';
 import { getAcpRuntimeClient, type AcpRuntimeClient } from '@main/core/acp/controller';
-import { runCommentTurnInRoom } from './spaces/dispatch-controller-instance';
+import { resolveRoomTurnPermission, runCommentTurnInRoom } from './spaces/dispatch-controller-instance';
 import { agentHookService } from '@main/core/agent-hooks/agent-hook-service';
 import { isValidProviderId } from '@main/core/agents/plugin-registry';
 import { events } from '@main/lib/events';
@@ -186,6 +186,8 @@ function awaitTurnEnd(conversationId: string): {
 const liveTurns = new Map<string, string>();
 /** Threads whose @mention is currently being answered by a room agent (doc comments in a space). */
 const roomTurns = new Set<string>();
+/** Thread → the room run answering it, so a margin approval reaches the room agent's held request. */
+const roomTurnRuns = new Map<string, string>();
 
 /**
  * What the reader is actually being asked to approve, from the typed tool
@@ -572,15 +574,27 @@ export const rigCommentAgentController = createRPCController({
       }
       roomTurns.add(parentId);
       try {
+        // Approvals show in the Room card AND here in the margin; either
+        // answers the same held request.
+        const publishRoomPermissions = (pending: SessionState['pendingPermissions']) =>
+          events.emit(rigCommentPermissionsChannel, {
+            absPath,
+            rootId: parentId,
+            requests: toPermissionRequests(pending),
+            workspaceRoot: cwd,
+          });
         const room = await runCommentTurnInRoom({
           bindingId: target.bindingId,
           agent: roomAgent,
           prompt: text,
           hiddenContext,
+          onPermissionsChanged: publishRoomPermissions,
         });
         if (room) {
           if (!room.success) return err(agentError(`The room agent could not start: ${room.error}`));
+          roomTurnRuns.set(parentId, room.data.runId);
           const { status, answer } = await room.data.done;
+          publishRoomPermissions([]);
           const classification = answer.trim() ? classifyProviderAnswer(answer) : null;
           if (status !== 'done' || !classification || classification.kind !== 'ok') {
             return err(
@@ -603,6 +617,7 @@ export const rigCommentAgentController = createRPCController({
         }
       } finally {
         roomTurns.delete(parentId);
+        roomTurnRuns.delete(parentId);
       }
     }
 
@@ -975,6 +990,11 @@ export const rigCommentAgentController = createRPCController({
     requestId: string;
     optionId: string;
   }): Promise<Result<void, RigCommentsError>> => {
+    const roomRunId = roomTurnRuns.get(input.rootId);
+    if (roomRunId) {
+      const answered = await resolveRoomTurnPermission(roomRunId, input.requestId, input.optionId);
+      return answered ? ok() : err(agentError('That request could not be answered — it may have expired.'));
+    }
     const conversationId = liveTurns.get(input.rootId);
     if (!conversationId) {
       return err(agentError('That agent turn is no longer running.'));
