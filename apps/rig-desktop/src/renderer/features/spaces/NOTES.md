@@ -682,28 +682,28 @@ Tick items off here as they land.
 
 **Open. Cheap, likely to bite:**
 - [x] Rig skill "In a space" section, SKILL_VERSION 15 (rig `feat/spaces-skill` 03cb164).
-- [ ] Silent failures: a request is claimed before the folder check, and failures post nothing. Check the folder first; post a `system` message on failure.
+- [x] Failures say why: failed cards show a reason; a request that can't start posts a Room notice.
 - [x] Doc comments show in the Room as comment lines and threads; agent replies are attributed to the agent.
 - [x] Presence and typing via Yjs awareness; away members dim in the panel.
-- [ ] The card header shows model "unknown": pass the model to `createSession`.
+- [x] Cards show the model the agent runs (read from the session).
 - [x] Agent rows pulse "working" while one of your runs is running.
 
 - [x] Doc comment threads are one unit in the Room: comment + quote, replies and the agent's card grouped, older replies folded (the card's context is its thread).
 - [x] Doc margin names resolve via the member list (name, else email prefix) instead of "someone".
-- [ ] Narrow windows: the Room and the doc squeeze each other; responsive pass (Dylan: later).
+- [x] Narrow windows: split becomes file + Room strip below 1000px; the panel stays clear of or collapses over the transcript.
 
 **Open. Medium:**
 - [x] Session scope decided (Sep 24): one session per person, per model, per space; Claude compacts; personal setup kept; named agents post-MVP.
 - [ ] Cost: ~36–51k tokens a turn. A per-turn token log, then trimming, is still open.
 - [x] Space memory across restarts: each persistent session's agent session id is saved in `userData/spaces-sessions.json`, and a restart resumes it (ACP `session/load`). Verified live: `[session/load] resume=<id>`, 2 messages replayed. Agents also see the last 20 room messages.
 - [ ] "Why 41 → 34": wire `rig history` and the provenance route across the whole space; add a Sources row on the card.
-- [ ] Skills in the space card and the `/` palette: expose the manifest's `.claude/skills/*` through a route.
-- [ ] Claude inviting people: the invite route is owner-only and the skill requires a go-ahead; there's no invite room message.
+- [x] The space's skills in the `/` palette (read from its `.claude/skills`).
+- [x] Invites: space editors can invite; every invite shows as a live card in the Room; agents invite via `rig share` (the request is the go-ahead).
 - [x] Doc comment `@claude` in a space goes to your room agent; approvals in margin and card.
 - [ ] Replying to a card (`parentId` dropped; no reply UI).
 - [ ] Attach button and doc import aren't wired.
 
-- [ ] A folder made outside the app (e.g. `rig join`/`rig init` in a terminal) isn't known to it, so Home offers "Download" and creates a second copy (`growth-2`). Detect existing folders in the Rig home by binding id before offering Download.
+- [x] Download opens an existing copy at its destination (`<home>/<slug>`) instead of making name-2 (no folder scanning).
 
 **Open. Large / product:**
 - [x] Space create/name (#name), Spaces rail group, Room-first opening.
