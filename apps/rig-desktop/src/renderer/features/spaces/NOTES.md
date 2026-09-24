@@ -688,6 +688,10 @@ Tick items off here as they land.
 - [ ] The card header shows model "unknown": pass the model to `createSession`.
 - [ ] The agent busy dot never lights (no live `agent_busy_changed`).
 
+- [ ] A session card started from a doc comment doesn't say so (e.g. "answering a comment on signups.md"); the preceding comment line is the only context.
+- [ ] Doc margin names fall back to "someone" when the relay has no profile name (sandbox accounts); fall back to the member's email prefix like the Room does.
+- [ ] Narrow windows: the Room and the doc squeeze each other; responsive pass (Dylan: later).
+
 **Open. Medium:**
 - [ ] Session scope and cost: a one-line answer loads ~51k tokens of context (~$0.37). Decide when a request reuses the persistent session and when it starts a fresh, lean one (Dylan, 2026-09-23). Trim what each turn loads (global instructions, skills, tool lists).
 - [x] Space memory across restarts: each persistent session's agent session id is saved in `userData/spaces-sessions.json`, and a restart resumes it (ACP `session/load`). Verified live: `[session/load] resume=<id>`, 2 messages replayed. Agents also see the last 20 room messages.
