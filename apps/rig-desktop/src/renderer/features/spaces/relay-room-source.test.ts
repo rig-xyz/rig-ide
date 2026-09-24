@@ -273,7 +273,7 @@ describe('RelayRoomSource', () => {
         parentId: 'c1',
         quote: null,
         author: { userId: 'u1', name: null, avatarUrl: null, kind: 'agent' },
-        meta: { model: 'claude-sonnet-5' },
+        meta: { agent: 'Claude Code' },
       }),
     ]);
     const source = new RelayRoomSource({

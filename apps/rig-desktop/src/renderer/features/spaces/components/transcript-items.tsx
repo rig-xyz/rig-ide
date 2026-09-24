@@ -280,7 +280,16 @@ export function CommentMirrorLine({
           “{quote}”
         </p>
       )}
-      <p className="ml-[22px] text-sm text-text-primary">{message.body}</p>
+      {/* An agent's reply is also the answer in its session card, just
+          above: keep it to a glance here instead of repeating it. */}
+      <p
+        className={cn(
+          'ml-[22px] text-sm',
+          replyFromAgent ? 'line-clamp-2 text-text-secondary' : 'text-text-primary'
+        )}
+      >
+        {message.body}
+      </p>
     </div>
   );
 }

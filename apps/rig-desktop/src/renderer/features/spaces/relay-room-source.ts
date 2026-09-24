@@ -661,7 +661,10 @@ function formatTime(iso: string): string {
 
 /** Which agent wrote an agent-authored post: `meta.agent` when set, else inferred from `meta.model`. */
 function agentOfPost(meta: Record<string, unknown> | null): AgentKind | undefined {
-  if (meta?.agent === 'claude' || meta?.agent === 'codex') return meta.agent;
+  // `agent` may be a provider id ("claude") or a display label ("Claude Code").
+  const agent = typeof meta?.agent === 'string' ? meta.agent.toLowerCase() : '';
+  if (agent.includes('claude')) return 'claude';
+  if (agent.includes('codex')) return 'codex';
   const model = typeof meta?.model === 'string' ? meta.model.toLowerCase() : '';
   if (/claude|sonnet|opus|haiku/.test(model)) return 'claude';
   return model ? 'codex' : undefined;
