@@ -4,7 +4,8 @@ import { rpc } from '@renderer/lib/ipc';
 import { buildRoomFeed } from '../fixtures/room-feed';
 import { RelayRoomSource, type RelayRoomClient } from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
-import type { AgentKind } from '../types';
+import { effectiveRunStatus, projectSessionCard } from '../projection';
+import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
 import { Composer } from './composer';
 import { RoomTranscript } from './room-transcript';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
@@ -67,6 +68,17 @@ function detectOwnAgentMention(
   return ownsIt ? agent : null;
 }
 
+/** The viewer's own agents that are mid-turn, so the composer can say a new @mention will queue. */
+function busyOwnAgents(snapshot: RoomSnapshot, selfUserId: string): AgentKind[] {
+  const busy = new Set<AgentKind>();
+  for (const meta of Object.values(snapshot.sessionMetaByRun)) {
+    if (meta.owner !== selfUserId) continue;
+    const status = effectiveRunStatus(meta.status, projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? []));
+    if (status === 'running') busy.add(meta.agent);
+  }
+  return [...busy];
+}
+
 export function RoomView({
   bindingId,
   spaceName,
@@ -90,6 +102,7 @@ export function RoomView({
   const [selfUserId, setSelfUserId] = useState(FALLBACK_OWN_ID);
   const [snapshot, setSnapshot] = useState(() => source?.getSnapshot() ?? null);
   const [playing, setPlaying] = useState(false);
+  const [replyTo, setReplyTo] = useState<RoomReplyRef | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [bodyWidth, setBodyWidth] = useState(0);
   useEffect(() => {
@@ -170,9 +183,10 @@ export function RoomView({
     }
   };
 
-  const handleSend = (text: string) => {
+  const handleSend = (text: string, replyTo?: RoomReplyRef) => {
     if (!(source instanceof RelayRoomSource) || !snapshot) return;
-    void source.send(text).then((sourceMessageId) => {
+    setReplyTo(null);
+    void source.send(text, replyTo).then((sourceMessageId) => {
       const mentioned = detectOwnAgentMention(text, selfUserId, snapshot.agents);
       if (!mentioned) return;
       // Wake this device's claim poller rather than waiting for its next tick.
@@ -257,10 +271,15 @@ export function RoomView({
             onStopSession={handleStopSession}
             onResolvePermission={handleResolvePermission}
             onOpenFile={onOpenFile}
+            onReply={source instanceof RelayRoomSource ? setReplyTo : undefined}
           />
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
             <Composer
               spaceName={snapshot.name}
+              draftKey={bindingId}
+              replyTo={replyTo}
+              onCancelReply={() => setReplyTo(null)}
+              busyAgents={busyOwnAgents(snapshot, selfUserId)}
               members={snapshot.members}
               // Own agents only: @claude/@codex always means the sender's
               // own agent (no cross-person delegation in the MVP).

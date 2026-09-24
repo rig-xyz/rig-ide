@@ -45,7 +45,7 @@ import type {
   SessionEventRow,
   SessionRun,
 } from '@main/rig/spaces/relay-api';
-import type { AgentKind, MessageKind, RoomEvent, RoomSnapshot, SessionRunMeta } from './types';
+import type { AgentKind, MessageKind, RoomEvent, RoomReplyRef, RoomSnapshot, SessionRunMeta } from './types';
 import { reduceRoom } from './fixtures/room-feed';
 import type { RoomSource } from './room-source';
 import { formatClock } from '@renderer/lib/time-format';
@@ -598,8 +598,12 @@ export class RelayRoomSource implements RoomSource {
    * the relay stored. Returns the new message's id (for `requestOwnAgent`'s
    * `sourceMessageId`), or `null` if the post failed.
    */
-  async send(text: string): Promise<string | null> {
-    const result = await this.opts.relay.postMessage(this.opts.bindingId, { body: text, kind: 'text' });
+  async send(text: string, replyTo?: RoomReplyRef): Promise<string | null> {
+    const result = await this.opts.relay.postMessage(this.opts.bindingId, {
+      body: text,
+      kind: 'text',
+      ...(replyTo ? { meta: { replyTo } } : {}),
+    });
     return result.success ? result.data.id : null;
   }
 
@@ -728,7 +732,23 @@ function toMessageMeta(
       };
     case 'system':
       return { kind: 'system', event: String(meta.event ?? '') };
-    default:
-      return { kind: 'text' };
+    default: {
+      const reply = meta.replyTo as Record<string, unknown> | undefined;
+      return reply &&
+        typeof reply === 'object' &&
+        typeof reply.id === 'string' &&
+        typeof reply.authorId === 'string' &&
+        typeof reply.excerpt === 'string'
+        ? {
+            kind: 'text',
+            replyTo: {
+              id: reply.id,
+              authorId: reply.authorId,
+              label: typeof reply.label === 'string' ? reply.label : '',
+              excerpt: reply.excerpt,
+            },
+          }
+        : { kind: 'text' };
+    }
   }
 }

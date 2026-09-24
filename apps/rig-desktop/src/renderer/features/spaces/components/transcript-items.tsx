@@ -1,10 +1,10 @@
-import { CircleAlert, Copy, UserPlus } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { Check, CircleAlert, Copy, CornerUpLeft, UserPlus } from 'lucide-react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import { formatClock, formatClockShort, formatFull } from '@renderer/lib/time-format';
 import { BrandLogo } from '../logos';
-import type { RoomConnector, RoomMember, RoomMessage, RoomSnapshot } from '../types';
+import type { RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 
 /**
@@ -104,6 +104,94 @@ export function bubbleClass(mine: boolean): string {
 }
 
 /**
+ * The actions a row offers on hover or focus: a small floating bar at its
+ * top-right. Each action confirms in place (Copy turns into "Copied").
+ */
+export function RowActions({
+  onReply,
+  copyText,
+  children,
+  forceVisible = false,
+}: {
+  onReply?: () => void;
+  copyText?: string;
+  /** Extra actions (e.g. Stop) before the standard ones. */
+  children?: ReactNode;
+  forceVisible?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const id = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(id);
+  }, [copied]);
+  if (!onReply && !copyText && !children) return null;
+  const button =
+    'hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs text-text-secondary transition-colors';
+  return (
+    <div
+      className={cn(
+        'border-border-hairline bg-bg-1 shadow-soft absolute top-0 right-2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-chip border p-0.5 transition-opacity group-hover:opacity-100 focus-within:opacity-100',
+        forceVisible ? 'opacity-100' : 'opacity-0'
+      )}
+      data-testid="row-actions"
+    >
+      {children}
+      {onReply && (
+        <button type="button" onClick={onReply} aria-label="Reply" title="Reply" className={button}>
+          <CornerUpLeft className="size-3.5" strokeWidth={1.5} />
+        </button>
+      )}
+      {copyText && (
+        <button
+          type="button"
+          onClick={() => void navigator.clipboard?.writeText(copyText).then(() => setCopied(true))}
+          aria-label="Copy"
+          title="Copy"
+          className={cn(button, copied && 'text-success')}
+        >
+          {copied ? <Check className="size-3.5" strokeWidth={1.5} /> : <Copy className="size-3.5" strokeWidth={1.5} />}
+          {copied && 'Copied'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** The quoted message a reply answers, above the reply's bubble; clicking jumps to it. */
+function ReplyQuote({
+  replyTo,
+  mine,
+  onJumpTo,
+}: {
+  replyTo: RoomReplyRef;
+  mine: boolean;
+  onJumpTo?: (messageId: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onJumpTo?.(replyTo.id)}
+      className={cn(
+        'flex max-w-full min-w-0 items-center gap-1.5 text-xs text-text-muted transition-colors hover:text-text-secondary',
+        mine && 'self-end'
+      )}
+      data-testid="reply-quote"
+    >
+      <CornerUpLeft className="size-3 shrink-0" strokeWidth={1.5} />
+      {replyTo.label && <b className="shrink-0 font-medium text-text-secondary">{replyTo.label}</b>}
+      <span className="min-w-0 truncate">{replyTo.excerpt}</span>
+    </button>
+  );
+}
+
+/** A short excerpt of a message for a quote-reply. */
+export function excerptOf(text: string, max = 90): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+/**
  * A human message: avatar, name and (on hover) time, then the words in a
  * bubble; your own sit on the right with neither. `continued` drops the
  * header for a follow-up from the same person a moment later; its time sits
@@ -114,33 +202,60 @@ export function MessageRow({
   snapshot,
   ownId,
   continued = false,
+  onReply,
+  onJumpTo,
 }: {
   message: RoomMessage;
   snapshot: RoomSnapshot;
   ownId: string;
   continued?: boolean;
+  /** Starts a quote-reply to this message. */
+  onReply?: (ref: RoomReplyRef) => void;
+  /** Scrolls to a quoted message. */
+  onJumpTo?: (messageId: string) => void;
 }) {
   const author = memberOf(snapshot, message.authorId);
   const mine = message.authorId === ownId;
   const body = message.body ? richText(message.body, ownId) : null;
+  const replyTo = message.meta.kind === 'text' ? message.meta.replyTo : undefined;
+  const actions = (
+    <RowActions
+      onReply={
+        onReply
+          ? () =>
+              onReply({
+                id: message.id,
+                authorId: message.authorId,
+                label: author?.name ?? message.authorId,
+                excerpt: excerptOf(message.body ?? ''),
+              })
+          : undefined
+      }
+      copyText={message.body}
+    />
+  );
   if (mine) {
     // Your own words: on the right, no avatar or name, time on hover beside the bubble.
     return (
       <div
-        className="group flex items-end justify-end gap-2 py-0.5 pr-2 pl-12"
+        className="group relative flex items-end justify-end gap-2 py-0.5 pr-2 pl-12"
         data-testid="message-row"
         data-author={message.authorId}
         data-mine="true"
         data-continued={continued}
       >
         <RowTime message={message} className="pb-1" />
-        <p className={bubbleClass(true)}>{body}</p>
+        <div className="flex min-w-0 flex-col items-end gap-1">
+          {replyTo && <ReplyQuote replyTo={replyTo} mine onJumpTo={onJumpTo} />}
+          <p className={bubbleClass(true)}>{body}</p>
+        </div>
+        {actions}
       </div>
     );
   }
   return (
     <div
-      className={cn(ROW_GRID, 'group py-0.5')}
+      className={cn(ROW_GRID, 'group relative py-0.5')}
       data-testid="message-row"
       data-author={message.authorId}
       data-mine="false"
@@ -158,8 +273,10 @@ export function MessageRow({
             <RowTime message={message} />
           </div>
         )}
+        {replyTo && <ReplyQuote replyTo={replyTo} mine={false} onJumpTo={onJumpTo} />}
         <p className={bubbleClass(false)}>{body}</p>
       </div>
+      {actions}
     </div>
   );
 }

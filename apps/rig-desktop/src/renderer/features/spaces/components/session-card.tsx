@@ -3,7 +3,6 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
-  Copy,
   FileText,
   Globe,
   Pencil,
@@ -20,11 +19,12 @@ import { formatClock } from '@renderer/lib/time-format';
 import { Button } from '@renderer/lib/ui/button';
 import { SafeMarkdown } from '@renderer/lib/ui/comment-markdown';
 import { Dialog, DialogContent, DialogTitle } from '@renderer/lib/ui/dialog';
-import { DotMatrix, type DotMatrixActivity } from '@renderer/lib/ui/dot-matrix';
+import { DotMatrix, type DotMatrixActivity, type DotMatrixState } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type {
   RoomMember,
+  RoomReplyRef,
   SessionCard as SessionCardData,
   SessionEvent,
   SessionOutput,
@@ -36,7 +36,7 @@ import type {
 } from '../types';
 import { AGENT_NAME, AgentAvatar } from './identity';
 import { SessionTrace } from './session-trace';
-import { ROW_GRID, RowTime } from './transcript-items';
+import { excerptOf, ROW_GRID, RowActions, RowTime } from './transcript-items';
 
 /**
  * Spaces: one agent turn in the Room, drawn like any other speaker's row
@@ -373,6 +373,9 @@ export function SessionCard({
   onStop,
   onResolvePermission,
   onOpenFile,
+  onReply,
+  messageId,
+  queued = false,
 }: {
   meta: SessionRunMeta;
   events: SessionEvent[];
@@ -386,10 +389,15 @@ export function SessionCard({
   onResolvePermission?: (requestId: string, optionId: string) => void;
   /** Opens a changed file (its path as the agent reported it). */
   onOpenFile?: (path: string) => void;
+  /** Starts a quote-reply to this answer. */
+  onReply?: (ref: RoomReplyRef) => void;
+  /** The Room message this run hangs off, for reply references. */
+  messageId?: string;
+  /** Another turn of the same agent is running ahead of this one: it waits its turn. */
+  queued?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [traceOpen, setTraceOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [resolving, setResolving] = useState<{ requestId: string; optionId: string } | null>(null);
   const card = useMemo(() => projectSessionCard(events), [events]);
@@ -404,13 +412,9 @@ export function SessionCard({
   const pending = card.permissions.pending[0] ?? null;
   const currentKind = stepKind(card.currentStep?.kind);
 
-  useEffect(() => {
-    if (!copied) return;
-    const id = setTimeout(() => setCopied(false), 1500);
-    return () => clearTimeout(id);
-  }, [copied]);
-
-  const liveLabel = pending
+  const liveLabel = queued
+    ? `Queued · after ${mine ? 'your' : `${ownerName}'s`} current ${agentName} turn`
+    : pending
     ? onResolvePermission
       ? 'Waiting for your approval'
       : `Waiting on ${ownerName}'s approval`
@@ -419,7 +423,9 @@ export function SessionCard({
       : events.length > 0
         ? 'Thinking'
         : 'Starting';
-  const liveMatrix: DotMatrixActivity = pending
+  const liveMatrix: DotMatrixState = queued
+    ? 'queued'
+    : pending
     ? 'waiting'
     : card.currentStep
       ? currentKind.matrix
@@ -554,40 +560,36 @@ export function SessionCard({
       </div>
 
       {/* Actions float at the row's top-right on hover or focus. */}
-      {((running && onStop) || (!running && card.finalAnswer)) && (
-        <div className={cn('border-border-hairline bg-bg-1 shadow-soft absolute top-0 right-2 flex -translate-y-1/2 items-center gap-0.5 rounded-chip border p-0.5 transition-opacity group-hover:opacity-100 focus-within:opacity-100', stopping ? 'opacity-100' : 'opacity-0')}>
-          {running && onStop ? (
-            <button
-              type="button"
-              onClick={() => {
-                setStopping(true);
-                onStop();
-              }}
-              disabled={stopping}
-              className="enabled:hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs text-text-primary transition-colors disabled:text-text-muted"
-            >
-              <Square className="size-2.5" strokeWidth={1.5} fill="currentColor" />
-              {stopping ? 'Stopping…' : 'Stop'}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard?.writeText(card.finalAnswer).then(() => setCopied(true));
-              }}
-              aria-label="Copy answer"
-              title="Copy answer"
-              className={cn(
-                'hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs transition-colors',
-                copied ? 'text-success' : 'text-text-secondary'
-              )}
-            >
-              {copied ? <Check className="size-3.5" strokeWidth={1.5} /> : <Copy className="size-3.5" strokeWidth={1.5} />}
-              {copied && 'Copied'}
-            </button>
-          )}
-        </div>
-      )}
+      <RowActions
+        forceVisible={stopping}
+        onReply={
+          onReply && !running && card.finalAnswer
+            ? () =>
+                onReply({
+                  id: messageId ?? meta.id,
+                  authorId: meta.owner,
+                  label: mine ? `Your ${agentName}` : `${ownerName}'s ${agentName}`,
+                  excerpt: excerptOf(card.finalAnswer),
+                })
+            : undefined
+        }
+        copyText={!running && card.finalAnswer ? card.finalAnswer : undefined}
+      >
+        {running && onStop && (
+          <button
+            type="button"
+            onClick={() => {
+              setStopping(true);
+              onStop();
+            }}
+            disabled={stopping}
+            className="enabled:hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs text-text-primary transition-colors disabled:text-text-muted"
+          >
+            <Square className="size-2.5" strokeWidth={1.5} fill="currentColor" />
+            {stopping ? 'Stopping…' : queued ? 'Cancel' : 'Stop'}
+          </button>
+        )}
+      </RowActions>
 
       <Dialog open={traceOpen} onOpenChange={setTraceOpen}>
         <DialogContent className="top-3 right-3 bottom-3 left-auto flex max-h-none w-[min(640px,calc(100vw-1.5rem))] max-w-none translate-x-0 translate-y-0 flex-col">

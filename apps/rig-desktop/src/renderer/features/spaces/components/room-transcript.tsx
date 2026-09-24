@@ -3,7 +3,8 @@ import { ArrowDown } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
-import type { RoomMessage, RoomSnapshot } from '../types';
+import { effectiveRunStatus, projectSessionCard } from '../projection';
+import type { RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
 import { SessionCard } from './session-card';
 import {
   CommentMirrorLine,
@@ -48,6 +49,26 @@ function isContinuation(prev: RoomMessage | undefined, message: RoomMessage, sna
   return gap >= 0 && gap < CONTINUE_WITHIN_MS && dayKey(prev.createdAt) === dayKey(message.createdAt);
 }
 
+/**
+ * A run that hasn't produced anything yet while an earlier run of the same
+ * person's same agent is still going: the dispatcher runs one turn at a
+ * time per agent, so this one is waiting in line.
+ */
+function isQueued(meta: SessionRunMeta, snapshot: RoomSnapshot): boolean {
+  if ((snapshot.sessionEventsByRun[meta.id] ?? []).length > 0) return false;
+  const running = (m: SessionRunMeta) =>
+    effectiveRunStatus(m.status, projectSessionCard(snapshot.sessionEventsByRun[m.id] ?? [])) === 'running';
+  if (!running(meta)) return false;
+  return Object.values(snapshot.sessionMetaByRun).some(
+    (other) =>
+      other.id !== meta.id &&
+      other.agent === meta.agent &&
+      other.owner === meta.owner &&
+      Date.parse(other.startedAt) < Date.parse(meta.startedAt) &&
+      running(other)
+  );
+}
+
 function renderItem(
   message: RoomMessage,
   snapshot: RoomSnapshot,
@@ -55,11 +76,22 @@ function renderItem(
   onStopSession?: (runId: string) => void,
   onResolvePermission?: (runId: string, requestId: string, optionId: string) => void,
   onOpenFile?: (relPath: string) => void,
-  continued = false
+  continued = false,
+  onReply?: (ref: RoomReplyRef) => void,
+  onJumpTo?: (messageId: string) => void
 ) {
   switch (message.meta.kind) {
     case 'text':
-      return <MessageRow message={message} snapshot={snapshot} ownId={ownId} continued={continued} />;
+      return (
+        <MessageRow
+          message={message}
+          snapshot={snapshot}
+          ownId={ownId}
+          continued={continued}
+          onReply={onReply}
+          onJumpTo={onJumpTo}
+        />
+      );
     case 'invite':
       return <InviteRow message={message} snapshot={snapshot} />;
     case 'comment_mirror':
@@ -90,6 +122,9 @@ function renderItem(
           viewerIsOwner={meta.owner === ownId}
           continued={continued}
           onOpenFile={onOpenFile}
+          onReply={onReply}
+          messageId={message.id}
+          queued={isQueued(meta, snapshot)}
           onStop={canStop ? () => onStopSession(meta.id) : undefined}
           onResolvePermission={
             canResolve
@@ -199,6 +234,7 @@ export function RoomTranscript({
   onStopSession,
   onResolvePermission,
   onOpenFile,
+  onReply,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
@@ -206,6 +242,8 @@ export function RoomTranscript({
   onResolvePermission?: (runId: string, requestId: string, optionId: string) => void;
   /** Opens a space file (relative path) in the editor, e.g. from a doc comment line. */
   onOpenFile?: (relPath: string) => void;
+  /** Starts a quote-reply in the composer. */
+  onReply?: (ref: RoomReplyRef) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -222,6 +260,16 @@ export function RoomTranscript({
     setPinned(true);
     setUnseen(0);
     el.scrollTo({ top: el.scrollHeight, behavior });
+  };
+
+  const jumpTo = (messageId: string) => {
+    const target = scrollRef.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
+    if (!target) return;
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    target.animate([{ backgroundColor: 'var(--accent-subtle)' }, { backgroundColor: 'transparent' }], {
+      duration: 1400,
+      easing: 'ease-out',
+    });
   };
 
   useEffect(() => {
@@ -296,7 +344,17 @@ export function RoomTranscript({
                 );
               }
               const render = (message: RoomMessage, continued = false) =>
-                renderItem(message, snapshot, ownId, onStopSession, onResolvePermission, onOpenFile, continued);
+                renderItem(
+                  message,
+                  snapshot,
+                  ownId,
+                  onStopSession,
+                  onResolvePermission,
+                  onOpenFile,
+                  continued,
+                  onReply,
+                  jumpTo
+                );
               const node =
                 unit.kind === 'message' ? (
                   render(unit.message, isContinuation(prevMessage, unit.message, snapshot))
@@ -315,6 +373,8 @@ export function RoomTranscript({
               nodes.push(
                 <motion.div
                   key={unit.kind === 'message' ? unit.message.id : `thread-${unit.threadId}`}
+                  data-message-id={unit.kind === 'message' ? unit.message.id : unit.threadId}
+                  className="rounded-card"
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}

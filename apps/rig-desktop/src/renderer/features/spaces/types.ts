@@ -161,7 +161,11 @@ export interface SessionRunMeta {
 // ────────── room messages ──────────
 
 export type MessageMeta =
-  | { kind: 'text' }
+  | {
+      kind: 'text';
+      /** A quote-reply: the message this one answers, with a short excerpt to show above it. */
+      replyTo?: RoomReplyRef;
+    }
   | { kind: 'session'; runId: string }
   | { kind: 'invite'; inviteId: string }
   | {
@@ -175,6 +179,15 @@ export type MessageMeta =
       isReply?: boolean;
     }
   | { kind: 'system'; event: string };
+
+/** What a quote-reply points at. The author is a member id; for an agent's answer, its owner. */
+export interface RoomReplyRef {
+  id: string;
+  authorId: string;
+  /** Who it's from as a label ("Sam", "Sam's Claude"). */
+  label: string;
+  excerpt: string;
+}
 
 export type MessageKind = MessageMeta['kind'];
 

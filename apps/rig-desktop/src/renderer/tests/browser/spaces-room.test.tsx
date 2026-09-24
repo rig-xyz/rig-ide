@@ -87,6 +87,37 @@ describe('Room transcript — flat rows', () => {
     expect(host.querySelectorAll('[data-testid="day-divider"]').length).toBeGreaterThan(0);
   });
 
+  it('shows a reply with the message it quotes, and offers Reply on hover', async () => {
+    const snapshot = replayedSnapshot();
+    const replies: unknown[] = [];
+    const quoted = snapshot.messages.find((m) => m.meta.kind === 'text' && m.authorId !== 'bob')!;
+    const reply: RoomMessage = {
+      ...quoted,
+      id: 'reply-1',
+      authorId: 'bob',
+      body: 'on it',
+      meta: { kind: 'text', replyTo: { id: quoted.id, authorId: quoted.authorId, label: 'Alice', excerpt: 'the quoted bit' } },
+    };
+    await act(async () => {
+      root.render(
+        <RoomTranscript
+          snapshot={{ ...snapshot, messages: [...snapshot.messages, reply] }}
+          ownId="bob"
+          onReply={(ref) => replies.push(ref)}
+        />
+      );
+    });
+    const row = host.querySelector<HTMLElement>('[data-testid="message-row"][data-author="bob"]:last-of-type');
+    expect(host.textContent).toContain('the quoted bit');
+    const replyButtons = host.querySelectorAll<HTMLButtonElement>('[aria-label="Reply"]');
+    expect(replyButtons.length).toBeGreaterThan(0);
+    await act(async () => {
+      replyButtons[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(replies).toHaveLength(1);
+    expect(row).not.toBeNull();
+  });
+
   it('renders one session card per real fixture run, each reporting a settled status', async () => {
     const snapshot = replayedSnapshot();
     await act(async () => {
@@ -205,6 +236,60 @@ describe('Room composer — palette on "/"', () => {
     const mentionPalette = host.querySelector('[data-testid="mention-palette"]');
     expect(mentionPalette).not.toBeNull();
     expect(mentionPalette?.textContent).toContain('@');
+  });
+
+  it('moves through the menu with the arrow keys and picks with Enter, agents first', async () => {
+    const snapshot = replayedSnapshot();
+    const own = snapshot.agents.filter((a) => a.owner === 'bob');
+    await act(async () => {
+      root.render(
+        <Composer spaceName={snapshot.name} members={snapshot.members} agents={own} skills={snapshot.skills} onSend={() => {}} />
+      );
+    });
+    const textarea = host.querySelector<HTMLTextAreaElement>('textarea')!;
+    await setTextareaValue(textarea, 'hey @');
+    const options = [...host.querySelectorAll<HTMLElement>('[role="option"]')];
+    expect(options[0]?.textContent).toContain(`@${own[0]!.agent}`);
+    expect(options[0]?.getAttribute('aria-selected')).toBe('true');
+
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    });
+    const second = [...host.querySelectorAll<HTMLElement>('[role="option"]')][1]!;
+    expect(second.getAttribute('aria-selected')).toBe('true');
+    const label = second.querySelector('span:nth-child(2)')!.textContent!;
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(textarea.value).toBe(`hey ${label} `);
+    expect(host.querySelector('[data-testid="mention-palette"]')).toBeNull();
+  });
+
+  it('sends a quote-reply with its reference, and says when the mentioned agent is busy', async () => {
+    const snapshot = replayedSnapshot();
+    const sent: Array<[string, unknown]> = [];
+    const replyTo = { id: 'm1', authorId: 'alice', label: 'Alice', excerpt: 'Why did organic drop?' };
+    await act(async () => {
+      root.render(
+        <Composer
+          spaceName={snapshot.name}
+          members={snapshot.members}
+          agents={snapshot.agents}
+          skills={snapshot.skills}
+          onSend={(text, ref) => sent.push([text, ref])}
+          replyTo={replyTo}
+          busyAgents={['claude']}
+        />
+      );
+    });
+    expect(host.querySelector('[data-testid="composer-reply"]')?.textContent).toContain('Alice');
+    const textarea = host.querySelector<HTMLTextAreaElement>('textarea')!;
+    await setTextareaValue(textarea, '@claude look again');
+    expect(host.querySelector('[data-testid="composer-queue-note"]')).not.toBeNull();
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(sent).toEqual([['@claude look again', replyTo]]);
   });
 });
 
