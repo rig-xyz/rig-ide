@@ -5,6 +5,7 @@ import { Composer } from '@renderer/features/spaces/components/composer';
 import { ConversationMap } from '@renderer/features/spaces/components/conversation-map';
 import { AgentSettingsContext, type AgentSettingsApi } from '@renderer/features/spaces/components/agent-settings';
 import { groupThreads, RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
+import { RoomView } from '@renderer/features/spaces/components/room-view';
 import { SessionCard } from '@renderer/features/spaces/components/session-card';
 import { buildRoomFeed } from '@renderer/features/spaces/fixtures/room-feed';
 import { FixtureRoomSource } from '@renderer/features/spaces/room-source';
@@ -16,7 +17,13 @@ import '@renderer/tokens.css';
 
 // The session card renders answers with SafeMarkdown, which imports the IPC
 // bridge (for opening links); nothing here clicks a link.
-vi.mock('@renderer/lib/ipc', () => ({ rpc: { app: { openExternal: async () => {} } } }));
+vi.mock('@renderer/lib/ipc', () => ({
+  rpc: {
+    app: { openExternal: async () => {} },
+    // No live relay here: the Room offers the scripted demo instead.
+    rig: { spacesConnection: { getConnectionInfo: async () => ({ success: false, error: { message: 'offline' } }) } },
+  },
+}));
 
 /**
  * Spaces (lane 2): renders the Room's real components (transcript +
@@ -230,6 +237,40 @@ describe('Room transcript — flat rows', () => {
     expect(host.textContent).toContain('Joined');
     expect(host.textContent).toContain('joined the space');
     expect(host.querySelectorAll('[data-testid="comment-mirror-line"]').length).toBe(2);
+  });
+});
+
+describe('Room view — renders through loading into content', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  // Regression: a hook placed after RoomView's early returns crashed the
+  // Room the moment it went from "no snapshot yet" to showing messages.
+  it('goes from the connect error to the scripted demo without breaking the rules of hooks', async () => {
+    const errors: unknown[] = [];
+    const onError = (e: ErrorEvent) => errors.push(e.error);
+    window.addEventListener('error', onError);
+    await act(async () => {
+      root.render(<RoomView bindingId="b1" spaceName="Room" />);
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain('Could not connect'));
+    const demo = [...host.querySelectorAll('button')].find((b) => b.textContent?.includes('scripted demo'))!;
+    await act(async () => {
+      demo.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="room-view"]')).not.toBeNull());
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="room-transcript"]')).not.toBeNull());
+    window.removeEventListener('error', onError);
+    expect(errors).toEqual([]);
   });
 });
 

@@ -257,6 +257,29 @@ export function RoomView({
     }
   }, [source, snapshot, selfUserId, bindingId]);
 
+  // Every hook sits above the early returns below: React needs the same
+  // hooks in the same order on every render.
+  const agentSettingsApi = useMemo<AgentSettingsApi | null>(
+    () =>
+      source instanceof RelayRoomSource
+        ? {
+            load: async (agent) => {
+              const result = await rpc.rig.spacesDispatch.agentConfig({ bindingId, agent }).catch(() => null);
+              if (!result) return { error: "Couldn't reach this agent's settings." };
+              return result.success ? result.data : { error: result.error };
+            },
+            change: async (agent, change) => {
+              const result = await rpc.rig.spacesDispatch
+                .setAgentConfig({ bindingId, agent, change })
+                .catch(() => null);
+              if (!result) return { error: "Couldn't change this agent's settings." };
+              return result.success ? result.data : { error: result.error };
+            },
+          }
+        : null,
+    [source, bindingId]
+  );
+
   const togglePlay = () => {
     if (!source || source.isDone()) return;
     if (source.isPlaying()) {
@@ -318,27 +341,6 @@ export function RoomView({
   if (!snapshot) {
     return <div className="bg-bg-0 flex h-full min-h-0 flex-col" data-testid="room-view" />;
   }
-
-  const agentSettingsApi = useMemo<AgentSettingsApi | null>(
-    () =>
-      source instanceof RelayRoomSource
-        ? {
-            load: async (agent) => {
-              const result = await rpc.rig.spacesDispatch.agentConfig({ bindingId, agent }).catch(() => null);
-              if (!result) return { error: "Couldn't reach this agent's settings." };
-              return result.success ? result.data : { error: result.error };
-            },
-            change: async (agent, change) => {
-              const result = await rpc.rig.spacesDispatch
-                .setAgentConfig({ bindingId, agent, change })
-                .catch(() => null);
-              if (!result) return { error: "Couldn't change this agent's settings." };
-              return result.success ? result.data : { error: result.error };
-            },
-          }
-        : null,
-    [source, bindingId]
-  );
 
   return (
     <AgentSettingsContext.Provider value={agentSettingsApi}>
