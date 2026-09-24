@@ -128,6 +128,8 @@ export type RigCommentsCacheEntry = {
  */
 export type RigCommentMember = {
   userId: string;
+  /** Comment authors are identified by Clerk id; this matches them to a member. */
+  clerkUserId?: string | null;
   name: string | null;
   avatarUrl: string | null;
   email: string | null;

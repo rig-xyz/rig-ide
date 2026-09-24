@@ -71,6 +71,8 @@ export async function runCommentTurnInRoom(spec: {
   agent: 'claude' | 'codex';
   prompt: string;
   hiddenContext: string;
+  /** The doc comment thread being answered. */
+  threadId?: string;
   onPermissionsChanged?: Parameters<SpacesDispatchController['runLocal']>[0]['onPermissionsChanged'];
 }): Promise<Awaited<ReturnType<SpacesDispatchController['runLocal']>> | null> {
   if (!spacesDispatchController.isRunning()) {
@@ -95,6 +97,7 @@ export async function runCommentTurnInRoom(spec: {
     agent: spec.agent,
     prompt: spec.prompt,
     extraHiddenContext: spec.hiddenContext,
+    threadId: spec.threadId,
     onPermissionsChanged: spec.onPermissionsChanged,
   });
 }

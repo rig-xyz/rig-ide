@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useRef } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import type { RoomMessage, RoomSnapshot } from '../types';
 import { SessionCard } from './session-card';
 import {
@@ -75,6 +75,89 @@ function renderItem(
   }
 }
 
+/** One row of the transcript: a plain message, or a whole doc comment thread. */
+type TranscriptUnit =
+  | { kind: 'message'; message: RoomMessage }
+  | { kind: 'thread'; threadId: string; messages: RoomMessage[] };
+
+/**
+ * Groups each doc comment thread (its first comment, the replies, and any
+ * agent runs answering it) into one unit, placed where the thread was last
+ * active so new replies surface at the bottom like any new message.
+ */
+export function groupThreads(messages: readonly RoomMessage[]): TranscriptUnit[] {
+  const byThread = new Map<string, RoomMessage[]>();
+  const lastIndex = new Map<string, number>();
+  messages.forEach((message, index) => {
+    if (!message.threadId) return;
+    const list = byThread.get(message.threadId) ?? [];
+    list.push(message);
+    byThread.set(message.threadId, list);
+    lastIndex.set(message.threadId, index);
+  });
+  const units: TranscriptUnit[] = [];
+  messages.forEach((message, index) => {
+    if (!message.threadId) {
+      units.push({ kind: 'message', message });
+    } else if (lastIndex.get(message.threadId) === index) {
+      units.push({ kind: 'thread', threadId: message.threadId, messages: byThread.get(message.threadId)! });
+    }
+  });
+  return units;
+}
+
+/** Replies shown before "Show N earlier replies"; the thread's first comment always shows. */
+const THREAD_VISIBLE_REPLIES = 3;
+
+/**
+ * A doc comment thread as one block: the comment and its quoted passage on
+ * top, then the replies and agent runs answering it, compact and in order.
+ * Older replies fold behind a toggle; the latest few always show.
+ */
+function ThreadBlock({
+  threadId,
+  messages,
+  renderMessage,
+  renderReply,
+}: {
+  threadId: string;
+  messages: RoomMessage[];
+  renderMessage: (message: RoomMessage) => ReactNode;
+  renderReply: (message: RoomMessage) => ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const root = messages.find((m) => m.id === threadId);
+  const rest = messages.filter((m) => m !== root);
+  const hidden = expanded ? 0 : Math.max(0, rest.length - THREAD_VISIBLE_REPLIES);
+  const shown = rest.slice(hidden);
+  return (
+    // No outer card: a session card inside a bordered block reads as a card
+    // in a card. The replies hang under the comment on a neutral hairline.
+    <div className="flex flex-col gap-2" data-testid="comment-thread">
+      {root && renderMessage(root)}
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="ml-[22px] self-start text-xs text-text-muted transition-colors hover:text-text-primary"
+          data-testid="thread-show-earlier"
+        >
+          Show {hidden} earlier {hidden === 1 ? 'reply' : 'replies'}
+        </button>
+      )}
+      {shown.length > 0 && (
+        <div className="border-border-hairline ml-[7px] flex flex-col gap-2.5 border-l pl-[15px]">
+          {shown.map((message) => (
+            <div key={message.id}>
+              {message.meta.kind === 'comment_mirror' ? renderReply(message) : renderMessage(message)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function RoomTranscript({
   snapshot,
   ownId,
@@ -126,12 +209,26 @@ export function RoomTranscript({
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto" data-testid="room-transcript">
       <div className="mx-auto flex max-w-[44rem] flex-col gap-3 px-5 pt-6 pb-3">
         <AnimatePresence initial={false}>
-          {snapshot.messages.map((message) => {
-            const node = renderItem(message, snapshot, ownId, onStopSession, onResolvePermission, onOpenFile);
+          {groupThreads(snapshot.messages).map((unit) => {
+            const render = (message: RoomMessage) =>
+              renderItem(message, snapshot, ownId, onStopSession, onResolvePermission, onOpenFile);
+            const node =
+              unit.kind === 'message' ? (
+                render(unit.message)
+              ) : (
+                <ThreadBlock
+                  threadId={unit.threadId}
+                  messages={unit.messages}
+                  renderMessage={render}
+                  renderReply={(message) => (
+                    <CommentMirrorLine message={message} snapshot={snapshot} onOpenFile={onOpenFile} inThread />
+                  )}
+                />
+              );
             if (!node) return null;
             return (
               <motion.div
-                key={message.id}
+                key={unit.kind === 'message' ? unit.message.id : `thread-${unit.threadId}`}
                 layout
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}

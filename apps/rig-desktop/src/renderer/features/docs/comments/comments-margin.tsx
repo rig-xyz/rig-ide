@@ -2,8 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, WifiOff } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import {
+  createContext,
   Fragment,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -155,6 +157,33 @@ function useAgentIcons(): Map<string, AgentIconAsset> {
  * menu's People section. Self may appear (Docs allows mentioning yourself);
  * no filtering beyond what the relay already applies (binding membership).
  */
+/**
+ * Display names for comment authors the relay sends without a profile name,
+ * keyed by user id and Clerk id (authors carry the Clerk id): the member's
+ * name, else their email's local part, so a thread never says "someone" for
+ * a known member.
+ */
+const MemberNamesContext = createContext<ReadonlyMap<string, string>>(new Map());
+
+function useMemberNames(path: string): ReadonlyMap<string, string> {
+  const { data } = useQuery({
+    queryKey: ['rig', 'comments', 'members', path],
+    queryFn: () => rpc.rig.comments.listMembers({ absPath: path }),
+    staleTime: 30_000,
+  });
+  return useMemo(() => {
+    const names = new Map<string, string>();
+    if (!data?.success) return names;
+    for (const member of data.data.members) {
+      const name = member.name ?? member.email?.split('@')[0];
+      if (!name) continue;
+      names.set(member.userId, name);
+      if (member.clerkUserId) names.set(member.clerkUserId, name);
+    }
+    return names;
+  }, [data]);
+}
+
 function usePeopleMentions(path: string): PersonMention[] {
   const { data } = useQuery({
     queryKey: ['rig', 'comments', 'members', path],
@@ -754,7 +783,8 @@ function relativeTime(iso: string): string {
 }
 
 function AuthorLine({ message }: { message: RigCommentMessage }) {
-  const human = message.author.name || 'someone';
+  const names = useContext(MemberNamesContext);
+  const human = message.author.name || names.get(message.author.userId ?? '') || 'someone';
   const isAgent = message.author.kind === 'agent';
   const isGuest = message.author.kind === 'guest';
   const model = metaString(message.meta, 'model');
@@ -1593,7 +1623,9 @@ export const MarginRail = observer(function MarginRail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingReveal]);
 
+  const memberNames = useMemberNames(store.path);
   return (
+    <MemberNamesContext.Provider value={memberNames}>
     <div
       // Marks the rail's whole DOM subtree (every card, the composer) as "not
       // away" for `ArtifactView`'s click-away-dismisses-the-active-thread
@@ -1675,5 +1707,6 @@ export const MarginRail = observer(function MarginRail({
         </div>
       ))}
     </div>
+    </MemberNamesContext.Provider>
   );
 });

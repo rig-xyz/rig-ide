@@ -2,11 +2,11 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Composer } from '@renderer/features/spaces/components/composer';
-import { RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
+import { groupThreads, RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
 import { SessionCard } from '@renderer/features/spaces/components/session-card';
 import { buildRoomFeed } from '@renderer/features/spaces/fixtures/room-feed';
 import { FixtureRoomSource } from '@renderer/features/spaces/room-source';
-import type { RoomMember, RoomSnapshot, SessionEvent, SessionRunMeta } from '@renderer/features/spaces/types';
+import type { RoomMember, RoomMessage, RoomSnapshot, SessionEvent, SessionRunMeta } from '@renderer/features/spaces/types';
 // Real tokens — the message-bubble/session-card class assertions below rely
 // on the actual `--accent`/`--bg-2` etc. custom properties being present,
 // same as artifact-view.test.tsx.
@@ -293,3 +293,58 @@ describe('Session card — approvals belong to the owner', () => {
     expect(host.querySelector('[data-testid="permission-waiting-line"]')).toBeNull();
   });
 });
+
+describe('Room transcript — doc comment threads', () => {
+  const msg = (id: string, extra: Partial<RoomMessage>): RoomMessage => ({
+    id,
+    seq: 0,
+    authorId: 'dylan',
+    createdAt: '',
+    time: '11:00',
+    body: id,
+    meta: { kind: 'text' },
+    ...extra,
+  });
+  const comment = (id: string, isReply: boolean) =>
+    msg(id, {
+      threadId: 'c1',
+      meta: { kind: 'comment_mirror', commentId: 'c1', path: 'signups.md', quote: '| W2 |', ...(isReply ? { isReply: true } : {}) },
+    });
+
+  it('groups a thread (comment, replies, its agent run) into one unit placed at its latest activity', () => {
+    const units = groupThreads([
+      comment('c1', false),
+      msg('chat-1', {}),
+      comment('r1', true),
+      msg('run-msg', { threadId: 'c1', meta: { kind: 'session', runId: 'run-1' } }),
+      msg('chat-2', {}),
+    ]);
+    expect(units.map((u) => (u.kind === 'message' ? u.message.id : `thread:${u.messages.map((m) => m.id).join(',')}`))).toEqual([
+      'chat-1',
+      'thread:c1,r1,run-msg',
+      'chat-2',
+    ]);
+  });
+
+  it('shows the latest replies and folds older ones behind "Show N earlier replies"', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const snapshot = replayedSnapshot();
+    snapshot.messages = [comment('c1', false), comment('r1', true), comment('r2', true), comment('r3', true), comment('r4', true), comment('r5', true)];
+    await act(async () => {
+      root.render(<RoomTranscript snapshot={snapshot} ownId="bob" />);
+    });
+    expect(host.querySelectorAll('[data-testid="comment-thread"]')).toHaveLength(1);
+    expect(host.querySelectorAll('[data-testid="comment-thread-reply"]')).toHaveLength(3);
+    const more = host.querySelector<HTMLButtonElement>('[data-testid="thread-show-earlier"]');
+    expect(more?.textContent).toBe('Show 2 earlier replies');
+    await act(async () => {
+      more!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(host.querySelectorAll('[data-testid="comment-thread-reply"]')).toHaveLength(5);
+    await act(async () => root.unmount());
+    host.remove();
+  });
+});
+

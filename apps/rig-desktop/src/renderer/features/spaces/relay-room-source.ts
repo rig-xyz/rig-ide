@@ -522,6 +522,11 @@ export class RelayRoomSource implements RoomSource {
         time: formatTime(row.createdAt),
         body: row.body || undefined,
         meta: comment ?? toMessageMeta(row.kind, meta),
+        ...(comment
+          ? { threadId: row.parentId ?? row.id }
+          : runId && typeof meta.threadId === 'string'
+            ? { threadId: meta.threadId }
+            : {}),
       },
     });
   }

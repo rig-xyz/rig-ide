@@ -589,6 +589,7 @@ export const rigCommentAgentController = createRPCController({
           agent: roomAgent,
           prompt: text,
           hiddenContext,
+          threadId: parentId,
           onPermissionsChanged: publishRoomPermissions,
         });
         if (room) {

@@ -166,6 +166,8 @@ export interface RoomMessage {
   /** Chat text (for 'text' messages) — raw-ish markup: @mentions, /commands, +file.md, bare paths get inline emphasis, same as the demo's `rich()`. */
   body?: string;
   meta: MessageMeta;
+  /** The doc comment thread this belongs to (its first comment's id): the comment itself, its replies, and agent runs answering it. */
+  threadId?: string;
 }
 
 export interface RoomInvite {

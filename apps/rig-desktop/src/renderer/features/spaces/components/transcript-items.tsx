@@ -238,15 +238,34 @@ export function CommentMirrorLine({
   message,
   snapshot,
   onOpenFile,
+  inThread = false,
 }: {
   message: RoomMessage;
   snapshot: RoomSnapshot;
   onOpenFile?: (relPath: string) => void;
+  /** Inside a thread block: a reply is just who, when and what; the file and quote are on the thread's first comment. */
+  inThread?: boolean;
 }) {
   if (message.meta.kind !== 'comment_mirror') return null;
   const { path, quote, replyFromAgent, isReply } = message.meta;
   const author = memberOf(snapshot, message.authorId);
   const who = author?.name ?? message.authorId;
+  if (inThread && isReply) {
+    return (
+      <div className="flex flex-col gap-0.5" data-testid="comment-thread-reply">
+        <div className="flex items-center gap-1.5 text-xs text-text-secondary">
+          {replyFromAgent && <BrandLogo id={agentLogoId(replyFromAgent)} size={12} />}
+          <b className="font-medium text-text-primary">
+            {replyFromAgent ? `${who}'s ${replyFromAgent === 'claude' ? 'Claude' : 'Codex'}` : who}
+          </b>
+          <span className="font-mono text-2xs text-text-muted">{message.time}</span>
+        </div>
+        <p className={cn('text-sm', replyFromAgent ? 'line-clamp-2 text-text-secondary' : 'text-text-primary')}>
+          {message.body}
+        </p>
+      </div>
+    );
+  }
   const fileChip = onOpenFile ? (
     <button
       type="button"

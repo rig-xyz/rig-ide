@@ -356,6 +356,7 @@ export function createSpacesDispatcher(deps: {
     agent: SessionAgent;
     prompt: string;
     extraHiddenContext?: string;
+    threadId?: string;
     onPermissionsChanged?: (pending: AcpPermissionRequest[]) => void;
   }) => Promise<Result<{ runId: string; done: Promise<{ status: SessionStatus; answer: string }> }, string>>;
   /** Answers a held permission request on one of this device's runs. Returns false if this device holds no such request for that run, or the option isn't one it offered. */
@@ -565,6 +566,8 @@ export function createSpacesDispatcher(deps: {
     sourceMessageId: string | null;
     /** Extra hidden context for this turn (e.g. a doc comment thread), after the space context. */
     extraHiddenContext?: string;
+    /** The doc comment thread this run answers; its card is grouped with that thread in the Room. */
+    threadId?: string;
     onSettled?: QueuedTurn['onSettled'];
     onPermissionsChanged?: QueuedTurn['onPermissionsChanged'];
   };
@@ -589,7 +592,7 @@ export function createSpacesDispatcher(deps: {
     const announced = await deps.api.postMessage(spec.bindingId, {
       body: spec.prompt.slice(0, 8000) || 'Agent session',
       kind: 'session',
-      meta: { runId: created.data.id },
+      meta: spec.threadId ? { runId: created.data.id, threadId: spec.threadId } : { runId: created.data.id },
     });
     if (!announced.success) {
       log.warn('Rig spaces dispatch: could not post the session message for a run', {
@@ -696,6 +699,7 @@ export function createSpacesDispatcher(deps: {
     agent: SessionAgent;
     prompt: string;
     extraHiddenContext?: string;
+    threadId?: string;
     onPermissionsChanged?: (pending: AcpPermissionRequest[]) => void;
   }): Promise<Result<{ runId: string; done: Promise<{ status: SessionStatus; answer: string }> }, string>> {
     let settle!: (value: { status: SessionStatus; answer: string }) => void;
