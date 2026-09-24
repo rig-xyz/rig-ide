@@ -721,7 +721,7 @@ export function SessionCard({
         )}
 
         {card.finalAnswer && status !== 'failed' && (
-          <SafeMarkdown content={card.finalAnswer} className="text-sm leading-relaxed text-text-primary/85" />
+          <SafeMarkdown content={card.finalAnswer} className="text-sm leading-relaxed text-text-prose" />
         )}
         {card.finalAnswer && status === 'failed' && (
           <details className="text-xs text-text-muted">

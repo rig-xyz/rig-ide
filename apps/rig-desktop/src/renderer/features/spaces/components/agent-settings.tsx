@@ -1,10 +1,23 @@
-import { Check, ChevronDown } from 'lucide-react';
-import { createContext, useContext, useRef, useState } from 'react';
+import {
+  Check,
+  ChevronDown,
+  Eye,
+  FilePen,
+  ListChecks,
+  Shield,
+  ShieldCheck,
+  ShieldOff,
+  Sparkles,
+  type LucideIcon,
+} from 'lucide-react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { AgentConfig, AgentConfigChange } from '@main/rig/spaces/dispatch';
+import { decideModeSelect, isDangerousMode, shouldPersistMode } from '@renderer/features/chat/permission-mode';
 import { Popover } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import type { AgentKind, SessionCard } from '../types';
+import { AGENT_NAME } from './identity';
 
 /**
  * Your agent's settings in a space, where you see it work: the model, its
@@ -16,7 +29,27 @@ import type { AgentKind, SessionCard } from '../types';
 export type AgentSettingsApi = {
   load: (agent: AgentKind) => Promise<AgentConfig | { error: string }>;
   change: (agent: AgentKind, change: AgentConfigChange) => Promise<AgentConfig | { error: string }>;
+  /** Makes a pick your default for this agent everywhere (new chats and spaces). */
+  remember?: (agent: AgentKind, change: AgentConfigChange) => void;
 };
+
+/** An icon per permission mode, so the ladder reads at a glance. Unknown modes get a plain shield. */
+const MODE_ICON: Record<string, LucideIcon> = {
+  default: ShieldCheck,
+  acceptEdits: FilePen,
+  plan: ListChecks,
+  auto: Sparkles,
+  dontAsk: Sparkles,
+  'read-only': Eye,
+  bypassPermissions: ShieldOff,
+  'agent-full-access': ShieldOff,
+};
+
+/** A description worth showing: not just the raw model id restated. */
+function usefulDescription(description: string | undefined): string | undefined {
+  if (!description) return undefined;
+  return /\s/.test(description.trim()) ? description : undefined;
+}
 
 /** Provided by the Room (it knows the space and can reach the app); absent in the scripted demo. */
 export const AgentSettingsContext = createContext<AgentSettingsApi | null>(null);
@@ -92,6 +125,11 @@ function SettingPill({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [armedId, setArmedId] = useState<string | null>(null);
+  const [everywhere, setEverywhere] = useState(false);
+  useEffect(() => {
+    if (!open) setArmedId(null);
+  }, [open]);
   if (!api) return null;
 
   const openMenu = async () => {
@@ -105,14 +143,26 @@ function SettingPill({
     else setConfig(loaded);
   };
 
-  const pick = async (value: string) => {
+  const choose = async (value: string) => {
+    // Escalating into a mode that acts without asking takes a second click.
+    if (dimension === 'mode') {
+      const decision = decideModeSelect(value, armedId);
+      if (decision.kind === 'confirm') {
+        setArmedId(value);
+        return;
+      }
+    }
+    setArmedId(null);
     setBusy(true);
-    const next = await api.change(agent, { [dimension]: value });
+    const change = { [dimension]: value };
+    const next = await api.change(agent, change);
     setBusy(false);
     if ('error' in next) {
       setError(next.error);
       return;
     }
+    // A mode that acts without asking is never made the default.
+    if (everywhere && api.remember && (dimension !== 'mode' || shouldPersistMode(value))) api.remember(agent, change);
     setConfig(next);
     setOpen(false);
   };
@@ -133,7 +183,8 @@ function SettingPill({
             ? cn(
                 'text-text-primary',
                 dimension === 'model' && 'hover:bg-accent/15 hover:text-accent',
-                dimension !== 'model' && 'hover:bg-warning/15 hover:text-warning'
+                dimension === 'mode' && 'hover:bg-warning/15 hover:text-warning',
+                dimension === 'effort' && 'hover:bg-bg-3'
               )
             : 'hover:bg-bg-2 text-text-muted hover:text-text-primary'
         )}
@@ -145,34 +196,66 @@ function SettingPill({
           strokeWidth={1.5}
         />
       </button>
-      <Popover anchor={ref} open={open} onClose={() => setOpen(false)} align="right" minWidth={240} role="dialog">
-        <div className="flex max-w-80 flex-col p-1" data-testid={`agent-setting-menu-${dimension}`}>
-          <p className="px-2 pt-1 pb-1.5 text-2xs text-text-muted">
-            {DIMENSION_TITLE[dimension]} · applies from the next turn
-          </p>
-          {busy && !group && <p className="px-2 py-1.5 text-xs text-text-muted">Loading…</p>}
-          {error && <p className="px-2 py-1.5 text-xs text-danger">{error}</p>}
-          {group?.options.map((option) => {
-            const selected = option.id === group.selected;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                disabled={busy}
-                onClick={() => void pick(option.id)}
-                className="hover:bg-bg-2 flex w-full items-start gap-2 rounded-control px-2 py-1.5 text-left transition-colors disabled:opacity-60"
-              >
-                <Check className={cn('mt-0.5 size-3.5 shrink-0', selected ? 'text-accent' : 'invisible')} strokeWidth={1.5} />
-                <span className="flex min-w-0 flex-col">
-                  <span className="text-sm text-text-primary">{option.name}</span>
-                  {option.description && <span className="text-xs text-text-muted">{option.description}</span>}
-                </span>
-              </button>
-            );
-          })}
-          {group === null && config && !busy && (
-            <p className="px-2 py-1.5 text-xs text-text-muted">This agent doesn't offer this setting.</p>
-          )}
+      <Popover anchor={ref} open={open} onClose={() => setOpen(false)} align="left" minWidth={260} role="dialog">
+        <div className="flex w-72 flex-col" data-testid={`agent-setting-menu-${dimension}`}>
+          <div className="flex flex-col p-1">
+            {busy && !group && <p className="px-2 py-2 text-xs text-text-muted">Loading…</p>}
+            {error && <p className="px-2 py-2 text-xs text-danger">{error}</p>}
+            {group?.options.map((option) => {
+              const selected = option.id === group.selected;
+              const Icon = dimension === 'mode' ? (MODE_ICON[option.id] ?? Shield) : null;
+              const dangerous = dimension === 'mode' && isDangerousMode(option.id);
+              const armed = armedId === option.id;
+              const description = armed ? 'Acts without asking. Click again to confirm.' : usefulDescription(option.description);
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void choose(option.id)}
+                  title={option.description}
+                  className={cn(
+                    'flex w-full items-center gap-2.5 rounded-control px-2 py-1.5 text-left transition-colors disabled:opacity-60',
+                    selected ? 'bg-bg-2' : 'hover:bg-bg-2',
+                    armed && 'bg-warning/10'
+                  )}
+                >
+                  {Icon && (
+                    <Icon
+                      className={cn('size-3.5 shrink-0', dangerous ? 'text-warning' : 'text-text-muted')}
+                      strokeWidth={1.5}
+                    />
+                  )}
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className={cn('truncate text-sm', dangerous ? 'text-warning' : 'text-text-primary')}>
+                      {option.name}
+                    </span>
+                    {description && (
+                      <span className={cn('truncate text-xs', armed ? 'text-warning' : 'text-text-muted')}>{description}</span>
+                    )}
+                  </span>
+                  {selected && <Check className="size-3.5 shrink-0 text-accent" strokeWidth={2} />}
+                </button>
+              );
+            })}
+            {group === null && config && !busy && (
+              <p className="px-2 py-2 text-xs text-text-muted">This agent doesn't offer this setting.</p>
+            )}
+          </div>
+          <div className="border-border-hairline flex items-center gap-2 border-t px-3 py-2">
+            {api.remember && (
+              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-xs text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={everywhere}
+                  onChange={(e) => setEverywhere(e.target.checked)}
+                  className="accent-accent size-3.5"
+                />
+                <span className="truncate">Default for all my {AGENT_NAME[agent]} sessions</span>
+              </label>
+            )}
+            <span className="ml-auto shrink-0 text-2xs text-text-muted">Next turn</span>
+          </div>
         </div>
       </Popover>
     </>
@@ -228,7 +311,14 @@ export function AgentSettings({
         />
       )}
       {!compact && config?.effort && (
-        <SettingPill agent={agent} dimension="effort" label={nameOf('effort', 'Effort')} config={config} setConfig={setConfig} />
+        <SettingPill
+          agent={agent}
+          dimension="effort"
+          label={nameOf('effort', 'Effort')}
+          config={config}
+          setConfig={setConfig}
+          tinted={tinted}
+        />
       )}
       {!compact && !tinted && usage && <ContextRing usage={usage} />}
     </span>

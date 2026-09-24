@@ -378,6 +378,8 @@ export function createSpacesDispatcher(deps: {
   resolveWorkspace: (bindingId: string) => Promise<string | null>;
   /** Remembers each persistent session's agent session id so a restart resumes it instead of starting over. */
   store?: SpaceSessionStore;
+  /** Your usual model / effort / permission mode for an agent (the ones the rig chat remembers), applied to a brand-new space session. */
+  defaultConfig?: (agent: SessionAgent) => AgentConfigChange;
 }): {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
@@ -590,8 +592,18 @@ export function createSpacesDispatcher(deps: {
         started = null;
       }
     }
+    const fresh = started === null;
     started ??= await deps.acp.startSession({ conversationId, providerId, cwd });
     if (!started.success) return err(started.error);
+    // A brand-new session starts from your usual settings for this agent; a
+    // resumed one keeps whatever it already had.
+    const defaults = fresh ? deps.defaultConfig?.(providerId) : undefined;
+    if (defaults && Object.keys(defaults).length > 0 && deps.acp.setConfig) {
+      const applied = await deps.acp.setConfig(conversationId, defaults);
+      if (!applied.success) {
+        log.warn('Rig spaces dispatch: could not apply your default agent settings', { conversationId, error: applied.error });
+      }
+    }
     deps.store?.set(key, {
       conversationId,
       acpSessionId: started.data.sessionId,

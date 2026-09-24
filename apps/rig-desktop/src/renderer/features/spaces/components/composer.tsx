@@ -174,6 +174,7 @@ export function Composer({
   }, [skillQuery, mentionQuery, skills, members, agents, busyAgents]);
 
   const menuOpen = items.length > 0 && dismissedFor !== value;
+  const mentioning = menuOpen && skillQuery === null;
   useEffect(() => setActive(0), [skillQuery, mentionQuery]);
 
   // Typing presence: on while there's input and recent keystrokes, off
@@ -212,10 +213,10 @@ export function Composer({
 
   return (
     <div className="relative">
-      {menuOpen && (
+      {menuOpen && skillQuery !== null && (
         <div
           className="popover-in border-border-hairline bg-bg-1 shadow-float absolute right-0 bottom-full left-0 z-10 mb-2 flex max-h-72 flex-col overflow-y-auto rounded-card border p-1.5"
-          data-testid={skillQuery !== null ? 'skills-palette' : 'mention-palette'}
+          data-testid="skills-palette"
           role="listbox"
         >
           {skillQuery !== null && <p className="px-2 pt-1 pb-1 text-2xs text-text-muted">Skills in this space</p>}
@@ -250,11 +251,39 @@ export function Composer({
         </div>
       )}
 
+      {mentioning && (
+        // Who you might mean, in the same pill language: ↑/↓ moves, Tab or ↵ picks.
+        <div className="mb-2 flex flex-wrap items-center gap-2 px-1" role="listbox" data-testid="mention-palette">
+          {items.map((item, i) => (
+            <button
+              key={item.key}
+              type="button"
+              role="option"
+              aria-selected={i === active}
+              onMouseEnter={() => setActive(i)}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={item.apply}
+              className={cn(
+                'popover-in shadow-float flex h-[30px] items-center gap-1.5 rounded-full border px-2.5 text-xs whitespace-nowrap backdrop-blur-md transition-colors',
+                i === active
+                  ? 'border-border-strong bg-[var(--pill-fill)] text-text-primary'
+                  : 'border-border-hairline border-dashed bg-[var(--pill-fill)]/60 text-text-secondary'
+              )}
+            >
+              <span className="flex size-5 items-center justify-center">{item.icon}</span>
+              <span>@{item.label}</span>
+              {item.detail && <span className="text-text-muted">{item.detail}</span>}
+              {i === active && (
+                <kbd className="border-border-strong ml-0.5 rounded border px-1 font-mono text-2xs leading-4 text-text-muted">Tab</kbd>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
       {!menuOpen && (replyTo || agentPill || docPill) && (
-        <div
-          className="pointer-events-none absolute right-0 bottom-full left-1 z-10 mb-2 flex flex-wrap items-center gap-2 [&>*]:pointer-events-auto"
-          data-testid="composer-pills"
-        >
+        // In the flow, above the input: the Room makes room for it rather than being covered.
+        <div className="popover-in mb-2 flex flex-wrap items-center gap-2 px-1" data-testid="composer-pills">
           {replyTo && (
             <ContextPill
               reason="You pressed Reply"

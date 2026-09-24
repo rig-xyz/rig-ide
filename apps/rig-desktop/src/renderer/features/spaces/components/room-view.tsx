@@ -268,6 +268,15 @@ export function RoomView({
               if (!result) return { error: "Couldn't reach this agent's settings." };
               return result.success ? result.data : { error: result.error };
             },
+            remember: (agent, change) => {
+              void rpc.rig.settings
+                .set({
+                  ...(change.model ? { lastModelByHarness: { [agent]: change.model } } : {}),
+                  ...(change.effort ? { lastEffortByHarness: { [agent]: change.effort } } : {}),
+                  ...(change.mode ? { lastModeByHarness: { [agent]: change.mode } } : {}),
+                })
+                .catch(() => {});
+            },
             change: async (agent, change) => {
               const result = await rpc.rig.spacesDispatch
                 .setAgentConfig({ bindingId, agent, change })

@@ -44,6 +44,7 @@
   --accent-subtle: rgba(98, 164, 245, 0.16);
   --accent-ink: #0a1522;
   --pill-fill: #232831;
+  --text-prose: #e7e5e0;
   /** The specular band in `.active-shimmer` — brighter than the text it crosses. */
   --shimmer-highlight: #ffffff;
   --success: #4ade80;
@@ -78,6 +79,7 @@
     --accent-subtle: rgba(47, 111, 192, 0.12);
     --accent-ink: #ffffff;
   --pill-fill: #e9ecf0;
+  --text-prose: #2b2a27;
   --shimmer-highlight: #b6bcc6;
     --success: #166534;
     --warning: #9c6a34;
@@ -107,6 +109,7 @@
   --accent-subtle: rgba(98, 164, 245, 0.16);
   --accent-ink: #0a1522;
   --pill-fill: #232831;
+  --text-prose: #e7e5e0;
   /** The specular band in `.active-shimmer` — brighter than the text it crosses. */
   --shimmer-highlight: #ffffff;
   --success: #4ade80;
@@ -140,6 +143,7 @@
   --accent-subtle: rgba(47, 111, 192, 0.12);
   --accent-ink: #ffffff;
   --pill-fill: #e9ecf0;
+  --text-prose: #2b2a27;
   --shimmer-highlight: #b6bcc6;
   --success: #166534;
   --warning: #9c6a34;
@@ -171,6 +175,7 @@
   --color-border-strong: var(--border-strong);
   --color-text-primary: var(--text-primary);
   --color-text-secondary: var(--text-secondary);
+  --color-text-prose: var(--text-prose);
   --color-text-muted: var(--text-muted);
   --color-accent: var(--accent);
   --color-accent-subtle: var(--accent-subtle);

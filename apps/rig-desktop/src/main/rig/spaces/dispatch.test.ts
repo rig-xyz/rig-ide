@@ -754,6 +754,25 @@ describe('createSpacesDispatcher', () => {
     expect(fake.started).toHaveLength(1); // same session, not a new one
   });
 
+  it('starts a brand-new space session from your usual agent settings', async () => {
+    const { api } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const applied: unknown[] = [];
+    fake.acp.setConfig = async (_conversationId, change) => {
+      applied.push(change);
+      return ok(undefined);
+    };
+    const { dispatch } = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      defaultConfig: (agent) => (agent === 'claude' ? { model: 'sonnet', mode: 'acceptEdits' } : {}),
+    });
+    const result = await dispatch(makeRequest({ id: 'req-defaults' }));
+    if ('failed' in result) throw new Error('expected success');
+    expect(applied).toEqual([{ model: 'sonnet', mode: 'acceptEdits' }]);
+  });
+
   it('fails without starting anything when no local workspace is bound to the request', async () => {
     const { api, createdRuns } = makeFakeApi();
     const fake = makeFakeAcp();

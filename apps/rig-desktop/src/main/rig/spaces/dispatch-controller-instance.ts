@@ -44,6 +44,13 @@ function realDeps(): SpacesDispatchControllerDeps {
         resolveWorkspace: async (bindingId) =>
           (await resolveLocalPathsImpl([bindingId]))[bindingId] ?? null,
         store: createFileSpaceSessionStore(join(app.getPath('userData'), 'spaces-sessions.json')),
+        defaultConfig: (agent) => {
+          const settings = rigSettingsStore.get();
+          const model = settings.lastModelByHarness[agent];
+          const effort = settings.lastEffortByHarness[agent];
+          const mode = settings.lastModeByHarness[agent];
+          return { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(mode ? { mode } : {}) };
+        },
       });
       const poller = new RequestClaimPoller({
         api,
