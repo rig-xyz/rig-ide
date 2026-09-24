@@ -177,6 +177,7 @@ export function spacesHiddenContext(
     'Your final message is your reply to the room. Do not also post it with `rig chat send`.',
     'Keep the reply short and direct; members can expand the card to see your full trace.',
     'When asked why something changed, use the rig change history (`rig history <path>`) rather than guessing.',
+    "When asked to invite someone, run `rig share <email>` in the space's folder: the request is the go-ahead, and the command's approval prompt is the confirmation.",
   ];
   if (roomLines.length > 0) {
     lines.push(
