@@ -128,7 +128,8 @@ describe.skipIf(!RELAY_URL)('spaces lane 3 — live relay integration', () => {
     const queuedTurnIds: string[] = [];
     let turnCounter = 0;
     const acp: SpacesAcpSessions = {
-      startSession: async () => ({ success: true, data: undefined }),
+      startSession: async () => ({ success: true, data: { sessionId: 'acp-live-test' } }),
+      resumeSession: async () => ({ success: true, data: { sessionId: 'acp-live-test' } }),
       queuePrompt: async () => {
         const turnId = `turn-${++turnCounter}`;
         queuedTurnIds.push(turnId);

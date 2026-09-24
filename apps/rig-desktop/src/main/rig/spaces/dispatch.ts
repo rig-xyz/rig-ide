@@ -48,12 +48,19 @@ export type RawSessionEvent =
   | { kind: 'turn_end'; turnId: string; stopReason: string | null };
 
 export interface SpacesAcpSessions {
-  /** Starts a brand-new local ACP session. Resolves once the session exists — never waits for a turn. */
+  /** Starts a brand-new local ACP session. Resolves with the agent's session id once the session exists — never waits for a turn. */
   startSession(input: {
     conversationId: string;
     providerId: SessionAgent;
     cwd: string;
-  }): Promise<Result<void, string>>;
+  }): Promise<Result<{ sessionId: string }, string>>;
+  /** Reopens an earlier ACP session by its agent session id (ACP `session/load`), with its context intact. */
+  resumeSession(input: {
+    conversationId: string;
+    providerId: SessionAgent;
+    cwd: string;
+    sessionId: string;
+  }): Promise<Result<{ sessionId: string }, string>>;
   /**
    * Submits one prompt: starts a turn when the session is idle, or queues
    * it behind the running one. Resolves as soon as it's submitted, never
@@ -96,6 +103,21 @@ export interface SpacesAcpSessions {
 }
 
 type PersistentKey = string;
+
+/** What survives an app restart for one persistent space session, so the agent keeps its memory. */
+export type StoredSpaceSession = {
+  conversationId: string;
+  acpSessionId: string;
+  providerId: SessionAgent;
+  cwd: string;
+  updatedAt: number;
+};
+
+/** Where persistent space sessions are remembered across restarts (a small file in the app's data folder). */
+export interface SpaceSessionStore {
+  get(key: string): StoredSpaceSession | null;
+  set(key: string, value: StoredSpaceSession): void;
+}
 
 type QueuedTurn = {
   requestId: string;
@@ -290,6 +312,8 @@ export function createSpacesDispatcher(deps: {
   acp: SpacesAcpSessions;
   /** Resolves a relay `bindingId` to this device's local workspace root, or null when nothing here is bound to it. */
   resolveWorkspace: (bindingId: string) => Promise<string | null>;
+  /** Remembers each persistent session's agent session id so a restart resumes it instead of starting over. */
+  store?: SpaceSessionStore;
 }): {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
@@ -429,7 +453,11 @@ export function createSpacesDispatcher(deps: {
     const existing = sessions.get(key);
     if (existing) return ok(existing);
 
-    const conversationId = randomUUID();
+    // Memory across restarts: reuse the stored conversation and resume the
+    // agent's own session (same cwd) rather than starting from nothing.
+    const stored = deps.store?.get(key) ?? null;
+    const resumable = stored && stored.providerId === providerId && stored.cwd === cwd ? stored : null;
+    const conversationId = resumable?.conversationId ?? randomUUID();
     const session: PersistentSession = {
       conversationId,
       providerId,
@@ -442,8 +470,31 @@ export function createSpacesDispatcher(deps: {
     // very first turn is missed (the raw log is created on first subscribe).
     await deps.acp.subscribeRaw(conversationId, (raw) => forwardRaw(session, raw));
 
-    const started = await deps.acp.startSession({ conversationId, providerId, cwd });
+    let started: Result<{ sessionId: string }, string> | null = null;
+    if (resumable) {
+      started = await deps.acp.resumeSession({
+        conversationId,
+        providerId,
+        cwd,
+        sessionId: resumable.acpSessionId,
+      });
+      if (!started.success) {
+        log.warn('Rig spaces dispatch: could not resume the space session, starting fresh', {
+          conversationId,
+          error: started.error,
+        });
+        started = null;
+      }
+    }
+    started ??= await deps.acp.startSession({ conversationId, providerId, cwd });
     if (!started.success) return err(started.error);
+    deps.store?.set(key, {
+      conversationId,
+      acpSessionId: started.data.sessionId,
+      providerId,
+      cwd,
+      updatedAt: Date.now(),
+    });
 
     // Permissions: the session-state topic only exists once the session
     // does. Nothing is missed: no turn has been prompted yet.
@@ -621,7 +672,24 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
           model: null,
         },
       });
-      return result.success ? ok(undefined) : err(describeAcpError(result.error));
+      return result.success ? ok({ sessionId: result.data.sessionId }) : err(describeAcpError(result.error));
+    },
+
+    async resumeSession({ conversationId, providerId, cwd, sessionId }) {
+      const client = await getClient();
+      const result = await client.resumeSession({
+        input: {
+          conversationId,
+          projectId: 'space',
+          taskId: 'space',
+          providerId,
+          workspaceId: cwd,
+          cwd,
+          sessionId,
+          model: null,
+        },
+      });
+      return result.success ? ok({ sessionId: result.data.sessionId }) : err(describeAcpError(result.error));
     },
 
     async queuePrompt(conversationId, text, hiddenContext, onRejected) {

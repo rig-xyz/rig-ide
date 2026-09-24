@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { app } from 'electron';
 import { getAcpRuntimeClient } from '@main/core/acp/controller';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { isError, resolveContext } from '../account';
@@ -7,6 +9,7 @@ import { createDeviceIdResolver, createRuntimeAcpSessions, createSpacesDispatche
 import { SpacesDispatchController, type SpacesDispatchControllerDeps } from './dispatch-controller';
 import { createHttpSpacesRelayApi } from './relay-api';
 import { RequestClaimPoller } from './request-claim';
+import { createFileSpaceSessionStore } from './session-store';
 
 /**
  * Boot-only wiring for `SpacesDispatchController` — real settings store,
@@ -32,6 +35,7 @@ function realDeps(): SpacesDispatchControllerDeps {
         acp: createRuntimeAcpSessions(getAcpRuntimeClient),
         resolveWorkspace: async (bindingId) =>
           (await resolveLocalPathsImpl([bindingId]))[bindingId] ?? null,
+        store: createFileSpaceSessionStore(join(app.getPath('userData'), 'spaces-sessions.json')),
       });
       const poller = new RequestClaimPoller({
         api,
