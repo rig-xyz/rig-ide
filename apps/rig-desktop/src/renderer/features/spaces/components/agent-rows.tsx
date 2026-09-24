@@ -1,6 +1,7 @@
 import { effectiveRunStatus, projectSessionCard } from '../projection';
-import type { RoomSnapshot } from '../types';
+import type { AgentKind, RoomSnapshot } from '../types';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
+import { AgentSettings } from './agent-settings';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 
 /**
@@ -13,6 +14,14 @@ export function AgentRows({ snapshot, selfUserId }: { snapshot: RoomSnapshot; se
   const mine = snapshot.agents.filter((a) => a.owner === selfUserId);
   if (mine.length === 0) return null;
   const runs = Object.values(snapshot.sessionMetaByRun);
+  // The model your agent last ran here, until its own list is loaded.
+  const lastModel = (kind: AgentKind): string | null => {
+    const latest = runs
+      .filter((m) => m.owner === selfUserId && m.agent === kind)
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))[0];
+    if (!latest) return null;
+    return projectSessionCard(snapshot.sessionEventsByRun[latest.id] ?? []).model ?? (latest.model !== 'unknown' ? latest.model : null);
+  };
   return (
     <>
       {mine.map((agent) => {
@@ -31,9 +40,9 @@ export function AgentRows({ snapshot, selfUserId }: { snapshot: RoomSnapshot; se
           >
             <AgentAvatar agent={agent.agent} owner={snapshot.members.find((m) => m.id === selfUserId)} size="sm" />
             <span className="text-xs text-text-primary">{AGENT_NAME[agent.agent]}</span>
-            <span className="ml-auto flex items-center gap-1.5 font-mono text-2xs text-text-muted">
-              {busy ? 'working' : `@${agent.agent}`}
+            <span className="ml-auto flex items-center gap-1.5 text-2xs text-text-muted">
               {busy && <DotMatrix state="thinking" size="sm" />}
+              <AgentSettings agent={agent.agent} model={lastModel(agent.agent) ?? (agent.model || null)} compact />
             </span>
           </div>
         );

@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Composer } from '@renderer/features/spaces/components/composer';
 import { ConversationMap } from '@renderer/features/spaces/components/conversation-map';
+import { AgentSettingsContext, type AgentSettingsApi } from '@renderer/features/spaces/components/agent-settings';
 import { groupThreads, RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
 import { SessionCard } from '@renderer/features/spaces/components/session-card';
 import { buildRoomFeed } from '@renderer/features/spaces/fixtures/room-feed';
@@ -532,6 +533,56 @@ describe('Session card — plan and thinking', () => {
       chips[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(opened).toEqual(['/w/signups.md']);
+  });
+
+  it("shows your agent's settings on its latest turn and changes them from the menu", async () => {
+    const changes: unknown[] = [];
+    let mode = 'default';
+    const config = () => ({
+      model: { selected: 'opus', options: [{ id: 'opus', name: 'Opus 5.5' }, { id: 'sonnet', name: 'Sonnet 5' }] },
+      effort: null,
+      mode: {
+        selected: mode,
+        options: [
+          { id: 'default', name: 'Ask first', description: 'Asks before edits and commands' },
+          { id: 'acceptEdits', name: 'Auto-edit' },
+        ],
+      },
+    });
+    const api: AgentSettingsApi = {
+      load: async () => config(),
+      change: async (_agent, change) => {
+        changes.push(change);
+        if (change.mode) mode = change.mode;
+        return config();
+      },
+    };
+    const done: SessionEvent[] = [
+      { seq: 1, kind: 'usage_update', payload: { size: 1000000, used: 46000 } },
+      { seq: 2, kind: 'turn_ended', payload: { status: 'done' } },
+    ];
+    await act(async () => {
+      root.render(
+        <AgentSettingsContext.Provider value={api}>
+          <SessionCard meta={{ ...meta, status: 'done' }} events={done} owner={undefined} viewerIsOwner showSettings />
+        </AgentSettingsContext.Provider>
+      );
+    });
+    expect(host.querySelector('[data-testid="agent-settings"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Context 5% used"]')).not.toBeNull();
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="agent-setting-mode"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="agent-setting-menu-mode"]')?.textContent).toContain('Auto-edit'));
+    const autoEdit = [...document.querySelectorAll<HTMLButtonElement>('[data-testid="agent-setting-menu-mode"] button')].find((b) =>
+      b.textContent?.includes('Auto-edit')
+    )!;
+    await act(async () => {
+      autoEdit.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(changes).toEqual([{ mode: 'acceptEdits' }]);
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="agent-setting-mode"]')?.textContent).toContain('Auto-edit'));
   });
 
   it('offers Retry on a failed run and Continue on a stopped one, as new turns for your agent', async () => {

@@ -10,6 +10,7 @@ import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
 import { Composer } from './composer';
 import { RoomTranscript } from './room-transcript';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
+import { AgentSettingsContext, type AgentSettingsApi } from './agent-settings';
 import { SpaceCard } from './space-card';
 
 /**
@@ -313,7 +314,29 @@ export function RoomView({
     return <div className="bg-bg-0 flex h-full min-h-0 flex-col" data-testid="room-view" />;
   }
 
+  const agentSettingsApi = useMemo<AgentSettingsApi | null>(
+    () =>
+      source instanceof RelayRoomSource
+        ? {
+            load: async (agent) => {
+              const result = await rpc.rig.spacesDispatch.agentConfig({ bindingId, agent }).catch(() => null);
+              if (!result) return { error: "Couldn't reach this agent's settings." };
+              return result.success ? result.data : { error: result.error };
+            },
+            change: async (agent, change) => {
+              const result = await rpc.rig.spacesDispatch
+                .setAgentConfig({ bindingId, agent, change })
+                .catch(() => null);
+              if (!result) return { error: "Couldn't change this agent's settings." };
+              return result.success ? result.data : { error: result.error };
+            },
+          }
+        : null,
+    [source, bindingId]
+  );
+
   return (
+    <AgentSettingsContext.Provider value={agentSettingsApi}>
     <div className="bg-bg-0 relative flex h-full min-h-0 flex-col" data-testid="room-view">
       <div className="border-border-hairline bg-bg-1 flex h-9 shrink-0 items-center gap-2 border-b px-3">
         <span className="text-xs font-medium text-text-primary">{snapshot.name}</span>
@@ -413,5 +436,6 @@ export function RoomView({
         )}
       </div>
     </div>
+    </AgentSettingsContext.Provider>
   );
 }

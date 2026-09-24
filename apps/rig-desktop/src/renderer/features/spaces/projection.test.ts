@@ -177,6 +177,14 @@ describe('projectSessionCard — against real exported fixtures', () => {
     ]);
   });
 
+  it('keeps the latest context usage and cost the agent reported', () => {
+    const card = projectSessionCard([
+      { seq: 1, kind: 'usage_update', payload: { size: 1000000, used: 40000 } },
+      { seq: 2, kind: 'usage_update', payload: { size: 1000000, used: 46385, cost: { amount: 0.29, currency: 'USD' } } },
+    ]);
+    expect(card.usage).toEqual({ used: 46385, size: 1000000, costUsd: 0.29 });
+  });
+
   it('replays relay-coalesced chunk runs, so the final answer is not lost', () => {
     const chunk = (text: string) => ({ messageId: 'm1', content: { type: 'text', text } });
     const card = projectSessionCard([

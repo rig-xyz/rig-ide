@@ -723,6 +723,37 @@ describe('createSpacesDispatcher', () => {
     expect(postedEvents.at(-1)).toEqual({ runId: 'lost-run', kinds: ['turn_ended'], payloads: [{ status: 'stopped' }] });
   });
 
+  it("reads and changes your space agent's settings on its persistent session", async () => {
+    const { api } = makeFakeApi();
+    const fake = makeFakeAcp();
+    let mode = 'default';
+    const changes: unknown[] = [];
+    fake.acp.readConfig = async () => ({
+      model: { selected: 'opus', options: [{ id: 'opus', name: 'Opus 5.5' }, { id: 'sonnet', name: 'Sonnet 5' }] },
+      effort: null,
+      mode: { selected: mode, options: [{ id: 'default', name: 'Ask first' }, { id: 'acceptEdits', name: 'Auto-edit' }] },
+    });
+    fake.acp.setConfig = async (_conversationId, change) => {
+      changes.push(change);
+      if (change.mode) mode = change.mode;
+      return ok(undefined);
+    };
+    const { agentConfig, setAgentConfig } = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+    });
+
+    const read = await agentConfig('b1', 'u1', 'claude');
+    expect(read.success && read.data.model?.selected).toBe('opus');
+    expect(fake.started).toHaveLength(1); // reached (started) the session once
+
+    const changed = await setAgentConfig('b1', 'u1', 'claude', { mode: 'acceptEdits' });
+    expect(changes).toEqual([{ mode: 'acceptEdits' }]);
+    expect(changed.success && changed.data.mode?.selected).toBe('acceptEdits');
+    expect(fake.started).toHaveLength(1); // same session, not a new one
+  });
+
   it('fails without starting anything when no local workspace is bound to the request', async () => {
     const { api, createdRuns } = makeFakeApi();
     const fake = makeFakeAcp();

@@ -121,6 +121,8 @@ export interface SessionCard {
   plan: SessionPlanEntry[];
   /** The agent's visible reasoning, accumulated across the turn. */
   thinking: string;
+  /** How full the agent's context window was at its last report (tokens), and what the turn cost, when it says. */
+  usage: { used: number; size: number; costUsd: number | null } | null;
   permissions: {
     pending: SessionPermissionPending[];
     decided: SessionPermissionDecided[];

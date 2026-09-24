@@ -103,7 +103,26 @@ export interface SpacesAcpSessions {
   resolvePermission(conversationId: string, requestId: string, optionId: string): Promise<void>;
   /** The model the session is running, when the agent reports one. */
   readModel?(conversationId: string): Promise<string | null>;
+  /** The session's model / effort / permission-mode choices and current picks. */
+  readConfig?(conversationId: string): Promise<AgentConfig | null>;
+  /** Changes one or more of those settings; applies from the next turn. */
+  setConfig?(conversationId: string, change: AgentConfigChange): Promise<Result<void, string>>;
 }
+
+/** One of an agent's settings: what's picked, and what it could be. */
+export type AgentConfigChoice = {
+  selected: string | null;
+  options: Array<{ id: string; name: string; description?: string }>;
+};
+
+/** Your space agent's own settings, as its session reports them. Null groups: the agent doesn't offer that setting. */
+export type AgentConfig = {
+  model: AgentConfigChoice | null;
+  effort: AgentConfigChoice | null;
+  mode: AgentConfigChoice | null;
+};
+
+export type AgentConfigChange = { model?: string; effort?: string; mode?: string };
 
 type PersistentKey = string;
 
@@ -364,6 +383,13 @@ export function createSpacesDispatcher(deps: {
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
   stopRun: (runId: string, bindingId?: string) => Promise<boolean>;
   settleIfNotLive: (runId: string, bindingId: string) => Promise<boolean>;
+  agentConfig: (bindingId: string, ownerUserId: string, agent: SessionAgent) => Promise<Result<AgentConfig, string>>;
+  setAgentConfig: (
+    bindingId: string,
+    ownerUserId: string,
+    agent: SessionAgent,
+    change: AgentConfigChange
+  ) => Promise<Result<AgentConfig, string>>;
   /** Marks runs left running by a previous app process as failed. */
   settleInterrupted: () => Promise<void>;
   /** Runs a turn in the owner's room agent without a relay agent request (see the function's own doc). */
@@ -767,6 +793,41 @@ export function createSpacesDispatcher(deps: {
     return closeOutStaleRun(bindingId, runId);
   }
 
+  /**
+   * Your space agent's settings. Reaches its persistent session first
+   * (resuming it if this process hasn't yet), so this is only called when
+   * someone actually opens a selector.
+   */
+  async function agentConfig(
+    bindingId: string,
+    ownerUserId: string,
+    agent: SessionAgent
+  ): Promise<Result<AgentConfig, string>> {
+    if (!deps.acp.readConfig) return err('this agent runtime has no settings to show');
+    const cwd = await deps.resolveWorkspace(bindingId);
+    if (!cwd) return err("this space's folder isn't open on this device");
+    const session = await ensureSession(keyFor(bindingId, ownerUserId, agent), bindingId, agent, cwd);
+    if (!session.success) return err(session.error);
+    const config = await deps.acp.readConfig(session.data.conversationId);
+    return config ? ok(config) : err("the agent hasn't reported its settings yet");
+  }
+
+  async function setAgentConfig(
+    bindingId: string,
+    ownerUserId: string,
+    agent: SessionAgent,
+    change: AgentConfigChange
+  ): Promise<Result<AgentConfig, string>> {
+    if (!deps.acp.setConfig) return err("this agent runtime can't change settings");
+    const cwd = await deps.resolveWorkspace(bindingId);
+    if (!cwd) return err("this space's folder isn't open on this device");
+    const session = await ensureSession(keyFor(bindingId, ownerUserId, agent), bindingId, agent, cwd);
+    if (!session.success) return err(session.error);
+    const set = await deps.acp.setConfig(session.data.conversationId, change);
+    if (!set.success) return err(set.error);
+    return agentConfig(bindingId, ownerUserId, agent);
+  }
+
   async function closeOutStaleRun(bindingId: string, runId: string): Promise<boolean> {
     const events = await deps.api.getSessionEvents(bindingId, runId, 0);
     if (!events.success) {
@@ -823,7 +884,16 @@ export function createSpacesDispatcher(deps: {
     }
   }
 
-  return { dispatch, runLocal, stopRun, resolvePermission, settleInterrupted, settleIfNotLive };
+  return {
+    dispatch,
+    runLocal,
+    stopRun,
+    resolvePermission,
+    settleInterrupted,
+    settleIfNotLive,
+    agentConfig,
+    setAgentConfig,
+  };
 }
 
 /**
@@ -984,6 +1054,40 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
       } catch {
         return null;
       }
+    },
+
+    async readConfig(conversationId) {
+      const client = await getClient();
+      try {
+        const { data } = await client.session.state({ conversationId }, 'config').snapshot();
+        const choice = (group: { selected: string | null; available: Array<{ id: string; name: string; description?: string }> } | null | undefined) =>
+          group
+            ? {
+                selected: group.selected,
+                options: group.available.map((o) => ({ id: o.id, name: o.name, ...(o.description ? { description: o.description } : {}) })),
+              }
+            : null;
+        return { model: choice(data.modelOptions), effort: choice(data.efforts), mode: choice(data.modeOptions) };
+      } catch {
+        return null;
+      }
+    },
+
+    async setConfig(conversationId, change) {
+      const client = await getClient();
+      if (change.model) {
+        const r = await client.setModelOption({ conversationId, dimension: 'model', value: change.model });
+        if (!r.success) return err(describeAcpError(r.error));
+      }
+      if (change.effort) {
+        const r = await client.setModelOption({ conversationId, dimension: 'effort', value: change.effort });
+        if (!r.success) return err(describeAcpError(r.error));
+      }
+      if (change.mode) {
+        const r = await client.setModeOption({ conversationId, value: change.mode });
+        if (!r.success) return err(describeAcpError(r.error));
+      }
+      return ok(undefined);
     },
 
     async resolvePermission(conversationId, requestId, optionId) {

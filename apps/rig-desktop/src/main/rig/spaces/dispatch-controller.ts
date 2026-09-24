@@ -1,5 +1,6 @@
 import { log } from '@main/lib/logger';
-import type { createSpacesDispatcher } from './dispatch';
+import { err, type Result } from '@emdash/shared';
+import type { AgentConfig, AgentConfigChange, createSpacesDispatcher } from './dispatch';
 import type { RequestClaimPoller } from './request-claim';
 
 /**
@@ -76,6 +77,26 @@ export class SpacesDispatchController {
   async stopRun(runId: string, bindingId?: string): Promise<boolean> {
     if (!this.dispatcher) return false;
     return this.dispatcher.stopRun(runId, bindingId);
+  }
+
+  /** Your agent's settings in a space (model, effort, permission mode). */
+  async agentConfig(
+    bindingId: string,
+    ownerUserId: string,
+    agent: 'claude' | 'codex'
+  ): Promise<Result<AgentConfig, string>> {
+    if (!this.dispatcher) return err('Spaces agents are not running on this device');
+    return this.dispatcher.agentConfig(bindingId, ownerUserId, agent);
+  }
+
+  async setAgentConfig(
+    bindingId: string,
+    ownerUserId: string,
+    agent: 'claude' | 'codex',
+    change: AgentConfigChange
+  ): Promise<Result<AgentConfig, string>> {
+    if (!this.dispatcher) return err('Spaces agents are not running on this device');
+    return this.dispatcher.setAgentConfig(bindingId, ownerUserId, agent, change);
   }
 
   /** Used by the `spacesDispatch.settleStaleRun` RPC route: the Room found one of your runs still "running" that nothing here runs. */

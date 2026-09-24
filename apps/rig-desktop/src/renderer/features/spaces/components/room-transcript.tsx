@@ -72,6 +72,16 @@ function isQueued(meta: SessionRunMeta, snapshot: RoomSnapshot): boolean {
   );
 }
 
+/** This run is the most recent one of its owner's agent: where that agent's settings show. */
+function isLatestRunOf(meta: SessionRunMeta, snapshot: RoomSnapshot): boolean {
+  return !Object.values(snapshot.sessionMetaByRun).some(
+    (other) =>
+      other.agent === meta.agent &&
+      other.owner === meta.owner &&
+      Date.parse(other.startedAt) > Date.parse(meta.startedAt)
+  );
+}
+
 function renderItem(
   message: RoomMessage,
   snapshot: RoomSnapshot,
@@ -134,6 +144,7 @@ function renderItem(
           otherAgents={snapshot.agents
             .filter((a) => a.owner === ownId && a.agent !== meta.agent)
             .map((a) => a.agent)}
+          showSettings={meta.owner === ownId && isLatestRunOf(meta, snapshot)}
           onStop={canStop ? () => onStopSession(meta.id) : undefined}
           onResolvePermission={
             canResolve

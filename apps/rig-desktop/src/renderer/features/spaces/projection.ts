@@ -44,6 +44,7 @@ export function newSessionCard(): SessionCard {
     finalAnswer: '',
     plan: [],
     thinking: '',
+    usage: null,
     permissions: { pending: [], decided: [] },
     lastSeq: 0,
     model: null,
@@ -261,6 +262,16 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
           entry.status === 'completed' || entry.status === 'in_progress' ? entry.status : ('pending' as const);
         return [{ content: entry.content, status }];
       });
+      break;
+    }
+    case 'usage_update': {
+      const used = typeof p.used === 'number' ? p.used : null;
+      const size = typeof p.size === 'number' ? p.size : null;
+      if (used === null || size === null || size <= 0) break;
+      const cost = p.cost as { amount?: unknown; currency?: unknown } | undefined;
+      const costUsd =
+        cost && typeof cost.amount === 'number' && cost.currency === 'USD' ? cost.amount : (state.usage?.costUsd ?? null);
+      state.usage = { used, size, costUsd };
       break;
     }
     case 'run_model': {

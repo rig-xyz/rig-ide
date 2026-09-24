@@ -6,7 +6,14 @@ import { createRPCController } from '@shared/lib/ipc/rpc';
 import { isError, resolveContext, rigAccountController } from '../account';
 import { resolveLocalPathsImpl } from '../recent-rigs';
 import { rigSettingsStore } from '../settings-instance';
-import { createDeviceIdResolver, createRuntimeAcpSessions, createSpacesDispatcher } from './dispatch';
+import { err, type Result } from '@emdash/shared';
+import {
+  type AgentConfig,
+  type AgentConfigChange,
+  createDeviceIdResolver,
+  createRuntimeAcpSessions,
+  createSpacesDispatcher,
+} from './dispatch';
 import { SpacesDispatchController, type SpacesDispatchControllerDeps } from './dispatch-controller';
 import { createHttpSpacesRelayApi } from './relay-api';
 import { RequestClaimPoller } from './request-claim';
@@ -107,6 +114,31 @@ export const rigSpacesDispatchController = createRPCController({
   stopRun: async ({ runId, bindingId }: { runId: string; bindingId?: string }): Promise<{ stopped: boolean }> => ({
     stopped: await spacesDispatchController.stopRun(runId, bindingId),
   }),
+  /** Your agent's settings in this space; reaches its session, so only call it when a selector opens. */
+  agentConfig: async ({
+    bindingId,
+    agent,
+  }: {
+    bindingId: string;
+    agent: 'claude' | 'codex';
+  }): Promise<Result<AgentConfig, string>> => {
+    const me = await relayApi.whoami();
+    if (!me.success) return err(me.error.message);
+    return spacesDispatchController.agentConfig(bindingId, me.data.id, agent);
+  },
+  setAgentConfig: async ({
+    bindingId,
+    agent,
+    change,
+  }: {
+    bindingId: string;
+    agent: 'claude' | 'codex';
+    change: AgentConfigChange;
+  }): Promise<Result<AgentConfig, string>> => {
+    const me = await relayApi.whoami();
+    if (!me.success) return err(me.error.message);
+    return spacesDispatchController.setAgentConfig(bindingId, me.data.id, agent, change);
+  },
   settleStaleRun: async ({ runId, bindingId }: { runId: string; bindingId: string }): Promise<{ settled: boolean }> => ({
     settled: await spacesDispatchController.settleStaleRun(runId, bindingId),
   }),
