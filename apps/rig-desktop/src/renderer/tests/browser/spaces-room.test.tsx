@@ -499,6 +499,33 @@ describe('Session card — plan and thinking', () => {
     expect(host.querySelector('[data-testid="session-thinking"]')?.textContent).toContain('6 words');
   });
 
+  it('lists what the answer rests on as Sources, leaving out files it changed', async () => {
+    const opened: string[] = [];
+    const run: SessionEvent[] = [
+      { seq: 1, kind: 'tool_call', payload: { toolCallId: 'a', kind: 'read', title: 'Read signups.md', status: 'completed', locations: [{ path: '/w/signups.md' }] } },
+      { seq: 2, kind: 'tool_call', payload: { toolCallId: 'b', kind: 'read', title: 'Read AGENTS.md', status: 'completed' } },
+      {
+        seq: 3,
+        kind: 'tool_call',
+        payload: { toolCallId: 'c', kind: 'edit', title: 'Edit notes.md', status: 'completed', content: [{ type: 'diff', path: '/w/notes.md', oldText: 'a', newText: 'b' }] },
+      },
+      { seq: 4, kind: 'tool_call', payload: { toolCallId: 'd', kind: 'read', title: 'Read notes.md', status: 'completed', locations: [{ path: '/w/notes.md' }] } },
+      { seq: 5, kind: 'agent_message_chunk', payload: { messageId: 'x', content: { type: 'text', text: 'Here you go.' } } },
+      { seq: 6, kind: 'turn_ended', payload: { status: 'done' } },
+    ];
+    await act(async () => {
+      root.render(
+        <SessionCard meta={{ ...meta, status: 'done' }} events={run} owner={undefined} onOpenFile={(p) => opened.push(p)} />
+      );
+    });
+    const chips = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="session-sources"] button')];
+    expect(chips.map((c) => c.textContent)).toEqual(['signups.md', 'AGENTS.md']);
+    await act(async () => {
+      chips[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(opened).toEqual(['/w/signups.md']);
+  });
+
   it('offers Retry on a failed run and Continue on a stopped one, as new turns for your agent', async () => {
     const reruns: Array<[string, string]> = [];
     const failed: SessionEvent[] = [{ seq: 1, kind: 'turn_ended', payload: { status: 'failed', reason: 'timed out' } }];

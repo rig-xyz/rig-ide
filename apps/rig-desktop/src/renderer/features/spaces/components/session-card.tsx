@@ -335,6 +335,55 @@ function ApprovalCard({
   );
 }
 
+/**
+ * The files an answer rests on: what the agent read, by the paths its tools
+ * reported (or, failing that, a "Read <file>" title). Files it changed are
+ * shown as file cards instead, so they're left out here.
+ */
+export function sourcesOf(card: SessionCardData): string[] {
+  const changed = new Set(card.outputs.map((o) => o.path));
+  const seen = new Set<string>();
+  const sources: string[] = [];
+  for (const step of card.steps) {
+    if (step.kind !== 'read' && step.kind !== 'search' && step.kind !== 'fetch') continue;
+    const paths = step.locations?.map((l) => l.path).filter(Boolean) ?? [];
+    if (paths.length === 0 && step.kind === 'read' && step.title?.startsWith('Read ')) {
+      paths.push(step.title.slice(5).trim());
+    }
+    for (const path of paths) {
+      if (changed.has(path) || seen.has(path)) continue;
+      seen.add(path);
+      sources.push(path);
+    }
+  }
+  return sources;
+}
+
+function SourcesRow({ sources, onOpen }: { sources: string[]; onOpen?: (path: string) => void }) {
+  if (sources.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" data-testid="session-sources">
+      <span className="mr-0.5 text-2xs text-text-muted">Sources</span>
+      {sources.map((path) => {
+        const name = path.split('/').pop() || path;
+        return (
+          <button
+            key={path}
+            type="button"
+            onClick={onOpen ? () => onOpen(path) : undefined}
+            disabled={!onOpen}
+            title={path}
+            className="border-border-hairline bg-bg-1 enabled:hover:border-border-strong enabled:hover:text-text-primary flex h-6 items-center gap-1.5 rounded-chip border px-2 text-xs text-text-secondary transition-colors"
+          >
+            <FileText className="size-3 shrink-0" strokeWidth={1.5} />
+            <span className="max-w-48 truncate">{name}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** A file the agent changed, as something you can open. */
 function FileCard({ output, onOpen }: { output: SessionOutput; onOpen?: () => void }) {
   const name = output.path.split('/').pop() ?? output.path;
@@ -617,6 +666,7 @@ export function SessionCard({
         {card.finalAnswer && (
           <SafeMarkdown content={card.finalAnswer} className="text-sm leading-relaxed text-text-primary" />
         )}
+        {!running && card.finalAnswer && <SourcesRow sources={sourcesOf(card)} onOpen={onOpenFile} />}
 
         {card.outputs.length > 0 && (
           <div className="flex flex-col gap-1.5 pt-0.5">
