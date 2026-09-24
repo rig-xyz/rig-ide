@@ -49,6 +49,8 @@ function createRelayRoomClient(): RelayRoomClient {
 
 /** Room width below which the floating panel would cover the transcript. */
 const ROOM_WIDE_PX = 1080;
+/** How long before asking again to settle a run this device couldn't settle yet. */
+const SETTLE_RETRY_MS = 20_000;
 /** The transcript's centered column (44rem plus its side padding). */
 const TRANSCRIPT_COLUMN_PX = 728;
 /** The floating panel's lane at the right edge: its 304px plus a margin. */
@@ -240,7 +242,14 @@ export function RoomView({
       const card = projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? []);
       if (effectiveRunStatus(meta.status, card) !== 'running') continue;
       settleTriedRef.current.add(meta.id);
-      void rpc.rig.spacesDispatch.settleStaleRun({ runId: meta.id, bindingId });
+      // A "no" can just mean this device's dispatcher hasn't started yet
+      // (right after launch): try that run again a little later.
+      void rpc.rig.spacesDispatch
+        .settleStaleRun({ runId: meta.id, bindingId })
+        .catch(() => ({ settled: false }))
+        .then(({ settled }) => {
+          if (!settled) setTimeout(() => settleTriedRef.current.delete(meta.id), SETTLE_RETRY_MS);
+        });
     }
   }, [source, snapshot, selfUserId, bindingId]);
 
