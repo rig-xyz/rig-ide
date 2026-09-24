@@ -209,6 +209,7 @@ export class RelayRoomSource implements RoomSource {
   private disposed = false;
 
   private lastMessageSeq = 0;
+  private readonly userIdByClerkId = new Map<string, string>();
   /** Last-known `session_events.seq` per run, so `?after=` catch-up never re-fetches everything. */
   private readonly lastRunSeq = new Map<string, number>();
   /** Guards against overlapping catch-up fetches from rapid-fire notifications. */
@@ -360,14 +361,21 @@ export class RelayRoomSource implements RoomSource {
   }
 
   private seedMembers(rows: RoomMemberRow[]): void {
-    const seeded = rows.map((row) => ({
-      id: row.userId,
-      name: row.name ?? row.userId,
-      email: '',
-      role: row.role,
-      initial: (row.name ?? row.userId).slice(0, 1).toUpperCase(),
-      status: 'here' as const,
-    }));
+    for (const row of rows) {
+      if (row.clerkUserId) this.userIdByClerkId.set(row.clerkUserId, row.userId);
+    }
+    const seeded = rows.map((row) => {
+      // No profile name yet: the email's local part reads better than an id.
+      const name = row.name ?? row.email?.split('@')[0] ?? row.userId;
+      return {
+        id: row.userId,
+        name,
+        email: row.email ?? '',
+        role: row.role,
+        initial: name.slice(0, 1).toUpperCase(),
+        status: 'here' as const,
+      };
+    });
     if (seeded.length === 0) return;
     this.snapshot = { ...this.snapshot, members: seeded };
   }
@@ -470,7 +478,11 @@ export class RelayRoomSource implements RoomSource {
     }
     this.lastMessageSeq = Math.max(this.lastMessageSeq, row.seq);
 
-    const authorId = row.author.userId ?? 'unknown';
+    // The relay identifies message authors by Clerk id while members, runs
+    // and `/v1/me` use the user id — map back so "mine" and ownership
+    // checks (Stop, approvals) line up.
+    const rawAuthorId = row.author.userId ?? 'unknown';
+    const authorId = this.userIdByClerkId.get(rawAuthorId) ?? rawAuthorId;
     const meta = row.meta ?? {};
     const runId = row.kind === 'session' && typeof meta.runId === 'string' ? meta.runId : null;
 

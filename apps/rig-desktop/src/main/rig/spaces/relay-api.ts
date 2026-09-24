@@ -73,7 +73,10 @@ export type AgentRequest = {
 
 export type RoomMemberRow = {
   userId: string;
+  /** Room message authors are identified by Clerk id, not `userId` — see `RelayRoomSource.ingestWireMessage`. */
+  clerkUserId: string | null;
   name: string | null;
+  email: string | null;
   role: string;
 };
 
@@ -503,7 +506,9 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
               if (!row || typeof row.userId !== 'string') return null;
               return {
                 userId: row.userId,
+                clerkUserId: typeof row.clerkUserId === 'string' ? row.clerkUserId : null,
                 name: typeof row.name === 'string' ? row.name : null,
+                email: typeof row.email === 'string' ? row.email : null,
                 role: typeof row.role === 'string' ? row.role : 'viewer',
               };
             })

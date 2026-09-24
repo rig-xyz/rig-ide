@@ -60,7 +60,7 @@ class FakeProvider implements RealtimeProvider {
 const BINDING = 'b1';
 
 function member(overrides: Partial<RoomMemberRow> = {}): RoomMemberRow {
-  return { userId: 'u1', name: 'Alice', role: 'owner', ...overrides };
+  return { userId: 'u1', clerkUserId: null, name: 'Alice', email: null, role: 'owner', ...overrides };
 }
 
 function message(overrides: Partial<RoomMessageRow> = {}): RoomMessageRow {
@@ -226,6 +226,25 @@ describe('RelayRoomSource', () => {
       ['claude', 'u1'],
       ['codex', 'u1'],
     ]);
+  });
+
+  it('maps Clerk-id message authors back to member user ids, and names unnamed members by email', async () => {
+    const fake = makeFakeRelay();
+    fake.setMembers([member({ userId: 'usr_1', clerkUserId: 'clerk_1', name: null, email: 'dylan@play.local' })]);
+    fake.queueMessages([message({ author: { userId: 'clerk_1', name: null, avatarUrl: null, kind: 'user' } })]);
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'usr_1',
+      relay: fake.relay,
+      createProvider: () => new FakeProvider(),
+    });
+    source.play();
+    await flush();
+
+    expect(source.getSnapshot().messages[0].authorId).toBe('usr_1');
+    expect(source.getSnapshot().members[0]).toMatchObject({ id: 'usr_1', name: 'dylan', initial: 'D' });
   });
 
   it('opens the connection with a ticket minted through the relay client, not a static token', async () => {
