@@ -1,11 +1,13 @@
+import { ListTree } from 'lucide-react';
 import { type RefObject, useEffect, useState } from 'react';
 import { cn } from '@renderer/lib/utils';
 
 /**
- * A slim rail beside the Room's transcript: one tick per row, placed where the
- * row sits in the conversation, with agent turns longer and in the accent,
- * and a band showing what's on screen. Hovering a tick previews the row;
- * clicking jumps to it. Only shown once the Room is long enough to need it.
+ * The Room's outline, tucked into its top-left corner. At rest it's a small
+ * minimap: one hairline per row, agent turns in the accent, a thin frame for
+ * what's on screen. Hover or focus opens it into a readable list (who, and
+ * the first words), the rows in view marked; clicking one jumps to it.
+ * Hidden while the whole conversation fits on screen.
  */
 
 export type MapEntry = {
@@ -31,7 +33,7 @@ export function ConversationMap({
 }) {
   const [placed, setPlaced] = useState<Placed[]>([]);
   const [view, setView] = useState({ top: 0, height: 1 });
-  const [hover, setHover] = useState<{ entry: MapEntry; top: number } | null>(null);
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     const scroller = scrollRef.current;
@@ -61,54 +63,82 @@ export function ConversationMap({
   // Nothing to navigate when everything already fits.
   if (view.height >= 0.66 || placed.length < 6) return null;
   const byId = new Map(entries.map((e) => [e.id, e]));
+  const inView = (top: number) => top >= view.top - 0.01 && top <= view.top + view.height;
 
   return (
     <div
-      // Just outside the transcript's centered 44rem column, not at the
-      // window edge where the space panel floats.
-      className="absolute top-6 bottom-6 z-10 w-4"
-      style={{ right: 'max(0.375rem, calc(50% - 22rem - 1.75rem))' }}
-      onMouseLeave={() => setHover(null)}
+      className="absolute top-3 left-3 z-10"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
+      }}
       data-testid="conversation-map"
     >
-      <div
-        className="bg-bg-3/60 absolute right-0 left-0 rounded-full transition-[top] duration-75"
-        style={{ top: `${view.top * 100}%`, height: `${view.height * 100}%` }}
-      />
-      {placed.map(({ id, top }) => {
-        const entry = byId.get(id);
-        if (!entry) return null;
-        return (
-          <button
-            key={id}
-            type="button"
-            aria-label={`Jump to ${entry.label}`}
-            onMouseEnter={() => setHover({ entry, top })}
-            onFocus={() => setHover({ entry, top })}
-            onClick={() => onJump(id)}
-            className="absolute right-0 flex h-2 w-full -translate-y-1/2 items-center justify-end"
-            style={{ top: `${top * 100}%` }}
-          >
-            <span
-              className={cn(
-                'block rounded-full transition-[width,background-color] duration-150',
-                entry.tone === 'agent' ? 'bg-accent h-[3px] w-3.5' : 'h-0.5 w-2',
-                entry.tone === 'person' && 'bg-text-muted',
-                entry.tone === 'mine' && 'bg-text-muted/60',
-                entry.tone === 'other' && 'bg-border-strong',
-                hover?.entry.id === id && 'w-4'
-              )}
-            />
-          </button>
-        );
-      })}
-      {hover && (
-        <div
-          className="popover-in border-border-hairline bg-bg-1 shadow-float pointer-events-none absolute right-6 w-64 -translate-y-1/2 rounded-card border px-3 py-2"
-          style={{ top: `${hover.top * 100}%` }}
+      {!open ? (
+        <button
+          type="button"
+          aria-label="Outline"
+          className="border-border-hairline bg-bg-1/80 hover:border-border-strong relative block h-20 w-5 rounded-control border transition-colors"
         >
-          <p className="text-2xs text-text-muted">{hover.entry.label}</p>
-          <p className="line-clamp-2 text-xs text-text-primary">{hover.entry.preview() || '…'}</p>
+          <span
+            className="border-accent/50 absolute inset-x-0.5 rounded-sm border"
+            style={{ top: `${view.top * 100}%`, height: `max(6px, ${view.height * 100}%)` }}
+          />
+          {placed.map(({ id, top }) => {
+            const entry = byId.get(id);
+            if (!entry) return null;
+            return (
+              <span
+                key={id}
+                className={cn(
+                  'absolute right-1 block h-px rounded-full',
+                  entry.tone === 'agent' ? 'bg-accent left-1' : 'left-2',
+                  entry.tone === 'person' && 'bg-text-muted',
+                  entry.tone === 'mine' && 'bg-text-muted/60',
+                  entry.tone === 'other' && 'bg-border-strong'
+                )}
+                style={{ top: `${top * 100}%` }}
+              />
+            );
+          })}
+        </button>
+      ) : (
+        <div className="popover-in border-border-hairline bg-bg-1 shadow-float flex max-h-[min(420px,60vh)] w-72 flex-col overflow-hidden rounded-card border">
+          <div className="border-border-hairline flex h-8 shrink-0 items-center gap-1.5 border-b px-3 text-xs text-text-muted">
+            <ListTree className="size-3.5" strokeWidth={1.5} />
+            Outline
+          </div>
+          <div className="min-h-0 overflow-y-auto p-1" role="list">
+            {placed.map(({ id, top }) => {
+              const entry = byId.get(id);
+              if (!entry) return null;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="listitem"
+                  onClick={() => onJump(id)}
+                  className={cn(
+                    'hover:bg-bg-2 flex w-full items-start gap-2 rounded-control px-2 py-1.5 text-left transition-colors',
+                    inView(top) && 'bg-bg-2/60'
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'mt-1.5 size-1.5 shrink-0 rounded-full',
+                      entry.tone === 'agent' ? 'bg-accent' : 'bg-text-muted/60'
+                    )}
+                  />
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate text-2xs text-text-muted">{entry.label}</span>
+                    <span className="line-clamp-1 text-xs text-text-secondary">{entry.preview() || '…'}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

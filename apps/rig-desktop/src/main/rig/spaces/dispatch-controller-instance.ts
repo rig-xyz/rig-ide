@@ -107,6 +107,9 @@ export const rigSpacesDispatchController = createRPCController({
   stopRun: async ({ runId, bindingId }: { runId: string; bindingId?: string }): Promise<{ stopped: boolean }> => ({
     stopped: await spacesDispatchController.stopRun(runId, bindingId),
   }),
+  settleStaleRun: async ({ runId, bindingId }: { runId: string; bindingId: string }): Promise<{ settled: boolean }> => ({
+    settled: await spacesDispatchController.settleStaleRun(runId, bindingId),
+  }),
   checkNow: async (): Promise<void> => {
     await spacesDispatchController.checkNow();
   },

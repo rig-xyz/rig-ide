@@ -5,6 +5,7 @@ import {
   createDeviceIdResolver,
   createSpacesDispatcher,
   finalAnswerFromEvents,
+  leakedProviderError,
   roomContextLines,
   spacesHiddenContext,
   type RawSessionEvent,
@@ -693,6 +694,35 @@ describe('createSpacesDispatcher', () => {
     expect(patchedSessions).toEqual([{ runId: 'stale-run', status: 'stopped' }]);
   });
 
+  it('settleIfNotLive leaves a run this process is running alone, and closes out one it is not', async () => {
+    const { api, postedEvents } = makeFakeApi({
+      getSessionEvents: async () =>
+        ok({
+          run: {
+            id: 'lost-run',
+            bindingId: 'b1',
+            ownerUserId: 'u1',
+            agent: 'claude',
+            model: null,
+            status: 'running',
+            title: null,
+            commands: null,
+            startedAt: '',
+            endedAt: null,
+          },
+          events: [],
+        }),
+    });
+    const fake = makeFakeAcp();
+    const { dispatch, settleIfNotLive } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+    const result = await dispatch(makeRequest({ id: 'req-live' }));
+    if ('failed' in result) throw new Error('expected success');
+
+    expect(await settleIfNotLive(result.runId, 'b1')).toBe(false);
+    expect(await settleIfNotLive('lost-run', 'b1')).toBe(true);
+    expect(postedEvents.at(-1)).toEqual({ runId: 'lost-run', kinds: ['turn_ended'], payloads: [{ status: 'stopped' }] });
+  });
+
   it('fails without starting anything when no local workspace is bound to the request', async () => {
     const { api, createdRuns } = makeFakeApi();
     const fake = makeFakeAcp();
@@ -979,3 +1009,17 @@ describe('runLocal approvals mirrored to the caller (doc margin)', () => {
   });
 });
 
+describe('leakedProviderError', () => {
+  it('turns a provider error printed as the answer into its own words', () => {
+    const answer =
+      'Warning: Model metadata for `gpt-6-sol` not found.\n\n{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6-sol\' model is not supported when using Codex with a ChatGPT account."}}';
+    expect(leakedProviderError(answer)).toBe(
+      "The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account."
+    );
+  });
+
+  it('leaves genuine answers alone', () => {
+    expect(leakedProviderError('Signups dropped because of the outage.')).toBeNull();
+    expect(leakedProviderError('')).toBeNull();
+  });
+});

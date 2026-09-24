@@ -171,13 +171,19 @@ function StepList({
   card,
   ownerName,
   limit,
+  finishedOnly = false,
 }: {
   card: SessionCardData;
   ownerName: string;
   /** Show only the last N (while running); undefined shows all. */
   limit?: number;
+  /** Leave out steps still in flight: while running, the live line already shows the current one. */
+  finishedOnly?: boolean;
 }) {
-  const steps = limit ? card.steps.slice(-limit) : card.steps;
+  const shown = finishedOnly
+    ? card.steps.filter((s) => s.status !== 'pending' && s.status !== 'in_progress')
+    : card.steps;
+  const steps = limit ? shown.slice(-limit) : shown;
   if (steps.length === 0) return null;
   return (
     <ul className="border-border-hairline ml-1.5 flex flex-col border-l pl-3" data-testid="session-steps">
@@ -273,12 +279,15 @@ function lastSentence(text: string): string {
 function ApprovalCard({
   request,
   step,
+  file,
   agentName,
   resolvingOptionId,
   onResolve,
 }: {
   request: SessionPermissionPending;
   step: SessionStep | undefined;
+  /** For an edit: the file and the lines it would change. */
+  file?: SessionOutput;
   agentName: string;
   resolvingOptionId: string | null;
   onResolve: (optionId: string) => void;
@@ -309,9 +318,20 @@ function ApprovalCard({
           <span className="text-xs text-text-secondary">{why}</span>
         </div>
       </div>
-      <code className="border-border-hairline bg-bg-1 rounded-control border px-2.5 py-1.5 font-mono text-xs break-all text-text-primary">
-        {request.title}
-      </code>
+      {file ? (
+        <div className="border-border-hairline bg-bg-1 flex items-center gap-2 rounded-control border px-2.5 py-1.5 text-sm">
+          <FileText className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+          <span className="min-w-0 truncate text-text-primary">{file.path.split('/').pop()}</span>
+          <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-xs">
+            <span className="text-success">+{file.adds}</span>
+            {file.dels > 0 && <span className="text-danger">−{file.dels}</span>}
+          </span>
+        </div>
+      ) : (
+        <code className="border-border-hairline bg-bg-1 rounded-control border px-2.5 py-1.5 font-mono text-xs break-all text-text-primary">
+          {request.title}
+        </code>
+      )}
       <div className="flex flex-wrap justify-end gap-1.5">
         {options.map((option) => {
           const rank = order(option.kind);
@@ -387,7 +407,9 @@ function SourcesRow({ sources, onOpen }: { sources: string[]; onOpen?: (path: st
 /** A file the agent changed, as something you can open. */
 function FileCard({ output, onOpen }: { output: SessionOutput; onOpen?: () => void }) {
   const name = output.path.split('/').pop() ?? output.path;
-  const dir = output.path.slice(0, Math.max(0, output.path.length - name.length - 1));
+  // Agents report absolute paths; the machine-specific prefix says nothing
+  // useful here. A relative path's folder does.
+  const dir = output.path.startsWith('/') ? '' : output.path.slice(0, Math.max(0, output.path.length - name.length - 1));
   return (
     <button
       type="button"
@@ -514,6 +536,22 @@ export function SessionCard({
   const mine = viewerIsOwner ?? !!onResolvePermission;
   const pending = card.permissions.pending[0] ?? null;
   const currentKind = stepKind(card.currentStep?.kind);
+  // An edit waiting for approval hasn't happened yet: its file shows in the
+  // approval card, not among the files this turn changed.
+  const pendingStep = pending ? card.steps.find((s) => s.toolCallId === pending.toolCallId) : undefined;
+  const pendingPaths = new Set(pendingStep?.locations?.map((l) => l.path) ?? []);
+  const pendingFile =
+    pendingStep && ['edit', 'delete', 'move'].includes(pendingStep.kind ?? '')
+      ? card.outputs.find(
+          (o) => pendingPaths.has(o.path) || (pendingStep.title ?? '').endsWith(o.path.split('/').pop() ?? '\0')
+        )
+      : undefined;
+  const changedFiles = card.outputs.filter((o) => o !== pendingFile);
+  // The live step's approval, once answered, reads under the live line (the step isn't in the list yet).
+  const currentDecided = card.currentStep
+    ? card.permissions.decided.find((d) => d.toolCallId === card.currentStep!.toolCallId)
+    : undefined;
+  const currentDecision = !pending && currentDecided ? decisionLabel(currentDecided) : null;
 
   const liveLabel = queued
     ? `Queued · after ${mine ? 'your' : `${ownerName}'s`} current ${agentName} turn`
@@ -522,7 +560,7 @@ export function SessionCard({
       ? 'Waiting for your approval'
       : `Waiting on ${ownerName}'s approval`
     : card.currentStep
-      ? currentKind.live
+      ? (card.currentStep.title ?? currentKind.live)
       : events.length > 0
         ? 'Thinking'
         : 'Starting';
@@ -562,18 +600,20 @@ export function SessionCard({
               data-testid="session-live-line"
             >
               <DotMatrix state={liveMatrix} />
-              <span className="active-shimmer-muted shrink-0">{liveLabel}</span>
-              {card.currentStep && !pending ? (
-                <span className="min-w-0 truncate text-xs text-text-primary">
-                  {card.currentStep.title ?? card.currentStep.toolCallId}
-                </span>
-              ) : !pending && card.thinking && !card.finalAnswer ? (
+              <span className="active-shimmer-muted min-w-0 truncate">{liveLabel}</span>
+              {!pending && !card.currentStep && card.thinking && !card.finalAnswer ? (
                 <span className="min-w-0 truncate text-xs text-text-muted italic">{lastSentence(card.thinking)}</span>
               ) : null}
               <span className="shrink-0 text-2xs text-text-muted tabular-nums">{elapsed}</span>
             </div>
             {card.plan.length > 0 && <PlanBlock plan={card.plan} />}
-            <StepList card={card} ownerName={ownerName} limit={3} />
+            {currentDecision && (
+              <span className="ml-6 text-2xs text-text-muted" data-testid="session-decision">
+                <span className={currentDecision.allowed ? 'text-success' : 'text-danger'}>{currentDecision.text}</span> by{' '}
+                {ownerName}
+              </span>
+            )}
+            <StepList card={card} ownerName={ownerName} limit={3} finishedOnly />
           </>
         ) : (
           (card.steps.length > 0 || card.plan.length > 0 || card.thinking.trim() !== '' || status !== 'done') && (
@@ -617,6 +657,7 @@ export function SessionCard({
           <ApprovalCard
             request={pending}
             step={card.steps.find((s) => s.toolCallId === pending.toolCallId)}
+            file={pendingFile}
             agentName={agentName}
             resolvingOptionId={resolving?.requestId === pending.requestId ? resolving.optionId : null}
             onResolve={(optionId) => {
@@ -663,14 +704,22 @@ export function SessionCard({
           </div>
         )}
 
-        {card.finalAnswer && (
-          <SafeMarkdown content={card.finalAnswer} className="text-sm leading-relaxed text-text-primary" />
+        {card.finalAnswer && status !== 'failed' && (
+          <SafeMarkdown content={card.finalAnswer} className="text-sm leading-relaxed text-text-primary/85" />
+        )}
+        {card.finalAnswer && status === 'failed' && (
+          <details className="text-xs text-text-muted">
+            <summary className="w-fit cursor-pointer hover:text-text-secondary">What the agent printed</summary>
+            <pre className="border-border-hairline bg-bg-1 mt-1 max-h-40 overflow-auto rounded-control border p-2 font-mono text-2xs whitespace-pre-wrap text-text-secondary">
+              {card.finalAnswer}
+            </pre>
+          </details>
         )}
         {!running && card.finalAnswer && <SourcesRow sources={sourcesOf(card)} onOpen={onOpenFile} />}
 
-        {card.outputs.length > 0 && (
+        {changedFiles.length > 0 && (
           <div className="flex flex-col gap-1.5 pt-0.5">
-            {card.outputs.map((output) => (
+            {changedFiles.map((output) => (
               <FileCard
                 key={output.path}
                 output={output}

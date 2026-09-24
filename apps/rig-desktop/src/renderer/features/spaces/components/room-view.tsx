@@ -229,6 +229,21 @@ export function RoomView({
     };
   }, [source]);
 
+  // Your own runs the relay still shows running but no process here is
+  // running (their end was lost): ask this device to close them out, once
+  // each, so nobody's card spins forever.
+  const settleTriedRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!(source instanceof RelayRoomSource) || !snapshot) return;
+    for (const meta of Object.values(snapshot.sessionMetaByRun)) {
+      if (meta.owner !== selfUserId || settleTriedRef.current.has(meta.id)) continue;
+      const card = projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? []);
+      if (effectiveRunStatus(meta.status, card) !== 'running') continue;
+      settleTriedRef.current.add(meta.id);
+      void rpc.rig.spacesDispatch.settleStaleRun({ runId: meta.id, bindingId });
+    }
+  }, [source, snapshot, selfUserId, bindingId]);
+
   const togglePlay = () => {
     if (!source || source.isDone()) return;
     if (source.isPlaying()) {

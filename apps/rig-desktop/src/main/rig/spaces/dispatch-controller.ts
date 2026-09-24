@@ -78,6 +78,12 @@ export class SpacesDispatchController {
     return this.dispatcher.stopRun(runId, bindingId);
   }
 
+  /** Used by the `spacesDispatch.settleStaleRun` RPC route: the Room found one of your runs still "running" that nothing here runs. */
+  async settleStaleRun(runId: string, bindingId: string): Promise<boolean> {
+    if (!this.dispatcher) return false;
+    return this.dispatcher.settleIfNotLive(runId, bindingId);
+  }
+
   /** Runs a turn in the owner's room agent with no relay request behind it (doc comments in a space). Null when the dispatcher isn't running (Spaces off, or signed out). */
   runLocal(
     spec: Parameters<ReturnType<typeof createSpacesDispatcher>['runLocal']>[0]

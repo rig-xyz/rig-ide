@@ -7,6 +7,7 @@ import { log } from '@main/lib/logger';
 import type { AgentRequest, SessionAgent, SessionStatus, SpacesRelayApi } from './relay-api';
 import { markRequestSettled, type ClaimDispatchResult } from './request-claim';
 import { SessionEventPublisher } from './session-publisher';
+import { classifyProviderAnswer } from '../comment-agent-answer-classify';
 
 /**
  * Spaces (lane 4): the real `dispatch` callback `RequestClaimPoller` needs —
@@ -327,6 +328,18 @@ function claimTurn(session: PersistentSession, turnId: string): QueuedTurn | nul
  * checked first because a fast user double-stop could otherwise race a
  * `stopReason` that hasn't updated yet.
  */
+const LEAKED_ERROR_PREFIX = 'The agent reported an error instead of answering: ';
+
+/** The reason to show when an answer is really a provider error, or null for a genuine answer. */
+export function leakedProviderError(answer: string): string | null {
+  if (!answer.trim()) return null;
+  const classified = classifyProviderAnswer(answer);
+  if (classified.kind !== 'failure') return null;
+  return classified.message.startsWith(LEAKED_ERROR_PREFIX)
+    ? classified.message.slice(LEAKED_ERROR_PREFIX.length)
+    : classified.message.replaceAll('this stroke', 'this');
+}
+
 function statusForEndedTurn(turn: QueuedTurn, stopReason: string | null): SessionStatus {
   if (turn.cancelledByStop || stopReason === 'cancelled') return 'stopped';
   if (stopReason === null) return 'failed';
@@ -350,6 +363,7 @@ export function createSpacesDispatcher(deps: {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
   stopRun: (runId: string, bindingId?: string) => Promise<boolean>;
+  settleIfNotLive: (runId: string, bindingId: string) => Promise<boolean>;
   /** Marks runs left running by a previous app process as failed. */
   settleInterrupted: () => Promise<void>;
   /** Runs a turn in the owner's room agent without a relay agent request (see the function's own doc). */
@@ -366,6 +380,8 @@ export function createSpacesDispatcher(deps: {
   resolvePermission: (runId: string, requestId: string, optionId: string) => Promise<boolean>;
 } {
   const sessions = new Map<PersistentKey, PersistentSession>();
+  /** Runs this process has started and not yet finalized: the only ones truly running here. */
+  const liveRunIds = new Set<string>();
 
   function forwardRaw(session: PersistentSession, raw: RawSessionEvent): void {
     switch (raw.kind) {
@@ -383,6 +399,14 @@ export function createSpacesDispatcher(deps: {
         session.current = null;
         releaseHeldPermissions(session, turn);
         const ended = statusForEndedTurn(turn, raw.stopReason);
+        // Some adapters (Codex) report a provider error as the answer text
+        // itself: a turn that "finished" with one is a failure, with the
+        // error's own words as the reason instead of raw JSON as the answer.
+        const leaked = ended === 'done' ? leakedProviderError(turn.answer.text) : null;
+        if (leaked) {
+          void finalizeTurn(turn, 'failed', leaked);
+          return;
+        }
         void finalizeTurn(turn, ended, ended === 'failed' ? 'the agent stopped with an error' : undefined);
         return;
       }
@@ -404,6 +428,7 @@ export function createSpacesDispatcher(deps: {
     turn.publisher.record('turn_ended', reason ? { status, reason } : { status });
     await turn.publisher.finish(status);
     deps.store?.clearInFlight?.(turn.runId);
+    liveRunIds.delete(turn.runId);
     if (turn.requestId) {
       await markRequestSettled(
         deps.api,
@@ -589,6 +614,7 @@ export function createSpacesDispatcher(deps: {
       title: spec.prompt.slice(0, 80) || null,
     });
     if (!created.success) return err(created.error.message);
+    liveRunIds.add(created.data.id);
 
     // The session card only appears in the Room when a `kind:'session'`
     // message points at the run, so announce it. Not fatal if it fails:
@@ -730,6 +756,17 @@ export function createSpacesDispatcher(deps: {
     return bindingId ? closeOutStaleRun(bindingId, runId) : false;
   }
 
+  /**
+   * Closes out one of this owner's runs that the relay still shows running
+   * but no process of this app is running (its end was lost, or the app
+   * quit mid-turn before in-flight runs were tracked). No-op for a run this
+   * process started and hasn't finished.
+   */
+  async function settleIfNotLive(runId: string, bindingId: string): Promise<boolean> {
+    if (liveRunIds.has(runId)) return false;
+    return closeOutStaleRun(bindingId, runId);
+  }
+
   async function closeOutStaleRun(bindingId: string, runId: string): Promise<boolean> {
     const events = await deps.api.getSessionEvents(bindingId, runId, 0);
     if (!events.success) {
@@ -786,7 +823,7 @@ export function createSpacesDispatcher(deps: {
     }
   }
 
-  return { dispatch, runLocal, stopRun, resolvePermission, settleInterrupted };
+  return { dispatch, runLocal, stopRun, resolvePermission, settleInterrupted, settleIfNotLive };
 }
 
 /**

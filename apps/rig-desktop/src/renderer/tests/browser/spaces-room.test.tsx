@@ -164,10 +164,16 @@ describe('Room transcript — flat rows', () => {
       root.render(<Harness />);
     });
     await vi.waitFor(() => expect(host.querySelector('[data-testid="conversation-map"]')).not.toBeNull());
-    const ticks = host.querySelectorAll<HTMLButtonElement>('[data-testid="conversation-map"] button');
-    expect(ticks).toHaveLength(10);
+    // At rest: a small minimap. Focusing it opens the readable outline.
+    const minimap = host.querySelector<HTMLButtonElement>('[aria-label="Outline"]')!;
     await act(async () => {
-      ticks[4]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      minimap.focus();
+    });
+    const rows = host.querySelectorAll<HTMLButtonElement>('[data-testid="conversation-map"] [role="listitem"]');
+    expect(rows).toHaveLength(10);
+    expect(rows[4]!.textContent).toContain('preview 4');
+    await act(async () => {
+      rows[4]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(jumps).toEqual(['m4']);
   });
