@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArtefactPane } from '@renderer/features/artifact/artefact-pane';
 import {
   closeActiveTab,
+  activeTab,
   closeTab,
   activateTab,
   moveTab,
@@ -748,9 +749,18 @@ export function App() {
    * files open beside it and the pinned card shows only full-width, like a
    * rig. As the preview overlay on a plain rig, opening a file closes it.
    */
+  /** The file open beside the Room, as a path inside the space (for the composer's context pill). */
+  const openDocIn = (root: string): string | null => {
+    const tab = activeTab(artefact);
+    if (tab?.kind !== 'file') return null;
+    const base = root.replace(/\/+$/, '');
+    return tab.path.startsWith(`${base}/`) ? tab.path.slice(base.length + 1) : tab.path.split('/').pop() ?? null;
+  };
+
   const renderRoom = (target: NonNullable<typeof bound>, { inSpace }: { inSpace: boolean }) => (
     <RoomView
       bindingId={target.bindingId}
+      openDoc={inSpace && layout !== 'chat' ? openDocIn(target.root) : null}
       spaceName={inSpace ? `#${target.name ?? 'space'}` : (target.name ?? 'Room')}
       onOpenFile={(path) => {
         if (!inSpace) setRoomPreviewOpen(false);

@@ -77,12 +77,15 @@ function SettingPill({
   label,
   config,
   setConfig,
+  tinted = false,
 }: {
   agent: AgentKind;
   dimension: Dimension;
   label: string;
   config: AgentConfig | null;
   setConfig: (config: AgentConfig) => void;
+  /** Plain text at rest, each setting its own tint on hover (inside the composer's pill). */
+  tinted?: boolean;
 }) {
   const api = useContext(AgentSettingsContext);
   const ref = useRef<HTMLButtonElement>(null);
@@ -124,11 +127,23 @@ function SettingPill({
         aria-haspopup="menu"
         aria-expanded={open}
         title={DIMENSION_TITLE[dimension]}
-        className="hover:bg-bg-2 flex h-6 max-w-40 items-center gap-1 rounded-chip px-2 text-xs text-text-muted transition-colors hover:text-text-primary"
+        className={cn(
+          'group/setting flex h-6 max-w-40 items-center gap-1 rounded-chip px-2 text-xs transition-colors',
+          tinted
+            ? cn(
+                'text-text-primary',
+                dimension === 'model' && 'hover:bg-accent/15 hover:text-accent',
+                dimension !== 'model' && 'hover:bg-warning/15 hover:text-warning'
+              )
+            : 'hover:bg-bg-2 text-text-muted hover:text-text-primary'
+        )}
         data-testid={`agent-setting-${dimension}`}
       >
         <span className="truncate">{label}</span>
-        <ChevronDown className="size-3 shrink-0" strokeWidth={1.5} />
+        <ChevronDown
+          className={cn('size-3 shrink-0', tinted && 'opacity-40 transition-opacity group-hover/setting:opacity-100')}
+          strokeWidth={1.5}
+        />
       </button>
       <Popover anchor={ref} open={open} onClose={() => setOpen(false)} align="right" minWidth={240} role="dialog">
         <div className="flex max-w-80 flex-col p-1" data-testid={`agent-setting-menu-${dimension}`}>
@@ -174,6 +189,7 @@ export function AgentSettings({
   model,
   usage,
   compact = false,
+  tinted = false,
 }: {
   agent: AgentKind;
   /** The model the run reported, shown before the agent's own list is loaded. */
@@ -181,6 +197,8 @@ export function AgentSettings({
   usage?: SessionCard['usage'];
   /** Model only (for the space panel rows). */
   compact?: boolean;
+  /** The composer pill's look: plain text, tinted on hover, no context ring. */
+  tinted?: boolean;
 }) {
   const api = useContext(AgentSettingsContext);
   const [config, setConfig] = useState<AgentConfig | null>(null);
@@ -197,6 +215,7 @@ export function AgentSettings({
         label={nameOf('model', model ?? 'Model')}
         config={config}
         setConfig={setConfig}
+        tinted={tinted}
       />
       {!compact && (
         <SettingPill
@@ -205,12 +224,13 @@ export function AgentSettings({
           label={nameOf('mode', 'Permissions')}
           config={config}
           setConfig={setConfig}
+          tinted={tinted}
         />
       )}
       {!compact && config?.effort && (
         <SettingPill agent={agent} dimension="effort" label={nameOf('effort', 'Effort')} config={config} setConfig={setConfig} />
       )}
-      {!compact && usage && <ContextRing usage={usage} />}
+      {!compact && !tinted && usage && <ContextRing usage={usage} />}
     </span>
   );
 }

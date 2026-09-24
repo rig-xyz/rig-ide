@@ -1,7 +1,10 @@
-import { AtSign, CornerDownLeft, CornerUpLeft, Paperclip, Sparkles, X } from 'lucide-react';
+import { AtSign, CornerDownLeft, CornerUpLeft, FileText, Paperclip, Sparkles } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@renderer/lib/utils';
-import type { RoomAgent, RoomMember, RoomReplyRef, RoomSkill } from '../types';
+import { agentLogoId, BrandLogo } from '../logos';
+import type { AgentKind, RoomAgent, RoomMember, RoomReplyRef, RoomSkill } from '../types';
+import { AgentSettings } from './agent-settings';
+import { ContextPill } from './context-pill';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 
 const TYPING_IDLE_MS = 4000;
@@ -16,6 +19,15 @@ const DRAFT_PREFIX = 'rig-room-draft:';
  * costs the sentence. When your agent is mid-turn, mentioning it says the
  * request will wait its turn.
  */
+
+/** What the composer understood about a message, sent along with its text. */
+export type ComposerSendContext = {
+  replyTo?: RoomReplyRef;
+  /** Your agent this message asks (its @tag, unless you dropped the pill); null for plain chat. */
+  agent: AgentKind | null;
+  /** A doc to give the agent as context. */
+  attach: string | null;
+};
 
 type MenuItem = {
   key: string;
@@ -57,6 +69,8 @@ export function Composer({
   onCancelReply,
   busyAgents = [],
   prefill,
+  openDoc = null,
+  agentModels,
 }: {
   spaceName: string;
   /** Where this composer keeps its unsent draft (the space's id); no draft kept without one. */
@@ -64,7 +78,7 @@ export function Composer({
   members: RoomMember[];
   agents: RoomAgent[];
   skills: RoomSkill[];
-  onSend: (text: string, replyTo?: RoomReplyRef) => void;
+  onSend: (text: string, context: ComposerSendContext) => void;
   /** Called with true while the user is typing, false after a few idle seconds or on send. */
   onTypingChange?: (typing: boolean) => void;
   replyTo?: RoomReplyRef | null;
@@ -73,11 +87,23 @@ export function Composer({
   busyAgents?: RoomAgent['agent'][];
   /** Puts this text in the input and focuses it (a new `nonce` each time). */
   prefill?: { text: string; nonce: number } | null;
+  /** The doc open beside the Room (its path in the space), offered as context when you ask your agent. */
+  openDoc?: string | null;
+  /** The model each of your agents last ran here, shown in its pill until its own list loads. */
+  agentModels?: Partial<Record<AgentKind, string | null>>;
 }) {
   const [value, setValue] = useState(() => readDraft(draftKey));
   const [focused, setFocused] = useState(false);
   const [active, setActive] = useState(0);
   const [dismissedFor, setDismissedFor] = useState<string | null>(null);
+  // Pills you dropped for this message; a fresh message starts clean.
+  const [droppedAgent, setDroppedAgent] = useState(false);
+  const [droppedDoc, setDroppedDoc] = useState(false);
+  useEffect(() => {
+    if (value.trim()) return;
+    setDroppedAgent(false);
+    setDroppedDoc(false);
+  }, [value]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => setValue(readDraft(draftKey)), [draftKey]);
@@ -168,10 +194,16 @@ export function Composer({
     []
   );
 
+  // Your agent is tagged once its @name is written out; dropping the pill
+  // sends the message as plain chat instead.
+  const tagged = agents.find((a) => new RegExp(`(^|\\s)@${a.agent}(\\s|$)`, 'i').test(value));
+  const agentPill = tagged && !droppedAgent ? tagged.agent : null;
+  const docPill = agentPill && openDoc && !droppedDoc ? openDoc : null;
+
   const send = () => {
     const trimmed = value.trim();
     if (!trimmed) return;
-    onSend(trimmed, replyTo ?? undefined);
+    onSend(trimmed, { replyTo: replyTo ?? undefined, agent: agentPill, attach: docPill });
     setValue('');
     setTyping(false);
   };
@@ -218,31 +250,60 @@ export function Composer({
         </div>
       )}
 
+      {!menuOpen && (replyTo || agentPill || docPill) && (
+        <div
+          className="pointer-events-none absolute right-0 bottom-full left-1 z-10 mb-2 flex flex-wrap items-center gap-2 [&>*]:pointer-events-auto"
+          data-testid="composer-pills"
+        >
+          {replyTo && (
+            <ContextPill
+              reason="You pressed Reply"
+              onDismiss={onCancelReply}
+              dismissLabel="Not a reply"
+              testId="composer-reply"
+            >
+              <CornerUpLeft className="size-3.5 shrink-0" strokeWidth={1.5} />
+              <span>Replying to</span>
+              <b className="font-medium text-text-primary">{replyTo.label}</b>
+              <span className="max-w-56 truncate">{replyTo.excerpt}</span>
+            </ContextPill>
+          )}
+          {agentPill && (
+            <ContextPill
+              reason={`You tagged @${agentPill}`}
+              onDismiss={() => setDroppedAgent(true)}
+              dismissLabel="Send as a plain message"
+              testId="composer-agent-pill"
+            >
+              <span className="card-pop-in flex">
+                <BrandLogo id={agentLogoId(agentPill)} size={14} />
+              </span>
+              <b className="font-medium text-text-primary">{AGENT_NAME[agentPill]}</b>
+              <span className="size-[3px] rounded-full bg-text-muted/60" aria-hidden />
+              <AgentSettings agent={agentPill} model={agentModels?.[agentPill] ?? null} tinted />
+            </ContextPill>
+          )}
+          {docPill && (
+            <ContextPill
+              reason="It's open beside the Room"
+              onDismiss={() => setDroppedDoc(true)}
+              dismissLabel="Don't attach"
+              testId="composer-doc-pill"
+            >
+              <FileText className="size-3.5 shrink-0" strokeWidth={1.5} />
+              <span>With</span>
+              <b className="font-medium text-text-primary">{docPill.split('/').pop()}</b>
+            </ContextPill>
+          )}
+        </div>
+      )}
+
       <div
         className={cn(
           'border-border-hairline bg-bg-1 rounded-card border transition-colors',
           focused && 'border-accent shadow-[0_0_0_3px_var(--accent-subtle)]'
         )}
       >
-        {replyTo && (
-          <div
-            className="border-border-hairline flex items-center gap-2 border-b px-3.5 py-2 text-xs text-text-muted"
-            data-testid="composer-reply"
-          >
-            <CornerUpLeft className="size-3.5 shrink-0" strokeWidth={1.5} />
-            <span className="shrink-0">Replying to</span>
-            <b className="shrink-0 font-medium text-text-secondary">{replyTo.label}</b>
-            <span className="min-w-0 truncate">{replyTo.excerpt}</span>
-            <button
-              type="button"
-              onClick={onCancelReply}
-              aria-label="Cancel reply"
-              className="hover:bg-bg-2 ml-auto flex size-5 shrink-0 items-center justify-center rounded-control transition-colors hover:text-text-primary"
-            >
-              <X className="size-3" strokeWidth={1.5} />
-            </button>
-          </div>
-        )}
         <textarea
           ref={textareaRef}
           value={value}
@@ -320,7 +381,7 @@ export function Composer({
               value.trim() ? 'bg-accent text-accent-ink' : 'bg-bg-2 text-text-secondary'
             )}
           >
-            {replyTo ? 'Reply' : 'Send'}
+            {agentPill ? `Ask ${AGENT_NAME[agentPill]}` : replyTo ? 'Reply' : 'Send'}
             <CornerDownLeft className="size-3" strokeWidth={1.5} />
           </button>
         </div>

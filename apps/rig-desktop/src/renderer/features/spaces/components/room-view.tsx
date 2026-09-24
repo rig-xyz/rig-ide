@@ -7,7 +7,7 @@ import { RelayRoomSource, type RelayRoomClient } from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
-import { Composer } from './composer';
+import { Composer, type ComposerSendContext } from './composer';
 import { RoomTranscript } from './room-transcript';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
 import { AgentSettingsContext, type AgentSettingsApi } from './agent-settings';
@@ -58,19 +58,6 @@ const TRANSCRIPT_COLUMN_PX = 728;
 const PANEL_LANE_PX = 320;
 
 const FALLBACK_OWN_ID = 'bob'; // fixture-only identity; the relay source uses the signed-in user's real id
-
-/** `@claude`/`@codex` in the text, only when the SENDER runs that agent in this room — per the lane-3 brief, a mention only ever creates an agent request targeting the sender, never a teammate's agent. */
-function detectOwnAgentMention(
-  text: string,
-  selfUserId: string,
-  agents: { agent: AgentKind; owner: string }[]
-): AgentKind | null {
-  const match = /@(claude|codex)\b/i.exec(text);
-  if (!match) return null;
-  const agent = match[1].toLowerCase() as AgentKind;
-  const ownsIt = agents.some((a) => a.agent === agent && a.owner === selfUserId);
-  return ownsIt ? agent : null;
-}
 
 /** A space with nothing in it yet: what it is, and three ways in. While the Room is still opening, just the matrix. */
 function RoomWelcome({
@@ -126,6 +113,19 @@ function RoomWelcome({
   );
 }
 
+/** The model each of your agents last ran here, for its composer pill. */
+function lastModels(snapshot: RoomSnapshot, selfUserId: string): Partial<Record<AgentKind, string | null>> {
+  const models: Partial<Record<AgentKind, string | null>> = {};
+  const runs = Object.values(snapshot.sessionMetaByRun)
+    .filter((m) => m.owner === selfUserId)
+    .sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
+  for (const meta of runs) {
+    const model = projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? []).model;
+    if (model) models[meta.agent] = model;
+  }
+  return models;
+}
+
 /** The viewer's own agents that are mid-turn, so the composer can say a new @mention will queue. */
 function busyOwnAgents(snapshot: RoomSnapshot, selfUserId: string): AgentKind[] {
   const busy = new Set<AgentKind>();
@@ -141,12 +141,15 @@ export function RoomView({
   bindingId,
   spaceName,
   onOpenFile,
+  openDoc = null,
   renderPanel,
 }: {
   bindingId: string;
   spaceName: string;
   /** Opens a space file (relative path) in the editor. */
   onOpenFile?: (relPath: string) => void;
+  /** The doc open beside the Room (its path in the space), if any. */
+  openDoc?: string | null;
   /** Renders the live space panel (the rig's pinned card), given the Room's own rows to add to it. */
   renderPanel?: (
     extraRows: ReactNode,
@@ -265,15 +268,17 @@ export function RoomView({
     }
   };
 
-  const handleSend = (text: string, replyTo?: RoomReplyRef) => {
+  const handleSend = (text: string, { replyTo, agent, attach }: ComposerSendContext) => {
     if (!(source instanceof RelayRoomSource) || !snapshot) return;
     setReplyTo(null);
     void source.send(text, replyTo).then((sourceMessageId) => {
-      const mentioned = detectOwnAgentMention(text, selfUserId, snapshot.agents);
-      if (!mentioned) return;
+      // The composer's pill decides: your agent when you tagged it and kept
+      // the pill, plain chat when you dropped it.
+      if (!agent || !snapshot.agents.some((a) => a.agent === agent && a.owner === selfUserId)) return;
+      const prompt = attach ? `${text}\n\n(Open beside the Room: ${attach})` : text;
       // Wake this device's claim poller rather than waiting for its next tick.
       void source
-        .requestOwnAgent(mentioned, text, sourceMessageId ?? undefined)
+        .requestOwnAgent(agent, prompt, sourceMessageId ?? undefined)
         .then(() => rpc.rig.spacesDispatch.checkNow());
     });
   };
@@ -413,6 +418,8 @@ export function RoomView({
               replyTo={replyTo}
               onCancelReply={() => setReplyTo(null)}
               busyAgents={busyOwnAgents(snapshot, selfUserId)}
+              openDoc={live ? openDoc : null}
+              agentModels={lastModels(snapshot, selfUserId)}
               members={snapshot.members}
               // Own agents only: @claude/@codex always means the sender's
               // own agent (no cross-person delegation in the MVP).

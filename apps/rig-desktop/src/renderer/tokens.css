@@ -43,6 +43,7 @@
   --accent: #62a4f5;
   --accent-subtle: rgba(98, 164, 245, 0.16);
   --accent-ink: #0a1522;
+  --pill-fill: #232831;
   /** The specular band in `.active-shimmer` — brighter than the text it crosses. */
   --shimmer-highlight: #ffffff;
   --success: #4ade80;
@@ -76,6 +77,7 @@
     --accent: #2f6fc0;
     --accent-subtle: rgba(47, 111, 192, 0.12);
     --accent-ink: #ffffff;
+  --pill-fill: #e9ecf0;
   --shimmer-highlight: #b6bcc6;
     --success: #166534;
     --warning: #9c6a34;
@@ -104,6 +106,7 @@
   --accent: #62a4f5;
   --accent-subtle: rgba(98, 164, 245, 0.16);
   --accent-ink: #0a1522;
+  --pill-fill: #232831;
   /** The specular band in `.active-shimmer` — brighter than the text it crosses. */
   --shimmer-highlight: #ffffff;
   --success: #4ade80;
@@ -136,6 +139,7 @@
   --accent: #2f6fc0;
   --accent-subtle: rgba(47, 111, 192, 0.12);
   --accent-ink: #ffffff;
+  --pill-fill: #e9ecf0;
   --shimmer-highlight: #b6bcc6;
   --success: #166534;
   --warning: #9c6a34;

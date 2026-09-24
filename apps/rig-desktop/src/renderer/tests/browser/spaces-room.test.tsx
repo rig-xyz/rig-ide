@@ -350,7 +350,49 @@ describe('Room composer — palette on "/"', () => {
     await act(async () => {
       textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
-    expect(sent).toEqual([['@claude look again', replyTo]]);
+    expect(sent).toEqual([['@claude look again', { replyTo, agent: 'claude', attach: null }]]);
+  });
+
+  it('shows pills for your tagged agent and the open doc, and dropping the agent pill sends plain chat', async () => {
+    const snapshot = replayedSnapshot();
+    const own = snapshot.agents.filter((a) => a.owner === 'bob');
+    const sent: Array<[string, unknown]> = [];
+    await act(async () => {
+      root.render(
+        <Composer
+          spaceName={snapshot.name}
+          members={snapshot.members}
+          agents={own}
+          skills={snapshot.skills}
+          onSend={(text, context) => sent.push([text, context])}
+          openDoc="docs/metrics.md"
+        />
+      );
+    });
+    const textarea = host.querySelector<HTMLTextAreaElement>('textarea')!;
+    await setTextareaValue(textarea, 'hello there');
+    expect(host.querySelector('[data-testid="composer-pills"]')).toBeNull();
+
+    await setTextareaValue(textarea, '@claude add a churn row');
+    expect(host.querySelector('[data-testid="composer-agent-pill"]')?.textContent).toContain('Claude');
+    expect(host.querySelector('[data-testid="composer-doc-pill"]')?.textContent).toContain('metrics.md');
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent?.startsWith('Ask Claude'))).toBe(true);
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(sent.at(-1)).toEqual(['@claude add a churn row', { replyTo: undefined, agent: 'claude', attach: 'docs/metrics.md' }]);
+
+    await setTextareaValue(textarea, '@claude this is just chat');
+    await act(async () => {
+      host
+        .querySelector<HTMLButtonElement>('[data-testid="composer-agent-pill"] [data-testid="context-pill-dismiss"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(host.querySelector('[data-testid="composer-agent-pill"]')).toBeNull();
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(sent.at(-1)).toEqual(['@claude this is just chat', { replyTo: undefined, agent: null, attach: null }]);
   });
 });
 
