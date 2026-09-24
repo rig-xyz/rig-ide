@@ -688,8 +688,8 @@ Tick items off here as they land.
 - [ ] The card header shows model "unknown": pass the model to `createSession`.
 - [ ] The agent busy dot never lights (no live `agent_busy_changed`).
 
-- [ ] A session card started from a doc comment doesn't say so (e.g. "answering a comment on signups.md"); the preceding comment line is the only context.
-- [ ] Doc margin names fall back to "someone" when the relay has no profile name (sandbox accounts); fall back to the member's email prefix like the Room does.
+- [x] Doc comment threads are one unit in the Room: comment + quote, replies and the agent's card grouped, older replies folded (the card's context is its thread).
+- [x] Doc margin names resolve via the member list (name, else email prefix) instead of "someone".
 - [ ] Narrow windows: the Room and the doc squeeze each other; responsive pass (Dylan: later).
 
 **Open. Medium:**
