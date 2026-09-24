@@ -2,6 +2,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Composer } from '@renderer/features/spaces/components/composer';
+import { ConversationMap } from '@renderer/features/spaces/components/conversation-map';
 import { groupThreads, RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
 import { SessionCard } from '@renderer/features/spaces/components/session-card';
 import { buildRoomFeed } from '@renderer/features/spaces/fixtures/room-feed';
@@ -116,6 +117,59 @@ describe('Room transcript — flat rows', () => {
     });
     expect(replies).toHaveLength(1);
     expect(row).not.toBeNull();
+  });
+
+  it('marks where you left off with a "New" line', async () => {
+    const snapshot = replayedSnapshot();
+    const others = snapshot.messages.filter((m) => m.authorId !== 'bob');
+    const lastRead = others[Math.floor(others.length / 2)]!.seq;
+    localStorage.setItem('rig-room-last-seen:space-1', String(lastRead));
+    await act(async () => {
+      root.render(<RoomTranscript snapshot={snapshot} ownId="bob" readKey="space-1" />);
+    });
+    const divider = host.querySelector('[data-testid="new-divider"]');
+    expect(divider).not.toBeNull();
+    const firstNew = snapshot.messages.find((m) => m.seq > lastRead && m.authorId !== 'bob')!;
+    // The line sits right above the unit holding the first unread message.
+    const next = divider!.nextElementSibling as HTMLElement | null;
+    expect(next?.dataset.messageId === firstNew.id || next?.dataset.messageId === firstNew.threadId || !!next?.querySelector(`[data-message-id]`)).toBe(true);
+    localStorage.removeItem('rig-room-last-seen:space-1');
+  });
+
+  it('shows the outline rail once the conversation is taller than its window, and jumps on click', async () => {
+    const jumps: string[] = [];
+    const entries = Array.from({ length: 10 }, (_, i) => ({
+      id: `m${i}`,
+      tone: (i % 3 === 0 ? 'agent' : 'person') as 'agent' | 'person',
+      label: `Row ${i}`,
+      preview: () => `preview ${i}`,
+    }));
+    function Harness() {
+      const scrollRef = React.useRef<HTMLDivElement>(null);
+      const contentRef = React.useRef<HTMLDivElement>(null);
+      return (
+        <div style={{ position: 'relative', width: 600 }}>
+          <div ref={scrollRef} style={{ height: 200, overflowY: 'auto' }}>
+            <div ref={contentRef} style={{ position: 'relative' }}>
+              {entries.map((e) => (
+                <div key={e.id} data-message-id={e.id} style={{ height: 100 }} />
+              ))}
+            </div>
+          </div>
+          <ConversationMap scrollRef={scrollRef} contentRef={contentRef} entries={entries} onJump={(id) => jumps.push(id)} />
+        </div>
+      );
+    }
+    await act(async () => {
+      root.render(<Harness />);
+    });
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="conversation-map"]')).not.toBeNull());
+    const ticks = host.querySelectorAll<HTMLButtonElement>('[data-testid="conversation-map"] button');
+    expect(ticks).toHaveLength(10);
+    await act(async () => {
+      ticks[4]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(jumps).toEqual(['m4']);
   });
 
   it('renders one session card per real fixture run, each reporting a settled status', async () => {

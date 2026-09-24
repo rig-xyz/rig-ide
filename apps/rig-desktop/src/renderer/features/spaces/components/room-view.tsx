@@ -272,6 +272,7 @@ export function RoomView({
             onResolvePermission={handleResolvePermission}
             onOpenFile={onOpenFile}
             onReply={source instanceof RelayRoomSource ? setReplyTo : undefined}
+            readKey={source instanceof RelayRoomSource ? bindingId : undefined}
           />
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
             <Composer

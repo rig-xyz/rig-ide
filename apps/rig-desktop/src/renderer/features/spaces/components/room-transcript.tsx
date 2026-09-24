@@ -1,10 +1,12 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { ArrowDown } from 'lucide-react';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
+import { type MapEntry, ConversationMap } from './conversation-map';
+import { AGENT_NAME } from './identity';
 import { SessionCard } from './session-card';
 import {
   CommentMirrorLine,
@@ -228,6 +230,65 @@ function ThreadBlock({
   );
 }
 
+const LAST_SEEN_PREFIX = 'rig-room-last-seen:';
+
+function readLastSeen(key: string): number | null {
+  try {
+    const raw = localStorage.getItem(LAST_SEEN_PREFIX + key);
+    const seq = raw === null ? Number.NaN : Number(raw);
+    return Number.isFinite(seq) ? seq : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLastSeen(key: string, seq: number): void {
+  try {
+    localStorage.setItem(LAST_SEEN_PREFIX + key, String(seq));
+  } catch {
+    // Storage unavailable: no "New" line next time.
+  }
+}
+
+/** The conversation's rows as outline entries: people's messages, agent turns, doc threads. */
+function mapEntriesFor(units: TranscriptUnit[], snapshot: RoomSnapshot, ownId: string): MapEntry[] {
+  const nameOf = (id: string) => snapshot.members.find((m) => m.id === id)?.name ?? id;
+  const entries: MapEntry[] = [];
+  for (const unit of units) {
+    if (unit.kind === 'thread') {
+      const root = unit.messages[0];
+      if (!root) continue;
+      const path = root.meta.kind === 'comment_mirror' ? root.meta.path : 'a doc';
+      entries.push({
+        id: unit.threadId,
+        tone: 'other',
+        label: `${nameOf(root.authorId)} on ${path} · ${root.time}`,
+        preview: () => root.body ?? '',
+      });
+      continue;
+    }
+    const m = unit.message;
+    if (m.meta.kind === 'text') {
+      entries.push({
+        id: m.id,
+        tone: m.authorId === ownId ? 'mine' : 'person',
+        label: `${m.authorId === ownId ? 'You' : nameOf(m.authorId)} · ${m.time}`,
+        preview: () => m.body ?? '',
+      });
+    } else if (m.meta.kind === 'session') {
+      const meta = snapshot.sessionMetaByRun[m.meta.runId];
+      if (!meta) continue;
+      entries.push({
+        id: m.id,
+        tone: 'agent',
+        label: `${meta.owner === ownId ? 'Your' : `${nameOf(meta.owner)}'s`} ${AGENT_NAME[meta.agent]} · ${m.time}`,
+        preview: () => projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? []).finalAnswer || 'Working…',
+      });
+    }
+  }
+  return entries;
+}
+
 export function RoomTranscript({
   snapshot,
   ownId,
@@ -235,6 +296,7 @@ export function RoomTranscript({
   onResolvePermission,
   onOpenFile,
   onReply,
+  readKey,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
@@ -244,6 +306,8 @@ export function RoomTranscript({
   onOpenFile?: (relPath: string) => void;
   /** Starts a quote-reply in the composer. */
   onReply?: (ref: RoomReplyRef) => void;
+  /** Where to remember how far the viewer has read (the space's id); no "New" line without one. */
+  readKey?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -316,6 +380,28 @@ export function RoomTranscript({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot.messages]);
 
+  // Where you left off: the first message from someone else after the last
+  // one you'd scrolled to, fixed for this visit (Slack's "New" line).
+  const [newFromId, setNewFromId] = useState<string | null>(null);
+  const markedRef = useRef(false);
+  useEffect(() => {
+    if (!readKey || markedRef.current || snapshot.messages.length === 0) return;
+    markedRef.current = true;
+    const lastRead = readLastSeen(readKey);
+    if (lastRead === null) return;
+    const first = snapshot.messages.find((m) => m.seq > lastRead && m.authorId !== ownId);
+    if (first) setNewFromId(first.id);
+  }, [readKey, snapshot.messages, ownId]);
+  useEffect(() => {
+    if (!readKey || !pinned || snapshot.messages.length === 0) return;
+    writeLastSeen(readKey, Math.max(...snapshot.messages.map((m) => m.seq)));
+  }, [readKey, pinned, snapshot.messages]);
+
+  const mapEntries = useMemo(
+    () => mapEntriesFor(groupThreads(snapshot.messages), snapshot, ownId),
+    [snapshot, ownId]
+  );
+
   const agentWorking = Object.values(snapshot.sessionMetaByRun).some(
     (meta) => meta.status === 'running' && snapshot.sessionEventsByRun[meta.id]?.every((e) => e.kind !== 'turn_ended')
   );
@@ -323,7 +409,7 @@ export function RoomTranscript({
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]" data-testid="room-transcript">
-      <div ref={contentRef} className="mx-auto flex max-w-[44rem] flex-col gap-1.5 px-3 pt-6 pb-3">
+      <div ref={contentRef} className="relative mx-auto flex max-w-[44rem] flex-col gap-1.5 px-3 pt-6 pb-3">
         <AnimatePresence initial={false}>
           {(() => {
             const units = groupThreads(snapshot.messages);
@@ -331,6 +417,15 @@ export function RoomTranscript({
             let lastDay = Number.NEGATIVE_INFINITY;
             let prevMessage: RoomMessage | undefined;
             for (const unit of units) {
+              const unitIds = unit.kind === 'message' ? [unit.message.id] : unit.messages.map((m) => m.id);
+              if (newFromId && unitIds.includes(newFromId)) {
+                nodes.push(
+                  <div key="new-divider" className="flex items-center gap-3 px-2 py-1.5" data-testid="new-divider">
+                    <span className="bg-accent/50 h-px flex-1" />
+                    <span className="text-accent text-2xs font-medium">New</span>
+                  </div>
+                );
+              }
               // A thread sits where it was last active, so its day is its latest message's.
               const placed = unit.kind === 'message' ? unit.message : unit.messages.at(-1);
               const day = placed ? dayStart(placed.createdAt) : Number.NaN;
@@ -399,6 +494,7 @@ export function RoomTranscript({
         </AnimatePresence>
       </div>
     </div>
+      <ConversationMap scrollRef={scrollRef} contentRef={contentRef} entries={mapEntries} onJump={jumpTo} />
       {!pinned && (unseen > 0 || agentWorking) && (
         <button
           type="button"
