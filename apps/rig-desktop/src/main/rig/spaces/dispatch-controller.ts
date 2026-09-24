@@ -78,6 +78,13 @@ export class SpacesDispatchController {
     return this.dispatcher.stopRun(runId);
   }
 
+  /** Runs a turn in the owner's room agent with no relay request behind it (doc comments in a space). Null when the dispatcher isn't running (Spaces off, or signed out). */
+  runLocal(
+    spec: Parameters<ReturnType<typeof createSpacesDispatcher>['runLocal']>[0]
+  ): ReturnType<ReturnType<typeof createSpacesDispatcher>['runLocal']> | null {
+    return this.dispatcher ? this.dispatcher.runLocal(spec) : null;
+  }
+
   /** Used by the `spacesDispatch.checkNow` RPC route: the Room just filed a request, so claim it now instead of on the next tick. */
   async checkNow(): Promise<void> {
     await this.poller?.checkNow();

@@ -887,3 +887,40 @@ describe('memory across restarts', () => {
   });
 });
 
+describe('runLocal (doc comments in a space)', () => {
+  it("runs in the owner's room session, shows in the room, and resolves with the final answer", async () => {
+    const { api, postedMessages, patchedRequests } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const { runLocal, dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+
+    // Same persistent session as a Room @claude for this owner.
+    await dispatch(makeRequest());
+    const conversationId = fake.started[0].conversationId;
+    fake.emitTurnStart(conversationId, fake.queued[0].turnId);
+    fake.emitTurnEnd(conversationId, fake.queued[0].turnId, 'end_turn');
+
+    const started = await runLocal({
+      bindingId: 'binding-1',
+      ownerUserId: 'owner-1',
+      agent: 'claude',
+      prompt: 'Why did organic drop?',
+      extraHiddenContext: '<comment_thread>…</comment_thread>',
+    });
+    if (!started.success) throw new Error(started.error);
+    expect(fake.started).toHaveLength(1); // reused, not a new session
+    expect(fake.queued[1].hiddenContext).toContain('<comment_thread>');
+    expect(postedMessages.at(-1)).toMatchObject({ kind: 'session', meta: { runId: started.data.runId } });
+
+    const turnId = fake.queued[1].turnId;
+    fake.emitTurnStart(conversationId, turnId);
+    fake.emitUpdate(conversationId, { sessionUpdate: 'agent_message_chunk', messageId: 'm1', content: { type: 'text', text: 'Thinking…' } });
+    fake.emitUpdate(conversationId, { sessionUpdate: 'agent_message_chunk', messageId: 'm2', content: { type: 'text', text: 'A tracking bug, ' } });
+    fake.emitUpdate(conversationId, { sessionUpdate: 'agent_message_chunk', messageId: 'm2', content: { type: 'text', text: 'fixed by Alice.' } });
+    fake.emitTurnEnd(conversationId, turnId, 'end_turn');
+
+    await expect(started.data.done).resolves.toEqual({ status: 'done', answer: 'A tracking bug, fixed by Alice.' });
+    // Only the Room request was ever settled on the relay.
+    await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: 'req1', status: 'done' }]));
+  });
+});
+

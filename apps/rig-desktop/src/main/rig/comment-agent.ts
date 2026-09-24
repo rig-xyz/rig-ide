@@ -9,6 +9,7 @@ import {
 import { err, ok, type Result } from '@emdash/shared';
 import { ReplicaState } from '@emdash/wire';
 import { getAcpRuntimeClient, type AcpRuntimeClient } from '@main/core/acp/controller';
+import { runCommentTurnInRoom } from './spaces/dispatch-controller-instance';
 import { agentHookService } from '@main/core/agent-hooks/agent-hook-service';
 import { isValidProviderId } from '@main/core/agents/plugin-registry';
 import { events } from '@main/lib/events';
@@ -183,6 +184,8 @@ function awaitTurnEnd(conversationId: string): {
  * live exactly as long as the turn does.
  */
 const liveTurns = new Map<string, string>();
+/** Threads whose @mention is currently being answered by a room agent (doc comments in a space). */
+const roomTurns = new Set<string>();
 
 /**
  * What the reader is actually being asked to approve, from the typed tool
@@ -555,6 +558,53 @@ export const rigCommentAgentController = createRPCController({
       target.bindingId
     );
     const initialQueue = [{ text, hiddenContext }];
+
+    // In a space, a plain @mention goes to your room agent: the same
+    // persistent session `@claude` reaches in the Room, so it knows the
+    // conversation and its own earlier work. The run shows in the Room
+    // (approvals on its card); its answer is posted here as the reply.
+    // Paintbrush strokes keep the standalone agent (structured proposals).
+    const roomAgent: 'claude' | 'codex' | null =
+      providerId === 'claude' ? 'claude' : providerId === 'codex' ? 'codex' : null;
+    if (!request.paintbrush && roomAgent) {
+      if (roomTurns.has(parentId)) {
+        return err(agentError('An agent is already replying in this thread.'));
+      }
+      roomTurns.add(parentId);
+      try {
+        const room = await runCommentTurnInRoom({
+          bindingId: target.bindingId,
+          agent: roomAgent,
+          prompt: text,
+          hiddenContext,
+        });
+        if (room) {
+          if (!room.success) return err(agentError(`The room agent could not start: ${room.error}`));
+          const { status, answer } = await room.data.done;
+          const classification = answer.trim() ? classifyProviderAnswer(answer) : null;
+          if (status !== 'done' || !classification || classification.kind !== 'ok') {
+            return err(
+              agentError(
+                status === 'stopped'
+                  ? 'The agent was stopped before answering.'
+                  : classification?.kind === 'failure'
+                    ? classification.message
+                    : 'The agent finished without writing an answer.'
+              )
+            );
+          }
+          return await rigCommentsController.reply({
+            absPath,
+            parentId,
+            body: classification.text,
+            authorKind: 'agent',
+            meta: { agent: agentLabel(providerId) },
+          });
+        }
+      } finally {
+        roomTurns.delete(parentId);
+      }
+    }
 
     let client: AcpRuntimeClient;
     try {

@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { app } from 'electron';
 import { getAcpRuntimeClient } from '@main/core/acp/controller';
 import { createRPCController } from '@shared/lib/ipc/rpc';
-import { isError, resolveContext } from '../account';
+import { isError, resolveContext, rigAccountController } from '../account';
 import { resolveLocalPathsImpl } from '../recent-rigs';
 import { rigSettingsStore } from '../settings-instance';
 import { createDeviceIdResolver, createRuntimeAcpSessions, createSpacesDispatcher } from './dispatch';
@@ -50,7 +50,36 @@ function realDeps(): SpacesDispatchControllerDeps {
   };
 }
 
+const relayApi = createHttpSpacesRelayApi();
+
 export const spacesDispatchController = new SpacesDispatchController(realDeps());
+
+/**
+ * Doc comments in a space go to your room agent: the same persistent session
+ * `@claude` reaches in the Room. Returns null when this isn't a space (or
+ * Spaces is off), so the caller keeps the standalone comment agent.
+ */
+export async function runCommentTurnInRoom(spec: {
+  bindingId: string;
+  agent: 'claude' | 'codex';
+  prompt: string;
+  hiddenContext: string;
+}): Promise<Awaited<ReturnType<SpacesDispatchController['runLocal']>> | null> {
+  if (!spacesDispatchController.isRunning()) return null;
+  const workspaces = await rigAccountController.workspaces();
+  const isSpace =
+    workspaces.success && workspaces.data.some((b) => b.id === spec.bindingId && b.kind === 'space');
+  if (!isSpace) return null;
+  const me = await relayApi.whoami();
+  if (!me.success) return null;
+  return spacesDispatchController.runLocal({
+    bindingId: spec.bindingId,
+    ownerUserId: me.data.id,
+    agent: spec.agent,
+    prompt: spec.prompt,
+    extraHiddenContext: spec.hiddenContext,
+  });
+}
 
 /** The renderer-facing half: the Room's session card Stop button and owner approvals. */
 export const rigSpacesDispatchController = createRPCController({

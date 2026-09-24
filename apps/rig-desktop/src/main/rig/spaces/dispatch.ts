@@ -120,11 +120,16 @@ export interface SpaceSessionStore {
 }
 
 type QueuedTurn = {
-  requestId: string;
+  /** The relay agent request this turn answers; null for a local turn (e.g. a doc comment) with no relay request. */
+  requestId: string | null;
   bindingId: string;
   runId: string;
   publisher: SessionEventPublisher;
   cancelledByStop: boolean;
+  /** The agent's latest message so far (its final answer once the turn ends). */
+  answer: { messageId: unknown; text: string };
+  /** Called once the turn is settled, with its status and final answer. */
+  onSettled?: (status: SessionStatus, answer: string) => void;
   /**
    * Set once `queuePrompt` resolves. May already be set by `claimTurn`
    * (below) before that happens — a `turn_start` marker can legitimately
@@ -152,7 +157,10 @@ type PersistentSession = {
  * and the recent room conversation. Kept short; the rig skill carries the
  * longer guidance.
  */
-export function spacesHiddenContext(request: AgentRequest, roomLines: readonly string[] = []): string {
+export function spacesHiddenContext(
+  request: Pick<AgentRequest, 'bindingId'>,
+  roomLines: readonly string[] = []
+): string {
   const lines = [
     '<rig_space_context>',
     `You are working in a shared rig space (binding ${request.bindingId}).`,
@@ -214,7 +222,7 @@ export function finalAnswerFromEvents(events: readonly { kind: string; payload: 
  */
 export async function roomContextLines(
   api: SpacesRelayApi,
-  request: AgentRequest,
+  request: Pick<AgentRequest, 'bindingId' | 'sourceMessageId'>,
   currentRunId: string
 ): Promise<string[]> {
   const [members, messages] = await Promise.all([
@@ -259,6 +267,14 @@ export async function roomContextLines(
     start -= 1;
   }
   return lines.slice(start);
+}
+
+/** Accumulates the turn's latest agent message: a new messageId starts a new message. */
+function collectAnswer(turn: QueuedTurn, update: Record<string, unknown>): void {
+  const content = update.content as { type?: string; text?: string } | undefined;
+  if (content?.type !== 'text' || typeof content.text !== 'string') return;
+  if (update.messageId !== turn.answer.messageId) turn.answer = { messageId: update.messageId, text: '' };
+  turn.answer.text += content.text;
 }
 
 function keyFor(bindingId: string, ownerUserId: string, agent: SessionAgent): PersistentKey {
@@ -318,6 +334,14 @@ export function createSpacesDispatcher(deps: {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
   stopRun: (runId: string) => Promise<boolean>;
+  /** Runs a turn in the owner's room agent without a relay agent request (see the function's own doc). */
+  runLocal: (spec: {
+    bindingId: string;
+    ownerUserId: string;
+    agent: SessionAgent;
+    prompt: string;
+    extraHiddenContext?: string;
+  }) => Promise<Result<{ runId: string; done: Promise<{ status: SessionStatus; answer: string }> }, string>>;
   /** Answers a held permission request on one of this device's runs. Returns false if this device holds no such request for that run, or the option isn't one it offered. */
   resolvePermission: (runId: string, requestId: string, optionId: string) => Promise<boolean>;
 } {
@@ -347,6 +371,7 @@ export function createSpacesDispatcher(deps: {
         const turn = session.current;
         if (!turn) return;
         turn.publisher.record(raw.update.sessionUpdate, raw.update);
+        if (raw.update.sessionUpdate === 'agent_message_chunk') collectAnswer(turn, raw.update);
         return;
       }
     }
@@ -357,11 +382,14 @@ export function createSpacesDispatcher(deps: {
     // aren't broadcast to the Room), so it must land before `finish`.
     turn.publisher.record('turn_ended', { status });
     await turn.publisher.finish(status);
-    await markRequestSettled(
-      deps.api,
-      { bindingId: turn.bindingId, id: turn.requestId },
-      requestStatusFor(status)
-    );
+    if (turn.requestId) {
+      await markRequestSettled(
+        deps.api,
+        { bindingId: turn.bindingId, id: turn.requestId },
+        requestStatusFor(status)
+      );
+    }
+    turn.onSettled?.(status, turn.answer.text);
   }
 
   /**
@@ -506,43 +534,49 @@ export function createSpacesDispatcher(deps: {
     return ok(session);
   }
 
-  async function dispatch(request: AgentRequest): Promise<ClaimDispatchResult> {
-    const cwd = await deps.resolveWorkspace(request.bindingId);
-    if (!cwd) {
-      return {
-        failed: true,
-        reason: `No local workspace on this device is bound to ${request.bindingId}`,
-      };
-    }
+  type TurnSpec = {
+    bindingId: string;
+    ownerUserId: string;
+    agent: SessionAgent;
+    prompt: string;
+    /** The relay agent request this turn answers, if any. */
+    requestId: string | null;
+    /** The room message that asked, excluded from the room context. */
+    sourceMessageId: string | null;
+    /** Extra hidden context for this turn (e.g. a doc comment thread), after the space context. */
+    extraHiddenContext?: string;
+    onSettled?: QueuedTurn['onSettled'];
+  };
 
-    const key = keyFor(request.bindingId, request.targetOwnerUserId, request.targetAgent);
-    const sessionResult = await ensureSession(key, request.bindingId, request.targetAgent, cwd);
-    if (!sessionResult.success) {
-      return { failed: true, reason: sessionResult.error };
-    }
+  /** Starts one turn in the owner's persistent session for the space: a relay run, its card, and the prompt. */
+  async function startTurn(spec: TurnSpec): Promise<Result<{ runId: string }, string>> {
+    const cwd = await deps.resolveWorkspace(spec.bindingId);
+    if (!cwd) return err(`No local workspace on this device is bound to ${spec.bindingId}`);
+
+    const key = keyFor(spec.bindingId, spec.ownerUserId, spec.agent);
+    const sessionResult = await ensureSession(key, spec.bindingId, spec.agent, cwd);
+    if (!sessionResult.success) return err(sessionResult.error);
     const session = sessionResult.data;
 
     // The run must exist on the relay BEFORE this returns — `runId` is a
     // real foreign key the request's own `running` patch depends on.
-    const created = await deps.api.createSession(request.bindingId, {
-      agent: request.targetAgent,
-      title: request.prompt.slice(0, 80) || null,
+    const created = await deps.api.createSession(spec.bindingId, {
+      agent: spec.agent,
+      title: spec.prompt.slice(0, 80) || null,
     });
-    if (!created.success) {
-      return { failed: true, reason: created.error.message };
-    }
+    if (!created.success) return err(created.error.message);
 
     // The session card only appears in the Room when a `kind:'session'`
     // message points at the run, so announce it. Not fatal if it fails:
     // the run still executes and its log is still published.
-    const announced = await deps.api.postMessage(request.bindingId, {
-      body: request.prompt.slice(0, 8000) || 'Agent session',
+    const announced = await deps.api.postMessage(spec.bindingId, {
+      body: spec.prompt.slice(0, 8000) || 'Agent session',
       kind: 'session',
       meta: { runId: created.data.id },
     });
     if (!announced.success) {
       log.warn('Rig spaces dispatch: could not post the session message for a run', {
-        bindingId: request.bindingId,
+        bindingId: spec.bindingId,
         runId: created.data.id,
         error: announced.error.message,
       });
@@ -550,29 +584,33 @@ export function createSpacesDispatcher(deps: {
 
     const publisher = new SessionEventPublisher({
       api: deps.api,
-      bindingId: request.bindingId,
+      bindingId: spec.bindingId,
       runId: created.data.id,
     });
     const turn: QueuedTurn = {
-      requestId: request.id,
-      bindingId: request.bindingId,
+      requestId: spec.requestId,
+      bindingId: spec.bindingId,
       runId: created.data.id,
       publisher,
       cancelledByStop: false,
       turnId: null,
+      answer: { messageId: null, text: '' },
+      onSettled: spec.onSettled,
     };
     session.pending.push(turn);
 
+    const contextRequest = { bindingId: spec.bindingId, sourceMessageId: spec.sourceMessageId };
+    const spaceContext = spacesHiddenContext(
+      contextRequest,
+      await roomContextLines(deps.api, contextRequest, created.data.id).catch((error: unknown) => {
+        log.warn('Rig spaces dispatch: could not load room context', { error: String(error) });
+        return [];
+      })
+    );
     const queued = await deps.acp.queuePrompt(
       session.conversationId,
-      request.prompt,
-      spacesHiddenContext(
-        request,
-        await roomContextLines(deps.api, request, created.data.id).catch((error: unknown) => {
-          log.warn('Rig spaces dispatch: could not load room context', { error: String(error) });
-          return [];
-        })
-      ),
+      spec.prompt,
+      spec.extraHiddenContext ? `${spaceContext}\n\n${spec.extraHiddenContext}` : spaceContext,
       (reason) => {
         const idx = session.pending.indexOf(turn);
         if (idx === -1) return; // already started; its turn_end settles it
@@ -585,14 +623,50 @@ export function createSpacesDispatcher(deps: {
       const idx = session.pending.indexOf(turn);
       if (idx !== -1) session.pending.splice(idx, 1);
       void finalizeTurn(turn, 'failed');
-      return { failed: true, reason: queued.error };
+      return err(queued.error);
     }
     // Stamp the turnId even if a fast `turn_start` already claimed this
     // entry (see `claimTurn`'s own doc comment) — same value either way,
     // and a no-op in the common case where `queuePrompt` resolves first.
     if (queued.data.turnId) turn.turnId = queued.data.turnId;
 
-    return { runId: created.data.id };
+    return ok({ runId: created.data.id });
+  }
+
+  async function dispatch(request: AgentRequest): Promise<ClaimDispatchResult> {
+    const started = await startTurn({
+      bindingId: request.bindingId,
+      ownerUserId: request.targetOwnerUserId,
+      agent: request.targetAgent,
+      prompt: request.prompt,
+      requestId: request.id,
+      sourceMessageId: request.sourceMessageId,
+    });
+    return started.success ? { runId: started.data.runId } : { failed: true, reason: started.error };
+  }
+
+  /**
+   * Runs a turn in the owner's room agent that no relay agent request stands
+   * behind, e.g. an `@claude` in a doc comment inside a space. It shows in the
+   * Room like any other run; the result resolves once the turn ends, with its
+   * final answer, so the caller can post it where the question was asked.
+   */
+  async function runLocal(spec: {
+    bindingId: string;
+    ownerUserId: string;
+    agent: SessionAgent;
+    prompt: string;
+    extraHiddenContext?: string;
+  }): Promise<Result<{ runId: string; done: Promise<{ status: SessionStatus; answer: string }> }, string>> {
+    let settle!: (value: { status: SessionStatus; answer: string }) => void;
+    const done = new Promise<{ status: SessionStatus; answer: string }>((resolve) => (settle = resolve));
+    const started = await startTurn({
+      ...spec,
+      requestId: null,
+      sourceMessageId: null,
+      onSettled: (status, answer) => settle({ status, answer }),
+    });
+    return started.success ? ok({ runId: started.data.runId, done }) : err(started.error);
   }
 
   async function stopRun(runId: string): Promise<boolean> {
@@ -613,7 +687,7 @@ export function createSpacesDispatcher(deps: {
     return false;
   }
 
-  return { dispatch, stopRun, resolvePermission };
+  return { dispatch, runLocal, stopRun, resolvePermission };
 }
 
 /**
