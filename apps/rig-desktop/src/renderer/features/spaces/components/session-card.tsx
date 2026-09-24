@@ -2,6 +2,7 @@ import { Check, ChevronRight, FileText, Loader2, Square } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { PermissionPrompt } from '@renderer/features/chat/permission-prompt';
+import { SafeMarkdown } from '@renderer/lib/ui/comment-markdown';
 import { cn } from '@renderer/lib/utils';
 import { agentLogoId, BrandLogo } from '../logos';
 import { projectSessionCard } from '../projection';
@@ -91,7 +92,9 @@ export function SessionCard({
           />
         </span>
         <b className="text-sm font-medium text-text-primary">{AGENT_NAME[meta.agent]}</b>
-        <span className="font-mono text-xs text-text-muted">{meta.model}</span>
+        {meta.model && meta.model !== 'unknown' && (
+          <span className="font-mono text-xs text-text-muted">{meta.model}</span>
+        )}
         <span className="ml-auto font-mono text-xs text-text-muted">
           {formatElapsed(meta.startedAt, meta.endedAt)}
         </span>
@@ -159,7 +162,10 @@ export function SessionCard({
           </div>
         ))}
         {card.finalAnswer && (
-          <p className="pt-1 text-sm leading-relaxed text-text-primary">{card.finalAnswer}</p>
+          <SafeMarkdown
+            content={card.finalAnswer}
+            className="pt-1 text-sm leading-relaxed text-text-primary"
+          />
         )}
       </div>
 
@@ -175,7 +181,7 @@ export function SessionCard({
               className={cn('size-3 transition-transform', open && 'rotate-90')}
               strokeWidth={1.5}
             />
-            {card.steps.length} steps
+            {card.steps.length} {card.steps.length === 1 ? 'step' : 'steps'}
           </button>
           {open && (
             <div

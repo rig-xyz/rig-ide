@@ -1,6 +1,6 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Composer } from '@renderer/features/spaces/components/composer';
 import { RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
 import { SessionCard } from '@renderer/features/spaces/components/session-card';
@@ -11,6 +11,10 @@ import type { RoomMember, RoomSnapshot, SessionEvent, SessionRunMeta } from '@re
 // on the actual `--accent`/`--bg-2` etc. custom properties being present,
 // same as artifact-view.test.tsx.
 import '@renderer/tokens.css';
+
+// The session card renders answers with SafeMarkdown, which imports the IPC
+// bridge (for opening links); nothing here clicks a link.
+vi.mock('@renderer/lib/ipc', () => ({ rpc: { app: { openExternal: async () => {} } } }));
 
 /**
  * Spaces (lane 2): renders the Room's real components (transcript +
@@ -104,8 +108,8 @@ describe('Room transcript — bubbles align by author', () => {
     const card = host.querySelector<HTMLElement>('[data-testid="session-card"]');
     expect(card).not.toBeNull();
     const toggle = card!.querySelector<HTMLButtonElement>('button');
-    expect(toggle?.textContent).toMatch(/steps$/);
-    const expectedStepCount = Number(toggle?.textContent?.match(/^(\d+) steps$/)?.[1]);
+    expect(toggle?.textContent).toMatch(/steps?$/);
+    const expectedStepCount = Number(toggle?.textContent?.match(/^(\d+) steps?$/)?.[1]);
     expect(expectedStepCount).toBeGreaterThan(0);
 
     expect(card!.querySelector('[data-testid="session-steps-log"]')).toBeNull();
