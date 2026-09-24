@@ -98,7 +98,7 @@ export class AcpRuntime {
   queuePrompt(
     conversationId: string,
     prompt: PromptInput
-  ): Result<{ queued: boolean }, AcpQueuePromptError> {
+  ): Result<{ queued: boolean; turnId: string }, AcpQueuePromptError> {
     return this.manager.queuePrompt({ conversationId, prompt });
   }
 

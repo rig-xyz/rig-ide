@@ -336,6 +336,7 @@ describe('AcpRuntime session manager', () => {
 
       const seen: SessionUpdate[] = [];
       const unobserve = rt.observeRawSessionEvents(conversationId, (raw) => {
+        if (raw.kind !== 'acp_update') return;
         expect(raw.sessionId).toBe(sessionId);
         seen.push(raw.update);
       });
@@ -378,7 +379,9 @@ describe('AcpRuntime session manager', () => {
         rt.observeRawSessionEvents(conversationId, () => {
           throw new Error('boom');
         });
-        rt.observeRawSessionEvents(conversationId, (raw) => otherSeen.push(raw.update));
+        rt.observeRawSessionEvents(conversationId, (raw) => {
+          if (raw.kind === 'acp_update') otherSeen.push(raw.update);
+        });
 
         await client.sessionUpdate({
           sessionId,
@@ -405,7 +408,9 @@ describe('AcpRuntime session manager', () => {
     it('stops delivering events after unsubscribe', async () => {
       const { rt, client, sessionId, conversationId } = await startHarness('conv-raw-unsub');
       const seen: SessionUpdate[] = [];
-      const unobserve = rt.observeRawSessionEvents(conversationId, (raw) => seen.push(raw.update));
+      const unobserve = rt.observeRawSessionEvents(conversationId, (raw) => {
+        if (raw.kind === 'acp_update') seen.push(raw.update);
+      });
       unobserve();
 
       await client.sessionUpdate({

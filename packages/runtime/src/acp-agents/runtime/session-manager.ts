@@ -56,7 +56,7 @@ import {
   type PooledAcpProcess,
 } from '../connection/source';
 import { SessionCell, type AcpChatHistory } from '../session/cell';
-import type { SessionCellCallbacks } from '../session/cell-deps';
+import type { SessionCellCallbacks, TurnBoundaryEvent } from '../session/cell-deps';
 import {
   createAcpSessionLiveHost,
   createAcpSessionsLiveHost,
@@ -101,7 +101,9 @@ export interface HistoryPage {
  * for e.g. a spaces session-event publisher) register one of these instead of
  * re-deriving them from the reduced transcript.
  */
-export type RawSessionEvent = { sessionId: string; update: SessionUpdate };
+export type RawSessionEvent =
+  | { kind: 'acp_update'; sessionId: string; update: SessionUpdate }
+  | TurnBoundaryEvent;
 export type RawSessionEventObserver = (raw: RawSessionEvent) => void;
 
 export class SessionManager implements InboundRouter {
@@ -259,12 +261,14 @@ export class SessionManager implements InboundRouter {
     return record.cell.prompt(input.prompt);
   }
 
-  queuePrompt(input: SendPromptInput): Result<{ queued: boolean }, AcpQueuePromptError> {
+  queuePrompt(
+    input: SendPromptInput
+  ): Result<{ queued: boolean; turnId: string }, AcpQueuePromptError> {
     const record = this.cells.get(input.conversationId);
     if (!record) return acpErr.conversationNotFound(input.conversationId);
     const result = record.cell.queuePrompt(input.prompt);
     if (!result.success) return result;
-    return ok({ queued: true });
+    return ok({ queued: true, turnId: result.data.turnId });
   }
 
   editQueuedPrompt(
@@ -439,7 +443,11 @@ export class SessionManager implements InboundRouter {
     });
     this.applyRawMeta(record.cell, params.update);
     record.cell.push(event);
-    this.notifyRawObservers(conversationId, { sessionId: params.sessionId, update: params.update });
+    this.notifyRawObservers(conversationId, {
+      kind: 'acp_update',
+      sessionId: params.sessionId,
+      update: params.update,
+    });
     this.syncRecord(record);
   }
 
@@ -490,6 +498,13 @@ export class SessionManager implements InboundRouter {
     const log = new LiveLog();
     this.rawEventLogs.set(conversationId, log);
     this.observeRawSessionEvents(conversationId, (raw) => {
+      // 19–50KB each and useless to a subscriber; dropped at the source so
+      // it never eats the log's replay buffer or the IPC channel carrying
+      // it. Dispatch-side callers also filter this (belt and suspenders —
+      // see `dispatch.ts`'s own `forwardRaw`).
+      if (raw.kind === 'acp_update' && raw.update.sessionUpdate === 'available_commands_update') {
+        return;
+      }
       log.append(`${JSON.stringify(raw)}\n`);
     });
     return log;
@@ -504,7 +519,7 @@ export class SessionManager implements InboundRouter {
       } catch (error) {
         this.deps.logger.error('SessionManager: raw session event observer threw', {
           conversationId,
-          sessionUpdate: raw.update.sessionUpdate,
+          kind: raw.kind === 'acp_update' ? raw.update.sessionUpdate : raw.kind,
           error: toSerializedError(error),
         });
       }
@@ -557,6 +572,8 @@ export class SessionManager implements InboundRouter {
       onDraftChanged: () => this.syncRecord(record),
       onClosed: () => this.removeRecord(input.conversationId, true),
       onSendQueuedPrompt: () => this.syncRecord(record),
+      onTurnBoundary: (event: TurnBoundaryEvent) =>
+        this.notifyRawObservers(input.conversationId, event),
     };
     const cell = new SessionCell({
       conversationId: input.conversationId,
@@ -680,6 +697,13 @@ export class SessionManager implements InboundRouter {
     this.terminals.disposeConversation(conversationId);
     record.live.dispose();
     this.deleteSessionSummary(conversationId);
+    // Each of these is a per-conversation buffer (the log alone is 19–50KB
+    // of `available_commands_update` payloads before the source-side filter
+    // above, plus every other raw event) that otherwise outlives the
+    // session it was built for, silently eating the 1MB replay buffer and
+    // the IPC channel carrying it.
+    this.rawEventLogs.delete(conversationId);
+    this.rawObservers.delete(conversationId);
     if (releaseConnection) void record.connectionLease.release();
   }
 

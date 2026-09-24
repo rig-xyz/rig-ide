@@ -18,6 +18,12 @@ export const acpStartInputSchema = z.object({
 export type AcpStartInputWire = z.infer<typeof acpStartInputSchema>;
 
 export const sendPromptResponseSchema = z.object({ queued: z.boolean() });
+// `turnId` is the queued prompt's own id — stable across the `turn_start`/
+// `turn_end` markers a caller (e.g. spaces' dispatcher) sees on the
+// conversation's raw session-event stream, so it can bind this specific
+// queued request to exactly its own turn instead of inferring it from a
+// separately delivered busy/idle signal.
+export const queuePromptResponseSchema = z.object({ queued: z.boolean(), turnId: z.string() });
 
 export const startSessionCommandSchema = z.object({ input: acpStartInputSchema });
 export const resumeSessionCommandSchema = z.object({

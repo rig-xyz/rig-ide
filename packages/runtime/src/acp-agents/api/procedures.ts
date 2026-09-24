@@ -54,7 +54,7 @@ export function createAcpProcedures(runtime: AcpRuntime) {
     queuePrompt(input: {
       conversationId: string;
       prompt: PromptInput;
-    }): Result<{ queued: boolean }, AcpQueuePromptError> {
+    }): Result<{ queued: boolean; turnId: string }, AcpQueuePromptError> {
       return runtime.queuePrompt(input.conversationId, input.prompt);
     },
     editQueuedPrompt(input: {
