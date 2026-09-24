@@ -77,6 +77,8 @@ export type RoomMemberRow = {
   role: string;
 };
 
+export type BindingDevice = { id: string; bindingId: string };
+
 export type RoomMessageRow = {
   id: string;
   seq: number;
@@ -133,6 +135,16 @@ export interface SpacesRelayApi {
     id: string,
     patch: { status: AgentRequestStatus; runId?: string }
   ): Promise<Result<AgentRequest, RelayApiError>>;
+
+  /**
+   * Mints (or would mint a fresh one each call — callers should cache) a
+   * device credential for THIS device on `bindingId`, via the relay's
+   * member self-service route (`POST /v1/me/bindings/:id/devices`). Every
+   * membership role may call it — no invite involved, the membership row
+   * is the grant — so it works for the same account claiming requests on
+   * any binding it's a member of, not just ones it owns.
+   */
+  mintDevice(bindingId: string, deviceLabel?: string): Promise<Result<BindingDevice, RelayApiError>>;
 
   listMembers(bindingId: string): Promise<Result<RoomMemberRow[], RelayApiError>>;
   listMessages(
@@ -418,6 +430,24 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         return err<RelayApiError>({ kind: 'relay', message: 'Could not update the agent request.' });
       }
       return ok(req);
+    },
+
+    async mintDevice(bindingId, deviceLabel) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(
+        ctxResult.data,
+        'POST',
+        `/v1/me/bindings/${bindingId}/devices`,
+        'register this device',
+        deviceLabel ? { deviceLabel } : {}
+      );
+      if (!result.success) return err(result.error);
+      const device = asRecord(asRecord(result.data)?.device);
+      if (!device || typeof device.id !== 'string') {
+        return err<RelayApiError>({ kind: 'relay', message: 'Could not register this device.' });
+      }
+      return ok({ id: device.id, bindingId });
     },
 
     async listMembers(bindingId) {

@@ -52,6 +52,7 @@ function makeSharedStore(requests: AgentRequest[]) {
       postSessionEvents: notImplemented('postSessionEvents'),
       getSessionEvents: notImplemented('getSessionEvents'),
       createAgentRequest: notImplemented('createAgentRequest'),
+      mintDevice: notImplemented('mintDevice'),
       listAgentRequests: async (status = 'queued') =>
         ok(Array.from(byId.values()).filter((r) => r.status === status)),
       // The one method that must behave atomically: only the FIRST caller to
@@ -183,6 +184,52 @@ describe('claimOne / claimAndDispatchQueued', () => {
     expect(store.get('running1')?.status).toBe('running'); // untouched
   });
 
+  it('resolves a per-binding device id when deviceId is a function, one call per request', async () => {
+    const store = makeSharedStore([
+      makeRequest({ id: 'q1', bindingId: 'binding-a', status: 'queued' }),
+      makeRequest({ id: 'q2', bindingId: 'binding-b', status: 'queued' }),
+    ]);
+    const resolvedFor: string[] = [];
+    const dispatched: string[] = [];
+    await claimAndDispatchQueued({
+      api: store.apiFor(),
+      deviceId: async (bindingId) => {
+        resolvedFor.push(bindingId);
+        return `device-for-${bindingId}`;
+      },
+      dispatch: async (request) => {
+        dispatched.push(request.id);
+        return { runId: `run-${request.id}` };
+      },
+    });
+    expect(resolvedFor.sort()).toEqual(['binding-a', 'binding-b']);
+    expect(dispatched.sort()).toEqual(['q1', 'q2']);
+    expect(store.get('q1')?.claimedByDeviceId).toBe('device-for-binding-a');
+    expect(store.get('q2')?.claimedByDeviceId).toBe('device-for-binding-b');
+  });
+
+  it('skips a request (without throwing) when the device id resolver rejects', async () => {
+    const store = makeSharedStore([
+      makeRequest({ id: 'q1', bindingId: 'binding-bad', status: 'queued' }),
+      makeRequest({ id: 'q2', bindingId: 'binding-good', status: 'queued' }),
+    ]);
+    const dispatched: string[] = [];
+    await claimAndDispatchQueued({
+      api: store.apiFor(),
+      deviceId: async (bindingId) => {
+        if (bindingId === 'binding-bad') throw new Error('could not mint a device id');
+        return `device-for-${bindingId}`;
+      },
+      dispatch: async (request) => {
+        dispatched.push(request.id);
+        return { runId: `run-${request.id}` };
+      },
+    });
+    expect(dispatched).toEqual(['q2']);
+    expect(store.get('q1')?.status).toBe('queued'); // never claimed
+    expect(store.get('q2')?.status).toBe('running');
+  });
+
   it('lists no requests and does nothing when listAgentRequests fails', async () => {
     const api: SpacesRelayApi = {
       whoami: async () => ok({ id: 'me' }),
@@ -191,6 +238,7 @@ describe('claimOne / claimAndDispatchQueued', () => {
       postSessionEvents: notImplemented('postSessionEvents'),
       getSessionEvents: notImplemented('getSessionEvents'),
       createAgentRequest: notImplemented('createAgentRequest'),
+      mintDevice: notImplemented('mintDevice'),
       listAgentRequests: async () => err<RelayApiError>({ kind: 'relay', message: 'down' }),
       claimAgentRequest: notImplemented('claimAgentRequest'),
       patchAgentRequest: notImplemented('patchAgentRequest'),

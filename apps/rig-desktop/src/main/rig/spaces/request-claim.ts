@@ -21,10 +21,22 @@ import type { AgentRequest, SpacesRelayApi } from './relay-api';
 
 export type ClaimDispatchResult = { runId: string } | { failed: true; reason?: string };
 
+/**
+ * This device's id for a given binding (minted via the relay's device-
+ * registration route, `POST /v1/me/bindings/:id/devices` — a plain string
+ * is fine when every claim this poller will ever see targets one already-
+ * known binding, e.g. in tests; `listAgentRequests` is cross-binding
+ * ("my inbox" across every space this account owns), so the one real
+ * implementation (`main/rig/spaces/dispatch.ts`) supplies a resolver that
+ * mints/reuses the right device id PER request's `bindingId` — passing a
+ * device id minted for the wrong binding 500s the claim route (see
+ * `NOTES.md`).
+ */
+export type DeviceIdResolver = string | ((bindingId: string) => Promise<string>);
+
 export type ClaimAndDispatchOptions = {
   api: SpacesRelayApi;
-  /** This device's id (minted via the relay's device-registration route, per lane 4's own notes — out of this lane's scope to mint). */
-  deviceId: string;
+  deviceId: DeviceIdResolver;
   /**
    * Starts the local agent for one claimed request. Returns the new run's
    * id on success, or `{failed: true}` if the local dispatch itself could
@@ -55,7 +67,26 @@ export async function claimAndDispatchQueued(options: ClaimAndDispatchOptions): 
   }
 
   for (const request of queued.data) {
-    await claimOne(api, deviceId, dispatch, request);
+    // No `await` at all on the common (plain-string) path — kept exactly as
+    // synchronous as before this option grew a resolver form, so a poll's
+    // very first dispatch still lands within the same microtask budget
+    // existing callers (and their tests) already assume.
+    if (typeof deviceId === 'string') {
+      await claimOne(api, deviceId, dispatch, request);
+      continue;
+    }
+    let resolvedDeviceId: string;
+    try {
+      resolvedDeviceId = await deviceId(request.bindingId);
+    } catch (error) {
+      log.warn('Rig spaces: could not resolve a device id for a queued agent request', {
+        requestId: request.id,
+        bindingId: request.bindingId,
+        error: String(error),
+      });
+      continue;
+    }
+    await claimOne(api, resolvedDeviceId, dispatch, request);
   }
 }
 
@@ -135,7 +166,7 @@ export async function claimOne(
 export async function markRequestSettled(
   api: SpacesRelayApi,
   request: Pick<AgentRequest, 'bindingId' | 'id'>,
-  status: 'done' | 'failed'
+  status: 'done' | 'failed' | 'cancelled'
 ): Promise<void> {
   const patched = await api.patchAgentRequest(request.bindingId, request.id, { status });
   if (!patched.success) {
