@@ -116,6 +116,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@electron/notarize": "^2.5.0",
     "@electron/rebuild": "^4.0.1",
+    "@hocuspocus/server": "^4",
     "@monaco-editor/react": "^4.7.0",
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-form": "^1.28.4",

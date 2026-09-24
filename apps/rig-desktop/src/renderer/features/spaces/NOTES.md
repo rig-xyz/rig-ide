@@ -170,3 +170,220 @@ time and never sends an oversized one, is open — see below.
   pass one today (there's nothing to stop against a fixture). Lane 3 needs
   to decide what stopping actually does against a live run and wire it
   through.
+
+## Lane 3 — what's live
+
+Everything below is behind `spacesEnabled`; the fixture-only path is
+unchanged (and stays reachable — see the dev toggle below).
+
+**Relay HTTP client** (`main/rig/spaces/relay-api.ts`) — `SpacesRelayApi`,
+a small DI-able interface wrapping every route in tap-spaces'
+`SPACES_NOTES.md` (sessions, agent-requests, members, messages).
+`createHttpSpacesRelayApi()` is the one real implementation, reusing
+`resolveContext()` (now exported from `main/rig/account.ts`) so it never
+re-derives the relay trust gate. One bug this surfaced before it ever hit
+a real relay: the member roster must be read from
+`GET /v1/me/bindings/:id/members` (PAT-authed), not
+`GET /v1/bindings/:id/members` (device-capability-token-only,
+`authMiddleware` — the same trap `comments.ts`'s own header comment
+already flags for a different route).
+
+**Session publisher** (`main/rig/spaces/session-publisher.ts`) —
+`SessionEventPublisher`: batches at 250ms/32 events (whichever first),
+assigns its own monotonic `seq`, retries a failed batch in place (never
+reorders/drops), bounds its retry queue (oldest dropped past the cap),
+and `finish(status)` drains the tail and patches the run's terminal
+status. `record()` is synchronous and never throws — publishing can never
+block or slow the local agent session, per the brief.
+
+**Request claiming** (`main/rig/spaces/request-claim.ts`) —
+`claimAndDispatchQueued`/`claimOne` list+claim+dispatch; a 409 (another
+device won the race) is a silent no-op, never a retry. `RequestClaimPoller`
+polls on an interval and coalesces overlapping `checkNow()` calls (for
+"on connect and on `agent_request_created`", per the brief) into one
+re-run rather than skipping or double-running. `dispatch` is injected —
+this module has zero ACP/runtime knowledge, which is also what keeps it
+fully unit-testable (see Tests below). **Two things only the live
+integration check surfaced**: `claim`'s `deviceId` has a real foreign key
+into `binding_devices` on the relay (mint one via
+`POST /v1/me/bindings/:id/devices` first — an ad-hoc string 500s the
+route) and `PATCH .../agent-requests/:id {status:'running', runId}`'s
+`runId` has a real foreign key into `session_runs` (create the run via
+`api.createSession` before advancing status) — both now called out in
+`request-claim.ts`'s own doc comments.
+
+**`RelayRoomSource`** (`renderer/features/spaces/relay-room-source.ts`) —
+implements lane 2's `RoomSource` directly in the renderer (own
+`@hocuspocus/provider` connection to `space:<bindingId>`, own `fetch`
+calls), NOT proxied through main like every other relay caller in this
+codebase — see the file's own header comment for why (lane 2's own
+contract plus the "test against a mocked provider" brief both point at a
+renderer-owned class) and the tradeoff that implies: the renderer now
+holds the PAT for the lifetime of an open Room, handed to it once by a
+new minimal RPC, `rig.spacesConnection.getConnectionInfo()`
+(`main/rig/spaces-connection.ts`). Flagged here explicitly for review —
+it is the one deliberate departure from "every relay call goes through
+main," not an oversight.
+
+Bootstraps the member roster + recent messages, resolves the first
+`kind:'session'` message naming an unseen run into a synthesized
+`session_started` + full event backlog, and catches up over HTTP
+(`?after=`/`?latest=`) on connect and on every stateless
+`message_created`/`session_event_appended` notification — coalescing
+overlapping catch-ups into one re-run, same pattern as the request
+poller. `send()`/`requestOwnAgent()` post a message / file an agent
+request targeting the sender.
+
+**Room UI wiring** (`components/room-view.tsx`, `App.tsx`) — `RoomView`
+takes `bindingId`/`spaceName` (the open rig's own) and opens a
+`RelayRoomSource` by default; a radio-tower toggle in the room header (and
+an automatic offer on a failed connection) switches to the scripted
+`FixtureRoomSource` demo — the dev fallback the brief asked for. Play/
+pause now only renders for the fixture. Composer's `onSend` posts through
+`RelayRoomSource.send()` and, when the text mentions the sender's OWN
+`@claude`/`@codex`, also files an agent request targeting the sender
+(linked via the posted message's id) — never a teammate's agent, per the
+brief.
+
+**Not done in this pass, and why:**
+- **The Stop button** stays unwired. Cancelling a live run needs an ACP
+  session registry keyed by relay `run_id → conversationId`, which doesn't
+  exist yet (this pass didn't create local agent sessions for spaces at
+  all — see the next point). Lane 2's own NOTES.md already flagged this as
+  an open decision; it's carried forward, not newly deferred.
+- **The publisher and request-claim poller are not wired into the running
+  app.** Both are complete, real, and integration-tested (see below)
+  against a real relay, but nothing in `main/index.ts` starts a
+  `RequestClaimPoller` on sign-in, and nothing feeds a local ACP session's
+  events into a `SessionEventPublisher`. The reason isn't scope-cutting for
+  its own sake: the raw per-event ACP notifications
+  `SessionEventPublisher.record()` needs (the exact `tool_call`/
+  `tool_call_update`/`agent_message_chunk` kinds `projection.ts` already
+  consumes) are consumed and reduced into `TranscriptTurn` state inside
+  `packages/runtime/src/acp-agents/session/cell.ts` before they ever reach
+  main — there is no existing hook that re-emits them raw (the closest
+  thing, `comment-agent.ts`'s `followProgress`, only exposes coarse
+  activity+text, not per-tool-call events). Wiring a new raw-passthrough
+  hook into `packages/runtime` (shared by chat too) is real, cross-cutting
+  surgery on the agent runtime that deserved more verification time than
+  this pass had, rather than a hasty change to code every other agent
+  session depends on. **Concrete next step**: add a hook alongside
+  `agentHookService`'s `agent:event` (or extend it) that re-emits the raw
+  ACP `session/update` payload per turn, keyed by `conversationId`, so a
+  spaces-aware caller can call `publisher.record(update.sessionUpdate,
+  update)` directly — `cell.ts`'s own `case 'tool_call':` branch (and
+  siblings) is the exact point that already sees these shapes today.
+- **Invite/connector/skill actions** (lane 2's own item 4) — still
+  presentation-only; out of this lane's scope.
+
+## Tests
+
+- `main/rig/spaces/relay-api.ts` has no dedicated unit test file (it's a
+  thin shape-mapping layer over `fetch`); it's exercised indirectly by
+  every publisher/claim test via the `SpacesRelayApi` fakes, and directly
+  by the live integration check below.
+- `session-publisher.test.ts` (8 tests): batch-at-32 vs. flush-at-250ms,
+  monotonic seq across multiple flushes, retry-without-reordering on a
+  failing relay, retry-queue bounding, `finish()` draining + patching
+  status (including when the relay never comes back), and that `record()`
+  never throws post-`dispose()`.
+- `request-claim.test.ts` (10 tests): claim→dispatch→mark-running,
+  dispatch-failure→mark-failed (including a thrown dispatch), a 409
+  conflict never calling dispatch, `claimAndDispatchQueued` skipping
+  non-queued rows, and — the one the brief specifically asked for — two
+  simulated devices racing the SAME request via a shared in-memory store
+  that enforces atomic claim-once, proving exactly one ever dispatches.
+  `RequestClaimPoller` coalesces overlapping `checkNow()` calls.
+- `relay-room-source.test.ts` (7 tests): bootstrap ordering, the
+  first-session-message synthesis (`session_started` + backlog), seq-bounded
+  catch-up after a stateless notification, `send()`/`requestOwnAgent()`
+  payload shapes, and provider teardown on `pause()`/`dispose()` — against
+  a hand-written fake Hocuspocus provider and a routed fake `fetch`, per
+  the brief.
+
+### Integration check (live relay)
+
+Ran once, successfully, against a **real** relay: real Postgres, real
+Hocuspocus (`TAP_REALTIME=1`), lane 1's own `startRelay()` — not a fake.
+**Environment note**: this machine's `initdb`/`pg_ctl` cannot start ANY
+local Postgres cluster right now — every attempt (fresh cluster, the
+existing Homebrew data dir, both inside and outside the sandbox) fails at
+`shmget` with `ENOMEM` on even a 56-byte segment, a host-level SysV-IPC
+condition, not a sandbox artifact, and not something to work around by
+changing kernel settings. The session's coordinator stood up a disposable
+Postgres 16 container instead (OrbStack, `postgresql://tap:tap@127.0.0.1:
+55470/tap_dev`) and the check ran against that.
+
+To reproduce (with a working local Postgres, adjust the connection
+string):
+
+```
+# 1. Seed + start a real relay (tap-spaces checkout):
+cd tap-spaces
+DATABASE_URL=postgresql://<user>:<pass>@<host>:<port>/<db> \
+  pnpm --filter @tap/relay exec tsx .spike/lane3-server.ts /tmp/lane3-conn.json
+# prints connection info (relayUrl, wsUrl, bindingId, ownerToken,
+# ownerUserId, two real deviceIds) to /tmp/lane3-conn.json and blocks —
+# this script isn't committed (`.spike/` is gitignored); recreate it from
+# `startRelay`/`createSandbox`/`makeTestUser` per this file's own
+# reasoning above if it's gone.
+
+# 2. In a second shell, from rig-desktop, with HOME pointed somewhere
+#    WITHOUT a real ~/.config/rig/config.json (that file's relay_token
+#    wins over RIG_RELAY_TOKEN by design — see main/rig/config.ts):
+HOME=/tmp/fake-home \
+SPACES_INTEGRATION_RELAY_URL=<relayUrl> \
+SPACES_INTEGRATION_WS_URL=<wsUrl> \
+SPACES_INTEGRATION_BINDING_ID=<bindingId> \
+SPACES_INTEGRATION_OWNER_TOKEN=<ownerToken> \
+SPACES_INTEGRATION_OWNER_ID=<ownerUserId> \
+SPACES_INTEGRATION_DEVICE_A_ID=<deviceAId> \
+SPACES_INTEGRATION_DEVICE_B_ID=<deviceBId> \
+pnpm --filter @rigxyz/desktop exec vitest run --project node \
+  src/main/rig/spaces/integration.local.test.ts \
+  src/renderer/features/spaces/relay-room-source.integration.local.test.ts
+```
+
+Both gated test files (`*.integration.local.test.ts`,
+`*.local.test.ts`) `describe.skipIf` themselves out of the normal suite
+when `SPACES_INTEGRATION_RELAY_URL` is unset — `pnpm test` never depends
+on a running relay.
+
+**Result, this run**: all 3 pass. (1) A session run created via
+`api.createSession`, published through the real `SessionEventPublisher`
+(batch size 2, forcing a real multi-batch split), reads back with the
+exact assigned seq `[1,2,3]` and status `done`. (2) `RelayRoomSource`
+posts a message via `send()`; the real Hocuspocus room's stateless
+`message_created` notification round-trips it into the source's own
+locally-polled snapshot with no other synchronization. (3) Two devices
+(real, pre-minted via `POST .../devices`) call `claimOne` concurrently
+against the SAME queued request over real HTTP; exactly one dispatches
+and creates a real session run, the other gets the relay's 409 and is a
+no-op; the request ends up `running` with a real `runId`.
+
+## What lane 4 (the dispatcher) needs from this lane
+
+- `main/rig/spaces/relay-api.ts`'s `SpacesRelayApi` is the one relay
+  client to reuse rather than re-wrapping `fetch` a second time — it
+  already covers every route lane 4's own section of `SPACES_NOTES.md`
+  calls for (`listAgentRequests`, `claimAgentRequest`, `patchAgentRequest`,
+  `createSession`).
+- `main/rig/spaces/request-claim.ts`'s `RequestClaimPoller`/
+  `claimAndDispatchQueued` already implement the claim-then-advance state
+  machine end-to-end (409 → no-op; dispatch failure → `failed`; dispatch
+  success → `running` with `runId`) and are integration-proven against a
+  real relay (two real devices, one winner). What's missing is exactly one
+  thing: a real `dispatch` callback that (a) mints/reuses a real device id
+  (`POST /v1/me/bindings/:id/devices`), (b) starts a local headless agent
+  turn with the request's prompt in the target binding's local workspace
+  (reuse `comment-agent.ts`'s dispatch pattern —
+  `getAcpRuntimeClient().startSession(...)` — for how permissions stay
+  local/owner-approved), and (c) returns `{runId}` from a real
+  `api.createSession()` call made BEFORE returning (that FK is real — see
+  above). Then start one `RequestClaimPoller` per signed-in account on
+  sign-in/app-start.
+- `main/rig/spaces/session-publisher.ts`'s `SessionEventPublisher` is
+  ready to take whatever raw per-event stream a finished dispatch wiring
+  produces — see "Not done in this pass" above for exactly where that
+  stream doesn't exist yet (`packages/runtime`'s `cell.ts`) and what hook
+  to add.
