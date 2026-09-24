@@ -1,12 +1,23 @@
+import { err, ok, type Result } from '@emdash/shared';
+import type {
+  AgentRequest,
+  RelayApiError,
+  RoomMemberRow,
+  RoomMessageRow,
+  SessionEventRow,
+  SessionRun,
+} from '@main/rig/spaces/relay-api';
 import { describe, expect, it, vi } from 'vitest';
-import { RelayRoomSource, type RealtimeProvider } from './relay-room-source';
+import { RelayRoomSource, type RealtimeProvider, type RelayRoomClient } from './relay-room-source';
 
 /**
  * A hand-written fake standing in for `@hocuspocus/provider`'s
  * `HocuspocusProvider` — exactly the "mocked provider" the lane-3 brief
  * calls for. Lets the test fire `connect`/`stateless` events on demand,
  * exactly the way the real provider would after a real WebSocket round
- * trip, without opening one.
+ * trip, without opening one. Records every `getToken()` call so a test can
+ * prove the ticket path is exercised (once per connect, mirroring how the
+ * real provider re-authenticates on every reconnect).
  */
 class FakeProvider implements RealtimeProvider {
   connectCalls = 0;
@@ -46,74 +57,143 @@ class FakeProvider implements RealtimeProvider {
   }
 }
 
-type Route = { method: string; path: string; respond: () => unknown | Promise<unknown> };
-
-/** A tiny router-style fake `fetch` — routes matched by exact path (including query string). */
-function fakeFetch(routes: Route[]): { fetchImpl: typeof fetch; requests: Array<{ method: string; path: string; body?: unknown }> } {
-  const requests: Array<{ method: string; path: string; body?: unknown }> = [];
-  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(String(input));
-    const path = url.pathname + url.search;
-    const method = (init?.method ?? 'GET').toUpperCase();
-    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    requests.push({ method, path, body });
-    const route = routes.find((r) => r.method === method && r.path === path);
-    if (!route) {
-      return new Response(JSON.stringify({ error: `no fake route for ${method} ${path}` }), {
-        status: 404,
-      });
-    }
-    const data = await route.respond();
-    return new Response(JSON.stringify(data), { status: 200 });
-  }) as typeof fetch;
-  return { fetchImpl, requests };
-}
-
-const BASE = 'https://relay.test';
 const BINDING = 'b1';
 
-function membersRoute(): Route {
+function member(overrides: Partial<RoomMemberRow> = {}): RoomMemberRow {
+  return { userId: 'u1', name: 'Alice', role: 'owner', ...overrides };
+}
+
+function message(overrides: Partial<RoomMessageRow> = {}): RoomMessageRow {
   return {
-    method: 'GET',
-    path: `/v1/me/bindings/${BINDING}/members`,
-    respond: () => ({
-      members: [{ userId: 'u1', name: 'Alice', role: 'owner' }],
-    }),
+    id: 'm1',
+    seq: 1,
+    author: { userId: 'u1', name: 'Alice', avatarUrl: null, kind: 'user' },
+    kind: 'text',
+    body: 'hello room',
+    meta: null,
+    createdAt: '2026-09-23T09:00:00Z',
+    ...overrides,
+  };
+}
+
+function run(overrides: Partial<SessionRun> = {}): SessionRun {
+  return {
+    id: 'run1',
+    bindingId: BINDING,
+    ownerUserId: 'u1',
+    agent: 'claude',
+    model: 'sonnet-5',
+    status: 'running',
+    title: 'Do the thing',
+    commands: null,
+    startedAt: '2026-09-23T09:00:00Z',
+    endedAt: null,
+    ...overrides,
+  };
+}
+
+/**
+ * A fully controllable fake `RelayRoomClient` — the seam this class is
+ * built to be tested against, now that every relay call is proxied through
+ * main instead of a direct `fetch`. Each method reads from a queue of
+ * canned responses (defaulting to an empty/ok result) so a test only has to
+ * set up the calls it cares about.
+ */
+function makeFakeRelay(overrides: Partial<RelayRoomClient> = {}) {
+  const posted: Array<{ bindingId: string; body: string; kind?: string }> = [];
+  const agentRequests: Array<{ bindingId: string; input: unknown }> = [];
+  const ticketMints: string[] = [];
+  let members: RoomMemberRow[] = [member()];
+  let messagesQueue: RoomMessageRow[][] = [[]];
+  const runsById = new Map<string, { run: SessionRun; events: SessionEventRow[] }>();
+  let ticket = { ticket: 'ticket-1', expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() };
+
+  const relay: RelayRoomClient = {
+    async mintRealtimeTicket(bindingId) {
+      ticketMints.push(bindingId);
+      return ok(ticket);
+    },
+    async listMembers() {
+      return ok(members);
+    },
+    async listMessages() {
+      return ok(messagesQueue.shift() ?? []);
+    },
+    async getSessionEvents(_bindingId, runId, after = 0) {
+      const entry = runsById.get(runId);
+      if (!entry) return err<RelayApiError>({ kind: 'relay', message: 'not found' });
+      return ok({ run: entry.run, events: entry.events.filter((e) => e.seq > after) });
+    },
+    async postMessage(bindingId, input) {
+      posted.push({ bindingId, body: input.body, kind: input.kind });
+      return ok(message({ id: 'posted-1', seq: 999, body: input.body }));
+    },
+    async requestOwnAgent(bindingId, input) {
+      agentRequests.push({ bindingId, input });
+      return ok({
+        id: 'req1',
+        bindingId,
+        targetOwnerUserId: input.targetOwnerUserId,
+        targetAgent: input.targetAgent,
+        requestedByUserId: input.targetOwnerUserId,
+        sourceMessageId: input.sourceMessageId ?? null,
+        prompt: input.prompt,
+        status: 'queued',
+        claimedByDeviceId: null,
+        claimedAt: null,
+        runId: null,
+        createdAt: '',
+        updatedAt: '',
+      } satisfies AgentRequest);
+    },
+    ...overrides,
+  };
+
+  return {
+    relay,
+    posted,
+    agentRequests,
+    ticketMints,
+    setMembers: (rows: RoomMemberRow[]) => (members = rows),
+    /** Each call to `listMessages` shifts one entry off this queue (defaults to `[]`). */
+    queueMessages: (...batches: RoomMessageRow[][]) => (messagesQueue = batches),
+    setRun: (runId: string, r: SessionRun, events: SessionEventRow[]) =>
+      runsById.set(runId, { run: r, events }),
+    appendEvents: (runId: string, events: SessionEventRow[]) => {
+      const entry = runsById.get(runId);
+      if (entry) entry.events.push(...events);
+    },
+    setTicket: (t: { ticket: string; expiresAt: string }) => (ticket = t),
+  };
+}
+
+function sessionEvent(overrides: Partial<SessionEventRow> = {}): SessionEventRow {
+  return {
+    runId: 'run1',
+    seq: 1,
+    kind: 'tool_call',
+    payload: {},
+    bytes: 0,
+    truncated: false,
+    originalBytes: null,
+    createdAt: '',
+    ...overrides,
   };
 }
 
 describe('RelayRoomSource', () => {
   it('bootstraps members and message history before the realtime connection opens, notifying subscribers', async () => {
-    const { fetchImpl, requests } = fakeFetch([
-      membersRoute(),
-      {
-        method: 'GET',
-        path: `/v1/me/bindings/${BINDING}/messages?latest=50`,
-        respond: () => ({
-          messages: [
-            {
-              id: 'm1',
-              seq: 1,
-              author: { userId: 'u1', name: 'Alice', kind: 'user' },
-              kind: 'text',
-              body: 'hello room',
-              meta: null,
-              createdAt: '2026-09-23T09:00:00Z',
-            },
-          ],
-        }),
-      },
-    ]);
+    const fake = makeFakeRelay();
+    fake.setMembers([member()]);
+    fake.queueMessages([message()]);
 
     let provider: FakeProvider | null = null;
     const source = new RelayRoomSource({
       bindingId: BINDING,
       spaceName: 'Growth',
-      relayUrl: BASE,
       wsUrl: 'wss://relay.test/v1/realtime',
-      token: 'tok',
       selfUserId: 'u1',
-      fetchImpl,
+      relay: fake.relay,
       createProvider: () => {
         provider = new FakeProvider();
         return provider;
@@ -123,7 +203,6 @@ describe('RelayRoomSource', () => {
     const seen: string[] = [];
     source.subscribe((event) => seen.push(event.type));
     source.play();
-    // let the bootstrap's async fetches resolve
     await flush();
 
     expect(seen).toEqual(['message_created']);
@@ -131,56 +210,42 @@ describe('RelayRoomSource', () => {
     expect(source.getSnapshot().messages[0].body).toBe('hello room');
     expect(source.getSnapshot().members.map((m) => m.id)).toEqual(['u1']);
     expect(provider!.connectCalls).toBe(1);
-    expect(requests.some((r) => r.path === `/v1/me/bindings/${BINDING}/members`)).toBe(true);
+  });
+
+  it('opens the connection with a ticket minted through the relay client, not a static token', async () => {
+    const fake = makeFakeRelay();
+    fake.queueMessages([]);
+    let gotToken: string | null = null;
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: async (options) => {
+        gotToken = await options.getToken();
+        return new FakeProvider();
+      },
+    });
+
+    source.play();
+    await flush();
+
+    expect(fake.ticketMints).toEqual([BINDING]);
+    expect(gotToken).toBe('ticket-1');
   });
 
   it('the first message of kind "session" synthesizes session_started plus its full event backlog', async () => {
-    const { fetchImpl } = fakeFetch([
-      membersRoute(),
-      {
-        method: 'GET',
-        path: `/v1/me/bindings/${BINDING}/messages?latest=50`,
-        respond: () => ({
-          messages: [
-            {
-              id: 'm1',
-              seq: 1,
-              author: { userId: 'u1', name: 'Alice', kind: 'user' },
-              kind: 'session',
-              body: undefined,
-              meta: { runId: 'run1' },
-              createdAt: '2026-09-23T09:00:00Z',
-            },
-          ],
-        }),
-      },
-      {
-        method: 'GET',
-        path: `/v1/me/bindings/${BINDING}/sessions/run1/events?after=0`,
-        respond: () => ({
-          run: {
-            id: 'run1',
-            agent: 'claude',
-            ownerUserId: 'u1',
-            model: 'sonnet-5',
-            status: 'running',
-            title: 'Do the thing',
-            startedAt: '2026-09-23T09:00:00Z',
-            endedAt: null,
-          },
-          events: [{ seq: 1, kind: 'tool_call', payload: { toolCallId: 't1' } }],
-        }),
-      },
-    ]);
+    const fake = makeFakeRelay();
+    fake.queueMessages([message({ kind: 'session', body: '', meta: { runId: 'run1' } })]);
+    fake.setRun('run1', run(), [sessionEvent({ seq: 1, kind: 'tool_call', payload: { toolCallId: 't1' } })]);
 
     const source = new RelayRoomSource({
       bindingId: BINDING,
       spaceName: 'Growth',
-      relayUrl: BASE,
       wsUrl: 'wss://relay.test/v1/realtime',
-      token: 'tok',
       selfUserId: 'u1',
-      fetchImpl,
+      relay: fake.relay,
       createProvider: () => new FakeProvider(),
     });
 
@@ -197,77 +262,20 @@ describe('RelayRoomSource', () => {
   });
 
   it('a session_event_appended notification fetches only events after the last known seq', async () => {
-    let afterZeroServed = false;
-    let afterOneServed = false;
-    const { fetchImpl } = fakeFetch([
-      membersRoute(),
-      {
-        method: 'GET',
-        path: `/v1/me/bindings/${BINDING}/messages?latest=50`,
-        respond: () => ({
-          messages: [
-            {
-              id: 'm1',
-              seq: 1,
-              author: { userId: 'u1', name: 'Alice', kind: 'user' },
-              kind: 'session',
-              meta: { runId: 'run1' },
-              createdAt: '2026-09-23T09:00:00Z',
-              body: undefined,
-            },
-          ],
-        }),
-      },
-      {
-        method: 'GET',
-        path: `/v1/me/bindings/${BINDING}/sessions/run1/events?after=0`,
-        respond: () => {
-          afterZeroServed = true;
-          return {
-            run: {
-              id: 'run1',
-              agent: 'claude',
-              ownerUserId: 'u1',
-              model: 'sonnet-5',
-              status: 'running',
-              title: 't',
-              startedAt: '2026-09-23T09:00:00Z',
-              endedAt: null,
-            },
-            events: [{ seq: 1, kind: 'tool_call', payload: {} }],
-          };
-        },
-      },
-      {
-        // catch-up on 'connect' — nothing new yet
-        method: 'GET',
-        path: `/v1/me/bindings/${BINDING}/messages?after=1`,
-        respond: () => ({ messages: [] }),
-      },
-      {
-        // Simulates the event not existing yet at connect-time catch-up
-        // (empty), then appearing once the stateless notification arrives.
-        method: 'GET',
-        path: `/v1/me/bindings/${BINDING}/sessions/run1/events?after=1`,
-        respond: () => {
-          if (!afterOneServed) {
-            afterOneServed = true;
-            return { run: { id: 'run1' }, events: [] };
-          }
-          return { run: { id: 'run1' }, events: [{ seq: 2, kind: 'tool_call_update', payload: {} }] };
-        },
-      },
-    ]);
+    const fake = makeFakeRelay();
+    fake.queueMessages(
+      [message({ kind: 'session', body: '', meta: { runId: 'run1' } })],
+      [] // connect-time catch-up: nothing new
+    );
+    fake.setRun('run1', run(), [sessionEvent({ seq: 1 })]);
 
     let provider: FakeProvider | null = null;
     const source = new RelayRoomSource({
       bindingId: BINDING,
       spaceName: 'Growth',
-      relayUrl: BASE,
       wsUrl: 'wss://relay.test/v1/realtime',
-      token: 'tok',
       selfUserId: 'u1',
-      fetchImpl,
+      relay: fake.relay,
       createProvider: () => {
         provider = new FakeProvider();
         return provider;
@@ -278,90 +286,75 @@ describe('RelayRoomSource', () => {
     source.subscribe((event) => seen.push(event.type));
     source.play();
     await flush();
-    expect(afterZeroServed).toBe(true);
 
     provider!.fire('connect');
     await flush();
     expect(seen.filter((t) => t === 'session_event_appended')).toHaveLength(1); // no new events yet
 
+    fake.appendEvents('run1', [sessionEvent({ seq: 2, kind: 'tool_call_update' })]);
     provider!.fire('stateless', { payload: JSON.stringify({ type: 'session_event_appended', runId: 'run1', seq: 2 }) });
     await flush();
 
-    expect(afterOneServed).toBe(true);
     expect(source.getSnapshot().sessionEventsByRun.run1.map((e) => e.seq)).toEqual([1, 2]);
   });
 
-  it('send() posts a text message to the relay', async () => {
-    const { fetchImpl, requests } = fakeFetch([
-      membersRoute(),
-      { method: 'GET', path: `/v1/me/bindings/${BINDING}/messages?latest=50`, respond: () => ({ messages: [] }) },
-      { method: 'POST', path: `/v1/me/bindings/${BINDING}/messages`, respond: () => ({ message: {} }) },
-    ]);
+  it('send() posts a text message through the relay client', async () => {
+    const fake = makeFakeRelay();
+    fake.queueMessages([]);
     const source = new RelayRoomSource({
       bindingId: BINDING,
       spaceName: 'Growth',
-      relayUrl: BASE,
       wsUrl: 'wss://relay.test/v1/realtime',
-      token: 'tok',
       selfUserId: 'u1',
-      fetchImpl,
+      relay: fake.relay,
       createProvider: () => new FakeProvider(),
     });
     source.play();
     await flush();
-    await source.send('hi everyone');
+    const id = await source.send('hi everyone');
 
-    const post = requests.find((r) => r.method === 'POST' && r.path === `/v1/me/bindings/${BINDING}/messages`);
-    expect(post?.body).toEqual({ body: 'hi everyone', kind: 'text' });
+    expect(fake.posted).toEqual([{ bindingId: BINDING, body: 'hi everyone', kind: 'text' }]);
+    expect(id).toBe('posted-1');
   });
 
   it('requestOwnAgent() files an agent request targeting the sender', async () => {
-    const { fetchImpl, requests } = fakeFetch([
-      membersRoute(),
-      { method: 'GET', path: `/v1/me/bindings/${BINDING}/messages?latest=50`, respond: () => ({ messages: [] }) },
-      {
-        method: 'POST',
-        path: `/v1/me/bindings/${BINDING}/agent-requests`,
-        respond: () => ({ request: {} }),
-      },
-    ]);
+    const fake = makeFakeRelay();
+    fake.queueMessages([]);
     const source = new RelayRoomSource({
       bindingId: BINDING,
       spaceName: 'Growth',
-      relayUrl: BASE,
       wsUrl: 'wss://relay.test/v1/realtime',
-      token: 'tok',
       selfUserId: 'u1',
-      fetchImpl,
+      relay: fake.relay,
       createProvider: () => new FakeProvider(),
     });
     source.play();
     await flush();
     await source.requestOwnAgent('claude', 'summarize the thread', 'm1');
 
-    const post = requests.find((r) => r.path === `/v1/me/bindings/${BINDING}/agent-requests`);
-    expect(post?.body).toEqual({
-      targetOwnerUserId: 'u1',
-      targetAgent: 'claude',
-      prompt: 'summarize the thread',
-      sourceMessageId: 'm1',
-    });
+    expect(fake.agentRequests).toEqual([
+      {
+        bindingId: BINDING,
+        input: {
+          targetOwnerUserId: 'u1',
+          targetAgent: 'claude',
+          prompt: 'summarize the thread',
+          sourceMessageId: 'm1',
+        },
+      },
+    ]);
   });
 
   it('pause()/dispose() disconnect and destroy the underlying provider', async () => {
-    const { fetchImpl } = fakeFetch([
-      membersRoute(),
-      { method: 'GET', path: `/v1/me/bindings/${BINDING}/messages?latest=50`, respond: () => ({ messages: [] }) },
-    ]);
+    const fake = makeFakeRelay();
+    fake.queueMessages([]);
     let provider: FakeProvider | null = null;
     const source = new RelayRoomSource({
       bindingId: BINDING,
       spaceName: 'Growth',
-      relayUrl: BASE,
       wsUrl: 'wss://relay.test/v1/realtime',
-      token: 'tok',
       selfUserId: 'u1',
-      fetchImpl,
+      relay: fake.relay,
       createProvider: () => {
         provider = new FakeProvider();
         return provider;
@@ -376,18 +369,14 @@ describe('RelayRoomSource', () => {
   });
 
   it('isDone() is always false and replayAll() is a no-op', async () => {
-    const { fetchImpl } = fakeFetch([
-      membersRoute(),
-      { method: 'GET', path: `/v1/me/bindings/${BINDING}/messages?latest=50`, respond: () => ({ messages: [] }) },
-    ]);
+    const fake = makeFakeRelay();
+    fake.queueMessages([]);
     const source = new RelayRoomSource({
       bindingId: BINDING,
       spaceName: 'Growth',
-      relayUrl: BASE,
       wsUrl: 'wss://relay.test/v1/realtime',
-      token: 'tok',
       selfUserId: 'u1',
-      fetchImpl,
+      relay: fake.relay,
       createProvider: () => new FakeProvider(),
     });
     expect(source.isDone()).toBe(false);
@@ -397,12 +386,11 @@ describe('RelayRoomSource', () => {
 });
 
 /**
- * Drains the chained bootstrap/catch-up awaits, including the real
- * `fetch`/`Response.json()` calls the fake `fetchImpl` still goes through
- * (undici resolves a body read via more than a plain microtask) — a macro-
- * task tick is more reliable here than counting `Promise.resolve()`s.
+ * Drains the chained bootstrap/catch-up awaits — a macro-task tick is more
+ * reliable here than counting `Promise.resolve()`s given how many awaits
+ * chain together (bootstrap -> ticket mint -> provider connect -> catch-up).
  */
-async function flush(times = 6): Promise<void> {
+async function flush(times = 8): Promise<void> {
   for (let i = 0; i < times; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }

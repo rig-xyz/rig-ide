@@ -2,12 +2,30 @@ import { Pause, Play, RadioTower } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { buildRoomFeed } from '../fixtures/room-feed';
-import { RelayRoomSource } from '../relay-room-source';
+import { RelayRoomSource, type RelayRoomClient } from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
 import type { AgentKind } from '../types';
 import { Composer } from './composer';
 import { RoomTranscript } from './room-transcript';
 import { SpaceCard } from './space-card';
+
+/**
+ * A thin 1:1 pass-through over `rpc.rig.spacesConnection` — see
+ * `relay-room-source.ts`'s `RelayRoomClient` for why this lives here
+ * instead of in that file (keeps it free of any `window.electronAPI`
+ * dependency at module scope, for tests that never call this function).
+ */
+function createRelayRoomClient(): RelayRoomClient {
+  const client = rpc.rig.spacesConnection;
+  return {
+    mintRealtimeTicket: (bindingId) => client.mintRealtimeTicket({ bindingId }),
+    listMembers: (bindingId) => client.listMembers({ bindingId }),
+    listMessages: (bindingId, query) => client.listMessages({ bindingId, query }),
+    getSessionEvents: (bindingId, runId, after) => client.getSessionEvents({ bindingId, runId, after }),
+    postMessage: (bindingId, input) => client.postMessage({ bindingId, ...input }),
+    requestOwnAgent: (bindingId, input) => client.requestOwnAgent({ bindingId, ...input }),
+  };
+}
 
 /**
  * Spaces: the Room view, mounted only when `spacesEnabled` is on (see
@@ -69,10 +87,9 @@ export function RoomView({ bindingId, spaceName }: { bindingId: string; spaceNam
       relaySource = new RelayRoomSource({
         bindingId,
         spaceName,
-        relayUrl: result.data.relayUrl,
         wsUrl: result.data.wsUrl,
-        token: result.data.token,
         selfUserId: result.data.selfUserId,
+        relay: createRelayRoomClient(),
       });
       setSelfUserId(result.data.selfUserId);
       setSource(relaySource);

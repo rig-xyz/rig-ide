@@ -11,39 +11,40 @@
  * STATELESS "something changed" notifications (`message_created`,
  * `session_event_appended`, `agent_request_created`) — never the payload
  * itself. This class is exactly the thing lane 2's `NOTES.md` asked for:
- * on each notification it fetches the real body over HTTP and resolves it
- * into the SAME inline-payload `RoomEvent` shape `FixtureRoomSource`
- * produces (via `reduceRoom`, the pure reducer lane 2 already wrote and
- * exported from `fixtures/room-feed.ts`), so `RoomTranscript` and friends
- * never have to know the difference between a live room and a replayed one.
+ * on each notification it re-fetches the real body and resolves it into the
+ * SAME inline-payload `RoomEvent` shape `FixtureRoomSource` produces (via
+ * `reduceRoom`, the pure reducer lane 2 already wrote and exported from
+ * `fixtures/room-feed.ts`), so `RoomTranscript` and friends never have to
+ * know the difference between a live room and a replayed one.
  *
- * SECURITY NOTE (flagged for review, not silently decided): this class
- * takes the relay PAT directly and makes its own `fetch`/WebSocket calls
- * from the renderer, unlike `comments.ts`/`account.ts`/the new
- * `main/rig/spaces/*` modules, which keep every relay call — and the token
- * — in the main process. Lane 2's own contract (`RelayRoomSource`
- * implementing `RoomSource`, tested "against a fake Hocuspocus server or a
- * mocked provider") only makes sense with the Yjs/Hocuspocus client living
- * in the renderer (that's where `@hocuspocus/provider` runs), and threading
- * a live, chatty realtime connection through IPC just to keep the token in
- * main would be a much bigger change than lane 3's remaining budget allows.
- * The token itself is handed to the renderer, once, by a new minimal main
- * RPC (`rig.spacesConnection.getConnectionInfo`, see
- * `main/rig/spaces-connection.ts`)
- * — never persisted renderer-side beyond this instance's lifetime, never
- * logged. This is a deliberate, reviewable tradeoff, not an oversight; see
- * `NOTES.md`'s "Open questions" for the alternative (a main-owned realtime
- * proxy) if this needs to change later.
+ * SECURITY (this class previously took the relay PAT directly and made its
+ * own `fetch`/WebSocket calls from the renderer, flagged for review — see
+ * git history for that version's own note on the tradeoff). Every plain
+ * HTTP call this class makes is now a thin proxy through `RelayRoomClient`
+ * (main's `rig.spacesConnection` RPC surface, backed by the SAME
+ * `SpacesRelayApi` the session publisher/dispatcher already use — see
+ * `main/rig/spaces-connection.ts`), so the renderer never holds this
+ * device's long-lived PAT. The realtime Hocuspocus connection is opened
+ * with a short-lived, single-binding ticket (`RelayRoomClient.
+ * mintRealtimeTicket`, ~10 minute TTL) instead — minted by main, handed to
+ * `@hocuspocus/provider` as a `token` FUNCTION (`ensureFreshTicket` below)
+ * rather than a static string, so it's re-minted automatically on every
+ * reconnect (Hocuspocus calls that function again each time it opens a new
+ * WebSocket) and proactively refreshed once the cached one is close to
+ * expiring.
  */
 
+import type { Result } from '@emdash/shared';
 import type {
-  AgentKind,
-  MessageKind,
-  RoomEvent,
-  RoomSnapshot,
-  SessionRunMeta,
-  SessionStatus,
-} from './types';
+  AgentRequest,
+  RelayApiError,
+  RoomMemberRow,
+  RoomMessageRow,
+  SessionAgent,
+  SessionEventRow,
+  SessionRun,
+} from '@main/rig/spaces/relay-api';
+import type { AgentKind, MessageKind, RoomEvent, RoomSnapshot, SessionRunMeta } from './types';
 import { reduceRoom } from './fixtures/room-feed';
 import type { RoomSource } from './room-source';
 
@@ -70,7 +71,8 @@ export interface RealtimeProvider {
 export type RealtimeProviderFactory = (options: {
   wsUrl: string;
   documentName: string;
-  token: string;
+  /** Called by the provider before EVERY connection attempt (initial connect and every automatic reconnect), so a fresh ticket is always supplied — see this file's own header comment. */
+  getToken: () => Promise<string>;
 }) => RealtimeProvider;
 
 /**
@@ -82,48 +84,56 @@ export type RealtimeProviderFactory = (options: {
 export async function createHocuspocusProvider(options: {
   wsUrl: string;
   documentName: string;
-  token: string;
+  getToken: () => Promise<string>;
 }): Promise<RealtimeProvider> {
   const { HocuspocusProvider } = await import('@hocuspocus/provider');
   return new HocuspocusProvider({
     url: options.wsUrl,
     name: options.documentName,
-    token: options.token,
+    token: options.getToken,
   }) as unknown as RealtimeProvider;
 }
 
-// ────────── HTTP wire shapes (mirrors `SPACES_NOTES.md`) ──────────
+// ────────── the relay surface this class needs, proxied through main ──────────
 
-type WireAuthor = { userId: string | null; name: string | null; kind: string };
-type WireMessage = {
-  id: string;
-  seq: number;
-  author: WireAuthor;
-  kind: string;
-  body: string;
-  meta: Record<string, unknown> | null;
-  createdAt: string;
-};
-type WireRun = {
-  id: string;
-  agent: AgentKind;
-  ownerUserId: string;
-  model: string | null;
-  status: SessionStatus;
-  title: string | null;
-  startedAt: string;
-  endedAt: string | null;
-};
-type WireEvent = {
-  seq: number;
-  kind: string;
-  payload: Record<string, unknown>;
-  truncated?: boolean;
-  originalBytes?: number | null;
-};
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
+/**
+ * Everything `RelayRoomSource` needs from the relay, mirroring
+ * `main/rig/spaces-connection.ts`'s `rig.spacesConnection` RPC methods
+ * 1:1 — kept as its own small interface, rather than calling `rpc.rig.
+ * spacesConnection` directly, so a test can hand this a plain in-memory
+ * fake instead of standing up IPC. `RoomView` builds the real one, a
+ * trivial pass-through over `rpc.rig.spacesConnection` (see its own
+ * `createRelayRoomClient`) — kept out of this file so nothing here needs
+ * `@renderer/lib/ipc`'s `rpc` (and, transitively, `window.electronAPI`) at
+ * module scope.
+ */
+export interface RelayRoomClient {
+  mintRealtimeTicket(
+    bindingId: string
+  ): Promise<Result<{ ticket: string; expiresAt: string }, RelayApiError>>;
+  listMembers(bindingId: string): Promise<Result<RoomMemberRow[], RelayApiError>>;
+  listMessages(
+    bindingId: string,
+    query: { latest?: number; after?: string }
+  ): Promise<Result<RoomMessageRow[], RelayApiError>>;
+  getSessionEvents(
+    bindingId: string,
+    runId: string,
+    after?: number
+  ): Promise<Result<{ run: SessionRun; events: SessionEventRow[] }, RelayApiError>>;
+  postMessage(
+    bindingId: string,
+    input: { body: string; kind?: string; meta?: Record<string, unknown> }
+  ): Promise<Result<RoomMessageRow, RelayApiError>>;
+  requestOwnAgent(
+    bindingId: string,
+    input: {
+      targetOwnerUserId: string;
+      targetAgent: SessionAgent;
+      prompt: string;
+      sourceMessageId?: string;
+    }
+  ): Promise<Result<AgentRequest, RelayApiError>>;
 }
 
 /** A statelessly-pushed "something changed" notification — never the payload itself, per `SPACES_NOTES.md`. */
@@ -136,17 +146,14 @@ type RoomNotification =
 export type RelayRoomSourceOptions = {
   bindingId: string;
   spaceName: string;
-  /** e.g. `https://tap-relay.fly.dev` — no trailing slash required. */
-  relayUrl: string;
   /** e.g. `wss://tap-relay.fly.dev/v1/realtime`. */
   wsUrl: string;
-  token: string;
   selfUserId: string;
-  fetchImpl?: typeof fetch;
+  relay: RelayRoomClient;
   createProvider?: (options: {
     wsUrl: string;
     documentName: string;
-    token: string;
+    getToken: () => Promise<string>;
   }) => RealtimeProvider | Promise<RealtimeProvider>;
   /** How many messages to bootstrap on open — mirrors `?latest=N`. */
   bootstrapMessageCount?: number;
@@ -154,6 +161,9 @@ export type RelayRoomSourceOptions = {
 };
 
 type Listener = (event: RoomEvent, snapshot: RoomSnapshot) => void;
+
+/** Re-mint once the cached ticket is within this margin of `expiresAt` (~10 minute TTL). */
+const TICKET_REFRESH_MARGIN_MS = 60_000;
 
 function emptySnapshot(name: string): RoomSnapshot {
   return {
@@ -179,10 +189,7 @@ function emptySnapshot(name: string): RoomSnapshot {
  * `replayAll()` is a no-op — there is no script to fast-forward.
  */
 export class RelayRoomSource implements RoomSource {
-  private readonly opts: Required<
-    Omit<RelayRoomSourceOptions, 'fetchImpl' | 'createProvider' | 'log'>
-  >;
-  private readonly fetchImpl: typeof fetch;
+  private readonly opts: Required<Omit<RelayRoomSourceOptions, 'createProvider' | 'log'>>;
   private readonly makeProvider: NonNullable<RelayRoomSourceOptions['createProvider']>;
   private readonly log: (message: string, extra?: Record<string, unknown>) => void;
 
@@ -199,17 +206,18 @@ export class RelayRoomSource implements RoomSource {
   private catchingUp = false;
   private catchUpAgainRequested = false;
 
+  private ticket: { value: string; expiresAtMs: number } | null = null;
+  private ticketMint: Promise<string> | null = null;
+
   constructor(options: RelayRoomSourceOptions) {
     this.opts = {
       bindingId: options.bindingId,
       spaceName: options.spaceName,
-      relayUrl: options.relayUrl.replace(/\/+$/, ''),
       wsUrl: options.wsUrl,
-      token: options.token,
       selfUserId: options.selfUserId,
+      relay: options.relay,
       bootstrapMessageCount: options.bootstrapMessageCount ?? 50,
     };
-    this.fetchImpl = options.fetchImpl ?? fetch;
     this.makeProvider = options.createProvider ?? createHocuspocusProvider;
     this.log = options.log ?? (() => {});
     this.snapshot = emptySnapshot(options.spaceName);
@@ -267,7 +275,7 @@ export class RelayRoomSource implements RoomSource {
     const provider = await this.makeProvider({
       wsUrl: this.opts.wsUrl,
       documentName: `space:${this.opts.bindingId}`,
-      token: this.opts.token,
+      getToken: () => this.ensureFreshTicket(),
     });
     if (this.disposed) {
       provider.destroy();
@@ -287,39 +295,70 @@ export class RelayRoomSource implements RoomSource {
     provider.connect();
   }
 
+  /**
+   * Returns the cached realtime ticket if it's not close to expiring, or
+   * mints a fresh one — called by the Hocuspocus provider itself before
+   * every connection attempt (initial connect AND every automatic
+   * reconnect, since `onAuthenticate` runs once per document open), so a
+   * long-lived Room session never opens a new connection on a stale
+   * credential. Concurrent callers share one in-flight mint.
+   */
+  private async ensureFreshTicket(): Promise<string> {
+    const now = Date.now();
+    if (this.ticket && this.ticket.expiresAtMs - now > TICKET_REFRESH_MARGIN_MS) {
+      return this.ticket.value;
+    }
+    if (this.ticketMint) return this.ticketMint;
+
+    this.ticketMint = (async () => {
+      const result = await this.opts.relay.mintRealtimeTicket(this.opts.bindingId);
+      if (!result.success) {
+        this.log('Rig spaces: could not mint a realtime ticket', { error: result.error.message });
+        throw new Error(result.error.message);
+      }
+      const expiresAtMs = Date.parse(result.data.expiresAt);
+      this.ticket = {
+        value: result.data.ticket,
+        expiresAtMs: Number.isNaN(expiresAtMs) ? now + TICKET_REFRESH_MARGIN_MS : expiresAtMs,
+      };
+      return this.ticket.value;
+    })();
+    try {
+      return await this.ticketMint;
+    } finally {
+      this.ticketMint = null;
+    }
+  }
+
   /** Loads the initial snapshot (member roster + recent messages + each referenced run's full event log) before the realtime connection is ever opened. */
   private async bootstrap(): Promise<void> {
     const [members, messages] = await Promise.all([
-      this.getJson<{ members?: unknown }>(`/v1/me/bindings/${this.opts.bindingId}/members`),
-      this.getJson<{ messages?: unknown }>(
-        `/v1/me/bindings/${this.opts.bindingId}/messages?latest=${this.opts.bootstrapMessageCount}`
-      ),
+      this.opts.relay.listMembers(this.opts.bindingId),
+      this.opts.relay.listMessages(this.opts.bindingId, { latest: this.opts.bootstrapMessageCount }),
     ]);
 
     // `member_joined` (the room-EVENT vocabulary) only flips an EXISTING
     // invited member's status in `reduceRoom` — there's no event for "here
     // is the initial roster." Bootstrap seeds `snapshot.members` directly.
-    this.seedMembers(asArray(members?.members));
+    if (members.success) this.seedMembers(members.data);
+    else this.log('Rig spaces: could not load room members', { error: members.error.message });
 
-    for (const row of asArray(messages?.messages)) {
-      await this.ingestWireMessage(row as WireMessage);
+    if (messages.success) {
+      for (const row of messages.data) await this.ingestWireMessage(row);
+    } else {
+      this.log('Rig spaces: could not load room messages', { error: messages.error.message });
     }
   }
 
-  private seedMembers(rows: unknown[]): void {
-    const seeded = rows
-      .map((row) => asRecord(row))
-      .filter((row): row is Record<string, unknown> => row !== null && typeof row.userId === 'string')
-      .map((row) => ({
-        id: row.userId as string,
-        name: typeof row.name === 'string' ? row.name : (row.userId as string),
-        email: '',
-        role: typeof row.role === 'string' ? row.role : 'viewer',
-        initial: (typeof row.name === 'string' ? row.name : (row.userId as string))
-          .slice(0, 1)
-          .toUpperCase(),
-        status: 'here' as const,
-      }));
+  private seedMembers(rows: RoomMemberRow[]): void {
+    const seeded = rows.map((row) => ({
+      id: row.userId,
+      name: row.name ?? row.userId,
+      email: '',
+      role: row.role,
+      initial: (row.name ?? row.userId).slice(0, 1).toUpperCase(),
+      status: 'here' as const,
+    }));
     if (seeded.length === 0) return;
     this.snapshot = { ...this.snapshot, members: seeded };
   }
@@ -374,24 +413,30 @@ export class RelayRoomSource implements RoomSource {
   }
 
   private async catchUpMessages(): Promise<void> {
-    const after = this.lastMessageSeq > 0 ? String(this.lastMessageSeq) : undefined;
-    const query = after ? `?after=${after}` : `?latest=${this.opts.bootstrapMessageCount}`;
-    const result = await this.getJson<{ messages?: unknown }>(
-      `/v1/me/bindings/${this.opts.bindingId}/messages${query}`
-    );
-    for (const row of asArray(result?.messages)) {
-      await this.ingestWireMessage(row as WireMessage);
+    const query =
+      this.lastMessageSeq > 0
+        ? { after: String(this.lastMessageSeq) }
+        : { latest: this.opts.bootstrapMessageCount };
+    const result = await this.opts.relay.listMessages(this.opts.bindingId, query);
+    if (!result.success) {
+      this.log('Rig spaces: could not catch up on room messages', { error: result.error.message });
+      return;
     }
+    for (const row of result.data) await this.ingestWireMessage(row);
   }
 
   private async catchUpRuns(): Promise<void> {
     for (const runId of Object.keys(this.snapshot.sessionMetaByRun)) {
       const after = this.lastRunSeq.get(runId) ?? 0;
-      const result = await this.getJson<{ run?: unknown; events?: unknown }>(
-        `/v1/me/bindings/${this.opts.bindingId}/sessions/${runId}/events?after=${after}`
-      );
-      const events = asArray(result?.events) as WireEvent[];
-      for (const event of events) {
+      const result = await this.opts.relay.getSessionEvents(this.opts.bindingId, runId, after);
+      if (!result.success) {
+        this.log('Rig spaces: could not catch up on session events', {
+          runId,
+          error: result.error.message,
+        });
+        continue;
+      }
+      for (const event of result.data.events) {
         this.applyLocal({
           type: 'session_event_appended',
           runId,
@@ -409,8 +454,8 @@ export class RelayRoomSource implements RoomSource {
     }
   }
 
-  /** Turns one wire message into the right `RoomEvent`(s) — a plain `message_created`, plus a synthesized `session_started` (+ its full event backlog) the FIRST time a `kind:'session'` message names a run this snapshot hasn't seen yet. */
-  private async ingestWireMessage(row: WireMessage): Promise<void> {
+  /** Turns one already-shaped relay message row into the right `RoomEvent`(s) — a plain `message_created`, plus a synthesized `session_started` (+ its full event backlog) the FIRST time a `kind:'session'` message names a run this snapshot hasn't seen yet. */
+  private async ingestWireMessage(row: RoomMessageRow): Promise<void> {
     if (row.seq <= this.lastMessageSeq && this.snapshot.messages.some((m) => m.id === row.id)) {
       return; // already applied (bootstrap + catch-up overlap window)
     }
@@ -443,10 +488,14 @@ export class RelayRoomSource implements RoomSource {
 
   /** Fetches a run's header + full event backlog (from seq 0) and applies `session_started` followed by every event, once — the first time a room message references it. */
   private async ingestRun(runId: string, ownerFallback: string): Promise<void> {
-    const result = await this.getJson<{ run?: unknown; events?: unknown }>(
-      `/v1/me/bindings/${this.opts.bindingId}/sessions/${runId}/events?after=0`
-    );
-    const run = asRecord(result?.run) as unknown as WireRun | null;
+    const result = await this.opts.relay.getSessionEvents(this.opts.bindingId, runId, 0);
+    const run: SessionRun | null = result.success ? result.data.run : null;
+    if (!result.success) {
+      this.log('Rig spaces: could not load a referenced session run', {
+        runId,
+        error: result.error.message,
+      });
+    }
     const meta: SessionRunMeta = {
       id: runId,
       agent: run?.agent ?? 'claude',
@@ -459,7 +508,7 @@ export class RelayRoomSource implements RoomSource {
     };
     this.applyLocal({ type: 'session_started', runId, meta });
 
-    const events = asArray(result?.events) as WireEvent[];
+    const events = result.success ? result.data.events : [];
     for (const event of events) {
       this.applyLocal({
         type: 'session_event_appended',
@@ -487,12 +536,8 @@ export class RelayRoomSource implements RoomSource {
    * `sourceMessageId`), or `null` if the post failed.
    */
   async send(text: string): Promise<string | null> {
-    const result = await this.postJson<{ message?: { id?: unknown } }>(
-      `/v1/me/bindings/${this.opts.bindingId}/messages`,
-      { body: text, kind: 'text' }
-    );
-    const id = result?.message?.id;
-    return typeof id === 'string' ? id : null;
+    const result = await this.opts.relay.postMessage(this.opts.bindingId, { body: text, kind: 'text' });
+    return result.success ? result.data.id : null;
   }
 
   /**
@@ -507,7 +552,7 @@ export class RelayRoomSource implements RoomSource {
     prompt: string,
     sourceMessageId?: string
   ): Promise<void> {
-    await this.postJson(`/v1/me/bindings/${this.opts.bindingId}/agent-requests`, {
+    await this.opts.relay.requestOwnAgent(this.opts.bindingId, {
       targetOwnerUserId: this.opts.selfUserId,
       targetAgent,
       prompt,
@@ -525,48 +570,6 @@ export class RelayRoomSource implements RoomSource {
     this.snapshot = reduceRoom(this.snapshot, event);
     for (const listener of this.listeners) listener(event, this.snapshot);
   }
-
-  private async getJson<T>(path: string): Promise<T | null> {
-    try {
-      const response = await this.fetchImpl(`${this.opts.relayUrl}${path}`, {
-        headers: { authorization: `Bearer ${this.opts.token}`, accept: 'application/json' },
-      });
-      if (!response.ok) {
-        this.log('Rig spaces: relay request failed', { path, status: response.status });
-        return null;
-      }
-      return (await response.json()) as T;
-    } catch (error) {
-      this.log('Rig spaces: relay request errored', { path, error: String(error) });
-      return null;
-    }
-  }
-
-  private async postJson<T>(path: string, body: unknown): Promise<T | null> {
-    try {
-      const response = await this.fetchImpl(`${this.opts.relayUrl}${path}`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${this.opts.token}`,
-          accept: 'application/json',
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) {
-        this.log('Rig spaces: relay post failed', { path, status: response.status });
-        return null;
-      }
-      return (await response.json()) as T;
-    } catch (error) {
-      this.log('Rig spaces: relay post errored', { path, error: String(error) });
-      return null;
-    }
-  }
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
 }
 
 function formatTime(iso: string): string {

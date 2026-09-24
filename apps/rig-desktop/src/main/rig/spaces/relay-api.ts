@@ -146,6 +146,21 @@ export interface SpacesRelayApi {
    */
   mintDevice(bindingId: string, deviceLabel?: string): Promise<Result<BindingDevice, RelayApiError>>;
 
+  /**
+   * Mints a short-lived (~10 minute), single-binding, single-user realtime
+   * credential (`POST /v1/me/bindings/:id/realtime-ticket`) for opening a
+   * `space:<bindingId>`/`file:<bindingId>:*` Hocuspocus connection WITHOUT
+   * handing the renderer this device's long-lived PAT. See tap-spaces'
+   * `SPACES_NOTES.md` "Realtime ticket" section for the full contract —
+   * `expiresAt` is ISO 8601; re-mint well before it lapses for a connection
+   * expected to outlive it, and on every reconnect (`onAuthenticate` runs
+   * once per document open, so a stale ticket only breaks a NEW connection,
+   * never one already established).
+   */
+  mintRealtimeTicket(
+    bindingId: string
+  ): Promise<Result<{ ticket: string; expiresAt: string }, RelayApiError>>;
+
   listMembers(bindingId: string): Promise<Result<RoomMemberRow[], RelayApiError>>;
   listMessages(
     bindingId: string,
@@ -448,6 +463,26 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         return err<RelayApiError>({ kind: 'relay', message: 'Could not register this device.' });
       }
       return ok({ id: device.id, bindingId });
+    },
+
+    async mintRealtimeTicket(bindingId) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(
+        ctxResult.data,
+        'POST',
+        `/v1/me/bindings/${bindingId}/realtime-ticket`,
+        'open a live connection',
+        {}
+      );
+      if (!result.success) return err(result.error);
+      const raw = asRecord(result.data);
+      const ticket = raw?.ticket;
+      const expiresAt = raw?.expiresAt;
+      if (typeof ticket !== 'string' || typeof expiresAt !== 'string') {
+        return err<RelayApiError>({ kind: 'relay', message: 'Could not open a live connection.' });
+      }
+      return ok({ ticket, expiresAt });
     },
 
     async listMembers(bindingId) {

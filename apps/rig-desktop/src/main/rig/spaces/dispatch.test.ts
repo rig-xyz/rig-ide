@@ -120,6 +120,7 @@ function makeFakeApi(overrides: Partial<SpacesRelayApi> = {}) {
       patchedRequests.push({ id, status: patch.status });
       return ok({ ...makeRequest({ id }), status: patch.status, runId: patch.runId ?? null });
     },
+    mintRealtimeTicket: notImplemented('mintRealtimeTicket'),
     listMembers: notImplemented('listMembers'),
     listMessages: notImplemented('listMessages'),
     postMessage: notImplemented('postMessage'),

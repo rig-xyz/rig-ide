@@ -76,6 +76,7 @@ function makeSharedStore(requests: AgentRequest[]) {
         patches.push({ id, status: patch.status, runId: patch.runId });
         return ok({ ...row });
       },
+      mintRealtimeTicket: notImplemented('mintRealtimeTicket'),
       listMembers: notImplemented('listMembers'),
       listMessages: notImplemented('listMessages'),
       postMessage: notImplemented('postMessage'),
@@ -242,6 +243,7 @@ describe('claimOne / claimAndDispatchQueued', () => {
       listAgentRequests: async () => err<RelayApiError>({ kind: 'relay', message: 'down' }),
       claimAgentRequest: notImplemented('claimAgentRequest'),
       patchAgentRequest: notImplemented('patchAgentRequest'),
+      mintRealtimeTicket: notImplemented('mintRealtimeTicket'),
       listMembers: notImplemented('listMembers'),
       listMessages: notImplemented('listMessages'),
       postMessage: notImplemented('postMessage'),

@@ -47,6 +47,7 @@ function fakeApi(overrides: Partial<SpacesRelayApi> = {}): {
     getSessionEvents: async () => err<RelayApiError>({ kind: 'relay', message: 'unused' }),
     createAgentRequest: async () => err<RelayApiError>({ kind: 'relay', message: 'unused' }),
     mintDevice: async () => err<RelayApiError>({ kind: 'relay', message: 'unused' }),
+    mintRealtimeTicket: async () => err<RelayApiError>({ kind: 'relay', message: 'unused' }),
     listAgentRequests: async () => ok([]),
     claimAgentRequest: async () => err<RelayApiError>({ kind: 'relay', message: 'unused' }),
     patchAgentRequest: async () => err<RelayApiError>({ kind: 'relay', message: 'unused' }),

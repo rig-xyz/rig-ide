@@ -2,30 +2,45 @@ import { err, ok, type Result } from '@emdash/shared';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import type { RigAccountError } from '@shared/rig/account';
 import { isError, resolveContext } from './account';
+import {
+  createHttpSpacesRelayApi,
+  type AgentRequest,
+  type RelayApiError,
+  type RoomMemberRow,
+  type RoomMessageRow,
+  type SessionAgent,
+  type SessionEventRow,
+  type SessionRun,
+} from './spaces/relay-api';
 
 /**
- * Spaces (lane 3): the ONE piece of relay connection info the renderer's
- * `RelayRoomSource` needs to open its own live `space:<bindingId>`
- * Hocuspocus connection and make its own HTTP catch-up calls — see that
- * module's own header comment for why the realtime/Yjs client lives in the
- * renderer (not main, unlike every other relay caller in this codebase)
- * and the tradeoff that implies for where the PAT ends up.
+ * Spaces: everything the renderer's `RelayRoomSource` needs from the relay,
+ * proxied through main — no HTTP call it makes and no realtime credential
+ * it opens a connection with ever touches this device's long-lived PAT.
  *
- * Kept to exactly this one read, resolved fresh on every call (same
- * reasoning as `account.ts`'s `resolveContext`: a mid-session sign-in or
- * sign-out takes effect on the next Room open, no restart needed) — this
- * module does not itself make any relay calls or hold the realtime
- * connection.
+ * `RelayRoomSource` used to hold that PAT directly (see its own header
+ * comment, still there documenting the prior tradeoff) so it could make its
+ * own `fetch`/WebSocket calls from the renderer — the one deliberate
+ * departure from "every relay call goes through main" in this codebase.
+ * tap-spaces' `feat/spaces-relay` now mints short-lived, single-binding
+ * realtime tickets (`POST /v1/me/bindings/:id/realtime-ticket`, ~10 minute
+ * TTL — see `SPACES_NOTES.md`'s "Realtime ticket" section) specifically so
+ * the renderer never needs the PAT at all: this module mints them, and
+ * every plain HTTP call `RelayRoomSource` used to make directly is now a
+ * thin proxy over `SpacesRelayApi` (the same relay client
+ * `session-publisher.ts`/`request-claim.ts`/`dispatch.ts` already use),
+ * reused rather than re-wrapped.
+ *
+ * `getConnectionInfo` intentionally no longer returns a token of any kind —
+ * `mintRealtimeTicket` is the only credential this controller ever hands
+ * the renderer, and it's scoped to one binding and ~10 minutes.
  */
 
 export type SpacesConnectionInfo = {
   relayUrl: string;
   wsUrl: string;
-  token: string;
   selfUserId: string;
 };
-
-const REQUEST_TIMEOUT_MS = 10_000;
 
 function toWsUrl(relayUrl: string): string {
   const url = new URL(relayUrl);
@@ -34,51 +49,64 @@ function toWsUrl(relayUrl: string): string {
   return url.toString();
 }
 
+const api = createHttpSpacesRelayApi();
+
 export const rigSpacesConnectionController = createRPCController({
   getConnectionInfo: async (): Promise<Result<SpacesConnectionInfo, RigAccountError>> => {
     const ctx = await resolveContext();
     if (isError(ctx)) return err(ctx);
 
-    let response: Response;
-    try {
-      response = await fetch(`${ctx.url.replace(/\/+$/, '')}/v1/me`, {
-        headers: { authorization: `Bearer ${ctx.token}`, accept: 'application/json' },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-    } catch {
-      return err<RigAccountError>({
-        kind: 'relay',
-        message: 'Could not connect to the relay — it may be unreachable.',
-      });
-    }
-    if (!response.ok) {
-      return err<RigAccountError>({
-        kind: 'relay',
-        status: response.status,
-        message: `Could not load your account (relay ${response.status}).`,
-      });
-    }
-    let userId: string | null = null;
-    try {
-      const data: unknown = await response.json();
-      const user =
-        typeof data === 'object' && data !== null
-          ? (data as Record<string, unknown>).user
-          : null;
-      const id = typeof user === 'object' && user !== null ? (user as Record<string, unknown>).id : null;
-      if (typeof id === 'string') userId = id;
-    } catch {
-      // handled by the null check below
-    }
-    if (!userId) {
-      return err<RigAccountError>({ kind: 'relay', message: 'Could not load your account.' });
-    }
+    const who = await api.whoami();
+    if (!who.success) return err(who.error);
 
     return ok({
       relayUrl: ctx.url,
       wsUrl: toWsUrl(ctx.url),
-      token: ctx.token,
-      selfUserId: userId,
+      selfUserId: who.data.id,
     });
   },
+
+  /** Mints this Room's realtime credential — see this file's own header comment. Re-mint before `expiresAt`, and on every reconnect. */
+  mintRealtimeTicket: async (input: {
+    bindingId: string;
+  }): Promise<Result<{ ticket: string; expiresAt: string }, RelayApiError>> =>
+    api.mintRealtimeTicket(input.bindingId),
+
+  listMembers: async (input: { bindingId: string }): Promise<Result<RoomMemberRow[], RelayApiError>> =>
+    api.listMembers(input.bindingId),
+
+  listMessages: async (input: {
+    bindingId: string;
+    query: { latest?: number; after?: string };
+  }): Promise<Result<RoomMessageRow[], RelayApiError>> => api.listMessages(input.bindingId, input.query),
+
+  getSessionEvents: async (input: {
+    bindingId: string;
+    runId: string;
+    after?: number;
+  }): Promise<Result<{ run: SessionRun; events: SessionEventRow[] }, RelayApiError>> =>
+    api.getSessionEvents(input.bindingId, input.runId, input.after),
+
+  postMessage: async (input: {
+    bindingId: string;
+    body: string;
+    kind?: string;
+    meta?: Record<string, unknown>;
+  }): Promise<Result<RoomMessageRow, RelayApiError>> =>
+    api.postMessage(input.bindingId, { body: input.body, kind: input.kind, meta: input.meta }),
+
+  /** Files an agent request targeting the SENDER's own agent — see `RelayRoomSource.requestOwnAgent`'s own doc comment for why it's never a teammate's. */
+  requestOwnAgent: async (input: {
+    bindingId: string;
+    targetOwnerUserId: string;
+    targetAgent: SessionAgent;
+    prompt: string;
+    sourceMessageId?: string;
+  }): Promise<Result<AgentRequest, RelayApiError>> =>
+    api.createAgentRequest(input.bindingId, {
+      targetOwnerUserId: input.targetOwnerUserId,
+      targetAgent: input.targetAgent,
+      prompt: input.prompt,
+      sourceMessageId: input.sourceMessageId,
+    }),
 });

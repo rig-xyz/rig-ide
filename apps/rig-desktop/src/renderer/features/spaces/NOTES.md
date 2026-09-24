@@ -603,3 +603,50 @@ into an owner-side approval UI) — it was not applied; see the final task
 report. The existing composer/dispatch code today already only ever
 targets `request.targetOwnerUserId`/`targetAgent` as set by whoever
 composed the request (unchanged by this pass either way).
+
+## Lane 5 continued — the renderer no longer holds the PAT (this pass)
+
+`RelayRoomSource` used to take the relay PAT directly (`token` option) and
+make its own `fetch`/WebSocket calls from the renderer — flagged for
+review in lane 3's own header comment. tap-spaces' `feat/spaces-relay` now
+mints short-lived (~10 minute), single-binding realtime tickets
+(`POST /v1/me/bindings/:id/realtime-ticket` — see its `SPACES_NOTES.md`
+"Realtime ticket" section) specifically to remove that need. This pass:
+
+- **Every HTTP call `RelayRoomSource` makes now goes through main.**
+  `main/rig/spaces-connection.ts`'s `rig.spacesConnection` RPC controller
+  gained `mintRealtimeTicket`/`listMembers`/`listMessages`/
+  `getSessionEvents`/`postMessage`/`requestOwnAgent`, each a thin proxy
+  over `SpacesRelayApi` (`main/rig/spaces/relay-api.ts` — reused, not
+  re-wrapped; it already had every one of these calls except
+  `mintRealtimeTicket`, added there alongside it). `RelayRoomSource` takes
+  a small injected `RelayRoomClient` interface mirroring these 1:1 instead
+  of `fetchImpl`+`token`; `room-view.tsx`'s `createRelayRoomClient()` is
+  the one real implementation, a pass-through over `rpc.rig.
+  spacesConnection`.
+- **The Hocuspocus connection opens with a minted ticket, not the PAT.**
+  `@hocuspocus/provider`'s `token` option accepts a function
+  (`() => Promise<string>`), not just a static string — exactly the hook
+  needed. `RelayRoomSource.ensureFreshTicket()` mints one via
+  `RelayRoomClient.mintRealtimeTicket`, caches it, and re-mints once it's
+  within 60s of its own `expiresAt`. Since Hocuspocus calls this function
+  again before every reconnect (`onAuthenticate` runs once per document
+  open), a fresh ticket is supplied automatically on both a normal
+  connect and any later reconnect, without this class needing to know
+  when a reconnect happens.
+- **`getConnectionInfo` no longer returns a token of any kind.** Its
+  result is now `{relayUrl, wsUrl, selfUserId}` — `mintRealtimeTicket` is
+  the only credential this controller ever hands the renderer, scoped to
+  one binding and ~10 minutes.
+- **Tests**: `spaces-connection.test.ts` (new) proves the no-token
+  contract directly and that every proxy method delegates to the relay
+  client with the right arguments. `relay-room-source.test.ts` was
+  rewritten against a fake `RelayRoomClient` (in place of a fake `fetch`)
+  plus a new case proving the provider is handed a ticket minted through
+  that client, not a static token.
+  `relay-room-source.integration.local.test.ts` (gated,
+  `SPACES_INTEGRATION_RELAY_URL`) now plays main's part directly
+  (`directHttpRelayClient`, since this renderer-only test process has no
+  real Electron main to proxy through) and asserts a REAL ticket was
+  minted (`relay.mintCalls > 0`) before asserting the message round-trip —
+  see this task's own final report for the live run's actual output.
