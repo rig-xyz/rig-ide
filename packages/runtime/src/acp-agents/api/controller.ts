@@ -10,5 +10,6 @@ export function createAcpController(runtime: AcpRuntime) {
     sessions: runtime.sessionsLiveHost(),
     session: runtime.sessionLiveHost(),
     terminalOutput: (key) => runtime.terminalOutputLog(key.terminalId),
+    sessionRawEvents: (key) => runtime.sessionRawEventsLog(key.conversationId),
   });
 }

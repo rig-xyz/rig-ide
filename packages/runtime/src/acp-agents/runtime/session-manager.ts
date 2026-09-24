@@ -41,6 +41,7 @@ import { acpErr } from '@emdash/core/acp';
 import type { Lease, Result } from '@emdash/shared';
 import { ok, toSerializedError } from '@emdash/shared';
 import type { Logger } from '@emdash/shared/logger';
+import { LiveLog } from '@emdash/wire';
 import { acquireAsResult } from '@emdash/wire/util';
 import { buildAgentClient, type InboundRouter } from '../agent-ports/agent-client';
 import type { FsPort } from '../agent-ports/fs-port';
@@ -92,6 +93,17 @@ export interface HistoryPage {
   nextCursor: number | null;
 }
 
+/**
+ * A raw, unreduced ACP session notification — exactly the `{sessionId, update}`
+ * pair `onSessionUpdate` receives from the agent, before `SessionCell` folds it
+ * into `TranscriptTurn` state. Callers that need the shapes `cell.ts` already
+ * consumes internally (tool_call/tool_call_update/agent_message_chunk/etc.,
+ * for e.g. a spaces session-event publisher) register one of these instead of
+ * re-deriving them from the reduced transcript.
+ */
+export type RawSessionEvent = { sessionId: string; update: SessionUpdate };
+export type RawSessionEventObserver = (raw: RawSessionEvent) => void;
+
 export class SessionManager implements InboundRouter {
   readonly sessionHost: AcpSessionLiveHost = createAcpSessionLiveHost();
   readonly sessionsHost: AcpSessionsLiveHost = createAcpSessionsLiveHost();
@@ -99,6 +111,8 @@ export class SessionManager implements InboundRouter {
   private readonly cells = new Map<string, SessionRecord>();
   private readonly routes = new Map<string, Map<string, string>>();
   private readonly loadingConversations = new Map<string, Set<string>>();
+  private readonly rawObservers = new Map<string, Set<RawSessionEventObserver>>();
+  private readonly rawEventLogs = new Map<string, LiveLog>();
 
   constructor(
     private readonly deps: AcpRuntimeDeps & { logger: Logger },
@@ -425,7 +439,76 @@ export class SessionManager implements InboundRouter {
     });
     this.applyRawMeta(record.cell, params.update);
     record.cell.push(event);
+    this.notifyRawObservers(conversationId, { sessionId: params.sessionId, update: params.update });
     this.syncRecord(record);
+  }
+
+  /**
+   * Registers an opt-in observer for one conversation's raw, unreduced ACP
+   * session notifications — called synchronously, in arrival order, right
+   * alongside (never instead of) the normal `SessionCell.push` reduction
+   * above. A conversation with no registered observer pays nothing beyond a
+   * `Map.get` that returns undefined: this must never change what chat (or
+   * anything else with no observer) already does.
+   *
+   * An observer that throws can never break the session: the throw is
+   * caught and logged here, and every other registered observer still runs.
+   * Returns an unsubscribe function; call it exactly once when done.
+   */
+  observeRawSessionEvents(conversationId: string, observer: RawSessionEventObserver): () => void {
+    let observers = this.rawObservers.get(conversationId);
+    if (!observers) {
+      observers = new Set();
+      this.rawObservers.set(conversationId, observers);
+    }
+    observers.add(observer);
+
+    let unsubscribed = false;
+    return () => {
+      if (unsubscribed) return;
+      unsubscribed = true;
+      const current = this.rawObservers.get(conversationId);
+      if (!current) return;
+      current.delete(observer);
+      if (current.size === 0) this.rawObservers.delete(conversationId);
+    };
+  }
+
+  /**
+   * Lazily creates (or returns) a `LiveLog` of one conversation's raw session
+   * events, newline-delimited JSON-encoded `RawSessionEvent`s — the wire's
+   * existing append-only, cross-process-subscribable primitive (the same one
+   * `terminalOutputLog` uses), reused here rather than inventing a new
+   * transport. Backed by `observeRawSessionEvents` above: the log only ever
+   * exists, and only ever costs anything, for a conversation something has
+   * actually asked for (e.g. the desktop app's `sessionRawEvents` wire
+   * endpoint, resolved on the first subscribe).
+   */
+  rawEventsLog(conversationId: string): LiveLog {
+    const existing = this.rawEventLogs.get(conversationId);
+    if (existing) return existing;
+    const log = new LiveLog();
+    this.rawEventLogs.set(conversationId, log);
+    this.observeRawSessionEvents(conversationId, (raw) => {
+      log.append(`${JSON.stringify(raw)}\n`);
+    });
+    return log;
+  }
+
+  private notifyRawObservers(conversationId: string, raw: RawSessionEvent): void {
+    const observers = this.rawObservers.get(conversationId);
+    if (!observers || observers.size === 0) return;
+    for (const observer of observers) {
+      try {
+        observer(raw);
+      } catch (error) {
+        this.deps.logger.error('SessionManager: raw session event observer threw', {
+          conversationId,
+          sessionUpdate: raw.update.sessionUpdate,
+          error: toSerializedError(error),
+        });
+      }
+    }
   }
 
   onPermissionRequest(

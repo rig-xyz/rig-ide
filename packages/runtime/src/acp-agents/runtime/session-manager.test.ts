@@ -304,4 +304,166 @@ describe('AcpRuntime session manager', () => {
     expect(rt.sessionLiveModels('conv-b')).toBeNull();
     expect(rt.sessionsListLiveModel().states.list.snapshot().data).toEqual({});
   });
+
+  describe('observeRawSessionEvents', () => {
+    it('does not change transcript reduction when no observer is registered', async () => {
+      const { rt, client, sessionId, conversationId } = await startHarness('conv-raw-unaffected');
+      const live = rt.sessionLiveModels(conversationId);
+      if (!live) throw new Error('expected live models');
+      const updates: unknown[] = [];
+      const unsub = live.states.activeTurn.subscribe((u) => updates.push(u));
+
+      await client.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          sessionId,
+          messageId: 'msg-1',
+          content: { type: 'text', text: 'hi' },
+        } as SessionUpdate,
+      });
+
+      expect(updates.length).toBeGreaterThan(0);
+      unsub();
+    });
+
+    it('delivers raw session updates to a registered observer, in order, alongside normal reduction', async () => {
+      const { rt, client, sessionId, conversationId } = await startHarness('conv-raw-order');
+      const live = rt.sessionLiveModels(conversationId);
+      if (!live) throw new Error('expected live models');
+      const reduced: unknown[] = [];
+      const unsub = live.states.activeTurn.subscribe((u) => reduced.push(u));
+
+      const seen: SessionUpdate[] = [];
+      const unobserve = rt.observeRawSessionEvents(conversationId, (raw) => {
+        expect(raw.sessionId).toBe(sessionId);
+        seen.push(raw.update);
+      });
+
+      await client.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          sessionId,
+          messageId: 'msg-1',
+          content: { type: 'text', text: 'hel' },
+        } as SessionUpdate,
+      });
+      await client.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          sessionId,
+          messageId: 'msg-1',
+          content: { type: 'text', text: 'lo' },
+        } as SessionUpdate,
+      });
+
+      expect(seen.map((u) => (u as { content: { text: string } }).content.text)).toEqual([
+        'hel',
+        'lo',
+      ]);
+      // The reduction the observer rides alongside still happened normally.
+      expect(reduced.length).toBeGreaterThan(0);
+
+      unobserve();
+      unsub();
+    });
+
+    it('logs and continues when an observer throws, without breaking the session or other observers', async () => {
+      const { h, rt, client, sessionId, conversationId } = await startHarness('conv-raw-throw');
+      const errorSpy = vi.spyOn(h.deps.logger, 'error').mockImplementation(() => {});
+      try {
+        const otherSeen: SessionUpdate[] = [];
+        rt.observeRawSessionEvents(conversationId, () => {
+          throw new Error('boom');
+        });
+        rt.observeRawSessionEvents(conversationId, (raw) => otherSeen.push(raw.update));
+
+        await client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            sessionId,
+            messageId: 'msg-1',
+            content: { type: 'text', text: 'hi' },
+          } as SessionUpdate,
+        });
+
+        expect(otherSeen).toHaveLength(1);
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining('raw session event observer threw'),
+          expect.objectContaining({ conversationId })
+        );
+        // The session itself is unaffected — still reachable, still live.
+        expect(rt.getSessionState(conversationId).lifecycle).toBe('ready');
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('stops delivering events after unsubscribe', async () => {
+      const { rt, client, sessionId, conversationId } = await startHarness('conv-raw-unsub');
+      const seen: SessionUpdate[] = [];
+      const unobserve = rt.observeRawSessionEvents(conversationId, (raw) => seen.push(raw.update));
+      unobserve();
+
+      await client.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          sessionId,
+          messageId: 'msg-1',
+          content: { type: 'text', text: 'hi' },
+        } as SessionUpdate,
+      });
+
+      expect(seen).toHaveLength(0);
+    });
+  });
+
+  describe('sessionRawEventsLog', () => {
+    it('only starts capturing once something asks for the log (opt-in)', async () => {
+      const { rt, client, sessionId, conversationId } = await startHarness('conv-rawlog-optin');
+
+      await client.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          sessionId,
+          messageId: 'msg-1',
+          content: { type: 'text', text: 'before' },
+        } as SessionUpdate,
+      });
+
+      // Asked for now, after the fact — the log starts empty; it never
+      // retroactively captures events that happened before it existed.
+      const log = rt.sessionRawEventsLog(conversationId);
+      expect(log.snapshot().data.text).toBe('');
+
+      await client.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          sessionId,
+          messageId: 'msg-1',
+          content: { type: 'text', text: 'after' },
+        } as SessionUpdate,
+      });
+
+      const lines = log
+        .snapshot()
+        .data.text.split('\n')
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as { sessionId: string; update: SessionUpdate });
+      expect(lines).toHaveLength(1);
+      expect(lines[0]?.sessionId).toBe(sessionId);
+      expect((lines[0]?.update as { content: { text: string } }).content.text).toBe('after');
+    });
+
+    it('returns the same log instance on repeated calls for the same conversation', async () => {
+      const { rt, conversationId } = await startHarness('conv-rawlog-same');
+      expect(rt.sessionRawEventsLog(conversationId)).toBe(rt.sessionRawEventsLog(conversationId));
+    });
+  });
 });

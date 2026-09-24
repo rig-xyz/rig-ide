@@ -180,6 +180,12 @@ export const acpApiContract = defineContract({
     },
   }),
   terminalOutput: liveLog({ key: terminalOutputKeySchema }),
+  // Opt-in, per-session stream of raw ACP session notifications (the exact
+  // `{sessionId, update}` pairs SessionCell reduces into transcript state),
+  // newline-delimited JSON over the same append-only log transport
+  // `terminalOutput` already uses. Subscribing is what makes it exist at all
+  // — see `SessionManager.rawEventsLog`'s own doc comment.
+  sessionRawEvents: liveLog({ key: sessionKeySchema }),
 });
 
 export type AcpApiContract = typeof acpApiContract;

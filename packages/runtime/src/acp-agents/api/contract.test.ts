@@ -1,3 +1,4 @@
+import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import {
   acpApiContract,
   acpRuntimeErrorSchema,
@@ -10,7 +11,7 @@ import {
   uploadAttachmentCommandSchema,
 } from '@emdash/core/acp';
 import { isOk } from '@emdash/shared';
-import { ReplicaState } from '@emdash/wire';
+import { ReplicaLog, ReplicaState } from '@emdash/wire';
 import { createTestWire } from '@emdash/wire/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -93,5 +94,59 @@ describe('ACP API contract schemas', () => {
         cause: { name: 'RequestError', message: 'Authentication required' },
       })
     ).not.toThrow();
+  });
+
+  it('streams raw session events across the wire, in order, via sessionRawEvents', async () => {
+    const h = makeAcpHarness();
+    const rt = new AcpRuntime(h.deps);
+    const wire = createTestWire(acpApiContract, createAcpController(rt), { validate: 'full' });
+    const contractClient = wire.client;
+    try {
+      const started = await contractClient.startSession({
+        input: makeStartInput({ conversationId: 'conv-raw-wire' }),
+      });
+      expect(started).toEqual({ success: true, data: { sessionId: 'session-1' } });
+
+      const replica = new ReplicaLog(
+        contractClient.sessionRawEvents.handle({ conversationId: 'conv-raw-wire' })
+      );
+      await replica.ready;
+
+      const client = h.client();
+      await client.sessionUpdate({
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          sessionId: 'session-1',
+          messageId: 'msg-1',
+          content: { type: 'text', text: 'hel' },
+        } as SessionUpdate,
+      });
+      await client.sessionUpdate({
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          sessionId: 'session-1',
+          messageId: 'msg-1',
+          content: { type: 'text', text: 'lo' },
+        } as SessionUpdate,
+      });
+
+      await vi.waitFor(() => {
+        expect(replica.text().trim().split('\n')).toHaveLength(2);
+      });
+      const lines = replica
+        .text()
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as { sessionId: string; update: SessionUpdate });
+      expect(lines.map((l) => (l.update as { content: { text: string } }).content.text)).toEqual([
+        'hel',
+        'lo',
+      ]);
+      await replica.dispose();
+    } finally {
+      wire.dispose();
+    }
   });
 });
