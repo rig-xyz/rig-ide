@@ -10,6 +10,7 @@ const alias = {
   '@main': resolve(__dirname, 'src/main'),
   '@tooling': resolve(__dirname, 'tooling'),
   '@emdash/core/acp/client': resolve(__dirname, '../../packages/core/src/acp/client.ts'),
+  '@emdash/core/acp/transcript-parser': resolve(__dirname, '../../packages/core/src/acp/reducer/index.ts'),
   '@emdash/core/acp': resolve(__dirname, '../../packages/core/src/acp/index.ts'),
   '@emdash/core/agents/agent-env': resolve(
     __dirname,

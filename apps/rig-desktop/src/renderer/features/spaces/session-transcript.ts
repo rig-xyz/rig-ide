@@ -1,5 +1,6 @@
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
-import { AcpTranscriptParser, type TranscriptTurn } from '@emdash/core/acp';
+// The browser-safe entry: '@emdash/core/acp' also pulls in Node-only transport code.
+import { AcpTranscriptParser, type TranscriptTurn } from '@emdash/core/acp/transcript-parser';
 import type { SessionEvent } from './types';
 
 /**

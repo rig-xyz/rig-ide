@@ -15,11 +15,6 @@ import '@renderer/tokens.css';
 // The session card renders answers with SafeMarkdown, which imports the IPC
 // bridge (for opening links); nothing here clicks a link.
 vi.mock('@renderer/lib/ipc', () => ({ rpc: { app: { openExternal: async () => {} } } }));
-// The expanded trace mounts chat's SolidJS transcript, which doesn't load in
-// this harness; its replay logic is unit-tested in session-transcript.test.ts.
-vi.mock('@renderer/features/spaces/components/session-trace', () => ({
-  SessionTrace: () => <div data-testid="session-trace" />,
-}));
 
 /**
  * Spaces (lane 2): renders the Room's real components (transcript +
