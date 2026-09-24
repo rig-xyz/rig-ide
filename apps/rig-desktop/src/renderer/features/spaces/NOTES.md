@@ -246,13 +246,15 @@ pause now only renders for the fixture. Composer's `onSend` posts through
 brief.
 
 **Not done in this pass, and why:**
-- **The Stop button** stays unwired. Cancelling a live run needs an ACP
+- **The Stop button** stays unwired. _(Done in lane 4 — see "Lane 4 — what's
+  live" below.)_ Cancelling a live run needs an ACP
   session registry keyed by relay `run_id → conversationId`, which doesn't
   exist yet (this pass didn't create local agent sessions for spaces at
   all — see the next point). Lane 2's own NOTES.md already flagged this as
   an open decision; it's carried forward, not newly deferred.
 - **The publisher and request-claim poller are not wired into the running
-  app.** Both are complete, real, and integration-tested (see below)
+  app.** _(Done in lane 4 — see "Lane 4 — what's live" below.)_ Both are
+  complete, real, and integration-tested (see below)
   against a real relay, but nothing in `main/index.ts` starts a
   `RequestClaimPoller` on sign-in, and nothing feeds a local ACP session's
   events into a `SessionEventPublisher`. The reason isn't scope-cutting for
@@ -387,3 +389,139 @@ no-op; the request ends up `running` with a real `runId`.
   produces — see "Not done in this pass" above for exactly where that
   stream doesn't exist yet (`packages/runtime`'s `cell.ts`) and what hook
   to add.
+
+## Lane 4 — what's live
+
+**Raw-event hook in the runtime** (`packages/runtime/src/acp-agents/
+runtime/session-manager.ts`) — `SessionManager.observeRawSessionEvents
+(conversationId, observer)`: a minimal, opt-in, per-conversation hook
+fired synchronously, in arrival order, right alongside the existing
+`SessionCell.push` reduction inside `onSessionUpdate`. A conversation with
+no observer costs one `Map.get` returning `undefined` — chat (which never
+registers one) is unaffected, proven by `session-manager.test.ts`'s own
+"does not change transcript reduction when no observer is registered"
+case. A throwing observer is caught and logged (`SessionManager: raw
+session event observer threw`) and never breaks the session or other
+observers.
+
+That hook is exposed across the ACP runtime worker/main process boundary
+(main only ever talks to the worker over `@emdash/wire`'s RPC contract —
+there is no shared-memory shortcut) as a new `sessionRawEvents` **liveLog**
+wire endpoint, reusing the existing `terminalOutput` transport rather than
+inventing a new one: `SessionManager.rawEventsLog(conversationId)` lazily
+creates a `LiveLog` of newline-delimited JSON `{sessionId, update}` lines,
+wired to `observeRawSessionEvents` on first creation — so the log (and the
+cost of maintaining it) only exists for a conversation something has
+actually subscribed to. Added to `packages/core/src/acp/api/contract.ts`
+and `packages/runtime/src/acp-agents/api/controller.ts`. Covered by new
+`session-manager.test.ts` cases (order, throw-safety, unsubscribe,
+reduction-unaffected, opt-in log creation) and a wire round-trip test in
+`api/contract.test.ts` using a real `ReplicaLog`.
+
+**Dispatcher** (`main/rig/spaces/dispatch.ts`) — `createSpacesDispatcher`
+is the real `dispatch` callback `RequestClaimPoller` needed. One
+persistent ACP session per `(bindingId, targetOwnerUserId, targetAgent)`:
+a second claimed request for the same key reuses the running session via
+`queuePrompt` rather than starting a second CLI process. Raw events are
+subscribed (via the hook above, over `ReplicaLog`) BEFORE the session
+starts, so nothing from the very first turn is missed, and forwarded to
+whichever queued request's `SessionEventPublisher` is the currently active
+turn — correlated FIFO purely off the session's own `isGenerating`
+busy/idle edges, since the ACP session machine's `lastStopReason` at that
+edge already distinguishes normal completion (a real reason), an explicit
+cancel (`'cancelled'`), and an in-turn error (left `null` — the session
+machine's own `TurnEnded` handling never sets a reason on an `'errored'`
+outcome, which turned out to be exactly the deterministic signal this
+needed; no extra hook required). `available_commands_update` notifications
+are dropped before publishing, per the goal's own instruction (19–50KB
+each, useless in the log). The seam is `SpacesAcpSessions` — everything
+this module needs from the ACP runtime, small enough to fake in tests
+without a real runtime worker or wire transport; `createRuntimeAcpSessions`
+(same file) is the one real implementation, thin and deliberately
+untested in isolation, same posture `relay-api.ts`'s HTTP implementation
+already takes.
+
+`createDeviceIdResolver` mints and memoizes a device id per binding
+(`SpacesRelayApi.mintDevice`, `POST /v1/me/bindings/:id/devices`, added to
+`relay-api.ts`) — necessary because `RequestClaimPoller`'s `deviceId` must
+vary per claimed request's own `bindingId` (`listAgentRequests` is
+cross-binding), not stay fixed for the whole poller. `request-claim.ts`'s
+`ClaimAndDispatchOptions.deviceId` now also accepts a resolver function
+(`(bindingId) => Promise<string>`) in addition to the plain string every
+existing test still uses unchanged.
+
+**Wired into the running app** — `main/rig/spaces/dispatch-controller.ts`'s
+`SpacesDispatchController` owns the one `RequestClaimPoller` this device
+runs, starting it exactly when `spacesEnabled` is on AND the app is signed
+in, stopping it the moment either isn't — re-evaluated on every settings
+change and on a 15s interval (there's no existing sign-in/out event to
+react to directly, so sign-in is re-polled rather than pushed; up to 15s
+latency noticing a sign-in that happened with the flag already on).
+Reentrancy-guarded so an overlapping settings-change + interval tick can
+never double-start a poller. Initialized in `main/index.ts` (alongside
+`acpAgentStatusBridge`), disposed in `app/shutdown.ts`. The real wiring
+(settings store, ACP runtime client, `resolveLocalPathsImpl`'s DB read)
+lives in the sibling `dispatch-controller-instance.ts`, deliberately kept
+out of `dispatch-controller.ts` itself: those touch Electron's `app`/the
+SQLite DB at module load time, which fails under this app's plain `node`
+Vitest project (the same pre-existing gap `context.test.ts`/
+`comments.smoke.test.ts`/`files.smoke.test.ts`/`share-links.test.ts` hit)
+— splitting the class out keeps `SpacesDispatchController` itself
+importable, and unit-testable, on its own.
+
+**Stop button** — `components/room-transcript.tsx` threads a new
+`onStopSession(runId)` down to `SessionCard`'s existing `onStop` prop, but
+only for the current user's OWN agent session (`meta.owner === ownId`) —
+the same "own agent only" rule the composer's `@mention` dispatch already
+follows. `room-view.tsx` wires it to a new `rig.spacesDispatch.stopRun`
+main RPC route (`rpc.ts`), only when the room is on the real relay
+(`RelayRoomSource`), never the scripted demo (nothing to stop there).
+Ownership is also enforced STRUCTURALLY on the main side, not just by the
+renderer hiding the button: `dispatch.ts`'s `stopRun(runId)` only ever
+finds runs THIS device's own dispatcher registry is tracking — a run
+dispatched by a teammate's device is simply not there, so there is
+nothing a curious or compromised renderer could stop by guessing a
+different `runId`. Stopping the CURRENTLY RUNNING turn calls the runtime's
+`cancelTurn`; stopping a still-PENDING (queued but not yet started) turn
+removes it from the queue and settles it `stopped` immediately, without
+touching the runtime at all.
+
+**Tests**: `session-manager.test.ts`/`contract.test.ts` (runtime, see
+above), `dispatch.test.ts` (17 cases against a fully fake
+`SpacesAcpSessions` plus a working fake `SpacesRelayApi`: session reuse,
+raw-event filtering/FIFO correlation, normal/error/stop outcomes, stop-
+while-running vs. stop-while-pending, failure cleanup, and the device id
+resolver), `dispatch-controller.test.ts` (8 cases against injected fakes:
+the enabled/signed-in gate in all four combinations, reacting to a
+settings change, the periodic sign-in re-check, no double-start, dispose,
+stop-run delegation), and 2 new `request-claim.test.ts` cases for the
+device id resolver form. `integration.local.test.ts` gained a third case,
+"a claimed request drives a fake ACP agent whose events land in the relay
+run in order" — the real `createSpacesDispatcher` and a real relay `api`,
+against a fake `SpacesAcpSessions` (there is no real ACP runtime worker in
+that test process), asserting `available_commands_update` never reaches
+the relay and the two real events land with seq `[1, 2]` and the run/
+request both settle `done`. **Not run live this pass**: the tap-spaces
+checkout this relies on had another agent actively committing to it at
+the time (`tap-spaces` root, per this task's own instructions, read/run
+only, no edits), and no relay process was already running to attach to —
+starting a fresh one risked colliding with that session's own in-flight
+Postgres migrations. The test is written and gated exactly like its two
+siblings (`describe.skipIf(!RELAY_URL)`), so it costs nothing in the
+normal suite and is ready to run the next time a relay is available; see
+this file's own "To reproduce" instructions above.
+
+**Not done in this pass, and why**:
+- **Permission requests during a spaces agent turn.** A spaces session can
+  still hit a tool-permission prompt like any other ACP session, but
+  nothing here resolves one — `comment-agent.ts`'s auto-approve/global-
+  setting handling was deliberately not ported, since there is no comment
+  thread (or any UI at all) for a spaces turn to surface a card to. In
+  practice this means a tool call needing approval will simply hang until
+  the turn's own absolute limits (none currently set) or a user-initiated
+  Stop end it. Fixing this properly needs a decision this pass didn't have
+  the room for: auto-approve everything (matching "Auto-approve agent
+  actions" if the setting's on, decline otherwise), or a new Room
+  affordance for approving a teammate-visible agent's tool call in place.
+- **Invite/connector/skill actions** — still presentation-only; unchanged
+  from lane 3, out of this lane's scope too.

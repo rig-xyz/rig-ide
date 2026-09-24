@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createSpacesDispatcher, type BusyChange, type RawSessionEvent, type SpacesAcpSessions } from './dispatch';
 import { createHttpSpacesRelayApi } from './relay-api';
 import { claimOne } from './request-claim';
 import { SessionEventPublisher } from './session-publisher';
@@ -105,5 +106,93 @@ describe.skipIf(!RELAY_URL)('spaces lane 3 — live relay integration', () => {
     expect(settled?.claimedByDeviceId).toEqual(expect.stringMatching(/^dev_|^device-/));
     expect(typeof settled?.runId).toBe('string');
     expect(settled?.runId?.length).toBeGreaterThan(0);
+  }, 20_000);
+
+  it('a claimed request drives a fake ACP agent whose events land in the relay run in order', async () => {
+    const created = await api.createAgentRequest(bindingId, {
+      targetOwnerUserId: process.env.SPACES_INTEGRATION_OWNER_ID!,
+      targetAgent: 'claude',
+      prompt: 'summarize the room',
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+    const request = created.data;
+
+    // The real `createSpacesDispatcher` (main/rig/spaces/dispatch.ts)
+    // against the REAL relay `api` above, but a FAKE `SpacesAcpSessions` —
+    // there is no real ACP runtime worker in this test process. Mirrors
+    // dispatch.test.ts's own fake exactly, so what's proven here is the
+    // real dispatcher's wiring end to end against a real relay, not the
+    // ACP runtime (already covered elsewhere).
+    let rawHandler: ((raw: RawSessionEvent) => void) | null = null;
+    let busyHandler: ((change: BusyChange) => void) | null = null;
+    const acp: SpacesAcpSessions = {
+      startSession: async () => ({ success: true, data: undefined }),
+      queuePrompt: async () => ({ success: true, data: undefined }),
+      cancelTurn: async () => {},
+      subscribeRaw: async (_conversationId, onEvent) => {
+        rawHandler = onEvent;
+        return () => {
+          rawHandler = null;
+        };
+      },
+      subscribeBusy: async (_conversationId, onChange) => {
+        busyHandler = onChange;
+        onChange({ isGenerating: false, lastStopReason: null }); // seed, mirrors ReplicaState
+        return () => {
+          busyHandler = null;
+        };
+      },
+    };
+
+    const { dispatch } = createSpacesDispatcher({
+      api,
+      acp,
+      resolveWorkspace: async () => '/tmp/lane4-integration-check',
+    });
+
+    await claimOne(
+      api,
+      DEVICE_A_ID,
+      async (claimedRequest) => dispatch(claimedRequest),
+      request
+    );
+
+    // Drive the fake agent's turn: busy, two raw events (one of them
+    // available_commands_update, which must NOT reach the relay), idle.
+    expect(busyHandler).not.toBeNull();
+    expect(rawHandler).not.toBeNull();
+    busyHandler!({ isGenerating: true, lastStopReason: null });
+    rawHandler!({ sessionId: 'fake-acp-session', update: { sessionUpdate: 'tool_call', toolCallId: 't1' } });
+    rawHandler!({ sessionId: 'fake-acp-session', update: { sessionUpdate: 'available_commands_update', commands: [] } });
+    rawHandler!({
+      sessionId: 'fake-acp-session',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Done.' } },
+    });
+    busyHandler!({ isGenerating: false, lastStopReason: 'end_turn' });
+
+    // `finalizeTurn` runs in the background off the busy-edge callback —
+    // poll the relay for the request to settle rather than racing it.
+    let runId: string | undefined;
+    await expect
+      .poll(
+        async () => {
+          const mine = await api.listAgentRequests('done');
+          if (!mine.success) return undefined;
+          const settled = mine.data.find((r) => r.id === request.id);
+          runId = settled?.runId ?? undefined;
+          return settled?.status;
+        },
+        { timeout: 15_000 }
+      )
+      .toBe('done');
+
+    expect(runId).toBeTruthy();
+    const events = await api.getSessionEvents(bindingId, runId!, 0);
+    expect(events.success).toBe(true);
+    if (!events.success) return;
+    expect(events.data.run.status).toBe('done');
+    expect(events.data.events.map((e) => e.kind)).toEqual(['tool_call', 'agent_message_chunk']);
+    expect(events.data.events.map((e) => e.seq)).toEqual([1, 2]);
   }, 20_000);
 });
