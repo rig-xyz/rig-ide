@@ -663,3 +663,41 @@ owner, and approvals belong to them.
   - is this a task for a teammate's agent, or a question the space's
     trace can answer.
 
+
+## Known gaps: demo vs code audit (2026-09-23)
+
+The live loop's glue gaps (A–E below) are now fixed; everything else is open.
+Tick items off here as they land.
+
+**Fixed:**
+- [x] Live Room had no agents, so `@claude` did nothing.
+- [x] A. Nothing posted a `kind:'session'` message, so no card appeared.
+- [x] B. No `turn_ended` event, so cards spun forever.
+- [x] C. Relay-coalesced `{chunks}` weren't unwrapped, so the final answer was blank.
+- [x] D. The agent got no context that it's in a space (a minimal hidden block now).
+- [x] E. The claim poller waited up to 15s (`spacesDispatch.checkNow`).
+- [x] Message authors carry a Clerk id, so the user's own messages looked foreign and ownership broke.
+- [x] Stale `packages/core` / `packages/runtime` `dist/` builds: the app consumes built dist, not source.
+  **Rebuild them after any runtime/contract change** (`pnpm build` in each).
+
+**Open. Cheap, likely to bite:**
+- [ ] The rig skill still says to reply via `rig chat send` when @-mentioned. Add an "in a space" section and bump `SKILL_VERSION` (rig repo, `bin/postinstall.mjs`).
+- [ ] Silent failures: a request is claimed before the folder check, and failures post nothing. Check the folder first; post a `system` message on failure.
+- [ ] Doc comments leak into the Room feed as plain bubbles (filter out `path`/`parentId` rows); `author.kind` is dropped, so agent posts look human.
+- [ ] Presence and typing: `setTyping` exists but isn't wired; `Member.online` is always "here".
+- [ ] The card header shows model "unknown": pass the model to `createSession`.
+- [ ] The agent busy dot never lights (no live `agent_busy_changed`).
+
+**Open. Medium:**
+- [ ] Space memory: persistent sessions are in-memory only (`sessionId: null`), so a restart gives a fresh agent. The agent also never sees recent room messages; add the last N, quoted as untrusted data.
+- [ ] "Why 41 → 34": wire `rig history` and the provenance route across the whole space; add a Sources row on the card.
+- [ ] Skills in the space card and the `/` palette: expose the manifest's `.claude/skills/*` through a route.
+- [ ] Claude inviting people: the invite route is owner-only and the skill requires a go-ahead; there's no invite room message.
+- [ ] Doc comment `@claude` goes to the separate comment agent, not the space session.
+- [ ] Replying to a card (`parentId` dropped; no reply UI).
+- [ ] Attach button and doc import aren't wired.
+
+**Open. Large / product:**
+- [ ] Space lifecycle: `#name` create, rail list, promote to rig (today the Room only opens on a bound rig).
+- [ ] Per-space connectors (sharing secrets needs design).
+- [ ] Live co-editing with named cursors (no Yjs editor binding yet).
