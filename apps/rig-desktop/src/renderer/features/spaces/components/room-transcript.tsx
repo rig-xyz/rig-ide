@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { dayKey, formatDayLabel } from '@renderer/lib/time-format';
+import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
 import type { RoomMessage, RoomSnapshot } from '../types';
 import { SessionCard } from './session-card';
 import {
@@ -51,7 +51,7 @@ function renderItem(
     case 'invite':
       return <InviteRow message={message} snapshot={snapshot} />;
     case 'comment_mirror':
-      return <CommentMirrorLine message={message} snapshot={snapshot} onOpenFile={onOpenFile} />;
+      return <CommentMirrorLine message={message} snapshot={snapshot} ownId={ownId} onOpenFile={onOpenFile} />;
     case 'system':
       if (message.meta.event === 'joined') return <JoinRow message={message} snapshot={snapshot} />;
       // Day breaks are derived from timestamps (see RoomTranscript); a
@@ -227,16 +227,18 @@ export function RoomTranscript({
           {(() => {
             const units = groupThreads(snapshot.messages);
             const nodes: ReactNode[] = [];
-            let lastDay = '';
+            let lastDay = Number.NEGATIVE_INFINITY;
             let prevMessage: RoomMessage | undefined;
             for (const unit of units) {
-              const first = unit.kind === 'message' ? unit.message : unit.messages[0];
-              const day = first ? dayKey(first.createdAt) : '';
-              if (first && day && day !== lastDay) {
+              // A thread sits where it was last active, so its day is its latest message's.
+              const placed = unit.kind === 'message' ? unit.message : unit.messages.at(-1);
+              const day = placed ? dayStart(placed.createdAt) : Number.NaN;
+              // Only ever step forward: an out-of-order item never re-opens an earlier day.
+              if (placed && day > lastDay) {
                 lastDay = day;
                 nodes.push(
                   <motion.div key={`day-${day}`} layout>
-                    <DayDivider label={formatDayLabel(first.createdAt)} />
+                    <DayDivider label={formatDayLabel(placed.createdAt)} />
                   </motion.div>
                 );
               }
@@ -251,7 +253,7 @@ export function RoomTranscript({
                     messages={unit.messages}
                     renderMessage={(message) => render(message)}
                     renderReply={(message) => (
-                      <CommentMirrorLine message={message} snapshot={snapshot} onOpenFile={onOpenFile} inThread />
+                      <CommentMirrorLine message={message} snapshot={snapshot} ownId={ownId} onOpenFile={onOpenFile} inThread />
                     )}
                   />
                 );

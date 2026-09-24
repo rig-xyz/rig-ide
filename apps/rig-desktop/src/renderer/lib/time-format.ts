@@ -17,6 +17,24 @@ export function formatClock(value: string | Date): string {
   return date ? date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
 }
 
+/** The clock time without AM/PM ("10:40"), for tight spots where the day's context is already clear. */
+export function formatClockShort(value: string | Date): string {
+  const date = toDate(value);
+  if (!date) return '';
+  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+    .formatToParts(date)
+    .filter((part) => part.type !== 'dayPeriod')
+    .map((part) => part.value)
+    .join('')
+    .trim();
+}
+
+/** Local midnight of the value's day, as a timestamp; NaN when unparseable. */
+export function dayStart(value: string | Date): number {
+  const date = toDate(value);
+  return date ? new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime() : Number.NaN;
+}
+
 /** A stable key for "same calendar day" in local time. */
 export function dayKey(value: string | Date): string {
   const date = toDate(value);

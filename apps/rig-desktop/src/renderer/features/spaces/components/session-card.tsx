@@ -1,7 +1,8 @@
-import { ChevronRight, FileText, Loader2, Square } from 'lucide-react';
+import { ChevronRight, FileText, Square } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { PermissionPrompt } from '@renderer/features/chat/permission-prompt';
 import { SafeMarkdown } from '@renderer/lib/ui/comment-markdown';
+import { DotMatrix, type DotMatrixActivity } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import { AGENT_NAME, AgentAvatar } from './identity';
@@ -45,6 +46,28 @@ function stepVerb(kind: string | undefined, status: string | undefined): string 
       return 'Running';
     default:
       return 'Working on';
+  }
+}
+
+/** Which motion the live matrix plays for what the agent is doing right now. */
+function liveActivity(kind: string | undefined, awaitingApproval: boolean, started: boolean): DotMatrixActivity {
+  if (awaitingApproval) return 'waiting';
+  switch (kind) {
+    case 'read':
+    case 'fetch':
+      return 'reading';
+    case 'edit':
+    case 'delete':
+    case 'move':
+      return 'editing';
+    case 'search':
+      return 'searching';
+    case 'execute':
+      return 'running';
+    case undefined:
+      return started ? 'thinking' : 'starting';
+    default:
+      return 'thinking';
   }
 }
 
@@ -105,15 +128,25 @@ export function SessionCard({
 
       {/* body */}
       <div className="flex flex-col gap-1 pl-[29px]">
-        {running && card.currentStep && (
-          <div className="flex h-6.5 items-center gap-2 text-sm text-text-secondary">
-            <Loader2 className="size-3.5 shrink-0 animate-spin text-text-muted" strokeWidth={1.5} />
+        {running && (
+          <div className="flex h-6.5 items-center gap-2 text-sm text-text-secondary" data-testid="session-live-line">
+            <DotMatrix state={liveActivity(card.currentStep?.kind, !!pendingPermission, events.length > 0)} />
             <span className="active-shimmer-muted shrink-0">
-              {stepVerb(card.currentStep.kind, card.steps.at(-1)?.status)}
+              {pendingPermission
+                ? onResolvePermission
+                  ? 'Waiting for your approval'
+                  : `Waiting on ${owner?.name ?? meta.owner}'s approval`
+                : card.currentStep
+                  ? stepVerb(card.currentStep.kind, card.steps.at(-1)?.status)
+                  : events.length > 0
+                    ? 'Thinking'
+                    : 'Starting'}
             </span>
-            <span className="min-w-0 truncate font-mono text-xs text-text-primary">
-              {card.currentStep.title ?? card.currentStep.toolCallId}
-            </span>
+            {card.currentStep && !pendingPermission && (
+              <span className="min-w-0 truncate font-mono text-xs text-text-primary">
+                {card.currentStep.title ?? card.currentStep.toolCallId}
+              </span>
+            )}
           </div>
         )}
         {pendingPermission &&
@@ -130,16 +163,7 @@ export function SessionCard({
                 onResolvePermission(pendingPermission.requestId, optionId);
               }}
             />
-          ) : (
-            <div
-              data-testid="permission-waiting-line"
-              className="flex h-6 items-center text-xs text-text-muted"
-            >
-              <span className="min-w-0 truncate">
-                Waiting on {owner?.name ?? meta.owner}'s approval
-              </span>
-            </div>
-          ))}
+          ) : null)}
         {card.outputs.map((output) => (
           <div
             key={output.path}

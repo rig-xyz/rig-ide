@@ -1,5 +1,6 @@
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { RoomSnapshot } from '../types';
+import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { AGENT_NAME, AgentAvatar } from './identity';
 
 /**
@@ -32,7 +33,7 @@ export function AgentRows({ snapshot, selfUserId }: { snapshot: RoomSnapshot; se
             <span className="text-xs text-text-primary">{AGENT_NAME[agent.agent]}</span>
             <span className="ml-auto flex items-center gap-1.5 font-mono text-2xs text-text-muted">
               {busy ? 'working' : `@${agent.agent}`}
-              {busy && <span className="bg-accent size-1.5 animate-pulse rounded-full" />}
+              {busy && <DotMatrix state="thinking" size="sm" />}
             </span>
           </div>
         );

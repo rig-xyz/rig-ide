@@ -2,7 +2,7 @@ import { CircleAlert, Copy, UserPlus } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
-import { formatFull } from '@renderer/lib/time-format';
+import { formatClockShort, formatFull } from '@renderer/lib/time-format';
 import { BrandLogo } from '../logos';
 import type { RoomConnector, RoomMember, RoomMessage, RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
@@ -70,26 +70,34 @@ function richText(text: string, ownId: string): ReactNode[] {
  */
 export const ROW_GRID = 'grid grid-cols-[28px_minmax(0,1fr)] gap-x-3 px-2';
 
-/** A row's time: hidden until the row is hovered or focused, full date on hover. */
-function RowTime({ message, className }: { message: RoomMessage; className?: string }) {
+/** A row's time: hidden until the row is hovered or focused, full date on hover. `short` drops AM/PM for the avatar column. */
+function RowTime({ message, short = false, className }: { message: RoomMessage; short?: boolean; className?: string }) {
   return (
     <time
       dateTime={message.createdAt}
       title={formatFull(message.createdAt)}
       className={cn(
-        'font-mono text-2xs whitespace-nowrap text-text-muted opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100',
+        'text-2xs whitespace-nowrap text-text-muted tabular-nums opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100',
         className
       )}
     >
-      {message.time}
+      {short ? formatClockShort(message.createdAt) || message.time : message.time}
     </time>
   );
 }
 
+/** A person's words sit in a bubble; agents' answers don't. Your own are tinted. */
+export function bubbleClass(mine: boolean): string {
+  return cn(
+    'w-fit max-w-full rounded-2xl rounded-tl-md px-3 py-1.5 text-sm leading-relaxed break-words whitespace-pre-wrap text-text-primary',
+    mine ? 'bg-accent-subtle' : 'bg-bg-2'
+  );
+}
+
 /**
- * A human message as a flat row: avatar, name and (on hover) time, then the
- * text. `continued` drops the header for a follow-up from the same person a
- * moment later; its time sits in the avatar column instead.
+ * A human message: avatar, name and (on hover) time, then the words in a
+ * bubble. `continued` drops the header for a follow-up from the same person
+ * a moment later; its time sits in the avatar column instead.
  */
 export function MessageRow({
   message,
@@ -105,26 +113,24 @@ export function MessageRow({
   const author = memberOf(snapshot, message.authorId);
   return (
     <div
-      className={cn(ROW_GRID, 'group hover:bg-bg-2/60 rounded-card py-1 transition-colors')}
+      className={cn(ROW_GRID, 'group py-0.5')}
       data-testid="message-row"
       data-author={message.authorId}
       data-continued={continued}
     >
       {continued ? (
-        <RowTime message={message} className="justify-self-end pt-0.5 leading-5" />
+        <RowTime message={message} short className="self-center justify-self-center" />
       ) : (
         <PersonAvatar member={author} name={message.authorId} className="mt-0.5" />
       )}
-      <div className="min-w-0">
+      <div className="flex min-w-0 flex-col gap-1">
         {!continued && (
           <div className="flex items-baseline gap-2">
             <b className="text-sm font-medium text-text-primary">{author?.name ?? message.authorId}</b>
             <RowTime message={message} />
           </div>
         )}
-        <p className="text-sm leading-relaxed break-words whitespace-pre-wrap text-text-primary">
-          {message.body ? richText(message.body, ownId) : null}
-        </p>
+        <p className={bubbleClass(message.authorId === ownId)}>{message.body ? richText(message.body, ownId) : null}</p>
       </div>
     </div>
   );
@@ -150,7 +156,7 @@ export function TypingRow({ personIds, snapshot }: { personIds: string[]; snapsh
           />
         ))}
       </span>
-      <span className="font-mono text-2xs text-text-muted">{typingLabel(names)}</span>
+      <span className="text-2xs text-text-muted">{typingLabel(names)}</span>
     </div>
   );
 }
@@ -176,7 +182,7 @@ export function DayDivider({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-3 px-2 py-1.5" data-testid="day-divider">
       <span className="bg-border-hairline h-px flex-1" />
-      <span className="font-mono text-2xs text-text-muted">{label}</span>
+      <span className="text-2xs text-text-muted">{label}</span>
       <span className="bg-border-hairline h-px flex-1" />
     </div>
   );
@@ -293,11 +299,14 @@ export function CommentMirrorLine({
   message,
   snapshot,
   onOpenFile,
+  ownId,
   inThread = false,
 }: {
   message: RoomMessage;
   snapshot: RoomSnapshot;
   onOpenFile?: (relPath: string) => void;
+  /** The viewer: their own comments get the tinted bubble. */
+  ownId?: string;
   /** Inside a thread block: a reply is just who, when and what; the file and quote are on the thread's first comment. */
   inThread?: boolean;
 }) {
@@ -321,7 +330,7 @@ export function CommentMirrorLine({
             <b className="font-medium text-text-primary">{name}</b>
             <RowTime message={message} />
           </div>
-          <p className={cn('text-sm', replyFromAgent ? 'line-clamp-2 text-text-secondary' : 'text-text-primary')}>
+          <p className={replyFromAgent ? 'line-clamp-2 text-sm text-text-secondary' : bubbleClass(message.authorId === ownId)}>
             {message.body}
           </p>
         </div>
@@ -356,7 +365,7 @@ export function CommentMirrorLine({
         )}
         {/* An agent's reply is also the answer in its session card, just
             above: keep it to a glance here instead of repeating it. */}
-        <p className={cn('text-sm', replyFromAgent ? 'line-clamp-2 text-text-secondary' : 'text-text-primary')}>
+        <p className={replyFromAgent ? 'line-clamp-2 text-sm text-text-secondary' : bubbleClass(message.authorId === ownId)}>
           {message.body}
         </p>
       </div>

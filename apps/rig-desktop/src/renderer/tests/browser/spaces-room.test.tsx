@@ -259,7 +259,9 @@ describe('Session card — approvals belong to the owner', () => {
       );
     });
 
-    expect(host.querySelector('[data-testid="permission-waiting-line"]')).toBeNull();
+    expect(host.querySelector('[data-testid="session-live-line"]')?.textContent).toContain(
+      'Waiting for your approval'
+    );
     const allow = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Allow');
     expect(allow).toBeDefined();
     await act(async () => {
@@ -268,11 +270,11 @@ describe('Session card — approvals belong to the owner', () => {
     expect(answers).toEqual([['perm-1', 'allow']]);
   });
 
-  it('shows everyone else one muted waiting line and no buttons, then nothing once decided', async () => {
+  it("shows everyone else who it's waiting on and no buttons, then moves on once decided", async () => {
     await act(async () => {
       root.render(<SessionCard meta={meta} events={events} owner={alice} />);
     });
-    expect(host.querySelector('[data-testid="permission-waiting-line"]')?.textContent).toBe(
+    expect(host.querySelector('[data-testid="session-live-line"]')?.textContent).toContain(
       "Waiting on Alice's approval"
     );
     expect([...host.querySelectorAll('button')].some((b) => b.textContent === 'Allow')).toBe(false);
@@ -288,7 +290,7 @@ describe('Session card — approvals belong to the owner', () => {
     await act(async () => {
       root.render(<SessionCard meta={meta} events={decided} owner={alice} />);
     });
-    expect(host.querySelector('[data-testid="permission-waiting-line"]')).toBeNull();
+    expect(host.querySelector('[data-testid="session-live-line"]')?.textContent).not.toContain('approval');
   });
 });
 

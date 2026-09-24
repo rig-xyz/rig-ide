@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dayKey, formatClock, formatDayLabel, formatFull, formatRelative } from './time-format';
+import { dayKey, dayStart, formatClock, formatClockShort, formatDayLabel, formatFull, formatRelative } from './time-format';
 
 const NOW = new Date(2026, 8, 24, 15, 0); // Thu Sep 24 2026, 15:00 local
 
@@ -31,5 +31,16 @@ describe('time-format', () => {
     expect(formatRelative(new Date(NOW.getTime() - 5 * 60_000), NOW)).toBe('5m');
     expect(formatRelative(new Date(NOW.getTime() - 3 * 3_600_000), NOW)).toBe('3h');
     expect(formatRelative(new Date(NOW.getTime() - 2 * 86_400_000), NOW)).toBe('2d');
+  });
+
+  it('drops AM/PM for the short clock', () => {
+    const short = formatClockShort(new Date(2026, 8, 24, 22, 40));
+    expect(short).toMatch(/^\d{1,2}[:.]40$/);
+    expect(formatClockShort('nope')).toBe('');
+  });
+
+  it('orders days by their local midnight', () => {
+    expect(dayStart(new Date(2026, 8, 24, 23))).toBeGreaterThan(dayStart(new Date(2026, 8, 23, 1)));
+    expect(Number.isNaN(dayStart('nope'))).toBe(true);
   });
 });

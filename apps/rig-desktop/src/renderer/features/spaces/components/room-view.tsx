@@ -1,7 +1,6 @@
 import { Pause, Play, RadioTower } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
-import { cn } from '@renderer/lib/utils';
 import { buildRoomFeed } from '../fixtures/room-feed';
 import { RelayRoomSource, type RelayRoomClient } from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
@@ -48,6 +47,10 @@ function createRelayRoomClient(): RelayRoomClient {
 
 /** Room width below which the floating panel would cover the transcript. */
 const ROOM_WIDE_PX = 1080;
+/** The transcript's centered column (44rem plus its side padding). */
+const TRANSCRIPT_COLUMN_PX = 728;
+/** The floating panel's lane at the right edge: its 304px plus a margin. */
+const PANEL_LANE_PX = 320;
 
 const FALLBACK_OWN_ID = 'bob'; // fixture-only identity; the relay source uses the signed-in user's real id
 
@@ -99,6 +102,10 @@ export function RoomView({
   // Room for a ~44rem transcript beside the 304px panel.
   const narrow = bodyWidth > 0 && bodyWidth < ROOM_WIDE_PX;
   const hasPanel = !!renderPanel;
+  // The panel floats over the Room. The centered transcript only moves left
+  // by as much as it takes to clear it, and not at all in a wide window.
+  const panelClearance =
+    hasPanel && !narrow ? Math.max(0, TRANSCRIPT_COLUMN_PX + 2 * PANEL_LANE_PX - bodyWidth) : 0;
   // The scripted-demo switch is a dev tool for the Room preview on plain
   // rigs; a real space (#name) never shows it.
   const showDemoToggle = !spaceName.startsWith('#');
@@ -243,7 +250,7 @@ export function RoomView({
       <div ref={bodyRef} className="relative flex min-h-0 flex-1">
         {/* Wide: keep the transcript clear of the floating panel. Narrow:
             the panel starts as its chip instead of covering the messages. */}
-        <div className={cn('flex min-h-0 flex-1 flex-col', hasPanel && !narrow && 'pr-[320px]')}>
+        <div className="flex min-h-0 flex-1 flex-col" style={{ paddingRight: panelClearance }}>
           <RoomTranscript
             snapshot={snapshot}
             ownId={selfUserId}
