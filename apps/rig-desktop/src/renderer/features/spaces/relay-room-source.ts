@@ -48,6 +48,7 @@ import type {
 import type { AgentKind, MessageKind, RoomEvent, RoomSnapshot, SessionRunMeta } from './types';
 import { reduceRoom } from './fixtures/room-feed';
 import type { RoomSource } from './room-source';
+import { formatClock } from '@renderer/lib/time-format';
 
 // ────────── the minimal realtime transport this class needs ──────────
 
@@ -395,6 +396,7 @@ export class RelayRoomSource implements RoomSource {
         email: row.email ?? '',
         role: row.role,
         initial: name.slice(0, 1).toUpperCase(),
+        avatarUrl: row.avatarUrl ?? null,
         status: 'here' as const,
       };
     });
@@ -535,7 +537,7 @@ export class RelayRoomSource implements RoomSource {
         seq: row.seq,
         authorId,
         createdAt: row.createdAt,
-        time: formatTime(row.createdAt),
+        time: formatClock(row.createdAt),
         body: row.body || undefined,
         meta: comment ?? toMessageMeta(row.kind, meta),
         ...(comment
@@ -693,11 +695,6 @@ export class RelayRoomSource implements RoomSource {
   }
 }
 
-function formatTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-}
 
 /** Which agent wrote an agent-authored post: `meta.agent` when set, else inferred from `meta.model`. */
 function agentOfPost(meta: Record<string, unknown> | null): AgentKind | undefined {

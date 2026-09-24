@@ -1,8 +1,6 @@
 import { effectiveRunStatus, projectSessionCard } from '../projection';
-import { agentLogoId, BrandLogo } from '../logos';
 import type { RoomSnapshot } from '../types';
-
-const AGENT_NAME: Record<'claude' | 'codex', string> = { claude: 'Claude', codex: 'Codex' };
+import { AGENT_NAME, AgentAvatar } from './identity';
 
 /**
  * The viewer's own agents, as rows in the rig's pinned card (same 28px row
@@ -30,7 +28,7 @@ export function AgentRows({ snapshot, selfUserId }: { snapshot: RoomSnapshot; se
             className="flex h-7 shrink-0 items-center gap-2 rounded-control px-2"
             data-testid="space-agent-row"
           >
-            <BrandLogo id={agentLogoId(agent.agent)} size={14} />
+            <AgentAvatar agent={agent.agent} owner={snapshot.members.find((m) => m.id === selfUserId)} size="sm" />
             <span className="text-xs text-text-primary">{AGENT_NAME[agent.agent]}</span>
             <span className="ml-auto flex items-center gap-1.5 font-mono text-2xs text-text-muted">
               {busy ? 'working' : `@${agent.agent}`}

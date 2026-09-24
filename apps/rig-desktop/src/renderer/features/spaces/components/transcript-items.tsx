@@ -1,13 +1,15 @@
-import { CircleAlert, Copy, MessageSquareQuote, Plug, UserPlus } from 'lucide-react';
+import { CircleAlert, Copy, UserPlus } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
-import { agentLogoId, BrandLogo } from '../logos';
+import { formatFull } from '@renderer/lib/time-format';
+import { BrandLogo } from '../logos';
 import type { RoomConnector, RoomMember, RoomMessage, RoomSnapshot } from '../types';
+import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 
 /**
  * Spaces (lane 2): the non-session transcript row kinds — human message
- * bubble, join row, day divider, invite row, connector card, comment-mirror
+ * row, typing line, join row, day divider, invite row, connector card, comment-mirror
  * line. All render from a `RoomMessage` + the room's `RoomSnapshot` (for
  * looking up the author, an invite's target member, etc.) — no fetches, no
  * local state. `session` messages are NOT handled here; `room-transcript.tsx`
@@ -61,73 +63,94 @@ function richText(text: string, ownId: string): ReactNode[] {
   return nodes;
 }
 
-/** Human message bubble — own messages right-aligned in the accent tint with the own avatar; others left with the author's name. */
-export function MessageBubble({
+/**
+ * The grid every row in the Room shares: a 28px identity column, then the
+ * text column. Keeping it in one place is what lines up messages, joins,
+ * invites and doc comments on the same left edge.
+ */
+export const ROW_GRID = 'grid grid-cols-[28px_minmax(0,1fr)] gap-x-3 px-2';
+
+/** A row's time: hidden until the row is hovered or focused, full date on hover. */
+function RowTime({ message, className }: { message: RoomMessage; className?: string }) {
+  return (
+    <time
+      dateTime={message.createdAt}
+      title={formatFull(message.createdAt)}
+      className={cn(
+        'font-mono text-2xs whitespace-nowrap text-text-muted opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100',
+        className
+      )}
+    >
+      {message.time}
+    </time>
+  );
+}
+
+/**
+ * A human message as a flat row: avatar, name and (on hover) time, then the
+ * text. `continued` drops the header for a follow-up from the same person a
+ * moment later; its time sits in the avatar column instead.
+ */
+export function MessageRow({
   message,
   snapshot,
   ownId,
+  continued = false,
 }: {
   message: RoomMessage;
   snapshot: RoomSnapshot;
   ownId: string;
+  continued?: boolean;
 }) {
   const author = memberOf(snapshot, message.authorId);
-  const mine = message.authorId === ownId;
   return (
-    <div className={cn('flex items-end gap-2', mine && 'flex-row-reverse')} data-testid="message-bubble" data-author={message.authorId} data-mine={mine}>
-      <IdentityAvatar
-        name={author?.name ?? message.authorId}
-        avatarUrl={null}
-        sizeClassName="size-5.5"
-        textClassName="text-2xs"
-        className="mb-0.5 shrink-0"
-      />
-      <div className={cn('flex max-w-[76%] min-w-0 flex-col gap-0.5', mine && 'items-end')}>
-        {!mine && (
-          <span className="pl-3 text-xs text-text-secondary">
-            <b className="font-medium text-text-primary">{author?.name ?? message.authorId}</b>
-          </span>
+    <div
+      className={cn(ROW_GRID, 'group hover:bg-bg-2/60 rounded-card py-1 transition-colors')}
+      data-testid="message-row"
+      data-author={message.authorId}
+      data-continued={continued}
+    >
+      {continued ? (
+        <RowTime message={message} className="justify-self-end pt-0.5 leading-5" />
+      ) : (
+        <PersonAvatar member={author} name={message.authorId} className="mt-0.5" />
+      )}
+      <div className="min-w-0">
+        {!continued && (
+          <div className="flex items-baseline gap-2">
+            <b className="text-sm font-medium text-text-primary">{author?.name ?? message.authorId}</b>
+            <RowTime message={message} />
+          </div>
         )}
-        <div
-          className={cn(
-            'rounded-[16px] px-3.5 py-2 text-sm leading-relaxed text-text-primary',
-            mine ? 'bg-accent-subtle rounded-br-[5px]' : 'bg-bg-2 rounded-bl-[5px]'
-          )}
-        >
+        <p className="text-sm leading-relaxed break-words whitespace-pre-wrap text-text-primary">
           {message.body ? richText(message.body, ownId) : null}
-        </div>
-        <span className="px-3 font-mono text-2xs text-text-muted">{message.time}</span>
+        </p>
       </div>
     </div>
   );
 }
 
-/** A typing indicator, same visual family as `MessageBubble` — three bouncing dots instead of text. */
-export function TypingBubble({ personId, snapshot }: { personId: string; snapshot: RoomSnapshot }) {
-  const author = memberOf(snapshot, personId);
+function typingLabel(names: string[]): string {
+  if (names.length === 1) return `${names[0]} is typing`;
+  if (names.length === 2) return `${names[0]} and ${names[1]} are typing`;
+  return `${names.length} people are typing`;
+}
+
+/** Who's typing, as one quiet line under the last message. People only: agents show their own live status. */
+export function TypingRow({ personIds, snapshot }: { personIds: string[]; snapshot: RoomSnapshot }) {
+  const names = personIds.map((id) => memberOf(snapshot, id)?.name ?? id);
   return (
-    <div className="flex items-end gap-2">
-      <IdentityAvatar
-        name={author?.name ?? personId}
-        avatarUrl={null}
-        sizeClassName="size-5.5"
-        textClassName="text-2xs"
-        className="mb-0.5 shrink-0"
-      />
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="pl-3 text-xs text-text-secondary">
-          <b className="font-medium text-text-primary">{author?.name ?? personId}</b> is typing
-        </span>
-        <div className="bg-bg-2 flex items-center gap-1 rounded-[16px] rounded-bl-[5px] px-3.5 py-2.5">
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              className="size-1.5 animate-bounce rounded-full bg-text-muted"
-              style={{ animationDelay: `${i * 0.15}s` }}
-            />
-          ))}
-        </div>
-      </div>
+    <div className={cn(ROW_GRID, 'items-center py-1')} data-testid="typing-row">
+      <span className="flex items-center justify-center gap-0.5" aria-hidden>
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="size-1 rounded-full bg-text-muted motion-safe:animate-bounce"
+            style={{ animationDelay: `${i * 0.15}s` }}
+          />
+        ))}
+      </span>
+      <span className="font-mono text-2xs text-text-muted">{typingLabel(names)}</span>
     </div>
   );
 }
@@ -136,22 +159,24 @@ export function TypingBubble({ personId, snapshot }: { personId: string; snapsho
 export function JoinRow({ message, snapshot }: { message: RoomMessage; snapshot: RoomSnapshot }) {
   const who = memberOf(snapshot, message.authorId);
   return (
-    <div className="flex items-center gap-2 px-0.5 text-xs text-text-secondary">
-      <IdentityAvatar name={who?.name ?? message.authorId} avatarUrl={null} sizeClassName="size-4" textClassName="text-2xs" />
-      <span>
-        <b className="font-medium text-text-primary">{who?.name ?? message.authorId}</b> joined the space
+    <div className={cn(ROW_GRID, 'group items-center py-1 text-xs text-text-secondary')}>
+      <PersonAvatar member={who} name={message.authorId} size="sm" className="justify-self-center" />
+      <span className="flex items-baseline gap-2">
+        <span>
+          <b className="font-medium text-text-primary">{who?.name ?? message.authorId}</b> joined the space
+        </span>
+        <RowTime message={message} />
       </span>
-      <span className="ml-auto font-mono text-2xs text-text-muted">{message.time}</span>
     </div>
   );
 }
 
-/** Day divider — a hairline with a centered date label, the transcript's own timeline break. */
-export function DayDivider({ message }: { message: RoomMessage }) {
+/** Day divider — a hairline with a centered day label ("Today", "Yesterday", a weekday, a date). */
+export function DayDivider({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-3 py-1.5 font-mono text-2xs tracking-wide text-text-muted uppercase">
+    <div className="flex items-center gap-3 px-2 py-1.5" data-testid="day-divider">
       <span className="bg-border-hairline h-px flex-1" />
-      <span>{message.body}</span>
+      <span className="font-mono text-2xs text-text-muted">{label}</span>
       <span className="bg-border-hairline h-px flex-1" />
     </div>
   );
@@ -175,14 +200,20 @@ export function InviteRow({ message, snapshot }: { message: RoomMessage; snapsho
   const role = invite?.role === 'viewer' ? 'can view' : 'can edit';
   const status = joined ? 'Joined' : isLive && !email ? 'Invite link created' : 'Invite sent by email';
   return (
+    <div className={cn(ROW_GRID, 'group py-1')}>
+      <PersonAvatar member={by} name={message.authorId} className="mt-0.5" />
+      <div className="flex min-w-0 flex-col gap-1.5">
+      <div className="flex items-baseline gap-2">
+        <span className="text-sm text-text-secondary">
+          <b className="font-medium text-text-primary">{by?.name ?? message.authorId}</b> invited someone
+        </span>
+        <RowTime message={message} />
+      </div>
     <div className="border-border-hairline bg-bg-1 flex max-w-[420px] flex-col gap-2.5 rounded-card border p-3">
-      <p className="text-xs text-text-muted">
-        <b className="font-medium text-text-secondary">{by?.name ?? message.authorId}</b> invited
-      </p>
       <div className="flex items-center gap-2.5">
         <IdentityAvatar
           name={label ?? '?'}
-          avatarUrl={null}
+          avatarUrl={who?.avatarUrl ?? null}
           sizeClassName={cn('size-8', !joined && 'opacity-45')}
           textClassName="text-xs"
         />
@@ -209,6 +240,8 @@ export function InviteRow({ message, snapshot }: { message: RoomMessage; snapsho
         )}
       </div>
     </div>
+      </div>
+    </div>
   );
 }
 
@@ -216,18 +249,25 @@ const CONNECTOR_NOTE = 'Every agent in this space can query these, read-only.';
 
 /** Connector card — announces the tools Someone connected to the space. */
 export function ConnectorCard({
+  message,
   addedBy,
   connectors,
 }: {
-  addedBy: string;
+  message: RoomMessage;
+  addedBy: RoomMember | undefined;
   connectors: RoomConnector[];
 }) {
   return (
+    <div className={cn(ROW_GRID, 'group py-1')}>
+      <PersonAvatar member={addedBy} name={message.authorId} className="mt-0.5" />
+      <div className="flex min-w-0 flex-col gap-1.5">
+      <div className="flex items-baseline gap-2">
+        <span className="text-sm text-text-secondary">
+          <b className="font-medium text-text-primary">{addedBy?.name ?? message.authorId}</b> connected tools to this space
+        </span>
+        <RowTime message={message} />
+      </div>
     <div className="border-border-hairline bg-bg-1 flex max-w-[420px] flex-col gap-2.5 rounded-card border p-3">
-      <p className="flex items-center gap-1.5 text-xs text-text-muted">
-        <Plug className="size-3.5 text-text-muted" strokeWidth={1.5} />
-        <b className="font-medium text-text-secondary">{addedBy}</b> connected tools to this space
-      </p>
       {connectors.map((c) => (
         <div key={c.id} className="flex items-center gap-2.5 text-sm text-text-primary">
           <BrandLogo id={c.logo} size={16} />
@@ -236,6 +276,8 @@ export function ConnectorCard({
         </div>
       ))}
       <p className="border-border-hairline border-t pt-2 text-2xs text-text-muted">{CONNECTOR_NOTE}</p>
+    </div>
+      </div>
     </div>
   );
 }
@@ -263,19 +305,26 @@ export function CommentMirrorLine({
   const { path, quote, replyFromAgent, isReply } = message.meta;
   const author = memberOf(snapshot, message.authorId);
   const who = author?.name ?? message.authorId;
+  const name = replyFromAgent ? `${who}'s ${AGENT_NAME[replyFromAgent]}` : who;
+  const avatar = (size: 'md' | 'sm', className?: string) =>
+    replyFromAgent ? (
+      <AgentAvatar agent={replyFromAgent} owner={author} size={size} className={className} />
+    ) : (
+      <PersonAvatar member={author} name={message.authorId} size={size} className={className} />
+    );
   if (inThread && isReply) {
     return (
-      <div className="flex flex-col gap-0.5" data-testid="comment-thread-reply">
-        <div className="flex items-center gap-1.5 text-xs text-text-secondary">
-          {replyFromAgent && <BrandLogo id={agentLogoId(replyFromAgent)} size={12} />}
-          <b className="font-medium text-text-primary">
-            {replyFromAgent ? `${who}'s ${replyFromAgent === 'claude' ? 'Claude' : 'Codex'}` : who}
-          </b>
-          <span className="font-mono text-2xs text-text-muted">{message.time}</span>
+      <div className="group flex gap-2" data-testid="comment-thread-reply">
+        {avatar('sm', 'mt-0.5')}
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <div className="flex items-baseline gap-2 text-xs">
+            <b className="font-medium text-text-primary">{name}</b>
+            <RowTime message={message} />
+          </div>
+          <p className={cn('text-sm', replyFromAgent ? 'line-clamp-2 text-text-secondary' : 'text-text-primary')}>
+            {message.body}
+          </p>
         </div>
-        <p className={cn('text-sm', replyFromAgent ? 'line-clamp-2 text-text-secondary' : 'text-text-primary')}>
-          {message.body}
-        </p>
       </div>
     );
   }
@@ -292,53 +341,45 @@ export function CommentMirrorLine({
     <span className="bg-bg-2 rounded-control px-1 font-mono text-xs text-text-primary">{path}</span>
   );
   return (
-    <div className="flex flex-col gap-1.5 px-0.5" data-testid="comment-mirror-line">
-      <div className="flex items-center gap-2 text-xs text-text-secondary">
-        {replyFromAgent ? (
-          <BrandLogo id={agentLogoId(replyFromAgent)} size={13} />
-        ) : (
-          <MessageSquareQuote className="size-3.5 text-text-muted" strokeWidth={1.5} />
+    <div className={cn(ROW_GRID, 'group py-1')} data-testid="comment-mirror-line">
+      {avatar('md', 'mt-0.5')}
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex items-baseline gap-2">
+          <span className="min-w-0 truncate text-sm text-text-secondary">
+            <b className="font-medium text-text-primary">{name}</b> {isReply ? 'replied on' : 'commented on'}{' '}
+            {fileChip}
+          </span>
+          <RowTime message={message} />
+        </div>
+        {!isReply && quote && (
+          <p className="border-border-strong line-clamp-2 border-l-2 pl-2.5 text-xs text-text-muted">{quote}</p>
         )}
-        <span className="min-w-0 truncate">
-          <b className="font-medium text-text-primary">
-            {replyFromAgent ? `${who}'s ${replyFromAgent === 'claude' ? 'Claude' : 'Codex'}` : who}
-          </b>{' '}
-          {isReply ? 'replied on' : 'commented on'} {fileChip}
-        </span>
-        <span className="ml-auto shrink-0 font-mono text-2xs text-text-muted">{message.time}</span>
-      </div>
-      {!isReply && quote && (
-        <p className="border-border-strong ml-[22px] line-clamp-2 border-l-2 pl-2.5 text-xs text-text-muted italic">
-          “{quote}”
+        {/* An agent's reply is also the answer in its session card, just
+            above: keep it to a glance here instead of repeating it. */}
+        <p className={cn('text-sm', replyFromAgent ? 'line-clamp-2 text-text-secondary' : 'text-text-primary')}>
+          {message.body}
         </p>
-      )}
-      {/* An agent's reply is also the answer in its session card, just
-          above: keep it to a glance here instead of repeating it. */}
-      <p
-        className={cn(
-          'ml-[22px] text-sm',
-          replyFromAgent ? 'line-clamp-2 text-text-secondary' : 'text-text-primary'
-        )}
-      >
-        {message.body}
-      </p>
+      </div>
     </div>
   );
 }
 
-/** System row (join is its own component above; this covers the rest: connectors added, skill added). */
+/** System row (join is its own component above; this covers the rest: connectors added, skill added, an agent that couldn't start). */
 export function SystemRow({ message, snapshot }: { message: RoomMessage; snapshot: RoomSnapshot }) {
   if (message.meta.kind !== 'system') return null;
   if (message.meta.event === 'connectors_added') {
-    const by = memberOf(snapshot, message.authorId)?.name ?? message.authorId;
-    return <ConnectorCard addedBy={by} connectors={snapshot.connectors} />;
+    return (
+      <ConnectorCard message={message} addedBy={memberOf(snapshot, message.authorId)} connectors={snapshot.connectors} />
+    );
   }
   const Icon = message.meta.event === 'agent_failed' ? CircleAlert : UserPlus;
   return (
-    <div className="flex items-center gap-2 px-0.5 text-xs text-text-secondary">
-      <Icon className="size-3.5 text-text-muted" strokeWidth={1.5} />
-      {message.body}
-      <span className="ml-auto font-mono text-2xs text-text-muted">{message.time}</span>
+    <div className={cn(ROW_GRID, 'group items-center py-1 text-xs text-text-secondary')}>
+      <Icon className="size-3.5 justify-self-center text-text-muted" strokeWidth={1.5} />
+      <span className="flex items-baseline gap-2">
+        <span>{message.body}</span>
+        <RowTime message={message} />
+      </span>
     </div>
   );
 }

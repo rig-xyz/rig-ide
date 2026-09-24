@@ -793,8 +793,8 @@ describe('room context for the agent', () => {
     const { api } = makeFakeApi({
       listMembers: async () =>
         ok([
-          { userId: 'usr_d', clerkUserId: 'clerk_d', name: null, email: 'dylan@play.local', role: 'owner' },
-          { userId: 'usr_s', clerkUserId: 'clerk_s', name: 'Sam', email: null, role: 'editor' },
+          { userId: 'usr_d', clerkUserId: 'clerk_d', name: null, email: 'dylan@play.local', role: 'owner', avatarUrl: null },
+          { userId: 'usr_s', clerkUserId: 'clerk_s', name: 'Sam', email: null, role: 'editor', avatarUrl: null },
         ]),
       listMessages: async () =>
         ok([

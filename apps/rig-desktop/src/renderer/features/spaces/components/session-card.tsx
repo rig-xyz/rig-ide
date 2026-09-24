@@ -1,11 +1,10 @@
 import { ChevronRight, FileText, Loader2, Square } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { PermissionPrompt } from '@renderer/features/chat/permission-prompt';
 import { SafeMarkdown } from '@renderer/lib/ui/comment-markdown';
 import { cn } from '@renderer/lib/utils';
-import { agentLogoId, BrandLogo } from '../logos';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
+import { AGENT_NAME, AgentAvatar } from './identity';
 import { SessionTrace } from './session-trace';
 import type { RoomMember, SessionEvent, SessionRunMeta } from '../types';
 
@@ -21,8 +20,6 @@ import type { RoomMember, SessionEvent, SessionRunMeta } from '../types';
  * timers beyond the elapsed-time ticker, which is display-only and never
  * mutates the projection.
  */
-
-const AGENT_NAME: Record<'claude' | 'codex', string> = { claude: 'Claude', codex: 'Codex' };
 
 function formatElapsed(startedAt: string, endedAt: string | null): string {
   const start = Date.parse(startedAt);
@@ -88,16 +85,7 @@ export function SessionCard({
     >
       {/* header */}
       <div className="flex items-center gap-2.5">
-        <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
-          <BrandLogo id={agentLogoId(meta.agent)} size={18} />
-          <IdentityAvatar
-            name={owner?.name ?? meta.owner}
-            avatarUrl={null}
-            sizeClassName="absolute -right-1 -bottom-1 size-3.5"
-            textClassName="text-2xs"
-            className="ring-bg-1 ring-1"
-          />
-        </span>
+        <AgentAvatar agent={meta.agent} owner={owner} size="sm" />
         <b className="text-sm font-medium text-text-primary">{AGENT_NAME[meta.agent]}</b>
         {model && <span className="font-mono text-xs text-text-muted">{model}</span>}
         <span className="ml-auto font-mono text-xs text-text-muted">

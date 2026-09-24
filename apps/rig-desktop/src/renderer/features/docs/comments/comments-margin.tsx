@@ -47,6 +47,7 @@ import {
 } from './comments-store';
 import { layoutMarginCards, MARGIN_CARD_GAP, type MarginLayoutItem } from './margin-layout';
 import { minimalScrollDelta } from './pending-reveal';
+import { formatFull, formatRelative } from '@renderer/lib/time-format';
 import { plainAllowOptionId, rawPermissionDetailText, summarizePermissionDetail } from './permission-summary';
 import type { CommentSurfaceAdapter } from './surface-adapter';
 import {
@@ -528,7 +529,7 @@ export const PermissionRequestRow = observer(function PermissionRequestRow({
   );
 });
 
-/** "1m 40s" past a minute, "40s" under one — no padding, matching `relativeTime`'s style. */
+/** "1m 40s" past a minute, "40s" under one — no padding, matching `formatRelative`'s style. */
 function formatElapsed(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -766,22 +767,6 @@ function metaString(meta: Record<string, unknown> | null, key: string): string |
   return trimmed.length > 0 ? trimmed : null;
 }
 
-/** Coarse "2h ago" / "3d ago" formatting — a local stand-in for the ported `RelativeTime` component. */
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '';
-  const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
-  if (seconds < 60) return 'now';
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.round(hours / 24);
-  if (days < 30) return `${days}d`;
-  const months = Math.round(days / 30);
-  return `${months}mo`;
-}
-
 function AuthorLine({ message }: { message: RigCommentMessage }) {
   const names = useContext(MemberNamesContext);
   const human = message.author.name || names.get(message.author.userId ?? '') || 'someone';
@@ -829,9 +814,13 @@ function AuthorLine({ message }: { message: RigCommentMessage }) {
       ) : (
         <span className="text-text-primary min-w-0 truncate text-xs font-medium">{human}</span>
       )}
-      <span className="text-text-muted ml-auto shrink-0 font-mono text-xs">
-        {relativeTime(message.createdAt)}
-      </span>
+      <time
+        dateTime={message.createdAt}
+        title={formatFull(message.createdAt)}
+        className="text-text-muted ml-auto shrink-0 font-mono text-xs"
+      >
+        {formatRelative(message.createdAt)}
+      </time>
     </div>
   );
 }

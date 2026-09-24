@@ -2,11 +2,11 @@ import { FileText, Plug, Sparkles, Users } from 'lucide-react';
 import { useMemo } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
-import { agentLogoId, BrandLogo } from '../logos';
+import { BrandLogo } from '../logos';
 import { projectSessionCard } from '../projection';
 import type { RoomSnapshot } from '../types';
+import { AGENT_NAME, AgentAvatar } from './identity';
 
-const AGENT_NAME: Record<'claude' | 'codex', string> = { claude: 'Claude', codex: 'Codex' };
 const MAX_ACTIVITY_ROWS = 5;
 
 /**
@@ -51,7 +51,7 @@ export function SpaceCard({ snapshot }: { snapshot: RoomSnapshot }) {
             <IdentityAvatar
               key={m.id}
               name={m.name}
-              avatarUrl={null}
+              avatarUrl={m.avatarUrl ?? null}
               sizeClassName="size-4"
               textClassName="text-2xs"
               className={cn(
@@ -66,16 +66,7 @@ export function SpaceCard({ snapshot }: { snapshot: RoomSnapshot }) {
 
       {snapshot.agents.map((agent) => (
         <div key={`${agent.agent}-${agent.owner}`} className="flex h-7 items-center gap-2 rounded-control px-2">
-          <span className="relative inline-flex size-4.5 shrink-0 items-center justify-center">
-            <BrandLogo id={agentLogoId(agent.agent)} size={14} />
-            <IdentityAvatar
-              name={snapshot.members.find((m) => m.id === agent.owner)?.name ?? agent.owner}
-              avatarUrl={null}
-              sizeClassName="absolute -right-1 -bottom-1 size-3"
-              textClassName="text-2xs"
-              className="ring-bg-1 ring-1"
-            />
-          </span>
+          <AgentAvatar agent={agent.agent} owner={snapshot.members.find((m) => m.id === agent.owner)} size="sm" />
           <span className="min-w-0 truncate text-xs text-text-primary">{AGENT_NAME[agent.agent]}</span>
           <span className="ml-auto flex items-center gap-1.5 font-mono text-2xs text-text-muted">
             {agent.model}

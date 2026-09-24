@@ -21,6 +21,8 @@ export interface RoomMember {
   role: string;
   /** Single-letter (or short) initial used when no avatar image is available. */
   initial: string;
+  /** Profile photo, when the person has one. */
+  avatarUrl?: string | null;
   status: 'here' | 'invited';
   /** Has the Room open right now (live presence). Undefined when unknown, e.g. the scripted fixture. */
   online?: boolean;

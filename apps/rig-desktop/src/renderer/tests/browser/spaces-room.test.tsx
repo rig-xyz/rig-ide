@@ -7,7 +7,7 @@ import { SessionCard } from '@renderer/features/spaces/components/session-card';
 import { buildRoomFeed } from '@renderer/features/spaces/fixtures/room-feed';
 import { FixtureRoomSource } from '@renderer/features/spaces/room-source';
 import type { RoomMember, RoomMessage, RoomSnapshot, SessionEvent, SessionRunMeta } from '@renderer/features/spaces/types';
-// Real tokens — the message-bubble/session-card class assertions below rely
+// Real tokens — the message-row/session-card class assertions below rely
 // on the actual `--accent`/`--bg-2` etc. custom properties being present,
 // same as artifact-view.test.tsx.
 import '@renderer/tokens.css';
@@ -23,8 +23,8 @@ vi.mock('@renderer/lib/ipc', () => ({ rpc: { app: { openExternal: async () => {}
  * `replayAll()` instead of `RoomView`'s own timer-driven `play()`, so this
  * test is deterministic and doesn't need fake timers.
  *
- * Covers the three assertions called out for lane 2: bubbles align by
- * author, the session card expands its step log, and `/` opens the skills
+ * Covers the three assertions called out for lane 2: messages render as
+ * flat rows, the session card expands its step log, and `/` opens the skills
  * palette.
  */
 
@@ -47,7 +47,7 @@ async function setTextareaValue(textarea: HTMLTextAreaElement | null, value: str
   });
 }
 
-describe('Room transcript — bubbles align by author', () => {
+describe('Room transcript — flat rows', () => {
   let host: HTMLDivElement;
   let root: Root;
 
@@ -62,28 +62,26 @@ describe('Room transcript — bubbles align by author', () => {
     host.remove();
   });
 
-  it('renders bob (the viewer) right-aligned and alice/carol left-aligned', async () => {
+  it('renders every message as a flat, left-aligned row with its author named', async () => {
     const snapshot = replayedSnapshot();
     await act(async () => {
       root.render(<RoomTranscript snapshot={snapshot} ownId="bob" />);
     });
 
-    const bubbles = Array.from(host.querySelectorAll<HTMLElement>('[data-testid="message-bubble"]'));
-    expect(bubbles.length).toBeGreaterThan(0);
+    const rows = Array.from(host.querySelectorAll<HTMLElement>('[data-testid="message-row"]'));
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.some((r) => r.dataset.author === 'bob')).toBe(true);
+    expect(rows.some((r) => r.dataset.author !== 'bob')).toBe(true);
 
-    const byBob = bubbles.filter((b) => b.dataset.author === 'bob');
-    const byOthers = bubbles.filter((b) => b.dataset.author !== 'bob');
-    expect(byBob.length).toBeGreaterThan(0);
-    expect(byOthers.length).toBeGreaterThan(0);
-
-    for (const bubble of byBob) {
-      expect(bubble.dataset.mine).toBe('true');
-      expect(bubble.className).toContain('flex-row-reverse');
+    for (const row of rows) {
+      expect(row.className).not.toContain('flex-row-reverse');
+      if (row.dataset.continued === 'false') {
+        const author = snapshot.members.find((m) => m.id === row.dataset.author);
+        expect(row.textContent).toContain(author?.name ?? row.dataset.author);
+      }
     }
-    for (const bubble of byOthers) {
-      expect(bubble.dataset.mine).toBe('false');
-      expect(bubble.className).not.toContain('flex-row-reverse');
-    }
+    // Day breaks come from the messages' own timestamps.
+    expect(host.querySelectorAll('[data-testid="day-divider"]').length).toBeGreaterThan(0);
   });
 
   it('renders one session card per real fixture run, each reporting a settled status', async () => {

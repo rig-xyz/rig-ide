@@ -78,6 +78,8 @@ export type RoomMemberRow = {
   name: string | null;
   email: string | null;
   role: string;
+  /** Profile photo (the relay's `imageUrl`), when the person has one. */
+  avatarUrl: string | null;
 };
 
 /** One invite as the Room shows it: who invited, whom (email) or a link, at what role. */
@@ -570,6 +572,7 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
                 name: typeof row.name === 'string' ? row.name : null,
                 email: typeof row.email === 'string' ? row.email : null,
                 role: typeof row.role === 'string' ? row.role : 'viewer',
+                avatarUrl: typeof row.imageUrl === 'string' ? row.imageUrl : null,
               };
             })
             .filter((m): m is RoomMemberRow => m !== null)

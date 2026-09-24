@@ -74,7 +74,7 @@ class FakeProvider implements RealtimeProvider {
 const BINDING = 'b1';
 
 function member(overrides: Partial<RoomMemberRow> = {}): RoomMemberRow {
-  return { userId: 'u1', clerkUserId: null, name: 'Alice', email: null, role: 'owner', ...overrides };
+  return { userId: 'u1', clerkUserId: null, name: 'Alice', email: null, role: 'owner', avatarUrl: null, ...overrides };
 }
 
 function message(overrides: Partial<RoomMessageRow> = {}): RoomMessageRow {

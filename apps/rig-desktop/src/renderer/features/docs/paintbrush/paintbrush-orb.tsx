@@ -24,18 +24,19 @@ import { cn } from '@renderer/lib/utils';
  * nothing to pure-grayscale pixels (zero saturation for it to rotate), so
  * the recipe first manufactures saturation (`sepia(1)`, which lands the
  * hue around a warm ~40°) and then rotates THAT to this app's own accent
- * hue: `tokens.css`'s light (`#7d88e8`) and dark (`#5560c8`) `--accent`
- * values both resolve to ~234° in HSL (agreeing to under a degree), so one
+ * hue: `tokens.css`'s dark (`#62a4f5`) and light (`#2f6fc0`) `--accent`
+ * values both resolve to ~213° in HSL (agreeing to about a degree), so one
  * rotation works for both themes. Saturation is boosted afterward so the
- * tint still reads at the small sizes every caller here uses. Verified by
- * rendering the exact filter over a canvas of grayscale dots and eyeballing
- * it against the accent swatch in Chromium — a real color-managed check,
- * not a guess — but it is still an approximation of the library's actual
- * per-pixel ink values, not a mathematically exact recolor; nudge the
+ * tint still reads at the small sizes every caller here uses. The old
+ * indigo accent (~234°) was verified by rendering the exact filter over a
+ * canvas of grayscale dots and eyeballing it against the accent swatch in
+ * Chromium; the blue accent's 173° is that value shifted by the hue delta
+ * (−21°), not yet re-checked by eye. Either way it is an approximation
+ * of the library's actual per-pixel ink values, not a mathematically exact recolor; nudge the
  * `hue-rotate`/`saturate` numbers here (once, for every caller) if a
  * future accent hue drifts far enough to read wrong.
  */
-const TINT_FILTER = 'grayscale(1) sepia(1) hue-rotate(194deg) saturate(3)';
+const TINT_FILTER = 'grayscale(1) sepia(1) hue-rotate(173deg) saturate(3)';
 
 /** The library's only tuned "inline" preset — every display size here is this canvas, CSS-scaled. */
 const CANVAS_SIZE = 20;

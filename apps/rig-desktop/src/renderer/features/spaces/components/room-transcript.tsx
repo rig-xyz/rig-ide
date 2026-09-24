@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { dayKey, formatDayLabel } from '@renderer/lib/time-format';
 import type { RoomMessage, RoomSnapshot } from '../types';
 import { SessionCard } from './session-card';
 import {
@@ -7,9 +8,9 @@ import {
   DayDivider,
   InviteRow,
   JoinRow,
-  MessageBubble,
+  MessageRow,
   SystemRow,
-  TypingBubble,
+  TypingRow,
 } from './transcript-items';
 
 /**
@@ -25,24 +26,37 @@ import {
 
 const FOLLOW_THRESHOLD_PX = 60;
 
+/** A follow-up from the same person within this long drops its name and avatar, Slack-style. */
+const CONTINUE_WITHIN_MS = 5 * 60_000;
+
+function isContinuation(prev: RoomMessage | undefined, message: RoomMessage): boolean {
+  if (!prev || prev.meta.kind !== 'text' || message.meta.kind !== 'text') return false;
+  if (prev.authorId !== message.authorId || prev.threadId || message.threadId) return false;
+  const gap = Date.parse(message.createdAt) - Date.parse(prev.createdAt);
+  return gap >= 0 && gap < CONTINUE_WITHIN_MS && dayKey(prev.createdAt) === dayKey(message.createdAt);
+}
+
 function renderItem(
   message: RoomMessage,
   snapshot: RoomSnapshot,
   ownId: string,
   onStopSession?: (runId: string) => void,
   onResolvePermission?: (runId: string, requestId: string, optionId: string) => void,
-  onOpenFile?: (relPath: string) => void
+  onOpenFile?: (relPath: string) => void,
+  continued = false
 ) {
   switch (message.meta.kind) {
     case 'text':
-      return <MessageBubble message={message} snapshot={snapshot} ownId={ownId} />;
+      return <MessageRow message={message} snapshot={snapshot} ownId={ownId} continued={continued} />;
     case 'invite':
       return <InviteRow message={message} snapshot={snapshot} />;
     case 'comment_mirror':
       return <CommentMirrorLine message={message} snapshot={snapshot} onOpenFile={onOpenFile} />;
     case 'system':
       if (message.meta.event === 'joined') return <JoinRow message={message} snapshot={snapshot} />;
-      if (message.meta.event === 'day_divider') return <DayDivider message={message} />;
+      // Day breaks are derived from timestamps (see RoomTranscript); a
+      // scripted divider message would double them.
+      if (message.meta.event === 'day_divider') return null;
       return <SystemRow message={message} snapshot={snapshot} />;
     case 'session': {
       const meta = snapshot.sessionMetaByRun[message.meta.runId];
@@ -139,14 +153,15 @@ function ThreadBlock({
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="ml-[22px] self-start text-xs text-text-muted transition-colors hover:text-text-primary"
+          className="ml-12 self-start text-xs text-text-muted transition-colors hover:text-text-primary"
           data-testid="thread-show-earlier"
         >
           Show {hidden} earlier {hidden === 1 ? 'reply' : 'replies'}
         </button>
       )}
       {shown.length > 0 && (
-        <div className="border-border-hairline ml-[7px] flex flex-col gap-2.5 border-l pl-[15px]">
+        // The hairline hangs from the root row's avatar; replies start on its text column.
+        <div className="border-border-hairline ml-[22px] flex flex-col gap-2.5 border-l pl-[25px]">
           {shown.map((message) => (
             <div key={message.id}>
               {message.meta.kind === 'comment_mirror' ? renderReply(message) : renderMessage(message)}
@@ -207,49 +222,67 @@ export function RoomTranscript({
 
   return (
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto" data-testid="room-transcript">
-      <div className="mx-auto flex max-w-[44rem] flex-col gap-3 px-5 pt-6 pb-3">
+      <div className="mx-auto flex max-w-[44rem] flex-col gap-1.5 px-3 pt-6 pb-3">
         <AnimatePresence initial={false}>
-          {groupThreads(snapshot.messages).map((unit) => {
-            const render = (message: RoomMessage) =>
-              renderItem(message, snapshot, ownId, onStopSession, onResolvePermission, onOpenFile);
-            const node =
-              unit.kind === 'message' ? (
-                render(unit.message)
-              ) : (
-                <ThreadBlock
-                  threadId={unit.threadId}
-                  messages={unit.messages}
-                  renderMessage={render}
-                  renderReply={(message) => (
-                    <CommentMirrorLine message={message} snapshot={snapshot} onOpenFile={onOpenFile} inThread />
-                  )}
-                />
+          {(() => {
+            const units = groupThreads(snapshot.messages);
+            const nodes: ReactNode[] = [];
+            let lastDay = '';
+            let prevMessage: RoomMessage | undefined;
+            for (const unit of units) {
+              const first = unit.kind === 'message' ? unit.message : unit.messages[0];
+              const day = first ? dayKey(first.createdAt) : '';
+              if (first && day && day !== lastDay) {
+                lastDay = day;
+                nodes.push(
+                  <motion.div key={`day-${day}`} layout>
+                    <DayDivider label={formatDayLabel(first.createdAt)} />
+                  </motion.div>
+                );
+              }
+              const render = (message: RoomMessage, continued = false) =>
+                renderItem(message, snapshot, ownId, onStopSession, onResolvePermission, onOpenFile, continued);
+              const node =
+                unit.kind === 'message' ? (
+                  render(unit.message, isContinuation(prevMessage, unit.message))
+                ) : (
+                  <ThreadBlock
+                    threadId={unit.threadId}
+                    messages={unit.messages}
+                    renderMessage={(message) => render(message)}
+                    renderReply={(message) => (
+                      <CommentMirrorLine message={message} snapshot={snapshot} onOpenFile={onOpenFile} inThread />
+                    )}
+                  />
+                );
+              prevMessage = unit.kind === 'message' ? unit.message : undefined;
+              if (!node) continue;
+              nodes.push(
+                <motion.div
+                  key={unit.kind === 'message' ? unit.message.id : `thread-${unit.threadId}`}
+                  layout
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                >
+                  {node}
+                </motion.div>
               );
-            if (!node) return null;
-            return (
-              <motion.div
-                key={unit.kind === 'message' ? unit.message.id : `thread-${unit.threadId}`}
-                layout
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-              >
-                {node}
-              </motion.div>
-            );
-          })}
-          {snapshot.typingUserIds.map((personId) => (
+            }
+            return nodes;
+          })()}
+          {snapshot.typingUserIds.length > 0 && (
             <motion.div
-              key={`typing-${personId}`}
+              key="typing"
               layout
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ duration: 0.15 }}
             >
-              <TypingBubble personId={personId} snapshot={snapshot} />
+              <TypingRow personIds={snapshot.typingUserIds} snapshot={snapshot} />
             </motion.div>
-          ))}
+          )}
         </AnimatePresence>
       </div>
     </div>

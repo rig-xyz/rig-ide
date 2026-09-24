@@ -40,9 +40,9 @@
   --text-primary: #f5f7f9;
   --text-secondary: #9aa4ae;
   --text-muted: #6b7480;
-  --accent: #7d88e8;
-  --accent-subtle: rgba(125, 136, 232, 0.16);
-  --accent-ink: #101223;
+  --accent: #62a4f5;
+  --accent-subtle: rgba(98, 164, 245, 0.16);
+  --accent-ink: #0a1522;
   /** The specular band in `.active-shimmer` — brighter than the text it crosses. */
   --shimmer-highlight: #ffffff;
   --success: #4ade80;
@@ -73,8 +73,8 @@
     --text-primary: #16181d;
     --text-secondary: #4d5560;
     --text-muted: #9aa1ab;
-    --accent: #5560c8;
-    --accent-subtle: rgba(85, 96, 200, 0.12);
+    --accent: #2f6fc0;
+    --accent-subtle: rgba(47, 111, 192, 0.12);
     --accent-ink: #ffffff;
   --shimmer-highlight: #b6bcc6;
     --success: #166534;
@@ -101,9 +101,9 @@
   --text-primary: #f5f7f9;
   --text-secondary: #9aa4ae;
   --text-muted: #6b7480;
-  --accent: #7d88e8;
-  --accent-subtle: rgba(125, 136, 232, 0.16);
-  --accent-ink: #101223;
+  --accent: #62a4f5;
+  --accent-subtle: rgba(98, 164, 245, 0.16);
+  --accent-ink: #0a1522;
   /** The specular band in `.active-shimmer` — brighter than the text it crosses. */
   --shimmer-highlight: #ffffff;
   --success: #4ade80;
@@ -133,8 +133,8 @@
   --text-primary: #16181d;
   --text-secondary: #4d5560;
   --text-muted: #9aa1ab;
-  --accent: #5560c8;
-  --accent-subtle: rgba(85, 96, 200, 0.12);
+  --accent: #2f6fc0;
+  --accent-subtle: rgba(47, 111, 192, 0.12);
   --accent-ink: #ffffff;
   --shimmer-highlight: #b6bcc6;
   --success: #166534;
