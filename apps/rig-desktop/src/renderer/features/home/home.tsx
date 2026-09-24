@@ -10,6 +10,7 @@ import {
   shapeMyInvites,
   type MyInviteRow,
 } from '@renderer/features/shell/invites-inbox';
+import { useSpacesEnabled } from '@renderer/features/spaces/use-spaces-enabled';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { cn } from '@renderer/lib/utils';
@@ -102,6 +103,31 @@ export function Home({
       setCreating(false);
     }
   }, [queryClient, onRigCreated]);
+  // Spaces: created inline from the rail's #name field; opens straight into
+  // its Room (App opens a space Room-first). Returns an error message to
+  // show under the field, or null on success.
+  const spacesEnabled = useSpacesEnabled();
+  const createSpace = useCallback(
+    async (name: string): Promise<string | null> => {
+      const result = await rpc.rig.create.create({
+        parentDir: null,
+        name,
+        sync: true,
+        seedDoc: false,
+        kind: 'space',
+      });
+      if (!result.success) return result.error.message;
+      if (result.data.rootId) void rpc.rig.files.releaseRoot({ rootId: result.data.rootId });
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'recent'] });
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
+      if (!result.data.synced) {
+        return result.data.syncError?.message ?? 'The space was created locally but could not go live.';
+      }
+      onRigCreated(result.data.path, null);
+      return null;
+    },
+    [queryClient, onRigCreated]
+  );
   // Pulse round: which rigs-rail row a WHAT'S NEW/ACROSS YOUR RIGS rig-name
   // link (no local match) should scroll to/flash — lives here, not in
   // either `BriefingSpine` or `RigsRail` alone, since it's the one piece of
@@ -429,6 +455,7 @@ export function Home({
             onOpenSession={onContinueSession}
             onOpenFolder={onOpenFolder}
             onCreateRig={startFreshOrCreate}
+            onCreateSpace={spacesEnabled && signedIn ? createSpace : undefined}
             highlightBindingId={highlightBindingId}
           />
         </div>

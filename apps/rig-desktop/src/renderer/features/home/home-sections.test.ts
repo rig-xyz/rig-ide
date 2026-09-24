@@ -193,6 +193,26 @@ describe('buildHomeRigRows', () => {
     ]);
   });
 
+  it('flags space bindings (local and relay-only) and leaves rigs untouched', () => {
+    const rows = buildHomeRigRows(
+      [RIG_A],
+      {
+        status: 'ok',
+        bindings: [
+          { bindingId: 'b1', name: 'Alpha', kind: 'space', lastSyncedAt: null, role: 'owner', createdAt: '' },
+          { bindingId: 'b2', name: 'growth', kind: 'space', lastSyncedAt: null, role: 'editor', createdAt: '' },
+          { bindingId: 'b3', name: 'plain', kind: 'rig', lastSyncedAt: null, role: 'owner', createdAt: '' },
+        ],
+      },
+      []
+    );
+    expect(rows.map((r) => [r.bindingId, r.isSpace ?? false])).toEqual([
+      ['b1', true],
+      ['b2', true],
+      ['b3', false],
+    ]);
+  });
+
   it('a binding with no local match becomes its own relay-only row, carrying canAutoJoin, no localPath, and no sessions', () => {
     const rows = buildHomeRigRows(
       [],

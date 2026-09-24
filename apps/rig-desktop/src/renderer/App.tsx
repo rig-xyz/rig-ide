@@ -555,6 +555,23 @@ export function App() {
         }
       : null;
 
+  // Spaces: a space opens Room-first. Its kind comes from the same cached
+  // workspaces listing the Home rail reads (one relay call, shared).
+  const workspacesQuery = useQuery({
+    queryKey: ['rig', 'account', 'workspaces'],
+    queryFn: () => rpc.rig.account.workspaces(),
+    enabled: spacesEnabled && !!bound,
+    staleTime: 60_000,
+  });
+  const boundIsSpace =
+    spacesEnabled &&
+    !!bound &&
+    !!workspacesQuery.data?.success &&
+    workspacesQuery.data.data.some((b) => b.id === bound.bindingId && b.kind === 'space');
+  useEffect(() => {
+    if (boundIsSpace) setRoomPreviewOpen(true);
+  }, [bound?.bindingId, boundIsSpace]);
+
   // Delete-a-rig round: the currently-open rig's own binding-deleted check.
   // Same query key `rig-people-card.tsx`/`pinned-card.tsx` already use for
   // this exact call (`['rig','share','members', root]`) — react-query
@@ -921,7 +938,7 @@ export function App() {
           </button>
           <RoomView
             bindingId={bound.bindingId}
-            spaceName={bound.name ?? 'Room'}
+            spaceName={boundIsSpace ? `#${bound.name ?? 'space'}` : (bound.name ?? 'Room')}
             onOpenFile={(relPath) => {
               setRoomPreviewOpen(false);
               openFile(`${bound.root.replace(/\/+$/, '')}/${relPath}`);

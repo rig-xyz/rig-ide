@@ -284,6 +284,21 @@ function shapeRequest(raw: unknown): AgentRequest | null {
 }
 
 /** The one real `SpacesRelayApi`, resolving `{url, token}` fresh on every call (same reasoning as `account.ts`'s `resolveContext`: a mid-session sign-in takes effect immediately). */
+/**
+ * Flags a binding as a space, or promotes a space back to a rig
+ * (`PATCH /v1/me/bindings/:id {kind}`, owner only). Standalone rather than
+ * on `SpacesRelayApi`: only space creation and promotion need it.
+ */
+export async function setBindingKind(
+  bindingId: string,
+  kind: 'rig' | 'space'
+): Promise<Result<void, RelayApiError>> {
+  const ctx = await resolveContext();
+  if (isError(ctx)) return err(ctx);
+  const result = await request(ctx, 'PATCH', `/v1/me/bindings/${bindingId}`, 'update the space', { kind });
+  return result.success ? ok(undefined) : err(result.error);
+}
+
 export function createHttpSpacesRelayApi(): SpacesRelayApi {
   async function ctxOrError(): Promise<Result<Resolved, RelayApiError>> {
     const ctx = await resolveContext();

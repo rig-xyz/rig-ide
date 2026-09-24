@@ -21,6 +21,8 @@ export type RigCreateRequest = {
   name: string;
   /** Go live after init (`rig sync` — mints the relay binding, mirrors to workspace home). */
   sync: boolean;
+  /** `'space'` flags the new binding as a space (a rig with a Room, named with #) once it's live. Default: a plain rig. */
+  kind?: 'rig' | 'space';
   /**
    * Onboarding flow round (docs/onboarding-flow-spec.md §2/3): writes the
    * first-run landing doc (`Start here.md`) into the new rig, main-side,

@@ -179,6 +179,7 @@ export function toBinding(value: unknown, relayHost: string): RigWorkspaceBindin
     id: binding.id,
     name: binding.name,
     role: typeof raw?.role === 'string' ? raw.role : 'viewer',
+    kind: binding.kind === 'space' ? 'space' : 'rig',
     lastSyncedAt: typeof raw?.lastSyncedAt === 'string' ? raw.lastSyncedAt : null,
     createdAt: typeof binding.createdAt === 'string' ? binding.createdAt : '',
     relayHost,

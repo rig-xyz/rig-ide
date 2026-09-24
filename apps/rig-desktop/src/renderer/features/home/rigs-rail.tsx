@@ -23,7 +23,7 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   getSessionAttentionFacts,
   subscribeSessionAttention,
@@ -93,6 +93,7 @@ export function RigsRail({
   onOpenSession,
   onOpenFolder,
   onCreateRig,
+  onCreateSpace,
   highlightBindingId,
 }: {
   rows: readonly HomeRigRow[];
@@ -101,6 +102,8 @@ export function RigsRail({
   onOpenSession: (path: string, sessionId: string) => void;
   onOpenFolder: () => void;
   onCreateRig: () => void;
+  /** Present when Spaces is enabled: shows the Spaces group, and creates a space from its inline #name field. */
+  onCreateSpace?: (name: string) => Promise<string | null>;
   /**
    * Home restructure — pulse round: a rig-name link clicked in
    * `BriefingSpine` (WHAT'S NEW / ACROSS YOUR RIGS) that has no local match
@@ -112,13 +115,41 @@ export function RigsRail({
   highlightBindingId?: string | null;
 }) {
   const { view, setView, hiddenBindingIds, setHidden } = useRigsRailSettings();
+  // Spaces get their own group on top (when enabled); the rest stay "Your rigs".
+  const spaceRows = onCreateSpace ? rows.filter((row) => row.isSpace) : [];
+  const rigRows = onCreateSpace ? rows.filter((row) => !row.isSpace) : rows;
   const visibleRows = sortHomeRigRows(
-    filterHomeRigRows(rows, view.filter, hiddenBindingIds),
+    filterHomeRigRows(rigRows, view.filter, hiddenBindingIds),
     view.sort
   );
+  const renderRow = (row: HomeRigRow) =>
+    row.kind === 'local' ? (
+      <LocalRigRow
+        key={row.bindingId}
+        row={row}
+        identities={identities}
+        onOpenPath={onOpenPath}
+        onOpenSession={onOpenSession}
+        isHighlightTarget={row.bindingId === highlightBindingId}
+        hidden={hiddenBindingIds.has(row.bindingId)}
+        onToggleHidden={() => setHidden(row.bindingId, !hiddenBindingIds.has(row.bindingId))}
+      />
+    ) : (
+      <RelayOnlyRigRow
+        key={row.bindingId}
+        row={row}
+        onOpenPath={onOpenPath}
+        isHighlightTarget={row.bindingId === highlightBindingId}
+        hidden={hiddenBindingIds.has(row.bindingId)}
+        onToggleHidden={() => setHidden(row.bindingId, !hiddenBindingIds.has(row.bindingId))}
+      />
+    );
 
   return (
     <div className="flex w-full flex-col gap-3 text-left lg:rounded-card lg:bg-bg-1 lg:p-3">
+      {onCreateSpace && (
+        <SpacesGroup rows={sortHomeRigRows(spaceRows, 'name')} renderRow={renderRow} onCreate={onCreateSpace} />
+      )}
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between px-1">
           <p className="font-mono text-xs tracking-wide text-text-muted uppercase">Your rigs</p>
@@ -146,35 +177,89 @@ export function RigsRail({
       {visibleRows.length === 0 && rows.length > 0 ? (
         <p className="px-1 text-xs text-text-muted">No rigs match this filter.</p>
       ) : (
-        <div className="flex flex-col gap-2">
-          {visibleRows.map((row) =>
-            row.kind === 'local' ? (
-              <LocalRigRow
-                key={row.bindingId}
-                row={row}
-                identities={identities}
-                onOpenPath={onOpenPath}
-                onOpenSession={onOpenSession}
-                isHighlightTarget={row.bindingId === highlightBindingId}
-                hidden={hiddenBindingIds.has(row.bindingId)}
-                onToggleHidden={() =>
-                  setHidden(row.bindingId, !hiddenBindingIds.has(row.bindingId))
+        <div className="flex flex-col gap-2">{visibleRows.map(renderRow)}</div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Spaces: rooms where people and their own agents work together (a rig
+ * binding flagged as a space). Named with #, created inline: type a name,
+ * press Enter, and it opens straight into its Room.
+ */
+function SpacesGroup({
+  rows,
+  renderRow,
+  onCreate,
+}: {
+  rows: readonly HomeRigRow[];
+  renderRow: (row: HomeRigRow) => ReactNode;
+  onCreate: (name: string) => Promise<string | null>;
+}) {
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    const trimmed = name.trim().replace(/^#+/, '');
+    if (!trimmed || busy) return;
+    setBusy(true);
+    setError(null);
+    const failure = await onCreate(trimmed);
+    setBusy(false);
+    if (failure) {
+      setError(failure);
+      return;
+    }
+    setNaming(false);
+    setName('');
+  };
+
+  return (
+    <div className="flex flex-col gap-2" data-testid="spaces-group">
+      <div className="flex items-center justify-between px-1">
+        <p className="font-mono text-xs tracking-wide text-text-muted uppercase">Spaces</p>
+        <button
+          type="button"
+          onClick={() => setNaming(true)}
+          className="-mr-1 flex items-center gap-1 rounded-control px-1.5 py-0.5 text-xs text-text-muted transition-colors hover:text-text-primary"
+        >
+          <Plus className="size-3 shrink-0" strokeWidth={1.5} />
+          New space
+        </button>
+      </div>
+      {naming && (
+        <div className="flex flex-col gap-1 px-1">
+          <label className="border-border-hairline bg-bg-0 focus-within:border-accent flex h-8 items-center gap-1 rounded-control border px-2 transition-colors">
+            <span className="font-mono text-sm text-text-muted">#</span>
+            <input
+              autoFocus
+              value={name}
+              disabled={busy}
+              placeholder="growth-q3"
+              aria-label="Space name"
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void submit();
+                if (e.key === 'Escape') {
+                  setNaming(false);
+                  setName('');
+                  setError(null);
                 }
-              />
-            ) : (
-              <RelayOnlyRigRow
-                key={row.bindingId}
-                row={row}
-                onOpenPath={onOpenPath}
-                isHighlightTarget={row.bindingId === highlightBindingId}
-                hidden={hiddenBindingIds.has(row.bindingId)}
-                onToggleHidden={() =>
-                  setHidden(row.bindingId, !hiddenBindingIds.has(row.bindingId))
-                }
-              />
-            )
-          )}
+              }}
+              className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+            />
+            {busy && <span className="font-mono text-2xs text-text-muted">creating…</span>}
+          </label>
+          {error && <p className="text-xs text-danger">{error}</p>}
         </div>
+      )}
+      {rows.length === 0 && !naming ? (
+        <p className="px-1 text-xs text-text-muted">A room for your team and your agents.</p>
+      ) : (
+        <div className="flex flex-col gap-2">{rows.map(renderRow)}</div>
       )}
     </div>
   );
@@ -556,6 +641,7 @@ function LocalRigRow({
                   )}
                 />
               )}
+              {row.isSpace && <span className="text-text-muted">#</span>}
               {row.name ?? row.path.split('/').pop()}
             </span>
             <span className="flex min-w-0 items-center gap-1.5">
@@ -972,7 +1058,10 @@ function RelayOnlyRigRow({
           <FolderOpen className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
         )}
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm text-text-primary">{row.name}</span>
+          <span className="block truncate text-sm text-text-primary">
+            {row.isSpace && <span className="text-text-muted">#</span>}
+            {row.name}
+          </span>
           {row.disambiguator && (
             <span className="block truncate font-mono text-xs text-text-muted">
               {row.disambiguator}
