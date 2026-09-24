@@ -1,9 +1,9 @@
+import type { AcpPermissionRequest } from '@emdash/core/acp';
 import { err, ok, type Result } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createDeviceIdResolver,
   createSpacesDispatcher,
-  type BusyChange,
   type RawSessionEvent,
   type SpacesAcpSessions,
 } from './dispatch';
@@ -37,6 +37,25 @@ function makeRequest(overrides: Partial<AgentRequest> = {}): AgentRequest {
 function notImplemented(name: string) {
   return async () => {
     throw new Error(`${name} should not be called in this test`);
+  };
+}
+
+function makePermissionRequest(overrides: Partial<AcpPermissionRequest> = {}): AcpPermissionRequest {
+  return {
+    requestId: 'perm-1',
+    toolCall: {
+      id: 't1',
+      seq: 1,
+      toolCallId: 't1',
+      title: 'Run rm -rf /',
+      status: 'running',
+      kind: 'execute-tool-call',
+    } as AcpPermissionRequest['toolCall'],
+    options: [
+      { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' },
+    ],
+    ...overrides,
   };
 }
 
@@ -113,14 +132,18 @@ function makeFakeApi(overrides: Partial<SpacesRelayApi> = {}) {
 /** A fully controllable fake `SpacesAcpSessions` — the seam this module is built to be tested against. */
 function makeFakeAcp() {
   const rawHandlers = new Map<string, (raw: RawSessionEvent) => void>();
-  const busyHandlers = new Map<string, (change: BusyChange) => void>();
+  const permissionHandlers = new Map<string, (request: AcpPermissionRequest) => void>();
   const started: Array<{ conversationId: string; providerId: string; cwd: string }> = [];
-  const queued: Array<{ conversationId: string; text: string }> = [];
+  const queued: Array<{ conversationId: string; text: string; turnId: string }> = [];
   const cancelled: string[] = [];
+  const resolvedPermissions: Array<{ conversationId: string; requestId: string; optionId: string }> = [];
   const callOrder: string[] = [];
 
   let startResult: Result<void, string> = ok(undefined);
-  let queueResult: Result<void, string> = ok(undefined);
+  let turnCounter = 0;
+  /** When set, overrides the default (immediate, auto-incrementing turnId) `queuePrompt` behaviour. */
+  let queuePromptImpl: ((conversationId: string, text: string) => Promise<Result<{ turnId: string }, string>>) | null =
+    null;
 
   const acp: SpacesAcpSessions = {
     async startSession(input) {
@@ -130,8 +153,10 @@ function makeFakeAcp() {
     },
     async queuePrompt(conversationId, text) {
       callOrder.push(`queuePrompt:${conversationId}`);
-      queued.push({ conversationId, text });
-      return queueResult;
+      if (queuePromptImpl) return queuePromptImpl(conversationId, text);
+      const turnId = `turn-${++turnCounter}`;
+      queued.push({ conversationId, text, turnId });
+      return ok({ turnId });
     },
     async cancelTurn(conversationId) {
       cancelled.push(conversationId);
@@ -141,12 +166,13 @@ function makeFakeAcp() {
       rawHandlers.set(conversationId, onEvent);
       return () => rawHandlers.delete(conversationId);
     },
-    async subscribeBusy(conversationId, onChange) {
-      callOrder.push(`subscribeBusy:${conversationId}`);
-      busyHandlers.set(conversationId, onChange);
-      // Mirrors the real ReplicaState: fires once immediately with the seed (idle) value.
-      onChange({ isGenerating: false, lastStopReason: null });
-      return () => busyHandlers.delete(conversationId);
+    async subscribePendingPermissions(conversationId, onRequest) {
+      callOrder.push(`subscribePendingPermissions:${conversationId}`);
+      permissionHandlers.set(conversationId, onRequest);
+      return () => permissionHandlers.delete(conversationId);
+    },
+    async resolvePermission(conversationId, requestId, optionId) {
+      resolvedPermissions.push({ conversationId, requestId, optionId });
     },
   };
 
@@ -155,18 +181,26 @@ function makeFakeAcp() {
     started,
     queued,
     cancelled,
+    resolvedPermissions,
     callOrder,
     setStartResult: (r: Result<void, string>) => (startResult = r),
-    setQueueResult: (r: Result<void, string>) => (queueResult = r),
-    emitRaw: (conversationId: string, update: RawSessionEvent['update']) =>
-      rawHandlers.get(conversationId)?.({ sessionId: 'acp-session-1', update }),
-    emitBusy: (conversationId: string, change: BusyChange) =>
-      busyHandlers.get(conversationId)?.(change),
+    /** Replaces `queuePrompt`'s default immediate-resolve behaviour, e.g. to control exactly when it resolves relative to raw-stream markers. */
+    setQueuePromptImpl: (
+      impl: (conversationId: string, text: string) => Promise<Result<{ turnId: string }, string>>
+    ) => (queuePromptImpl = impl),
+    emitTurnStart: (conversationId: string, turnId: string) =>
+      rawHandlers.get(conversationId)?.({ kind: 'turn_start', turnId }),
+    emitTurnEnd: (conversationId: string, turnId: string, stopReason: string | null) =>
+      rawHandlers.get(conversationId)?.({ kind: 'turn_end', turnId, stopReason }),
+    emitUpdate: (conversationId: string, update: { sessionUpdate: string } & Record<string, unknown>) =>
+      rawHandlers.get(conversationId)?.({ kind: 'acp_update', sessionId: 'acp-session-1', update }),
+    emitPermissionRequest: (conversationId: string, request: AcpPermissionRequest) =>
+      permissionHandlers.get(conversationId)?.(request),
   };
 }
 
 describe('createSpacesDispatcher', () => {
-  it('starts a fresh persistent session, subscribing to raw/busy events before starting it', async () => {
+  it('starts a fresh persistent session, subscribing to raw events/permissions before starting it', async () => {
     const { api, createdRuns, patchedRequests } = makeFakeApi();
     const fake = makeFakeAcp();
     const { dispatch } = createSpacesDispatcher({
@@ -181,13 +215,15 @@ describe('createSpacesDispatcher', () => {
     expect(createdRuns).toEqual([{ bindingId: 'binding-1', agent: 'claude' }]);
     expect(fake.started).toHaveLength(1);
     expect(fake.started[0]).toMatchObject({ providerId: 'claude', cwd: '/rigs/one' });
-    expect(fake.queued).toEqual([{ conversationId: fake.started[0].conversationId, text: 'do the thing' }]);
+    expect(fake.queued.map((q) => ({ conversationId: q.conversationId, text: q.text }))).toEqual([
+      { conversationId: fake.started[0].conversationId, text: 'do the thing' },
+    ]);
     // Subscriptions happen before the session starts.
     const conversationId = fake.started[0].conversationId;
     expect(fake.callOrder.indexOf(`subscribeRaw:${conversationId}`)).toBeLessThan(
       fake.callOrder.indexOf(`startSession:${conversationId}`)
     );
-    expect(fake.callOrder.indexOf(`subscribeBusy:${conversationId}`)).toBeLessThan(
+    expect(fake.callOrder.indexOf(`subscribePendingPermissions:${conversationId}`)).toBeLessThan(
       fake.callOrder.indexOf(`startSession:${conversationId}`)
     );
     // Nothing settled yet — the turn hasn't even started.
@@ -239,11 +275,12 @@ describe('createSpacesDispatcher', () => {
     const result = await dispatch(makeRequest());
     if ('failed' in result) throw new Error('expected success');
     const conversationId = fake.started[0].conversationId;
+    const turnId = fake.queued[0].turnId;
 
-    fake.emitBusy(conversationId, { isGenerating: true, lastStopReason: null });
-    fake.emitRaw(conversationId, { sessionUpdate: 'available_commands_update', commands: [] });
-    fake.emitRaw(conversationId, { sessionUpdate: 'tool_call', toolCallId: 't1' });
-    fake.emitBusy(conversationId, { isGenerating: false, lastStopReason: 'end_turn' });
+    fake.emitTurnStart(conversationId, turnId);
+    fake.emitUpdate(conversationId, { sessionUpdate: 'available_commands_update', commands: [] });
+    fake.emitUpdate(conversationId, { sessionUpdate: 'tool_call', toolCallId: 't1' });
+    fake.emitTurnEnd(conversationId, turnId, 'end_turn');
     await vi.waitFor(() => expect(postedEvents.length).toBeGreaterThan(0));
 
     const kinds = postedEvents.flatMap((p) => p.kinds);
@@ -262,14 +299,15 @@ describe('createSpacesDispatcher', () => {
     const result = await dispatch(makeRequest({ id: 'req1' }));
     if ('failed' in result) throw new Error('expected success');
     const conversationId = fake.started[0].conversationId;
-    fake.emitBusy(conversationId, { isGenerating: true, lastStopReason: null });
-    fake.emitBusy(conversationId, { isGenerating: false, lastStopReason: 'end_turn' });
+    const turnId = fake.queued[0].turnId;
+    fake.emitTurnStart(conversationId, turnId);
+    fake.emitTurnEnd(conversationId, turnId, 'end_turn');
 
     await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: 'req1', status: 'done' }]));
     expect(patchedSessions).toEqual([{ runId: result.runId, status: 'done' }]);
   });
 
-  it('maps an in-turn error (lastStopReason: null on a busy->idle edge) to failed/failed', async () => {
+  it('maps an in-turn error (turn_end stopReason: null) to failed/failed', async () => {
     const { api, patchedSessions, patchedRequests } = makeFakeApi();
     const fake = makeFakeAcp();
     const { dispatch } = createSpacesDispatcher({
@@ -281,8 +319,9 @@ describe('createSpacesDispatcher', () => {
     const result = await dispatch(makeRequest({ id: 'req1' }));
     if ('failed' in result) throw new Error('expected success');
     const conversationId = fake.started[0].conversationId;
-    fake.emitBusy(conversationId, { isGenerating: true, lastStopReason: null });
-    fake.emitBusy(conversationId, { isGenerating: false, lastStopReason: null });
+    const turnId = fake.queued[0].turnId;
+    fake.emitTurnStart(conversationId, turnId);
+    fake.emitTurnEnd(conversationId, turnId, null);
 
     await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: 'req1', status: 'failed' }]));
     expect(patchedSessions).toEqual([{ runId: result.runId, status: 'failed' }]);
@@ -301,15 +340,16 @@ describe('createSpacesDispatcher', () => {
     const b = await dispatch(makeRequest({ id: 'reqB' }));
     if ('failed' in a || 'failed' in b) throw new Error('expected success');
     const conversationId = fake.started[0].conversationId;
+    const [turnA, turnB] = fake.queued.map((q) => q.turnId);
 
-    fake.emitBusy(conversationId, { isGenerating: true, lastStopReason: null });
-    fake.emitRaw(conversationId, { sessionUpdate: 'tool_call', toolCallId: 'for-a' });
-    fake.emitBusy(conversationId, { isGenerating: false, lastStopReason: 'end_turn' });
+    fake.emitTurnStart(conversationId, turnA);
+    fake.emitUpdate(conversationId, { sessionUpdate: 'tool_call', toolCallId: 'for-a' });
+    fake.emitTurnEnd(conversationId, turnA, 'end_turn');
     await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: 'reqA', status: 'done' }]));
 
-    fake.emitBusy(conversationId, { isGenerating: true, lastStopReason: null });
-    fake.emitRaw(conversationId, { sessionUpdate: 'tool_call', toolCallId: 'for-b' });
-    fake.emitBusy(conversationId, { isGenerating: false, lastStopReason: 'cancelled' });
+    fake.emitTurnStart(conversationId, turnB);
+    fake.emitUpdate(conversationId, { sessionUpdate: 'tool_call', toolCallId: 'for-b' });
+    fake.emitTurnEnd(conversationId, turnB, 'cancelled');
     await vi.waitFor(() =>
       expect(patchedRequests).toEqual([
         { id: 'reqA', status: 'done' },
@@ -321,6 +361,156 @@ describe('createSpacesDispatcher', () => {
     const bEvents = postedEvents.find((p) => p.runId === b.runId);
     expect(aEvents?.kinds).toEqual(['tool_call']);
     expect(bEvents?.kinds).toEqual(['tool_call']);
+  });
+
+  describe('in-band turn boundaries (review findings (a) and (b))', () => {
+    it('(a) claims a turn_start that arrives before queuePrompt itself resolves, never dropping the events that follow it', async () => {
+      // Reproduces the drop: `subscribeRaw` and the busy/idle signal used to
+      // travel on separate channels with no ordering guarantee. Here we
+      // simulate the worst case directly — the runtime's raw stream
+      // delivers turn_start, an update, AND turn_end before the RPC call
+      // that queued the prompt has even resolved back to this module.
+      const { api, postedEvents, patchedRequests } = makeFakeApi();
+      const fake = makeFakeAcp();
+      let resolveQueue!: (r: Result<{ turnId: string }, string>) => void;
+      fake.setQueuePromptImpl(
+        () =>
+          new Promise((resolve) => {
+            resolveQueue = resolve;
+          })
+      );
+      const { dispatch } = createSpacesDispatcher({
+        api,
+        acp: fake.acp,
+        resolveWorkspace: async () => '/rigs/one',
+      });
+
+      const dispatchPromise = dispatch(makeRequest({ id: 'req1' }));
+      await vi.waitFor(() => expect(fake.started).toHaveLength(1));
+      const conversationId = fake.started[0].conversationId;
+
+      // Raw stream races ahead of the queuePrompt RPC ack.
+      fake.emitTurnStart(conversationId, 'server-turn-1');
+      fake.emitUpdate(conversationId, { sessionUpdate: 'tool_call', toolCallId: 't1' });
+      fake.emitTurnEnd(conversationId, 'server-turn-1', 'end_turn');
+
+      // Only now does queuePrompt's own RPC ack arrive, carrying the SAME turnId.
+      resolveQueue(ok({ turnId: 'server-turn-1' }));
+      const result = await dispatchPromise;
+      if ('failed' in result) throw new Error('expected success');
+
+      await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: 'req1', status: 'done' }]));
+      const events = postedEvents.find((p) => p.runId === result.runId);
+      expect(events?.kinds).toEqual(['tool_call']);
+    });
+
+    it('(b) never drops a turn\'s final event even when it arrives in the very same tick as turn_end', async () => {
+      // Reproduces the other half of the drop: a busy/idle edge could
+      // previously finalize (and finish the publisher for) a turn before
+      // its own tail event — typically the final agent_message_chunk — had
+      // been forwarded. On the single in-band stream there is no separate
+      // edge to race: every event delivered before turn_end is guaranteed
+      // recorded before the turn is finalized.
+      const { api, postedEvents, patchedRequests } = makeFakeApi();
+      const fake = makeFakeAcp();
+      const { dispatch } = createSpacesDispatcher({
+        api,
+        acp: fake.acp,
+        resolveWorkspace: async () => '/rigs/one',
+      });
+
+      const result = await dispatch(makeRequest({ id: 'req1' }));
+      if ('failed' in result) throw new Error('expected success');
+      const conversationId = fake.started[0].conversationId;
+      const turnId = fake.queued[0].turnId;
+
+      fake.emitTurnStart(conversationId, turnId);
+      fake.emitUpdate(conversationId, {
+        sessionUpdate: 'agent_message_chunk',
+        messageId: 'm1',
+        content: { type: 'text', text: 'the final answer' },
+      });
+      // No await between the tail event and turn_end.
+      fake.emitTurnEnd(conversationId, turnId, 'end_turn');
+
+      await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: 'req1', status: 'done' }]));
+      const events = postedEvents.find((p) => p.runId === result.runId);
+      expect(events?.kinds).toEqual(['agent_message_chunk']);
+    });
+  });
+
+  describe('permission requests during a spaces turn', () => {
+    it('auto-declines a pending permission request, picking a reject option, and never picking an allow option', async () => {
+      const { api } = makeFakeApi();
+      const fake = makeFakeAcp();
+      const { dispatch } = createSpacesDispatcher({
+        api,
+        acp: fake.acp,
+        resolveWorkspace: async () => '/rigs/one',
+      });
+
+      const result = await dispatch(makeRequest());
+      if ('failed' in result) throw new Error('expected success');
+      const conversationId = fake.started[0].conversationId;
+      const turnId = fake.queued[0].turnId;
+      fake.emitTurnStart(conversationId, turnId);
+
+      fake.emitPermissionRequest(conversationId, makePermissionRequest());
+
+      await vi.waitFor(() => expect(fake.resolvedPermissions).toHaveLength(1));
+      expect(fake.resolvedPermissions[0]).toEqual({
+        conversationId,
+        requestId: 'perm-1',
+        optionId: 'reject-once',
+      });
+    });
+
+    it('falls back to reject_always, then to the first option, when reject_once is not offered', async () => {
+      const { api } = makeFakeApi();
+      const fake = makeFakeAcp();
+      const { dispatch } = createSpacesDispatcher({
+        api,
+        acp: fake.acp,
+        resolveWorkspace: async () => '/rigs/one',
+      });
+      const result = await dispatch(makeRequest());
+      if ('failed' in result) throw new Error('expected success');
+      const conversationId = fake.started[0].conversationId;
+
+      fake.emitPermissionRequest(
+        conversationId,
+        makePermissionRequest({
+          options: [
+            { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+            { optionId: 'reject-always', name: 'Always reject', kind: 'reject_always' },
+          ],
+        })
+      );
+      await vi.waitFor(() => expect(fake.resolvedPermissions).toHaveLength(1));
+      expect(fake.resolvedPermissions[0]).toMatchObject({ optionId: 'reject-always' });
+    });
+
+    it('records permission_requested/permission_decided events, carrying the tool title, in the run log', async () => {
+      const { api, postedEvents } = makeFakeApi();
+      const fake = makeFakeAcp();
+      const { dispatch } = createSpacesDispatcher({
+        api,
+        acp: fake.acp,
+        resolveWorkspace: async () => '/rigs/one',
+      });
+
+      const result = await dispatch(makeRequest());
+      if ('failed' in result) throw new Error('expected success');
+      const conversationId = fake.started[0].conversationId;
+      const turnId = fake.queued[0].turnId;
+      fake.emitTurnStart(conversationId, turnId);
+      fake.emitPermissionRequest(conversationId, makePermissionRequest());
+
+      await vi.waitFor(() => {
+        const kinds = postedEvents.flatMap((p) => p.kinds);
+        expect(kinds).toEqual(['permission_requested', 'permission_decided']);
+      });
+    });
   });
 
   it('stopRun on the CURRENTLY RUNNING turn cancels it and finalizes it "stopped" once the runtime confirms', async () => {
@@ -335,7 +525,8 @@ describe('createSpacesDispatcher', () => {
     const result = await dispatch(makeRequest({ id: 'req1' }));
     if ('failed' in result) throw new Error('expected success');
     const conversationId = fake.started[0].conversationId;
-    fake.emitBusy(conversationId, { isGenerating: true, lastStopReason: null });
+    const turnId = fake.queued[0].turnId;
+    fake.emitTurnStart(conversationId, turnId);
 
     const stopped = await stopRun(result.runId);
     expect(stopped).toBe(true);
@@ -343,7 +534,7 @@ describe('createSpacesDispatcher', () => {
 
     // The runtime settles the cancel asynchronously — until it does, nothing is finalized yet.
     expect(patchedRequests).toEqual([]);
-    fake.emitBusy(conversationId, { isGenerating: false, lastStopReason: 'cancelled' });
+    fake.emitTurnEnd(conversationId, turnId, 'cancelled');
     await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: 'req1', status: 'cancelled' }]));
     expect(patchedSessions).toEqual([{ runId: result.runId, status: 'stopped' }]);
   });
@@ -417,7 +608,7 @@ describe('createSpacesDispatcher', () => {
   it('fails and settles the request when queuePrompt itself fails', async () => {
     const { api, patchedSessions, patchedRequests } = makeFakeApi();
     const fake = makeFakeAcp();
-    fake.setQueueResult(err('queue rejected'));
+    fake.setQueuePromptImpl(async () => err('queue rejected'));
     const { dispatch } = createSpacesDispatcher({
       api,
       acp: fake.acp,

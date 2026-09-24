@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSpacesDispatcher, type BusyChange, type RawSessionEvent, type SpacesAcpSessions } from './dispatch';
+import { createSpacesDispatcher, type RawSessionEvent, type SpacesAcpSessions } from './dispatch';
 import { createHttpSpacesRelayApi } from './relay-api';
 import { claimOne } from './request-claim';
 import { SessionEventPublisher } from './session-publisher';
@@ -125,10 +125,15 @@ describe.skipIf(!RELAY_URL)('spaces lane 3 — live relay integration', () => {
     // real dispatcher's wiring end to end against a real relay, not the
     // ACP runtime (already covered elsewhere).
     let rawHandler: ((raw: RawSessionEvent) => void) | null = null;
-    let busyHandler: ((change: BusyChange) => void) | null = null;
+    const queuedTurnIds: string[] = [];
+    let turnCounter = 0;
     const acp: SpacesAcpSessions = {
       startSession: async () => ({ success: true, data: undefined }),
-      queuePrompt: async () => ({ success: true, data: undefined }),
+      queuePrompt: async () => {
+        const turnId = `turn-${++turnCounter}`;
+        queuedTurnIds.push(turnId);
+        return { success: true, data: { turnId } };
+      },
       cancelTurn: async () => {},
       subscribeRaw: async (_conversationId, onEvent) => {
         rawHandler = onEvent;
@@ -136,13 +141,8 @@ describe.skipIf(!RELAY_URL)('spaces lane 3 — live relay integration', () => {
           rawHandler = null;
         };
       },
-      subscribeBusy: async (_conversationId, onChange) => {
-        busyHandler = onChange;
-        onChange({ isGenerating: false, lastStopReason: null }); // seed, mirrors ReplicaState
-        return () => {
-          busyHandler = null;
-        };
-      },
+      subscribePendingPermissions: async () => () => {},
+      resolvePermission: async () => {},
     };
 
     const { dispatch } = createSpacesDispatcher({
@@ -158,20 +158,34 @@ describe.skipIf(!RELAY_URL)('spaces lane 3 — live relay integration', () => {
       request
     );
 
-    // Drive the fake agent's turn: busy, two raw events (one of them
-    // available_commands_update, which must NOT reach the relay), idle.
-    expect(busyHandler).not.toBeNull();
+    // Drive the fake agent's turn entirely over the in-band raw stream:
+    // turn_start, three updates (one of them available_commands_update,
+    // which must NOT reach the relay, and the agent's FINAL message chunk
+    // last), then turn_end — proving the tail event is never lost even
+    // though it's the very last thing forwarded before the turn (and the
+    // publisher it depends on) is finalized.
     expect(rawHandler).not.toBeNull();
-    busyHandler!({ isGenerating: true, lastStopReason: null });
-    rawHandler!({ sessionId: 'fake-acp-session', update: { sessionUpdate: 'tool_call', toolCallId: 't1' } });
-    rawHandler!({ sessionId: 'fake-acp-session', update: { sessionUpdate: 'available_commands_update', commands: [] } });
+    expect(queuedTurnIds).toHaveLength(1);
+    const turnId = queuedTurnIds[0]!;
+    rawHandler!({ kind: 'turn_start', turnId });
     rawHandler!({
+      kind: 'acp_update',
+      sessionId: 'fake-acp-session',
+      update: { sessionUpdate: 'tool_call', toolCallId: 't1' },
+    });
+    rawHandler!({
+      kind: 'acp_update',
+      sessionId: 'fake-acp-session',
+      update: { sessionUpdate: 'available_commands_update', commands: [] },
+    });
+    rawHandler!({
+      kind: 'acp_update',
       sessionId: 'fake-acp-session',
       update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Done.' } },
     });
-    busyHandler!({ isGenerating: false, lastStopReason: 'end_turn' });
+    rawHandler!({ kind: 'turn_end', turnId, stopReason: 'end_turn' });
 
-    // `finalizeTurn` runs in the background off the busy-edge callback —
+    // `finalizeTurn` runs in the background off the turn_end marker —
     // poll the relay for the request to settle rather than racing it.
     let runId: string | undefined;
     await expect
@@ -194,5 +208,10 @@ describe.skipIf(!RELAY_URL)('spaces lane 3 — live relay integration', () => {
     expect(events.data.run.status).toBe('done');
     expect(events.data.events.map((e) => e.kind)).toEqual(['tool_call', 'agent_message_chunk']);
     expect(events.data.events.map((e) => e.seq)).toEqual([1, 2]);
+    // The in-band ordering guarantee this whole fix is about: the agent's
+    // FINAL message is the last event on the run, immediately before it
+    // settled done — never dropped, never reordered behind a separately
+    // delivered idle signal.
+    expect(events.data.events.at(-1)?.kind).toBe('agent_message_chunk');
   }, 20_000);
 });

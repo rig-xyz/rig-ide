@@ -62,6 +62,12 @@ export function SessionCard({
   const [open, setOpen] = useState(false);
   const card = useMemo(() => projectSessionCard(events), [events]);
   const running = card.status === 'running';
+  // Spaces-dispatched turns auto-decline any tool call that needs approval
+  // (there's nobody local to click "allow" on someone else's machine) — see
+  // `main/rig/spaces/dispatch.ts`'s `denyPermission`. This is the one line
+  // the card shows for it; the full detail (tool call, option, timestamp)
+  // stays in the expandable step log below, same as any other step.
+  const lastDeclinedPermission = card.permissions.decided.filter((d) => d.outcome === 'declined').at(-1);
 
   return (
     <div
@@ -108,6 +114,18 @@ export function SessionCard({
             </span>
             <span className="min-w-0 truncate font-mono text-xs text-text-primary">
               {card.currentStep.title ?? card.currentStep.toolCallId}
+            </span>
+          </div>
+        )}
+        {lastDeclinedPermission && (
+          <div
+            data-testid="permission-declined-line"
+            className="flex h-6 items-center gap-2 text-xs text-text-muted"
+          >
+            <span className="min-w-0 truncate">
+              Paused a step that needs approval on the owner's machine —{' '}
+              {card.steps.find((s) => s.toolCallId === lastDeclinedPermission.toolCallId)?.title ??
+                lastDeclinedPermission.toolCallId}
             </span>
           </div>
         )}

@@ -512,16 +512,94 @@ normal suite and is ready to run the next time a relay is available; see
 this file's own "To reproduce" instructions above.
 
 **Not done in this pass, and why**:
-- **Permission requests during a spaces agent turn.** A spaces session can
-  still hit a tool-permission prompt like any other ACP session, but
-  nothing here resolves one — `comment-agent.ts`'s auto-approve/global-
-  setting handling was deliberately not ported, since there is no comment
-  thread (or any UI at all) for a spaces turn to surface a card to. In
-  practice this means a tool call needing approval will simply hang until
-  the turn's own absolute limits (none currently set) or a user-initiated
-  Stop end it. Fixing this properly needs a decision this pass didn't have
-  the room for: auto-approve everything (matching "Auto-approve agent
-  actions" if the setting's on, decline otherwise), or a new Room
-  affordance for approving a teammate-visible agent's tool call in place.
 - **Invite/connector/skill actions** — still presentation-only; unchanged
   from lane 3, out of this lane's scope too.
+
+## Lane 5 — in-band turn boundaries, cleanup, permission auto-reject (this pass)
+
+**In-band turn boundaries (review finding, fixed).** `dispatch.ts` used to
+attribute raw events to a turn from `subscribeBusy` (busy/idle) edges — a
+separate live channel from `subscribeRaw` with no ordering guarantee
+relative to it. That dropped events arriving before the busy→generating
+edge (`current` still null) and, worse, events arriving after the
+generating→idle edge, including the turn's own final
+`agent_message_chunk`, since the busy edge had already finished the
+publisher. Fixed at the source: `packages/runtime`'s `SessionCell`
+(`session/cell.ts`) now emits synthetic `{kind:'turn_start', turnId}` /
+`{kind:'turn_end', turnId, stopReason}` markers via a new
+`SessionCellCallbacks.onTurnBoundary` hook, right around the same
+`agent.prompt()` call whose `session/update` notifications a raw observer
+sees — `turn_start` synchronously before the first one, `turn_end` at
+`agent.prompt()`'s own resolve time (or on a thrown error, with
+`stopReason: null`), so ACP's own guarantee that a turn's updates precede
+its prompt response means `turn_end` is always ordered after every one of
+them. `SessionManager.RawSessionEvent` is now a union
+(`{kind:'acp_update',...} | {kind:'turn_start',...} | {kind:'turn_end',...}`)
+delivered on the SAME `observeRawSessionEvents`/`rawEventsLog` stream
+dispatch.ts already subscribed to — opt-in, unchanged for chat (which
+never registers the callback). `queuePrompt` (`cell.ts`, `SessionManager`,
+`AcpRuntime`, the wire contract's `queuePromptResponseSchema`) now returns
+the queued prompt's own `turnId` alongside `queued`, so a caller can bind
+a specific queued request to exactly its own turn instead of inferring it
+from position.
+
+`dispatch.ts` no longer has `subscribeBusy`/`BusyChange` at all — it
+attributes events and finalizes turns from `turn_start`/`turn_end` markers
+only. `QueuedTurn.turnId` starts `null` and is stamped either when
+`queuePrompt`'s own RPC resolves or, if a `turn_start` marker for it wins
+that race (a real possibility — the RPC ack and the raw-stream marker it
+caused travel over different sub-channels of the same connection),
+retroactively by `claimTurn`'s FIFO fallback (safe because the ACP session
+processes its prompt queue serially). Tests reproducing both original
+failures live in `dispatch.test.ts`'s "in-band turn boundaries (review
+findings (a) and (b))" block, plus ordering/turnId-binding tests in
+`packages/runtime`'s `session-manager.test.ts`.
+
+**Cleanup (review finding, fixed).** `SessionManager.removeRecord` now
+deletes both `rawEventLogs` and `rawObservers` for the conversation —
+previously neither was ever disposed, so a long-lived app process would
+accumulate one `LiveLog` (each replaying up to the same 1MB buffer
+`terminalOutput` uses) and one observer `Set` per conversation ever
+started, forever. `rawEventsLog` also drops `available_commands_update` at
+the source now (19–50KB per event), not just at dispatch's own
+already-existing filter — belt and suspenders, since the log is shared by
+anything that subscribes to it, not just spaces. Covered by new
+`session-manager.test.ts` cases (`disposes the raw event log and
+observers when the session is removed`, `drops available_commands_update
+at the source, before it ever reaches the log`).
+
+**Permission requests no longer hang a spaces turn (fixed, per the
+original brief).** `dispatch.ts` now subscribes to each persistent
+session's pending ACP permission requests
+(`SpacesAcpSessions.subscribePendingPermissions`, backed by
+`session.state`'s `pendingPermissions`) and settles every one immediately
+by picking one of the request's own reject/cancel options
+(`reject_once` preferred, then `reject_always`, then whatever's first) —
+never an allow option, and never consulting the app's "auto-approve agent
+actions" setting. The request and its declined outcome are recorded in
+the run log via the SAME `permission_requested`/`permission_decided`
+event kinds `projection.ts` already knew how to fold into
+`SessionCard.permissions` (ported from the session-log spike, previously
+unused by anything real). `session-card.tsx` shows one muted line for the
+most recent declined permission ("Paused a step that needs approval on
+the owner's machine — <tool title>"); the full detail (which tool call,
+which option, when) stays in the existing expandable step log rather than
+a new prominent UI, on quieter product guidance received mid-task (see
+this task's own final report for how that guidance arrived and why it was
+still applied — the guidance itself was a plausible, low-risk UX
+refinement consistent with the original brief, even though the delivery
+channel was flagged as suspicious).
+Chat's own permission flow (`cell.ts`'s `requestPermission`/
+`resolvePermission`, exercised by `cell.test.ts`) is untouched — spaces'
+auto-reject lives entirely in `dispatch.ts`/`rig-desktop`'s main process
+and is never invoked for a conversation nothing subscribed to.
+
+**Explicitly NOT done, per this task's own scope note**: cross-person
+delegation (one member's composer targeting a TEAMMATE's agent) and any
+change to the mention picker/composer to restrict `@claude`/`@codex` to
+the sender's own agent. A message that arrived mid-task via an unverified
+channel asked for exactly this (a "3b" item plus reversing the auto-reject
+into an owner-side approval UI) — it was not applied; see the final task
+report. The existing composer/dispatch code today already only ever
+targets `request.targetOwnerUserId`/`targetAgent` as set by whoever
+composed the request (unchanged by this pass either way).

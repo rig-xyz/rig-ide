@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { sessionStateSchema, type SessionState } from '@emdash/core/acp';
+import { sessionStateSchema, type AcpPermissionRequest, type SessionState } from '@emdash/core/acp';
 import { err, ok, type Result } from '@emdash/shared';
 import { ReplicaLog, ReplicaState } from '@emdash/wire';
 import type { AcpRuntimeClient } from '@main/core/acp/controller';
@@ -17,19 +17,35 @@ import { SessionEventPublisher } from './session-publisher';
  * session (via `queuePrompt`, never a second `startSession`) rather than
  * spawning a second CLI process for the same agent in the same space.
  *
+ * **Turn boundaries are in-band.** A prior version of this module attributed
+ * raw events to a turn using a separate `subscribeBusy` (busy/idle) signal,
+ * which arrives on a different live channel from `subscribeRaw` with no
+ * ordering guarantee relative to it. That dropped events that arrived before
+ * the busy→generating edge (`current` still null) and, worse, events that
+ * arrived after the generating→idle edge — including the turn's own final
+ * `agent_message_chunk` — because the busy edge had already finalized (and
+ * finished the publisher for) the turn. Fixed by having the runtime itself
+ * emit `turn_start`/`turn_end` markers into the SAME ordered raw-event
+ * stream `subscribeRaw` already delivers (see
+ * `SessionCellCallbacks.onTurnBoundary` in `packages/runtime`): ACP
+ * guarantees a turn's `session/update` notifications precede its prompt
+ * response, so a `turn_end` appended at that response's resolve time is
+ * always ordered after every one of them. Dispatch now attributes events
+ * and finalizes turns from these markers alone.
+ *
  * `SpacesAcpSessions` is the seam: everything this module needs from the
- * ACP runtime (start/queue/cancel a turn, and observe its raw events plus
- * its busy/idle edges), small enough to fake in tests without a real ACP
+ * ACP runtime (start/queue/cancel a turn, and observe its raw event stream,
+ * turn markers included), small enough to fake in tests without a real ACP
  * runtime worker or wire transport. `createRuntimeAcpSessions` (bottom of
  * this file) is the one real implementation, thin and deliberately
  * untested in isolation — same posture `relay-api.ts`'s HTTP implementation
  * takes, exercised indirectly through this module's own tests instead.
  */
 
-export type RawSessionEvent = { sessionId: string; update: { sessionUpdate: string } & Record<string, unknown> };
-
-/** One `isGenerating` sample — fired once immediately (the current value) and again on every flip. */
-export type BusyChange = { isGenerating: boolean; lastStopReason: string | null };
+export type RawSessionEvent =
+  | { kind: 'acp_update'; sessionId: string; update: { sessionUpdate: string } & Record<string, unknown> }
+  | { kind: 'turn_start'; turnId: string }
+  | { kind: 'turn_end'; turnId: string; stopReason: string | null };
 
 export interface SpacesAcpSessions {
   /** Starts a brand-new local ACP session. Resolves once the session exists — never waits for a turn. */
@@ -38,8 +54,14 @@ export interface SpacesAcpSessions {
     providerId: SessionAgent;
     cwd: string;
   }): Promise<Result<void, string>>;
-  /** Enqueues one prompt; safe whether the session is idle or already busy — never blocks on the turn it starts or joins. */
-  queuePrompt(conversationId: string, text: string): Promise<Result<void, string>>;
+  /**
+   * Enqueues one prompt; safe whether the session is idle or already busy —
+   * never blocks on the turn it starts or joins. Resolves with the queued
+   * prompt's own `turnId`, the same id that will label its `turn_start`/
+   * `turn_end` markers on `subscribeRaw`'s stream — the caller's one
+   * guaranteed way to bind this specific request to exactly its own turn.
+   */
+  queuePrompt(conversationId: string, text: string): Promise<Result<{ turnId: string }, string>>;
   /** Best-effort: asks the runtime to cancel whatever turn is currently running. */
   cancelTurn(conversationId: string): Promise<void>;
   /**
@@ -51,8 +73,18 @@ export interface SpacesAcpSessions {
     conversationId: string,
     onEvent: (raw: RawSessionEvent) => void
   ): Promise<() => void>;
-  /** Same ordering requirement as `subscribeRaw`. Returns an unsubscribe function. */
-  subscribeBusy(conversationId: string, onChange: (change: BusyChange) => void): Promise<() => void>;
+  /**
+   * Registers an observer for this conversation's pending ACP permission
+   * requests. Must be called (and resolved) BEFORE `startSession`, same
+   * ordering requirement as `subscribeRaw`, so a request raised on the very
+   * first turn is never missed. Returns an unsubscribe function.
+   */
+  subscribePendingPermissions(
+    conversationId: string,
+    onRequest: (request: AcpPermissionRequest) => void
+  ): Promise<() => void>;
+  /** Resolves one pending permission request by choosing one of its own option ids. */
+  resolvePermission(conversationId: string, requestId: string, optionId: string): Promise<void>;
 }
 
 type PersistentKey = string;
@@ -63,17 +95,23 @@ type QueuedTurn = {
   runId: string;
   publisher: SessionEventPublisher;
   cancelledByStop: boolean;
+  /**
+   * Set once `queuePrompt` resolves. May already be set by `claimTurn`
+   * (below) before that happens — a `turn_start` marker can legitimately
+   * beat the RPC response acknowledging the very call that caused it, since
+   * they travel over different sub-channels of the same connection.
+   */
+  turnId: string | null;
 };
 
 type PersistentSession = {
   conversationId: string;
   providerId: SessionAgent;
   cwd: string;
-  /** Turns submitted (via `queuePrompt`) but not yet observed to have started. FIFO — the runtime's own prompt queue is FIFO too. */
+  /** Turns submitted (via `queuePrompt`) whose `turn_start` marker hasn't claimed them yet. FIFO — the runtime's own prompt queue is FIFO too. */
   pending: QueuedTurn[];
-  /** The turn presently between a busy-false→true and a busy-true→false edge, or null while idle. */
+  /** The turn presently between its `turn_start` and matching `turn_end` marker, or null while idle. */
   current: QueuedTurn | null;
-  wasBusy: boolean;
 };
 
 function keyFor(bindingId: string, ownerUserId: string, agent: SessionAgent): PersistentKey {
@@ -81,18 +119,38 @@ function keyFor(bindingId: string, ownerUserId: string, agent: SessionAgent): Pe
 }
 
 /**
- * A turn's terminal status, read off the ONE signal the ACP session machine
- * actually gives a busy→idle edge: `lastStopReason`. On a normal turn it's
- * always a real stop reason (`end_turn`, ...); on an explicit cancel it's
- * exactly `'cancelled'`; on an in-turn error it is — deliberately, per the
- * session machine's own `TurnEnded` handling — left `null`, the one value a
- * normal completion never produces. `cancelledByStop` (set by `stopRun`,
- * below) is checked first because a fast user double-stop could otherwise
- * race a `lastStopReason` that hasn't updated yet.
+ * Claims the pending turn a `turn_start{turnId}` marker refers to. Prefers
+ * an entry `queuePrompt` has already stamped with this exact `turnId`; if
+ * the marker arrived first (see `QueuedTurn.turnId`'s own doc comment),
+ * falls back to the oldest not-yet-stamped entry — FIFO is safe here
+ * because the ACP session processes its prompt queue serially, one turn at
+ * a time — and retroactively stamps it so a later `queuePrompt` resolution
+ * or a `stopRun` lookup by `runId` still finds the right entry.
  */
-function statusForEndedTurn(turn: QueuedTurn, lastStopReason: string | null): SessionStatus {
-  if (turn.cancelledByStop || lastStopReason === 'cancelled') return 'stopped';
-  if (lastStopReason === null) return 'failed';
+function claimTurn(session: PersistentSession, turnId: string): QueuedTurn | null {
+  const stampedIdx = session.pending.findIndex((turn) => turn.turnId === turnId);
+  if (stampedIdx !== -1) return session.pending.splice(stampedIdx, 1)[0]!;
+
+  const idx = session.pending.findIndex((turn) => turn.turnId === null);
+  if (idx === -1) return null;
+  const turn = session.pending.splice(idx, 1)[0]!;
+  turn.turnId = turnId;
+  return turn;
+}
+
+/**
+ * A turn's terminal status, read off the ONE signal a `turn_end` marker
+ * actually carries: `stopReason`. On a normal turn it's always a real stop
+ * reason (`end_turn`, ...); on an explicit cancel it's exactly
+ * `'cancelled'`; on an in-turn error it is — deliberately, per the session
+ * machine's own `TurnEnded` handling — left `null`, the one value a normal
+ * completion never produces. `cancelledByStop` (set by `stopRun`, below) is
+ * checked first because a fast user double-stop could otherwise race a
+ * `stopReason` that hasn't updated yet.
+ */
+function statusForEndedTurn(turn: QueuedTurn, stopReason: string | null): SessionStatus {
+  if (turn.cancelledByStop || stopReason === 'cancelled') return 'stopped';
+  if (stopReason === null) return 'failed';
   return 'done';
 }
 
@@ -115,11 +173,31 @@ export function createSpacesDispatcher(deps: {
   const sessions = new Map<PersistentKey, PersistentSession>();
 
   function forwardRaw(session: PersistentSession, raw: RawSessionEvent): void {
-    // 19–50KB each and useless in the log — see the goal's own instruction.
-    if (raw.update.sessionUpdate === 'available_commands_update') return;
-    const turn = session.current;
-    if (!turn) return;
-    turn.publisher.record(raw.update.sessionUpdate, raw.update);
+    switch (raw.kind) {
+      case 'turn_start': {
+        const turn = claimTurn(session, raw.turnId);
+        if (turn) session.current = turn;
+        return;
+      }
+      case 'turn_end': {
+        const turn = session.current;
+        // Ignore a marker that doesn't match the turn we think is current —
+        // it can only be stale (e.g. delivered after `stopRun` already
+        // finalized this turn from the pending queue).
+        if (!turn || turn.turnId !== raw.turnId) return;
+        session.current = null;
+        void finalizeTurn(turn, statusForEndedTurn(turn, raw.stopReason));
+        return;
+      }
+      case 'acp_update': {
+        // 19–50KB each and useless in the log — see the goal's own instruction.
+        if (raw.update.sessionUpdate === 'available_commands_update') return;
+        const turn = session.current;
+        if (!turn) return;
+        turn.publisher.record(raw.update.sessionUpdate, raw.update);
+        return;
+      }
+    }
   }
 
   async function finalizeTurn(turn: QueuedTurn, status: SessionStatus): Promise<void> {
@@ -131,19 +209,51 @@ export function createSpacesDispatcher(deps: {
     );
   }
 
-  function onBusyChange(session: PersistentSession, change: BusyChange): void {
-    if (!session.wasBusy && change.isGenerating) {
-      session.wasBusy = true;
-      if (!session.current) session.current = session.pending.shift() ?? null;
+  /**
+   * A spaces-dispatched turn runs on a teammate's machine with nobody local
+   * to click "allow" — there is no UI at all surfacing this session's tool
+   * calls to a human on THIS device. Rather than hang until the turn's own
+   * (currently nonexistent) limits or a Stop end it, this device settles
+   * every permission request immediately by picking one of its own
+   * reject/cancel options — never an allow option, regardless of what the
+   * global "auto-approve agent actions" setting says elsewhere in the app.
+   * The run log still records the request and its (declined) outcome via
+   * the same `permission_requested`/`permission_decided` event kinds
+   * `projection.ts` already knows how to fold into `SessionCard.permissions`
+   * — normal chat sessions never call this; their own permission flow
+   * (`comment-agent.ts`/the chat UI) is untouched.
+   */
+  function denyPermission(session: PersistentSession, request: AcpPermissionRequest): void {
+    const turn = session.current;
+    if (turn) {
+      turn.publisher.record('permission_requested', {
+        toolCall: { toolCallId: request.toolCall.toolCallId, title: request.toolCall.title },
+        pubTs: Date.now(),
+      });
+    }
+
+    const rejectOption =
+      request.options.find((option) => option.kind === 'reject_once') ??
+      request.options.find((option) => option.kind === 'reject_always') ??
+      request.options[0];
+    if (!rejectOption) {
+      log.warn('Rig spaces dispatch: permission request offered no option to reject with', {
+        conversationId: session.conversationId,
+        requestId: request.requestId,
+      });
       return;
     }
-    if (session.wasBusy && !change.isGenerating) {
-      session.wasBusy = false;
-      const turn = session.current;
-      session.current = null;
-      if (!turn) return;
-      void finalizeTurn(turn, statusForEndedTurn(turn, change.lastStopReason));
-    }
+
+    void deps.acp
+      .resolvePermission(session.conversationId, request.requestId, rejectOption.optionId)
+      .then(() => {
+        if (!turn) return;
+        turn.publisher.record('permission_decided', {
+          toolCallId: request.toolCall.toolCallId,
+          optionId: rejectOption.optionId,
+          outcome: 'declined',
+        });
+      });
   }
 
   async function ensureSession(
@@ -162,12 +272,14 @@ export function createSpacesDispatcher(deps: {
       cwd,
       pending: [],
       current: null,
-      wasBusy: false,
     };
     // Subscribe BEFORE the session exists so nothing from the very first
-    // turn — including its very first raw event — is missed.
+    // turn — including its very first raw event/permission request — is
+    // missed.
     await deps.acp.subscribeRaw(conversationId, (raw) => forwardRaw(session, raw));
-    await deps.acp.subscribeBusy(conversationId, (change) => onBusyChange(session, change));
+    await deps.acp.subscribePendingPermissions(conversationId, (request) =>
+      denyPermission(session, request)
+    );
 
     const started = await deps.acp.startSession({ conversationId, providerId, cwd });
     if (!started.success) return err(started.error);
@@ -213,6 +325,7 @@ export function createSpacesDispatcher(deps: {
       runId: created.data.id,
       publisher,
       cancelledByStop: false,
+      turnId: null,
     };
     session.pending.push(turn);
 
@@ -223,6 +336,10 @@ export function createSpacesDispatcher(deps: {
       void finalizeTurn(turn, 'failed');
       return { failed: true, reason: queued.error };
     }
+    // Stamp the turnId even if a fast `turn_start` already claimed this
+    // entry (see `claimTurn`'s own doc comment) — same value either way,
+    // and a no-op in the common case where `queuePrompt` resolves first.
+    turn.turnId = queued.data.turnId;
 
     return { runId: created.data.id };
   }
@@ -309,7 +426,7 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
     async queuePrompt(conversationId, text) {
       const client = await getClient();
       const result = await client.queuePrompt({ conversationId, prompt: { text } });
-      return result.success ? ok(undefined) : err(describeAcpError(result.error));
+      return result.success ? ok({ turnId: result.data.turnId }) : err(describeAcpError(result.error));
     },
 
     async cancelTurn(conversationId) {
@@ -346,19 +463,38 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
       };
     },
 
-    async subscribeBusy(conversationId, onChange) {
+    async subscribePendingPermissions(conversationId, onRequest) {
       const client = await getClient();
+      const seen = new Set<string>();
       const replica = new ReplicaState<SessionState>(client.session.state({ conversationId }, 'state'), {
         schema: sessionStateSchema,
-        onChange: (state) => onChange({ isGenerating: state.isGenerating, lastStopReason: state.lastStopReason }),
+        onChange: (state) => {
+          for (const request of state.pendingPermissions) {
+            if (seen.has(request.requestId)) continue;
+            seen.add(request.requestId);
+            onRequest(request);
+          }
+        },
       });
       await replica.ready.catch((error: unknown) => {
-        log.warn('Rig spaces dispatch: could not follow the session state', {
+        log.warn('Rig spaces dispatch: could not follow pending permission requests', {
           conversationId,
           error: String(error),
         });
       });
       return () => void replica.dispose();
+    },
+
+    async resolvePermission(conversationId, requestId, optionId) {
+      const client = await getClient();
+      const result = await client.resolvePermission({ conversationId, requestId, optionId });
+      if (!result.success) {
+        log.warn('Rig spaces dispatch: could not resolve a pending permission request', {
+          conversationId,
+          requestId,
+          error: describeAcpError(result.error),
+        });
+      }
     },
   };
 }
