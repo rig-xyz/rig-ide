@@ -503,7 +503,8 @@ export function SessionCard({
   viewerIsOwner?: boolean;
   /** A follow-up turn from the same agent a moment later: no avatar or header. */
   continued?: boolean;
-  onStop?: () => void;
+  /** Resolves false when nothing here could stop it. */
+  onStop?: () => Promise<boolean> | void;
   /** Only passed for the viewer's OWN agent's run: approvals belong to the owner. */
   onResolvePermission?: (requestId: string, optionId: string) => void;
   /** Opens a changed file (its path as the agent reported it). */
@@ -524,6 +525,12 @@ export function SessionCard({
   const [expanded, setExpanded] = useState(false);
   const [traceOpen, setTraceOpen] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [stopFailed, setStopFailed] = useState(false);
+  useEffect(() => {
+    if (!stopFailed) return;
+    const id = setTimeout(() => setStopFailed(false), 4000);
+    return () => clearTimeout(id);
+  }, [stopFailed]);
   const [resolving, setResolving] = useState<{ requestId: string; optionId: string } | null>(null);
   const card = useMemo(() => projectSessionCard(events), [events]);
   const status = effectiveRunStatus(meta.status, card);
@@ -732,7 +739,7 @@ export function SessionCard({
 
       {/* Actions float at the row's top-right on hover or focus. */}
       <RowActions
-        forceVisible={stopping}
+        forceVisible={stopping || stopFailed}
         onReply={
           onReply && !running && card.finalAnswer
             ? () =>
@@ -751,13 +758,18 @@ export function SessionCard({
             type="button"
             onClick={() => {
               setStopping(true);
-              onStop();
+              void Promise.resolve(onStop()).then((stopped) => {
+                if (stopped === false) {
+                  setStopping(false);
+                  setStopFailed(true);
+                }
+              });
             }}
             disabled={stopping}
             className="enabled:hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs text-text-primary transition-colors disabled:text-text-muted"
           >
             <Square className="size-2.5" strokeWidth={1.5} fill="currentColor" />
-            {stopping ? 'Stopping…' : queued ? 'Cancel' : 'Stop'}
+            {stopping ? 'Stopping…' : stopFailed ? "Couldn't stop it from here" : queued ? 'Cancel' : 'Stop'}
           </button>
         )}
         {!running && onRerun && prompt && (

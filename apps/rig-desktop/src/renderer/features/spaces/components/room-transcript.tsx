@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { ArrowDown } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
+import { cn } from '@renderer/lib/utils';
 import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
@@ -75,7 +76,7 @@ function renderItem(
   message: RoomMessage,
   snapshot: RoomSnapshot,
   ownId: string,
-  onStopSession?: (runId: string) => void,
+  onStopSession?: (runId: string) => Promise<boolean>,
   onResolvePermission?: (runId: string, requestId: string, optionId: string) => void,
   onOpenFile?: (relPath: string) => void,
   continued = false,
@@ -307,7 +308,7 @@ export function RoomTranscript({
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
-  onStopSession?: (runId: string) => void;
+  onStopSession?: (runId: string) => Promise<boolean>;
   onResolvePermission?: (runId: string, requestId: string, optionId: string) => void;
   /** Opens a space file (relative path) in the editor, e.g. from a doc comment line. */
   onOpenFile?: (relPath: string) => void;
@@ -418,7 +419,7 @@ export function RoomTranscript({
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]" data-testid="room-transcript">
-      <div ref={contentRef} className="relative mx-auto flex max-w-[44rem] flex-col gap-1.5 px-3 pt-6 pb-3">
+      <div ref={contentRef} className="relative mx-auto flex max-w-[44rem] flex-col gap-4 px-3 pt-6 pb-3">
         <AnimatePresence initial={false}>
           {(() => {
             const units = groupThreads(snapshot.messages);
@@ -460,9 +461,10 @@ export function RoomTranscript({
                   jumpTo,
                   onRerun
                 );
+              const continuedUnit = unit.kind === 'message' && isContinuation(prevMessage, unit.message, snapshot);
               const node =
                 unit.kind === 'message' ? (
-                  render(unit.message, isContinuation(prevMessage, unit.message, snapshot))
+                  render(unit.message, continuedUnit)
                 ) : (
                   <ThreadBlock
                     threadId={unit.threadId}
@@ -479,7 +481,8 @@ export function RoomTranscript({
                 <motion.div
                   key={unit.kind === 'message' ? unit.message.id : `thread-${unit.threadId}`}
                   data-message-id={unit.kind === 'message' ? unit.message.id : unit.threadId}
-                  className="rounded-card"
+                  // Room between speakers; a follow-up from the same one sits close.
+                  className={cn('rounded-card', continuedUnit && '-mt-3')}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}

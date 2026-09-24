@@ -3,10 +3,11 @@ import { type RefObject, useEffect, useState } from 'react';
 import { cn } from '@renderer/lib/utils';
 
 /**
- * The Room's outline, tucked into its top-left corner. At rest it's a small
- * minimap: one hairline per row, agent turns in the accent, a thin frame for
- * what's on screen. Hover or focus opens it into a readable list (who, and
- * the first words), the rows in view marked; clicking one jumps to it.
+ * The Room's outline, tucked into its top-left corner. At rest it's a short
+ * stack of dashes, one per row (agent turns a little longer), the ones on
+ * screen brighter, as in Claude's own chat. Hover or focus opens it into a
+ * readable list (who, and the first words), the rows in view marked;
+ * clicking one jumps to it.
  * Hidden while the whole conversation fits on screen.
  */
 
@@ -19,6 +20,15 @@ export type MapEntry = {
 };
 
 type Placed = { id: string; top: number };
+
+const MAX_DASHES = 24;
+
+/** Up to `max` items, evenly spread across the list (always keeping the last). */
+function sample<T>(items: T[], max: number): T[] {
+  if (items.length <= max) return items;
+  const step = (items.length - 1) / (max - 1);
+  return Array.from({ length: max }, (_, i) => items[Math.round(i * step)]!);
+}
 
 export function ConversationMap({
   scrollRef,
@@ -77,29 +87,21 @@ export function ConversationMap({
       data-testid="conversation-map"
     >
       {!open ? (
-        <button
-          type="button"
-          aria-label="Outline"
-          className="border-border-hairline bg-bg-1/80 hover:border-border-strong relative block h-20 w-5 rounded-control border transition-colors"
-        >
-          <span
-            className="border-accent/50 absolute inset-x-0.5 rounded-sm border"
-            style={{ top: `${view.top * 100}%`, height: `max(6px, ${view.height * 100}%)` }}
-          />
-          {placed.map(({ id, top }) => {
+        // At rest: a short stack of dashes, one per row (evenly sampled past
+        // a couple dozen), the ones on screen brighter. No frame, no scale.
+        <button type="button" aria-label="Outline" className="flex flex-col items-start gap-[5px] p-1.5">
+          {sample(placed, MAX_DASHES).map(({ id, top }) => {
             const entry = byId.get(id);
             if (!entry) return null;
+            const visible = inView(top);
             return (
               <span
                 key={id}
                 className={cn(
-                  'absolute right-1 block h-px rounded-full',
-                  entry.tone === 'agent' ? 'bg-accent left-1' : 'left-2',
-                  entry.tone === 'person' && 'bg-text-muted',
-                  entry.tone === 'mine' && 'bg-text-muted/60',
-                  entry.tone === 'other' && 'bg-border-strong'
+                  'block h-0.5 rounded-full transition-[width,background-color] duration-150',
+                  entry.tone === 'agent' ? 'w-4' : 'w-2.5',
+                  visible ? 'bg-text-primary' : 'bg-text-muted/45'
                 )}
-                style={{ top: `${top * 100}%` }}
               />
             );
           })}

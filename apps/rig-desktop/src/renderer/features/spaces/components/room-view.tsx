@@ -273,8 +273,9 @@ export function RoomView({
   // the button in that case (see its own `onStopSession` prop).
   const handleStopSession =
     source instanceof RelayRoomSource
-      ? (runId: string) => {
-          void rpc.rig.spacesDispatch.stopRun({ runId, bindingId });
+      ? async (runId: string): Promise<boolean> => {
+          const result = await rpc.rig.spacesDispatch.stopRun({ runId, bindingId }).catch(() => null);
+          return result?.stopped === true;
         }
       : undefined;
   const handleResolvePermission =
