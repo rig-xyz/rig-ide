@@ -6,6 +6,7 @@ import {
   FileText,
   Globe,
   Pencil,
+  RotateCcw,
   Search,
   ShieldAlert,
   Square,
@@ -14,15 +15,17 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock } from '@renderer/lib/time-format';
 import { Button } from '@renderer/lib/ui/button';
 import { SafeMarkdown } from '@renderer/lib/ui/comment-markdown';
 import { Dialog, DialogContent, DialogTitle } from '@renderer/lib/ui/dialog';
+import { Popover, PopoverMenuItem } from '@renderer/lib/ui/popover';
 import { DotMatrix, type DotMatrixActivity, type DotMatrixState } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type {
+  AgentKind,
   RoomMember,
   RoomReplyRef,
   SessionCard as SessionCardData,
@@ -364,6 +367,48 @@ function FileCard({ output, onOpen }: { output: SessionOutput; onOpen?: () => vo
   );
 }
 
+/** Retry this turn: straight away with the same agent, or pick one of your others from a small menu. */
+function RetryButton({
+  agent,
+  otherAgents,
+  onRerun,
+}: {
+  agent: AgentKind;
+  otherAgents: AgentKind[];
+  onRerun: (agent: AgentKind) => void;
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        ref={ref}
+        type="button"
+        onClick={() => (otherAgents.length > 0 ? setOpen(true) : onRerun(agent))}
+        aria-label="Retry"
+        title={otherAgents.length > 0 ? 'Retry…' : 'Retry'}
+        aria-haspopup={otherAgents.length > 0 ? 'menu' : undefined}
+        className="hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs text-text-secondary transition-colors"
+      >
+        <RotateCcw className="size-3.5" strokeWidth={1.5} />
+      </button>
+      <Popover anchor={ref} open={open} onClose={() => setOpen(false)} align="right" minWidth={180}>
+        <PopoverMenuItem label={`Again with ${AGENT_NAME[agent]}`} icon={RotateCcw} onSelect={() => { setOpen(false); onRerun(agent); }} />
+        {otherAgents.map((other) => (
+          <PopoverMenuItem
+            key={other}
+            label={`With ${AGENT_NAME[other]}`}
+            onSelect={() => {
+              setOpen(false);
+              onRerun(other);
+            }}
+          />
+        ))}
+      </Popover>
+    </>
+  );
+}
+
 export function SessionCard({
   meta,
   events,
@@ -376,6 +421,9 @@ export function SessionCard({
   onReply,
   messageId,
   queued = false,
+  onRerun,
+  prompt,
+  otherAgents = [],
 }: {
   meta: SessionRunMeta;
   events: SessionEvent[];
@@ -395,6 +443,12 @@ export function SessionCard({
   messageId?: string;
   /** Another turn of the same agent is running ahead of this one: it waits its turn. */
   queued?: boolean;
+  /** Your own run only: files a new turn for one of your agents with this prompt (Retry, Continue). */
+  onRerun?: (agent: AgentKind, prompt: string) => void;
+  /** What this run was asked, for Retry. */
+  prompt?: string;
+  /** Your other agents, offered by Retry. */
+  otherAgents?: AgentKind[];
 }) {
   const [expanded, setExpanded] = useState(false);
   const [traceOpen, setTraceOpen] = useState(false);
@@ -533,13 +587,31 @@ export function SessionCard({
               <span className="text-sm text-text-primary">{agentName} couldn't finish</span>
               {card.failureReason && <span className="text-xs text-text-secondary">{card.failureReason}</span>}
             </div>
+            {onRerun && prompt && (
+              <Button size="sm" variant="outline" className="ml-auto" onClick={() => onRerun(meta.agent, prompt)}>
+                <RotateCcw />
+                Retry
+              </Button>
+            )}
           </div>
         )}
         {status === 'stopped' && (
-          <span className="bg-bg-2 flex w-fit items-center gap-1.5 rounded-chip px-2.5 py-1 text-xs text-text-secondary">
-            <Square className="size-2.5" strokeWidth={1.5} fill="currentColor" />
-            Stopped{card.finalAnswer ? ' partway' : ''}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="bg-bg-2 flex w-fit items-center gap-1.5 rounded-chip px-2.5 py-1 text-xs text-text-secondary">
+              <Square className="size-2.5" strokeWidth={1.5} fill="currentColor" />
+              Stopped{card.finalAnswer ? ' partway' : ''}
+            </span>
+            {onRerun && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => onRerun(meta.agent, 'Continue where you left off.')}
+                data-testid="session-continue"
+              >
+                Continue
+              </Button>
+            )}
+          </div>
         )}
 
         {card.finalAnswer && (
@@ -588,6 +660,9 @@ export function SessionCard({
             <Square className="size-2.5" strokeWidth={1.5} fill="currentColor" />
             {stopping ? 'Stopping…' : queued ? 'Cancel' : 'Stop'}
           </button>
+        )}
+        {!running && onRerun && prompt && (
+          <RetryButton agent={meta.agent} otherAgents={otherAgents} onRerun={(agent) => onRerun(agent, prompt)} />
         )}
       </RowActions>
 

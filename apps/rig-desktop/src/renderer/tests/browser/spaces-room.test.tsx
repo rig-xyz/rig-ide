@@ -498,6 +498,45 @@ describe('Session card — plan and thinking', () => {
     expect(host.querySelector('[data-testid="session-plan"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="session-thinking"]')?.textContent).toContain('6 words');
   });
+
+  it('offers Retry on a failed run and Continue on a stopped one, as new turns for your agent', async () => {
+    const reruns: Array<[string, string]> = [];
+    const failed: SessionEvent[] = [{ seq: 1, kind: 'turn_ended', payload: { status: 'failed', reason: 'timed out' } }];
+    await act(async () => {
+      root.render(
+        <SessionCard
+          meta={{ ...meta, status: 'failed' }}
+          events={failed}
+          owner={undefined}
+          prompt="why did organic drop?"
+          onRerun={(agent, prompt) => reruns.push([agent, prompt])}
+        />
+      );
+    });
+    const retry = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Retry')!;
+    await act(async () => {
+      retry.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const stopped: SessionEvent[] = [{ seq: 1, kind: 'turn_ended', payload: { status: 'stopped' } }];
+    await act(async () => {
+      root.render(
+        <SessionCard
+          meta={{ ...meta, status: 'stopped' }}
+          events={stopped}
+          owner={undefined}
+          prompt="why did organic drop?"
+          onRerun={(agent, prompt) => reruns.push([agent, prompt])}
+        />
+      );
+    });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="session-continue"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(reruns).toEqual([
+      ['claude', 'why did organic drop?'],
+      ['claude', 'Continue where you left off.'],
+    ]);
+  });
 });
 
 describe('Room transcript — doc comment threads', () => {

@@ -4,7 +4,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
-import type { RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
+import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
 import { type MapEntry, ConversationMap } from './conversation-map';
 import { AGENT_NAME } from './identity';
 import { SessionCard } from './session-card';
@@ -80,7 +80,8 @@ function renderItem(
   onOpenFile?: (relPath: string) => void,
   continued = false,
   onReply?: (ref: RoomReplyRef) => void,
-  onJumpTo?: (messageId: string) => void
+  onJumpTo?: (messageId: string) => void,
+  onRerun?: (agent: AgentKind, prompt: string) => void
 ) {
   switch (message.meta.kind) {
     case 'text':
@@ -127,6 +128,11 @@ function renderItem(
           onReply={onReply}
           messageId={message.id}
           queued={isQueued(meta, snapshot)}
+          onRerun={meta.owner === ownId ? onRerun : undefined}
+          prompt={message.body}
+          otherAgents={snapshot.agents
+            .filter((a) => a.owner === ownId && a.agent !== meta.agent)
+            .map((a) => a.agent)}
           onStop={canStop ? () => onStopSession(meta.id) : undefined}
           onResolvePermission={
             canResolve
@@ -297,6 +303,7 @@ export function RoomTranscript({
   onOpenFile,
   onReply,
   readKey,
+  onRerun,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
@@ -308,6 +315,8 @@ export function RoomTranscript({
   onReply?: (ref: RoomReplyRef) => void;
   /** Where to remember how far the viewer has read (the space's id); no "New" line without one. */
   readKey?: string;
+  /** Files a new turn for one of the viewer's own agents (Retry, Continue). */
+  onRerun?: (agent: AgentKind, prompt: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -448,7 +457,8 @@ export function RoomTranscript({
                   onOpenFile,
                   continued,
                   onReply,
-                  jumpTo
+                  jumpTo,
+                  onRerun
                 );
               const node =
                 unit.kind === 'message' ? (
