@@ -190,6 +190,8 @@ const CHAT_COLLAPSED_STORAGE_KEY = 'rig-chat-collapsed';
  * left as a documented gap since this is a knob for future experimentation,
  * not a live user-facing toggle.
  */
+/** Below this window width, split view shows the file with the chat collapsed. */
+const NARROW_WINDOW_PX = 1000;
 const CHAT_PANEL_ORDER = 1;
 const ARTIFACT_PANEL_ORDER = CHAT_PANEL_ORDER === 1 ? 3 : 1;
 const CHAT_RESIZE_HANDLE_ORDER = 2;
@@ -299,6 +301,15 @@ export function App() {
   // by the topbar's `LayoutSwitcher`. Per-session, deliberately not
   // persisted — same as the fold states it replaces.
   const [rigLayout, setRigLayout] = useState<RigLayout>('chat');
+  // Narrow windows: split view would squeeze the chat (or Room) and the file
+  // against each other, so there it shows the file with the chat collapsed.
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const layout: RigLayout = windowWidth < NARROW_WINDOW_PX && rigLayout === 'split' ? 'files' : rigLayout;
   const [focusedRigPane, setFocusedRigPane] = useState<FocusedRigPane>('chat');
   // Spaces (lane 2): the Room UI, built against a recorded feed — a dev
   // entry point only, gated by `spacesEnabled` (Settings → Experimental).
@@ -748,9 +759,9 @@ export function App() {
       // The space panel IS the rig's pinned card (a space is a rig binding),
       // plus the Room's agent rows. Full-width layout only, as for rigs.
       renderPanel={
-        inSpace && rigLayout !== 'chat'
+        inSpace && layout !== 'chat'
           ? undefined
-          : (extraRows, onlineUserIds) => (
+          : (extraRows, onlineUserIds, { startCollapsed }) => (
               <PinnedCard
                 root={target.root}
                 rootId={target.rootId}
@@ -767,6 +778,7 @@ export function App() {
                 }}
                 extraRows={extraRows}
                 onlineUserIds={onlineUserIds}
+                startCollapsed={startCollapsed}
               />
             )
       }
@@ -940,8 +952,8 @@ export function App() {
           bound ? (
             <div className="flex items-center gap-1.5">
               <LayoutSwitcher
-                layout={rigLayout}
-                hiddenTabCount={rigLayout === 'chat' ? artefact.tabs.length : 0}
+                layout={layout}
+                hiddenTabCount={layout === 'chat' ? artefact.tabs.length : 0}
                 onChange={applyLayout}
               />
               {spacesEnabled && !boundIsSpace && (
@@ -1031,19 +1043,31 @@ export function App() {
             style={{
               order: CHAT_PANEL_ORDER,
               // Capped so a narrow window always leaves room for the file.
-              width: rigLayout === 'split' ? `min(${chatWidth}px, 60%)` : undefined,
+              width: layout === 'split' ? `min(${chatWidth}px, 60%)` : undefined,
             }}
             onPointerDownCapture={() => setFocusedRigPane('chat')}
             onFocusCapture={() => setFocusedRigPane('chat')}
             className={cn(
               'relative flex shrink-0 flex-col overflow-hidden bg-bg-1',
-              rigLayout === 'chat' && 'min-w-0 flex-1',
-              rigLayout === 'files' && 'border-border-hairline w-10 border-r'
+              layout === 'chat' && 'min-w-0 flex-1',
+              layout === 'files' && 'border-border-hairline w-10 border-r'
             )}
           >
             {boundIsSpace ? (
               <RecoveryBoundary scope="Room">
-                {rigLayout === 'files' ? null : renderRoom(bound, { inSpace: true })}
+                {layout === 'files' ? (
+                  <button
+                    type="button"
+                    aria-label="Back to the Room"
+                    title="Back to the Room"
+                    onClick={() => setRigLayout('chat')}
+                    className="hover:bg-bg-2 mx-auto mt-2 flex size-7 items-center justify-center rounded-control text-text-muted transition-colors"
+                  >
+                    <MessageSquare className="size-3.5" strokeWidth={1.5} />
+                  </button>
+                ) : (
+                  renderRoom(bound, { inSpace: true })
+                )}
               </RecoveryBoundary>
             ) : (
             <RecoveryBoundary scope="Chat panel">
@@ -1054,16 +1078,17 @@ export function App() {
                 name={bound.name}
                 initialActiveSessionId={pendingActiveSessionId}
                 onOpenFile={openFile}
-                collapsed={rigLayout === 'files'}
+                collapsed={layout === 'files'}
                 onExpand={() => {
                   setFocusedRigPane('chat');
-                  setRigLayout('split');
+                  // Narrow windows have no split: expanding goes to the chat.
+                  setRigLayout(windowWidth < NARROW_WINDOW_PX ? 'chat' : 'split');
                 }}
                 onNativeCloseActionChange={registerChatNativeClose}
               />
             </RecoveryBoundary>
             )}
-            {rigLayout === 'chat' && !boundIsSpace && (
+            {layout === 'chat' && !boundIsSpace && (
               <PinnedCard
                 root={bound.root}
                 rootId={bound.rootId}
@@ -1076,7 +1101,7 @@ export function App() {
             )}
           </div>
 
-          {rigLayout === 'split' && (
+          {layout === 'split' && (
             // The handle IS the panel divider (no separate border-r on the
             // chat wrapper above) — a wide, easy-to-grab hit area with a
             // thin centered line so it reads as a hairline at rest and only
@@ -1093,7 +1118,7 @@ export function App() {
             </div>
           )}
 
-          {rigLayout !== 'chat' &&
+          {layout !== 'chat' &&
             (() => {
               const pane = (
                 <ArtefactPane

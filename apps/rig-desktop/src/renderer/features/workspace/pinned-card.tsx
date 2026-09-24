@@ -117,6 +117,7 @@ export function PinnedCard({
   onOpenFocus,
   extraRows,
   onlineUserIds,
+  startCollapsed,
 }: {
   root: string;
   rootId: string;
@@ -131,9 +132,14 @@ export function PinnedCard({
   extraRows?: ReactNode;
   /** Who is here right now (the Room's live presence); members not in it are dimmed. Absent: no presence shown. */
   onlineUserIds?: ReadonlySet<string>;
+  /** Show as the chip whenever this turns true (e.g. the host became too narrow for the card); not persisted. */
+  startCollapsed?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [collapsed, setCollapsed] = useState(readCollapsed);
+  useEffect(() => {
+    if (startCollapsed) setCollapsed(true);
+  }, [startCollapsed]);
   const [importOpen, setImportOpen] = useState(false);
   const toggleCollapsed = () => {
     setCollapsed((current) => {

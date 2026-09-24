@@ -1,6 +1,7 @@
 import { Pause, Play, RadioTower } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
+import { cn } from '@renderer/lib/utils';
 import { buildRoomFeed } from '../fixtures/room-feed';
 import { RelayRoomSource, type RelayRoomClient } from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
@@ -43,6 +44,9 @@ function createRelayRoomClient(): RelayRoomClient {
  * source.
  */
 
+/** Room width below which the floating panel would cover the transcript. */
+const ROOM_WIDE_PX = 1080;
+
 const FALLBACK_OWN_ID = 'bob'; // fixture-only identity; the relay source uses the signed-in user's real id
 
 /** `@claude`/`@codex` in the text, only when the SENDER runs that agent in this room — per the lane-3 brief, a mention only ever creates an agent request targeting the sender, never a teammate's agent. */
@@ -69,7 +73,11 @@ export function RoomView({
   /** Opens a space file (relative path) in the editor. */
   onOpenFile?: (relPath: string) => void;
   /** Renders the live space panel (the rig's pinned card), given the Room's own rows to add to it. */
-  renderPanel?: (extraRows: ReactNode, onlineUserIds: ReadonlySet<string>) => ReactNode;
+  renderPanel?: (
+    extraRows: ReactNode,
+    onlineUserIds: ReadonlySet<string>,
+    options: { startCollapsed: boolean }
+  ) => ReactNode;
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -77,6 +85,18 @@ export function RoomView({
   const [selfUserId, setSelfUserId] = useState(FALLBACK_OWN_ID);
   const [snapshot, setSnapshot] = useState(() => source?.getSnapshot() ?? null);
   const [playing, setPlaying] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [bodyWidth, setBodyWidth] = useState(0);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => setBodyWidth(entry.contentRect.width));
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
+  // Room for a ~44rem transcript beside the 304px panel.
+  const narrow = bodyWidth > 0 && bodyWidth < ROOM_WIDE_PX;
+  const hasPanel = !!renderPanel;
   // The scripted-demo switch is a dev tool for the Room preview on plain
   // rigs; a real space (#name) never shows it.
   const showDemoToggle = !spaceName.startsWith('#');
@@ -218,8 +238,10 @@ export function RoomView({
         )}
       </div>
 
-      <div className="relative flex min-h-0 flex-1">
-        <div className="flex min-h-0 flex-1 flex-col">
+      <div ref={bodyRef} className="relative flex min-h-0 flex-1">
+        {/* Wide: keep the transcript clear of the floating panel. Narrow:
+            the panel starts as its chip instead of covering the messages. */}
+        <div className={cn('flex min-h-0 flex-1 flex-col', hasPanel && !narrow && 'pr-[320px]')}>
           <RoomTranscript
             snapshot={snapshot}
             ownId={selfUserId}
@@ -245,7 +267,8 @@ export function RoomView({
         {source instanceof RelayRoomSource ? (
           (renderPanel?.(
             <AgentRows snapshot={snapshot} selfUserId={selfUserId} />,
-            new Set(snapshot.members.filter((m) => m.online !== false).map((m) => m.id))
+            new Set(snapshot.members.filter((m) => m.online !== false).map((m) => m.id)),
+            { startCollapsed: narrow }
           ) ?? null)
         ) : (
           <SpaceCard snapshot={snapshot} />
