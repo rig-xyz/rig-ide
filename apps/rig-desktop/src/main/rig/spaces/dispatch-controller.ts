@@ -78,6 +78,11 @@ export class SpacesDispatchController {
     return this.dispatcher.stopRun(runId);
   }
 
+  /** Used by the `spacesDispatch.checkNow` RPC route: the Room just filed a request, so claim it now instead of on the next tick. */
+  async checkNow(): Promise<void> {
+    await this.poller?.checkNow();
+  }
+
   /** Used by the `spacesDispatch.resolvePermission` RPC route: the owner answering an approval from their own session card. */
   async resolvePermission(runId: string, requestId: string, optionId: string): Promise<boolean> {
     if (!this.dispatcher) return false;

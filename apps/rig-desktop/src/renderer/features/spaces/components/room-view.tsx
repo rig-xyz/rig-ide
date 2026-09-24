@@ -129,7 +129,11 @@ export function RoomView({ bindingId, spaceName }: { bindingId: string; spaceNam
     if (!(source instanceof RelayRoomSource) || !snapshot) return;
     void source.send(text).then((sourceMessageId) => {
       const mentioned = detectOwnAgentMention(text, selfUserId, snapshot.agents);
-      if (mentioned) void source.requestOwnAgent(mentioned, text, sourceMessageId ?? undefined);
+      if (!mentioned) return;
+      // Wake this device's claim poller rather than waiting for its next tick.
+      void source
+        .requestOwnAgent(mentioned, text, sourceMessageId ?? undefined)
+        .then(() => rpc.rig.spacesDispatch.checkNow());
     });
   };
 

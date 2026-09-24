@@ -53,6 +53,9 @@ export const rigSpacesDispatchController = createRPCController({
   stopRun: async ({ runId }: { runId: string }): Promise<{ stopped: boolean }> => ({
     stopped: await spacesDispatchController.stopRun(runId),
   }),
+  checkNow: async (): Promise<void> => {
+    await spacesDispatchController.checkNow();
+  },
   resolvePermission: async ({
     runId,
     requestId,

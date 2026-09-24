@@ -61,7 +61,11 @@ export interface SpacesAcpSessions {
    * `turn_end` markers on `subscribeRaw`'s stream — the caller's one
    * guaranteed way to bind this specific request to exactly its own turn.
    */
-  queuePrompt(conversationId: string, text: string): Promise<Result<{ turnId: string }, string>>;
+  queuePrompt(
+    conversationId: string,
+    text: string,
+    hiddenContext?: string
+  ): Promise<Result<{ turnId: string }, string>>;
   /** Best-effort: asks the runtime to cancel whatever turn is currently running. */
   cancelTurn(conversationId: string): Promise<void>;
   /**
@@ -115,6 +119,24 @@ type PersistentSession = {
   /** Permission requests waiting on the owner's answer, by ACP request id. */
   heldPermissions: Map<string, { request: AcpPermissionRequest; turn: QueuedTurn }>;
 };
+
+/**
+ * Context the agent gets with every spaces turn, alongside (not inside) the
+ * user's own text: where it is, that everyone sees its work, and how to
+ * reply. Kept short; the rig skill carries the longer guidance.
+ */
+export function spacesHiddenContext(request: AgentRequest): string {
+  return [
+    '<rig_space_context>',
+    `You are working in a shared rig space (binding ${request.bindingId}).`,
+    "The request comes from your owner, a member of the space; you run on their machine, in the space's folder.",
+    'Everything you do in this turn (steps, tool calls, files, your final message) is visible to every member of the space, as a session card in the room.',
+    'Your final message is your reply to the room. Do not also post it with `rig chat send`.',
+    'Keep the reply short and direct; members can expand the card to see your full trace.',
+    'When asked why something changed, use the rig change history (`rig history <path>`) rather than guessing.',
+    '</rig_space_context>',
+  ].join('\n');
+}
 
 function keyFor(bindingId: string, ownerUserId: string, agent: SessionAgent): PersistentKey {
   return `${bindingId}::${ownerUserId}::${agent}`;
@@ -206,6 +228,9 @@ export function createSpacesDispatcher(deps: {
   }
 
   async function finalizeTurn(turn: QueuedTurn, status: SessionStatus): Promise<void> {
+    // The card flips out of "running" on this event (run status changes
+    // aren't broadcast to the Room), so it must land before `finish`.
+    turn.publisher.record('turn_ended', { status });
     await turn.publisher.finish(status);
     await markRequestSettled(
       deps.api,
@@ -347,10 +372,26 @@ export function createSpacesDispatcher(deps: {
     // real foreign key the request's own `running` patch depends on.
     const created = await deps.api.createSession(request.bindingId, {
       agent: request.targetAgent,
-      title: null,
+      title: request.prompt.slice(0, 80) || null,
     });
     if (!created.success) {
       return { failed: true, reason: created.error.message };
+    }
+
+    // The session card only appears in the Room when a `kind:'session'`
+    // message points at the run, so announce it. Not fatal if it fails:
+    // the run still executes and its log is still published.
+    const announced = await deps.api.postMessage(request.bindingId, {
+      body: request.prompt.slice(0, 8000) || 'Agent session',
+      kind: 'session',
+      meta: { runId: created.data.id },
+    });
+    if (!announced.success) {
+      log.warn('Rig spaces dispatch: could not post the session message for a run', {
+        bindingId: request.bindingId,
+        runId: created.data.id,
+        error: announced.error.message,
+      });
     }
 
     const publisher = new SessionEventPublisher({
@@ -368,7 +409,11 @@ export function createSpacesDispatcher(deps: {
     };
     session.pending.push(turn);
 
-    const queued = await deps.acp.queuePrompt(session.conversationId, request.prompt);
+    const queued = await deps.acp.queuePrompt(
+      session.conversationId,
+      request.prompt,
+      spacesHiddenContext(request)
+    );
     if (!queued.success) {
       const idx = session.pending.indexOf(turn);
       if (idx !== -1) session.pending.splice(idx, 1);
@@ -463,9 +508,12 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
       return result.success ? ok(undefined) : err(describeAcpError(result.error));
     },
 
-    async queuePrompt(conversationId, text) {
+    async queuePrompt(conversationId, text, hiddenContext) {
       const client = await getClient();
-      const result = await client.queuePrompt({ conversationId, prompt: { text } });
+      const result = await client.queuePrompt({
+        conversationId,
+        prompt: hiddenContext ? { text, hiddenContext } : { text },
+      });
       return result.success ? ok({ turnId: result.data.turnId }) : err(describeAcpError(result.error));
     },
 

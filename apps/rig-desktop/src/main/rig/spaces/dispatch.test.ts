@@ -65,6 +65,7 @@ function makeFakeApi(overrides: Partial<SpacesRelayApi> = {}) {
   const createdRuns: Array<{ bindingId: string; agent: string }> = [];
   const patchedSessions: Array<{ runId: string; status?: SessionStatus }> = [];
   const postedEvents: Array<{ runId: string; kinds: string[]; payloads: unknown[] }> = [];
+  const postedMessages: Array<{ bindingId: string; body: string; kind?: string; meta?: Record<string, unknown> }> = [];
   const patchedRequests: Array<{ id: string; status: string }> = [];
   const mintedDevices: string[] = [];
 
@@ -123,11 +124,14 @@ function makeFakeApi(overrides: Partial<SpacesRelayApi> = {}) {
     mintRealtimeTicket: notImplemented('mintRealtimeTicket'),
     listMembers: notImplemented('listMembers'),
     listMessages: notImplemented('listMessages'),
-    postMessage: notImplemented('postMessage'),
+    async postMessage(bindingId, input) {
+      postedMessages.push({ bindingId, ...input });
+      return ok({ id: `msg-${postedMessages.length}` } as never);
+    },
     ...overrides,
   };
 
-  return { api, createdRuns, patchedSessions, postedEvents, patchedRequests, mintedDevices };
+  return { api, createdRuns, patchedSessions, postedEvents, postedMessages, patchedRequests, mintedDevices };
 }
 
 /** A fully controllable fake `SpacesAcpSessions` — the seam this module is built to be tested against. */
@@ -135,7 +139,7 @@ function makeFakeAcp() {
   const rawHandlers = new Map<string, (raw: RawSessionEvent) => void>();
   const permissionHandlers = new Map<string, (request: AcpPermissionRequest) => void>();
   const started: Array<{ conversationId: string; providerId: string; cwd: string }> = [];
-  const queued: Array<{ conversationId: string; text: string; turnId: string }> = [];
+  const queued: Array<{ conversationId: string; text: string; turnId: string; hiddenContext?: string }> = [];
   const cancelled: string[] = [];
   const resolvedPermissions: Array<{ conversationId: string; requestId: string; optionId: string }> = [];
   const callOrder: string[] = [];
@@ -152,11 +156,11 @@ function makeFakeAcp() {
       started.push(input);
       return startResult;
     },
-    async queuePrompt(conversationId, text) {
+    async queuePrompt(conversationId, text, hiddenContext) {
       callOrder.push(`queuePrompt:${conversationId}`);
       if (queuePromptImpl) return queuePromptImpl(conversationId, text);
       const turnId = `turn-${++turnCounter}`;
-      queued.push({ conversationId, text, turnId });
+      queued.push({ conversationId, text, turnId, hiddenContext });
       return ok({ turnId });
     },
     async cancelTurn(conversationId) {
@@ -231,6 +235,21 @@ describe('createSpacesDispatcher', () => {
     expect(patchedRequests).toEqual([]);
   });
 
+  it('announces the run in the room with a session message, and gives the agent space context', async () => {
+    const { api, postedMessages } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+
+    const result = await dispatch(makeRequest());
+    if ('failed' in result) throw new Error('expected success');
+
+    expect(postedMessages).toEqual([
+      expect.objectContaining({ bindingId: makeRequest().bindingId, kind: 'session', meta: { runId: result.runId } }),
+    ]);
+    expect(fake.queued[0].hiddenContext).toContain('shared rig space');
+    expect(fake.queued[0].text).toBe(makeRequest().prompt);
+  });
+
   it('reuses the same persistent session for a second request to the same space/owner/agent', async () => {
     const { api } = makeFakeApi();
     const fake = makeFakeAcp();
@@ -285,7 +304,7 @@ describe('createSpacesDispatcher', () => {
     await vi.waitFor(() => expect(postedEvents.length).toBeGreaterThan(0));
 
     const kinds = postedEvents.flatMap((p) => p.kinds);
-    expect(kinds).toEqual(['tool_call']);
+    expect(kinds).toEqual(['tool_call', 'turn_ended']);
   });
 
   it('finishes the run "done" and the request "done" on a normal end_turn', async () => {
@@ -360,8 +379,8 @@ describe('createSpacesDispatcher', () => {
 
     const aEvents = postedEvents.find((p) => p.runId === a.runId);
     const bEvents = postedEvents.find((p) => p.runId === b.runId);
-    expect(aEvents?.kinds).toEqual(['tool_call']);
-    expect(bEvents?.kinds).toEqual(['tool_call']);
+    expect(aEvents?.kinds).toEqual(['tool_call', 'turn_ended']);
+    expect(bEvents?.kinds).toEqual(['tool_call', 'turn_ended']);
   });
 
   describe('in-band turn boundaries (review findings (a) and (b))', () => {
@@ -402,7 +421,7 @@ describe('createSpacesDispatcher', () => {
 
       await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: 'req1', status: 'done' }]));
       const events = postedEvents.find((p) => p.runId === result.runId);
-      expect(events?.kinds).toEqual(['tool_call']);
+      expect(events?.kinds).toEqual(['tool_call', 'turn_ended']);
     });
 
     it('(b) never drops a turn\'s final event even when it arrives in the very same tick as turn_end', async () => {
@@ -436,7 +455,7 @@ describe('createSpacesDispatcher', () => {
 
       await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: 'req1', status: 'done' }]));
       const events = postedEvents.find((p) => p.runId === result.runId);
-      expect(events?.kinds).toEqual(['agent_message_chunk']);
+      expect(events?.kinds).toEqual(['agent_message_chunk', 'turn_ended']);
     });
   });
 
@@ -520,7 +539,7 @@ describe('createSpacesDispatcher', () => {
       fake.emitTurnEnd(conversationId, turnId, 'cancelled');
 
       await vi.waitFor(() =>
-        expect(eventsOf(postedEvents).map((e) => e.kind)).toEqual(['permission_requested', 'permission_decided'])
+        expect(eventsOf(postedEvents).map((e) => e.kind)).toEqual(['permission_requested', 'permission_decided', 'turn_ended'])
       );
       expect(eventsOf(postedEvents)[1].payload).toMatchObject({ outcome: 'cancelled', optionId: null });
       await expect(dispatcher.resolvePermission(runId, 'perm-1', 'allow-once')).resolves.toBe(false);

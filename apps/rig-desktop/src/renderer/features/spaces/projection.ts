@@ -146,6 +146,17 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
   const p = event.payload ?? {};
   const truncated = event.truncated === true;
 
+  // The relay coalesces a run of adjacent same-kind chunk events into one
+  // stored event, `{chunks: [payload, ...]}`; replay them one by one.
+  if (Array.isArray(p.chunks)) {
+    for (const chunk of p.chunks) {
+      if (chunk && typeof chunk === 'object') {
+        applySessionEvent(card, { ...event, payload: chunk as Record<string, unknown> });
+      }
+    }
+    return;
+  }
+
   switch (event.kind) {
     case 'agent_message_chunk': {
       const content = p.content as { type?: string; text?: string } | undefined;
@@ -228,9 +239,16 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
       break;
     }
     case 'turn_ended': {
+      // The live dispatcher records the run's final `status`; recorded
+      // fixtures only carry an ACP `stopReason`.
       const stopReason = typeof p.stopReason === 'string' ? p.stopReason : '';
-      const status: SessionStatus = stopReason === 'cancelled' ? 'stopped' : 'done';
-      state.status = VALID_STATUSES.includes(status) ? status : 'done';
+      const status: SessionStatus =
+        typeof p.status === 'string' && VALID_STATUSES.includes(p.status as SessionStatus)
+          ? (p.status as SessionStatus)
+          : stopReason === 'cancelled'
+            ? 'stopped'
+            : 'done';
+      state.status = status;
       state.currentStep = null;
       break;
     }

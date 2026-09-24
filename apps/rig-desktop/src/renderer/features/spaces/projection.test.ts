@@ -140,6 +140,26 @@ describe('projectSessionCard — against real exported fixtures', () => {
     ]);
   });
 
+  it('replays relay-coalesced chunk runs, so the final answer is not lost', () => {
+    const chunk = (text: string) => ({ messageId: 'm1', content: { type: 'text', text } });
+    const card = projectSessionCard([
+      { seq: 3, kind: 'agent_message_chunk', payload: { chunks: [chunk('Signups '), chunk('fell 17%.')] } },
+    ]);
+    expect(card.finalAnswer).toBe('Signups fell 17%.');
+  });
+
+  it("takes the live dispatcher's turn_ended status, including failed", () => {
+    expect(projectSessionCard([{ seq: 1, kind: 'turn_ended', payload: { status: 'failed' } }]).status).toBe(
+      'failed'
+    );
+    expect(projectSessionCard([{ seq: 1, kind: 'turn_ended', payload: { status: 'stopped' } }]).status).toBe(
+      'stopped'
+    );
+    expect(projectSessionCard([{ seq: 1, kind: 'turn_ended', payload: { stopReason: 'end_turn' } }]).status).toBe(
+      'done'
+    );
+  });
+
   it('an empty event log projects to the fresh-card defaults', () => {
     const card = projectSessionCard([]);
     expect(card).toEqual(newSessionCard());
