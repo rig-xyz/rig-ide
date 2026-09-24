@@ -1,5 +1,5 @@
 import { Pause, Play, RadioTower } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { buildRoomFeed } from '../fixtures/room-feed';
 import { RelayRoomSource, type RelayRoomClient } from '../relay-room-source';
@@ -7,6 +7,7 @@ import { FixtureRoomSource, type RoomSource } from '../room-source';
 import type { AgentKind } from '../types';
 import { Composer } from './composer';
 import { RoomTranscript } from './room-transcript';
+import { AgentRows } from './agent-rows';
 import { SpaceCard } from './space-card';
 
 /**
@@ -61,11 +62,14 @@ export function RoomView({
   bindingId,
   spaceName,
   onOpenFile,
+  renderPanel,
 }: {
   bindingId: string;
   spaceName: string;
   /** Opens a space file (relative path) in the editor. */
   onOpenFile?: (relPath: string) => void;
+  /** Renders the live space panel (the rig's pinned card), given the Room's own rows to add to it. */
+  renderPanel?: (extraRows: ReactNode) => ReactNode;
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -233,7 +237,11 @@ export function RoomView({
             />
           </div>
         </div>
-        <SpaceCard snapshot={snapshot} />
+        {source instanceof RelayRoomSource && renderPanel ? (
+          renderPanel(<AgentRows snapshot={snapshot} selfUserId={selfUserId} />)
+        ) : (
+          <SpaceCard snapshot={snapshot} />
+        )}
       </div>
     </div>
   );

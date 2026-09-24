@@ -926,6 +926,27 @@ export function App() {
               setRoomPreviewOpen(false);
               openFile(`${bound.root.replace(/\/+$/, '')}/${relPath}`);
             }}
+            // The space panel IS the rig's pinned card (a space is a rig
+            // binding): same Changes/Files/Skills/People/Activity, plus the
+            // Room's agent rows.
+            renderPanel={(extraRows) => (
+              <PinnedCard
+                root={bound.root}
+                rootId={bound.rootId}
+                bindingId={bound.bindingId}
+                name={bound.name}
+                syncing={bound.root === syncingRoot}
+                onOpenFile={(absPath) => {
+                  setRoomPreviewOpen(false);
+                  openFile(absPath);
+                }}
+                onOpenFocus={() => {
+                  setRoomPreviewOpen(false);
+                  openFocus();
+                }}
+                extraRows={extraRows}
+              />
+            )}
           />
         </div>
       )}

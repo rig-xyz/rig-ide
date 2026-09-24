@@ -1,4 +1,4 @@
-import { Check, ChevronRight, FileText, Loader2, Square } from 'lucide-react';
+import { ChevronRight, FileText, Loader2, Square } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { PermissionPrompt } from '@renderer/features/chat/permission-prompt';
@@ -6,6 +6,7 @@ import { SafeMarkdown } from '@renderer/lib/ui/comment-markdown';
 import { cn } from '@renderer/lib/utils';
 import { agentLogoId, BrandLogo } from '../logos';
 import { projectSessionCard } from '../projection';
+import { SessionTrace } from './session-trace';
 import type { RoomMember, SessionEvent, SessionRunMeta } from '../types';
 
 /**
@@ -75,7 +76,11 @@ export function SessionCard({
 
   return (
     <div
-      className="border-border-hairline bg-bg-1 flex max-w-[440px] flex-col gap-2.5 rounded-card border p-3"
+      // Opening the trace widens the card: the chat transcript needs room.
+      className={cn(
+        'border-border-hairline bg-bg-1 flex flex-col gap-2.5 rounded-card border p-3 transition-[max-width]',
+        open ? 'max-w-[680px]' : 'max-w-[440px]'
+      )}
       data-testid="session-card"
       data-status={card.status}
     >
@@ -184,18 +189,8 @@ export function SessionCard({
             {card.steps.length} {card.steps.length === 1 ? 'step' : 'steps'}
           </button>
           {open && (
-            <div
-              data-testid="session-steps-log"
-              className="bg-bg-0 -mx-3 flex flex-col gap-1 px-3 py-2 pl-[41px] font-mono text-2xs text-text-secondary"
-            >
-              {card.steps.map((step) => (
-                <div key={step.toolCallId} className="flex items-center gap-2">
-                  <Check className="size-3 shrink-0 text-success" strokeWidth={1.5} />
-                  <span className="min-w-0 truncate">
-                    {stepVerb(step.kind, step.status)} {step.title ?? step.toolCallId}
-                  </span>
-                </div>
-              ))}
+            <div className="-mx-3 border-border-hairline border-t" data-testid="session-steps-log">
+              <SessionTrace runId={meta.id} events={events} running={running} />
             </div>
           )}
         </div>

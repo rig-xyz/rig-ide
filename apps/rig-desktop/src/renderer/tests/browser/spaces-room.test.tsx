@@ -15,6 +15,11 @@ import '@renderer/tokens.css';
 // The session card renders answers with SafeMarkdown, which imports the IPC
 // bridge (for opening links); nothing here clicks a link.
 vi.mock('@renderer/lib/ipc', () => ({ rpc: { app: { openExternal: async () => {} } } }));
+// The expanded trace mounts chat's SolidJS transcript, which doesn't load in
+// this harness; its replay logic is unit-tested in session-transcript.test.ts.
+vi.mock('@renderer/features/spaces/components/session-trace', () => ({
+  SessionTrace: () => <div data-testid="session-trace" />,
+}));
 
 /**
  * Spaces (lane 2): renders the Room's real components (transcript +
@@ -116,9 +121,8 @@ describe('Room transcript — bubbles align by author', () => {
     await act(async () => {
       toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    const log = card!.querySelector('[data-testid="session-steps-log"]');
-    expect(log).not.toBeNull();
-    expect(log!.children.length).toBe(expectedStepCount);
+    // Expanded, the card shows the run the way the rig chat does.
+    expect(card!.querySelector('[data-testid="session-trace"]')).not.toBeNull();
   });
 
   it('renders the invite row, join row and comment-mirror lines from the scripted story', async () => {

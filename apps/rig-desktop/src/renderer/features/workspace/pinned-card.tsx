@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight, Cloud, Diff, FolderTree, Loader2, Sparkles, Users } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { NavigatorContent } from '@renderer/features/artifact/navigator-popover';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import {
@@ -115,6 +115,7 @@ export function PinnedCard({
   syncing,
   onOpenFile,
   onOpenFocus,
+  extraRows,
 }: {
   root: string;
   rootId: string;
@@ -125,6 +126,8 @@ export function PinnedCard({
   /** Opens in an editor tab; relPath rides along so this card can mark it seen. */
   onOpenFile: (absPath: string, relPath: string) => void;
   onOpenFocus: () => void;
+  /** Rows a host view adds under People, in the same row grammar (the Room adds your agents). */
+  extraRows?: ReactNode;
 }) {
   const queryClient = useQueryClient();
   const [collapsed, setCollapsed] = useState(readCollapsed);
@@ -568,6 +571,8 @@ export function PinnedCard({
           )}
         </>
       )}
+
+      {extraRows}
 
       {/* ── ACTIVITY — the working set, same geometry, no icon column ── */}
       {activity.length > 0 && (
