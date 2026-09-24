@@ -690,13 +690,15 @@ Tick items off here as they land.
 
 **Open. Medium:**
 - [ ] Session scope and cost: a one-line answer loads ~51k tokens of context (~$0.37). Decide when a request reuses the persistent session and when it starts a fresh, lean one (Dylan, 2026-09-23). Trim what each turn loads (global instructions, skills, tool lists).
-- [ ] Space memory: persistent sessions are in-memory only (`sessionId: null`), so a restart gives a fresh agent. The agent also never sees recent room messages; add the last N, quoted as untrusted data.
+- [x] Space memory across restarts: each persistent session's agent session id is saved in `userData/spaces-sessions.json`, and a restart resumes it (ACP `session/load`). Verified live: `[session/load] resume=<id>`, 2 messages replayed. Agents also see the last 20 room messages.
 - [ ] "Why 41 → 34": wire `rig history` and the provenance route across the whole space; add a Sources row on the card.
 - [ ] Skills in the space card and the `/` palette: expose the manifest's `.claude/skills/*` through a route.
 - [ ] Claude inviting people: the invite route is owner-only and the skill requires a go-ahead; there's no invite room message.
 - [ ] Doc comment `@claude` goes to the separate comment agent, not the space session.
 - [ ] Replying to a card (`parentId` dropped; no reply UI).
 - [ ] Attach button and doc import aren't wired.
+
+- [ ] A folder made outside the app (e.g. `rig join`/`rig init` in a terminal) isn't known to it, so Home offers "Download" and creates a second copy (`growth-2`). Detect existing folders in the Rig home by binding id before offering Download.
 
 **Open. Large / product:**
 - [ ] Space lifecycle: `#name` create, rail list, promote to rig (today the Room only opens on a bound rig).
