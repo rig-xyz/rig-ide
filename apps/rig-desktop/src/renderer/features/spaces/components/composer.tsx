@@ -314,7 +314,7 @@ export function Composer({
               </span>
               <b className="font-medium text-text-primary">{AGENT_NAME[agentPill]}</b>
               <span className="size-[3px] rounded-full bg-text-muted/60" aria-hidden />
-              <AgentSettings agent={agentPill} model={agentModels?.[agentPill] ?? null} tinted prefetch />
+              <AgentSettings agent={agentPill} model={agentModels?.[agentPill] ?? null} prefetch />
             </ContextPill>
           )}
           {docPill && (
