@@ -204,14 +204,16 @@ function SettingPill({
         minWidth={300}
         estimatedWidth={300}
         role="dialog"
-        className="rounded-card overflow-x-hidden py-0"
+        // The pills' glass: the same fill, blurred backdrop, hairline edge and
+        // faint top highlight, rounder than a plain menu.
+        className="overflow-x-hidden rounded-[18px] bg-[var(--pill-fill)]/90 py-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-md"
       >
         <div className="flex w-full flex-col" data-testid={`agent-setting-menu-${dimension}`}>
-          <div className="flex items-baseline justify-between px-3 pt-2.5 pb-1">
+          <div className="flex items-baseline justify-between px-3.5 pt-3 pb-1.5">
             <span className="text-xs font-medium text-text-secondary">{DIMENSION_TITLE[dimension]}</span>
             <span className="text-2xs text-text-muted">from the next turn</span>
           </div>
-          <div className="flex flex-col px-1 pb-1">
+          <div className="flex flex-col px-1.5 pb-1.5">
             {busy && !group && <p className="px-2 py-2 text-xs text-text-muted">Loading…</p>}
             {error && <p className="px-2 py-2 text-xs text-danger">{error}</p>}
             {group?.options.map((option) => {
@@ -228,8 +230,8 @@ function SettingPill({
                   onClick={() => void choose(option.id)}
                   title={option.description}
                   className={cn(
-                    'flex w-full min-w-0 items-center gap-2.5 rounded-control px-2 py-1.5 text-left transition-colors disabled:opacity-60',
-                    armed ? 'bg-warning/10' : 'hover:bg-bg-2'
+                    'flex w-full min-w-0 items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left transition-colors disabled:opacity-60',
+                    armed ? 'bg-warning/10' : selected ? 'bg-text-primary/[0.06]' : 'hover:bg-text-primary/[0.05]'
                   )}
                 >
                   {Icon && (
@@ -252,7 +254,7 @@ function SettingPill({
             )}
           </div>
           {api.remember && (
-            <label className="border-border-hairline flex cursor-pointer items-center gap-2 border-t px-3 py-2 text-xs text-text-secondary hover:text-text-primary">
+            <label className="flex cursor-pointer items-center gap-2 border-t border-text-primary/[0.06] px-3.5 py-2.5 text-xs text-text-secondary hover:text-text-primary">
               <input
                 type="checkbox"
                 checked={everywhere}
