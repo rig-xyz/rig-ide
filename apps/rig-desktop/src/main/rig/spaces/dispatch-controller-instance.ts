@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { app } from 'electron';
 import { getAcpRuntimeClient } from '@main/core/acp/controller';
+import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { isError, resolveContext, rigAccountController } from '../account';
 import { resolveLocalPathsImpl } from '../recent-rigs';
@@ -72,13 +73,20 @@ export async function runCommentTurnInRoom(spec: {
   hiddenContext: string;
   onPermissionsChanged?: Parameters<SpacesDispatchController['runLocal']>[0]['onPermissionsChanged'];
 }): Promise<Awaited<ReturnType<SpacesDispatchController['runLocal']>> | null> {
-  if (!spacesDispatchController.isRunning()) return null;
+  if (!spacesDispatchController.isRunning()) {
+    log.info('Rig spaces: doc mention goes to the standalone agent (Spaces not running)');
+    return null;
+  }
   const workspaces = await rigAccountController.workspaces();
   const isSpace =
     workspaces.success && workspaces.data.some((b) => b.id === spec.bindingId && b.kind === 'space');
   if (!isSpace) return null;
   const me = await relayApi.whoami();
-  if (!me.success) return null;
+  if (!me.success) {
+    log.warn('Rig spaces: doc mention could not identify you; using the standalone agent', { error: me.error.message });
+    return null;
+  }
+  log.info('Rig spaces: doc mention goes to your room agent', { bindingId: spec.bindingId });
   return spacesDispatchController.runLocal({
     bindingId: spec.bindingId,
     ownerUserId: me.data.id,

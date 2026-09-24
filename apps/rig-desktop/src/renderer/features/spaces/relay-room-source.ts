@@ -502,7 +502,11 @@ export class RelayRoomSource implements RoomSource {
 
     // Doc comments share the message table (they carry a `path`). Keep them
     // in the room, rendered as comment lines tied to their file and passage.
-    const comment = row.path ? this.commentMeta(row) : null;
+    // A reply in a doc comment thread carries no path of its own; it takes
+    // its thread's.
+    const parent = row.parentId ? this.snapshot.messages.find((m) => m.id === row.parentId) : undefined;
+    const threadPath = row.path ?? (parent?.meta.kind === 'comment_mirror' ? parent.meta.path : null);
+    const comment = threadPath ? this.commentMeta({ ...row, path: threadPath }) : null;
     const kind = (comment ? 'comment_mirror' : row.kind) as MessageKind;
 
     this.applyLocal({

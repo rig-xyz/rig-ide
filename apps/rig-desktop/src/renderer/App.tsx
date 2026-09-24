@@ -1030,7 +1030,8 @@ export function App() {
           <div
             style={{
               order: CHAT_PANEL_ORDER,
-              width: rigLayout === 'split' ? chatWidth : undefined,
+              // Capped so a narrow window always leaves room for the file.
+              width: rigLayout === 'split' ? `min(${chatWidth}px, 60%)` : undefined,
             }}
             onPointerDownCapture={() => setFocusedRigPane('chat')}
             onFocusCapture={() => setFocusedRigPane('chat')}

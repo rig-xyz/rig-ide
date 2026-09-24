@@ -574,11 +574,7 @@ export function createSpacesDispatcher(deps: {
     const cwd = await deps.resolveWorkspace(spec.bindingId);
     if (!cwd) return err(`No local workspace on this device is bound to ${spec.bindingId}`);
 
-    const key = keyFor(spec.bindingId, spec.ownerUserId, spec.agent);
-    const sessionResult = await ensureSession(key, spec.bindingId, spec.agent, cwd);
-    if (!sessionResult.success) return err(sessionResult.error);
-    const session = sessionResult.data;
-
+    const t0 = Date.now();
     // The run must exist on the relay BEFORE this returns — `runId` is a
     // real foreign key the request's own `running` patch depends on.
     const created = await deps.api.createSession(spec.bindingId, {
@@ -608,6 +604,26 @@ export function createSpacesDispatcher(deps: {
       bindingId: spec.bindingId,
       runId: created.data.id,
     });
+
+    // The card is up; now reach the agent. Resuming a session after a
+    // restart can take seconds, so it happens after the card, never before.
+    const key = keyFor(spec.bindingId, spec.ownerUserId, spec.agent);
+    log.info('Rig spaces dispatch: run announced, reaching the agent session', {
+      runId: created.data.id,
+      ms: Date.now() - t0,
+    });
+    const sessionResult = await ensureSession(key, spec.bindingId, spec.agent, cwd);
+    log.info('Rig spaces dispatch: agent session ready', {
+      runId: created.data.id,
+      ok: sessionResult.success,
+      ms: Date.now() - t0,
+    });
+    if (!sessionResult.success) {
+      publisher.record('turn_ended', { status: 'failed', reason: sessionResult.error });
+      await publisher.finish('failed');
+      return err(sessionResult.error);
+    }
+    const session = sessionResult.data;
     deps.store?.markInFlight?.(created.data.id, spec.bindingId);
     const turn: QueuedTurn = {
       requestId: spec.requestId,
