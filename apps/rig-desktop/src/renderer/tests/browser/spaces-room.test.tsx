@@ -434,6 +434,8 @@ describe('Session card — approvals belong to the owner', () => {
       "Waiting on Alice's approval"
     );
     expect([...host.querySelectorAll('button')].some((b) => b.textContent === 'Allow once')).toBe(false);
+    // Nothing to offer on someone else's running turn: no empty action bar either.
+    expect(host.querySelector('[data-testid="row-actions"]')).toBeNull();
 
     const decided: SessionEvent[] = [
       ...events,

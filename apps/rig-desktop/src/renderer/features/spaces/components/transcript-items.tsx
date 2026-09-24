@@ -1,5 +1,5 @@
 import { Check, CircleAlert, Copy, CornerUpLeft, UserPlus } from 'lucide-react';
-import { type ReactNode, useEffect, useState } from 'react';
+import { Children, type ReactNode, useEffect, useState } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import { formatClock, formatClockShort, formatFull } from '@renderer/lib/time-format';
@@ -125,7 +125,8 @@ export function RowActions({
     const id = setTimeout(() => setCopied(false), 1500);
     return () => clearTimeout(id);
   }, [copied]);
-  if (!onReply && !copyText && !children) return null;
+  // `children` can be an array of `false`s (conditional actions that don't apply): count real ones.
+  if (!onReply && !copyText && Children.toArray(children).length === 0) return null;
   const button =
     'hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs text-text-secondary transition-colors';
   return (
