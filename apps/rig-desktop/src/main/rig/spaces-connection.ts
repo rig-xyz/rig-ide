@@ -1,4 +1,7 @@
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
+import { parseFrontmatter } from '@shared/core/skills/validation';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import type { RigAccountError } from '@shared/rig/account';
 import { isError, resolveContext } from './account';
@@ -51,6 +54,35 @@ function toWsUrl(relayUrl: string): string {
 
 const api = createHttpSpacesRelayApi();
 
+/** One of a space's own skills, for the Room's `/` palette. */
+export type SpaceSkill = { cmd: string; name: string; desc: string };
+
+/**
+ * The skills the space itself ships (`.claude/skills/<name>/SKILL.md` in its
+ * folder on this device): shared with every member because they're files in
+ * the space, and what the room agent runs with. Reads only that folder.
+ */
+export async function listSpaceSkillsIn(root: string): Promise<SpaceSkill[]> {
+  const dir = join(root, '.claude', 'skills');
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return [];
+  }
+  const skills: SpaceSkill[] = [];
+  for (const entry of entries.sort()) {
+    try {
+      const { frontmatter } = parseFrontmatter(await readFile(join(dir, entry, 'SKILL.md'), 'utf8'));
+      const name = frontmatter.name?.trim() || entry;
+      skills.push({ cmd: `/${name}`, name, desc: frontmatter.description?.trim() ?? '' });
+    } catch {
+      // Not a skill folder (no SKILL.md): skip.
+    }
+  }
+  return skills;
+}
+
 export const rigSpacesConnectionController = createRPCController({
   getConnectionInfo: async (): Promise<Result<SpacesConnectionInfo, RigAccountError>> => {
     const ctx = await resolveContext();
@@ -72,6 +104,13 @@ export const rigSpacesConnectionController = createRPCController({
   }): Promise<Result<{ ticket: string; expiresAt: string }, RelayApiError>> =>
     api.mintRealtimeTicket(input.bindingId),
 
+  listSkills: async (input: { bindingId: string }): Promise<SpaceSkill[]> => {
+    // Lazy: the rigs table module opens the app database at load, which this
+    // module's other callers (and its tests) don't need.
+    const { resolveLocalPathsImpl } = await import('./recent-rigs');
+    const root = (await resolveLocalPathsImpl([input.bindingId]))[input.bindingId];
+    return root ? listSpaceSkillsIn(root) : [];
+  },
   listMembers: async (input: { bindingId: string }): Promise<Result<RoomMemberRow[], RelayApiError>> =>
     api.listMembers(input.bindingId),
 

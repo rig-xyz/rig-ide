@@ -22,6 +22,7 @@ function createRelayRoomClient(): RelayRoomClient {
   return {
     mintRealtimeTicket: (bindingId) => client.mintRealtimeTicket({ bindingId }),
     listMembers: (bindingId) => client.listMembers({ bindingId }),
+    listSkills: (bindingId) => client.listSkills({ bindingId }),
     listMessages: (bindingId, query) => client.listMessages({ bindingId, query }),
     getSessionEvents: (bindingId, runId, after) => client.getSessionEvents({ bindingId, runId, after }),
     postMessage: (bindingId, input) => client.postMessage({ bindingId, ...input }),

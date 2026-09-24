@@ -329,6 +329,23 @@ describe('RelayRoomSource', () => {
     expect(source.getSnapshot().members.find((m) => m.id === 'u2')?.online).toBe(false);
   });
 
+  it("lists the space's own skills for the / palette", async () => {
+    const fake = makeFakeRelay();
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: { ...fake.relay, listSkills: async () => [{ cmd: '/weekly-report', name: 'weekly-report', desc: 'Summarise' }] },
+      createProvider: () => new FakeProvider(),
+    });
+    source.play();
+    await flush();
+    expect(source.getSnapshot().skills).toEqual([
+      { cmd: '/weekly-report', name: 'weekly-report', desc: 'Summarise', addedBy: '' },
+    ]);
+  });
+
   it('opens the connection with a ticket minted through the relay client, not a static token', async () => {
     const fake = makeFakeRelay();
     fake.queueMessages([]);

@@ -111,3 +111,25 @@ describe('rigSpacesConnectionController', () => {
     });
   });
 });
+
+describe('listSpaceSkillsIn — the space folder\'s own skills for the / palette', () => {
+  it('reads name and description from each .claude/skills/<name>/SKILL.md, skipping folders without one', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const root = mkdtempSync(join(tmpdir(), 'space-'));
+    mkdirSync(join(root, '.claude', 'skills', 'weekly-report'), { recursive: true });
+    writeFileSync(
+      join(root, '.claude', 'skills', 'weekly-report', 'SKILL.md'),
+      '---\nname: weekly-report\ndescription: Summarise signups for the week\n---\nBody'
+    );
+    mkdirSync(join(root, '.claude', 'skills', 'not-a-skill'), { recursive: true });
+
+    const { listSpaceSkillsIn } = await import('./spaces-connection');
+    expect(await listSpaceSkillsIn(root)).toEqual([
+      { cmd: '/weekly-report', name: 'weekly-report', desc: 'Summarise signups for the week' },
+    ]);
+    expect(await listSpaceSkillsIn(join(root, 'missing'))).toEqual([]);
+  });
+});
+

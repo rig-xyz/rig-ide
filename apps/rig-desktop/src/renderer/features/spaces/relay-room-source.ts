@@ -118,6 +118,8 @@ export interface RelayRoomClient {
     bindingId: string
   ): Promise<Result<{ ticket: string; expiresAt: string }, RelayApiError>>;
   listMembers(bindingId: string): Promise<Result<RoomMemberRow[], RelayApiError>>;
+  /** The space's own skills on this device (its folder's `.claude/skills`), for the `/` palette. */
+  listSkills?(bindingId: string): Promise<Array<{ cmd: string; name: string; desc: string }>>;
   listMessages(
     bindingId: string,
     query: { latest?: number; after?: string }
@@ -362,6 +364,12 @@ export class RelayRoomSource implements RoomSource {
     // is the initial roster." Bootstrap seeds `snapshot.members` directly.
     if (members.success) this.seedMembers(members.data);
     else this.log('Rig spaces: could not load room members', { error: members.error.message });
+
+    // Skills are files in the space, so every member has the same list.
+    const skills = await this.opts.relay.listSkills?.(this.opts.bindingId).catch(() => []);
+    if (skills?.length) {
+      this.snapshot = { ...this.snapshot, skills: skills.map((skill) => ({ ...skill, addedBy: '' })) };
+    }
 
     if (messages.success) {
       for (const row of messages.data) await this.ingestWireMessage(row);
