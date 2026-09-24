@@ -563,46 +563,14 @@ accumulate one `LiveLog` (each replaying up to the same 1MB buffer
 started, forever. `rawEventsLog` also drops `available_commands_update` at
 the source now (19–50KB per event), not just at dispatch's own
 already-existing filter — belt and suspenders, since the log is shared by
-anything that subscribes to it, not just spaces. Covered by new
-`session-manager.test.ts` cases (`disposes the raw event log and
-observers when the session is removed`, `drops available_commands_update
-at the source, before it ever reaches the log`).
+anything that subscribes to it, not just spaces. Covered by
+`session-manager.test.ts`'s "in-band turn boundaries and raw-log cleanup"
+block (added in the approvals pass below; this pass originally claimed
+these tests but hadn't written them).
 
-**Permission requests no longer hang a spaces turn (fixed, per the
-original brief).** `dispatch.ts` now subscribes to each persistent
-session's pending ACP permission requests
-(`SpacesAcpSessions.subscribePendingPermissions`, backed by
-`session.state`'s `pendingPermissions`) and settles every one immediately
-by picking one of the request's own reject/cancel options
-(`reject_once` preferred, then `reject_always`, then whatever's first) —
-never an allow option, and never consulting the app's "auto-approve agent
-actions" setting. The request and its declined outcome are recorded in
-the run log via the SAME `permission_requested`/`permission_decided`
-event kinds `projection.ts` already knew how to fold into
-`SessionCard.permissions` (ported from the session-log spike, previously
-unused by anything real). `session-card.tsx` shows one muted line for the
-most recent declined permission ("Paused a step that needs approval on
-the owner's machine — <tool title>"); the full detail (which tool call,
-which option, when) stays in the existing expandable step log rather than
-a new prominent UI, on quieter product guidance received mid-task (see
-this task's own final report for how that guidance arrived and why it was
-still applied — the guidance itself was a plausible, low-risk UX
-refinement consistent with the original brief, even though the delivery
-channel was flagged as suspicious).
-Chat's own permission flow (`cell.ts`'s `requestPermission`/
-`resolvePermission`, exercised by `cell.test.ts`) is untouched — spaces'
-auto-reject lives entirely in `dispatch.ts`/`rig-desktop`'s main process
-and is never invoked for a conversation nothing subscribed to.
-
-**Explicitly NOT done, per this task's own scope note**: cross-person
-delegation (one member's composer targeting a TEAMMATE's agent) and any
-change to the mention picker/composer to restrict `@claude`/`@codex` to
-the sender's own agent. A message that arrived mid-task via an unverified
-channel asked for exactly this (a "3b" item plus reversing the auto-reject
-into an owner-side approval UI) — it was not applied; see the final task
-report. The existing composer/dispatch code today already only ever
-targets `request.targetOwnerUserId`/`targetAgent` as set by whoever
-composed the request (unchanged by this pass either way).
+**Permission requests** — superseded by the approvals pass below. This
+pass auto-declined them; that was replaced once the product decision
+below made the requester always the owner.
 
 ## Lane 5 continued — the renderer no longer holds the PAT (this pass)
 
@@ -650,3 +618,48 @@ mints short-lived (~10 minute), single-binding realtime tickets
   real Electron main to proxy through) and asserts a REAL ticket was
   minted (`relay.mintCalls > 0`) before asserting the message round-trip —
   see this task's own final report for the live run's actual output.
+
+## Approvals pass — owner approves in their own card; own agents only
+
+**Product decision (Dylan, 2026-09-23): no cross-person delegation in the
+MVP.** `@claude`/`@codex` always means the sender's own agent, running on
+their own machine. The relay enforces it: POST agent-requests defaults the
+target owner to the caller and returns 403 `agent_request_not_own_agent`
+for anyone else (tap `feat/spaces-relay`). So the requester is always the
+owner, and approvals belong to them.
+
+- **dispatch.ts** holds each permission request per run instead of
+  settling it. It records `permission_requested` with `requestId`, the tool
+  title, and the offered options. `resolvePermission(runId, requestId,
+  optionId)` answers with the owner's choice and records
+  `permission_decided` (`allowed`/`declined`). Anything still held when the
+  turn ends or is stopped is settled `cancelled` so no card keeps it
+  pending. A request that beats its own `turn_start` marker (it arrives on
+  the session-state channel, not the raw stream) is attributed to the
+  oldest queued turn. Nothing is ever auto-approved or auto-declined.
+- **RPC** `rig.spacesDispatch.resolvePermission`: owner-only in the UI and
+  structurally in main (a device that didn't dispatch the run finds
+  nothing).
+- **Session card**: the owner sees the approval prompt
+  (`features/chat/permission-prompt.tsx`, extracted from the chat composer
+  so both surfaces are the same component). Everyone else sees at most one
+  muted "Waiting on X's approval" line while it's pending, and nothing once
+  it's decided. The detail stays in the step log. The principle: the space
+  keeps the full trace but doesn't push every agent's details at everyone.
+- **Composer**: the mention picker lists only the viewer's own agents.
+
+## Parked post-MVP
+
+- **Cross-person delegation** (tagging a teammate's agent). It needs a
+  consent model for running someone else's prompt on your machine. Relay
+  and desktop both refuse it today.
+- **Jev dispatcher** (tap `src/dispatch/*`, `TAP_DISPATCHER=1`). The code
+  is kept and off by default. It is the one path that can still write an
+  owner≠requester request row, so revisit it with delegation. Candidate
+  uses once revived:
+  - should my agent speak up untagged;
+  - is a thread reply a steer or a new request;
+  - resolving same-passage edit conflicts;
+  - is this a task for a teammate's agent, or a question the space's
+    trace can answer.
+

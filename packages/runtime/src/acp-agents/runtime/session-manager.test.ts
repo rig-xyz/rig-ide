@@ -471,4 +471,110 @@ describe('AcpRuntime session manager', () => {
       expect(rt.sessionRawEventsLog(conversationId)).toBe(rt.sessionRawEventsLog(conversationId));
     });
   });
+
+  describe('in-band turn boundaries and raw-log cleanup', () => {
+    type Seen = { kind: string; update?: string; stopReason?: string | null; turnId?: string };
+
+    function record(rt: AcpRuntime, conversationId: string): Seen[] {
+      const seen: Seen[] = [];
+      rt.observeRawSessionEvents(conversationId, (raw) => {
+        if (raw.kind === 'acp_update') seen.push({ kind: raw.kind, update: raw.update.sessionUpdate });
+        else if (raw.kind === 'turn_end')
+          seen.push({ kind: raw.kind, turnId: raw.turnId, stopReason: raw.stopReason });
+        else seen.push({ kind: raw.kind, turnId: raw.turnId });
+      });
+      return seen;
+    }
+
+    it("brackets a turn's updates with turn_start and turn_end, same turnId, carrying the stop reason", async () => {
+      const { h, rt, client, sessionId, conversationId } = await startHarness('conv-markers');
+      const seen = record(rt, conversationId);
+      h.agent.prompt.mockImplementationOnce(async () => {
+        await client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            sessionId,
+            messageId: 'msg-1',
+            content: { type: 'text', text: 'the answer' },
+          } as SessionUpdate,
+        });
+        return { stopReason: 'end_turn' };
+      });
+
+      expect(isOk(await rt.sendPrompt(conversationId, { text: 'go' }))).toBe(true);
+
+      await vi.waitFor(() => expect(seen.at(-1)?.kind).toBe('turn_end'));
+      expect(seen.map((e) => e.kind)).toEqual(['turn_start', 'acp_update', 'turn_end']);
+      expect(seen[1]?.update).toBe('agent_message_chunk');
+      expect(seen[2]).toMatchObject({ stopReason: 'end_turn', turnId: seen[0]?.turnId });
+    });
+
+    it('emits turn_end with the cancelled stop reason for a cancelled turn', async () => {
+      const { h, rt, conversationId } = await startHarness('conv-markers-cancel');
+      const seen = record(rt, conversationId);
+      h.agent.prompt.mockResolvedValueOnce({ stopReason: 'cancelled' });
+
+      await rt.sendPrompt(conversationId, { text: 'go' });
+
+      await vi.waitFor(() => expect(seen.at(-1)).toMatchObject({ kind: 'turn_end', stopReason: 'cancelled' }));
+    });
+
+    it('emits turn_end with a null stop reason when the prompt fails', async () => {
+      const { h, rt, conversationId } = await startHarness('conv-markers-error');
+      const seen = record(rt, conversationId);
+      h.agent.prompt.mockRejectedValueOnce(new Error('agent crashed'));
+
+      await rt.sendPrompt(conversationId, { text: 'go' });
+
+      await vi.waitFor(() => expect(seen.at(-1)).toMatchObject({ kind: 'turn_end', stopReason: null }));
+      expect(seen.map((e) => e.kind)).toEqual(['turn_start', 'turn_end']);
+    });
+
+    it('never writes available_commands_update into the raw log', async () => {
+      const { rt, client, sessionId, conversationId } = await startHarness('conv-rawlog-filter');
+      const log = rt.sessionRawEventsLog(conversationId);
+
+      await client.sessionUpdate({
+        sessionId,
+        update: { sessionUpdate: 'available_commands_update', availableCommands: [] } as SessionUpdate,
+      });
+      await client.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          sessionId,
+          messageId: 'msg-1',
+          content: { type: 'text', text: 'kept' },
+        } as SessionUpdate,
+      });
+
+      const kinds = log
+        .snapshot()
+        .data.text.split('\n')
+        .filter((line) => line.length > 0)
+        .map((line) => (JSON.parse(line) as { update?: { sessionUpdate: string } }).update?.sessionUpdate);
+      expect(kinds).toEqual(['agent_message_chunk']);
+    });
+
+    it("disposes a conversation's raw log and observers when its session is removed", async () => {
+      const { h, rt, conversationId } = await startHarness('conv-rawlog-dispose');
+      const before = rt.sessionRawEventsLog(conversationId);
+      const observer = vi.fn();
+      rt.observeRawSessionEvents(conversationId, observer);
+
+      h.lastChild.emitExit(42);
+      await vi.waitFor(() => expect(rt.getSessionState(conversationId).lifecycle).toBe('closed'));
+
+      // A later request for the same conversation gets a fresh log, not the stale buffer.
+      expect(rt.sessionRawEventsLog(conversationId)).not.toBe(before);
+
+      // A new session under the same conversation id must not reach the old observer.
+      const restarted = await rt.startSession(makeStartInput({ conversationId }));
+      expect(isOk(restarted)).toBe(true);
+      await rt.sendPrompt(conversationId, { text: 'go' });
+      await vi.waitFor(() => expect(h.agent.prompt).toHaveBeenCalled());
+      expect(observer).not.toHaveBeenCalled();
+    });
+  });
 });
