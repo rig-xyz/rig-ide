@@ -97,25 +97,33 @@ describe('Room transcript — flat rows', () => {
     }
   });
 
-  it('expands a session card\'s full step log when its "N steps" footer is clicked', async () => {
+  it('opens a finished turn\'s steps from its summary line, and the full trace from there', async () => {
     const snapshot = replayedSnapshot();
     await act(async () => {
       root.render(<RoomTranscript snapshot={snapshot} ownId="bob" />);
     });
 
-    const card = host.querySelector<HTMLElement>('[data-testid="session-card"]');
-    expect(card).not.toBeNull();
-    const toggle = card!.querySelector<HTMLButtonElement>('button');
-    expect(toggle?.textContent).toMatch(/steps?$/);
-    const expectedStepCount = Number(toggle?.textContent?.match(/^(\d+) steps?$/)?.[1]);
-    expect(expectedStepCount).toBeGreaterThan(0);
+    const card = [...host.querySelectorAll<HTMLElement>('[data-testid="session-card"]')].find((c) =>
+      c.querySelector('[data-testid="session-summary"]')
+    );
+    expect(card).toBeDefined();
+    const summary = card!.querySelector<HTMLButtonElement>('[data-testid="session-summary"]')!;
+    expect(summary.textContent).toMatch(/^Worked .* · \d+ steps?/);
 
-    expect(card!.querySelector('[data-testid="session-steps-log"]')).toBeNull();
+    expect(card!.querySelector('[data-testid="session-steps"]')).toBeNull();
     await act(async () => {
-      toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      summary.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    // Expanded, the card shows the run the way the rig chat does.
-    expect(card!.querySelector('[data-testid="session-trace"]')).not.toBeNull();
+    const steps = card!.querySelectorAll('[data-testid="session-step"]');
+    expect(steps.length).toBe(Number(summary.textContent?.match(/(\d+) steps?/)?.[1]));
+
+    // The full trace opens beside the Room, rendered the way the rig chat does.
+    await act(async () => {
+      card!
+        .querySelector<HTMLButtonElement>('[data-testid="session-open-trace"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(document.querySelector('[data-testid="session-trace"]')).not.toBeNull();
   });
 
   it('renders the invite row, join row and comment-mirror lines from the scripted story', async () => {
@@ -262,7 +270,7 @@ describe('Session card — approvals belong to the owner', () => {
     expect(host.querySelector('[data-testid="session-live-line"]')?.textContent).toContain(
       'Waiting for your approval'
     );
-    const allow = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Allow');
+    const allow = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Allow once');
     expect(allow).toBeDefined();
     await act(async () => {
       allow!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -277,7 +285,7 @@ describe('Session card — approvals belong to the owner', () => {
     expect(host.querySelector('[data-testid="session-live-line"]')?.textContent).toContain(
       "Waiting on Alice's approval"
     );
-    expect([...host.querySelectorAll('button')].some((b) => b.textContent === 'Allow')).toBe(false);
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent === 'Allow once')).toBe(false);
 
     const decided: SessionEvent[] = [
       ...events,
@@ -291,6 +299,8 @@ describe('Session card — approvals belong to the owner', () => {
       root.render(<SessionCard meta={meta} events={decided} owner={alice} />);
     });
     expect(host.querySelector('[data-testid="session-live-line"]')?.textContent).not.toContain('approval');
+    // The decision stays on the step as a record everyone can read.
+    expect(host.querySelector('[data-testid="session-decision"]')?.textContent).toBe('Allowed once by Alice');
   });
 });
 

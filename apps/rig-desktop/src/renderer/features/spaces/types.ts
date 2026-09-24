@@ -90,6 +90,12 @@ export interface SessionPermissionDecided {
   toolCallId: string;
   optionId: string;
   outcome: string;
+  /** The chosen option's ACP kind (`allow_once`, `allow_always`, `reject_once`, …), when the request was seen. */
+  optionKind?: string;
+  /** What was asked, from the request. */
+  title?: string;
+  /** When it was answered (ms), when the event says. */
+  decidedAt?: number;
 }
 
 export type SessionStatus = 'running' | 'waiting' | 'done' | 'stopped' | 'failed';

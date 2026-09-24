@@ -131,12 +131,21 @@ describe('projectSessionCard — against real exported fixtures', () => {
       {
         seq: 2,
         kind: 'permission_decided',
-        payload: { requestId: 'perm-1', toolCallId: 't1', optionId: 'allow', outcome: 'allowed' },
+        payload: { requestId: 'perm-1', toolCallId: 't1', optionId: 'allow', outcome: 'allowed', pubTs: 2 },
       },
     ]);
     expect(decided.permissions.pending).toEqual([]);
+    // The record keeps what was asked and which kind of answer it got, for the step list.
     expect(decided.permissions.decided).toEqual([
-      { requestId: 'perm-1', toolCallId: 't1', optionId: 'allow', outcome: 'allowed' },
+      {
+        requestId: 'perm-1',
+        toolCallId: 't1',
+        optionId: 'allow',
+        outcome: 'allowed',
+        optionKind: 'allow_once',
+        title: 'npm test',
+        decidedAt: 2,
+      },
     ]);
   });
 

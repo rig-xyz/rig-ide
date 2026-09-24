@@ -29,9 +29,20 @@ const FOLLOW_THRESHOLD_PX = 60;
 /** A follow-up from the same person within this long drops its name and avatar, Slack-style. */
 const CONTINUE_WITHIN_MS = 5 * 60_000;
 
-function isContinuation(prev: RoomMessage | undefined, message: RoomMessage): boolean {
-  if (!prev || prev.meta.kind !== 'text' || message.meta.kind !== 'text') return false;
-  if (prev.authorId !== message.authorId || prev.threadId || message.threadId) return false;
+/** Who a row speaks as, for grouping follow-ups: a person, or one person's agent. */
+function speakerOf(message: RoomMessage, snapshot: RoomSnapshot): string | null {
+  if (message.meta.kind === 'text') return `person:${message.authorId}`;
+  if (message.meta.kind === 'session') {
+    const meta = snapshot.sessionMetaByRun[message.meta.runId];
+    return meta ? `agent:${meta.agent}:${meta.owner}` : null;
+  }
+  return null;
+}
+
+function isContinuation(prev: RoomMessage | undefined, message: RoomMessage, snapshot: RoomSnapshot): boolean {
+  if (!prev || prev.threadId || message.threadId) return false;
+  const speaker = speakerOf(message, snapshot);
+  if (!speaker || speaker !== speakerOf(prev, snapshot)) return false;
   const gap = Date.parse(message.createdAt) - Date.parse(prev.createdAt);
   return gap >= 0 && gap < CONTINUE_WITHIN_MS && dayKey(prev.createdAt) === dayKey(message.createdAt);
 }
@@ -51,7 +62,7 @@ function renderItem(
     case 'invite':
       return <InviteRow message={message} snapshot={snapshot} />;
     case 'comment_mirror':
-      return <CommentMirrorLine message={message} snapshot={snapshot} ownId={ownId} onOpenFile={onOpenFile} />;
+      return <CommentMirrorLine message={message} snapshot={snapshot} onOpenFile={onOpenFile} />;
     case 'system':
       if (message.meta.event === 'joined') return <JoinRow message={message} snapshot={snapshot} />;
       // Day breaks are derived from timestamps (see RoomTranscript); a
@@ -75,6 +86,9 @@ function renderItem(
           meta={meta}
           events={events}
           owner={owner}
+          viewerIsOwner={meta.owner === ownId}
+          continued={continued}
+          onOpenFile={onOpenFile}
           onStop={canStop ? () => onStopSession(meta.id) : undefined}
           onResolvePermission={
             canResolve
@@ -141,7 +155,12 @@ function ThreadBlock({
 }) {
   const [expanded, setExpanded] = useState(false);
   const root = messages.find((m) => m.id === threadId);
-  const rest = messages.filter((m) => m !== root);
+  // When the agent's run is in the thread, that row is its reply: the
+  // mirrored copy of the same answer would only repeat it.
+  const hasRun = messages.some((m) => m.meta.kind === 'session');
+  const rest = messages.filter(
+    (m) => m !== root && !(hasRun && m.meta.kind === 'comment_mirror' && m.meta.replyFromAgent)
+  );
   const hidden = expanded ? 0 : Math.max(0, rest.length - THREAD_VISIBLE_REPLIES);
   const shown = rest.slice(hidden);
   return (
@@ -246,14 +265,14 @@ export function RoomTranscript({
                 renderItem(message, snapshot, ownId, onStopSession, onResolvePermission, onOpenFile, continued);
               const node =
                 unit.kind === 'message' ? (
-                  render(unit.message, isContinuation(prevMessage, unit.message))
+                  render(unit.message, isContinuation(prevMessage, unit.message, snapshot))
                 ) : (
                   <ThreadBlock
                     threadId={unit.threadId}
                     messages={unit.messages}
                     renderMessage={(message) => render(message)}
                     renderReply={(message) => (
-                      <CommentMirrorLine message={message} snapshot={snapshot} ownId={ownId} onOpenFile={onOpenFile} inThread />
+                      <CommentMirrorLine message={message} snapshot={snapshot} onOpenFile={onOpenFile} inThread />
                     )}
                   />
                 );

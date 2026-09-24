@@ -752,9 +752,10 @@ export function App() {
     <RoomView
       bindingId={target.bindingId}
       spaceName={inSpace ? `#${target.name ?? 'space'}` : (target.name ?? 'Room')}
-      onOpenFile={(relPath) => {
+      onOpenFile={(path) => {
         if (!inSpace) setRoomPreviewOpen(false);
-        openFile(`${target.root.replace(/\/+$/, '')}/${relPath}`);
+        // Agents report the files they changed by absolute path; doc comments by relative.
+        openFile(path.startsWith('/') ? path : `${target.root.replace(/\/+$/, '')}/${path}`);
       }}
       // The space panel IS the rig's pinned card (a space is a rig binding),
       // plus the Room's agent rows. Full-width layout only, as for rigs.

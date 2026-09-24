@@ -15,10 +15,13 @@ export function SessionTrace({
   runId,
   events,
   running,
+  className = 'h-[420px]',
 }: {
   runId: string;
   events: SessionEvent[];
   running: boolean;
+  /** Sizes the trace; it scrolls inside whatever box this gives it. */
+  className?: string;
 }) {
   const context = getSharedChatContext();
   const state = useMemo(() => createChatState(context, { uri: `space-run:${runId}` }), [context, runId]);
@@ -30,7 +33,7 @@ export function SessionTrace({
   }, [state, runId, events, running]);
 
   return (
-    <div className="h-[420px]" data-testid="session-trace">
+    <div className={className} data-testid="session-trace">
       <ChatTranscript
         context={context}
         state={state}

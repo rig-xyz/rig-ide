@@ -231,12 +231,17 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
     case 'permission_decided': {
       const toolCallId = typeof p.toolCallId === 'string' ? p.toolCallId : '';
       const requestId = typeof p.requestId === 'string' ? p.requestId : toolCallId;
+      const asked = state.permissions.pending.find((x) => x.requestId === requestId);
+      const optionId = typeof p.optionId === 'string' ? p.optionId : '';
       state.permissions.pending = state.permissions.pending.filter((x) => x.requestId !== requestId);
       state.permissions.decided.push({
         requestId,
         toolCallId,
-        optionId: typeof p.optionId === 'string' ? p.optionId : '',
+        optionId,
         outcome: typeof p.outcome === 'string' ? p.outcome : '',
+        optionKind: asked?.options.find((o) => o.optionId === optionId)?.kind,
+        title: asked?.title,
+        decidedAt: typeof p.pubTs === 'number' ? p.pubTs : undefined,
       });
       break;
     }

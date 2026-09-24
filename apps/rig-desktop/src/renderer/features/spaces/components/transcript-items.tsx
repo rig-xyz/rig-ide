@@ -2,7 +2,7 @@ import { CircleAlert, Copy, UserPlus } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
-import { formatClockShort, formatFull } from '@renderer/lib/time-format';
+import { formatClock, formatClockShort, formatFull } from '@renderer/lib/time-format';
 import { BrandLogo } from '../logos';
 import type { RoomConnector, RoomMember, RoomMessage, RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
@@ -71,7 +71,16 @@ function richText(text: string, ownId: string): ReactNode[] {
 export const ROW_GRID = 'grid grid-cols-[28px_minmax(0,1fr)] gap-x-3 px-2';
 
 /** A row's time: hidden until the row is hovered or focused, full date on hover. `short` drops AM/PM for the avatar column. */
-function RowTime({ message, short = false, className }: { message: RoomMessage; short?: boolean; className?: string }) {
+export function RowTime({
+  message,
+  short = false,
+  className,
+}: {
+  /** Anything with a timestamp; `time` is a precomputed label when there is one. */
+  message: { createdAt: string; time?: string };
+  short?: boolean;
+  className?: string;
+}) {
   return (
     <time
       dateTime={message.createdAt}
@@ -81,7 +90,7 @@ function RowTime({ message, short = false, className }: { message: RoomMessage; 
         className
       )}
     >
-      {short ? formatClockShort(message.createdAt) || message.time : message.time}
+      {short ? formatClockShort(message.createdAt) || message.time : message.time || formatClock(message.createdAt)}
     </time>
   );
 }
@@ -299,14 +308,11 @@ export function CommentMirrorLine({
   message,
   snapshot,
   onOpenFile,
-  ownId,
   inThread = false,
 }: {
   message: RoomMessage;
   snapshot: RoomSnapshot;
   onOpenFile?: (relPath: string) => void;
-  /** The viewer: their own comments get the tinted bubble. */
-  ownId?: string;
   /** Inside a thread block: a reply is just who, when and what; the file and quote are on the thread's first comment. */
   inThread?: boolean;
 }) {
@@ -330,7 +336,7 @@ export function CommentMirrorLine({
             <b className="font-medium text-text-primary">{name}</b>
             <RowTime message={message} />
           </div>
-          <p className={replyFromAgent ? 'line-clamp-2 text-sm text-text-secondary' : bubbleClass(message.authorId === ownId)}>
+          <p className={cn('text-sm', replyFromAgent ? 'line-clamp-2 text-text-secondary' : 'text-text-primary')}>
             {message.body}
           </p>
         </div>
@@ -365,7 +371,7 @@ export function CommentMirrorLine({
         )}
         {/* An agent's reply is also the answer in its session card, just
             above: keep it to a glance here instead of repeating it. */}
-        <p className={replyFromAgent ? 'line-clamp-2 text-sm text-text-secondary' : bubbleClass(message.authorId === ownId)}>
+        <p className={cn('text-sm', replyFromAgent ? 'line-clamp-2 text-text-secondary' : 'text-text-primary')}>
           {message.body}
         </p>
       </div>
