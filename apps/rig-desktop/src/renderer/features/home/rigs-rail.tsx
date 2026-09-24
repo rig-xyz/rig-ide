@@ -1153,7 +1153,7 @@ function RelayOnlyActionsMenu({
       // `<home>/<slug>` on its own (no `targetDir`). Any failure (e.g. a
       // collision with an existing binding) surfaces inline below, via the
       // CLI's own `--json` error envelope message.
-      const result = await rpc.rig.join.attach({ bindingId: row.bindingId });
+      const result = await rpc.rig.join.attach({ bindingId: row.bindingId, name: row.name });
       if (!result.success) {
         onError(result.error.message);
         return;
