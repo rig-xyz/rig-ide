@@ -52,7 +52,7 @@
     "typecheck": "tsgo --noEmit && tsgo --noEmit -p scripts/release/tsconfig.json"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^1.4.0",
+    "@agentclientprotocol/sdk": "^1.5.0",
     "@hocuspocus/provider": "^4",
     "@codemirror/commands": "^6.10.4",
     "@codemirror/lang-css": "^6.3.1",
