@@ -56,6 +56,7 @@ export function Composer({
   replyTo,
   onCancelReply,
   busyAgents = [],
+  prefill,
 }: {
   spaceName: string;
   /** Where this composer keeps its unsent draft (the space's id); no draft kept without one. */
@@ -70,6 +71,8 @@ export function Composer({
   onCancelReply?: () => void;
   /** Your agents that are mid-turn right now. */
   busyAgents?: RoomAgent['agent'][];
+  /** Puts this text in the input and focuses it (a new `nonce` each time). */
+  prefill?: { text: string; nonce: number } | null;
 }) {
   const [value, setValue] = useState(() => readDraft(draftKey));
   const [focused, setFocused] = useState(false);
@@ -82,6 +85,11 @@ export function Composer({
   useEffect(() => {
     if (replyTo) textareaRef.current?.focus();
   }, [replyTo]);
+  useEffect(() => {
+    if (!prefill) return;
+    setValue(prefill.text);
+    textareaRef.current?.focus();
+  }, [prefill]);
 
   const skillQuery = /^\/(\S*)$/.exec(value)?.[1] ?? null;
   const mentionQuery = useMemo(() => /(?:^|\s)@([a-z]*)$/i.exec(value)?.[1] ?? null, [value]);

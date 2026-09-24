@@ -157,6 +157,9 @@ export function reduceRoom(snapshot: RoomSnapshot, event: RoomEvent): RoomSnapsh
       return { ...snapshot, agents };
     }
 
+    case 'connection_changed':
+      return { ...snapshot, connection: event.connection };
+
     case 'presence_changed':
       return {
         ...snapshot,

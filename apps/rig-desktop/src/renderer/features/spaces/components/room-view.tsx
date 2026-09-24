@@ -1,4 +1,5 @@
-import { Pause, Play, RadioTower } from 'lucide-react';
+import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucide-react';
+import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { buildRoomFeed } from '../fixtures/room-feed';
@@ -68,6 +69,60 @@ function detectOwnAgentMention(
   return ownsIt ? agent : null;
 }
 
+/** A space with nothing in it yet: what it is, and three ways in. While the Room is still opening, just the matrix. */
+function RoomWelcome({
+  spaceName,
+  connecting,
+  hasSkills,
+  onPrefill,
+}: {
+  spaceName: string;
+  connecting: boolean;
+  hasSkills: boolean;
+  onPrefill: (text: string) => void;
+}) {
+  if (connecting) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3" data-testid="room-opening">
+        <DotMatrix state="starting" size="lg" />
+        <span className="active-shimmer-muted text-sm text-text-secondary">Opening {spaceName}</span>
+      </div>
+    );
+  }
+  const action =
+    'border-border-hairline bg-bg-1 hover:bg-bg-2 flex h-8 items-center gap-2 rounded-chip border px-3 text-sm text-text-primary transition-colors';
+  return (
+    <div
+      className="card-pop-in flex min-h-0 flex-1 flex-col items-center justify-center gap-5 px-6 text-center"
+      data-testid="room-welcome"
+    >
+      <span className="bg-bg-2 flex size-11 items-center justify-center rounded-card text-text-secondary">
+        <Hash className="size-5" strokeWidth={1.5} />
+      </span>
+      <div className="flex flex-col gap-1">
+        <h2 className="font-display text-xl text-text-primary">This is {spaceName}</h2>
+        <p className="text-sm text-text-secondary">A room for you, your team and your agents.</p>
+      </div>
+      <div className="flex flex-wrap justify-center gap-2">
+        <button type="button" className={action} onClick={() => onPrefill('@claude invite ')}>
+          <UserPlus className="size-3.5 text-text-muted" strokeWidth={1.5} />
+          Invite someone
+        </button>
+        <button type="button" className={action} onClick={() => onPrefill('@claude ')}>
+          <AtSign className="size-3.5 text-text-muted" strokeWidth={1.5} />
+          Ask @claude
+        </button>
+        {hasSkills && (
+          <button type="button" className={action} onClick={() => onPrefill('/')}>
+            <Sparkles className="size-3.5 text-text-muted" strokeWidth={1.5} />
+            Use a skill
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** The viewer's own agents that are mid-turn, so the composer can say a new @mention will queue. */
 function busyOwnAgents(snapshot: RoomSnapshot, selfUserId: string): AgentKind[] {
   const busy = new Set<AgentKind>();
@@ -103,6 +158,7 @@ export function RoomView({
   const [snapshot, setSnapshot] = useState(() => source?.getSnapshot() ?? null);
   const [playing, setPlaying] = useState(false);
   const [replyTo, setReplyTo] = useState<RoomReplyRef | null>(null);
+  const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [bodyWidth, setBodyWidth] = useState(0);
   useEffect(() => {
@@ -115,6 +171,7 @@ export function RoomView({
   // Room for a ~44rem transcript beside the 304px panel.
   const narrow = bodyWidth > 0 && bodyWidth < ROOM_WIDE_PX;
   const hasPanel = !!renderPanel;
+  const live = source instanceof RelayRoomSource;
   // The panel floats over the Room. The centered transcript only moves left
   // by as much as it takes to clear it, and not at all in a wide window.
   const panelClearance =
@@ -265,6 +322,14 @@ export function RoomView({
         {/* Wide: keep the transcript clear of the floating panel. Narrow:
             the panel starts as its chip instead of covering the messages. */}
         <div className="flex min-h-0 flex-1 flex-col" style={{ paddingRight: panelClearance }}>
+          {live && snapshot.messages.length === 0 ? (
+            <RoomWelcome
+              spaceName={snapshot.name}
+              connecting={snapshot.connection === 'connecting'}
+              hasSkills={snapshot.skills.length > 0}
+              onPrefill={(text) => setPrefill({ text, nonce: Date.now() })}
+            />
+          ) : (
           <RoomTranscript
             snapshot={snapshot}
             ownId={selfUserId}
@@ -281,8 +346,20 @@ export function RoomView({
                 : undefined
             }
           />
+          )}
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
+            {live && snapshot.connection === 'offline' && (
+              <div
+                className="border-border-hairline bg-bg-1 mb-2 flex items-center gap-2 rounded-card border px-3 py-2 text-xs text-text-secondary"
+                role="status"
+                data-testid="room-offline"
+              >
+                <span className="size-1.5 shrink-0 rounded-full bg-warning" />
+                Lost the live connection to the room, reconnecting. Your agents keep working on this computer.
+              </div>
+            )}
             <Composer
+              prefill={prefill}
               spaceName={snapshot.name}
               draftKey={bindingId}
               replyTo={replyTo}

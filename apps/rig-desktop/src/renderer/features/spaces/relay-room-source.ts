@@ -199,6 +199,7 @@ function emptySnapshot(name: string, selfUserId: string): RoomSnapshot {
     sessionMetaByRun: {},
     sessionEventsByRun: {},
     typingUserIds: [],
+    connection: 'connecting',
   };
 }
 
@@ -310,10 +311,12 @@ export class RelayRoomSource implements RoomSource {
     provider.awareness?.on('change', () => this.syncPresence());
     provider.on('connect', () => {
       this.connected = true;
+      this.applyLocal({ type: 'connection_changed', connection: 'online' });
       void this.catchUp();
     });
     provider.on('disconnect', () => {
       this.connected = false;
+      if (!this.disposed) this.applyLocal({ type: 'connection_changed', connection: 'offline' });
     });
     provider.on('stateless', ({ payload }) => {
       void this.handleNotification(payload);

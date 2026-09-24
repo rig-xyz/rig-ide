@@ -226,6 +226,31 @@ describe('RelayRoomSource', () => {
     expect(provider!.connectCalls).toBe(1);
   });
 
+  it('reports its live connection: connecting, then online, offline when cut, online again', async () => {
+    const fake = makeFakeRelay();
+    let provider: FakeProvider | null = null;
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: () => {
+        provider = new FakeProvider();
+        return provider;
+      },
+    });
+    expect(source.getSnapshot().connection).toBe('connecting');
+    source.play();
+    await flush();
+    provider!.fire('connect');
+    expect(source.getSnapshot().connection).toBe('online');
+    provider!.fire('disconnect');
+    expect(source.getSnapshot().connection).toBe('offline');
+    provider!.fire('connect');
+    expect(source.getSnapshot().connection).toBe('online');
+  });
+
   it("offers the viewer's own claude and codex, so @claude/@codex can be tagged", () => {
     const fake = makeFakeRelay();
     const source = new RelayRoomSource({
