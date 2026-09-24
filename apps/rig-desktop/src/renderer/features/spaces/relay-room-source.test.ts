@@ -24,7 +24,21 @@ class FakeProvider implements RealtimeProvider {
   disconnectCalls = 0;
   destroyCalls = 0;
   sent: string[] = [];
-  awareness = { setLocalStateField: vi.fn() };
+  awarenessStates = new Map<number, Record<string, unknown>>();
+  private awarenessHandlers: Array<() => void> = [];
+  awareness = {
+    setLocalStateField: vi.fn(),
+    getStates: () => this.awarenessStates,
+    on: (_event: 'change', cb: () => void) => void this.awarenessHandlers.push(cb),
+    off: (_event: 'change', cb: () => void) => {
+      this.awarenessHandlers = this.awarenessHandlers.filter((h) => h !== cb);
+    },
+  };
+  /** Replaces all clients' awareness states and fires 'change'. */
+  setAwareness(states: Array<Record<string, unknown>>): void {
+    this.awarenessStates = new Map(states.map((state, i) => [i + 1, state]));
+    for (const h of this.awarenessHandlers) h();
+  }
   private handlers: Record<string, Array<(...args: never[]) => void>> = {
     connect: [],
     disconnect: [],
@@ -283,6 +297,36 @@ describe('RelayRoomSource', () => {
       isReply: true,
       replyFromAgent: 'claude',
     });
+  });
+
+  it('derives who is here and who is typing from awareness, never showing yourself typing', async () => {
+    const fake = makeFakeRelay();
+    fake.setMembers([member({ userId: 'u1' }), member({ userId: 'u2', name: 'Sam' }), member({ userId: 'u3', name: 'Carol' })]);
+    let provider: FakeProvider | null = null;
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: () => (provider = new FakeProvider()),
+    });
+    source.play();
+    await flush();
+    expect(provider!.awareness.setLocalStateField).toHaveBeenCalledWith('user', { id: 'u1' });
+
+    provider!.setAwareness([{ user: { id: 'u1' }, typing: true }, { user: { id: 'u2' }, typing: true }]);
+    const snap = source.getSnapshot();
+    expect(snap.members.map((m) => [m.id, m.online])).toEqual([
+      ['u1', true],
+      ['u2', true],
+      ['u3', false],
+    ]);
+    expect(snap.typingUserIds).toEqual(['u2']);
+
+    provider!.setAwareness([{ user: { id: 'u1' } }]);
+    expect(source.getSnapshot().typingUserIds).toEqual([]);
+    expect(source.getSnapshot().members.find((m) => m.id === 'u2')?.online).toBe(false);
   });
 
   it('opens the connection with a ticket minted through the relay client, not a static token', async () => {

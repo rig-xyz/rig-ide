@@ -157,6 +157,12 @@ export function reduceRoom(snapshot: RoomSnapshot, event: RoomEvent): RoomSnapsh
       return { ...snapshot, agents };
     }
 
+    case 'presence_changed':
+      return {
+        ...snapshot,
+        members: snapshot.members.map((m) => ({ ...m, online: event.onlineIds.includes(m.id) })),
+      };
+
     case 'typing_started':
       return {
         ...snapshot,

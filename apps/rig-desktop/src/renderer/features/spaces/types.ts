@@ -22,6 +22,8 @@ export interface RoomMember {
   /** Single-letter (or short) initial used when no avatar image is available. */
   initial: string;
   status: 'here' | 'invited';
+  /** Has the Room open right now (live presence). Undefined when unknown, e.g. the scripted fixture. */
+  online?: boolean;
 }
 
 /** One person's agent, running on their own machine, working in the open. */
@@ -198,6 +200,8 @@ export type RoomEvent =
   | { type: 'session_started'; runId: string; meta: SessionRunMeta }
   | { type: 'typing_started'; personId: PersonId }
   | { type: 'typing_stopped'; personId: PersonId }
+  /** Who has the Room open right now; everyone else is away. */
+  | { type: 'presence_changed'; onlineIds: PersonId[] }
   | { type: 'space_ready_changed'; ready: boolean };
 
 /** Full materialized state of a room — what components render from. */

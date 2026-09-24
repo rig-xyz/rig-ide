@@ -227,6 +227,9 @@ export function RoomView({
               agents={snapshot.agents.filter((a) => a.owner === selfUserId)}
               skills={snapshot.skills}
               onSend={handleSend}
+              onTypingChange={
+                source instanceof RelayRoomSource ? (typing) => source.setTyping(typing) : undefined
+              }
             />
           </div>
         </div>

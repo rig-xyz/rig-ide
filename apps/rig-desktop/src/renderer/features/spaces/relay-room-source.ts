@@ -65,7 +65,13 @@ export interface RealtimeProvider {
   on(event: 'disconnect', cb: () => void): void;
   on(event: 'stateless', cb: (data: { payload: string }) => void): void;
   off(event: 'connect' | 'disconnect' | 'stateless', cb: (...args: never[]) => void): void;
-  awareness: { setLocalStateField(field: string, value: unknown): void } | null;
+  /** Yjs awareness: each connected client's small shared state (who they are, whether they're typing). */
+  awareness: {
+    setLocalStateField(field: string, value: unknown): void;
+    getStates(): Map<number, Record<string, unknown>>;
+    on(event: 'change', cb: () => void): void;
+    off(event: 'change', cb: () => void): void;
+  } | null;
 }
 
 export type RealtimeProviderFactory = (options: {
@@ -292,6 +298,10 @@ export class RelayRoomSource implements RoomSource {
       return;
     }
     this.provider = provider;
+    // Presence: announce who this client is; everyone's states give who's
+    // here and who's typing.
+    provider.awareness?.setLocalStateField('user', { id: this.opts.selfUserId });
+    provider.awareness?.on('change', () => this.syncPresence());
     provider.on('connect', () => {
       this.connected = true;
       void this.catchUp();
@@ -598,6 +608,33 @@ export class RelayRoomSource implements RoomSource {
       ...(row.parentId ? { isReply: true } : {}),
       ...(agent === 'claude' || agent === 'codex' ? { replyFromAgent: agent } : {}),
     };
+  }
+
+  private onlineIds: string[] = [];
+
+  /** Folds every connected client's awareness state into presence and typing events. */
+  private syncPresence(): void {
+    const states = this.provider?.awareness?.getStates();
+    if (!states) return;
+    const online = new Set<string>([this.opts.selfUserId]);
+    const typing = new Set<string>();
+    for (const state of states.values()) {
+      const user = state.user as { id?: unknown } | undefined;
+      if (typeof user?.id !== 'string') continue;
+      online.add(user.id);
+      if (state.typing === true && user.id !== this.opts.selfUserId) typing.add(user.id);
+    }
+    const onlineIds = [...online].sort();
+    if (onlineIds.join() !== this.onlineIds.join()) {
+      this.onlineIds = onlineIds;
+      this.applyLocal({ type: 'presence_changed', onlineIds });
+    }
+    for (const id of this.snapshot.typingUserIds) {
+      if (!typing.has(id)) this.applyLocal({ type: 'typing_stopped', personId: id });
+    }
+    for (const id of typing) {
+      if (!this.snapshot.typingUserIds.includes(id)) this.applyLocal({ type: 'typing_started', personId: id });
+    }
   }
 
   setTyping(isTyping: boolean): void {

@@ -54,7 +54,11 @@ export function SpaceCard({ snapshot }: { snapshot: RoomSnapshot }) {
               avatarUrl={null}
               sizeClassName="size-4"
               textClassName="text-2xs"
-              className={cn('ring-bg-1 ring-1', i > 0 && '-ml-1', m.status === 'invited' && 'opacity-45')}
+              className={cn(
+                'ring-bg-1 ring-1',
+                i > 0 && '-ml-1',
+                (m.status === 'invited' || m.online === false) && 'opacity-45'
+              )}
             />
           ))}
         </span>
@@ -65,7 +69,7 @@ export function SpaceCard({ snapshot }: { snapshot: RoomSnapshot }) {
           <span className="relative inline-flex size-4.5 shrink-0 items-center justify-center">
             <BrandLogo id={agentLogoId(agent.agent)} size={14} />
             <IdentityAvatar
-              name={agent.owner}
+              name={snapshot.members.find((m) => m.id === agent.owner)?.name ?? agent.owner}
               avatarUrl={null}
               sizeClassName="absolute -right-1 -bottom-1 size-3"
               textClassName="text-2xs"

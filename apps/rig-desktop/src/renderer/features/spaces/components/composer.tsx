@@ -1,9 +1,11 @@
 import { AtSign, CornerDownLeft, Paperclip, Sparkles } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import { agentLogoId, BrandLogo } from '../logos';
 import type { RoomAgent, RoomMember, RoomSkill } from '../types';
+
+const TYPING_IDLE_MS = 4000;
 
 /**
  * Spaces (lane 2): the composer. A `/` as the first character opens the
@@ -19,12 +21,15 @@ export function Composer({
   agents,
   skills,
   onSend,
+  onTypingChange,
 }: {
   spaceName: string;
   members: RoomMember[];
   agents: RoomAgent[];
   skills: RoomSkill[];
   onSend: (text: string) => void;
+  /** Called with true while the user is typing, false after a few idle seconds or on send. */
+  onTypingChange?: (typing: boolean) => void;
 }) {
   const [value, setValue] = useState('');
   const [focused, setFocused] = useState(false);
@@ -50,11 +55,30 @@ export function Composer({
     return [...people, ...agentOptions].filter((o) => o.label.toLowerCase().startsWith(q));
   }, [mentionQuery, members, agents]);
 
+  // Typing presence: on while there's input and recent keystrokes, off
+  // after a short idle or on send.
+  const typingRef = useRef(false);
+  const typingIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const setTyping = (typing: boolean) => {
+    if (typingIdleRef.current) clearTimeout(typingIdleRef.current);
+    typingIdleRef.current = typing ? setTimeout(() => setTyping(false), TYPING_IDLE_MS) : null;
+    if (typingRef.current === typing) return;
+    typingRef.current = typing;
+    onTypingChange?.(typing);
+  };
+  useEffect(
+    () => () => {
+      if (typingIdleRef.current) clearTimeout(typingIdleRef.current);
+    },
+    []
+  );
+
   const send = () => {
     const trimmed = value.trim();
     if (!trimmed) return;
     onSend(trimmed);
     setValue('');
+    setTyping(false);
   };
 
   const applyMention = (label: string) => {
@@ -131,7 +155,10 @@ export function Composer({
         <textarea
           ref={textareaRef}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => {
+            setValue(e.target.value);
+            setTyping(e.target.value.trim().length > 0);
+          }}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           onKeyDown={(e) => {
