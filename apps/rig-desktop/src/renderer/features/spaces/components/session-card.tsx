@@ -712,7 +712,9 @@ export function SessionCard({
         )}
 
         {card.finalAnswer && status !== 'failed' && (
-          <SafeMarkdown content={card.finalAnswer} className="text-sm leading-relaxed text-text-prose" />
+          <div data-highlight-target className="rounded-card">
+            <SafeMarkdown content={card.finalAnswer} className="text-sm leading-relaxed text-text-prose" />
+          </div>
         )}
         {card.finalAnswer && status === 'failed' && (
           <details className="text-xs text-text-muted">

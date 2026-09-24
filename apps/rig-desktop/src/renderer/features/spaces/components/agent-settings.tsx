@@ -108,54 +108,113 @@ function ChoiceChips({
   group,
   busy,
   onPick,
+  revealOnHover = false,
 }: {
   dimension: Dimension;
   group: NonNullable<AgentConfig[Dimension]>;
   busy: boolean;
   onPick: (value: string) => void;
+  /** Show only the current pick; hovering (or focusing) slides the other choices out to its right. */
+  revealOnHover?: boolean;
 }) {
   const [armedId, setArmedId] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState(!revealOnHover);
+  const leaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (leaveRef.current) clearTimeout(leaveRef.current);
+  }, []);
+  const show = () => {
+    if (leaveRef.current) clearTimeout(leaveRef.current);
+    setRevealed(true);
+  };
+  const hide = () => {
+    if (!revealOnHover) return;
+    if (leaveRef.current) clearTimeout(leaveRef.current);
+    // Forgiving: a short grace before folding. Leaving also cancels a pending confirm.
+    leaveRef.current = setTimeout(() => {
+      setArmedId(null);
+      setRevealed(false);
+    }, 280);
+  };
+
+  const chip = (option: Option) => {
+    const selected = option.id === group.selected;
+    const dangerous = dimension === 'mode' && isDangerousMode(option.id);
+    const armed = armedId === option.id;
+    return (
+      <button
+        key={option.id}
+        type="button"
+        role="radio"
+        aria-checked={selected}
+        disabled={busy}
+        title={option.description}
+        onClick={() => {
+          // Re-picking the current choice just folds the inline choices (composer); in the panel it's a no-op.
+          if (selected) {
+            if (!revealOnHover) onPick(option.id);
+            return;
+          }
+          if (dimension === 'mode' && decideModeSelect(option.id, armedId).kind === 'confirm') {
+            setArmedId(option.id);
+            return;
+          }
+          setArmedId(null);
+          onPick(option.id);
+        }}
+        className={cn(
+          'h-6 shrink-0 rounded-full px-2.5 text-xs whitespace-nowrap transition-colors disabled:opacity-60',
+          selected
+            ? 'bg-text-primary/[0.1] text-text-primary'
+            : dangerous
+              ? 'text-warning hover:bg-warning/10'
+              : 'text-text-muted hover:bg-text-primary/[0.06] hover:text-text-primary',
+          armed && 'bg-warning/15 text-warning'
+        )}
+      >
+        {armed ? 'Confirm?' : optionLabel(dimension, option)}
+      </button>
+    );
+  };
+  const current = group.options.find((o) => o.id === group.selected);
+  const others = group.options.filter((o) => o.id !== group.selected);
+
+  if (!revealOnHover) {
+    return (
+      <span
+        className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none]"
+        role="radiogroup"
+        aria-label={DIMENSION_TITLE[dimension]}
+        data-testid={`agent-choices-${dimension}`}
+      >
+        {group.options.map(chip)}
+      </span>
+    );
+  }
+  // The current pick first; the rest slide out to its right on hover.
   return (
     <span
-      className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none]"
+      className="flex min-w-0 items-center gap-1"
       role="radiogroup"
       aria-label={DIMENSION_TITLE[dimension]}
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      onFocus={show}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) hide();
+      }}
       data-testid={`agent-choices-${dimension}`}
+      data-revealed={revealed || armedId !== null}
     >
-      {group.options.map((option) => {
-        const selected = option.id === group.selected;
-        const dangerous = dimension === 'mode' && isDangerousMode(option.id);
-        const armed = armedId === option.id;
-        return (
-          <button
-            key={option.id}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            disabled={busy}
-            title={option.description}
-            onClick={() => {
-              if (dimension === 'mode' && decideModeSelect(option.id, armedId).kind === 'confirm') {
-                setArmedId(option.id);
-                return;
-              }
-              setArmedId(null);
-              onPick(option.id);
-            }}
-            className={cn(
-              'h-6 shrink-0 rounded-full px-2.5 text-xs whitespace-nowrap transition-colors disabled:opacity-60',
-              selected
-                ? 'bg-text-primary/[0.1] text-text-primary'
-                : dangerous
-                  ? 'text-warning hover:bg-warning/10'
-                  : 'text-text-muted hover:bg-text-primary/[0.06] hover:text-text-primary',
-              armed && 'bg-warning/15 text-warning'
-            )}
-          >
-            {armed ? 'Confirm?' : optionLabel(dimension, option)}
-          </button>
-        );
-      })}
+      {current && chip(current)}
+      <span
+        className={cn(
+          'flex min-w-0 items-center gap-1 overflow-x-auto transition-[max-width,opacity] duration-300 ease-out [scrollbar-width:none] motion-reduce:transition-none',
+          revealed || armedId !== null ? 'max-w-[40rem] opacity-100' : 'pointer-events-none max-w-0 opacity-0'
+        )}
+      >
+        {others.map(chip)}
+      </span>
     </span>
   );
 }
@@ -255,7 +314,9 @@ export function AgentSettings({
           dimension={openDim}
           group={group}
           busy={busy}
-          onPick={(value) => void pick(openDim, value).then((ok) => ok && setOpenDim(null))}
+          onPick={(value) =>
+            value === group.selected ? setOpenDim(null) : void pick(openDim, value).then((ok) => ok && setOpenDim(null))
+          }
         />
       ) : (
         dims.map((dimension) => (
@@ -287,8 +348,9 @@ export function AgentSettings({
 /**
  * Your agent in the space panel. Its row says what it's set to
  * ("Opus 4.7 · Manual"); clicking it expands in place into one short row
- * per setting (a line of pills each), the context it has used, and "use as
- * my default everywhere". Clicking the row again folds it.
+ * per setting showing just the current pick (hover a setting and the other
+ * choices slide out to its right), the context it has used, and "use as my
+ * default everywhere". Clicking the row again folds it.
  */
 export function AgentConfigRow({
   agent,
@@ -331,6 +393,7 @@ export function AgentConfigRow({
           group={group}
           busy={busy}
           onPick={(value) => void pick(dimension, value, everywhere)}
+          revealOnHover
         />
       </div>
     );

@@ -248,7 +248,9 @@ export function MessageRow({
         <RowTime message={message} className="pb-1" />
         <div className="flex min-w-0 flex-col items-end gap-1">
           {replyTo && <ReplyQuote replyTo={replyTo} mine onJumpTo={onJumpTo} />}
-          <p className={bubbleClass(true)}>{body}</p>
+          <p className={bubbleClass(true)} data-highlight-target>
+            {body}
+          </p>
         </div>
         {actions}
       </div>
@@ -275,7 +277,9 @@ export function MessageRow({
           </div>
         )}
         {replyTo && <ReplyQuote replyTo={replyTo} mine={false} onJumpTo={onJumpTo} />}
-        <p className={bubbleClass(false)}>{body}</p>
+        <p className={bubbleClass(false)} data-highlight-target>
+          {body}
+        </p>
       </div>
       {actions}
     </div>

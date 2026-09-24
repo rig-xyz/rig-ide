@@ -340,10 +340,15 @@ export function RoomTranscript({
     const target = scrollRef.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
     if (!target) return;
     target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    target.animate([{ backgroundColor: 'var(--accent-subtle)' }, { backgroundColor: 'transparent' }], {
-      duration: 1400,
-      easing: 'ease-out',
-    });
+    // Ring just the message itself (a person's bubble, an agent's answer), not the whole row.
+    const focus = target.querySelector<HTMLElement>('[data-highlight-target]') ?? target;
+    focus.animate(
+      [
+        { boxShadow: '0 0 0 2px var(--accent), 0 0 0 6px var(--accent-subtle)' },
+        { boxShadow: '0 0 0 2px transparent, 0 0 0 6px transparent' },
+      ],
+      { duration: 1600, easing: 'ease-out' }
+    );
   };
 
   useEffect(() => {
