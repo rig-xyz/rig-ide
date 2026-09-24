@@ -3,9 +3,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Composer } from '@renderer/features/spaces/components/composer';
 import { RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
+import { SessionCard } from '@renderer/features/spaces/components/session-card';
 import { buildRoomFeed } from '@renderer/features/spaces/fixtures/room-feed';
 import { FixtureRoomSource } from '@renderer/features/spaces/room-source';
-import type { RoomSnapshot } from '@renderer/features/spaces/types';
+import type { RoomMember, RoomSnapshot, SessionEvent, SessionRunMeta } from '@renderer/features/spaces/types';
 // Real tokens — the message-bubble/session-card class assertions below rely
 // on the actual `--accent`/`--bg-2` etc. custom properties being present,
 // same as artifact-view.test.tsx.
@@ -192,5 +193,100 @@ describe('Room composer — palette on "/"', () => {
     const mentionPalette = host.querySelector('[data-testid="mention-palette"]');
     expect(mentionPalette).not.toBeNull();
     expect(mentionPalette?.textContent).toContain('@');
+  });
+});
+
+describe('Session card — approvals belong to the owner', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  const meta: SessionRunMeta = {
+    id: 'run-1',
+    agent: 'claude',
+    owner: 'alice',
+    model: 'sonnet',
+    title: '',
+    status: 'running',
+    startedAt: new Date().toISOString(),
+    endedAt: null,
+  };
+  const alice: RoomMember = {
+    id: 'alice',
+    name: 'Alice',
+    email: 'alice@example.com',
+    role: 'CTO',
+    initial: 'A',
+    status: 'here',
+  };
+  const events: SessionEvent[] = [
+    { seq: 1, kind: 'tool_call', payload: { toolCallId: 't1', title: 'npm test', kind: 'execute', status: 'pending' } },
+    {
+      seq: 2,
+      kind: 'permission_requested',
+      payload: {
+        requestId: 'perm-1',
+        toolCall: { toolCallId: 't1', title: 'npm test' },
+        options: [
+          { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+        ],
+      },
+    },
+  ];
+
+  it("shows the owner the approval prompt, and answers with the chosen option", async () => {
+    const answers: Array<[string, string]> = [];
+    await act(async () => {
+      root.render(
+        <SessionCard
+          meta={meta}
+          events={events}
+          owner={alice}
+          onResolvePermission={(requestId, optionId) => answers.push([requestId, optionId])}
+        />
+      );
+    });
+
+    expect(host.querySelector('[data-testid="permission-waiting-line"]')).toBeNull();
+    const allow = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Allow');
+    expect(allow).toBeDefined();
+    await act(async () => {
+      allow!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(answers).toEqual([['perm-1', 'allow']]);
+  });
+
+  it('shows everyone else one muted waiting line and no buttons, then nothing once decided', async () => {
+    await act(async () => {
+      root.render(<SessionCard meta={meta} events={events} owner={alice} />);
+    });
+    expect(host.querySelector('[data-testid="permission-waiting-line"]')?.textContent).toBe(
+      "Waiting on Alice's approval"
+    );
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent === 'Allow')).toBe(false);
+
+    const decided: SessionEvent[] = [
+      ...events,
+      {
+        seq: 3,
+        kind: 'permission_decided',
+        payload: { requestId: 'perm-1', toolCallId: 't1', optionId: 'allow', outcome: 'allowed' },
+      },
+    ];
+    await act(async () => {
+      root.render(<SessionCard meta={meta} events={decided} owner={alice} />);
+    });
+    expect(host.querySelector('[data-testid="permission-waiting-line"]')).toBeNull();
   });
 });

@@ -78,6 +78,12 @@ export class SpacesDispatchController {
     return this.dispatcher.stopRun(runId);
   }
 
+  /** Used by the `spacesDispatch.resolvePermission` RPC route: the owner answering an approval from their own session card. */
+  async resolvePermission(runId: string, requestId: string, optionId: string): Promise<boolean> {
+    if (!this.dispatcher) return false;
+    return this.dispatcher.resolvePermission(runId, requestId, optionId);
+  }
+
   async evaluate(): Promise<void> {
     if (this.evaluating) return;
     this.evaluating = true;

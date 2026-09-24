@@ -64,7 +64,7 @@ function makeFakeApi(overrides: Partial<SpacesRelayApi> = {}) {
   let nextRunId = 1;
   const createdRuns: Array<{ bindingId: string; agent: string }> = [];
   const patchedSessions: Array<{ runId: string; status?: SessionStatus }> = [];
-  const postedEvents: Array<{ runId: string; kinds: string[] }> = [];
+  const postedEvents: Array<{ runId: string; kinds: string[]; payloads: unknown[] }> = [];
   const patchedRequests: Array<{ id: string; status: string }> = [];
   const mintedDevices: string[] = [];
 
@@ -104,7 +104,7 @@ function makeFakeApi(overrides: Partial<SpacesRelayApi> = {}) {
       return ok(run);
     },
     async postSessionEvents(_bindingId, runId, events) {
-      postedEvents.push({ runId, kinds: events.map((e) => e.kind) });
+      postedEvents.push({ runId, kinds: events.map((e) => e.kind), payloads: events.map((e) => e.payload) });
       return ok({ inserted: events.length, upToSeq: events.at(-1)?.seq ?? null });
     },
     getSessionEvents: notImplemented('getSessionEvents'),
@@ -441,76 +441,106 @@ describe('createSpacesDispatcher', () => {
   });
 
   describe('permission requests during a spaces turn', () => {
-    it('auto-declines a pending permission request, picking a reject option, and never picking an allow option', async () => {
-      const { api } = makeFakeApi();
+    async function startTurn() {
+      const fakeApi = makeFakeApi();
       const fake = makeFakeAcp();
-      const { dispatch } = createSpacesDispatcher({
-        api,
+      const dispatcher = createSpacesDispatcher({
+        api: fakeApi.api,
         acp: fake.acp,
         resolveWorkspace: async () => '/rigs/one',
       });
-
-      const result = await dispatch(makeRequest());
+      const result = await dispatcher.dispatch(makeRequest());
       if ('failed' in result) throw new Error('expected success');
       const conversationId = fake.started[0].conversationId;
       const turnId = fake.queued[0].turnId;
       fake.emitTurnStart(conversationId, turnId);
+      return { ...fakeApi, fake, dispatcher, runId: result.runId, conversationId, turnId };
+    }
 
+    function eventsOf(postedEvents: Array<{ kinds: string[]; payloads: unknown[] }>) {
+      return postedEvents.flatMap((p) => p.kinds.map((kind, i) => ({ kind, payload: p.payloads[i] as Record<string, unknown> })));
+    }
+
+    it('holds a permission request for the owner instead of settling it, recording it with its options', async () => {
+      const { fake, postedEvents, conversationId } = await startTurn();
       fake.emitPermissionRequest(conversationId, makePermissionRequest());
 
-      await vi.waitFor(() => expect(fake.resolvedPermissions).toHaveLength(1));
-      expect(fake.resolvedPermissions[0]).toEqual({
-        conversationId,
+      await vi.waitFor(() => expect(eventsOf(postedEvents).map((e) => e.kind)).toEqual(['permission_requested']));
+      const [requested] = eventsOf(postedEvents);
+      expect(requested.payload).toMatchObject({
         requestId: 'perm-1',
-        optionId: 'reject-once',
+        toolCall: { toolCallId: 't1', title: 'Run rm -rf /' },
+        options: [
+          { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' },
+        ],
       });
+      // Never auto-approved or auto-declined.
+      expect(fake.resolvedPermissions).toEqual([]);
     });
 
-    it('falls back to reject_always, then to the first option, when reject_once is not offered', async () => {
-      const { api } = makeFakeApi();
-      const fake = makeFakeAcp();
-      const { dispatch } = createSpacesDispatcher({
-        api,
-        acp: fake.acp,
-        resolveWorkspace: async () => '/rigs/one',
-      });
-      const result = await dispatch(makeRequest());
-      if ('failed' in result) throw new Error('expected success');
-      const conversationId = fake.started[0].conversationId;
-
-      fake.emitPermissionRequest(
-        conversationId,
-        makePermissionRequest({
-          options: [
-            { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
-            { optionId: 'reject-always', name: 'Always reject', kind: 'reject_always' },
-          ],
-        })
-      );
-      await vi.waitFor(() => expect(fake.resolvedPermissions).toHaveLength(1));
-      expect(fake.resolvedPermissions[0]).toMatchObject({ optionId: 'reject-always' });
-    });
-
-    it('records permission_requested/permission_decided events, carrying the tool title, in the run log', async () => {
-      const { api, postedEvents } = makeFakeApi();
-      const fake = makeFakeAcp();
-      const { dispatch } = createSpacesDispatcher({
-        api,
-        acp: fake.acp,
-        resolveWorkspace: async () => '/rigs/one',
-      });
-
-      const result = await dispatch(makeRequest());
-      if ('failed' in result) throw new Error('expected success');
-      const conversationId = fake.started[0].conversationId;
-      const turnId = fake.queued[0].turnId;
-      fake.emitTurnStart(conversationId, turnId);
+    it("resolves with the owner's chosen option and records the outcome", async () => {
+      const { fake, postedEvents, dispatcher, runId, conversationId } = await startTurn();
       fake.emitPermissionRequest(conversationId, makePermissionRequest());
 
-      await vi.waitFor(() => {
-        const kinds = postedEvents.flatMap((p) => p.kinds);
-        expect(kinds).toEqual(['permission_requested', 'permission_decided']);
+      await expect(dispatcher.resolvePermission(runId, 'perm-1', 'allow-once')).resolves.toBe(true);
+      expect(fake.resolvedPermissions).toEqual([{ conversationId, requestId: 'perm-1', optionId: 'allow-once' }]);
+      await vi.waitFor(() =>
+        expect(eventsOf(postedEvents).map((e) => e.kind)).toEqual(['permission_requested', 'permission_decided'])
+      );
+      expect(eventsOf(postedEvents)[1].payload).toMatchObject({
+        requestId: 'perm-1',
+        optionId: 'allow-once',
+        outcome: 'allowed',
       });
+      // Already answered: a second answer finds nothing.
+      await expect(dispatcher.resolvePermission(runId, 'perm-1', 'reject-once')).resolves.toBe(false);
+    });
+
+    it('records a reject option as declined', async () => {
+      const { fake, postedEvents, dispatcher, runId, conversationId } = await startTurn();
+      fake.emitPermissionRequest(conversationId, makePermissionRequest());
+      await dispatcher.resolvePermission(runId, 'perm-1', 'reject-once');
+      await vi.waitFor(() => expect(eventsOf(postedEvents).at(-1)?.payload).toMatchObject({ outcome: 'declined' }));
+    });
+
+    it('refuses an unknown request, a different run, or an option the request never offered', async () => {
+      const { fake, dispatcher, runId, conversationId } = await startTurn();
+      fake.emitPermissionRequest(conversationId, makePermissionRequest());
+
+      await expect(dispatcher.resolvePermission(runId, 'nope', 'allow-once')).resolves.toBe(false);
+      await expect(dispatcher.resolvePermission('other-run', 'perm-1', 'allow-once')).resolves.toBe(false);
+      await expect(dispatcher.resolvePermission(runId, 'perm-1', 'made-up')).resolves.toBe(false);
+      expect(fake.resolvedPermissions).toEqual([]);
+    });
+
+    it('settles a still-held request as cancelled when its turn ends', async () => {
+      const { fake, postedEvents, dispatcher, runId, conversationId, turnId } = await startTurn();
+      fake.emitPermissionRequest(conversationId, makePermissionRequest());
+      fake.emitTurnEnd(conversationId, turnId, 'cancelled');
+
+      await vi.waitFor(() =>
+        expect(eventsOf(postedEvents).map((e) => e.kind)).toEqual(['permission_requested', 'permission_decided'])
+      );
+      expect(eventsOf(postedEvents)[1].payload).toMatchObject({ outcome: 'cancelled', optionId: null });
+      await expect(dispatcher.resolvePermission(runId, 'perm-1', 'allow-once')).resolves.toBe(false);
+    });
+
+    it('attributes a request that beats its turn_start marker to the queued turn', async () => {
+      const fakeApi = makeFakeApi();
+      const fake = makeFakeAcp();
+      const dispatcher = createSpacesDispatcher({
+        api: fakeApi.api,
+        acp: fake.acp,
+        resolveWorkspace: async () => '/rigs/one',
+      });
+      const result = await dispatcher.dispatch(makeRequest());
+      if ('failed' in result) throw new Error('expected success');
+      const conversationId = fake.started[0].conversationId;
+
+      // No turn_start yet.
+      fake.emitPermissionRequest(conversationId, makePermissionRequest());
+      await expect(dispatcher.resolvePermission(result.runId, 'perm-1', 'allow-once')).resolves.toBe(true);
     });
   });
 

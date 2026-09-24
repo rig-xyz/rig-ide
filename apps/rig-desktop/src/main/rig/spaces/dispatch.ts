@@ -112,6 +112,8 @@ type PersistentSession = {
   pending: QueuedTurn[];
   /** The turn presently between its `turn_start` and matching `turn_end` marker, or null while idle. */
   current: QueuedTurn | null;
+  /** Permission requests waiting on the owner's answer, by ACP request id. */
+  heldPermissions: Map<string, { request: AcpPermissionRequest; turn: QueuedTurn }>;
 };
 
 function keyFor(bindingId: string, ownerUserId: string, agent: SessionAgent): PersistentKey {
@@ -169,6 +171,8 @@ export function createSpacesDispatcher(deps: {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
   stopRun: (runId: string) => Promise<boolean>;
+  /** Answers a held permission request on one of this device's runs. Returns false if this device holds no such request for that run, or the option isn't one it offered. */
+  resolvePermission: (runId: string, requestId: string, optionId: string) => Promise<boolean>;
 } {
   const sessions = new Map<PersistentKey, PersistentSession>();
 
@@ -186,6 +190,7 @@ export function createSpacesDispatcher(deps: {
         // finalized this turn from the pending queue).
         if (!turn || turn.turnId !== raw.turnId) return;
         session.current = null;
+        releaseHeldPermissions(session, turn);
         void finalizeTurn(turn, statusForEndedTurn(turn, raw.stopReason));
         return;
       }
@@ -210,50 +215,83 @@ export function createSpacesDispatcher(deps: {
   }
 
   /**
-   * A spaces-dispatched turn runs on a teammate's machine with nobody local
-   * to click "allow" — there is no UI at all surfacing this session's tool
-   * calls to a human on THIS device. Rather than hang until the turn's own
-   * (currently nonexistent) limits or a Stop end it, this device settles
-   * every permission request immediately by picking one of its own
-   * reject/cancel options — never an allow option, regardless of what the
-   * global "auto-approve agent actions" setting says elsewhere in the app.
-   * The run log still records the request and its (declined) outcome via
-   * the same `permission_requested`/`permission_decided` event kinds
-   * `projection.ts` already knows how to fold into `SessionCard.permissions`
-   * — normal chat sessions never call this; their own permission flow
-   * (`comment-agent.ts`/the chat UI) is untouched.
+   * Spaces turns only ever run the requester's OWN agent on their own device
+   * (no cross-person delegation in the MVP), so a permission request waits
+   * for its owner rather than being settled here: it's recorded in the run
+   * log with its options, and the owner's own session card answers it via
+   * `resolvePermission` below. Other members see the same log event and
+   * render at most a muted "waiting on approval" line. Nothing is ever
+   * auto-approved or auto-declined. Normal chat sessions never reach this;
+   * their own permission flow is untouched.
+   *
+   * Permission requests arrive on a different channel (session state) from
+   * the raw event stream, so if one beats its own `turn_start` marker it's
+   * attributed to the oldest queued turn — the one about to start.
    */
-  function denyPermission(session: PersistentSession, request: AcpPermissionRequest): void {
-    const turn = session.current;
-    if (turn) {
-      turn.publisher.record('permission_requested', {
-        toolCall: { toolCallId: request.toolCall.toolCallId, title: request.toolCall.title },
-        pubTs: Date.now(),
-      });
-    }
-
-    const rejectOption =
-      request.options.find((option) => option.kind === 'reject_once') ??
-      request.options.find((option) => option.kind === 'reject_always') ??
-      request.options[0];
-    if (!rejectOption) {
-      log.warn('Rig spaces dispatch: permission request offered no option to reject with', {
+  function holdPermission(session: PersistentSession, request: AcpPermissionRequest): void {
+    const turn = session.current ?? session.pending[0] ?? null;
+    if (!turn) {
+      log.warn('Rig spaces dispatch: permission request with no turn to attribute it to', {
         conversationId: session.conversationId,
         requestId: request.requestId,
       });
       return;
     }
+    session.heldPermissions.set(request.requestId, { request, turn });
+    turn.publisher.record('permission_requested', {
+      requestId: request.requestId,
+      toolCall: { toolCallId: request.toolCall.toolCallId, title: request.toolCall.title },
+      options: request.options.map((option) => ({
+        optionId: option.optionId,
+        name: option.name,
+        kind: option.kind,
+      })),
+      pubTs: Date.now(),
+    });
+  }
 
-    void deps.acp
-      .resolvePermission(session.conversationId, request.requestId, rejectOption.optionId)
-      .then(() => {
-        if (!turn) return;
-        turn.publisher.record('permission_decided', {
-          toolCallId: request.toolCall.toolCallId,
-          optionId: rejectOption.optionId,
-          outcome: 'declined',
-        });
-      });
+  function recordPermissionDecided(
+    turn: QueuedTurn,
+    request: AcpPermissionRequest,
+    optionId: string | null,
+    outcome: 'allowed' | 'declined' | 'cancelled'
+  ): void {
+    turn.publisher.record('permission_decided', {
+      requestId: request.requestId,
+      toolCallId: request.toolCall.toolCallId,
+      optionId,
+      outcome,
+    });
+  }
+
+  /** A turn that ends with approvals still held (Stop, error) settles them as cancelled so no card keeps showing them pending. */
+  function releaseHeldPermissions(session: PersistentSession, turn: QueuedTurn): void {
+    for (const [requestId, held] of session.heldPermissions) {
+      if (held.turn !== turn) continue;
+      session.heldPermissions.delete(requestId);
+      recordPermissionDecided(turn, held.request, null, 'cancelled');
+    }
+  }
+
+  async function resolvePermission(runId: string, requestId: string, optionId: string): Promise<boolean> {
+    for (const session of sessions.values()) {
+      const held = session.heldPermissions.get(requestId);
+      if (!held || held.turn.runId !== runId) continue;
+      const option = held.request.options.find((o) => o.optionId === optionId);
+      if (!option) return false;
+      session.heldPermissions.delete(requestId);
+      // Recorded before resolving: once the tool runs, the turn can end (and
+      // its publisher finish) before the resolve call even returns.
+      recordPermissionDecided(
+        held.turn,
+        held.request,
+        optionId,
+        option.kind.startsWith('reject') ? 'declined' : 'allowed'
+      );
+      await deps.acp.resolvePermission(session.conversationId, requestId, optionId);
+      return true;
+    }
+    return false;
   }
 
   async function ensureSession(
@@ -272,13 +310,14 @@ export function createSpacesDispatcher(deps: {
       cwd,
       pending: [],
       current: null,
+      heldPermissions: new Map(),
     };
     // Subscribe BEFORE the session exists so nothing from the very first
     // turn — including its very first raw event/permission request — is
     // missed.
     await deps.acp.subscribeRaw(conversationId, (raw) => forwardRaw(session, raw));
     await deps.acp.subscribePendingPermissions(conversationId, (request) =>
-      denyPermission(session, request)
+      holdPermission(session, request)
     );
 
     const started = await deps.acp.startSession({ conversationId, providerId, cwd });
@@ -354,6 +393,7 @@ export function createSpacesDispatcher(deps: {
       const idx = session.pending.findIndex((turn) => turn.runId === runId);
       if (idx !== -1) {
         const [turn] = session.pending.splice(idx, 1);
+        releaseHeldPermissions(session, turn);
         void finalizeTurn(turn, 'stopped');
         return true;
       }
@@ -361,7 +401,7 @@ export function createSpacesDispatcher(deps: {
     return false;
   }
 
-  return { dispatch, stopRun };
+  return { dispatch, stopRun, resolvePermission };
 }
 
 /**

@@ -142,6 +142,12 @@ export function RoomView({ bindingId, spaceName }: { bindingId: string; spaceNam
           void rpc.rig.spacesDispatch.stopRun({ runId });
         }
       : undefined;
+  const handleResolvePermission =
+    source instanceof RelayRoomSource
+      ? (runId: string, requestId: string, optionId: string) => {
+          void rpc.rig.spacesDispatch.resolvePermission({ runId, requestId, optionId });
+        }
+      : undefined;
 
   if (connectError) {
     return (
@@ -192,12 +198,19 @@ export function RoomView({ bindingId, spaceName }: { bindingId: string; spaceNam
 
       <div className="relative flex min-h-0 flex-1">
         <div className="flex min-h-0 flex-1 flex-col">
-          <RoomTranscript snapshot={snapshot} ownId={selfUserId} onStopSession={handleStopSession} />
+          <RoomTranscript
+            snapshot={snapshot}
+            ownId={selfUserId}
+            onStopSession={handleStopSession}
+            onResolvePermission={handleResolvePermission}
+          />
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
             <Composer
               spaceName={snapshot.name}
               members={snapshot.members}
-              agents={snapshot.agents}
+              // Own agents only: @claude/@codex always means the sender's
+              // own agent (no cross-person delegation in the MVP).
+              agents={snapshot.agents.filter((a) => a.owner === selfUserId)}
               skills={snapshot.skills}
               onSend={handleSend}
             />

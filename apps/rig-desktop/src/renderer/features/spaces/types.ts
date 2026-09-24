@@ -67,12 +67,22 @@ export interface SessionOutput {
   approximate: boolean;
 }
 
+export interface SessionPermissionOption {
+  optionId: string;
+  name: string;
+  kind: string;
+}
+
 export interface SessionPermissionPending {
+  requestId: string;
   toolCallId: string;
+  title: string;
+  options: SessionPermissionOption[];
   requestedAt: number;
 }
 
 export interface SessionPermissionDecided {
+  requestId: string;
   toolCallId: string;
   optionId: string;
   outcome: string;

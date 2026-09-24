@@ -1,14 +1,12 @@
 import { tailMode } from '@emdash/chat-ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Check,
   History,
   MessageSquare,
   Pencil,
   Play,
   Plus,
   Send,
-  ShieldAlert,
   Square,
   X,
 } from 'lucide-react';
@@ -39,6 +37,7 @@ import { MetaOptionPicker } from './meta-option-picker';
 import { PermissionModePicker } from './permission-mode-picker';
 import { ReplayStore } from './replay-store';
 import { canResumeSession } from './resume-capability';
+import { PermissionPrompt } from './permission-prompt';
 import { deriveTranscriptPanelMode, shouldShowResumeButton } from './resume-presentation';
 import { RigChatStore } from './rig-chat-store';
 import { noteSessionSeen } from './session-attention-store';
@@ -1503,67 +1502,14 @@ const Composer = observer(function Composer({
   return (
     <div className="flex flex-col gap-2">
       {permission && (
-        // Aligned into the composer's own flow — a hairline divider, not a
-        // detached gray slab (round E: chat-ui has no inline-transcript
-        // permission unit, so this stays here, just restyled per the design
-        // system: mono command text, `option.kind`-driven button variants,
-        // no extra card chrome — Rule 9 reserves card chrome for file-edit
-        // summaries).
-        <div className="flex flex-col gap-2 border-b border-border-hairline pb-3">
-          <span className="flex items-center gap-1.5">
-            {/* Round F: the same shield glyph the transcript's own tool line
-                uses for its awaiting-permission state (chat-ui's
-                `IconShieldAlert`) — so the two surfaces read as the same ask.
-                Neutral muted, not chat-ui's one-off amber: this app's tokens
-                stay monochrome, teal is reserved for "alive," not alerts. */}
-            <ShieldAlert className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
-            <span className="font-mono text-xs break-all text-text-secondary">
-              {permission.title}
-            </span>
-          </span>
-          <div className="flex flex-wrap gap-1.5">
-            {permission.options.map((option) => {
-              const isReject = option.kind.startsWith('reject');
-              const isAlwaysAllow = option.kind === 'allow_always';
-              const resolving = resolvingPermissionOptionId === option.optionId;
-              return (
-                <Button
-                  key={option.optionId}
-                  size="sm"
-                  // Allow = primary (filled); "Always Allow" = outlined
-                  // secondary, not filled — filled read as equal weight to
-                  // Allow (round F); Reject = ghost, quietest of the three.
-                  variant={isReject ? 'ghost' : isAlwaysAllow ? 'outline' : 'default'}
-                  // The whole row disables the moment ANY option is picked
-                  // (round E 5(b)) — the gap before the runtime actually
-                  // starts the tool reads as progress, not a dead click.
-                  disabled={resolvingPermissionOptionId !== null}
-                  onClick={() => live?.resolvePermission(option.optionId)}
-                  // Round: permission option crop — `option.name` is the
-                  // ACP adapter's own raw string, sometimes with the whole
-                  // shell command restated inline ("Always Allow
-                  // Bash(<command>)"), which used to clip at the panel
-                  // edge (`Button`'s base class is `whitespace-nowrap
-                  // shrink-0` on purpose everywhere else). Not rig-
-                  // desktop's text to reformat — the command is already
-                  // shown in full on the line above these buttons, so
-                  // truncating the label loses nothing; `title` keeps the
-                  // untruncated string one hover away.
-                  title={option.name}
-                >
-                  {resolving ? (
-                    <>
-                      <Check />
-                      {isReject ? 'Rejected' : 'Allowed · running…'}
-                    </>
-                  ) : (
-                    <span className="max-w-56 truncate">{option.name}</span>
-                  )}
-                </Button>
-              );
-            })}
-          </div>
-        </div>
+        // Aligned into the composer's own flow — see `PermissionPrompt`.
+        <PermissionPrompt
+          className="border-b border-border-hairline pb-3"
+          title={permission.title}
+          options={permission.options}
+          resolvingOptionId={resolvingPermissionOptionId}
+          onResolve={(optionId) => live?.resolvePermission(optionId)}
+        />
       )}
 
       {/* One container, no internal seam — the hairline is the outside

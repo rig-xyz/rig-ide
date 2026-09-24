@@ -1,6 +1,7 @@
 import { Check, ChevronRight, FileText, Loader2, Square } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
+import { PermissionPrompt } from '@renderer/features/chat/permission-prompt';
 import { cn } from '@renderer/lib/utils';
 import { agentLogoId, BrandLogo } from '../logos';
 import { projectSessionCard } from '../projection';
@@ -53,21 +54,23 @@ export function SessionCard({
   events,
   owner,
   onStop,
+  onResolvePermission,
 }: {
   meta: SessionRunMeta;
   events: SessionEvent[];
   owner: RoomMember | undefined;
   onStop?: () => void;
+  /** Only passed for the viewer's OWN agent's run: approvals belong to the owner, on their own card. */
+  onResolvePermission?: (requestId: string, optionId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [resolving, setResolving] = useState<{ requestId: string; optionId: string } | null>(null);
   const card = useMemo(() => projectSessionCard(events), [events]);
   const running = card.status === 'running';
-  // Spaces-dispatched turns auto-decline any tool call that needs approval
-  // (there's nobody local to click "allow" on someone else's machine) — see
-  // `main/rig/spaces/dispatch.ts`'s `denyPermission`. This is the one line
-  // the card shows for it; the full detail (tool call, option, timestamp)
-  // stays in the expandable step log below, same as any other step.
-  const lastDeclinedPermission = card.permissions.decided.filter((d) => d.outcome === 'declined').at(-1);
+  // Approvals belong to the agent's owner: their card gets the prompt,
+  // everyone else at most one muted line while it's pending, nothing once
+  // it's decided. The full detail stays in the step log.
+  const pendingPermission = card.permissions.pending[0] ?? null;
 
   return (
     <div
@@ -117,18 +120,30 @@ export function SessionCard({
             </span>
           </div>
         )}
-        {lastDeclinedPermission && (
-          <div
-            data-testid="permission-declined-line"
-            className="flex h-6 items-center gap-2 text-xs text-text-muted"
-          >
-            <span className="min-w-0 truncate">
-              Paused a step that needs approval on the owner's machine —{' '}
-              {card.steps.find((s) => s.toolCallId === lastDeclinedPermission.toolCallId)?.title ??
-                lastDeclinedPermission.toolCallId}
-            </span>
-          </div>
-        )}
+        {pendingPermission &&
+          (onResolvePermission ? (
+            <PermissionPrompt
+              className="py-1"
+              title={pendingPermission.title}
+              options={pendingPermission.options}
+              resolvingOptionId={
+                resolving?.requestId === pendingPermission.requestId ? resolving.optionId : null
+              }
+              onResolve={(optionId) => {
+                setResolving({ requestId: pendingPermission.requestId, optionId });
+                onResolvePermission(pendingPermission.requestId, optionId);
+              }}
+            />
+          ) : (
+            <div
+              data-testid="permission-waiting-line"
+              className="flex h-6 items-center text-xs text-text-muted"
+            >
+              <span className="min-w-0 truncate">
+                Waiting on {owner?.name ?? meta.owner}'s approval
+              </span>
+            </div>
+          ))}
         {card.outputs.map((output) => (
           <div
             key={output.path}

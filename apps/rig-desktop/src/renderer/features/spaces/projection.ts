@@ -190,14 +190,37 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
     case 'permission_requested': {
       const toolCall = p.toolCall as Record<string, unknown> | undefined;
       const toolCallId = typeof toolCall?.toolCallId === 'string' ? toolCall.toolCallId : '';
+      const requestId = typeof p.requestId === 'string' ? p.requestId : toolCallId;
       const requestedAt = typeof p.pubTs === 'number' ? p.pubTs : Date.now();
-      state.permissions.pending.push({ toolCallId, requestedAt });
+      const options = Array.isArray(p.options)
+        ? p.options.flatMap((o: unknown) => {
+            const opt = o as Record<string, unknown> | null;
+            return opt && typeof opt.optionId === 'string'
+              ? [
+                  {
+                    optionId: opt.optionId,
+                    name: typeof opt.name === 'string' ? opt.name : opt.optionId,
+                    kind: typeof opt.kind === 'string' ? opt.kind : '',
+                  },
+                ]
+              : [];
+          })
+        : [];
+      state.permissions.pending.push({
+        requestId,
+        toolCallId,
+        title: typeof toolCall?.title === 'string' ? toolCall.title : toolCallId,
+        options,
+        requestedAt,
+      });
       break;
     }
     case 'permission_decided': {
       const toolCallId = typeof p.toolCallId === 'string' ? p.toolCallId : '';
-      state.permissions.pending = state.permissions.pending.filter((x) => x.toolCallId !== toolCallId);
+      const requestId = typeof p.requestId === 'string' ? p.requestId : toolCallId;
+      state.permissions.pending = state.permissions.pending.filter((x) => x.requestId !== requestId);
       state.permissions.decided.push({
+        requestId,
         toolCallId,
         optionId: typeof p.optionId === 'string' ? p.optionId : '',
         outcome: typeof p.outcome === 'string' ? p.outcome : '',

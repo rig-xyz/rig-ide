@@ -29,7 +29,8 @@ function renderItem(
   message: RoomMessage,
   snapshot: RoomSnapshot,
   ownId: string,
-  onStopSession?: (runId: string) => void
+  onStopSession?: (runId: string) => void,
+  onResolvePermission?: (runId: string, requestId: string, optionId: string) => void
 ) {
   switch (message.meta.kind) {
     case 'text':
@@ -52,12 +53,19 @@ function renderItem(
       // dispatch already follows. `SessionCard` itself only renders the
       // button while the run is `running`.
       const canStop = onStopSession && meta.owner === ownId;
+      // Same rule for approvals: only the owner answers their agent's asks.
+      const canResolve = onResolvePermission && meta.owner === ownId;
       return (
         <SessionCard
           meta={meta}
           events={events}
           owner={owner}
           onStop={canStop ? () => onStopSession(meta.id) : undefined}
+          onResolvePermission={
+            canResolve
+              ? (requestId, optionId) => onResolvePermission(meta.id, requestId, optionId)
+              : undefined
+          }
         />
       );
     }
@@ -70,10 +78,12 @@ export function RoomTranscript({
   snapshot,
   ownId,
   onStopSession,
+  onResolvePermission,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
   onStopSession?: (runId: string) => void;
+  onResolvePermission?: (runId: string, requestId: string, optionId: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
@@ -113,7 +123,7 @@ export function RoomTranscript({
       <div className="mx-auto flex max-w-[44rem] flex-col gap-3 px-5 pt-6 pb-3">
         <AnimatePresence initial={false}>
           {snapshot.messages.map((message) => {
-            const node = renderItem(message, snapshot, ownId, onStopSession);
+            const node = renderItem(message, snapshot, ownId, onStopSession, onResolvePermission);
             if (!node) return null;
             return (
               <motion.div

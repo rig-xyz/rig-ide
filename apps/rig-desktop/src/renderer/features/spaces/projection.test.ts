@@ -97,6 +97,49 @@ describe('projectSessionCard — against real exported fixtures', () => {
     expect(card.status).toBe('done');
   });
 
+  it('tracks a held permission request with its options until it is decided', () => {
+    const requested: SessionEvent = {
+      seq: 1,
+      kind: 'permission_requested',
+      payload: {
+        requestId: 'perm-1',
+        toolCall: { toolCallId: 't1', title: 'npm test' },
+        options: [
+          { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+          { name: 'no id, dropped' },
+        ],
+        pubTs: 1,
+      },
+    };
+    const pending = projectSessionCard([requested]);
+    expect(pending.permissions.pending).toEqual([
+      {
+        requestId: 'perm-1',
+        toolCallId: 't1',
+        title: 'npm test',
+        options: [
+          { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+        ],
+        requestedAt: 1,
+      },
+    ]);
+
+    const decided = projectSessionCard([
+      requested,
+      {
+        seq: 2,
+        kind: 'permission_decided',
+        payload: { requestId: 'perm-1', toolCallId: 't1', optionId: 'allow', outcome: 'allowed' },
+      },
+    ]);
+    expect(decided.permissions.pending).toEqual([]);
+    expect(decided.permissions.decided).toEqual([
+      { requestId: 'perm-1', toolCallId: 't1', optionId: 'allow', outcome: 'allowed' },
+    ]);
+  });
+
   it('an empty event log projects to the fresh-card defaults', () => {
     const card = projectSessionCard([]);
     expect(card).toEqual(newSessionCard());

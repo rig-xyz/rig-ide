@@ -33,6 +33,7 @@ function makeFakeDeps(overrides: Partial<SpacesDispatchControllerDeps> = {}) {
         dispatcher: {
           dispatch: vi.fn(),
           stopRun: vi.fn(async (runId: string) => runId === 'known-run'),
+          resolvePermission: vi.fn(async (runId: string) => runId === 'known-run'),
         } as unknown as ReturnType<typeof createSpacesDispatcher>,
       };
     },
@@ -164,5 +165,18 @@ describe('SpacesDispatchController', () => {
 
     expect(await controller.stopRun('known-run')).toBe(true);
     expect(await controller.stopRun('unknown-run')).toBe(false);
+  });
+
+  it('resolvePermission delegates to the running dispatcher, and is false when nothing is running', async () => {
+    const fake = makeFakeDeps();
+    const controller = new SpacesDispatchController(fake.deps);
+    expect(await controller.resolvePermission('known-run', 'perm-1', 'allow')).toBe(false);
+
+    fake.setEnabled(true);
+    fake.setSignedIn(true);
+    await controller.evaluate();
+
+    expect(await controller.resolvePermission('known-run', 'perm-1', 'allow')).toBe(true);
+    expect(await controller.resolvePermission('unknown-run', 'perm-1', 'allow')).toBe(false);
   });
 });

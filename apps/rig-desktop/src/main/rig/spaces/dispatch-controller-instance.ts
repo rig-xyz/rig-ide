@@ -48,9 +48,20 @@ function realDeps(): SpacesDispatchControllerDeps {
 
 export const spacesDispatchController = new SpacesDispatchController(realDeps());
 
-/** The renderer-facing half: the Room's session card Stop button. */
+/** The renderer-facing half: the Room's session card Stop button and owner approvals. */
 export const rigSpacesDispatchController = createRPCController({
   stopRun: async ({ runId }: { runId: string }): Promise<{ stopped: boolean }> => ({
     stopped: await spacesDispatchController.stopRun(runId),
+  }),
+  resolvePermission: async ({
+    runId,
+    requestId,
+    optionId,
+  }: {
+    runId: string;
+    requestId: string;
+    optionId: string;
+  }): Promise<{ resolved: boolean }> => ({
+    resolved: await spacesDispatchController.resolvePermission(runId, requestId, optionId),
   }),
 });
