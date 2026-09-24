@@ -42,6 +42,8 @@ export function newSessionCard(): SessionCard {
     outputs: [],
     steps: [],
     finalAnswer: '',
+    plan: [],
+    thinking: '',
     permissions: { pending: [], decided: [] },
     lastSeq: 0,
     model: null,
@@ -245,6 +247,22 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
       });
       break;
     }
+    case 'agent_thought_chunk': {
+      const content = p.content as { type?: string; text?: string } | undefined;
+      if (content && content.type === 'text' && typeof content.text === 'string') state.thinking += content.text;
+      break;
+    }
+    case 'plan': {
+      if (!Array.isArray(p.entries)) break;
+      state.plan = p.entries.flatMap((raw: unknown) => {
+        const entry = raw as Record<string, unknown> | null;
+        if (!entry || typeof entry.content !== 'string') return [];
+        const status =
+          entry.status === 'completed' || entry.status === 'in_progress' ? entry.status : ('pending' as const);
+        return [{ content: entry.content, status }];
+      });
+      break;
+    }
     case 'run_model': {
       if (typeof p.model === 'string' && p.model) state.model = p.model;
       break;
@@ -265,8 +283,7 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
       break;
     }
     default:
-      // plan / plan_update / user_message_chunk / agent_thought_chunk /
-      // available_commands_update / session_info_update / usage_update /
+      // user_message_chunk / available_commands_update / session_info_update / usage_update /
       // current_mode_update / etc — not part of the v1 card, forwarded and
       // stored elsewhere, just not projected here.
       break;

@@ -149,6 +149,34 @@ describe('projectSessionCard — against real exported fixtures', () => {
     ]);
   });
 
+  it('keeps the latest plan and the accumulated thinking', () => {
+    const card = projectSessionCard([
+      { seq: 1, kind: 'agent_thought_chunk', payload: { content: { type: 'text', text: 'Look at ' } } },
+      { seq: 2, kind: 'agent_thought_chunk', payload: { content: { type: 'text', text: 'the history.' } } },
+      {
+        seq: 3,
+        kind: 'plan',
+        payload: { entries: [{ content: 'Read the doc', status: 'in_progress' }, { content: 'Answer', status: 'pending' }] },
+      },
+      {
+        seq: 4,
+        kind: 'plan',
+        payload: {
+          entries: [
+            { content: 'Read the doc', status: 'completed' },
+            { content: 'Answer', status: 'in_progress' },
+            { status: 'pending' },
+          ],
+        },
+      },
+    ]);
+    expect(card.thinking).toBe('Look at the history.');
+    expect(card.plan).toEqual([
+      { content: 'Read the doc', status: 'completed' },
+      { content: 'Answer', status: 'in_progress' },
+    ]);
+  });
+
   it('replays relay-coalesced chunk runs, so the final answer is not lost', () => {
     const chunk = (text: string) => ({ messageId: 'm1', content: { type: 'text', text } });
     const card = projectSessionCard([

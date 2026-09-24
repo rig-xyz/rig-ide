@@ -100,6 +100,12 @@ export interface SessionPermissionDecided {
 
 export type SessionStatus = 'running' | 'waiting' | 'done' | 'stopped' | 'failed';
 
+/** One entry of the plan an agent publishes (ACP `plan`): what it means to do, and how far along it is. */
+export interface SessionPlanEntry {
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+}
+
 /** The pure projection of a run's event log — what the session card renders. */
 export interface SessionCard {
   status: SessionStatus;
@@ -111,6 +117,10 @@ export interface SessionCard {
   outputs: SessionOutput[];
   steps: SessionStep[];
   finalAnswer: string;
+  /** The agent's latest plan, replaced whole on every update; empty when it never published one. */
+  plan: SessionPlanEntry[];
+  /** The agent's visible reasoning, accumulated across the turn. */
+  thinking: string;
   permissions: {
     pending: SessionPermissionPending[];
     decided: SessionPermissionDecided[];

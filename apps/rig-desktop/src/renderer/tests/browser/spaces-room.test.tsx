@@ -307,6 +307,60 @@ describe('Session card — approvals belong to the owner', () => {
   });
 });
 
+describe('Session card — plan and thinking', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  const meta: SessionRunMeta = {
+    id: 'run-plan',
+    agent: 'claude',
+    owner: 'alice',
+    model: 'sonnet',
+    title: '',
+    status: 'running',
+    startedAt: new Date().toISOString(),
+    endedAt: null,
+  };
+  const events: SessionEvent[] = [
+    { seq: 1, kind: 'agent_thought_chunk', payload: { content: { type: 'text', text: 'First the doc. Then the history' } } },
+    {
+      seq: 2,
+      kind: 'plan',
+      payload: { entries: [{ content: 'Read the doc', status: 'completed' }, { content: 'Check history', status: 'in_progress' }] },
+    },
+  ];
+
+  it('shows the plan while running, and a glimpse of the thinking in the live line', async () => {
+    await act(async () => {
+      root.render(<SessionCard meta={meta} events={events} owner={undefined} />);
+    });
+    expect(host.querySelector('[data-testid="session-plan"]')?.textContent).toContain('1 of 2');
+    expect(host.querySelector('[data-testid="session-live-line"]')?.textContent).toContain('Then the history');
+  });
+
+  it('folds thinking and plan into the summary once done', async () => {
+    const done: SessionEvent[] = [...events, { seq: 3, kind: 'turn_ended', payload: { status: 'done' } }];
+    await act(async () => {
+      root.render(<SessionCard meta={{ ...meta, status: 'done' }} events={done} owner={undefined} />);
+    });
+    expect(host.querySelector('[data-testid="session-plan"]')).toBeNull();
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="session-summary"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(host.querySelector('[data-testid="session-plan"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="session-thinking"]')?.textContent).toContain('6 words');
+  });
+});
+
 describe('Room transcript — doc comment threads', () => {
   const msg = (id: string, extra: Partial<RoomMessage>): RoomMessage => ({
     id,

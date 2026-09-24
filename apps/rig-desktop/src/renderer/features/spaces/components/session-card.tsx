@@ -30,6 +30,7 @@ import type {
   SessionOutput,
   SessionPermissionDecided,
   SessionPermissionPending,
+  SessionPlanEntry,
   SessionRunMeta,
   SessionStep,
 } from '../types';
@@ -187,6 +188,82 @@ function StepList({
       ))}
     </ul>
   );
+}
+
+/** The agent's own plan: how far along, then each entry done, in progress, or ahead. */
+function PlanBlock({ plan }: { plan: SessionPlanEntry[] }) {
+  const done = plan.filter((e) => e.status === 'completed').length;
+  return (
+    <div className="flex flex-col gap-1.5" data-testid="session-plan">
+      <div className="flex items-center gap-2 text-xs">
+        <span className="font-medium text-text-secondary">Plan</span>
+        <span className="text-text-muted tabular-nums">
+          {done} of {plan.length}
+        </span>
+        <span className="bg-bg-3 h-1 w-16 overflow-hidden rounded-full">
+          <span
+            className="bg-accent block h-full rounded-full transition-[width] duration-300"
+            style={{ width: `${plan.length ? (done / plan.length) * 100 : 0}%` }}
+          />
+        </span>
+      </div>
+      <ul className="flex flex-col">
+        {plan.map((entry, i) => (
+          <li key={i} className="flex min-h-6 items-center gap-2 text-xs">
+            {entry.status === 'completed' ? (
+              <Check className="size-3.5 shrink-0 text-success" strokeWidth={1.5} />
+            ) : entry.status === 'in_progress' ? (
+              <DotMatrix state="planning" size="sm" className="mx-0.5" />
+            ) : (
+              <span className="border-text-muted mx-[3px] size-2 shrink-0 rounded-full border" />
+            )}
+            <span
+              className={cn(
+                'min-w-0',
+                entry.status === 'completed' ? 'text-text-muted line-through decoration-text-muted/50' : 'text-text-secondary',
+                entry.status === 'in_progress' && 'text-text-primary'
+              )}
+            >
+              {entry.content}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** The agent's reasoning, folded away by default. */
+function ThinkingBlock({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return (
+    <div className="flex flex-col gap-1" data-testid="session-thinking">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex h-6 w-fit items-center gap-1.5 text-xs text-text-muted transition-colors hover:text-text-primary"
+      >
+        <Brain className="size-3.5" strokeWidth={1.5} />
+        Thinking
+        <span className="tabular-nums">· {words} words</span>
+        <ChevronRight className={cn('size-3 transition-transform duration-150', open && 'rotate-90')} strokeWidth={1.5} />
+      </button>
+      {open && (
+        <p className="border-border-hairline ml-1.5 border-l pl-3 text-xs leading-relaxed whitespace-pre-wrap text-text-muted">
+          {text.trim()}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The last sentence of a stream of text, for a one-line glimpse. */
+function lastSentence(text: string): string {
+  const trimmed = text.trim();
+  const parts = trimmed.split(/(?<=[.!?])\s+/);
+  return (parts[parts.length - 1] ?? trimmed).slice(-140);
 }
 
 /** The owner's approval ask: what it wants to do, the exact command or target, and the choices. */
@@ -377,17 +454,20 @@ export function SessionCard({
             >
               <DotMatrix state={liveMatrix} />
               <span className="active-shimmer-muted shrink-0">{liveLabel}</span>
-              {card.currentStep && !pending && (
+              {card.currentStep && !pending ? (
                 <span className="min-w-0 truncate text-xs text-text-primary">
                   {card.currentStep.title ?? card.currentStep.toolCallId}
                 </span>
-              )}
+              ) : !pending && card.thinking && !card.finalAnswer ? (
+                <span className="min-w-0 truncate text-xs text-text-muted italic">{lastSentence(card.thinking)}</span>
+              ) : null}
               <span className="shrink-0 text-2xs text-text-muted tabular-nums">{elapsed}</span>
             </div>
+            {card.plan.length > 0 && <PlanBlock plan={card.plan} />}
             <StepList card={card} ownerName={ownerName} limit={3} />
           </>
         ) : (
-          (card.steps.length > 0 || status !== 'done') && (
+          (card.steps.length > 0 || card.plan.length > 0 || card.thinking.trim() !== '' || status !== 'done') && (
             <div className="flex flex-col gap-1">
               <button
                 type="button"
@@ -407,6 +487,8 @@ export function SessionCard({
               </button>
               {expanded && (
                 <>
+                  {card.thinking.trim() && <ThinkingBlock text={card.thinking} />}
+                  {card.plan.length > 0 && <PlanBlock plan={card.plan} />}
                   <StepList card={card} ownerName={ownerName} />
                   <button
                     type="button"
