@@ -55,17 +55,21 @@ export interface SpacesAcpSessions {
     cwd: string;
   }): Promise<Result<void, string>>;
   /**
-   * Enqueues one prompt; safe whether the session is idle or already busy —
-   * never blocks on the turn it starts or joins. Resolves with the queued
-   * prompt's own `turnId`, the same id that will label its `turn_start`/
-   * `turn_end` markers on `subscribeRaw`'s stream — the caller's one
-   * guaranteed way to bind this specific request to exactly its own turn.
+   * Submits one prompt: starts a turn when the session is idle, or queues
+   * it behind the running one. Resolves as soon as it's submitted, never
+   * waiting for the turn. `turnId` is the id its `turn_start`/`turn_end`
+   * markers will carry when known up front, else null (dispatch then binds
+   * the oldest unclaimed request to the next `turn_start`, which is safe
+   * because the session runs its prompts one at a time, in order).
+   * `onRejected` fires if the runtime refuses the prompt before any turn
+   * starts, so the request doesn't wait forever.
    */
   queuePrompt(
     conversationId: string,
     text: string,
-    hiddenContext?: string
-  ): Promise<Result<{ turnId: string }, string>>;
+    hiddenContext?: string,
+    onRejected?: (reason: string) => void
+  ): Promise<Result<{ turnId: string | null }, string>>;
   /** Best-effort: asks the runtime to cancel whatever turn is currently running. */
   cancelTurn(conversationId: string): Promise<void>;
   /**
@@ -79,9 +83,9 @@ export interface SpacesAcpSessions {
   ): Promise<() => void>;
   /**
    * Registers an observer for this conversation's pending ACP permission
-   * requests. Must be called (and resolved) BEFORE `startSession`, same
-   * ordering requirement as `subscribeRaw`, so a request raised on the very
-   * first turn is never missed. Returns an unsubscribe function.
+   * requests. Call it after `startSession` (the session-state topic only
+   * exists once the session does) and before the first prompt. Returns an
+   * unsubscribe function.
    */
   subscribePendingPermissions(
     conversationId: string,
@@ -337,16 +341,18 @@ export function createSpacesDispatcher(deps: {
       current: null,
       heldPermissions: new Map(),
     };
-    // Subscribe BEFORE the session exists so nothing from the very first
-    // turn — including its very first raw event/permission request — is
-    // missed.
+    // Raw events: subscribe BEFORE the session exists so nothing from the
+    // very first turn is missed (the raw log is created on first subscribe).
     await deps.acp.subscribeRaw(conversationId, (raw) => forwardRaw(session, raw));
-    await deps.acp.subscribePendingPermissions(conversationId, (request) =>
-      holdPermission(session, request)
-    );
 
     const started = await deps.acp.startSession({ conversationId, providerId, cwd });
     if (!started.success) return err(started.error);
+
+    // Permissions: the session-state topic only exists once the session
+    // does. Nothing is missed: no turn has been prompted yet.
+    await deps.acp.subscribePendingPermissions(conversationId, (request) =>
+      holdPermission(session, request)
+    );
 
     sessions.set(key, session);
     return ok(session);
@@ -412,7 +418,14 @@ export function createSpacesDispatcher(deps: {
     const queued = await deps.acp.queuePrompt(
       session.conversationId,
       request.prompt,
-      spacesHiddenContext(request)
+      spacesHiddenContext(request),
+      (reason) => {
+        const idx = session.pending.indexOf(turn);
+        if (idx === -1) return; // already started; its turn_end settles it
+        session.pending.splice(idx, 1);
+        log.warn('Rig spaces dispatch: the runtime rejected a prompt', { runId: turn.runId, reason });
+        void finalizeTurn(turn, 'failed');
+      }
     );
     if (!queued.success) {
       const idx = session.pending.indexOf(turn);
@@ -423,7 +436,7 @@ export function createSpacesDispatcher(deps: {
     // Stamp the turnId even if a fast `turn_start` already claimed this
     // entry (see `claimTurn`'s own doc comment) — same value either way,
     // and a no-op in the common case where `queuePrompt` resolves first.
-    turn.turnId = queued.data.turnId;
+    if (queued.data.turnId) turn.turnId = queued.data.turnId;
 
     return { runId: created.data.id };
   }
@@ -508,13 +521,21 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
       return result.success ? ok(undefined) : err(describeAcpError(result.error));
     },
 
-    async queuePrompt(conversationId, text, hiddenContext) {
+    async queuePrompt(conversationId, text, hiddenContext, onRejected) {
       const client = await getClient();
-      const result = await client.queuePrompt({
-        conversationId,
-        prompt: hiddenContext ? { text, hiddenContext } : { text },
-      });
-      return result.success ? ok({ turnId: result.data.turnId }) : err(describeAcpError(result.error));
+      // `sendPrompt`, not `queuePrompt`: the runtime's queue only drains when
+      // a turn ends, so a prompt queued on an idle session never starts.
+      // `sendPrompt` starts it when idle (or queues it when busy), and only
+      // resolves once the turn is over, so don't wait for it here.
+      void client
+        .sendPrompt({ conversationId, prompt: hiddenContext ? { text, hiddenContext } : { text } })
+        .then(
+          (result) => {
+            if (!result.success) onRejected?.(describeAcpError(result.error));
+          },
+          (error: unknown) => onRejected?.(String(error))
+        );
+      return ok({ turnId: null });
     },
 
     async cancelTurn(conversationId) {

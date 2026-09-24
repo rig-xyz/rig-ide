@@ -147,8 +147,14 @@ function makeFakeAcp() {
   let startResult: Result<void, string> = ok(undefined);
   let turnCounter = 0;
   /** When set, overrides the default (immediate, auto-incrementing turnId) `queuePrompt` behaviour. */
-  let queuePromptImpl: ((conversationId: string, text: string) => Promise<Result<{ turnId: string }, string>>) | null =
-    null;
+  let queuePromptImpl:
+    | ((
+        conversationId: string,
+        text: string,
+        hiddenContext?: string,
+        onRejected?: (reason: string) => void
+      ) => Promise<Result<{ turnId: string | null }, string>>)
+    | null = null;
 
   const acp: SpacesAcpSessions = {
     async startSession(input) {
@@ -156,9 +162,9 @@ function makeFakeAcp() {
       started.push(input);
       return startResult;
     },
-    async queuePrompt(conversationId, text, hiddenContext) {
+    async queuePrompt(conversationId, text, hiddenContext, onRejected) {
       callOrder.push(`queuePrompt:${conversationId}`);
-      if (queuePromptImpl) return queuePromptImpl(conversationId, text);
+      if (queuePromptImpl) return queuePromptImpl(conversationId, text, hiddenContext, onRejected);
       const turnId = `turn-${++turnCounter}`;
       queued.push({ conversationId, text, turnId, hiddenContext });
       return ok({ turnId });
@@ -191,7 +197,12 @@ function makeFakeAcp() {
     setStartResult: (r: Result<void, string>) => (startResult = r),
     /** Replaces `queuePrompt`'s default immediate-resolve behaviour, e.g. to control exactly when it resolves relative to raw-stream markers. */
     setQueuePromptImpl: (
-      impl: (conversationId: string, text: string) => Promise<Result<{ turnId: string }, string>>
+      impl: (
+        conversationId: string,
+        text: string,
+        hiddenContext?: string,
+        onRejected?: (reason: string) => void
+      ) => Promise<Result<{ turnId: string | null }, string>>
     ) => (queuePromptImpl = impl),
     emitTurnStart: (conversationId: string, turnId: string) =>
       rawHandlers.get(conversationId)?.({ kind: 'turn_start', turnId }),
@@ -205,7 +216,7 @@ function makeFakeAcp() {
 }
 
 describe('createSpacesDispatcher', () => {
-  it('starts a fresh persistent session, subscribing to raw events/permissions before starting it', async () => {
+  it('starts a fresh persistent session, subscribing to raw events first and permissions before the first prompt', async () => {
     const { api, createdRuns, patchedRequests } = makeFakeApi();
     const fake = makeFakeAcp();
     const { dispatch } = createSpacesDispatcher({
@@ -223,14 +234,13 @@ describe('createSpacesDispatcher', () => {
     expect(fake.queued.map((q) => ({ conversationId: q.conversationId, text: q.text }))).toEqual([
       { conversationId: fake.started[0].conversationId, text: 'do the thing' },
     ]);
-    // Subscriptions happen before the session starts.
+    // Raw events subscribe before the session starts; permissions after it
+    // exists (its state topic doesn't before) but before the first prompt.
     const conversationId = fake.started[0].conversationId;
-    expect(fake.callOrder.indexOf(`subscribeRaw:${conversationId}`)).toBeLessThan(
-      fake.callOrder.indexOf(`startSession:${conversationId}`)
-    );
-    expect(fake.callOrder.indexOf(`subscribePendingPermissions:${conversationId}`)).toBeLessThan(
-      fake.callOrder.indexOf(`startSession:${conversationId}`)
-    );
+    const at = (call: string) => fake.callOrder.indexOf(`${call}:${conversationId}`);
+    expect(at('subscribeRaw')).toBeLessThan(at('startSession'));
+    expect(at('startSession')).toBeLessThan(at('subscribePendingPermissions'));
+    expect(at('subscribePendingPermissions')).toBeLessThan(at('queuePrompt'));
     // Nothing settled yet — the turn hasn't even started.
     expect(patchedRequests).toEqual([]);
   });
@@ -248,6 +258,23 @@ describe('createSpacesDispatcher', () => {
     ]);
     expect(fake.queued[0].hiddenContext).toContain('shared rig space');
     expect(fake.queued[0].text).toBe(makeRequest().prompt);
+  });
+
+  it('fails the request when the runtime rejects the prompt before any turn starts', async () => {
+    const { api, patchedRequests } = makeFakeApi();
+    const fake = makeFakeAcp();
+    let reject: ((reason: string) => void) | undefined;
+    fake.setQueuePromptImpl(async (_conversationId, _text, _hidden, onRejected) => {
+      reject = onRejected;
+      return ok({ turnId: null });
+    });
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+
+    const result = await dispatch(makeRequest());
+    if ('failed' in result) throw new Error('expected success');
+    reject?.('invalid_state');
+
+    await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: makeRequest().id, status: 'failed' }]));
   });
 
   it('reuses the same persistent session for a second request to the same space/owner/agent', async () => {
