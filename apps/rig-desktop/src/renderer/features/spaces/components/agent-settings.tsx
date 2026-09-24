@@ -442,14 +442,17 @@ export function AgentConfigRow({
               </span>
             )}
             {api.remember && (
-              <label className="ml-auto flex cursor-pointer items-center gap-1.5 hover:text-text-primary">
+              <label
+                className="ml-auto flex cursor-pointer items-center gap-1.5 hover:text-text-primary"
+                title={`Picks become your default for ${AGENT_NAME[agent]} in new chats and spaces`}
+              >
                 <input
                   type="checkbox"
                   checked={everywhere}
                   onChange={(e) => setEverywhere(e.target.checked)}
                   className="accent-accent size-3"
                 />
-                My default everywhere
+                Set as default
               </label>
             )}
           </div>
