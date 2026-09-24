@@ -681,30 +681,32 @@ Tick items off here as they land.
   **Rebuild them after any runtime/contract change** (`pnpm build` in each).
 
 **Open. Cheap, likely to bite:**
-- [ ] The rig skill still says to reply via `rig chat send` when @-mentioned. Add an "in a space" section and bump `SKILL_VERSION` (rig repo, `bin/postinstall.mjs`).
+- [x] Rig skill "In a space" section, SKILL_VERSION 15 (rig `feat/spaces-skill` 03cb164).
 - [ ] Silent failures: a request is claimed before the folder check, and failures post nothing. Check the folder first; post a `system` message on failure.
-- [ ] Doc comments leak into the Room feed as plain bubbles (filter out `path`/`parentId` rows); `author.kind` is dropped, so agent posts look human.
-- [ ] Presence and typing: `setTyping` exists but isn't wired; `Member.online` is always "here".
+- [x] Doc comments show in the Room as comment lines and threads; agent replies are attributed to the agent.
+- [x] Presence and typing via Yjs awareness; away members dim in the panel.
 - [ ] The card header shows model "unknown": pass the model to `createSession`.
-- [ ] The agent busy dot never lights (no live `agent_busy_changed`).
+- [x] Agent rows pulse "working" while one of your runs is running.
 
 - [x] Doc comment threads are one unit in the Room: comment + quote, replies and the agent's card grouped, older replies folded (the card's context is its thread).
 - [x] Doc margin names resolve via the member list (name, else email prefix) instead of "someone".
 - [ ] Narrow windows: the Room and the doc squeeze each other; responsive pass (Dylan: later).
 
 **Open. Medium:**
-- [ ] Session scope and cost: a one-line answer loads ~51k tokens of context (~$0.37). Decide when a request reuses the persistent session and when it starts a fresh, lean one (Dylan, 2026-09-23). Trim what each turn loads (global instructions, skills, tool lists).
+- [x] Session scope decided (Sep 24): one session per person, per model, per space; Claude compacts; personal setup kept; named agents post-MVP.
+- [ ] Cost: ~36–51k tokens a turn. A per-turn token log, then trimming, is still open.
 - [x] Space memory across restarts: each persistent session's agent session id is saved in `userData/spaces-sessions.json`, and a restart resumes it (ACP `session/load`). Verified live: `[session/load] resume=<id>`, 2 messages replayed. Agents also see the last 20 room messages.
 - [ ] "Why 41 → 34": wire `rig history` and the provenance route across the whole space; add a Sources row on the card.
 - [ ] Skills in the space card and the `/` palette: expose the manifest's `.claude/skills/*` through a route.
 - [ ] Claude inviting people: the invite route is owner-only and the skill requires a go-ahead; there's no invite room message.
-- [ ] Doc comment `@claude` goes to the separate comment agent, not the space session.
+- [x] Doc comment `@claude` in a space goes to your room agent; approvals in margin and card.
 - [ ] Replying to a card (`parentId` dropped; no reply UI).
 - [ ] Attach button and doc import aren't wired.
 
 - [ ] A folder made outside the app (e.g. `rig join`/`rig init` in a terminal) isn't known to it, so Home offers "Download" and creates a second copy (`growth-2`). Detect existing folders in the Rig home by binding id before offering Download.
 
 **Open. Large / product:**
-- [ ] Space lifecycle: `#name` create, rail list, promote to rig (today the Room only opens on a bound rig).
+- [x] Space create/name (#name), Spaces rail group, Room-first opening.
+- [ ] "Promote to rig" UI (relay PATCH kind exists).
 - [ ] Per-space connectors (sharing secrets needs design).
 - [ ] Live co-editing with named cursors (no Yjs editor binding yet).
