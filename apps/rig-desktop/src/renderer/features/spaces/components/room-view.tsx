@@ -259,14 +259,29 @@ export function RoomView({
 
   // Every hook sits above the early returns below: React needs the same
   // hooks in the same order on every render.
+  const configCache = useRef(new Map<AgentKind, ReturnType<AgentSettingsApi['load']>>());
   const agentSettingsApi = useMemo<AgentSettingsApi | null>(
     () =>
       source instanceof RelayRoomSource
         ? {
-            load: async (agent) => {
-              const result = await rpc.rig.spacesDispatch.agentConfig({ bindingId, agent }).catch(() => null);
-              if (!result) return { error: "Couldn't reach this agent's settings." };
-              return result.success ? result.data : { error: result.error };
+            // One fetch per agent, shared by every menu and pill in the Room;
+            // a failed fetch isn't cached, so the next open tries again.
+            load: (agent) => {
+              const cached = configCache.current.get(agent);
+              if (cached) return cached;
+              const pending = rpc.rig.spacesDispatch
+                .agentConfig({ bindingId, agent })
+                .catch(() => null)
+                .then((result) => {
+                  if (!result) return { error: "Couldn't reach this agent's settings." };
+                  return result.success ? result.data : { error: result.error };
+                })
+                .then((loaded) => {
+                  if ('error' in loaded) configCache.current.delete(agent);
+                  return loaded;
+                });
+              configCache.current.set(agent, pending);
+              return pending;
             },
             remember: (agent, change) => {
               void rpc.rig.settings
@@ -282,6 +297,7 @@ export function RoomView({
                 .setAgentConfig({ bindingId, agent, change })
                 .catch(() => null);
               if (!result) return { error: "Couldn't change this agent's settings." };
+              if (result.success) configCache.current.set(agent, Promise.resolve(result.data));
               return result.success ? result.data : { error: result.error };
             },
           }

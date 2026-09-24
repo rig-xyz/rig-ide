@@ -196,9 +196,22 @@ function SettingPill({
           strokeWidth={1.5}
         />
       </button>
-      <Popover anchor={ref} open={open} onClose={() => setOpen(false)} align="left" minWidth={260} role="dialog">
-        <div className="flex w-72 flex-col" data-testid={`agent-setting-menu-${dimension}`}>
-          <div className="flex flex-col p-1">
+      <Popover
+        anchor={ref}
+        open={open}
+        onClose={() => setOpen(false)}
+        align="left"
+        minWidth={300}
+        estimatedWidth={300}
+        role="dialog"
+        className="rounded-card overflow-x-hidden py-0"
+      >
+        <div className="flex w-full flex-col" data-testid={`agent-setting-menu-${dimension}`}>
+          <div className="flex items-baseline justify-between px-3 pt-2.5 pb-1">
+            <span className="text-xs font-medium text-text-secondary">{DIMENSION_TITLE[dimension]}</span>
+            <span className="text-2xs text-text-muted">from the next turn</span>
+          </div>
+          <div className="flex flex-col px-1 pb-1">
             {busy && !group && <p className="px-2 py-2 text-xs text-text-muted">Loading…</p>}
             {error && <p className="px-2 py-2 text-xs text-danger">{error}</p>}
             {group?.options.map((option) => {
@@ -215,16 +228,12 @@ function SettingPill({
                   onClick={() => void choose(option.id)}
                   title={option.description}
                   className={cn(
-                    'flex w-full items-center gap-2.5 rounded-control px-2 py-1.5 text-left transition-colors disabled:opacity-60',
-                    selected ? 'bg-bg-2' : 'hover:bg-bg-2',
-                    armed && 'bg-warning/10'
+                    'flex w-full min-w-0 items-center gap-2.5 rounded-control px-2 py-1.5 text-left transition-colors disabled:opacity-60',
+                    armed ? 'bg-warning/10' : 'hover:bg-bg-2'
                   )}
                 >
                   {Icon && (
-                    <Icon
-                      className={cn('size-3.5 shrink-0', dangerous ? 'text-warning' : 'text-text-muted')}
-                      strokeWidth={1.5}
-                    />
+                    <Icon className={cn('size-3.5 shrink-0', dangerous ? 'text-warning' : 'text-text-muted')} strokeWidth={1.5} />
                   )}
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className={cn('truncate text-sm', dangerous ? 'text-warning' : 'text-text-primary')}>
@@ -234,7 +243,7 @@ function SettingPill({
                       <span className={cn('truncate text-xs', armed ? 'text-warning' : 'text-text-muted')}>{description}</span>
                     )}
                   </span>
-                  {selected && <Check className="size-3.5 shrink-0 text-accent" strokeWidth={2} />}
+                  <Check className={cn('size-3.5 shrink-0 text-accent', !selected && 'invisible')} strokeWidth={2} />
                 </button>
               );
             })}
@@ -242,20 +251,17 @@ function SettingPill({
               <p className="px-2 py-2 text-xs text-text-muted">This agent doesn't offer this setting.</p>
             )}
           </div>
-          <div className="border-border-hairline flex items-center gap-2 border-t px-3 py-2">
-            {api.remember && (
-              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-xs text-text-secondary">
-                <input
-                  type="checkbox"
-                  checked={everywhere}
-                  onChange={(e) => setEverywhere(e.target.checked)}
-                  className="accent-accent size-3.5"
-                />
-                <span className="truncate">Default for all my {AGENT_NAME[agent]} sessions</span>
-              </label>
-            )}
-            <span className="ml-auto shrink-0 text-2xs text-text-muted">Next turn</span>
-          </div>
+          {api.remember && (
+            <label className="border-border-hairline flex cursor-pointer items-center gap-2 border-t px-3 py-2 text-xs text-text-secondary hover:text-text-primary">
+              <input
+                type="checkbox"
+                checked={everywhere}
+                onChange={(e) => setEverywhere(e.target.checked)}
+                className="accent-accent size-3.5 shrink-0"
+              />
+              Use as my default for {AGENT_NAME[agent]} everywhere
+            </label>
+          )}
         </div>
       </Popover>
     </>
@@ -273,6 +279,7 @@ export function AgentSettings({
   usage,
   compact = false,
   tinted = false,
+  prefetch = false,
 }: {
   agent: AgentKind;
   /** The model the run reported, shown before the agent's own list is loaded. */
@@ -282,16 +289,30 @@ export function AgentSettings({
   compact?: boolean;
   /** The composer pill's look: plain text, tinted on hover, no context ring. */
   tinted?: boolean;
+  /** Fetch the choices right away (you're about to ask this agent); otherwise on first hover. */
+  prefetch?: boolean;
 }) {
   const api = useContext(AgentSettingsContext);
   const [config, setConfig] = useState<AgentConfig | null>(null);
+  // The choices are fetched once per agent and shared (the Room caches
+  // them), so menus open with their options already there.
+  const warm = () => {
+    if (!api || config) return;
+    void api.load(agent).then((loaded) => {
+      if (!('error' in loaded)) setConfig(loaded);
+    });
+  };
+  useEffect(() => {
+    if (prefetch) warm();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefetch, agent, api]);
   if (!api) return usage ? <ContextRing usage={usage} /> : null;
   const nameOf = (dimension: Dimension, fallback: string) => {
     const group = config?.[dimension];
     return group?.options.find((o) => o.id === group.selected)?.name ?? fallback;
   };
   return (
-    <span className="flex items-center gap-0.5" data-testid="agent-settings">
+    <span className="flex items-center gap-0.5" data-testid="agent-settings" onMouseEnter={warm} onFocus={warm}>
       <SettingPill
         agent={agent}
         dimension="model"

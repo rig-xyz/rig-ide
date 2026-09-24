@@ -253,7 +253,11 @@ export function Composer({
 
       {mentioning && (
         // Who you might mean, in the same pill language: ↑/↓ moves, Tab or ↵ picks.
-        <div className="mb-2 flex flex-wrap items-center gap-2 px-1" role="listbox" data-testid="mention-palette">
+        <div
+          className="mb-2 flex items-center gap-2 overflow-x-auto px-1 [scrollbar-width:none]"
+          role="listbox"
+          data-testid="mention-palette"
+        >
           {items.map((item, i) => (
             <button
               key={item.key}
@@ -263,8 +267,9 @@ export function Composer({
               onMouseEnter={() => setActive(i)}
               onMouseDown={(e) => e.preventDefault()}
               onClick={item.apply}
+              ref={i === active ? (el) => el?.scrollIntoView({ block: 'nearest', inline: 'nearest' }) : undefined}
               className={cn(
-                'popover-in shadow-float flex h-[30px] items-center gap-1.5 rounded-full border px-2.5 text-xs whitespace-nowrap backdrop-blur-md transition-colors',
+                'popover-in shadow-float flex h-[30px] shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs whitespace-nowrap backdrop-blur-md transition-colors',
                 i === active
                   ? 'border-border-strong bg-[var(--pill-fill)] text-text-primary'
                   : 'border-border-hairline border-dashed bg-[var(--pill-fill)]/60 text-text-secondary'
@@ -272,7 +277,7 @@ export function Composer({
             >
               <span className="flex size-5 items-center justify-center">{item.icon}</span>
               <span>@{item.label}</span>
-              {item.detail && <span className="text-text-muted">{item.detail}</span>}
+              {i === active && item.detail && <span className="text-text-muted">{item.detail}</span>}
               {i === active && (
                 <kbd className="border-border-strong ml-0.5 rounded border px-1 font-mono text-2xs leading-4 text-text-muted">Tab</kbd>
               )}
@@ -309,7 +314,7 @@ export function Composer({
               </span>
               <b className="font-medium text-text-primary">{AGENT_NAME[agentPill]}</b>
               <span className="size-[3px] rounded-full bg-text-muted/60" aria-hidden />
-              <AgentSettings agent={agentPill} model={agentModels?.[agentPill] ?? null} tinted />
+              <AgentSettings agent={agentPill} model={agentModels?.[agentPill] ?? null} tinted prefetch />
             </ContextPill>
           )}
           {docPill && (
