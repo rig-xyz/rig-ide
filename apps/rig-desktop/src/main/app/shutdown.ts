@@ -12,6 +12,7 @@ import { updateService } from '@main/core/updates/update-service';
 import { log } from '@main/lib/logger';
 import { telemetryService } from '@main/lib/telemetry';
 import { disposeRigBridge } from '@main/rig/intent-bridge';
+import { spacesDispatchController } from '@main/rig/spaces/dispatch-controller-instance';
 import { projectManager } from '../core/projects/project-manager';
 import { appScope } from './app-scope';
 
@@ -50,6 +51,7 @@ export async function runQuitCleanup(): Promise<void> {
   prSyncScheduler.dispose();
   remoteTmuxReaperService.dispose();
   disposeRigBridge();
+  spacesDispatchController.dispose();
 
   // critical phase
   const criticalSteps: Array<[string, () => Promise<void>]> = [

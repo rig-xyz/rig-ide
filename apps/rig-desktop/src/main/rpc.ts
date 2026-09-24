@@ -56,6 +56,7 @@ import { rigSeenStateController } from './rig/seen-state';
 import { rigSessionsController } from './rig/sessions';
 import { rigSettingsController } from './rig/settings-instance';
 import { rigSpacesConnectionController } from './rig/spaces-connection';
+import { rigSpacesDispatchController } from './rig/spaces/dispatch-controller-instance';
 import { rigShareLinksController } from './rig/share-links';
 import { rigWorkspaceController } from './rig/workspace';
 
@@ -149,6 +150,10 @@ export const rpcRouter = createRPCRouter({
     // renderer the PAT itself rather than proxying every relay call, unlike
     // every other key in this namespace.
     spacesConnection: rigSpacesConnectionController,
+    // Spaces (lane 4): the Room session card's Stop button. Cancels the
+    // claimed request's ACP turn if — and only if — THIS device is the one
+    // running it; see `dispatch-controller.ts`'s own header comment.
+    spacesDispatch: rigSpacesDispatchController,
     // Public share links (mint/list/revoke) for the currently-open file —
     // its own key rather than folded into `comments` (own resource, own
     // error shape: 403 for a viewer-only member, 404 for an untracked

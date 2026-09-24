@@ -25,7 +25,12 @@ import {
 
 const FOLLOW_THRESHOLD_PX = 60;
 
-function renderItem(message: RoomMessage, snapshot: RoomSnapshot, ownId: string) {
+function renderItem(
+  message: RoomMessage,
+  snapshot: RoomSnapshot,
+  ownId: string,
+  onStopSession?: (runId: string) => void
+) {
   switch (message.meta.kind) {
     case 'text':
       return <MessageBubble message={message} snapshot={snapshot} ownId={ownId} />;
@@ -42,14 +47,34 @@ function renderItem(message: RoomMessage, snapshot: RoomSnapshot, ownId: string)
       if (!meta) return null;
       const events = snapshot.sessionEventsByRun[message.meta.runId] ?? [];
       const owner = snapshot.members.find((m) => m.id === meta.owner);
-      return <SessionCard meta={meta} events={events} owner={owner} />;
+      // Stop is only ever offered for MY agent's own session — never a
+      // teammate's, same "own agent only" rule the composer's @mention
+      // dispatch already follows. `SessionCard` itself only renders the
+      // button while the run is `running`.
+      const canStop = onStopSession && meta.owner === ownId;
+      return (
+        <SessionCard
+          meta={meta}
+          events={events}
+          owner={owner}
+          onStop={canStop ? () => onStopSession(meta.id) : undefined}
+        />
+      );
     }
     default:
       return null;
   }
 }
 
-export function RoomTranscript({ snapshot, ownId }: { snapshot: RoomSnapshot; ownId: string }) {
+export function RoomTranscript({
+  snapshot,
+  ownId,
+  onStopSession,
+}: {
+  snapshot: RoomSnapshot;
+  ownId: string;
+  onStopSession?: (runId: string) => void;
+}) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
 
@@ -88,7 +113,7 @@ export function RoomTranscript({ snapshot, ownId }: { snapshot: RoomSnapshot; ow
       <div className="mx-auto flex max-w-[44rem] flex-col gap-3 px-5 pt-6 pb-3">
         <AnimatePresence initial={false}>
           {snapshot.messages.map((message) => {
-            const node = renderItem(message, snapshot, ownId);
+            const node = renderItem(message, snapshot, ownId, onStopSession);
             if (!node) return null;
             return (
               <motion.div

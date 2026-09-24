@@ -116,6 +116,16 @@ export function RoomView({ bindingId, spaceName }: { bindingId: string; spaceNam
     });
   };
 
+  // Only meaningful against the real relay — there's nothing running to
+  // stop behind the scripted demo, so `RoomTranscript` never even offers
+  // the button in that case (see its own `onStopSession` prop).
+  const handleStopSession =
+    source instanceof RelayRoomSource
+      ? (runId: string) => {
+          void rpc.rig.spacesDispatch.stopRun({ runId });
+        }
+      : undefined;
+
   if (connectError) {
     return (
       <div className="bg-bg-0 flex h-full min-h-0 flex-col items-center justify-center gap-3 text-sm text-text-muted">
@@ -165,7 +175,7 @@ export function RoomView({ bindingId, spaceName }: { bindingId: string; spaceNam
 
       <div className="relative flex min-h-0 flex-1">
         <div className="flex min-h-0 flex-1 flex-col">
-          <RoomTranscript snapshot={snapshot} ownId={selfUserId} />
+          <RoomTranscript snapshot={snapshot} ownId={selfUserId} onStopSession={handleStopSession} />
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
             <Composer
               spaceName={snapshot.name}
