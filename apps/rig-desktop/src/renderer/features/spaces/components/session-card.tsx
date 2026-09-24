@@ -5,7 +5,7 @@ import { PermissionPrompt } from '@renderer/features/chat/permission-prompt';
 import { SafeMarkdown } from '@renderer/lib/ui/comment-markdown';
 import { cn } from '@renderer/lib/utils';
 import { agentLogoId, BrandLogo } from '../logos';
-import { projectSessionCard } from '../projection';
+import { effectiveRunStatus, projectSessionCard } from '../projection';
 import { SessionTrace } from './session-trace';
 import type { RoomMember, SessionEvent, SessionRunMeta } from '../types';
 
@@ -68,7 +68,8 @@ export function SessionCard({
   const [open, setOpen] = useState(false);
   const [resolving, setResolving] = useState<{ requestId: string; optionId: string } | null>(null);
   const card = useMemo(() => projectSessionCard(events), [events]);
-  const running = card.status === 'running';
+  const status = effectiveRunStatus(meta.status, card);
+  const running = status === 'running';
   // Approvals belong to the agent's owner: their card gets the prompt,
   // everyone else at most one muted line while it's pending, nothing once
   // it's decided. The full detail stays in the step log.
@@ -82,7 +83,7 @@ export function SessionCard({
         open ? 'max-w-[680px]' : 'max-w-[440px]'
       )}
       data-testid="session-card"
-      data-status={card.status}
+      data-status={status}
     >
       {/* header */}
       <div className="flex items-center gap-2.5">

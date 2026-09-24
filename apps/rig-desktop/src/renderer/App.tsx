@@ -568,8 +568,10 @@ export function App() {
     !!bound &&
     !!workspacesQuery.data?.success &&
     workspacesQuery.data.data.some((b) => b.id === bound.bindingId && b.kind === 'space');
+  // A space opens Room-first: the Room takes the chat panel's place in the
+  // rig layout (below), so files open beside it. No overlay.
   useEffect(() => {
-    if (boundIsSpace) setRoomPreviewOpen(true);
+    if (boundIsSpace) setRoomPreviewOpen(false);
   }, [bound?.bindingId, boundIsSpace]);
 
   // Delete-a-rig round: the currently-open rig's own binding-deleted check.
@@ -729,6 +731,48 @@ export function App() {
     setFocusedRigPane('artifact');
     setArtefact((current) => openFocusTab(current));
   }, []);
+
+  /**
+   * The Room for the bound rig. In a space it lives in the chat panel's slot:
+   * files open beside it and the pinned card shows only full-width, like a
+   * rig. As the preview overlay on a plain rig, opening a file closes it.
+   */
+  const renderRoom = (target: NonNullable<typeof bound>, { inSpace }: { inSpace: boolean }) => (
+    <RoomView
+      bindingId={target.bindingId}
+      spaceName={inSpace ? `#${target.name ?? 'space'}` : (target.name ?? 'Room')}
+      onOpenFile={(relPath) => {
+        if (!inSpace) setRoomPreviewOpen(false);
+        openFile(`${target.root.replace(/\/+$/, '')}/${relPath}`);
+      }}
+      // The space panel IS the rig's pinned card (a space is a rig binding),
+      // plus the Room's agent rows. Full-width layout only, as for rigs.
+      renderPanel={
+        inSpace && rigLayout !== 'chat'
+          ? undefined
+          : (extraRows, onlineUserIds) => (
+              <PinnedCard
+                root={target.root}
+                rootId={target.rootId}
+                bindingId={target.bindingId}
+                name={target.name}
+                syncing={target.root === syncingRoot}
+                onOpenFile={(absPath) => {
+                  if (!inSpace) setRoomPreviewOpen(false);
+                  openFile(absPath);
+                }}
+                onOpenFocus={() => {
+                  if (!inSpace) setRoomPreviewOpen(false);
+                  openFocus();
+                }}
+                extraRows={extraRows}
+                onlineUserIds={onlineUserIds}
+              />
+            )
+      }
+    />
+  );
+
 
   // Layout-switcher round: switching to split/files with no tabs open has
   // nothing to show there yet — the direct door is the focus view, same as
@@ -900,7 +944,7 @@ export function App() {
                 hiddenTabCount={rigLayout === 'chat' ? artefact.tabs.length : 0}
                 onChange={applyLayout}
               />
-              {spacesEnabled && (
+              {spacesEnabled && !boundIsSpace && (
                 <Tooltip>
                   <TooltipTrigger
                     render={
@@ -921,7 +965,7 @@ export function App() {
           ) : undefined
         }
       />
-      {bound && spacesEnabled && roomPreviewOpen && (
+      {bound && spacesEnabled && !boundIsSpace && roomPreviewOpen && (
         // Dev entry point only (Spaces lane 2): the Room UI over a recorded
         // feed, no relay dependency. Overlays the whole rig pane instead of
         // plugging into `rigLayout` — `FixtureRoomSource` owns its own
@@ -936,35 +980,7 @@ export function App() {
           >
             <X className="size-4" strokeWidth={1.5} />
           </button>
-          <RoomView
-            bindingId={bound.bindingId}
-            spaceName={boundIsSpace ? `#${bound.name ?? 'space'}` : (bound.name ?? 'Room')}
-            onOpenFile={(relPath) => {
-              setRoomPreviewOpen(false);
-              openFile(`${bound.root.replace(/\/+$/, '')}/${relPath}`);
-            }}
-            // The space panel IS the rig's pinned card (a space is a rig
-            // binding): same Changes/Files/Skills/People/Activity, plus the
-            // Room's agent rows.
-            renderPanel={(extraRows) => (
-              <PinnedCard
-                root={bound.root}
-                rootId={bound.rootId}
-                bindingId={bound.bindingId}
-                name={bound.name}
-                syncing={bound.root === syncingRoot}
-                onOpenFile={(absPath) => {
-                  setRoomPreviewOpen(false);
-                  openFile(absPath);
-                }}
-                onOpenFocus={() => {
-                  setRoomPreviewOpen(false);
-                  openFocus();
-                }}
-                extraRows={extraRows}
-              />
-            )}
-          />
+          {renderRoom(bound, { inSpace: false })}
         </div>
       )}
       <SettingsModal
@@ -1024,6 +1040,11 @@ export function App() {
               rigLayout === 'files' && 'border-border-hairline w-10 border-r'
             )}
           >
+            {boundIsSpace ? (
+              <RecoveryBoundary scope="Room">
+                {rigLayout === 'files' ? null : renderRoom(bound, { inSpace: true })}
+              </RecoveryBoundary>
+            ) : (
             <RecoveryBoundary scope="Chat panel">
               <ChatPanel
                 root={bound.root}
@@ -1040,7 +1061,8 @@ export function App() {
                 onNativeCloseActionChange={registerChatNativeClose}
               />
             </RecoveryBoundary>
-            {rigLayout === 'chat' && (
+            )}
+            {rigLayout === 'chat' && !boundIsSpace && (
               <PinnedCard
                 root={bound.root}
                 rootId={bound.rootId}

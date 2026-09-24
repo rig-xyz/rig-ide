@@ -268,3 +268,14 @@ export function projectSessionCard(events: readonly SessionEvent[]): SessionCard
   for (const event of sorted) applySessionEvent(card, event);
   return card;
 }
+
+/**
+ * The status to show for a run. The event log says "running" until it sees
+ * `turn_ended`; a run the relay already marks finished (e.g. one interrupted
+ * by an app quit and closed out later) must not keep spinning.
+ */
+export function effectiveRunStatus(metaStatus: SessionStatus, card: Pick<SessionCard, 'status'>): SessionStatus {
+  const finished = metaStatus === 'done' || metaStatus === 'failed' || metaStatus === 'stopped';
+  return card.status === 'running' && finished ? metaStatus : card.status;
+}
+

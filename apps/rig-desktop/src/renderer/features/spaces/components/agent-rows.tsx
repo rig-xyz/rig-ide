@@ -1,4 +1,4 @@
-import { projectSessionCard } from '../projection';
+import { effectiveRunStatus, projectSessionCard } from '../projection';
 import { agentLogoId, BrandLogo } from '../logos';
 import type { RoomSnapshot } from '../types';
 
@@ -21,7 +21,8 @@ export function AgentRows({ snapshot, selfUserId }: { snapshot: RoomSnapshot; se
           (meta) =>
             meta.owner === selfUserId &&
             meta.agent === agent.agent &&
-            projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? []).status === 'running'
+            effectiveRunStatus(meta.status, projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? [])) ===
+              'running'
         );
         return (
           <div

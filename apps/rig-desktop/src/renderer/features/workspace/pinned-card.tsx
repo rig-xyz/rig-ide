@@ -116,6 +116,7 @@ export function PinnedCard({
   onOpenFile,
   onOpenFocus,
   extraRows,
+  onlineUserIds,
 }: {
   root: string;
   rootId: string;
@@ -128,6 +129,8 @@ export function PinnedCard({
   onOpenFocus: () => void;
   /** Rows a host view adds under People, in the same row grammar (the Room adds your agents). */
   extraRows?: ReactNode;
+  /** Who is here right now (the Room's live presence); members not in it are dimmed. Absent: no presence shown. */
+  onlineUserIds?: ReadonlySet<string>;
 }) {
   const queryClient = useQueryClient();
   const [collapsed, setCollapsed] = useState(readCollapsed);
@@ -545,7 +548,11 @@ export function PinnedCard({
                       avatarUrl={member.avatarUrl}
                       sizeClassName="size-4"
                       textClassName="text-2xs"
-                      className={cn('ring-bg-1 ring-1', index > 0 && '-ml-1')}
+                      className={cn(
+                        'ring-bg-1 ring-1',
+                        index > 0 && '-ml-1',
+                        onlineUserIds && !onlineUserIds.has(member.userId) && 'opacity-45'
+                      )}
                     />
                   ))}
                   {members.length > 3 && (

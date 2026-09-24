@@ -11,6 +11,7 @@ import {
   EyeOff,
   FolderInput,
   FolderOpen,
+  Hash,
   FolderSearch,
   LayoutList,
   LogOut,
@@ -626,7 +627,11 @@ function LocalRigRow({
           title={row.path}
           className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left"
         >
-          <FolderOpen className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+          {row.isSpace ? (
+            <Hash className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+          ) : (
+            <FolderOpen className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+          )}
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm text-text-primary">
               {/* Attention round: the row's own dot — visible even when its
@@ -641,7 +646,6 @@ function LocalRigRow({
                   )}
                 />
               )}
-              {row.isSpace && <span className="text-text-muted">#</span>}
               {row.name ?? row.path.split('/').pop()}
             </span>
             <span className="flex min-w-0 items-center gap-1.5">
@@ -1054,12 +1058,13 @@ function RelayOnlyRigRow({
             />
             <TooltipContent side="top">{NOT_SET_UP_TOOLTIP}</TooltipContent>
           </Tooltip>
+        ) : row.isSpace ? (
+          <Hash className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
         ) : (
           <FolderOpen className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
         )}
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm text-text-primary">
-            {row.isSpace && <span className="text-text-muted">#</span>}
             {row.name}
           </span>
           {row.disambiguator && (

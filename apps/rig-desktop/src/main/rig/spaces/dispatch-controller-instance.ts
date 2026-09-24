@@ -43,6 +43,7 @@ function realDeps(): SpacesDispatchControllerDeps {
         dispatch: dispatcher.dispatch,
       });
       poller.start();
+      void dispatcher.settleInterrupted();
       return { poller, dispatcher };
     },
     setInterval: (cb, ms) => setInterval(cb, ms),

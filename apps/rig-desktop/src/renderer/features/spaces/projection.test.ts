@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FIXTURE_EVENTS, FIXTURE_RUNS, type FixtureRunKey } from './fixtures';
-import { applySessionEvent, newSessionCard, projectSessionCard } from './projection';
+import { applySessionEvent, effectiveRunStatus, newSessionCard, projectSessionCard } from './projection';
 import type { SessionEvent } from './types';
 
 const RUN_KEYS = Object.keys(FIXTURE_EVENTS) as FixtureRunKey[];
@@ -158,6 +158,14 @@ describe('projectSessionCard — against real exported fixtures', () => {
     expect(projectSessionCard([{ seq: 1, kind: 'turn_ended', payload: { stopReason: 'end_turn' } }]).status).toBe(
       'done'
     );
+  });
+
+  it("doesn't keep spinning a run the relay already marks finished", () => {
+    const running = projectSessionCard([{ seq: 1, kind: 'tool_call', payload: { toolCallId: 't1' } }]);
+    expect(running.status).toBe('running');
+    expect(effectiveRunStatus('failed', running)).toBe('failed');
+    expect(effectiveRunStatus('running', running)).toBe('running');
+    expect(effectiveRunStatus('failed', { status: 'done' })).toBe('done');
   });
 
   it('an empty event log projects to the fresh-card defaults', () => {

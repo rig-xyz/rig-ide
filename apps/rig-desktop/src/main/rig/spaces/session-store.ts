@@ -10,31 +10,53 @@ import type { SpaceSessionStore, StoredSpaceSession } from './dispatch';
  * every change; a missing or unreadable file just means "nothing to resume".
  */
 export function createFileSpaceSessionStore(filePath: string): SpaceSessionStore {
-  let entries: Record<string, StoredSpaceSession> = {};
+  type FileShape = { sessions: Record<string, StoredSpaceSession>; inFlight: Record<string, string> };
+  let data: FileShape = { sessions: {}, inFlight: {} };
   try {
-    const parsed: unknown = JSON.parse(readFileSync(filePath, 'utf8'));
-    if (parsed && typeof parsed === 'object') entries = parsed as Record<string, StoredSpaceSession>;
+    const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as Partial<FileShape> & Record<string, unknown>;
+    // Earlier files held the sessions map at the top level.
+    data =
+      parsed && typeof parsed === 'object' && 'sessions' in parsed
+        ? { sessions: parsed.sessions ?? {}, inFlight: parsed.inFlight ?? {} }
+        : { sessions: (parsed ?? {}) as Record<string, StoredSpaceSession>, inFlight: {} };
   } catch {
     // No file yet, or unreadable: start empty.
   }
 
+  const save = () => {
+    try {
+      mkdirSync(dirname(filePath), { recursive: true });
+      const tmp = `${filePath}.tmp`;
+      writeFileSync(tmp, JSON.stringify(data, null, 2));
+      renameSync(tmp, filePath);
+    } catch (error) {
+      log.warn('Rig spaces: could not save space sessions', { error: String(error) });
+    }
+  };
+
   return {
     get(key) {
-      const entry = entries[key];
+      const entry = data.sessions[key];
       return entry && typeof entry.acpSessionId === 'string' && typeof entry.conversationId === 'string'
         ? entry
         : null;
     },
     set(key, value) {
-      entries = { ...entries, [key]: value };
-      try {
-        mkdirSync(dirname(filePath), { recursive: true });
-        const tmp = `${filePath}.tmp`;
-        writeFileSync(tmp, JSON.stringify(entries, null, 2));
-        renameSync(tmp, filePath);
-      } catch (error) {
-        log.warn('Rig spaces: could not save space sessions', { error: String(error) });
-      }
+      data = { ...data, sessions: { ...data.sessions, [key]: value } };
+      save();
+    },
+    markInFlight(runId, bindingId) {
+      data = { ...data, inFlight: { ...data.inFlight, [runId]: bindingId } };
+      save();
+    },
+    clearInFlight(runId) {
+      if (!(runId in data.inFlight)) return;
+      const { [runId]: _cleared, ...rest } = data.inFlight;
+      data = { ...data, inFlight: rest };
+      save();
+    },
+    inFlight() {
+      return Object.entries(data.inFlight).map(([runId, bindingId]) => ({ runId, bindingId }));
     },
   };
 }

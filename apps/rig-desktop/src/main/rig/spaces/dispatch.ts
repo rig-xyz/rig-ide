@@ -117,6 +117,10 @@ export type StoredSpaceSession = {
 export interface SpaceSessionStore {
   get(key: string): StoredSpaceSession | null;
   set(key: string, value: StoredSpaceSession): void;
+  /** Runs started but not yet settled, so ones cut off by an app quit can be closed out on the next start. */
+  markInFlight?(runId: string, bindingId: string): void;
+  clearInFlight?(runId: string): void;
+  inFlight?(): Array<{ runId: string; bindingId: string }>;
 }
 
 type QueuedTurn = {
@@ -343,6 +347,8 @@ export function createSpacesDispatcher(deps: {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
   stopRun: (runId: string) => Promise<boolean>;
+  /** Marks runs left running by a previous app process as failed. */
+  settleInterrupted: () => Promise<void>;
   /** Runs a turn in the owner's room agent without a relay agent request (see the function's own doc). */
   runLocal: (spec: {
     bindingId: string;
@@ -392,6 +398,7 @@ export function createSpacesDispatcher(deps: {
     // aren't broadcast to the Room), so it must land before `finish`.
     turn.publisher.record('turn_ended', { status });
     await turn.publisher.finish(status);
+    deps.store?.clearInFlight?.(turn.runId);
     if (turn.requestId) {
       await markRequestSettled(
         deps.api,
@@ -601,6 +608,7 @@ export function createSpacesDispatcher(deps: {
       bindingId: spec.bindingId,
       runId: created.data.id,
     });
+    deps.store?.markInFlight?.(created.data.id, spec.bindingId);
     const turn: QueuedTurn = {
       requestId: spec.requestId,
       bindingId: spec.bindingId,
@@ -703,7 +711,23 @@ export function createSpacesDispatcher(deps: {
     return false;
   }
 
-  return { dispatch, runLocal, stopRun, resolvePermission };
+  /**
+   * Closes out runs a previous app process started but never settled (it quit
+   * mid-turn): the relay still shows them running, so their cards would spin
+   * forever. Marked failed; best-effort.
+   */
+  async function settleInterrupted(): Promise<void> {
+    for (const { runId, bindingId } of deps.store?.inFlight?.() ?? []) {
+      const patched = await deps.api.patchSession(bindingId, runId, { status: 'failed' });
+      if (!patched.success) {
+        log.warn('Rig spaces dispatch: could not close out an interrupted run', { runId, error: patched.error.message });
+        continue;
+      }
+      deps.store?.clearInFlight?.(runId);
+    }
+  }
+
+  return { dispatch, runLocal, stopRun, resolvePermission, settleInterrupted };
 }
 
 /**

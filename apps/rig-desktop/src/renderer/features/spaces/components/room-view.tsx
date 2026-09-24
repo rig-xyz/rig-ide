@@ -69,7 +69,7 @@ export function RoomView({
   /** Opens a space file (relative path) in the editor. */
   onOpenFile?: (relPath: string) => void;
   /** Renders the live space panel (the rig's pinned card), given the Room's own rows to add to it. */
-  renderPanel?: (extraRows: ReactNode) => ReactNode;
+  renderPanel?: (extraRows: ReactNode, onlineUserIds: ReadonlySet<string>) => ReactNode;
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -77,6 +77,9 @@ export function RoomView({
   const [selfUserId, setSelfUserId] = useState(FALLBACK_OWN_ID);
   const [snapshot, setSnapshot] = useState(() => source?.getSnapshot() ?? null);
   const [playing, setPlaying] = useState(false);
+  // The scripted-demo switch is a dev tool for the Room preview on plain
+  // rigs; a real space (#name) never shows it.
+  const showDemoToggle = !spaceName.startsWith('#');
 
   useEffect(() => {
     let cancelled = false;
@@ -189,6 +192,7 @@ export function RoomView({
     <div className="bg-bg-0 relative flex h-full min-h-0 flex-col" data-testid="room-view">
       <div className="border-border-hairline bg-bg-1 flex h-9 shrink-0 items-center gap-2 border-b px-3">
         <span className="text-xs font-medium text-text-primary">{snapshot.name}</span>
+        {showDemoToggle && (
         <button
           type="button"
           onClick={() => setUseFixtures((v) => !v)}
@@ -197,6 +201,7 @@ export function RoomView({
         >
           <RadioTower className="size-3.5" strokeWidth={1.5} />
         </button>
+        )}
         {useFixtures && (
           <button
             type="button"
@@ -237,8 +242,11 @@ export function RoomView({
             />
           </div>
         </div>
-        {source instanceof RelayRoomSource && renderPanel ? (
-          renderPanel(<AgentRows snapshot={snapshot} selfUserId={selfUserId} />)
+        {source instanceof RelayRoomSource ? (
+          (renderPanel?.(
+            <AgentRows snapshot={snapshot} selfUserId={selfUserId} />,
+            new Set(snapshot.members.filter((m) => m.online !== false).map((m) => m.id))
+          ) ?? null)
         ) : (
           <SpaceCard snapshot={snapshot} />
         )}
