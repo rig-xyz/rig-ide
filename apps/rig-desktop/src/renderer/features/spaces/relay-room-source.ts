@@ -165,12 +165,21 @@ type Listener = (event: RoomEvent, snapshot: RoomSnapshot) => void;
 /** Re-mint once the cached ticket is within this margin of `expiresAt` (~10 minute TTL). */
 const TICKET_REFRESH_MARGIN_MS = 60_000;
 
-function emptySnapshot(name: string): RoomSnapshot {
+/**
+ * The viewer's own agents: in the MVP a member can only tag their own
+ * `@claude`/`@codex`, which run locally, so these are the only agents the
+ * composer needs. If one isn't installed, the dispatch fails and the
+ * request settles as failed.
+ */
+function emptySnapshot(name: string, selfUserId: string): RoomSnapshot {
   return {
     name,
     ready: true,
     members: [],
-    agents: [],
+    agents: [
+      { agent: 'claude', owner: selfUserId, model: '', busy: false },
+      { agent: 'codex', owner: selfUserId, model: '', busy: false },
+    ],
     connectors: [],
     skills: [],
     messages: [],
@@ -220,7 +229,7 @@ export class RelayRoomSource implements RoomSource {
     };
     this.makeProvider = options.createProvider ?? createHocuspocusProvider;
     this.log = options.log ?? (() => {});
-    this.snapshot = emptySnapshot(options.spaceName);
+    this.snapshot = emptySnapshot(options.spaceName, options.selfUserId);
   }
 
   // ── RoomSource ──────────────────────────────────────────────────────────

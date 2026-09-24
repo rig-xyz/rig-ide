@@ -212,6 +212,22 @@ describe('RelayRoomSource', () => {
     expect(provider!.connectCalls).toBe(1);
   });
 
+  it("offers the viewer's own claude and codex, so @claude/@codex can be tagged", () => {
+    const fake = makeFakeRelay();
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: () => new FakeProvider(),
+    });
+    expect(source.getSnapshot().agents.map((a) => [a.agent, a.owner])).toEqual([
+      ['claude', 'u1'],
+      ['codex', 'u1'],
+    ]);
+  });
+
   it('opens the connection with a ticket minted through the relay client, not a static token', async () => {
     const fake = makeFakeRelay();
     fake.queueMessages([]);
