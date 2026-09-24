@@ -182,6 +182,8 @@ export interface SpacesRelayApi {
   listMembers(bindingId: string): Promise<Result<RoomMemberRow[], RelayApiError>>;
   /** A space's pending invites (any member of a space may read them). */
   listInvites?(bindingId: string): Promise<Result<RoomInviteRow[], RelayApiError>>;
+  /** The connector ids a space uses (no secrets: each member's own login stays on their machine). */
+  listConnectors?(bindingId: string): Promise<Result<string[], RelayApiError>>;
   listMessages(
     bindingId: string,
     query: { latest?: number; after?: string }
@@ -578,6 +580,19 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
             .filter((m): m is RoomMemberRow => m !== null)
         : [];
       return ok(members);
+    },
+
+    async listConnectors(bindingId) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(ctxResult.data, 'GET', `/v1/me/bindings/${bindingId}/connectors`, 'load space connectors');
+      if (!result.success) return err(result.error);
+      const raw = asRecord(result.data)?.connectors;
+      return ok(
+        Array.isArray(raw)
+          ? raw.map((c) => asRecord(c)?.connectorId).filter((id): id is string => typeof id === 'string')
+          : []
+      );
     },
 
     async listMessages(bindingId, query) {

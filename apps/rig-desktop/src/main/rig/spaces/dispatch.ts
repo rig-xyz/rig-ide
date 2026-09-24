@@ -1,9 +1,16 @@
-import { randomUUID } from 'node:crypto';
-import { sessionStateSchema, type AcpPermissionRequest, type SessionState } from '@emdash/core/acp';
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  sessionStateSchema,
+  type AcpMcpServerWire,
+  type AcpPermissionRequest,
+  type SessionState,
+} from '@emdash/core/acp';
 import { err, ok, type Result } from '@emdash/shared';
 import { ReplicaLog, ReplicaState } from '@emdash/wire';
 import type { AcpRuntimeClient } from '@main/core/acp/controller';
 import { log } from '@main/lib/logger';
+import { connectorById, RUN_CONNECTORS_EVENT, type ConnectorGap } from '@shared/spaces/connectors';
+import type { SessionConnectors } from '../connectors/connections';
 import type { AgentRequest, SessionAgent, SessionStatus, SpacesRelayApi } from './relay-api';
 import { markRequestSettled, type ClaimDispatchResult } from './request-claim';
 import { SessionEventPublisher } from './session-publisher';
@@ -54,6 +61,8 @@ export interface SpacesAcpSessions {
     conversationId: string;
     providerId: SessionAgent;
     cwd: string;
+    /** Remote MCP servers (your connectors) for this session only. */
+    mcpServers?: AcpMcpServerWire[];
   }): Promise<Result<{ sessionId: string }, string>>;
   /** Reopens an earlier ACP session by its agent session id (ACP `session/load`), with its context intact. */
   resumeSession(input: {
@@ -61,7 +70,10 @@ export interface SpacesAcpSessions {
     providerId: SessionAgent;
     cwd: string;
     sessionId: string;
+    mcpServers?: AcpMcpServerWire[];
   }): Promise<Result<{ sessionId: string }, string>>;
+  /** Closes the live session (it can be resumed later by its agent session id). */
+  stopSession?(conversationId: string): Promise<void>;
   /**
    * Submits one prompt: starts a turn when the session is idle, or queues
    * it behind the running one. Resolves as soon as it's submitted, never
@@ -177,7 +189,56 @@ type PersistentSession = {
   current: QueuedTurn | null;
   /** Permission requests waiting on the owner's answer, by ACP request id. */
   heldPermissions: Map<string, { request: AcpPermissionRequest; turn: QueuedTurn }>;
+  /** Which connector servers (and tokens) the session was started with; a change means reloading it. */
+  connectorsFingerprint: string;
+  /** Undoes the raw-event and permission subscriptions, for a reload. */
+  unsubscribes: Array<() => void>;
 };
+
+/** The model / effort / mode a session has picked, as a change that re-applies them. */
+function pickedConfig(config: AgentConfig): AgentConfigChange {
+  return {
+    ...(config.model?.selected ? { model: config.model.selected } : {}),
+    ...(config.effort?.selected ? { effort: config.effort.selected } : {}),
+    ...(config.mode?.selected ? { mode: config.mode.selected } : {}),
+  };
+}
+
+/** Identifies a set of connector servers, tokens included, without keeping the tokens. */
+export function connectorsFingerprint(servers: readonly AcpMcpServerWire[]): string {
+  return createHash('sha256').update(JSON.stringify(servers)).digest('hex');
+}
+
+/**
+ * What the agent is told about the space's connectors this turn: which it can
+ * use (through its owner's own login), and which the space uses but it can't
+ * reach, so it can point its owner at Connect instead of guessing.
+ */
+export function connectorsHiddenContext(connected: readonly string[], gaps: readonly ConnectorGap[]): string | null {
+  if (connected.length === 0 && gaps.length === 0) return null;
+  const name = (id: string) => connectorById(id)?.name ?? id;
+  const lines = ['<rig_connectors>'];
+  if (connected.length > 0) {
+    lines.push(
+      `Connected tools you can use, through your owner's own login: ${connected.map(name).join(', ')}.`,
+      'Anything you read from them shows up in the room, visible to every member of the space.'
+    );
+  }
+  const missing = gaps.filter((g) => g.state === 'not_connected').map((g) => name(g.id));
+  const expired = gaps.filter((g) => g.state === 'expired').map((g) => name(g.id));
+  if (missing.length > 0) {
+    lines.push(
+      `This space also uses ${missing.join(', ')}, which your owner hasn't connected on this device. If the request needs it, say so in one line and tell them to click Connect next to it in the space panel; don't guess its contents.`
+    );
+  }
+  if (expired.length > 0) {
+    lines.push(
+      `Your owner's login to ${expired.join(', ')} has expired. If the request needs it, say so in one line and tell them to click Reconnect in the space panel.`
+    );
+  }
+  lines.push('</rig_connectors>');
+  return lines.join('\n');
+}
 
 /**
  * Context the agent gets with every spaces turn, alongside (not inside) the
@@ -380,6 +441,8 @@ export function createSpacesDispatcher(deps: {
   store?: SpaceSessionStore;
   /** Your usual model / effort / permission mode for an agent (the ones the rig chat remembers), applied to a brand-new space session. */
   defaultConfig?: (agent: SessionAgent) => AgentConfigChange;
+  /** The space's connectors for the owner's session: servers with fresh tokens, and the ones they can't reach. */
+  connectors?: (bindingId: string) => Promise<SessionConnectors>;
 }): {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
@@ -550,14 +613,48 @@ export function createSpacesDispatcher(deps: {
     return false;
   }
 
+  async function loadConnectors(bindingId: string): Promise<SessionConnectors> {
+    if (!deps.connectors) return { servers: [], gaps: [] };
+    try {
+      return await deps.connectors(bindingId);
+    } catch (error) {
+      log.warn('Rig spaces dispatch: could not load the space connectors', { bindingId, error: String(error) });
+      return { servers: [], gaps: [] };
+    }
+  }
+
+  /**
+   * The owner's persistent session for this space and agent, started (or
+   * resumed) on first use. `connectors`, when given, are the servers the
+   * session should have: if they changed since it started (a new connection,
+   * a removed connector, a refreshed token), an idle session is closed and
+   * resumed with them. The agent keeps its context; a busy one keeps its
+   * current servers until the next turn.
+   */
   async function ensureSession(
     key: PersistentKey,
     bindingId: string,
     providerId: SessionAgent,
-    cwd: string
+    cwd: string,
+    connectors?: SessionConnectors
   ): Promise<Result<PersistentSession, string>> {
     const existing = sessions.get(key);
-    if (existing) return ok(existing);
+    /** The settings a reloaded session had, re-applied after the reload (some agents reset them on load). */
+    let carried: AgentConfigChange | undefined;
+    if (existing) {
+      const unchanged = !connectors || connectorsFingerprint(connectors.servers) === existing.connectorsFingerprint;
+      const busy = existing.current !== null || existing.pending.length > 0;
+      if (unchanged || busy || !deps.acp.stopSession) return ok(existing);
+      log.info('Rig spaces dispatch: connectors changed, reloading the space session', {
+        conversationId: existing.conversationId,
+      });
+      const previous = await deps.acp.readConfig?.(existing.conversationId).catch(() => null);
+      carried = previous ? pickedConfig(previous) : undefined;
+      sessions.delete(key);
+      for (const unsubscribe of existing.unsubscribes) unsubscribe();
+      await deps.acp.stopSession(existing.conversationId);
+    }
+    const { servers } = connectors ?? (await loadConnectors(bindingId));
 
     // Memory across restarts: reuse the stored conversation and resume the
     // agent's own session (same cwd) rather than starting from nothing.
@@ -571,10 +668,12 @@ export function createSpacesDispatcher(deps: {
       pending: [],
       current: null,
       heldPermissions: new Map(),
+      connectorsFingerprint: connectorsFingerprint(servers),
+      unsubscribes: [],
     };
     // Raw events: subscribe BEFORE the session exists so nothing from the
     // very first turn is missed (the raw log is created on first subscribe).
-    await deps.acp.subscribeRaw(conversationId, (raw) => forwardRaw(session, raw));
+    session.unsubscribes.push(await deps.acp.subscribeRaw(conversationId, (raw) => forwardRaw(session, raw)));
 
     let started: Result<{ sessionId: string }, string> | null = null;
     if (resumable) {
@@ -583,6 +682,7 @@ export function createSpacesDispatcher(deps: {
         providerId,
         cwd,
         sessionId: resumable.acpSessionId,
+        mcpServers: servers,
       });
       if (!started.success) {
         log.warn('Rig spaces dispatch: could not resume the space session, starting fresh', {
@@ -593,11 +693,11 @@ export function createSpacesDispatcher(deps: {
       }
     }
     const fresh = started === null;
-    started ??= await deps.acp.startSession({ conversationId, providerId, cwd });
+    started ??= await deps.acp.startSession({ conversationId, providerId, cwd, mcpServers: servers });
     if (!started.success) return err(started.error);
     // A brand-new session starts from your usual settings for this agent; a
-    // resumed one keeps whatever it already had.
-    const defaults = fresh ? deps.defaultConfig?.(providerId) : undefined;
+    // resumed one keeps whatever it already had (a reload re-applies them).
+    const defaults = carried ?? (fresh ? deps.defaultConfig?.(providerId) : undefined);
     if (defaults && Object.keys(defaults).length > 0 && deps.acp.setConfig) {
       const applied = await deps.acp.setConfig(conversationId, defaults);
       if (!applied.success) {
@@ -614,8 +714,8 @@ export function createSpacesDispatcher(deps: {
 
     // Permissions: the session-state topic only exists once the session
     // does. Nothing is missed: no turn has been prompted yet.
-    await deps.acp.subscribePendingPermissions(conversationId, (request) =>
-      holdPermission(session, request)
+    session.unsubscribes.push(
+      await deps.acp.subscribePendingPermissions(conversationId, (request) => holdPermission(session, request))
     );
 
     sessions.set(key, session);
@@ -683,7 +783,8 @@ export function createSpacesDispatcher(deps: {
       runId: created.data.id,
       ms: Date.now() - t0,
     });
-    const sessionResult = await ensureSession(key, spec.bindingId, spec.agent, cwd);
+    const connectors = await loadConnectors(spec.bindingId);
+    const sessionResult = await ensureSession(key, spec.bindingId, spec.agent, cwd, connectors);
     log.info('Rig spaces dispatch: agent session ready', {
       runId: created.data.id,
       ok: sessionResult.success,
@@ -698,6 +799,8 @@ export function createSpacesDispatcher(deps: {
     // Shown in the card header; the relay run was created before the session existed.
     const model = await deps.acp.readModel?.(session.conversationId).catch(() => null);
     if (model) publisher.record('run_model', { model });
+    // The space's connectors this turn couldn't reach, so the card can offer Connect to its owner.
+    if (connectors.gaps.length > 0) publisher.record(RUN_CONNECTORS_EVENT, { gaps: connectors.gaps });
     deps.store?.markInFlight?.(created.data.id, spec.bindingId);
     const turn: QueuedTurn = {
       requestId: spec.requestId,
@@ -720,10 +823,15 @@ export function createSpacesDispatcher(deps: {
         return [];
       })
     );
+    const connectorsContext = connectorsHiddenContext(
+      connectors.servers.map((server) => server.name),
+      connectors.gaps
+    );
+    const hiddenContext = [spaceContext, connectorsContext, spec.extraHiddenContext].filter(Boolean).join('\n\n');
     const queued = await deps.acp.queuePrompt(
       session.conversationId,
       spec.prompt,
-      spec.extraHiddenContext ? `${spaceContext}\n\n${spec.extraHiddenContext}` : spaceContext,
+      hiddenContext,
       (reason) => {
         const idx = session.pending.indexOf(turn);
         if (idx === -1) return; // already started; its turn_end settles it
@@ -950,7 +1058,7 @@ function describeAcpError(error: unknown): string {
 
 export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClient>): SpacesAcpSessions {
   return {
-    async startSession({ conversationId, providerId, cwd }) {
+    async startSession({ conversationId, providerId, cwd, mcpServers }) {
       const client = await getClient();
       const result = await client.startSession({
         input: {
@@ -962,12 +1070,13 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
           cwd,
           sessionId: null,
           model: null,
+          ...(mcpServers?.length ? { mcpServers } : {}),
         },
       });
       return result.success ? ok({ sessionId: result.data.sessionId }) : err(describeAcpError(result.error));
     },
 
-    async resumeSession({ conversationId, providerId, cwd, sessionId }) {
+    async resumeSession({ conversationId, providerId, cwd, sessionId, mcpServers }) {
       const client = await getClient();
       const result = await client.resumeSession({
         input: {
@@ -979,9 +1088,21 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
           cwd,
           sessionId,
           model: null,
+          ...(mcpServers?.length ? { mcpServers } : {}),
         },
       });
       return result.success ? ok({ sessionId: result.data.sessionId }) : err(describeAcpError(result.error));
+    },
+
+    async stopSession(conversationId) {
+      const client = await getClient();
+      const result = await client.stopSession({ conversationId });
+      if (!result.success) {
+        log.warn('Rig spaces dispatch: could not close a space session', {
+          conversationId,
+          error: describeAcpError(result.error),
+        });
+      }
     },
 
     async queuePrompt(conversationId, text, hiddenContext, onRejected) {

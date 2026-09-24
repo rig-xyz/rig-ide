@@ -3,6 +3,23 @@ import { attachmentRefSchema } from '../models/attachments';
 import { permissionDecisionSchema } from '../models/permissions';
 import { promptDraftUpdateSchema, promptInputSchema, queuedPromptSchema } from '../models/prompt';
 
+const acpNameValueSchema = z.object({ name: z.string(), value: z.string() });
+
+/**
+ * A remote MCP server handed to the agent for this one session (ACP
+ * `mcpServers` on `session/new` / `session/load`). Headers may carry a bearer
+ * token: this input lives in memory only and must never be logged or
+ * persisted. Remote (http) only, on purpose: session starts can come from
+ * the renderer, and a stdio server would let that caller spawn any command.
+ */
+export const acpMcpServerSchema = z.object({
+  type: z.literal('http'),
+  name: z.string(),
+  url: z.string().url(),
+  headers: z.array(acpNameValueSchema),
+});
+export type AcpMcpServerWire = z.infer<typeof acpMcpServerSchema>;
+
 export const acpStartInputSchema = z.object({
   conversationId: z.string(),
   projectId: z.string(),
@@ -14,6 +31,7 @@ export const acpStartInputSchema = z.object({
   model: z.string().nullable(),
   initialQueue: z.array(promptInputSchema).optional(),
   env: z.record(z.string(), z.string()).optional(),
+  mcpServers: z.array(acpMcpServerSchema).optional(),
 });
 export type AcpStartInputWire = z.infer<typeof acpStartInputSchema>;
 

@@ -14,7 +14,9 @@ import type { AcpStartInputWire } from '@emdash/core/acp';
 const sessionStarts = new Map<string, AcpStartInputWire>();
 
 export function noteAcpSessionStart(input: AcpStartInputWire): void {
-  sessionStarts.set(input.conversationId, input);
+  // Connector servers carry login tokens; nothing here needs them.
+  const { mcpServers: _mcpServers, ...rest } = input;
+  sessionStarts.set(input.conversationId, rest);
 }
 
 export function getAcpSessionStart(conversationId: string): AcpStartInputWire | undefined {

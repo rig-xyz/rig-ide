@@ -5,6 +5,7 @@ import {
   createDeviceIdResolver,
   createSpacesDispatcher,
   finalAnswerFromEvents,
+  connectorsHiddenContext,
   leakedProviderError,
   roomContextLines,
   spacesHiddenContext,
@@ -153,6 +154,8 @@ function makeFakeAcp() {
   let startResult: Result<{ sessionId: string }, string> = ok({ sessionId: 'acp-new' });
   let resumeResult: Result<{ sessionId: string }, string> = ok({ sessionId: 'acp-resumed' });
   const resumed: Array<{ conversationId: string; sessionId: string }> = [];
+  const resumedServers: unknown[] = [];
+  const stopped: string[] = [];
   let turnCounter = 0;
   /** When set, overrides the default (immediate, auto-incrementing turnId) `queuePrompt` behaviour. */
   let queuePromptImpl:
@@ -173,7 +176,12 @@ function makeFakeAcp() {
     async resumeSession(input) {
       callOrder.push(`resumeSession:${input.conversationId}`);
       resumed.push({ conversationId: input.conversationId, sessionId: input.sessionId });
+      resumedServers.push(input.mcpServers);
       return resumeResult;
+    },
+    async stopSession(conversationId) {
+      callOrder.push(`stopSession:${conversationId}`);
+      stopped.push(conversationId);
     },
     async queuePrompt(conversationId, text, hiddenContext, onRejected) {
       callOrder.push(`queuePrompt:${conversationId}`);
@@ -208,6 +216,8 @@ function makeFakeAcp() {
     resolvedPermissions,
     callOrder,
     resumed,
+    resumedServers,
+    stopped,
     setStartResult: (r: Result<{ sessionId: string }, string>) => (startResult = r),
     setResumeResult: (r: Result<{ sessionId: string }, string>) => (resumeResult = r),
     /** Replaces `queuePrompt`'s default immediate-resolve behaviour, e.g. to control exactly when it resolves relative to raw-stream markers. */
@@ -1071,5 +1081,152 @@ describe('leakedProviderError', () => {
   it('leaves genuine answers alone', () => {
     expect(leakedProviderError('Signups dropped because of the outage.')).toBeNull();
     expect(leakedProviderError('')).toBeNull();
+  });
+});
+
+describe('connectors', () => {
+  const LINEAR = { type: 'http' as const, name: 'linear', url: 'https://mcp.linear.app/mcp', headers: [{ name: 'Authorization', value: 'Bearer t1' }] };
+
+  function memoryStore(): SpaceSessionStore {
+    const entries = new Map<string, StoredSpaceSession>();
+    return { get: (k) => entries.get(k) ?? null, set: (k, v) => void entries.set(k, v) };
+  }
+
+  it("hands the space's connected tools to the session, and tells the agent what it can and can't reach", async () => {
+    const { api, postedEvents } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const { dispatch } = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      connectors: async () => ({ servers: [LINEAR], gaps: [{ id: 'notion', state: 'not_connected' }] }),
+    });
+
+    await dispatch(makeRequest());
+
+    expect(fake.started[0]).toMatchObject({ mcpServers: [LINEAR] });
+    const hidden = fake.queued[0]!.hiddenContext!;
+    expect(hidden).toContain('<rig_connectors>');
+    expect(hidden).toContain('Connected tools you can use');
+    expect(hidden).toContain('Linear');
+    expect(hidden).toContain("This space also uses Notion, which your owner hasn't connected");
+    expect(hidden).not.toContain('Bearer');
+    await vi.waitFor(() => expect(postedEvents.flatMap((e) => e.kinds)).toContain('run_connectors'));
+    const payloads = postedEvents.flatMap((e) => e.payloads) as Array<Record<string, unknown>>;
+    expect(payloads.find((p) => 'gaps' in p)).toEqual({ gaps: [{ id: 'notion', state: 'not_connected' }] });
+    // The token never reaches the relay.
+    expect(JSON.stringify(postedEvents)).not.toContain('Bearer');
+  });
+
+  it('adds nothing when the space has no connectors', async () => {
+    const { api, postedEvents } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+    await dispatch(makeRequest());
+    expect(fake.started[0]).toMatchObject({ mcpServers: [] });
+    expect(fake.queued[0]!.hiddenContext).not.toContain('<rig_connectors>');
+    expect(postedEvents.flatMap((e) => e.kinds)).not.toContain('run_connectors');
+  });
+
+  it('runs without connectors when loading them fails', async () => {
+    const fake = makeFakeAcp();
+    const { dispatch } = createSpacesDispatcher({
+      api: makeFakeApi().api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      connectors: async () => {
+        throw new Error('keychain locked');
+      },
+    });
+    expect(await dispatch(makeRequest())).toEqual({ runId: 'run-1' });
+    expect(fake.started[0]).toMatchObject({ mcpServers: [] });
+  });
+
+  it('reloads an idle session, keeping its context, when its connectors change', async () => {
+    const fake = makeFakeAcp();
+    let current = { servers: [] as (typeof LINEAR)[], gaps: [] as never[] };
+    const { dispatch } = createSpacesDispatcher({
+      api: makeFakeApi().api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      store: memoryStore(),
+      connectors: async () => current,
+    });
+
+    await dispatch(makeRequest());
+    const conversationId = fake.started[0]!.conversationId;
+    fake.emitTurnStart(conversationId, 'turn-1');
+    fake.emitTurnEnd(conversationId, 'turn-1', 'end_turn');
+
+    // You connect Linear; the next turn's session gets it, by resuming the same agent session.
+    current = { servers: [LINEAR], gaps: [] };
+    await dispatch(makeRequest({ id: 'req2' }));
+    expect(fake.stopped).toEqual([conversationId]);
+    expect(fake.resumed).toEqual([{ conversationId, sessionId: 'acp-new' }]);
+    expect(fake.resumedServers).toEqual([[LINEAR]]);
+    expect(fake.started).toHaveLength(1);
+
+    // Nothing changed since: no further reload.
+    const resumedId = fake.resumed[0]!.conversationId;
+    fake.emitTurnStart(resumedId, 'turn-2');
+    fake.emitTurnEnd(resumedId, 'turn-2', 'end_turn');
+    await dispatch(makeRequest({ id: 'req3' }));
+    expect(fake.stopped).toHaveLength(1);
+  });
+
+  it('re-applies the model, effort and mode a reloaded session had', async () => {
+    const fake = makeFakeAcp();
+    const applied: unknown[] = [];
+    fake.acp.readConfig = async () => ({
+      model: { selected: 'gpt-5.6-sol', options: [] },
+      effort: { selected: 'high', options: [] },
+      mode: null,
+    });
+    fake.acp.setConfig = async (_c, change) => {
+      applied.push(change);
+      return ok(undefined);
+    };
+    let current = { servers: [] as (typeof LINEAR)[], gaps: [] as never[] };
+    const { dispatch } = createSpacesDispatcher({
+      api: makeFakeApi().api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      store: memoryStore(),
+      connectors: async () => current,
+    });
+    await dispatch(makeRequest());
+    const conversationId = fake.started[0]!.conversationId;
+    fake.emitTurnStart(conversationId, 'turn-1');
+    fake.emitTurnEnd(conversationId, 'turn-1', 'end_turn');
+
+    current = { servers: [LINEAR], gaps: [] };
+    await dispatch(makeRequest({ id: 'req2' }));
+    expect(applied).toEqual([{ model: 'gpt-5.6-sol', effort: 'high' }]);
+  });
+
+  it('leaves a busy session alone when its connectors change mid-turn', async () => {
+    const fake = makeFakeAcp();
+    let current = { servers: [] as (typeof LINEAR)[], gaps: [] as never[] };
+    const { dispatch } = createSpacesDispatcher({
+      api: makeFakeApi().api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      connectors: async () => current,
+    });
+    await dispatch(makeRequest());
+    fake.emitTurnStart(fake.started[0]!.conversationId, 'turn-1');
+
+    current = { servers: [LINEAR], gaps: [] };
+    await dispatch(makeRequest({ id: 'req2' }));
+    expect(fake.stopped).toEqual([]);
+    expect(fake.queued).toHaveLength(2);
+  });
+
+  it('words expired logins as Reconnect, and says nothing when there is nothing to say', () => {
+    expect(connectorsHiddenContext([], [])).toBeNull();
+    const text = connectorsHiddenContext([], [{ id: 'linear', state: 'expired' }])!;
+    expect(text).toContain("login to Linear has expired");
+    expect(text).toContain('Reconnect');
+    expect(text).not.toContain('Connected tools');
   });
 });
