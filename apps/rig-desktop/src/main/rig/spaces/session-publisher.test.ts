@@ -248,6 +248,57 @@ describe('SessionEventPublisher', () => {
     expect(patches).toEqual([{ status: 'done' }]);
   });
 
+  it('finish() while a batch is mid-send still sends the tail, turn_ended included', async () => {
+    // The relay answers the first batch only when we say so, so finish()
+    // lands while that send is in flight: the race that used to drop the
+    // run's last events and leave every card spinning.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let first = true;
+    const sent: SessionEventInput[][] = [];
+    const { api, patches } = fakeApi({
+      postSessionEvents: async (_b, _r, events) => {
+        if (first) {
+          first = false;
+          await gate;
+        }
+        sent.push(events);
+        return ok({ inserted: events.length, upToSeq: events[events.length - 1]?.seq ?? null });
+      },
+    });
+    const clock = fakeClock();
+    const pub = new SessionEventPublisher({
+      api,
+      bindingId: 'b1',
+      runId: 'run1',
+      maxBatchSize: 2,
+      flushIntervalMs: 250,
+      now: clock.now,
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+    });
+
+    pub.record('agent_message_chunk', { text: 'a' });
+    pub.record('agent_message_chunk', { text: 'b' }); // full batch: flush starts, blocked on the gate
+    void clock.advance(0);
+    pub.record('agent_message_chunk', { text: 'c' });
+    pub.record('turn_ended', { status: 'done' });
+    const finished = pub.finish('done');
+    release();
+    await finished;
+
+    expect(sent.flat().map((e) => e.kind)).toEqual([
+      'agent_message_chunk',
+      'agent_message_chunk',
+      'agent_message_chunk',
+      'turn_ended',
+    ]);
+    expect(pub.pending).toBe(0);
+    expect(patches).toEqual([{ status: 'done' }]);
+  });
+
   it('finish() patches status even when the tail never sent (relay unreachable)', async () => {
     const { api, calls, patches, failNext } = fakeApi();
     failNext(10);

@@ -1,7 +1,7 @@
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { RoomSnapshot } from '../types';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
-import { AGENT_NAME, AgentAvatar } from './identity';
+import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 
 /**
  * The viewer's own agents, as rows in the rig's pinned card (same 28px row
@@ -39,5 +39,39 @@ export function AgentRows({ snapshot, selfUserId }: { snapshot: RoomSnapshot; se
         );
       })}
     </>
+  );
+}
+
+/**
+ * What the collapsed space panel chip says: who's here (their faces and a
+ * count) and, when any agent in the space is working, the matrix and whose.
+ */
+export function SpaceChipSummary({ snapshot }: { snapshot: RoomSnapshot }) {
+  const here = snapshot.members.filter((m) => m.online !== false && m.status !== 'invited');
+  const working = Object.values(snapshot.sessionMetaByRun).filter(
+    (meta) =>
+      effectiveRunStatus(meta.status, projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? [])) === 'running'
+  );
+  const firstOwner = working[0] ? snapshot.members.find((m) => m.id === working[0]!.owner) : undefined;
+  return (
+    <span className="flex items-center gap-2 text-xs text-text-secondary">
+      <span className="flex items-center">
+        {here.slice(0, 3).map((m, i) => (
+          <PersonAvatar key={m.id} member={m} size="sm" className={i > 0 ? '-ml-1.5 ring-2 ring-bg-1' : 'ring-2 ring-bg-1'} />
+        ))}
+      </span>
+      <span className="tabular-nums">{here.length} here</span>
+      {working.length > 0 && (
+        <>
+          <span className="bg-border-hairline h-3 w-px" />
+          <DotMatrix state="thinking" size="sm" />
+          <span>
+            {working.length === 1
+              ? `${firstOwner?.name ?? 'Someone'}'s ${AGENT_NAME[working[0]!.agent]} working`
+              : `${working.length} agents working`}
+          </span>
+        </>
+      )}
+    </span>
   );
 }

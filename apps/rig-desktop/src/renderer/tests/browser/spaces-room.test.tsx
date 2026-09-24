@@ -62,7 +62,7 @@ describe('Room transcript — flat rows', () => {
     host.remove();
   });
 
-  it('renders every message as a flat, left-aligned row with its author named', async () => {
+  it('puts your messages on the right and names everyone else on the left', async () => {
     const snapshot = replayedSnapshot();
     await act(async () => {
       root.render(<RoomTranscript snapshot={snapshot} ownId="bob" />);
@@ -74,8 +74,11 @@ describe('Room transcript — flat rows', () => {
     expect(rows.some((r) => r.dataset.author !== 'bob')).toBe(true);
 
     for (const row of rows) {
-      expect(row.className).not.toContain('flex-row-reverse');
-      if (row.dataset.continued === 'false') {
+      // Yours on the right without a name; everyone else's on the left, named.
+      expect(row.dataset.mine).toBe(String(row.dataset.author === 'bob'));
+      if (row.dataset.mine === 'true') {
+        expect(row.className).toContain('justify-end');
+      } else if (row.dataset.continued === 'false') {
         const author = snapshot.members.find((m) => m.id === row.dataset.author);
         expect(row.textContent).toContain(author?.name ?? row.dataset.author);
       }

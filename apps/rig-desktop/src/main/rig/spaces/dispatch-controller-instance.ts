@@ -104,8 +104,8 @@ export async function runCommentTurnInRoom(spec: {
 
 /** The renderer-facing half: the Room's session card Stop button and owner approvals. */
 export const rigSpacesDispatchController = createRPCController({
-  stopRun: async ({ runId }: { runId: string }): Promise<{ stopped: boolean }> => ({
-    stopped: await spacesDispatchController.stopRun(runId),
+  stopRun: async ({ runId, bindingId }: { runId: string; bindingId?: string }): Promise<{ stopped: boolean }> => ({
+    stopped: await spacesDispatchController.stopRun(runId, bindingId),
   }),
   checkNow: async (): Promise<void> => {
     await spacesDispatchController.checkNow();

@@ -73,9 +73,9 @@ export class SpacesDispatchController {
   }
 
   /** Used by the `spacesDispatch.stopRun` RPC route. `false` when nothing is running, or this device has no such run. */
-  async stopRun(runId: string): Promise<boolean> {
+  async stopRun(runId: string, bindingId?: string): Promise<boolean> {
     if (!this.dispatcher) return false;
-    return this.dispatcher.stopRun(runId);
+    return this.dispatcher.stopRun(runId, bindingId);
   }
 
   /** Runs a turn in the owner's room agent with no relay request behind it (doc comments in a space). Null when the dispatcher isn't running (Spaces off, or signed out). */

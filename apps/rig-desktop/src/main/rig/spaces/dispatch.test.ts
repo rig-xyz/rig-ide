@@ -662,6 +662,37 @@ describe('createSpacesDispatcher', () => {
     expect(await stopRun('someone-elses-run')).toBe(false);
   });
 
+  it('stopRun closes out a run with no live turn here, so every card stops spinning', async () => {
+    // The run's end never reached the relay: its log stops mid-answer.
+    const { api, postedEvents, patchedSessions } = makeFakeApi({
+      getSessionEvents: async () =>
+        ok({
+          run: {
+            id: 'stale-run',
+            bindingId: 'b1',
+            ownerUserId: 'u1',
+            agent: 'claude',
+            model: null,
+            status: 'running',
+            title: null,
+            commands: null,
+            startedAt: '',
+            endedAt: null,
+          },
+          events: [
+            { runId: 'stale-run', seq: 7, kind: 'agent_message_chunk', payload: {}, bytes: 0, truncated: false, originalBytes: null, createdAt: '' },
+          ],
+        }),
+    });
+    const fake = makeFakeAcp();
+    const { stopRun } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+
+    expect(await stopRun('stale-run', 'b1')).toBe(true);
+    expect(fake.cancelled).toEqual([]);
+    expect(postedEvents).toEqual([{ runId: 'stale-run', kinds: ['turn_ended'], payloads: [{ status: 'stopped' }] }]);
+    expect(patchedSessions).toEqual([{ runId: 'stale-run', status: 'stopped' }]);
+  });
+
   it('fails without starting anything when no local workspace is bound to the request', async () => {
     const { api, createdRuns } = makeFakeApi();
     const fake = makeFakeAcp();

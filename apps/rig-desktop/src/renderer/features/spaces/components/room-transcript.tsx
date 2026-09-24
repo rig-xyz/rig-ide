@@ -1,5 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react';
+import { ArrowDown } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
 import type { RoomMessage, RoomSnapshot } from '../types';
 import { SessionCard } from './session-card';
@@ -14,14 +16,13 @@ import {
 } from './transcript-items';
 
 /**
- * Spaces (lane 2): the Room transcript — a keyed list where new items
- * animate in (`AnimatePresence` + `motion.div`'s enter transition) and
- * every row carries `layout` so a growing session card (new steps, new
- * output rows landing) animates its own height change instead of snapping.
- * Follow-scroll stays pinned to the bottom while new items arrive, and
- * stops the moment the user scrolls up by hand — resuming automatically
- * once they scroll back within a small threshold of the bottom, same
- * heuristic as the reference demo.
+ * Spaces (lane 2): the Room transcript — a keyed list where new items fade
+ * in. Rows don't animate their height: a streaming answer grows many times
+ * a second, and re-animating every row around it made scrolling stutter.
+ * While the reader is at the bottom, anything that grows the transcript
+ * keeps them there (a ResizeObserver on the content, so a stream growing
+ * inside one row counts, not just new rows). Scrolling up unpins; a pill
+ * then counts what's new and jumps back down.
  */
 
 const FOLLOW_THRESHOLD_PX = 60;
@@ -207,41 +208,74 @@ export function RoomTranscript({
   onOpenFile?: (relPath: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const followRef = useRef(true);
+  const contentRef = useRef<HTMLDivElement>(null);
+  // Pinned = the reader is at the bottom, so new content keeps them there.
+  // Scrolling up unpins; coming back near the bottom re-pins.
+  const pinnedRef = useRef(true);
+  const [pinned, setPinned] = useState(true);
+  const [unseen, setUnseen] = useState(0);
+
+  const pinToBottom = (behavior: ScrollBehavior = 'auto') => {
+    const el = scrollRef.current;
+    if (!el) return;
+    pinnedRef.current = true;
+    setPinned(true);
+    setUnseen(0);
+    el.scrollTo({ top: el.scrollHeight, behavior });
+  };
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const onWheel = () => {
-      followRef.current = false;
-      const check = () => {
-        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-        if (distanceFromBottom < FOLLOW_THRESHOLD_PX) followRef.current = true;
-      };
-      window.setTimeout(check, 600);
+    const onScroll = () => {
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_THRESHOLD_PX;
+      if (atBottom === pinnedRef.current) return;
+      pinnedRef.current = atBottom;
+      setPinned(atBottom);
+      if (atBottom) setUnseen(0);
     };
-    el.addEventListener('wheel', onWheel, { passive: true });
-    return () => el.removeEventListener('wheel', onWheel);
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
   }, []);
 
-  const itemCount = snapshot.messages.length + snapshot.typingUserIds.length;
+  // Anything that grows the transcript (a new row, a streaming answer, a
+  // step landing) keeps a pinned reader at the bottom, instantly: smooth
+  // scrolls chasing a stream lag behind and stutter.
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el || !followRef.current) return;
-    const raf = requestAnimationFrame(() => {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    const content = contentRef.current;
+    if (!el || !content) return;
+    el.scrollTop = el.scrollHeight;
+    const observer = new ResizeObserver(() => {
+      if (pinnedRef.current) el.scrollTop = el.scrollHeight;
     });
-    return () => cancelAnimationFrame(raf);
-    // Only the item count needs to trigger a re-scroll — a session card
-    // growing in place (more steps/outputs) is already visible without
-    // moving the viewport, and re-running this on every snapshot change
-    // would fight the user's own scroll position.
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
+
+  // New messages while scrolled up are counted for the jump-back pill; one
+  // you sent yourself always brings you back down.
+  const lastCountRef = useRef(snapshot.messages.length);
+  useEffect(() => {
+    const added = snapshot.messages.slice(lastCountRef.current);
+    lastCountRef.current = snapshot.messages.length;
+    if (added.length === 0) return;
+    if (added.some((m) => m.authorId === ownId && m.meta.kind === 'text')) {
+      pinToBottom();
+      return;
+    }
+    if (!pinnedRef.current) setUnseen((n) => n + added.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemCount]);
+  }, [snapshot.messages]);
+
+  const agentWorking = Object.values(snapshot.sessionMetaByRun).some(
+    (meta) => meta.status === 'running' && snapshot.sessionEventsByRun[meta.id]?.every((e) => e.kind !== 'turn_ended')
+  );
 
   return (
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto" data-testid="room-transcript">
-      <div className="mx-auto flex max-w-[44rem] flex-col gap-1.5 px-3 pt-6 pb-3">
+    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]" data-testid="room-transcript">
+      <div ref={contentRef} className="mx-auto flex max-w-[44rem] flex-col gap-1.5 px-3 pt-6 pb-3">
         <AnimatePresence initial={false}>
           {(() => {
             const units = groupThreads(snapshot.messages);
@@ -256,7 +290,7 @@ export function RoomTranscript({
               if (placed && day > lastDay) {
                 lastDay = day;
                 nodes.push(
-                  <motion.div key={`day-${day}`} layout>
+                  <motion.div key={`day-${day}`}>
                     <DayDivider label={formatDayLabel(placed.createdAt)} />
                   </motion.div>
                 );
@@ -281,10 +315,9 @@ export function RoomTranscript({
               nodes.push(
                 <motion.div
                   key={unit.kind === 'message' ? unit.message.id : `thread-${unit.threadId}`}
-                  layout
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                  transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
                 >
                   {node}
                 </motion.div>
@@ -295,7 +328,6 @@ export function RoomTranscript({
           {snapshot.typingUserIds.length > 0 && (
             <motion.div
               key="typing"
-              layout
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -306,6 +338,19 @@ export function RoomTranscript({
           )}
         </AnimatePresence>
       </div>
+    </div>
+      {!pinned && (unseen > 0 || agentWorking) && (
+        <button
+          type="button"
+          onClick={() => pinToBottom('smooth')}
+          className="card-pop-in border-border-hairline bg-bg-1 shadow-float hover:bg-bg-2 absolute bottom-3 left-1/2 flex h-8 -translate-x-1/2 items-center gap-2 rounded-chip border px-3 text-xs text-text-primary transition-colors"
+          data-testid="jump-to-latest"
+        >
+          {agentWorking && <DotMatrix state="thinking" size="sm" />}
+          {unseen > 0 ? `${unseen} new ${unseen === 1 ? 'message' : 'messages'}` : 'Jump to latest'}
+          <ArrowDown className="size-3.5 text-text-muted" strokeWidth={1.5} />
+        </button>
+      )}
     </div>
   );
 }

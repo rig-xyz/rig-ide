@@ -95,18 +95,19 @@ export function RowTime({
   );
 }
 
-/** A person's words sit in a bubble; agents' answers don't. Your own are tinted. */
+/** A person's words sit in a bubble; agents' answers don't. Yours are tinted and sit on the right. */
 export function bubbleClass(mine: boolean): string {
   return cn(
-    'w-fit max-w-full rounded-2xl rounded-tl-md px-3 py-1.5 text-sm leading-relaxed break-words whitespace-pre-wrap text-text-primary',
-    mine ? 'bg-accent-subtle' : 'bg-bg-2'
+    'w-fit max-w-full rounded-2xl px-3 py-1.5 text-sm leading-relaxed break-words whitespace-pre-wrap text-text-primary',
+    mine ? 'bg-accent-subtle rounded-tr-md' : 'bg-bg-2 rounded-tl-md'
   );
 }
 
 /**
  * A human message: avatar, name and (on hover) time, then the words in a
- * bubble. `continued` drops the header for a follow-up from the same person
- * a moment later; its time sits in the avatar column instead.
+ * bubble; your own sit on the right with neither. `continued` drops the
+ * header for a follow-up from the same person a moment later; its time sits
+ * in the avatar column instead.
  */
 export function MessageRow({
   message,
@@ -120,11 +121,29 @@ export function MessageRow({
   continued?: boolean;
 }) {
   const author = memberOf(snapshot, message.authorId);
+  const mine = message.authorId === ownId;
+  const body = message.body ? richText(message.body, ownId) : null;
+  if (mine) {
+    // Your own words: on the right, no avatar or name, time on hover beside the bubble.
+    return (
+      <div
+        className="group flex items-end justify-end gap-2 py-0.5 pr-2 pl-12"
+        data-testid="message-row"
+        data-author={message.authorId}
+        data-mine="true"
+        data-continued={continued}
+      >
+        <RowTime message={message} className="pb-1" />
+        <p className={bubbleClass(true)}>{body}</p>
+      </div>
+    );
+  }
   return (
     <div
       className={cn(ROW_GRID, 'group py-0.5')}
       data-testid="message-row"
       data-author={message.authorId}
+      data-mine="false"
       data-continued={continued}
     >
       {continued ? (
@@ -139,7 +158,7 @@ export function MessageRow({
             <RowTime message={message} />
           </div>
         )}
-        <p className={bubbleClass(message.authorId === ownId)}>{message.body ? richText(message.body, ownId) : null}</p>
+        <p className={bubbleClass(false)}>{body}</p>
       </div>
     </div>
   );

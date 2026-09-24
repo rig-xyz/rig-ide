@@ -52,8 +52,8 @@ export class SessionEventPublisher {
   private nextSeq = 1;
   private timer: unknown = null;
   private timerDeadline: number | null = null;
-  /** Guards against two overlapping `flush()` calls sending the same events twice. */
-  private flushing = false;
+  /** The flush currently talking to the relay, if any: guards against two overlapping sends, and lets `finish()` wait it out. */
+  private flushing: Promise<void> | null = null;
   private disposed = false;
 
   constructor(options: SessionPublisherOptions) {
@@ -129,25 +129,27 @@ export class SessionEventPublisher {
    */
   async flush(): Promise<void> {
     if (this.flushing || this.queue.length === 0) return;
-    this.flushing = true;
-    try {
-      const batch = this.queue.slice(0, this.maxBatchSize);
-      const result = await this.api.postSessionEvents(this.bindingId, this.runId, batch);
-      if (!result.success) {
-        log.warn('Rig spaces publisher: batch failed, will retry', {
-          runId: this.runId,
-          count: batch.length,
-          error: result.error.message,
-        });
-        // Leave `this.queue` untouched — retried on the next flush.
-        this.armTimer(this.flushIntervalMs);
-        return;
-      }
-      this.queue = this.queue.slice(batch.length);
-      if (this.queue.length > 0) this.armTimer(0);
-    } finally {
-      this.flushing = false;
+    this.flushing = this.sendBatch().finally(() => {
+      this.flushing = null;
+    });
+    return this.flushing;
+  }
+
+  private async sendBatch(): Promise<void> {
+    const batch = this.queue.slice(0, this.maxBatchSize);
+    const result = await this.api.postSessionEvents(this.bindingId, this.runId, batch);
+    if (!result.success) {
+      log.warn('Rig spaces publisher: batch failed, will retry', {
+        runId: this.runId,
+        count: batch.length,
+        error: result.error.message,
+      });
+      // Leave `this.queue` untouched — retried on the next flush.
+      if (!this.disposed) this.armTimer(this.flushIntervalMs);
+      return;
     }
+    this.queue = this.queue.slice(batch.length);
+    if (this.queue.length > 0 && !this.disposed) this.armTimer(0);
   }
 
   /**
@@ -162,6 +164,11 @@ export class SessionEventPublisher {
     // retry loop — `finish()` must return in bounded time even if the relay
     // is down. Stops as soon as a flush makes no progress (the relay is
     // unreachable) rather than spinning five times against a dead host.
+    //
+    // A timer-driven flush may be mid-send right now: wait for it first, so
+    // its outcome counts and our own flush isn't a no-op mistaken for "no
+    // progress" (which used to drop the run's tail, `turn_ended` included).
+    if (this.flushing) await this.flushing;
     for (let attempts = 0; this.queue.length > 0 && attempts < 5; attempts += 1) {
       const before = this.queue.length;
       await this.flush();

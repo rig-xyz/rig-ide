@@ -349,7 +349,7 @@ export function createSpacesDispatcher(deps: {
 }): {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
-  stopRun: (runId: string) => Promise<boolean>;
+  stopRun: (runId: string, bindingId?: string) => Promise<boolean>;
   /** Marks runs left running by a previous app process as failed. */
   settleInterrupted: () => Promise<void>;
   /** Runs a turn in the owner's room agent without a relay agent request (see the function's own doc). */
@@ -720,7 +720,39 @@ export function createSpacesDispatcher(deps: {
     return started.success ? ok({ runId: started.data.runId, done }) : err(started.error);
   }
 
-  async function stopRun(runId: string): Promise<boolean> {
+  /**
+   * `bindingId` lets Stop close out a run this device has no live turn for
+   * (its end never reached the relay, or the app restarted mid-run): the run
+   * gets a `turn_ended` and a terminal status, so every card stops spinning.
+   */
+  async function stopRun(runId: string, bindingId?: string): Promise<boolean> {
+    if (await stopLocal(runId)) return true;
+    return bindingId ? closeOutStaleRun(bindingId, runId) : false;
+  }
+
+  async function closeOutStaleRun(bindingId: string, runId: string): Promise<boolean> {
+    const events = await deps.api.getSessionEvents(bindingId, runId, 0);
+    if (!events.success) {
+      log.warn('Rig spaces dispatch: could not read a stale run to close it out', { runId, error: events.error.message });
+      return false;
+    }
+    const runEvents = events.data.events;
+    if (!runEvents.some((e) => e.kind === 'turn_ended')) {
+      const lastSeq = runEvents.reduce((max, e) => Math.max(max, e.seq), 0);
+      const posted = await deps.api.postSessionEvents(bindingId, runId, [
+        { seq: lastSeq + 1, kind: 'turn_ended', payload: { status: 'stopped' } },
+      ]);
+      if (!posted.success) {
+        log.warn('Rig spaces dispatch: could not close out a stale run', { runId, error: posted.error.message });
+        return false;
+      }
+    }
+    await deps.api.patchSession(bindingId, runId, { status: 'stopped' });
+    deps.store?.clearInFlight?.(runId);
+    return true;
+  }
+
+  async function stopLocal(runId: string): Promise<boolean> {
     for (const session of sessions.values()) {
       if (session.current?.runId === runId) {
         session.current.cancelledByStop = true;

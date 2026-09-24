@@ -313,6 +313,7 @@ export function SessionCard({
   const [expanded, setExpanded] = useState(false);
   const [traceOpen, setTraceOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [resolving, setResolving] = useState<{ requestId: string; optionId: string } | null>(null);
   const card = useMemo(() => projectSessionCard(events), [events]);
   const status = effectiveRunStatus(meta.status, card);
@@ -472,15 +473,19 @@ export function SessionCard({
 
       {/* Actions float at the row's top-right on hover or focus. */}
       {((running && onStop) || (!running && card.finalAnswer)) && (
-        <div className="border-border-hairline bg-bg-1 shadow-soft absolute top-0 right-2 flex -translate-y-1/2 items-center gap-0.5 rounded-chip border p-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        <div className={cn('border-border-hairline bg-bg-1 shadow-soft absolute top-0 right-2 flex -translate-y-1/2 items-center gap-0.5 rounded-chip border p-0.5 transition-opacity group-hover:opacity-100 focus-within:opacity-100', stopping ? 'opacity-100' : 'opacity-0')}>
           {running && onStop ? (
             <button
               type="button"
-              onClick={onStop}
-              className="hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs text-text-primary transition-colors"
+              onClick={() => {
+                setStopping(true);
+                onStop();
+              }}
+              disabled={stopping}
+              className="enabled:hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs text-text-primary transition-colors disabled:text-text-muted"
             >
               <Square className="size-2.5" strokeWidth={1.5} fill="currentColor" />
-              Stop
+              {stopping ? 'Stopping…' : 'Stop'}
             </button>
           ) : (
             <button

@@ -7,7 +7,7 @@ import { FixtureRoomSource, type RoomSource } from '../room-source';
 import type { AgentKind } from '../types';
 import { Composer } from './composer';
 import { RoomTranscript } from './room-transcript';
-import { AgentRows } from './agent-rows';
+import { AgentRows, SpaceChipSummary } from './agent-rows';
 import { SpaceCard } from './space-card';
 
 /**
@@ -81,7 +81,7 @@ export function RoomView({
   renderPanel?: (
     extraRows: ReactNode,
     onlineUserIds: ReadonlySet<string>,
-    options: { startCollapsed: boolean }
+    options: { startCollapsed: boolean; chipSummary: ReactNode }
   ) => ReactNode;
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
@@ -188,7 +188,7 @@ export function RoomView({
   const handleStopSession =
     source instanceof RelayRoomSource
       ? (runId: string) => {
-          void rpc.rig.spacesDispatch.stopRun({ runId });
+          void rpc.rig.spacesDispatch.stopRun({ runId, bindingId });
         }
       : undefined;
   const handleResolvePermission =
@@ -277,7 +277,7 @@ export function RoomView({
           (renderPanel?.(
             <AgentRows snapshot={snapshot} selfUserId={selfUserId} />,
             new Set(snapshot.members.filter((m) => m.online !== false).map((m) => m.id)),
-            { startCollapsed: narrow }
+            { startCollapsed: narrow, chipSummary: <SpaceChipSummary snapshot={snapshot} /> }
           ) ?? null)
         ) : (
           <SpaceCard snapshot={snapshot} />
