@@ -186,15 +186,70 @@ export function connectorIdForUrl(url: string): ConnectorId | null {
 }
 
 /**
+ * The MCP server name rig's own tools (invite, people, recent changes, file
+ * comments) are handed to room agents under, by the desktop itself — see
+ * `main/rig/spaces/rig-tools.ts`. Claude sees `mcp__rig__rig_invite`, Codex
+ * `mcp.rig.rig_invite`.
+ */
+export const RIG_TOOLS_SERVER = 'rig';
+
+/** The few arguments of a rig tool call its step shows ("Rig · invite hugo@acme.co"). */
+export type RigToolArgs = { email?: string; path?: string; replyTo?: string };
+
+const RIG_TOOL_NAME = /^mcp__rig__(.+)$|^mcp\.rig\.(.+)$/;
+
+/**
+ * A rig tool call's arguments, from the tool call's `rawInput` (Claude passes
+ * them as they are; Codex wraps them as `{ server, tool, arguments }`). Keeps
+ * only what a step title uses. Undefined for any other tool.
+ */
+export function rigToolArgs(raw: string | undefined, rawInput: unknown): RigToolArgs | undefined {
+  if (!raw || !RIG_TOOL_NAME.test(raw) || typeof rawInput !== 'object' || rawInput === null) return undefined;
+  const wrapped = (rawInput as { arguments?: unknown }).arguments;
+  const input = (typeof wrapped === 'object' && wrapped !== null ? wrapped : rawInput) as Record<string, unknown>;
+  const args: RigToolArgs = {};
+  if (typeof input.email === 'string' && input.email) args.email = input.email;
+  if (typeof input.path === 'string' && input.path) args.path = input.path;
+  if (typeof input.reply_to === 'string' && input.reply_to) args.replyTo = input.reply_to;
+  return Object.keys(args).length > 0 ? args : undefined;
+}
+
+/** "invite hugo@acme.co" from a rig tool's raw name and arguments, or null when it isn't one of rig's own tools. */
+export function prettyRigTool(raw: string, args?: RigToolArgs): string | null {
+  const match = RIG_TOOL_NAME.exec(raw);
+  if (!match) return null;
+  const tool = (match[1] ?? match[2]!).replace(/^rig_/, '');
+  const on = args?.path ? ` on ${args.path}` : '';
+  switch (tool) {
+    case 'invite':
+      return args?.email ? `invite ${args.email}` : 'invite';
+    case 'people':
+      return 'people';
+    case 'recent_changes':
+      return 'recent changes';
+    case 'file_comments':
+      return `comments${on}`;
+    case 'comment':
+      return `${args?.replyTo ? 'reply' : 'comment'}${on}`;
+    default:
+      return tool.replace(/[_-]+/g, ' ').trim().toLowerCase();
+  }
+}
+
+/**
  * Any MCP tool name an agent reports, made readable: "Linear · list issues".
  * `via` says where the tool came from: `space` for a connector rig handed to
  * the session, `setup` for one from the agent's own global setup (claude.ai
- * connectors show as `mcp__claude_ai_<Name>__<tool>`). Null when it isn't an
- * MCP tool name at all.
+ * connectors show as `mcp__claude_ai_<Name>__<tool>`), `rig` for rig's own
+ * tools (`args` fills in who or which file). Null when it isn't an MCP tool
+ * name at all.
  */
 export function prettyAgentTool(
-  raw: string
-): { label: string; action: string; connector: ConnectorDef | null; via: 'space' | 'setup' } | null {
+  raw: string,
+  args?: RigToolArgs
+): { label: string; action: string; connector: ConnectorDef | null; via: 'space' | 'setup' | 'rig' } | null {
+  const rig = prettyRigTool(raw, args);
+  if (rig) return { label: 'Rig', action: rig, connector: null, via: 'rig' };
   const ours = prettyConnectorTool(raw);
   if (ours) return { label: ours.connector.name, action: ours.action, connector: ours.connector, via: 'space' };
   const match = /^mcp__(.+?)__(.+)$/.exec(raw) ?? /^mcp\.([^.]+)\.(.+)$/.exec(raw);

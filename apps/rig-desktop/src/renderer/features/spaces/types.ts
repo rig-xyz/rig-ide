@@ -9,7 +9,7 @@
  * describes the SHAPE of that room — no rendering, no transport.
  */
 
-import type { ConnectionState, ConnectorGap } from '@shared/spaces/connectors';
+import type { ConnectionState, ConnectorGap, RigToolArgs } from '@shared/spaces/connectors';
 
 export type PersonId = string;
 export type AgentKind = 'claude' | 'codex';
@@ -68,6 +68,8 @@ export interface SessionStep {
   title?: string;
   status?: string;
   locations?: Array<{ path: string; line?: number | null }>;
+  /** A rig tool's arguments (who, which file), so the step reads "Rig · invite hugo@…". */
+  args?: RigToolArgs;
 }
 
 export interface SessionOutput {
@@ -120,7 +122,7 @@ export interface SessionCard {
   model: string | null;
   /** Why the run failed, when it says. */
   failureReason: string | null;
-  currentStep: { toolCallId: string; title?: string; kind?: string } | null;
+  currentStep: { toolCallId: string; title?: string; kind?: string; args?: RigToolArgs } | null;
   outputs: SessionOutput[];
   steps: SessionStep[];
   finalAnswer: string;

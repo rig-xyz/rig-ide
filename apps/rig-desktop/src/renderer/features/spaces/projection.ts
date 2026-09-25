@@ -21,7 +21,7 @@
  * arrive without re-folding the whole log every time.
  */
 
-import { RUN_CONNECTORS_EVENT, type ConnectorGap } from '@shared/spaces/connectors';
+import { RUN_CONNECTORS_EVENT, rigToolArgs, type ConnectorGap } from '@shared/spaces/connectors';
 import type {
   SessionCard,
   SessionEvent,
@@ -187,8 +187,10 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
         status: typeof p.status === 'string' ? p.status : 'pending',
         locations: Array.isArray(p.locations) ? (p.locations as SessionStep['locations']) : undefined,
       };
+      const args = rigToolArgs(step.title, p.rawInput);
+      if (args) step.args = args;
       state.steps.push(step);
-      state.currentStep = { toolCallId, title: step.title, kind: step.kind };
+      state.currentStep = { toolCallId, title: step.title, kind: step.kind, args: step.args };
       recordEditOutputs(state, p, truncated);
       break;
     }
@@ -200,7 +202,10 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
         if (typeof p.title === 'string') step.title = p.title;
         if (typeof p.status === 'string') step.status = p.status;
         if (Array.isArray(p.locations)) step.locations = p.locations as SessionStep['locations'];
-        state.currentStep = { toolCallId, title: step.title, kind: step.kind };
+        // Claude streams a tool's input in after the call opens.
+        const args = rigToolArgs(step.title, p.rawInput);
+        if (args) step.args = args;
+        state.currentStep = { toolCallId, title: step.title, kind: step.kind, args: step.args };
       }
       recordEditOutputs(state, p, truncated);
       break;

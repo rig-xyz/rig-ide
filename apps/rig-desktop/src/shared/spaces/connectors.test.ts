@@ -51,3 +51,36 @@ describe('global setup helpers', () => {
     expect(prettyAgentTool('Read')).toBeNull();
   });
 });
+
+describe("rig's own tools", () => {
+  it('reads as "Rig · invite hugo@…" for both agents, with who or which file', async () => {
+    const { prettyAgentTool, rigToolArgs } = await import('./connectors');
+    const claude = rigToolArgs('mcp__rig__rig_invite', { email: 'hugo@acme.co', role: 'editor' });
+    expect(prettyAgentTool('mcp__rig__rig_invite', claude)).toEqual({
+      label: 'Rig',
+      action: 'invite hugo@acme.co',
+      connector: null,
+      via: 'rig',
+    });
+    // Codex wraps the arguments.
+    const codex = rigToolArgs('mcp.rig.rig_comment', {
+      server: 'rig',
+      tool: 'rig_comment',
+      arguments: { path: 'notes/plan.md', reply_to: 'm1', body: 'Done' },
+    });
+    expect(prettyAgentTool('mcp.rig.rig_comment', codex)?.action).toBe('reply on notes/plan.md');
+    expect(prettyAgentTool('mcp__rig__rig_comment', { path: 'plan.md' })?.action).toBe('comment on plan.md');
+    expect(prettyAgentTool('mcp__rig__rig_file_comments', { path: 'plan.md' })?.action).toBe('comments on plan.md');
+    expect(prettyAgentTool('mcp__rig__rig_people')?.action).toBe('people');
+    expect(prettyAgentTool('mcp__rig__rig_recent_changes')?.action).toBe('recent changes');
+    // Before the arguments stream in, the bare action.
+    expect(prettyAgentTool('mcp__rig__rig_invite')?.action).toBe('invite');
+  });
+
+  it('keeps arguments only for rig tools', async () => {
+    const { rigToolArgs } = await import('./connectors');
+    expect(rigToolArgs('mcp__linear__list_issues', { email: 'a@b.co' })).toBeUndefined();
+    expect(rigToolArgs('mcp__rig__rig_people', {})).toBeUndefined();
+    expect(rigToolArgs(undefined, { email: 'a@b.co' })).toBeUndefined();
+  });
+});

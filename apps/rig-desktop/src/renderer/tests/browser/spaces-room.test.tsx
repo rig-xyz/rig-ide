@@ -1954,6 +1954,47 @@ describe('Connectors — Room copy and turn footer', () => {
     expect(step.title).toBe('From your Claude setup');
   });
 
+  it("reads rig's own tools as \"Rig · invite hugo@…\", once their input streams in, in the live line, the approval and the step list", async () => {
+    const running: SessionEvent[] = [
+      { seq: 1, kind: 'tool_call', payload: { toolCallId: 't1', title: 'mcp__rig__rig_invite', kind: 'other', status: 'pending', rawInput: {} } },
+      { seq: 2, kind: 'tool_call_update', payload: { toolCallId: 't1', rawInput: { email: 'hugo@acme.co', role: 'editor' } } },
+    ];
+    await act(async () => {
+      root.render(<SessionCard meta={{ ...runMeta, status: 'running' }} events={running} owner={undefined} />);
+    });
+    expect(host.querySelector('[data-testid="session-live-line"]')?.textContent).toContain('Rig · invite hugo@acme.co');
+
+    const asking: SessionEvent[] = [
+      ...running,
+      {
+        seq: 3,
+        kind: 'permission_requested',
+        payload: {
+          requestId: 'perm-1',
+          toolCall: { toolCallId: 't1', title: 'mcp__rig__rig_invite' },
+          options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }],
+        },
+      },
+    ];
+    await act(async () => {
+      root.render(
+        <SessionCard meta={{ ...runMeta, status: 'running' }} events={asking} owner={undefined} onResolvePermission={vi.fn()} />
+      );
+    });
+    expect(host.querySelector('[data-testid="approval-card"] code')?.textContent).toBe('Rig · invite hugo@acme.co');
+
+    const done: SessionEvent[] = [
+      ...running,
+      { seq: 3, kind: 'tool_call_update', payload: { toolCallId: 't1', status: 'completed' } },
+      { seq: 4, kind: 'turn_ended', payload: { status: 'done' } },
+    ];
+    await act(async () => {
+      root.render(<SessionCard meta={{ ...runMeta, status: 'done' }} events={done} owner={undefined} />);
+    });
+    await act(async () => click(host.querySelector('[data-testid="session-summary"]')!));
+    expect(host.querySelector('[data-testid="session-step"]')?.textContent).toContain('Rig · invite hugo@acme.co');
+  });
+
   it("drops a turn's footer gap for a connector the run's own agent already reaches globally, but keeps it for a different agent", async () => {
     const globalSetup: GlobalServer[] = [
       { agent: 'claude', name: 'claude.ai Linear', url: 'https://mcp.linear.app/mcp', connectorId: 'linear' },

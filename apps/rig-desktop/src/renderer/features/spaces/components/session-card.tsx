@@ -22,8 +22,16 @@ import { SafeMarkdown } from '@renderer/lib/ui/comment-markdown';
 import { Dialog, DialogContent, DialogTitle } from '@renderer/lib/ui/dialog';
 import { Popover, PopoverMenuItem } from '@renderer/lib/ui/popover';
 import { DotMatrix, type DotMatrixActivity, type DotMatrixState } from '@renderer/lib/ui/dot-matrix';
+import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { cn } from '@renderer/lib/utils';
-import { connectorById, prettyAgentTool, type ConnectorDef, type ConnectResult, type GlobalServer } from '@shared/spaces/connectors';
+import {
+  connectorById,
+  prettyAgentTool,
+  type ConnectorDef,
+  type ConnectResult,
+  type GlobalServer,
+  type RigToolArgs,
+} from '@shared/spaces/connectors';
 import { ConnectPill } from './connectors-panel';
 import { globalAgentsFor } from '../global-setup';
 import { ConnectorLogo } from '../logos';
@@ -136,14 +144,17 @@ function summaryLine(card: SessionCardData, elapsed: string): string {
  * know) — an uncataloged global tool falls back to the raw title, same as
  * before. A "setup" tool's tooltip names the run's agent, so "Linear · list
  * issues" reads as coming from your Claude setup rather than a connector
- * rig itself wired up.
+ * rig itself wired up. Rig's own tools ("rig") read as "Rig · invite
+ * hugo@…", with the rig mark and no connector.
  */
 function prettyStepTitle(
   raw: string | undefined,
-  agent: AgentKind
-): { text: string; connector: ConnectorDef; tooltip?: string } | null {
+  agent: AgentKind,
+  args?: RigToolArgs
+): { text: string; connector: ConnectorDef | null; tooltip?: string } | null {
   if (!raw) return null;
-  const pretty = prettyAgentTool(raw);
+  const pretty = prettyAgentTool(raw, args);
+  if (pretty?.via === 'rig') return { text: `${pretty.label} · ${pretty.action}`, connector: null };
   if (!pretty || !pretty.connector) return null;
   return {
     text: `${pretty.label} · ${pretty.action}`,
@@ -169,7 +180,7 @@ function StepRow({
   const live = step.status === 'pending' || step.status === 'in_progress';
   const Icon = kind.icon;
   const decision = decided ? decisionLabel(decided) : null;
-  const pretty = prettyStepTitle(step.title, agent);
+  const pretty = prettyStepTitle(step.title, agent, step.args);
   return (
     <li className="flex min-w-0 flex-col" data-testid="session-step">
       <div className="flex h-6 min-w-0 items-center gap-2 text-xs text-text-secondary">
@@ -177,8 +188,10 @@ function StepRow({
           <DotMatrix state={kind.matrix} size="sm" className="mx-0.5" />
         ) : failed ? (
           <X className="size-3.5 shrink-0 text-danger" strokeWidth={1.5} />
-        ) : pretty ? (
+        ) : pretty?.connector ? (
           <ConnectorLogo id={pretty.connector.id} name={pretty.connector.name} brand={pretty.connector.brand} size={14} className="rounded" />
+        ) : pretty ? (
+          <RigMark size={14} className="shrink-0 text-text-muted" />
         ) : (
           <Icon className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
         )}
@@ -334,6 +347,9 @@ function ApprovalCard({
         : kind === 'fetch'
           ? ['Fetch a page', `${agentName} wants to fetch from the web.`, Globe]
           : ['Use a tool', `${agentName} wants your go-ahead first.`, ShieldAlert];
+  // Rig's own tools say what they'll do: "Rig · invite hugo@acme.co".
+  const rigTool = prettyAgentTool(request.title, step?.args);
+  const shownTitle = rigTool?.via === 'rig' ? `${rigTool.label} · ${rigTool.action}` : request.title;
   // Deny quietest, "Always" in between, the one-off allow is the primary.
   const order = (k: string) => (k.startsWith('reject') ? 0 : k === 'allow_always' ? 1 : 2);
   const options = [...request.options].sort((a, b) => order(a.kind) - order(b.kind));
@@ -362,7 +378,7 @@ function ApprovalCard({
         </div>
       ) : (
         <code className="border-border-hairline bg-bg-1 rounded-control border px-2.5 py-1.5 font-mono text-xs break-all text-text-primary">
-          {request.title}
+          {shownTitle}
         </code>
       )}
       <div className="flex flex-wrap justify-end gap-1.5">
@@ -514,8 +530,8 @@ function RetryButton({
 }
 
 /** A running step's title for the live line; connector tools read as "Linear · list issues" (see `prettyStepTitle`). */
-function liveStepTitle(title: string | undefined, agent: AgentKind): string | undefined {
-  return prettyStepTitle(title, agent)?.text ?? title;
+function liveStepTitle(title: string | undefined, agent: AgentKind, args?: RigToolArgs): string | undefined {
+  return prettyStepTitle(title, agent, args)?.text ?? title;
 }
 
 export function SessionCard({
@@ -623,7 +639,7 @@ export function SessionCard({
       ? 'Waiting for your approval'
       : `Waiting on ${ownerName}'s approval`
     : card.currentStep
-      ? (liveStepTitle(card.currentStep.title, meta.agent) ?? currentKind.live)
+      ? (liveStepTitle(card.currentStep.title, meta.agent, card.currentStep.args) ?? currentKind.live)
       : events.length > 0
         ? 'Thinking'
         : 'Starting';
