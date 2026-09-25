@@ -3,7 +3,7 @@ import type { RoomSnapshot, SessionEvent, SessionRunMeta } from '../types';
 import { spaceChipStatus } from './agent-rows';
 
 function run(id: string, owner: string, agent: 'claude' | 'codex', status: SessionRunMeta['status'] = 'running'): SessionRunMeta {
-  return { id, agent, owner, model: null, title: '', status, startedAt: new Date().toISOString(), endedAt: null } as SessionRunMeta;
+  return { id, agent, owner, model: '', title: '', status, startedAt: new Date().toISOString(), endedAt: null } as unknown as SessionRunMeta;
 }
 
 const chunk: SessionEvent = { seq: 1, kind: 'agent_message_chunk', payload: { messageId: 'x', content: { type: 'text', text: 'Working' } } };
