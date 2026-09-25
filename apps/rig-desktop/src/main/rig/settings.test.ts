@@ -584,24 +584,38 @@ describe('RigSettingsStore', () => {
     });
   });
 
-  describe('spacesEnabled (Spaces behind Experimental)', () => {
-    it('defaults to false before anything is ever set', () => {
+  describe('spacesEnabled (on by default since 0.4.3)', () => {
+    it('defaults to true before anything is ever set', () => {
       const store = new RigSettingsStore(settingsPath);
       store.initialize();
-      expect(store.get().spacesEnabled).toBe(false);
+      expect(store.get().spacesEnabled).toBe(true);
     });
 
-    it('set() persists and round-trips through a second store instance', () => {
+    it('turning it off persists and round-trips through a second store instance', () => {
       const first = new RigSettingsStore(settingsPath);
       first.initialize();
-      first.set({ spacesEnabled: true });
+      first.set({ spacesEnabled: false });
 
       const second = new RigSettingsStore(settingsPath);
       second.initialize();
-      expect(second.get().spacesEnabled).toBe(true);
+      expect(second.get().spacesEnabled).toBe(false);
     });
 
-    it('an existing settings.json that predates this field loads as false, not a throw', () => {
+    it('a 0.4.2 settings.json that saved false is switched on once, then an opt-out sticks', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      const { spacesDefaultOnApplied: _, ...older } = DEFAULT_RIG_SETTINGS;
+      writeFileSync(settingsPath, JSON.stringify({ ...older, spacesEnabled: false }));
+      const first = new RigSettingsStore(settingsPath);
+      first.initialize();
+      expect(first.get().spacesEnabled).toBe(true);
+      first.set({ spacesEnabled: false });
+
+      const second = new RigSettingsStore(settingsPath);
+      second.initialize();
+      expect(second.get().spacesEnabled).toBe(false);
+    });
+
+    it('an existing settings.json that predates this field loads as true, not a throw', () => {
       mkdirSync(join(dir, 'nested'), { recursive: true });
       writeFileSync(
         settingsPath,
@@ -609,10 +623,10 @@ describe('RigSettingsStore', () => {
       );
       const store = new RigSettingsStore(settingsPath);
       expect(() => store.initialize()).not.toThrow();
-      expect(store.get().spacesEnabled).toBe(false);
+      expect(store.get().spacesEnabled).toBe(true);
     });
 
-    it('a malformed value (wrong type) degrades to false rather than passing through', () => {
+    it('a malformed value (wrong type) after the switch degrades to false rather than passing through', () => {
       mkdirSync(join(dir, 'nested'), { recursive: true });
       writeFileSync(
         settingsPath,

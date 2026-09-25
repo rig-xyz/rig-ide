@@ -229,14 +229,14 @@ export type RigSettings = {
    */
   smartHighlighterEnabled: boolean;
   /**
-   * Spaces (lane 2): the Room UI is feature-flagged behind Settings →
-   * Experimental the same way `smartHighlighterEnabled` above is — same
-   * persistence mechanism (`rpc.rig.settings`), a plain global preference,
-   * not per-rig. Default `false`; an existing settings.json that predates
-   * this field also loads it as `false` (`main/rig/settings.ts`'s
-   * `normalizeSettings`).
+   * Spaces: still switchable in Settings → Experimental, but on by default
+   * since 0.4.3. Earlier builds saved `false` for everyone who never touched
+   * it, so `normalizeSettings` turns it on once for a file without
+   * `spacesDefaultOnApplied`; after that the saved value is respected.
    */
   spacesEnabled: boolean;
+  /** Set once the 0.4.3 "Spaces on by default" switch has been applied to this settings file. */
+  spacesDefaultOnApplied: boolean;
 };
 
 export const DEFAULT_RIG_SETTINGS: RigSettings = {
@@ -263,7 +263,8 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   paintbrushAgent: null,
   paintbrushCoachMarkSeen: false,
   smartHighlighterEnabled: false,
-  spacesEnabled: false,
+  spacesEnabled: true,
+  spacesDefaultOnApplied: true,
 };
 
 /** The subset of legacy localStorage values the renderer can hand to `importLegacy`. */

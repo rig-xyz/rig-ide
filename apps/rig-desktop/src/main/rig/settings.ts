@@ -176,7 +176,9 @@ function normalizeSettings(parsed: unknown): RigSettings {
     paintbrushAgent: typeof raw.paintbrushAgent === 'string' ? raw.paintbrushAgent : null,
     paintbrushCoachMarkSeen: raw.paintbrushCoachMarkSeen === true,
     smartHighlighterEnabled: raw.smartHighlighterEnabled === true,
-    spacesEnabled: raw.spacesEnabled === true,
+    // On by default since 0.4.3; a file from before then gets it switched on once.
+    spacesEnabled: raw.spacesDefaultOnApplied === true ? raw.spacesEnabled === true : true,
+    spacesDefaultOnApplied: true,
   };
 }
 
