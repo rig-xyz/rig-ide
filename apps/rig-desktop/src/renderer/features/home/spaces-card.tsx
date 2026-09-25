@@ -14,6 +14,7 @@ import {
   canAutoJoin,
   deriveRelayOnlyRowStatus,
   NOT_SET_UP_TOOLTIP,
+  SPACE_NOT_SET_UP_TOOLTIP,
   type HomeRigRow,
 } from './home-sections';
 import { RenameRigDialog } from './rename-rig-dialog';
@@ -205,82 +206,19 @@ function SpaceRow({
   onTogglePinned: () => void;
   isHighlighted: boolean;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const statusLine = deriveSpaceStatusLine(status, Date.now());
   const path = row.kind === 'local' ? row.path : null;
   const relayStatus = row.kind === 'relayOnly' ? deriveRelayOnlyRowStatus(row) : null;
   const openablePath = path ?? (relayStatus?.kind === 'localPath' ? relayStatus.path : null);
-
-  return (
-    <div
-      className={cn(
-        'group flex items-center gap-2.5 rounded-control px-2 py-2 transition-colors',
-        isHighlighted ? 'bg-accent-subtle' : 'hover:bg-bg-2'
-      )}
-    >
-      <SpaceStatusTile status={status} />
-      <button
-        type="button"
-        onClick={() => (openablePath ? onOpenPath(openablePath) : undefined)}
-        disabled={!openablePath}
-        title={openablePath ?? undefined}
-        className="flex min-w-0 flex-1 flex-col items-start text-left disabled:cursor-default"
-      >
-        <span className="flex min-w-0 items-center gap-1">
-          <span className="text-text-muted font-mono text-sm">#</span>
-          <span className="text-text-primary truncate text-sm">{row.name}</span>
-          {pinned && <Star className="text-text-muted size-3 shrink-0 fill-current" strokeWidth={1.5} />}
-          {relayStatus?.kind === 'notSetUp' && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span aria-label={NOT_SET_UP_TOOLTIP} tabIndex={0} className="text-text-muted inline-flex">
-                    <FolderSearch className="size-3 shrink-0" strokeWidth={1.5} />
-                  </span>
-                }
-              />
-              <TooltipContent side="top">{NOT_SET_UP_TOOLTIP}</TooltipContent>
-            </Tooltip>
-          )}
-        </span>
-        <span className="text-text-muted truncate text-xs">
-          {relayStatus?.kind === 'checking' ? 'checking…' : statusLine}
-        </span>
-      </button>
-      <Faces bindingId={row.bindingId} />
-      <SpaceRowMenu row={row} pinned={pinned} onTogglePinned={onTogglePinned} onOpenPath={onOpenPath} />
-    </div>
-  );
-}
-
-function SpaceRowMenu({
-  row,
-  pinned,
-  onTogglePinned,
-  onOpenPath,
-}: {
-  row: HomeRigRow;
-  pinned: boolean;
-  onTogglePinned: () => void;
-  onOpenPath: (path: string) => void;
-}) {
-  const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const deleteMode = deriveDeleteRigMode(row.role);
-  const path = row.kind === 'local' ? row.path : null;
-
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: ['rig', 'recent', 'list'] });
-    void queryClient.invalidateQueries({ queryKey: ['rig', 'account', 'workspaces'] });
-  };
+  // Lane J: a joined-but-not-downloaded space is no dead end — clicking the
+  // row downloads it (the menu's "Download") and opens it. An unrecognized
+  // role can't auto-join, so that row still only offers ⋯ → Locate.
+  const downloadable = row.kind === 'relayOnly' && relayStatus?.kind === 'notSetUp' && canAutoJoin(row.role);
 
   const download = async () => {
     if (row.kind !== 'relayOnly') return;
-    setOpen(false);
     setBusy(true);
     setError(null);
     try {
@@ -300,7 +238,6 @@ function SpaceRowMenu({
 
   const locate = async () => {
     if (row.kind !== 'relayOnly') return;
-    setOpen(false);
     setBusy(true);
     setError(null);
     try {
@@ -322,6 +259,98 @@ function SpaceRowMenu({
     }
   };
 
+  const subtext = busy
+    ? 'Downloading…'
+    : relayStatus?.kind === 'checking'
+      ? 'checking…'
+      : statusLine;
+
+  return (
+    <div
+      className={cn(
+        'group flex items-center gap-2.5 rounded-control px-2 py-2 transition-colors',
+        isHighlighted ? 'bg-accent-subtle' : 'hover:bg-bg-2'
+      )}
+    >
+      <SpaceStatusTile status={status} />
+      <button
+        type="button"
+        onClick={() => (openablePath ? onOpenPath(openablePath) : downloadable ? void download() : undefined)}
+        disabled={busy || (!openablePath && !downloadable)}
+        title={openablePath ?? undefined}
+        aria-busy={busy || undefined}
+        className="flex min-w-0 flex-1 flex-col items-start text-left disabled:cursor-default"
+      >
+        <span className="flex min-w-0 items-center gap-1">
+          <span className="text-text-muted font-mono text-sm">#</span>
+          <span className="text-text-primary truncate text-sm">{row.name}</span>
+          {pinned && <Star className="text-text-muted size-3 shrink-0 fill-current" strokeWidth={1.5} />}
+          {relayStatus?.kind === 'notSetUp' && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    aria-label={downloadable ? SPACE_NOT_SET_UP_TOOLTIP : NOT_SET_UP_TOOLTIP}
+                    tabIndex={0}
+                    className="text-text-muted inline-flex"
+                  >
+                    <FolderSearch className="size-3 shrink-0" strokeWidth={1.5} />
+                  </span>
+                }
+              />
+              <TooltipContent side="top">{downloadable ? SPACE_NOT_SET_UP_TOOLTIP : NOT_SET_UP_TOOLTIP}</TooltipContent>
+            </Tooltip>
+          )}
+        </span>
+        {error ? (
+          <span className="text-danger truncate text-xs" title={error}>
+            {error}
+          </span>
+        ) : (
+          <span className="text-text-muted truncate text-xs">{subtext}</span>
+        )}
+      </button>
+      <Faces bindingId={row.bindingId} />
+      <SpaceRowMenu
+        row={row}
+        pinned={pinned}
+        onTogglePinned={onTogglePinned}
+        busy={busy}
+        onDownload={() => void download()}
+        onLocate={() => void locate()}
+      />
+    </div>
+  );
+}
+
+function SpaceRowMenu({
+  row,
+  pinned,
+  onTogglePinned,
+  busy,
+  onDownload,
+  onLocate,
+}: {
+  row: HomeRigRow;
+  pinned: boolean;
+  onTogglePinned: () => void;
+  busy: boolean;
+  onDownload: () => void;
+  onLocate: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const deleteMode = deriveDeleteRigMode(row.role);
+  const path = row.kind === 'local' ? row.path : null;
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ['rig', 'recent', 'list'] });
+    void queryClient.invalidateQueries({ queryKey: ['rig', 'account', 'workspaces'] });
+  };
+
   return (
     <>
       {path && (
@@ -341,6 +370,7 @@ function SpaceRowMenu({
         path={path}
         name={row.name}
         role={row.role}
+        noun="space"
         onDeleted={refresh}
       />
       <button
@@ -364,7 +394,10 @@ function SpaceRowMenu({
             type="button"
             role="menuitem"
             tabIndex={-1}
-            onClick={() => void download()}
+            onClick={() => {
+              setOpen(false);
+              onDownload();
+            }}
             className="hover:bg-bg-2 flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary"
           >
             <Download className="size-3.5 shrink-0" strokeWidth={1.5} />
@@ -376,7 +409,10 @@ function SpaceRowMenu({
             type="button"
             role="menuitem"
             tabIndex={-1}
-            onClick={() => void locate()}
+            onClick={() => {
+              setOpen(false);
+              onLocate();
+            }}
             className="hover:bg-bg-2 flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary"
           >
             <FolderSearch className="size-3.5 shrink-0" strokeWidth={1.5} />
@@ -427,10 +463,9 @@ function SpaceRowMenu({
           ) : (
             <Trash2 className="size-3.5 shrink-0" strokeWidth={1.5} />
           )}
-          {deriveRigMenuLabel(deleteMode)}
+          {deriveRigMenuLabel(deleteMode, 'space')}
         </button>
       </Popover>
-      {error && <p className="text-danger absolute -bottom-4 left-10 text-xs">{error}</p>}
     </>
   );
 }

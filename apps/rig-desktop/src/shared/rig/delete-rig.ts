@@ -27,6 +27,9 @@
  */
 export type DeleteRigMode = 'delete' | 'leave' | 'local';
 
+/** What the row is called in copy: a space (Home's Spaces card) or a plain rig (default). Lane J. */
+export type DeleteRigNoun = 'rig' | 'space';
+
 /**
  * `role` is this account's role on the binding, straight from
  * `rpc.rig.account.workspaces()` (`null` when unknown — see
@@ -46,10 +49,11 @@ export function deriveDeleteRigMode(role: string | null): DeleteRigMode {
  * for both `'delete'` and `'local'` (an unknown role still reads as delete
  * from THIS Mac's point of view: forgetting a local rig you don't
  * confidently know your role on is unambiguously "delete it here"), "Leave
- * rig…" only for a confidently-known non-owner member.
+ * rig…" only for a confidently-known non-owner member. A space reads
+ * "Leave space…"/"Delete space…" (`noun`).
  */
-export function deriveRigMenuLabel(mode: DeleteRigMode): string {
-  return mode === 'leave' ? 'Leave rig…' : 'Delete rig…';
+export function deriveRigMenuLabel(mode: DeleteRigMode, noun: DeleteRigNoun = 'rig'): string {
+  return mode === 'leave' ? `Leave ${noun}…` : `Delete ${noun}…`;
 }
 
 /** The confirm dialog's title + body — verbatim strings, no markup. */
@@ -76,8 +80,10 @@ export function deriveDeleteRigCopy(input: {
   mode: DeleteRigMode;
   name: string | null;
   memberCount: number | null;
+  noun?: DeleteRigNoun;
 }): DeleteRigCopy {
-  const name = input.name ?? 'this rig';
+  const noun = input.noun ?? 'rig';
+  const name = input.name ?? `this ${noun}`;
 
   if (input.mode === 'local') {
     return {
@@ -94,16 +100,16 @@ export function deriveDeleteRigCopy(input: {
     const others = Math.max(0, (input.memberCount ?? 0) - 1);
     const body =
       others > 0
-        ? `Stops syncing on this computer. You'll lose access; the rig stays for its owner and the other ${others} ${personWord(others)}.`
-        : "Stops syncing on this computer. You'll lose access; the rig stays for its owner.";
+        ? `Stops syncing on this computer. You'll lose access; the ${noun} stays for its owner and the other ${others} ${personWord(others)}.`
+        : `Stops syncing on this computer. You'll lose access; the ${noun} stays for its owner.`;
     return { title: `Leave ${name}?`, body };
   }
 
   const count = input.memberCount ?? 0;
   const body =
     count > 0
-      ? `Stops syncing on this computer. Removes the rig for everyone: ${count} ${personWord(count)} will lose access.`
-      : 'Stops syncing on this computer. Removes the rig for everyone. Nobody else has access.';
+      ? `Stops syncing on this computer. Removes the ${noun} for everyone: ${count} ${personWord(count)} will lose access.`
+      : `Stops syncing on this computer. Removes the ${noun} for everyone. Nobody else has access.`;
   return { title: `Delete ${name}?`, body };
 }
 
@@ -113,8 +119,8 @@ export function deriveFolderKeptNote(path: string): string {
 }
 
 /** The confirm dialog's submit button label — no ellipsis, unlike the menu item / title. */
-export function deriveDeleteRigButtonLabel(mode: DeleteRigMode): string {
-  return mode === 'leave' ? 'Leave rig' : 'Delete rig';
+export function deriveDeleteRigButtonLabel(mode: DeleteRigMode, noun: DeleteRigNoun = 'rig'): string {
+  return mode === 'leave' ? `Leave ${noun}` : `Delete ${noun}`;
 }
 
 /** Why a relay call for `delete`/`leave` failed — drives `deriveDeleteRigFailureMessage`'s exact copy. */

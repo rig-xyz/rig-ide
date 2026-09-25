@@ -30,6 +30,16 @@ describe('deriveRigMenuLabel / deriveDeleteRigButtonLabel', () => {
     expect(deriveDeleteRigButtonLabel('local')).toBe('Delete rig');
     expect(deriveDeleteRigButtonLabel('leave')).toBe('Leave rig');
   });
+
+  it('says "space" for a space (lane J)', () => {
+    expect(deriveRigMenuLabel('leave', 'space')).toBe('Leave space…');
+    expect(deriveRigMenuLabel('delete', 'space')).toBe('Delete space…');
+    expect(deriveDeleteRigButtonLabel('leave', 'space')).toBe('Leave space');
+    expect(deriveDeleteRigCopy({ mode: 'delete', name: null, memberCount: 0, noun: 'space' })).toEqual({
+      title: 'Delete this space?',
+      body: 'Stops syncing on this computer. Removes the space for everyone. Nobody else has access.',
+    });
+  });
 });
 
 describe('deriveDeleteRigCopy', () => {

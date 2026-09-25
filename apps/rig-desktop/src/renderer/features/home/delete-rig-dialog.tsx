@@ -8,6 +8,7 @@ import {
   deriveDeleteRigCopy,
   deriveDeleteRigMode,
   deriveFolderKeptNote,
+  type DeleteRigNoun,
 } from '@shared/rig/delete-rig';
 import { PULSE_QUERY_KEY } from './briefing-spine';
 
@@ -33,6 +34,7 @@ export function DeleteRigDialog({
   path,
   name,
   role,
+  noun = 'rig',
   onDeleted,
 }: {
   open: boolean;
@@ -42,6 +44,8 @@ export function DeleteRigDialog({
   path: string | null;
   name: string | null;
   role: string | null;
+  /** "space" when opened from Home's Spaces card, so the copy says what the user sees (lane J). */
+  noun?: DeleteRigNoun;
   /** Fires once the rig is actually gone from this account's point of view — the caller decides what to do next (e.g. `App.tsx`'s `goHome` when this WAS the currently-open rig). */
   onDeleted?: (trashWarning: string | null) => void;
 }) {
@@ -50,7 +54,7 @@ export function DeleteRigDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <div className="flex shrink-0 items-center justify-between px-4 py-3">
-          <DialogTitle>{deriveDeleteRigCopy({ mode, name, memberCount: null }).title}</DialogTitle>
+          <DialogTitle>{deriveDeleteRigCopy({ mode, name, memberCount: null, noun }).title}</DialogTitle>
           <DialogClose />
         </div>
         {/* Keyed remount per open so a reopened dialog never carries a stale trash checkbox or error from the last rig it acted on. */}
@@ -60,6 +64,7 @@ export function DeleteRigDialog({
             path={path}
             name={name}
             mode={mode}
+            noun={noun}
             onClose={() => onOpenChange(false)}
             onDeleted={onDeleted}
           />
@@ -74,6 +79,7 @@ function DeleteRigForm({
   path,
   name,
   mode,
+  noun,
   onClose,
   onDeleted,
 }: {
@@ -81,6 +87,7 @@ function DeleteRigForm({
   path: string | null;
   name: string | null;
   mode: ReturnType<typeof deriveDeleteRigMode>;
+  noun: DeleteRigNoun;
   onClose: () => void;
   onDeleted?: (trashWarning: string | null) => void;
 }) {
@@ -98,7 +105,7 @@ function DeleteRigForm({
   // module's own header comment for why that's a safe assumption here.
   const memberCount = membersQuery.data?.success ? Math.max(0, membersQuery.data.data.length - 1) : null;
 
-  const copy = deriveDeleteRigCopy({ mode, name, memberCount });
+  const copy = deriveDeleteRigCopy({ mode, name, memberCount, noun });
 
   const submit = async () => {
     setBusy(true);
@@ -117,7 +124,7 @@ function DeleteRigForm({
       onClose();
     } catch {
       setError(
-        mode === 'leave' ? "Couldn't leave this rig. Try again." : "Couldn't delete this rig. Try again."
+        mode === 'leave' ? `Couldn't leave this ${noun}. Try again.` : `Couldn't delete this ${noun}. Try again.`
       );
     } finally {
       setBusy(false);
@@ -151,7 +158,7 @@ function DeleteRigForm({
           Cancel
         </Button>
         <Button variant="destructive" size="sm" onClick={() => void submit()} disabled={busy}>
-          {busy ? 'Working…' : deriveDeleteRigButtonLabel(mode)}
+          {busy ? 'Working…' : deriveDeleteRigButtonLabel(mode, noun)}
         </Button>
       </div>
     </div>
