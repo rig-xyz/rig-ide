@@ -10,6 +10,7 @@ import { ReplicaLog, ReplicaState } from '@emdash/wire';
 import type { AcpRuntimeClient } from '@main/core/acp/controller';
 import { log } from '@main/lib/logger';
 import { connectorById, RIG_TOOLS_SERVER, RUN_CONNECTORS_EVENT, type ConnectorGap } from '@shared/spaces/connectors';
+import { RUN_PRIVACY_EVENT, type LocalRunEvent, type RoomSees } from '@shared/spaces/room-sees';
 import type { SessionConnectors } from '../connectors/connections';
 import type { RigToolScope } from './rig-tools';
 import type { AgentRequest, SessionAgent, SessionStatus, SpacesRelayApi } from './relay-api';
@@ -220,7 +221,8 @@ export function connectorsFingerprint(servers: readonly AcpMcpServerWire[]): str
 export function connectorsHiddenContext(
   connected: readonly string[],
   gaps: readonly ConnectorGap[],
-  global: readonly string[] = []
+  global: readonly string[] = [],
+  roomSees: RoomSees = 'everything'
 ): string | null {
   if (connected.length === 0 && gaps.length === 0 && global.length === 0) return null;
   const name = (id: string) => connectorById(id)?.name ?? id;
@@ -228,7 +230,9 @@ export function connectorsHiddenContext(
   if (connected.length > 0) {
     lines.push(
       `Connected tools you can use, through your owner's own login: ${connected.map(name).join(', ')}.`,
-      'Anything you read from them shows up in the room, visible to every member of the space.'
+      roomSees === 'everything'
+        ? 'Anything you read from them shows up in the room, visible to every member of the space.'
+        : "The room doesn't see what they return; only your final message is shared with every member."
     );
   }
   if (global.length > 0) {
@@ -258,18 +262,30 @@ export function connectorsHiddenContext(
  * and the recent room conversation. Kept short; the rig skill carries the
  * longer guidance.
  */
+/** What the agent is told the room sees of its turn, at its owner's "Room sees" level. */
+const ROOM_SEES_CONTEXT: Record<RoomSees, string> = {
+  everything:
+    'Everything you do in this turn (steps, tool calls, files, your final message) is visible to every member of the space, as a session card in the room.',
+  steps:
+    "The room sees your steps' labels, not what your tools return; your final message and the files you change are visible to every member of the space.",
+  answer: 'The room sees only your final message and the files you change, not your steps.',
+};
+
 export function spacesHiddenContext(
   request: Pick<AgentRequest, 'bindingId'>,
   roomLines: readonly string[] = [],
-  rigTools = false
+  rigTools = false,
+  roomSees: RoomSees = 'everything'
 ): string {
   const lines = [
     '<rig_space_context>',
     `You are working in a shared rig space (binding ${request.bindingId}).`,
     "The request comes from your owner, a member of the space; you run on their machine, in the space's folder.",
-    'Everything you do in this turn (steps, tool calls, files, your final message) is visible to every member of the space, as a session card in the room.',
+    ROOM_SEES_CONTEXT[roomSees],
     'Your final message is your reply to the room. Do not also post it with `rig chat send`.',
-    'Keep the reply short and direct; members can expand the card to see your full trace.',
+    roomSees === 'everything'
+      ? 'Keep the reply short and direct; members can expand the card to see your full trace.'
+      : 'Keep the reply short and direct.',
     'When asked why something changed, use the rig change history (`rig history <path>`) rather than guessing.',
     "When asked to invite someone, run `rig share <email>` in the space's folder: the request is the go-ahead, and the command's approval prompt is the confirmation.",
     // Skills are discovered by name and a truncated description, which agents
@@ -472,6 +488,10 @@ export function createSpacesDispatcher(deps: {
   connectors?: (bindingId: string, agent: SessionAgent) => Promise<SessionConnectors>;
   /** Rig's own tools for the owner's session in this space: the local `rig` MCP server, with that session's token (see `rig-tools-server.ts`). */
   rigTools?: (scope: RigToolScope) => Promise<AcpMcpServerWire | null>;
+  /** How much of a run in this space the room sees (read once per run). Omitted: everything. */
+  roomSees?: (bindingId: string) => RoomSees;
+  /** The owner overlay: every event of a run, before the Room-sees filter (see `local-runs.ts`). */
+  recordLocal?: (bindingId: string, runId: string, event: LocalRunEvent) => void;
 }): {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
@@ -841,12 +861,21 @@ export function createSpacesDispatcher(deps: {
       });
     }
 
+    // Read once per run: a change applies from the next run.
+    const roomSees = deps.roomSees?.(spec.bindingId) ?? 'everything';
+    const runId = created.data.id;
     const publisher = new SessionEventPublisher({
       api: deps.api,
       bindingId: spec.bindingId,
-      runId: created.data.id,
+      runId,
       prompt: spec.prompt,
+      roomSees: { level: roomSees, spaceRoot: cwd },
+      ...(deps.recordLocal
+        ? { onLocalEvent: (event: LocalRunEvent) => deps.recordLocal!(spec.bindingId, runId, event) }
+        : {}),
     });
+    // First, so every card knows why details are missing.
+    publisher.record(RUN_PRIVACY_EVENT, { level: roomSees });
 
     // The card is up; now reach the agent. Resuming a session after a
     // restart can take seconds, so it happens after the card, never before.
@@ -894,12 +923,14 @@ export function createSpacesDispatcher(deps: {
         log.warn('Rig spaces dispatch: could not load room context', { error: String(error) });
         return [];
       }),
-      session.rigTools
+      session.rigTools,
+      roomSees
     );
     const connectorsContext = connectorsHiddenContext(
       connectors.servers.map((server) => server.name),
       connectors.gaps,
-      connectors.global
+      connectors.global,
+      roomSees
     );
     const hiddenContext = [spaceContext, connectorsContext, spec.extraHiddenContext].filter(Boolean).join('\n\n');
     // Agents echo their prompt back (Codex titles the session with all of

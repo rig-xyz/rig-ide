@@ -1,3 +1,5 @@
+import { defineEvent } from '../lib/ipc/events';
+
 /**
  * "Room sees": how much of your agent's work other members of a space see
  * in the Room. One setting per member per space, kept on the member's own
@@ -38,3 +40,16 @@ export const RUN_PRIVACY_EVENT = 'run_privacy';
 export const PRIVATE_PROGRESS_EVENT = 'private_progress';
 /** Appended by the relay when the owner hides a finished run's details: `{steps}`. */
 export const DETAILS_HIDDEN_EVENT = 'details_hidden';
+
+/** One event of a run as its owner's computer recorded it, before the Room-sees filter. */
+export type LocalRunEvent = { seq: number; kind: string; payload: Record<string, unknown> };
+
+/**
+ * Pushed to the owner's own windows for every event of a run this computer
+ * is running: the Room shows your own runs from this unfiltered copy (the
+ * "owner overlay"), so you see all of your agent's work and can answer its
+ * approvals whatever the room sees.
+ */
+export const spacesLocalRunEventChannel = defineEvent<{ bindingId: string; runId: string; event: LocalRunEvent }>(
+  'rig:spaces-local-run-event'
+);

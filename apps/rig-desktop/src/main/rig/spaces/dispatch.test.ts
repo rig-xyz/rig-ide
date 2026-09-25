@@ -72,6 +72,8 @@ function makeFakeApi(overrides: Partial<SpacesRelayApi> = {}) {
   const createdRuns: Array<{ bindingId: string; agent: string }> = [];
   const patchedSessions: Array<{ runId: string; status?: SessionStatus }> = [];
   const postedEvents: Array<{ runId: string; kinds: string[]; payloads: unknown[] }> = [];
+  /** `run_privacy` opens every run; kept apart so tests about the run's own stream can look past it. */
+  const postedPrivacy: Array<{ runId: string; payload: unknown }> = [];
   const postedMessages: Array<{ bindingId: string; body: string; kind?: string; meta?: Record<string, unknown> }> = [];
   const patchedRequests: Array<{ id: string; status: string }> = [];
   const mintedDevices: string[] = [];
@@ -112,7 +114,11 @@ function makeFakeApi(overrides: Partial<SpacesRelayApi> = {}) {
       return ok(run);
     },
     async postSessionEvents(_bindingId, runId, events) {
-      postedEvents.push({ runId, kinds: events.map((e) => e.kind), payloads: events.map((e) => e.payload) });
+      for (const e of events) if (e.kind === 'run_privacy') postedPrivacy.push({ runId, payload: e.payload });
+      const stream = events.filter((e) => e.kind !== 'run_privacy');
+      if (stream.length > 0) {
+        postedEvents.push({ runId, kinds: stream.map((e) => e.kind), payloads: stream.map((e) => e.payload) });
+      }
       return ok({ inserted: events.length, upToSeq: events.at(-1)?.seq ?? null });
     },
     getSessionEvents: notImplemented('getSessionEvents'),
@@ -138,7 +144,7 @@ function makeFakeApi(overrides: Partial<SpacesRelayApi> = {}) {
     ...overrides,
   };
 
-  return { api, createdRuns, patchedSessions, postedEvents, postedMessages, patchedRequests, mintedDevices };
+  return { api, createdRuns, patchedSessions, postedEvents, postedPrivacy, postedMessages, patchedRequests, mintedDevices };
 }
 
 /** A fully controllable fake `SpacesAcpSessions` — the seam this module is built to be tested against. */
@@ -1405,5 +1411,73 @@ describe('rig tools', () => {
     // One added line: the skill pointer and the CLI invite line stay as they were.
     expect(context.split('\n')).toHaveLength(spacesHiddenContext(makeRequest()).split('\n').length + 1);
     expect(context).toContain('run `rig share <email>`');
+  });
+});
+
+describe('Room sees', () => {
+  it('runs at the space level: announces it, uploads the filtered steps, and keeps the full run for the owner', async () => {
+    const { api, postedEvents, postedPrivacy } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const local: Array<{ bindingId: string; runId: string; kind: string; payload: Record<string, unknown> }> = [];
+    const { dispatch } = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      roomSees: (bindingId) => (bindingId === 'binding-1' ? 'steps' : 'everything'),
+      recordLocal: (bindingId, runId, event) => local.push({ bindingId, runId, kind: event.kind, payload: event.payload }),
+    });
+
+    const result = await dispatch(makeRequest());
+    if ('failed' in result) throw new Error('expected success');
+    const conversationId = fake.started[0].conversationId;
+    const { turnId, hiddenContext } = fake.queued[0];
+    fake.emitTurnStart(conversationId, turnId);
+    fake.emitUpdate(conversationId, {
+      sessionUpdate: 'tool_call',
+      toolCallId: 'g1',
+      kind: 'other',
+      title: 'mcp__granola__list_meetings',
+      rawOutput: 'GRANOLA_OUT: Bob asked for 180k',
+    });
+    fake.emitUpdate(conversationId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'THOUGHT' } });
+    fake.emitUpdate(conversationId, { sessionUpdate: 'agent_message_chunk', messageId: 'm', content: { type: 'text', text: 'Done.' } });
+    fake.emitTurnEnd(conversationId, turnId, 'end_turn');
+    await vi.waitFor(() => expect(postedEvents.flatMap((p) => p.kinds)).toContain('turn_ended'));
+
+    expect(postedPrivacy).toEqual([{ runId: result.runId, payload: { level: 'steps' } }]);
+    expect(postedEvents.flatMap((p) => p.kinds)).toEqual(['tool_call', 'agent_message_chunk', 'turn_ended']);
+    expect(postedEvents.flatMap((p) => p.payloads)[0]).toMatchObject({ title: 'mcp__granola__list_meetings', private: true });
+    expect(JSON.stringify(postedEvents)).not.toContain('GRANOLA_OUT');
+    expect(JSON.stringify(postedEvents)).not.toContain('THOUGHT');
+
+    expect(local.map((e) => e.kind)).toEqual(['run_privacy', 'tool_call', 'agent_thought_chunk', 'agent_message_chunk', 'turn_ended']);
+    expect(local.every((e) => e.bindingId === 'binding-1' && e.runId === result.runId)).toBe(true);
+    expect(JSON.stringify(local)).toContain('GRANOLA_OUT');
+
+    // The agent is told what the room sees.
+    expect(hiddenContext).toContain("The room sees your steps' labels, not what your tools return");
+    expect(hiddenContext).not.toContain('is visible to every member of the space, as a session card');
+  });
+
+  it('without a level, runs as Everything (as before)', async () => {
+    const { api, postedPrivacy } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+    const result = await dispatch(makeRequest());
+    if ('failed' in result) throw new Error('expected success');
+    fake.emitTurnStart(fake.started[0].conversationId, fake.queued[0].turnId);
+    fake.emitTurnEnd(fake.started[0].conversationId, fake.queued[0].turnId, 'end_turn');
+    await vi.waitFor(() => expect(postedPrivacy).toEqual([{ runId: result.runId, payload: { level: 'everything' } }]));
+  });
+
+  it('tells the agent, in one line, what the room sees at each level; connectors too', () => {
+    const at = (level: 'answer' | 'steps' | 'everything') => spacesHiddenContext({ bindingId: 'b' }, [], false, level);
+    expect(at('everything')).toContain('Everything you do in this turn');
+    expect(at('everything')).toContain('members can expand the card to see your full trace');
+    expect(at('steps')).toContain("The room sees your steps' labels, not what your tools return");
+    expect(at('steps')).not.toContain('full trace');
+    expect(at('answer')).toContain('The room sees only your final message and the files you change, not your steps.');
+    expect(connectorsHiddenContext(['linear'], [], [], 'steps')).toContain("The room doesn't see what they return");
+    expect(connectorsHiddenContext(['linear'], [], [], 'everything')).toContain('shows up in the room');
   });
 });

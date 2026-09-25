@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { app } from 'electron';
 import { getAcpRuntimeClient } from '@main/core/acp/controller';
+import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { isError, resolveContext, rigAccountController } from '../account';
@@ -8,7 +9,13 @@ import { resolveLocalPathsImpl } from '../recent-rigs';
 import { rigSettingsStore } from '../settings-instance';
 import { connections, globalSetupFor } from '../connectors/connections-instance';
 import { isConnectorId } from '@shared/spaces/connectors';
-import { err, type Result } from '@emdash/shared';
+import {
+  DETAILS_HIDDEN_EVENT,
+  roomSeesFor,
+  spacesLocalRunEventChannel,
+  type LocalRunEvent,
+} from '@shared/spaces/room-sees';
+import { err, ok, type Result } from '@emdash/shared';
 import {
   type AgentConfig,
   type AgentConfigChange,
@@ -17,6 +24,7 @@ import {
   createSpacesDispatcher,
 } from './dispatch';
 import { SpacesDispatchController, type SpacesDispatchControllerDeps } from './dispatch-controller';
+import { LocalRunStore } from './local-runs';
 import { createHttpSpacesRelayApi } from './relay-api';
 import { RequestClaimPoller } from './request-claim';
 import { rigToolsServer } from './rig-tools-instance';
@@ -34,6 +42,14 @@ import { createFileSpaceSessionStore } from './session-store';
  * the one place that eagerly pays that cost, and nothing under test may
  * import it.
  */
+/**
+ * The owner overlay (`local-runs.ts`): this computer's full copy of the runs
+ * it runs, pushed to its own windows as each event lands so the Room shows
+ * your own runs from it rather than from the relay's filtered copy.
+ */
+const localRuns = new LocalRunStore();
+localRuns.subscribe((bindingId, runId, event) => events.emit(spacesLocalRunEventChannel, { bindingId, runId, event }));
+
 function realDeps(): SpacesDispatchControllerDeps {
   return {
     isEnabled: () => rigSettingsStore.get().spacesEnabled,
@@ -68,6 +84,8 @@ function realDeps(): SpacesDispatchControllerDeps {
           };
         },
         rigTools: (scope) => rigToolsServer.serverFor(scope),
+        roomSees: (bindingId) => roomSeesFor(rigSettingsStore.get().spacesRoomSees, bindingId),
+        recordLocal: (bindingId, runId, event) => localRuns.append(bindingId, runId, event),
         defaultConfig: (agent) => {
           const settings = rigSettingsStore.get();
           const model = settings.lastModelByHarness[agent];
@@ -187,4 +205,16 @@ export const rigSpacesDispatchController = createRPCController({
   }): Promise<{ resolved: boolean }> => ({
     resolved: await spacesDispatchController.resolvePermission(runId, requestId, optionId),
   }),
+  /** The owner overlay: this computer's own full copy of one of your runs, or null (not run here, or since restarted). */
+  localRunEvents: async ({ runId }: { runId: string }): Promise<{ events: LocalRunEvent[] | null }> => ({
+    events: localRuns.events(runId),
+  }),
+  /** "Hide details" on one of your finished runs: the relay keeps only its answer; your own copy just notes it. */
+  hideRunDetails: async ({ bindingId, runId }: { bindingId: string; runId: string }): Promise<Result<{ steps: number }, string>> => {
+    const result = await relayApi.hideSessionDetails?.(bindingId, runId);
+    if (!result) return err("This relay can't hide a run's details.");
+    if (!result.success) return err(result.error.message);
+    localRuns.note(runId, DETAILS_HIDDEN_EVENT, { steps: result.data.steps });
+    return ok(result.data);
+  },
 });

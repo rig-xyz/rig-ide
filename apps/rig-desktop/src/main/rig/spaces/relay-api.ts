@@ -145,6 +145,8 @@ export interface SpacesRelayApi {
     runId: string,
     after?: number
   ): Promise<Result<{ run: SessionRun; events: SessionEventRow[] }, RelayApiError>>;
+  /** "Hide details", owner-only: the relay drops a finished run's stored steps, keeping its answer (`POST .../hide-details`). */
+  hideSessionDetails?(bindingId: string, runId: string): Promise<Result<{ steps: number }, RelayApiError>>;
 
   createAgentRequest(
     bindingId: string,
@@ -411,6 +413,21 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         inserted: typeof raw?.inserted === 'number' ? raw.inserted : 0,
         upToSeq: typeof raw?.upToSeq === 'number' ? raw.upToSeq : null,
       });
+    },
+
+    async hideSessionDetails(bindingId, runId) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(
+        ctxResult.data,
+        'POST',
+        `/v1/me/bindings/${bindingId}/sessions/${runId}/hide-details`,
+        'hide the session details',
+        {}
+      );
+      if (!result.success) return err(result.error);
+      const steps = asRecord(result.data)?.steps;
+      return ok({ steps: typeof steps === 'number' ? steps : 0 });
     },
 
     async getSessionEvents(bindingId, runId, after) {
