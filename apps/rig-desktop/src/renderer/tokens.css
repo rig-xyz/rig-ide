@@ -70,11 +70,18 @@
     --bg-1: #ffffff;
     --bg-2: #eff1f4;
     --bg-3: #e7eaee;
-    --border-hairline: #e3e6ea;
+    /* Light-mode pass: was #e3e6ea — ~1.25:1 against both --bg-1 (white)
+       and --bg-0, i.e. functionally invisible (a floating card's own
+       border read as no border at all, leaving it to the soft shadow
+       alone). Darkened to a real, still-quiet hairline (~1.4:1). */
+    --border-hairline: #d3d7dd;
     --border-strong: #d1d5db;
     --text-primary: #16181d;
     --text-secondary: #4d5560;
-    --text-muted: #9aa1ab;
+    /* Light-mode pass: was #9aa1ab (~2.6:1 on white) — too weak for muted
+       text that still carries information (timestamps, "Worked 45s").
+       Darkened to ~4.5:1. */
+    --text-muted: #71777f;
     --accent: #2f6fc0;
     --accent-subtle: rgba(47, 111, 192, 0.12);
     --accent-ink: #ffffff;
@@ -84,9 +91,12 @@
     --success: #166534;
     --warning: #9c6a34;
     --danger: #b8483d;
-    --shadow-soft: 0 1px 2px rgba(22, 24, 29, 0.05), 0 10px 24px rgba(22, 24, 29, 0.07);
-  --shadow-float: 0 1px 2px rgba(24, 24, 27, 0.06), 0 4px 12px rgba(24, 24, 27, 0.1);
-  --shadow-modal: 0 2px 6px rgba(24, 24, 27, 0.06), 0 16px 48px rgba(24, 24, 27, 0.14);
+    /* Light-mode pass: floating surfaces relied on shadow alone (the
+       hairline above was invisible) — nudged up alongside the hairline
+       fix rather than instead of it. */
+    --shadow-soft: 0 1px 2px rgba(22, 24, 29, 0.06), 0 10px 24px rgba(22, 24, 29, 0.09);
+  --shadow-float: 0 1px 3px rgba(24, 24, 27, 0.08), 0 6px 16px rgba(24, 24, 27, 0.12);
+  --shadow-modal: 0 2px 8px rgba(24, 24, 27, 0.08), 0 20px 56px rgba(24, 24, 27, 0.16);
   }
 }
 
@@ -134,11 +144,12 @@
   --bg-1: #ffffff;
   --bg-2: #eff1f4;
   --bg-3: #e7eaee;
-  --border-hairline: #e3e6ea;
+  /* Kept in sync with the @media block above — see its comment. */
+  --border-hairline: #d3d7dd;
   --border-strong: #d1d5db;
   --text-primary: #16181d;
   --text-secondary: #4d5560;
-  --text-muted: #9aa1ab;
+  --text-muted: #71777f;
   --accent: #2f6fc0;
   --accent-subtle: rgba(47, 111, 192, 0.12);
   --accent-ink: #ffffff;
@@ -148,9 +159,9 @@
   --success: #166534;
   --warning: #9c6a34;
   --danger: #b8483d;
-  --shadow-soft: 0 1px 2px rgba(22, 24, 29, 0.05), 0 10px 24px rgba(22, 24, 29, 0.07);
-  --shadow-float: 0 1px 2px rgba(24, 24, 27, 0.06), 0 4px 12px rgba(24, 24, 27, 0.1);
-  --shadow-modal: 0 2px 6px rgba(24, 24, 27, 0.06), 0 16px 48px rgba(24, 24, 27, 0.14);
+  --shadow-soft: 0 1px 2px rgba(22, 24, 29, 0.06), 0 10px 24px rgba(22, 24, 29, 0.09);
+  --shadow-float: 0 1px 3px rgba(24, 24, 27, 0.08), 0 6px 16px rgba(24, 24, 27, 0.12);
+  --shadow-modal: 0 2px 8px rgba(24, 24, 27, 0.08), 0 20px 56px rgba(24, 24, 27, 0.16);
 }
 
 /*
