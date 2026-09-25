@@ -144,6 +144,9 @@ export function reduceRoom(snapshot: RoomSnapshot, event: RoomEvent): RoomSnapsh
     case 'connector_added':
       return { ...snapshot, connectors: [...snapshot.connectors, event.connector] };
 
+    case 'connectors_synced':
+      return { ...snapshot, connectors: event.connectors };
+
     case 'skill_added':
       return { ...snapshot, skills: [...snapshot.skills, event.skill] };
 
@@ -214,7 +217,8 @@ function systemMessage(
   authorId: PersonId,
   event: string,
   time: string,
-  body?: string
+  body?: string,
+  connectorIds?: string[]
 ): RoomMessage {
   msgCounter += 1;
   return {
@@ -224,7 +228,7 @@ function systemMessage(
     createdAt: `2026-09-22T${time}:00-04:00`,
     time,
     body,
-    meta: { kind: 'system', event },
+    meta: { kind: 'system', event, ...(connectorIds ? { connectorIds } : {}) },
   };
 }
 
@@ -452,7 +456,8 @@ export function buildRoomFeed(): RoomFeedScript {
           'alice',
           'connectors_added',
           '14:07',
-          'Connected Metabase and Mixpanel to this space, read-only.'
+          'Connected Metabase and Mixpanel to this space, read-only.',
+          ['metabase', 'mixpanel']
         ),
       },
     ],

@@ -1,11 +1,13 @@
-import { Check, CircleAlert, Copy, CornerUpLeft, UserPlus } from 'lucide-react';
+import { Check, CircleAlert, Copy, CornerUpLeft, Plug, UserPlus } from 'lucide-react';
 import { Children, type ReactNode, useEffect, useState } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import { formatClock, formatClockShort, formatFull } from '@renderer/lib/time-format';
-import { BrandLogo } from '../logos';
+import type { ConnectResult } from '@shared/spaces/connectors';
+import { ConnectorMark } from '../logos';
 import type { RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
+import { ConnectPill } from './connectors-panel';
 
 /**
  * Spaces (lane 2): the non-session transcript row kinds — human message
@@ -401,17 +403,20 @@ export function InviteRow({ message, snapshot }: { message: RoomMessage; snapsho
   );
 }
 
-const CONNECTOR_NOTE = 'Every agent in this space can query these, read-only.';
+const CONNECTOR_NOTE = "Each person's agent uses their own login. What an agent reads here is visible to the space.";
 
 /** Connector card — announces the tools Someone connected to the space. */
 export function ConnectorCard({
   message,
   addedBy,
   connectors,
+  onConnect,
 }: {
   message: RoomMessage;
   addedBy: RoomMember | undefined;
   connectors: RoomConnector[];
+  /** Runs the connect flow for a not-yet-connected/expired connector's pill. */
+  onConnect?: (id: string) => Promise<ConnectResult>;
 }) {
   return (
     <div className={cn(ROW_GRID, 'group py-1')}>
@@ -426,9 +431,26 @@ export function ConnectorCard({
     <div className="border-border-hairline bg-bg-1 flex max-w-[420px] flex-col gap-2.5 rounded-card border p-3">
       {connectors.map((c) => (
         <div key={c.id} className="flex items-center gap-2.5 text-sm text-text-primary">
-          <BrandLogo id={c.logo} size={16} />
+          <ConnectorMark connector={c} size={16} />
           {c.name}
-          <span className="ml-auto font-mono text-2xs text-text-muted">read-only</span>
+          {c.mine === undefined ? (
+            <span className="ml-auto font-mono text-2xs text-text-muted">read-only</span>
+          ) : c.mine === 'connected' ? (
+            <span className="ml-auto flex items-center gap-1.5 text-2xs text-text-muted">
+              <span className="bg-success size-1.5 rounded-full" />
+              Connected as you
+            </span>
+          ) : (
+            onConnect && (
+              <span className="ml-auto">
+                <ConnectPill
+                  label={c.mine === 'expired' ? 'Reconnect' : 'Connect'}
+                  variant={c.mine === 'expired' ? 'warn' : 'accent'}
+                  onConnect={() => onConnect(c.id)}
+                />
+              </span>
+            )
+          )}
         </div>
       ))}
       <p className="border-border-hairline border-t pt-2 text-2xs text-text-muted">{CONNECTOR_NOTE}</p>
@@ -520,15 +542,25 @@ export function CommentMirrorLine({
   );
 }
 
-/** System row (join is its own component above; this covers the rest: connectors added, skill added, an agent that couldn't start). */
-export function SystemRow({ message, snapshot }: { message: RoomMessage; snapshot: RoomSnapshot }) {
+/** System row (join is its own component above; this covers the rest: connectors added/removed, skill added, an agent that couldn't start). */
+export function SystemRow({
+  message,
+  snapshot,
+  onConnectorConnect,
+}: {
+  message: RoomMessage;
+  snapshot: RoomSnapshot;
+  /** Runs the connect flow for a connector pill inside a `connectors_added` card. */
+  onConnectorConnect?: (id: string) => Promise<ConnectResult>;
+}) {
   if (message.meta.kind !== 'system') return null;
   if (message.meta.event === 'connectors_added') {
-    return (
-      <ConnectorCard message={message} addedBy={memberOf(snapshot, message.authorId)} connectors={snapshot.connectors} />
-    );
+    const ids = message.meta.connectorIds ?? snapshot.connectors.map((c) => c.id);
+    const connectors = snapshot.connectors.filter((c) => ids.includes(c.id));
+    return <ConnectorCard message={message} addedBy={memberOf(snapshot, message.authorId)} connectors={connectors} onConnect={onConnectorConnect} />;
   }
-  const Icon = message.meta.event === 'agent_failed' ? CircleAlert : UserPlus;
+  const Icon =
+    message.meta.event === 'agent_failed' ? CircleAlert : message.meta.event === 'connectors_removed' ? Plug : UserPlus;
   return (
     <div className={cn(ROW_GRID, 'group items-center py-1 text-xs text-text-secondary')}>
       <Icon className="size-3.5 justify-self-center text-text-muted" strokeWidth={1.5} />

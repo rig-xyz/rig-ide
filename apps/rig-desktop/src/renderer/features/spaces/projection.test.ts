@@ -227,4 +227,26 @@ describe('projectSessionCard — against real exported fixtures', () => {
     const card = projectSessionCard([]);
     expect(card).toEqual(newSessionCard());
   });
+
+  it('records a run_connectors event as connector gaps, dropping anything malformed', () => {
+    const card = projectSessionCard([
+      {
+        seq: 1,
+        kind: 'run_connectors',
+        payload: {
+          gaps: [
+            { id: 'linear', state: 'not_connected' },
+            { id: 'sentry', state: 'expired' },
+            { id: 'notion', state: 'connected' }, // not a gap — dropped
+            { state: 'expired' }, // missing id — dropped
+            'garbage',
+          ],
+        },
+      },
+    ]);
+    expect(card.connectorGaps).toEqual([
+      { id: 'linear', state: 'not_connected' },
+      { id: 'sentry', state: 'expired' },
+    ]);
+  });
 });

@@ -1,6 +1,7 @@
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { cn } from '@renderer/lib/utils';
-import type { LogoId } from './types';
+import { connectorById } from '@shared/spaces/connectors';
+import type { LogoId, RoomConnector } from './types';
 
 /**
  * Real brand marks — copied verbatim from the demo's `<symbol>` defs
@@ -64,4 +65,39 @@ export function BrandLogo({
 /** Agent → brand mark (Claude uses `l-claude`, Codex uses OpenAI's mark, per the demo's `AG` map). */
 export function agentLogoId(agent: 'claude' | 'codex'): LogoId {
   return agent === 'claude' ? 'claude' : 'openai';
+}
+
+/**
+ * A BYOA catalog connector's stand-in mark (connectors-spec.md: no real
+ * brand icons in v1) — its catalog `brand` color with its name's initial,
+ * matching the design sketch's letter tiles.
+ */
+export function ConnectorTile({
+  name,
+  brand,
+  size = 18,
+  className,
+}: {
+  name: string;
+  brand: string;
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn('inline-grid shrink-0 place-items-center rounded font-semibold text-white', className)}
+      style={{ width: size, height: size, background: brand, fontSize: Math.max(8, Math.round(size * 0.5)) }}
+      aria-hidden
+    >
+      {name.charAt(0).toUpperCase()}
+    </span>
+  );
+}
+
+/** A `RoomConnector`'s mark: a catalog tile when it's a BYOA connector, else its `logo` brand mark (the scripted demo's pre-catalog connectors). */
+export function ConnectorMark({ connector, size = 16, className }: { connector: RoomConnector; size?: number; className?: string }) {
+  const def = connectorById(connector.id);
+  if (def) return <ConnectorTile name={def.name} brand={def.brand} size={size} className={className} />;
+  if (connector.logo) return <BrandLogo id={connector.logo} size={size} className={className} />;
+  return null;
 }

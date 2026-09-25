@@ -23,6 +23,9 @@ import { Dialog, DialogContent, DialogTitle } from '@renderer/lib/ui/dialog';
 import { Popover, PopoverMenuItem } from '@renderer/lib/ui/popover';
 import { DotMatrix, type DotMatrixActivity, type DotMatrixState } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
+import { connectorById, prettyConnectorTool, type ConnectResult } from '@shared/spaces/connectors';
+import { ConnectPill } from './connectors-panel';
+import { ConnectorTile } from '../logos';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type {
   AgentKind,
@@ -143,6 +146,9 @@ function StepRow({
   const live = step.status === 'pending' || step.status === 'in_progress';
   const Icon = kind.icon;
   const decision = decided ? decisionLabel(decided) : null;
+  // A connector's raw MCP tool name ("mcp__linear__list_issues") reads as
+  // "Linear · list issues" with its brand tile, per connectors-spec.md.
+  const pretty = step.title ? prettyConnectorTool(step.title) : null;
   return (
     <li className="flex min-w-0 flex-col" data-testid="session-step">
       <div className="flex h-6 min-w-0 items-center gap-2 text-xs text-text-secondary">
@@ -150,11 +156,13 @@ function StepRow({
           <DotMatrix state={kind.matrix} size="sm" className="mx-0.5" />
         ) : failed ? (
           <X className="size-3.5 shrink-0 text-danger" strokeWidth={1.5} />
+        ) : pretty ? (
+          <ConnectorTile name={pretty.connector.name} brand={pretty.connector.brand} size={14} className="rounded" />
         ) : (
           <Icon className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
         )}
         <span className="min-w-0 truncate" title={step.title}>
-          {step.title ?? kind.past}
+          {pretty ? `${pretty.connector.name} · ${pretty.action}` : (step.title ?? kind.past)}
         </span>
       </div>
       {decision && (
@@ -495,6 +503,7 @@ export function SessionCard({
   onRerun,
   prompt,
   otherAgents = [],
+  onConnectorConnect,
 }: {
   meta: SessionRunMeta;
   events: SessionEvent[];
@@ -521,6 +530,8 @@ export function SessionCard({
   prompt?: string;
   /** Your other agents, offered by Retry. */
   otherAgents?: AgentKind[];
+  /** Runs the connect flow for a footer gap pill (own run only — see `card.connectorGaps`). */
+  onConnectorConnect?: (id: string) => Promise<ConnectResult>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [traceOpen, setTraceOpen] = useState(false);
@@ -725,6 +736,30 @@ export function SessionCard({
           </details>
         )}
         {!running && card.finalAnswer && <SourcesRow sources={sourcesOf(card)} onOpen={onOpenFile} />}
+        {mine && onConnectorConnect && card.connectorGaps.length > 0 && (
+          <div className="flex flex-wrap gap-1.5" data-testid="session-connector-gaps">
+            {card.connectorGaps.map((gap) => {
+              const def = connectorById(gap.id);
+              const name = def?.name ?? gap.id;
+              return (
+                <span
+                  key={gap.id}
+                  className="bg-bg-2 border-border-hairline flex h-7 w-fit items-center gap-2 rounded-chip border pr-1 pl-2 text-xs text-text-secondary"
+                  data-testid="connector-gap-pill"
+                  data-connector={gap.id}
+                >
+                  {def && <ConnectorTile name={def.name} brand={def.brand} size={16} />}
+                  {gap.state === 'expired' ? `Your ${name} login expired` : `${name} isn't connected for you`}
+                  <ConnectPill
+                    label={gap.state === 'expired' ? 'Reconnect' : 'Connect'}
+                    variant={gap.state === 'expired' ? 'warn' : 'accent'}
+                    onConnect={() => onConnectorConnect(gap.id)}
+                  />
+                </span>
+              );
+            })}
+          </div>
+        )}
 
         {changedFiles.length > 0 && (
           <div className="flex flex-col gap-1.5 pt-0.5">

@@ -2,6 +2,8 @@ import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucid
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
+import type { ConnectorId } from '@shared/spaces/connectors';
+import { connectorsApi } from '../connectors-api';
 import { buildRoomFeed } from '../fixtures/room-feed';
 import { RelayRoomSource, type RelayRoomClient } from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
@@ -11,6 +13,7 @@ import { Composer, type ComposerSendContext } from './composer';
 import { RoomTranscript } from './room-transcript';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
 import { AgentSettingsContext, type AgentSettingsApi } from './agent-settings';
+import { ConnectorsSection } from './connectors-panel';
 import { SpaceCard } from './space-card';
 
 /**
@@ -21,6 +24,12 @@ import { SpaceCard } from './space-card';
  */
 function createRelayRoomClient(): RelayRoomClient {
   const client = rpc.rig.spacesConnection;
+  // The connectors routes (connectors-spec.md's `GET/POST/DELETE
+  // /v1/me/bindings/:id/connectors`) are still landing on `spacesConnection`
+  // in this shared worktree — cast rather than depend on the exact method
+  // names so this file type-checks either way; `RelayRoomSource` already
+  // treats all three as optional and no-ops gracefully if they're absent.
+  const withConnectors = client as unknown as RelayRoomClient;
   return {
     mintRealtimeTicket: (bindingId) => client.mintRealtimeTicket({ bindingId }),
     listMembers: (bindingId) => client.listMembers({ bindingId }),
@@ -30,6 +39,9 @@ function createRelayRoomClient(): RelayRoomClient {
     getSessionEvents: (bindingId, runId, after) => client.getSessionEvents({ bindingId, runId, after }),
     postMessage: (bindingId, input) => client.postMessage({ bindingId, ...input }),
     requestOwnAgent: (bindingId, input) => client.requestOwnAgent({ bindingId, ...input }),
+    listConnectors: withConnectors.listConnectors?.bind(withConnectors),
+    addConnector: withConnectors.addConnector?.bind(withConnectors),
+    removeConnector: withConnectors.removeConnector?.bind(withConnectors),
   };
 }
 
@@ -213,6 +225,7 @@ export function RoomView({
         wsUrl: result.data.wsUrl,
         selfUserId: result.data.selfUserId,
         relay: createRelayRoomClient(),
+        connections: connectorsApi,
       });
       setSelfUserId(result.data.selfUserId);
       setSource(relaySource);
@@ -349,6 +362,17 @@ export function RoomView({
           void rpc.rig.spacesDispatch.resolvePermission({ runId, requestId, optionId });
         }
       : undefined;
+  // Shared by the transcript's connector pills (a `connectors_added` card,
+  // an agent turn's footer gap) — the fuller add/consent/catalog flow lives
+  // in the space panel's `ConnectorsSection` instead.
+  const handleConnectorConnect =
+    source instanceof RelayRoomSource
+      ? async (id: string) => {
+          const result = await connectorsApi.connect(id as ConnectorId);
+          await source.refreshConnections();
+          return result;
+        }
+      : undefined;
 
   if (connectError) {
     return (
@@ -427,6 +451,7 @@ export function RoomView({
                   }
                 : undefined
             }
+            onConnectorConnect={handleConnectorConnect}
           />
           )}
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
@@ -463,7 +488,10 @@ export function RoomView({
         </div>
         {source instanceof RelayRoomSource ? (
           (renderPanel?.(
-            <AgentRows snapshot={snapshot} selfUserId={selfUserId} />,
+            <>
+              <AgentRows snapshot={snapshot} selfUserId={selfUserId} />
+              <ConnectorsSection snapshot={snapshot} selfUserId={selfUserId} source={source} />
+            </>,
             new Set(snapshot.members.filter((m) => m.online !== false).map((m) => m.id)),
             { startCollapsed: narrow, chipSummary: <SpaceChipSummary snapshot={snapshot} /> }
           ) ?? null)

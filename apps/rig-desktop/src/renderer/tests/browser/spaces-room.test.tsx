@@ -1,6 +1,7 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ConnectResult } from '@shared/spaces/connectors';
 import { Composer } from '@renderer/features/spaces/components/composer';
 import { ConversationMap } from '@renderer/features/spaces/components/conversation-map';
 import {
@@ -10,12 +11,16 @@ import {
   type AgentSettingsApi,
 } from '@renderer/features/spaces/components/agent-settings';
 import { AgentRows } from '@renderer/features/spaces/components/agent-rows';
+import { ConnectorsSection } from '@renderer/features/spaces/components/connectors-panel';
 import { groupThreads, RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
 import { RoomView } from '@renderer/features/spaces/components/room-view';
 import { SessionCard } from '@renderer/features/spaces/components/session-card';
+import { ConnectorCard } from '@renderer/features/spaces/components/transcript-items';
+import { connectorsApi } from '@renderer/features/spaces/connectors-api';
 import { buildRoomFeed } from '@renderer/features/spaces/fixtures/room-feed';
+import type { RelayRoomSource } from '@renderer/features/spaces/relay-room-source';
 import { FixtureRoomSource } from '@renderer/features/spaces/room-source';
-import type { RoomMember, RoomMessage, RoomSnapshot, SessionEvent, SessionRunMeta } from '@renderer/features/spaces/types';
+import type { RoomConnector, RoomMember, RoomMessage, RoomSnapshot, SessionEvent, SessionRunMeta } from '@renderer/features/spaces/types';
 // Real tokens — the message-row/session-card class assertions below rely
 // on the actual `--accent`/`--bg-2` etc. custom properties being present,
 // same as artifact-view.test.tsx.
@@ -30,6 +35,52 @@ vi.mock('@renderer/lib/ipc', () => ({
     rig: { spacesConnection: { getConnectionInfo: async () => ({ success: false, error: { message: 'offline' } }) } },
   },
 }));
+
+// The connectors panel/pills go through this one wrapper (connectors-api.ts)
+// rather than the IPC bridge directly — mocked here so each test controls
+// what "your own connection" looks like without any RPC plumbing.
+vi.mock('@renderer/features/spaces/connectors-api', () => ({
+  connectorsApi: {
+    list: vi.fn().mockResolvedValue([]),
+    connect: vi.fn().mockResolvedValue({ ok: true }),
+    cancel: vi.fn().mockResolvedValue(undefined),
+    disconnect: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+function click(el: Element): void {
+  el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+}
+
+/** A fake `RelayRoomSource` exposing only what `ConnectorsSection` calls on it. */
+function fakeConnectorsSource(overrides: Partial<Pick<RelayRoomSource, 'addConnector' | 'removeConnector' | 'refreshConnections'>> = {}): RelayRoomSource {
+  return {
+    addConnector: vi.fn().mockResolvedValue({ ok: true }),
+    removeConnector: vi.fn().mockResolvedValue({ ok: true }),
+    refreshConnections: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  } as unknown as RelayRoomSource;
+}
+
+function connectorsSnapshot(overrides: Partial<RoomSnapshot> = {}): RoomSnapshot {
+  return {
+    name: 'growth',
+    ready: true,
+    members: [
+      { id: 'dylan', name: 'Dylan', email: 'dylan@acme.com', role: 'owner', initial: 'D', status: 'here' },
+      { id: 'sam', name: 'Sam', email: 'sam@acme.com', role: 'viewer', initial: 'S', status: 'here' },
+    ],
+    agents: [],
+    connectors: [],
+    skills: [],
+    messages: [],
+    invitesById: {},
+    sessionMetaByRun: {},
+    sessionEventsByRun: {},
+    typingUserIds: [],
+    ...overrides,
+  };
+}
 
 /**
  * Spaces (lane 2): renders the Room's real components (transcript +
@@ -855,6 +906,234 @@ describe('Room transcript — doc comment threads', () => {
     expect(host.querySelectorAll('[data-testid="comment-thread-reply"]')).toHaveLength(5);
     await act(async () => root.unmount());
     host.remove();
+  });
+});
+
+describe('Connectors — space panel', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    vi.mocked(connectorsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(connectorsApi.connect).mockReset().mockResolvedValue({ ok: true });
+    vi.mocked(connectorsApi.cancel).mockReset().mockResolvedValue(undefined);
+    vi.mocked(connectorsApi.disconnect).mockReset().mockResolvedValue(undefined);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  it('shows the empty state, and the Add pill only for a member who can write', async () => {
+    const snapshot = connectorsSnapshot();
+    await act(async () => {
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} />);
+    });
+    expect(host.querySelector('[data-testid="connectors-empty"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="connectors-add-toggle"]')).not.toBeNull();
+
+    await act(async () => {
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="sam" source={fakeConnectorsSource()} />);
+    });
+    expect(host.querySelector('[data-testid="connectors-add-toggle"]')).toBeNull();
+  });
+
+  it('picking a catalog tool opens its consent line, and "Continue in browser" connects then adds it to the space', async () => {
+    const source = fakeConnectorsSource();
+    const snapshot = connectorsSnapshot();
+    await act(async () => {
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={source} />);
+    });
+    await act(async () => click(host.querySelector('[data-testid="connectors-add-toggle"]')!));
+    const rows = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="connector-catalog-row"]')];
+    expect(rows.length).toBeGreaterThan(0);
+    const linearRow = rows.find((r) => r.textContent?.includes('Linear'))!;
+    await act(async () => click(linearRow));
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="connector-consent"]')).not.toBeNull());
+    expect(host.querySelector('[data-testid="connector-consent"]')?.textContent).toContain('sign in to Linear in your browser');
+
+    const go = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Continue in browser')!;
+    await act(async () => click(go));
+    await vi.waitFor(() => expect(connectorsApi.connect).toHaveBeenCalledWith('linear'));
+    await vi.waitFor(() => expect(source.addConnector).toHaveBeenCalledWith('linear'));
+  });
+
+  it('shows the waiting state while connecting, and Cancel aborts it', async () => {
+    const inFlight: { settle: ((r: ConnectResult) => void) | null } = { settle: null };
+    vi.mocked(connectorsApi.connect).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          inFlight.settle = resolve;
+        })
+    );
+    const snapshot = connectorsSnapshot({
+      connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'not_connected' }],
+    });
+    await act(async () => {
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} />);
+    });
+    await act(async () => click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Connect')!));
+    await act(async () => click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Continue in browser')!));
+    expect(host.textContent).toContain('Waiting for your browser');
+
+    await act(async () => click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Cancel')!));
+    expect(connectorsApi.cancel).toHaveBeenCalledWith('linear');
+    expect(host.textContent).not.toContain('Waiting for your browser');
+    inFlight.settle?.({ ok: true }); // let the abandoned promise settle so it doesn't dangle
+  });
+
+  it('renders connected, not-connected and expired rows with their sub-line, dot and pill', async () => {
+    const snapshot = connectorsSnapshot({
+      connectors: [
+        { id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' },
+        { id: 'notion', name: 'Notion', addedBy: 'sam', mine: 'not_connected' },
+        { id: 'sentry', name: 'Sentry', addedBy: 'dylan', mine: 'expired' },
+      ],
+    });
+    await act(async () => {
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} />);
+    });
+    const rowFor = (id: string) => host.querySelector<HTMLElement>(`[data-testid="connector-row"][data-connector="${id}"]`)!;
+    expect(rowFor('linear').textContent).toContain('Connected as you');
+    expect(rowFor('notion').textContent).toContain('Added by Sam');
+    expect([...rowFor('notion').querySelectorAll('button')].some((b) => b.textContent === 'Connect')).toBe(true);
+    expect(rowFor('sentry').textContent).toContain('Login expired');
+    expect([...rowFor('sentry').querySelectorAll('button')].some((b) => b.textContent === 'Reconnect')).toBe(true);
+  });
+
+  it('disconnects your own login with one click, no confirm needed', async () => {
+    const source = fakeConnectorsSource();
+    const snapshot = connectorsSnapshot({
+      connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }],
+    });
+    await act(async () => {
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={source} />);
+    });
+    const row = host.querySelector<HTMLElement>('[data-testid="connector-row"]')!;
+    await act(async () => click([...row.querySelectorAll('button')].find((b) => b.textContent === 'Disconnect mine')!));
+    expect(connectorsApi.disconnect).toHaveBeenCalledWith('linear');
+    await vi.waitFor(() => expect(source.refreshConnections).toHaveBeenCalled());
+  });
+
+  it('removing from the space takes a second click to confirm', async () => {
+    const source = fakeConnectorsSource();
+    const snapshot = connectorsSnapshot({
+      connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }],
+    });
+    await act(async () => {
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={source} />);
+    });
+    const row = host.querySelector<HTMLElement>('[data-testid="connector-row"]')!;
+    const removeButton = () => [...row.querySelectorAll('button')].find((b) => b.textContent?.includes('Remove') || b.textContent === 'Confirm remove?')!;
+    await act(async () => click(removeButton()));
+    expect(removeButton().textContent).toBe('Confirm remove?');
+    expect(source.removeConnector).not.toHaveBeenCalled();
+    await act(async () => click(removeButton()));
+    expect(source.removeConnector).toHaveBeenCalledWith('linear');
+  });
+});
+
+describe('Connectors — Room copy and turn footer', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  const connectorMessage: RoomMessage = {
+    id: 'm-connectors',
+    seq: 1,
+    authorId: 'dylan',
+    createdAt: new Date().toISOString(),
+    time: '10:00',
+    meta: { kind: 'system', event: 'connectors_added', connectorIds: ['linear'] },
+  };
+
+  it("ConnectorCard uses the updated note and offers Connect for a connector you haven't connected", async () => {
+    const connectors: RoomConnector[] = [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'not_connected' }];
+    const onConnect = vi.fn().mockResolvedValue({ ok: true });
+    await act(async () => {
+      root.render(<ConnectorCard message={connectorMessage} addedBy={undefined} connectors={connectors} onConnect={onConnect} />);
+    });
+    expect(host.textContent).toContain("Each person's agent uses their own login");
+    expect(host.textContent).not.toContain('read-only');
+    await act(async () => click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Connect')!));
+    expect(onConnect).toHaveBeenCalledWith('linear');
+  });
+
+  it('ConnectorCard shows "Connected as you" once your own login is in place', async () => {
+    const connectors: RoomConnector[] = [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }];
+    await act(async () => {
+      root.render(<ConnectorCard message={connectorMessage} addedBy={undefined} connectors={connectors} />);
+    });
+    expect(host.textContent).toContain('Connected as you');
+  });
+
+  const runMeta: SessionRunMeta = {
+    id: 'run-connectors',
+    agent: 'claude',
+    owner: 'alice',
+    model: 'sonnet',
+    title: '',
+    status: 'done',
+    startedAt: new Date().toISOString(),
+    endedAt: new Date().toISOString(),
+  };
+  const gapEvents: SessionEvent[] = [
+    { seq: 1, kind: 'agent_message_chunk', payload: { messageId: 'x', content: { type: 'text', text: 'Done.' } } },
+    { seq: 2, kind: 'run_connectors', payload: { gaps: [{ id: 'linear', state: 'not_connected' }] } },
+    { seq: 3, kind: 'turn_ended', payload: { status: 'done' } },
+  ];
+
+  it("shows the connector-gap footer only to the run's own owner, and runs the connect flow from it", async () => {
+    const onConnectorConnect = vi.fn().mockResolvedValue({ ok: true });
+    await act(async () => {
+      root.render(
+        <SessionCard meta={runMeta} events={gapEvents} owner={undefined} viewerIsOwner onConnectorConnect={onConnectorConnect} />
+      );
+    });
+    const gaps = host.querySelector('[data-testid="session-connector-gaps"]');
+    expect(gaps).not.toBeNull();
+    expect(gaps?.textContent).toContain("Linear isn't connected for you");
+    await act(async () => click([...gaps!.querySelectorAll('button')].find((b) => b.textContent === 'Connect')!));
+    expect(onConnectorConnect).toHaveBeenCalledWith('linear');
+
+    await act(async () => {
+      root.render(
+        <SessionCard
+          meta={runMeta}
+          events={gapEvents}
+          owner={undefined}
+          viewerIsOwner={false}
+          onConnectorConnect={onConnectorConnect}
+        />
+      );
+    });
+    expect(host.querySelector('[data-testid="session-connector-gaps"]')).toBeNull();
+  });
+
+  it('prettifies a connector\'s raw MCP tool name in the step list, with its brand tile', async () => {
+    const events: SessionEvent[] = [
+      { seq: 1, kind: 'tool_call', payload: { toolCallId: 't1', title: 'mcp__linear__list_issues', kind: 'fetch', status: 'completed' } },
+      { seq: 2, kind: 'turn_ended', payload: { status: 'done' } },
+    ];
+    await act(async () => {
+      root.render(<SessionCard meta={{ ...runMeta, status: 'done' }} events={events} owner={undefined} />);
+    });
+    await act(async () => click(host.querySelector('[data-testid="session-summary"]')!));
+    expect(host.querySelector('[data-testid="session-step"]')?.textContent).toContain('Linear · list issues');
   });
 });
 
