@@ -7,7 +7,8 @@
  * - a **connection** is your own login to it, on this machine (keychain only).
  *
  * v1's catalog is handcrafted: every entry here was checked to accept dynamic
- * client registration as a public client with a loopback redirect.
+ * client registration with a loopback redirect (a few issue each install its
+ * own client secret, which the connection store keeps with the tokens).
  */
 
 export const CONNECTOR_IDS = [
@@ -23,13 +24,40 @@ export const CONNECTOR_IDS = [
   'clickup',
   'airtable',
   'attio',
+  'stripe',
+  'canva',
+  'neon',
+  'cloudflare',
+  'honeycomb',
+  'zapier',
+  'monday',
+  'miro',
+  'supabase',
+  'vercel',
+  'webflow',
+  'make',
 ] as const;
 
 export type ConnectorId = (typeof CONNECTOR_IDS)[number];
 
+/** How the gallery groups tools (its filter chips). */
+export const CONNECTOR_CATEGORIES = [
+  'Work tracking',
+  'Docs & data',
+  'Design',
+  'Analytics',
+  'Engineering',
+  'Customers & revenue',
+  'Meetings',
+  'Automation',
+] as const;
+
+export type ConnectorCategory = (typeof CONNECTOR_CATEGORIES)[number];
+
 export interface ConnectorDef {
   id: ConnectorId;
   name: string;
+  category: ConnectorCategory;
   /** The vendor's remote MCP endpoint (streamable HTTP). */
   url: string;
   /** One short line for the catalog. */
@@ -39,24 +67,37 @@ export interface ConnectorDef {
 }
 
 export const CONNECTORS: readonly ConnectorDef[] = [
-  { id: 'linear', name: 'Linear', url: 'https://mcp.linear.app/mcp', blurb: 'Issues, projects, cycles', brand: '#5E6AD2' },
-  { id: 'notion', name: 'Notion', url: 'https://mcp.notion.com/mcp', blurb: 'Pages and databases', brand: '#191919' },
-  { id: 'posthog', name: 'PostHog', url: 'https://mcp.posthog.com/mcp', blurb: 'Product analytics and flags', brand: '#F54E00' },
-  { id: 'amplitude', name: 'Amplitude', url: 'https://mcp.amplitude.com/mcp', blurb: 'Charts and cohorts', brand: '#1E61F0' },
-  { id: 'mixpanel', name: 'Mixpanel', url: 'https://mcp.mixpanel.com/mcp', blurb: 'Events and funnels', brand: '#7856FF' },
-  { id: 'sentry', name: 'Sentry', url: 'https://mcp.sentry.dev/mcp', blurb: 'Errors and releases', brand: '#362D59' },
+  { id: 'linear', category: 'Work tracking', name: 'Linear', url: 'https://mcp.linear.app/mcp', blurb: 'Issues, projects, cycles', brand: '#5E6AD2' },
+  { id: 'notion', category: 'Docs & data', name: 'Notion', url: 'https://mcp.notion.com/mcp', blurb: 'Pages and databases', brand: '#191919' },
+  { id: 'posthog', category: 'Analytics', name: 'PostHog', url: 'https://mcp.posthog.com/mcp', blurb: 'Product analytics and flags', brand: '#F54E00' },
+  { id: 'amplitude', category: 'Analytics', name: 'Amplitude', url: 'https://mcp.amplitude.com/mcp', blurb: 'Charts and cohorts', brand: '#1E61F0' },
+  { id: 'mixpanel', category: 'Analytics', name: 'Mixpanel', url: 'https://mcp.mixpanel.com/mcp', blurb: 'Events and funnels', brand: '#7856FF' },
+  { id: 'sentry', category: 'Engineering', name: 'Sentry', url: 'https://mcp.sentry.dev/mcp', blurb: 'Errors and releases', brand: '#362D59' },
   {
     id: 'atlassian',
+    category: 'Work tracking',
     name: 'Jira & Confluence',
     url: 'https://mcp.atlassian.com/v1/mcp',
     blurb: 'Tickets and the wiki',
     brand: '#0C66E4',
   },
-  { id: 'granola', name: 'Granola', url: 'https://mcp.granola.ai/mcp', blurb: 'Meeting notes and transcripts', brand: '#1F7A4D' },
-  { id: 'intercom', name: 'Intercom', url: 'https://mcp.intercom.com/mcp', blurb: 'Customer conversations and tickets', brand: '#1F8DED' },
-  { id: 'clickup', name: 'ClickUp', url: 'https://mcp.clickup.com/mcp', blurb: 'Tasks, docs and goals', brand: '#7B68EE' },
-  { id: 'airtable', name: 'Airtable', url: 'https://mcp.airtable.com/mcp', blurb: 'Bases, tables and records', brand: '#18BFFF' },
-  { id: 'attio', name: 'Attio', url: 'https://mcp.attio.com/mcp', blurb: 'CRM: people, companies and deals', brand: '#1C1D1F' },
+  { id: 'granola', category: 'Meetings', name: 'Granola', url: 'https://mcp.granola.ai/mcp', blurb: 'Meeting notes and transcripts', brand: '#1F7A4D' },
+  { id: 'intercom', category: 'Customers & revenue', name: 'Intercom', url: 'https://mcp.intercom.com/mcp', blurb: 'Customer conversations and tickets', brand: '#1F8DED' },
+  { id: 'clickup', category: 'Work tracking', name: 'ClickUp', url: 'https://mcp.clickup.com/mcp', blurb: 'Tasks, docs and goals', brand: '#7B68EE' },
+  { id: 'airtable', category: 'Docs & data', name: 'Airtable', url: 'https://mcp.airtable.com/mcp', blurb: 'Bases, tables and records', brand: '#18BFFF' },
+  { id: 'attio', category: 'Customers & revenue', name: 'Attio', url: 'https://mcp.attio.com/mcp', blurb: 'CRM: people, companies and deals', brand: '#1C1D1F' },
+  { id: 'stripe', category: 'Customers & revenue', name: 'Stripe', url: 'https://mcp.stripe.com', blurb: 'Payments, customers and subscriptions', brand: '#635BFF' },
+  { id: 'canva', category: 'Design', name: 'Canva', url: 'https://mcp.canva.com/mcp', blurb: 'Designs, templates and brand assets', brand: '#00C4CC' },
+  { id: 'neon', category: 'Engineering', name: 'Neon', url: 'https://mcp.neon.tech/mcp', blurb: 'Serverless Postgres databases', brand: '#34D59A' },
+  { id: 'cloudflare', category: 'Engineering', name: 'Cloudflare', url: 'https://mcp.cloudflare.com/mcp', blurb: 'Workers, DNS and edge config', brand: '#F38020' },
+  { id: 'honeycomb', category: 'Engineering', name: 'Honeycomb', url: 'https://mcp.honeycomb.io/mcp', blurb: 'Traces, queries and SLOs', brand: '#F5A623' },
+  { id: 'zapier', category: 'Automation', name: 'Zapier', url: 'https://mcp.zapier.com/api/mcp/mcp', blurb: 'Actions across thousands of apps', brand: '#FF4F00' },
+  { id: 'monday', category: 'Work tracking', name: 'monday.com', url: 'https://mcp.monday.com/mcp', blurb: 'Boards, items and workflows', brand: '#FF3D57' },
+  { id: 'miro', category: 'Design', name: 'Miro', url: 'https://mcp.miro.com/', blurb: 'Boards, stickies and diagrams', brand: '#FFD02F' },
+  { id: 'supabase', category: 'Engineering', name: 'Supabase', url: 'https://mcp.supabase.com/mcp', blurb: 'Postgres, auth and storage', brand: '#3FCF8E' },
+  { id: 'vercel', category: 'Engineering', name: 'Vercel', url: 'https://mcp.vercel.com', blurb: 'Deployments, logs and projects', brand: '#111111' },
+  { id: 'webflow', category: 'Design', name: 'Webflow', url: 'https://mcp.webflow.com/mcp', blurb: 'Sites, pages and CMS', brand: '#146EF5' },
+  { id: 'make', category: 'Automation', name: 'Make', url: 'https://mcp.make.com', blurb: 'Scenarios and automations', brand: '#6D00CC' },
 ];
 
 export function isConnectorId(value: unknown): value is ConnectorId {
