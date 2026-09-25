@@ -12,7 +12,7 @@ import type { RoomConnector, RoomSnapshot } from '../types';
  * Spaces: the Connectors section of the space panel (connectors-spec.md's
  * "Renderer") — one line per connector this space uses, a compact status,
  * and the collapsed line for the agents' own global setup. No hover pills,
- * no inline consent box: a row's only job is to open the tool gallery
+ * no inline consent box: a row's only job is to open the connector gallery
  * (`ConnectorGallery`) straight on that connector's detail view, where the
  * actual connect/disconnect/remove flow lives.
  */
@@ -105,7 +105,7 @@ function ConnectorRow({
   onOpen,
 }: {
   connector: RoomConnector;
-  /** Your agents' own global MCP setup, so a tool one of them already reaches this way reads "Via Claude" instead of nagging you to connect it. */
+  /** Your agents' own global MCP setup, so a connector one of them already reaches this way reads "Via Claude" instead of nagging you to connect it. */
   globalSetup: readonly GlobalServer[];
   onOpen: () => void;
 }) {
@@ -118,15 +118,15 @@ function ConnectorRow({
     <button
       type="button"
       onClick={onOpen}
-      className="hover:bg-bg-2 flex h-8 w-full min-w-0 items-center gap-2 rounded-control px-2 text-left transition-colors"
+      className="hover:bg-bg-2 flex h-7 w-full min-w-0 items-center gap-2 rounded-control pr-2 pl-8 text-left transition-colors"
       data-testid="connector-row"
       data-connector={connector.id}
       data-state={mine}
     >
       {def ? (
-        <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={18} />
+        <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={16} />
       ) : (
-        <span className="bg-bg-3 size-[18px] shrink-0 rounded" />
+        <span className="bg-bg-3 size-4 shrink-0 rounded" />
       )}
       <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-primary">{connector.name}</span>
       <span className={cn('ml-auto flex shrink-0 items-center gap-1.5 text-2xs whitespace-nowrap', STATUS_TEXT_CLASS[status.tone])}>
@@ -139,9 +139,9 @@ function ConnectorRow({
 
 /**
  * The quiet collapsed line for the agents' own global setup: "Your agents
- * also bring N tools from their own setup". It's read-only in the panel —
- * clicking it opens the gallery, whose own "From your agents' own setup"
- * section has the full grouped list.
+ * also bring N connectors from their own setup". It's read-only in the
+ * panel — clicking it opens the gallery, whose own "From your agents' own
+ * setup" section has the full grouped list.
  */
 function GlobalSetupLine({ servers, onOpen }: { servers: readonly GlobalServer[]; onOpen: () => void }) {
   if (servers.length === 0) return null;
@@ -153,7 +153,7 @@ function GlobalSetupLine({ servers, onOpen }: { servers: readonly GlobalServer[]
       data-testid="global-setup-line"
     >
       <span className="min-w-0 flex-1 truncate">
-        Your agents also bring {servers.length} {servers.length === 1 ? 'tool' : 'tools'} from their own setup
+        Your agents also bring {servers.length} {servers.length === 1 ? 'connector' : 'connectors'} from their own setup
       </span>
       <ChevronRight className="size-3 shrink-0" strokeWidth={1.5} />
     </button>
@@ -170,7 +170,7 @@ export function ConnectorsSection({
 }: {
   snapshot: RoomSnapshot;
   selfUserId: string;
-  /** Opens the tool gallery beside the panel (see `ConnectorGallery`), optionally straight on one connector's detail view. */
+  /** Opens the connector gallery beside the panel (see `ConnectorGallery`), optionally straight on one connector's detail view. */
   onOpenGallery?: (focus?: ConnectorId) => void;
   /** Keys this section's remembered expanded/collapsed state to its space. */
   bindingId: string;
@@ -247,10 +247,10 @@ export function ConnectorsSection({
       </div>
 
       {expanded && (
-        <div className="popover-in flex shrink-0 flex-col" data-testid="connectors-expanded">
+        <div className="popover-in flex shrink-0 flex-col pt-1 pb-1.5" data-testid="connectors-expanded">
           {connectors.length === 0 && (
-            <p className="px-2 pb-1.5 text-2xs text-text-muted" data-testid="connectors-empty">
-              None yet. Add a tool your team uses; each person&rsquo;s agent reaches it with their own login.
+            <p className="px-2 text-2xs text-text-muted" data-testid="connectors-empty">
+              None yet. Add a connector your team uses; each person&rsquo;s agent reaches it with their own login.
             </p>
           )}
 

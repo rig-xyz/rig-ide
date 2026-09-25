@@ -1107,7 +1107,7 @@ describe('Connectors — space panel', () => {
     expect(onOpenGallery).toHaveBeenCalledWith('linear');
   });
 
-  it('shows the collapsed "Your agents also bring N tools" line, which opens the gallery (unfocused) when clicked', async () => {
+  it('shows the collapsed "Your agents also bring N connectors" line, which opens the gallery (unfocused) when clicked', async () => {
     const onOpenGallery = vi.fn();
     const globalSetup: GlobalServer[] = [
       { agent: 'claude', name: 'claude.ai Linear', url: 'https://mcp.linear.app/mcp', connectorId: 'linear' },
@@ -1126,7 +1126,7 @@ describe('Connectors — space panel', () => {
     });
     await openConnectors();
     const line = host.querySelector<HTMLButtonElement>('[data-testid="global-setup-line"]')!;
-    expect(line.textContent).toContain('Your agents also bring 2 tools from their own setup');
+    expect(line.textContent).toContain('Your agents also bring 2 connectors from their own setup');
     await act(async () => click(line));
     expect(onOpenGallery).toHaveBeenCalledWith();
   });

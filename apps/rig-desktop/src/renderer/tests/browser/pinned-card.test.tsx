@@ -33,6 +33,8 @@ vi.mock('@renderer/lib/ipc', () => ({
   events: { on: vi.fn(() => () => {}) },
 }));
 
+import { ConnectorsSection } from '@renderer/features/spaces/components/connectors-panel';
+import type { RoomSnapshot } from '@renderer/features/spaces/types';
 import { PinnedCard } from '@renderer/features/workspace/pinned-card';
 
 function click(el: Element): void {
@@ -159,6 +161,25 @@ describe('PinnedCard', () => {
       expect(chip.textContent).toContain('growth');
       expect(chip.textContent).toContain('Syncing');
     });
+
+    it('oozes the expand button out of the LEFT edge, not the right — the chip is anchored top-right, near the window edge', async () => {
+      await render({ startCollapsed: true });
+      const chip = host.querySelector('[data-testid="pinned-chip"]')!;
+      const expandButton = host.querySelector<HTMLButtonElement>('[data-testid="pinned-chip-expand"]')!;
+      // Positioned via `right`, not `left` — bleeding toward the panel's
+      // open space instead of off the window's right edge, where it used
+      // to get cut off.
+      expect(expandButton.style.right).toBeTruthy();
+      expect(expandButton.style.left).toBe('');
+
+      await act(async () => {
+        chip.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      });
+      // The invisible bridge that keeps hover alive while crossing the gap
+      // extends left too (`right-full`), mirroring the button.
+      expect(chip.innerHTML).toContain('right-full');
+      expect(chip.innerHTML).not.toContain('left-full');
+    });
   });
 
   describe('expanded header', () => {
@@ -214,12 +235,75 @@ describe('PinnedCard', () => {
     await render();
     const row = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.includes('Changes'))!;
     expect(row.parentElement!.textContent).toContain('1 new');
-    expect(row.parentElement!.textContent).not.toContain('today');
     // The section remembers being open (it starts open); open it if it isn't.
-    if (!host.querySelector('[data-testid="changes-today"]')) {
+    if (!host.querySelector('[data-testid="changes-meta"]')) {
       await act(async () => row.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     }
-    expect(host.querySelector('[data-testid="changes-today"]')?.textContent).toBe('1 file changed in the last day');
+    expect(host.querySelector('[data-testid="changes-meta"]')?.textContent).toBe('1 file changed today');
+  });
+
+  describe('Changes detail: two-line hierarchy', () => {
+    it('leads with the Pulse summary (text-secondary), then one muted meta line with the count — no summary means no pulse line and just the count', async () => {
+      mocks.filesList.mockResolvedValue({
+        success: true,
+        data: [{ kind: 'file', name: 'notes.md', relPath: 'notes.md', mtimeMs: Date.now() }],
+      });
+      // No pulse briefing at all (offline, per the default mock) — the
+      // Pulse summary paragraph is absent, and the meta line falls back to
+      // just the day's count, with no "· summary …" suffix.
+      await render();
+      const detail = host.querySelector('[data-testid="changes-detail"]')!;
+      expect(host.querySelector('[data-testid="changes-summary"]')).toBeNull();
+      const meta = host.querySelector('[data-testid="changes-meta"]')!;
+      expect(meta.textContent).toBe('1 file changed today');
+      expect(meta.textContent).not.toContain('·');
+      expect(meta.className).toContain('text-2xs');
+      expect(meta.className).toContain('text-text-muted');
+      // The summary (when present) always renders before the meta line.
+      expect(Array.from(detail.children).indexOf(meta)).toBe(detail.children.length - 1);
+    });
+
+    it('shows the Pulse summary first, then a merged meta line: count · summary age', async () => {
+      mocks.filesList.mockResolvedValue({
+        success: true,
+        data: [{ kind: 'file', name: 'notes.md', relPath: 'notes.md', mtimeMs: Date.now() }],
+      });
+      const fiftyEightMinAgo = new Date(Date.now() - 58 * 60_000).toISOString();
+      mocks.pulseGet.mockResolvedValue({
+        success: true,
+        data: {
+          cached: false,
+          briefing: {
+            greeting: '',
+            summary: '',
+            pickBackUp: [],
+            perPerson: [],
+            degraded: false,
+            generatedAt: fiftyEightMinAgo,
+            perRig: [
+              {
+                bindingId: 'binding_growth',
+                rigName: 'growth',
+                line: 'growth: shipped the onboarding flow',
+                at: fiftyEightMinAgo,
+              },
+            ],
+          },
+        },
+      });
+      await render();
+      const detail = host.querySelector('[data-testid="changes-detail"]')!;
+      const summary = host.querySelector('[data-testid="changes-summary"]')!;
+      const meta = host.querySelector('[data-testid="changes-meta"]')!;
+      expect(summary).toBeTruthy();
+      expect(summary.className).toContain('text-text-secondary');
+      expect(summary.className).toContain('leading-relaxed');
+      expect(summary.className).not.toContain('text-text-muted');
+      // The summary is the FIRST line, the meta line the second.
+      const children = Array.from(detail.children);
+      expect(children.indexOf(summary)).toBeLessThan(children.indexOf(meta));
+      expect(meta.textContent).toBe('1 file changed today · summary 58m ago');
+    });
   });
 
   it("lets a function chip summary own the chip's whole status", async () => {
@@ -239,5 +323,90 @@ describe('PinnedCard', () => {
     expect(activityLabel).toBeTruthy();
     expect(activityLabel!.className).not.toContain('font-mono');
     expect(activityLabel!.className).not.toContain('uppercase');
+  });
+
+  describe('People row', () => {
+    beforeEach(() => {
+      mocks.shareMembers.mockResolvedValue({
+        success: true,
+        data: {
+          members: [
+            { userId: 'u_dylan', name: 'Dylan', email: 'dylan@acme.com', avatarUrl: null, role: 'owner' },
+            { userId: 'u_sam', name: 'Sam', email: 'sam@acme.com', avatarUrl: null, role: 'editor' },
+          ],
+          selfRole: 'owner',
+        },
+      });
+    });
+
+    it('shows the D S avatar stack on the summary row while collapsed, and hides it while expanded (same rule as Agents/Connectors)', async () => {
+      await render();
+      const peopleButton = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.includes('People'))!;
+
+      expect(host.querySelector('[data-testid="people-avatar-stack"]')).not.toBeNull();
+
+      await act(async () => peopleButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+      expect(peopleButton.getAttribute('aria-expanded')).toBe('true');
+      expect(host.querySelector('[data-testid="people-avatar-stack"]')).toBeNull();
+
+      await act(async () => peopleButton.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+      expect(host.querySelector('[data-testid="people-avatar-stack"]')).not.toBeNull();
+    });
+  });
+});
+
+/**
+ * `ConnectorsSection` (`connectors-panel.tsx`) doesn't have its own test
+ * file — its coverage lives alongside the rest of the space panel's row
+ * grammar in `spaces-room.test.tsx` — but that file is shared with another
+ * engineer right now, so new coverage for this pass goes here instead: one
+ * focused check that a connector's logo shrank to 16px, matching the other
+ * sub-row leading visuals (Skills' file icons, Agents' avatars).
+ */
+describe('ConnectorsSection — logo size', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    try {
+      localStorage.clear();
+    } catch {
+      // localStorage unavailable in this environment — nothing to clear.
+    }
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  it('renders a connector row\'s logo at 16px, not the old 18px', async () => {
+    const snapshot: RoomSnapshot = {
+      name: 'growth',
+      ready: true,
+      members: [{ id: 'dylan', name: 'Dylan', email: 'dylan@acme.com', role: 'owner', initial: 'D', status: 'here' }],
+      agents: [],
+      connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }],
+      skills: [],
+      messages: [],
+      invitesById: {},
+      sessionMetaByRun: {},
+      sessionEventsByRun: {},
+      typingUserIds: [],
+    };
+    await act(async () => {
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" bindingId="space-connectors-logo-size" />);
+    });
+    await act(async () => {
+      click(host.querySelector('[data-testid="connectors-summary-row"]')!);
+    });
+    const row = host.querySelector('[data-testid="connector-row"][data-connector="linear"]')!;
+    const logo = row.querySelector('svg')!;
+    expect(logo).toBeTruthy();
+    expect(logo.getAttribute('width')).toBe('16');
+    expect(logo.getAttribute('height')).toBe('16');
   });
 });

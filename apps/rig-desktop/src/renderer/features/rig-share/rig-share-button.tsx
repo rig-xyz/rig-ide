@@ -242,6 +242,29 @@ export function RigSharePopoverContent({
 }
 
 /**
+ * One member, the panel's own row grammar (same standard as Agents/
+ * Connectors/Skills): h-7, a 16px avatar aligned under the People header's
+ * label, plain text-xs name, right-aligned text-2xs muted role — not the
+ * looser `MemberRow` the top-bar popover uses, whose bigger avatar and
+ * `py-1.5` spacing is what read as "too far apart" in the panel.
+ */
+function CompactMemberRow({ member }: { member: RigMember }) {
+  const display = member.name ?? member.email ?? member.userId;
+  return (
+    <div className="flex h-7 items-center gap-2 pr-2 pl-8">
+      <IdentityAvatar
+        name={member.name ?? member.email}
+        avatarUrl={member.avatarUrl}
+        sizeClassName="size-4"
+        textClassName="text-2xs"
+      />
+      <span className="text-text-primary min-w-0 flex-1 truncate text-xs">{display}</span>
+      <span className="text-text-muted shrink-0 text-2xs">{member.role}</span>
+    </div>
+  );
+}
+
+/**
  * `variant: 'compact'`'s own shape: just the people, plus one pill that
  * expands the full invite form in place — no separate "People" header (the
  * space panel's own row already says who this is), no invite form shown by
@@ -258,20 +281,22 @@ function CompactSharePanel({
 }) {
   const [inviting, setInviting] = useState(false);
   return (
-    <div className="flex flex-col gap-3 p-3">
-      <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col">
+      <div className="flex flex-col">
         {memberList.members.map((member) => (
-          <MemberRow key={member.userId} member={member} />
+          <CompactMemberRow key={member.userId} member={member} />
         ))}
       </div>
       {showInvites &&
         (inviting ? (
-          <InviteSection root={root} currentMembers={memberList.members} />
+          <div className="px-2 pt-1">
+            <InviteSection root={root} currentMembers={memberList.members} />
+          </div>
         ) : (
           <button
             type="button"
             onClick={() => setInviting(true)}
-            className="bg-bg-2 text-text-secondary hover:text-text-primary rounded-chip flex w-fit shrink-0 items-center gap-1.5 px-2.5 py-1 text-xs transition-colors"
+            className="bg-bg-2 text-text-secondary hover:text-text-primary rounded-chip mx-2 mt-1 flex w-fit shrink-0 items-center gap-1.5 px-2.5 py-1 text-xs transition-colors"
           >
             <UserPlus className="size-3" strokeWidth={1.5} />
             Invite people

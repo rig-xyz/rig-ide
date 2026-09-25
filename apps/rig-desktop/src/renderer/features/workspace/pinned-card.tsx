@@ -205,9 +205,13 @@ function CollapsedChip({
         <span
           className="absolute top-1 size-6 rounded-full motion-reduce:transition-none"
           style={{
-            left: 'calc(100% - 28px)',
+            // Mirror of the right-edge math below: the chip is anchored
+            // top-right (near the window's edge), so the button oozes out
+            // of the LEFT edge instead — toward the panel's open space —
+            // rather than off the right edge where it used to get cut off.
+            right: 'calc(100% - 28px)',
             background: CHIP_FILL,
-            transform: `translateX(${btnX}px)`,
+            transform: `translateX(-${btnX}px)`,
             transition: `transform 550ms ${CHIP_SPRING}`,
           }}
         />
@@ -216,7 +220,7 @@ function CollapsedChip({
       {/* an invisible bridge over the gap, so crossing to the button never counts as leaving */}
       {out && (
         <span
-          className="absolute top-[-6px] left-full h-10"
+          className="absolute top-[-6px] right-full h-10"
           style={{ width: CHIP_BUTTON_OUT_PX + 8 }}
           aria-hidden
         />
@@ -260,7 +264,7 @@ function CollapsedChip({
                 'absolute top-1 z-10 flex size-6 items-center justify-center rounded-full text-text-secondary transition-opacity duration-200 hover:text-text-primary motion-reduce:transition-none',
                 out ? 'pointer-events-auto opacity-100 delay-100' : 'pointer-events-none opacity-0'
               )}
-              style={{ left: `calc(100% + ${btnX - 28}px)`, transition: `opacity 200ms, left 550ms ${CHIP_SPRING}` }}
+              style={{ right: `calc(100% + ${btnX - 28}px)`, transition: `opacity 200ms, right 550ms ${CHIP_SPRING}` }}
             >
               <PanelRightOpen className="size-3.5" strokeWidth={1.5} />
             </button>
@@ -520,7 +524,7 @@ export function PinnedCard({
 
       {/* ── RIG rows — one grammar: icon · label ····· value · chevron.
           Every row is a disclosure; its content expands IN PLACE. ── */}
-      <div className="hover:bg-bg-2 flex h-7 shrink-0 items-center rounded-control pr-2 transition-colors">
+      <div className="hover:bg-bg-2 flex h-8 shrink-0 items-center rounded-control pr-2 transition-colors">
         <button
           type="button"
           onClick={() => toggleSection('changes')}
@@ -560,14 +564,12 @@ export function PinnedCard({
         )}
       </div>
       {expanded === 'changes' && (
-        <div className="popover-in flex shrink-0 flex-col gap-1 px-2 pt-0.5 pb-1.5" data-testid="changes-detail">
-          <p className="text-2xs text-text-muted" data-testid="changes-today">
-            {changedRecently === 0
-              ? 'No files changed in the last day'
-              : `${changedRecently} ${changedRecently === 1 ? 'file' : 'files'} changed in the last day`}
-          </p>
+        <div className="popover-in flex shrink-0 flex-col gap-1 pt-1 pb-1.5 pl-8 pr-2" data-testid="changes-detail">
+          {/* Hierarchy: the Pulse summary leads (it's the actual story); the
+              count + the summary's own age follow as one quiet meta line,
+              instead of three same-weight lines. */}
           {summarySegs.length > 0 && (
-            <p className="text-xs leading-relaxed text-text-muted">
+            <p className="text-xs leading-relaxed text-text-secondary" data-testid="changes-summary">
               {summarySegs.map((segment, index) =>
                 segment.kind === 'link' && segment.target.kind === 'file' ? (
                   <button
@@ -587,11 +589,16 @@ export function PinnedCard({
               )}
             </p>
           )}
-          {briefing && (
-            <p className="text-2xs text-text-muted" title="Pulse, rig's summary of recent activity" data-testid="changes-summary-age">
-              {pulseRefreshing ? 'Summary · updating…' : `Summary · ${summaryAge(briefing.generatedAt)}`}
-            </p>
-          )}
+          <p
+            className="text-2xs text-text-muted"
+            title={briefing ? "Pulse, rig's summary of recent activity" : undefined}
+            data-testid="changes-meta"
+          >
+            {changedRecently === 0
+              ? 'No files changed today'
+              : `${changedRecently} ${changedRecently === 1 ? 'file' : 'files'} changed today`}
+            {briefing && ` · summary ${pulseRefreshing ? 'updating…' : `${summaryAge(briefing.generatedAt)}`}`}
+          </p>
         </div>
       )}
 
@@ -600,7 +607,7 @@ export function PinnedCard({
         type="button"
         onClick={() => toggleSection('files')}
         aria-expanded={expanded === 'files'}
-        className="hover:bg-bg-2 flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-left transition-colors"
+        className="hover:bg-bg-2 flex h-8 shrink-0 items-center gap-2 rounded-control px-2 text-left transition-colors"
       >
         <FolderTree className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
         <span className="text-xs text-text-primary">Files</span>
@@ -616,7 +623,7 @@ export function PinnedCard({
         </span>
       </button>
       {expanded === 'files' && (
-        <div className="popover-in shrink-0 px-1 pb-1">
+        <div className="popover-in shrink-0 px-1 pt-1 pb-1.5">
           <NavigatorContent
             root={root}
             rootId={rootId}
@@ -680,7 +687,7 @@ export function PinnedCard({
             type="button"
             onClick={() => toggleSection('skills')}
             aria-expanded={expanded === 'skills'}
-            className="hover:bg-bg-2 flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-left transition-colors"
+            className="hover:bg-bg-2 flex h-8 shrink-0 items-center gap-2 rounded-control px-2 text-left transition-colors"
           >
             <Sparkles className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
             <span className="text-xs text-text-primary">Skills</span>
@@ -696,7 +703,7 @@ export function PinnedCard({
             </span>
           </button>
           {expanded === 'skills' && (
-            <div className="popover-in shrink-0 pb-1">
+            <div className="popover-in shrink-0 pt-1 pb-1.5">
               {skillFiles.map((node) => {
                 const Icon = iconFor(node.name);
                 return (
@@ -725,36 +732,40 @@ export function PinnedCard({
             type="button"
             onClick={() => toggleSection('people')}
             aria-expanded={expanded === 'people'}
-            className="hover:bg-bg-2 flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-left transition-colors"
+            className="hover:bg-bg-2 flex h-8 shrink-0 items-center gap-2 rounded-control px-2 text-left transition-colors"
           >
             <Users className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
             <span className="text-xs text-text-primary">People</span>
             <span className="ml-auto flex items-center gap-1.5">
-              {members.length === 0 ? (
-                <span className="text-accent text-2xs font-medium">Invite</span>
-              ) : (
-                <span className="flex items-center">
-                  {members.slice(0, 3).map((member, index) => (
-                    <IdentityAvatar
-                      key={member.userId}
-                      name={member.name ?? member.email}
-                      avatarUrl={member.avatarUrl}
-                      sizeClassName="size-4"
-                      textClassName="text-2xs"
-                      className={cn(
-                        'ring-bg-1 ring-1',
-                        index > 0 && '-ml-1',
-                        onlineUserIds && !onlineUserIds.has(member.userId) && 'opacity-45'
-                      )}
-                    />
-                  ))}
-                  {members.length > 3 && (
-                    <span className="bg-bg-2 text-text-muted ring-bg-1 -ml-1 flex size-4 shrink-0 items-center justify-center rounded-chip font-mono text-2xs ring-1">
-                      +{members.length - 3}
-                    </span>
-                  )}
-                </span>
-              )}
+              {/* Once expanded, the content below already says who's who —
+                  the summary's own avatar stack is redundant then (same
+                  rule as the Agents and Connectors rows). */}
+              {expanded !== 'people' &&
+                (members.length === 0 ? (
+                  <span className="text-accent text-2xs font-medium">Invite</span>
+                ) : (
+                  <span className="flex items-center" data-testid="people-avatar-stack">
+                    {members.slice(0, 3).map((member, index) => (
+                      <IdentityAvatar
+                        key={member.userId}
+                        name={member.name ?? member.email}
+                        avatarUrl={member.avatarUrl}
+                        sizeClassName="size-4"
+                        textClassName="text-2xs"
+                        className={cn(
+                          'ring-bg-1 ring-1',
+                          index > 0 && '-ml-1',
+                          onlineUserIds && !onlineUserIds.has(member.userId) && 'opacity-45'
+                        )}
+                      />
+                    ))}
+                    {members.length > 3 && (
+                      <span className="bg-bg-2 text-text-muted ring-bg-1 -ml-1 flex size-4 shrink-0 items-center justify-center rounded-chip font-mono text-2xs ring-1">
+                        +{members.length - 3}
+                      </span>
+                    )}
+                  </span>
+                ))}
               <ChevronRight
                 className={cn(
                   'size-3 shrink-0 text-text-muted transition-transform',
@@ -765,7 +776,7 @@ export function PinnedCard({
             </span>
           </button>
           {expanded === 'people' && (
-            <div className="popover-in shrink-0 pb-1">
+            <div className="popover-in shrink-0 pt-1 pb-1.5">
               <RigSharePopoverContent root={root} name={name} variant={isSpace ? 'compact' : 'full'} />
             </div>
           )}

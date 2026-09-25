@@ -75,7 +75,7 @@ export function AgentRows({
         type="button"
         onClick={toggleExpanded}
         aria-expanded={expanded}
-        className="hover:bg-bg-2 flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-left transition-colors"
+        className="hover:bg-bg-2 flex h-8 shrink-0 items-center gap-2 rounded-control px-2 text-left transition-colors"
         data-testid="agents-summary-row"
       >
         <Bot className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
@@ -104,7 +104,7 @@ export function AgentRows({
         </span>
       </button>
       {expanded && (
-        <div className="popover-in flex shrink-0 flex-col" data-testid="agents-expanded">
+        <div className="popover-in flex shrink-0 flex-col pt-1 pb-1.5" data-testid="agents-expanded">
           {mine.map((agent) => {
             const latest = runsOf(selfUserId, agent.agent)[0];
             return (
@@ -128,7 +128,7 @@ export function AgentRows({
             return (
               <div
                 key={`${owner}:${agent}`}
-                className="flex h-7 shrink-0 items-center gap-2 rounded-control px-2"
+                className="flex h-7 shrink-0 items-center gap-2 rounded-control pr-2 pl-8"
                 title={`Only ${ownerName} can change ${ownerName}'s ${AGENT_NAME[agent]}`}
                 data-testid="space-agent-row-theirs"
               >

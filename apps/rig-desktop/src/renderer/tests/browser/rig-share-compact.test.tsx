@@ -107,6 +107,19 @@ describe('RigSharePopoverContent — variant="compact"', () => {
     expect(host.querySelector('input[type="email"]')).toBeNull();
   });
 
+  it('renders member rows tight — h-7, no extra vertical gap between them — instead of the old loose py-1.5 spacing', async () => {
+    await render();
+
+    const name = Array.from(host.querySelectorAll('span')).find((el) => el.textContent === 'Ada Lovelace')!;
+    const row = name.closest('div')!;
+    expect(row.className).toContain('h-7');
+
+    // The list around the rows adds no gap of its own — rows sit flush,
+    // stacked purely by their own fixed height.
+    const list = row.parentElement!;
+    expect(list.className).not.toMatch(/\bgap-/);
+  });
+
   it('expands the full invite form in place on click — no navigation, member list stays mounted', async () => {
     await render();
 
