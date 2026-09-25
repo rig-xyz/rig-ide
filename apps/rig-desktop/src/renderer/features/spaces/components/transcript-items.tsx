@@ -24,8 +24,10 @@ function memberOf(snapshot: RoomSnapshot, id: string): RoomMember | undefined {
 }
 
 /** Inline emphasis for @mentions, /commands and +file.md references — same markup rules as the reference demo's `rich()`, done as React nodes instead of HTML string concatenation. */
-function richText(text: string, ownId: string): ReactNode[] {
-  const pattern = /(@[a-z]+)|(\/[a-z-]+)|(\+[\w./-]+\.md)|(reviews\/[\w.-]+\.md)/g;
+export function richText(text: string, ownId: string): ReactNode[] {
+  // @ and / only start a token after whitespace, the start, or opening
+  // punctuation — so an email's "@gmail" or a path/URL's "/segment" stays plain.
+  const pattern = /((?<![\w.@/:-])@[a-z]+)|((?<![\w.@/:-])\/[a-z-]+)|(\+[\w./-]+\.md)|(reviews\/[\w.-]+\.md)/g;
   const nodes: ReactNode[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
