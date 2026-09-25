@@ -42,6 +42,7 @@ import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
 import { SettingsModal } from '@renderer/features/shell/settings-modal';
 import { RoomView } from '@renderer/features/spaces/components/room-view';
 import { useSpacesEnabled } from '@renderer/features/spaces/use-spaces-enabled';
+import { readOpenRig, writeOpenRig } from '@renderer/features/shell/open-rig-memory';
 import { deriveBoundIsSpace, deriveTopbarContext, type TopbarContext } from '@renderer/features/shell/topbar-context';
 import { isUpdateReady, shouldAnnounceUpdate } from '@renderer/features/shell/update-status';
 import {
@@ -504,6 +505,7 @@ export function App() {
           result.foreignAccount === null
         ) {
           setFolder({ status: 'empty' });
+          writeOpenRig(null);
           return;
         }
         setFolder({ status: 'detected', path: picked, result });
@@ -519,6 +521,13 @@ export function App() {
         );
       } catch (error) {
         if (!openPathRequests.current.isCurrent(requestToken)) return;
+        // A silent restore that can't even be checked lands on Home, same
+        // as the not-a-rig case above — never an error card nobody asked for.
+        if (opts?.launchRestore) {
+          setFolder({ status: 'empty' });
+          writeOpenRig(null);
+          return;
+        }
         setFolder({
           status: 'error',
           path: picked,
@@ -578,6 +587,14 @@ export function App() {
     await openPath(picked);
   }, [openPath]);
 
+  // 0.4.3: a window reload reopens the rig/space this window had open
+  // (`open-rig-memory.ts`). Declared before the Open Recent effect below so
+  // a cold-launch Open Recent pick, when there is one, still wins.
+  useEffect(() => {
+    const remembered = readOpenRig();
+    if (remembered) void openPath(remembered.path, { launchRestore: true, kind: remembered.kind });
+  }, [openPath]);
+
   // Native "Open Recent" (macOS): a cold-launch pick is buffered in main
   // until the renderer can consume it (`consumePendingOpenFile`); a pick
   // made while already running arrives as a live event instead.
@@ -624,6 +641,13 @@ export function App() {
       : undefined,
     openedAsSpace,
   });
+  // Remember this window's open rig for a reload (`open-rig-memory.ts`);
+  // `goHome` forgets it.
+  const boundRootForMemory = bound?.root ?? null;
+  useEffect(() => {
+    if (!boundRootForMemory) return;
+    writeOpenRig(boundIsSpace ? { path: boundRootForMemory, kind: 'space' } : { path: boundRootForMemory });
+  }, [boundRootForMemory, boundIsSpace]);
   // A space opens Room-first: the Room takes the chat panel's place in the
   // rig layout (below), so files open beside it. No overlay.
   useEffect(() => {
@@ -744,6 +768,7 @@ export function App() {
     setPendingOpenAbsPath(null);
     setJustCreatedRig(false);
     setOpenedAsSpace(false);
+    writeOpenRig(null);
   }, []);
 
   // Round (beyond-markdown): every file opens now — `ArtifactView` itself
