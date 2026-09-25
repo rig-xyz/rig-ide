@@ -1,6 +1,5 @@
-import { ArrowLeft, Plug, Search, X } from 'lucide-react';
+import { ArrowLeft, Loader2, Plug, Search, X } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import {
   CONNECTOR_CATEGORIES,
@@ -641,7 +640,7 @@ function ConnectorDetail({
           )}
           {phase === 'waiting' && (
             <span className="flex items-center gap-1.5 text-xs text-text-muted">
-              <DotMatrix state="waiting" size="sm" />
+              <Loader2 className="size-3 animate-spin text-text-muted" strokeWidth={2} />
               Waiting for your browser…
               <GalleryPill onClick={onCancel}>Cancel</GalleryPill>
             </span>

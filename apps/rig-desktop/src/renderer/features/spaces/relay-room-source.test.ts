@@ -447,7 +447,10 @@ describe('RelayRoomSource', () => {
     source.play();
     await flush();
 
-    expect(seen).toEqual(['session_started', 'session_event_appended', 'message_created']);
+    // `session_started`/`session_event_appended` are folded into the
+    // snapshot silently during bootstrap (see "Calm Room open" below) —
+    // only the final event of the batch (this message itself) notifies.
+    expect(seen).toEqual(['message_created']);
     const snapshot = source.getSnapshot();
     expect(snapshot.sessionMetaByRun.run1.status).toBe('running');
     expect(snapshot.sessionEventsByRun.run1).toHaveLength(1);
@@ -482,13 +485,74 @@ describe('RelayRoomSource', () => {
 
     provider!.fire('connect');
     await flush();
-    expect(seen.filter((t) => t === 'session_event_appended')).toHaveLength(1); // no new events yet
+    // Bootstrap already folded run1's one event in silently (no separate
+    // notification — see the batching test below); the connect-time
+    // catch-up finds nothing newer than the seq it already has.
+    expect(seen.filter((t) => t === 'session_event_appended')).toHaveLength(0); // no new events yet
 
     fake.appendEvents('run1', [sessionEvent({ seq: 2, kind: 'tool_call_update' })]);
     provider!.fire('stateless', { payload: JSON.stringify({ type: 'session_event_appended', runId: 'run1', seq: 2 }) });
     await flush();
 
     expect(source.getSnapshot().sessionEventsByRun.run1.map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  it('bootstrap fetches every referenced run in parallel, bounded, and notifies once for the whole batch (Calm Room open)', async () => {
+    const fake = makeFakeRelay();
+    const runIds = ['run1', 'run2', 'run3', 'run4', 'run5', 'run6', 'run7', 'run8'];
+    fake.queueMessages(
+      runIds.map((id, i) => message({ id: `m${i}`, seq: i + 1, kind: 'session', body: '', meta: { runId: id } }))
+    );
+
+    // A `getSessionEvents` that never resolves on its own — the test drives
+    // each call's resolution by hand, so it can prove how many are in
+    // flight together rather than trusting timing.
+    const pending = new Map<string, () => void>();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const relay: RelayRoomClient = {
+      ...fake.relay,
+      async getSessionEvents(_bindingId, runId) {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise<void>((resolve) => pending.set(runId, () => resolve()));
+        inFlight -= 1;
+        return ok({ run: run({ id: runId }), events: [] });
+      },
+    };
+
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay,
+      createProvider: () => new FakeProvider(),
+    });
+
+    const notifications: number[] = [];
+    source.subscribe(() => notifications.push(Object.keys(source.getSnapshot().sessionMetaByRun).length));
+    source.play();
+    await flush();
+
+    // Only the first 6 (BOOTSTRAP_RUN_CONCURRENCY) are kicked off together —
+    // not all 8 at once (bounded), and not one at a time (parallel).
+    expect(pending.size).toBe(6);
+    expect(maxInFlight).toBe(6);
+    expect(notifications).toEqual([]); // nothing announced mid-bootstrap
+
+    for (const resolve of [...pending.values()]) resolve();
+    await flush();
+
+    // The 2 remaining runs started as soon as a slot freed up.
+    expect(pending.size).toBe(8);
+    for (const resolve of [...pending.values()]) resolve();
+    await flush();
+
+    // Exactly one notification for the entire bootstrap, once every run has
+    // loaded — never a trickle of one update per run or per message.
+    expect(notifications).toEqual([8]);
+    expect(Object.keys(source.getSnapshot().sessionMetaByRun).sort()).toEqual(runIds);
   });
 
   it('send() posts a text message through the relay client', async () => {

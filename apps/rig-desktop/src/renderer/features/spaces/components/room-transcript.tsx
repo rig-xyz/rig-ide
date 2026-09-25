@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { ArrowDown } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
@@ -338,6 +338,19 @@ export function RoomTranscript({
   const pinnedRef = useRef(true);
   const [pinned, setPinned] = useState(true);
   const [unseen, setUnseen] = useState(0);
+  const reducedMotion = useReducedMotion();
+
+  // Calm Room open: every message id already here the moment this transcript
+  // first mounts (a full, already-loaded snapshot — see `RelayRoomSource`'s
+  // own batched bootstrap) never animates in; only a row whose message
+  // wasn't in `seenIds` yet gets the enter animation. Read during render
+  // (reflects the PREVIOUS commit's ids), written after in the effect below
+  // — same timing trick `lastCountRef` below already relies on — so a row's
+  // very first render sees it as new, and every later re-render doesn't.
+  const [seenIds] = useState(() => new Set(snapshot.messages.map((m) => m.id)));
+  useEffect(() => {
+    for (const m of snapshot.messages) seenIds.add(m.id);
+  }, [snapshot.messages, seenIds]);
 
   const pinToBottom = (behavior: ScrollBehavior = 'auto') => {
     const el = scrollRef.current;
@@ -435,8 +448,21 @@ export function RoomTranscript({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]" data-testid="room-transcript">
-      <div ref={contentRef} className="relative mx-auto flex max-w-[44rem] flex-col gap-4 px-3 pt-6 pb-3">
+    <motion.div
+      ref={scrollRef}
+      className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
+      data-testid="room-transcript"
+      // Calm Room open: the whole, already-scrolled-to-bottom transcript
+      // fades in once on mount (masking the non-smooth scroll-to-bottom
+      // that happens in the same tick, below) — never per row.
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: reducedMotion ? 0 : 0.2, ease: [0.16, 1, 0.3, 1] }}
+    >
+      {/* Extra bottom clearance (vs. the top/side padding) so the "N new
+          messages" pill below has room to float without covering the last
+          row — it's positioned relative to this same scroll viewport. */}
+      <div ref={contentRef} className="relative mx-auto flex max-w-[44rem] flex-col gap-4 px-3 pt-6 pb-12">
         <AnimatePresence initial={false}>
           {(() => {
             const units = groupThreads(snapshot.messages);
@@ -496,15 +522,23 @@ export function RoomTranscript({
                 );
               prevMessage = unit.kind === 'message' ? unit.message : undefined;
               if (!node) continue;
+              // Calm Room open: a row whose message was already in the
+              // snapshot the moment this transcript mounted never animates
+              // (`initial={false}`) — only a genuinely new one does, with a
+              // short fade + 4px rise. `seenIds` starts pre-loaded with
+              // every id from that first mount (see above), so the whole
+              // initial batch reads as "already seen."
+              const isNewRow = !!placed && !seenIds.has(placed.id);
               nodes.push(
                 <motion.div
                   key={unit.kind === 'message' ? unit.message.id : `thread-${unit.threadId}`}
                   data-message-id={unit.kind === 'message' ? unit.message.id : unit.threadId}
+                  data-row-entered={isNewRow ? 'true' : undefined}
                   // Room between speakers; a follow-up from the same one sits close.
                   className={cn('rounded-card', continuedUnit && '-mt-3')}
-                  initial={{ opacity: 0, y: 10 }}
+                  initial={isNewRow ? { opacity: 0, y: 4 } : false}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                  transition={{ duration: reducedMotion ? 0 : 0.16, ease: [0.16, 1, 0.3, 1] }}
                 >
                   {node}
                 </motion.div>
@@ -525,7 +559,7 @@ export function RoomTranscript({
           )}
         </AnimatePresence>
       </div>
-    </div>
+    </motion.div>
       <ConversationMap scrollRef={scrollRef} contentRef={contentRef} entries={mapEntries} onJump={jumpTo} />
       {!pinned && (unseen > 0 || agentWorking) && (
         <button

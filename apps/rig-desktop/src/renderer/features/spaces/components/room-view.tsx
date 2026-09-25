@@ -1,7 +1,7 @@
 import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucide-react';
-import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
+import { cn } from '@renderer/lib/utils';
 import type { ConnectorId, GlobalServer } from '@shared/spaces/connectors';
 import { connectorsApi } from '../connectors-api';
 import { buildRoomFeed } from '../fixtures/room-feed';
@@ -68,7 +68,35 @@ const PANEL_LANE_PX = 320;
 
 const FALLBACK_OWN_ID = 'bob'; // fixture-only identity; the relay source uses the signed-in user's real id
 
-/** A space with nothing in it yet: what it is, and three ways in. While the Room is still opening, just the matrix. */
+/**
+ * Calm Room open: while `bootstrap()` is still loading the room whole (see
+ * `RelayRoomSource`'s own header), three faint message-shaped rows stand in
+ * for the transcript — a shape, not a spinner, so nothing seems to be
+ * "thinking." `animate-pulse` is already reduced-motion-gated globally
+ * (tokens.css), so this needs no gate of its own.
+ */
+export function RoomLoadingSkeleton() {
+  const widths = ['w-2/3', 'w-1/2', 'w-5/6'];
+  return (
+    <div
+      className="flex min-h-0 flex-1 flex-col justify-end gap-5 px-3 pb-6"
+      data-testid="room-loading-skeleton"
+      aria-hidden="true"
+    >
+      {widths.map((width, i) => (
+        <div key={i} className="mx-auto flex w-full max-w-[44rem] items-start gap-3 px-3" style={{ opacity: 1 - i * 0.22 }}>
+          <span className="bg-bg-2 size-7 shrink-0 animate-pulse rounded-full" />
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5 pt-1">
+            <span className="bg-bg-2 h-2 w-20 animate-pulse rounded-full" />
+            <span className={cn('bg-bg-2 h-2 animate-pulse rounded-full', width)} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** A space with nothing in it yet: what it is, and three ways in. While the Room is still opening, the loading skeleton. */
 function RoomWelcome({
   spaceName,
   connecting,
@@ -81,12 +109,7 @@ function RoomWelcome({
   onPrefill: (text: string) => void;
 }) {
   if (connecting) {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3" data-testid="room-opening">
-        <DotMatrix state="starting" size="lg" />
-        <span className="active-shimmer-muted text-sm text-text-secondary">Opening {spaceName}</span>
-      </div>
-    );
+    return <RoomLoadingSkeleton />;
   }
   const action =
     'border-border-hairline bg-bg-1 hover:bg-bg-2 flex h-8 items-center gap-2 rounded-chip border px-3 text-sm text-text-primary transition-colors';

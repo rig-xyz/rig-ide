@@ -141,7 +141,7 @@ export function AgentRows({
                   {model ? (
                     <span className="truncate">{model}</span>
                   ) : (
-                    <DotMatrix state="starting" size="sm" label="Loading" />
+                    <span className="h-2 w-12 animate-pulse rounded-full bg-bg-3" data-testid="agent-model-loading" />
                   )}
                 </span>
               </div>

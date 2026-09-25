@@ -196,6 +196,12 @@ type Listener = (event: RoomEvent, snapshot: RoomSnapshot) => void;
 /** Re-mint once the cached ticket is within this margin of `expiresAt` (~10 minute TTL). */
 const TICKET_REFRESH_MARGIN_MS = 60_000;
 
+/** How many session runs `bootstrap()` fetches at once — enough that a history full of runs doesn't trickle in one at a time, capped so it doesn't open dozens of requests at once either. */
+const BOOTSTRAP_RUN_CONCURRENCY = 6;
+
+/** One run's header + full event backlog, as fetched by `getSessionEvents(..., 0)` — `run: null` means the fetch failed (logged at the call site). */
+type RunFetchResult = { run: SessionRun | null; events: SessionEventRow[] };
+
 /**
  * The viewer's own agents: in the MVP a member can only tag their own
  * `@claude`/`@codex`, which run locally, so these are the only agents the
@@ -380,7 +386,16 @@ export class RelayRoomSource implements RoomSource {
     }
   }
 
-  /** Loads the initial snapshot (member roster + recent messages + each referenced run's full event log) before the realtime connection is ever opened. */
+  /**
+   * Loads the initial snapshot (member roster + recent messages + each
+   * referenced run's full event log) before the realtime connection is ever
+   * opened — and before any listener hears about it. Runs referenced by the
+   * message history are fetched in parallel (bounded), and every event this
+   * produces is folded into `this.snapshot` silently (`apply` below); the
+   * Room only finds out once, at the very end, with the whole thing built —
+   * never message by message, run by run (that trickle is what made the
+   * Room's open feel jumpy; see this file's own header).
+   */
   private async bootstrap(): Promise<void> {
     const [members, messages] = await Promise.all([
       this.opts.relay.listMembers(this.opts.bindingId),
@@ -399,13 +414,63 @@ export class RelayRoomSource implements RoomSource {
       this.snapshot = { ...this.snapshot, skills: skills.map((skill) => ({ ...skill, addedBy: '' })) };
     }
     await this.refreshInvites();
-    await this.refreshConnectors();
 
-    if (messages.success) {
-      for (const row of messages.data) await this.ingestWireMessage(row);
-    } else {
+    let lastEvent: RoomEvent | null = null;
+    const apply = (event: RoomEvent): void => {
+      this.reduceLocal(event);
+      lastEvent = event;
+    };
+
+    await this.refreshConnectors(apply);
+
+    if (!messages.success) {
       this.log('Rig spaces: could not load room messages', { error: messages.error.message });
+    } else {
+      // Every run a `kind:'session'` message names, fetched together — not
+      // one `await` per message the way the realtime catch-up path still
+      // does (that part is unchanged; see `ingestWireMessage`/`ingestRun`).
+      const runIds: string[] = [];
+      const seenRunIds = new Set<string>();
+      for (const row of messages.data) {
+        const runId = sessionRunIdOf(row);
+        if (runId && !seenRunIds.has(runId)) {
+          seenRunIds.add(runId);
+          runIds.push(runId);
+        }
+      }
+      const prefetchedRuns = await this.fetchRunsBounded(runIds);
+      for (const row of messages.data) await this.ingestWireMessage(row, apply, prefetchedRuns);
     }
+
+    if (lastEvent) this.notifyListeners(lastEvent);
+  }
+
+  /** Fetches every run in `runIds` via `getSessionEvents(..., 0)`, up to `BOOTSTRAP_RUN_CONCURRENCY` at once, rather than one after another. */
+  private async fetchRunsBounded(runIds: readonly string[]): Promise<Map<string, RunFetchResult>> {
+    const results = new Map<string, RunFetchResult>();
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < runIds.length) {
+        const runId = runIds[next]!;
+        next += 1;
+        results.set(runId, await this.fetchRun(runId));
+      }
+    };
+    const workerCount = Math.min(BOOTSTRAP_RUN_CONCURRENCY, runIds.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    return results;
+  }
+
+  private async fetchRun(runId: string): Promise<RunFetchResult> {
+    const result = await this.opts.relay.getSessionEvents(this.opts.bindingId, runId, 0);
+    if (!result.success) {
+      this.log('Rig spaces: could not load a referenced session run', {
+        runId,
+        error: result.error.message,
+      });
+      return { run: null, events: [] };
+    }
+    return { run: result.data.run, events: result.data.events };
   }
 
   private seedMembers(rows: RoomMemberRow[]): void {
@@ -520,8 +585,23 @@ export class RelayRoomSource implements RoomSource {
     }
   }
 
-  /** Turns one already-shaped relay message row into the right `RoomEvent`(s) — a plain `message_created`, plus a synthesized `session_started` (+ its full event backlog) the FIRST time a `kind:'session'` message names a run this snapshot hasn't seen yet. */
-  private async ingestWireMessage(row: RoomMessageRow): Promise<void> {
+  /**
+   * Turns one already-shaped relay message row into the right `RoomEvent`(s)
+   * — a plain `message_created`, plus a synthesized `session_started` (+ its
+   * full event backlog) the FIRST time a `kind:'session'` message names a
+   * run this snapshot hasn't seen yet. `apply` is how each event reaches the
+   * snapshot: defaults to `applyLocal` (mutate + notify, the realtime/
+   * catch-up path, unchanged), but `bootstrap()` passes a silent variant so
+   * nothing notifies until the whole initial batch is in. `prefetchedRuns`
+   * is `bootstrap()`'s own bounded-parallel fetch, keyed by run id — when a
+   * run isn't in it (the realtime path never passes one), `ingestRun` fetches
+   * it itself, same as before.
+   */
+  private async ingestWireMessage(
+    row: RoomMessageRow,
+    apply: (event: RoomEvent) => void = (event) => this.applyLocal(event),
+    prefetchedRuns?: ReadonlyMap<string, RunFetchResult>
+  ): Promise<void> {
     if (row.seq <= this.lastMessageSeq && this.snapshot.messages.some((m) => m.id === row.id)) {
       return; // already applied (bootstrap + catch-up overlap window)
     }
@@ -533,10 +613,10 @@ export class RelayRoomSource implements RoomSource {
     const rawAuthorId = row.author.userId ?? 'unknown';
     const authorId = this.userIdByClerkId.get(rawAuthorId) ?? rawAuthorId;
     const meta = row.meta ?? {};
-    const runId = row.kind === 'session' && typeof meta.runId === 'string' ? meta.runId : null;
+    const runId = sessionRunIdOf(row);
 
     if (runId && !this.snapshot.sessionMetaByRun[runId]) {
-      await this.ingestRun(runId, authorId);
+      await this.ingestRun(runId, authorId, apply, prefetchedRuns?.get(runId));
     }
 
     if (row.kind === 'invite' && typeof meta.inviteId === 'string' && !this.snapshot.invitesById[meta.inviteId]) {
@@ -544,7 +624,7 @@ export class RelayRoomSource implements RoomSource {
     }
 
     if (row.kind === 'system' && (meta.event === 'connectors_added' || meta.event === 'connectors_removed')) {
-      await this.refreshConnectors();
+      await this.refreshConnectors(apply);
     }
 
     // Doc comments share the message table (they carry a `path`). Keep them
@@ -556,7 +636,7 @@ export class RelayRoomSource implements RoomSource {
     const comment = threadPath ? this.commentMeta({ ...row, path: threadPath }) : null;
     const kind = (comment ? 'comment_mirror' : row.kind) as MessageKind;
 
-    this.applyLocal({
+    apply({
       type: 'message_created',
       id: row.id,
       seq: row.seq,
@@ -578,16 +658,14 @@ export class RelayRoomSource implements RoomSource {
     });
   }
 
-  /** Fetches a run's header + full event backlog (from seq 0) and applies `session_started` followed by every event, once — the first time a room message references it. */
-  private async ingestRun(runId: string, ownerFallback: string): Promise<void> {
-    const result = await this.opts.relay.getSessionEvents(this.opts.bindingId, runId, 0);
-    const run: SessionRun | null = result.success ? result.data.run : null;
-    if (!result.success) {
-      this.log('Rig spaces: could not load a referenced session run', {
-        runId,
-        error: result.error.message,
-      });
-    }
+  /** Applies `session_started` followed by every event of a run's full backlog, once — the first time a room message references it. Uses `prefetched` (bootstrap's own bounded-parallel fetch) when given, else fetches it itself (the realtime path). */
+  private async ingestRun(
+    runId: string,
+    ownerFallback: string,
+    apply: (event: RoomEvent) => void,
+    prefetched?: RunFetchResult
+  ): Promise<void> {
+    const { run, events } = prefetched ?? (await this.fetchRun(runId));
     const meta: SessionRunMeta = {
       id: runId,
       agent: run?.agent ?? 'claude',
@@ -598,11 +676,10 @@ export class RelayRoomSource implements RoomSource {
       startedAt: run?.startedAt ?? new Date().toISOString(),
       endedAt: run?.endedAt ?? null,
     };
-    this.applyLocal({ type: 'session_started', runId, meta });
+    apply({ type: 'session_started', runId, meta });
 
-    const events = result.success ? result.data.events : [];
     for (const event of events) {
-      this.applyLocal({
+      apply({
         type: 'session_event_appended',
         runId,
         seq: event.seq,
@@ -677,8 +754,8 @@ export class RelayRoomSource implements RoomSource {
 
   // ── connectors (connectors-spec.md) ────────────────────────────────────
 
-  /** Re-fetches the space's connector list from the relay, enriched with this device's own connection state — bootstrap, and every `connectors_added`/`connectors_removed` system message. */
-  private async refreshConnectors(): Promise<void> {
+  /** Re-fetches the space's connector list from the relay, enriched with this device's own connection state — bootstrap, and every `connectors_added`/`connectors_removed` system message. `apply` defaults to `applyLocal` (mutate + notify); `bootstrap()` passes its own silent variant so this never notifies mid-batch. */
+  private async refreshConnectors(apply: (event: RoomEvent) => void = (event) => this.applyLocal(event)): Promise<void> {
     const listFn = this.opts.relay.listConnectors;
     if (!listFn) return;
     const result = await listFn(this.opts.bindingId);
@@ -698,7 +775,7 @@ export class RelayRoomSource implements RoomSource {
         account: status?.account,
       };
     });
-    this.applyLocal({ type: 'connectors_synced', connectors });
+    apply({ type: 'connectors_synced', connectors });
   }
 
   /** Just this device's own connection states, re-merged into the existing connector list — cheaper than `refreshConnectors()` for after a local connect/disconnect, which never changes the space's list itself. */
@@ -785,10 +862,26 @@ export class RelayRoomSource implements RoomSource {
 
   // ── plumbing ────────────────────────────────────────────────────────────
 
+  /** Folds an event into the snapshot AND notifies every listener — the realtime/catch-up path, and anything bootstrap wants to announce immediately. */
   private applyLocal(event: RoomEvent): void {
+    this.reduceLocal(event);
+    this.notifyListeners(event);
+  }
+
+  /** Folds an event into the snapshot without notifying anyone — `bootstrap()`'s own silent `apply`, so the initial batch never trickles out one event at a time. */
+  private reduceLocal(event: RoomEvent): void {
     this.snapshot = reduceRoom(this.snapshot, event);
+  }
+
+  private notifyListeners(event: RoomEvent): void {
     for (const listener of this.listeners) listener(event, this.snapshot);
   }
+}
+
+/** The run a `kind:'session'` message names, or `null` for any other message. */
+function sessionRunIdOf(row: RoomMessageRow): string | null {
+  const meta = row.meta ?? {};
+  return row.kind === 'session' && typeof meta.runId === 'string' ? meta.runId : null;
 }
 
 

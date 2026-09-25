@@ -1,6 +1,5 @@
-import { ChevronRight, Plug } from 'lucide-react';
+import { ChevronRight, Loader2, Plug } from 'lucide-react';
 import { useState } from 'react';
-import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { connectorById, type ConnectionState, type ConnectorId, type ConnectResult, type GlobalServer } from '@shared/spaces/connectors';
 import { globalAgentsFor, viaGlobalSetupLabel, viaGlobalSetupShortLabel } from '../global-setup';
@@ -42,7 +41,7 @@ export function ConnectPill({
   if (waiting) {
     return (
       <span className="inline-flex items-center gap-1.5 text-2xs text-text-muted" data-testid="connect-pill-waiting">
-        <DotMatrix state="waiting" size="sm" />
+        <Loader2 className="size-3 animate-spin text-text-muted" strokeWidth={2} />
         Waiting for your browser…
         <button
           type="button"

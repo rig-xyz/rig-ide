@@ -14,7 +14,7 @@ import { AgentRows } from '@renderer/features/spaces/components/agent-rows';
 import { ConnectorGallery } from '@renderer/features/spaces/components/connector-gallery';
 import { ConnectorsSection } from '@renderer/features/spaces/components/connectors-panel';
 import { groupThreads, RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
-import { RoomView } from '@renderer/features/spaces/components/room-view';
+import { RoomLoadingSkeleton, RoomView } from '@renderer/features/spaces/components/room-view';
 import { SessionCard } from '@renderer/features/spaces/components/session-card';
 import { ConnectorCard } from '@renderer/features/spaces/components/transcript-items';
 import { connectorsApi } from '@renderer/features/spaces/connectors-api';
@@ -297,6 +297,43 @@ describe('Room transcript — flat rows', () => {
     expect(host.textContent).toContain('joined the space');
     expect(host.querySelectorAll('[data-testid="comment-mirror-line"]').length).toBe(2);
   });
+
+  // Calm Room open: rows already in the snapshot when the transcript first
+  // mounts (a whole, already-loaded batch — see `RelayRoomSource`'s own
+  // header) never get the enter animation; only a message added afterward
+  // does. Same `root`/component instance across both renders, so this is a
+  // re-render of the mounted transcript, not a fresh mount.
+  it('marks only a newly-added message for the enter animation — initial rows never re-animate', async () => {
+    const snapshot = replayedSnapshot();
+    await act(async () => {
+      root.render(<RoomTranscript snapshot={snapshot} ownId="bob" />);
+    });
+    const initialRows = [...host.querySelectorAll<HTMLElement>('[data-message-id]')];
+    expect(initialRows.length).toBeGreaterThan(0);
+    expect(initialRows.every((r) => r.dataset.rowEntered === undefined)).toBe(true);
+
+    const last = snapshot.messages.at(-1)!;
+    const added: RoomMessage = {
+      ...last,
+      id: 'brand-new-message',
+      seq: last.seq + 1,
+      authorId: last.authorId === 'bob' ? 'alice' : 'bob',
+      body: 'a brand new message',
+      meta: { kind: 'text' },
+      threadId: undefined,
+    };
+    await act(async () => {
+      root.render(<RoomTranscript snapshot={{ ...snapshot, messages: [...snapshot.messages, added] }} ownId="bob" />);
+    });
+
+    const newRow = host.querySelector<HTMLElement>(`[data-message-id="${added.id}"]`);
+    expect(newRow?.dataset.rowEntered).toBe('true');
+    // Every row that was already there stays unmarked.
+    for (const row of initialRows) {
+      const stillThere = host.querySelector<HTMLElement>(`[data-message-id="${row.dataset.messageId}"]`);
+      expect(stillThere?.dataset.rowEntered).toBeUndefined();
+    }
+  });
 });
 
 describe('Room view — renders through loading into content', () => {
@@ -330,6 +367,19 @@ describe('Room view — renders through loading into content', () => {
     await vi.waitFor(() => expect(host.querySelector('[data-testid="room-transcript"]')).not.toBeNull());
     window.removeEventListener('error', onError);
     expect(errors).toEqual([]);
+  });
+
+  // Calm Room open: while bootstrapping, a calm shimmer skeleton stands in
+  // for the transcript — never the agent-state dot matrix (that's for agent
+  // states only, see the "polish" brief).
+  it('shows three calm skeleton rows while the room is still opening, not the dot matrix', async () => {
+    await act(async () => {
+      root.render(<RoomLoadingSkeleton />);
+    });
+    const skeleton = host.querySelector('[data-testid="room-loading-skeleton"]');
+    expect(skeleton).not.toBeNull();
+    expect(skeleton?.querySelectorAll('.animate-pulse').length).toBeGreaterThanOrEqual(3);
+    expect(skeleton?.querySelector('[data-state]')).toBeNull(); // no DotMatrix here
   });
 });
 
@@ -903,8 +953,10 @@ describe('Session card — plan and thinking', () => {
     // is exclusively the one just injected above.
     const loadingRow = theirsRows.find((row) => row.title === "Only Alice can change Alice's Claude");
     expect(loadingRow).toBeTruthy();
-    // No blank/stale text — a quiet phantom (the matrix's "starting" state) instead.
-    expect(loadingRow!.querySelector('[data-state="starting"]')).not.toBeNull();
+    // No blank/stale text — a quiet shimmer phantom instead (the dot matrix
+    // is for agent states only; a settings phantom isn't one — see the
+    // "polish" brief's "dot-matrix loader is for agent states only").
+    expect(loadingRow!.querySelector('[data-testid="agent-model-loading"]')).not.toBeNull();
     expect(loadingRow!.textContent?.trim().endsWith("Alice's Claude")).toBe(true);
   });
 
@@ -1375,6 +1427,10 @@ describe('Connectors — gallery', () => {
     );
     await act(async () => click(buttonIn(detail(), 'Continue in browser')));
     expect(detail().textContent).toContain('Waiting for your browser');
+    // The dot matrix is for agent states only — a browser sign-in wait gets
+    // a plain spinner instead (see the "polish" brief).
+    expect(detail().querySelector('[data-state]')).toBeNull();
+    expect(detail().querySelector('.animate-spin')).not.toBeNull();
 
     await act(async () => click(buttonIn(detail(), 'Cancel')));
     expect(connectorsApi.cancel).toHaveBeenCalledWith('linear');
@@ -1717,6 +1773,24 @@ describe('Connectors — Room copy and turn footer', () => {
     expect(host.textContent).not.toContain('read-only');
     await act(async () => click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Connect')!));
     expect(onConnect).toHaveBeenCalledWith('linear');
+  });
+
+  it('ConnectorCard\'s Connect pill waits with a plain spinner, not the agent dot matrix', async () => {
+    const connectors: RoomConnector[] = [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'not_connected' }];
+    let settle: ((r: ConnectResult) => void) | null = null;
+    const onConnect = vi.fn().mockImplementation(() => new Promise<ConnectResult>((resolve) => (settle = resolve)));
+    await act(async () => {
+      root.render(<ConnectorCard message={connectorMessage} addedBy={undefined} connectors={connectors} onConnect={onConnect} />);
+    });
+    await act(async () => click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Connect')!));
+
+    const waiting = host.querySelector('[data-testid="connect-pill-waiting"]');
+    expect(waiting).not.toBeNull();
+    expect(waiting?.textContent).toContain('Waiting for your browser');
+    expect(waiting?.querySelector('[data-state]')).toBeNull(); // no DotMatrix here
+    expect(waiting?.querySelector('.animate-spin')).not.toBeNull();
+
+    await act(async () => settle?.({ ok: true }));
   });
 
   it('ConnectorCard shows "Connected as you" once your own login is in place', async () => {
