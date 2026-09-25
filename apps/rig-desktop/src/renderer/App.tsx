@@ -1536,7 +1536,26 @@ export function Topbar({
   );
 }
 
-function FolderResult({
+/** How long an open may take before `OpeningHint` says anything. */
+const OPENING_HINT_DELAY_MS = 600;
+
+/**
+ * 0.4.3: what an open shows while `detect` runs — nothing for the usual
+ * frame or two, then a quiet "Opening…" if it's slow. It used to be the
+ * generic folder card (path + "Checking…" + "Open Folder…"), which flashed
+ * a folder picker on every Home → space/rig open.
+ */
+function OpeningHint() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSlow(true), OPENING_HINT_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return slow ? <div className="text-sm text-text-muted">Opening…</div> : null;
+}
+
+// Exported for direct testing (`folder-result.test.tsx`).
+export function FolderResult({
   folder,
   onOpenFolder,
   onRetryOpen,
@@ -1548,6 +1567,7 @@ function FolderResult({
   onRetryOpen: (path: string) => void;
   onCancel: () => void;
 }) {
+  if (folder.status === 'detecting') return <OpeningHint />;
   // Accounts & rigs round (onboarding-flow-spec.md, "Accounts & rigs"): a
   // rig whose `rig_rigs` row belongs to a different, known account —
   // `detect` already stopped short of opening it (no root registered, no
@@ -1581,10 +1601,6 @@ function FolderResult({
   return (
     <div className="flex w-full max-w-md flex-col gap-3 rounded-card border border-border-hairline bg-bg-1 p-5">
       <div className="font-mono text-xs break-all text-text-muted">{folder.path}</div>
-
-      {folder.status === 'detecting' && (
-        <div className="text-sm text-text-secondary">Checking…</div>
-      )}
 
       {folder.status === 'error' && <div className="text-sm text-danger">{folder.message}</div>}
 
