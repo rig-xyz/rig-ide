@@ -3,6 +3,23 @@
 The desktop app registers the `rig` URL scheme. The website depends on one
 link shape, so this doc is the contract between the two.
 
+## Canary: `rig-canary://`
+
+Canary builds register `rig-canary` instead of `rig`, so installing canary
+never takes `rig://` links away from an installed stable Rig. Everything below
+applies unchanged with `rig-canary` in place of `rig`, and each build accepts
+only its own scheme: canary ignores `rig://`, and stable ignores
+`rig-canary://`.
+
+The website only emits `rig://`, so "Open in Rig" on the invite page always
+goes to stable (or to nothing, on a Mac with only canary installed). To test an
+invite on canary, paste the `https://userig.xyz/join/<secret>` link into Home,
+or open `rig-canary://join/<secret>` yourself (see "Testing a link").
+
+The scheme comes from `URL_SCHEME` in `src/shared/app-identity.ts` (picked by
+`VITE_BUILD`) at runtime, and from `src/shared/app-identity.canary.ts` in the
+canary builder config. Keep the two in sync.
+
 ## `rig://join/<secret>`
 
 The website's invite page (`https://userig.xyz/join/<secret>`) offers "Open in
@@ -43,15 +60,16 @@ The app never logs the secret or the URL that carries it.
   initial `process.argv`. Links wait in `src/main/rig/deep-link-inbox.ts`
   until the renderer's confirm has mounted.
 - Confirm UI: `src/renderer/features/deep-link/deep-link-join-dialog.tsx`.
-- Scheme declaration: `protocols` in `electron-builder.config.ts` (and the
-  canary config).
+- Scheme declaration: `protocols` in `electron-builder.config.ts` (`rig`) and
+  `electron-builder.canary.config.ts` (`rig-canary`).
 
 ## Testing a link
 
 macOS routes a scheme only to an app bundle whose Info.plist declares it, so
 test on a packaged build (`/Applications/Rig.app`): run
 `open 'rig://join/tap_inv_…'` in Terminal, or click "Open in Rig" on the
-invite page. On macOS, `pnpm dev` doesn't register the scheme at all:
+invite page. For `/Applications/Rig Canary.app`, run
+`open 'rig-canary://join/tap_inv_…'`. On macOS, `pnpm dev` doesn't register the scheme at all:
 registering the bare Electron.app would only take the default away from an
 installed Rig.app. On Windows and Linux, `pnpm dev` registers the Electron
 binary plus the app path. The single-instance lock is off in dev, though, so

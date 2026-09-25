@@ -26,6 +26,12 @@ import { createMainWindow, getMainWindow } from './window';
  * `electron-builder.config.ts`), so only a packaged app receives links
  * there; on Windows/Linux `pnpm dev` registers the Electron binary + app
  * path instead.
+ *
+ * The scheme is per channel (`RIG_URL_SCHEME`, from `URL_SCHEME` in
+ * `@shared/app-identity`): stable and dev register and accept `rig://`,
+ * canary `rig-canary://` (declared in `electron-builder.canary.config.ts`),
+ * so an installed canary never takes the website's `rig://` links away from
+ * stable.
  */
 
 /** Set once startup has opened its first window; before that, startup itself is about to. */
@@ -55,7 +61,7 @@ export function handleDeepLinkArgv(argv: readonly string[]): void {
 
 function registerProtocolClient(): void {
   // macOS dev: skipped. There the call registers the bare Electron.app
-  // bundle (it ignores the path/args below), which doesn't declare `rig` and
+  // bundle (it ignores the path/args below), which doesn't declare the scheme and
   // can't route a link back to this app, so all it would do is take the
   // default away from an installed Rig.app until that next launches.
   if (process.defaultApp && process.platform === 'darwin') return;
@@ -66,7 +72,7 @@ function registerProtocolClient(): void {
       ? app.setAsDefaultProtocolClient(RIG_URL_SCHEME, process.execPath, [resolve(process.argv[1])])
       : false
     : app.setAsDefaultProtocolClient(RIG_URL_SCHEME);
-  if (!registered) log.warn('deep links: could not register as the rig:// handler');
+  if (!registered) log.warn(`deep links: could not register as the ${RIG_URL_SCHEME}:// handler`);
 }
 
 function receiveDeepLink(url: string): void {

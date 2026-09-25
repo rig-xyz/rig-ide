@@ -1,3 +1,4 @@
+import { URL_SCHEME } from '../app-identity';
 import { defineEvent } from '../lib/ipc/events';
 import { rigJoinPageUrl } from '../urls';
 import { isInviteSecretShape } from './invite-link';
@@ -12,25 +13,38 @@ import { isInviteSecretShape } from './invite-link';
  * as hostile: exactly one shape is accepted, and a match only ever leads to
  * an in-app confirm (`features/deep-link/deep-link-join-dialog.tsx`), never
  * a silent join. The secret is the invite's bearer capability — never log
- * it, or the URL that carries it.
+ * it, or the URL that carries it. Canary builds use `rig-canary://` instead
+ * (see `RIG_URL_SCHEME`).
  */
 
-export const RIG_URL_SCHEME = 'rig';
+/**
+ * The scheme this build registers and accepts: `rig` for stable (and dev),
+ * `rig-canary` for canary, so the two never fight over the website's `rig://`
+ * links. Everything below takes the scheme as a parameter (defaulting to this
+ * build's) so tests can exercise both.
+ */
+export const RIG_URL_SCHEME = URL_SCHEME;
 
 export type RigDeepLink = {
   kind: 'join';
   secret: string;
 };
 
-// `rig://join/<secret>`, an optional trailing slash (Windows' shell appends
-// one to some protocol activations), nothing else: no query, no fragment, no
-// extra path segments, no userinfo/port. The scheme and `join` host are
-// case-insensitive (browsers may lowercase either); the secret is not.
-const JOIN_LINK = /^rig:\/\/join\/([^/?#]+)\/?$/i;
+// `<scheme>://join/<secret>`, an optional trailing slash (Windows' shell
+// appends one to some protocol activations), nothing else: no query, no
+// fragment, no extra path segments, no userinfo/port. The scheme and `join`
+// host are case-insensitive (browsers may lowercase either); the secret is not.
+function joinLinkPattern(scheme: string): RegExp {
+  const escaped = scheme.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+  return new RegExp(`^${escaped}:\\/\\/join\\/([^/?#]+)\\/?$`, 'i');
+}
 
-/** `null` for anything that isn't a well-formed `rig://join/<secret>`. */
-export function parseRigDeepLink(input: string): RigDeepLink | null {
-  const match = JOIN_LINK.exec(input.trim());
+/** `null` for anything that isn't a well-formed `<scheme>://join/<secret>` for this build's scheme. */
+export function parseRigDeepLink(
+  input: string,
+  scheme: string = RIG_URL_SCHEME
+): RigDeepLink | null {
+  const match = joinLinkPattern(scheme).exec(input.trim());
   if (!match) return null;
   const secret = match[1]!;
   if (!isInviteSecretShape(secret)) return null;
@@ -38,13 +52,17 @@ export function parseRigDeepLink(input: string): RigDeepLink | null {
 }
 
 /**
- * The first `rig://` argument in a process argv — how Windows and Linux hand
- * a deep link over (the initial `process.argv`, and `second-instance`'s argv
- * when the app was already running). Not parsed here: callers run it through
+ * The first argument in this build's scheme (`rig://`, or `rig-canary://` on
+ * canary) in a process argv — how Windows and Linux hand a deep link over
+ * (the initial `process.argv`, and `second-instance`'s argv when the app was
+ * already running). Not parsed here: callers run it through
  * `parseRigDeepLink` so an unrecognized one is still logged as ignored.
  */
-export function findRigUrlInArgv(argv: readonly string[]): string | null {
-  const prefix = `${RIG_URL_SCHEME}://`;
+export function findRigUrlInArgv(
+  argv: readonly string[],
+  scheme: string = RIG_URL_SCHEME
+): string | null {
+  const prefix = `${scheme.toLowerCase()}://`;
   return argv.find((arg) => arg.toLowerCase().startsWith(prefix)) ?? null;
 }
 

@@ -6,6 +6,7 @@ import {
   PRODUCT_NAME,
   R2_BASE_URL,
   UPDATE_CHANNEL,
+  URL_SCHEME,
 } from './src/shared/app-identity.canary.ts';
 
 const config: Configuration = {
@@ -33,12 +34,13 @@ const config: Configuration = {
     },
   ],
   generateUpdatesFilesForAllChannels: false,
-  // `rig://join/<secret>` deep links (the website invite page's "Open in
-  // Rig"). Declares the scheme in the macOS Info.plist (CFBundleURLTypes) —
-  // macOS only routes a scheme to an app bundle that declares it — and in
-  // the Linux .desktop file / Windows installer. Runtime side:
+  // `rig-canary://join/<secret>` deep links: canary's own scheme, so it never
+  // takes the website's `rig://` links away from an installed stable Rig.
+  // Declares the scheme in the macOS Info.plist (CFBundleURLTypes) — macOS
+  // only routes a scheme to an app bundle that declares it — and in the Linux
+  // .desktop file / Windows installer. Runtime side:
   // src/main/app/deep-links.ts; contract: docs/deep-links.md.
-  protocols: [{ name: 'Rig', schemes: ['rig'] }],
+  protocols: [{ name: PRODUCT_NAME, schemes: [URL_SCHEME] }],
   files: ['out/**/*', 'node_modules/**/*', 'drizzle/**/*'],
   asarUnpack: [
     'node_modules/better-sqlite3/**',

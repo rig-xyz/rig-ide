@@ -10,3 +10,10 @@ describe('Rig packaging configuration', () => {
     expect(config.electronFuses?.enableCookieEncryption).toBe(false);
   });
 });
+
+describe('Rig deep-link schemes', () => {
+  it('gives canary its own scheme so it never claims the website rig:// links', () => {
+    expect(stableConfig.protocols).toEqual([{ name: 'Rig', schemes: ['rig'] }]);
+    expect(canaryConfig.protocols).toEqual([{ name: 'Rig Canary', schemes: ['rig-canary'] }]);
+  });
+});

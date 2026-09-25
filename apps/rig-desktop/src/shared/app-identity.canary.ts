@@ -9,3 +9,4 @@ export const PRODUCT_NAME = 'Rig Canary';
 export const APP_NAME_LOWER = 'emdash-canary';
 export const UPDATE_CHANNEL = 'v1-canary';
 export const ARTIFACT_PREFIX = 'rig-canary';
+export const URL_SCHEME = 'rig-canary';

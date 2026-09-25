@@ -5,6 +5,7 @@ import {
   PRODUCT_NAME,
   R2_BASE_URL,
   UPDATE_CHANNEL,
+  URL_SCHEME,
 } from './src/shared/app-identity.ts';
 
 const config: Configuration = {
@@ -36,7 +37,7 @@ const config: Configuration = {
   // macOS only routes a scheme to an app bundle that declares it — and in
   // the Linux .desktop file / Windows installer. Runtime side:
   // src/main/app/deep-links.ts; contract: docs/deep-links.md.
-  protocols: [{ name: 'Rig', schemes: ['rig'] }],
+  protocols: [{ name: 'Rig', schemes: [URL_SCHEME] }],
   files: ['out/**/*', 'node_modules/**/*', 'drizzle/**/*'],
   // Bundled @rigxyz/cli — produced by scripts/vendor-rig-cli.ts (run automatically
   // by the package:* scripts and scripts/release/build.ts). Lives OUTSIDE the asar

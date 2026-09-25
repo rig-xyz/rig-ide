@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findRigUrlInArgv, parseRigDeepLink, toJoinRequest } from './deep-link';
+import { findRigUrlInArgv, parseRigDeepLink, RIG_URL_SCHEME, toJoinRequest } from './deep-link';
 
 // The relay's real shape: `tap_inv_` + 32 base64url chars.
 const SECRET = 'tap_inv_Ab3-_x9QwErTyUiOpAsDfGhJkLzXcVbN';
@@ -59,6 +59,30 @@ describe('parseRigDeepLink', () => {
     expect(parseRigDeepLink('')).toBeNull();
     expect(parseRigDeepLink('   ')).toBeNull();
     expect(parseRigDeepLink('not a link')).toBeNull();
+  });
+});
+
+describe('per-channel scheme', () => {
+  it('is rig:// for stable and dev builds', () => {
+    expect(RIG_URL_SCHEME).toBe('rig');
+  });
+
+  it("accepts only the running build's scheme", () => {
+    expect(parseRigDeepLink(`rig-canary://join/${SECRET}`, 'rig-canary')).toEqual({
+      kind: 'join',
+      secret: SECRET,
+    });
+    expect(parseRigDeepLink(`RIG-CANARY://join/${SECRET}/`, 'rig-canary')?.secret).toBe(SECRET);
+    // Canary leaves the website's rig:// links to stable, and stable ignores canary's.
+    expect(parseRigDeepLink(`rig://join/${SECRET}`, 'rig-canary')).toBeNull();
+    expect(parseRigDeepLink(`rig-canary://join/${SECRET}`)).toBeNull();
+  });
+
+  it("finds only the running build's scheme in argv", () => {
+    const argv = ['/usr/bin/rig-canary', `rig://join/${SECRET}`, `rig-canary://join/${SECRET}`];
+    expect(findRigUrlInArgv(argv, 'rig-canary')).toBe(`rig-canary://join/${SECRET}`);
+    expect(findRigUrlInArgv(argv)).toBe(`rig://join/${SECRET}`);
+    expect(findRigUrlInArgv([`rig-canary://join/${SECRET}`])).toBeNull();
   });
 });
 

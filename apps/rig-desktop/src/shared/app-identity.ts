@@ -25,6 +25,10 @@ export const USER_DATA_DIR_NAME = isDev
     : 'rig-desktop';
 export const UPDATE_CHANNEL = isCanary ? 'v1-canary' : 'v1-stable';
 export const ARTIFACT_PREFIX = isCanary ? 'rig-canary' : 'rig';
+// The deep-link URL scheme this build registers (docs/deep-links.md). Canary
+// gets its own so an installed canary never takes `rig://` links (which the
+// website emits) away from stable. Keep in sync with ./app-identity.canary.ts.
+export const URL_SCHEME = isCanary ? 'rig-canary' : 'rig';
 // Our release bucket (Cloudflare R2 behind the userig.xyz zone). The updater
 // polls `${R2_BASE_URL}/${UPDATE_CHANNEL}` for latest-mac.yml; artifacts are
 // uploaded there by the release step. Upstream's was releases.emdash.sh.
