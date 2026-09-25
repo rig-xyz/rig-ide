@@ -245,6 +245,30 @@ describe('Room transcript — flat rows', () => {
     expect(jumps).toEqual(['m4']);
   });
 
+  it("renders the relay's member_joined system message as a quiet join row with the member's avatar", async () => {
+    const snapshot = replayedSnapshot();
+    const joiner = snapshot.members.find((m) => m.id !== 'bob')!;
+    const last = snapshot.messages[snapshot.messages.length - 1]!;
+    const joined: RoomMessage = {
+      id: 'm-joined',
+      seq: last.seq + 1,
+      authorId: joiner.id,
+      createdAt: last.createdAt,
+      time: last.time,
+      body: 'joined the space',
+      meta: { kind: 'system', event: 'member_joined' },
+    };
+    await act(async () => {
+      root.render(<RoomTranscript snapshot={{ ...snapshot, messages: [...snapshot.messages, joined] }} ownId="bob" />);
+    });
+
+    const rows = [...host.querySelectorAll<HTMLElement>('[data-testid="join-row"]')];
+    const row = rows.find((r) => r.textContent?.includes(`${joiner.name} joined the space`));
+    expect(row).toBeTruthy();
+    // Pictured as the member, not as a generic system line.
+    expect(row!.firstElementChild?.textContent || row!.querySelector('img, svg')).toBeTruthy();
+  });
+
   it('renders one session card per real fixture run, each reporting a settled status', async () => {
     const snapshot = replayedSnapshot();
     await act(async () => {

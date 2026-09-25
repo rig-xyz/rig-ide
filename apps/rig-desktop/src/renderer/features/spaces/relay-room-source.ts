@@ -473,6 +473,18 @@ export class RelayRoomSource implements RoomSource {
     return { run: result.data.run, events: result.data.events };
   }
 
+  /** Re-lists the roster when `userId` (a `member_joined` message's joiner) isn't in it yet — a no-op during bootstrap, whose roster already has everyone. */
+  private async refreshMembersFor(userId: unknown): Promise<void> {
+    if (typeof userId === 'string' && this.snapshot.members.some((m) => m.id === userId)) return;
+    const members = await this.opts.relay.listMembers(this.opts.bindingId);
+    if (!members.success) {
+      this.log('Rig spaces: could not refresh room members', { error: members.error.message });
+      return;
+    }
+    this.seedMembers(members.data);
+    await this.refreshInvites();
+  }
+
   private seedMembers(rows: RoomMemberRow[]): void {
     for (const row of rows) {
       if (row.clerkUserId) this.userIdByClerkId.set(row.clerkUserId, row.userId);
@@ -606,6 +618,13 @@ export class RelayRoomSource implements RoomSource {
       return; // already applied (bootstrap + catch-up overlap window)
     }
     this.lastMessageSeq = Math.max(this.lastMessageSeq, row.seq);
+
+    // Someone new accepted an invite: re-read the roster BEFORE resolving
+    // the author below, so "Sam joined" maps to Sam (not a raw Clerk id)
+    // and an emailed invite's card flips to "Joined".
+    if (row.kind === 'system' && row.meta?.event === 'member_joined') {
+      await this.refreshMembersFor(row.meta.userId);
+    }
 
     // The relay identifies message authors by Clerk id while members, runs
     // and `/v1/me` use the user id — map back so "mine" and ownership

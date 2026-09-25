@@ -497,6 +497,60 @@ describe('RelayRoomSource', () => {
     expect(source.getSnapshot().sessionEventsByRun.run1.map((e) => e.seq)).toEqual([1, 2]);
   });
 
+  it("a member_joined system message re-reads the roster first, so the join row is the new member's, not a raw Clerk id", async () => {
+    const fake = makeFakeRelay();
+    fake.setMembers([member()]);
+    fake.queueMessages(
+      [message()],
+      [], // connect-time catch-up: nothing new
+      [
+        message({
+          id: 'm2',
+          seq: 2,
+          kind: 'system',
+          body: 'joined the space',
+          author: { userId: 'clerk_sam', name: 'Sam', avatarUrl: null, kind: 'user' },
+          meta: { event: 'member_joined', userId: 'u-sam' },
+        }),
+      ]
+    );
+    let listMembersCalls = 0;
+    const listMembers = fake.relay.listMembers.bind(fake.relay);
+    fake.relay.listMembers = async (bindingId) => {
+      listMembersCalls += 1;
+      return listMembers(bindingId);
+    };
+
+    let provider: FakeProvider | null = null;
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: () => {
+        provider = new FakeProvider();
+        return provider;
+      },
+    });
+    source.play();
+    await flush();
+    provider!.fire('connect');
+    await flush();
+    expect(listMembersCalls).toBe(1);
+
+    fake.setMembers([member(), member({ userId: 'u-sam', clerkUserId: 'clerk_sam', name: 'Sam', role: 'editor' })]);
+    provider!.fire('stateless', { payload: JSON.stringify({ type: 'message_created', id: 'm2', seq: 2, kind: 'system' }) });
+    await flush();
+
+    expect(listMembersCalls).toBe(2);
+    const snapshot = source.getSnapshot();
+    expect(snapshot.members.map((m) => m.id)).toEqual(['u1', 'u-sam']);
+    const joined = snapshot.messages.find((m) => m.id === 'm2');
+    expect(joined?.authorId).toBe('u-sam');
+    expect(joined?.meta).toEqual({ kind: 'system', event: 'member_joined' });
+  });
+
   it('bootstrap fetches every referenced run in parallel, bounded, and notifies once for the whole batch (Calm Room open)', async () => {
     const fake = makeFakeRelay();
     const runIds = ['run1', 'run2', 'run3', 'run4', 'run5', 'run6', 'run7', 'run8'];

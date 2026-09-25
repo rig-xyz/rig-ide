@@ -317,7 +317,7 @@ export function TypingRow({ personIds, snapshot }: { personIds: string[]; snapsh
 export function JoinRow({ message, snapshot }: { message: RoomMessage; snapshot: RoomSnapshot }) {
   const who = memberOf(snapshot, message.authorId);
   return (
-    <div className={cn(ROW_GRID, 'group items-center py-1 text-xs text-text-secondary')}>
+    <div className={cn(ROW_GRID, 'group items-center py-1 text-xs text-text-secondary')} data-testid="join-row">
       <PersonAvatar member={who} name={message.authorId} size="sm" className="justify-self-center" />
       <span className="flex items-baseline gap-2">
         <span>

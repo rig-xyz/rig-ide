@@ -104,7 +104,11 @@ function renderItem(
     case 'comment_mirror':
       return <CommentMirrorLine message={message} snapshot={snapshot} onOpenFile={onOpenFile} />;
     case 'system':
-      if (message.meta.event === 'joined') return <JoinRow message={message} snapshot={snapshot} />;
+      // 'member_joined' is the relay's (posted when an invite accept creates
+      // a membership); 'joined' is the scripted demo's.
+      if (message.meta.event === 'joined' || message.meta.event === 'member_joined') {
+        return <JoinRow message={message} snapshot={snapshot} />;
+      }
       // Day breaks are derived from timestamps (see RoomTranscript); a
       // scripted divider message would double them.
       if (message.meta.event === 'day_divider') return null;
