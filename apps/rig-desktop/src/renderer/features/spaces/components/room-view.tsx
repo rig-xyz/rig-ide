@@ -215,19 +215,17 @@ export function RoomView({
     initialSection: 'global-setup' | null;
   }>({ open: false, focus: null, initialScope: 'all', initialSection: null });
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
+  // The body only exists once the Room has a snapshot (and isn't folded into
+  // the doc-focus rail), so it's tracked as state: the observer attaches when
+  // the element appears, not at mount — a mount-time `[]` effect missed it
+  // and left `bodyWidth` at 0, which shoved the transcript left.
+  const [bodyEl, bodyRef] = useState<HTMLDivElement | null>(null);
   const [bodyWidth, setBodyWidth] = useState(0);
-  // Split-resize perf round: this used to run with no dependency array —
-  // tearing the `ResizeObserver` down and standing a new one up again on
-  // EVERY render of this component, not just when the body actually
-  // resized. `[]` mounts it once, like any other subscription. The
-  // callback itself is now rAF-throttled too: a live window/split drag can
-  // report a new `contentRect` faster than the screen paints, and each one
-  // used to commit straight to state — re-rendering the whole Room (and,
-  // through it, `RoomTranscript`'s own per-message projection below) once
-  // per raw resize notification instead of once per painted frame.
+  // rAF-throttled: a live window/split drag can report a new `contentRect`
+  // faster than the screen paints, and each one used to re-render the whole
+  // Room once per raw resize notification instead of once per painted frame.
   useEffect(() => {
-    const el = bodyRef.current;
+    const el = bodyEl;
     if (!el) return;
     let frame = 0;
     const observer = new ResizeObserver(([entry]) => {
@@ -243,7 +241,7 @@ export function RoomView({
       observer.disconnect();
       if (frame) cancelAnimationFrame(frame);
     };
-  }, []);
+  }, [bodyEl]);
   // Room for a ~44rem transcript beside the 304px panel.
   const narrow = bodyWidth > 0 && bodyWidth < ROOM_WIDE_PX;
   const hasPanel = !!renderPanel;
