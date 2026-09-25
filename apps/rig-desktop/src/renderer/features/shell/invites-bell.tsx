@@ -27,11 +27,16 @@ import {
  * an invite arriving within minutes is fine for a bell, and the relay isn't
  * hammered from every open desktop.
  *
- * Accept is SERVER-SIDE membership only, by design: the invitee plane never
+ * Accept is SERVER-SIDE membership first, by design: the invitee plane never
  * exposes the invite secret. Round: rig attach — a joined row no longer just
  * points at Home; it offers "Set up locally" right there, driving the same
  * `rpc.rig.join.attach` flow Home's "Download" uses (member-gated, no
  * invite secret needed), opening the result the normal way on success.
+ *
+ * Lane J ("boom, you're in"): Accept now runs that attach itself, straight
+ * after the membership call, and opens the space — the same one-click
+ * sequence as Home's `PendingInviteInline`. "Set up locally" survives only
+ * as the retry when the attach half fails after a successful accept.
  *
  * Feedback round fix: the query key is now account-scoped
  * (`invites-inbox.ts`'s `myInvitesQueryKey`) — the old bare key had no
@@ -125,6 +130,7 @@ export function InvitesBell({ onOpenPath }: { onOpenPath: (path: string) => void
           error={invitesQuery.isError || invitesQuery.data?.success === false}
           email={me?.email ?? null}
           onOpenPath={onOpenPath}
+          onClose={() => setOpen(false)}
         />
       </Popover>
     </>
@@ -136,11 +142,13 @@ function InvitesPopoverContent({
   error,
   email,
   onOpenPath,
+  onClose,
 }: {
   invites: RigMyInvite[] | null;
   error: boolean;
   email: string | null;
   onOpenPath: (path: string) => void;
+  onClose: () => void;
 }) {
   if (invites === null) {
     return (
@@ -156,21 +164,46 @@ function InvitesPopoverContent({
   return (
     <div className="flex flex-col gap-1 p-2">
       {rows.map((row) => (
-        <InviteRow key={row.id} row={row} onOpenPath={onOpenPath} />
+        <InviteRow key={row.id} row={row} onOpenPath={onOpenPath} onClose={onClose} />
       ))}
     </div>
   );
 }
 
-function InviteRow({ row, onOpenPath }: { row: MyInviteRow; onOpenPath: (path: string) => void }) {
+function InviteRow({
+  row,
+  onOpenPath,
+  onClose,
+}: {
+  row: MyInviteRow;
+  onOpenPath: (path: string) => void;
+  onClose: () => void;
+}) {
   const queryClient = useQueryClient();
-  const [phase, setPhase] = useState<'idle' | 'accepting' | 'declining' | 'joined'>('idle');
+  const [phase, setPhase] = useState<'idle' | 'joining' | 'declining' | 'joined'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [settingUp, setSettingUp] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
 
+  // `rig attach` with no `targetDir` lands the rig in `<home>/<slug>` on its
+  // own (rig home round: no picker, same as Home's "Download"). On success,
+  // the same first-sync handoff `rigs-rail.tsx`'s "Download" uses — see
+  // `lib/just-attached.ts` — then close the bell and open the space.
+  const attach = async (): Promise<string | null> => {
+    try {
+      const result = await rpc.rig.join.attach({ bindingId: row.bindingId });
+      if (!result.success) return result.error.message;
+      markJustAttachedSyncing(result.data.localPath, result.data.syncing);
+      onClose();
+      onOpenPath(result.data.localPath);
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : 'Could not set up the rig locally.';
+    }
+  };
+
   const accept = async () => {
-    setPhase('accepting');
+    setPhase('joining');
     setError(null);
     const result = await rpc.rig.share.acceptMyInvite({ id: row.id });
     if (!result.success) {
@@ -178,12 +211,17 @@ function InviteRow({ row, onOpenPath }: { row: MyInviteRow; onOpenPath: (path: s
       setError(result.error.message);
       return;
     }
-    setPhase('joined');
     // Membership changed server-side: the rig now belongs in Home's shared
-    // list, and this invite will drop from the next list read. The joined
-    // row stays visible until then so the outcome is legible.
+    // list, and this invite will drop from the next list read.
     void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
     void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY_PREFIX });
+    const attachError = await attach();
+    // Accepted but not set up here: the joined row stays, with the error
+    // and a "Set up locally" retry, so the outcome is legible.
+    if (attachError) {
+      setSetupError(attachError);
+      setPhase('joined');
+    }
   };
 
   const decline = async () => {
@@ -202,24 +240,8 @@ function InviteRow({ row, onOpenPath }: { row: MyInviteRow; onOpenPath: (path: s
   const setUpLocally = async () => {
     setSettingUp(true);
     setSetupError(null);
-    try {
-      // Rig home round: no picker — same as Home's "Download", `rig
-      // attach` with no `targetDir` lands the rig in `<home>/<slug>` on
-      // its own.
-      const result = await rpc.rig.join.attach({ bindingId: row.bindingId });
-      if (!result.success) {
-        setSetupError(result.error.message);
-        return;
-      }
-      // First-sync round: same handoff `rigs-rail.tsx`'s "Download" uses —
-      // see `lib/just-attached.ts`.
-      markJustAttachedSyncing(result.data.localPath, result.data.syncing);
-      onOpenPath(result.data.localPath);
-    } catch (err) {
-      setSetupError(err instanceof Error ? err.message : 'Could not set up the rig locally.');
-    } finally {
-      setSettingUp(false);
-    }
+    setSetupError(await attach());
+    setSettingUp(false);
   };
 
   return (
@@ -260,7 +282,7 @@ function InviteRow({ row, onOpenPath }: { row: MyInviteRow; onOpenPath: (path: s
             disabled={phase !== 'idle'}
             className="shrink-0"
           >
-            {phase === 'accepting' ? 'Accepting…' : 'Accept'}
+            {phase === 'joining' ? 'Joining…' : 'Accept'}
           </Button>
           <Button
             variant="ghost"

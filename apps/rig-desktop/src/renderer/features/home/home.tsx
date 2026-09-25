@@ -616,11 +616,9 @@ function SignedOutGate({ signInPhase, onSignIn }: { signInPhase: RigSignInPhase;
 /**
  * Feedback round, Part C — an account with zero rigs but a pending invite
  * gets it surfaced right on the empty state, not only behind the topbar
- * bell (`invites-bell.tsx`'s `InviteRow`). Deliberately does NOT replay
- * that row's own two-step accept/"Set up locally" flow: with nothing else
- * on screen, one click doing accept-then-attach end to end is the more
- * honest "one line + one button" than a second interstitial state would
- * be. Mirrors `InviteRow`'s two relay calls exactly (`acceptMyInvite` then
+ * bell (`invites-bell.tsx`'s `InviteRow`). One click does accept-then-
+ * attach end to end (lane J made the bell's Accept do the same). Mirrors
+ * `InviteRow`'s two relay calls exactly (`acceptMyInvite` then
  * `join.attach`) — a failure in the SECOND one still leaves the invite
  * accepted server-side, so this quietly falls back to idle rather than
  * showing an error; the `['rig','account']` invalidate below means the
