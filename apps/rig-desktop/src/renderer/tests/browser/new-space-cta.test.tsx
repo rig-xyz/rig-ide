@@ -336,6 +336,27 @@ describe('NewSpaceCta', () => {
     expect(onOpenPath).not.toHaveBeenCalled();
   });
 
+  it('after a paste, the field shows the start of the link, not its secret tail — value unchanged', async () => {
+    await render();
+    const input = await openJoinField();
+    input.style.width = '120px';
+    const long = `${LINK}${'x'.repeat(80)}`;
+
+    // A real paste: the paste event, then the browser's own insert + input event.
+    await act(async () => {
+      input.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true }));
+      await type(input, long);
+      input.setSelectionRange(long.length, long.length);
+      input.scrollLeft = input.scrollWidth;
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    });
+
+    expect(input.value).toBe(long);
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(0);
+    expect(input.scrollLeft).toBe(0);
+  });
+
   it('rejects a pasted link that is not a rig invite link, without calling anything', async () => {
     await render();
     await pasteAndJoin('not a link');

@@ -60,6 +60,7 @@ export function NewSpaceCta({
   const reduceMotion = useReducedMotion() ?? false;
   const filterId = `new-space-goo-${useId().replace(/:/g, '')}`;
   const createRef = useRef<HTMLButtonElement>(null);
+  const linkInputRef = useRef<HTMLInputElement>(null);
   const refocusCreate = useRef(false);
   const leaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -111,6 +112,18 @@ export function NewSpaceCta({
     refocusCreate.current = refocus;
     setJoinOpen(false);
     setValue('');
+  };
+
+  // A pasted link ends in its secret — and a focused text field scrolls to
+  // the caret, i.e. to that secret. Put the caret (and the scroll) back at
+  // the start so the field reads "https://userig.xyz/join/…"; the value
+  // itself is untouched. (Once blurred, Chromium already scrolls a field
+  // back to its start on its own.)
+  const showLinkStart = () => {
+    const input = linkInputRef.current;
+    if (!input) return;
+    if (document.activeElement === input) input.setSelectionRange(0, 0);
+    input.scrollLeft = 0;
   };
 
   // The pasted link carries the invite's secret, so it's never echoed back in an error line.
@@ -271,11 +284,14 @@ export function NewSpaceCta({
             style={{ paddingLeft: BUBBLE + INSET + 2 }}
           >
             <input
+              ref={linkInputRef}
               value={value}
               onChange={(e) => {
                 setValue(e.target.value);
                 if (error) setError(null);
               }}
+              // After the paste lands (its input event re-renders first).
+              onPaste={() => requestAnimationFrame(showLinkStart)}
               onKeyDown={(e) => {
                 if (e.key === 'Escape' && !joining) {
                   e.preventDefault();
