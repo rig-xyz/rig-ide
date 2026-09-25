@@ -107,6 +107,20 @@ export const plugin = definePlugin(
           },
         ],
       },
+      // The ChatGPT desktop app bundles its own codex-cli, off PATH, which `which -a`
+      // never sees. It's frequently newer than a stale global npm/homebrew install and
+      // is the only one that knows about ChatGPT-account-only models (e.g. gpt-6-sol)
+      // — so it's worth discovering as a candidate even though emdash didn't install it.
+      extraLocations: {
+        macos: [
+          '/Applications/ChatGPT.app/Contents/Resources/codex',
+          '~/Applications/ChatGPT.app/Contents/Resources/codex',
+        ],
+      },
+      // Auto-resolution (no user pin/override) should prefer whichever discovered
+      // codex is newest rather than whichever happens to be first on PATH — a global
+      // npm install commonly shadows the ChatGPT app's newer bundled binary otherwise.
+      preferNewest: true,
     }),
     mcp: {
       kind: 'supported',

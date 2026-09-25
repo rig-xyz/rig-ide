@@ -86,6 +86,20 @@ export const hostDependencyDescriptorSchema = z.object({
    *  Use for CLIs whose version command has project-local side effects. */
   skipVersionProbe: z.boolean().optional(),
   installCommands: z.partialRecord(z.enum(PLATFORMS), z.array(installOptionSchema)),
+  /**
+   * Well-known absolute install locations to probe in addition to PATH (`which -a`),
+   * e.g. a binary bundled inside another app's install directory. A leading `~`
+   * expands to the current user's home directory. Enumerated the same way as PATH
+   * hits (realpath, version probe, provenance `unknown`/inferred, not manageable).
+   */
+  extraLocations: z.partialRecord(z.enum(PLATFORMS), z.array(z.string())).optional(),
+  /**
+   * When true, auto-resolution (no user pin/override) picks the highest-versioned
+   * runnable installation among all discovered candidates (PATH hits + extraLocations)
+   * instead of the first PATH hit. Opt-in per descriptor so other agents keep the
+   * existing first-PATH-hit behavior.
+   */
+  preferNewest: z.boolean().optional(),
   /** Optional link to installation documentation, shown in the dependency detail view. */
   installDocs: z.string().optional(),
   updates: updatesDescriptorSchema,

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IExecutionContext } from '../../exec/execution-context';
 import { HostDependencyManager } from './host-dependency-manager';
 import type { InstallMethodDetector } from './method-detection';
-import type { DependencyDescriptor, Provenance } from './types';
+import { resolveActiveInstallation, type DependencyDescriptor, type Provenance } from './types';
 
 const TEST_DEPENDENCIES: DependencyDescriptor[] = [
   {
@@ -1203,5 +1203,176 @@ describe('HostDependencyManager runability-aware resolution', () => {
     expect(repoLocal?.isActive).toBe(false);
     expect(global?.isActive).toBe(true);
     expect(global?.status).toBe('available');
+  });
+});
+
+/**
+ * `extraLocations` + `preferNewest`: the ChatGPT desktop app fix. The app
+ * bundles its own codex-cli off PATH (`which -a` never sees it), which is
+ * frequently newer than a stale global npm/homebrew install and is the only
+ * one that knows about ChatGPT-account-only models. These are opt-in per
+ * descriptor (see codex's plugin descriptor) so every other agent keeps
+ * today's first-PATH-hit behavior unchanged.
+ */
+describe('HostDependencyManager extraLocations + preferNewest resolution', () => {
+  const NPM_PATH = '/usr/local/bin/codex';
+  const CHATGPT_PATH = '/Applications/ChatGPT.app/Contents/Resources/codex';
+
+  const codexWithExtraLocation: DependencyDescriptor = {
+    id: 'codex',
+    name: 'Codex',
+    category: 'agent',
+    commands: ['codex'],
+    versionArgs: ['--version'],
+    extraLocations: { macos: [CHATGPT_PATH] },
+    preferNewest: true,
+  };
+
+  function ctxWith(opts: {
+    npmVersion?: string;
+    chatgptPresent?: boolean;
+    chatgptVersion?: string;
+  }) {
+    return makeCtx(async (command, args = []) => {
+      if (command === 'which' && args[0] === '-a' && args[1] === 'codex') {
+        return { stdout: opts.npmVersion ? `${NPM_PATH}\n` : '', stderr: '' };
+      }
+      if (command === 'which' && args[0] === 'codex') {
+        return { stdout: opts.npmVersion ? `${NPM_PATH}\n` : '', stderr: '' };
+      }
+      if (command === 'test' && args[0] === '-x' && args[1] === CHATGPT_PATH) {
+        if (opts.chatgptPresent) return { stdout: '', stderr: '' };
+        throw new Error('No such file or directory');
+      }
+      if (command === 'realpath') {
+        return { stdout: `${args[0]}\n`, stderr: '' };
+      }
+      if (command === NPM_PATH && args[0] === '--version' && opts.npmVersion) {
+        return { stdout: `codex-cli ${opts.npmVersion}\n`, stderr: '' };
+      }
+      if (command === CHATGPT_PATH && args[0] === '--version' && opts.chatgptVersion) {
+        return { stdout: `codex-cli ${opts.chatgptVersion}\n`, stderr: '' };
+      }
+      throw new Error(`Unexpected: ${command} ${args.join(' ')}`);
+    });
+  }
+
+  it('discovers an extraLocation candidate that which -a never sees', async () => {
+    const manager = new HostDependencyManager(
+      ctxWith({ chatgptPresent: true, chatgptVersion: '0.155.0-alpha.9.2' }),
+      { dependencies: [codexWithExtraLocation], installMethodDetector: unknownDetector }
+    );
+
+    const state = await manager.probe('codex');
+
+    expect(state.path).toBe(CHATGPT_PATH);
+    expect(state.status).toBe('available');
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const hostDep = manager.getHostDependency('codex');
+    expect(hostDep?.installations).toHaveLength(1);
+    expect(hostDep?.installations[0]).toMatchObject({
+      pathEntry: CHATGPT_PATH,
+      isActive: true,
+      manageable: false,
+      provenance: { kind: 'unknown', confidence: 'inferred' },
+    });
+  });
+
+  it('picks the newer extraLocation install over an older first-PATH-hit install', async () => {
+    const manager = new HostDependencyManager(
+      ctxWith({ npmVersion: '0.147.0', chatgptPresent: true, chatgptVersion: '0.155.0-alpha.9.2' }),
+      { dependencies: [codexWithExtraLocation], installMethodDetector: unknownDetector }
+    );
+
+    const state = await manager.probe('codex');
+
+    // The PATH hit (0.147.0) is discovered first, but the ChatGPT app's bundled
+    // codex (0.155.0-alpha.9.2, newer despite the prerelease tag) wins.
+    expect(state.path).toBe(CHATGPT_PATH);
+    expect(state.version).toBe('0.155.0');
+  });
+
+  it('is harmless when the extraLocation does not exist on this machine', async () => {
+    const manager = new HostDependencyManager(
+      ctxWith({ npmVersion: '0.147.0', chatgptPresent: false }),
+      { dependencies: [codexWithExtraLocation], installMethodDetector: unknownDetector }
+    );
+
+    const state = await manager.probe('codex');
+
+    expect(state.path).toBe(NPM_PATH);
+    expect(state.status).toBe('available');
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const hostDep = manager.getHostDependency('codex');
+    // No phantom "missing" entry for the extraLocation that isn't there.
+    expect(hostDep?.installations).toHaveLength(1);
+    expect(hostDep?.installations[0]?.pathEntry).toBe(NPM_PATH);
+  });
+
+  it('still resolves the user-pinned installation as `used`, not the newest one', async () => {
+    const manager = new HostDependencyManager(
+      ctxWith({ npmVersion: '0.147.0', chatgptPresent: true, chatgptVersion: '0.155.0-alpha.9.2' }),
+      {
+        dependencies: [codexWithExtraLocation],
+        installMethodDetector: unknownDetector,
+        getSelection: async () => ({ kind: 'pinned', realpath: NPM_PATH }),
+      }
+    );
+
+    await manager.probe('codex');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const hostDep = manager.getHostDependency('codex');
+    expect(hostDep?.used).toEqual({ kind: 'pinned', realpath: NPM_PATH });
+
+    const active = resolveActiveInstallation(hostDep!.installations, hostDep!.used);
+    // The pin wins even though the ChatGPT app install is newer and would
+    // otherwise be auto-selected.
+    expect(active?.pathEntry).toBe(NPM_PATH);
+  });
+
+  it('does not change resolution for a descriptor without preferNewest, even with mixed versions', async () => {
+    const OLD_PATH = '/usr/local/bin/codex';
+    const NEWER_PATH = '/opt/homebrew/bin/codex';
+    const codexWithoutPreferNewest: DependencyDescriptor = {
+      id: 'codex',
+      name: 'Codex',
+      category: 'agent',
+      commands: ['codex'],
+      versionArgs: ['--version'],
+      // No extraLocations, no preferNewest — today's first-PATH-hit behavior.
+    };
+    const ctx = makeCtx(async (command, args = []) => {
+      if (command === 'which' && args[0] === '-a' && args[1] === 'codex') {
+        return { stdout: `${OLD_PATH}\n${NEWER_PATH}\n`, stderr: '' };
+      }
+      if (command === 'which' && args[0] === 'codex') {
+        return { stdout: `${OLD_PATH}\n`, stderr: '' };
+      }
+      if (command === 'realpath') {
+        return { stdout: `${args[0]}\n`, stderr: '' };
+      }
+      if (command === OLD_PATH && args[0] === '--version') {
+        return { stdout: 'codex-cli 0.100.0\n', stderr: '' };
+      }
+      if (command === NEWER_PATH && args[0] === '--version') {
+        return { stdout: 'codex-cli 0.200.0\n', stderr: '' };
+      }
+      throw new Error(`Unexpected: ${command} ${args.join(' ')}`);
+    });
+
+    const manager = new HostDependencyManager(ctx, {
+      dependencies: [codexWithoutPreferNewest],
+      installMethodDetector: unknownDetector,
+    });
+
+    const state = await manager.probe('codex');
+
+    // First runnable PATH hit wins, not the higher-versioned second one —
+    // unchanged from before this feature existed.
+    expect(state.path).toBe(OLD_PATH);
+    expect(state.version).toBe('0.100.0');
   });
 });
