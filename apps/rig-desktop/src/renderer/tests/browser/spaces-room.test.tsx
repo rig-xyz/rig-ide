@@ -369,6 +369,34 @@ describe('Room view — renders through loading into content', () => {
     expect(errors).toEqual([]);
   });
 
+  // Regression (d6a027f98): the body's ResizeObserver used to attach in a
+  // mount-time `[]` effect, but the body only renders once a snapshot has
+  // loaded — so it never attached, `bodyWidth` stayed 0, and the panel
+  // clearance (`TRANSCRIPT_COLUMN_PX + 2 * PANEL_LANE_PX - bodyWidth`)
+  // shoved the transcript ~1368px left even in a wide window.
+  it('measures the body once the snapshot arrives after mount — no panel clearance in a wide window', async () => {
+    host.style.width = '1600px';
+    host.style.height = '800px';
+    await act(async () => {
+      root.render(<RoomView bindingId="b1" spaceName="Room" renderPanel={() => null} />);
+    });
+    // No snapshot at mount: the connect error shows instead of the body.
+    await vi.waitFor(() => expect(host.textContent).toContain('Could not connect'));
+    const demo = [...host.querySelectorAll('button')].find((b) => b.textContent?.includes('scripted demo'))!;
+    await act(async () => {
+      demo.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="room-transcript"]')).not.toBeNull());
+
+    // The column that carries `paddingRight: panelClearance`, around the transcript.
+    const column = host.querySelector<HTMLElement>('[data-testid="room-transcript"]')!.closest<HTMLElement>(
+      '[style*="padding-right"]'
+    )!;
+    expect(column).not.toBeNull();
+    await vi.waitFor(() => expect(column.style.paddingRight).toBe('0px'));
+    expect(column.getBoundingClientRect().width).toBeGreaterThan(1000);
+  });
+
   // Calm Room open: while bootstrapping, a calm shimmer skeleton stands in
   // for the transcript — never the agent-state dot matrix (that's for agent
   // states only, see the "polish" brief).
