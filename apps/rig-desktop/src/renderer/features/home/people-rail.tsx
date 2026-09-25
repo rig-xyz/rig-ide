@@ -17,6 +17,13 @@ import { derivePulseSectionState } from './pulse-state';
  * all when there's no one to show (loading, error, or a briefing with an
  * empty `perPerson`) — no empty-state chrome, matching `PulseSection`'s
  * own established "absent, not a teaser" precedent.
+ *
+ * Polish round, lane C ("spaces first"): re-skinned onto the SAME floating
+ * glass card look every other Home card now shares (design doc — "only
+ * re-skinned... Don't redesign its content"), unconditionally rather than
+ * only above the `xl` breakpoint, and the header dropped its mono
+ * uppercase styling for the plain sentence-case label the rest of Home's
+ * headers use now.
  */
 export function PeopleRail() {
   const pulseQuery = useQuery({
@@ -31,15 +38,9 @@ export function PeopleRail() {
   const people = [...state.briefing.perPerson].sort((a, b) => Number(b.isSelf) - Number(a.isSelf));
 
   return (
-    // Surface round: `xl:bg-bg-1`/`xl:p-3` live on this component's own
-    // root, not a wrapper in `home.tsx` — this component can return `null`
-    // above, and a background applied one level out would still paint an
-    // empty tinted panel for that case. `px-1` on the header/list below
-    // stays (now genuinely nested padding, not redundant) since it also
-    // applies below `xl`, where this rail has no surface of its own.
-    <div className="xl:bg-bg-1 xl:rounded-card flex w-full flex-col gap-0.5 text-left xl:p-3">
-      <p className="text-text-muted px-1 pb-1 font-mono text-xs tracking-wide uppercase">People</p>
-      <div className="flex flex-col gap-3 px-1">
+    <div className="border-border-hairline bg-bg-1 shadow-float flex w-full flex-col gap-2 rounded-card border p-3 text-left">
+      <p className="text-text-primary text-sm font-medium">People</p>
+      <div className="flex flex-col gap-3">
         {people.map((person) => (
           <div key={person.userId} className="flex items-start gap-2.5">
             <IdentityAvatar

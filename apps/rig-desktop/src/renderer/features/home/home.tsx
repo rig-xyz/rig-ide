@@ -14,7 +14,9 @@ import { useSpacesEnabled } from '@renderer/features/spaces/use-spaces-enabled';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { cn } from '@renderer/lib/utils';
+import { AcrossYourSpaces } from './across-your-spaces';
 import { BriefingSpine } from './briefing-spine';
+import { FloatingCard } from './floating-card';
 import {
   buildHomeRigRows,
   deriveHomeRegions,
@@ -25,9 +27,13 @@ import {
   type HomeRecentSession,
   type LegacyRowVisibility,
 } from './home-sections';
+import { NeedsYouSection } from './needs-you-section';
 import { PeopleRail } from './people-rail';
 import { shouldShowPulseSection } from './pulse-state';
 import { RigsRail } from './rigs-rail';
+import { indexSpaceStatuses } from './space-status-state';
+import { SpacesCard } from './spaces-card';
+import { useSpaceStatus } from './use-space-status';
 import { deriveWelcomePhase, type WelcomePhase } from './welcome-state';
 
 /**
@@ -341,12 +347,32 @@ export function Home({
     ? buildHomeRigRows(localRigs, workspaces, recentSessions, localPaths, localPathsPending)
     : [];
 
+  // Home restructure, "spaces first": spaces get their own floating card
+  // (`SpacesCard`) with a live status tile per row; plain rigs are demoted
+  // into the "Solo rigs" card (`RigsRail`, now spaces-free — see its own
+  // header comment).
+  const spaceRows = spacesEnabled ? rigRows.filter((row) => row.isSpace) : [];
+  const soloRigRows = spacesEnabled ? rigRows.filter((row) => !row.isSpace) : rigRows;
+
   const showPulse = shouldShowPulseSection(
     signedIn,
     workspaces.status === 'ok'
       ? { status: 'ok', bindingCount: workspaces.bindings.length }
       : { status: workspaces.status }
   );
+
+  // Polish round, lane C: `rpc.rig.spaceStatus.get()`'s per-space live
+  // status — polled gently (`use-space-status.ts`), only while there's
+  // any reason to (Spaces enabled + signed in; a signed-out/solo window
+  // has no spaces to ask about). `selfUserId` reuses the SAME account id
+  // `filterLocalRigsByAccount` above already resolved — the relay's own
+  // `users.id`, which is exactly what `RigSpaceRunningItem.ownerUserId`
+  // is keyed on (confirmed against `tap`'s `session_runs.owner_user_id`).
+  const spaceStatusQuery = useSpaceStatus(spacesEnabled && signedIn);
+  const statusByBinding = indexSpaceStatuses(
+    spaceStatusQuery.data?.success ? spaceStatusQuery.data.data : []
+  );
+  const selfUserId = currentAccountId ?? null;
 
   // Feedback round, Part A: signing out (or never having signed in on this
   // launch) must not leave any rig visible on Home — a single generic gate
@@ -431,33 +457,53 @@ export function Home({
       <div className="flex min-h-0 flex-1 flex-col gap-8 lg:flex-row lg:items-start lg:gap-10">
         {showPulse && (
           <div className="min-w-0 flex-1 lg:order-2 lg:px-4">
-            <BriefingSpine
-              localRigs={localRigs}
-              onOpenPath={onOpenPath}
-              onHighlightRig={setHighlightBindingId}
-            />
+            <div className="flex flex-col gap-6">
+              <BriefingSpine
+                localRigs={localRigs}
+                onOpenPath={onOpenPath}
+                onHighlightRig={setHighlightBindingId}
+              />
+              <NeedsYouSection
+                spaceRows={spaceRows}
+                statusByBinding={statusByBinding}
+                selfUserId={selfUserId}
+                onOpenPath={onOpenPath}
+              />
+              <AcrossYourSpaces spaceRows={spaceRows} statusByBinding={statusByBinding} onOpenPath={onOpenPath} />
+            </div>
           </div>
         )}
         <div
           className={cn(
-            'w-full lg:order-1',
-            // Solo/signed-out: no pulse regions beside it — a fixed 280px
-            // rail would leave a wide window mostly empty, so the rigs
-            // list becomes its own wider, centered column instead of a
+            'flex w-full flex-col gap-4 lg:order-1',
+            // Solo/signed-out: no pulse regions beside it — a fixed 290px
+            // rail would leave a wide window mostly empty, so the left
+            // column becomes its own wider, centered column instead of a
             // cramped sidebar with nothing next to it.
-            showPulse ? 'lg:w-[280px] lg:shrink-0' : 'mx-auto lg:max-w-2xl'
+            showPulse ? 'lg:w-[290px] lg:shrink-0' : 'mx-auto lg:max-w-2xl'
           )}
         >
-          <RigsRail
-            rows={rigRows}
-            identities={identities}
-            onOpenPath={onOpenPath}
-            onOpenSession={onContinueSession}
-            onOpenFolder={onOpenFolder}
-            onCreateRig={startFreshOrCreate}
-            onCreateSpace={spacesEnabled && signedIn ? createSpace : undefined}
-            highlightBindingId={highlightBindingId}
-          />
+          {spacesEnabled && signedIn && (
+            <SpacesCard
+              rows={spaceRows}
+              statusByBinding={statusByBinding}
+              selfUserId={selfUserId}
+              onOpenPath={onOpenPath}
+              onCreateSpace={createSpace}
+              highlightBindingId={highlightBindingId}
+            />
+          )}
+          <FloatingCard storageKey="rig-home-solo-rigs-collapsed" title="Solo rigs" count={soloRigRows.length}>
+            <RigsRail
+              rows={soloRigRows}
+              identities={identities}
+              onOpenPath={onOpenPath}
+              onOpenSession={onContinueSession}
+              onOpenFolder={onOpenFolder}
+              onCreateRig={startFreshOrCreate}
+              highlightBindingId={highlightBindingId}
+            />
+          </FloatingCard>
         </div>
         {showPulse && (
           <div className="hidden xl:order-3 xl:block xl:w-[300px] xl:shrink-0">

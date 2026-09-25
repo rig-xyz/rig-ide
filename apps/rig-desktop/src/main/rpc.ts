@@ -49,6 +49,7 @@ import { rigHomeController } from './rig/home';
 import { rigImportController } from './rig/import-doc';
 import { rigJoinController } from './rig/join';
 import { rigPulseController } from './rig/pulse';
+import { rigSpaceStatusController } from './rig/space-status';
 import { rigRecentController } from './rig/recent-rigs';
 import { rigControlController } from './rig/rig-controls';
 import { rigShareController } from './rig/rig-share';
@@ -194,6 +195,12 @@ export const rpcRouter = createRPCRouter({
     // different relay resource (`/v1/me/pulse`, `/v1/me/ask`) with its own
     // (much longer) timeouts — see `pulse.ts`'s own header comment.
     pulse: rigPulseController,
+    // Polish round, lane C: Home's per-space live status (`GET
+    // /v1/me/spaces/status`) — a DotMatrix state per space row. Its own
+    // key, account-scoped like `pulse` above but a different relay
+    // resource with its own (short) timeout — see `space-status.ts`'s own
+    // header comment.
+    spaceStatus: rigSpaceStatusController,
     // Settings → About's rig/tapd version rows — package.json reads only,
     // see `bundled-cli.ts`'s own header comment for why this never spawns
     // either binary.
