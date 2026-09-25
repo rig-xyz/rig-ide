@@ -115,7 +115,7 @@ function ConnectorRow({
   return (
     <>
       <div
-        className="group/row flex min-h-8 items-center gap-2 rounded-control px-2 py-1"
+        className="group/row hover:bg-bg-2 relative flex min-h-8 items-center gap-2 rounded-control px-2 py-1 transition-colors"
         data-testid="connector-row"
         data-connector={connector.id}
         data-state={phase ?? mine}
@@ -125,11 +125,11 @@ function ConnectorRow({
         ) : (
           <span className="bg-bg-3 size-[18px] shrink-0 rounded" />
         )}
-        <span className="flex min-w-0 flex-col leading-tight">
+        <span className="flex min-w-0 flex-1 flex-col leading-tight">
           <b className="truncate text-xs font-medium text-text-primary">{connector.name}</b>
           <span
             className={cn(
-              'flex items-center gap-1 text-2xs',
+              'flex min-w-0 items-center gap-1 truncate text-2xs whitespace-nowrap',
               connected ? 'text-text-secondary' : expired ? 'text-warning' : 'text-text-muted'
             )}
           >
@@ -161,24 +161,28 @@ function ConnectorRow({
               </button>
             )
           ) : (
-            <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100">
+            // Out of the layout (so the name never squeezes), over the row's
+            // right end on hover, on the row's own hover fill.
+            <span className="bg-bg-2 pointer-events-none absolute inset-y-0 right-1 flex items-center gap-0.5 rounded-control pl-2 opacity-0 transition-opacity group-hover/row:pointer-events-auto group-hover/row:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
               <button
                 type="button"
                 onClick={() => void onDisconnect()}
-                className="hover:bg-bg-2 h-6 rounded-full px-2 text-2xs text-text-muted transition-colors hover:text-text-primary"
+                title="Forget your own login on this computer"
+                className="hover:bg-bg-3 h-6 rounded-full px-2 text-2xs text-text-muted transition-colors hover:text-text-primary"
               >
-                Disconnect mine
+                Disconnect
               </button>
               {canWrite && (
                 <button
                   type="button"
                   onClick={() => (armedRemove ? void onRemove() : onArmRemove())}
+                  title="Remove it from this space, for everyone"
                   className={cn(
                     'h-6 rounded-full px-2 text-2xs transition-colors',
                     armedRemove ? 'bg-danger/15 text-danger' : 'text-text-muted hover:text-text-primary'
                   )}
                 >
-                  {armedRemove ? 'Confirm remove?' : 'Remove from space'}
+                  {armedRemove ? 'Remove for all?' : 'Remove'}
                 </button>
               )}
             </span>
@@ -366,12 +370,12 @@ export function ConnectorsSection({
               key={c.id}
               type="button"
               onClick={() => pickCatalog(c.id)}
-              className="group/cat hover:bg-bg-2 flex h-8 items-center gap-2 rounded-control px-2 text-left transition-colors"
+              className="group/cat hover:bg-bg-2 flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-left transition-colors"
               data-testid="connector-catalog-row"
             >
-              <ConnectorTile name={c.name} brand={c.brand} size={16} />
-              <span className="flex min-w-0 flex-col leading-tight">
-                <b className="truncate text-2xs font-medium text-text-primary">{c.name}</b>
+              <ConnectorTile name={c.name} brand={c.brand} size={18} />
+              <span className="flex min-w-0 flex-1 flex-col leading-tight">
+                <b className="truncate text-xs font-medium text-text-primary">{c.name}</b>
                 <span className="truncate text-2xs text-text-muted">{c.blurb}</span>
               </span>
               <span className="text-accent ml-auto text-2xs opacity-0 transition-opacity group-hover/cat:opacity-100">

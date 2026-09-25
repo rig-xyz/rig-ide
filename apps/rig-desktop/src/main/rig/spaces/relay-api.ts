@@ -244,7 +244,7 @@ async function relayError(response: Response, action: string): Promise<RelayApiE
 
 async function request(
   ctx: Resolved,
-  method: 'GET' | 'POST' | 'PATCH',
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
   action: string,
   body?: unknown

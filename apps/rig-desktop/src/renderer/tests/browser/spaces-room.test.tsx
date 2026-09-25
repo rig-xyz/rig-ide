@@ -1014,7 +1014,7 @@ describe('Connectors — space panel', () => {
       root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={source} />);
     });
     const row = host.querySelector<HTMLElement>('[data-testid="connector-row"]')!;
-    await act(async () => click([...row.querySelectorAll('button')].find((b) => b.textContent === 'Disconnect mine')!));
+    await act(async () => click([...row.querySelectorAll('button')].find((b) => b.textContent === 'Disconnect')!));
     expect(connectorsApi.disconnect).toHaveBeenCalledWith('linear');
     await vi.waitFor(() => expect(source.refreshConnections).toHaveBeenCalled());
   });
@@ -1028,9 +1028,9 @@ describe('Connectors — space panel', () => {
       root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={source} />);
     });
     const row = host.querySelector<HTMLElement>('[data-testid="connector-row"]')!;
-    const removeButton = () => [...row.querySelectorAll('button')].find((b) => b.textContent?.includes('Remove') || b.textContent === 'Confirm remove?')!;
+    const removeButton = () => [...row.querySelectorAll('button')].find((b) => b.textContent?.includes('Remove') || b.textContent === 'Remove for all?')!;
     await act(async () => click(removeButton()));
-    expect(removeButton().textContent).toBe('Confirm remove?');
+    expect(removeButton().textContent).toBe('Remove for all?');
     expect(source.removeConnector).not.toHaveBeenCalled();
     await act(async () => click(removeButton()));
     expect(source.removeConnector).toHaveBeenCalledWith('linear');

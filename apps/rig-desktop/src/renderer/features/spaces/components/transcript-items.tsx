@@ -424,7 +424,8 @@ export function ConnectorCard({
       <div className="flex min-w-0 flex-col gap-1.5">
       <div className="flex items-baseline gap-2">
         <span className="text-sm text-text-secondary">
-          <b className="font-medium text-text-primary">{addedBy?.name ?? message.authorId}</b> connected tools to this space
+          <b className="font-medium text-text-primary">{addedBy?.name ?? message.authorId}</b> added{' '}
+          {connectors.map((c) => c.name).join(', ') || 'tools'} to the space
         </span>
         <RowTime message={message} />
       </div>
