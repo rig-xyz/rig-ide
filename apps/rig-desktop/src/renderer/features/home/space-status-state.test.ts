@@ -105,18 +105,18 @@ describe('deriveSpaceStatusLine', () => {
     expect(deriveSpaceStatusLine(failed, NOW)).toBe('Claude failed · 1m ago');
   });
 
-  it('an old lastRun reads "Quiet · Xd"', () => {
+  it('an old lastRun reads just the relative time, no "Quiet" label', () => {
     const status: RigSpaceStatus = {
       bindingId: 'x',
       running: [],
       lastRun: { status: 'done', endedAt: new Date(NOW - 2 * 24 * 60 * 60 * 1000).toISOString(), agent: 'claude', ownerUserId: 'u' },
     };
-    expect(deriveSpaceStatusLine(status, NOW)).toBe('Quiet · 2d ago');
+    expect(deriveSpaceStatusLine(status, NOW)).toBe('2d ago');
   });
 
-  it('never ran at all — plain "Quiet"', () => {
-    expect(deriveSpaceStatusLine(undefined, NOW)).toBe('Quiet');
-    expect(deriveSpaceStatusLine({ bindingId: 'x', running: [] }, NOW)).toBe('Quiet');
+  it('never ran at all — no status line', () => {
+    expect(deriveSpaceStatusLine(undefined, NOW)).toBe('');
+    expect(deriveSpaceStatusLine({ bindingId: 'x', running: [] }, NOW)).toBe('');
   });
 });
 

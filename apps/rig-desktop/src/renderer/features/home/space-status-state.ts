@@ -22,7 +22,7 @@ export function agentLabel(agent: RigSpaceAgent): string {
 /**
  * How long a just-ended run still gets its own end glyph (done ✓ / failed /
  * stopped) and "{Agent} finished · Xm" subtext, before the row settles back
- * to the plain "Quiet · Xh" a genuinely idle space shows — the 1b grammar's
+ * to the plain "Xh ago" a genuinely idle space shows — the 1b grammar's
  * own distinction (design doc: "pricing" at 3m shows the done glyph;
  * "research"/"ops" at 2d show the dim quiet tile instead). No spec gave an
  * exact cutoff; 15 minutes is a deliberate, generous-but-not-permanent
@@ -65,11 +65,12 @@ function isRecentlyEnded(endedAt: string | null, now: number): boolean {
 
 /**
  * The row's muted subtext, in words — "Claude editing metrics.md",
- * "Claude is waiting on you", "Codex finished · 3m", "Quiet · 2d". A
+ * "Claude is waiting on you", "Codex finished · 3m", "2d ago". A
  * present-running item always leads (our activity vocabulary is already
  * gerund-shaped — "editing", "reading" — except `waiting`, which reads as
  * a full sentence instead, per the approved mock, since "Claude waiting" on
- * its own reads as a fragment). Falls back to `lastRun`, then plain "Quiet".
+ * its own reads as a fragment). Falls back to `lastRun` — an idle space
+ * shows just the relative time, no "Quiet" label — then nothing at all.
  */
 export function deriveSpaceStatusLine(status: RigSpaceStatus | undefined, now: number): string {
   const running = status?.running ?? [];
@@ -88,10 +89,10 @@ export function deriveSpaceStatusLine(status: RigSpaceStatus | undefined, now: n
         const verb = last.status === 'done' ? 'finished' : last.status === 'failed' ? 'failed' : 'stopped';
         return `${agentLabel(last.agent)} ${verb} · ${relativeTime(endedAt, now)}`;
       }
-      return `Quiet · ${relativeTime(endedAt, now)}`;
+      return relativeTime(endedAt, now);
     }
   }
-  return 'Quiet';
+  return '';
 }
 
 /** True when a run this device's owner started is sitting on a pending approval — the space belongs in "Needs you." */

@@ -67,7 +67,21 @@ describe('AcrossYourSpaces', () => {
 
   it('lists a recently-quiet space as a compact one-line row, not dropped, when nothing is active', async () => {
     const quietRow = localSpaceRow('b-quiet', 'ops');
-    const statusByBinding = new Map<string, RigSpaceStatus>();
+    const statusByBinding = new Map<string, RigSpaceStatus>([
+      [
+        'b-quiet',
+        {
+          bindingId: 'b-quiet',
+          running: [],
+          lastRun: {
+            status: 'done',
+            endedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+            agent: 'claude',
+            ownerUserId: 'u',
+          },
+        },
+      ],
+    ]);
 
     await act(async () => {
       root.render(
@@ -82,7 +96,9 @@ describe('AcrossYourSpaces', () => {
 
     expect(host.textContent).toContain('Across your spaces');
     expect(host.textContent).toContain('ops');
-    expect(host.textContent).toContain('Quiet');
+    // Just the relative time — an idle space carries no "Quiet" label.
+    expect(host.textContent).toContain('2h ago');
+    expect(host.textContent).not.toContain('Quiet');
     // No live-card-only chrome (faces query etc.) for the quiet row.
     expect(host.querySelector('button')).not.toBeNull();
   });
