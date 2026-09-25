@@ -22,6 +22,7 @@ vi.mock('@renderer/lib/ipc', () => ({
 
 import { RoomView } from '@renderer/features/spaces/components/room-view';
 import { SpaceRail } from '@renderer/features/spaces/components/space-rail';
+import { agentLogoId, BrandLogo } from '@renderer/features/spaces/logos';
 
 beforeAll(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -121,12 +122,58 @@ describe('SpaceRail', () => {
     expect(host.querySelector('[data-state="waiting"]')).not.toBeNull();
   });
 
-  it('a quiet agent (no runs) gets the still, dim tile', async () => {
+  it('a quiet agent (no runs) shows just its logo — no dot matrix', async () => {
     await act(async () => {
       root.render(<SpaceRail snapshot={snapshot()} onExpand={() => {}} />);
     });
     const tiles = Array.from(host.querySelectorAll<HTMLElement>('[data-testid="space-rail-agent-tile"]'));
     expect(tiles.every((t) => t.dataset.kind === 'quiet')).toBe(true);
+    expect(host.querySelector('[data-testid="space-rail-agents"] [data-state]')).toBeNull();
+    expect(tiles.map((t) => t.getAttribute('aria-label'))).toEqual(["Dylan's Claude quiet", "Sam's Codex quiet"]);
+  });
+
+  it('each agent tile carries its brand mark and its owner\'s initial, like the transcript avatar', async () => {
+    // The mark each agent kind should carry, drawn by the same `BrandLogo` the transcript's `AgentAvatar` uses.
+    const expected = document.createElement('div');
+    const expectedRoot = createRoot(expected);
+    await act(async () => {
+      expectedRoot.render(
+        <>
+          <BrandLogo id={agentLogoId('claude')} />
+          <BrandLogo id={agentLogoId('codex')} />
+        </>
+      );
+    });
+    const [claudePath, codexPath] = [...expected.querySelectorAll('path')].map((p) => p.getAttribute('d'));
+    await act(async () => expectedRoot.unmount());
+
+    await act(async () => {
+      root.render(<SpaceRail snapshot={snapshot()} onExpand={() => {}} />);
+    });
+    const [claudeTile, codexTile] = Array.from(host.querySelectorAll<HTMLElement>('[data-testid="space-rail-agent-tile"]'));
+    expect(claudeTile!.querySelector('path')?.getAttribute('d')).toBe(claudePath);
+    expect(codexTile!.querySelector('path')?.getAttribute('d')).toBe(codexPath);
+    // Owner badge: no avatar photo in these fixtures, so their first initial.
+    expect(claudeTile!.querySelector('text')?.textContent).toBe('D');
+    expect(codexTile!.querySelector('text')?.textContent).toBe('S');
+    // The rail's own tooltip names the agent — no second, native title on the avatar.
+    expect(claudeTile!.querySelector('[title]')).toBeNull();
+  });
+
+  it('a live agent keeps its logo and shows the dot matrix directly under it', async () => {
+    const s = snapshot({ sessionMetaByRun: { a: run('a', 'dylan', 'claude') }, sessionEventsByRun: { a: [chunk] } });
+    await act(async () => {
+      root.render(<SpaceRail snapshot={s} onExpand={() => {}} />);
+    });
+    const [claudeTile, codexTile] = Array.from(host.querySelectorAll<HTMLElement>('[data-testid="space-rail-agent-tile"]'));
+    expect(claudeTile!.dataset.kind).toBe('live');
+    const children = [...claudeTile!.children];
+    expect(children.length).toBe(2);
+    expect(children[0]!.querySelector('path')).not.toBeNull(); // the logo first…
+    expect(children[1]!.getAttribute('data-state')).toBe('thinking'); // …the matrix under it
+    expect(claudeTile!.getAttribute('aria-label')).toBe("Dylan's Claude working");
+    // Sam's Codex has nothing running — logo only.
+    expect(codexTile!.querySelector('[data-state]')).toBeNull();
   });
 });
 

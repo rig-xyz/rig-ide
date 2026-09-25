@@ -1,9 +1,8 @@
 import { ArrowLeft } from 'lucide-react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
-import { cn } from '@renderer/lib/utils';
 import type { RoomSnapshot } from '../types';
-import { AGENT_NAME, PersonAvatar } from './identity';
+import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 import { deriveAgentTileState, describeAgentTileState } from './space-rail-status';
 
 /**
@@ -18,12 +17,11 @@ import { deriveAgentTileState, describeAgentTileState } from './space-rail-statu
  * narrower rail never needs to lose anything to get there.
  *
  * Three groups, top to bottom: the way back to the Room beside the doc
- * (Split), the space's agents (each its own small status tile — the 1b
- * grammar `features/home/space-status-tile.tsx` established for the home
- * list, restyled locally since that component takes a `RigSpaceStatus`
- * and this rail has no such thing to hand it — its own state comes
- * straight off the live Room snapshot, see `space-rail-status.ts`), and
- * who's here right now.
+ * (Split), the space's agents (each drawn the way the transcript draws
+ * it — `AgentAvatar`'s brand mark with the owner's badge — plus a small
+ * `DotMatrix` under it while something is live; its state comes straight
+ * off the live Room snapshot, see `space-rail-status.ts`), and who's here
+ * right now.
  */
 export function SpaceRail({
   snapshot,
@@ -72,15 +70,14 @@ export function SpaceRail({
                   render={
                     <span
                       tabIndex={0}
+                      role="img"
+                      aria-label={label}
                       data-testid="space-rail-agent-tile"
                       data-kind={state.kind}
-                      className="bg-bg-2 inline-flex size-8 shrink-0 items-center justify-center rounded-control"
+                      className="inline-flex shrink-0 flex-col items-center gap-1.5 rounded-control"
                     >
-                      {state.kind === 'live' ? (
-                        <DotMatrix state={state.state} size="sm" label={label} />
-                      ) : (
-                        <QuietDots label={label} />
-                      )}
+                      <AgentAvatar agent={agent} owner={ownerMember} title={null} />
+                      {state.kind === 'live' && <DotMatrix state={state.state} size="sm" />}
                     </span>
                   }
                 />
@@ -106,16 +103,5 @@ export function SpaceRail({
         ))}
       </div>
     </div>
-  );
-}
-
-/** Mirrors `space-status-tile.tsx`'s own still-dots grid (a quiet tile's "nothing to see" look) — small enough to duplicate locally rather than reach into `features/home`, which this round doesn't otherwise touch. */
-function QuietDots({ label }: { label: string }) {
-  return (
-    <span className={cn('inline-grid grid-cols-3 gap-0.5')} role="img" aria-label={label}>
-      {Array.from({ length: 9 }, (_, i) => (
-        <span key={i} className="bg-text-muted size-1 rounded-full opacity-20" />
-      ))}
-    </span>
   );
 }
