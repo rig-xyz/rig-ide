@@ -114,6 +114,8 @@ export type ConnectionState = 'connected' | 'not_connected' | 'expired';
 export interface ConnectionStatus {
   id: ConnectorId;
   state: ConnectionState;
+  /** Who you're signed in as there (an email or username), when the connector's server says. Local to you. */
+  account?: string;
 }
 
 /** How a connect attempt ended. `cancelled` = you pressed Cancel (or started another). */
