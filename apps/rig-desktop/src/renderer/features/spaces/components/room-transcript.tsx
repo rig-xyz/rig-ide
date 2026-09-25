@@ -4,7 +4,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
-import type { ConnectResult } from '@shared/spaces/connectors';
+import type { ConnectResult, GlobalServer } from '@shared/spaces/connectors';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
 import { type MapEntry, ConversationMap } from './conversation-map';
@@ -84,7 +84,8 @@ function renderItem(
   onReply?: (ref: RoomReplyRef) => void,
   onJumpTo?: (messageId: string) => void,
   onRerun?: (agent: AgentKind, prompt: string) => void,
-  onConnectorConnect?: (id: string) => Promise<ConnectResult>
+  onConnectorConnect?: (id: string) => Promise<ConnectResult>,
+  globalSetup?: GlobalServer[]
 ) {
   switch (message.meta.kind) {
     case 'text':
@@ -144,6 +145,7 @@ function renderItem(
           }
           onConnectorConnect={meta.owner === ownId ? onConnectorConnect : undefined}
           spaceConnectors={snapshot.connectors}
+          globalSetup={globalSetup}
         />
       );
     }
@@ -310,6 +312,7 @@ export function RoomTranscript({
   readKey,
   onRerun,
   onConnectorConnect,
+  globalSetup,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
@@ -325,6 +328,8 @@ export function RoomTranscript({
   onRerun?: (agent: AgentKind, prompt: string) => void;
   /** Runs the connect flow for a connector's Connect/Reconnect pill (a `connectors_added` card, or an agent turn's footer gap). */
   onConnectorConnect?: (id: string) => Promise<ConnectResult>;
+  /** Your agents' own global MCP setup, loaded once per Room by `RoomView` — a session card drops a footer gap its own run's agent already reaches this way. */
+  globalSetup?: GlobalServer[];
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -472,7 +477,8 @@ export function RoomTranscript({
                   onReply,
                   jumpTo,
                   onRerun,
-                  onConnectorConnect
+                  onConnectorConnect,
+                  globalSetup
                 );
               const continuedUnit = unit.kind === 'message' && isContinuation(prevMessage, unit.message, snapshot);
               const node =

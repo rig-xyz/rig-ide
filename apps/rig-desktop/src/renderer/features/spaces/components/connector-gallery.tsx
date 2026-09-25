@@ -10,8 +10,10 @@ import {
   type ConnectorCategory,
   type ConnectorDef,
   type ConnectorId,
+  type GlobalServer,
 } from '@shared/spaces/connectors';
 import { connectorsApi } from '../connectors-api';
+import { inGlobalSetupLabel } from '../global-setup';
 import { ConnectorLogo } from '../logos';
 import type { RelayRoomSource } from '../relay-room-source';
 import type { RoomSnapshot } from '../types';
@@ -41,12 +43,15 @@ export function ConnectorGallery({
   source,
   onClose,
   rightInset,
+  globalSetup = [],
 }: {
   snapshot: RoomSnapshot;
   source: RelayRoomSource;
   onClose: () => void;
   /** Px from the Room's right edge: clears the floating space panel, so the sheet sits beside it. */
   rightInset: number;
+  /** Your agents' own global MCP setup — a catalog tool one of them already reaches this way gets a footer note instead of a bare category label. */
+  globalSetup?: readonly GlobalServer[];
 }) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<ConnectorCategory | 'All'>('All');
@@ -152,7 +157,11 @@ export function ConnectorGallery({
         {error?.id === def.id && <p className="text-2xs text-danger">{error.message}</p>}
         <div className="mt-auto flex items-center gap-2">
           <span className="text-2xs text-text-muted">
-            {active ? '' : room ? (room.addedBy ? addedByLabel(snapshot, room.addedBy) : '') : def.category}
+            {active
+              ? ''
+              : room
+                ? (room.addedBy ? addedByLabel(snapshot, room.addedBy) : inGlobalSetupLabel(def.id, globalSetup) ?? '')
+                : (inGlobalSetupLabel(def.id, globalSetup) ?? def.category)}
           </span>
           <span className="ml-auto flex items-center gap-1.5">
             {active?.phase === 'waiting' ? (

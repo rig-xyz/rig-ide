@@ -1,11 +1,12 @@
 /**
  * Expanded/collapsed state for a space panel's disclosure sections (Agents,
- * Connectors), remembered per space on this computer — same `rig-room-*`
- * key convention as the composer's draft and the transcript's last-seen
- * marker, wrapped in try/catch since storage isn't guaranteed to exist.
+ * Connectors, and the Connectors section's own nested "also bring" line),
+ * remembered per space on this computer — same `rig-room-*` key convention
+ * as the composer's draft and the transcript's last-seen marker, wrapped in
+ * try/catch since storage isn't guaranteed to exist.
  */
 
-export type PanelSectionId = 'agents' | 'connectors';
+export type PanelSectionId = 'agents' | 'connectors' | 'connectors-global-setup';
 
 const PREFIX = 'rig-room-panel-section:';
 

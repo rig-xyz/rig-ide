@@ -1,5 +1,5 @@
 import { rpc } from '@renderer/lib/ipc';
-import type { ConnectionStatus, ConnectorId, ConnectResult } from '@shared/spaces/connectors';
+import type { ConnectionStatus, ConnectorId, ConnectResult, GlobalServer } from '@shared/spaces/connectors';
 
 /**
  * The main-process connectors RPC (`rpc.rig.connectors`, see connectors-
@@ -18,6 +18,14 @@ export interface ConnectorsApi {
   cancel(id: ConnectorId): Promise<void>;
   /** Deletes this device's local tokens for the connector. */
   disconnect(id: ConnectorId): Promise<void>;
+  /**
+   * Your agents' own global MCP setup on this device (Claude's claude.ai
+   * connectors + ~/.claude, Codex's ~/.codex) — only servers actually
+   * connected/enabled, names and URLs only, never a credential. Main caches
+   * this per space (~5s the first time for Claude, instant after), so it's
+   * cheap to call again on panel expand or gallery open.
+   */
+  globalSetup(bindingId?: string): Promise<GlobalServer[]>;
 }
 
 export const connectorsApi: ConnectorsApi = {
@@ -25,4 +33,5 @@ export const connectorsApi: ConnectorsApi = {
   connect: (id) => rpc.rig.connectors.connect({ id }),
   cancel: (id) => rpc.rig.connectors.cancel({ id }),
   disconnect: (id) => rpc.rig.connectors.disconnect({ id }),
+  globalSetup: (bindingId) => rpc.rig.connectors.globalSetup({ bindingId }),
 };

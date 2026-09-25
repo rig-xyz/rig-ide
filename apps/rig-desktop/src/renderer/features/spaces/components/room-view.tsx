@@ -2,7 +2,7 @@ import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucid
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
-import type { ConnectorId } from '@shared/spaces/connectors';
+import type { ConnectorId, GlobalServer } from '@shared/spaces/connectors';
 import { connectorsApi } from '../connectors-api';
 import { buildRoomFeed } from '../fixtures/room-feed';
 import { RelayRoomSource, type RelayRoomClient } from '../relay-room-source';
@@ -195,6 +195,20 @@ export function RoomView({
   // The scripted-demo switch is a dev tool for the Room preview on plain
   // rigs; a real space (#name) never shows it.
   const showDemoToggle = !spaceName.startsWith('#');
+
+  // Your agents' own global MCP setup (connectors-spec.md's Surface) — this
+  // device only, never part of the relay snapshot. Loaded once per Room;
+  // main caches it (~5s the first time for Claude, instant after), so a
+  // refresh on panel expand / gallery open is cheap.
+  const [globalSetup, setGlobalSetup] = useState<GlobalServer[]>([]);
+  const refreshGlobalSetup = () => {
+    void connectorsApi.globalSetup(bindingId).then(setGlobalSetup).catch(() => {});
+  };
+  useEffect(() => {
+    if (!live) return;
+    refreshGlobalSetup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, bindingId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -448,6 +462,7 @@ export function RoomView({
                 : undefined
             }
             onConnectorConnect={handleConnectorConnect}
+            globalSetup={globalSetup}
           />
           )}
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
@@ -491,7 +506,12 @@ export function RoomView({
                 selfUserId={selfUserId}
                 source={source}
                 bindingId={bindingId}
-                onOpenGallery={() => setGalleryOpen(true)}
+                onOpenGallery={() => {
+                  setGalleryOpen(true);
+                  refreshGlobalSetup();
+                }}
+                globalSetup={globalSetup}
+                onExpand={refreshGlobalSetup}
               />
             </>,
             new Set(snapshot.members.filter((m) => m.online !== false).map((m) => m.id)),
@@ -507,6 +527,7 @@ export function RoomView({
             onClose={() => setGalleryOpen(false)}
             // Beside the floating panel in a wide Room; over the Room when it's narrow.
             rightInset={narrow ? 12 : PANEL_LANE_PX + 4}
+            globalSetup={globalSetup}
           />
         )}
       </div>

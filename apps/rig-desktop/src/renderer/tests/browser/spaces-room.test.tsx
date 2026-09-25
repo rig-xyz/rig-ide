@@ -1,7 +1,7 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConnectResult } from '@shared/spaces/connectors';
+import type { ConnectResult, GlobalServer } from '@shared/spaces/connectors';
 import { Composer } from '@renderer/features/spaces/components/composer';
 import { ConversationMap } from '@renderer/features/spaces/components/conversation-map';
 import {
@@ -46,6 +46,7 @@ vi.mock('@renderer/features/spaces/connectors-api', () => ({
     connect: vi.fn().mockResolvedValue({ ok: true }),
     cancel: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn().mockResolvedValue(undefined),
+    globalSetup: vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -1035,6 +1036,89 @@ describe('Connectors — space panel', () => {
     expect([...rowFor('sentry').querySelectorAll('button')].some((b) => b.textContent === 'Reconnect')).toBe(true);
   });
 
+  it('says "Via your Claude setup" with a quiet pill for a connector your agent already reaches globally, and drops it from the to-connect count', async () => {
+    const snapshot = connectorsSnapshot({
+      connectors: [
+        { id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'not_connected' },
+        { id: 'notion', name: 'Notion', addedBy: 'dylan', mine: 'not_connected' },
+      ],
+    });
+    const globalSetup: GlobalServer[] = [
+      { agent: 'claude', name: 'claude.ai Linear', url: 'https://mcp.linear.app/mcp', connectorId: 'linear' },
+    ];
+    await act(async () => {
+      root.render(
+        <ConnectorsSection
+          snapshot={snapshot}
+          selfUserId="dylan"
+          source={fakeConnectorsSource()}
+          bindingId="space-connectors-global"
+          globalSetup={globalSetup}
+        />
+      );
+    });
+    // Collapsed: only Notion counts — Linear's rig connection isn't needed.
+    expect(host.querySelector('[data-testid="connectors-summary-row"]')?.textContent).toContain('1 to connect');
+
+    await openConnectors();
+    const rowFor = (id: string) => host.querySelector<HTMLElement>(`[data-testid="connector-row"][data-connector="${id}"]`)!;
+    expect(rowFor('linear').textContent).toContain('Via your Claude setup');
+    expect(rowFor('notion').textContent).toContain('Not connected yet');
+
+    const linearConnect = [...rowFor('linear').querySelectorAll('button')].find((b) => b.textContent === 'Connect')!;
+    const notionConnect = [...rowFor('notion').querySelectorAll('button')].find((b) => b.textContent === 'Connect')!;
+    // Still available (Codex might not have it) — just a quiet ghost pill, not the usual accent one.
+    expect(linearConnect.className).not.toContain('bg-accent-subtle');
+    expect(notionConnect.className).toContain('bg-accent-subtle');
+  });
+
+  it('collapses "Your agents also bring N tools" behind its own line, expands to a compact list grouped by agent, and remembers that per space', async () => {
+    const snapshot = connectorsSnapshot();
+    const globalSetup: GlobalServer[] = [
+      { agent: 'claude', name: 'claude.ai Linear', url: 'https://mcp.linear.app/mcp', connectorId: 'linear' },
+      { agent: 'codex', name: 'launchdarkly', url: null, connectorId: null },
+    ];
+    const render = (bindingId: string) =>
+      act(async () => {
+        root.render(
+          <ConnectorsSection
+            snapshot={snapshot}
+            selfUserId="dylan"
+            source={fakeConnectorsSource()}
+            bindingId={bindingId}
+            globalSetup={globalSetup}
+          />
+        );
+      });
+    await render('space-connectors-also-bring-1');
+    await openConnectors();
+
+    const summary = host.querySelector<HTMLButtonElement>('[data-testid="global-setup-disclosure"] button')!;
+    expect(summary.textContent).toContain('Your agents also bring 2 tools from their own setup');
+    expect(summary.getAttribute('aria-expanded')).toBe('false');
+
+    await act(async () => click(summary));
+    expect(summary.getAttribute('aria-expanded')).toBe('true');
+    const disclosure = host.querySelector('[data-testid="global-setup-disclosure"]')!;
+    expect(disclosure.textContent).toContain('Claude');
+    expect(disclosure.textContent).toContain('Linear');
+    expect(disclosure.textContent).toContain('Codex');
+    expect(disclosure.textContent).toContain('launchdarkly');
+    // Nothing actionable in there — no pills, no buttons besides the toggle itself.
+    expect(disclosure.querySelectorAll('button')).toHaveLength(1);
+
+    // Remounted against the same space: still expanded.
+    await act(async () => root.unmount());
+    host.remove();
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await render('space-connectors-also-bring-1');
+    expect(host.querySelector('[data-testid="global-setup-disclosure"] button')?.getAttribute('aria-expanded')).toBe(
+      'true'
+    );
+  });
+
   it('disconnects your own login with one click, no confirm needed', async () => {
     const source = fakeConnectorsSource();
     const snapshot = connectorsSnapshot({
@@ -1233,6 +1317,20 @@ describe('Connectors — gallery', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
+  it('notes a catalog tool your agents already have globally in the card footer', async () => {
+    const globalSetup: GlobalServer[] = [
+      { agent: 'claude', name: 'claude.ai PostHog', url: 'https://mcp.posthog.com/mcp', connectorId: 'posthog' },
+    ];
+    await act(async () => {
+      root.render(
+        <ConnectorGallery snapshot={connectorsSnapshot()} source={fakeConnectorsSource()} onClose={vi.fn()} rightInset={320} globalSetup={globalSetup} />
+      );
+    });
+    expect(cardOf('posthog').textContent).toContain('In your Claude setup');
+    // A tool none of your agents have keeps its plain category label.
+    expect(cardOf('linear').textContent).toContain('Work tracking');
+  });
+
   it('draws a real brand mark for a Simple Icons connector, and the letter tile for one with no vector mark', async () => {
     await renderGallery();
     expect(cardOf('linear').querySelector('svg')).not.toBeNull();
@@ -1363,6 +1461,60 @@ describe('Connectors — Room copy and turn footer', () => {
     });
     await act(async () => click(host.querySelector('[data-testid="session-summary"]')!));
     expect(host.querySelector('[data-testid="session-step"]')?.textContent).toContain('Linear · list issues');
+  });
+
+  it('prettifies a claude.ai global-setup tool too, in both the live line and the finished step list, with a "your setup" tooltip', async () => {
+    const running: SessionEvent[] = [
+      { seq: 1, kind: 'tool_call', payload: { toolCallId: 't1', title: 'mcp__claude_ai_Linear__list_issues', kind: 'fetch', status: 'in_progress' } },
+    ];
+    await act(async () => {
+      root.render(<SessionCard meta={{ ...runMeta, status: 'running' }} events={running} owner={undefined} />);
+    });
+    const liveLine = host.querySelector<HTMLElement>('[data-testid="session-live-line"] .active-shimmer-muted')!;
+    expect(liveLine.textContent).toContain('Linear · list issues');
+    expect(liveLine.title).toBe('From your Claude setup');
+
+    const done: SessionEvent[] = [...running.map((e) => ({ ...e, payload: { ...e.payload, status: 'completed' } })), { seq: 2, kind: 'turn_ended', payload: { status: 'done' } }];
+    await act(async () => {
+      root.render(<SessionCard meta={{ ...runMeta, status: 'done' }} events={done} owner={undefined} />);
+    });
+    await act(async () => click(host.querySelector('[data-testid="session-summary"]')!));
+    const step = host.querySelector<HTMLElement>('[data-testid="session-step"] span')!;
+    expect(step.textContent).toContain('Linear · list issues');
+    expect(step.title).toBe('From your Claude setup');
+  });
+
+  it("drops a turn's footer gap for a connector the run's own agent already reaches globally, but keeps it for a different agent", async () => {
+    const globalSetup: GlobalServer[] = [
+      { agent: 'claude', name: 'claude.ai Linear', url: 'https://mcp.linear.app/mcp', connectorId: 'linear' },
+    ];
+    await act(async () => {
+      root.render(
+        <SessionCard
+          meta={runMeta}
+          events={gapEvents}
+          owner={undefined}
+          viewerIsOwner
+          onConnectorConnect={vi.fn()}
+          globalSetup={globalSetup}
+        />
+      );
+    });
+    expect(host.querySelector('[data-testid="session-connector-gaps"]')).toBeNull();
+
+    await act(async () => {
+      root.render(
+        <SessionCard
+          meta={{ ...runMeta, agent: 'codex' }}
+          events={gapEvents}
+          owner={undefined}
+          viewerIsOwner
+          onConnectorConnect={vi.fn()}
+          globalSetup={globalSetup}
+        />
+      );
+    });
+    expect(host.querySelector('[data-testid="session-connector-gaps"]')).not.toBeNull();
   });
 });
 

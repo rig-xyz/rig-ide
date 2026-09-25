@@ -23,8 +23,9 @@ import { Dialog, DialogContent, DialogTitle } from '@renderer/lib/ui/dialog';
 import { Popover, PopoverMenuItem } from '@renderer/lib/ui/popover';
 import { DotMatrix, type DotMatrixActivity, type DotMatrixState } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
-import { connectorById, prettyConnectorTool, type ConnectResult } from '@shared/spaces/connectors';
+import { connectorById, prettyAgentTool, type ConnectorDef, type ConnectResult, type GlobalServer } from '@shared/spaces/connectors';
 import { ConnectPill } from './connectors-panel';
+import { globalAgentsFor } from '../global-setup';
 import { ConnectorLogo } from '../logos';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type {
@@ -133,23 +134,48 @@ function summaryLine(card: SessionCardData, elapsed: string): string {
   return parts.join(' · ');
 }
 
+/**
+ * A step or live-line title, prettified via `prettyAgentTool`: a connector
+ * rig injected ("space") always prettifies with its brand mark; a tool one
+ * of the agent's OWN global setup brings ("setup") only prettifies when
+ * it's also a catalog connector (so its name/logo are ones we actually
+ * know) — an uncataloged global tool falls back to the raw title, same as
+ * before. A "setup" tool's tooltip names the run's agent, so "Linear · list
+ * issues" reads as coming from your Claude setup rather than a connector
+ * rig itself wired up.
+ */
+function prettyStepTitle(
+  raw: string | undefined,
+  agent: AgentKind
+): { text: string; connector: ConnectorDef; tooltip?: string } | null {
+  if (!raw) return null;
+  const pretty = prettyAgentTool(raw);
+  if (!pretty || !pretty.connector) return null;
+  return {
+    text: `${pretty.label} · ${pretty.action}`,
+    connector: pretty.connector,
+    tooltip: pretty.via === 'setup' ? `From your ${AGENT_NAME[agent]} setup` : undefined,
+  };
+}
+
 function StepRow({
   step,
   decided,
   ownerName,
+  agent,
 }: {
   step: SessionStep;
   decided: SessionPermissionDecided | undefined;
   ownerName: string;
+  /** The run's agent, so a global-setup tool's tooltip names it ("From your Claude setup"). */
+  agent: AgentKind;
 }) {
   const kind = stepKind(step.kind);
   const failed = step.status === 'failed';
   const live = step.status === 'pending' || step.status === 'in_progress';
   const Icon = kind.icon;
   const decision = decided ? decisionLabel(decided) : null;
-  // A connector's raw MCP tool name ("mcp__linear__list_issues") reads as
-  // "Linear · list issues" with its brand tile, per connectors-spec.md.
-  const pretty = step.title ? prettyConnectorTool(step.title) : null;
+  const pretty = prettyStepTitle(step.title, agent);
   return (
     <li className="flex min-w-0 flex-col" data-testid="session-step">
       <div className="flex h-6 min-w-0 items-center gap-2 text-xs text-text-secondary">
@@ -162,8 +188,8 @@ function StepRow({
         ) : (
           <Icon className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
         )}
-        <span className="min-w-0 truncate" title={step.title}>
-          {pretty ? `${pretty.connector.name} · ${pretty.action}` : (step.title ?? kind.past)}
+        <span className="min-w-0 truncate" title={pretty?.tooltip ?? step.title}>
+          {pretty ? pretty.text : (step.title ?? kind.past)}
         </span>
       </div>
       {decision && (
@@ -179,11 +205,14 @@ function StepRow({
 function StepList({
   card,
   ownerName,
+  agent,
   limit,
   finishedOnly = false,
 }: {
   card: SessionCardData;
   ownerName: string;
+  /** The run's agent, forwarded to each `StepRow`. */
+  agent: AgentKind;
   /** Show only the last N (while running); undefined shows all. */
   limit?: number;
   /** Leave out steps still in flight: while running, the live line already shows the current one. */
@@ -202,6 +231,7 @@ function StepList({
           step={step}
           decided={card.permissions.decided.find((d) => d.toolCallId === step.toolCallId)}
           ownerName={ownerName}
+          agent={agent}
         />
       ))}
     </ul>
@@ -489,10 +519,9 @@ function RetryButton({
   );
 }
 
-/** A running step's title for the live line; connector tools read as "Linear · list issues". */
-function liveStepTitle(title: string | undefined): string | undefined {
-  const pretty = title ? prettyConnectorTool(title) : null;
-  return pretty ? `${pretty.connector.name} · ${pretty.action}` : title;
+/** A running step's title for the live line; connector tools read as "Linear · list issues" (see `prettyStepTitle`). */
+function liveStepTitle(title: string | undefined, agent: AgentKind): string | undefined {
+  return prettyStepTitle(title, agent)?.text ?? title;
 }
 
 export function SessionCard({
@@ -512,6 +541,7 @@ export function SessionCard({
   otherAgents = [],
   onConnectorConnect,
   spaceConnectors,
+  globalSetup,
 }: {
   meta: SessionRunMeta;
   events: SessionEvent[];
@@ -542,6 +572,8 @@ export function SessionCard({
   onConnectorConnect?: (id: string) => Promise<ConnectResult>;
   /** The space's connectors as they are now, with your own state, so a gap you've since fixed stops asking. */
   spaceConnectors?: RoomConnector[];
+  /** Your agents' own global MCP setup — a gap this run's own agent (`meta.agent`) already reaches this way is dropped rather than nagging you to connect it (dispatch stops recording these going forward; older runs still carry them). */
+  globalSetup?: GlobalServer[];
 }) {
   const [expanded, setExpanded] = useState(false);
   const [traceOpen, setTraceOpen] = useState(false);
@@ -557,6 +589,7 @@ export function SessionCard({
   // The run recorded what it couldn't reach; show only what's still missing
   // now (connected since: gone; removed from the space: gone; lapsed: Reconnect).
   const liveGaps = card.connectorGaps.flatMap((gap) => {
+    if (globalSetup && globalAgentsFor(gap.id, globalSetup).has(meta.agent)) return [];
     if (!spaceConnectors) return [gap];
     const now = spaceConnectors.find((c) => c.id === gap.id);
     if (!now || now.mine === 'connected') return [];
@@ -596,10 +629,14 @@ export function SessionCard({
       ? 'Waiting for your approval'
       : `Waiting on ${ownerName}'s approval`
     : card.currentStep
-      ? (liveStepTitle(card.currentStep.title) ?? currentKind.live)
+      ? (liveStepTitle(card.currentStep.title, meta.agent) ?? currentKind.live)
       : events.length > 0
         ? 'Thinking'
         : 'Starting';
+  // A running global-setup tool's tooltip, e.g. "From your Claude setup" —
+  // same rule as the finished step list (`prettyStepTitle`).
+  const liveTooltip =
+    !queued && !pending && card.currentStep ? prettyStepTitle(card.currentStep.title, meta.agent)?.tooltip : undefined;
   const liveMatrix: DotMatrixState = queued
     ? 'queued'
     : pending
@@ -636,7 +673,9 @@ export function SessionCard({
               data-testid="session-live-line"
             >
               <DotMatrix state={liveMatrix} />
-              <span className="active-shimmer-muted min-w-0 truncate">{liveLabel}</span>
+              <span className="active-shimmer-muted min-w-0 truncate" title={liveTooltip}>
+                {liveLabel}
+              </span>
               {!pending && !card.currentStep && card.thinking && !card.finalAnswer ? (
                 <span className="min-w-0 truncate text-xs text-text-muted italic">{lastSentence(card.thinking)}</span>
               ) : null}
@@ -649,7 +688,7 @@ export function SessionCard({
                 {ownerName}
               </span>
             )}
-            <StepList card={card} ownerName={ownerName} limit={3} finishedOnly />
+            <StepList card={card} ownerName={ownerName} agent={meta.agent} limit={3} finishedOnly />
           </>
         ) : (
           (card.steps.length > 0 || card.plan.length > 0 || card.thinking.trim() !== '' || status !== 'done') && (
@@ -674,7 +713,7 @@ export function SessionCard({
                 <>
                   {card.thinking.trim() && <ThinkingBlock text={card.thinking} />}
                   {card.plan.length > 0 && <PlanBlock plan={card.plan} />}
-                  <StepList card={card} ownerName={ownerName} />
+                  <StepList card={card} ownerName={ownerName} agent={meta.agent} />
                   <button
                     type="button"
                     onClick={() => setTraceOpen(true)}

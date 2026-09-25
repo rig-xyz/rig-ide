@@ -2,8 +2,10 @@ import { ChevronRight, Plug } from 'lucide-react';
 import { useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
-import { connectorById, type ConnectorId, type ConnectResult } from '@shared/spaces/connectors';
+import { connectorById, type ConnectorId, type ConnectResult, type GlobalServer } from '@shared/spaces/connectors';
 import { connectorsApi } from '../connectors-api';
+import { displayServerName, groupGlobalSetup, viaGlobalSetupLabel } from '../global-setup';
+import { AGENT_NAME } from './identity';
 import { ConnectorLogo, ConnectorMark } from '../logos';
 import { readPanelSectionExpanded, writePanelSectionExpanded } from '../panel-section-storage';
 import type { RelayRoomSource } from '../relay-room-source';
@@ -74,8 +76,12 @@ export function ConnectPill({
   );
 }
 
-function subLabel(mine: RoomConnector['mine'], addedByName: string, isMine: boolean): string {
+function subLabel(mine: RoomConnector['mine'], addedByName: string, isMine: boolean, viaLabel: string | null): string {
   if (mine === 'connected') return 'Connected as you';
+  // A tool one of your agents already reaches globally: say that instead of
+  // nagging about the rig connection — the product rule is "don't nudge you
+  // to connect a tool your agent already has that way".
+  if (viaLabel) return viaLabel;
   if (mine === 'expired') return 'Login expired';
   return isMine ? 'Not connected yet' : `Added by ${addedByName} · not connected`;
 }
@@ -87,6 +93,7 @@ function ConnectorRow({
   canWrite,
   pending,
   armedRemove,
+  globalSetup,
   onStart,
   onGo,
   onCancel,
@@ -101,6 +108,8 @@ function ConnectorRow({
   canWrite: boolean;
   pending: PendingConnect | null;
   armedRemove: boolean;
+  /** Your agents' own global MCP setup, so a tool one of them already reaches this way reads "Via your Claude setup" instead of nagging you to connect it. */
+  globalSetup: readonly GlobalServer[];
   onStart: () => void;
   onGo: () => void;
   onCancel: () => void;
@@ -112,6 +121,7 @@ function ConnectorRow({
   const mine = connector.mine ?? 'not_connected';
   const connected = mine === 'connected';
   const expired = mine === 'expired';
+  const viaLabel = connected ? null : viaGlobalSetupLabel(connector.id, globalSetup);
   const phase = pending?.phase ?? null;
 
   return (
@@ -132,13 +142,15 @@ function ConnectorRow({
           <span
             className={cn(
               'flex min-w-0 items-center gap-1 truncate text-2xs whitespace-nowrap',
-              connected ? 'text-text-secondary' : expired ? 'text-warning' : 'text-text-muted'
+              connected ? 'text-text-secondary' : viaLabel ? 'text-text-muted' : expired ? 'text-warning' : 'text-text-muted'
             )}
           >
-            {(connected || expired) && (
-              <span className={cn('size-1.5 rounded-full', connected ? 'bg-success' : 'bg-warning')} />
+            {(connected || expired || viaLabel) && (
+              <span
+                className={cn('size-1.5 rounded-full', connected ? 'bg-success' : viaLabel ? 'bg-text-muted' : 'bg-warning')}
+              />
             )}
-            {phase === 'waiting' ? 'Waiting for your browser…' : subLabel(mine, addedByName, isMine)}
+            {phase === 'waiting' ? 'Waiting for your browser…' : subLabel(mine, addedByName, isMine, viaLabel)}
           </span>
         </span>
         <span className="ml-auto flex shrink-0 items-center gap-1">
@@ -156,7 +168,13 @@ function ConnectorRow({
                 onClick={onStart}
                 className={cn(
                   'h-6 rounded-full px-2.5 text-xs transition-colors',
-                  expired ? 'bg-warning/15 text-warning hover:bg-warning/25' : 'bg-accent-subtle text-accent hover:bg-accent/25'
+                  // Still available (the other agent may not have it) — just
+                  // quieter, since your agent can already reach this one.
+                  viaLabel
+                    ? 'text-text-muted hover:text-text-primary'
+                    : expired
+                      ? 'bg-warning/15 text-warning hover:bg-warning/25'
+                      : 'bg-accent-subtle text-accent hover:bg-accent/25'
                 )}
               >
                 {expired ? 'Reconnect' : 'Connect'}
@@ -222,12 +240,71 @@ function ConnectorRow({
   );
 }
 
+/**
+ * The quiet, collapsed-by-default line under the connector rows: "Your
+ * agents also bring N tools from their own setup" — expands to a compact
+ * list grouped by agent, name only, nothing actionable (rig never touches
+ * this setup, it only shows it).
+ */
+function GlobalSetupDisclosure({ servers, bindingId }: { servers: readonly GlobalServer[]; bindingId: string }) {
+  const [open, setOpen] = useState(() => readPanelSectionExpanded(bindingId, 'connectors-global-setup') ?? false);
+  if (servers.length === 0) return null;
+  const groups = groupGlobalSetup(servers);
+  const toggle = () => {
+    setOpen((current) => {
+      const next = !current;
+      writePanelSectionExpanded(bindingId, 'connectors-global-setup', next);
+      return next;
+    });
+  };
+  return (
+    <div className="border-border-hairline mt-1 border-t pt-1" data-testid="global-setup-disclosure">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        className="flex h-7 w-full items-center gap-1.5 px-2 text-left text-2xs text-text-muted transition-colors hover:text-text-primary"
+      >
+        <ChevronRight className={cn('size-3 shrink-0 transition-transform', open && 'rotate-90')} strokeWidth={1.5} />
+        Your agents also bring {servers.length} {servers.length === 1 ? 'tool' : 'tools'} from their own setup
+      </button>
+      {open && (
+        <div className="popover-in flex flex-col gap-2 px-2 pb-1.5 pl-6">
+          {groups.map((group) => (
+            <div key={group.agent} className="flex flex-col gap-1">
+              <span className="text-2xs font-medium text-text-muted">{AGENT_NAME[group.agent]}</span>
+              {group.servers.map((server, i) => {
+                const def = server.connectorId ? connectorById(server.connectorId) : null;
+                return (
+                  <span
+                    key={`${server.agent}-${server.name}-${i}`}
+                    className="flex min-w-0 items-center gap-1.5 text-2xs text-text-secondary"
+                  >
+                    {def ? (
+                      <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={14} />
+                    ) : (
+                      <Plug className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+                    )}
+                    <span className="truncate">{displayServerName(server.name)}</span>
+                  </span>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ConnectorsSection({
   snapshot,
   selfUserId,
   source,
   bindingId,
   onOpenGallery,
+  globalSetup = [],
+  onExpand,
 }: {
   snapshot: RoomSnapshot;
   selfUserId: string;
@@ -237,6 +314,10 @@ export function ConnectorsSection({
   source: RelayRoomSource;
   /** Keys this section's remembered expanded/collapsed state to its space. */
   bindingId: string;
+  /** Your agents' own global MCP setup — loaded once per Room by `RoomView`, cheap to refresh on expand (main caches it). */
+  globalSetup?: readonly GlobalServer[];
+  /** Called the moment this section opens, so `RoomView` can refresh `globalSetup`. */
+  onExpand?: () => void;
 }) {
   const self = snapshot.members.find((m) => m.id === selfUserId);
   const canWrite = self?.role === 'owner' || self?.role === 'editor';
@@ -251,13 +332,18 @@ export function ConnectorsSection({
     setExpanded((current) => {
       const next = !current;
       writePanelSectionExpanded(bindingId, 'connectors', next);
+      if (next) onExpand?.();
       return next;
     });
   };
   const visible = expanded || pending !== null;
 
   const connectors = snapshot.connectors;
-  const needsAction = connectors.filter((c) => (c.mine ?? 'not_connected') !== 'connected');
+  // A connector one of your agents already reaches from its own global setup
+  // doesn't need you to do anything — it's left out of the "to connect" count.
+  const needsAction = connectors.filter(
+    (c) => (c.mine ?? 'not_connected') !== 'connected' && !viaGlobalSetupLabel(c.id, globalSetup)
+  );
   const anyExpired = needsAction.some((c) => c.mine === 'expired');
 
   const startConnect = (id: string, isNew: boolean) => {
@@ -367,6 +453,7 @@ export function ConnectorsSection({
               canWrite={canWrite}
               pending={pending?.id === c.id ? pending : null}
               armedRemove={armedRemoveId === c.id}
+              globalSetup={globalSetup}
               onStart={() => startConnect(c.id, false)}
               onGo={goConnect}
               onCancel={cancelPending}
@@ -391,6 +478,7 @@ export function ConnectorsSection({
               canWrite={canWrite}
               pending={pending}
               armedRemove={false}
+              globalSetup={globalSetup}
               onStart={() => {}}
               onGo={goConnect}
               onCancel={cancelPending}
@@ -400,6 +488,7 @@ export function ConnectorsSection({
             />
           )}
 
+          <GlobalSetupDisclosure servers={globalSetup} bindingId={bindingId} />
         </div>
       )}
     </div>
