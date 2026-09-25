@@ -1124,6 +1124,31 @@ describe('Connectors — Room copy and turn footer', () => {
     expect(host.querySelector('[data-testid="session-connector-gaps"]')).toBeNull();
   });
 
+  it('drops a gap pill once you connect, and turns it into Reconnect when your login lapses', async () => {
+    const render = (mine: RoomConnector['mine'] | null) =>
+      act(async () => {
+        root.render(
+          <SessionCard
+            meta={runMeta}
+            events={gapEvents}
+            owner={undefined}
+            viewerIsOwner
+            onConnectorConnect={vi.fn()}
+            spaceConnectors={mine ? [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine }] : []}
+          />
+        );
+      });
+    await render('not_connected');
+    expect(host.querySelector('[data-testid="connector-gap-pill"]')?.textContent).toContain('Connect');
+    await render('connected');
+    expect(host.querySelector('[data-testid="session-connector-gaps"]')).toBeNull();
+    await render('expired');
+    expect(host.querySelector('[data-testid="connector-gap-pill"]')?.textContent).toContain('Reconnect');
+    // Removed from the space since: nothing left to connect.
+    await render(null);
+    expect(host.querySelector('[data-testid="session-connector-gaps"]')).toBeNull();
+  });
+
   it('prettifies a connector\'s raw MCP tool name in the step list, with its brand tile', async () => {
     const events: SessionEvent[] = [
       { seq: 1, kind: 'tool_call', payload: { toolCallId: 't1', title: 'mcp__linear__list_issues', kind: 'fetch', status: 'completed' } },

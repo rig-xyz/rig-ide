@@ -29,6 +29,7 @@ import { ConnectorTile } from '../logos';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type {
   AgentKind,
+  RoomConnector,
   RoomMember,
   RoomReplyRef,
   SessionCard as SessionCardData,
@@ -488,6 +489,12 @@ function RetryButton({
   );
 }
 
+/** A running step's title for the live line; connector tools read as "Linear · list issues". */
+function liveStepTitle(title: string | undefined): string | undefined {
+  const pretty = title ? prettyConnectorTool(title) : null;
+  return pretty ? `${pretty.connector.name} · ${pretty.action}` : title;
+}
+
 export function SessionCard({
   meta,
   events,
@@ -504,6 +511,7 @@ export function SessionCard({
   prompt,
   otherAgents = [],
   onConnectorConnect,
+  spaceConnectors,
 }: {
   meta: SessionRunMeta;
   events: SessionEvent[];
@@ -532,6 +540,8 @@ export function SessionCard({
   otherAgents?: AgentKind[];
   /** Runs the connect flow for a footer gap pill (own run only — see `card.connectorGaps`). */
   onConnectorConnect?: (id: string) => Promise<ConnectResult>;
+  /** The space's connectors as they are now, with your own state, so a gap you've since fixed stops asking. */
+  spaceConnectors?: RoomConnector[];
 }) {
   const [expanded, setExpanded] = useState(false);
   const [traceOpen, setTraceOpen] = useState(false);
@@ -544,6 +554,14 @@ export function SessionCard({
   }, [stopFailed]);
   const [resolving, setResolving] = useState<{ requestId: string; optionId: string } | null>(null);
   const card = useMemo(() => projectSessionCard(events), [events]);
+  // The run recorded what it couldn't reach; show only what's still missing
+  // now (connected since: gone; removed from the space: gone; lapsed: Reconnect).
+  const liveGaps = card.connectorGaps.flatMap((gap) => {
+    if (!spaceConnectors) return [gap];
+    const now = spaceConnectors.find((c) => c.id === gap.id);
+    if (!now || now.mine === 'connected') return [];
+    return [now.mine === 'expired' ? { ...gap, state: 'expired' as const } : gap];
+  });
   const status = effectiveRunStatus(meta.status, card);
   const running = status === 'running';
   const now = useNow(running);
@@ -578,7 +596,7 @@ export function SessionCard({
       ? 'Waiting for your approval'
       : `Waiting on ${ownerName}'s approval`
     : card.currentStep
-      ? (card.currentStep.title ?? currentKind.live)
+      ? (liveStepTitle(card.currentStep.title) ?? currentKind.live)
       : events.length > 0
         ? 'Thinking'
         : 'Starting';
@@ -736,9 +754,9 @@ export function SessionCard({
           </details>
         )}
         {!running && card.finalAnswer && <SourcesRow sources={sourcesOf(card)} onOpen={onOpenFile} />}
-        {mine && onConnectorConnect && card.connectorGaps.length > 0 && (
+        {mine && onConnectorConnect && liveGaps.length > 0 && (
           <div className="flex flex-wrap gap-1.5" data-testid="session-connector-gaps">
-            {card.connectorGaps.map((gap) => {
+            {liveGaps.map((gap) => {
               const def = connectorById(gap.id);
               const name = def?.name ?? gap.id;
               return (

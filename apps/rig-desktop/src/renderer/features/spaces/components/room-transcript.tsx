@@ -143,6 +143,7 @@ function renderItem(
               : undefined
           }
           onConnectorConnect={meta.owner === ownId ? onConnectorConnect : undefined}
+          spaceConnectors={snapshot.connectors}
         />
       );
     }
