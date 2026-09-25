@@ -313,6 +313,32 @@ describe('PinnedCard', () => {
       expect(children.indexOf(summary)).toBeLessThan(children.indexOf(meta));
       expect(meta.textContent).toBe('1 file changed today · summary 58m ago');
     });
+
+    it("hides the summary age when the briefing has no line for this rig (a brand-new space)", async () => {
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+      mocks.pulseGet.mockResolvedValue({
+        success: true,
+        data: {
+          cached: true,
+          briefing: {
+            greeting: '',
+            summary: '',
+            pickBackUp: [],
+            perPerson: [],
+            degraded: false,
+            generatedAt: twoHoursAgo,
+            perRig: [
+              { bindingId: 'binding_other', rigName: 'other', line: 'other: tidied the roadmap', at: twoHoursAgo },
+            ],
+          },
+        },
+      });
+      await render();
+      expect(host.querySelector('[data-testid="changes-summary"]')).toBeNull();
+      const meta = host.querySelector('[data-testid="changes-meta"]')!;
+      expect(meta.textContent).toBe('No files changed today');
+      expect(meta.getAttribute('title')).toBeNull();
+    });
   });
 
   it("lets a function chip summary own the chip's whole status", async () => {

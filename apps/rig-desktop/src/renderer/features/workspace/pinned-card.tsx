@@ -598,13 +598,18 @@ export function PinnedCard({
           )}
           <p
             className="text-2xs text-text-muted"
-            title={briefing ? "Pulse, rig's summary of recent activity" : undefined}
+            title={summarySegs.length > 0 ? "Pulse, rig's summary of recent activity" : undefined}
             data-testid="changes-meta"
           >
             {changedRecently === 0
               ? 'No files changed today'
               : `${changedRecently} ${changedRecently === 1 ? 'file' : 'files'} changed today`}
-            {briefing && ` · summary ${pulseRefreshing ? 'updating…' : `${summaryAge(briefing.generatedAt)}`}`}
+            {/* Lane J: the age belongs to THIS rig's summary line — the
+                account-wide briefing's own `generatedAt` shows up for a
+                space with no line in it (e.g. one created a minute ago). */}
+            {briefing &&
+              summarySegs.length > 0 &&
+              ` · summary ${pulseRefreshing ? 'updating…' : `${summaryAge(briefing.generatedAt)}`}`}
           </p>
         </div>
       )}
