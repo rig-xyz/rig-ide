@@ -1,3 +1,4 @@
+import os from 'node:os';
 import type { IExecutionContext } from '../../exec/execution-context';
 import type { Platform } from '../capability';
 import { toPlatform } from './install-options';
@@ -6,9 +7,50 @@ import type { ProbeResult } from './types';
 const WHICH_TIMEOUT_MS = 5_000;
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
 const REALPATH_TIMEOUT_MS = 5_000;
+const EXTRA_LOCATION_PROBE_TIMEOUT_MS = 5_000;
 
 function targetPlatform(platform?: Platform): Platform {
   return platform ?? toPlatform(process.platform);
+}
+
+/** Expands a leading `~` (or bare `~`) to the current user's home directory. */
+function expandHome(location: string): string {
+  if (location === '~') return os.homedir();
+  if (location.startsWith('~/')) return `${os.homedir()}${location.slice(1)}`;
+  return location;
+}
+
+/**
+ * Checks whether a well-known off-PATH location (e.g. a binary bundled inside
+ * another app's install directory) exists and is executable. Unlike
+ * `resolveCommandPath`, this doesn't search PATH — it tests the given absolute
+ * path directly via `test -x`, so it works for locations `which`/`where` would
+ * never find. Returns the expanded path when runnable, `null` otherwise
+ * (including when the host has no POSIX `test` binary, e.g. Windows — no
+ * current descriptor declares extraLocations there).
+ */
+export async function resolveExtraLocationPath(
+  location: string,
+  ctx: IExecutionContext
+): Promise<string | null> {
+  const expanded = expandHome(location);
+  try {
+    await ctx.exec('test', ['-x', expanded], { timeout: EXTRA_LOCATION_PROBE_TIMEOUT_MS });
+    return expanded;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolves a list of extra-location hints, dropping any that don't exist/aren't executable. */
+export async function resolveExtraLocationPaths(
+  locations: string[],
+  ctx: IExecutionContext
+): Promise<string[]> {
+  const resolved = await Promise.all(
+    locations.map((location) => resolveExtraLocationPath(location, ctx))
+  );
+  return resolved.filter((path): path is string => path !== null);
 }
 
 /**

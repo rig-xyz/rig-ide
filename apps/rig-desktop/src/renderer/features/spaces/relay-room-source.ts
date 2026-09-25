@@ -45,7 +45,8 @@ import type {
   SessionEventRow,
   SessionRun,
 } from '@main/rig/spaces/relay-api';
-import type { AgentKind, MessageKind, RoomEvent, RoomReplyRef, RoomSnapshot, SessionRunMeta } from './types';
+import { connectorById, type ConnectionStatus } from '@shared/spaces/connectors';
+import type { AgentKind, MessageKind, RoomConnector, RoomEvent, RoomReplyRef, RoomSnapshot, SessionRunMeta } from './types';
 import { reduceRoom } from './fixtures/room-feed';
 import type { RoomSource } from './room-source';
 import { formatClock } from '@renderer/lib/time-format';
@@ -146,6 +147,22 @@ export interface RelayRoomClient {
       sourceMessageId?: string;
     }
   ): Promise<Result<AgentRequest, RelayApiError>>;
+  /** The space's connectors (connectors-spec.md) — `GET /v1/me/bindings/:id/connectors`. */
+  listConnectors?(
+    bindingId: string
+  ): Promise<Result<Array<{ connectorId: string; addedBy: string; addedAt: string }>, RelayApiError>>;
+  /** `POST /v1/me/bindings/:id/connectors`; 403 when the viewer can't write. */
+  addConnector?(
+    bindingId: string,
+    connectorId: string
+  ): Promise<Result<{ connectorId: string; addedBy: string; addedAt: string }, RelayApiError>>;
+  /** `DELETE /v1/me/bindings/:id/connectors/:connectorId`. */
+  removeConnector?(bindingId: string, connectorId: string): Promise<Result<void, RelayApiError>>;
+}
+
+/** This device's own connection states — `connectorsApi.list()`, injected so this file never imports `@renderer/lib/ipc`. */
+export interface ConnectionsClient {
+  list(): Promise<ConnectionStatus[]>;
 }
 
 /** A statelessly-pushed "something changed" notification — never the payload itself, per `SPACES_NOTES.md`. */
@@ -162,6 +179,8 @@ export type RelayRoomSourceOptions = {
   wsUrl: string;
   selfUserId: string;
   relay: RelayRoomClient;
+  /** This device's own connection states, for `RoomConnector.mine` — omitted, `mine` stays undefined everywhere. */
+  connections?: ConnectionsClient;
   createProvider?: (options: {
     wsUrl: string;
     documentName: string;
@@ -211,9 +230,10 @@ function emptySnapshot(name: string, selfUserId: string): RoomSnapshot {
  * `replayAll()` is a no-op — there is no script to fast-forward.
  */
 export class RelayRoomSource implements RoomSource {
-  private readonly opts: Required<Omit<RelayRoomSourceOptions, 'createProvider' | 'log'>>;
+  private readonly opts: Required<Omit<RelayRoomSourceOptions, 'createProvider' | 'log' | 'connections'>>;
   private readonly makeProvider: NonNullable<RelayRoomSourceOptions['createProvider']>;
   private readonly log: (message: string, extra?: Record<string, unknown>) => void;
+  private readonly connections: ConnectionsClient | undefined;
 
   private snapshot: RoomSnapshot;
   private readonly listeners = new Set<Listener>();
@@ -241,6 +261,7 @@ export class RelayRoomSource implements RoomSource {
       relay: options.relay,
       bootstrapMessageCount: options.bootstrapMessageCount ?? 50,
     };
+    this.connections = options.connections;
     this.makeProvider = options.createProvider ?? createHocuspocusProvider;
     this.log = options.log ?? (() => {});
     this.snapshot = emptySnapshot(options.spaceName, options.selfUserId);
@@ -378,6 +399,7 @@ export class RelayRoomSource implements RoomSource {
       this.snapshot = { ...this.snapshot, skills: skills.map((skill) => ({ ...skill, addedBy: '' })) };
     }
     await this.refreshInvites();
+    await this.refreshConnectors();
 
     if (messages.success) {
       for (const row of messages.data) await this.ingestWireMessage(row);
@@ -521,6 +543,10 @@ export class RelayRoomSource implements RoomSource {
       await this.refreshInvites();
     }
 
+    if (row.kind === 'system' && (meta.event === 'connectors_added' || meta.event === 'connectors_removed')) {
+      await this.refreshConnectors();
+    }
+
     // Doc comments share the message table (they carry a `path`). Keep them
     // in the room, rendered as comment lines tied to their file and passage.
     // A reply in a doc comment thread carries no path of its own; it takes
@@ -649,6 +675,69 @@ export class RelayRoomSource implements RoomSource {
     this.snapshot = { ...this.snapshot, invitesById };
   }
 
+  // ── connectors (connectors-spec.md) ────────────────────────────────────
+
+  /** Re-fetches the space's connector list from the relay, enriched with this device's own connection state — bootstrap, and every `connectors_added`/`connectors_removed` system message. */
+  private async refreshConnectors(): Promise<void> {
+    const listFn = this.opts.relay.listConnectors;
+    if (!listFn) return;
+    const result = await listFn(this.opts.bindingId);
+    if (!result.success) {
+      this.log('Rig spaces: could not load the space’s connectors', { error: result.error.message });
+      return;
+    }
+    const mineById = await this.connectionStates();
+    const connectors: RoomConnector[] = result.data.map((row) => {
+      const def = connectorById(row.connectorId);
+      const status = mineById.get(row.connectorId);
+      return {
+        id: row.connectorId,
+        name: def?.name ?? row.connectorId,
+        addedBy: row.addedBy,
+        mine: status?.state,
+        account: status?.account,
+      };
+    });
+    this.applyLocal({ type: 'connectors_synced', connectors });
+  }
+
+  /** Just this device's own connection states, re-merged into the existing connector list — cheaper than `refreshConnectors()` for after a local connect/disconnect, which never changes the space's list itself. */
+  async refreshConnections(): Promise<void> {
+    if (!this.connections || this.snapshot.connectors.length === 0) return;
+    const mineById = await this.connectionStates();
+    const connectors = this.snapshot.connectors.map((c) => {
+      const status = mineById.get(c.id);
+      return { ...c, mine: status?.state ?? c.mine, account: status?.account ?? c.account };
+    });
+    this.applyLocal({ type: 'connectors_synced', connectors });
+  }
+
+  private async connectionStates(): Promise<Map<string, ConnectionStatus>> {
+    if (!this.connections) return new Map();
+    const list = await this.connections.list().catch(() => []);
+    return new Map(list.map((s) => [s.id, s]));
+  }
+
+  /** Adds a connector to the space (editors/owners only — the relay 403s otherwise). */
+  async addConnector(connectorId: string): Promise<{ ok: true } | { ok: false; message?: string }> {
+    const addFn = this.opts.relay.addConnector;
+    if (!addFn) return { ok: false, message: 'Not available yet.' };
+    const result = await addFn(this.opts.bindingId, connectorId);
+    if (!result.success) return { ok: false, message: result.error.message };
+    await this.refreshConnectors();
+    return { ok: true };
+  }
+
+  /** Removes a connector from the space for everyone (editors/owners only); connections stay on each person's machine. */
+  async removeConnector(connectorId: string): Promise<{ ok: true } | { ok: false; message?: string }> {
+    const removeFn = this.opts.relay.removeConnector;
+    if (!removeFn) return { ok: false, message: 'Not available yet.' };
+    const result = await removeFn(this.opts.bindingId, connectorId);
+    if (!result.success) return { ok: false, message: result.error.message };
+    await this.refreshConnectors();
+    return { ok: true };
+  }
+
   private commentMeta(row: RoomMessageRow): import('./types').MessageMeta {
     const parent = row.parentId ? this.snapshot.messages.find((m) => m.id === row.parentId) : undefined;
     const parentQuote = parent?.meta.kind === 'comment_mirror' ? parent.meta.quote : '';
@@ -734,7 +823,11 @@ function toMessageMeta(
           : {}),
       };
     case 'system':
-      return { kind: 'system', event: String(meta.event ?? '') };
+      return {
+        kind: 'system',
+        event: String(meta.event ?? ''),
+        ...(Array.isArray(meta.connectorIds) ? { connectorIds: meta.connectorIds.map(String) } : {}),
+      };
     default: {
       const reply = meta.replyTo as Record<string, unknown> | undefined;
       return reply &&

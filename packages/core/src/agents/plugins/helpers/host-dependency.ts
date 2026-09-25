@@ -44,6 +44,16 @@ export function npmDependency(opts: {
   versionArgs?: string[];
   /** Extra InstallOption entries appended per platform after the npm option. */
   extraOptions?: Partial<Record<Platform, InstallOption[]>>;
+  /**
+   * Well-known absolute install locations to probe in addition to PATH (`which -a`).
+   * A leading `~` expands to the current user's home directory.
+   */
+  extraLocations?: Partial<Record<Platform, string[]>>;
+  /**
+   * When true, auto-resolution (no user pin/override) picks the highest-versioned
+   * runnable installation instead of the first PATH hit.
+   */
+  preferNewest?: boolean;
 }): HostDependencyDescriptor {
   const recommended = opts.recommended !== false;
   const flags = opts.installFlags ? `${opts.installFlags} ` : '';
@@ -68,6 +78,8 @@ export function npmDependency(opts: {
     ...(opts.installDocs ? { installDocs: opts.installDocs } : {}),
     ...(opts.skipVersionProbe ? { skipVersionProbe: true } : {}),
     ...(opts.versionArgs ? { versionArgs: opts.versionArgs } : {}),
+    ...(opts.extraLocations ? { extraLocations: opts.extraLocations } : {}),
+    ...(opts.preferNewest ? { preferNewest: true } : {}),
     installCommands: {
       macos: perPlatform('macos'),
       linux: perPlatform('linux'),

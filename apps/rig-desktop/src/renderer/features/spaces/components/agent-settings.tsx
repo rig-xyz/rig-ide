@@ -407,7 +407,7 @@ export function AgentConfigRow({
   const [expanded, setExpanded] = useState(false);
   const [everywhere, setEverywhere] = useState(false);
 
-  const row = 'flex h-7 w-full shrink-0 items-center gap-2 rounded-control px-2 text-left transition-colors';
+  const row = 'flex h-7 w-full shrink-0 items-center gap-2 rounded-control pr-2 pl-8 text-left transition-colors';
   if (!api) {
     return (
       <div className={row} data-testid="space-agent-row">
@@ -465,7 +465,7 @@ export function AgentConfigRow({
         </span>
       </button>
       {expanded && (
-        <div className="popover-in flex flex-col gap-1.5 py-1.5 pr-1 pl-2" data-testid="agent-config">
+        <div className="popover-in flex flex-col gap-1.5 py-1.5 pr-1 pl-8" data-testid="agent-config">
           {error && (
             <p className="flex items-center gap-2 text-xs text-text-muted">
               <span className="min-w-0 truncate">{error}</span>

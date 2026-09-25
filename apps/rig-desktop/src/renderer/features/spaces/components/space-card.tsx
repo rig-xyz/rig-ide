@@ -2,7 +2,7 @@ import { FileText, Plug, Sparkles, Users } from 'lucide-react';
 import { useMemo } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
-import { BrandLogo } from '../logos';
+import { ConnectorMark } from '../logos';
 import { projectSessionCard } from '../projection';
 import type { RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar } from './identity';
@@ -81,7 +81,7 @@ export function SpaceCard({ snapshot }: { snapshot: RoomSnapshot }) {
           <span className="text-xs text-text-primary">Connectors</span>
           <span className="ml-auto flex items-center gap-1">
             {snapshot.connectors.map((c) => (
-              <BrandLogo key={c.id} id={c.logo} size={13} />
+              <ConnectorMark key={c.id} connector={c} size={13} />
             ))}
           </span>
         </div>

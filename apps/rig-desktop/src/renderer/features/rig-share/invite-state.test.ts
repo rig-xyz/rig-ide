@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { RigInvite, RigMember } from '@shared/rig/rig-share';
 import {
+  excludeInvitesToMembers,
   isPendingInvite,
   mintedInviteMatchesRole,
+  type PendingInvite,
   shapePendingInvites,
   suggestCollaborators,
 } from './invite-state';
@@ -88,6 +90,51 @@ describe('mintedInviteMatchesRole', () => {
 
   it('false for a null minted role (a pure-capability link) against any real role selection', () => {
     expect(mintedInviteMatchesRole(null, 'editor')).toBe(false);
+  });
+});
+
+describe('excludeInvitesToMembers', () => {
+  function member(overrides: Partial<RigMember> = {}): RigMember {
+    return {
+      userId: 'u_1',
+      name: 'Sam',
+      email: 'sam@example.com',
+      avatarUrl: null,
+      role: 'editor',
+      ...overrides,
+    };
+  }
+
+  function pending(email: string | null, overrides: Partial<PendingInvite> = {}): PendingInvite {
+    return { id: 'inv_1', email, roleLabel: 'editor', createdAt: '2026-08-14T12:00:00Z', ...overrides };
+  }
+
+  it('drops a pending invite whose email belongs to a current member — Sam joined another way', () => {
+    const sam = member({ email: 'sam@example.com' });
+    expect(excludeInvitesToMembers([pending('sam@example.com')], [sam])).toEqual([]);
+  });
+
+  it('matches case-insensitively', () => {
+    const sam = member({ email: 'sam@example.com' });
+    expect(excludeInvitesToMembers([pending('SAM@Example.com')], [sam])).toEqual([]);
+  });
+
+  it('keeps an open-link invite (no email) regardless of membership', () => {
+    const sam = member({ email: 'sam@example.com' });
+    const link = pending(null);
+    expect(excludeInvitesToMembers([link], [sam])).toEqual([link]);
+  });
+
+  it('keeps an invite addressed to someone who is not (yet) a member', () => {
+    const sam = member({ email: 'sam@example.com' });
+    const forBob = pending('bob@example.com');
+    expect(excludeInvitesToMembers([forBob], [sam])).toEqual([forBob]);
+  });
+
+  it('is a no-op when there are no members with an email on file', () => {
+    const noEmail = member({ email: null });
+    const forBob = pending('bob@example.com');
+    expect(excludeInvitesToMembers([forBob], [noEmail])).toEqual([forBob]);
   });
 });
 

@@ -791,6 +791,7 @@ export function App() {
                 onlineUserIds={onlineUserIds}
                 startCollapsed={startCollapsed}
                 chipSummary={chipSummary}
+                isSpace={inSpace}
               />
             )
       }

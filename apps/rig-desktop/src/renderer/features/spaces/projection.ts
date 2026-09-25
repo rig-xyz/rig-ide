@@ -21,6 +21,7 @@
  * arrive without re-folding the whole log every time.
  */
 
+import { RUN_CONNECTORS_EVENT, type ConnectorGap } from '@shared/spaces/connectors';
 import type {
   SessionCard,
   SessionEvent,
@@ -49,6 +50,7 @@ export function newSessionCard(): SessionCard {
     lastSeq: 0,
     model: null,
     failureReason: null,
+    connectorGaps: [],
   };
 }
 
@@ -276,6 +278,17 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
     }
     case 'run_model': {
       if (typeof p.model === 'string' && p.model) state.model = p.model;
+      break;
+    }
+    case RUN_CONNECTORS_EVENT: {
+      if (!Array.isArray(p.gaps)) break;
+      state.connectorGaps = p.gaps.flatMap((raw: unknown) => {
+        const g = raw as Record<string, unknown> | null;
+        if (!g || typeof g.id !== 'string') return [];
+        return g.state === 'not_connected' || g.state === 'expired'
+          ? [{ id: g.id, state: g.state } as ConnectorGap]
+          : [];
+      });
       break;
     }
     case 'turn_ended': {

@@ -1,6 +1,8 @@
+import type { ReactNode } from 'react';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { cn } from '@renderer/lib/utils';
-import type { LogoId } from './types';
+import { connectorById, type ConnectorId } from '@shared/spaces/connectors';
+import type { AgentKind, LogoId, RoomConnector } from './types';
 
 /**
  * Real brand marks — copied verbatim from the demo's `<symbol>` defs
@@ -36,6 +38,91 @@ const LOGO_META: Record<Exclude<LogoId, 'rig'>, { viewBox: string; path: string;
   gads: { viewBox: '0 0 24 24', path: GADS_PATH, brandFill: '#4285F4' },
 };
 
+/**
+ * BYOA catalog connectors (connectors-spec.md's v1 list) with a real brand
+ * mark: official Simple Icons (CC0) paths, fetched verbatim from
+ * `simple-icons@latest`. Notion's mark is black in the source — like
+ * OpenAI's above, it renders in `currentColor` (bound to `text-text-primary`
+ * below) so it stays visible on the dark theme instead of vanishing.
+ * Amplitude, Granola and Attio have no clean vector mark to inline (no
+ * Simple Icons entry; their sites only ship a raster favicon/app icon or,
+ * for Attio, a wide wordmark with no standalone square icon), so they're
+ * left out here and fall back to the letter tile in `ConnectorLogo`.
+ */
+const LINEAR_PATH =
+  'M2.886 4.18A11.982 11.982 0 0 1 11.99 0C18.624 0 24 5.376 24 12.009c0 3.64-1.62 6.903-4.18 9.105L2.887 4.18ZM1.817 5.626l16.556 16.556c-.524.33-1.075.62-1.65.866L.951 7.277c.247-.575.537-1.126.866-1.65ZM.322 9.163l14.515 14.515c-.71.172-1.443.282-2.195.322L0 11.358a12 12 0 0 1 .322-2.195Zm-.17 4.862 9.823 9.824a12.02 12.02 0 0 1-9.824-9.824Z';
+
+const NOTION_PATH =
+  'M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z';
+
+const POSTHOG_PATH =
+  'M9.854 14.5 5 9.647.854 5.5A.5.5 0 0 0 0 5.854V8.44a.5.5 0 0 0 .146.353L5 13.647l.147.146L9.854 18.5l.146.147v-.049c.065.03.134.049.207.049h2.586a.5.5 0 0 0 .353-.854L9.854 14.5zm0-5-4-4a.487.487 0 0 0-.409-.144.515.515 0 0 0-.356.21.493.493 0 0 0-.089.288V8.44a.5.5 0 0 0 .147.353l9 9a.5.5 0 0 0 .853-.354v-2.585a.5.5 0 0 0-.146-.354l-5-5zm1-4a.5.5 0 0 0-.854.354V8.44a.5.5 0 0 0 .147.353l4 4a.5.5 0 0 0 .853-.354V9.854a.5.5 0 0 0-.146-.354l-4-4zm12.647 11.515a3.863 3.863 0 0 1-2.232-1.1l-4.708-4.707a.5.5 0 0 0-.854.354v6.585a.5.5 0 0 0 .5.5H23.5a.5.5 0 0 0 .5-.5v-.6c0-.276-.225-.497-.499-.532zm-5.394.032a.8.8 0 1 1 0-1.6.8.8 0 0 1 0 1.6zM.854 15.5a.5.5 0 0 0-.854.354v2.293a.5.5 0 0 0 .5.5h2.293c.222 0 .39-.135.462-.309a.493.493 0 0 0-.109-.545L.854 15.501zM5 14.647.854 10.5a.5.5 0 0 0-.854.353v2.586a.5.5 0 0 0 .146.353L4.854 18.5l.146.147h2.793a.5.5 0 0 0 .353-.854L5 14.647z';
+
+const SENTRY_PATH =
+  'M13.91 2.505c-.873-1.448-2.972-1.448-3.844 0L6.904 7.92a15.478 15.478 0 0 1 8.53 12.811h-2.221A13.301 13.301 0 0 0 5.784 9.814l-2.926 5.06a7.65 7.65 0 0 1 4.435 5.848H2.194a.365.365 0 0 1-.298-.534l1.413-2.402a5.16 5.16 0 0 0-1.614-.913L.296 19.275a2.182 2.182 0 0 0 .812 2.999 2.24 2.24 0 0 0 1.086.288h6.983a9.322 9.322 0 0 0-3.845-8.318l1.11-1.922a11.47 11.47 0 0 1 4.95 10.24h5.915a17.242 17.242 0 0 0-7.885-15.28l2.244-3.845a.37.37 0 0 1 .504-.13c.255.14 9.75 16.708 9.928 16.9a.365.365 0 0 1-.327.543h-2.287c.029.612.029 1.223 0 1.831h2.297a2.206 2.206 0 0 0 1.922-3.31z';
+
+const ATLASSIAN_PATH =
+  'M7.12 11.084a.683.683 0 00-1.16.126L.075 22.974a.703.703 0 00.63 1.018h8.19a.678.678 0 00.63-.39c1.767-3.65.696-9.203-2.406-12.52zM11.434.386a15.515 15.515 0 00-.906 15.317l3.95 7.9a.703.703 0 00.628.388h8.19a.703.703 0 00.63-1.017L12.63.38a.664.664 0 00-1.196.006z';
+
+const INTERCOM_PATH =
+  'M21 0H3C1.343 0 0 1.343 0 3v18c0 1.658 1.343 3 3 3h18c1.658 0 3-1.342 3-3V3c0-1.657-1.342-3-3-3zm-5.801 4.399c0-.44.36-.8.802-.8.44 0 .8.36.8.8v10.688c0 .442-.36.801-.8.801-.443 0-.802-.359-.802-.801V4.399zM11.2 3.994c0-.44.357-.799.8-.799s.8.359.8.799v11.602c0 .44-.357.8-.8.8s-.8-.36-.8-.8V3.994zm-4 .405c0-.44.359-.8.799-.8.443 0 .802.36.802.8v10.688c0 .442-.36.801-.802.801-.44 0-.799-.359-.799-.801V4.399zM3.199 6c0-.442.36-.8.802-.8.44 0 .799.358.799.8v7.195c0 .441-.359.8-.799.8-.443 0-.802-.36-.802-.8V6zM20.52 18.202c-.123.105-3.086 2.593-8.52 2.593-5.433 0-8.397-2.486-8.521-2.593-.335-.288-.375-.792-.086-1.128.285-.334.79-.375 1.125-.09.047.041 2.693 2.211 7.481 2.211 4.848 0 7.456-2.186 7.479-2.207.334-.289.839-.25 1.128.086.289.336.25.84-.086 1.128zm.281-5.007c0 .441-.36.8-.801.8-.441 0-.801-.36-.801-.8V6c0-.442.361-.8.801-.8.441 0 .801.357.801.8v7.195z';
+
+const CLICKUP_PATH =
+  'M2 18.439l3.69-2.828c1.961 2.56 4.044 3.739 6.363 3.739 2.307 0 4.33-1.166 6.203-3.704L22 18.405C19.298 22.065 15.941 24 12.053 24 8.178 24 4.788 22.078 2 18.439zM12.04 6.15l-6.568 5.66-3.036-3.52L12.055 0l9.543 8.296-3.05 3.509z';
+
+const AIRTABLE_PATH =
+  'M11.992 1.966c-.434 0-.87.086-1.28.257L1.779 5.917c-.503.208-.49.908.012 1.116l8.982 3.558a3.266 3.266 0 0 0 2.454 0l8.982-3.558c.503-.196.503-.908.012-1.116l-8.957-3.694a3.255 3.255 0 0 0-1.272-.257zM23.4 8.056a.589.589 0 0 0-.222.045l-10.012 3.877a.612.612 0 0 0-.38.564v8.896a.6.6 0 0 0 .821.552L23.62 18.1a.583.583 0 0 0 .38-.551V8.653a.6.6 0 0 0-.6-.596zM.676 8.095a.644.644 0 0 0-.48.19C.086 8.396 0 8.53 0 8.69v8.355c0 .442.515.737.908.54l6.27-3.006.307-.147 2.969-1.436c.466-.22.43-.908-.061-1.092L.883 8.138a.57.57 0 0 0-.207-.044z';
+
+const STRIPE_PATH =
+  'M13.976 9.15c-2.172-.806-3.356-1.426-3.356-2.409 0-.831.683-1.305 1.901-1.305 2.227 0 4.515.858 6.09 1.631l.89-5.494C18.252.975 15.697 0 12.165 0 9.667 0 7.589.654 6.104 1.872 4.56 3.147 3.757 4.992 3.757 7.218c0 4.039 2.467 5.76 6.476 7.219 2.585.92 3.445 1.574 3.445 2.583 0 .98-.84 1.545-2.354 1.545-1.875 0-4.965-.921-6.99-2.109l-.9 5.555C5.175 22.99 8.385 24 11.714 24c2.641 0 4.843-.624 6.328-1.813 1.664-1.305 2.525-3.236 2.525-5.732 0-4.128-2.524-5.851-6.594-7.305h.003z';
+const CANVA_PATH =
+  'M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zM6.962 7.68c.754 0 1.337.549 1.405 1.2.069.583-.171 1.097-.822 1.406-.343.171-.48.172-.549.069-.034-.069 0-.137.069-.206.617-.514.617-.926.548-1.508-.034-.378-.308-.618-.583-.618-1.2 0-2.914 2.674-2.674 4.629.103.754.549 1.646 1.509 1.646.308 0 .65-.103.96-.24.5-.264.799-.47 1.097-.8-.073-.885.704-2.046 1.851-2.046.515 0 .926.205.96.583.068.514-.377.582-.514.582s-.378-.034-.378-.17c-.034-.138.309-.07.275-.378-.035-.206-.24-.274-.446-.274-.72 0-1.131.994-1.029 1.611.035.275.172.549.447.549.205 0 .514-.31.617-.755.068-.308.343-.514.583-.514.102 0 .17.034.205.171v.138c-.034.137-.137.548-.102.651 0 .069.034.171.17.171.092 0 .436-.18.777-.459.117-.59.253-1.298.253-1.357.034-.24.137-.48.617-.48.103 0 .171.034.205.171v.138l-.136.617c.445-.583 1.097-.994 1.508-.994.172 0 .309.102.309.274 0 .103 0 .274-.069.446-.137.377-.309.96-.412 1.474 0 .137.035.274.207.274.171 0 .685-.206 1.096-.754l.007-.004c-.002-.068-.007-.134-.007-.202 0-.411.035-.754.104-.994.068-.274.411-.514.617-.514.103 0 .205.069.205.171 0 .035 0 .103-.034.137-.137.446-.24.857-.24 1.269 0 .24.034.582.102.788 0 .034.035.069.07.069.068 0 .548-.445.89-1.028-.308-.206-.48-.549-.48-.96 0-.72.446-1.097.858-1.097.343 0 .617.24.617.72 0 .308-.103.65-.274.96h.102a.77.77 0 0 0 .584-.24.293.293 0 0 1 .134-.117c.335-.425.83-.74 1.41-.74.48 0 .924.205.959.582.068.515-.378.618-.515.618l-.002-.002c-.138 0-.377-.035-.377-.172 0-.137.309-.068.274-.376-.034-.206-.24-.275-.446-.275-.686 0-1.13.891-1.028 1.611.034.275.171.583.445.583.206 0 .515-.308.652-.754.068-.274.343-.514.583-.514.103 0 .17.034.205.171 0 .069 0 .206-.137.652-.17.308-.171.48-.137.617.034.274.171.48.309.583.034.034.068.102.068.102 0 .069-.034.138-.137.138-.034 0-.068 0-.103-.035-.514-.205-.72-.548-.789-.891-.205.24-.445.377-.72.377-.445 0-.89-.411-.96-.926a1.609 1.609 0 0 1 .075-.649c-.203.13-.422.203-.623.203h-.17c-.447.652-.927 1.098-1.27 1.303a.896.896 0 0 1-.377.104c-.068 0-.171-.035-.205-.104-.095-.152-.156-.392-.193-.667-.481.527-1.145.805-1.453.805-.343 0-.548-.206-.582-.55v-.376c.102-.754.377-1.2.377-1.337a.074.074 0 0 0-.069-.07c-.24 0-1.028.824-1.166 1.373l-.103.445c-.068.309-.377.515-.582.515-.103 0-.172-.035-.206-.172v-.137l.046-.233c-.435.31-.87.508-1.075.508-.308 0-.48-.172-.514-.412-.206.274-.445.412-.754.412-.352 0-.696-.24-.862-.593-.244.275-.523.553-.852.764-.48.309-1.028.549-1.68.549-.582 0-1.097-.309-1.371-.583-.412-.377-.651-.96-.686-1.509-.205-1.68.823-3.84 2.4-4.8.378-.205.755-.343 1.132-.343zm9.77 3.291c-.104 0-.172.172-.172.343 0 .274.137.583.309.755a1.74 1.74 0 0 0 .102-.583c0-.343-.137-.515-.24-.515z';
+const NEON_PATH =
+  'M24 0V24l-9.365-8.045V24H0V0ZM2.942 21.087h8.751V9.563l9.365 8.204V2.919L2.942 2.914Z';
+const CLOUDFLARE_PATH =
+  'M16.5088 16.8447c.1475-.5068.0908-.9707-.1553-1.3154-.2246-.3164-.6045-.499-1.0615-.5205l-8.6592-.1123a.1559.1559 0 0 1-.1333-.0713c-.0283-.042-.0351-.0986-.021-.1553.0278-.084.1123-.1484.2036-.1562l8.7359-.1123c1.0351-.0489 2.1601-.8868 2.5537-1.9136l.499-1.3013c.0215-.0561.0293-.1128.0147-.168-.5625-2.5463-2.835-4.4453-5.5499-4.4453-2.5039 0-4.6284 1.6177-5.3876 3.8614-.4927-.3658-1.1187-.5625-1.794-.499-1.2026.119-2.1665 1.083-2.2861 2.2856-.0283.31-.0069.6128.0635.894C1.5683 13.171 0 14.7754 0 16.752c0 .1748.0142.3515.0352.5273.0141.083.0844.1475.1689.1475h15.9814c.0909 0 .1758-.0645.2032-.1553l.12-.4268zm2.7568-5.5634c-.0771 0-.1611 0-.2383.0112-.0566 0-.1054.0415-.127.0976l-.3378 1.1744c-.1475.5068-.0918.9707.1543 1.3164.2256.3164.6055.498 1.0625.5195l1.8437.1133c.0557 0 .1055.0263.1329.0703.0283.043.0351.1074.0214.1562-.0283.084-.1132.1485-.204.1553l-1.921.1123c-1.041.0488-2.1582.8867-2.5527 1.914l-.1406.3585c-.0283.0713.0215.1416.0986.1416h6.5977c.0771 0 .1474-.0489.169-.126.1122-.4082.1757-.837.1757-1.2803 0-2.6025-2.125-4.727-4.7344-4.727';
+const ZAPIER_PATH =
+  'M4.157 0A4.151 4.151 0 0 0 0 4.161v15.678A4.151 4.151 0 0 0 4.157 24h15.682A4.152 4.152 0 0 0 24 19.839V4.161A4.152 4.152 0 0 0 19.839 0H4.157Zm10.61 8.761h.03a.577.577 0 0 1 .23.038.585.585 0 0 1 .201.124.63.63 0 0 1 .162.431.612.612 0 0 1-.162.435.58.58 0 0 1-.201.128.58.58 0 0 1-.23.042.529.529 0 0 1-.235-.042.585.585 0 0 1-.332-.328.559.559 0 0 1-.038-.235.613.613 0 0 1 .17-.431.59.59 0 0 1 .405-.162Zm2.853 1.572c.03.004.061.004.095.004.325-.011.646.064.937.219.238.144.431.355.552.609.128.279.189.582.185.888v.193a2 2 0 0 1 0 .219h-2.498c.003.227.075.45.204.642a.78.78 0 0 0 .646.265.714.714 0 0 0 .484-.136.642.642 0 0 0 .23-.318l.915.257a1.398 1.398 0 0 1-.28.537c-.14.159-.321.284-.521.355a2.234 2.234 0 0 1-.836.136 1.923 1.923 0 0 1-1.001-.245 1.618 1.618 0 0 1-.665-.703 2.221 2.221 0 0 1-.227-1.036 1.95 1.95 0 0 1 .48-1.398 1.9 1.9 0 0 1 1.3-.488Zm-9.607.023c.162.004.325.026.48.079.207.065.4.174.563.314.26.302.393.692.366 1.088v2.276H8.53l-.109-.711h-.065c-.064.163-.155.31-.272.439a1.122 1.122 0 0 1-.374.264 1.023 1.023 0 0 1-.453.083 1.334 1.334 0 0 1-.866-.264.965.965 0 0 1-.329-.801.993.993 0 0 1 .076-.431 1.02 1.02 0 0 1 .242-.363 1.478 1.478 0 0 1 1.043-.303h.952v-.181a.696.696 0 0 0-.136-.454.553.553 0 0 0-.438-.154.695.695 0 0 0-.378.086.48.48 0 0 0-.193.254l-.99-.144a1.26 1.26 0 0 1 .257-.563c.14-.174.321-.302.533-.378.261-.091.54-.136.82-.129.053-.003.106-.007.163-.007Zm4.384.007c.174 0 .347.038.506.114.182.083.34.211.458.374.257.423.377.911.351 1.406a2.53 2.53 0 0 1-.355 1.448 1.148 1.148 0 0 1-1.009.517c-.204 0-.401-.045-.582-.136a1.052 1.052 0 0 1-.48-.457 1.298 1.298 0 0 1-.114-.234h-.045l.004 1.784h-1.059v-4.713h.904l.117.805h.057c.068-.208.177-.401.328-.56a1.129 1.129 0 0 1 .843-.344h.076v-.004Zm7.559.084h.903l.113.805h.053a1.37 1.37 0 0 1 .235-.484.813.813 0 0 1 .313-.242.82.82 0 0 1 .39-.076h.234v1.051h-.401a.662.662 0 0 0-.313.008.623.623 0 0 0-.272.155.663.663 0 0 0-.174.26.683.683 0 0 0-.027.314v1.875h-1.054v-3.666Zm-17.515.003h3.262v.896L3.73 13.104l.034.113h1.973l.042.9H2.4v-.9l1.931-1.754-.045-.117H2.441v-.896Zm11.815 0h1.055v3.659h-1.055V10.45Zm3.443.684.019.016a.69.69 0 0 0-.351.045.756.756 0 0 0-.287.204c-.11.155-.174.336-.189.522h1.545c-.034-.526-.257-.787-.74-.787h.003Zm-5.718.163c-.026 0-.057 0-.083.004a.78.78 0 0 0-.31.053.746.746 0 0 0-.257.189 1.016 1.016 0 0 0-.204.695v.064c-.015.257.057.507.204.711a.634.634 0 0 0 .253.196.638.638 0 0 0 .314.061.644.644 0 0 0 .578-.265c.14-.223.204-.48.189-.74a1.216 1.216 0 0 0-.181-.711.677.677 0 0 0-.503-.257Zm-4.509 1.266a.464.464 0 0 0-.268.102.373.373 0 0 0-.114.276c0 .053.008.106.027.155a.375.375 0 0 0 .087.132.576.576 0 0 0 .397.11v.004a.863.863 0 0 0 .563-.182.573.573 0 0 0 .211-.457v-.14h-.903Z';
+const MIRO_PATH =
+  'M17.392 0H13.9L17 4.808 10.444 0H6.949l3.102 6.3L3.494 0H0l3.05 8.131L0 24h3.494L10.05 6.985 6.949 24h3.494L17 5.494 13.899 24h3.493L24 3.672 17.392 0z';
+const SUPABASE_PATH =
+  'M11.9 1.036c-.015-.986-1.26-1.41-1.874-.637L.764 12.05C-.33 13.427.65 15.455 2.409 15.455h9.579l.113 7.51c.014.985 1.259 1.408 1.873.636l9.262-11.653c1.093-1.375.113-3.403-1.645-3.403h-9.642z';
+const VERCEL_PATH =
+  'm12 1.608 12 20.784H0Z';
+const WEBFLOW_PATH =
+  'm24 4.515-7.658 14.97H9.149l3.205-6.204h-.144C9.566 16.713 5.621 18.973 0 19.485v-6.118s3.596-.213 5.71-2.435H0V4.515h6.417v5.278l.144-.001 2.622-5.277h4.854v5.244h.144l2.72-5.244H24Z';
+const MAKE_PATH =
+  'M13.38 3.498c-.27 0-.511.19-.566.465L9.85 18.986a.578.578 0 0 0 .453.678l4.095.826a.58.58 0 0 0 .682-.455l2.963-15.021a.578.578 0 0 0-.453-.678l-4.096-.826a.589.589 0 0 0-.113-.012zm-5.876.098a.576.576 0 0 0-.516.318L.062 17.697a.575.575 0 0 0 .256.774l3.733 1.877a.578.578 0 0 0 .775-.258l6.926-13.781a.577.577 0 0 0-.256-.776L7.762 3.658a.571.571 0 0 0-.258-.062zm11.74.115a.576.576 0 0 0-.576.576v15.426c0 .318.258.578.576.578h4.178a.58.58 0 0 0 .578-.578V4.287a.578.578 0 0 0-.578-.576Z';
+
+const CONNECTOR_LOGO_META: Partial<Record<ConnectorId, { viewBox: string; path: string; brandFill: string }>> = {
+  linear: { viewBox: '0 0 24 24', path: LINEAR_PATH, brandFill: '#5E6AD2' },
+  notion: { viewBox: '0 0 24 24', path: NOTION_PATH, brandFill: 'currentColor' },
+  posthog: { viewBox: '0 0 24 24', path: POSTHOG_PATH, brandFill: '#F54E00' },
+  // Same mark the scripted demo already used for its pre-catalog Mixpanel logo.
+  mixpanel: { viewBox: '0 0 24 24', path: MIXPANEL_PATH, brandFill: '#7856FF' },
+  sentry: { viewBox: '0 0 24 24', path: SENTRY_PATH, brandFill: '#362D59' },
+  atlassian: { viewBox: '0 0 24 24', path: ATLASSIAN_PATH, brandFill: '#0C66E4' },
+  // Simple Icons ships Intercom's own hex (a pale #2E67F8-ish blue) too low-
+  // contrast on a light tile — the catalog's own `brand` (#1F8DED) reads better.
+  intercom: { viewBox: '0 0 24 24', path: INTERCOM_PATH, brandFill: '#1F8DED' },
+  clickup: { viewBox: '0 0 24 24', path: CLICKUP_PATH, brandFill: '#7B68EE' },
+  airtable: { viewBox: '0 0 24 24', path: AIRTABLE_PATH, brandFill: '#18BFFF' },
+  stripe: { viewBox: '0 0 24 24', path: STRIPE_PATH, brandFill: '#635BFF' },
+  canva: { viewBox: '0 0 24 24', path: CANVA_PATH, brandFill: '#00C4CC' },
+  neon: { viewBox: '0 0 24 24', path: NEON_PATH, brandFill: '#34D59A' },
+  cloudflare: { viewBox: '0 0 24 24', path: CLOUDFLARE_PATH, brandFill: '#F38020' },
+  zapier: { viewBox: '0 0 24 24', path: ZAPIER_PATH, brandFill: '#FF4F00' },
+  miro: { viewBox: '0 0 24 24', path: MIRO_PATH, brandFill: '#FFD02F' },
+  supabase: { viewBox: '0 0 24 24', path: SUPABASE_PATH, brandFill: '#3FCF8E' },
+  vercel: { viewBox: '0 0 24 24', path: VERCEL_PATH, brandFill: 'currentColor' },
+  webflow: { viewBox: '0 0 24 24', path: WEBFLOW_PATH, brandFill: '#146EF5' },
+  make: { viewBox: '0 0 24 24', path: MAKE_PATH, brandFill: '#6D00CC' },
+  // Honeycomb and monday.com have no Simple Icons entry either: letter tiles.
+  // Attio has no Simple Icons entry and its site ships only a wide wordmark
+  // (103x26, no standalone square icon) plus a raster .ico favicon — no
+  // clean vector mark to inline, so it falls back to the letter tile.
+};
+
 /** One brand mark. `openai` renders in the current text color (matches the demo's `--openai` ink token); everything else keeps its real brand fill. */
 export function BrandLogo({
   id,
@@ -64,4 +151,148 @@ export function BrandLogo({
 /** Agent → brand mark (Claude uses `l-claude`, Codex uses OpenAI's mark, per the demo's `AG` map). */
 export function agentLogoId(agent: 'claude' | 'codex'): LogoId {
   return agent === 'claude' ? 'claude' : 'openai';
+}
+
+/**
+ * A BYOA catalog connector's fallback mark, for the two catalog entries with
+ * no clean vector logo to inline (Amplitude, Granola — see
+ * `CONNECTOR_LOGO_META` above): its catalog `brand` color with its name's
+ * initial, matching the design sketch's original letter tiles.
+ */
+function ConnectorTile({
+  name,
+  brand,
+  size = 18,
+  className,
+}: {
+  name: string;
+  brand: string;
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn('inline-grid shrink-0 place-items-center rounded font-semibold text-white', className)}
+      style={{ width: size, height: size, background: brand, fontSize: Math.max(8, Math.round(size * 0.5)) }}
+      aria-hidden
+    >
+      {name.charAt(0).toUpperCase()}
+    </span>
+  );
+}
+
+/**
+ * "Via your Claude setup": a tiny agent-brand badge on a connector logo's
+ * bottom-right corner, in the same ring-bordered chip language as
+ * `identity.tsx`'s `OwnerBadge` on agent avatars — but naming which
+ * agent(s) already reach this connector from their own global setup rather
+ * than who owns it. Two agents overlap slightly, like `AgentAvatar`'s own
+ * owner badge; the catalog only ever has the two.
+ */
+function ViaBadge({ agents, hostSize }: { agents: readonly AgentKind[]; hostSize: number }) {
+  const size = Math.max(9, Math.round(hostSize * 0.58));
+  const overlap = Math.round(size * 0.4);
+  const shown = agents.slice(0, 2);
+  return (
+    <span
+      className="absolute -right-1 -bottom-1 flex"
+      aria-hidden
+      data-testid="connector-via-badge"
+    >
+      {shown.map((agent, i) => (
+        <span
+          key={agent}
+          className="bg-bg-2 ring-bg-1 grid shrink-0 place-items-center rounded-full ring-2"
+          style={{ width: size, height: size, marginLeft: i > 0 ? -overlap : 0 }}
+        >
+          <BrandLogo id={agentLogoId(agent)} size={Math.round(size * 0.62)} />
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * A connector's logo on its tile (the gallery's cards and detail header),
+ * with the "via your agent's setup" badge on the TILE's bottom-right corner,
+ * like the owner badge on an agent avatar — for a catalog logo and for a
+ * plain server's plug icon alike.
+ */
+export function LogoTile({
+  px,
+  via,
+  className,
+  children,
+}: {
+  /** The tile's side in px. */
+  px: number;
+  via?: readonly AgentKind[];
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={cn('bg-bg-2 relative grid shrink-0 place-items-center', px >= 44 ? 'rounded-card' : 'rounded-control', className)}
+      style={{ width: px, height: px }}
+    >
+      {children}
+      {via && via.length > 0 && <ViaBadge agents={via} hostSize={Math.round(px * 0.6)} />}
+    </span>
+  );
+}
+
+/**
+ * The one connector logo, drawn the same way everywhere a connector shows
+ * (space panel rows, the catalog, `ConnectorCard`, a turn's gap pill, a
+ * prettified step title): a real brand mark for the catalog ids in
+ * `CONNECTOR_LOGO_META`, else the letter tile above.
+ */
+export function ConnectorLogo({
+  id,
+  name,
+  brand,
+  size = 18,
+  via,
+  className,
+}: {
+  id: string;
+  name: string;
+  brand: string;
+  size?: number;
+  /** Agents that already reach this connector from their own global setup — drawn as a small badge on the logo's corner (see `ViaBadge`) wherever the logo shows in that "via your setup" state. Omit or leave empty when it doesn't apply (e.g. you're connected via rig). */
+  via?: readonly AgentKind[];
+  className?: string;
+}) {
+  const meta = CONNECTOR_LOGO_META[id as ConnectorId];
+  const mark = (markClassName?: string) =>
+    meta ? (
+      <svg
+        width={size}
+        height={size}
+        viewBox={meta.viewBox}
+        className={cn('shrink-0', meta.brandFill === 'currentColor' && 'text-text-primary', markClassName)}
+        aria-hidden
+      >
+        <path fill={meta.brandFill} d={meta.path} />
+      </svg>
+    ) : (
+      <ConnectorTile name={name} brand={brand} size={size} className={markClassName} />
+    );
+
+  if (!via || via.length === 0) return mark(className);
+
+  return (
+    <span className={cn('relative inline-block shrink-0', className)} style={{ width: size, height: size }}>
+      {mark()}
+      <ViaBadge agents={via} hostSize={size} />
+    </span>
+  );
+}
+
+/** A `RoomConnector`'s mark: `ConnectorLogo` for a BYOA catalog connector, else its `logo` brand mark (the scripted demo's pre-catalog connectors). */
+export function ConnectorMark({ connector, size = 16, className }: { connector: RoomConnector; size?: number; className?: string }) {
+  const def = connectorById(connector.id);
+  if (def) return <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={size} className={className} />;
+  if (connector.logo) return <BrandLogo id={connector.logo} size={size} className={className} />;
+  return null;
 }

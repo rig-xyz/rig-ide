@@ -311,6 +311,18 @@ export interface DependencyDescriptor {
   /** Per-platform install options from plugin metadata. */
   installCommands?: Partial<Record<Platform, InstallOption[]>>;
   /**
+   * Well-known absolute install locations to probe in addition to PATH (`which -a`),
+   * e.g. a binary bundled inside another app's install directory. A leading `~`
+   * expands to the current user's home directory.
+   */
+  extraLocations?: Partial<Record<Platform, string[]>>;
+  /**
+   * When true, auto-resolution (no user pin/override) picks the highest-versioned
+   * runnable installation among all discovered candidates instead of the first PATH
+   * hit. See `HostDependencyManager.resolveFirstPath`.
+   */
+  preferNewest?: boolean;
+  /**
    * Optional imperative hooks from the provider implementation.
    * Absent for core dependencies.
    */

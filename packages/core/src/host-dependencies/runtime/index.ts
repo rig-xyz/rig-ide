@@ -43,7 +43,10 @@ export {
 export {
   resolveAllCommandPaths,
   resolveCommandPath,
+  resolveExtraLocationPath,
+  resolveExtraLocationPaths,
   resolveRealpath,
   runVersionProbe,
 } from './probe';
+export { compareVersionStrings } from './version-order';
 export { agentResolveStatus, buildDescriptorFromProvider } from '../descriptor-from-provider';

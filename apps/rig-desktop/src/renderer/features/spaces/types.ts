@@ -9,6 +9,8 @@
  * describes the SHAPE of that room — no rendering, no transport.
  */
 
+import type { ConnectionState, ConnectorGap } from '@shared/spaces/connectors';
+
 export type PersonId = string;
 export type AgentKind = 'claude' | 'codex';
 
@@ -41,8 +43,13 @@ export type LogoId = 'claude' | 'openai' | 'metabase' | 'mixpanel' | 'gads' | 'r
 export interface RoomConnector {
   id: string;
   name: string;
-  logo: LogoId;
+  /** Brand mark for connectors predating the BYOA catalog (Metabase, Mixpanel in the scripted demo). Catalog connectors (see connectors-spec.md) render a brand-colored tile from `@shared/spaces/connectors` instead — see `ConnectorMark`. */
+  logo?: LogoId;
   addedBy: PersonId;
+  /** Your own connection to this connector on this machine (connectors-spec.md's "connection"), from the local connectors RPC. Undefined for the scripted demo's pre-BYOA connectors, which have no such concept. */
+  mine?: ConnectionState;
+  /** Who you're signed in as there, when the connector's server says (`ConnectionStatus.account`). Local to you; undefined when unknown. */
+  account?: string;
 }
 
 export interface RoomSkill {
@@ -128,6 +135,8 @@ export interface SessionCard {
     decided: SessionPermissionDecided[];
   };
   lastSeq: number;
+  /** Connectors this run's agent couldn't reach (missing/expired), from a `run_connectors` event — connectors-spec.md's Nudge. Empty when the run recorded none. */
+  connectorGaps: ConnectorGap[];
 }
 
 /**
@@ -180,7 +189,7 @@ export type MessageMeta =
       /** A reply in the comment thread rather than the thread's first comment. */
       isReply?: boolean;
     }
-  | { kind: 'system'; event: string };
+  | { kind: 'system'; event: string; /** Set on `connectors_added`/`connectors_removed` — see connectors-spec.md. */ connectorIds?: string[] };
 
 /** What a quote-reply points at. The author is a member id; for an agent's answer, its owner. */
 export interface RoomReplyRef {
@@ -238,6 +247,8 @@ export type RoomEvent =
   | { type: 'member_joined'; id: PersonId }
   | { type: 'invite_status_changed'; inviteId: string; status: RoomInvite['status'] }
   | { type: 'connector_added'; connector: RoomConnector }
+  /** The space's full connector list, refetched from the relay (+ local connection state) — see `RelayRoomSource.refreshConnectors`. */
+  | { type: 'connectors_synced'; connectors: RoomConnector[] }
   | { type: 'skill_added'; skill: RoomSkill }
   | { type: 'agent_busy_changed'; agent: AgentKind; owner: PersonId; busy: boolean }
   | { type: 'session_started'; runId: string; meta: SessionRunMeta }

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Share2, X } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { Check, Copy, Share2, UserPlus, X } from 'lucide-react';
+import { type ReactNode, useRef, useState } from 'react';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { isOfflineError } from '@renderer/features/docs/comments/comments-cache';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
@@ -10,9 +10,14 @@ import { Button } from '@renderer/lib/ui/button';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { Popover } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/lib/utils';
-import type { RigInviteMinted, RigInviteRole, RigMember } from '@shared/rig/rig-share';
+import type { RigInviteMinted, RigInviteRole, RigMember, RigMemberList } from '@shared/rig/rig-share';
 import { deriveAvatarStack } from './avatar-stack';
-import { mintedInviteMatchesRole, shapePendingInvites, suggestCollaborators } from './invite-state';
+import {
+  excludeInvitesToMembers,
+  mintedInviteMatchesRole,
+  shapePendingInvites,
+  suggestCollaborators,
+} from './invite-state';
 import { deriveSharePopoverPhase } from './share-sync-state';
 
 /**
@@ -108,8 +113,25 @@ export function RigShareButton({ root, name }: { root: string; name: string | nu
   );
 }
 
-/** Exported for the pinned card's People row — same surface, second anchor. */
-export function RigSharePopoverContent({ root, name }: { root: string; name: string | null }) {
+/**
+ * Exported for the pinned card's People row — same surface, second anchor.
+ *
+ * `variant`: `'full'` (default, the top-bar popover's own shape) renders the
+ * "People on <name>" header, the member list, and — for an owner — the
+ * always-visible invite form plus pending invites. `'compact'` (the space
+ * panel's People row) shows only the member list; invite management collapses
+ * into a single "Invite people" pill that expands the same invite form in
+ * place, so the row doesn't default to showing a full form nobody asked for.
+ */
+export function RigSharePopoverContent({
+  root,
+  name,
+  variant = 'full',
+}: {
+  root: string;
+  name: string | null;
+  variant?: 'full' | 'compact';
+}) {
   const queryClient = useQueryClient();
   const [enablingSync, setEnablingSync] = useState(false);
   const [enableSyncError, setEnableSyncError] = useState<string | null>(null);
@@ -199,12 +221,14 @@ export function RigSharePopoverContent({ root, name }: { root: string; name: str
   // UI on a broken client-side guess is the worse failure.
   const showInvites = memberList.selfRole === 'owner' || memberList.selfRole === null;
 
+  if (variant === 'compact') {
+    return <CompactSharePanel root={root} memberList={memberList} showInvites={showInvites} />;
+  }
+
   return (
     <div className="flex flex-col gap-3 p-3">
-      <div className="flex flex-col gap-1">
-        <p className="text-text-muted px-0.5 font-mono text-xs tracking-wide uppercase">
-          {name ? `People on ${name}` : 'People'}
-        </p>
+      <div className="flex flex-col gap-1.5">
+        <p className="text-text-muted px-1 text-xs">{name ? `People on ${name}` : 'People'}</p>
         {memberList.members.map((member) => (
           <MemberRow key={member.userId} member={member} />
         ))}
@@ -217,10 +241,84 @@ export function RigSharePopoverContent({ root, name }: { root: string; name: str
   );
 }
 
+/**
+ * One member, the panel's own row grammar (same standard as Agents/
+ * Connectors/Skills): h-7, a 16px avatar aligned under the People header's
+ * label, plain text-xs name, right-aligned text-2xs muted role — not the
+ * looser `MemberRow` the top-bar popover uses, whose bigger avatar and
+ * `py-1.5` spacing is what read as "too far apart" in the panel.
+ */
+function CompactMemberRow({ member }: { member: RigMember }) {
+  const display = member.name ?? member.email ?? member.userId;
+  return (
+    <div className="flex h-7 items-center gap-2 pr-2 pl-8">
+      <IdentityAvatar
+        name={member.name ?? member.email}
+        avatarUrl={member.avatarUrl}
+        sizeClassName="size-4"
+        textClassName="text-2xs"
+      />
+      <span className="text-text-primary min-w-0 flex-1 truncate text-xs">{display}</span>
+      <span className="text-text-muted shrink-0 text-2xs">{member.role}</span>
+    </div>
+  );
+}
+
+/**
+ * `variant: 'compact'`'s own shape: just the people, plus one pill that
+ * expands the full invite form in place — no separate "People" header (the
+ * space panel's own row already says who this is), no invite form shown by
+ * default, no navigation to a different surface for either.
+ */
+function CompactSharePanel({
+  root,
+  memberList,
+  showInvites,
+}: {
+  root: string;
+  memberList: RigMemberList;
+  showInvites: boolean;
+}) {
+  const [inviting, setInviting] = useState(false);
+  return (
+    <div className="flex flex-col">
+      <div className="flex flex-col">
+        {memberList.members.map((member) => (
+          <CompactMemberRow key={member.userId} member={member} />
+        ))}
+      </div>
+      {showInvites &&
+        (inviting ? (
+          <div className="px-2 pt-1">
+            <InviteSection root={root} currentMembers={memberList.members} />
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setInviting(true)}
+            className="bg-bg-2 text-text-secondary hover:text-text-primary rounded-chip mx-2 mt-1 flex w-fit shrink-0 items-center gap-1.5 px-2.5 py-1 text-xs transition-colors"
+          >
+            <UserPlus className="size-3" strokeWidth={1.5} />
+            Invite people
+          </button>
+        ))}
+    </div>
+  );
+}
+
+/** Quieter than a member's name — regular UI font, muted, on a subtle fill; used for both a member's role and a pending invite's granted role. */
+function RolePill({ children }: { children: ReactNode }) {
+  return (
+    <span className="bg-bg-2 text-text-muted rounded-chip shrink-0 px-1.5 py-0.5 text-2xs">
+      {children}
+    </span>
+  );
+}
+
 function MemberRow({ member }: { member: RigMember }) {
   const display = member.name ?? member.email ?? member.userId;
   return (
-    <div className="flex items-center gap-2 px-0.5 py-1">
+    <div className="flex items-center gap-2 px-1 py-1.5">
       <IdentityAvatar
         name={member.name ?? member.email}
         avatarUrl={member.avatarUrl}
@@ -228,9 +326,7 @@ function MemberRow({ member }: { member: RigMember }) {
         textClassName="text-2xs"
       />
       <span className="text-text-primary min-w-0 flex-1 truncate text-xs">{display}</span>
-      <span className="bg-bg-2 text-text-secondary rounded-chip shrink-0 px-1.5 py-0.5 font-mono text-xs">
-        {member.role}
-      </span>
+      <RolePill>{member.role}</RolePill>
     </div>
   );
 }
@@ -301,8 +397,14 @@ function InviteSection({ root, currentMembers }: { root: string; currentMembers:
     void queryClient.invalidateQueries({ queryKey: invitesKey });
   };
 
+  // `excludeInvitesToMembers` drops invites addressed to someone who's
+  // already a member (their invite went unused because they joined some
+  // other way) — see its own doc comment.
   const pending = invitesQuery.data?.success
-    ? shapePendingInvites(invitesQuery.data.data.invites, Date.now())
+    ? excludeInvitesToMembers(
+        shapePendingInvites(invitesQuery.data.data.invites, Date.now()),
+        currentMembers
+      )
     : [];
   // The relay's own verdict on whether this caller may manage invites —
   // rendered as-is (a non-owner on the honest-degradation path sees the
@@ -317,14 +419,12 @@ function InviteSection({ root, currentMembers }: { root: string; currentMembers:
   const displayedMinted = minted && mintedInviteMatchesRole(minted.invite.role, role) ? minted : null;
 
   return (
-    <div className="border-border-hairline flex flex-col gap-2 border-t pt-2">
-      <p className="text-text-muted px-0.5 font-mono text-xs tracking-wide uppercase">
-        Invite someone
-      </p>
+    <div className="border-border-hairline flex flex-col gap-2.5 border-t pt-3">
+      <p className="text-text-muted px-1 text-xs">Invite someone</p>
       {/* One helper line, honest about both modes: with an email the invite
           is emailed AND locked to that account; without one it's an open
           link anyone can use. */}
-      <p className="text-text-muted px-0.5 text-xs">
+      <p className="text-text-muted px-1 text-xs">
         Invite by email, and they get a link only their account can use. Leave it empty for an open
         link.
       </p>
@@ -350,7 +450,7 @@ function InviteSection({ root, currentMembers }: { root: string; currentMembers:
             }
           }}
           placeholder="email (optional)"
-          className="border-border-hairline bg-bg-1 text-text-primary placeholder:text-text-muted rounded-control border px-2 py-1 text-xs outline-none"
+          className="border-border-hairline bg-bg-1 text-text-primary placeholder:text-text-muted rounded-control border px-2.5 py-1.5 text-xs outline-none"
         />
         {emailFocused && suggestions.length > 0 && (
           <div className="border-border-hairline bg-bg-1 rounded-control shadow-soft flex flex-col gap-0.5 border p-1">
@@ -399,7 +499,7 @@ function InviteSection({ root, currentMembers }: { root: string; currentMembers:
             type="button"
             onClick={() => setRole(option)}
             className={cn(
-              'rounded-control px-2 py-1 text-xs transition-colors',
+              'rounded-control px-2.5 py-1.5 text-xs transition-colors',
               role === option
                 ? 'bg-bg-2 text-text-primary'
                 : 'text-text-secondary hover:text-text-primary'
@@ -425,29 +525,26 @@ function InviteSection({ root, currentMembers }: { root: string; currentMembers:
 
       {pending.length > 0 && (
         <div className="flex flex-col gap-1 pt-1">
-          <p className="text-text-muted px-0.5 font-mono text-xs tracking-wide uppercase">
-            Pending invites
-          </p>
+          <p className="text-text-muted px-1 text-xs">Pending invites</p>
           {pending.map((invite) => (
-            <div key={invite.id} className="flex items-center gap-2 px-0.5 py-1">
+            <div key={invite.id} className="flex items-center gap-2 px-1 py-1.5">
               <span className="text-text-secondary min-w-0 flex-1 truncate text-xs">
                 {invite.email ?? 'Anyone with the link'}
               </span>
-              <span className="bg-bg-2 text-text-secondary rounded-chip shrink-0 px-1.5 py-0.5 font-mono text-xs">
-                {invite.roleLabel}
-              </span>
-              <span className="text-text-muted shrink-0 font-mono text-xs">
+              <RolePill>{invite.roleLabel}</RolePill>
+              <span className="text-text-muted shrink-0 text-2xs">
                 {relativeTime(Date.parse(invite.createdAt), Date.now())}
               </span>
               <Button
                 variant="ghost"
-                size="xs"
+                size="icon-sm"
                 onClick={() => void revoke(invite.id)}
                 disabled={revokingId === invite.id}
+                aria-label={revokingId === invite.id ? 'Revoking…' : 'Revoke'}
+                title={revokingId === invite.id ? 'Revoking…' : 'Revoke'}
                 className="shrink-0"
               >
                 <X className="size-3" />
-                {revokingId === invite.id ? 'Revoking…' : 'Revoke'}
               </Button>
             </div>
           ))}

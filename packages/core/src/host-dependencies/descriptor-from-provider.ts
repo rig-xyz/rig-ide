@@ -64,6 +64,8 @@ export function buildDescriptorFromProvider(
       : agentResolveStatus,
     updates: hostDep.updates,
     installCommands: hostDep.installCommands,
+    extraLocations: hostDep.extraLocations,
+    preferNewest: hostDep.preferNewest,
     uninstall: hostDep.uninstall,
     commandHooks,
   };

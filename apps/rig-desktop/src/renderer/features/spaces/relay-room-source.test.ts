@@ -578,6 +578,172 @@ describe('RelayRoomSource', () => {
   });
 });
 
+describe('RelayRoomSource — connectors (connectors-spec.md)', () => {
+  it("bootstraps the space's connectors from the relay, enriched with this device's own connection state", async () => {
+    const fake = makeFakeRelay({
+      listConnectors: async () => ok([{ connectorId: 'linear', addedBy: 'u1', addedAt: '2026-09-24T00:00:00Z' }]),
+    });
+    const connections = { list: vi.fn().mockResolvedValue([{ id: 'linear', state: 'connected' }]) };
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      connections,
+      createProvider: () => new FakeProvider(),
+    });
+    source.play();
+    await flush();
+    expect(source.getSnapshot().connectors).toEqual([{ id: 'linear', name: 'Linear', addedBy: 'u1', mine: 'connected' }]);
+  });
+
+  it('refetches the connector list when a connectors_added system message arrives', async () => {
+    let listCalls = 0;
+    const fake = makeFakeRelay({
+      listConnectors: async () => {
+        listCalls += 1;
+        return ok(listCalls === 1 ? [] : [{ connectorId: 'notion', addedBy: 'u1', addedAt: '' }]);
+      },
+    });
+    fake.queueMessages([
+      message({
+        id: 'm2',
+        seq: 2,
+        kind: 'system',
+        body: 'Dylan added Notion',
+        meta: { event: 'connectors_added', connectorIds: ['notion'] },
+      }),
+    ]);
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: () => new FakeProvider(),
+    });
+    source.play();
+    await flush();
+    // Bootstrap's own refresh (empty) plus one more triggered by the
+    // system message — the final snapshot reflects that second fetch.
+    expect(listCalls).toBe(2);
+    expect(source.getSnapshot().connectors.map((c) => c.id)).toEqual(['notion']);
+  });
+
+  it('adds and removes a connector through the relay, re-syncing the list afterward', async () => {
+    const added: string[] = [];
+    const removed: string[] = [];
+    let listCalls = 0;
+    const fake = makeFakeRelay({
+      listConnectors: async () => {
+        listCalls += 1;
+        return ok(listCalls === 1 ? [] : [{ connectorId: 'linear', addedBy: 'u1', addedAt: '' }]);
+      },
+      addConnector: async (_bindingId, connectorId) => {
+        added.push(connectorId);
+        return ok({ connectorId, addedBy: 'u1', addedAt: '' });
+      },
+      removeConnector: async (_bindingId, connectorId) => {
+        removed.push(connectorId);
+        return ok(undefined);
+      },
+    });
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: () => new FakeProvider(),
+    });
+    source.play();
+    await flush();
+
+    expect(await source.addConnector('linear')).toEqual({ ok: true });
+    expect(added).toEqual(['linear']);
+    expect(source.getSnapshot().connectors.map((c) => c.id)).toEqual(['linear']);
+
+    expect(await source.removeConnector('linear')).toEqual({ ok: true });
+    expect(removed).toEqual(['linear']);
+  });
+
+  it("surfaces a write it can't make (403 from the relay) instead of throwing", async () => {
+    const fake = makeFakeRelay({
+      addConnector: async () => err<RelayApiError>({ kind: 'relay', message: 'Forbidden' }),
+      removeConnector: async () => err<RelayApiError>({ kind: 'relay', message: 'Forbidden' }),
+    });
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: () => new FakeProvider(),
+    });
+    source.play();
+    await flush();
+    expect(await source.addConnector('linear')).toEqual({ ok: false, message: 'Forbidden' });
+    expect(await source.removeConnector('linear')).toEqual({ ok: false, message: 'Forbidden' });
+  });
+
+  it("refreshConnections re-merges just this device's own state, without hitting the relay's connector list again", async () => {
+    let listCalls = 0;
+    const fake = makeFakeRelay({
+      listConnectors: async () => {
+        listCalls += 1;
+        return ok([{ connectorId: 'linear', addedBy: 'u1', addedAt: '' }]);
+      },
+    });
+    let state: 'connected' | 'not_connected' | 'expired' = 'not_connected';
+    const connections = { list: vi.fn(async () => [{ id: 'linear' as const, state }]) };
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      connections,
+      createProvider: () => new FakeProvider(),
+    });
+    source.play();
+    await flush();
+    expect(source.getSnapshot().connectors[0]!.mine).toBe('not_connected');
+    expect(listCalls).toBe(1);
+
+    state = 'connected';
+    await source.refreshConnections();
+    expect(source.getSnapshot().connectors[0]!.mine).toBe('connected');
+    expect(listCalls).toBe(1); // refreshConnections never re-hits listConnectors, only the local connections client
+  });
+
+  it("carries the connection's own account (who you're signed in as) into RoomConnector, on bootstrap and on refresh", async () => {
+    const fake = makeFakeRelay({
+      listConnectors: async () => ok([{ connectorId: 'linear', addedBy: 'u1', addedAt: '' }]),
+    });
+    let account: string | undefined;
+    const connections = { list: vi.fn(async () => [{ id: 'linear' as const, state: 'connected' as const, account }]) };
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      connections,
+      createProvider: () => new FakeProvider(),
+    });
+    source.play();
+    await flush();
+    // Optional, per connectors.ts — not every connector reports it (yet).
+    expect(source.getSnapshot().connectors[0]!.account).toBeUndefined();
+
+    // Once the connector starts reporting an account, a refresh picks it up.
+    account = 'dtsbourg@gmail.com';
+    await source.refreshConnections();
+    expect(source.getSnapshot().connectors[0]!.account).toBe('dtsbourg@gmail.com');
+  });
+});
+
 /**
  * Drains the chained bootstrap/catch-up awaits — a macro-task tick is more
  * reliable here than counting `Promise.resolve()`s given how many awaits

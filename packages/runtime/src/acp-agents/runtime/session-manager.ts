@@ -111,6 +111,11 @@ export class SessionManager implements InboundRouter {
   readonly sessionsHost: AcpSessionsLiveHost = createAcpSessionsLiveHost();
   readonly sessionsList: SessionsListModel = createSessionsListModel(this.sessionsHost);
   private readonly cells = new Map<string, SessionRecord>();
+  /**
+   * Closes still in flight, by ACP session id. Some agents (Codex) refuse to
+   * load a session that is still closing, so a reload waits for its close.
+   */
+  private readonly closing = new Map<string, Promise<void>>();
   private readonly routes = new Map<string, Map<string, string>>();
   private readonly loadingConversations = new Map<string, Set<string>>();
   private readonly rawObservers = new Map<string, Set<RawSessionEventObserver>>();
@@ -166,6 +171,7 @@ export class SessionManager implements InboundRouter {
 
     try {
       if (input.sessionId && connection.supportsLoadSession && connection.agent.loadSession) {
+        await this.closing.get(input.sessionId);
         record = this.createRecord(input, connection, acquired, input.sessionId);
         this.addLoading(connection.key, input.conversationId);
         this.registerRoute(connection.key, input.sessionId, input.conversationId);
@@ -174,7 +180,7 @@ export class SessionManager implements InboundRouter {
         let loaded = false;
         try {
           const response = await connection.agent.loadSession(
-            this.buildLoadSessionRequest(input.cwd, input.sessionId)
+            this.buildLoadSessionRequest(input, input.sessionId)
           );
           record.cell.applySessionLoaded({
             modes: response.modes,
@@ -212,7 +218,7 @@ export class SessionManager implements InboundRouter {
       if (!record) {
         let response;
         try {
-          response = await connection.agent.newSession(this.buildNewSessionRequest(input.cwd));
+          response = await connection.agent.newSession(this.buildNewSessionRequest(input));
         } catch (e) {
           if (isAuthRequiredError(e)) throw e;
           this.removeRecord(input.conversationId, false);
@@ -314,7 +320,12 @@ export class SessionManager implements InboundRouter {
   stop(conversationId: string): Result<void, AcpStopSessionError> {
     const record = this.cells.get(conversationId);
     if (!record) return ok();
-    record.cell.closeSession().catch(() => {});
+    const sessionId = record.cell.acpSessionId;
+    const closed = record.cell.closeSession().catch(() => {});
+    this.closing.set(sessionId, closed);
+    void closed.then(() => {
+      if (this.closing.get(sessionId) === closed) this.closing.delete(sessionId);
+    });
     this.removeRecord(conversationId, true);
     return ok();
   }
@@ -769,12 +780,12 @@ export class SessionManager implements InboundRouter {
     }
   }
 
-  private buildNewSessionRequest(cwd: string): NewSessionRequest {
-    return { cwd, mcpServers: [] };
+  private buildNewSessionRequest(input: AcpStartInput): NewSessionRequest {
+    return { cwd: input.cwd, mcpServers: input.mcpServers ?? [] };
   }
 
-  private buildLoadSessionRequest(cwd: string, sessionId: string): LoadSessionRequest {
-    return { cwd, sessionId, mcpServers: [] };
+  private buildLoadSessionRequest(input: AcpStartInput, sessionId: string): LoadSessionRequest {
+    return { cwd: input.cwd, sessionId, mcpServers: input.mcpServers ?? [] };
   }
 }
 

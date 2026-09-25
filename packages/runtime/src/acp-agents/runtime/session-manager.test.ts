@@ -205,6 +205,42 @@ describe('AcpRuntime session manager', () => {
     expect(JSON.stringify(history.data.turns[0].items[0])).not.toContain('Context body');
   });
 
+  it("hands the session's own MCP servers to the agent on new and load, and none by default", async () => {
+    const server = { type: 'http' as const, name: 'linear', url: 'https://mcp.linear.app/mcp', headers: [{ name: 'Authorization', value: 'Bearer t' }] };
+    const h = makeAcpHarness();
+    const rt = new AcpRuntime(h.deps);
+    await rt.startSession(makeStartInput({ conversationId: 'conv-plain' }));
+    expect(h.agent.newSession).toHaveBeenLastCalledWith(expect.objectContaining({ mcpServers: [] }));
+
+    await rt.startSession({ ...makeStartInput({ conversationId: 'conv-mcp' }), mcpServers: [server] });
+    expect(h.agent.newSession).toHaveBeenLastCalledWith(expect.objectContaining({ mcpServers: [server] }));
+
+    h.agent.loadSession = vi.fn(async () => ({}));
+    await rt.resumeSession({ ...makeStartInput({ conversationId: 'conv-load' }), sessionId: 'session-old', mcpServers: [server] });
+    expect(h.agent.loadSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-old', mcpServers: [server] }));
+  });
+
+  it('waits for a closing session to finish closing before loading it again', async () => {
+    const h = makeAcpHarness();
+    const rt = new AcpRuntime(h.deps);
+    const order: string[] = [];
+    let finishClose!: () => void;
+    h.agent.closeSession = vi.fn(() => new Promise<Record<string, never>>((resolve) => (finishClose = () => { order.push('closed'); resolve({}); })));
+    h.agent.loadSession = vi.fn(async () => {
+      order.push('load');
+      return {};
+    });
+    await rt.startSession(makeStartInput({ conversationId: 'conv-reload' }));
+    rt.stopSession('conv-reload');
+
+    const resumed = rt.resumeSession({ ...makeStartInput({ conversationId: 'conv-reload' }), sessionId: 'session-1' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(order).toEqual([]);
+    finishClose();
+    expect(isOk(await resumed)).toBe(true);
+    expect(order).toEqual(['closed', 'load']);
+  });
+
   it('returns a resume result with replayed history', async () => {
     const h = makeAcpHarness();
     const rt = new AcpRuntime(h.deps);

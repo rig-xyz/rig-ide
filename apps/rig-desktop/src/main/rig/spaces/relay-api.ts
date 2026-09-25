@@ -107,6 +107,15 @@ export type RoomMessageRow = {
   quote?: string | null;
 };
 
+/** One connector a space uses, as the relay lists it. */
+export type SpaceConnectorRow = { connectorId: string; addedBy: string; addedAt: string };
+
+function shapeConnector(raw: unknown): SpaceConnectorRow | null {
+  const r = asRecord(raw);
+  if (!r || typeof r.connectorId !== 'string') return null;
+  return { connectorId: r.connectorId, addedBy: String(r.addedBy ?? ''), addedAt: String(r.addedAt ?? '') };
+}
+
 export interface SpacesRelayApi {
   /** Who this device is acting as — needed to tell "my" agent requests apart, and to label outgoing messages. */
   whoami(): Promise<Result<{ id: string }, RelayApiError>>;
@@ -182,6 +191,11 @@ export interface SpacesRelayApi {
   listMembers(bindingId: string): Promise<Result<RoomMemberRow[], RelayApiError>>;
   /** A space's pending invites (any member of a space may read them). */
   listInvites?(bindingId: string): Promise<Result<RoomInviteRow[], RelayApiError>>;
+  /** The connectors a space uses (ids only, no secrets: each member's own login stays on their machine). */
+  listConnectors?(bindingId: string): Promise<Result<SpaceConnectorRow[], RelayApiError>>;
+  /** Adds one (owner/editor of a space; 403 otherwise). Already there: returns it, no second Room message. */
+  addConnector?(bindingId: string, connectorId: string): Promise<Result<SpaceConnectorRow, RelayApiError>>;
+  removeConnector?(bindingId: string, connectorId: string): Promise<Result<void, RelayApiError>>;
   listMessages(
     bindingId: string,
     query: { latest?: number; after?: string }
@@ -230,7 +244,7 @@ async function relayError(response: Response, action: string): Promise<RelayApiE
 
 async function request(
   ctx: Resolved,
-  method: 'GET' | 'POST' | 'PATCH',
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
   action: string,
   body?: unknown
@@ -252,6 +266,7 @@ async function request(
     return err(transportError(action, error));
   }
   if (!response.ok) return err(await relayError(response, action));
+  if (response.status === 204) return ok(null);
   try {
     return ok(await response.json());
   } catch (error) {
@@ -578,6 +593,38 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
             .filter((m): m is RoomMemberRow => m !== null)
         : [];
       return ok(members);
+    },
+
+    async listConnectors(bindingId) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(ctxResult.data, 'GET', `/v1/me/bindings/${bindingId}/connectors`, 'load space connectors');
+      if (!result.success) return err(result.error);
+      const raw = asRecord(result.data)?.connectors;
+      return ok(Array.isArray(raw) ? raw.map(shapeConnector).filter((c): c is SpaceConnectorRow => c !== null) : []);
+    },
+
+    async addConnector(bindingId, connectorId) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(ctxResult.data, 'POST', `/v1/me/bindings/${bindingId}/connectors`, 'add the connector', {
+        connectorId,
+      });
+      if (!result.success) return err(result.error);
+      const connector = shapeConnector(asRecord(result.data)?.connector);
+      return connector ? ok(connector) : err<RelayApiError>({ kind: 'relay', message: 'Could not add the connector.' });
+    },
+
+    async removeConnector(bindingId, connectorId) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(
+        ctxResult.data,
+        'DELETE',
+        `/v1/me/bindings/${bindingId}/connectors/${encodeURIComponent(connectorId)}`,
+        'remove the connector'
+      );
+      return result.success ? ok(undefined) : err(result.error);
     },
 
     async listMessages(bindingId, query) {

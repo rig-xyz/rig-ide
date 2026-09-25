@@ -131,4 +131,29 @@ describe('npmDependency', () => {
     expect(dep.installCommands.linux!).toHaveLength(1);
     expect(dep.installCommands.windows!).toHaveLength(1);
   });
+
+  it('carries extraLocations per platform when provided', () => {
+    const dep = npmDependency({
+      ...base,
+      extraLocations: { macos: ['/Applications/SomeApp.app/Contents/Resources/mytool'] },
+    });
+    expect(dep.extraLocations).toEqual({
+      macos: ['/Applications/SomeApp.app/Contents/Resources/mytool'],
+    });
+  });
+
+  it('omits extraLocations when not provided', () => {
+    const dep = npmDependency(base);
+    expect('extraLocations' in dep).toBe(false);
+  });
+
+  it('carries preferNewest when true', () => {
+    const dep = npmDependency({ ...base, preferNewest: true });
+    expect(dep.preferNewest).toBe(true);
+  });
+
+  it('omits preferNewest when not provided or false', () => {
+    expect('preferNewest' in npmDependency(base)).toBe(false);
+    expect('preferNewest' in npmDependency({ ...base, preferNewest: false })).toBe(false);
+  });
 });

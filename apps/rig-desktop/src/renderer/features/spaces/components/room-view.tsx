@@ -2,6 +2,8 @@ import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucid
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
+import type { ConnectorId, GlobalServer } from '@shared/spaces/connectors';
+import { connectorsApi } from '../connectors-api';
 import { buildRoomFeed } from '../fixtures/room-feed';
 import { RelayRoomSource, type RelayRoomClient } from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
@@ -11,6 +13,8 @@ import { Composer, type ComposerSendContext } from './composer';
 import { RoomTranscript } from './room-transcript';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
 import { AgentSettingsContext, type AgentSettingsApi } from './agent-settings';
+import { ConnectorGallery } from './connector-gallery';
+import { ConnectorsSection } from './connectors-panel';
 import { SpaceCard } from './space-card';
 
 /**
@@ -30,6 +34,9 @@ function createRelayRoomClient(): RelayRoomClient {
     getSessionEvents: (bindingId, runId, after) => client.getSessionEvents({ bindingId, runId, after }),
     postMessage: (bindingId, input) => client.postMessage({ bindingId, ...input }),
     requestOwnAgent: (bindingId, input) => client.requestOwnAgent({ bindingId, ...input }),
+    listConnectors: (bindingId) => client.listConnectors({ bindingId }),
+    addConnector: (bindingId, connectorId) => client.addConnector({ bindingId, connectorId }),
+    removeConnector: (bindingId, connectorId) => client.removeConnector({ bindingId, connectorId }),
   };
 }
 
@@ -156,7 +163,7 @@ export function RoomView({
   renderPanel?: (
     extraRows: ReactNode,
     onlineUserIds: ReadonlySet<string>,
-    options: { startCollapsed: boolean; chipSummary: ReactNode }
+    options: { startCollapsed: boolean; chipSummary: (ctx: { unseenCount: number }) => ReactNode }
   ) => ReactNode;
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
@@ -166,6 +173,12 @@ export function RoomView({
   const [snapshot, setSnapshot] = useState(() => source?.getSnapshot() ?? null);
   const [playing, setPlaying] = useState(false);
   const [replyTo, setReplyTo] = useState<RoomReplyRef | null>(null);
+  const [gallery, setGallery] = useState<{
+    open: boolean;
+    focus: ConnectorId | null;
+    initialScope: 'all' | 'installed' | 'available';
+    initialSection: 'global-setup' | null;
+  }>({ open: false, focus: null, initialScope: 'all', initialSection: null });
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [bodyWidth, setBodyWidth] = useState(0);
@@ -187,6 +200,20 @@ export function RoomView({
   // The scripted-demo switch is a dev tool for the Room preview on plain
   // rigs; a real space (#name) never shows it.
   const showDemoToggle = !spaceName.startsWith('#');
+
+  // Your agents' own global MCP setup (connectors-spec.md's Surface) — this
+  // device only, never part of the relay snapshot. Loaded once per Room;
+  // main caches it (~5s the first time for Claude, instant after), so a
+  // refresh on panel expand / gallery open is cheap.
+  const [globalSetup, setGlobalSetup] = useState<GlobalServer[]>([]);
+  const refreshGlobalSetup = () => {
+    void connectorsApi.globalSetup(bindingId).then(setGlobalSetup).catch(() => {});
+  };
+  useEffect(() => {
+    if (!live) return;
+    refreshGlobalSetup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, bindingId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -213,6 +240,7 @@ export function RoomView({
         wsUrl: result.data.wsUrl,
         selfUserId: result.data.selfUserId,
         relay: createRelayRoomClient(),
+        connections: connectorsApi,
       });
       setSelfUserId(result.data.selfUserId);
       setSource(relaySource);
@@ -349,6 +377,17 @@ export function RoomView({
           void rpc.rig.spacesDispatch.resolvePermission({ runId, requestId, optionId });
         }
       : undefined;
+  // Shared by the transcript's connector pills (a `connectors_added` card,
+  // an agent turn's footer gap) — the fuller add/consent/catalog flow lives
+  // in the space panel's `ConnectorsSection` instead.
+  const handleConnectorConnect =
+    source instanceof RelayRoomSource
+      ? async (id: string) => {
+          const result = await connectorsApi.connect(id as ConnectorId);
+          await source.refreshConnections();
+          return result;
+        }
+      : undefined;
 
   if (connectError) {
     return (
@@ -427,6 +466,8 @@ export function RoomView({
                   }
                 : undefined
             }
+            onConnectorConnect={handleConnectorConnect}
+            globalSetup={globalSetup}
           />
           )}
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
@@ -463,12 +504,48 @@ export function RoomView({
         </div>
         {source instanceof RelayRoomSource ? (
           (renderPanel?.(
-            <AgentRows snapshot={snapshot} selfUserId={selfUserId} />,
+            <>
+              <AgentRows snapshot={snapshot} selfUserId={selfUserId} bindingId={bindingId} />
+              <ConnectorsSection
+                snapshot={snapshot}
+                selfUserId={selfUserId}
+                bindingId={bindingId}
+                onOpenGallery={(focus) => {
+                  setGallery({ open: true, focus: focus ?? null, initialScope: 'all', initialSection: null });
+                  refreshGlobalSetup();
+                }}
+                onOpenGlobalSetup={() => {
+                  setGallery({ open: true, focus: null, initialScope: 'installed', initialSection: 'global-setup' });
+                  refreshGlobalSetup();
+                }}
+                globalSetup={globalSetup}
+                onExpand={refreshGlobalSetup}
+              />
+            </>,
             new Set(snapshot.members.filter((m) => m.online !== false).map((m) => m.id)),
-            { startCollapsed: narrow, chipSummary: <SpaceChipSummary snapshot={snapshot} /> }
+            {
+              startCollapsed: narrow,
+              chipSummary: ({ unseenCount }) => (
+                <SpaceChipSummary snapshot={snapshot} selfUserId={selfUserId} unseenCount={unseenCount} />
+              ),
+            }
           ) ?? null)
         ) : (
           <SpaceCard snapshot={snapshot} />
+        )}
+        {gallery.open && source instanceof RelayRoomSource && (
+          <ConnectorGallery
+            snapshot={snapshot}
+            selfUserId={selfUserId}
+            source={source}
+            onClose={() => setGallery({ open: false, focus: null, initialScope: 'all', initialSection: null })}
+            // Beside the floating panel in a wide Room; over the Room when it's narrow.
+            rightInset={narrow ? 12 : PANEL_LANE_PX + 4}
+            globalSetup={globalSetup}
+            focus={gallery.focus}
+            initialScope={gallery.initialScope}
+            initialSection={gallery.initialSection}
+          />
         )}
       </div>
     </div>

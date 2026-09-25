@@ -4,6 +4,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
+import type { ConnectResult, GlobalServer } from '@shared/spaces/connectors';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
 import { type MapEntry, ConversationMap } from './conversation-map';
@@ -82,7 +83,9 @@ function renderItem(
   continued = false,
   onReply?: (ref: RoomReplyRef) => void,
   onJumpTo?: (messageId: string) => void,
-  onRerun?: (agent: AgentKind, prompt: string) => void
+  onRerun?: (agent: AgentKind, prompt: string) => void,
+  onConnectorConnect?: (id: string) => Promise<ConnectResult>,
+  globalSetup?: GlobalServer[]
 ) {
   switch (message.meta.kind) {
     case 'text':
@@ -105,7 +108,7 @@ function renderItem(
       // Day breaks are derived from timestamps (see RoomTranscript); a
       // scripted divider message would double them.
       if (message.meta.event === 'day_divider') return null;
-      return <SystemRow message={message} snapshot={snapshot} />;
+      return <SystemRow message={message} snapshot={snapshot} onConnectorConnect={onConnectorConnect} />;
     case 'session': {
       const meta = snapshot.sessionMetaByRun[message.meta.runId];
       if (!meta) return null;
@@ -140,6 +143,9 @@ function renderItem(
               ? (requestId, optionId) => onResolvePermission(meta.id, requestId, optionId)
               : undefined
           }
+          onConnectorConnect={meta.owner === ownId ? onConnectorConnect : undefined}
+          spaceConnectors={snapshot.connectors}
+          globalSetup={globalSetup}
         />
       );
     }
@@ -305,6 +311,8 @@ export function RoomTranscript({
   onReply,
   readKey,
   onRerun,
+  onConnectorConnect,
+  globalSetup,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
@@ -318,6 +326,10 @@ export function RoomTranscript({
   readKey?: string;
   /** Files a new turn for one of the viewer's own agents (Retry, Continue). */
   onRerun?: (agent: AgentKind, prompt: string) => void;
+  /** Runs the connect flow for a connector's Connect/Reconnect pill (a `connectors_added` card, or an agent turn's footer gap). */
+  onConnectorConnect?: (id: string) => Promise<ConnectResult>;
+  /** Your agents' own global MCP setup, loaded once per Room by `RoomView` — a session card drops a footer gap its own run's agent already reaches this way. */
+  globalSetup?: GlobalServer[];
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -464,7 +476,9 @@ export function RoomTranscript({
                   continued,
                   onReply,
                   jumpTo,
-                  onRerun
+                  onRerun,
+                  onConnectorConnect,
+                  globalSetup
                 );
               const continuedUnit = unit.kind === 'message' && isContinuation(prevMessage, unit.message, snapshot);
               const node =
