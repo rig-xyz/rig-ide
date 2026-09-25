@@ -196,16 +196,20 @@ describe('who you are signed in as', () => {
     );
   });
 
-  it('asks only once when the server has no answer', async () => {
+  it('asks at most once a day when the server has no answer', async () => {
     const h = harness();
     vi.mocked(h.deps.identify!).mockResolvedValue(null);
     const result = h.connections.connect('linear');
     await h.redirect({ code: 'c' });
     await result;
-    await vi.waitFor(() => expect(JSON.parse(h.secrets.get('connectors:user-1:linear')!).loginTried).toBe(true));
+    await vi.waitFor(() => expect(JSON.parse(h.secrets.get('connectors:user-1:linear')!).loginTriedAt).toBeTypeOf('number'));
     await h.connections.list();
     await h.connections.list();
     expect(h.deps.identify).toHaveBeenCalledTimes(1);
+    // A day later it asks again (the server may have learned to answer, or rig may know its tool by then).
+    h.advance(24 * 60 * 60 * 1000 + 1);
+    await h.connections.list();
+    await vi.waitFor(() => expect(h.deps.identify).toHaveBeenCalledTimes(2));
   });
 
   it('never lets a failed lookup break the connection', async () => {

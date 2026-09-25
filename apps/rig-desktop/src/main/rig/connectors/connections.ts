@@ -53,8 +53,8 @@ type StoredConnection = {
   expired?: boolean;
   /** Who you're signed in as at the vendor (an email or username), when its server says. */
   login?: string;
-  /** Asked the server once already (so a server with no "who am I" isn't asked on every list). */
-  loginTried?: boolean;
+  /** When rig last asked and got no answer (so such a server isn't asked on every list; retried after a day). */
+  loginTriedAt?: number;
 };
 
 export interface ConnectionSecrets {
@@ -148,7 +148,7 @@ export function createConnections(deps: ConnectionsDeps): Connections {
       if (!token) return;
       const login = await identify(id, connectorById(id)!.url, token).catch(() => null);
       const stored = await read(account, id);
-      if (stored?.tokens) await write(account, id, { ...stored, loginTried: true, ...(login ? { login } : {}) });
+      if (stored?.tokens) await write(account, id, { ...stored, loginTriedAt: now(), ...(login ? { login } : {}) });
     } finally {
       identifying.delete(key);
     }
@@ -266,7 +266,8 @@ export function createConnections(deps: ConnectionsDeps): Connections {
           const stored = account ? await read(account, c.id) : null;
           const state = stateOf(stored);
           // Connections made before rig asked (or while the server was down): ask once, in the background.
-          if (account && state === 'connected' && !stored?.login && !stored?.loginTried) void learnLogin(account, c.id);
+          const askedRecently = stored?.loginTriedAt !== undefined && now() - stored.loginTriedAt < LOGIN_RETRY_MS;
+          if (account && state === 'connected' && !stored?.login && !askedRecently) void learnLogin(account, c.id);
           return { id: c.id, state, ...(stored?.login ? { account: stored.login } : {}) };
         })
       );
@@ -454,11 +455,15 @@ export function loginFromIdToken(idToken: string): string | null {
 const WHOAMI_TOOLS: Partial<Record<ConnectorId, { tool: string; args?: Record<string, unknown> }>> = {
   linear: { tool: 'get_user', args: { query: 'me' } },
   sentry: { tool: 'whoami' },
+  // Checked 2026-09-25: returns your own person record, with email.
+  notion: { tool: 'notion-get-users', args: { user_id: 'self' } },
   atlassian: { tool: 'atlassianUserInfo' },
 };
 const WHOAMI_NAME =
   /^(?:[a-z0-9]+[-_.])?(?:whoami|who[-_]?am[-_]?i|get[-_]?me|get[-_]?self|me|self|get[-_]?current[-_]?user|current[-_]?user|get[-_]?viewer|viewer|user[-_]?info|get[-_]?user[-_]?info)$/i;
 const IDENTIFY_TIMEOUT_MS = 15_000;
+/** How long to wait before asking a server that had no answer again. */
+const LOGIN_RETRY_MS = 24 * 60 * 60 * 1000;
 
 /** The account behind a token, from the vendor's own MCP server: an email when it shows one, else a username or name. */
 export function pickLogin(payload: unknown): string | null {
@@ -512,7 +517,7 @@ async function identifyViaMcp(id: ConnectorId, url: string, accessToken: string)
         (t) => WHOAMI_NAME.test(t.name) && !((t.inputSchema as { required?: unknown[] })?.required?.length)
       );
       if (guess) call = { name: guess.name, arguments: {} };
-      // Once per connection (loginTried): which tools it has, to map its "who am I" by hand. Names only.
+      // Once a day at most per connection (loginTriedAt): which tools it has, to map its "who am I" by hand. Names only.
       else log.warn('Rig connectors: no "who am I" tool found', { id, tools: tools.map((t) => t.name) });
     }
     if (!call) return null;
