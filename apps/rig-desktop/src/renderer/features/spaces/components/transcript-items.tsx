@@ -356,7 +356,17 @@ export function InviteRow({ message, snapshot }: { message: RoomMessage; snapsho
   const joined = invite?.status === 'joined';
   const label = who?.name ?? email ?? (invite ? 'Anyone with the link' : message.body);
   const role = invite?.role === 'viewer' ? 'can view' : 'can edit';
-  const status = joined ? 'Joined' : isLive && !email ? 'Invite link created' : 'Invite sent by email';
+  // Lane J: a live invite never says "sent by email" — the relay's invite
+  // row and Room message don't carry whether the email actually went out
+  // (only the inviter's mint response does), and the share popover can
+  // honestly say it didn't. The scripted demo keeps its own copy.
+  const status = joined
+    ? 'Joined'
+    : !isLive
+      ? 'Invite sent by email'
+      : email
+        ? `Invited ${email}`
+        : 'Invite link created';
   return (
     <div className={cn(ROW_GRID, 'group py-1')}>
       <PersonAvatar member={by} name={message.authorId} className="mt-0.5" />
