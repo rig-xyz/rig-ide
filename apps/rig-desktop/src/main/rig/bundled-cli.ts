@@ -155,8 +155,11 @@ export function logRigVersionSkew(): void {
  * Runs the vendored CLI's postinstall script once per launch (fire-and-forget).
  * A DMG install never runs npm, so without this agents never get the
  * Rig skill in ~/.claude/skills/rig and ~/.agents/skills/rig (Codex). The script
- * is internally idempotent and collision-safe. Rig creates Codex's standard
- * ~/.agents home first so first-time Codex users are not skipped.
+ * is internally idempotent and collision-safe, and rewrites an older copy.
+ * It skips a harness whose home dir doesn't exist yet, so Rig creates both
+ * homes first: otherwise someone whose Claude or Codex hasn't run before this
+ * launch gets no skill until the next one (Claude creates ~/.claude on its
+ * first session, after this has already run).
  */
 export function installBundledRigSkill(): void {
   if (!bundledRigBinDir()) return;
@@ -169,6 +172,7 @@ export function installBundledRigSkill(): void {
     return;
   }
 
+  ensureClaudeSkillHome();
   ensureCodexSkillHome();
   execFile(
     process.execPath,
@@ -190,13 +194,21 @@ export function installBundledRigSkill(): void {
 
 /** Ensure the standard Codex user-skill root exists before the CLI installer runs. */
 export function ensureCodexSkillHome(homeDir = os.homedir()): string | null {
-  const agentsDir = path.join(homeDir, '.agents');
+  return ensureSkillHome(path.join(homeDir, '.agents'), 'Codex');
+}
+
+/** Ensure Claude Code's user config dir (its user-skill root's parent) exists before the CLI installer runs. */
+export function ensureClaudeSkillHome(homeDir = os.homedir()): string | null {
+  return ensureSkillHome(path.join(homeDir, '.claude'), 'Claude');
+}
+
+function ensureSkillHome(dir: string, agent: string): string | null {
   try {
-    fs.mkdirSync(agentsDir, { recursive: true });
-    return agentsDir;
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
   } catch (error) {
-    log.warn('[bundled-cli] Could not create Codex agent skill home', {
-      path: agentsDir,
+    log.warn(`[bundled-cli] Could not create ${agent} agent skill home`, {
+      path: dir,
       error: String(error),
     });
     return null;

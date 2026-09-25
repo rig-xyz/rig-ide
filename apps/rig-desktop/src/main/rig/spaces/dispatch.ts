@@ -268,6 +268,11 @@ export function spacesHiddenContext(
     'Keep the reply short and direct; members can expand the card to see your full trace.',
     'When asked why something changed, use the rig change history (`rig history <path>`) rather than guessing.',
     "When asked to invite someone, run `rig share <email>` in the space's folder: the request is the go-ahead, and the command's approval prompt is the confirmation.",
+    // Skills are discovered by name and a truncated description, which agents
+    // don't reliably act on (Codex's listing cuts the rig skill's triggers
+    // off), so point at the file itself. The packaged app writes this copy
+    // at every launch (`installBundledRigSkill`).
+    'For anything else rig does here (who has access, the chat, file comments, history, sync), read the rig skill at `~/.agents/skills/rig/SKILL.md` before running `rig` commands; `rig --help` lists them all.',
   ];
   if (roomLines.length > 0) {
     lines.push(

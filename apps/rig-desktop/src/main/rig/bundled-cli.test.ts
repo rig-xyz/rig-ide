@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   dedupeByRealPath,
   devRigBinDir,
+  ensureClaudeSkillHome,
   ensureCodexSkillHome,
   shapeLocalInstalls,
   type ProbedInstall,
@@ -42,6 +43,22 @@ describe('ensureCodexSkillHome', () => {
       const expected = path.join(homeDir, '.agents');
       expect(ensureCodexSkillHome(homeDir)).toBe(expected);
       expect(fs.statSync(expected).isDirectory()).toBe(true);
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('ensureClaudeSkillHome', () => {
+  it("creates Claude Code's user dir before Claude has ever run, and leaves an existing one alone", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rig-claude-skill-home-'));
+    try {
+      const expected = path.join(homeDir, '.claude');
+      expect(ensureClaudeSkillHome(homeDir)).toBe(expected);
+      expect(fs.statSync(expected).isDirectory()).toBe(true);
+      fs.writeFileSync(path.join(expected, 'settings.json'), '{}');
+      expect(ensureClaudeSkillHome(homeDir)).toBe(expected);
+      expect(fs.readFileSync(path.join(expected, 'settings.json'), 'utf8')).toBe('{}');
     } finally {
       fs.rmSync(homeDir, { recursive: true, force: true });
     }
