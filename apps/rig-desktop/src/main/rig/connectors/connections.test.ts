@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthorizationServerMetadata } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { createConnections, type CallbackListener, type ConnectionsDeps, type OAuthSteps } from './connections';
+import { createConnections, pickLogin, type CallbackListener, type ConnectionsDeps, type OAuthSteps } from './connections';
 
 const METADATA = { issuer: 'https://as.example', authorization_endpoint: 'https://as.example/authorize', token_endpoint: 'https://as.example/token', response_types_supported: ['code'] } as AuthorizationServerMetadata;
 
@@ -33,6 +33,7 @@ function harness(opts: { account?: string | null; now?: number } = {}) {
     oauth,
     listen: listener,
     now: () => now,
+    identify: vi.fn(async () => 'dylan@example.com'),
   };
   const connections = createConnections(deps);
   /** Simulates the vendor redirecting back, echoing the state from the opened URL. */
@@ -180,5 +181,52 @@ describe('connections', () => {
     await connections.disconnect('linear');
     expect(secrets.size).toBe(0);
     expect((await connections.forSession(['linear'])).gaps).toEqual([{ id: 'linear', state: 'not_connected' }]);
+  });
+});
+
+describe('who you are signed in as', () => {
+  it('learns it right after connecting, and lists it with the connection', async () => {
+    const h = harness();
+    const result = h.connections.connect('linear');
+    await h.redirect({ code: 'c' });
+    await result;
+    await vi.waitFor(() => expect(h.deps.identify).toHaveBeenCalledWith('linear', 'https://mcp.linear.app/mcp', 'access-1'));
+    await vi.waitFor(async () =>
+      expect((await h.connections.list()).find((s) => s.id === 'linear')).toEqual({ id: 'linear', state: 'connected', account: 'dylan@example.com' })
+    );
+  });
+
+  it('asks only once when the server has no answer', async () => {
+    const h = harness();
+    vi.mocked(h.deps.identify!).mockResolvedValue(null);
+    const result = h.connections.connect('linear');
+    await h.redirect({ code: 'c' });
+    await result;
+    await vi.waitFor(() => expect(JSON.parse(h.secrets.get('connectors:user-1:linear')!).loginTried).toBe(true));
+    await h.connections.list();
+    await h.connections.list();
+    expect(h.deps.identify).toHaveBeenCalledTimes(1);
+  });
+
+  it('never lets a failed lookup break the connection', async () => {
+    const h = harness();
+    vi.mocked(h.deps.identify!).mockRejectedValue(new Error('boom'));
+    const result = h.connections.connect('linear');
+    await h.redirect({ code: 'c' });
+    expect(await result).toEqual({ ok: true });
+    expect((await h.connections.list()).find((s) => s.id === 'linear')?.state).toBe('connected');
+  });
+});
+
+describe('pickLogin', () => {
+  it('prefers an email anywhere in the answer', () => {
+    expect(pickLogin('User: Dylan (dylan@example.com), admin')).toBe('dylan@example.com');
+    expect(pickLogin({ user: { name: 'Dylan', email: 'd@x.io' } })).toBe('d@x.io');
+  });
+
+  it('falls back to a username or name', () => {
+    expect(pickLogin({ user: { username: 'dtsbourg' } })).toBe('dtsbourg');
+    expect(pickLogin('{"displayName":"Dylan B"}')).toBe('Dylan B');
+    expect(pickLogin('no idea')).toBeNull();
   });
 });

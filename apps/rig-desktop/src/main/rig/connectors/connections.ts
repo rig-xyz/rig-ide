@@ -51,6 +51,10 @@ type StoredConnection = {
   tokens: { accessToken: string; refreshToken?: string; expiresAt?: number } | null;
   /** Set when a refresh was refused: the login needs redoing. */
   expired?: boolean;
+  /** Who you're signed in as at the vendor (an email or username), when its server says. */
+  login?: string;
+  /** Asked the server once already (so a server with no "who am I" isn't asked on every list). */
+  loginTried?: boolean;
 };
 
 export interface ConnectionSecrets {
@@ -104,6 +108,8 @@ export interface ConnectionsDeps {
   listen?: () => Promise<CallbackListener>;
   now?: () => number;
   timeoutMs?: number;
+  /** Asks the connector's own server who the token belongs to. Default: its "who am I" MCP tool. */
+  identify?: (id: ConnectorId, url: string, accessToken: string) => Promise<string | null>;
 }
 
 /**
@@ -128,6 +134,25 @@ export function createConnections(deps: ConnectionsDeps): Connections {
   const oauth = deps.oauth ?? sdkOAuthSteps;
   const listen = deps.listen ?? listenOnLoopback;
   const now = deps.now ?? Date.now;
+  const identify = deps.identify ?? identifyViaMcp;
+  /** One lookup in flight per connection. */
+  const identifying = new Set<string>();
+
+  /** Best effort, never blocks a connect or a list: remembers who you're signed in as. */
+  async function learnLogin(account: string, id: ConnectorId): Promise<void> {
+    const key = secretKey(account, id);
+    if (identifying.has(key)) return;
+    identifying.add(key);
+    try {
+      const token = await freshAccessToken(account, id);
+      if (!token) return;
+      const login = await identify(id, connectorById(id)!.url, token).catch(() => null);
+      const stored = await read(account, id);
+      if (stored?.tokens) await write(account, id, { ...stored, loginTried: true, ...(login ? { login } : {}) });
+    } finally {
+      identifying.delete(key);
+    }
+  }
   /** The one sign-in in flight (the callback port is shared, so one at a time). */
   let inFlight: { id: ConnectorId; abort: (result: ConnectResult) => void } | null = null;
 
@@ -198,6 +223,7 @@ export function createConnections(deps: ConnectionsDeps): Connections {
 
       const tokens = await oauth.exchange(issuer, metadata, client, code, codeVerifier, connector.url);
       await write(account, id, { issuer, clients, tokens: toTokens(tokens) });
+      void learnLogin(account, id);
       log.info('Rig connectors: connected', { id });
       return { ok: true };
     } finally {
@@ -234,10 +260,13 @@ export function createConnections(deps: ConnectionsDeps): Connections {
     async list() {
       const account = await deps.accountId();
       return Promise.all(
-        CONNECTORS.map(async (c) => ({
-          id: c.id,
-          state: account ? stateOf(await read(account, c.id)) : ('not_connected' as const),
-        }))
+        CONNECTORS.map(async (c): Promise<ConnectionStatus> => {
+          const stored = account ? await read(account, c.id) : null;
+          const state = stateOf(stored);
+          // Connections made before rig asked (or while the server was down): ask once, in the background.
+          if (account && state === 'connected' && !stored?.login && !stored?.loginTried) void learnLogin(account, c.id);
+          return { id: c.id, state, ...(stored?.login ? { account: stored.login } : {}) };
+        })
       );
     },
 
@@ -401,4 +430,81 @@ async function listenOnLoopback(): Promise<CallbackListener> {
 function closeQuietly(server: Server): void {
   server.close();
   server.closeAllConnections?.();
+}
+
+/** Known "who am I" tools; any other server gets a name-based guess (a tool that takes no arguments). */
+const WHOAMI_TOOLS: Partial<Record<ConnectorId, { tool: string; args?: Record<string, unknown> }>> = {
+  linear: { tool: 'get_user', args: { query: 'me' } },
+  sentry: { tool: 'whoami' },
+  atlassian: { tool: 'atlassianUserInfo' },
+};
+const WHOAMI_NAME =
+  /^(?:[a-z0-9]+[-_.])?(?:whoami|who[-_]?am[-_]?i|get[-_]?me|get[-_]?self|me|self|get[-_]?current[-_]?user|current[-_]?user|get[-_]?viewer|viewer|user[-_]?info|get[-_]?user[-_]?info)$/i;
+const IDENTIFY_TIMEOUT_MS = 15_000;
+
+/** The account behind a token, from the vendor's own MCP server: an email when it shows one, else a username or name. */
+export function pickLogin(payload: unknown): string | null {
+  const text = typeof payload === 'string' ? payload : JSON.stringify(payload ?? '');
+  const email = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/.exec(text)?.[0];
+  if (email) return email;
+  let data: unknown = payload;
+  if (typeof payload === 'string') {
+    try {
+      data = JSON.parse(payload);
+    } catch {
+      return null;
+    }
+  }
+  const find = (value: unknown, depth: number): string | null => {
+    if (!value || typeof value !== 'object' || depth > 3) return null;
+    const record = value as Record<string, unknown>;
+    for (const key of ['username', 'login', 'handle', 'displayName', 'display_name', 'name']) {
+      const v = record[key];
+      if (typeof v === 'string' && v.trim() && v.length <= 120) return v.trim();
+    }
+    for (const v of Object.values(record)) {
+      const hit = find(v, depth + 1);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return find(data, 0);
+}
+
+async function identifyViaMcp(id: ConnectorId, url: string, accessToken: string): Promise<string | null> {
+  const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all([
+    import('@modelcontextprotocol/sdk/client/index.js'),
+    import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
+  ]);
+  const client = new Client({ name: 'rig', version: '1' });
+  const signal = AbortSignal.timeout(IDENTIFY_TIMEOUT_MS);
+  try {
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(url), {
+        requestInit: { headers: { Authorization: `Bearer ${accessToken}` }, signal },
+      })
+    );
+    const known = WHOAMI_TOOLS[id];
+    let call: { name: string; arguments: Record<string, unknown> } | null = known
+      ? { name: known.tool, arguments: known.args ?? {} }
+      : null;
+    if (!call) {
+      const { tools } = await client.listTools(undefined, { signal });
+      const guess = tools.find(
+        (t) => WHOAMI_NAME.test(t.name) && !((t.inputSchema as { required?: unknown[] })?.required?.length)
+      );
+      if (guess) call = { name: guess.name, arguments: {} };
+    }
+    if (!call) return null;
+    const result = await client.callTool(call, undefined, { signal });
+    if (result.isError) return null;
+    const content = (result.content as Array<{ type: string; text?: string }> | undefined) ?? [];
+    const text = content.map((c) => (c.type === 'text' ? (c.text ?? '') : '')).join('\n');
+    return pickLogin(result.structuredContent ?? text) ?? pickLogin(text);
+  } catch (error) {
+    log.info('Rig connectors: could not learn which account a login belongs to', { id, error: String(error) });
+    return null;
+  } finally {
+    await client.close().catch(() => {});
+  }
 }
