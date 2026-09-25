@@ -817,6 +817,7 @@ export function createSpacesDispatcher(deps: {
       api: deps.api,
       bindingId: spec.bindingId,
       runId: created.data.id,
+      prompt: spec.prompt,
     });
 
     // The card is up; now reach the agent. Resuming a session after a
@@ -872,6 +873,9 @@ export function createSpacesDispatcher(deps: {
       connectors.global
     );
     const hiddenContext = [spaceContext, connectorsContext, spec.extraHiddenContext].filter(Boolean).join('\n\n');
+    // Agents echo their prompt back (Codex titles the session with all of
+    // it): the publisher strips this block from anything it uploads.
+    publisher.setHiddenContext(hiddenContext);
     const queued = await deps.acp.queuePrompt(
       session.conversationId,
       spec.prompt,

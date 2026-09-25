@@ -17,6 +17,67 @@ function isRetryable(error: RelayApiError): boolean {
   return error.status === 429 || error.status >= 500;
 }
 
+/** A published session title's cap: the same as the run title `startTurn` creates. */
+const TITLE_MAX_CHARS = 80;
+
+/**
+ * Any block rig wraps hidden context in (`<rig_space_context>`,
+ * `<rig_connectors>`, `<rig_context_target version="1">`, …). An unclosed
+ * one, as a truncated echo would leave it, runs to the end of the text.
+ */
+const RIG_TAGGED_BLOCK = /<(rig_[a-z0-9_]+)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+
+/**
+ * Matches `hidden` verbatim except for whitespace: Codex collapses runs of
+ * whitespace when it turns a prompt into a title, so a plain `includes`
+ * would miss the echo.
+ */
+function hiddenContextPattern(hidden: string): RegExp | null {
+  const words = hidden.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+  return new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'), 'g');
+}
+
+/** `text` without the run's hidden context or any `<rig_…>` block (trimmed if anything went), else `text` itself. */
+function stripHiddenContext(text: string, hidden: RegExp | null): string {
+  const stripped = (hidden ? text.replace(hidden, ' ') : text).replace(RIG_TAGGED_BLOCK, ' ');
+  return stripped === text ? text : stripped.trim();
+}
+
+/**
+ * Removes what an agent echoes back of the prompt's hidden context before an
+ * event leaves the machine. The dispatcher sends the member's visible prompt
+ * plus a hidden context block (instructions, the room transcript, connector
+ * notes, a doc thread); adapters echo the prompt back, and every member of
+ * the space can read the uploaded events:
+ * - `session_info_update.title`: Codex titles the session with its whole
+ *   first prompt, hidden block included, and Claude's generated title is
+ *   written from text that is mostly that block. The published title is
+ *   always the visible prompt instead.
+ * - `user_message_chunk`: a replayed prompt carries the hidden block as its
+ *   own text. It's stripped, and an echo with nothing visible left is dropped.
+ * Returns null to drop the event. Never mutates `payload` (the same object
+ * also feeds the local session).
+ */
+export function redactPromptEcho(
+  kind: string,
+  payload: Record<string, unknown>,
+  prompt: { visible: string; hidden: RegExp | null }
+): Record<string, unknown> | null {
+  if (kind === 'session_info_update' && typeof payload.title === 'string') {
+    const visible = prompt.visible.replace(/\s+/g, ' ').trim().slice(0, TITLE_MAX_CHARS);
+    return { ...payload, title: visible || null };
+  }
+  if (kind === 'user_message_chunk') {
+    const content = payload.content as { type?: unknown; text?: unknown } | undefined;
+    if (content?.type !== 'text' || typeof content.text !== 'string') return payload;
+    const text = stripHiddenContext(content.text, prompt.hidden);
+    if (!text) return null;
+    return text === content.text ? payload : { ...payload, content: { ...content, text } };
+  }
+  return payload;
+}
+
 /**
  * Spaces (lane 3): turns one running ACP agent session's events into
  * batched `POST .../sessions/:runId/events` calls, per the cadence
@@ -54,6 +115,8 @@ export type SessionPublisherOptions = {
   api: SpacesRelayApi;
   bindingId: string;
   runId: string;
+  /** The member's visible prompt for this run: what a published session title becomes (see `redactPromptEcho`). */
+  prompt?: string;
   /** Flush cadence — defaults match the session-log spike's own 250ms/32. */
   flushIntervalMs?: number;
   maxBatchSize?: number;
@@ -86,6 +149,9 @@ export class SessionEventPublisher {
   private readonly scheduleTimeout: (cb: () => void, ms: number) => unknown;
   private readonly cancelTimeout: (handle: unknown) => void;
   private readonly random: () => number;
+  private readonly prompt: string;
+  /** The hidden context the dispatcher sent with this run's prompt, as a whitespace-tolerant pattern; null until `setHiddenContext`. */
+  private hiddenContext: RegExp | null = null;
 
   private queue: SessionEventInput[] = [];
   private nextSeq = 1;
@@ -109,6 +175,16 @@ export class SessionEventPublisher {
     this.scheduleTimeout = options.setTimeout ?? ((cb, ms) => setTimeout(cb, ms));
     this.cancelTimeout = options.clearTimeout ?? ((handle) => clearTimeout(handle as NodeJS.Timeout));
     this.random = options.random ?? Math.random;
+    this.prompt = options.prompt ?? '';
+  }
+
+  /**
+   * The hidden context block sent alongside this run's prompt, so an agent's
+   * echo of it is stripped before publishing (see `redactPromptEcho`). Set
+   * before the prompt is queued: nothing the agent echoes can arrive sooner.
+   */
+  setHiddenContext(hiddenContext: string): void {
+    this.hiddenContext = hiddenContextPattern(hiddenContext);
   }
 
   /** Events queued but not yet successfully sent — for tests and diagnostics. */
@@ -117,12 +193,15 @@ export class SessionEventPublisher {
   }
 
   /**
-   * Queues one event with the next sequence number. Synchronous, never
+   * Queues one event with the next sequence number, minus any echo of the
+   * prompt's hidden context (`redactPromptEcho`). Synchronous, never
    * throws. Flushes immediately once the queue reaches `maxBatchSize`;
    * otherwise arms (or leaves armed) the flush timer.
    */
   record(kind: string, payload: Record<string, unknown>): void {
     if (this.disposed) return;
+    const redacted = redactPromptEcho(kind, payload, { visible: this.prompt, hidden: this.hiddenContext });
+    if (!redacted) return;
     if (this.queue.length >= this.maxQueueSize) {
       const dropped = this.queue.shift();
       log.warn('Rig spaces publisher: retry queue full, dropping the oldest event', {
@@ -131,7 +210,7 @@ export class SessionEventPublisher {
         droppedSeq: dropped?.seq,
       });
     }
-    this.queue.push({ seq: this.nextSeq, kind, payload });
+    this.queue.push({ seq: this.nextSeq, kind, payload: redacted });
     this.nextSeq += 1;
 
     if (this.queue.length >= this.maxBatchSize) {

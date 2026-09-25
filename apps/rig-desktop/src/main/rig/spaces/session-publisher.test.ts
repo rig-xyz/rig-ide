@@ -1,6 +1,7 @@
 import { err, ok } from '@emdash/shared';
 import { describe, expect, it } from 'vitest';
 import type { RelayApiError, SessionEventInput, SpacesRelayApi } from './relay-api';
+import { connectorsHiddenContext, spacesHiddenContext } from './dispatch';
 import { SessionEventPublisher } from './session-publisher';
 
 /**
@@ -447,5 +448,122 @@ describe('SessionEventPublisher', () => {
     pub.dispose();
     expect(() => pub.record('tool_call', {})).not.toThrow();
     expect(pub.pending).toBe(0);
+  });
+});
+
+describe('SessionEventPublisher: hidden context never leaves in an echo', () => {
+  const visible = 'Which launch tasks are still open?';
+  // Built exactly as `startTurn` builds it: the space context (room transcript
+  // included), the connectors note, and a doc thread with no rig tag.
+  const hidden = [
+    spacesHiddenContext({ bindingId: 'b1' }, ['Sam: the acquisition closes on the 14th, keep it quiet']),
+    connectorsHiddenContext(['linear'], []),
+    'The thread so far, oldest first:\n- Priya: salary bands are in comp.md',
+  ].join('\n\n');
+  const secrets = ['rig_space_context', 'acquisition closes', 'rig_connectors', 'salary bands', 'room_messages'];
+
+  function publisher(prompt = visible) {
+    const { api, calls } = fakeApi();
+    const clock = fakeClock();
+    const pub = new SessionEventPublisher({
+      api,
+      bindingId: 'b1',
+      runId: 'run1',
+      prompt,
+      now: clock.now,
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+    });
+    const sent = () => calls.flat();
+    return { pub, sent };
+  }
+
+  function expectNoSecrets(value: unknown) {
+    const json = JSON.stringify(value);
+    for (const secret of secrets) expect(json).not.toContain(secret);
+  }
+
+  it("publishes Codex's session title as the visible prompt, not the prompt+hidden block it echoes", async () => {
+    const { pub, sent } = publisher();
+    pub.setHiddenContext(hidden);
+    // codex-acp: the text blocks joined with ' ', whitespace collapsed.
+    const echoed = { sessionUpdate: 'session_info_update', title: `${visible} ${hidden}`.replace(/\s+/g, ' ') };
+    pub.record('session_info_update', echoed);
+    await pub.flush();
+
+    expect(sent()).toHaveLength(1);
+    expect(sent()[0]?.payload).toEqual({ sessionUpdate: 'session_info_update', title: visible });
+    expectNoSecrets(sent());
+    expect(echoed.title).toContain('acquisition closes'); // the local copy is untouched
+  });
+
+  it('clips a long visible prompt to the run-title length, and leaves title-less info updates alone', async () => {
+    const { pub, sent } = publisher(`Please ${'really '.repeat(30)}check the plan`);
+    pub.setHiddenContext(hidden);
+    pub.record('session_info_update', { sessionUpdate: 'session_info_update', title: 'Launch tasks review' });
+    const status = { sessionUpdate: 'session_info_update', _meta: { codex: { threadStatus: { type: 'idle' } } } };
+    pub.record('session_info_update', status);
+    await pub.flush();
+
+    const title = sent()[0]?.payload.title as string;
+    expect(title.length).toBe(80);
+    expect(title.startsWith('Please really')).toBe(true);
+    expect(sent()[1]?.payload).toEqual(status);
+  });
+
+  it("strips a Claude-style prompt echo: the hidden block's own chunk is dropped, the visible text kept", async () => {
+    const { pub, sent } = publisher();
+    pub.setHiddenContext(hidden);
+    // The prompt goes out as two text blocks; an echo replays each as a chunk.
+    pub.record('user_message_chunk', { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: visible } });
+    pub.record('user_message_chunk', { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: hidden } });
+    // …or as one text with both.
+    pub.record('user_message_chunk', {
+      sessionUpdate: 'user_message_chunk',
+      content: { type: 'text', text: `${visible}\n${hidden}` },
+    });
+    // Claude's generated title is written from mostly-hidden text: replaced too.
+    pub.record('session_info_update', { sessionUpdate: 'session_info_update', title: 'Quiet acquisition timeline' });
+    await pub.flush();
+
+    expect(sent().map((e) => [e.kind, e.payload])).toEqual([
+      ['user_message_chunk', { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: visible } }],
+      ['user_message_chunk', { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: visible } }],
+      ['session_info_update', { sessionUpdate: 'session_info_update', title: visible }],
+    ]);
+    expect(sent().map((e) => e.seq)).toEqual([1, 2, 3]); // a dropped echo leaves no seq gap
+    expectNoSecrets(sent());
+  });
+
+  it('strips any <rig_…> block from an echo even without the exact hidden context (another turn, truncated)', async () => {
+    const { pub, sent } = publisher();
+    // No setHiddenContext: e.g. an earlier turn's prompt replayed.
+    pub.record('user_message_chunk', {
+      sessionUpdate: 'user_message_chunk',
+      content: {
+        type: 'text',
+        text: 'hi <rig_space_context>\n<room_messages>\nSam: the acquisition closes on the 14th\n</room_messages>\n</rig_space_context> there <rig_context_target version="1">x</rig_context_target>',
+      },
+    });
+    // Truncated mid-block: no closing tag, so the rest of the text goes.
+    pub.record('user_message_chunk', {
+      sessionUpdate: 'user_message_chunk',
+      content: { type: 'text', text: 'ask the room <rig_connectors>\nConnected tools: Linear. The acquisition closes' },
+    });
+    await pub.flush();
+
+    const texts = sent().map((e) => (e.payload.content as { text: string }).text);
+    expect(texts[0]).toMatch(/^hi\s+there$/);
+    expect(texts[1]).toBe('ask the room');
+    expectNoSecrets(sent());
+  });
+
+  it("leaves other events verbatim (tool titles and inputs aren't prompt echoes)", async () => {
+    const { pub, sent } = publisher();
+    pub.setHiddenContext(hidden);
+    const tool = { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'grep -r "<rig_space_context>" src', rawInput: { q: 1 } };
+    pub.record('tool_call', tool);
+    await pub.flush();
+    expect(sent()[0]?.payload).toEqual(tool);
   });
 });

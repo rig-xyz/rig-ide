@@ -359,6 +359,31 @@ describe('createSpacesDispatcher', () => {
     expect(kinds).toEqual(['tool_call', 'turn_ended']);
   });
 
+  it("publishes an agent's echo of the prompt without the hidden context it was sent", async () => {
+    const { api, postedEvents } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+
+    const result = await dispatch(makeRequest());
+    if ('failed' in result) throw new Error('expected success');
+    const conversationId = fake.started[0].conversationId;
+    const { turnId, text, hiddenContext } = fake.queued[0];
+
+    fake.emitTurnStart(conversationId, turnId);
+    // Codex titles the session with its whole prompt; Claude may replay the hidden block.
+    fake.emitUpdate(conversationId, { sessionUpdate: 'session_info_update', title: `${text} ${hiddenContext}` });
+    fake.emitUpdate(conversationId, {
+      sessionUpdate: 'user_message_chunk',
+      content: { type: 'text', text: hiddenContext },
+    });
+    fake.emitTurnEnd(conversationId, turnId, 'end_turn');
+    await vi.waitFor(() => expect(postedEvents.flatMap((p) => p.kinds)).toContain('turn_ended'));
+
+    expect(postedEvents.flatMap((p) => p.kinds)).toEqual(['session_info_update', 'turn_ended']);
+    expect(postedEvents[0].payloads[0]).toEqual({ sessionUpdate: 'session_info_update', title: text });
+    expect(JSON.stringify(postedEvents)).not.toContain('rig_space_context');
+  });
+
   it('finishes the run "done" and the request "done" on a normal end_turn', async () => {
     const { api, patchedSessions, patchedRequests } = makeFakeApi();
     const fake = makeFakeAcp();
