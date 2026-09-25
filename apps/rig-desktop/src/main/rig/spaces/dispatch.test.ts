@@ -1222,6 +1222,26 @@ describe('connectors', () => {
     expect(fake.queued).toHaveLength(2);
   });
 
+  it("mentions the space's tools the agent already has from its owner's own setup, without nudging", () => {
+    const text = connectorsHiddenContext([], [], ['linear'])!;
+    expect(text).toContain("Your owner's own setup also gives you Linear");
+    expect(text).not.toContain('Connect');
+  });
+
+  it('asks for the connectors of the agent being run', async () => {
+    const fake = makeFakeAcp();
+    const connectors = vi.fn(async () => ({ servers: [], gaps: [], global: ['linear' as const] }));
+    const { dispatch } = createSpacesDispatcher({
+      api: makeFakeApi().api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      connectors,
+    });
+    await dispatch(makeRequest({ targetAgent: 'codex' }));
+    expect(connectors).toHaveBeenCalledWith('binding-1', 'codex');
+    expect(fake.queued[0]!.hiddenContext).toContain("Your owner's own setup also gives you Linear");
+  });
+
   it('words expired logins as Reconnect, and says nothing when there is nothing to say', () => {
     expect(connectorsHiddenContext([], [])).toBeNull();
     const text = connectorsHiddenContext([], [{ id: 'linear', state: 'expired' }])!;

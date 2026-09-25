@@ -6,7 +6,7 @@ import { createRPCController } from '@shared/lib/ipc/rpc';
 import { isError, resolveContext, rigAccountController } from '../account';
 import { resolveLocalPathsImpl } from '../recent-rigs';
 import { rigSettingsStore } from '../settings-instance';
-import { connections } from '../connectors/connections-instance';
+import { connections, globalSetupFor } from '../connectors/connections-instance';
 import { isConnectorId } from '@shared/spaces/connectors';
 import { err, type Result } from '@emdash/shared';
 import {
@@ -46,14 +46,25 @@ function realDeps(): SpacesDispatchControllerDeps {
         resolveWorkspace: async (bindingId) =>
           (await resolveLocalPathsImpl([bindingId]))[bindingId] ?? null,
         store: createFileSpaceSessionStore(join(app.getPath('userData'), 'spaces-sessions.json')),
-        connectors: async (bindingId) => {
+        connectors: async (bindingId, agent) => {
           const listed = await api.listConnectors?.(bindingId);
           if (!listed?.success) {
             // An older relay without the route, or a hiccup: the session runs without connectors.
             if (listed) log.warn('Rig spaces: could not load the space connectors', { bindingId, error: listed.error.message });
             return { servers: [], gaps: [] };
           }
-          return connections.forSession(listed.data.map((c) => c.connectorId).filter(isConnectorId));
+          const ids = listed.data.map((c) => c.connectorId).filter(isConnectorId);
+          const [session, own] = await Promise.all([
+            connections.forSession(ids),
+            // This agent's own global setup: a tool it already has there is never a gap.
+            globalSetupFor(bindingId).catch(() => []),
+          ]);
+          const global = new Set(own.filter((s) => s.agent === agent && s.connectorId).map((s) => s.connectorId!));
+          return {
+            servers: session.servers,
+            gaps: session.gaps.filter((gap) => !global.has(gap.id)),
+            global: ids.filter((id) => global.has(id)),
+          };
         },
         defaultConfig: (agent) => {
           const settings = rigSettingsStore.get();

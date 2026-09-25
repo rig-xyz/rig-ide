@@ -214,14 +214,23 @@ export function connectorsFingerprint(servers: readonly AcpMcpServerWire[]): str
  * use (through its owner's own login), and which the space uses but it can't
  * reach, so it can point its owner at Connect instead of guessing.
  */
-export function connectorsHiddenContext(connected: readonly string[], gaps: readonly ConnectorGap[]): string | null {
-  if (connected.length === 0 && gaps.length === 0) return null;
+export function connectorsHiddenContext(
+  connected: readonly string[],
+  gaps: readonly ConnectorGap[],
+  global: readonly string[] = []
+): string | null {
+  if (connected.length === 0 && gaps.length === 0 && global.length === 0) return null;
   const name = (id: string) => connectorById(id)?.name ?? id;
   const lines = ['<rig_connectors>'];
   if (connected.length > 0) {
     lines.push(
       `Connected tools you can use, through your owner's own login: ${connected.map(name).join(', ')}.`,
       'Anything you read from them shows up in the room, visible to every member of the space.'
+    );
+  }
+  if (global.length > 0) {
+    lines.push(
+      `Your owner's own setup also gives you ${global.map(name).join(', ')} (their own connectors, not rig's); use it for this space's work too.`
     );
   }
   const missing = gaps.filter((g) => g.state === 'not_connected').map((g) => name(g.id));
@@ -441,8 +450,8 @@ export function createSpacesDispatcher(deps: {
   store?: SpaceSessionStore;
   /** Your usual model / effort / permission mode for an agent (the ones the rig chat remembers), applied to a brand-new space session. */
   defaultConfig?: (agent: SessionAgent) => AgentConfigChange;
-  /** The space's connectors for the owner's session: servers with fresh tokens, and the ones they can't reach. */
-  connectors?: (bindingId: string) => Promise<SessionConnectors>;
+  /** The space's connectors for the owner's session with this agent: servers with fresh tokens, the ones it can't reach, and the ones it has from its own setup. */
+  connectors?: (bindingId: string, agent: SessionAgent) => Promise<SessionConnectors>;
 }): {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
@@ -613,10 +622,10 @@ export function createSpacesDispatcher(deps: {
     return false;
   }
 
-  async function loadConnectors(bindingId: string): Promise<SessionConnectors> {
+  async function loadConnectors(bindingId: string, agent: SessionAgent): Promise<SessionConnectors> {
     if (!deps.connectors) return { servers: [], gaps: [] };
     try {
-      return await deps.connectors(bindingId);
+      return await deps.connectors(bindingId, agent);
     } catch (error) {
       log.warn('Rig spaces dispatch: could not load the space connectors', { bindingId, error: String(error) });
       return { servers: [], gaps: [] };
@@ -654,7 +663,7 @@ export function createSpacesDispatcher(deps: {
       for (const unsubscribe of existing.unsubscribes) unsubscribe();
       await deps.acp.stopSession(existing.conversationId);
     }
-    const { servers } = connectors ?? (await loadConnectors(bindingId));
+    const { servers } = connectors ?? (await loadConnectors(bindingId, providerId));
 
     // Memory across restarts: reuse the stored conversation and resume the
     // agent's own session (same cwd) rather than starting from nothing.
@@ -783,7 +792,7 @@ export function createSpacesDispatcher(deps: {
       runId: created.data.id,
       ms: Date.now() - t0,
     });
-    const connectors = await loadConnectors(spec.bindingId);
+    const connectors = await loadConnectors(spec.bindingId, spec.agent);
     const sessionResult = await ensureSession(key, spec.bindingId, spec.agent, cwd, connectors);
     log.info('Rig spaces dispatch: agent session ready', {
       runId: created.data.id,
@@ -825,7 +834,8 @@ export function createSpacesDispatcher(deps: {
     );
     const connectorsContext = connectorsHiddenContext(
       connectors.servers.map((server) => server.name),
-      connectors.gaps
+      connectors.gaps,
+      connectors.global
     );
     const hiddenContext = [spaceContext, connectorsContext, spec.extraHiddenContext].filter(Boolean).join('\n\n');
     const queued = await deps.acp.queuePrompt(

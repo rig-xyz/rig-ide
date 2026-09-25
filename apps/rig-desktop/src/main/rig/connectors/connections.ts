@@ -106,8 +106,12 @@ export interface ConnectionsDeps {
   timeoutMs?: number;
 }
 
-/** What a session gets: the servers to hand the agent, and the space's connectors it can't reach. */
-export type SessionConnectors = { servers: AcpMcpServerWire[]; gaps: ConnectorGap[] };
+/**
+ * What a session gets: the servers to hand the agent, the space's connectors
+ * it can't reach, and (optionally) the space's connectors it already has from
+ * its own global setup, which are never gaps.
+ */
+export type SessionConnectors = { servers: AcpMcpServerWire[]; gaps: ConnectorGap[]; global?: ConnectorId[] };
 
 export interface Connections {
   list(): Promise<ConnectionStatus[]>;
