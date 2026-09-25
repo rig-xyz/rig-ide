@@ -33,6 +33,12 @@ const config: Configuration = {
     },
   ],
   generateUpdatesFilesForAllChannels: false,
+  // `rig://join/<secret>` deep links (the website invite page's "Open in
+  // Rig"). Declares the scheme in the macOS Info.plist (CFBundleURLTypes) —
+  // macOS only routes a scheme to an app bundle that declares it — and in
+  // the Linux .desktop file / Windows installer. Runtime side:
+  // src/main/app/deep-links.ts; contract: docs/deep-links.md.
+  protocols: [{ name: 'Rig', schemes: ['rig'] }],
   files: ['out/**/*', 'node_modules/**/*', 'drizzle/**/*'],
   asarUnpack: [
     'node_modules/better-sqlite3/**',

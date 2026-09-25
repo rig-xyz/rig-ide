@@ -9,6 +9,7 @@ import type {
   RigInviteLinkJoined,
   RigInviteList,
   RigInviteMinted,
+  RigInvitePreview,
   RigInviteRole,
   RigMember,
   RigMemberList,
@@ -372,6 +373,43 @@ function inviteLinkTransportError(action: string, error: unknown, secret: string
   return { kind: 'network', message: `Could not ${action} — the relay is unreachable.` };
 }
 
+const EMPTY_INVITE_PREVIEW: RigInvitePreview = { spaceName: null, inviterName: null };
+
+/**
+ * `GET /v1/invites/:secret` — the relay's public preview (no token: the
+ * secret itself authorizes it). A 404 or a revoked/expired status is final;
+ * any other non-2xx (a rate limit, a relay hiccup) yields an empty preview,
+ * since the accept is authoritative anyway.
+ */
+async function fetchInvitePreview(
+  relayUrl: string,
+  secret: string,
+  action: string
+): Promise<Result<RigInvitePreview, RigInviteLinkError>> {
+  try {
+    const response = await fetch(`${relayUrl.replace(/\/+$/, '')}/v1/invites/${encodeURIComponent(secret)}`, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (response.status === 404) return err(INVITE_LINK_NOT_FOUND);
+    if (!response.ok) return ok(EMPTY_INVITE_PREVIEW);
+    const data = asRecord(await response.json());
+    if (data?.status === 'revoked' || data?.status === 'expired') return err(inviteLinkInvalid(data.status));
+    const name = asRecord(data?.binding)?.name;
+    const inviter = asRecord(data?.inviter);
+    const inviterName = [inviter?.name, inviter?.email].find(
+      (value): value is string => typeof value === 'string' && value.length > 0
+    );
+    return ok({
+      spaceName: typeof name === 'string' && name ? name : null,
+      inviterName: inviterName ?? null,
+    });
+  } catch (error) {
+    return err(inviteLinkTransportError(action, error, secret));
+  }
+}
+
 // ── controller ───────────────────────────────────────────────────────────────
 
 export const rigShareController = createRPCController({
@@ -721,6 +759,29 @@ export const rigShareController = createRPCController({
    * succeeds (the relay answers 201 with `member: null`). The secret is
    * never logged, and never part of an error message.
    */
+  /**
+   * The invite's public preview (`GET /v1/invites/:secret`) for the
+   * `rig://join/<secret>` confirm dialog: which space, and who shared it.
+   * Needs no sign-in (the secret authorizes it), so it's asked of the
+   * account relay without reading the token at all; the same trust gate
+   * still applies to where the secret is sent.
+   */
+  previewInviteLink: async ({ link }: { link: string }): Promise<Result<RigInvitePreview, RigInviteLinkError>> => {
+    const secret = extractInviteSecret(link);
+    if (!secret) {
+      return err<RigInviteLinkError>({ kind: 'invalidLink', message: "That doesn't look like a rig invite link." });
+    }
+    const url = resolveRelayUrl();
+    const trust = checkRelayTrust(url);
+    if (!trust.trusted) {
+      return err<RigInviteLinkError>({
+        kind: 'relay',
+        message: `RIG_RELAY_URL points at an unrecognized relay (${trust.host}) — refusing to send the invite there.`,
+      });
+    }
+    return fetchInvitePreview(url, secret, 'load this invite');
+  },
+
   acceptInviteLink: async ({
     link,
   }: {
@@ -741,24 +802,9 @@ export const rigShareController = createRPCController({
     const action = 'join with this link';
     const inviteUrl = `${ctx.url.replace(/\/+$/, '')}/v1/invites/${encodeURIComponent(secret)}`;
 
-    let spaceName: string | null = null;
-    try {
-      const preview = await fetch(inviteUrl, {
-        method: 'GET',
-        headers: { accept: 'application/json' },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-      if (preview.status === 404) return err(INVITE_LINK_NOT_FOUND);
-      // Any other non-2xx (rate limit, a relay hiccup) — the accept below is authoritative anyway.
-      if (preview.ok) {
-        const data = asRecord(await preview.json());
-        if (data?.status === 'revoked' || data?.status === 'expired') return err(inviteLinkInvalid(data.status));
-        const name = asRecord(data?.binding)?.name;
-        spaceName = typeof name === 'string' && name ? name : null;
-      }
-    } catch (error) {
-      return err(inviteLinkTransportError(action, error, secret));
-    }
+    const preview = await fetchInvitePreview(ctx.url, secret, action);
+    if (!preview.success) return err(preview.error);
+    const { spaceName } = preview.data;
 
     let response: Response;
     try {

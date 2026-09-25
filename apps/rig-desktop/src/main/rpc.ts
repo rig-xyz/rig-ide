@@ -42,6 +42,7 @@ import { rigCommentsController } from './rig/comments';
 import { rigCommentsCacheController } from './rig/comments-cache-store';
 import { rigContextController } from './rig/context';
 import { rigCreateController } from './rig/create';
+import { rigDeepLinkController } from './rig/deep-link';
 import { rigDeleteController } from './rig/delete-rig';
 import { rigFileMentionsController } from './rig/file-mentions';
 import { rigFilesController } from './rig/files';
@@ -179,6 +180,10 @@ export const rpcRouter = createRPCRouter({
     // bundled CLI, not a data surface like everything else in this
     // namespace. See `join.ts`'s own header comment.
     join: rigJoinController,
+    // `rig://join/<secret>` links from the website's invite page: the
+    // renderer's confirm dialog drains links that arrived before it
+    // mounted. See `deep-link.ts` and `app/deep-links.ts`.
+    deepLink: rigDeepLinkController,
     // Home's "New rig" dialog — drives the bundled CLI headlessly
     // (`rig init --json`, then `rig sync --json` when the toggle is on).
     // Its own key, like `join` above: a one-shot creation action, not a

@@ -150,6 +150,17 @@ export type RigInviteLinkJoined = {
   becameMember: boolean;
 };
 
+/**
+ * `GET /v1/invites/:secret`'s public preview, REDUCED to what a confirm
+ * needs to name: the space and who shared it (`inviterName` falls back to
+ * the inviter's email). Either is `null` when the relay didn't say, or
+ * didn't answer (a rate limit, a hiccup): the accept is authoritative.
+ */
+export type RigInvitePreview = {
+  spaceName: string | null;
+  inviterName: string | null;
+};
+
 export type RigInviteLinkError = {
   kind:
     /** Not a `userig.xyz/join/<secret>` link. */

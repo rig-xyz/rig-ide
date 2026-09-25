@@ -11,6 +11,7 @@ import {
 import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
 import { telemetryService } from '@main/lib/telemetry';
+import { deepLinkInbox } from '@main/rig/deep-link';
 import { registerExternalLinkHandlers } from '@main/utils/externalLinks';
 import { PRODUCT_NAME } from '@shared/app-identity';
 import type { Theme } from '@shared/core/app-settings';
@@ -87,6 +88,12 @@ export function createMainWindow(): BrowserWindow {
   registerExternalLinkHandlers(mainWindow, import.meta.env.DEV);
   registerBrowserWebviewHandlers(mainWindow);
   registerRendererRecoveryHandlers(mainWindow);
+  // A reloading or closed renderer isn't listening for deep links: queue
+  // them until the next one mounts its confirm dialog (`rig/deep-link-inbox.ts`).
+  mainWindow.webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) deepLinkInbox.reset();
+  });
+  mainWindow.on('closed', () => deepLinkInbox.reset());
 
   // Show when ready
   mainWindow.once('ready-to-show', () => {

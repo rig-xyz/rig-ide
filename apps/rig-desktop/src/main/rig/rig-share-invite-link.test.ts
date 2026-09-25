@@ -175,3 +175,84 @@ describe('acceptInviteLink', () => {
     expect(JSON.stringify(mocks.warn.mock.calls)).not.toContain(SECRET);
   });
 });
+
+describe('previewInviteLink', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.stubEnv('RIG_RELAY_URL', RELAY);
+    mocks.readRelayToken.mockReset().mockResolvedValue(null);
+    mocks.warn.mockReset();
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('names the space and the inviter from the public preview, without a sign-in', async () => {
+    fetchMock.mockResolvedValueOnce(
+      json(200, { ...ACTIVE_PREVIEW, inviter: { name: 'Ada', email: 'ada@example.com' } })
+    );
+
+    const result = await rigShareController.previewInviteLink({ link: LINK });
+
+    expect(result).toEqual({ success: true, data: { spaceName: 'growth', inviterName: 'Ada' } });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(`${RELAY}/v1/invites/${SECRET}`);
+    expect(init.headers.authorization).toBeUndefined();
+    expect(mocks.readRelayToken).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the inviter's email, then to nothing", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json(200, { ...ACTIVE_PREVIEW, inviter: { name: null, email: 'ada@example.com' } })
+    );
+    expect(await rigShareController.previewInviteLink({ link: LINK })).toEqual({
+      success: true,
+      data: { spaceName: 'growth', inviterName: 'ada@example.com' },
+    });
+    fetchMock.mockResolvedValueOnce(json(200, { status: 'active', binding: { name: null }, inviter: {} }));
+    expect(await rigShareController.previewInviteLink({ link: LINK })).toEqual({
+      success: true,
+      data: { spaceName: null, inviterName: null },
+    });
+  });
+
+  it('says revoked, expired, or notFound when the invite is no good', async () => {
+    fetchMock.mockResolvedValueOnce(json(200, { ...ACTIVE_PREVIEW, status: 'revoked' }));
+    expect(await rigShareController.previewInviteLink({ link: LINK })).toMatchObject({
+      success: false,
+      error: { kind: 'revoked' },
+    });
+    fetchMock.mockResolvedValueOnce(json(200, { ...ACTIVE_PREVIEW, status: 'expired' }));
+    expect(await rigShareController.previewInviteLink({ link: LINK })).toMatchObject({
+      success: false,
+      error: { kind: 'expired' },
+    });
+    fetchMock.mockResolvedValueOnce(json(404, { error: 'not_found' }));
+    expect(await rigShareController.previewInviteLink({ link: LINK })).toMatchObject({
+      success: false,
+      error: { kind: 'notFound' },
+    });
+  });
+
+  it('refuses to send the secret to an untrusted relay', async () => {
+    vi.stubEnv('RIG_RELAY_URL', 'https://evil.example');
+    expect(await rigShareController.previewInviteLink({ link: LINK })).toMatchObject({
+      success: false,
+      error: { kind: 'relay' },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('never logs or returns the secret when the relay is unreachable', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError(`fetch failed for ${RELAY}/v1/invites/${SECRET}`));
+    const result = await rigShareController.previewInviteLink({ link: LINK });
+    expect(result).toMatchObject({ success: false, error: { kind: 'network' } });
+    expect(JSON.stringify(result)).not.toContain(SECRET);
+    expect(JSON.stringify(mocks.warn.mock.calls)).not.toContain(SECRET);
+  });
+});

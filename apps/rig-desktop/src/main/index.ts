@@ -9,6 +9,7 @@ import { PRODUCT_NAME } from '@shared/app-identity';
 import { registerRPCRouter } from '@shared/lib/ipc/rpc';
 import { rigSettingsChangedChannel } from '@shared/rig/settings';
 import { rigOpenRecentChannel } from '@shared/rig/workspace';
+import { handleDeepLinkArgv, installDeepLinkHandlers } from './app/deep-links';
 import { LIBSECRET_PASSWORD_STORE, shouldForceLibsecretBackend } from './app/linux-secret-storage';
 import { setupApplicationMenu } from './app/menu';
 import { registerAppScheme, setupAppProtocol } from './app/protocol';
@@ -98,16 +99,24 @@ app.on('open-file', (event, path) => {
   events.emit(rigOpenRecentChannel, path);
 });
 
-app.on('second-instance', () => {
+app.on('second-instance', (_event, argv) => {
   const win = BrowserWindow.getAllWindows()[0];
   if (win?.isMinimized()) win.restore();
   win?.focus();
+  // Windows/Linux: a `rig://` link opened while running arrives as the
+  // would-be second instance's argv.
+  handleDeepLinkArgv(argv);
 });
 
 if (!import.meta.env.DEV && !app.requestSingleInstanceLock()) {
   app.quit();
   process.exit(0);
 }
+
+// `rig://join/<secret>` deep links — registered at module load, like
+// `open-file` above, because macOS's `open-url` can fire before
+// `app.whenReady()` on a cold launch. See `app/deep-links.ts`.
+installDeepLinkHandlers();
 
 if (import.meta.env.DEV) {
   try {

@@ -57,3 +57,18 @@ export function parseInviteLink(input: string): ParsedInviteLink | null {
 export function extractInviteSecret(input: string): string | null {
   return parseInviteLink(input)?.secret ?? null;
 }
+
+/**
+ * The relay's own invite-secret shape: `tap_inv_` + base64url (tap's
+ * `core/src/ids.ts` `newInviteSecret` — 24 random bytes, so 32 chars
+ * today; the bounds leave room without accepting arbitrary junk).
+ * Stricter than `parseInviteLink`, which takes whatever a person pasted
+ * and lets the relay decide: this is for input a web page can hand us
+ * unasked (the `rig://join/<secret>` deep link, `./deep-link.ts`), where
+ * anything else is dropped before it reaches the network.
+ */
+const INVITE_SECRET_SHAPE = /^tap_inv_[A-Za-z0-9_-]{16,128}$/;
+
+export function isInviteSecretShape(secret: string): boolean {
+  return INVITE_SECRET_SHAPE.test(secret);
+}
