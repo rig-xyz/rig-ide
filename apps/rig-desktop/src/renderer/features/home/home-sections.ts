@@ -484,13 +484,21 @@ export function buildHomeRigRows(
   const spaceBindings = new Set(
     workspaces.status === 'ok' ? workspaces.bindings.filter((b) => b.kind === 'space').map((b) => b.bindingId) : []
   );
+  // A local row's name is read from its own `rig.toml` when it's opened —
+  // right after `rig attach` that file often hasn't synced down yet (attach
+  // writes only the binding config), so the row is recorded nameless. The
+  // relay's binding name is the fallback, never an override.
+  const relayNameByBinding =
+    workspaces.status === 'ok'
+      ? new Map(workspaces.bindings.map((b) => [b.bindingId, b.name]))
+      : new Map<string, string>();
 
   const localRows: HomeRigRow[] = localRigs
     .map((r) => ({
       kind: 'local' as const,
       bindingId: r.bindingId,
       ...(spaceBindings.has(r.bindingId) ? { isSpace: true } : {}),
-      name: r.name,
+      name: r.name ?? relayNameByBinding.get(r.bindingId) ?? null,
       path: r.path,
       lastOpenedAt: r.lastOpenedAt,
       sessions: sessionsByRig.get(r.bindingId) ?? [],

@@ -193,6 +193,26 @@ describe('buildHomeRigRows', () => {
     ]);
   });
 
+  it("a nameless local row (rig.toml not synced down yet, e.g. right after a link join) takes the relay's binding name", () => {
+    const rows = buildHomeRigRows(
+      [{ ...RIG_A, name: null }],
+      {
+        status: 'ok',
+        bindings: [
+          { bindingId: 'b1', name: 'calm-valley', kind: 'space', lastSyncedAt: null, role: 'editor', createdAt: '' },
+        ],
+      },
+      []
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: 'local', bindingId: 'b1', name: 'calm-valley', isSpace: true });
+  });
+
+  it('a nameless local row stays nameless while the relay list is not known', () => {
+    const rows = buildHomeRigRows([{ ...RIG_A, name: null }], { status: 'loading' }, []);
+    expect(rows[0]).toMatchObject({ kind: 'local', name: null });
+  });
+
   it('flags space bindings (local and relay-only) and leaves rigs untouched', () => {
     const rows = buildHomeRigRows(
       [RIG_A],
