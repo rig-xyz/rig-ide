@@ -862,6 +862,203 @@ describe('RelayRoomSource — connectors (connectors-spec.md)', () => {
   });
 });
 
+describe('RelayRoomSource without the realtime socket', () => {
+  /** A relay whose message log grows like the real one: `?after=` returns only what's newer. */
+  function growingRelay() {
+    const fake = makeFakeRelay();
+    const log: RoomMessageRow[] = [message()];
+    let listMessagesCalls = 0;
+    let listMembersCalls = 0;
+    let members: RoomMemberRow[] = [member()];
+    const eventCalls: string[] = [];
+    const getSessionEvents = fake.relay.getSessionEvents.bind(fake.relay);
+    fake.relay.listMessages = async (_bindingId, query) => {
+      listMessagesCalls += 1;
+      const after = query.after ? Number(query.after) : 0;
+      return ok(log.filter((m) => m.seq > after));
+    };
+    fake.relay.listMembers = async () => {
+      listMembersCalls += 1;
+      return ok(members);
+    };
+    fake.relay.getSessionEvents = async (bindingId, runId, after) => {
+      eventCalls.push(runId);
+      return getSessionEvents(bindingId, runId, after);
+    };
+    return {
+      fake,
+      post: (row: RoomMessageRow) => log.push(row),
+      setMembers: (rows: RoomMemberRow[]) => (members = rows),
+      calls: () => ({ listMessages: listMessagesCalls, listMembers: listMembersCalls }),
+      eventCalls,
+    };
+  }
+
+  function makeSource(relay: RelayRoomClient, createProvider: () => RealtimeProvider | Promise<RealtimeProvider>) {
+    return new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay,
+      createProvider,
+      pollIntervalMs: 10,
+      connectGraceMs: 30,
+    });
+  }
+
+  it('never connects (the upgrade 404s, so the provider only ever reports disconnect): polls for messages, runs and members', async () => {
+    const relay = growingRelay();
+    let provider: FakeProvider | null = null;
+    const source = makeSource(relay.fake.relay, () => (provider = new FakeProvider()));
+    source.play();
+    await flush();
+    expect(source.getSnapshot().connection).toBe('connecting');
+
+    // Each failed attempt reports a disconnect; the Room goes quiet-offline once.
+    const seen: string[] = [];
+    source.subscribe((event) => seen.push(event.type === 'connection_changed' ? `connection:${event.connection}` : event.type));
+    provider!.fire('disconnect');
+    provider!.fire('disconnect');
+    expect(source.getSnapshot().connection).toBe('offline');
+    expect(seen.filter((t) => t === 'connection:offline')).toHaveLength(1);
+
+    // A new chat message, and a run that starts and keeps logging events.
+    relay.post(message({ id: 'm2', seq: 2, body: 'still there?' }));
+    relay.fake.setRun('run1', run(), [sessionEvent({ seq: 1 })]);
+    relay.post(message({ id: 'm3', seq: 3, kind: 'session', body: '', meta: { runId: 'run1' } }));
+    await wait(40);
+    expect(source.getSnapshot().messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3']);
+    expect(source.getSnapshot().sessionEventsByRun.run1!.map((e) => e.seq)).toEqual([1]);
+
+    relay.fake.appendEvents('run1', [sessionEvent({ seq: 2, kind: 'tool_call_update' })]);
+    await wait(40);
+    expect(source.getSnapshot().sessionEventsByRun.run1!.map((e) => e.seq)).toEqual([1, 2]);
+
+    // Someone joins without a join message reaching us: the roster poll still finds them.
+    relay.setMembers([member(), member({ userId: 'u-sam', name: 'Sam', role: 'editor' })]);
+    await wait(120);
+    expect(source.getSnapshot().members.map((m) => m.id)).toEqual(['u1', 'u-sam']);
+    expect(seen).toContain('members_synced');
+    source.dispose();
+  });
+
+  it('never connects and never even says so: starts polling after the grace period anyway', async () => {
+    const relay = growingRelay();
+    const source = makeSource(relay.fake.relay, () => new FakeProvider());
+    source.play();
+    await flush();
+    expect(source.getSnapshot().connection).toBe('connecting');
+    await wait(50);
+    expect(source.getSnapshot().connection).toBe('offline');
+    relay.post(message({ id: 'm2', seq: 2, body: 'hello?' }));
+    await wait(40);
+    expect(source.getSnapshot().messages.map((m) => m.id)).toEqual(['m1', 'm2']);
+    source.dispose();
+  });
+
+  it('cannot even build the provider: still polls', async () => {
+    const relay = growingRelay();
+    const source = makeSource(relay.fake.relay, async () => {
+      throw new Error('no websocket for you');
+    });
+    source.play();
+    await flush();
+    expect(source.getSnapshot().connection).toBe('offline');
+    relay.post(message({ id: 'm2', seq: 2 }));
+    await wait(40);
+    expect(source.getSnapshot().messages.map((m) => m.id)).toEqual(['m1', 'm2']);
+    source.dispose();
+  });
+
+  it('drops then recovers: polls only while the socket is down, and catches up once it is back', async () => {
+    const relay = growingRelay();
+    let provider: FakeProvider | null = null;
+    const source = makeSource(relay.fake.relay, () => (provider = new FakeProvider()));
+    source.play();
+    await flush();
+    provider!.fire('connect');
+    await flush();
+    expect(source.getSnapshot().connection).toBe('online');
+
+    // Connected: nothing polls, however long we wait.
+    const whileOnline = relay.calls().listMessages;
+    await wait(60);
+    expect(relay.calls().listMessages).toBe(whileOnline);
+
+    // Dropped: polling picks up what the socket would have told us.
+    provider!.fire('disconnect');
+    expect(source.getSnapshot().connection).toBe('offline');
+    relay.post(message({ id: 'm2', seq: 2, body: 'missed this' }));
+    await wait(40);
+    expect(source.getSnapshot().messages.map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(relay.calls().listMessages).toBeGreaterThan(whileOnline + 1);
+
+    // Back: one catch-up, then polling stops.
+    relay.post(message({ id: 'm3', seq: 3 }));
+    provider!.fire('connect');
+    await flush();
+    expect(source.getSnapshot().connection).toBe('online');
+    expect(source.getSnapshot().messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3']);
+    const afterRecovery = relay.calls().listMessages;
+    await wait(60);
+    expect(relay.calls().listMessages).toBe(afterRecovery);
+    source.dispose();
+  });
+
+  it("polling skips runs that have already finished (a long history doesn't mean a request per run per poll)", async () => {
+    const relay = growingRelay();
+    relay.fake.setRun('done1', run({ id: 'done1', status: 'done' }), [sessionEvent({ runId: 'done1', seq: 1 })]);
+    relay.fake.setRun('live1', run({ id: 'live1' }), [sessionEvent({ runId: 'live1', seq: 1 })]);
+    relay.post(message({ id: 'm2', seq: 2, kind: 'session', body: '', meta: { runId: 'done1' } }));
+    relay.post(message({ id: 'm3', seq: 3, kind: 'session', body: '', meta: { runId: 'live1' } }));
+    let provider: FakeProvider | null = null;
+    const source = makeSource(relay.fake.relay, () => (provider = new FakeProvider()));
+    source.play();
+    await flush();
+    relay.eventCalls.length = 0;
+    provider!.fire('disconnect');
+    await wait(50);
+    expect(relay.eventCalls.length).toBeGreaterThan(0);
+    expect(new Set(relay.eventCalls)).toEqual(new Set(['live1']));
+    source.dispose();
+  });
+
+  it('clears anyone "typing" when the socket drops (no awareness updates would ever clear it)', async () => {
+    const relay = growingRelay();
+    let provider: FakeProvider | null = null;
+    const source = makeSource(relay.fake.relay, () => (provider = new FakeProvider()));
+    source.play();
+    await flush();
+    provider!.fire('connect');
+    provider!.setAwareness([{ user: { id: 'u1' } }, { user: { id: 'u-sam' }, typing: true }]);
+    expect(source.getSnapshot().typingUserIds).toEqual(['u-sam']);
+    provider!.fire('disconnect');
+    expect(source.getSnapshot().typingUserIds).toEqual([]);
+    source.dispose();
+  });
+
+  it('pause() and dispose() stop the polling', async () => {
+    const relay = growingRelay();
+    let provider: FakeProvider | null = null;
+    const source = makeSource(relay.fake.relay, () => (provider = new FakeProvider()));
+    source.play();
+    await flush();
+    provider!.fire('disconnect');
+    await wait(30);
+    source.pause();
+    provider!.fire('disconnect'); // the real provider reports its own close
+    const paused = relay.calls().listMessages;
+    await wait(50);
+    expect(relay.calls().listMessages).toBe(paused);
+    source.dispose();
+  });
+});
+
+async function wait(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Drains the chained bootstrap/catch-up awaits — a macro-task tick is more
  * reliable here than counting `Promise.resolve()`s given how many awaits

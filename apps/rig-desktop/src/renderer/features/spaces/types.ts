@@ -245,6 +245,8 @@ export type RoomEvent =
   /** Adds the member (status 'invited') and creates its `RoomInvite` in one step — `who` must be a known room member (see the fixture's `PEOPLE` map). */
   | { type: 'member_invited'; who: PersonId; by: PersonId; inviteId: string }
   | { type: 'member_joined'; id: PersonId }
+  /** The roster, re-read from the relay (the live source's fallback poll). */
+  | { type: 'members_synced'; members: RoomMember[] }
   | { type: 'invite_status_changed'; inviteId: string; status: RoomInvite['status'] }
   | { type: 'connector_added'; connector: RoomConnector }
   /** The space's full connector list, refetched from the relay (+ local connection state) — see `RelayRoomSource.refreshConnectors`. */
@@ -277,5 +279,5 @@ export interface RoomSnapshot {
   connection?: RoomConnection;
 }
 
-/** Whether the Room is hearing the relay live: first connecting, connected, or cut off (it retries on its own). */
+/** Whether the Room is hearing the relay live: first connecting, connected, or without the socket (it retries on its own, and polls meanwhile). */
 export type RoomConnection = 'connecting' | 'online' | 'offline';

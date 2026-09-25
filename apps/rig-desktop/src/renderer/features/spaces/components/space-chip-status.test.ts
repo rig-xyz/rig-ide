@@ -58,9 +58,11 @@ describe('spaceChipStatus', () => {
     expect(spaceChipStatus(s, 'dylan', 0)?.kind).toBe('others-working');
   });
 
-  it('puts a lost connection above everything', () => {
-    const s = snapshot({ connection: 'offline', sessionMetaByRun: { b: run('b', 'dylan', 'claude') }, sessionEventsByRun: { b: [chunk, asking] } });
-    expect(spaceChipStatus(s, 'dylan', 5)).toEqual({ kind: 'offline' });
+  it('mentions a lost connection only when there is nothing else to say (the Room keeps updating by polling)', () => {
+    const busy = snapshot({ connection: 'offline', sessionMetaByRun: { b: run('b', 'dylan', 'claude') }, sessionEventsByRun: { b: [chunk, asking] } });
+    expect(spaceChipStatus(busy, 'dylan', 5)).toEqual({ kind: 'needs-you', agent: 'claude' });
+    expect(spaceChipStatus(snapshot({ connection: 'offline' }), 'dylan', 2)).toEqual({ kind: 'new', count: 2 });
+    expect(spaceChipStatus(snapshot({ connection: 'offline' }), 'dylan', 0)).toEqual({ kind: 'offline' });
   });
 
   it('ignores finished runs', () => {

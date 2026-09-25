@@ -132,6 +132,9 @@ export function reduceRoom(snapshot: RoomSnapshot, event: RoomEvent): RoomSnapsh
         members: snapshot.members.map((m) => (m.id === event.id ? { ...m, status: 'here' } : m)),
       };
 
+    case 'members_synced':
+      return { ...snapshot, members: event.members };
+
     case 'invite_status_changed':
       return {
         ...snapshot,

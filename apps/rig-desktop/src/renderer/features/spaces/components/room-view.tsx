@@ -566,15 +566,18 @@ export function RoomView({
           />
           )}
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
+            {/* No live socket: the source polls instead, so nothing is
+                broken, just a few seconds behind. A quiet note, not an alarm. */}
             {live && snapshot.connection === 'offline' && (
-              <div
-                className="border-border-hairline bg-bg-1 mb-2 flex items-center gap-2 rounded-card border px-3 py-2 text-xs text-text-secondary"
+              <p
+                className="mb-1.5 flex items-center gap-1.5 px-1 text-2xs text-text-muted"
                 role="status"
+                title="The live connection is down, so the Room checks for news every few seconds. Your agents keep working on this computer."
                 data-testid="room-offline"
               >
-                <span className="size-1.5 shrink-0 rounded-full bg-warning" />
-                Lost the live connection to the room, reconnecting. Your agents keep working on this computer.
-              </div>
+                <span className="bg-border-strong size-1.5 shrink-0 rounded-full" />
+                Updating a little slower than usual
+              </p>
             )}
             <Composer
               prefill={prefill}

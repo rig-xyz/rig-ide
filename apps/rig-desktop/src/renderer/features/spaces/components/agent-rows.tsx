@@ -171,13 +171,13 @@ export type SpaceChipStatus =
   | { kind: 'new'; count: number };
 
 /**
- * Most urgent first: the live connection is down; one of your agents is
- * waiting on your approval; your agent is working; someone else's is;
- * files changed that you haven't opened. Sync, connectors to connect and
- * the rest stay inside the panel.
+ * Most urgent first: one of your agents is waiting on your approval; your
+ * agent is working; someone else's is; files changed that you haven't
+ * opened; last, and quietly, the Room is updating by polling because the
+ * live connection is down (nothing is broken, so it never outranks news).
+ * Sync, connectors to connect and the rest stay inside the panel.
  */
 export function spaceChipStatus(snapshot: RoomSnapshot, selfUserId: string, unseenCount: number): SpaceChipStatus | null {
-  if (snapshot.connection === 'offline') return { kind: 'offline' };
   const running: Array<{ owner: string; agent: AgentKind }> = [];
   for (const meta of Object.values(snapshot.sessionMetaByRun)) {
     const card = projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? []);
@@ -193,6 +193,7 @@ export function spaceChipStatus(snapshot: RoomSnapshot, selfUserId: string, unse
     return { kind: 'others-working', owner, agent: first.agent, count: running.length };
   }
   if (unseenCount > 0) return { kind: 'new', count: unseenCount };
+  if (snapshot.connection === 'offline') return { kind: 'offline' };
   return null;
 }
 
@@ -233,9 +234,14 @@ function ChipStatus({ status }: { status: SpaceChipStatus }) {
   switch (status.kind) {
     case 'offline':
       return (
-        <span className="flex items-center gap-1.5 text-warning" data-testid="chip-status" data-kind="offline">
-          <span className="size-1.5 rounded-full bg-warning" />
-          Reconnecting…
+        <span
+          className="flex items-center gap-1.5 text-text-muted"
+          title="The live connection is down, so the Room checks for news every few seconds."
+          data-testid="chip-status"
+          data-kind="offline"
+        >
+          <span className="bg-border-strong size-1.5 rounded-full" />
+          Updating slower
         </span>
       );
     case 'needs-you':

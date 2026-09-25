@@ -48,6 +48,7 @@ import type {
 import { connectorById, type ConnectionStatus } from '@shared/spaces/connectors';
 import type { AgentKind, MessageKind, RoomConnector, RoomEvent, RoomReplyRef, RoomSnapshot, SessionRunMeta } from './types';
 import { reduceRoom } from './fixtures/room-feed';
+import { effectiveRunStatus, projectSessionCard } from './projection';
 import type { RoomSource } from './room-source';
 import { formatClock } from '@renderer/lib/time-format';
 
@@ -188,6 +189,10 @@ export type RelayRoomSourceOptions = {
   }) => RealtimeProvider | Promise<RealtimeProvider>;
   /** How many messages to bootstrap on open — mirrors `?latest=N`. */
   bootstrapMessageCount?: number;
+  /** How often to re-read the relay while the realtime socket is down (see `startPolling`). */
+  pollIntervalMs?: number;
+  /** How long the first connection gets before the Room stops waiting on it and starts polling. */
+  connectGraceMs?: number;
   log?: (message: string, extra?: Record<string, unknown>) => void;
 };
 
@@ -195,6 +200,19 @@ type Listener = (event: RoomEvent, snapshot: RoomSnapshot) => void;
 
 /** Re-mint once the cached ticket is within this margin of `expiresAt` (~10 minute TTL). */
 const TICKET_REFRESH_MARGIN_MS = 60_000;
+
+/**
+ * Without the realtime socket (never connected, e.g. a relay with realtime
+ * switched off answering the upgrade with a 404, or dropped mid-session) the
+ * Room re-reads the relay itself on this cadence, so it keeps updating —
+ * just a little slower — instead of freezing until a reload. Stops the
+ * moment the socket is back.
+ */
+const POLL_INTERVAL_MS = 4_000;
+/** How long the first connection gets before polling starts anyway (a failed upgrade may never say so). */
+const CONNECT_GRACE_MS = 5_000;
+/** The roster is re-read every Nth poll: joins already arrive as `member_joined` messages; this catches the rest. */
+const MEMBER_POLL_EVERY = 5;
 
 /** How many session runs `bootstrap()` fetches at once — enough that a history full of runs doesn't trickle in one at a time, capped so it doesn't open dozens of requests at once either. */
 const BOOTSTRAP_RUN_CONCURRENCY = 6;
@@ -236,7 +254,9 @@ function emptySnapshot(name: string, selfUserId: string): RoomSnapshot {
  * `replayAll()` is a no-op — there is no script to fast-forward.
  */
 export class RelayRoomSource implements RoomSource {
-  private readonly opts: Required<Omit<RelayRoomSourceOptions, 'createProvider' | 'log' | 'connections'>>;
+  private readonly opts: Required<Omit<RelayRoomSourceOptions, 'createProvider' | 'log' | 'connections' | 'pollIntervalMs' | 'connectGraceMs'>>;
+  private readonly pollIntervalMs: number;
+  private readonly connectGraceMs: number;
   private readonly makeProvider: NonNullable<RelayRoomSourceOptions['createProvider']>;
   private readonly log: (message: string, extra?: Record<string, unknown>) => void;
   private readonly connections: ConnectionsClient | undefined;
@@ -246,6 +266,13 @@ export class RelayRoomSource implements RoomSource {
   private provider: RealtimeProvider | null = null;
   private connected = false;
   private disposed = false;
+  private paused = false;
+
+  /** The fallback poll while the socket is down — see `POLL_INTERVAL_MS`. */
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private graceTimer: ReturnType<typeof setTimeout> | null = null;
+  private pollTicks = 0;
+  private pollInFlight = false;
 
   private lastMessageSeq = 0;
   private readonly userIdByClerkId = new Map<string, string>();
@@ -267,6 +294,8 @@ export class RelayRoomSource implements RoomSource {
       relay: options.relay,
       bootstrapMessageCount: options.bootstrapMessageCount ?? 50,
     };
+    this.pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
+    this.connectGraceMs = options.connectGraceMs ?? CONNECT_GRACE_MS;
     this.connections = options.connections;
     this.makeProvider = options.createProvider ?? createHocuspocusProvider;
     this.log = options.log ?? (() => {});
@@ -299,16 +328,20 @@ export class RelayRoomSource implements RoomSource {
 
   play(): void {
     if (this.disposed) return;
+    this.paused = false;
     void this.connect();
   }
 
   pause(): void {
+    this.paused = true;
+    this.stopPolling();
     this.provider?.disconnect();
     this.connected = false;
   }
 
   dispose(): void {
     this.disposed = true;
+    this.stopPolling();
     this.provider?.destroy();
     this.provider = null;
     this.listeners.clear();
@@ -322,11 +355,18 @@ export class RelayRoomSource implements RoomSource {
       return;
     }
     await this.bootstrap();
-    const provider = await this.makeProvider({
-      wsUrl: this.opts.wsUrl,
-      documentName: `space:${this.opts.bindingId}`,
-      getToken: () => this.ensureFreshTicket(),
-    });
+    let provider: RealtimeProvider;
+    try {
+      provider = await this.makeProvider({
+        wsUrl: this.opts.wsUrl,
+        documentName: `space:${this.opts.bindingId}`,
+        getToken: () => this.ensureFreshTicket(),
+      });
+    } catch (error) {
+      this.log('Rig spaces: could not open the realtime connection', { error: String(error) });
+      this.goOffline();
+      return;
+    }
     if (this.disposed) {
       provider.destroy();
       return;
@@ -338,17 +378,86 @@ export class RelayRoomSource implements RoomSource {
     provider.awareness?.on('change', () => this.syncPresence());
     provider.on('connect', () => {
       this.connected = true;
+      this.stopPolling();
       this.applyLocal({ type: 'connection_changed', connection: 'online' });
       void this.catchUp();
     });
     provider.on('disconnect', () => {
       this.connected = false;
-      if (!this.disposed) this.applyLocal({ type: 'connection_changed', connection: 'offline' });
+      this.goOffline();
     });
     provider.on('stateless', ({ payload }) => {
       void this.handleNotification(payload);
     });
     provider.connect();
+    // A failed upgrade (a relay with realtime off answers it with a 404)
+    // usually shows up as `disconnect`, but nothing guarantees one — a
+    // ticket that can't be minted, say. Don't wait on it forever.
+    this.graceTimer = setTimeout(() => {
+      this.graceTimer = null;
+      if (!this.connected) this.goOffline();
+    }, this.connectGraceMs);
+  }
+
+  // ── without the socket: poll ────────────────────────────────────────────
+
+  /**
+   * The socket is down (or never came up): say so quietly and keep the
+   * Room current by polling. Called on every failed reconnect attempt, so
+   * it only acts the first time. Anyone "typing" is dropped — with no
+   * awareness updates, a stale indicator would never clear.
+   */
+  private goOffline(): void {
+    if (this.disposed || this.paused || this.connected) return;
+    this.startPolling();
+    for (const id of this.snapshot.typingUserIds) this.applyLocal({ type: 'typing_stopped', personId: id });
+    if (this.snapshot.connection !== 'offline') this.applyLocal({ type: 'connection_changed', connection: 'offline' });
+  }
+
+  private startPolling(): void {
+    if (this.pollTimer) return;
+    this.pollTicks = 0;
+    this.pollTimer = setInterval(() => void this.pollOnce(), this.pollIntervalMs);
+  }
+
+  private stopPolling(): void {
+    if (this.graceTimer) clearTimeout(this.graceTimer);
+    this.graceTimer = null;
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = null;
+  }
+
+  /** One poll: new messages and live runs' events, and every few polls the roster. A slow relay never stacks polls up. */
+  private async pollOnce(): Promise<void> {
+    if (this.pollInFlight || this.disposed) return;
+    this.pollInFlight = true;
+    try {
+      this.pollTicks += 1;
+      if (this.pollTicks % MEMBER_POLL_EVERY === 0) await this.pollMembers();
+      await this.catchUp();
+    } finally {
+      this.pollInFlight = false;
+    }
+  }
+
+  /** Re-reads the roster (and with it the invite cards), telling listeners only when someone joined, left or changed. */
+  private async pollMembers(): Promise<void> {
+    const result = await this.opts.relay.listMembers(this.opts.bindingId);
+    if (!result.success) return;
+    const rosterKey = (): string =>
+      this.snapshot.members.map((m) => `${m.id}:${m.name}:${m.role}:${m.avatarUrl ?? ''}`).join('|');
+    const before = rosterKey();
+    this.seedMembers(result.data);
+    if (rosterKey() === before) return;
+    await this.refreshInvites();
+    this.notifyListeners({ type: 'members_synced', members: this.snapshot.members });
+  }
+
+  /** Whether a run can still gain events — polling skips the settled ones, which is almost all of a long history. */
+  private isRunLive(runId: string): boolean {
+    const meta = this.snapshot.sessionMetaByRun[runId];
+    if (!meta) return false;
+    return effectiveRunStatus(meta.status, projectSessionCard(this.snapshot.sessionEventsByRun[runId] ?? [])) === 'running';
   }
 
   /**
@@ -570,6 +679,8 @@ export class RelayRoomSource implements RoomSource {
 
   private async catchUpRuns(): Promise<void> {
     for (const runId of Object.keys(this.snapshot.sessionMetaByRun)) {
+      // Polling (no socket): only runs that are still going can have news.
+      if (!this.connected && !this.isRunLive(runId)) continue;
       const after = this.lastRunSeq.get(runId) ?? 0;
       const result = await this.opts.relay.getSessionEvents(this.opts.bindingId, runId, after);
       if (!result.success) {
