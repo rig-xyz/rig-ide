@@ -21,7 +21,7 @@ import {
   viaGlobalSetupShortLabel,
   yourAgentsHaveItLabel,
 } from '../global-setup';
-import { ConnectorLogo } from '../logos';
+import { ConnectorLogo, LogoTile } from '../logos';
 import type { RelayRoomSource } from '../relay-room-source';
 import type { AgentKind, RoomSnapshot } from '../types';
 import { AGENT_NAME } from './identity';
@@ -271,9 +271,9 @@ export function ConnectorGallery({
         data-connector={def.id}
       >
         <div className="flex items-start gap-2.5">
-          <span className="bg-bg-2 grid size-9 shrink-0 place-items-center rounded-control">
-            <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={20} via={viaAgents} />
-          </span>
+          <LogoTile px={36} via={viaAgents}>
+            <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={20} />
+          </LogoTile>
           <span className="flex min-w-0 flex-col gap-0.5 leading-tight">
             <b className="truncate text-sm font-medium text-text-primary">{def.name}</b>
             <span className="text-xs text-text-secondary">{def.blurb}</span>
@@ -452,13 +452,13 @@ export function ConnectorGallery({
                     const subtitle = `In your ${globalAgentsLabel(new Set(setupCard.agents))} setup`;
                     const body = (
                       <>
-                        <span className="bg-bg-2 grid size-9 shrink-0 place-items-center rounded-control">
+                        <LogoTile px={36} via={setupCard.agents}>
                           {def ? (
-                            <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={20} via={setupCard.agents} />
+                            <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={20} />
                           ) : (
                             <Plug className="size-4 text-text-muted" strokeWidth={1.5} />
                           )}
-                        </span>
+                        </LogoTile>
                         <span className="flex min-w-0 flex-col gap-0.5 leading-tight">
                           <b className="truncate text-sm font-medium text-text-primary" title={setupCard.rawName}>
                             {setupCard.name}
@@ -581,11 +581,11 @@ function ConnectorDetail({
         All connectors
       </button>
 
-      <div className="flex max-w-lg flex-col gap-5">
+      <div className="mx-auto flex w-full max-w-xl flex-col gap-6 pt-2">
         <div className="flex items-start gap-3">
-          <span className="bg-bg-2 grid size-12 shrink-0 place-items-center rounded-card">
-            <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={26} via={connected ? [] : viaAgents} />
-          </span>
+          <LogoTile px={48} via={connected ? [] : viaAgents}>
+            <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={26} />
+          </LogoTile>
           <div className="flex min-w-0 flex-col gap-1 pt-0.5">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-base font-semibold text-text-primary">{def.name}</h3>
@@ -613,12 +613,17 @@ function ConnectorDetail({
                   <DetailPill onClick={() => void onDisconnect()}>Disconnect</DetailPill>
                 ) : inSpace ? (
                   <DetailPill accent onClick={onStart}>
-                    {expired ? 'Reconnect' : 'Connect'}
+                    {expired ? 'Reconnect' : viaAgents.length > 0 ? 'Connect here' : 'Connect'}
                   </DetailPill>
                 ) : null /* not in the space yet: "Add to space" below connects you as part of adding it */}
               </span>
             )}
           </div>
+          {!connected && viaAgents.length > 0 && inSpace && phase === null && (
+            <p className="text-2xs leading-relaxed text-text-muted" data-testid="gallery-detail-via-hint">
+              {viaHint(viaAgents)}
+            </p>
+          )}
           {phase === 'consent' && (
             <div className="border-border-hairline bg-bg-2 flex flex-col gap-2 rounded-card border p-3 text-xs text-text-secondary" data-testid="gallery-detail-consent">
               <span>
@@ -684,10 +689,19 @@ function ConnectorDetail({
 }
 
 /** One block of the detail view — a quiet label plus its content, separated from its neighbors by space and a hairline rather than boxed (Dylan: no more one big card mixing everything). */
+/** What "Connect here" adds when one of your agents already reaches the connector through its own setup. */
+function viaHint(via: readonly AgentKind[]): string {
+  const names = via.map((a) => AGENT_NAME[a]).join(' and ');
+  const others = (['claude', 'codex'] as const).filter((a) => !via.includes(a)).map((a) => AGENT_NAME[a]);
+  return `Your ${names} already reaches it through your own setup. Connecting here signs you in for this space, so ${
+    others.length > 0 ? `your ${others.join(' and ')} can use it too` : 'every agent you run here uses the same login'
+  }.`;
+}
+
 function DetailSection({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="border-border-hairline flex flex-col gap-2 border-t pt-4 first:border-t-0 first:pt-0" data-testid="gallery-detail-section">
-      <h4 className="font-mono text-2xs tracking-wide text-text-muted uppercase">{title}</h4>
+    <section className="border-border-hairline flex flex-col gap-2.5 border-t pt-5" data-testid="gallery-detail-section">
+      <h4 className="text-xs font-medium text-text-secondary">{title}</h4>
       {children}
     </section>
   );

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthorizationServerMetadata } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { createConnections, pickLogin, type CallbackListener, type ConnectionsDeps, type OAuthSteps } from './connections';
+import { createConnections, loginFromIdToken, pickLogin, type CallbackListener, type ConnectionsDeps, type OAuthSteps } from './connections';
 
 const METADATA = { issuer: 'https://as.example', authorization_endpoint: 'https://as.example/authorize', token_endpoint: 'https://as.example/token', response_types_supported: ['code'] } as AuthorizationServerMetadata;
 
@@ -228,5 +228,14 @@ describe('pickLogin', () => {
     expect(pickLogin({ user: { username: 'dtsbourg' } })).toBe('dtsbourg');
     expect(pickLogin('{"displayName":"Dylan B"}')).toBe('Dylan B');
     expect(pickLogin('no idea')).toBeNull();
+  });
+});
+
+describe('loginFromIdToken', () => {
+  const jwt = (claims: object) => `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`;
+  it('reads the email, else the username or name', () => {
+    expect(loginFromIdToken(jwt({ email: 'd@x.io', name: 'Dylan' }))).toBe('d@x.io');
+    expect(loginFromIdToken(jwt({ preferred_username: 'dtsbourg' }))).toBe('dtsbourg');
+    expect(loginFromIdToken('not-a-jwt')).toBeNull();
   });
 });

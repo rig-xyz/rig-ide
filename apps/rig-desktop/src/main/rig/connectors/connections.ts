@@ -222,8 +222,10 @@ export function createConnections(deps: ConnectionsDeps): Connections {
       if (!code) return { ok: false, reason: 'failed', message: 'The sign-in came back without a code.' };
 
       const tokens = await oauth.exchange(issuer, metadata, client, code, codeVerifier, connector.url);
-      await write(account, id, { issuer, clients, tokens: toTokens(tokens) });
-      void learnLogin(account, id);
+      // An OpenID id_token says who you are straight away; otherwise ask the server.
+      const fromIdToken = tokens.id_token ? loginFromIdToken(tokens.id_token) : null;
+      await write(account, id, { issuer, clients, tokens: toTokens(tokens), ...(fromIdToken ? { login: fromIdToken } : {}) });
+      if (!fromIdToken) void learnLogin(account, id);
       log.info('Rig connectors: connected', { id });
       return { ok: true };
     } finally {
@@ -430,6 +432,22 @@ async function listenOnLoopback(): Promise<CallbackListener> {
 function closeQuietly(server: Server): void {
   server.close();
   server.closeAllConnections?.();
+}
+
+/** The email (or username) claim of an OpenID id_token. Display only: not verified, never trusted for access. */
+export function loginFromIdToken(idToken: string): string | null {
+  const payload = idToken.split('.')[1];
+  if (!payload) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>;
+    for (const key of ['email', 'preferred_username', 'name']) {
+      const value = claims[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+  } catch {
+    // Not a JWT we can read: fall back to asking the server.
+  }
+  return null;
 }
 
 /** Known "who am I" tools; any other server gets a name-based guess (a tool that takes no arguments). */

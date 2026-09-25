@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { cn } from '@renderer/lib/utils';
 import { connectorById, type ConnectorId } from '@shared/spaces/connectors';
@@ -207,6 +208,35 @@ function ViaBadge({ agents, hostSize }: { agents: readonly AgentKind[]; hostSize
           <BrandLogo id={agentLogoId(agent)} size={Math.round(size * 0.62)} />
         </span>
       ))}
+    </span>
+  );
+}
+
+/**
+ * A connector's logo on its tile (the gallery's cards and detail header),
+ * with the "via your agent's setup" badge on the TILE's bottom-right corner,
+ * like the owner badge on an agent avatar — for a catalog logo and for a
+ * plain server's plug icon alike.
+ */
+export function LogoTile({
+  px,
+  via,
+  className,
+  children,
+}: {
+  /** The tile's side in px. */
+  px: number;
+  via?: readonly AgentKind[];
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={cn('bg-bg-2 relative grid shrink-0 place-items-center', px >= 44 ? 'rounded-card' : 'rounded-control', className)}
+      style={{ width: px, height: px }}
+    >
+      {children}
+      {via && via.length > 0 && <ViaBadge agents={via} hostSize={Math.round(px * 0.6)} />}
     </span>
   );
 }

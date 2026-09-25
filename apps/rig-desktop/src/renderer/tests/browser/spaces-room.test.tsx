@@ -1653,6 +1653,18 @@ describe('Connectors — gallery', () => {
     expect(detail().querySelector('[data-testid="connector-via-badge"]')).toBeNull();
   });
 
+  it("badges every setup card on its tile's corner, a plain server's plug tile included", async () => {
+    await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), {
+      globalSetup: [
+        { agent: 'claude', name: 'claude.ai Linear', url: 'https://mcp.linear.app/mcp', connectorId: 'linear' },
+        { agent: 'codex', name: 'grafana_prod', url: 'https://monitor.example/', connectorId: null },
+      ],
+    });
+    const cards = [...host.querySelectorAll('[data-testid="gallery-setup-card"]')];
+    expect(cards.length).toBe(2);
+    for (const card of cards) expect(card.querySelector('[data-testid="connector-via-badge"]')).not.toBeNull();
+  });
+
   it('offers one action for a connector not in the space yet: "Add to space" (which connects you as part of adding it)', async () => {
     await renderGallery();
     await act(async () => click(cardOf('posthog')));
