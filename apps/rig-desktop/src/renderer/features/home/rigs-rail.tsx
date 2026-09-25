@@ -63,6 +63,9 @@ import {
   type SessionAttentionStatus,
 } from './session-attention';
 
+/** Rows shown before "Show all N" — the Spaces card's own `SHOWN_CAP`. */
+const SHOWN_CAP = 6;
+
 /**
  * Round: HOME RESTRUCTURE — the left region ("YOUR RIGS", the action
  * zone). Replaces the old separate CONTINUE + RIGS sections with ONE
@@ -121,7 +124,14 @@ export function RigsRail({
   highlightBindingId?: string | null;
 }) {
   const { view, setView, hiddenBindingIds, setHidden } = useRigsRailSettings();
-  const visibleRows = sortHomeRigRows(filterHomeRigRows(rows, view.filter, hiddenBindingIds), view.sort);
+  const [showAll, setShowAll] = useState(false);
+  const sortedRows = sortHomeRigRows(filterHomeRigRows(rows, view.filter, hiddenBindingIds), view.sort);
+  // Same cap as the Spaces card (0.4.3: one account had 19 rigs listed in
+  // full). A highlight target past the cap lifts it, so a briefing's
+  // rig-name link still lands on its row.
+  const highlightIndex = sortedRows.findIndex((r) => r.bindingId === highlightBindingId);
+  const capped = !showAll && highlightIndex < SHOWN_CAP;
+  const visibleRows = capped ? sortedRows.slice(0, SHOWN_CAP) : sortedRows;
   const renderRow = (row: HomeRigRow) =>
     row.kind === 'local' ? (
       <LocalRigRow
@@ -154,6 +164,15 @@ export function RigsRail({
         <p className="px-1 text-xs text-text-muted">No rigs match this filter.</p>
       ) : (
         <div className="flex flex-col gap-2">{visibleRows.map(renderRow)}</div>
+      )}
+      {capped && sortedRows.length > SHOWN_CAP && (
+        <button
+          type="button"
+          onClick={() => setShowAll(true)}
+          className="w-fit px-1 text-xs text-text-muted transition-colors hover:text-text-primary"
+        >
+          Show all {sortedRows.length}
+        </button>
       )}
     </div>
   );

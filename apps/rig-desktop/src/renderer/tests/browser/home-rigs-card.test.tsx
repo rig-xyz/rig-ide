@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,7 +24,24 @@ vi.mock('@renderer/lib/ipc', () => ({
 }));
 
 import { FloatingCard } from '@renderer/features/home/floating-card';
+import type { HomeRigRow } from '@renderer/features/home/home-sections';
 import { RigsRail } from '@renderer/features/home/rigs-rail';
+
+function localRig(i: number): HomeRigRow {
+  return {
+    kind: 'local',
+    bindingId: `b-${i}`,
+    name: `rig-${String(i).padStart(2, '0')}`,
+    path: `/Users/me/Rig/rig-${i}`,
+    // Newest first under the default 'recent' sort: rig-00, rig-01, …
+    lastOpenedAt: 1_000_000 - i,
+    sessions: [],
+    paused: false,
+    outsideHome: false,
+    notARigAnymore: false,
+    role: 'owner',
+  };
+}
 
 function click(el: Element): void {
   el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -86,5 +104,47 @@ describe('Home "Rigs" card', () => {
     const newButton = [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === '+ New')!;
     await act(async () => click(newButton));
     expect(created).toEqual([true]);
+  });
+
+  it('caps the list at six rows with a "Show all N" that reveals the rest', async () => {
+    const rows = Array.from({ length: 19 }, (_, i) => localRig(i));
+    const rigNames = () =>
+      [...host.querySelectorAll('span')].map((s) => s.textContent ?? '').filter((t) => /^rig-\d\d$/.test(t));
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={new QueryClient()}>
+          <RigsRail rows={rows} identities={new Map()} onOpenPath={() => {}} onOpenSession={() => {}} />
+        </QueryClientProvider>
+      );
+    });
+
+    expect(new Set(rigNames())).toEqual(new Set(['rig-00', 'rig-01', 'rig-02', 'rig-03', 'rig-04', 'rig-05']));
+    const showAll = [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Show all 19');
+    expect(showAll).toBeDefined();
+    // The filter/sort control stays.
+    expect(host.textContent).toContain('All · Recent activity');
+
+    await act(async () => click(showAll!));
+    expect(new Set(rigNames()).size).toBe(19);
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent?.startsWith('Show all'))).toBe(false);
+  });
+
+  it('lifts the cap when the highlighted rig sits past it', async () => {
+    const rows = Array.from({ length: 9 }, (_, i) => localRig(i));
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={new QueryClient()}>
+          <RigsRail
+            rows={rows}
+            identities={new Map()}
+            onOpenPath={() => {}}
+            onOpenSession={() => {}}
+            highlightBindingId="b-8"
+          />
+        </QueryClientProvider>
+      );
+    });
+    expect(host.textContent).toContain('rig-08');
+    expect(host.textContent).not.toContain('Show all');
   });
 });
