@@ -164,6 +164,7 @@ export function ConnectorsSection({
   snapshot,
   selfUserId,
   onOpenGallery,
+  onOpenGlobalSetup,
   bindingId,
   globalSetup = [],
   onExpand,
@@ -172,6 +173,8 @@ export function ConnectorsSection({
   selfUserId: string;
   /** Opens the connector gallery beside the panel (see `ConnectorGallery`), optionally straight on one connector's detail view. */
   onOpenGallery?: (focus?: ConnectorId) => void;
+  /** The "your agents also bring…" line: the gallery on the Installed scope, at that section. */
+  onOpenGlobalSetup?: () => void;
   /** Keys this section's remembered expanded/collapsed state to its space. */
   bindingId: string;
   /** Your agents' own global MCP setup — loaded once per Room by `RoomView`, cheap to refresh on expand (main caches it). */
@@ -258,7 +261,7 @@ export function ConnectorsSection({
             <ConnectorRow key={c.id} connector={c} globalSetup={globalSetup} onOpen={() => onOpenGallery?.(c.id as ConnectorId)} />
           ))}
 
-          <GlobalSetupLine servers={globalSetup} onOpen={() => onOpenGallery?.()} />
+          <GlobalSetupLine servers={globalSetup} onOpen={() => (onOpenGlobalSetup ?? onOpenGallery)?.()} />
         </div>
       )}
     </div>

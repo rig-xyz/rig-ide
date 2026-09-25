@@ -511,20 +511,11 @@ export function RoomView({
                 selfUserId={selfUserId}
                 bindingId={bindingId}
                 onOpenGallery={(focus) => {
-                  // `ConnectorsSection` calls this the same way for its "+
-                  // Add" toggle and for the "your agents also bring N…"
-                  // line — both pass no `focus`. Its callback has no way to
-                  // tell them apart, so an unfocused open is routed to the
-                  // Installed scope, scrolled to the global-setup section:
-                  // that's the one named, testable requirement here
-                  // (connectors-spec.md), at the cost of "+ Add" landing
-                  // there too when you have any global setup.
-                  setGallery({
-                    open: true,
-                    focus: focus ?? null,
-                    initialScope: focus ? 'all' : 'installed',
-                    initialSection: focus ? null : 'global-setup',
-                  });
+                  setGallery({ open: true, focus: focus ?? null, initialScope: 'all', initialSection: null });
+                  refreshGlobalSetup();
+                }}
+                onOpenGlobalSetup={() => {
+                  setGallery({ open: true, focus: null, initialScope: 'installed', initialSection: 'global-setup' });
                   refreshGlobalSetup();
                 }}
                 globalSetup={globalSetup}

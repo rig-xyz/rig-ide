@@ -1191,6 +1191,27 @@ describe('Connectors — space panel', () => {
     await act(async () => click(host.querySelector('[data-testid="connectors-add-toggle"]')!));
     expect(onOpenGallery).toHaveBeenCalledWith();
   });
+
+  it('the "your agents also bring" line opens their own connectors, not the Add grid', async () => {
+    const onOpenGallery = vi.fn();
+    const onOpenGlobalSetup = vi.fn();
+    await act(async () => {
+      root.render(
+        <ConnectorsSection
+          snapshot={connectorsSnapshot()}
+          selfUserId="dylan"
+          bindingId="space-connectors-setup-line"
+          onOpenGallery={onOpenGallery}
+          onOpenGlobalSetup={onOpenGlobalSetup}
+          globalSetup={[{ agent: 'claude', name: 'claude.ai Linear', url: 'https://mcp.linear.app/mcp', connectorId: 'linear' }]}
+        />
+      );
+    });
+    await openConnectors();
+    await act(async () => click(host.querySelector('[data-testid="global-setup-line"]')!));
+    expect(onOpenGlobalSetup).toHaveBeenCalledTimes(1);
+    expect(onOpenGallery).not.toHaveBeenCalled();
+  });
 });
 
 describe('Connectors — gallery', () => {
