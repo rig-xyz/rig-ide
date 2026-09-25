@@ -548,7 +548,7 @@ export function RoomView({
   // bottom-right chip that drew OVER the doc instead of living in the
   // column App.tsx already reserves for it).
   if (collapsed) {
-    return <SpaceRail snapshot={snapshot} onExpand={onExpandCollapsed} />;
+    return <SpaceRail snapshot={snapshot} selfUserId={selfUserId} onExpand={onExpandCollapsed} />;
   }
 
   return (

@@ -25,9 +25,12 @@ import { deriveAgentTileState, describeAgentTileState } from './space-rail-statu
  */
 export function SpaceRail({
   snapshot,
+  selfUserId,
   onExpand,
 }: {
   snapshot: RoomSnapshot;
+  /** The viewer: their own agents read plain ("Claude finished"), everyone else's as theirs ("Sam's Claude finished"). */
+  selfUserId?: string;
   /** Brings the Room back beside the doc (Split) — the rail's own "back" button. */
   onExpand?: () => void;
 }) {
@@ -62,8 +65,9 @@ export function SpaceRail({
             const ownerMember = snapshot.members.find((m) => m.id === owner);
             const runsOfAgent = runs.filter((m) => m.owner === owner && m.agent === agent);
             const state = deriveAgentTileState(runsOfAgent, snapshot, Date.now());
-            const name = ownerMember ? `${ownerMember.name}'s ${AGENT_NAME[agent]}` : AGENT_NAME[agent];
-            const label = describeAgentTileState(state, name);
+            const theirs = ownerMember && owner !== selfUserId ? ownerMember.name : undefined;
+            const name = theirs ? `${theirs}'s ${AGENT_NAME[agent]}` : AGENT_NAME[agent];
+            const label = describeAgentTileState(state, name, selfUserId !== undefined ? theirs : undefined);
             return (
               <Tooltip key={`${owner}:${agent}`}>
                 <TooltipTrigger

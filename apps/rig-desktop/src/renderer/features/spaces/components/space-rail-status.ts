@@ -52,12 +52,17 @@ export function deriveAgentTileState(runs: readonly SessionRunMeta[], snapshot: 
   return { kind: 'quiet' };
 }
 
-/** In words, for the tile's tooltip — "Claude is waiting on you", "Claude thinking", "Claude finished", "Claude quiet". */
-export function describeAgentTileState(state: AgentTileState, agentName: string): string {
+/**
+ * In words, for the tile's tooltip — "Claude is waiting on you", "Claude
+ * thinking", "Claude finished", "Claude quiet". Someone else's agent is
+ * named as theirs by the caller ("Sam's Claude finished"); pass `ownerName`
+ * for it, so its approvals wait on them ("… is waiting on Sam"), not you.
+ */
+export function describeAgentTileState(state: AgentTileState, agentName: string, ownerName?: string): string {
   if (state.kind === 'quiet') return `${agentName} quiet`;
   switch (state.state) {
     case 'waiting':
-      return `${agentName} is waiting on you`;
+      return `${agentName} is waiting on ${ownerName ?? 'you'}`;
     case 'done':
       return `${agentName} finished`;
     case 'failed':

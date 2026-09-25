@@ -82,6 +82,7 @@ describe('describeAgentTileState', () => {
 
   it('says waiting on you in words', () => {
     expect(describeAgentTileState({ kind: 'live', state: 'waiting' }, 'Claude')).toBe('Claude is waiting on you');
+    expect(describeAgentTileState({ kind: 'live', state: 'waiting' }, "Sam's Claude", 'Sam')).toBe("Sam's Claude is waiting on Sam");
   });
 
   it('names a working agent', () => {

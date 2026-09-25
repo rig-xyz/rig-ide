@@ -25,7 +25,7 @@ function running(over: Partial<RigSpaceStatus['running'][number]> = {}): RigSpac
   return {
     runId: 'run_1',
     agent: 'claude',
-    ownerUserId: 'user_1',
+    ownerUserId: 'me',
     startedAt: new Date(NOW - 60_000).toISOString(),
     activity: 'editing',
     ...over,
@@ -47,8 +47,13 @@ function msg(seq: number, authorUserId = 'sam', over: Partial<NonNullable<RigSpa
   return { id: `m${seq}`, seq, createdAt: iso((100 - seq) * 60_000), authorUserId, authorKind: 'user' as const, ...over };
 }
 
-function lastRun(status: 'done' | 'failed' | 'stopped', msAgo: number, agent: 'claude' | 'codex' = 'claude') {
-  return { status, endedAt: iso(msAgo), agent, ownerUserId: 'sam' };
+function lastRun(
+  status: 'done' | 'failed' | 'stopped',
+  msAgo: number,
+  agent: 'claude' | 'codex' = 'claude',
+  owner: { ownerUserId: string; ownerName?: string } = { ownerUserId: SELF }
+) {
+  return { status, endedAt: iso(msAgo), agent, ...owner };
 }
 
 /** Opened 30 minutes ago, having read up to seq 10. */
@@ -165,6 +170,29 @@ describe('deriveSpaceStatusLine', () => {
     expect(line({ bindingId: 'x', running: [], recentMessages: [msg(11), msg(12), msg(13)] })).toBe('3 new messages');
     const nine = Array.from({ length: 9 }, (_, i) => msg(20 + i));
     expect(line({ bindingId: 'x', running: [], recentMessages: nine })).toBe('9+ new messages');
+  });
+
+  it("names someone else's agent by the owner's first name; yours stays plain", () => {
+    const sam = { ownerUserId: 'sam', ownerName: 'Sam Lee' };
+    expect(line({ bindingId: 'x', running: [], lastRun: lastRun('done', 5 * 60_000, 'claude', sam) })).toBe("Sam's Claude finished · 5m ago");
+    expect(line({ bindingId: 'x', running: [], lastRun: lastRun('failed', 5 * 60_000, 'codex', sam) })).toBe("Sam's Codex failed · 5m ago");
+    expect(line({ bindingId: 'x', running: [running({ ...sam, title: 'metrics.md' })] })).toBe("Sam's Claude editing metrics.md");
+    expect(line({ bindingId: 'x', running: [running({ ...sam, activity: null })] })).toBe("Sam's Claude working");
+    // Their agent waits on them, not on you.
+    expect(line({ bindingId: 'x', running: [running({ ...sam, activity: 'waiting' })] })).toBe("Sam's Claude is waiting on Sam");
+    expect(line({ bindingId: 'x', running: [], lastRun: lastRun('done', 5 * 60_000) })).toBe('Claude finished · 5m ago');
+  });
+
+  it("falls back to \"A teammate's\" when the owner's name isn't known, and to plain when who you are isn't", () => {
+    const unnamed = { ownerUserId: 'sam' };
+    expect(line({ bindingId: 'x', running: [], lastRun: lastRun('done', 5 * 60_000, 'claude', unnamed) })).toBe(
+      "A teammate's Claude finished · 5m ago"
+    );
+    expect(line({ bindingId: 'x', running: [running({ ...unnamed, activity: 'waiting' })] })).toBe(
+      "A teammate's Claude is waiting for approval"
+    );
+    const status: RigSpaceStatus = { bindingId: 'x', running: [], lastRun: lastRun('done', 5 * 60_000, 'claude', unnamed) };
+    expect(deriveSpaceStatusLine(status, deriveSpaceAttention(status, MARKER, null), NOW)).toBe('Claude finished · 5m ago');
   });
 
   it('idle reads the latest activity as a relative time, or "No activity yet"', () => {

@@ -29,6 +29,8 @@ export type RigSpaceRunningItem = {
   activity: RigSpaceActivity | null;
   /** The latest tool call's (or pending permission's) own title, when the event carried one. */
   title?: string;
+  /** The owner's display name, from the space's member list (the relay sends only the id); absent when unknown. */
+  ownerName?: string;
 };
 
 export type RigSpaceLastRun = {
@@ -36,6 +38,8 @@ export type RigSpaceLastRun = {
   endedAt: string | null;
   agent: RigSpaceAgent;
   ownerUserId: string;
+  /** As on `RigSpaceRunningItem`. */
+  ownerName?: string;
 };
 
 /** One room message, just enough to count it: its `seq` compares against the Room's own read marker. */

@@ -132,6 +132,18 @@ describe('SpaceRail', () => {
     expect(tiles.map((t) => t.getAttribute('aria-label'))).toEqual(["Dylan's Claude quiet", "Sam's Codex quiet"]);
   });
 
+  it("names only other people's agents as theirs, and their approvals as waiting on them", async () => {
+    const s = snapshot({
+      sessionMetaByRun: { b: run('b', 'sam', 'codex') },
+      sessionEventsByRun: { b: [chunk, asking] },
+    });
+    await act(async () => {
+      root.render(<SpaceRail snapshot={s} selfUserId="dylan" onExpand={() => {}} />);
+    });
+    const tiles = Array.from(host.querySelectorAll<HTMLElement>('[data-testid="space-rail-agent-tile"]'));
+    expect(tiles.map((t) => t.getAttribute('aria-label'))).toEqual(['Claude quiet', "Sam's Codex is waiting on Sam"]);
+  });
+
   it('each agent tile carries its brand mark and its owner\'s initial, like the transcript avatar', async () => {
     // The mark each agent kind should carry, drawn by the same `BrandLogo` the transcript's `AgentAvatar` uses.
     const expected = document.createElement('div');

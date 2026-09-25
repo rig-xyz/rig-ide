@@ -195,9 +195,9 @@ describe('SpacesCard — what you missed', () => {
   }
 
   const statuses: RigSpaceStatus[] = [
-    { bindingId: 'w-live', running: [{ runId: 'r1', agent: 'claude', ownerUserId: 'sam', startedAt: iso(60_000), activity: 'editing', title: 'metrics.md' }] },
-    { bindingId: 'w-failed', running: [], lastRun: { status: 'failed', endedAt: iso(60 * 60_000), agent: 'codex', ownerUserId: 'sam' }, recentMessages: msgs(11, 2) },
-    { bindingId: 'w-done', running: [], lastRun: { status: 'done', endedAt: iso(20 * 60_000), agent: 'claude', ownerUserId: 'sam' } },
+    { bindingId: 'w-live', running: [{ runId: 'r1', agent: 'claude', ownerUserId: SELF, startedAt: iso(60_000), activity: 'editing', title: 'metrics.md' }] },
+    { bindingId: 'w-failed', running: [], lastRun: { status: 'failed', endedAt: iso(60 * 60_000), agent: 'codex', ownerUserId: SELF }, recentMessages: msgs(11, 2) },
+    { bindingId: 'w-done', running: [], lastRun: { status: 'done', endedAt: iso(20 * 60_000), agent: 'claude', ownerUserId: 'sam', ownerName: 'Sam Lee' } },
     { bindingId: 'w-one', running: [], recentMessages: [...msgs(11, 1), ...msgs(12, 1, SELF)] },
     { bindingId: 'w-five', running: [], recentMessages: msgs(11, 5) },
     { bindingId: 'w-nine', running: [], recentMessages: msgs(11, 9) },
@@ -273,9 +273,9 @@ describe('SpacesCard — what you missed', () => {
     expect(lineOf('gentle-island').className).toContain('text-danger');
   });
 
-  it('an unseen finish: the green check, "Claude finished · 20m ago"', () => {
+  it('an unseen finish: the green check, "Sam\'s Claude finished · 20m ago" (someone else\'s agent is named as theirs)', () => {
     expect(tileOf('pricing').querySelector('[data-state="done"]')).not.toBeNull();
-    expect(lineOf('pricing').textContent).toBe('Claude finished · 20m ago');
+    expect(lineOf('pricing').textContent).toBe("Sam's Claude finished · 20m ago");
     expect(lineOf('pricing').className).toContain('text-text-secondary');
   });
 

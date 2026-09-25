@@ -162,6 +162,123 @@ function toStatus(value: unknown): RigSpaceStatus | null {
   };
 }
 
+// ── whose agent: owners' names ("Sam's Claude finished") ──
+//
+// The status route names a run's owner by user id only. Home says whose
+// agent it was, so names come from each space's member list — re-read at
+// most every few minutes per space, or sooner (but not on every poll) when
+// a run's owner isn't in the list we have: someone new.
+
+const NAMES_TTL_MS = 5 * 60_000;
+const NAMES_RETRY_MS = 60_000;
+const NAMES_CONCURRENCY = 4;
+
+export type MemberNames = ReadonlyMap<string, string>;
+
+/** A member's display name: their profile name, else their email's local part; null when the row has neither. */
+export function memberDisplayName(value: unknown): { userId: string; name: string } | null {
+  const raw = asRecord(value);
+  if (!raw || typeof raw.userId !== 'string') return null;
+  const name =
+    typeof raw.name === 'string' && raw.name.trim()
+      ? raw.name.trim()
+      : typeof raw.email === 'string' && raw.email.includes('@')
+        ? raw.email.split('@')[0]!
+        : null;
+  return name ? { userId: raw.userId, name } : null;
+}
+
+function ownerIdsOf(status: RigSpaceStatus): string[] {
+  return [...status.running.map((r) => r.ownerUserId), ...(status.lastRun ? [status.lastRun.ownerUserId] : [])];
+}
+
+/** Copies each run owner's name, when known, onto the statuses. */
+export function withOwnerNames(
+  statuses: readonly RigSpaceStatus[],
+  namesByBinding: ReadonlyMap<string, MemberNames>
+): RigSpaceStatus[] {
+  return statuses.map((status) => {
+    const names = namesByBinding.get(status.bindingId);
+    if (!names) return status;
+    const named = <T extends { ownerUserId: string }>(item: T): T => {
+      const ownerName = names.get(item.ownerUserId);
+      return ownerName ? { ...item, ownerName } : item;
+    };
+    return {
+      ...status,
+      running: status.running.map(named),
+      ...(status.lastRun ? { lastRun: named(status.lastRun) } : {}),
+    };
+  });
+}
+
+/** Member names per space, cached as described above. `fetchNames` answers null on any failure (the last good list, if any, stays). */
+export function createOwnerNameCache(
+  fetchNames: (bindingId: string) => Promise<MemberNames | null>,
+  now: () => number = Date.now
+): (statuses: readonly RigSpaceStatus[]) => Promise<Map<string, MemberNames>> {
+  const cache = new Map<string, { at: number; names: MemberNames }>();
+  return async (statuses) => {
+    const due: string[] = [];
+    for (const status of statuses) {
+      const owners = ownerIdsOf(status);
+      if (owners.length === 0) continue;
+      const cached = cache.get(status.bindingId);
+      const age = cached ? now() - cached.at : Infinity;
+      const missing = cached ? owners.some((id) => !cached.names.has(id)) : true;
+      if (age >= NAMES_TTL_MS || (missing && age >= NAMES_RETRY_MS)) due.push(status.bindingId);
+    }
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < due.length) {
+        const bindingId = due[next]!;
+        next += 1;
+        const names = await fetchNames(bindingId);
+        const previous = cache.get(bindingId);
+        // A failed read still counts as a try, so a flaky relay isn't asked again every poll.
+        cache.set(bindingId, { at: now(), names: names ?? previous?.names ?? new Map() });
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(NAMES_CONCURRENCY, due.length) }, () => worker()));
+    return new Map([...cache].map(([bindingId, entry]) => [bindingId, entry.names]));
+  };
+}
+
+async function fetchMemberNames(ctx: Resolved, bindingId: string): Promise<MemberNames | null> {
+  try {
+    const base = ctx.url.replace(/\/+$/, '');
+    const response = await fetch(`${base}/v1/me/bindings/${encodeURIComponent(bindingId)}/members`, {
+      headers: { authorization: `Bearer ${ctx.token}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const raw = asRecord(await response.json())?.members;
+    if (!Array.isArray(raw)) return null;
+    return new Map(
+      raw.map(memberDisplayName).filter((m): m is { userId: string; name: string } => m !== null).map((m) => [m.userId, m.name])
+    );
+  } catch (error) {
+    log.warn('Rig space status: could not load a space’s member names', { bindingId, error: String(error) });
+    return null;
+  }
+}
+
+let ownerNameCache: { token: string; ctx: Resolved; namesFor: ReturnType<typeof createOwnerNameCache> } | null = null;
+
+/** The name cache for the signed-in account (a new token, e.g. another account, starts a new one). */
+function ownerNamesFor(ctx: Resolved): ReturnType<typeof createOwnerNameCache> {
+  if (ownerNameCache?.token !== ctx.token) {
+    const entry: NonNullable<typeof ownerNameCache> = {
+      token: ctx.token,
+      ctx,
+      namesFor: createOwnerNameCache((bindingId) => fetchMemberNames(entry.ctx, bindingId)),
+    };
+    ownerNameCache = entry;
+  }
+  ownerNameCache.ctx = ctx;
+  return ownerNameCache.namesFor;
+}
+
 export const rigSpaceStatusController = createRPCController({
   /** `GET /v1/me/spaces/status` — every space binding the caller is a member of, with its own live/last-run status. */
   get: async (): Promise<Result<RigSpaceStatus[], RigSpaceStatusError>> => {
@@ -186,7 +303,7 @@ export const rigSpaceStatusController = createRPCController({
       const statuses = Array.isArray(raw)
         ? raw.map(toStatus).filter((s): s is RigSpaceStatus => s !== null)
         : [];
-      return ok(statuses);
+      return ok(withOwnerNames(statuses, await ownerNamesFor(ctx)(statuses)));
     } catch (error) {
       return err(transportError('load your spaces’ status', error));
     }

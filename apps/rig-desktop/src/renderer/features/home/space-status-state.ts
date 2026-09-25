@@ -19,6 +19,27 @@ export function agentLabel(agent: RigSpaceAgent): string {
   return agent === 'codex' ? 'Codex' : 'Claude';
 }
 
+/** When nobody's name is known for a teammate's run. */
+export const UNKNOWN_OWNER = 'A teammate';
+
+/**
+ * Whose run it is, for the line: `undefined` for your own (or when who "you"
+ * are isn't known), else the owner's first name ("Sam" for "Sam Lee"),
+ * falling back to `UNKNOWN_OWNER`.
+ */
+export function ownerOf(
+  item: { ownerUserId: string; ownerName?: string } | undefined,
+  selfUserId: string | null
+): string | undefined {
+  if (!item || !selfUserId || item.ownerUserId === selfUserId) return undefined;
+  return item.ownerName?.trim().split(/\s+/)[0] || UNKNOWN_OWNER;
+}
+
+/** "Claude" for yours, "Sam's Claude" for someone else's. */
+export function agentPhrase(agent: RigSpaceAgent, owner: string | undefined): string {
+  return owner ? `${owner}'s ${agentLabel(agent)}` : agentLabel(agent);
+}
+
 // ── What a space's tile says ("E · what you missed") ──
 //
 // The ONE thing in a space most worth your attention, in priority order:
@@ -90,10 +111,11 @@ export function idlePattern(seed: string): number[] {
 /** Mirrors `features/spaces/room-read-marker.ts`'s `SpaceReadMarker` (kept structural so this module stays storage-free). */
 export type SpaceSeenMarker = { lastSeenSeq: number | null; openedAt: number | null };
 
+/** `owner` is set only when the run isn't yours: who to name in the line (see `ownerOf`). */
 export type SpaceAttention =
-  | { kind: 'live'; state: DotMatrixActivity }
-  | { kind: 'failed'; agent: RigSpaceAgent; endedAt: number }
-  | { kind: 'finished'; agent: RigSpaceAgent; endedAt: number }
+  | { kind: 'live'; state: DotMatrixActivity; owner?: string }
+  | { kind: 'failed'; agent: RigSpaceAgent; endedAt: number; owner?: string }
+  | { kind: 'finished'; agent: RigSpaceAgent; endedAt: number; owner?: string }
   /** 1–9; 9 means "9+". */
   | { kind: 'messages'; count: number }
   /** Nothing for you. `lastActivityAt` is null when nothing ever happened in the space. */
@@ -150,15 +172,17 @@ export function deriveSpaceAttention(
   selfUserId: string | null
 ): SpaceAttention {
   const running = status?.running ?? [];
+  const withOwner = (owner: string | undefined) => (owner ? { owner } : {});
   if (running.length > 0) {
-    return { kind: 'live', state: running[0]!.activity ?? 'thinking' };
+    return { kind: 'live', state: running[0]!.activity ?? 'thinking', ...withOwner(ownerOf(running[0], selfUserId)) };
   }
   const last = status?.lastRun;
   const endedAt = parseTime(last?.endedAt);
   const openedAt = marker?.openedAt ?? null;
   if (last && endedAt !== null && openedAt !== null && endedAt > openedAt) {
-    if (last.status === 'failed') return { kind: 'failed', agent: last.agent, endedAt };
-    if (last.status === 'done') return { kind: 'finished', agent: last.agent, endedAt };
+    const owner = withOwner(ownerOf(last, selfUserId));
+    if (last.status === 'failed') return { kind: 'failed', agent: last.agent, endedAt, ...owner };
+    if (last.status === 'done') return { kind: 'finished', agent: last.agent, endedAt, ...owner };
   }
   const count = countNewMessages(status, marker?.lastSeenSeq ?? null, selfUserId);
   if (count > 0) return { kind: 'messages', count };
@@ -171,6 +195,8 @@ export function deriveSpaceAttention(
  * "No activity yet". Every row has one, so rows keep one height. A live
  * item's activity is already gerund-shaped ("editing", "reading") except
  * `waiting`, which reads as a full sentence instead (per the approved mock).
+ * Someone else's agent is named as theirs: "Sam's Claude finished · 5m ago",
+ * "Sam's Claude is waiting on Sam".
  */
 export function deriveSpaceStatusLine(
   status: RigSpaceStatus | undefined,
@@ -180,15 +206,21 @@ export function deriveSpaceStatusLine(
   switch (attention.kind) {
     case 'live': {
       const item = status!.running[0]!;
-      const agent = agentLabel(item.agent);
-      if (item.activity === 'waiting') return `${agent} is waiting on you`;
+      const agent = agentPhrase(item.agent, attention.owner);
+      if (item.activity === 'waiting') {
+        return attention.owner && attention.owner !== UNKNOWN_OWNER
+          ? `${agent} is waiting on ${attention.owner}`
+          : attention.owner
+            ? `${agent} is waiting for approval`
+            : `${agent} is waiting on you`;
+      }
       const verb = item.activity ?? 'working';
       return item.title ? `${agent} ${verb} ${item.title}` : `${agent} ${verb}`;
     }
     case 'failed':
-      return `${agentLabel(attention.agent)} failed · ${relativeTime(attention.endedAt, now)}`;
+      return `${agentPhrase(attention.agent, attention.owner)} failed · ${relativeTime(attention.endedAt, now)}`;
     case 'finished':
-      return `${agentLabel(attention.agent)} finished · ${relativeTime(attention.endedAt, now)}`;
+      return `${agentPhrase(attention.agent, attention.owner)} finished · ${relativeTime(attention.endedAt, now)}`;
     case 'messages':
       if (attention.count === 1) return '1 new message';
       return attention.count >= MAX_NEW_MESSAGES ? `${MAX_NEW_MESSAGES}+ new messages` : `${attention.count} new messages`;
