@@ -60,6 +60,21 @@ describe('InviteRow status (live invite)', () => {
     expect(host.textContent).toContain('Invite link created');
   });
 
+  it('pictures an open link with a link glyph, not "AL" initials', async () => {
+    await render(snapshotWith({ id: 'inv1', by: 'u-dylan', who: '', email: null, role: 'editor', status: 'sent' }));
+    const card = host.querySelector('[data-testid="invite-link-avatar"]');
+    expect(card?.querySelector('svg')).toBeTruthy();
+    expect(host.textContent).toContain('Anyone with the link');
+    expect(host.textContent).not.toContain('AL');
+  });
+
+  it('keeps the initials avatar for an emailed invite', async () => {
+    await render(
+      snapshotWith({ id: 'inv1', by: 'u-dylan', who: 'sam@play.local', email: 'sam@play.local', role: 'editor', status: 'sent' })
+    );
+    expect(host.querySelector('[data-testid="invite-link-avatar"]')).toBeNull();
+  });
+
   it('says "Joined" once the invitee is a member', async () => {
     await render(
       snapshotWith({ id: 'inv1', by: 'u-dylan', who: 'sam@play.local', email: 'sam@play.local', role: 'editor', status: 'joined' })

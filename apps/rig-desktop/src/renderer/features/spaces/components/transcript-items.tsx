@@ -1,4 +1,4 @@
-import { Check, CircleAlert, Copy, CornerUpLeft, Plug, UserPlus } from 'lucide-react';
+import { Check, CircleAlert, Copy, CornerUpLeft, Link as LinkIcon, Plug, UserPlus } from 'lucide-react';
 import { Children, type ReactNode, useEffect, useState } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
@@ -354,6 +354,8 @@ export function InviteRow({ message, snapshot }: { message: RoomMessage; snapsho
     : undefined;
   const isLive = invite?.role !== undefined;
   const joined = invite?.status === 'joined';
+  // An open link isn't a person — its card shows a link glyph, not initials.
+  const openLink = Boolean(invite) && !who && !email;
   const label = who?.name ?? email ?? (invite ? 'Anyone with the link' : message.body);
   const role = invite?.role === 'viewer' ? 'can view' : 'can edit';
   // Lane J: a live invite never says "sent by email" — the relay's invite
@@ -379,12 +381,24 @@ export function InviteRow({ message, snapshot }: { message: RoomMessage; snapsho
       </div>
     <div className="border-border-hairline bg-bg-1 flex max-w-[420px] flex-col gap-2.5 rounded-card border p-3">
       <div className="flex items-center gap-2.5">
-        <IdentityAvatar
-          name={label ?? '?'}
-          avatarUrl={who?.avatarUrl ?? null}
-          sizeClassName={cn('size-8', !joined && 'opacity-45')}
-          textClassName="text-xs"
-        />
+        {openLink ? (
+          <span
+            data-testid="invite-link-avatar"
+            className={cn(
+              'bg-bg-2 text-text-secondary flex size-8 shrink-0 items-center justify-center rounded-full',
+              !joined && 'opacity-45'
+            )}
+          >
+            <LinkIcon className="size-4" strokeWidth={1.5} aria-hidden />
+          </span>
+        ) : (
+          <IdentityAvatar
+            name={label ?? '?'}
+            avatarUrl={who?.avatarUrl ?? null}
+            sizeClassName={cn('size-8', !joined && 'opacity-45')}
+            textClassName="text-xs"
+          />
+        )}
         <div className="flex min-w-0 flex-col">
           <b className="truncate text-sm font-medium text-text-primary">{label}</b>
           {who?.email && who.email !== label && (
