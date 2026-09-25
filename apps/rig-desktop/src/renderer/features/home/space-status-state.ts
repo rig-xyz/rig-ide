@@ -8,7 +8,7 @@
  */
 
 import { relativeTime } from '@renderer/features/chat/session-history';
-import type { DotMatrixActivity, DotMatrixEnd } from '@renderer/lib/ui/dot-matrix';
+import type { DotMatrixActivity } from '@renderer/lib/ui/dot-matrix';
 import type { RigSpaceAgent, RigSpaceStatus } from '@shared/rig/space-status';
 
 export function indexSpaceStatuses(statuses: readonly RigSpaceStatus[]): Map<string, RigSpaceStatus> {
@@ -19,80 +19,211 @@ export function agentLabel(agent: RigSpaceAgent): string {
   return agent === 'codex' ? 'Codex' : 'Claude';
 }
 
-/**
- * How long a just-ended run still gets its own end glyph (done ✓ / failed /
- * stopped) and "{Agent} finished · Xm" subtext, before the row settles back
- * to the plain "Xh ago" a genuinely idle space shows — the 1b grammar's
- * own distinction (design doc: "pricing" at 3m shows the done glyph;
- * "research"/"ops" at 2d show the dim quiet tile instead). No spec gave an
- * exact cutoff; 15 minutes is a deliberate, generous-but-not-permanent
- * window for "this just happened."
- */
-export const RECENT_ENDED_MS = 15 * 60 * 1000;
+// ── What a space's tile says ("E · what you missed") ──
+//
+// The ONE thing in a space most worth your attention, in priority order:
+// something live (the 1b motions) › the last run failed while you were away
+// (red cross) › it finished while you were away (green check) › new
+// messages since you last read the space (dice faces) › otherwise nothing
+// for you: a faint pattern that belongs to the space. "While you were away"
+// / "since you last read" come from the Room's own per-space read markers
+// (`features/spaces/room-read-marker.ts`); opening the space clears them.
 
-export type SpaceTileState =
+/** New-message counts as dice faces (cells row-major 0–8). 5 is a plus, so it can't read as the failed cross; 9 fills the grid and means "9+". */
+export const DICE_FACES: Readonly<Record<number, readonly number[]>> = {
+  1: [4],
+  2: [0, 8],
+  3: [0, 4, 8],
+  4: [0, 2, 6, 8],
+  5: [1, 3, 4, 5, 7],
+  6: [0, 2, 3, 5, 6, 8],
+  7: [0, 2, 3, 4, 5, 6, 8],
+  8: [0, 1, 2, 3, 5, 6, 7, 8],
+  9: [0, 1, 2, 3, 4, 5, 6, 7, 8],
+};
+
+export const MAX_NEW_MESSAGES = 9;
+
+const patternKey = (cells: readonly number[]) => [...cells].sort((a, b) => a - b).join(',');
+
+/**
+ * Cell sets an idle pattern may never be: every dice face, the done (✓)
+ * and failed (✕) glyphs, and any full row, column or diagonal (which covers
+ * the queued bar) — so a space's own pattern never reads as a status.
+ */
+export const RESERVED_PATTERNS: ReadonlySet<string> = new Set(
+  [
+    ...Object.values(DICE_FACES),
+    [1, 3, 5, 7],
+    [0, 2, 4, 6, 8],
+    [0, 1, 2],
+    [3, 4, 5],
+    [6, 7, 8],
+    [0, 3, 6],
+    [1, 4, 7],
+    [2, 5, 8],
+    [2, 4, 6],
+  ].map(patternKey)
+);
+
+/**
+ * A space's own idle pattern: 3–4 lit cells, seeded by its bindingId so it
+ * never changes, and never one of `RESERVED_PATTERNS`. An FNV-1a hash seeds
+ * a small xorshift-multiply generator; a draw that lands on a reserved set
+ * is redrawn (the design prototype's own rule). Returns the lit cells,
+ * sorted — empty only if 50 draws in a row were reserved.
+ */
+export function idlePattern(seed: string): number[] {
+  let h = 2166136261;
+  for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  const rnd = () => (h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0) / 4294967296;
+  for (let tries = 0; tries < 50; tries++) {
+    const n = 3 + Math.floor(rnd() * 2);
+    const on = new Set<number>();
+    while (on.size < n) on.add(Math.floor(rnd() * 9));
+    const cells = [...on].sort((a, b) => a - b);
+    if (!RESERVED_PATTERNS.has(patternKey(cells))) return cells;
+  }
+  return [];
+}
+
+/** Mirrors `features/spaces/room-read-marker.ts`'s `SpaceReadMarker` (kept structural so this module stays storage-free). */
+export type SpaceSeenMarker = { lastSeenSeq: number | null; openedAt: number | null };
+
+export type SpaceAttention =
   | { kind: 'live'; state: DotMatrixActivity }
-  | { kind: 'end'; state: DotMatrixEnd }
-  /** No live run and nothing recently ended — a still, dim tile (1b: "quiet spaces = a still, dim tile"). */
-  | { kind: 'quiet' };
+  | { kind: 'failed'; agent: RigSpaceAgent; endedAt: number }
+  | { kind: 'finished'; agent: RigSpaceAgent; endedAt: number }
+  /** 1–9; 9 means "9+". */
+  | { kind: 'messages'; count: number }
+  /** Nothing for you. `lastActivityAt` is null when nothing ever happened in the space. */
+  | { kind: 'idle'; lastActivityAt: number | null };
+
+function parseTime(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : at;
+}
+
+/** The newest thing that happened in a space: a run starting or ending, or a message. */
+export function lastActivityAt(status: RigSpaceStatus | undefined): number | null {
+  const times = [
+    ...(status?.running ?? []).map((r) => parseTime(r.startedAt)),
+    parseTime(status?.lastRun?.endedAt),
+    ...(status?.recentMessages ?? []).map((m) => parseTime(m.createdAt)),
+  ].filter((t): t is number => t !== null);
+  return times.length > 0 ? Math.max(...times) : null;
+}
 
 /**
- * The row's own status tile (`SpaceStatusTile`): a running space always
- * wins (an unrecognized/absent `activity` on an otherwise-live run still
- * gets a live tile — `'thinking'`, the same honest fallback
- * `session-card.tsx`'s `OTHER_STEP` uses, rather than a falsely-calm quiet
- * one); otherwise a recently-ended run's own outcome glyph; otherwise
- * quiet.
+ * Messages newer than your read marker that someone else wrote — a
+ * teammate, their agent's turn, a share-link guest (stamped with the link
+ * creator's id, so `authorKind` is what tells it apart). Your own messages
+ * and your own agent's turns never count. Capped at `MAX_NEW_MESSAGES`: the
+ * relay sends the newest nine, so nine of nine newer is "9+". No marker
+ * (never read here) counts nothing.
  */
-export function deriveSpaceTileState(status: RigSpaceStatus | undefined, now: number): SpaceTileState {
+export function countNewMessages(
+  status: RigSpaceStatus | undefined,
+  lastSeenSeq: number | null,
+  selfUserId: string | null
+): number {
+  if (lastSeenSeq === null) return 0;
+  const count = (status?.recentMessages ?? []).filter(
+    (m) => m.seq > lastSeenSeq && (m.authorKind === 'guest' || m.authorUserId !== selfUserId)
+  ).length;
+  return Math.min(count, MAX_NEW_MESSAGES);
+}
+
+/**
+ * The row's tile and line, in priority order: a running item always wins
+ * (an absent `activity` still gets a live tile — `'thinking'`, the same
+ * honest fallback `session-card.tsx`'s `OTHER_STEP` uses); then the last
+ * run's outcome if it ended after you last opened the space (only failed
+ * and done — a stopped run was someone's own choice, nothing to flag);
+ * then new messages; else idle. With no "opened" marker nothing reads as
+ * unseen — `baselineMarker` sets one the first time Home sees a space.
+ */
+export function deriveSpaceAttention(
+  status: RigSpaceStatus | undefined,
+  marker: SpaceSeenMarker | null,
+  selfUserId: string | null
+): SpaceAttention {
   const running = status?.running ?? [];
   if (running.length > 0) {
     return { kind: 'live', state: running[0]!.activity ?? 'thinking' };
   }
   const last = status?.lastRun;
-  if (last && isRecentlyEnded(last.endedAt, now)) {
-    const state: DotMatrixEnd = last.status === 'done' ? 'done' : last.status === 'failed' ? 'failed' : 'stopped';
-    return { kind: 'end', state };
+  const endedAt = parseTime(last?.endedAt);
+  const openedAt = marker?.openedAt ?? null;
+  if (last && endedAt !== null && openedAt !== null && endedAt > openedAt) {
+    if (last.status === 'failed') return { kind: 'failed', agent: last.agent, endedAt };
+    if (last.status === 'done') return { kind: 'finished', agent: last.agent, endedAt };
   }
-  return { kind: 'quiet' };
-}
-
-function isRecentlyEnded(endedAt: string | null, now: number): boolean {
-  if (!endedAt) return false;
-  const at = Date.parse(endedAt);
-  return !Number.isNaN(at) && now - at <= RECENT_ENDED_MS;
+  const count = countNewMessages(status, marker?.lastSeenSeq ?? null, selfUserId);
+  if (count > 0) return { kind: 'messages', count };
+  return { kind: 'idle', lastActivityAt: lastActivityAt(status) };
 }
 
 /**
- * The row's muted subtext, in words — "Claude editing metrics.md",
- * "Claude is waiting on you", "Codex finished · 3m", "2d ago". A
- * present-running item always leads (our activity vocabulary is already
- * gerund-shaped — "editing", "reading" — except `waiting`, which reads as
- * a full sentence instead, per the approved mock, since "Claude waiting" on
- * its own reads as a fragment). Falls back to `lastRun` — an idle space
- * shows just the relative time, no "Quiet" label — then nothing at all.
+ * The row's second line, in words — "Claude editing metrics.md", "Claude
+ * is waiting on you", "Codex failed · 1h ago", "3 new messages", "2d ago",
+ * "No activity yet". Every row has one, so rows keep one height. A live
+ * item's activity is already gerund-shaped ("editing", "reading") except
+ * `waiting`, which reads as a full sentence instead (per the approved mock).
  */
-export function deriveSpaceStatusLine(status: RigSpaceStatus | undefined, now: number): string {
-  const running = status?.running ?? [];
-  if (running.length > 0) {
-    const item = running[0]!;
-    const agent = agentLabel(item.agent);
-    if (item.activity === 'waiting') return `${agent} is waiting on you`;
-    const verb = item.activity ?? 'working';
-    return item.title ? `${agent} ${verb} ${item.title}` : `${agent} ${verb}`;
-  }
-  const last = status?.lastRun;
-  if (last?.endedAt) {
-    const endedAt = Date.parse(last.endedAt);
-    if (!Number.isNaN(endedAt)) {
-      if (now - endedAt <= RECENT_ENDED_MS) {
-        const verb = last.status === 'done' ? 'finished' : last.status === 'failed' ? 'failed' : 'stopped';
-        return `${agentLabel(last.agent)} ${verb} · ${relativeTime(endedAt, now)}`;
-      }
-      return relativeTime(endedAt, now);
+export function deriveSpaceStatusLine(
+  status: RigSpaceStatus | undefined,
+  attention: SpaceAttention,
+  now: number
+): string {
+  switch (attention.kind) {
+    case 'live': {
+      const item = status!.running[0]!;
+      const agent = agentLabel(item.agent);
+      if (item.activity === 'waiting') return `${agent} is waiting on you`;
+      const verb = item.activity ?? 'working';
+      return item.title ? `${agent} ${verb} ${item.title}` : `${agent} ${verb}`;
     }
+    case 'failed':
+      return `${agentLabel(attention.agent)} failed · ${relativeTime(attention.endedAt, now)}`;
+    case 'finished':
+      return `${agentLabel(attention.agent)} finished · ${relativeTime(attention.endedAt, now)}`;
+    case 'messages':
+      if (attention.count === 1) return '1 new message';
+      return attention.count >= MAX_NEW_MESSAGES ? `${MAX_NEW_MESSAGES}+ new messages` : `${attention.count} new messages`;
+    case 'idle':
+      return attention.lastActivityAt === null ? 'No activity yet' : relativeTime(attention.lastActivityAt, now);
   }
-  return '';
+}
+
+/** The line's tone: a failure in the muted-error tone, anything else unseen a step brighter than the idle/live muted text. */
+export function spaceStatusLineTone(attention: SpaceAttention): 'danger' | 'secondary' | 'muted' {
+  if (attention.kind === 'failed') return 'danger';
+  if (attention.kind === 'finished' || attention.kind === 'messages') return 'secondary';
+  return 'muted';
+}
+
+/**
+ * What to remember for a space this device has no marker for yet (never
+ * opened here, or opened before these markers existed): "seen up to now",
+ * so the first Home after an update — or after being added to a space —
+ * doesn't light every row up with its whole history; only what happens
+ * from here on counts. The message baseline waits for a relay that sends
+ * `recentMessages` (an older one can't say what "now" is). Returns null
+ * when there's nothing to write.
+ */
+export function baselineMarker(
+  status: RigSpaceStatus,
+  marker: SpaceSeenMarker,
+  now: number
+): Partial<{ lastSeenSeq: number; openedAt: number }> | null {
+  const out: Partial<{ lastSeenSeq: number; openedAt: number }> = {};
+  if (marker.lastSeenSeq === null && status.recentMessages) {
+    out.lastSeenSeq = Math.max(0, ...status.recentMessages.map((m) => m.seq));
+  }
+  if (marker.openedAt === null) out.openedAt = now;
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 /** True when a run this device's owner started is sitting on a pending approval — the space belongs in "Needs you." */
@@ -146,36 +277,39 @@ export function countNeedsApproval<T extends { bindingId: string }>(
   return rows.filter((r) => spaceNeedsApproval(statusByBinding.get(r.bindingId), selfUserId)).length;
 }
 
-/** 0 (loudest) → 3 (quietest): waiting on you, then live, then recently ended, then quiet. */
-function spaceActivityRank(status: RigSpaceStatus | undefined, selfUserId: string | null, now: number): number {
+/** 0 (loudest) → 3 (quietest): waiting on you, then live, then something you missed, then idle. */
+function spaceActivityRank(
+  status: RigSpaceStatus | undefined,
+  attention: SpaceAttention,
+  selfUserId: string | null
+): number {
   if (spaceNeedsApproval(status, selfUserId)) return 0;
-  if (spaceIsActive(status)) return 1;
-  return deriveSpaceTileState(status, now).kind === 'end' ? 2 : 3;
+  if (attention.kind === 'live') return 1;
+  return attention.kind === 'idle' ? 3 : 2;
 }
 
-/** The one timestamp that makes two same-rank rows orderable — a running item's own start, or the last run's end. */
+/** The one timestamp that makes two same-rank rows orderable — a running item's own start, else the space's latest activity. */
 function spaceRecencyKey(status: RigSpaceStatus | undefined, now: number): number {
   const running = status?.running ?? [];
-  if (running.length > 0) {
-    const at = Date.parse(running[0]!.startedAt);
-    return Number.isNaN(at) ? now : at;
-  }
-  const endedAt = status?.lastRun?.endedAt;
-  const at = endedAt ? Date.parse(endedAt) : NaN;
-  return Number.isNaN(at) ? 0 : at;
+  if (running.length > 0) return parseTime(running[0]!.startedAt) ?? now;
+  return lastActivityAt(status) ?? 0;
 }
 
-/** "Sorted by activity" (design doc): needs-you first, then live, then recently-ended, then quiet — most-recent-first within each tier, name as the final tiebreak. */
+/** "Sorted by activity" (design doc): needs-you first, then live, then what you missed, then idle — most-recent-first within each tier, name as the final tiebreak. */
 export function sortSpaceRowsByActivity<T extends { bindingId: string; name: string }>(
   rows: readonly T[],
   statusByBinding: ReadonlyMap<string, RigSpaceStatus>,
+  attentionByBinding: ReadonlyMap<string, SpaceAttention>,
   selfUserId: string | null,
   now: number
 ): T[] {
+  const idle: SpaceAttention = { kind: 'idle', lastActivityAt: null };
   return [...rows].sort((a, b) => {
     const sa = statusByBinding.get(a.bindingId);
     const sb = statusByBinding.get(b.bindingId);
-    const rankDiff = spaceActivityRank(sa, selfUserId, now) - spaceActivityRank(sb, selfUserId, now);
+    const rankDiff =
+      spaceActivityRank(sa, attentionByBinding.get(a.bindingId) ?? idle, selfUserId) -
+      spaceActivityRank(sb, attentionByBinding.get(b.bindingId) ?? idle, selfUserId);
     if (rankDiff !== 0) return rankDiff;
     const recencyDiff = spaceRecencyKey(sb, now) - spaceRecencyKey(sa, now);
     if (recencyDiff !== 0) return recencyDiff;

@@ -6,6 +6,7 @@ import { cn } from '@renderer/lib/utils';
 import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
 import type { ConnectResult, GlobalServer } from '@shared/spaces/connectors';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
+import { readLastSeen, writeLastSeen } from '../room-read-marker';
 import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
 import { type MapEntry, ConversationMap } from './conversation-map';
 import { AGENT_NAME } from './identity';
@@ -245,26 +246,6 @@ function ThreadBlock({
       )}
     </div>
   );
-}
-
-const LAST_SEEN_PREFIX = 'rig-room-last-seen:';
-
-function readLastSeen(key: string): number | null {
-  try {
-    const raw = localStorage.getItem(LAST_SEEN_PREFIX + key);
-    const seq = raw === null ? Number.NaN : Number(raw);
-    return Number.isFinite(seq) ? seq : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeLastSeen(key: string, seq: number): void {
-  try {
-    localStorage.setItem(LAST_SEEN_PREFIX + key, String(seq));
-  } catch {
-    // Storage unavailable: no "New" line next time.
-  }
 }
 
 /** The conversation's rows as outline entries: people's messages, agent turns, doc threads. */

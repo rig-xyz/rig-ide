@@ -15,7 +15,7 @@ import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { DotMatrixEnd, DotMatrixState } from '@renderer/lib/ui/dot-matrix';
 import type { RoomSnapshot, SessionRunMeta } from '../types';
 
-/** Mirrors home's own `RECENT_ENDED_MS` (`features/home/space-status-state.ts`) — how long a just-ended run still gets its own end glyph before the tile settles back to quiet. */
+/** How long a just-ended run still gets its own end glyph before the tile settles back to quiet. */
 export const RECENT_ENDED_MS = 15 * 60 * 1000;
 
 export type AgentTileState =

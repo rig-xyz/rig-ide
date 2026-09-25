@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { connectorById } from '@shared/spaces/connectors';
 import type { RigSpaceStatus } from '@shared/rig/space-status';
-import { agentLabel } from './space-status-state';
+import { agentLabel, deriveSpaceAttention } from './space-status-state';
 import { SpaceStatusTile } from './space-status-tile';
 import { ConnectorLogo } from '@renderer/features/spaces/logos';
 import type { HomeRigRow } from './home-sections';
@@ -115,7 +115,8 @@ function ApprovalCard({
       disabled={!card.path}
       className="border-border-hairline bg-bg-1 hover:bg-bg-2 flex items-center gap-3 rounded-card border p-3 text-left transition-colors disabled:cursor-default"
     >
-      <SpaceStatusTile status={status} />
+      {/* A card here is always a waiting run, so the tile is always live — no read marker needed. */}
+      <SpaceStatusTile attention={deriveSpaceAttention(status, null, null)} seed={card.bindingId} />
       <div className="min-w-0 flex-1">
         <p className="text-text-primary text-sm">
           {card.agent} wants{card.title ? <> to <span className="font-medium">{card.title.replace(/^./, (c) => c.toLowerCase())}</span></> : ' your approval'}

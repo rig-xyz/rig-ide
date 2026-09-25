@@ -1,6 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, FolderSearch, LogOut, MoreHorizontal, Pencil, Star, Trash2 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  getReadMarkersVersion,
+  readSpaceMarker,
+  subscribeReadMarkers,
+  writeLastSeen,
+  writeOpenedAt,
+} from '@renderer/features/spaces/room-read-marker';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
@@ -19,13 +26,17 @@ import {
 } from './home-sections';
 import { RenameRigDialog } from './rename-rig-dialog';
 import {
+  baselineMarker,
   countNeedsApproval,
+  deriveSpaceAttention,
   deriveSpaceStatusLine,
   filterSpaceRows,
   readPinnedSpaceIds,
   SPACE_FILTER_LABELS,
   sortSpaceRowsByActivity,
+  spaceStatusLineTone,
   writePinnedSpaceIds,
+  type SpaceAttention,
   type SpaceRowFilter,
 } from './space-status-state';
 import { SpaceStatusTile } from './space-status-tile';
@@ -62,6 +73,7 @@ export function SpacesCard({
   // No "+ New" of its own: Home's "New space" pill floats right above this
   // card (`new-space-cta.tsx`) and is the one create/join entry point.
   const { pinned, toggle: togglePinned } = useSpacePins();
+  const attentionByBinding = useSpaceAttention(rows, statusByBinding, selfUserId);
 
   const now = Date.now();
   const filtered = filterSpaceRows(rows, filter, {
@@ -75,6 +87,7 @@ export function SpacesCard({
     // creation), so "Untitled space" only ever shows for an old/odd row.
     filtered.map((r) => ({ ...r, name: r.name ?? 'Untitled space' })),
     statusByBinding,
+    attentionByBinding,
     selfUserId,
     now
   );
@@ -118,6 +131,7 @@ export function SpacesCard({
               key={row.bindingId}
               row={row}
               status={statusByBinding.get(row.bindingId)}
+              attention={attentionByBinding.get(row.bindingId) ?? { kind: 'idle', lastActivityAt: null }}
               onOpenPath={onOpenPath}
               pinned={pinned.has(row.bindingId)}
               onTogglePinned={() => togglePinned(row.bindingId)}
@@ -141,6 +155,40 @@ export function SpacesCard({
     </FloatingCard>
   );
 }
+
+/**
+ * Each row's "what you missed" (`deriveSpaceAttention`), read against the
+ * Room's own per-space read markers — re-read whenever one changes, so
+ * coming back from a space shows it cleared. A space this device has no
+ * marker for yet gets one set to "now" (`baselineMarker`): what happened
+ * before Home first saw it isn't news.
+ */
+function useSpaceAttention(
+  rows: readonly HomeRigRow[],
+  statusByBinding: ReadonlyMap<string, RigSpaceStatus>,
+  selfUserId: string | null
+): Map<string, SpaceAttention> {
+  useSyncExternalStore(subscribeReadMarkers, getReadMarkersVersion);
+  useEffect(() => {
+    for (const status of statusByBinding.values()) {
+      const baseline = baselineMarker(status, readSpaceMarker(status.bindingId), Date.now());
+      if (baseline?.lastSeenSeq !== undefined) writeLastSeen(status.bindingId, baseline.lastSeenSeq);
+      if (baseline?.openedAt !== undefined) writeOpenedAt(status.bindingId, baseline.openedAt);
+    }
+  }, [statusByBinding]);
+  return new Map(
+    rows.map((row) => [
+      row.bindingId,
+      deriveSpaceAttention(statusByBinding.get(row.bindingId), readSpaceMarker(row.bindingId), selfUserId),
+    ])
+  );
+}
+
+const LINE_TONE = {
+  danger: 'text-danger',
+  secondary: 'text-text-secondary',
+  muted: 'text-text-muted',
+} as const;
 
 /** Pinned spaces — purely local display state (design doc: "pin with ★ remembered locally"). */
 function useSpacePins(): { pinned: ReadonlySet<string>; toggle: (bindingId: string) => void } {
@@ -194,6 +242,7 @@ function Faces({ bindingId }: { bindingId: string }) {
 function SpaceRow({
   row,
   status,
+  attention,
   onOpenPath,
   pinned,
   onTogglePinned,
@@ -201,6 +250,7 @@ function SpaceRow({
 }: {
   row: HomeRigRow;
   status: RigSpaceStatus | undefined;
+  attention: SpaceAttention;
   onOpenPath: (path: string) => void;
   pinned: boolean;
   onTogglePinned: () => void;
@@ -208,7 +258,7 @@ function SpaceRow({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const statusLine = deriveSpaceStatusLine(status, Date.now());
+  const statusLine = deriveSpaceStatusLine(status, attention, Date.now());
   const path = row.kind === 'local' ? row.path : null;
   const relayStatus = row.kind === 'relayOnly' ? deriveRelayOnlyRowStatus(row) : null;
   const openablePath = path ?? (relayStatus?.kind === 'localPath' ? relayStatus.path : null);
@@ -272,7 +322,7 @@ function SpaceRow({
         isHighlighted ? 'bg-accent-subtle' : 'hover:bg-bg-2'
       )}
     >
-      <SpaceStatusTile status={status} />
+      <SpaceStatusTile attention={attention} seed={row.bindingId} />
       <button
         type="button"
         onClick={() => (openablePath ? onOpenPath(openablePath) : downloadable ? void download() : undefined)}
@@ -306,7 +356,15 @@ function SpaceRow({
             {error}
           </span>
         ) : (
-          <span className="text-text-muted truncate text-xs">{subtext}</span>
+          <span
+            className={cn(
+              'truncate text-xs',
+              subtext === statusLine ? LINE_TONE[spaceStatusLineTone(attention)] : 'text-text-muted'
+            )}
+            data-testid="space-status-line"
+          >
+            {subtext}
+          </span>
         )}
       </button>
       <Faces bindingId={row.bindingId} />

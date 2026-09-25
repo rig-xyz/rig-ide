@@ -5,6 +5,7 @@ import type {
   RigSpaceAgent,
   RigSpaceActivity,
   RigSpaceLastRun,
+  RigSpaceRecentMessage,
   RigSpaceRunningItem,
   RigSpaceStatus,
   RigSpaceStatusError,
@@ -125,6 +126,20 @@ function toLastRun(value: unknown): RigSpaceLastRun | null {
   };
 }
 
+function toRecentMessage(value: unknown): RigSpaceRecentMessage | null {
+  const raw = asRecord(value);
+  if (!raw || typeof raw.id !== 'string' || typeof raw.authorUserId !== 'string') return null;
+  const seq = Number(raw.seq);
+  if (!Number.isFinite(seq)) return null;
+  return {
+    id: raw.id,
+    seq,
+    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : '',
+    authorUserId: raw.authorUserId,
+    authorKind: raw.authorKind === 'agent' || raw.authorKind === 'guest' ? raw.authorKind : 'user',
+  };
+}
+
 function toStatus(value: unknown): RigSpaceStatus | null {
   const raw = asRecord(value);
   if (!raw || typeof raw.bindingId !== 'string') return null;
@@ -135,6 +150,15 @@ function toStatus(value: unknown): RigSpaceStatus | null {
       ? raw.running.map(toRunning).filter((r): r is RigSpaceRunningItem => r !== null)
       : [],
     ...(lastRun ? { lastRun } : {}),
+    // Left absent (not `[]`) from an older relay, so Home can tell "no
+    // messages" from "doesn't know" and never baselines a read marker on it.
+    ...(Array.isArray(raw.recentMessages)
+      ? {
+          recentMessages: raw.recentMessages
+            .map(toRecentMessage)
+            .filter((m): m is RigSpaceRecentMessage => m !== null),
+        }
+      : {}),
   };
 }
 

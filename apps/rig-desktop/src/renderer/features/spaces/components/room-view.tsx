@@ -7,6 +7,7 @@ import { connectorsApi } from '../connectors-api';
 import { buildRoomFeed } from '../fixtures/room-feed';
 import { RelayRoomSource, type RelayRoomClient } from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
+import { writeOpenedAt } from '../room-read-marker';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
 import { Composer, type ComposerSendContext } from './composer';
@@ -253,6 +254,20 @@ export function RoomView({
   // The scripted-demo switch is a dev tool for the Room preview on plain
   // rigs; a real space (#name) never shows it.
   const showDemoToggle = !spaceName.startsWith('#');
+
+  // "Last opened" for Home's what-you-missed tiles (`room-read-marker.ts`):
+  // stamped on entering the space and again on leaving it (or quitting from
+  // inside it), so a run that ended while you were here reads as seen.
+  useEffect(() => {
+    if (!live) return;
+    const stamp = () => writeOpenedAt(bindingId, Date.now());
+    stamp();
+    window.addEventListener('beforeunload', stamp);
+    return () => {
+      window.removeEventListener('beforeunload', stamp);
+      stamp();
+    };
+  }, [live, bindingId]);
 
   // Your agents' own global MCP setup (connectors-spec.md's Surface) — this
   // device only, never part of the relay snapshot. Loaded once per Room;

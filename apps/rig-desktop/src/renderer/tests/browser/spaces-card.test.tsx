@@ -33,6 +33,9 @@ vi.mock('@renderer/lib/ipc', () => ({
 
 import { SpacesCard } from '@renderer/features/home/spaces-card';
 import { SPACE_NOT_SET_UP_TOOLTIP, type HomeRigRow } from '@renderer/features/home/home-sections';
+import { DICE_FACES, idlePattern } from '@renderer/features/home/space-status-state';
+import { writeLastSeen, writeOpenedAt } from '@renderer/features/spaces/room-read-marker';
+import type { RigSpaceStatus } from '@shared/rig/space-status';
 
 function click(el: Element): void {
   el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -155,5 +158,156 @@ describe('SpacesCard — a joined space not on this Mac yet', () => {
     expect(document.body.textContent).toContain('the space stays for its owner');
     const submit = [...document.body.querySelectorAll('button')].find((b) => b.textContent === 'Leave space');
     expect(submit).toBeTruthy();
+  });
+});
+
+// ── "E · what you missed": each row's tile and second line ──
+
+describe('SpacesCard — what you missed', () => {
+  const NOW = Date.now();
+  const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
+  const SELF = 'me';
+
+  function localSpace(bindingId: string, name: string): HomeRigRow {
+    return {
+      kind: 'local',
+      bindingId,
+      isSpace: true,
+      name,
+      path: `/Rig/${name}`,
+      lastOpenedAt: 0,
+      sessions: [],
+      paused: false,
+      outsideHome: false,
+      notARigAnymore: false,
+      role: 'owner',
+    };
+  }
+
+  function msgs(fromSeq: number, count: number, authorUserId = 'sam') {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `m${fromSeq + i}`,
+      seq: fromSeq + i,
+      createdAt: iso((count - i) * 60_000),
+      authorUserId,
+      authorKind: 'user' as const,
+    }));
+  }
+
+  const statuses: RigSpaceStatus[] = [
+    { bindingId: 'w-live', running: [{ runId: 'r1', agent: 'claude', ownerUserId: 'sam', startedAt: iso(60_000), activity: 'editing', title: 'metrics.md' }] },
+    { bindingId: 'w-failed', running: [], lastRun: { status: 'failed', endedAt: iso(60 * 60_000), agent: 'codex', ownerUserId: 'sam' }, recentMessages: msgs(11, 2) },
+    { bindingId: 'w-done', running: [], lastRun: { status: 'done', endedAt: iso(20 * 60_000), agent: 'claude', ownerUserId: 'sam' } },
+    { bindingId: 'w-one', running: [], recentMessages: [...msgs(11, 1), ...msgs(12, 1, SELF)] },
+    { bindingId: 'w-five', running: [], recentMessages: msgs(11, 5) },
+    { bindingId: 'w-nine', running: [], recentMessages: msgs(11, 9) },
+    { bindingId: 'w-idle', running: [], lastRun: { status: 'done', endedAt: iso(3 * 3_600_000), agent: 'claude', ownerUserId: 'sam' }, recentMessages: msgs(4, 2).map((m) => ({ ...m, createdAt: iso(4 * 3_600_000) })) },
+    { bindingId: 'w-empty', running: [], recentMessages: [] },
+  ];
+  const rows = [
+    localSpace('w-live', 'growth'),
+    localSpace('w-failed', 'gentle-island'),
+    localSpace('w-done', 'pricing'),
+    localSpace('w-one', 'clear-canyon'),
+    localSpace('w-five', 'calm-valley'),
+    localSpace('w-nine', 'launch'),
+    localSpace('w-idle', 'research'),
+    localSpace('w-empty', 'lively-island'),
+  ];
+
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(async () => {
+    localStorage.clear();
+    // Every space last opened 2h ago, having read up to seq 10.
+    for (const s of statuses) {
+      writeLastSeen(s.bindingId, 10);
+      writeOpenedAt(s.bindingId, NOW - 2 * 3_600_000);
+    }
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={new QueryClient()}>
+          <SpacesCard
+            rows={rows}
+            statusByBinding={new Map(statuses.map((s) => [s.bindingId, s]))}
+            selfUserId={SELF}
+            onOpenPath={() => {}}
+          />
+        </QueryClientProvider>
+      );
+    });
+    // Show every row, not just the first six.
+    const showAll = [...host.querySelectorAll('button')].find((b) => b.textContent?.startsWith('Show all'));
+    if (showAll) await act(async () => click(showAll));
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+    localStorage.clear();
+  });
+
+  function rowOf(name: string): HTMLElement {
+    const nameEl = [...host.querySelectorAll('span')].find((s) => s.textContent === name)!;
+    return nameEl.closest('.group') as HTMLElement;
+  }
+  const tileOf = (name: string) => rowOf(name).querySelector<HTMLElement>('[data-tile]')!;
+  const lineOf = (name: string) => rowOf(name).querySelector<HTMLElement>('[data-testid="space-status-line"]')!;
+  const litOf = (name: string) =>
+    [...tileOf(name).querySelectorAll('[data-lit]')].map((el) => [...el.parentElement!.children].indexOf(el));
+
+  it('live wins: the 1b motion and the activity in words', () => {
+    expect(tileOf('growth').dataset.tile).toBe('live');
+    expect(tileOf('growth').querySelector('[data-state="editing"]')).not.toBeNull();
+    expect(lineOf('growth').textContent).toBe('Claude editing metrics.md');
+  });
+
+  it('an unseen failure: the red cross, "Codex failed · 1h ago" in the error tone', () => {
+    expect(tileOf('gentle-island').dataset.tile).toBe('failed');
+    expect(tileOf('gentle-island').querySelector('[data-state="failed"]')).not.toBeNull();
+    expect(lineOf('gentle-island').textContent).toBe('Codex failed · 1h ago');
+    expect(lineOf('gentle-island').className).toContain('text-danger');
+  });
+
+  it('an unseen finish: the green check, "Claude finished · 20m ago"', () => {
+    expect(tileOf('pricing').querySelector('[data-state="done"]')).not.toBeNull();
+    expect(lineOf('pricing').textContent).toBe('Claude finished · 20m ago');
+    expect(lineOf('pricing').className).toContain('text-text-secondary');
+  });
+
+  it('new messages as dice faces — yours never count; 5 is a plus; 9 of 9 is "9+"', () => {
+    expect(tileOf('clear-canyon').dataset.tile).toBe('messages');
+    expect(litOf('clear-canyon')).toEqual([...DICE_FACES[1]!]);
+    expect(lineOf('clear-canyon').textContent).toBe('1 new message');
+    expect(litOf('calm-valley')).toEqual([1, 3, 4, 5, 7]);
+    expect(lineOf('calm-valley').textContent).toBe('5 new messages');
+    expect(litOf('launch')).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(lineOf('launch').textContent).toBe('9+ new messages');
+    expect(tileOf('launch').querySelector('.bg-accent')).not.toBeNull();
+  });
+
+  it("nothing for you: the space's own grey pattern and its last activity, or no activity yet", () => {
+    expect(tileOf('research').dataset.tile).toBe('idle');
+    expect(litOf('research')).toEqual(idlePattern('w-idle'));
+    expect(tileOf('research').querySelector('.bg-text-muted')).not.toBeNull();
+    expect(lineOf('research').textContent).toBe('3h ago');
+    expect(lineOf('research').className).toContain('text-text-muted');
+    expect(litOf('lively-island')).toEqual(idlePattern('w-empty'));
+    expect(lineOf('lively-island').textContent).toBe('No activity yet');
+  });
+
+  it('opening a space clears what you missed — Home re-reads the markers', async () => {
+    await act(async () => {
+      writeOpenedAt('w-failed', Date.now());
+      writeLastSeen('w-failed', 12);
+      writeLastSeen('w-nine', 19);
+    });
+    expect(tileOf('gentle-island').dataset.tile).toBe('idle');
+    expect(lineOf('gentle-island').textContent).toBe('1m ago');
+    expect(tileOf('launch').dataset.tile).toBe('idle');
   });
 });
