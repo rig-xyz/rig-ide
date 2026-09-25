@@ -499,6 +499,12 @@ function InviteSection({ root, currentMembers }: { root: string; currentMembers:
   const collaborators = collaboratorsQuery.data?.success ? collaboratorsQuery.data.data : [];
   const currentMemberIds = new Set(currentMembers.map((member) => member.userId));
   const suggestions = suggestCollaborators(collaborators, currentMemberIds, email);
+  // Once the typed email IS the one remaining suggestion there's nothing
+  // left to pick — hide the list rather than echo the field back.
+  const onlySuggestionMatches =
+    suggestions.length === 1 &&
+    (suggestions[0].email ?? '').toLowerCase() === email.trim().toLowerCase();
+  const showSuggestions = emailFocused && suggestions.length > 0 && !onlySuggestionMatches;
 
   const createInvite = async () => {
     setCreating(true);
@@ -561,7 +567,7 @@ function InviteSection({ root, currentMembers }: { root: string; currentMembers:
         link.
       </p>
 
-      <div className="relative flex flex-col gap-1">
+      <div className="relative">
         <input
           type="email"
           value={email}
@@ -582,10 +588,16 @@ function InviteSection({ root, currentMembers }: { root: string; currentMembers:
             }
           }}
           placeholder="email (optional)"
-          className="border-border-hairline bg-bg-1 text-text-primary placeholder:text-text-muted rounded-control border px-2.5 py-1.5 text-xs outline-none"
+          className="border-border-hairline bg-bg-1 text-text-primary w-full placeholder:text-text-muted rounded-control border px-2.5 py-1.5 text-xs outline-none"
         />
-        {emailFocused && suggestions.length > 0 && (
-          <div className="border-border-hairline bg-bg-1 rounded-control shadow-soft flex flex-col gap-0.5 border p-1">
+        {/* An overlay, not in-flow content: blurring the field (e.g. by
+            pressing "Send invite") hides the list, and an in-flow list would
+            shift the button up out from under that very click. */}
+        {showSuggestions && (
+          <div
+            data-testid="invite-suggestions"
+            className="border-border-hairline bg-bg-1 rounded-control shadow-soft absolute inset-x-0 top-full z-10 mt-1 flex flex-col gap-0.5 border p-1"
+          >
             {suggestions.map((person) => (
               <button
                 key={person.userId}
