@@ -1653,10 +1653,10 @@ describe('Connectors — gallery', () => {
     expect(detail().querySelector('[data-testid="connector-via-badge"]')).toBeNull();
   });
 
-  it('"Your connection" offers Connect and "In this space" offers Add to space, independently, for a not-yet-added connector', async () => {
+  it('offers one action for a connector not in the space yet: "Add to space" (which connects you as part of adding it)', async () => {
     await renderGallery();
     await act(async () => click(cardOf('posthog')));
-    expect(buttonIn(detail(), 'Connect')).toBeTruthy();
+    expect([...detail().querySelectorAll('button')].some((b) => b.textContent === 'Connect')).toBe(false);
     expect(buttonIn(detail(), 'Add to space')).toBeTruthy();
     expect(detail().textContent).toContain('Not in this space yet');
   });
@@ -1665,8 +1665,8 @@ describe('Connectors — gallery', () => {
     await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), { selfUserId: 'sam' });
     await act(async () => click(cardOf('posthog')));
     expect([...detail().querySelectorAll('button')].some((b) => b.textContent === 'Add to space')).toBe(false);
-    // Connecting your own login stays available to everyone.
-    expect(buttonIn(detail(), 'Connect')).toBeTruthy();
+    // A login only matters once the space uses the connector, so there's nothing to connect yet either.
+    expect([...detail().querySelectorAll('button')].some((b) => b.textContent === 'Connect')).toBe(false);
   });
 });
 

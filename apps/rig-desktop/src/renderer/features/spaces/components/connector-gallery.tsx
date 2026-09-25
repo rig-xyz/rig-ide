@@ -611,11 +611,11 @@ function ConnectorDetail({
               <span className="flex shrink-0 items-center gap-2">
                 {connected ? (
                   <DetailPill onClick={() => void onDisconnect()}>Disconnect</DetailPill>
-                ) : (
+                ) : inSpace ? (
                   <DetailPill accent onClick={onStart}>
                     {expired ? 'Reconnect' : 'Connect'}
                   </DetailPill>
-                )}
+                ) : null /* not in the space yet: "Add to space" below connects you as part of adding it */}
               </span>
             )}
           </div>
