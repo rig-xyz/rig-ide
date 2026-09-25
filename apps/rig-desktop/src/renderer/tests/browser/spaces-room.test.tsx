@@ -1090,6 +1090,32 @@ describe('Connectors — space panel', () => {
     const rowFor = (id: string) => host.querySelector<HTMLElement>(`[data-testid="connector-row"][data-connector="${id}"]`)!;
     expect(rowFor('linear').textContent).toContain('Via Claude');
     expect(rowFor('notion').textContent).toContain('Connect');
+    // The logo carries a small "via Claude" badge in this state, but not once it's a real connection.
+    expect(rowFor('linear').querySelector('[data-testid="connector-via-badge"]')).not.toBeNull();
+    expect(rowFor('notion').querySelector('[data-testid="connector-via-badge"]')).toBeNull();
+    // The compact status stays "Via Claude"; the full sentence is in the row's own tooltip.
+    expect(rowFor('linear').title).toBe('Via your Claude setup');
+  });
+
+  it('shows the account in the row\'s tooltip once connected, falling back to "you"', async () => {
+    const snapshot = connectorsSnapshot({
+      connectors: [
+        { id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected', account: 'dtsbourg@gmail.com' },
+        { id: 'notion', name: 'Notion', addedBy: 'dylan', mine: 'connected' },
+      ],
+    });
+    await act(async () => {
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" bindingId="space-connectors-account" />);
+    });
+    await openConnectors();
+    const rowFor = (id: string) => host.querySelector<HTMLElement>(`[data-testid="connector-row"][data-connector="${id}"]`)!;
+    // Compact status keeps saying "Connected" — the account lives in the tooltip.
+    expect(rowFor('linear').textContent).toContain('Connected');
+    expect(rowFor('linear').textContent).not.toContain('dtsbourg@gmail.com');
+    expect(rowFor('linear').title).toBe('Connected as dtsbourg@gmail.com');
+    expect(rowFor('notion').title).toBe('Connected as you');
+    // A real connection never shows the via-setup badge.
+    expect(rowFor('linear').querySelector('[data-testid="connector-via-badge"]')).toBeNull();
   });
 
   it('opens the gallery straight on a connector\'s detail view when its row is clicked', async () => {
@@ -1376,12 +1402,12 @@ describe('Connectors — gallery', () => {
     expect(host.querySelector('[data-testid="gallery-detail"]')).toBeNull();
   });
 
-  it('"Disconnect my login" clears your connection, no confirm needed', async () => {
+  it('"Disconnect" clears your connection, no confirm needed', async () => {
     const { source } = await renderGallery(
       connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }] })
     );
     await act(async () => click(cardOf('linear')));
-    await act(async () => click(buttonIn(detail(), 'Disconnect my login')));
+    await act(async () => click(buttonIn(detail(), 'Disconnect')));
     expect(connectorsApi.disconnect).toHaveBeenCalledWith('linear');
     await vi.waitFor(() => expect(source.refreshConnections).toHaveBeenCalled());
   });
@@ -1438,14 +1464,19 @@ describe('Connectors — gallery', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
-  it('notes a catalog connector your agents already have globally in the card footer', async () => {
+  it('notes a catalog connector your agents already have globally in the card footer, and clarifies what Add does', async () => {
     const globalSetup: GlobalServer[] = [
       { agent: 'claude', name: 'claude.ai PostHog', url: 'https://mcp.posthog.com/mcp', connectorId: 'posthog' },
     ];
     await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), { globalSetup });
-    expect(cardOf('posthog').textContent).toContain('In your Claude setup');
-    // A connector none of your agents have keeps its plain category label.
+    expect(cardOf('posthog').textContent).toContain('Your Claude has it · add for everyone');
+    // The logo carries a small "via Claude" badge in this state.
+    expect(cardOf('posthog').querySelector('[data-testid="connector-via-badge"]')).not.toBeNull();
+    // The Add pill explains itself: adding shares it with the whole space.
+    expect(buttonIn(cardOf('posthog'), 'Add').title).toContain('everyone');
+    // A connector none of your agents have keeps its plain category label and no badge.
     expect(cardOf('linear').textContent).toContain('Work tracking');
+    expect(cardOf('linear').querySelector('[data-testid="connector-via-badge"]')).toBeNull();
   });
 
   it('shows the "From your agents\' own setup" section as cards: a cleaned name (raw name kept in a title), a real logo when it matches the catalog, a neutral tile when it doesn\'t, and merged agents for the same catalog connector', async () => {
@@ -1492,13 +1523,16 @@ describe('Connectors — gallery', () => {
     expect(cardOf('amplitude').querySelector('span[aria-hidden]')?.textContent).toBe('A');
   });
 
-  it('keeps the scope and category filters on one line that never wraps', async () => {
+  it('keeps the scope and category filters on one line that never wraps, with no visible scrollbar over the chips', async () => {
     await renderGallery();
     const row = host.querySelector('[data-testid="gallery-filters"]')!;
     expect(row.className).not.toContain('flex-wrap');
     expect(buttonIn(row, 'All')).toBeTruthy();
     expect(buttonIn(row, 'Installed')).toBeTruthy();
     expect(buttonIn(row, 'Available')).toBeTruthy();
+    // The row scrolls, but its own scrollbar never overlaps the chips.
+    expect(row.className).toContain('overflow-x-auto');
+    expect(row.className).toContain('[scrollbar-width:none]');
   });
 
   it('scope "Installed" keeps what\'s in the space plus what your agents already reach on their own; "Available" drops what\'s already in the space', async () => {
@@ -1556,26 +1590,83 @@ describe('Connectors — gallery', () => {
     scrollSpy.mockRestore();
   });
 
-  it('detail\'s status card shows which of your agents can reach it, plus the connector\'s MCP host', async () => {
+  it('detail\'s Details section shows which of your agents can reach it, plus the connector\'s MCP host', async () => {
     await renderGallery(
       connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }] })
     );
     await act(async () => click(cardOf('linear')));
-    const status = host.querySelector('[data-testid="gallery-detail-status"]')!;
     // A space connector is wired into any of your agents' sessions.
-    expect(status.textContent).toContain('Available to your agents: Claude, Codex');
-    expect(status.textContent).toContain('mcp.linear.app');
+    expect(detail().textContent).toContain('Available to');
+    expect(detail().textContent).toContain('Claude, Codex');
+    expect(detail().textContent).toContain('Server');
+    expect(detail().textContent).toContain('mcp.linear.app');
   });
 
-  it('detail\'s status card names just the one agent for a connector only reached via its own global setup', async () => {
+  it('detail\'s Details section names just the one agent for a connector only reached via its own global setup', async () => {
     const globalSetup: GlobalServer[] = [
       { agent: 'codex', name: 'claude.ai PostHog', url: 'https://mcp.posthog.com/mcp', connectorId: 'posthog' },
     ];
     await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), { globalSetup });
     await act(async () => click(cardOf('posthog')));
-    const status = host.querySelector('[data-testid="gallery-detail-status"]')!;
-    expect(status.textContent).toContain('Available to your agents: Codex');
-    expect(status.textContent).toContain('mcp.posthog.com');
+    expect(detail().textContent).toContain('Available to');
+    expect(detail().textContent).toContain('Codex');
+    expect(detail().textContent).toContain('mcp.posthog.com');
+  });
+
+  it('restructures the detail view into separate sections — Your connection, In this space, Details — instead of one big card', async () => {
+    await renderGallery(
+      connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'sam', mine: 'not_connected' }] })
+    );
+    await act(async () => click(cardOf('linear')));
+    const sections = [...detail().querySelectorAll('[data-testid="gallery-detail-section"] h4')].map((h) => h.textContent);
+    expect(sections).toEqual(['Your connection', 'In this space', 'Details']);
+    expect(host.querySelector('[data-testid="gallery-detail-status"]')).toBeNull();
+  });
+
+  it('shows the account when known, falling back to "you"', async () => {
+    await renderGallery(
+      connectorsSnapshot({
+        connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected', account: 'dtsbourg@gmail.com' }],
+      })
+    );
+    await act(async () => click(cardOf('linear')));
+    expect(detail().textContent).toContain('Connected as dtsbourg@gmail.com');
+  });
+
+  it('puts the "via" badge on the detail header\'s logo too, while not personally connected', async () => {
+    const globalSetup: GlobalServer[] = [
+      { agent: 'codex', name: 'claude.ai PostHog', url: 'https://mcp.posthog.com/mcp', connectorId: 'posthog' },
+    ];
+    await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), { globalSetup });
+    await act(async () => click(cardOf('posthog')));
+    expect(detail().querySelector('[data-testid="connector-via-badge"]')).not.toBeNull();
+  });
+
+  it('drops the detail header\'s "via" badge once you\'re actually connected', async () => {
+    const globalSetup: GlobalServer[] = [
+      { agent: 'codex', name: 'claude.ai PostHog', url: 'https://mcp.posthog.com/mcp', connectorId: 'posthog' },
+    ];
+    vi.mocked(connectorsApi.list).mockResolvedValue([{ id: 'posthog', state: 'connected' }]);
+    await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), { globalSetup, focus: 'posthog' });
+    await vi.waitFor(() => expect(connectorsApi.list).toHaveBeenCalled());
+    await vi.waitFor(() => expect(detail().textContent).toContain('Connected as you'));
+    expect(detail().querySelector('[data-testid="connector-via-badge"]')).toBeNull();
+  });
+
+  it('"Your connection" offers Connect and "In this space" offers Add to space, independently, for a not-yet-added connector', async () => {
+    await renderGallery();
+    await act(async () => click(cardOf('posthog')));
+    expect(buttonIn(detail(), 'Connect')).toBeTruthy();
+    expect(buttonIn(detail(), 'Add to space')).toBeTruthy();
+    expect(detail().textContent).toContain('Not in this space yet');
+  });
+
+  it('does not offer "Add to space" to a member who cannot write', async () => {
+    await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), { selfUserId: 'sam' });
+    await act(async () => click(cardOf('posthog')));
+    expect([...detail().querySelectorAll('button')].some((b) => b.textContent === 'Add to space')).toBe(false);
+    // Connecting your own login stays available to everyone.
+    expect(buttonIn(detail(), 'Connect')).toBeTruthy();
   });
 });
 

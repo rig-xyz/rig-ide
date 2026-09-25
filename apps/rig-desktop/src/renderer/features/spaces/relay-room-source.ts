@@ -689,11 +689,13 @@ export class RelayRoomSource implements RoomSource {
     const mineById = await this.connectionStates();
     const connectors: RoomConnector[] = result.data.map((row) => {
       const def = connectorById(row.connectorId);
+      const status = mineById.get(row.connectorId);
       return {
         id: row.connectorId,
         name: def?.name ?? row.connectorId,
         addedBy: row.addedBy,
-        mine: mineById.get(row.connectorId),
+        mine: status?.state,
+        account: status?.account,
       };
     });
     this.applyLocal({ type: 'connectors_synced', connectors });
@@ -703,14 +705,17 @@ export class RelayRoomSource implements RoomSource {
   async refreshConnections(): Promise<void> {
     if (!this.connections || this.snapshot.connectors.length === 0) return;
     const mineById = await this.connectionStates();
-    const connectors = this.snapshot.connectors.map((c) => ({ ...c, mine: mineById.get(c.id) ?? c.mine }));
+    const connectors = this.snapshot.connectors.map((c) => {
+      const status = mineById.get(c.id);
+      return { ...c, mine: status?.state ?? c.mine, account: status?.account ?? c.account };
+    });
     this.applyLocal({ type: 'connectors_synced', connectors });
   }
 
-  private async connectionStates(): Promise<Map<string, ConnectionStatus['state']>> {
+  private async connectionStates(): Promise<Map<string, ConnectionStatus>> {
     if (!this.connections) return new Map();
     const list = await this.connections.list().catch(() => []);
-    return new Map(list.map((s) => [s.id, s.state]));
+    return new Map(list.map((s) => [s.id, s]));
   }
 
   /** Adds a connector to the space (editors/owners only — the relay 403s otherwise). */

@@ -57,3 +57,18 @@ export function viaGlobalSetupShortLabel(connectorId: string, servers: readonly 
   const agents = globalAgentsFor(connectorId, servers);
   return agents.size > 0 ? `Via ${globalAgentsLabel(agents)}` : null;
 }
+
+/**
+ * The "Add to this space" gallery card's footer for a catalog connector
+ * your agents already reach from their own setup but the space doesn't use
+ * yet — "Your Claude has it · add for everyone" (grammar flips to "have"
+ * for two agents). Explains what Add actually does: it isn't a personal
+ * sign-in (you already have one), it's making the tool part of the space so
+ * everyone's agents can use it with their own logins. Null when no agent
+ * has it — the card falls back to its plain category label instead.
+ */
+export function yourAgentsHaveItLabel(agents: ReadonlySet<AgentKind>): string | null {
+  if (agents.size === 0) return null;
+  const verb = agents.size > 1 ? 'have' : 'has';
+  return `Your ${globalAgentsLabel(agents)} ${verb} it · add for everyone`;
+}

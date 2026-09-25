@@ -1,7 +1,7 @@
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { cn } from '@renderer/lib/utils';
 import { connectorById, type ConnectorId } from '@shared/spaces/connectors';
-import type { LogoId, RoomConnector } from './types';
+import type { AgentKind, LogoId, RoomConnector } from './types';
 
 /**
  * Real brand marks — copied verbatim from the demo's `<symbol>` defs
@@ -181,6 +181,37 @@ function ConnectorTile({
 }
 
 /**
+ * "Via your Claude setup": a tiny agent-brand badge on a connector logo's
+ * bottom-right corner, in the same ring-bordered chip language as
+ * `identity.tsx`'s `OwnerBadge` on agent avatars — but naming which
+ * agent(s) already reach this connector from their own global setup rather
+ * than who owns it. Two agents overlap slightly, like `AgentAvatar`'s own
+ * owner badge; the catalog only ever has the two.
+ */
+function ViaBadge({ agents, hostSize }: { agents: readonly AgentKind[]; hostSize: number }) {
+  const size = Math.max(9, Math.round(hostSize * 0.58));
+  const overlap = Math.round(size * 0.4);
+  const shown = agents.slice(0, 2);
+  return (
+    <span
+      className="absolute -right-1 -bottom-1 flex"
+      aria-hidden
+      data-testid="connector-via-badge"
+    >
+      {shown.map((agent, i) => (
+        <span
+          key={agent}
+          className="bg-bg-2 ring-bg-1 grid shrink-0 place-items-center rounded-full ring-2"
+          style={{ width: size, height: size, marginLeft: i > 0 ? -overlap : 0 }}
+        >
+          <BrandLogo id={agentLogoId(agent)} size={Math.round(size * 0.62)} />
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
  * The one connector logo, drawn the same way everywhere a connector shows
  * (space panel rows, the catalog, `ConnectorCard`, a turn's gap pill, a
  * prettified step title): a real brand mark for the catalog ids in
@@ -191,26 +222,40 @@ export function ConnectorLogo({
   name,
   brand,
   size = 18,
+  via,
   className,
 }: {
   id: string;
   name: string;
   brand: string;
   size?: number;
+  /** Agents that already reach this connector from their own global setup — drawn as a small badge on the logo's corner (see `ViaBadge`) wherever the logo shows in that "via your setup" state. Omit or leave empty when it doesn't apply (e.g. you're connected via rig). */
+  via?: readonly AgentKind[];
   className?: string;
 }) {
   const meta = CONNECTOR_LOGO_META[id as ConnectorId];
-  if (!meta) return <ConnectorTile name={name} brand={brand} size={size} className={className} />;
+  const mark = (markClassName?: string) =>
+    meta ? (
+      <svg
+        width={size}
+        height={size}
+        viewBox={meta.viewBox}
+        className={cn('shrink-0', meta.brandFill === 'currentColor' && 'text-text-primary', markClassName)}
+        aria-hidden
+      >
+        <path fill={meta.brandFill} d={meta.path} />
+      </svg>
+    ) : (
+      <ConnectorTile name={name} brand={brand} size={size} className={markClassName} />
+    );
+
+  if (!via || via.length === 0) return mark(className);
+
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox={meta.viewBox}
-      className={cn('shrink-0', meta.brandFill === 'currentColor' && 'text-text-primary', className)}
-      aria-hidden
-    >
-      <path fill={meta.brandFill} d={meta.path} />
-    </svg>
+    <span className={cn('relative inline-block shrink-0', className)} style={{ width: size, height: size }}>
+      {mark()}
+      <ViaBadge agents={via} hostSize={size} />
+    </span>
   );
 }
 

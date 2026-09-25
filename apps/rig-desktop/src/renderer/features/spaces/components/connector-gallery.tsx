@@ -7,6 +7,7 @@ import {
   CONNECTORS,
   connectorById,
   type ConnectionState,
+  type ConnectionStatus,
   type ConnectorCategory,
   type ConnectorDef,
   type ConnectorId,
@@ -16,15 +17,15 @@ import { connectorsApi } from '../connectors-api';
 import {
   globalAgentsFor,
   globalAgentsLabel,
-  inGlobalSetupLabel,
   viaGlobalSetupLabel,
   viaGlobalSetupShortLabel,
+  yourAgentsHaveItLabel,
 } from '../global-setup';
 import { ConnectorLogo } from '../logos';
 import type { RelayRoomSource } from '../relay-room-source';
 import type { AgentKind, RoomSnapshot } from '../types';
 import { AGENT_NAME } from './identity';
-import { compactConnectorStatus, type PendingConnect } from './connectors-panel';
+import { compactConnectorStatus, connectionStateLabel, type PendingConnect } from './connectors-panel';
 
 /** The gallery's own scope filter, alongside its category chips. */
 type GalleryScope = 'all' | 'installed' | 'available';
@@ -135,14 +136,14 @@ export function ConnectorGallery({
   const [flow, setFlow] = useState<PendingConnect | null>(null);
   const [error, setError] = useState<{ id: string; message: string } | null>(null);
   const [armedRemove, setArmedRemove] = useState(false);
-  // Your own logins, for connectors the space doesn't use yet (connected ones add straight away).
-  const [mine, setMine] = useState<Map<string, ConnectionState>>(new Map());
+  // Your own logins (state + account), for connectors the space doesn't use yet (connected ones add straight away).
+  const [mine, setMine] = useState<Map<string, ConnectionStatus>>(new Map());
   const searchRef = useRef<HTMLInputElement>(null);
   const globalSetupSectionRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     searchRef.current?.focus();
-    void connectorsApi.list().then((statuses) => setMine(new Map(statuses.map((s) => [s.id, s.state]))));
+    void connectorsApi.list().then((statuses) => setMine(new Map(statuses.map((s) => [s.id, s]))));
     if (initialSection === 'global-setup') globalSetupSectionRef.current?.scrollIntoView({ block: 'start' });
     // Only meant to run once, against how the gallery was opened.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -209,7 +210,7 @@ export function ConnectorGallery({
    */
   const startFlow = (def: ConnectorDef, isNew: boolean) => {
     setError(null);
-    if (isNew && mine.get(def.id) === 'connected') {
+    if (isNew && mine.get(def.id)?.state === 'connected') {
       void source.addConnector(def.id).then((added) => {
         if (!added.ok) fail(def.id, added.message ?? "Couldn't add this to the space.");
       });
@@ -229,7 +230,10 @@ export function ConnectorGallery({
         if (result.reason !== 'cancelled') fail(id, result.message ?? `Couldn't connect to ${connectorById(id)?.name ?? id}.`);
         return;
       }
-      setMine((prev) => new Map(prev).set(id, 'connected'));
+      // Re-fetch rather than just marking 'connected' locally, so the account
+      // the connector just reported (once main starts filling it in) shows up too.
+      const statuses = await connectorsApi.list();
+      setMine(new Map(statuses.map((s) => [s.id, s])));
       if (isNew) {
         const added = await source.addConnector(id);
         if (!added.ok) fail(id, added.message ?? "Couldn't add this to the space.");
@@ -246,9 +250,15 @@ export function ConnectorGallery({
 
   const card = (def: ConnectorDef) => {
     const room = inSpace.get(def.id);
-    const state: ConnectionState = room ? (room.mine ?? 'not_connected') : (mine.get(def.id) ?? 'not_connected');
+    const state: ConnectionState = room ? (room.mine ?? 'not_connected') : (mine.get(def.id)?.state ?? 'not_connected');
+    const viaAgents: readonly AgentKind[] = state === 'connected' ? [] : [...globalAgentsFor(def.id, globalSetup)];
     const viaLabel = state === 'connected' ? null : viaGlobalSetupShortLabel(def.id, globalSetup);
     const status = compactConnectorStatus(state, viaLabel);
+    const footerLabel = room
+      ? room.addedBy
+        ? addedByLabel(snapshot, room.addedBy, selfUserId)
+        : ''
+      : (yourAgentsHaveItLabel(new Set(viaAgents)) ?? def.category);
     return (
       <div
         key={def.id}
@@ -262,7 +272,7 @@ export function ConnectorGallery({
       >
         <div className="flex items-start gap-2.5">
           <span className="bg-bg-2 grid size-9 shrink-0 place-items-center rounded-control">
-            <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={20} />
+            <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={20} via={viaAgents} />
           </span>
           <span className="flex min-w-0 flex-col gap-0.5 leading-tight">
             <b className="truncate text-sm font-medium text-text-primary">{def.name}</b>
@@ -270,14 +280,12 @@ export function ConnectorGallery({
           </span>
         </div>
         <div className="mt-auto flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-2xs text-text-muted">
-            {room ? (room.addedBy ? addedByLabel(snapshot, room.addedBy, selfUserId) : '') : (inGlobalSetupLabel(def.id, globalSetup) ?? def.category)}
-          </span>
+          <span className="min-w-0 flex-1 truncate text-2xs text-text-muted">{footerLabel}</span>
           {room ? (
             state === 'connected' ? (
-              <span className="flex shrink-0 items-center gap-1.5 text-2xs text-text-secondary">
-                <span className="bg-success size-1.5 rounded-full" />
-                Connected as you
+              <span className="flex min-w-0 shrink items-center gap-1.5 text-2xs text-text-secondary">
+                <span className="bg-success size-1.5 shrink-0 rounded-full" />
+                <span className="truncate">Connected as {room.account ?? 'you'}</span>
               </span>
             ) : (
               <span className={cn('shrink-0 text-2xs whitespace-nowrap', STATUS_CLASS[status.tone])}>{status.text}</span>
@@ -285,6 +293,11 @@ export function ConnectorGallery({
           ) : (
             <GalleryPill
               accent
+              title={
+                viaAgents.length > 0
+                  ? 'Adds it to the space, so everyone’s agents can use it with their own logins.'
+                  : undefined
+              }
               onClick={(e) => {
                 e.stopPropagation();
                 startFlow(def, true);
@@ -309,6 +322,13 @@ export function ConnectorGallery({
       : [...globalAgentsFor(detailDef.id, globalSetup)]
     : [];
   const detailMcpHost = detailDef ? urlHost(detailDef.url) : '';
+  const detailState: ConnectionState = detailDef
+    ? detailRoom
+      ? (detailRoom.mine ?? 'not_connected')
+      : (mine.get(detailDef.id)?.state ?? 'not_connected')
+    : 'not_connected';
+  const detailAccount = detailDef ? (detailRoom?.account ?? mine.get(detailDef.id)?.account) : undefined;
+  const detailViaAgents: readonly AgentKind[] = detailDef ? [...globalAgentsFor(detailDef.id, globalSetup)] : [];
 
   return (
     <>
@@ -366,8 +386,10 @@ export function ConnectorGallery({
           <ConnectorDetail
             def={detailDef}
             inSpace={detailRoom !== null}
-            state={detailRoom ? (detailRoom.mine ?? 'not_connected') : (mine.get(detailDef.id) ?? 'not_connected')}
+            state={detailState}
+            account={detailAccount}
             viaLabel={viaGlobalSetupLabel(detailDef.id, globalSetup)}
+            viaAgents={detailViaAgents}
             canWrite={canWrite}
             addedByName={detailRoom?.addedBy ? addedByLabel(snapshot, detailRoom.addedBy, selfUserId) : null}
             availableAgents={detailAvailableAgents}
@@ -381,7 +403,7 @@ export function ConnectorGallery({
             onCancel={cancel}
             onDisconnect={async () => {
               await connectorsApi.disconnect(detailDef.id);
-              setMine((prev) => new Map(prev).set(detailDef.id, 'not_connected'));
+              setMine((prev) => new Map(prev).set(detailDef.id, { id: detailDef.id, state: 'not_connected' }));
               await source.refreshConnections();
             }}
             onArmRemove={() => setArmedRemove(true)}
@@ -432,7 +454,7 @@ export function ConnectorGallery({
                       <>
                         <span className="bg-bg-2 grid size-9 shrink-0 place-items-center rounded-control">
                           {def ? (
-                            <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={20} />
+                            <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={20} via={setupCard.agents} />
                           ) : (
                             <Plug className="size-4 text-text-muted" strokeWidth={1.5} />
                           )}
@@ -487,15 +509,20 @@ const STATUS_CLASS: Record<ReturnType<typeof compactConnectorStatus>['tone'], st
 
 /**
  * A connector's detail view: opened either from a space panel row or from
- * clicking a gallery card. Everything actionable — connect/reconnect,
- * disconnect your own login, remove from the space — lives here; the grid
- * and the panel rows are just entry points onto it.
+ * clicking a gallery card. Three separate, clearly-labeled parts rather
+ * than one big card (Dylan): a plain header, "Your connection" (your own
+ * login — connect/reconnect/disconnect, available to anyone), "In this
+ * space" (whether the space uses it at all — add/remove, owners/editors
+ * only), and a quiet "Details" list. Everything actionable lives here; the
+ * grid and the panel rows are just entry points onto it.
  */
 function ConnectorDetail({
   def,
   inSpace,
   state,
+  account,
   viaLabel,
+  viaAgents,
   canWrite,
   addedByName,
   availableAgents,
@@ -515,7 +542,11 @@ function ConnectorDetail({
   /** Whether this connector is already used by the space, vs. one you're only previewing from "Add to this space". */
   inSpace: boolean;
   state: ConnectionState;
+  /** Who you're signed in as there, when known (`RoomConnector.account`/`ConnectionStatus.account`). */
+  account: string | undefined;
   viaLabel: string | null;
+  /** Agents that already reach this connector from their own global setup — the header logo's "via" badge, shown only while you haven't connected it yourself. */
+  viaAgents: readonly AgentKind[];
   canWrite: boolean;
   addedByName: string | null;
   /** Which of your agents can reach this connector: both, for a space connector; just the one, for a global-setup-only match. */
@@ -536,7 +567,7 @@ function ConnectorDetail({
   const connected = state === 'connected';
   const expired = state === 'expired';
   const phase = flow?.phase ?? null;
-  const stateLine = connected ? 'Connected as you' : expired ? 'Login expired' : (viaLabel ?? 'Not connected');
+  const connectionLine = connectionStateLabel(state, account, viaLabel);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" data-testid="gallery-detail" data-connector={def.id}>
@@ -550,30 +581,18 @@ function ConnectorDetail({
         All connectors
       </button>
 
-      <div className="mx-auto flex max-w-lg flex-col gap-4">
-        <div className="flex flex-col items-center gap-2 text-center">
+      <div className="flex max-w-lg flex-col gap-5">
+        <div className="flex items-start gap-3">
           <span className="bg-bg-2 grid size-12 shrink-0 place-items-center rounded-card">
-            <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={26} />
+            <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={26} via={connected ? [] : viaAgents} />
           </span>
-          <div className="flex flex-col gap-0.5">
-            <h3 className="text-base font-semibold text-text-primary">{def.name}</h3>
+          <div className="flex min-w-0 flex-col gap-1 pt-0.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-base font-semibold text-text-primary">{def.name}</h3>
+              <span className="bg-bg-2 rounded-full px-2 py-0.5 text-2xs text-text-secondary">{def.category}</span>
+            </div>
             <p className="text-xs text-text-secondary">{def.blurb}</p>
           </div>
-          <span className="bg-bg-2 rounded-full px-2 py-0.5 text-2xs text-text-secondary">{def.category}</span>
-        </div>
-
-        <div className="border-border-hairline bg-bg-1 flex flex-col gap-1.5 rounded-card border p-3.5" data-testid="gallery-detail-status">
-          <span className="flex items-center gap-1.5 text-xs text-text-secondary" data-testid="gallery-detail-state">
-            {(connected || expired) && <span className={cn('size-1.5 rounded-full', connected ? 'bg-success' : 'bg-warning')} />}
-            {stateLine}
-          </span>
-          {inSpace && addedByName && <span className="text-2xs text-text-muted">{addedByName}</span>}
-          {availableAgents.length > 0 && (
-            <span className="text-2xs text-text-muted">
-              Available to your agents: {availableAgents.map((a) => AGENT_NAME[a]).join(', ')}
-            </span>
-          )}
-          <span className="text-2xs text-text-muted">{mcpHost}</span>
         </div>
 
         {error && (
@@ -582,8 +601,25 @@ function ConnectorDetail({
           </p>
         )}
 
-        <div className="flex flex-col gap-3">
-          {phase === 'consent' ? (
+        <DetailSection title="Your connection">
+          <div className="flex items-center justify-between gap-3">
+            <span className="flex min-w-0 items-center gap-1.5 text-xs text-text-secondary" data-testid="gallery-detail-state">
+              {(connected || expired) && <span className={cn('size-1.5 shrink-0 rounded-full', connected ? 'bg-success' : 'bg-warning')} />}
+              <span className="truncate">{connectionLine}</span>
+            </span>
+            {phase === null && (
+              <span className="flex shrink-0 items-center gap-2">
+                {connected ? (
+                  <DetailPill onClick={() => void onDisconnect()}>Disconnect</DetailPill>
+                ) : (
+                  <DetailPill accent onClick={onStart}>
+                    {expired ? 'Reconnect' : 'Connect'}
+                  </DetailPill>
+                )}
+              </span>
+            )}
+          </div>
+          {phase === 'consent' && (
             <div className="border-border-hairline bg-bg-2 flex flex-col gap-2 rounded-card border p-3 text-xs text-text-secondary" data-testid="gallery-detail-consent">
               <span>
                 Results your agent gets from <b className="font-medium text-text-primary">{def.name}</b> will show up in this
@@ -597,35 +633,63 @@ function ConnectorDetail({
                 <GalleryPill onClick={onCancel}>Cancel</GalleryPill>
               </span>
             </div>
-          ) : phase === 'waiting' ? (
+          )}
+          {phase === 'waiting' && (
             <span className="flex items-center gap-1.5 text-xs text-text-muted">
               <DotMatrix state="waiting" size="sm" />
               Waiting for your browser…
               <GalleryPill onClick={onCancel}>Cancel</GalleryPill>
             </span>
-          ) : (
-            !(inSpace && connected) && (
-              <span>
-                <DetailPill accent onClick={onStart}>
-                  {!inSpace ? 'Add' : expired ? 'Reconnect' : 'Connect'}
-                </DetailPill>
-              </span>
-            )
           )}
+        </DetailSection>
 
-          {phase === null && (connected || (inSpace && canWrite)) && (
-            <span className="flex items-center gap-2">
-              {connected && <DetailPill onClick={() => void onDisconnect()}>Disconnect my login</DetailPill>}
-              {inSpace && canWrite && (
+        <DetailSection title="In this space">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-text-secondary">{inSpace ? (addedByName ?? 'Added') : 'Not in this space yet'}</span>
+            {canWrite &&
+              phase === null &&
+              (inSpace ? (
                 <DetailPill danger={armedRemove} onClick={() => (armedRemove ? void onRemove() : onArmRemove())}>
-                  {armedRemove ? 'Remove for everyone?' : 'Remove from space'}
+                  {armedRemove ? 'Remove for everyone?' : 'Remove'}
                 </DetailPill>
-              )}
-            </span>
-          )}
-        </div>
+              ) : (
+                <DetailPill accent onClick={onStart}>
+                  Add to space
+                </DetailPill>
+              ))}
+          </div>
+        </DetailSection>
+
+        <DetailSection title="Details">
+          <dl className="flex flex-col gap-1.5">
+            {availableAgents.length > 0 && (
+              <div className="flex items-center justify-between gap-3 text-2xs">
+                <dt className="text-text-muted">Available to</dt>
+                <dd className="text-text-secondary">{availableAgents.map((a) => AGENT_NAME[a]).join(', ')}</dd>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3 text-2xs">
+              <dt className="text-text-muted">Server</dt>
+              <dd className="text-text-secondary">{mcpHost}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-3 text-2xs">
+              <dt className="text-text-muted">Category</dt>
+              <dd className="text-text-secondary">{def.category}</dd>
+            </div>
+          </dl>
+        </DetailSection>
       </div>
     </div>
+  );
+}
+
+/** One block of the detail view — a quiet label plus its content, separated from its neighbors by space and a hairline rather than boxed (Dylan: no more one big card mixing everything). */
+function DetailSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="border-border-hairline flex flex-col gap-2 border-t pt-4 first:border-t-0 first:pt-0" data-testid="gallery-detail-section">
+      <h4 className="font-mono text-2xs tracking-wide text-text-muted uppercase">{title}</h4>
+      {children}
+    </section>
   );
 }
 
@@ -647,11 +711,13 @@ function GallerySection({ title, children }: { title: string; children: ReactNod
 function GalleryPill({
   accent,
   danger,
+  title,
   onClick,
   children,
 }: {
   accent?: boolean;
   danger?: boolean;
+  title?: string;
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
   children: ReactNode;
 }) {
@@ -659,6 +725,7 @@ function GalleryPill({
     <button
       type="button"
       onClick={onClick}
+      title={title}
       className={cn(
         'h-6 rounded-full px-2.5 text-xs whitespace-nowrap transition-colors',
         danger
@@ -747,10 +814,10 @@ function GalleryFilters({
     );
 
   return (
-    <div className="relative">
+    <div className="relative pb-1">
       <div
         ref={rowRef}
-        className="carousel-scroll flex items-center gap-1.5"
+        className="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         data-testid="gallery-filters"
       >
         <div className="flex shrink-0 items-center gap-1.5" role="group" aria-label="Scope">

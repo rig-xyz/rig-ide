@@ -716,6 +716,32 @@ describe('RelayRoomSource — connectors (connectors-spec.md)', () => {
     expect(source.getSnapshot().connectors[0]!.mine).toBe('connected');
     expect(listCalls).toBe(1); // refreshConnections never re-hits listConnectors, only the local connections client
   });
+
+  it("carries the connection's own account (who you're signed in as) into RoomConnector, on bootstrap and on refresh", async () => {
+    const fake = makeFakeRelay({
+      listConnectors: async () => ok([{ connectorId: 'linear', addedBy: 'u1', addedAt: '' }]),
+    });
+    let account: string | undefined;
+    const connections = { list: vi.fn(async () => [{ id: 'linear' as const, state: 'connected' as const, account }]) };
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      connections,
+      createProvider: () => new FakeProvider(),
+    });
+    source.play();
+    await flush();
+    // Optional, per connectors.ts — not every connector reports it (yet).
+    expect(source.getSnapshot().connectors[0]!.account).toBeUndefined();
+
+    // Once the connector starts reporting an account, a refresh picks it up.
+    account = 'dtsbourg@gmail.com';
+    await source.refreshConnections();
+    expect(source.getSnapshot().connectors[0]!.account).toBe('dtsbourg@gmail.com');
+  });
 });
 
 /**

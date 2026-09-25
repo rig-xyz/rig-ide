@@ -3,10 +3,10 @@ import { useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { connectorById, type ConnectionState, type ConnectorId, type ConnectResult, type GlobalServer } from '@shared/spaces/connectors';
-import { viaGlobalSetupShortLabel } from '../global-setup';
+import { globalAgentsFor, viaGlobalSetupLabel, viaGlobalSetupShortLabel } from '../global-setup';
 import { ConnectorLogo, ConnectorMark } from '../logos';
 import { readPanelSectionExpanded, writePanelSectionExpanded } from '../panel-section-storage';
-import type { RoomConnector, RoomSnapshot } from '../types';
+import type { AgentKind, RoomConnector, RoomSnapshot } from '../types';
 
 /**
  * Spaces: the Connectors section of the space panel (connectors-spec.md's
@@ -98,7 +98,20 @@ const STATUS_TEXT_CLASS: Record<ReturnType<typeof compactConnectorStatus>['tone'
   accent: 'text-accent',
 };
 
-/** One connector, one line: logo, name, compact status. Opens the gallery's detail view on click — no other affordance on the row itself. */
+/**
+ * The one full sentence for a connector's own connection state — "Connected
+ * as dtsbourg@gmail.com" (falls back to "Connected as you" when no account
+ * is known yet), "Login expired", a via-setup sentence, or "Not connected".
+ * Shared by the panel row's tooltip and the gallery detail's "Your
+ * connection" line.
+ */
+export function connectionStateLabel(state: ConnectionState, account: string | undefined, viaLabel: string | null): string {
+  if (state === 'connected') return `Connected as ${account ?? 'you'}`;
+  if (state === 'expired') return 'Login expired';
+  return viaLabel ?? 'Not connected';
+}
+
+/** One connector, one line: logo, name, compact status. Opens the gallery's detail view on click — no other affordance on the row itself. The account (when known) isn't shown inline — it's in the row's own tooltip. */
 function ConnectorRow({
   connector,
   globalSetup,
@@ -112,19 +125,21 @@ function ConnectorRow({
   const def = connectorById(connector.id);
   const mine = connector.mine ?? 'not_connected';
   const viaLabel = mine === 'connected' ? null : viaGlobalSetupShortLabel(connector.id, globalSetup);
+  const via: readonly AgentKind[] = mine === 'connected' ? [] : [...globalAgentsFor(connector.id, globalSetup)];
   const status = compactConnectorStatus(mine, viaLabel);
 
   return (
     <button
       type="button"
       onClick={onOpen}
+      title={connectionStateLabel(mine, connector.account, viaGlobalSetupLabel(connector.id, globalSetup))}
       className="hover:bg-bg-2 flex h-7 w-full min-w-0 items-center gap-2 rounded-control pr-2 pl-8 text-left transition-colors"
       data-testid="connector-row"
       data-connector={connector.id}
       data-state={mine}
     >
       {def ? (
-        <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={16} />
+        <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={16} via={via} />
       ) : (
         <span className="bg-bg-3 size-4 shrink-0 rounded" />
       )}

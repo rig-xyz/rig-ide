@@ -48,6 +48,8 @@ export interface RoomConnector {
   addedBy: PersonId;
   /** Your own connection to this connector on this machine (connectors-spec.md's "connection"), from the local connectors RPC. Undefined for the scripted demo's pre-BYOA connectors, which have no such concept. */
   mine?: ConnectionState;
+  /** Who you're signed in as there, when the connector's server says (`ConnectionStatus.account`). Local to you; undefined when unknown. */
+  account?: string;
 }
 
 export interface RoomSkill {
