@@ -245,7 +245,7 @@ describe('NewSpaceCta', () => {
     await flush();
 
     expect(mocks.acceptInviteLink).toHaveBeenCalledWith({ link: LINK });
-    expect(onOpenPath).toHaveBeenCalledWith('/Users/me/Rig/growth');
+    expect(onOpenPath).toHaveBeenCalledWith('/Users/me/Rig/growth', { kind: 'space' });
     // Done: back to the "New space" pill.
     expect(linkInput()).toBeNull();
   });
@@ -275,7 +275,7 @@ describe('NewSpaceCta', () => {
     await flush();
 
     expect(mocks.attach).toHaveBeenCalledWith({ bindingId: 'b_1', name: 'growth' });
-    expect(onOpenPath).toHaveBeenCalledWith('/Users/me/Rig/growth');
+    expect(onOpenPath).toHaveBeenCalledWith('/Users/me/Rig/growth', { kind: 'space' });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['rig', 'account'] });
     expect(mocks.openExternal).not.toHaveBeenCalled();
     // Joined and opened: the field collapses back into the "New space" pill.

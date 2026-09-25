@@ -42,7 +42,7 @@ import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
 import { SettingsModal } from '@renderer/features/shell/settings-modal';
 import { RoomView } from '@renderer/features/spaces/components/room-view';
 import { useSpacesEnabled } from '@renderer/features/spaces/use-spaces-enabled';
-import { deriveTopbarContext, type TopbarContext } from '@renderer/features/shell/topbar-context';
+import { deriveBoundIsSpace, deriveTopbarContext, type TopbarContext } from '@renderer/features/shell/topbar-context';
 import { isUpdateReady, shouldAnnounceUpdate } from '@renderer/features/shell/update-status';
 import {
   deriveNativeUpdateMenuAction,
@@ -289,6 +289,10 @@ export function App() {
   // by a timeout.
   const [pendingOpenAbsPath, setPendingOpenAbsPath] = useState<string | null>(null);
   const [justCreatedRig, setJustCreatedRig] = useState(false);
+  // 0.4.3: the current open was started as a space (create/join) — lets
+  // the bar and panes take the space form from the first bound frame,
+  // before the workspaces listing names the new binding (`deriveBoundIsSpace`).
+  const [openedAsSpace, setOpenedAsSpace] = useState(false);
   // Session-first viewer: the artefact pane's tabs. Empty means the pane
   // doesn't exist — the session owns the window and the pinned card floats
   // over it (state A). See `features/artifact/artefact-tabs.ts`.
@@ -466,11 +470,14 @@ export function App() {
          * which already ran (synchronously, same tick) by the time this body executes.
          */
         openFilePath?: string;
+        /** The caller knows it's opening a space (it just created or joined one) — see `openedAsSpace`. */
+        kind?: 'space';
       }
     ) => {
       const requestToken = openPathRequests.current.begin();
       setArtefact(NO_TABS);
       setFolder({ status: 'detecting', path: picked });
+      setOpenedAsSpace(opts?.kind === 'space');
       setPendingActiveSessionId(opts?.activeSessionId ?? null);
       if (opts?.openFilePath) setPendingOpenAbsPath(opts.openFilePath);
       try {
@@ -538,10 +545,13 @@ export function App() {
   // arming the doc-open (below) and the topbar's inline auto-rename
   // (`RigSwitcher`'s `autoEdit`) for once it actually binds.
   const openCreatedRig = useCallback(
-    (path: string, docAbsPath: string | null) => {
+    (path: string, docAbsPath: string | null, kind?: 'space') => {
       setPendingOpenAbsPath(docAbsPath);
-      setJustCreatedRig(true);
-      void openPath(path, { source: 'create' });
+      // A space lands in its Room under its generated `#name` — no inline
+      // rename (it flashed the rig mark and a name field before the bar
+      // settled on `# name`).
+      setJustCreatedRig(kind !== 'space');
+      void openPath(path, { source: 'create', kind });
     },
     [openPath]
   );
@@ -606,11 +616,14 @@ export function App() {
     enabled: spacesEnabled && !!bound,
     staleTime: 60_000,
   });
-  const boundIsSpace =
-    spacesEnabled &&
-    !!bound &&
-    !!workspacesQuery.data?.success &&
-    workspacesQuery.data.data.some((b) => b.id === bound.bindingId && b.kind === 'space');
+  const boundIsSpace = deriveBoundIsSpace({
+    spacesEnabled,
+    bindingId: bound?.bindingId ?? null,
+    listedKind: workspacesQuery.data?.success
+      ? workspacesQuery.data.data.find((b) => b.id === bound?.bindingId)?.kind
+      : undefined,
+    openedAsSpace,
+  });
   // A space opens Room-first: the Room takes the chat panel's place in the
   // rig layout (below), so files open beside it. No overlay.
   useEffect(() => {
@@ -730,6 +743,7 @@ export function App() {
     setPendingActiveSessionId(null);
     setPendingOpenAbsPath(null);
     setJustCreatedRig(false);
+    setOpenedAsSpace(false);
   }, []);
 
   // Round (beyond-markdown): every file opens now — `ArtifactView` itself
@@ -1094,7 +1108,7 @@ export function App() {
         focusAbout={focusAboutOnOpen}
       />
       {/* `rig://join/<secret>` from the website's invite page: confirm, then join and open. */}
-      <DeepLinkJoinDialog onOpenPath={(path) => void openPath(path, { source: 'deeplink' })} />
+      <DeepLinkJoinDialog onOpenPath={(path) => void openPath(path, { source: 'deeplink', kind: 'space' })} />
       {bound && bindingDeleted ? (
         // Delete-a-rig round: the owner (or another member) deleted this
         // binding out from under us while it was open — replaces the
@@ -1332,7 +1346,7 @@ export function Topbar({
   /** `true` scrolls Settings straight to About — the gear's own click passes this along as `updateReady` (see below), never called with `true` from anywhere else. */
   onOpenSettings: (focusAbout?: boolean) => void;
   /** Threaded down to `InvitesBell` — its post-accept "Set up locally" opens the result the same way every other "open a rig" entry point does. Also `RigSwitcher`'s own row clicks. */
-  onOpenPath: (path: string) => void;
+  onOpenPath: (path: string, opts?: { kind?: 'space' }) => void;
   /** `RigSwitcher`'s "Open folder…" escape hatch — the native picker, same `openFolder` flow every other entry point uses. */
   onOpenFolder: () => void;
   /**

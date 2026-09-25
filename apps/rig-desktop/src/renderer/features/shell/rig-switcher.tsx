@@ -53,7 +53,7 @@ export function RigSwitcher({
   /** The rig's workspace root — needed alongside `bindingId` for the rename rpc. */
   path: string;
   name: string;
-  onOpenPath: (path: string) => void;
+  onOpenPath: (path: string, opts?: { kind?: 'space' }) => void;
   onOpenFolder: () => void;
   /** "All spaces" (space menu only) — back to Home, same house-button target the breadcrumb's own icon uses. */
   onGoHome: () => void;
@@ -150,7 +150,7 @@ export function RigSwitcher({
       return;
     }
     setOpen(false);
-    onOpenPath(result.data.path);
+    onOpenPath(result.data.path, { kind: 'space' });
   };
 
   if (editing) {

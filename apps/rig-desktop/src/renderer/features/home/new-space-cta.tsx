@@ -54,7 +54,7 @@ export function NewSpaceCta({
   existingNames: ReadonlySet<string>;
   onCreateSpace: (name: string) => Promise<string | null>;
   /** Opens a joined space's local folder — Home's own `onOpenPath`. */
-  onOpenPath: (path: string) => void;
+  onOpenPath: (path: string, opts?: { kind?: 'space' }) => void;
 }) {
   const queryClient = useQueryClient();
   const reduceMotion = useReducedMotion() ?? false;
@@ -166,7 +166,7 @@ export function NewSpaceCta({
       return;
     }
     markJustAttachedSyncing(attached.data.localPath, attached.data.syncing);
-    onOpenPath(attached.data.localPath);
+    onOpenPath(attached.data.localPath, { kind: 'space' });
   };
 
   const bubbleOut = out && !joinOpen && !creating;

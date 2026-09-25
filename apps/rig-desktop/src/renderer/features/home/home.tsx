@@ -64,7 +64,7 @@ export function Home({
   onRigCreated,
 }: {
   onOpenFolder: () => void;
-  onOpenPath: (path: string) => void;
+  onOpenPath: (path: string, opts?: { openFilePath?: string; kind?: 'space' }) => void;
   onContinueSession: (path: string, sessionId: string) => void;
   /**
    * Onboarding flow round (docs/onboarding-flow-spec.md §2): fires once the
@@ -72,7 +72,7 @@ export function Home({
    * actually created a rig — `App.tsx` opens it and arms the topbar's
    * inline auto-rename and the landing-doc open.
    */
-  onRigCreated: (path: string, docPath: string | null) => void;
+  onRigCreated: (path: string, docPath: string | null, kind?: 'space') => void;
 }) {
   const { agents, isLoading: agentsLoading } = useRunnableAgents();
   const identities = useAgentIdentities();
@@ -129,7 +129,7 @@ export function Home({
       if (!result.data.synced) {
         return result.data.syncError?.message ?? 'The space was created locally but could not go live.';
       }
-      onRigCreated(result.data.path, null);
+      onRigCreated(result.data.path, null, 'space');
       return null;
     },
     [queryClient, onRigCreated]

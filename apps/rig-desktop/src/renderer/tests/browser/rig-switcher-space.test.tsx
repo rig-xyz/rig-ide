@@ -142,7 +142,7 @@ describe('RigSwitcher', () => {
     expect(call.name).toMatch(/^[a-z]+-[a-z]+$/);
     // Never collides with a space this account already has.
     expect(['growth', 'ops']).not.toContain(call.name);
-    expect(onOpenPath).toHaveBeenCalledWith('/rigs/bright-harbor');
+    expect(onOpenPath).toHaveBeenCalledWith('/rigs/bright-harbor', { kind: 'space' });
   });
 
   it('a plain rig keeps the unfiltered menu with "Open folder…", no space-only items', async () => {
