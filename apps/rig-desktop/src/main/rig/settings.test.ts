@@ -113,6 +113,23 @@ describe('RigSettingsStore', () => {
     expect(store.get().lastModeByHarness).toEqual({});
   });
 
+  it('keeps "Room sees" per space: one space pick never clobbers another, and bad values are dropped on load', () => {
+    const store = new RigSettingsStore(settingsPath);
+    store.initialize();
+    expect(store.get().spacesRoomSees).toEqual({});
+    store.set({ spacesRoomSees: { bnd_a: 'answer' } });
+    store.set({ spacesRoomSees: { bnd_b: 'everything' } });
+    expect(store.get().spacesRoomSees).toEqual({ bnd_a: 'answer', bnd_b: 'everything' });
+
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({ ...store.get(), spacesRoomSees: { bnd_a: 'steps', bnd_b: 'nothing', bnd_c: 3 } })
+    );
+    const reloaded = new RigSettingsStore(settingsPath);
+    reloaded.initialize();
+    expect(reloaded.get().spacesRoomSees).toEqual({ bnd_a: 'steps' });
+  });
+
   it('merges lastOpenTabsByRig at the key level — one rig writing its tabs never clobbers another', () => {
     const store = new RigSettingsStore(settingsPath);
     store.initialize();

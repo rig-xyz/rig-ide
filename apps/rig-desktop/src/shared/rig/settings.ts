@@ -1,4 +1,5 @@
 import { defineEvent } from '../lib/ipc/events';
+import type { RoomSees } from '../spaces/room-sees';
 
 /**
  * Main-owned app preferences (`persistence-design.md`'s "Preferences" layer)
@@ -237,6 +238,12 @@ export type RigSettings = {
   spacesEnabled: boolean;
   /** Set once the 0.4.3 "Spaces on by default" switch has been applied to this settings file. */
   spacesDefaultOnApplied: boolean;
+  /**
+   * "Room sees", per space (binding id): how much of your agents' work the
+   * other members see. A space missing here is at the default
+   * (`shared/spaces/room-sees.ts`). Only ever read on this computer.
+   */
+  spacesRoomSees: Record<string, RoomSees>;
 };
 
 export const DEFAULT_RIG_SETTINGS: RigSettings = {
@@ -265,6 +272,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   smartHighlighterEnabled: false,
   spacesEnabled: true,
   spacesDefaultOnApplied: true,
+  spacesRoomSees: {},
 };
 
 /** The subset of legacy localStorage values the renderer can hand to `importLegacy`. */

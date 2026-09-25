@@ -12,6 +12,7 @@ import {
   type RigSettingsPatch,
   type RigsRailView,
 } from '@shared/rig/settings';
+import { isRoomSees, type RoomSees } from '@shared/spaces/room-sees';
 
 /**
  * The main-owned preferences store (`persistence-design.md`'s "Preferences"
@@ -78,6 +79,9 @@ export class RigSettingsStore {
         : {}),
       ...(patch.fileTreeViewByRig
         ? { fileTreeViewByRig: { ...this.settings.fileTreeViewByRig, ...patch.fileTreeViewByRig } }
+        : {}),
+      ...(patch.spacesRoomSees
+        ? { spacesRoomSees: { ...this.settings.spacesRoomSees, ...patch.spacesRoomSees } }
         : {}),
     };
     this.settings = next;
@@ -179,7 +183,16 @@ function normalizeSettings(parsed: unknown): RigSettings {
     // On by default since 0.4.3; a file from before then gets it switched on once.
     spacesEnabled: raw.spacesDefaultOnApplied === true ? raw.spacesEnabled === true : true,
     spacesDefaultOnApplied: true,
+    spacesRoomSees: normalizeRoomSees(raw.spacesRoomSees),
   };
+}
+
+/** Keeps only valid levels; anything else falls back to the default by being absent. */
+function normalizeRoomSees(value: unknown): Record<string, RoomSees> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  const out: Record<string, RoomSees> = {};
+  for (const [bindingId, level] of Object.entries(value)) if (isRoomSees(level)) out[bindingId] = level;
+  return out;
 }
 
 function isRigsRailView(value: unknown): value is RigsRailView {
