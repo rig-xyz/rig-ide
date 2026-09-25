@@ -155,3 +155,50 @@ export function prettyConnectorTool(raw: string): { connector: ConnectorDef; act
   const action = match[2]!.replace(/[_-]+/g, ' ').trim().toLowerCase();
   return { connector, action };
 }
+
+/**
+ * An MCP server one of your agents brings from its own global setup (your
+ * claude.ai connectors and ~/.claude for Claude, ~/.codex for Codex). Rig
+ * never changes these ("global setup is global setup"); it only shows them,
+ * and doesn't nudge you to connect a tool your agent already has this way.
+ */
+export interface GlobalServer {
+  agent: 'claude' | 'codex';
+  /** As the agent names it, e.g. "claude.ai Linear" or "launchdarkly". */
+  name: string;
+  /** Remote servers only; null for local (stdio) ones. */
+  url: string | null;
+  /** The catalog tool it is, matched by URL host; null when it isn't one of ours. */
+  connectorId: ConnectorId | null;
+}
+
+/** The catalog tool served at this URL (same host as its MCP endpoint), or null. */
+export function connectorIdForUrl(url: string): ConnectorId | null {
+  let host: string;
+  try {
+    host = new URL(url).host;
+  } catch {
+    return null;
+  }
+  return CONNECTORS.find((c) => new URL(c.url).host === host)?.id ?? null;
+}
+
+/**
+ * Any MCP tool name an agent reports, made readable: "Linear · list issues".
+ * `via` says where the tool came from: `space` for a connector rig handed to
+ * the session, `setup` for one from the agent's own global setup (claude.ai
+ * connectors show as `mcp__claude_ai_<Name>__<tool>`). Null when it isn't an
+ * MCP tool name at all.
+ */
+export function prettyAgentTool(
+  raw: string
+): { label: string; action: string; connector: ConnectorDef | null; via: 'space' | 'setup' } | null {
+  const ours = prettyConnectorTool(raw);
+  if (ours) return { label: ours.connector.name, action: ours.action, connector: ours.connector, via: 'space' };
+  const match = /^mcp__(.+?)__(.+)$/.exec(raw) ?? /^mcp\.([^.]+)\.(.+)$/.exec(raw);
+  if (!match) return null;
+  const server = match[1]!.replace(/^claude_ai_/, '').replace(/[_-]+/g, ' ').trim();
+  const connector = CONNECTORS.find((c) => c.name.toLowerCase() === server.toLowerCase()) ?? null;
+  const action = match[2]!.replace(/[_-]+/g, ' ').trim().toLowerCase();
+  return { label: connector?.name ?? server, action, connector, via: 'setup' };
+}

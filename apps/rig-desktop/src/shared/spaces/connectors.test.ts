@@ -32,3 +32,22 @@ describe('prettyConnectorTool', () => {
     expect(prettyConnectorTool('Read')).toBeNull();
   });
 });
+
+describe('global setup helpers', () => {
+  it('matches a catalog tool by its MCP host', async () => {
+    const { connectorIdForUrl } = await import('./connectors');
+    expect(connectorIdForUrl('https://mcp.linear.app/mcp')).toBe('linear');
+    expect(connectorIdForUrl('https://mcp.atlassian.com/v1/mcp')).toBe('atlassian');
+    expect(connectorIdForUrl('https://mcp.launchdarkly.com/mcp/launchdarkly')).toBeNull();
+    expect(connectorIdForUrl('not a url')).toBeNull();
+  });
+
+  it('reads claude.ai connector and other global tool names, and marks where they came from', async () => {
+    const { prettyAgentTool } = await import('./connectors');
+    expect(prettyAgentTool('mcp__claude_ai_Linear__list_issues')).toMatchObject({ label: 'Linear', action: 'list issues', via: 'setup' });
+    expect(prettyAgentTool('mcp__claude_ai_Atlassian_Rovo__search')).toMatchObject({ label: 'Atlassian Rovo', connector: null, via: 'setup' });
+    expect(prettyAgentTool('mcp.launchdarkly.get_flag')).toMatchObject({ label: 'launchdarkly', action: 'get flag', via: 'setup' });
+    expect(prettyAgentTool('mcp__linear__list_issues')).toMatchObject({ label: 'Linear', via: 'space' });
+    expect(prettyAgentTool('Read')).toBeNull();
+  });
+});
