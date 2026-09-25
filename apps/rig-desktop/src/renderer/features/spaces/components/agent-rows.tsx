@@ -98,7 +98,7 @@ export function AgentRows({
                     // No single owner to badge — this glyph now stands for
                     // the KIND across everyone running it, not one person's
                     // instance of it.
-                    owner={undefined}
+                    owner={null}
                     size="sm"
                     className={cn('ring-bg-1 ring-2', i > 0 && '-ml-1.5')}
                   />

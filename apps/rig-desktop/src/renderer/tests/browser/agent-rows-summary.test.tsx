@@ -78,6 +78,8 @@ describe('AgentRows — collapsed summary', () => {
     const kindAvatars = [...host.querySelectorAll<HTMLElement>('[data-testid="agent-kind-avatar"]')];
     const kinds = kindAvatars.map((el) => el.dataset.kind).sort();
     expect(kinds).toEqual(['claude', 'codex']);
+    // A kind has no single owner, so no owner badge (not a "?").
+    for (const el of kindAvatars) expect(el.querySelector('svg text')).toBeNull();
 
     // Expanding reveals the per-person instances — bob's own claude row,
     // plus (at least) alice's and whoever else's claude/codex rows.

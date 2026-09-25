@@ -277,7 +277,6 @@ function SpaceRow({
         type="button"
         onClick={() => (openablePath ? onOpenPath(openablePath) : downloadable ? void download() : undefined)}
         disabled={busy || (!openablePath && !downloadable)}
-        title={openablePath ?? undefined}
         aria-busy={busy || undefined}
         className="flex min-w-0 flex-1 flex-col items-start text-left disabled:cursor-default"
       >
@@ -383,7 +382,13 @@ function SpaceRowMenu({
         aria-label={`More actions for "${row.name ?? row.bindingId}"`}
         className={cn(
           'text-text-muted hover:text-text-primary focus-visible:outline-accent rounded-control flex shrink-0 items-center justify-center p-1 transition-opacity focus-visible:outline-2 focus-visible:outline-offset-2',
-          busy ? 'pointer-events-none opacity-50' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+          // Out of the layout until the row is hovered or focused (or its
+          // menu is open), so the faces sit flush right at rest.
+          busy
+            ? 'pointer-events-none opacity-50'
+            : open
+              ? 'flex'
+              : 'hidden group-focus-within:flex group-hover:flex'
         )}
       >
         <MoreHorizontal className="size-3.5" strokeWidth={1.5} />

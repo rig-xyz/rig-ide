@@ -74,7 +74,8 @@ export function AgentAvatar({
   title,
 }: {
   agent: AgentKind;
-  owner: RoomMember | undefined;
+  /** `null` = the agent kind itself, with no owner badge; `undefined` = an owner we can't resolve ("?"). */
+  owner: RoomMember | undefined | null;
   size?: Size;
   className?: string;
   /** Overrides the native hover title; `null` drops it, for callers that wrap the avatar in their own tooltip. */
@@ -90,7 +91,7 @@ export function AgentAvatar({
       title={title === undefined ? (owner ? `${owner.name}'s ${AGENT_NAME[agent]}` : AGENT_NAME[agent]) : (title ?? undefined)}
     >
       <BrandLogo id={agentLogoId(agent)} size={AGENT_LOGO[size]} />
-      <OwnerBadge owner={owner} className={cn('absolute', BADGE[size])} />
+      {owner !== null && <OwnerBadge owner={owner} className={cn('absolute', BADGE[size])} />}
     </span>
   );
 }
