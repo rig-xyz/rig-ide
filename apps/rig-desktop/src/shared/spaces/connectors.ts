@@ -19,6 +19,10 @@ export const CONNECTOR_IDS = [
   'sentry',
   'atlassian',
   'granola',
+  'intercom',
+  'clickup',
+  'airtable',
+  'attio',
 ] as const;
 
 export type ConnectorId = (typeof CONNECTOR_IDS)[number];
@@ -49,6 +53,10 @@ export const CONNECTORS: readonly ConnectorDef[] = [
     brand: '#0C66E4',
   },
   { id: 'granola', name: 'Granola', url: 'https://mcp.granola.ai/mcp', blurb: 'Meeting notes and transcripts', brand: '#1F7A4D' },
+  { id: 'intercom', name: 'Intercom', url: 'https://mcp.intercom.com/mcp', blurb: 'Customer conversations and tickets', brand: '#1F8DED' },
+  { id: 'clickup', name: 'ClickUp', url: 'https://mcp.clickup.com/mcp', blurb: 'Tasks, docs and goals', brand: '#7B68EE' },
+  { id: 'airtable', name: 'Airtable', url: 'https://mcp.airtable.com/mcp', blurb: 'Bases, tables and records', brand: '#18BFFF' },
+  { id: 'attio', name: 'Attio', url: 'https://mcp.attio.com/mcp', blurb: 'CRM: people, companies and deals', brand: '#1C1D1F' },
 ];
 
 export function isConnectorId(value: unknown): value is ConnectorId {
