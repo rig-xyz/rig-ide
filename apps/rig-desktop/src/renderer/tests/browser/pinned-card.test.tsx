@@ -205,6 +205,30 @@ describe('PinnedCard', () => {
     });
   });
 
+  it('Changes shows one clock on the row ("N new"); the day\'s count lives inside', async () => {
+    mocks.filesList.mockResolvedValue({
+      success: true,
+      data: [{ kind: 'file', name: 'notes.md', relPath: 'notes.md', mtimeMs: Date.now() }],
+    });
+    mocks.seenState.mockResolvedValue({ baselineAt: Date.now() - 60_000, seen: {} });
+    await render();
+    const row = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.includes('Changes'))!;
+    expect(row.parentElement!.textContent).toContain('1 new');
+    expect(row.parentElement!.textContent).not.toContain('today');
+    // The section remembers being open (it starts open); open it if it isn't.
+    if (!host.querySelector('[data-testid="changes-today"]')) {
+      await act(async () => row.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    }
+    expect(host.querySelector('[data-testid="changes-today"]')?.textContent).toBe('1 file changed in the last day');
+  });
+
+  it("lets a function chip summary own the chip's whole status", async () => {
+    await render({ startCollapsed: true, syncing: true, chipSummary: ({ unseenCount }) => <span>room says {unseenCount}</span> });
+    const chip = host.querySelector('[data-testid="pinned-chip"]')!;
+    expect(chip.textContent).toContain('room says 0');
+    expect(chip.textContent).not.toContain('Syncing');
+  });
+
   it('shows the "Activity" section label in the regular font, sentence case', async () => {
     mocks.filesList.mockResolvedValue({
       success: true,

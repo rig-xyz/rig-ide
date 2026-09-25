@@ -163,7 +163,7 @@ export function RoomView({
   renderPanel?: (
     extraRows: ReactNode,
     onlineUserIds: ReadonlySet<string>,
-    options: { startCollapsed: boolean; chipSummary: ReactNode }
+    options: { startCollapsed: boolean; chipSummary: (ctx: { unseenCount: number }) => ReactNode }
   ) => ReactNode;
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
@@ -514,7 +514,12 @@ export function RoomView({
               />
             </>,
             new Set(snapshot.members.filter((m) => m.online !== false).map((m) => m.id)),
-            { startCollapsed: narrow, chipSummary: <SpaceChipSummary snapshot={snapshot} /> }
+            {
+              startCollapsed: narrow,
+              chipSummary: ({ unseenCount }) => (
+                <SpaceChipSummary snapshot={snapshot} selfUserId={selfUserId} unseenCount={unseenCount} />
+              ),
+            }
           ) ?? null)
         ) : (
           <SpaceCard snapshot={snapshot} />

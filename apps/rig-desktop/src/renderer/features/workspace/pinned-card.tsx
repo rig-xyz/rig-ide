@@ -9,6 +9,7 @@ import {
   summarySegments,
   type SummarySegment,
 } from '@renderer/features/home/summary-segments';
+import { isPulseStale } from '@renderer/features/home/pulse-state';
 import { usePulseBriefing } from '@renderer/features/home/use-pulse-briefing';
 import { NewMenu } from '@renderer/features/rig-import/add-menu';
 import { ImportDocDialog } from '@renderer/features/rig-import/import-doc-dialog';
@@ -17,6 +18,7 @@ import { events, rpc } from '@renderer/lib/ipc';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
+import { formatRelative } from '@renderer/lib/time-format';
 import { cn } from '@renderer/lib/utils';
 import { selectCards, toContentOnlyPinned, toContentOnlyWrites } from '@shared/rig/card-rail';
 import {
@@ -116,6 +118,21 @@ function flattenFiles(nodes: readonly RigFileNode[]): RigFileNode[] {
   return out;
 }
 
+/** "just now", "2h ago", or a date for anything older than a week. */
+function summaryAge(generatedAt: string): string {
+  const age = formatRelative(generatedAt);
+  if (age === 'now') return 'just now';
+  return /^\d+[mhd]$/.test(age) ? `${age} ago` : age;
+}
+
+/**
+ * What the collapsed chip says instead of the rig's name. A function owns the
+ * whole status line (given the unread-file count), so it can rank "N new"
+ * against states only its caller knows; a node sits beside the chip's own
+ * syncing and "N new" marks.
+ */
+export type ChipSummary = ReactNode | ((ctx: { unseenCount: number }) => ReactNode);
+
 /**
  * The collapsed panel as a chip: glassy like the Room's context pill
  * (`context-pill.tsx`) — a backdrop-blurred, translucent fill behind a
@@ -131,7 +148,7 @@ function CollapsedChip({
   unseenCount,
   onExpand,
 }: {
-  chipSummary?: ReactNode;
+  chipSummary?: ChipSummary;
   name: string | null;
   syncing: boolean;
   unseenCount: number;
@@ -211,9 +228,16 @@ function CollapsedChip({
         aria-label="Show details"
         className="relative z-10 flex h-8 min-w-0 items-center gap-2 pr-3 pl-2.5 text-left"
       >
-        {chipSummary ?? <span className="max-w-36 truncate text-xs text-text-primary">{name ?? 'This rig'}</span>}
-        {syncing && <span className="text-2xs text-warning">Syncing</span>}
-        {unseenCount > 0 && (
+        {typeof chipSummary === 'function' ? (
+          // The summary owns the whole status (it ranks "N new" against the Room's own states).
+          chipSummary({ unseenCount })
+        ) : (
+          <>
+            {chipSummary ?? <span className="max-w-36 truncate text-xs text-text-primary">{name ?? 'This rig'}</span>}
+            {syncing && <span className="text-2xs text-warning">Syncing</span>}
+          </>
+        )}
+        {typeof chipSummary !== 'function' && unseenCount > 0 && (
           <span
             className="bg-accent-subtle text-accent rounded-chip px-1.5 text-2xs tabular-nums"
             title={`${unseenCount} new or changed ${unseenCount === 1 ? 'file' : 'files'}`}
@@ -278,7 +302,7 @@ export function PinnedCard({
   /** Show as the chip whenever this turns true (e.g. the host became too narrow for the card); not persisted. */
   startCollapsed?: boolean;
   /** What the collapsed chip says instead of the rig's name (the Room shows who's here and what's working). */
-  chipSummary?: ReactNode;
+  chipSummary?: ChipSummary;
   /** This binding is a space, not a plain rig: no Cloud row (spaces aren't backed up the same way), and People renders the compact share surface. */
   isSpace?: boolean;
 }) {
@@ -434,10 +458,16 @@ export function PinnedCard({
 
   // The rig's one-line story — the same per-rig pulse line Home narrates,
   // shown under the Changes row. File names in it are live links.
-  const { state: briefingState } = usePulseBriefing();
+  const { state: briefingState, refreshing: pulseRefreshing, forceRefresh: refreshPulse } = usePulseBriefing();
   const briefing = briefingState.kind === 'data' ? briefingState.briefing : null;
   const rigEntry = briefing?.perRig.find((item) => item.bindingId === bindingId) ?? null;
   const rigLine = rigEntry ? stripRigPrefix(rigEntry.line, rigEntry.rigName) : null;
+  // Opening Changes asks for a fresh summary when the one we have is stale
+  // (Pulse regenerates on its own at most every few hours).
+  const briefingAt = briefing?.generatedAt ?? null;
+  useEffect(() => {
+    if (expanded === 'changes' && briefingAt && isPulseStale(briefingAt, Date.now())) void refreshPulse();
+  }, [expanded, briefingAt, refreshPulse]);
   const summarySegs: SummarySegment[] = useMemo(
     () => (rigLine ? summarySegments(rigLine, fileLinks(contentFiles)) : []),
     [rigLine, contentFiles]
@@ -500,13 +530,9 @@ export function PinnedCard({
           <Diff className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
           <span className="text-xs text-text-primary">Changes</span>
           <span className="ml-auto flex shrink-0 items-center gap-1.5">
-            {changedRecently === 0 && unseenFiles.size === 0 ? (
-              <span className="text-2xs text-text-muted">Up to date</span>
-            ) : changedRecently > 0 ? (
-              // "0 today" beside a new-count is pure noise — the chip
-              // alone carries that state.
-              <span className="font-mono text-2xs text-text-muted">{changedRecently} today</span>
-            ) : null}
+            {/* One clock on the row: what's new for you. The day's count and
+                the Pulse summary (a different, slower clock) live inside. */}
+            {unseenFiles.size === 0 && <span className="text-2xs text-text-muted">Up to date</span>}
             <ChevronRight
               className={cn(
                 'size-3 shrink-0 text-text-muted transition-transform',
@@ -523,7 +549,7 @@ export function PinnedCard({
                 <button
                   type="button"
                   onClick={onOpenFocus}
-                  className="bg-accent-subtle text-accent ml-1.5 shrink-0 rounded-chip px-1.5 font-mono text-2xs transition-opacity hover:opacity-80"
+                  className="bg-accent-subtle text-accent ml-1.5 shrink-0 rounded-chip px-1.5 text-2xs tabular-nums transition-opacity hover:opacity-80"
                 >
                   {unseenFiles.size} new
                 </button>
@@ -533,26 +559,40 @@ export function PinnedCard({
           </Tooltip>
         )}
       </div>
-      {expanded === 'changes' && summarySegs.length > 0 && (
-        <p className="popover-in shrink-0 px-2 pt-0.5 pb-1.5 text-xs leading-relaxed text-text-muted">
-          {summarySegs.map((segment, index) =>
-            segment.kind === 'link' && segment.target.kind === 'file' ? (
-              <button
-                key={`${segment.text}-${index}`}
-                type="button"
-                onClick={() => {
-                  const relPath = (segment.target as { kind: 'file'; relPath: string }).relPath;
-                  openFile(relPath);
-                }}
-                className="text-text-secondary hover:text-text-primary underline decoration-current/30 underline-offset-2 transition-colors"
-              >
-                {segment.text}
-              </button>
-            ) : (
-              <span key={index}>{segment.text}</span>
-            )
+      {expanded === 'changes' && (
+        <div className="popover-in flex shrink-0 flex-col gap-1 px-2 pt-0.5 pb-1.5" data-testid="changes-detail">
+          <p className="text-2xs text-text-muted" data-testid="changes-today">
+            {changedRecently === 0
+              ? 'No files changed in the last day'
+              : `${changedRecently} ${changedRecently === 1 ? 'file' : 'files'} changed in the last day`}
+          </p>
+          {summarySegs.length > 0 && (
+            <p className="text-xs leading-relaxed text-text-muted">
+              {summarySegs.map((segment, index) =>
+                segment.kind === 'link' && segment.target.kind === 'file' ? (
+                  <button
+                    key={`${segment.text}-${index}`}
+                    type="button"
+                    onClick={() => {
+                      const relPath = (segment.target as { kind: 'file'; relPath: string }).relPath;
+                      openFile(relPath);
+                    }}
+                    className="text-text-secondary hover:text-text-primary underline decoration-current/30 underline-offset-2 transition-colors"
+                  >
+                    {segment.text}
+                  </button>
+                ) : (
+                  <span key={index}>{segment.text}</span>
+                )
+              )}
+            </p>
           )}
-        </p>
+          {briefing && (
+            <p className="text-2xs text-text-muted" title="Pulse, rig's summary of recent activity" data-testid="changes-summary-age">
+              {pulseRefreshing ? 'Summary · updating…' : `Summary · ${summaryAge(briefing.generatedAt)}`}
+            </p>
+          )}
+        </div>
       )}
 
       {/* P1: the browse door — every file in the rig, reachable at rest. */}

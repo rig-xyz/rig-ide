@@ -153,36 +153,113 @@ export function AgentRows({
   );
 }
 
+/** The one thing the collapsed chip reports beside the faces: the most urgent true state, or nothing. */
+export type SpaceChipStatus =
+  | { kind: 'offline' }
+  | { kind: 'needs-you'; agent: AgentKind }
+  | { kind: 'yours-working'; agents: AgentKind[] }
+  | { kind: 'others-working'; owner: string; agent: AgentKind; count: number }
+  | { kind: 'new'; count: number };
+
 /**
- * What the collapsed space panel chip says: who's here (their faces and a
- * count) and, when any agent in the space is working, the matrix and whose.
+ * Most urgent first: the live connection is down; one of your agents is
+ * waiting on your approval; your agent is working; someone else's is;
+ * files changed that you haven't opened. Sync, connectors to connect and
+ * the rest stay inside the panel.
  */
-export function SpaceChipSummary({ snapshot }: { snapshot: RoomSnapshot }) {
+export function spaceChipStatus(snapshot: RoomSnapshot, selfUserId: string, unseenCount: number): SpaceChipStatus | null {
+  if (snapshot.connection === 'offline') return { kind: 'offline' };
+  const running: Array<{ owner: string; agent: AgentKind }> = [];
+  for (const meta of Object.values(snapshot.sessionMetaByRun)) {
+    const card = projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? []);
+    if (effectiveRunStatus(meta.status, card) !== 'running') continue;
+    if (meta.owner === selfUserId && card.permissions.pending.length > 0) return { kind: 'needs-you', agent: meta.agent };
+    running.push({ owner: meta.owner, agent: meta.agent });
+  }
+  const mine = running.filter((r) => r.owner === selfUserId);
+  if (mine.length > 0) return { kind: 'yours-working', agents: [...new Set(mine.map((r) => r.agent))] };
+  if (running.length > 0) {
+    const first = running[0]!;
+    const owner = snapshot.members.find((m) => m.id === first.owner)?.name ?? 'Someone';
+    return { kind: 'others-working', owner, agent: first.agent, count: running.length };
+  }
+  if (unseenCount > 0) return { kind: 'new', count: unseenCount };
+  return null;
+}
+
+function namesHere(names: string[]): string {
+  if (names.length === 0) return 'Nobody else is here';
+  if (names.length === 1) return `${names[0]} is here`;
+  return `${names.slice(0, -1).join(', ')} and ${names.at(-1)} are here`;
+}
+
+/**
+ * What the collapsed space panel chip says: the faces of who's here (no
+ * count; the tooltip names them) and one status slot, see `spaceChipStatus`.
+ */
+export function SpaceChipSummary({
+  snapshot,
+  selfUserId,
+  unseenCount,
+}: {
+  snapshot: RoomSnapshot;
+  selfUserId: string;
+  unseenCount: number;
+}) {
   const here = snapshot.members.filter((m) => m.online !== false && m.status !== 'invited');
-  const working = Object.values(snapshot.sessionMetaByRun).filter(
-    (meta) =>
-      effectiveRunStatus(meta.status, projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? [])) === 'running'
-  );
-  const firstOwner = working[0] ? snapshot.members.find((m) => m.id === working[0]!.owner) : undefined;
+  const status = spaceChipStatus(snapshot, selfUserId, unseenCount);
   return (
-    <span className="flex items-center gap-2 text-xs text-text-secondary">
-      <span className="flex items-center">
+    <span className="flex items-center gap-2 text-xs text-text-secondary" data-testid="space-chip-summary">
+      <span className="flex items-center" title={namesHere(here.map((m) => m.name))}>
         {here.slice(0, 3).map((m, i) => (
           <PersonAvatar key={m.id} member={m} size="sm" className={i > 0 ? '-ml-1.5 ring-2 ring-bg-1' : 'ring-2 ring-bg-1'} />
         ))}
       </span>
-      <span className="tabular-nums">{here.length} here</span>
-      {working.length > 0 && (
-        <>
-          <span className="bg-border-hairline h-3 w-px" />
-          <DotMatrix state="thinking" size="sm" />
-          <span>
-            {working.length === 1
-              ? `${firstOwner?.name ?? 'Someone'}'s ${AGENT_NAME[working[0]!.agent]} working`
-              : `${working.length} agents working`}
-          </span>
-        </>
-      )}
+      {status && <ChipStatus status={status} />}
     </span>
   );
+}
+
+function ChipStatus({ status }: { status: SpaceChipStatus }) {
+  switch (status.kind) {
+    case 'offline':
+      return (
+        <span className="flex items-center gap-1.5 text-warning" data-testid="chip-status" data-kind="offline">
+          <span className="size-1.5 rounded-full bg-warning" />
+          Reconnecting…
+        </span>
+      );
+    case 'needs-you':
+      return (
+        <span className="flex items-center gap-1.5 text-text-primary" data-testid="chip-status" data-kind="needs-you">
+          <DotMatrix state="waiting" size="sm" />
+          {AGENT_NAME[status.agent]} needs you
+        </span>
+      );
+    case 'yours-working':
+      return (
+        <span className="flex items-center gap-1.5" data-testid="chip-status" data-kind="yours-working">
+          <DotMatrix state="thinking" size="sm" />
+          {status.agents.length === 1 ? `${AGENT_NAME[status.agents[0]!]} working` : `${status.agents.length} agents working`}
+        </span>
+      );
+    case 'others-working':
+      return (
+        <span className="flex items-center gap-1.5 text-text-muted" data-testid="chip-status" data-kind="others-working">
+          <DotMatrix state="thinking" size="sm" />
+          {status.count === 1 ? `${status.owner}'s ${AGENT_NAME[status.agent]} working` : `${status.count} agents working`}
+        </span>
+      );
+    case 'new':
+      return (
+        <span
+          className="bg-accent-subtle text-accent rounded-chip px-1.5 text-2xs tabular-nums"
+          title={`${status.count} new or changed ${status.count === 1 ? 'file' : 'files'}`}
+          data-testid="chip-status"
+          data-kind="new"
+        >
+          {status.count} new
+        </span>
+      );
+  }
 }
