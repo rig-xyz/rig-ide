@@ -210,6 +210,15 @@ describe('PinnedCard', () => {
       // Collapsing swaps back to the chip.
       expect(host.querySelector('[data-testid="pinned-chip"]')).toBeTruthy();
     });
+
+    it('shows "Details" instead of the space name for a space — the Room\'s single top bar already names it', async () => {
+      await render({ isSpace: true, name: '#growth' });
+      const header = host.querySelector('.card-pop-in > div > p')!;
+      expect(header.textContent).toBe('Details');
+      expect(header.className).toContain('text-text-muted');
+      // Collapse still works exactly the same.
+      expect(host.querySelector<HTMLButtonElement>('[aria-label="Collapse"]')).toBeTruthy();
+    });
   });
 
   describe('Cloud row', () => {

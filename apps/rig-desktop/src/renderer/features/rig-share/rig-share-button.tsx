@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Share2, UserPlus, X } from 'lucide-react';
+import { Check, Copy, Share2, UserPlus, Users, X } from 'lucide-react';
 import { type ReactNode, useRef, useState } from 'react';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { isOfflineError } from '@renderer/features/docs/comments/comments-cache';
@@ -47,7 +47,22 @@ import { deriveSharePopoverPhase } from './share-sync-state';
  * driver the old create dialog's own "Turn on sync" used); signed in and
  * already-synced renders exactly as before.
  */
-export function RigShareButton({ root, name }: { root: string; name: string | null }) {
+export function RigShareButton({
+  root,
+  name,
+  variant = 'default',
+}: {
+  root: string;
+  name: string | null;
+  /**
+   * Room chrome round: a space's single top bar shows the member faces as
+   * their own trigger (`RigPeopleButton`, below) — so the Share trigger
+   * here is a plain accent pill, never the avatar stack, to avoid saying
+   * "who's here" twice. `'default'` keeps the combined avatar-stack-or-icon
+   * trigger every other surface (the rig file browser header) still uses.
+   */
+  variant?: 'default' | 'pill';
+}) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -70,29 +85,35 @@ export function RigShareButton({ root, name }: { root: string; name: string | nu
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="true"
         aria-expanded={open}
-        className="border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex shrink-0 items-center gap-1.5 border bg-bg-1 px-2 py-1 text-xs transition-colors"
+        className={
+          variant === 'pill'
+            ? 'bg-accent text-bg-0 hover:opacity-90 rounded-chip flex shrink-0 items-center gap-1.5 px-2.5 py-1 text-xs font-medium transition-opacity'
+            : 'border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex shrink-0 items-center gap-1.5 border bg-bg-1 px-2 py-1 text-xs transition-colors'
+        }
       >
-        {stack.visible.length > 0 ? (
-          <span className="flex items-center">
-            {stack.visible.map((member, index) => (
-              <IdentityAvatar
-                key={member.userId}
-                name={member.name ?? member.email}
-                avatarUrl={member.avatarUrl}
-                sizeClassName="size-5"
-                textClassName="text-2xs"
-                className={cn('ring-bg-1 ring-1', index > 0 && '-ml-1')}
-              />
-            ))}
-            {stack.overflow > 0 && (
-              <span className="bg-bg-2 text-text-muted ring-bg-1 -ml-1 flex size-5 shrink-0 items-center justify-center rounded-chip text-2xs font-medium ring-1">
-                +{stack.overflow}
-              </span>
-            )}
-          </span>
-        ) : (
-          <Share2 className="size-3.5" strokeWidth={1.5} />
-        )}
+        {variant === 'default' &&
+          (stack.visible.length > 0 ? (
+            <span className="flex items-center">
+              {stack.visible.map((member, index) => (
+                <IdentityAvatar
+                  key={member.userId}
+                  name={member.name ?? member.email}
+                  avatarUrl={member.avatarUrl}
+                  sizeClassName="size-5"
+                  textClassName="text-2xs"
+                  className={cn('ring-bg-1 ring-1', index > 0 && '-ml-1')}
+                />
+              ))}
+              {stack.overflow > 0 && (
+                <span className="bg-bg-2 text-text-muted ring-bg-1 -ml-1 flex size-5 shrink-0 items-center justify-center rounded-chip text-2xs font-medium ring-1">
+                  +{stack.overflow}
+                </span>
+              )}
+            </span>
+          ) : (
+            <Share2 className="size-3.5" strokeWidth={1.5} />
+          ))}
+        {variant === 'pill' && <Share2 className="size-3.5" strokeWidth={1.5} />}
         Share
       </button>
 
@@ -108,6 +129,80 @@ export function RigShareButton({ root, name }: { root: string; name: string | nu
         ariaLabel="Share"
       >
         <RigSharePopoverContent root={root} name={name} />
+      </Popover>
+    </>
+  );
+}
+
+/**
+ * Room chrome round: the single top bar's member-faces trigger — the same
+ * avatar stack `RigShareButton`'s `'default'` variant used to show inline,
+ * now its own button so a click reads as "who's here" (opens People) and
+ * stays distinct from the accent Share pill beside it (opens the invite
+ * flow). Same members query, same `RigSharePopoverContent` surface — just a
+ * second anchor for it, exactly as that component's own doc comment
+ * describes for the pinned card's People row.
+ */
+export function RigPeopleButton({ root, name }: { root: string; name: string | null }) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const membersQuery = useQuery({
+    queryKey: ['rig', 'share', 'members', root],
+    queryFn: () => rpc.rig.share.members({ root }),
+    staleTime: 60_000,
+  });
+  const memberList = membersQuery.data?.success ? membersQuery.data.data : null;
+  const stack = deriveAvatarStack(memberList?.members ?? []);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="true"
+        aria-expanded={open}
+        aria-label="People"
+        className="hover:bg-bg-2 rounded-control flex shrink-0 items-center px-1 py-1 transition-colors"
+      >
+        {stack.visible.length > 0 ? (
+          <span className="flex items-center">
+            {stack.visible.map((member, index) => (
+              <IdentityAvatar
+                key={member.userId}
+                name={member.name ?? member.email}
+                avatarUrl={member.avatarUrl}
+                sizeClassName="size-6"
+                textClassName="text-2xs"
+                className={cn('ring-bg-1 ring-1', index > 0 && '-ml-1.5')}
+              />
+            ))}
+            {stack.overflow > 0 && (
+              <span className="bg-bg-2 text-text-muted ring-bg-1 -ml-1.5 flex size-6 shrink-0 items-center justify-center rounded-full text-2xs font-medium ring-1">
+                +{stack.overflow}
+              </span>
+            )}
+          </span>
+        ) : (
+          <span className="text-text-muted hover:text-text-primary flex size-6 items-center justify-center">
+            <Users className="size-3.5" strokeWidth={1.5} />
+          </span>
+        )}
+      </button>
+
+      <Popover
+        anchor={triggerRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        role="dialog"
+        align="right"
+        gap={6}
+        estimatedWidth={320}
+        minWidth={320}
+        ariaLabel="People"
+      >
+        <RigSharePopoverContent root={root} name={name} variant="compact" />
       </Popover>
     </>
   );

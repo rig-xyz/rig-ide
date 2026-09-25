@@ -16,7 +16,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { formatClock } from '@renderer/lib/time-format';
+import { formatClock, formatElapsed } from '@renderer/lib/time-format';
 import { Button } from '@renderer/lib/ui/button';
 import { SafeMarkdown } from '@renderer/lib/ui/comment-markdown';
 import { Dialog, DialogContent, DialogTitle } from '@renderer/lib/ui/dialog';
@@ -63,12 +63,6 @@ import { excerptOf, ROW_GRID, RowActions, RowTime } from './transcript-items';
  * Pure presentation over `projectSessionCard(events)`; the only timers are
  * the elapsed-time tick while running and the "Copied" confirmation.
  */
-
-function formatElapsed(ms: number): string {
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
-}
 
 function elapsedMs(startedAt: string, endedAt: string | null, now: number): number {
   const start = Date.parse(startedAt);

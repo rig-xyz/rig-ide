@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { dayKey, dayStart, formatClock, formatClockShort, formatDayLabel, formatFull, formatRelative } from './time-format';
+import {
+  dayKey,
+  dayStart,
+  formatClock,
+  formatClockShort,
+  formatDayLabel,
+  formatElapsed,
+  formatFull,
+  formatRelative,
+} from './time-format';
 
 const NOW = new Date(2026, 8, 24, 15, 0); // Thu Sep 24 2026, 15:00 local
 
@@ -42,5 +51,16 @@ describe('time-format', () => {
   it('orders days by their local midnight', () => {
     expect(dayStart(new Date(2026, 8, 24, 23))).toBeGreaterThan(dayStart(new Date(2026, 8, 23, 1)));
     expect(Number.isNaN(dayStart('nope'))).toBe(true);
+  });
+
+  it('formats elapsed durations as seconds, minutes, then hours — never a raw minute count past 60', () => {
+    expect(formatElapsed(45_000)).toBe('45s');
+    expect(formatElapsed(0)).toBe('0s');
+    expect(formatElapsed(3 * 60_000 + 14_000)).toBe('3m 14s');
+    expect(formatElapsed(59 * 60_000 + 59_000)).toBe('59m 59s');
+    expect(formatElapsed(7 * 3_600_000 + 38 * 60_000)).toBe('7h 38m');
+    // The old bug: 457m51s (7h37m51s) must read as hours, not raw minutes.
+    expect(formatElapsed(457 * 60_000 + 51_000)).toBe('7h 37m');
+    expect(formatElapsed(-500)).toBe('0s');
   });
 });

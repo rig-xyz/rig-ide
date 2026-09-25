@@ -83,3 +83,17 @@ export function formatFull(value: string | Date): string {
   if (!date) return '';
   return date.toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' });
 }
+
+/**
+ * How long something took: "45s" under a minute, "3m 14s" under an hour,
+ * "7h 38m" from there on — never a raw minute count past 60 (the old
+ * session-card formatter's own bug, "457m 51s").
+ */
+export function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes}m ${totalSeconds % 60}s`;
+  const hours = Math.floor(totalMinutes / 60);
+  return `${hours}h ${totalMinutes % 60}m`;
+}

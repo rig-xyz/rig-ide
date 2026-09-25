@@ -492,9 +492,16 @@ export function PinnedCard({
   return (
     <div className="card-pop-in border-border-hairline bg-bg-1 shadow-float absolute top-[52px] right-4 z-20 flex max-h-[calc(100vh-140px)] w-[304px] origin-top-right flex-col overflow-y-auto rounded-card border p-2">
       <div className="flex h-6 shrink-0 items-center px-2">
-        <p className="min-w-0 truncate text-xs font-medium text-text-primary">
-          {name ? name.replace(/^#/, '') : 'Rig'}
-        </p>
+        {/* Room chrome round: the single top bar (`RoomView`'s own header)
+            already names the space — repeating it here read as a second,
+            redundant title. A space's panel just says what it is. */}
+        {isSpace ? (
+          <p className="min-w-0 truncate text-xs font-medium text-text-muted">Details</p>
+        ) : (
+          <p className="min-w-0 truncate text-xs font-medium text-text-primary">
+            {name ? name.replace(/^#/, '') : 'Rig'}
+          </p>
+        )}
         <Tooltip>
           <TooltipTrigger
             render={

@@ -152,6 +152,8 @@ export function RoomView({
   onOpenFile,
   openDoc = null,
   renderPanel,
+  collapsed = false,
+  onExpand: onExpandCollapsed,
 }: {
   bindingId: string;
   spaceName: string;
@@ -165,6 +167,15 @@ export function RoomView({
     onlineUserIds: ReadonlySet<string>,
     options: { startCollapsed: boolean; chipSummary: (ctx: { unseenCount: number }) => ReactNode }
   ) => ReactNode;
+  /**
+   * Room chrome round: the doc-focus layout (the doc at full width) folds
+   * the Room down to a small floating chip instead of unmounting it — the
+   * connection and its live state stay up, only the transcript/composer
+   * stop being drawn. See the `collapsed` early return below.
+   */
+  collapsed?: boolean;
+  /** Brings the Room back beside the doc (the chip's own click target). */
+  onExpand?: () => void;
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -408,36 +419,63 @@ export function RoomView({
     return <div className="bg-bg-0 flex h-full min-h-0 flex-col" data-testid="room-view" />;
   }
 
+  // Room chrome round: doc-focus layout. The Room stays connected (every
+  // hook above keeps running) but draws only a small floating chip —
+  // faces plus the same live status the panel's own collapsed chip shows
+  // (`SpaceChipSummary`, shared styling) — bottom-right, fixed so it isn't
+  // clipped by the sliver this component is mounted into.
+  if (collapsed) {
+    return (
+      <div className="pointer-events-none fixed inset-0 z-30" data-testid="room-collapsed-chip">
+        <button
+          type="button"
+          onClick={onExpandCollapsed}
+          aria-label="Back to the Room"
+          className="border-border-hairline bg-bg-1 shadow-float pointer-events-auto absolute bottom-4 right-4 flex h-9 items-center gap-2 rounded-chip border px-3 transition-colors hover:bg-bg-2"
+        >
+          {source instanceof RelayRoomSource && (
+            <SpaceChipSummary snapshot={snapshot} selfUserId={selfUserId} unseenCount={0} />
+          )}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <AgentSettingsContext.Provider value={agentSettingsApi}>
     <div className="bg-bg-0 relative flex h-full min-h-0 flex-col" data-testid="room-view">
-      <div className="border-border-hairline bg-bg-1 flex h-9 shrink-0 items-center gap-2 border-b px-3">
-        <span className="text-xs font-medium text-text-primary">{snapshot.name}</span>
-        {showDemoToggle && (
-        <button
-          type="button"
-          onClick={() => setUseFixtures((v) => !v)}
-          title={useFixtures ? 'Switch to the live room' : 'Switch to the scripted demo (dev)'}
-          className="hover:bg-bg-2 ml-auto flex size-6 items-center justify-center rounded-control text-text-muted transition-colors"
-        >
-          <RadioTower className="size-3.5" strokeWidth={1.5} />
-        </button>
-        )}
-        {useFixtures && (
+      {/* Room chrome round: a real space (#name) is already named in the
+          app's single top bar — this row used to repeat it. It survives
+          only for the Room-preview overlay on a plain rig (`showDemoToggle`,
+          same condition), where it's the dev-only demo toggle's home and
+          there's no other bar in view. */}
+      {showDemoToggle && (
+        <div className="border-border-hairline bg-bg-1 flex h-9 shrink-0 items-center gap-2 border-b px-3">
+          <span className="text-xs font-medium text-text-primary">{snapshot.name}</span>
           <button
             type="button"
-            onClick={togglePlay}
-            aria-label={playing ? 'Pause the scripted feed' : 'Play the scripted feed'}
-            className="hover:bg-bg-2 flex size-6 items-center justify-center rounded-control text-text-muted transition-colors"
+            onClick={() => setUseFixtures((v) => !v)}
+            title={useFixtures ? 'Switch to the live room' : 'Switch to the scripted demo (dev)'}
+            className="hover:bg-bg-2 ml-auto flex size-6 items-center justify-center rounded-control text-text-muted transition-colors"
           >
-            {playing ? (
-              <Pause className="size-3.5" strokeWidth={1.5} />
-            ) : (
-              <Play className="size-3.5" strokeWidth={1.5} />
-            )}
+            <RadioTower className="size-3.5" strokeWidth={1.5} />
           </button>
-        )}
-      </div>
+          {useFixtures && (
+            <button
+              type="button"
+              onClick={togglePlay}
+              aria-label={playing ? 'Pause the scripted feed' : 'Play the scripted feed'}
+              className="hover:bg-bg-2 flex size-6 items-center justify-center rounded-control text-text-muted transition-colors"
+            >
+              {playing ? (
+                <Pause className="size-3.5" strokeWidth={1.5} />
+              ) : (
+                <Play className="size-3.5" strokeWidth={1.5} />
+              )}
+            </button>
+          )}
+        </div>
+      )}
 
       <div ref={bodyRef} className="relative flex min-h-0 flex-1">
         {/* Wide: keep the transcript clear of the floating panel. Narrow:

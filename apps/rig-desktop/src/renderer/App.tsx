@@ -18,6 +18,8 @@ import { ChatPanel } from '@renderer/features/chat/chat-panel';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { markBindingDeleted } from '@renderer/features/home/deleted-rig-store';
 import { Home } from '@renderer/features/home/home';
+import { stripRigPrefix } from '@renderer/features/home/summary-segments';
+import { usePulseBriefing } from '@renderer/features/home/use-pulse-briefing';
 import { Onboarding } from '@renderer/features/onboarding/onboarding';
 import { deriveOnboardingSteps } from '@renderer/features/onboarding/onboarding-state';
 import {
@@ -28,7 +30,7 @@ import { RecoveryBoundary } from '@renderer/features/recovery/recovery-boundary'
 import { RecoverySurface } from '@renderer/features/recovery/recovery-surface';
 import { reportRendererFailure } from '@renderer/features/recovery/renderer-error-reporting';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
-import { RigShareButton } from '@renderer/features/rig-share/rig-share-button';
+import { RigPeopleButton, RigShareButton } from '@renderer/features/rig-share/rig-share-button';
 import { InvitesBell } from '@renderer/features/shell/invites-bell';
 import { LayoutSwitcher, type RigLayout } from '@renderer/features/shell/layout-switcher';
 import {
@@ -762,6 +764,11 @@ export function App() {
       bindingId={target.bindingId}
       openDoc={inSpace && layout !== 'chat' ? openDocIn(target.root) : null}
       spaceName={inSpace ? `#${target.name ?? 'space'}` : (target.name ?? 'Room')}
+      // Room chrome round: doc-focus layout (the doc at full width) folds
+      // the Room to a floating chip instead of unmounting it — see
+      // `RoomView`'s own `collapsed` doc comment.
+      collapsed={inSpace && layout === 'files'}
+      onExpand={() => setRigLayout('split')}
       onOpenFile={(path) => {
         if (!inSpace) setRoomPreviewOpen(false);
         // Agents report the files they changed by absolute path; doc comments by relative.
@@ -957,18 +964,43 @@ export function App() {
         updateReady={isUpdateReady(updateStatus.state)}
         autoEditRigName={justCreatedRig}
         onAutoEditRigNameHandled={() => setJustCreatedRig(false)}
+        isSpace={boundIsSpace}
+        // Room chrome round: with a doc open beside a space's Room, the
+        // breadcrumb grows one more segment (`# growth › metrics.md ×`) —
+        // the same open tab `openDocIn` already names for the composer's
+        // pill, just surfaced up here too. `×` closes it and folds the
+        // layout back to the Room alone.
+        docBreadcrumb={
+          bound && boundIsSpace && layout !== 'chat'
+            ? (() => {
+                const relPath = openDocIn(bound.root);
+                if (!relPath) return null;
+                return {
+                  name: relPath.split('/').pop() ?? relPath,
+                  onClose: () => setArtefact((current) => closeActiveTab(current)),
+                };
+              })()
+            : null
+        }
         // Session-first viewer: rig-level Share lives in the topbar now —
         // the panel header that used to carry it went with the resident
-        // file browser.
-        shareSlot={bound ? <RigShareButton root={bound.root} name={bound.name} /> : undefined}
+        // file browser. A space instead shows the member faces (People) and
+        // a separate accent Share pill on the right (below) — see Topbar's
+        // own doc comment for why the split.
+        shareSlot={bound && !boundIsSpace ? <RigShareButton root={bound.root} name={bound.name} /> : undefined}
+        peopleSlot={bound && boundIsSpace ? <RigPeopleButton root={bound.root} name={bound.name} /> : undefined}
+        sharePillSlot={
+          bound && boundIsSpace ? <RigShareButton root={bound.root} name={bound.name} variant="pill" /> : undefined
+        }
+        layoutSwitcher={
+          bound
+            ? { layout, hiddenTabCount: layout === 'chat' ? artefact.tabs.length : 0, onChange: applyLayout }
+            : null
+        }
+        hasOpenDoc={artefact.tabs.length > 0}
         layoutSlot={
           bound ? (
             <div className="flex items-center gap-1.5">
-              <LayoutSwitcher
-                layout={layout}
-                hiddenTabCount={layout === 'chat' ? artefact.tabs.length : 0}
-                onChange={applyLayout}
-              />
               {spacesEnabled && !boundIsSpace && (
                 <Tooltip>
                   <TooltipTrigger
@@ -1067,21 +1099,12 @@ export function App() {
             )}
           >
             {boundIsSpace ? (
-              <RecoveryBoundary scope="Room">
-                {layout === 'files' ? (
-                  <button
-                    type="button"
-                    aria-label="Back to the Room"
-                    title="Back to the Room"
-                    onClick={() => setRigLayout('chat')}
-                    className="hover:bg-bg-2 mx-auto mt-2 flex size-7 items-center justify-center rounded-control text-text-muted transition-colors"
-                  >
-                    <MessageSquare className="size-3.5" strokeWidth={1.5} />
-                  </button>
-                ) : (
-                  renderRoom(bound, { inSpace: true })
-                )}
-              </RecoveryBoundary>
+              // Room chrome round: kept mounted across all three layouts now
+              // (`RoomView`'s own `collapsed` prop draws the doc-focus
+              // floating chip instead) — its connection and live state stay
+              // up rather than tearing down and reconnecting on every
+              // layout flip.
+              <RecoveryBoundary scope="Room">{renderRoom(bound, { inSpace: true })}</RecoveryBoundary>
             ) : (
             <RecoveryBoundary scope="Chat panel">
               <ChatPanel
@@ -1228,7 +1251,10 @@ export function App() {
   );
 }
 
-function Topbar({
+// Exported for direct testing (`topbar.test.tsx`) — the layout-switcher
+// gate, the doc breadcrumb and the People/Share split are Topbar's own
+// decisions now (see each prop's doc comment below), not App's.
+export function Topbar({
   context,
   variant,
   scrolled,
@@ -1238,9 +1264,15 @@ function Topbar({
   onOpenFolder,
   updateReady,
   shareSlot,
+  peopleSlot,
+  sharePillSlot,
+  layoutSwitcher = null,
+  hasOpenDoc = false,
   layoutSlot,
   autoEditRigName,
   onAutoEditRigNameHandled,
+  isSpace = false,
+  docBreadcrumb = null,
 }: {
   context: TopbarContext;
   /** Which bottom-edge treatment the bar wears (Dylan's seam call, this
@@ -1271,15 +1303,46 @@ function Topbar({
    * itself the moment `isUpdateReady` goes false again (after install).
    */
   updateReady: boolean;
-  /** Session-first viewer: the rig-level Share button (rig view only) — rendered in the right cluster, leading the account/gear icons. */
+  /** Session-first viewer: the rig-level Share button (plain-rig view only — a space uses `peopleSlot`/`sharePillSlot` instead) — rendered beside the name. */
   shareSlot?: React.ReactNode;
-  /** Layout-switcher round: the chat/split/files segmented control (rig view only) — rendered in the right cluster, ahead of the account/gear icons. */
+  /** Room chrome round: a space's member-faces trigger (opens People) — rendered in the right cluster, ahead of the Share pill. */
+  peopleSlot?: React.ReactNode;
+  /** Room chrome round: a space's own accent Share pill, split out from the faces so each reads as its own action. */
+  sharePillSlot?: React.ReactNode;
+  /**
+   * Layout-switcher round: the chat/split/files segmented control's own
+   * data (rig view only) — Topbar decides FROM THIS whether to render it,
+   * so the "no switch without a doc" rule (room chrome round, space view
+   * only) is a fact this component owns, not a blob the caller pre-built.
+   * `null` while no rig is bound.
+   */
+  layoutSwitcher?: { layout: RigLayout; hiddenTabCount: number; onChange: (next: RigLayout) => void } | null;
+  /** Room chrome round: whether the artefact pane has any open tabs — the layout switcher's gate for a space (see `layoutSwitcher`). */
+  hasOpenDoc?: boolean;
+  /** Layout-switcher round: anything else in the same cluster (rig view only) — currently just the "Room (preview)" toggle — rendered after the switcher, ahead of the account/gear icons. */
   layoutSlot?: React.ReactNode;
   /** Onboarding flow round: true immediately after this rig was just created — passed through to `RigSwitcher`'s `autoEdit`. */
   autoEditRigName?: boolean;
   /** Called once `autoEditRigName`'s inline rename has been entered, so `App` can drop the flag. */
   onAutoEditRigNameHandled?: () => void;
+  /** Room chrome round: the bound rig is a space — drives the `#`-icon switcher, the Pulse one-liner, and the right cluster's People/Share split. */
+  isSpace?: boolean;
+  /** Room chrome round: the doc open beside a space's Room, if any — extends the breadcrumb with `› name ×`. */
+  docBreadcrumb?: { name: string; onClose: () => void } | null;
 }) {
+  // Room chrome round: the space's one-line Pulse story, muted and
+  // truncating after the switcher — same cached briefing `PinnedCard`'s own
+  // Changes row shows, just the headline without its detail. Hook runs
+  // unconditionally (Home renders this component too); the lookup below
+  // only does anything once `isSpace` and a rig is actually bound.
+  const { state: pulseBriefingState } = usePulseBriefing();
+  const spaceSummary =
+    isSpace && context.kind === 'rig' && pulseBriefingState.kind === 'data'
+      ? (() => {
+          const entry = pulseBriefingState.briefing.perRig.find((item) => item.bindingId === context.bindingId);
+          return entry ? stripRigPrefix(entry.line, entry.rigName) : null;
+        })()
+      : null;
   return (
     // The window is `titleBarStyle: 'hiddenInset'` (main/app/window.ts) — no
     // native title bar, just the traffic lights at (10, 10). This header is
@@ -1354,11 +1417,36 @@ function Topbar({
               onOpenFolder={onOpenFolder}
               autoEdit={autoEditRigName}
               onAutoEditHandled={onAutoEditRigNameHandled}
+              isSpace={isSpace}
             />
+            {/* Room chrome round: the doc open beside the Room joins the
+                breadcrumb — `# growth › metrics.md ×`. */}
+            {docBreadcrumb && (
+              <>
+                <ChevronRight className="size-3 shrink-0" strokeWidth={1.5} />
+                <span className="max-w-40 truncate text-text-secondary">{docBreadcrumb.name}</span>
+                <button
+                  type="button"
+                  onClick={docBreadcrumb.onClose}
+                  aria-label="Close doc"
+                  className="hover:bg-bg-2 hover:text-text-primary flex size-4 shrink-0 items-center justify-center rounded-control text-text-muted transition-colors [-webkit-app-region:no-drag]"
+                >
+                  <X className="size-3" strokeWidth={1.5} />
+                </button>
+              </>
+            )}
+            {/* Room chrome round: the space's Pulse one-liner, right after
+                the switcher — muted, truncating, never pushing the right
+                cluster around on a narrow window. */}
+            {spaceSummary && (
+              <span className="min-w-0 truncate text-text-muted">· {spaceSummary}</span>
+            )}
             {/* Feedback round 3: Share belongs WITH the rig it shares —
                 beside the name, not in the account cluster where its
-                avatar stack collided with the user's own avatar. */}
-            <span className="ml-1.5 [-webkit-app-region:no-drag]">{shareSlot}</span>
+                avatar stack collided with the user's own avatar. A space
+                moves both Share and People to the right cluster instead
+                (below) — see this prop's own doc comment. */}
+            {shareSlot && <span className="ml-1.5 [-webkit-app-region:no-drag]">{shareSlot}</span>}
           </>
         )}
       </div>
@@ -1366,7 +1454,20 @@ function Topbar({
         {/* Feedback round 4: no account avatar here — the identity surface
             lives in Settings, and the pill beside Share's own avatar stack
             read as a second, mystery identity. */}
+        {/* Room chrome round: for a space, this switch is noise until
+            there's actually a doc to switch to — it appears only once one
+            is open beside the Room. A plain rig keeps it always on. */}
+        {layoutSwitcher && (!isSpace || hasOpenDoc) && (
+          <LayoutSwitcher
+            layout={layoutSwitcher.layout}
+            hiddenTabCount={layoutSwitcher.hiddenTabCount}
+            onChange={layoutSwitcher.onChange}
+            spaceMode={isSpace}
+          />
+        )}
         {layoutSlot}
+        {peopleSlot}
+        {sharePillSlot}
         {/* Invites addressed to me — renders nothing signed out; accent
             count dot only when invites exist (a live indicator, within the
             accent budget). Sits between the avatar and the gear. */}

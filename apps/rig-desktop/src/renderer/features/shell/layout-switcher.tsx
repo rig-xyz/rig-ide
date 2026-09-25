@@ -15,17 +15,28 @@ export function LayoutSwitcher({
   layout,
   hiddenTabCount,
   onChange,
+  spaceMode = false,
 }: {
   layout: RigLayout;
   /** Open tabs not currently visible — only meaningful while `layout === 'chat'`; surfaced as a presence dot on the split segment. */
   hiddenTabCount: number;
   onChange: (next: RigLayout) => void;
+  /** Room chrome round: a space's Room owns `'chat'` instead of a session,
+   * so the segments read Room/Split/Doc there — same three values, same
+   * glyphs, just the words a member actually sees. */
+  spaceMode?: boolean;
 }) {
-  const segments: { value: RigLayout; label: string }[] = [
-    { value: 'chat', label: 'Chat' },
-    { value: 'split', label: 'Side by side' },
-    { value: 'files', label: 'Files' },
-  ];
+  const segments: { value: RigLayout; label: string }[] = spaceMode
+    ? [
+        { value: 'chat', label: 'Room' },
+        { value: 'split', label: 'Split' },
+        { value: 'files', label: 'Doc' },
+      ]
+    : [
+        { value: 'chat', label: 'Chat' },
+        { value: 'split', label: 'Side by side' },
+        { value: 'files', label: 'Files' },
+      ];
 
   return (
     <div

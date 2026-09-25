@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Check, ChevronDown, FolderOpen } from 'lucide-react';
+import { Check, ChevronDown, FolderOpen, Hash } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { Popover } from '@renderer/lib/ui/popover';
@@ -36,6 +36,7 @@ export function RigSwitcher({
   onOpenFolder,
   autoEdit = false,
   onAutoEditHandled,
+  isSpace = false,
 }: {
   /** The currently-open rig's binding id — checks the matching row. */
   bindingId: string;
@@ -48,6 +49,9 @@ export function RigSwitcher({
   autoEdit?: boolean;
   /** Called once `autoEdit`'s edit mode has been entered, so the caller can drop its flag. */
   onAutoEditHandled?: () => void;
+  /** Room chrome round: a space's own identity is its `#name`, never a
+   * folder — the trigger wears the `Hash` glyph instead of `FolderOpen`. */
+  isSpace?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -131,7 +135,11 @@ export function RigSwitcher({
         aria-expanded={open}
         className="text-text-muted hover:bg-bg-2 hover:text-text-primary rounded-control flex min-w-0 shrink items-center gap-1 px-1 py-0.5 transition-colors [-webkit-app-region:no-drag]"
       >
-        <FolderOpen className="size-3 shrink-0" strokeWidth={1.5} />
+        {isSpace ? (
+          <Hash className="size-3 shrink-0" strokeWidth={1.5} />
+        ) : (
+          <FolderOpen className="size-3 shrink-0" strokeWidth={1.5} />
+        )}
         <span className="max-w-64 truncate">{displayName}</span>
         <ChevronDown className="size-3 shrink-0" strokeWidth={1.5} />
       </button>
