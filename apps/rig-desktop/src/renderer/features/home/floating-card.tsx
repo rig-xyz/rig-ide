@@ -41,7 +41,7 @@ export function FloatingCard({
   storageKey: string;
   title: string;
   count?: number;
-  /** Rendered beside the collapse chevron, only while expanded (e.g. Spaces' "+ New"). */
+  /** Rendered beside the collapse chevron, only while expanded (e.g. Rigs' "+ New"). */
   headerAction?: ReactNode;
   children: ReactNode;
 }) {

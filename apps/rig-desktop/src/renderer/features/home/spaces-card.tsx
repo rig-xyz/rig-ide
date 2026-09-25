@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, FolderSearch, Loader2, LogOut, MoreHorizontal, Pencil, Plus, Star, Trash2 } from 'lucide-react';
+import { Download, FolderSearch, LogOut, MoreHorizontal, Pencil, Star, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
@@ -29,7 +29,6 @@ import {
 } from './space-status-state';
 import { SpaceStatusTile } from './space-status-tile';
 import { FloatingCard } from './floating-card';
-import { generateSpaceName } from './space-create';
 
 const SHOWN_CAP = 6;
 const FACES_MAX = 3;
@@ -49,36 +48,19 @@ export function SpacesCard({
   statusByBinding,
   selfUserId,
   onOpenPath,
-  onCreateSpace,
   highlightBindingId,
 }: {
   rows: readonly HomeRigRow[];
   statusByBinding: ReadonlyMap<string, RigSpaceStatus>;
   selfUserId: string | null;
   onOpenPath: (path: string) => void;
-  onCreateSpace: (name: string) => Promise<string | null>;
   highlightBindingId?: string | null;
 }) {
   const [filter, setFilter] = useState<SpaceRowFilter>('all');
   const [showAll, setShowAll] = useState(false);
-  // Polish round 2, lane F: "+ New" is one click now (Dylan's "boom, you're
-  // in" — no typed name), the same one-click action Home's own primary
-  // "New space" CTA drives (`new-space-cta.tsx`) — a generated name, then
-  // straight into the Room via `onCreateSpace` (`home.tsx`'s `createSpace`,
-  // unchanged).
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  // No "+ New" of its own: Home's "New space" pill floats right above this
+  // card (`new-space-cta.tsx`) and is the one create/join entry point.
   const { pinned, toggle: togglePinned } = useSpacePins();
-
-  const createOneClick = async () => {
-    if (creating) return;
-    setCreating(true);
-    setCreateError(null);
-    const existingNames = new Set(rows.map((r) => r.name).filter((n): n is string => !!n));
-    const failure = await onCreateSpace(generateSpaceName(existingNames));
-    setCreating(false);
-    if (failure) setCreateError(failure);
-  };
 
   const now = Date.now();
   const filtered = filterSpaceRows(rows, filter, {
@@ -103,23 +85,7 @@ export function SpacesCard({
       storageKey="rig-home-spaces-collapsed"
       title="Spaces"
       count={rows.length}
-      headerAction={
-        <button
-          type="button"
-          onClick={() => void createOneClick()}
-          disabled={creating}
-          className="bg-bg-2 text-text-muted hover:text-text-primary flex items-center gap-1 rounded-chip px-2 py-0.5 text-xs transition-colors disabled:pointer-events-none disabled:opacity-60"
-        >
-          {creating ? (
-            <Loader2 className="size-3 shrink-0 animate-spin" strokeWidth={1.5} />
-          ) : (
-            <Plus className="size-3 shrink-0" strokeWidth={1.5} />
-          )}
-          New
-        </button>
-      }
     >
-      {createError && <p className="text-danger px-1 text-xs">{createError}</p>}
       {rows.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-0.5">
           {(Object.keys(SPACE_FILTER_LABELS) as SpaceRowFilter[]).map((f) => (
@@ -199,8 +165,8 @@ function useSpaceMembers(bindingId: string) {
   return query.data?.success ? query.data.data : [];
 }
 
-/** Exported for `across-your-spaces.tsx`'s own cards — same member-faces look, same query (react-query dedupes). */
-export function Faces({ bindingId }: { bindingId: string }) {
+/** A space's member faces (first few, then "+N"). */
+function Faces({ bindingId }: { bindingId: string }) {
   const members = useSpaceMembers(bindingId);
   if (members.length === 0) return null;
   return (

@@ -2,15 +2,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { userEvent } from 'vitest/browser';
 
 /**
- * Polish round 2, lane F — Home's primary "New space" CTA (Dylan's
- * "Google-Meet style: boom, you're in") and the "Join with a link" field
- * beside it. One click generates a name and drives straight through
- * `onCreateSpace` (no dialog). Lane H: the link field now joins in the app
- * — `rpc.rig.share.acceptInviteLink`, then `rpc.rig.join.attach`, then
- * `onOpenPath` (all mocked here) — and only falls back to
- * `rpc.app.openExternal` without a usable sign-in.
+ * Home's "New space" quick-create pill (Dylan's "Google-Meet style: boom,
+ * you're in"): one click generates a name and drives straight through
+ * `onCreateSpace` (no dialog). Hovering it oozes out a link bubble; clicking
+ * that stretches the pill into an inline "Paste an invite link" field,
+ * which joins in the app — `rpc.rig.share.acceptInviteLink`, then
+ * `rpc.rig.join.attach`, then `onOpenPath` (all mocked here) — and only
+ * falls back to `rpc.app.openExternal` without a usable sign-in.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -80,8 +81,31 @@ describe('NewSpaceCta', () => {
     });
   }
 
+  const pill = () => host.querySelector<HTMLElement>('[data-testid="new-space-cta"]')!;
+  const linkBubble = () => host.querySelector<HTMLButtonElement>('button[aria-label="Join with a link"]');
+  const linkInput = () => host.querySelector<HTMLInputElement>('input[aria-label="Invite link"]');
+
+  async function hover() {
+    // React's onMouseEnter is driven by mouseover (it doesn't listen for the non-bubbling mouseenter).
+    await act(async () => pill().dispatchEvent(new MouseEvent('mouseover', { bubbles: true })));
+  }
+
+  async function openJoinField() {
+    await hover();
+    await act(async () => click(linkBubble()!));
+    return linkInput()!;
+  }
+
+  async function type(input: HTMLInputElement, text: string) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(input, text);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
   async function pasteAndJoin(text: string) {
-    const input = host.querySelector<HTMLInputElement>('[aria-label="Join with a link"]')!;
+    const input = await openJoinField();
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
     await act(async () => {
       setter.call(input, text);
@@ -126,6 +150,83 @@ describe('NewSpaceCta', () => {
     expect(host.textContent).toContain('The space could not go live.');
   });
 
+  it('hovering the pill oozes out the link bubble (focusable only while it is out)', async () => {
+    await render();
+    expect(pill().dataset.out).toBeUndefined();
+    expect(linkBubble()!.tabIndex).toBe(-1);
+
+    await hover();
+
+    expect(pill().dataset.out).toBe('true');
+    expect(linkBubble()!.tabIndex).toBe(0);
+    // Nothing to paste into yet: the pill is still "New space".
+    expect(linkInput()).toBeNull();
+    expect(host.textContent).toContain('New space');
+  });
+
+  it('clicking the link bubble morphs the pill into a focused "Paste an invite link" field', async () => {
+    await render();
+    const input = await openJoinField();
+
+    expect(input).toBeTruthy();
+    expect(input.placeholder).toBe('Paste an invite link');
+    expect(document.activeElement).toBe(input);
+    expect(pill().dataset.join).toBe('true');
+    // The pill became the field: no "New space" button while it's open.
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent?.includes('New space'))).toBe(false);
+    expect([...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Join')?.disabled).toBe(true);
+  });
+
+  it('Escape collapses the field back into the "New space" pill', async () => {
+    await render();
+    const input = await openJoinField();
+    await type(input, 'half a li');
+
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+
+    expect(linkInput()).toBeNull();
+    expect(pill().dataset.join).toBeUndefined();
+    const newSpace = [...host.querySelectorAll('button')].find((b) => b.textContent?.includes('New space'));
+    expect(newSpace).toBeTruthy();
+    expect(document.activeElement).toBe(newSpace);
+  });
+
+  it('blurring the field while it is still empty collapses it', async () => {
+    await render();
+    const input = await openJoinField();
+    await act(async () => input.blur());
+    expect(linkInput()).toBeNull();
+  });
+
+  it('Enter in the field joins with the pasted link', async () => {
+    mocks.acceptInviteLink.mockResolvedValue({
+      success: true,
+      data: { bindingId: 'b_1', spaceName: 'growth', becameMember: true },
+    });
+    mocks.attach.mockResolvedValue({
+      success: true,
+      data: { localPath: '/Users/me/Rig/growth', rigName: 'growth', syncing: false },
+    });
+    const onOpenPath = vi.fn();
+    await render({ onOpenPath });
+    const input = await openJoinField();
+    await type(input, LINK);
+
+    // A real Enter keypress in the focused field (implicit form submit).
+    expect(document.activeElement).toBe(input);
+    await act(async () => {
+      await userEvent.keyboard('{Enter}');
+    });
+    await flush();
+
+    expect(mocks.acceptInviteLink).toHaveBeenCalledWith({ link: LINK });
+    expect(onOpenPath).toHaveBeenCalledWith('/Users/me/Rig/growth');
+    // Done: back to the "New space" pill.
+    expect(linkInput()).toBeNull();
+  });
+
   it('"Join with a link" accepts in the app, shows a busy state, then attaches and opens the space', async () => {
     const accept = deferred<unknown>();
     mocks.acceptInviteLink.mockReturnValue(accept.promise);
@@ -154,7 +255,9 @@ describe('NewSpaceCta', () => {
     expect(onOpenPath).toHaveBeenCalledWith('/Users/me/Rig/growth');
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['rig', 'account'] });
     expect(mocks.openExternal).not.toHaveBeenCalled();
-    expect(input.value).toBe('');
+    // Joined and opened: the field collapses back into the "New space" pill.
+    expect(input.isConnected).toBe(false);
+    expect(linkInput()).toBeNull();
     expect(host.querySelector('[role="alert"]')).toBeNull();
   });
 
@@ -165,12 +268,12 @@ describe('NewSpaceCta', () => {
     });
     await render();
 
-    const input = await pasteAndJoin('userig.xyz/join/abc123');
+    await pasteAndJoin('userig.xyz/join/abc123');
     await flush();
 
     expect(mocks.openExternal).toHaveBeenCalledWith('https://userig.xyz/join/abc123');
     expect(mocks.attach).not.toHaveBeenCalled();
-    expect(input.value).toBe('');
+    expect(linkInput()).toBeNull();
   });
 
   it('shows the typed error inline (never the link itself) and keeps the paste to fix', async () => {

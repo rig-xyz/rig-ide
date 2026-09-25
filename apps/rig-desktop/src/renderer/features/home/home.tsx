@@ -14,7 +14,6 @@ import { useSpacesEnabled } from '@renderer/features/spaces/use-spaces-enabled';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { cn } from '@renderer/lib/utils';
-import { AcrossYourSpaces } from './across-your-spaces';
 import { BriefingSpine } from './briefing-spine';
 import { FloatingCard } from './floating-card';
 import {
@@ -466,16 +465,12 @@ export function Home({
                 onOpenPath={onOpenPath}
                 onHighlightRig={setHighlightBindingId}
               />
-              {spacesEnabled && signedIn && (
-                <NewSpaceCta existingNames={spaceNames} onCreateSpace={createSpace} onOpenPath={onOpenPath} />
-              )}
               <NeedsYouSection
                 spaceRows={spaceRows}
                 statusByBinding={statusByBinding}
                 selfUserId={selfUserId}
                 onOpenPath={onOpenPath}
               />
-              <AcrossYourSpaces spaceRows={spaceRows} statusByBinding={statusByBinding} onOpenPath={onOpenPath} />
             </div>
           </div>
         )}
@@ -490,14 +485,17 @@ export function Home({
           )}
         >
           {spacesEnabled && signedIn && (
-            <SpacesCard
-              rows={spaceRows}
-              statusByBinding={statusByBinding}
-              selfUserId={selfUserId}
-              onOpenPath={onOpenPath}
-              onCreateSpace={createSpace}
-              highlightBindingId={highlightBindingId}
-            />
+            <>
+              {/* Quick-create, floating above the Spaces card: "New space", or its link bubble to join one. */}
+              <NewSpaceCta existingNames={spaceNames} onCreateSpace={createSpace} onOpenPath={onOpenPath} />
+              <SpacesCard
+                rows={spaceRows}
+                statusByBinding={statusByBinding}
+                selfUserId={selfUserId}
+                onOpenPath={onOpenPath}
+                highlightBindingId={highlightBindingId}
+              />
+            </>
           )}
           <FloatingCard
             storageKey="rig-home-solo-rigs-collapsed"

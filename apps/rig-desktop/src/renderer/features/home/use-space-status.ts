@@ -9,7 +9,7 @@ export const SPACE_STATUS_QUERY_KEY = ['rig', 'spaceStatus', 'get'];
 const SPACE_STATUS_POLL_MS = 20_000;
 
 /**
- * Polish round, lane C: the spaces card's + "Across your spaces"' shared
+ * Polish round, lane C: the spaces card's + "Needs you"' shared
  * read of `rpc.rig.spaceStatus.get()` — one query, one cache entry, same
  * dedup reasoning `PULSE_QUERY_KEY` already relies on for
  * `BriefingSpine`/`PeopleRail`. `enabled` mirrors `shouldShowPulseSection`'s

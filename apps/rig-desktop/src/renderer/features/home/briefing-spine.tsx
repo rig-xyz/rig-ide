@@ -39,9 +39,8 @@ const PULSE_REFETCH_INTERVAL_MS = 20 * 60 * 1000;
  * Polish round, lane C ("spaces first"): WHAT'S NEW (pick-back-up items)
  * and the old quiet-line ACROSS YOUR RIGS moved OUT of this component —
  * the approved mock replaces them with `needs-you-section.tsx`'s "Needs
- * you" and `across-your-spaces.tsx`'s own richer cards, both rendered by
- * `home.tsx` directly below this one (they need space-status/self-user
- * data this component has no reason to carry). This component's own scope
+ * you", rendered by `home.tsx` directly below this one (it needs
+ * space-status/self-user data this component has no reason to carry). This component's own scope
  * is back to exactly what the design doc's main-column list says it keeps:
  * "the Pulse summary paragraph... the Ask box + suggestion pills".
  *

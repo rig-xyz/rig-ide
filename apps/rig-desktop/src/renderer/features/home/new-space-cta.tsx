@@ -1,27 +1,50 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Hash, Link as LinkIcon, Loader2 } from 'lucide-react';
-import { useState } from 'react';
+import { useReducedMotion } from 'motion/react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { MY_INVITES_KEY_PREFIX } from '@renderer/features/shell/invites-inbox';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { Button } from '@renderer/lib/ui/button';
+import { cn } from '@renderer/lib/utils';
 import { normalizeJoinLink } from './join-link';
 import { generateSpaceName } from './space-create';
 
 /**
- * Polish round 2, lane F — Dylan's "Google-Meet style: boom, you're in"
- * primary action, placed right under the greeting/Ask (`home.tsx`, between
- * `BriefingSpine` and `NeedsYouSection`). One click: `generateSpaceName`
- * picks a friendly, unique-among-your-spaces name, and `onCreateSpace`
- * (`home.tsx`'s own `createSpace`, the SAME path the Spaces card's manual
- * "#name" field already drove) creates it and opens straight into its
- * Room — no naming dialog. `JoinWithLinkField` sits right beside it for the
- * other on-ramp: paste an invite link and it's accepted in the app, then
- * attached and opened — the same accept → `join.attach` → open path the
- * emailed-invite accept (`home.tsx`'s `PendingInviteInline`) takes. Only
- * without a usable sign-in does it fall back to the hub's own
- * `/join/<secret>` page in the browser.
+ * Home's quick-create pill, floating above the Spaces card in the left
+ * column (`home.tsx`). One click on "New space": `generateSpaceName` picks
+ * a friendly, unique-among-your-spaces name and `onCreateSpace` (`home.tsx`'s
+ * own `createSpace`) creates it and opens straight into its Room, no naming
+ * dialog.
+ *
+ * Hovering (or focusing) it lets a round link bubble ooze out of its right
+ * edge, in the same liquid language as the composer's `ContextPill`
+ * (`features/spaces/components/context-pill.tsx`): the pill body and the
+ * bubble are one liquid layer (an SVG goo filter over a single fill), so
+ * at rest the bubble sits inside the pill's own fill; on hover the body
+ * pulls back from its right end and the bubble pinches off there (inside
+ * the column, so it never spills into the next one). Glow and edge are
+ * separate layers, text crisp above. Hover is forgiving: open at once,
+ * close after a short grace.
+ *
+ * Clicking the bubble stretches the whole pill into an inline field (the
+ * link icon slides to the field's left edge, the accent fill turns into
+ * the card surface): paste an invite link and it's accepted in the app,
+ * then attached and opened, the same accept → `join.attach` → open path
+ * the emailed-invite accept (`home.tsx`'s `PendingInviteInline`) takes.
+ * Only without a usable sign-in does it fall back to the hub's own
+ * `/join/<secret>` page in the browser. Escape, or leaving it empty,
+ * collapses it back. Reduced motion: no ooze, just show/hide.
  */
+
+const SPRING = 'cubic-bezier(.34,1.56,.64,1)';
+const CLOSE_GRACE_MS = 280;
+/** Bubble diameter and its inset from the pill's edge, in px (the pill is 40px tall). */
+const BUBBLE = 32;
+const INSET = 4;
+/** How far the body pulls back from its right end while the bubble is out. */
+const PULL_BACK = BUBBLE + INSET + 8;
+
 export function NewSpaceCta({
   existingNames,
   onCreateSpace,
@@ -33,49 +56,64 @@ export function NewSpaceCta({
   /** Opens a joined space's local folder — Home's own `onOpenPath`. */
   onOpenPath: (path: string) => void;
 }) {
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-
-  const createOneClick = async () => {
-    if (creating) return;
-    setCreating(true);
-    setCreateError(null);
-    const name = generateSpaceName(existingNames);
-    const failure = await onCreateSpace(name);
-    setCreating(false);
-    if (failure) setCreateError(failure);
-  };
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <button
-          type="button"
-          onClick={() => void createOneClick()}
-          disabled={creating}
-          className="welcome-cta bg-accent text-accent-ink focus-visible:outline-accent inline-flex shrink-0 items-center gap-2 rounded-chip px-5 py-2.5 text-sm font-medium outline-none transition-opacity focus-visible:outline-2 focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-60"
-        >
-          {creating ? (
-            <Loader2 className="size-4 animate-spin" strokeWidth={1.5} />
-          ) : (
-            <Hash className="size-4" strokeWidth={1.5} />
-          )}
-          {creating ? 'Starting…' : 'New space'}
-        </button>
-        <JoinWithLinkField onOpenPath={onOpenPath} />
-      </div>
-      {createError && <p className="text-danger text-xs">{createError}</p>}
-    </div>
-  );
-}
-
-/** The "paste an invite link" on-ramp — see this file's own header comment for what it does. The pasted link carries the invite's secret, so it's never echoed back in an error line. */
-function JoinWithLinkField({ onOpenPath }: { onOpenPath: (path: string) => void }) {
   const queryClient = useQueryClient();
+  const reduceMotion = useReducedMotion() ?? false;
+  const filterId = `new-space-goo-${useId().replace(/:/g, '')}`;
+  const createRef = useRef<HTMLButtonElement>(null);
+  const refocusCreate = useRef(false);
+  const leaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (leaveRef.current) clearTimeout(leaveRef.current);
+    },
+    []
+  );
+
+  const [out, setOut] = useState(false);
+  const [joinOpen, setJoinOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [value, setValue] = useState('');
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Escape hands focus back to "New space", once it's mounted again.
+  useEffect(() => {
+    if (!joinOpen && refocusCreate.current) {
+      refocusCreate.current = false;
+      createRef.current?.focus();
+    }
+  }, [joinOpen]);
+
+  const enter = () => {
+    if (leaveRef.current) clearTimeout(leaveRef.current);
+    setOut(true);
+  };
+  const leave = () => {
+    if (leaveRef.current) clearTimeout(leaveRef.current);
+    leaveRef.current = setTimeout(() => setOut(false), CLOSE_GRACE_MS);
+  };
+
+  const createOneClick = async () => {
+    if (creating) return;
+    setCreating(true);
+    setError(null);
+    const failure = await onCreateSpace(generateSpaceName(existingNames));
+    setCreating(false);
+    if (failure) setError(failure);
+  };
+
+  const openJoin = () => {
+    setError(null);
+    setOut(false);
+    setJoinOpen(true);
+  };
+  const collapse = (refocus: boolean) => {
+    refocusCreate.current = refocus;
+    setJoinOpen(false);
+    setValue('');
+  };
+
+  // The pasted link carries the invite's secret, so it's never echoed back in an error line.
   const submit = async () => {
     const url = normalizeJoinLink(value);
     if (!url) {
@@ -95,7 +133,7 @@ function JoinWithLinkField({ onOpenPath }: { onOpenPath: (path: string) => void 
           setError(opened.error ?? "Couldn't open the browser.");
           return;
         }
-        setValue('');
+        collapse(false);
         return;
       }
       setJoining(false);
@@ -108,7 +146,7 @@ function JoinWithLinkField({ onOpenPath }: { onOpenPath: (path: string) => void 
     const { bindingId, spaceName } = joined.data;
     const attached = await rpc.rig.join.attach({ bindingId, name: spaceName });
     setJoining(false);
-    setValue('');
+    collapse(false);
     if (!attached.success) {
       // Joined server-side either way — the space shows on Home to set up from there.
       setError(`You joined ${spaceName ? `#${spaceName}` : 'the space'}, but it couldn't be set up here: ${attached.error.message}`);
@@ -118,34 +156,180 @@ function JoinWithLinkField({ onOpenPath }: { onOpenPath: (path: string) => void 
     onOpenPath(attached.data.localPath);
   };
 
+  const bubbleOut = out && !joinOpen && !creating;
+  const bodyWidth = bubbleOut ? `calc(100% - ${PULL_BACK}px)` : '100%';
+  const bubbleLeft = joinOpen ? `${INSET}px` : `calc(100% - ${BUBBLE + INSET}px)`;
+  const fill = joinOpen ? 'var(--bg-1)' : 'var(--accent)';
+  /** Reduced motion: every layer just snaps to its state. */
+  const ease = (transition: string) => (reduceMotion ? 'none' : transition);
+
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-1">
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void submit();
-        }}
-        className="border-border-hairline focus-within:border-accent bg-bg-1 flex min-w-0 items-center gap-2 rounded-control border py-1.5 pr-1.5 pl-3 transition-colors"
+    <div className="flex flex-col gap-1.5">
+      <div
+        className="relative h-10 w-full"
+        onMouseEnter={enter}
+        onMouseLeave={leave}
+        onFocus={enter}
+        onBlur={leave}
+        data-testid="new-space-cta"
+        data-out={bubbleOut || undefined}
+        data-join={joinOpen || undefined}
       >
-        <LinkIcon className="text-text-muted size-3.5 shrink-0" strokeWidth={1.5} />
-        <input
-          value={value}
-          onChange={(e) => {
-            setValue(e.target.value);
-            if (error) setError(null);
-          }}
-          placeholder="Join with a link…"
-          disabled={joining}
-          aria-label="Join with a link"
-          className="text-text-primary placeholder:text-text-muted min-w-0 flex-1 bg-transparent text-sm outline-none disabled:cursor-not-allowed"
+        <svg width="0" height="0" className="absolute" aria-hidden>
+          <defs>
+            <filter id={filterId} x="-10%" y="-50%" width="120%" height="200%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
+              <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -7" result="goo" />
+              <feBlend in="SourceGraphic" in2="goo" />
+            </filter>
+          </defs>
+        </svg>
+        {/* the field's float shadow (join only), under the liquid */}
+        <span
+          className={cn('shadow-float absolute inset-0 rounded-full', joinOpen ? 'opacity-100' : 'opacity-0')}
+          style={{ transition: ease('opacity 250ms') }}
+          aria-hidden
         />
-        <Button type="submit" size="sm" variant="secondary" disabled={joining || !value.trim()}>
-          {joining && <Loader2 className="size-3.5 animate-spin" strokeWidth={1.5} />}
-          {joining ? 'Joining…' : 'Join'}
-        </Button>
-      </form>
+        {/* one liquid fill: the body and the bubble */}
+        <span
+          className={cn('pointer-events-none absolute inset-0', creating && 'opacity-60')}
+          style={{ filter: `url(#${filterId})` }}
+          aria-hidden
+        >
+          <span
+            className="absolute inset-y-0 left-0 rounded-full"
+            style={{
+              width: bodyWidth,
+              background: fill,
+              transition: ease(`width 550ms ${SPRING}, background-color 250ms`),
+            }}
+          />
+          <span
+            className="absolute rounded-full"
+            style={{
+              top: INSET,
+              left: bubbleLeft,
+              width: BUBBLE,
+              height: BUBBLE,
+              background: fill,
+              transform: `scale(${bubbleOut || joinOpen ? 1 : 0.6})`,
+              transition: ease(`left 550ms ${SPRING}, transform 550ms ${SPRING} 40ms, background-color 250ms`),
+            }}
+          />
+        </span>
+        {/* the CTA's own top highlight + accent glow (idle only) */}
+        <span
+          className={cn(
+            'pointer-events-none absolute inset-y-0 left-0 rounded-full',
+            joinOpen ? 'opacity-0' : creating ? 'opacity-60' : 'opacity-100'
+          )}
+          style={{
+            width: bodyWidth,
+            boxShadow:
+              'inset 0 1px 0 color-mix(in oklab, white 25%, transparent), 0 6px 18px color-mix(in oklab, var(--accent) 35%, transparent)',
+            transition: ease(`width 550ms ${SPRING}, opacity 200ms`),
+          }}
+          aria-hidden
+        />
+        {/* the field's edge (join only) */}
+        <span
+          className={cn(
+            'border-accent pointer-events-none absolute inset-0 rounded-full border',
+            joinOpen ? 'opacity-100' : 'opacity-0'
+          )}
+          style={{ transition: ease('opacity 250ms') }}
+          aria-hidden
+        />
+        {/* the link icon rides the bubble: at the right edge while it's out, then to the field's left edge */}
+        <span
+          className={cn(
+            'pointer-events-none absolute z-10 flex items-center justify-center rounded-full',
+            joinOpen ? 'text-text-muted' : 'text-accent-ink',
+            bubbleOut || joinOpen ? 'opacity-100' : 'opacity-0'
+          )}
+          style={{
+            top: INSET,
+            left: bubbleLeft,
+            width: BUBBLE,
+            height: BUBBLE,
+            // the bubble wears the body's own top highlight while it's out
+            boxShadow: joinOpen ? 'none' : 'inset 0 1px 0 color-mix(in oklab, white 25%, transparent)',
+            transition: ease(`left 550ms ${SPRING}, opacity 200ms${bubbleOut ? ' 100ms' : ''}`),
+          }}
+          aria-hidden
+        >
+          <LinkIcon className="size-4" strokeWidth={1.75} />
+        </span>
+
+        {joinOpen ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submit();
+            }}
+            className="absolute inset-0 z-10 flex items-center gap-2 pr-1.5"
+            style={{ paddingLeft: BUBBLE + INSET + 2 }}
+          >
+            <input
+              value={value}
+              onChange={(e) => {
+                setValue(e.target.value);
+                if (error) setError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape' && !joining) {
+                  e.preventDefault();
+                  collapse(true);
+                }
+              }}
+              onBlur={() => {
+                if (!value.trim() && !joining) collapse(false);
+              }}
+              autoFocus
+              placeholder="Paste an invite link"
+              disabled={joining}
+              aria-label="Invite link"
+              className="text-text-primary placeholder:text-text-muted min-w-0 flex-1 bg-transparent text-sm outline-none disabled:cursor-not-allowed"
+            />
+            <Button type="submit" size="sm" className="rounded-full" disabled={joining || !value.trim()}>
+              {joining && <Loader2 className="size-3.5 animate-spin" strokeWidth={1.5} />}
+              {joining ? 'Joining…' : 'Join'}
+            </Button>
+          </form>
+        ) : (
+          <>
+            <button
+              ref={createRef}
+              type="button"
+              onClick={() => void createOneClick()}
+              disabled={creating}
+              className="text-accent-ink focus-visible:outline-accent absolute inset-y-0 left-0 z-10 flex items-center gap-2 rounded-full pl-4 text-sm font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-60"
+              style={{ width: bodyWidth, transition: ease(`width 550ms ${SPRING}`) }}
+            >
+              {creating ? (
+                <Loader2 className="size-4 animate-spin" strokeWidth={1.5} />
+              ) : (
+                <Hash className="size-4" strokeWidth={1.5} />
+              )}
+              {creating ? 'Starting…' : 'New space'}
+            </button>
+            <button
+              type="button"
+              aria-label="Join with a link"
+              title="Join with a link"
+              onClick={openJoin}
+              tabIndex={bubbleOut ? 0 : -1}
+              className={cn(
+                'focus-visible:outline-accent absolute z-10 rounded-full outline-none focus-visible:outline-2 focus-visible:outline-offset-2',
+                bubbleOut ? 'pointer-events-auto' : 'pointer-events-none'
+              )}
+              style={{ top: INSET, left: bubbleLeft, width: BUBBLE, height: BUBBLE }}
+            />
+          </>
+        )}
+      </div>
       {error && (
-        <p className="text-danger text-xs" role="alert">
+        <p className="text-danger px-3 text-xs" role="alert">
           {error}
         </p>
       )}
