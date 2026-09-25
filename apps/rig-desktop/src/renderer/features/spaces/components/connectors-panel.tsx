@@ -2,7 +2,7 @@ import { ChevronRight, Plug } from 'lucide-react';
 import { useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
-import { CONNECTORS, connectorById, type ConnectorId, type ConnectResult } from '@shared/spaces/connectors';
+import { connectorById, type ConnectorId, type ConnectResult } from '@shared/spaces/connectors';
 import { connectorsApi } from '../connectors-api';
 import { ConnectorLogo, ConnectorMark } from '../logos';
 import { readPanelSectionExpanded, writePanelSectionExpanded } from '../panel-section-storage';
@@ -13,8 +13,9 @@ import type { RoomConnector, RoomSnapshot } from '../types';
  * Spaces: the Connectors section of the space panel (connectors-spec.md's
  * "Renderer") — the tools this space uses, each person's own connect state,
  * and (for owners/editors) adding or removing one. No modals or menus, per
- * house style: the catalog opens in place, and each row's own consent line
- * and waiting state live right under it.
+ * house style: "+ Add" opens the tool gallery beside the panel
+ * (`ConnectorGallery`), and each row's own consent line and waiting state
+ * live right under it.
  */
 
 /** A connect (or reconnect) in flight for one connector: the consent line, then waiting for the browser. */
@@ -226,9 +227,12 @@ export function ConnectorsSection({
   selfUserId,
   source,
   bindingId,
+  onOpenGallery,
 }: {
   snapshot: RoomSnapshot;
   selfUserId: string;
+  /** "+ Add" opens the tool gallery beside the panel (see `ConnectorGallery`). */
+  onOpenGallery?: () => void;
   /** Only ever rendered against the live relay — the scripted demo has no accounts/logins to connect. */
   source: RelayRoomSource;
   /** Keys this section's remembered expanded/collapsed state to its space. */
@@ -236,13 +240,12 @@ export function ConnectorsSection({
 }) {
   const self = snapshot.members.find((m) => m.id === selfUserId);
   const canWrite = self?.role === 'owner' || self?.role === 'editor';
-  const [catalogOpen, setCatalogOpen] = useState(false);
   const [pending, setPending] = useState<PendingConnect | null>(null);
   const [armedRemoveId, setArmedRemoveId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Collapsed by default; remembered per space. A connect flow in progress
-  // or the open catalog forces it open regardless (you can't hide the thing
-  // you're mid-way through), without disturbing the remembered preference.
+  // forces it open regardless (you can't hide the thing you're mid-way
+  // through), without disturbing the remembered preference.
   const [expanded, setExpanded] = useState(() => readPanelSectionExpanded(bindingId, 'connectors') ?? false);
   const toggleExpanded = () => {
     setExpanded((current) => {
@@ -251,16 +254,14 @@ export function ConnectorsSection({
       return next;
     });
   };
-  const visible = expanded || catalogOpen || pending !== null;
+  const visible = expanded || pending !== null;
 
   const connectors = snapshot.connectors;
-  const catalog = CONNECTORS.filter((c) => !connectors.some((rc) => rc.id === c.id));
   const needsAction = connectors.filter((c) => (c.mine ?? 'not_connected') !== 'connected');
   const anyExpired = needsAction.some((c) => c.mine === 'expired');
 
   const startConnect = (id: string, isNew: boolean) => {
     setError(null);
-    setCatalogOpen(false);
     setPending({ id, phase: 'consent', isNew });
   };
 
@@ -290,19 +291,6 @@ export function ConnectorsSection({
           await source.refreshConnections();
         }
       });
-  };
-
-  const pickCatalog = (id: ConnectorId) => {
-    setCatalogOpen(false);
-    void connectorsApi.list().then(async (statuses) => {
-      const alreadyConnected = statuses.find((s) => s.id === id)?.state === 'connected';
-      if (alreadyConnected) {
-        const added = await source.addConnector(id);
-        if (!added.ok) setError(added.message ?? "Couldn't add this to the space.");
-        return;
-      }
-      startConnect(id, true);
-    });
   };
 
   const newRowDef = pending?.isNew && !connectors.some((c) => c.id === pending.id) ? connectorById(pending.id) : null;
@@ -345,13 +333,13 @@ export function ConnectorsSection({
           <button
             type="button"
             onClick={() => {
-              setCatalogOpen((v) => !v);
               setPending(null);
+              onOpenGallery?.();
             }}
             className="hover:bg-bg-2 ml-1 shrink-0 rounded-chip px-2 py-0.5 text-2xs text-text-muted transition-colors hover:text-text-primary"
             data-testid="connectors-add-toggle"
           >
-            {catalogOpen ? 'Done' : '+ Add'}
+            + Add
           </button>
         )}
       </div>
@@ -364,7 +352,7 @@ export function ConnectorsSection({
             </p>
           )}
 
-          {connectors.length === 0 && !catalogOpen && !newRowDef && (
+          {connectors.length === 0 && !newRowDef && (
             <p className="px-2 pb-1.5 text-2xs text-text-muted" data-testid="connectors-empty">
               None yet. Add a tool your team uses; each person&rsquo;s agent reaches it with their own login.
             </p>
@@ -412,29 +400,6 @@ export function ConnectorsSection({
             />
           )}
 
-          {catalogOpen && (
-            <div className="flex flex-col pb-1" data-testid="connectors-catalog">
-              {catalog.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => pickCatalog(c.id)}
-                  className="group/cat hover:bg-bg-2 flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-left transition-colors"
-                  data-testid="connector-catalog-row"
-                >
-                  <ConnectorLogo id={c.id} name={c.name} brand={c.brand} size={18} />
-                  <span className="flex min-w-0 flex-1 flex-col leading-tight">
-                    <b className="truncate text-xs font-medium text-text-primary">{c.name}</b>
-                    <span className="truncate text-2xs text-text-muted">{c.blurb}</span>
-                  </span>
-                  <span className="text-accent ml-auto text-2xs opacity-0 transition-opacity group-hover/cat:opacity-100">
-                    Add
-                  </span>
-                </button>
-              ))}
-              {catalog.length === 0 && <p className="px-2 py-1 text-2xs text-text-muted">Every catalog tool is already in this space.</p>}
-            </div>
-          )}
         </div>
       )}
     </div>

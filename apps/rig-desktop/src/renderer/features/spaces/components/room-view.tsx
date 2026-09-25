@@ -13,6 +13,7 @@ import { Composer, type ComposerSendContext } from './composer';
 import { RoomTranscript } from './room-transcript';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
 import { AgentSettingsContext, type AgentSettingsApi } from './agent-settings';
+import { ConnectorGallery } from './connector-gallery';
 import { ConnectorsSection } from './connectors-panel';
 import { SpaceCard } from './space-card';
 
@@ -172,6 +173,7 @@ export function RoomView({
   const [snapshot, setSnapshot] = useState(() => source?.getSnapshot() ?? null);
   const [playing, setPlaying] = useState(false);
   const [replyTo, setReplyTo] = useState<RoomReplyRef | null>(null);
+  const [galleryOpen, setGalleryOpen] = useState(false);
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [bodyWidth, setBodyWidth] = useState(0);
@@ -484,13 +486,28 @@ export function RoomView({
           (renderPanel?.(
             <>
               <AgentRows snapshot={snapshot} selfUserId={selfUserId} bindingId={bindingId} />
-              <ConnectorsSection snapshot={snapshot} selfUserId={selfUserId} source={source} bindingId={bindingId} />
+              <ConnectorsSection
+                snapshot={snapshot}
+                selfUserId={selfUserId}
+                source={source}
+                bindingId={bindingId}
+                onOpenGallery={() => setGalleryOpen(true)}
+              />
             </>,
             new Set(snapshot.members.filter((m) => m.online !== false).map((m) => m.id)),
             { startCollapsed: narrow, chipSummary: <SpaceChipSummary snapshot={snapshot} /> }
           ) ?? null)
         ) : (
           <SpaceCard snapshot={snapshot} />
+        )}
+        {galleryOpen && source instanceof RelayRoomSource && (
+          <ConnectorGallery
+            snapshot={snapshot}
+            source={source}
+            onClose={() => setGalleryOpen(false)}
+            // Beside the floating panel in a wide Room; over the Room when it's narrow.
+            rightInset={narrow ? 12 : PANEL_LANE_PX + 4}
+          />
         )}
       </div>
     </div>

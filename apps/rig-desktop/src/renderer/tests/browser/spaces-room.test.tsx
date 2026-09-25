@@ -11,6 +11,7 @@ import {
   type AgentSettingsApi,
 } from '@renderer/features/spaces/components/agent-settings';
 import { AgentRows } from '@renderer/features/spaces/components/agent-rows';
+import { ConnectorGallery } from '@renderer/features/spaces/components/connector-gallery';
 import { ConnectorsSection } from '@renderer/features/spaces/components/connectors-panel';
 import { groupThreads, RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
 import { RoomView } from '@renderer/features/spaces/components/room-view';
@@ -989,27 +990,6 @@ describe('Connectors — space panel', () => {
     expect(host.querySelector('[data-testid="connectors-add-toggle"]')).toBeNull();
   });
 
-  it('picking a catalog tool opens its consent line, and "Continue in browser" connects then adds it to the space', async () => {
-    const source = fakeConnectorsSource();
-    const snapshot = connectorsSnapshot();
-    await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={source} bindingId="space-connectors-catalog" />);
-    });
-    await openConnectors();
-    await act(async () => click(host.querySelector('[data-testid="connectors-add-toggle"]')!));
-    const rows = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="connector-catalog-row"]')];
-    expect(rows.length).toBeGreaterThan(0);
-    const linearRow = rows.find((r) => r.textContent?.includes('Linear'))!;
-    await act(async () => click(linearRow));
-    await vi.waitFor(() => expect(host.querySelector('[data-testid="connector-consent"]')).not.toBeNull());
-    expect(host.querySelector('[data-testid="connector-consent"]')?.textContent).toContain('sign in to Linear in your browser');
-
-    const go = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Continue in browser')!;
-    await act(async () => click(go));
-    await vi.waitFor(() => expect(connectorsApi.connect).toHaveBeenCalledWith('linear'));
-    await vi.waitFor(() => expect(source.addConnector).toHaveBeenCalledWith('linear'));
-  });
-
   it('shows the waiting state while connecting, and Cancel aborts it', async () => {
     const inFlight: { settle: ((r: ConnectResult) => void) | null } = { settle: null };
     vi.mocked(connectorsApi.connect).mockImplementation(
@@ -1132,43 +1112,132 @@ describe('Connectors — space panel', () => {
     expect(host.querySelector('[data-testid="connector-row"]')).toBeNull();
   });
 
-  it('cannot be collapsed while the catalog is open or a connect is mid-flow', async () => {
-    const snapshot = connectorsSnapshot();
+  it('"+ Add" opens the tool gallery instead of a list in the panel', async () => {
+    const onOpenGallery = vi.fn();
+    await act(async () => {
+      root.render(
+        <ConnectorsSection
+          snapshot={connectorsSnapshot()}
+          selfUserId="dylan"
+          source={fakeConnectorsSource()}
+          bindingId="space-connectors-add"
+          onOpenGallery={onOpenGallery}
+        />
+      );
+    });
+    await openConnectors();
+    await act(async () => click(host.querySelector('[data-testid="connectors-add-toggle"]')!));
+    expect(onOpenGallery).toHaveBeenCalledTimes(1);
+  });
+
+  it('cannot be collapsed while a connect is mid-flow', async () => {
+    const snapshot = connectorsSnapshot({
+      connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'not_connected' }],
+    });
     await act(async () => {
       root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} bindingId="space-connectors-autoexpand" />);
     });
     await openConnectors();
-    await act(async () => click(host.querySelector('[data-testid="connectors-add-toggle"]')!));
-    expect(host.querySelector('[data-testid="connectors-catalog"]')).not.toBeNull();
-
-    // Clicking the summary row while the catalog is open can't hide it.
-    await openConnectors();
-    expect(host.querySelector('[data-testid="connectors-catalog"]')).not.toBeNull();
-
-    const linearRow = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="connector-catalog-row"]')].find((r) =>
-      r.textContent?.includes('Linear')
-    )!;
-    await act(async () => click(linearRow));
-    await vi.waitFor(() => expect(host.querySelector('[data-testid="connector-consent"]')).not.toBeNull());
-
-    // Same during the consent step of a connect.
+    await act(async () => click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Connect')!));
+    expect(host.querySelector('[data-testid="connector-consent"]')).not.toBeNull();
+    // Clicking the summary row during the consent step can't hide it.
     await openConnectors();
     expect(host.querySelector('[data-testid="connector-consent"]')).not.toBeNull();
   });
+});
+
+describe('Connectors — gallery', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    vi.mocked(connectorsApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(connectorsApi.connect).mockReset().mockResolvedValue({ ok: true });
+    vi.mocked(connectorsApi.cancel).mockReset().mockResolvedValue(undefined);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  const cardOf = (id: string) => host.querySelector<HTMLElement>(`[data-testid="gallery-card"][data-connector="${id}"]`)!;
+  const buttonIn = (el: Element, label: string) => [...el.querySelectorAll('button')].find((b) => b.textContent === label)!;
+
+  const renderGallery = async (snapshot = connectorsSnapshot(), source = fakeConnectorsSource(), onClose = vi.fn()) => {
+    await act(async () => {
+      root.render(<ConnectorGallery snapshot={snapshot} source={source} onClose={onClose} rightInset={320} />);
+    });
+    return { source, onClose };
+  };
+
+  it('groups tools: in this space (with your state), ones you can add, and ones coming soon', async () => {
+    await renderGallery(
+      connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }] })
+    );
+    const headings = [...host.querySelectorAll('h3')].map((h) => h.textContent);
+    expect(headings).toEqual(['In this space', 'Add to this space', 'Coming soon']);
+    expect(cardOf('linear').textContent).toContain('Connected as you');
+    expect(buttonIn(cardOf('posthog'), 'Add')).toBeTruthy();
+    expect(host.querySelectorAll('[data-testid="gallery-soon"]').length).toBeGreaterThan(0);
+  });
+
+  it('Add shows the consent line on the card, then connects and adds the tool to the space', async () => {
+    const { source } = await renderGallery();
+    await act(async () => click(buttonIn(cardOf('posthog'), 'Add')));
+    expect(cardOf('posthog').querySelector('[data-testid="gallery-consent"]')?.textContent).toContain(
+      'sign in to PostHog in your browser'
+    );
+    await act(async () => click(buttonIn(cardOf('posthog'), 'Continue in browser')));
+    await vi.waitFor(() => expect(connectorsApi.connect).toHaveBeenCalledWith('posthog'));
+    await vi.waitFor(() => expect(source.addConnector).toHaveBeenCalledWith('posthog'));
+  });
+
+  it('adds a tool you are already connected to straight away, no sign-in', async () => {
+    vi.mocked(connectorsApi.list).mockResolvedValue([{ id: 'sentry', state: 'connected' }]);
+    const { source } = await renderGallery();
+    await vi.waitFor(() => expect(connectorsApi.list).toHaveBeenCalled());
+    await act(async () => click(buttonIn(cardOf('sentry'), 'Add')));
+    await vi.waitFor(() => expect(source.addConnector).toHaveBeenCalledWith('sentry'));
+    expect(connectorsApi.connect).not.toHaveBeenCalled();
+  });
+
+  it('filters by search and by category', async () => {
+    await renderGallery();
+    const search = host.querySelector<HTMLInputElement>('[data-testid="gallery-search"]')!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(search, 'funnel');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const ids = () => [...host.querySelectorAll('[data-testid="gallery-card"]')].map((c) => c.getAttribute('data-connector'));
+    expect(ids()).toEqual(['mixpanel']);
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(search, '');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => click(buttonIn(host, 'Analytics')));
+    expect(ids()).toEqual(['posthog', 'amplitude', 'mixpanel']);
+  });
+
+  it('closes on Escape and on the backdrop', async () => {
+    const { onClose } = await renderGallery();
+    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await act(async () => click(host.querySelector('[data-testid="gallery-backdrop"]')!));
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
 
   it('draws a real brand mark for a Simple Icons connector, and the letter tile for one with no vector mark', async () => {
-    const snapshot = connectorsSnapshot();
-    await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} bindingId="space-connectors-logos" />);
-    });
-    await openConnectors();
-    await act(async () => click(host.querySelector('[data-testid="connectors-add-toggle"]')!));
-    const rows = [...host.querySelectorAll<HTMLElement>('[data-testid="connector-catalog-row"]')];
-    const linearRow = rows.find((r) => r.textContent?.includes('Linear'))!;
-    const amplitudeRow = rows.find((r) => r.textContent?.includes('Amplitude'))!;
-    expect(linearRow.querySelector('svg')).not.toBeNull();
-    expect(amplitudeRow.querySelector('svg')).toBeNull();
-    expect(amplitudeRow.querySelector('span[aria-hidden]')?.textContent).toBe('A');
+    await renderGallery();
+    expect(cardOf('linear').querySelector('svg')).not.toBeNull();
+    expect(cardOf('amplitude').querySelector('svg')).toBeNull();
+    expect(cardOf('amplitude').querySelector('span[aria-hidden]')?.textContent).toBe('A');
   });
 });
 
