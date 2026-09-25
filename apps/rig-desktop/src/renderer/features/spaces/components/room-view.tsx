@@ -173,7 +173,7 @@ export function RoomView({
   const [snapshot, setSnapshot] = useState(() => source?.getSnapshot() ?? null);
   const [playing, setPlaying] = useState(false);
   const [replyTo, setReplyTo] = useState<RoomReplyRef | null>(null);
-  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [gallery, setGallery] = useState<{ open: boolean; focus: ConnectorId | null }>({ open: false, focus: null });
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [bodyWidth, setBodyWidth] = useState(0);
@@ -504,10 +504,9 @@ export function RoomView({
               <ConnectorsSection
                 snapshot={snapshot}
                 selfUserId={selfUserId}
-                source={source}
                 bindingId={bindingId}
-                onOpenGallery={() => {
-                  setGalleryOpen(true);
+                onOpenGallery={(focus) => {
+                  setGallery({ open: true, focus: focus ?? null });
                   refreshGlobalSetup();
                 }}
                 globalSetup={globalSetup}
@@ -520,14 +519,16 @@ export function RoomView({
         ) : (
           <SpaceCard snapshot={snapshot} />
         )}
-        {galleryOpen && source instanceof RelayRoomSource && (
+        {gallery.open && source instanceof RelayRoomSource && (
           <ConnectorGallery
             snapshot={snapshot}
+            selfUserId={selfUserId}
             source={source}
-            onClose={() => setGalleryOpen(false)}
+            onClose={() => setGallery({ open: false, focus: null })}
             // Beside the floating panel in a wide Room; over the Room when it's narrow.
             rightInset={narrow ? 12 : PANEL_LANE_PX + 4}
             globalSetup={globalSetup}
+            focus={gallery.focus}
           />
         )}
       </div>

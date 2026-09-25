@@ -46,6 +46,18 @@ export function inGlobalSetupLabel(connectorId: string, servers: readonly Global
   return agents.size > 0 ? `In your ${globalAgentsLabel(agents)} setup` : null;
 }
 
+/**
+ * The one-line panel row's (and gallery card's) compact status for a
+ * connector you haven't connected via rig, but one of your agents already
+ * reaches this way — e.g. "Via Claude". Shorter than `viaGlobalSetupLabel`
+ * (that one reads naturally in a fuller sentence; this one has to fit next
+ * to a logo and a name on one line). Null when no agent has it.
+ */
+export function viaGlobalSetupShortLabel(connectorId: string, servers: readonly GlobalServer[]): string | null {
+  const agents = globalAgentsFor(connectorId, servers);
+  return agents.size > 0 ? `Via ${globalAgentsLabel(agents)}` : null;
+}
+
 /** One agent's servers, for the panel's "also bring" disclosure. */
 export interface GlobalSetupGroup {
   agent: AgentKind;

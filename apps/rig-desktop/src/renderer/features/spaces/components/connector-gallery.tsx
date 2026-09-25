@@ -1,4 +1,4 @@
-import { Search, X } from 'lucide-react';
+import { ArrowLeft, Plug, Search, X } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
@@ -13,18 +13,23 @@ import {
   type GlobalServer,
 } from '@shared/spaces/connectors';
 import { connectorsApi } from '../connectors-api';
-import { inGlobalSetupLabel } from '../global-setup';
+import { displayServerName, groupGlobalSetup, inGlobalSetupLabel, viaGlobalSetupLabel, viaGlobalSetupShortLabel } from '../global-setup';
 import { ConnectorLogo } from '../logos';
 import type { RelayRoomSource } from '../relay-room-source';
 import type { RoomSnapshot } from '../types';
+import { AGENT_NAME } from './identity';
+import { compactConnectorStatus, type PendingConnect } from './connectors-panel';
 
 /**
  * The connector gallery (connectors-spec.md, kit canvas board 8): opened from
- * the space panel's "+ Add", a wide sheet beside the panel, not a modal. Search,
- * category chips, and logo cards in three groups: the tools this space already
- * uses (with your own login state), the ones you can add, and the ones that
- * need a rig-registered app first ("Soon"). Adding or connecting happens on the
- * card itself: its consent line, then waiting for your browser.
+ * the space panel — either to its grid (search, category chips, logo cards
+ * grouped "In this space" / "Add to this space" / "Coming soon" / "From your
+ * agents' own setup"), or straight to one connector's DETAIL view when a
+ * panel row is clicked. It's a wide sheet beside the panel, not a modal —
+ * the Room dims behind it. The detail view is where the actual connect,
+ * disconnect and remove-from-space flows live; the grid's cards are just
+ * entry points (their own "Add" pill still adds a not-yet-used tool without
+ * a detour through the detail view).
  */
 
 /** Tools we can't connect yet (each needs an app registered by Rig Labs); shown, not actionable. */
@@ -36,27 +41,32 @@ const SOON: Array<{ id: string; name: string; blurb: string; category: Connector
   { id: 'hubspot', name: 'HubSpot', blurb: 'Contacts, deals and pipelines', category: 'Customers & revenue', brandFill: '#FF7A59', path: 'M18.164 7.93V5.084a2.198 2.198 0 001.267-1.978v-.067A2.2 2.2 0 0017.238.845h-.067a2.2 2.2 0 00-2.193 2.193v.067a2.196 2.196 0 001.252 1.973l.013.006v2.852a6.22 6.22 0 00-2.969 1.31l.012-.01-7.828-6.095A2.497 2.497 0 104.3 4.656l-.012.006 7.697 5.991a6.176 6.176 0 00-1.038 3.446c0 1.343.425 2.588 1.147 3.607l-.013-.02-2.342 2.343a1.968 1.968 0 00-.58-.095h-.002a2.033 2.033 0 102.033 2.033 1.978 1.978 0 00-.1-.595l.005.014 2.317-2.317a6.247 6.247 0 104.782-11.134l-.036-.005zm-.964 9.378a3.206 3.206 0 113.215-3.207v.002a3.206 3.206 0 01-3.207 3.207z' },
 ];
 
-type Flow = { id: ConnectorId; phase: 'consent' | 'waiting'; isNew: boolean };
-
 export function ConnectorGallery({
   snapshot,
+  selfUserId,
   source,
   onClose,
   rightInset,
   globalSetup = [],
+  focus = null,
 }: {
   snapshot: RoomSnapshot;
+  selfUserId: string;
   source: RelayRoomSource;
   onClose: () => void;
   /** Px from the Room's right edge: clears the floating space panel, so the sheet sits beside it. */
   rightInset: number;
-  /** Your agents' own global MCP setup — a catalog tool one of them already reaches this way gets a footer note instead of a bare category label. */
+  /** Your agents' own global MCP setup — a catalog tool one of them already reaches this way gets a footer note instead of a bare category label, and its own read-only section at the foot of the grid. */
   globalSetup?: readonly GlobalServer[];
+  /** Opens straight on this connector's detail view (a space panel row was clicked) instead of the grid. */
+  focus?: ConnectorId | null;
 }) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<ConnectorCategory | 'All'>('All');
-  const [flow, setFlow] = useState<Flow | null>(null);
+  const [detail, setDetail] = useState<ConnectorId | null>(focus);
+  const [flow, setFlow] = useState<PendingConnect | null>(null);
   const [error, setError] = useState<{ id: string; message: string } | null>(null);
+  const [armedRemove, setArmedRemove] = useState(false);
   // Your own logins, for tools the space doesn't use yet (connected ones add straight away).
   const [mine, setMine] = useState<Map<string, ConnectionState>>(new Map());
   const searchRef = useRef<HTMLInputElement>(null);
@@ -65,6 +75,17 @@ export function ConnectorGallery({
     searchRef.current?.focus();
     void connectorsApi.list().then((statuses) => setMine(new Map(statuses.map((s) => [s.id, s.state]))));
   }, []);
+
+  // A different row was clicked while the gallery was already open: jump to
+  // its detail, abandoning any flow that was mid-way for the old one.
+  useEffect(() => {
+    if (flow && flow.id !== focus && flow.phase === 'waiting') void connectorsApi.cancel(flow.id as ConnectorId);
+    setFlow(null);
+    setArmedRemove(false);
+    setError(null);
+    setDetail(focus ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -75,6 +96,8 @@ export function ConnectorGallery({
   }, [flow, onClose]);
 
   const inSpace = new Map(snapshot.connectors.map((c) => [c.id, c]));
+  const self = snapshot.members.find((m) => m.id === selfUserId);
+  const canWrite = self?.role === 'owner' || self?.role === 'editor';
   const q = query.trim().toLowerCase();
   const matches = (t: { name: string; blurb: string; category: string }) =>
     (category === 'All' || t.category === category) &&
@@ -83,27 +106,36 @@ export function ConnectorGallery({
   const inThisSpace = CONNECTORS.filter((c) => inSpace.has(c.id) && matches(c));
   const addable = CONNECTORS.filter((c) => !inSpace.has(c.id) && matches(c));
   const soon = SOON.filter(matches);
+  const setupGroups = useMemo(() => groupGlobalSetup(globalSetup), [globalSetup]);
   const nothing = inThisSpace.length + addable.length + soon.length === 0;
 
   const categories = useMemo(() => ['All' as const, ...CONNECTOR_CATEGORIES], []);
 
   const fail = (id: string, message: string) => setError({ id, message });
 
-  const add = async (def: ConnectorDef) => {
+  /**
+   * The primary action, wherever it's triggered from (the grid card's "Add"
+   * pill, or the detail view's own Connect/Reconnect/Add button): straight
+   * to the space when you're already connected and it's new to the space,
+   * otherwise opens the detail view mid-flow (consent, then the browser).
+   */
+  const startFlow = (def: ConnectorDef, isNew: boolean) => {
     setError(null);
-    if (mine.get(def.id) === 'connected') {
-      const added = await source.addConnector(def.id);
-      if (!added.ok) fail(def.id, added.message ?? "Couldn't add this to the space.");
+    if (isNew && mine.get(def.id) === 'connected') {
+      void source.addConnector(def.id).then((added) => {
+        if (!added.ok) fail(def.id, added.message ?? "Couldn't add this to the space.");
+      });
       return;
     }
-    setFlow({ id: def.id, phase: 'consent', isNew: true });
+    setDetail(def.id);
+    setFlow({ id: def.id, phase: 'consent', isNew });
   };
 
   const go = () => {
     if (!flow) return;
     const { id, isNew } = flow;
     setFlow({ id, phase: 'waiting', isNew });
-    void connectorsApi.connect(id).then(async (result) => {
+    void connectorsApi.connect(id as ConnectorId).then(async (result) => {
       setFlow(null);
       if (!result.ok) {
         if (result.reason !== 'cancelled') fail(id, result.message ?? `Couldn't connect to ${connectorById(id)?.name ?? id}.`);
@@ -120,21 +152,23 @@ export function ConnectorGallery({
   };
 
   const cancel = () => {
-    if (flow?.phase === 'waiting') void connectorsApi.cancel(flow.id);
+    if (flow?.phase === 'waiting') void connectorsApi.cancel(flow.id as ConnectorId);
     setFlow(null);
   };
 
   const card = (def: ConnectorDef) => {
     const room = inSpace.get(def.id);
-    const state = room ? (room.mine ?? 'not_connected') : null;
-    const active = flow?.id === def.id ? flow : null;
+    const state: ConnectionState = room ? (room.mine ?? 'not_connected') : (mine.get(def.id) ?? 'not_connected');
+    const viaLabel = state === 'connected' ? null : viaGlobalSetupShortLabel(def.id, globalSetup);
+    const status = compactConnectorStatus(state, viaLabel);
     return (
       <div
         key={def.id}
-        className={cn(
-          'bg-bg-1 border-border-hairline hover:border-border-strong flex min-h-[7.5rem] flex-col gap-2.5 rounded-card border p-3 transition-colors',
-          active && 'border-accent/50 col-span-2'
-        )}
+        role="button"
+        tabIndex={0}
+        onClick={() => setDetail(def.id)}
+        onKeyDown={(e) => e.key === 'Enter' && setDetail(def.id)}
+        className="bg-bg-1 border-border-hairline hover:border-border-strong flex min-h-[7.5rem] cursor-pointer flex-col gap-2.5 rounded-card border p-3 transition-colors"
         data-testid="gallery-card"
         data-connector={def.id}
       >
@@ -147,55 +181,37 @@ export function ConnectorGallery({
             <span className="text-xs text-text-secondary">{def.blurb}</span>
           </span>
         </div>
-        {active?.phase === 'consent' && (
-          <p className="text-xs text-text-secondary" data-testid="gallery-consent">
-            Results your agent gets from <b className="font-medium text-text-primary">{def.name}</b> will show up in this
-            Room. You&rsquo;ll sign in to {def.name} in your browser; everyone else in the space connects with their own
-            login.
-          </p>
-        )}
-        {error?.id === def.id && <p className="text-2xs text-danger">{error.message}</p>}
         <div className="mt-auto flex items-center gap-2">
-          <span className="text-2xs text-text-muted">
-            {active
-              ? ''
-              : room
-                ? (room.addedBy ? addedByLabel(snapshot, room.addedBy) : inGlobalSetupLabel(def.id, globalSetup) ?? '')
-                : (inGlobalSetupLabel(def.id, globalSetup) ?? def.category)}
+          <span className="min-w-0 flex-1 truncate text-2xs text-text-muted">
+            {room ? (room.addedBy ? addedByLabel(snapshot, room.addedBy, selfUserId) : '') : (inGlobalSetupLabel(def.id, globalSetup) ?? def.category)}
           </span>
-          <span className="ml-auto flex items-center gap-1.5">
-            {active?.phase === 'waiting' ? (
-              <>
-                <DotMatrix state="waiting" size="sm" />
-                <span className="text-2xs text-text-muted">Waiting for your browser…</span>
-                <GalleryPill onClick={cancel}>Cancel</GalleryPill>
-              </>
-            ) : active?.phase === 'consent' ? (
-              <>
-                <GalleryPill onClick={cancel}>Cancel</GalleryPill>
-                <GalleryPill accent onClick={go}>
-                  Continue in browser
-                </GalleryPill>
-              </>
-            ) : state === 'connected' ? (
-              <span className="flex items-center gap-1.5 text-2xs text-text-secondary">
+          {room ? (
+            state === 'connected' ? (
+              <span className="flex shrink-0 items-center gap-1.5 text-2xs text-text-secondary">
                 <span className="bg-success size-1.5 rounded-full" />
                 Connected as you
               </span>
-            ) : state ? (
-              <GalleryPill accent onClick={() => setFlow({ id: def.id, phase: 'consent', isNew: false })}>
-                {state === 'expired' ? 'Reconnect' : 'Connect'}
-              </GalleryPill>
             ) : (
-              <GalleryPill accent onClick={() => void add(def)}>
-                Add
-              </GalleryPill>
-            )}
-          </span>
+              <span className={cn('shrink-0 text-2xs whitespace-nowrap', STATUS_CLASS[status.tone])}>{status.text}</span>
+            )
+          ) : (
+            <GalleryPill
+              accent
+              onClick={(e) => {
+                e.stopPropagation();
+                startFlow(def, true);
+              }}
+            >
+              Add
+            </GalleryPill>
+          )}
         </div>
       </div>
     );
   };
+
+  const detailDef = detail ? connectorById(detail) : null;
+  const detailRoom = detailDef ? (inSpace.get(detailDef.id) ?? null) : null;
 
   return (
     <>
@@ -230,73 +246,275 @@ export function ConnectorGallery({
               <X className="size-3.5" strokeWidth={1.75} />
             </button>
           </div>
-          <label className="bg-bg-0 border-border-hairline focus-within:border-accent/60 flex h-9 items-center gap-2 rounded-control border px-3">
-            <Search className="size-3.5 text-text-muted" strokeWidth={1.75} />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search tools"
-              aria-label="Search tools"
-              className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
-              data-testid="gallery-search"
-            />
-          </label>
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Categories">
-            {categories.map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => setCategory(c)}
-                aria-pressed={category === c}
-                className={cn(
-                  'h-7 rounded-full border px-3 text-xs whitespace-nowrap transition-colors',
-                  category === c
-                    ? 'border-text-primary bg-text-primary text-bg-0'
-                    : 'border-border-hairline text-text-secondary hover:border-border-strong hover:text-text-primary'
-                )}
-              >
-                {c}
-              </button>
-            ))}
-          </div>
+          {!detailDef && (
+            <>
+              <label className="bg-bg-0 border-border-hairline focus-within:border-accent/60 flex h-9 items-center gap-2 rounded-control border px-3">
+                <Search className="size-3.5 text-text-muted" strokeWidth={1.75} />
+                <input
+                  ref={searchRef}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search tools"
+                  aria-label="Search tools"
+                  className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+                  data-testid="gallery-search"
+                />
+              </label>
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Categories">
+                {categories.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setCategory(c)}
+                    aria-pressed={category === c}
+                    className={cn(
+                      'h-7 rounded-full border px-3 text-xs whitespace-nowrap transition-colors',
+                      category === c
+                        ? 'border-text-primary bg-text-primary text-bg-0'
+                        : 'border-border-hairline text-text-secondary hover:border-border-strong hover:text-text-primary'
+                    )}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
-          {inThisSpace.length > 0 && <GallerySection title="In this space">{inThisSpace.map(card)}</GallerySection>}
-          {addable.length > 0 && <GallerySection title="Add to this space">{addable.map(card)}</GallerySection>}
-          {soon.length > 0 && (
-            <GallerySection title="Coming soon">
-              {soon.map((t) => (
-                <div
-                  key={t.id}
-                  className="bg-bg-1 border-border-hairline flex min-h-[7.5rem] flex-col gap-2.5 rounded-card border p-3 opacity-55"
-                  data-testid="gallery-soon"
-                >
-                  <div className="flex items-start gap-2.5">
-                    <span className={cn('bg-bg-2 grid size-9 shrink-0 place-items-center rounded-control', t.brandFill === 'currentColor' && 'text-text-primary')}>
-                      <svg width={20} height={20} viewBox="0 0 24 24" aria-hidden>
-                        <path fill={t.brandFill} d={t.path} />
-                      </svg>
-                    </span>
-                    <span className="flex min-w-0 flex-col gap-0.5 leading-tight">
-                      <b className="truncate text-sm font-medium text-text-primary">{t.name}</b>
-                      <span className="text-xs text-text-secondary">{t.blurb}</span>
-                    </span>
+        {detailDef ? (
+          <ConnectorDetail
+            def={detailDef}
+            inSpace={detailRoom !== null}
+            state={detailRoom ? (detailRoom.mine ?? 'not_connected') : (mine.get(detailDef.id) ?? 'not_connected')}
+            viaLabel={viaGlobalSetupLabel(detailDef.id, globalSetup)}
+            canWrite={canWrite}
+            addedByName={detailRoom?.addedBy ? addedByLabel(snapshot, detailRoom.addedBy, selfUserId) : null}
+            flow={flow?.id === detailDef.id ? flow : null}
+            error={error?.id === detailDef.id ? error.message : null}
+            armedRemove={armedRemove}
+            onBack={() => setDetail(null)}
+            onStart={() => startFlow(detailDef, !detailRoom)}
+            onGo={go}
+            onCancel={cancel}
+            onDisconnect={async () => {
+              await connectorsApi.disconnect(detailDef.id);
+              setMine((prev) => new Map(prev).set(detailDef.id, 'not_connected'));
+              await source.refreshConnections();
+            }}
+            onArmRemove={() => setArmedRemove(true)}
+            onRemove={async () => {
+              setArmedRemove(false);
+              const result = await source.removeConnector(detailDef.id);
+              if (!result.ok) fail(detailDef.id, result.message ?? "Couldn't remove this from the space.");
+              else setDetail(null);
+            }}
+          />
+        ) : (
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+            {inThisSpace.length > 0 && <GallerySection title="In this space">{inThisSpace.map(card)}</GallerySection>}
+            {addable.length > 0 && <GallerySection title="Add to this space">{addable.map(card)}</GallerySection>}
+            {soon.length > 0 && (
+              <GallerySection title="Coming soon">
+                {soon.map((t) => (
+                  <div
+                    key={t.id}
+                    className="bg-bg-1 border-border-hairline flex min-h-[7.5rem] flex-col gap-2.5 rounded-card border p-3 opacity-55"
+                    data-testid="gallery-soon"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <span className={cn('bg-bg-2 grid size-9 shrink-0 place-items-center rounded-control', t.brandFill === 'currentColor' && 'text-text-primary')}>
+                        <svg width={20} height={20} viewBox="0 0 24 24" aria-hidden>
+                          <path fill={t.brandFill} d={t.path} />
+                        </svg>
+                      </span>
+                      <span className="flex min-w-0 flex-col gap-0.5 leading-tight">
+                        <b className="truncate text-sm font-medium text-text-primary">{t.name}</b>
+                        <span className="text-xs text-text-secondary">{t.blurb}</span>
+                      </span>
+                    </div>
+                    <span className="mt-auto text-2xs text-text-muted">Coming soon</span>
                   </div>
-                  <span className="mt-auto text-2xs text-text-muted">Coming soon</span>
+                ))}
+              </GallerySection>
+            )}
+            {nothing && <p className="py-10 text-center text-xs text-text-muted">No tools match &ldquo;{query}&rdquo;.</p>}
+            {setupGroups.length > 0 && (
+              <section className="flex flex-col" data-testid="gallery-global-setup">
+                <h3 className="pt-4 pb-2 text-sm font-medium text-text-primary">From your agents&rsquo; own setup</h3>
+                <div className="flex flex-col gap-3">
+                  {setupGroups.map((group) => (
+                    <div key={group.agent} className="flex flex-col gap-1.5">
+                      <span className="text-2xs font-medium text-text-muted">{AGENT_NAME[group.agent]}</span>
+                      <div className="flex flex-col gap-1">
+                        {group.servers.map((server, i) => {
+                          const def = server.connectorId ? connectorById(server.connectorId) : null;
+                          return (
+                            <span
+                              key={`${server.agent}-${server.name}-${i}`}
+                              className="flex min-w-0 items-center gap-1.5 text-xs text-text-secondary"
+                            >
+                              {def ? (
+                                <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={16} />
+                              ) : (
+                                <Plug className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+                              )}
+                              <span className="truncate">{displayServerName(server.name)}</span>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </GallerySection>
-          )}
-          {nothing && <p className="py-10 text-center text-xs text-text-muted">No tools match &ldquo;{query}&rdquo;.</p>}
-        </div>
+              </section>
+            )}
+          </div>
+        )}
       </section>
     </>
   );
 }
 
-function addedByLabel(snapshot: RoomSnapshot, userId: string): string {
+const STATUS_CLASS: Record<ReturnType<typeof compactConnectorStatus>['tone'], string> = {
+  success: 'text-text-secondary',
+  warn: 'text-warning',
+  muted: 'text-text-muted',
+  accent: 'text-accent',
+};
+
+/**
+ * A connector's detail view: opened either from a space panel row or from
+ * clicking a gallery card. Everything actionable — connect/reconnect,
+ * disconnect your own login, remove from the space — lives here; the grid
+ * and the panel rows are just entry points onto it.
+ */
+function ConnectorDetail({
+  def,
+  inSpace,
+  state,
+  viaLabel,
+  canWrite,
+  addedByName,
+  flow,
+  error,
+  armedRemove,
+  onBack,
+  onStart,
+  onGo,
+  onCancel,
+  onDisconnect,
+  onArmRemove,
+  onRemove,
+}: {
+  def: ConnectorDef;
+  /** Whether this connector is already used by the space, vs. one you're only previewing from "Add to this space". */
+  inSpace: boolean;
+  state: ConnectionState;
+  viaLabel: string | null;
+  canWrite: boolean;
+  addedByName: string | null;
+  flow: PendingConnect | null;
+  error: string | null;
+  armedRemove: boolean;
+  onBack: () => void;
+  onStart: () => void;
+  onGo: () => void;
+  onCancel: () => void;
+  onDisconnect: () => Promise<void>;
+  onArmRemove: () => void;
+  onRemove: () => Promise<void>;
+}) {
+  const connected = state === 'connected';
+  const expired = state === 'expired';
+  const phase = flow?.phase ?? null;
+  const stateLine = connected ? 'Connected as you' : expired ? 'Login expired' : (viaLabel ?? 'Not connected');
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" data-testid="gallery-detail" data-connector={def.id}>
+      <button
+        type="button"
+        onClick={onBack}
+        className="mb-4 flex items-center gap-1 text-xs text-text-muted transition-colors hover:text-text-primary"
+        data-testid="gallery-detail-back"
+      >
+        <ArrowLeft className="size-3.5" strokeWidth={1.75} />
+        All tools
+      </button>
+
+      <div className="flex items-start gap-3">
+        <span className="bg-bg-2 grid size-14 shrink-0 place-items-center rounded-card">
+          <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={30} />
+        </span>
+        <div className="flex min-w-0 flex-col gap-0.5 pt-0.5 leading-tight">
+          <h3 className="text-base font-semibold text-text-primary">{def.name}</h3>
+          <p className="text-xs text-text-secondary">{def.blurb}</p>
+          <span className="text-2xs text-text-muted">{def.category}</span>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-col gap-1">
+        <span className="flex items-center gap-1.5 text-xs text-text-secondary" data-testid="gallery-detail-state">
+          {(connected || expired) && <span className={cn('size-1.5 rounded-full', connected ? 'bg-success' : 'bg-warning')} />}
+          {stateLine}
+        </span>
+        {inSpace && addedByName && <span className="text-2xs text-text-muted">{addedByName}</span>}
+      </div>
+
+      {error && (
+        <p className="mt-3 text-2xs text-danger" data-testid="gallery-detail-error">
+          {error}
+        </p>
+      )}
+
+      <div className="mt-4 flex flex-col gap-3">
+        {phase === 'consent' ? (
+          <div className="border-border-hairline bg-bg-2 flex flex-col gap-2 rounded-card border p-3 text-xs text-text-secondary" data-testid="gallery-detail-consent">
+            <span>
+              Results your agent gets from <b className="font-medium text-text-primary">{def.name}</b> will show up in this
+              Room. You&rsquo;ll sign in to {def.name} in your browser; everyone else in the space connects with their own
+              login.
+            </span>
+            <span className="flex gap-1.5">
+              <GalleryPill accent onClick={onGo}>
+                Continue in browser
+              </GalleryPill>
+              <GalleryPill onClick={onCancel}>Cancel</GalleryPill>
+            </span>
+          </div>
+        ) : phase === 'waiting' ? (
+          <span className="flex items-center gap-1.5 text-xs text-text-muted">
+            <DotMatrix state="waiting" size="sm" />
+            Waiting for your browser…
+            <GalleryPill onClick={onCancel}>Cancel</GalleryPill>
+          </span>
+        ) : (
+          !(inSpace && connected) && (
+            <span>
+              <GalleryPill accent onClick={onStart}>
+                {!inSpace ? 'Add' : expired ? 'Reconnect' : 'Connect'}
+              </GalleryPill>
+            </span>
+          )
+        )}
+
+        {phase === null && (connected || (inSpace && canWrite)) && (
+          <span className="flex items-center gap-2">
+            {connected && <GalleryPill onClick={() => void onDisconnect()}>Disconnect my login</GalleryPill>}
+            {inSpace && canWrite && (
+              <GalleryPill danger={armedRemove} onClick={() => (armedRemove ? void onRemove() : onArmRemove())}>
+                {armedRemove ? 'Remove for everyone?' : 'Remove from space'}
+              </GalleryPill>
+            )}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function addedByLabel(snapshot: RoomSnapshot, userId: string, selfUserId: string): string {
+  if (userId === selfUserId) return 'Added by you';
   const name = snapshot.members.find((m) => m.id === userId)?.name ?? userId;
   return `Added by ${name}`;
 }
@@ -304,20 +522,34 @@ function addedByLabel(snapshot: RoomSnapshot, userId: string): string {
 function GallerySection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="flex flex-col">
-      <h3 className="pt-4 pb-2 font-mono text-2xs tracking-wide text-text-muted uppercase">{title}</h3>
+      <h3 className="pt-4 pb-2 text-sm font-medium text-text-primary">{title}</h3>
       <div className="grid grid-cols-3 gap-2.5">{children}</div>
     </section>
   );
 }
 
-function GalleryPill({ accent, onClick, children }: { accent?: boolean; onClick: () => void; children: ReactNode }) {
+function GalleryPill({
+  accent,
+  danger,
+  onClick,
+  children,
+}: {
+  accent?: boolean;
+  danger?: boolean;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  children: ReactNode;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
         'h-6 rounded-full px-2.5 text-xs whitespace-nowrap transition-colors',
-        accent ? 'bg-accent-subtle text-accent hover:bg-accent/25' : 'text-text-muted hover:text-text-primary'
+        danger
+          ? 'bg-danger/15 text-danger'
+          : accent
+            ? 'bg-accent-subtle text-accent hover:bg-accent/25'
+            : 'text-text-muted hover:text-text-primary'
       )}
     >
       {children}

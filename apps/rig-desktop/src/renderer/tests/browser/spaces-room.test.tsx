@@ -1,7 +1,7 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConnectResult, GlobalServer } from '@shared/spaces/connectors';
+import type { ConnectorId, ConnectResult, GlobalServer } from '@shared/spaces/connectors';
 import { Composer } from '@renderer/features/spaces/components/composer';
 import { ConversationMap } from '@renderer/features/spaces/components/conversation-map';
 import {
@@ -962,10 +962,6 @@ describe('Connectors — space panel', () => {
     host = document.createElement('div');
     document.body.appendChild(host);
     root = createRoot(host);
-    vi.mocked(connectorsApi.list).mockReset().mockResolvedValue([]);
-    vi.mocked(connectorsApi.connect).mockReset().mockResolvedValue({ ok: true });
-    vi.mocked(connectorsApi.cancel).mockReset().mockResolvedValue(undefined);
-    vi.mocked(connectorsApi.disconnect).mockReset().mockResolvedValue(undefined);
   });
 
   afterEach(async () => {
@@ -979,44 +975,19 @@ describe('Connectors — space panel', () => {
   it('shows the empty state, and the Add pill only for a member who can write', async () => {
     const snapshot = connectorsSnapshot();
     await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} bindingId="space-connectors-empty" />);
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" bindingId="space-connectors-empty" />);
     });
     await openConnectors();
     expect(host.querySelector('[data-testid="connectors-empty"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="connectors-add-toggle"]')).not.toBeNull();
 
     await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="sam" source={fakeConnectorsSource()} bindingId="space-connectors-empty" />);
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="sam" bindingId="space-connectors-empty" />);
     });
     expect(host.querySelector('[data-testid="connectors-add-toggle"]')).toBeNull();
   });
 
-  it('shows the waiting state while connecting, and Cancel aborts it', async () => {
-    const inFlight: { settle: ((r: ConnectResult) => void) | null } = { settle: null };
-    vi.mocked(connectorsApi.connect).mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          inFlight.settle = resolve;
-        })
-    );
-    const snapshot = connectorsSnapshot({
-      connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'not_connected' }],
-    });
-    await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} bindingId="space-connectors-waiting" />);
-    });
-    await openConnectors();
-    await act(async () => click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Connect')!));
-    await act(async () => click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Continue in browser')!));
-    expect(host.textContent).toContain('Waiting for your browser');
-
-    await act(async () => click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Cancel')!));
-    expect(connectorsApi.cancel).toHaveBeenCalledWith('linear');
-    expect(host.textContent).not.toContain('Waiting for your browser');
-    inFlight.settle?.({ ok: true }); // let the abandoned promise settle so it doesn't dangle
-  });
-
-  it('renders connected, not-connected and expired rows with their sub-line, dot and pill', async () => {
+  it('renders each connector as a single row (a button): logo, name, and a compact status — no sub-labels, no hover pills', async () => {
     const snapshot = connectorsSnapshot({
       connectors: [
         { id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' },
@@ -1025,18 +996,26 @@ describe('Connectors — space panel', () => {
       ],
     });
     await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} bindingId="space-connectors-rows" />);
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" bindingId="space-connectors-rows" />);
     });
     await openConnectors();
     const rowFor = (id: string) => host.querySelector<HTMLElement>(`[data-testid="connector-row"][data-connector="${id}"]`)!;
-    expect(rowFor('linear').textContent).toContain('Connected as you');
-    expect(rowFor('notion').textContent).toContain('Added by Sam');
-    expect([...rowFor('notion').querySelectorAll('button')].some((b) => b.textContent === 'Connect')).toBe(true);
-    expect(rowFor('sentry').textContent).toContain('Login expired');
-    expect([...rowFor('sentry').querySelectorAll('button')].some((b) => b.textContent === 'Reconnect')).toBe(true);
+
+    // Every row is itself a button — no nested action pills, no menu.
+    expect(rowFor('linear').tagName).toBe('BUTTON');
+    expect(rowFor('linear').querySelectorAll('button')).toHaveLength(0);
+
+    expect(rowFor('linear').textContent).toContain('Connected');
+    expect(rowFor('linear').textContent).not.toContain('Added by');
+    expect(rowFor('linear').querySelector('.bg-success')).not.toBeNull();
+
+    expect(rowFor('notion').textContent).toContain('Connect');
+    expect(rowFor('notion').textContent).not.toContain('Added by');
+
+    expect(rowFor('sentry').textContent).toContain('Reconnect');
   });
 
-  it('says "Via your Claude setup" with a quiet pill for a connector your agent already reaches globally, and drops it from the to-connect count', async () => {
+  it('says "Via Claude" for a connector your agent already reaches globally, and drops it from the to-connect count', async () => {
     const snapshot = connectorsSnapshot({
       connectors: [
         { id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'not_connected' },
@@ -1051,7 +1030,6 @@ describe('Connectors — space panel', () => {
         <ConnectorsSection
           snapshot={snapshot}
           selfUserId="dylan"
-          source={fakeConnectorsSource()}
           bindingId="space-connectors-global"
           globalSetup={globalSetup}
         />
@@ -1062,94 +1040,47 @@ describe('Connectors — space panel', () => {
 
     await openConnectors();
     const rowFor = (id: string) => host.querySelector<HTMLElement>(`[data-testid="connector-row"][data-connector="${id}"]`)!;
-    expect(rowFor('linear').textContent).toContain('Via your Claude setup');
-    expect(rowFor('notion').textContent).toContain('Not connected yet');
-
-    const linearConnect = [...rowFor('linear').querySelectorAll('button')].find((b) => b.textContent === 'Connect')!;
-    const notionConnect = [...rowFor('notion').querySelectorAll('button')].find((b) => b.textContent === 'Connect')!;
-    // Still available (Codex might not have it) — just a quiet ghost pill, not the usual accent one.
-    expect(linearConnect.className).not.toContain('bg-accent-subtle');
-    expect(notionConnect.className).toContain('bg-accent-subtle');
+    expect(rowFor('linear').textContent).toContain('Via Claude');
+    expect(rowFor('notion').textContent).toContain('Connect');
   });
 
-  it('collapses "Your agents also bring N tools" behind its own line, expands to a compact list grouped by agent, and remembers that per space', async () => {
-    const snapshot = connectorsSnapshot();
+  it('opens the gallery straight on a connector\'s detail view when its row is clicked', async () => {
+    const onOpenGallery = vi.fn();
+    const snapshot = connectorsSnapshot({
+      connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }],
+    });
+    await act(async () => {
+      root.render(
+        <ConnectorsSection snapshot={snapshot} selfUserId="dylan" bindingId="space-connectors-open" onOpenGallery={onOpenGallery} />
+      );
+    });
+    await openConnectors();
+    await act(async () => click(host.querySelector('[data-testid="connector-row"][data-connector="linear"]')!));
+    expect(onOpenGallery).toHaveBeenCalledWith('linear');
+  });
+
+  it('shows the collapsed "Your agents also bring N tools" line, which opens the gallery (unfocused) when clicked', async () => {
+    const onOpenGallery = vi.fn();
     const globalSetup: GlobalServer[] = [
       { agent: 'claude', name: 'claude.ai Linear', url: 'https://mcp.linear.app/mcp', connectorId: 'linear' },
       { agent: 'codex', name: 'launchdarkly', url: null, connectorId: null },
     ];
-    const render = (bindingId: string) =>
-      act(async () => {
-        root.render(
-          <ConnectorsSection
-            snapshot={snapshot}
-            selfUserId="dylan"
-            source={fakeConnectorsSource()}
-            bindingId={bindingId}
-            globalSetup={globalSetup}
-          />
-        );
-      });
-    await render('space-connectors-also-bring-1');
-    await openConnectors();
-
-    const summary = host.querySelector<HTMLButtonElement>('[data-testid="global-setup-disclosure"] button')!;
-    expect(summary.textContent).toContain('Your agents also bring 2 tools from their own setup');
-    expect(summary.getAttribute('aria-expanded')).toBe('false');
-
-    await act(async () => click(summary));
-    expect(summary.getAttribute('aria-expanded')).toBe('true');
-    const disclosure = host.querySelector('[data-testid="global-setup-disclosure"]')!;
-    expect(disclosure.textContent).toContain('Claude');
-    expect(disclosure.textContent).toContain('Linear');
-    expect(disclosure.textContent).toContain('Codex');
-    expect(disclosure.textContent).toContain('launchdarkly');
-    // Nothing actionable in there — no pills, no buttons besides the toggle itself.
-    expect(disclosure.querySelectorAll('button')).toHaveLength(1);
-
-    // Remounted against the same space: still expanded.
-    await act(async () => root.unmount());
-    host.remove();
-    host = document.createElement('div');
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await render('space-connectors-also-bring-1');
-    expect(host.querySelector('[data-testid="global-setup-disclosure"] button')?.getAttribute('aria-expanded')).toBe(
-      'true'
-    );
-  });
-
-  it('disconnects your own login with one click, no confirm needed', async () => {
-    const source = fakeConnectorsSource();
-    const snapshot = connectorsSnapshot({
-      connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }],
-    });
     await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={source} bindingId="space-connectors-disconnect" />);
+      root.render(
+        <ConnectorsSection
+          snapshot={connectorsSnapshot()}
+          selfUserId="dylan"
+          bindingId="space-connectors-global-line"
+          globalSetup={globalSetup}
+          onOpenGallery={onOpenGallery}
+        />
+      );
     });
     await openConnectors();
-    const row = host.querySelector<HTMLElement>('[data-testid="connector-row"]')!;
-    await act(async () => click([...row.querySelectorAll('button')].find((b) => b.textContent === 'Disconnect')!));
-    expect(connectorsApi.disconnect).toHaveBeenCalledWith('linear');
-    await vi.waitFor(() => expect(source.refreshConnections).toHaveBeenCalled());
-  });
-
-  it('removing from the space takes a second click to confirm', async () => {
-    const source = fakeConnectorsSource();
-    const snapshot = connectorsSnapshot({
-      connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }],
-    });
-    await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={source} bindingId="space-connectors-remove" />);
-    });
-    await openConnectors();
-    const row = host.querySelector<HTMLElement>('[data-testid="connector-row"]')!;
-    const removeButton = () => [...row.querySelectorAll('button')].find((b) => b.textContent?.includes('Remove') || b.textContent === 'Remove for all?')!;
-    await act(async () => click(removeButton()));
-    expect(removeButton().textContent).toBe('Remove for all?');
-    expect(source.removeConnector).not.toHaveBeenCalled();
-    await act(async () => click(removeButton()));
-    expect(source.removeConnector).toHaveBeenCalledWith('linear');
+    const line = host.querySelector<HTMLButtonElement>('[data-testid="global-setup-line"]')!;
+    expect(line.textContent).toContain('Your agents also bring 2 tools from their own setup');
+    await act(async () => click(line));
+    expect(onOpenGallery).toHaveBeenCalledWith();
   });
 
   it('collapses behind a summary row by default — stacked logos, a count, a quiet hint when action is needed — and remembers it open per space', async () => {
@@ -1161,7 +1092,7 @@ describe('Connectors — space panel', () => {
     });
     const render = (bindingId: string) =>
       act(async () => {
-        root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} bindingId={bindingId} />);
+        root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" bindingId={bindingId} />);
       });
     await render('space-connectors-collapse-1');
 
@@ -1196,14 +1127,13 @@ describe('Connectors — space panel', () => {
     expect(host.querySelector('[data-testid="connector-row"]')).toBeNull();
   });
 
-  it('"+ Add" opens the tool gallery instead of a list in the panel', async () => {
+  it('"+ Add" opens the tool gallery unfocused, straight to the grid', async () => {
     const onOpenGallery = vi.fn();
     await act(async () => {
       root.render(
         <ConnectorsSection
           snapshot={connectorsSnapshot()}
           selfUserId="dylan"
-          source={fakeConnectorsSource()}
           bindingId="space-connectors-add"
           onOpenGallery={onOpenGallery}
         />
@@ -1211,22 +1141,7 @@ describe('Connectors — space panel', () => {
     });
     await openConnectors();
     await act(async () => click(host.querySelector('[data-testid="connectors-add-toggle"]')!));
-    expect(onOpenGallery).toHaveBeenCalledTimes(1);
-  });
-
-  it('cannot be collapsed while a connect is mid-flow', async () => {
-    const snapshot = connectorsSnapshot({
-      connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'not_connected' }],
-    });
-    await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} bindingId="space-connectors-autoexpand" />);
-    });
-    await openConnectors();
-    await act(async () => click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Connect')!));
-    expect(host.querySelector('[data-testid="connector-consent"]')).not.toBeNull();
-    // Clicking the summary row during the consent step can't hide it.
-    await openConnectors();
-    expect(host.querySelector('[data-testid="connector-consent"]')).not.toBeNull();
+    expect(onOpenGallery).toHaveBeenCalledWith();
   });
 });
 
@@ -1241,6 +1156,7 @@ describe('Connectors — gallery', () => {
     vi.mocked(connectorsApi.list).mockReset().mockResolvedValue([]);
     vi.mocked(connectorsApi.connect).mockReset().mockResolvedValue({ ok: true });
     vi.mocked(connectorsApi.cancel).mockReset().mockResolvedValue(undefined);
+    vi.mocked(connectorsApi.disconnect).mockReset().mockResolvedValue(undefined);
   });
 
   afterEach(async () => {
@@ -1250,10 +1166,26 @@ describe('Connectors — gallery', () => {
 
   const cardOf = (id: string) => host.querySelector<HTMLElement>(`[data-testid="gallery-card"][data-connector="${id}"]`)!;
   const buttonIn = (el: Element, label: string) => [...el.querySelectorAll('button')].find((b) => b.textContent === label)!;
+  const detail = () => host.querySelector<HTMLElement>('[data-testid="gallery-detail"]')!;
 
-  const renderGallery = async (snapshot = connectorsSnapshot(), source = fakeConnectorsSource(), onClose = vi.fn()) => {
+  const renderGallery = async (
+    snapshot = connectorsSnapshot(),
+    source = fakeConnectorsSource(),
+    onClose = vi.fn(),
+    extra: { selfUserId?: string; focus?: ConnectorId | null; globalSetup?: GlobalServer[] } = {}
+  ) => {
     await act(async () => {
-      root.render(<ConnectorGallery snapshot={snapshot} source={source} onClose={onClose} rightInset={320} />);
+      root.render(
+        <ConnectorGallery
+          snapshot={snapshot}
+          selfUserId={extra.selfUserId ?? 'dylan'}
+          source={source}
+          onClose={onClose}
+          rightInset={320}
+          globalSetup={extra.globalSetup}
+          focus={extra.focus}
+        />
+      );
     });
     return { source, onClose };
   };
@@ -1269,24 +1201,136 @@ describe('Connectors — gallery', () => {
     expect(host.querySelectorAll('[data-testid="gallery-soon"]').length).toBeGreaterThan(0);
   });
 
-  it('Add shows the consent line on the card, then connects and adds the tool to the space', async () => {
+  it('clicking a card (not its Add button) opens the detail view, hiding search and the category chips', async () => {
+    await renderGallery(
+      connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }] })
+    );
+    await act(async () => click(cardOf('linear')));
+    expect(detail().getAttribute('data-connector')).toBe('linear');
+    expect(detail().textContent).toContain('Connected as you');
+    expect(host.querySelector('[data-testid="gallery-search"]')).toBeNull();
+  });
+
+  it('"← All tools" returns from the detail view to the grid', async () => {
+    await renderGallery(
+      connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }] })
+    );
+    await act(async () => click(cardOf('linear')));
+    await act(async () => click(host.querySelector('[data-testid="gallery-detail-back"]')!));
+    expect(host.querySelector('[data-testid="gallery-detail"]')).toBeNull();
+    expect(host.querySelector('[data-testid="gallery-search"]')).not.toBeNull();
+  });
+
+  it('opens straight on a connector\'s detail view when `focus` is set (a space panel row was clicked)', async () => {
+    await renderGallery(
+      connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }] }),
+      fakeConnectorsSource(),
+      vi.fn(),
+      { focus: 'linear' }
+    );
+    expect(detail().getAttribute('data-connector')).toBe('linear');
+  });
+
+  it('detail view shows the big logo, name, blurb, category, your state, and who added it', async () => {
+    await renderGallery(
+      connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'sam', mine: 'not_connected' }] })
+    );
+    await act(async () => click(cardOf('linear')));
+    expect(detail().querySelector('svg')).not.toBeNull();
+    expect(detail().textContent).toContain('Linear');
+    expect(detail().textContent).toContain('Issues, projects, cycles');
+    expect(detail().textContent).toContain('Work tracking');
+    expect(detail().textContent).toContain('Not connected');
+    expect(detail().textContent).toContain('Added by Sam');
+  });
+
+  it('says "Added by you" when you added it yourself, and shows "Login expired" with the amber Reconnect action', async () => {
+    await renderGallery(
+      connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'expired' }] })
+    );
+    await act(async () => click(cardOf('linear')));
+    expect(detail().textContent).toContain('Added by you');
+    expect(detail().textContent).toContain('Login expired');
+    expect(buttonIn(detail(), 'Reconnect')).toBeTruthy();
+  });
+
+  it('Connect on the detail view shows the consent line, then waits for the browser, and Cancel aborts it', async () => {
+    const inFlight: { settle: ((r: ConnectResult) => void) | null } = { settle: null };
+    vi.mocked(connectorsApi.connect).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          inFlight.settle = resolve;
+        })
+    );
+    await renderGallery(
+      connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'not_connected' }] })
+    );
+    await act(async () => click(cardOf('linear')));
+    await act(async () => click(buttonIn(detail(), 'Connect')));
+    expect(detail().querySelector('[data-testid="gallery-detail-consent"]')?.textContent).toContain(
+      'sign in to Linear in your browser'
+    );
+    await act(async () => click(buttonIn(detail(), 'Continue in browser')));
+    expect(detail().textContent).toContain('Waiting for your browser');
+
+    await act(async () => click(buttonIn(detail(), 'Cancel')));
+    expect(connectorsApi.cancel).toHaveBeenCalledWith('linear');
+    expect(detail().textContent).not.toContain('Waiting for your browser');
+    inFlight.settle?.({ ok: true }); // let the abandoned promise settle so it doesn't dangle
+  });
+
+  it('Add on a not-yet-added card opens its detail already mid-flow; connecting adds it to the space', async () => {
     const { source } = await renderGallery();
     await act(async () => click(buttonIn(cardOf('posthog'), 'Add')));
-    expect(cardOf('posthog').querySelector('[data-testid="gallery-consent"]')?.textContent).toContain(
-      'sign in to PostHog in your browser'
-    );
-    await act(async () => click(buttonIn(cardOf('posthog'), 'Continue in browser')));
+    expect(detail().getAttribute('data-connector')).toBe('posthog');
+    expect(detail().querySelector('[data-testid="gallery-detail-consent"]')).not.toBeNull();
+    await act(async () => click(buttonIn(detail(), 'Continue in browser')));
     await vi.waitFor(() => expect(connectorsApi.connect).toHaveBeenCalledWith('posthog'));
     await vi.waitFor(() => expect(source.addConnector).toHaveBeenCalledWith('posthog'));
   });
 
-  it('adds a tool you are already connected to straight away, no sign-in', async () => {
+  it('adds a tool you are already connected to straight away, no sign-in and no detour through the detail view', async () => {
     vi.mocked(connectorsApi.list).mockResolvedValue([{ id: 'sentry', state: 'connected' }]);
     const { source } = await renderGallery();
     await vi.waitFor(() => expect(connectorsApi.list).toHaveBeenCalled());
     await act(async () => click(buttonIn(cardOf('sentry'), 'Add')));
     await vi.waitFor(() => expect(source.addConnector).toHaveBeenCalledWith('sentry'));
     expect(connectorsApi.connect).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-testid="gallery-detail"]')).toBeNull();
+  });
+
+  it('"Disconnect my login" clears your connection, no confirm needed', async () => {
+    const { source } = await renderGallery(
+      connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }] })
+    );
+    await act(async () => click(cardOf('linear')));
+    await act(async () => click(buttonIn(detail(), 'Disconnect my login')));
+    expect(connectorsApi.disconnect).toHaveBeenCalledWith('linear');
+    await vi.waitFor(() => expect(source.refreshConnections).toHaveBeenCalled());
+  });
+
+  it('"Remove from space" needs a second click to confirm, then removes it for everyone', async () => {
+    const { source } = await renderGallery(
+      connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }] })
+    );
+    await act(async () => click(cardOf('linear')));
+    const removeButton = () => [...detail().querySelectorAll('button')].find((b) => b.textContent?.startsWith('Remove'))!;
+    await act(async () => click(removeButton()));
+    expect(removeButton().textContent).toBe('Remove for everyone?');
+    expect(source.removeConnector).not.toHaveBeenCalled();
+    await act(async () => click(removeButton()));
+    expect(source.removeConnector).toHaveBeenCalledWith('linear');
+  });
+
+  it('does not offer "Remove from space" to a member who cannot write', async () => {
+    await renderGallery(
+      connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }] }),
+      fakeConnectorsSource(),
+      vi.fn(),
+      { selfUserId: 'sam' }
+    );
+    await act(async () => click(cardOf('linear')));
+    expect([...detail().querySelectorAll('button')].some((b) => b.textContent?.includes('Remove'))).toBe(false);
   });
 
   it('filters by search and by category', async () => {
@@ -1321,14 +1365,25 @@ describe('Connectors — gallery', () => {
     const globalSetup: GlobalServer[] = [
       { agent: 'claude', name: 'claude.ai PostHog', url: 'https://mcp.posthog.com/mcp', connectorId: 'posthog' },
     ];
-    await act(async () => {
-      root.render(
-        <ConnectorGallery snapshot={connectorsSnapshot()} source={fakeConnectorsSource()} onClose={vi.fn()} rightInset={320} globalSetup={globalSetup} />
-      );
-    });
+    await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), { globalSetup });
     expect(cardOf('posthog').textContent).toContain('In your Claude setup');
     // A tool none of your agents have keeps its plain category label.
     expect(cardOf('linear').textContent).toContain('Work tracking');
+  });
+
+  it('shows a read-only "From your agents\' own setup" section at the foot of the grid, grouped by agent', async () => {
+    const globalSetup: GlobalServer[] = [
+      { agent: 'claude', name: 'claude.ai Linear', url: 'https://mcp.linear.app/mcp', connectorId: 'linear' },
+      { agent: 'codex', name: 'launchdarkly', url: null, connectorId: null },
+    ];
+    await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), { globalSetup });
+    const section = host.querySelector('[data-testid="gallery-global-setup"]')!;
+    expect(section.textContent).toContain('Claude');
+    expect(section.textContent).toContain('Linear');
+    expect(section.textContent).toContain('Codex');
+    expect(section.textContent).toContain('launchdarkly');
+    // Nothing actionable in there — read-only.
+    expect(section.querySelectorAll('button')).toHaveLength(0);
   });
 
   it('draws a real brand mark for a Simple Icons connector, and the letter tile for one with no vector mark', async () => {
@@ -1338,6 +1393,7 @@ describe('Connectors — gallery', () => {
     expect(cardOf('amplitude').querySelector('span[aria-hidden]')?.textContent).toBe('A');
   });
 });
+
 
 describe('Connectors — Room copy and turn footer', () => {
   let host: HTMLDivElement;
