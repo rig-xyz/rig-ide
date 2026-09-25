@@ -62,6 +62,32 @@ export function mintedInviteMatchesRole(
 }
 
 /**
+ * Dylan's feedback round, part (b): "Sam shows as a pending email invite even
+ * though Sam is a member — his invite was never used because he joined
+ * another way." Rather than teach the relay to reconcile that, hide it
+ * client-side: an invite whose email already belongs to a current member is
+ * never going to be accepted (the relay would just answer "already a
+ * member"), so it shouldn't sit in "Pending invites" looking actionable.
+ * Matches case-insensitively, since email addresses are compared that way in
+ * practice. Open-link invites (`email: null`) have nothing to match against
+ * and always stay listed.
+ */
+export function excludeInvitesToMembers(
+  invites: PendingInvite[],
+  members: RigMember[]
+): PendingInvite[] {
+  const memberEmails = new Set(
+    members
+      .map((member) => member.email)
+      .filter((email): email is string => email !== null)
+      .map((email) => email.toLowerCase())
+  );
+  return invites.filter(
+    (invite) => invite.email === null || !memberEmails.has(invite.email.toLowerCase())
+  );
+}
+
+/**
  * People suggestions for the invite form (Dylan's "a quick way to invite
  * people he's already worked with"): distinct collaborators gathered once,
  * on popover open, across every rig the caller has (`rig.share.collaborators`
