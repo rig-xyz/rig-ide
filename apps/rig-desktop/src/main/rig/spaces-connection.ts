@@ -15,6 +15,7 @@ import {
   type SessionAgent,
   type SessionEventRow,
   type SessionRun,
+  type SpaceConnectorRow,
 } from './spaces/relay-api';
 
 /**
@@ -116,6 +117,19 @@ export const rigSpacesConnectionController = createRPCController({
   },
   listMembers: async (input: { bindingId: string }): Promise<Result<RoomMemberRow[], RelayApiError>> =>
     api.listMembers(input.bindingId),
+
+  // Connectors (connectors-spec.md): which tools the space uses. Ids only;
+  // your own logins stay in main (`rpc.rig.connectors`).
+  listConnectors: async (input: { bindingId: string }): Promise<Result<SpaceConnectorRow[], RelayApiError>> =>
+    api.listConnectors ? api.listConnectors(input.bindingId) : ok([]),
+  addConnector: async (input: { bindingId: string; connectorId: string }): Promise<Result<SpaceConnectorRow, RelayApiError>> =>
+    api.addConnector
+      ? api.addConnector(input.bindingId, input.connectorId)
+      : err<RelayApiError>({ kind: 'relay', message: 'Connectors are not available.' }),
+  removeConnector: async (input: { bindingId: string; connectorId: string }): Promise<Result<void, RelayApiError>> =>
+    api.removeConnector
+      ? api.removeConnector(input.bindingId, input.connectorId)
+      : err<RelayApiError>({ kind: 'relay', message: 'Connectors are not available.' }),
 
   listMessages: async (input: {
     bindingId: string;

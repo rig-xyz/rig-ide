@@ -24,12 +24,6 @@ import { SpaceCard } from './space-card';
  */
 function createRelayRoomClient(): RelayRoomClient {
   const client = rpc.rig.spacesConnection;
-  // The connectors routes (connectors-spec.md's `GET/POST/DELETE
-  // /v1/me/bindings/:id/connectors`) are still landing on `spacesConnection`
-  // in this shared worktree — cast rather than depend on the exact method
-  // names so this file type-checks either way; `RelayRoomSource` already
-  // treats all three as optional and no-ops gracefully if they're absent.
-  const withConnectors = client as unknown as RelayRoomClient;
   return {
     mintRealtimeTicket: (bindingId) => client.mintRealtimeTicket({ bindingId }),
     listMembers: (bindingId) => client.listMembers({ bindingId }),
@@ -39,9 +33,9 @@ function createRelayRoomClient(): RelayRoomClient {
     getSessionEvents: (bindingId, runId, after) => client.getSessionEvents({ bindingId, runId, after }),
     postMessage: (bindingId, input) => client.postMessage({ bindingId, ...input }),
     requestOwnAgent: (bindingId, input) => client.requestOwnAgent({ bindingId, ...input }),
-    listConnectors: withConnectors.listConnectors?.bind(withConnectors),
-    addConnector: withConnectors.addConnector?.bind(withConnectors),
-    removeConnector: withConnectors.removeConnector?.bind(withConnectors),
+    listConnectors: (bindingId) => client.listConnectors({ bindingId }),
+    addConnector: (bindingId, connectorId) => client.addConnector({ bindingId, connectorId }),
+    removeConnector: (bindingId, connectorId) => client.removeConnector({ bindingId, connectorId }),
   };
 }
 

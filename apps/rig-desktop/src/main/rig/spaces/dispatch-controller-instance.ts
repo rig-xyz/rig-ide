@@ -53,7 +53,7 @@ function realDeps(): SpacesDispatchControllerDeps {
             if (listed) log.warn('Rig spaces: could not load the space connectors', { bindingId, error: listed.error.message });
             return { servers: [], gaps: [] };
           }
-          return connections.forSession(listed.data.filter(isConnectorId));
+          return connections.forSession(listed.data.map((c) => c.connectorId).filter(isConnectorId));
         },
         defaultConfig: (agent) => {
           const settings = rigSettingsStore.get();
