@@ -1,7 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Check, ChevronDown, FolderOpen, Hash } from 'lucide-react';
+import { Check, ChevronDown, FolderOpen, Hash, Home as HomeIcon, Loader2, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { generateSpaceName } from '@renderer/features/home/space-create';
 import { rpc } from '@renderer/lib/ipc';
 import { Popover } from '@renderer/lib/ui/popover';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
@@ -27,6 +28,14 @@ import { InlineRigNameInput } from './inline-rig-name';
  * `prefers-reduced-motion` skips it entirely). The caller keys this
  * component by `bindingId` so switching to a genuinely different rig gets
  * a fresh mount — `autoEdit` only ever fires once per rig.
+ *
+ * Polish round 2, lane F: inside a space, the menu is space-scoped now —
+ * "your spaces" only (never a plain rig mixed in), then "New space" (the
+ * same one-click auto-named create Home's own primary CTA drives — see
+ * `space-create.ts`'s `generateSpaceName`) and "All spaces" (`onGoHome`,
+ * back to Home). "Open folder…" is dropped for a space — a space has no
+ * "browse to a folder I already have" case the way a plain rig does. A
+ * plain rig keeps today's unfiltered menu and "Open folder…" unchanged.
  */
 export function RigSwitcher({
   bindingId,
@@ -34,6 +43,7 @@ export function RigSwitcher({
   name,
   onOpenPath,
   onOpenFolder,
+  onGoHome,
   autoEdit = false,
   onAutoEditHandled,
   isSpace = false,
@@ -45,6 +55,8 @@ export function RigSwitcher({
   name: string;
   onOpenPath: (path: string) => void;
   onOpenFolder: () => void;
+  /** "All spaces" (space menu only) — back to Home, same house-button target the breadcrumb's own icon uses. */
+  onGoHome: () => void;
   /** True immediately after this rig was just created — enters inline rename once, auto-focused with the name selected. */
   autoEdit?: boolean;
   /** Called once `autoEdit`'s edit mode has been entered, so the caller can drop its flag. */
@@ -56,9 +68,12 @@ export function RigSwitcher({
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [displayName, setDisplayName] = useState(name);
+  const [creatingSpace, setCreatingSpace] = useState(false);
+  const [createSpaceError, setCreateSpaceError] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const consumedAutoEdit = useRef(false);
   const prefersReducedMotion = useReducedMotion();
+  const queryClient = useQueryClient();
 
   useEffect(() => setDisplayName(name), [name]);
 
@@ -88,6 +103,55 @@ export function RigSwitcher({
     staleTime: 5_000,
   });
   const rows = signedIn ? (recentQuery.data ?? []) : [];
+
+  // Space menu round: `recentRigs` carries no space/rig distinction of its
+  // own (it's a plain `rig_rigs` row) — the same cross-reference
+  // `home-sections.ts`'s `buildHomeRigRows` uses against
+  // `rpc.rig.account.workspaces()`'s own `kind` field.
+  const workspacesQuery = useQuery({
+    queryKey: ['rig', 'account', 'workspaces'],
+    queryFn: () => rpc.rig.account.workspaces(),
+    enabled: open && signedIn && isSpace,
+    staleTime: 5_000,
+  });
+  const spaceBindingIds = new Set(
+    workspacesQuery.data?.success
+      ? workspacesQuery.data.data.filter((b) => b.kind === 'space').map((b) => b.id)
+      : []
+  );
+  const displayRows = isSpace ? rows.filter((row) => spaceBindingIds.has(row.bindingId)) : rows;
+
+  const createSpaceOneClick = async () => {
+    if (creatingSpace) return;
+    setCreatingSpace(true);
+    setCreateSpaceError(null);
+    const existingNames = new Set(
+      displayRows.map((row) => row.name).filter((n): n is string => !!n)
+    );
+    const result = await rpc.rig.create.create({
+      parentDir: null,
+      name: generateSpaceName(existingNames),
+      sync: true,
+      seedDoc: false,
+      kind: 'space',
+    });
+    setCreatingSpace(false);
+    if (!result.success) {
+      setCreateSpaceError(result.error.message);
+      return;
+    }
+    if (result.data.rootId) void rpc.rig.files.releaseRoot({ rootId: result.data.rootId });
+    void queryClient.invalidateQueries({ queryKey: ['rig', 'recent'] });
+    void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
+    if (!result.data.synced) {
+      setCreateSpaceError(
+        result.data.syncError?.message ?? 'The space was created locally but could not go live.'
+      );
+      return;
+    }
+    setOpen(false);
+    onOpenPath(result.data.path);
+  };
 
   if (editing) {
     const row = (
@@ -152,7 +216,7 @@ export function RigSwitcher({
         estimatedWidth={260}
         minWidth={260}
       >
-        {rows.map((row) => (
+        {displayRows.map((row) => (
           <button
             key={row.bindingId}
             type="button"
@@ -169,25 +233,59 @@ export function RigSwitcher({
             </span>
             <span className="min-w-0 flex-1">
               <span className="text-text-primary block truncate text-sm">
-                {row.name ?? row.path.split('/').pop()}
+                {isSpace ? `#${row.name ?? row.path.split('/').pop()}` : (row.name ?? row.path.split('/').pop())}
               </span>
             </span>
           </button>
         ))}
         <div className="border-border-hairline mt-1 border-t pt-1">
-          <button
-            type="button"
-            role="menuitem"
-            tabIndex={-1}
-            onClick={() => {
-              setOpen(false);
-              onOpenFolder();
-            }}
-            className="hover:bg-bg-2 text-text-secondary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
-          >
-            <FolderOpen className="size-3.5 shrink-0" strokeWidth={1.5} />
-            Open folder…
-          </button>
+          {isSpace ? (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                tabIndex={-1}
+                onClick={() => void createSpaceOneClick()}
+                disabled={creatingSpace}
+                className="hover:bg-bg-2 text-text-secondary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm disabled:pointer-events-none disabled:opacity-60"
+              >
+                {creatingSpace ? (
+                  <Loader2 className="size-3.5 shrink-0 animate-spin" strokeWidth={1.5} />
+                ) : (
+                  <Plus className="size-3.5 shrink-0" strokeWidth={1.5} />
+                )}
+                {creatingSpace ? 'Starting…' : 'New space'}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                tabIndex={-1}
+                onClick={() => {
+                  setOpen(false);
+                  onGoHome();
+                }}
+                className="hover:bg-bg-2 text-text-secondary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+              >
+                <HomeIcon className="size-3.5 shrink-0" strokeWidth={1.5} />
+                All spaces
+              </button>
+              {createSpaceError && <p className="text-danger px-2.5 pt-1 pb-0.5 text-xs">{createSpaceError}</p>}
+            </>
+          ) : (
+            <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              onClick={() => {
+                setOpen(false);
+                onOpenFolder();
+              }}
+              className="hover:bg-bg-2 text-text-secondary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+            >
+              <FolderOpen className="size-3.5 shrink-0" strokeWidth={1.5} />
+              Open folder…
+            </button>
+          )}
         </div>
       </Popover>
     </>

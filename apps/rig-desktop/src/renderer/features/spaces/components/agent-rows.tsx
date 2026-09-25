@@ -68,6 +68,11 @@ export function AgentRows({
   if (mine.length === 0 && theirs.size === 0) return null;
 
   const all = [...mine.map((agent) => ({ owner: selfUserId, agent: agent.agent })), ...theirs.values()];
+  // Polish round 2, lane F (Dylan): the collapsed summary shows each agent
+  // KIND once — one Claude logo, one Codex logo — not one per (owner,
+  // kind) instance; who's running which stays a per-row fact for the
+  // expanded list below, not something the summary stack repeats itself.
+  const summaryKinds = [...new Set(all.map(({ agent }) => agent))];
 
   return (
     <>
@@ -86,14 +91,18 @@ export function AgentRows({
               the Connectors row's logos). */}
           {!expanded && (
             <span className="flex items-center" data-testid="agents-avatar-stack">
-              {all.map(({ owner, agent }, i) => (
-                <AgentAvatar
-                  key={`${owner}:${agent}`}
-                  agent={agent}
-                  owner={snapshot.members.find((m) => m.id === owner)}
-                  size="sm"
-                  className={cn('ring-bg-1 ring-2', i > 0 && '-ml-1.5')}
-                />
+              {summaryKinds.map((agent, i) => (
+                <span key={agent} data-testid="agent-kind-avatar" data-kind={agent}>
+                  <AgentAvatar
+                    agent={agent}
+                    // No single owner to badge — this glyph now stands for
+                    // the KIND across everyone running it, not one person's
+                    // instance of it.
+                    owner={undefined}
+                    size="sm"
+                    className={cn('ring-bg-1 ring-2', i > 0 && '-ml-1.5')}
+                  />
+                </span>
               ))}
             </span>
           )}

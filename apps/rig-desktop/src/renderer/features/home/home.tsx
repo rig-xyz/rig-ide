@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, LogIn } from 'lucide-react';
+import { Loader2, LogIn, Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
 import { deriveSignedIn } from '@renderer/features/rig-account/auth-state';
@@ -28,6 +28,7 @@ import {
   type LegacyRowVisibility,
 } from './home-sections';
 import { NeedsYouSection } from './needs-you-section';
+import { NewSpaceCta } from './new-space-cta';
 import { PeopleRail } from './people-rail';
 import { shouldShowPulseSection } from './pulse-state';
 import { RigsRail } from './rigs-rail';
@@ -353,6 +354,8 @@ export function Home({
   // header comment).
   const spaceRows = spacesEnabled ? rigRows.filter((row) => row.isSpace) : [];
   const soloRigRows = spacesEnabled ? rigRows.filter((row) => !row.isSpace) : rigRows;
+  // New-space CTA: the collision check `generateSpaceName` runs against.
+  const spaceNames = new Set(spaceRows.map((row) => row.name).filter((name): name is string => !!name));
 
   const showPulse = shouldShowPulseSection(
     signedIn,
@@ -463,6 +466,9 @@ export function Home({
                 onOpenPath={onOpenPath}
                 onHighlightRig={setHighlightBindingId}
               />
+              {spacesEnabled && signedIn && (
+                <NewSpaceCta existingNames={spaceNames} onCreateSpace={createSpace} />
+              )}
               <NeedsYouSection
                 spaceRows={spaceRows}
                 statusByBinding={statusByBinding}
@@ -493,14 +499,26 @@ export function Home({
               highlightBindingId={highlightBindingId}
             />
           )}
-          <FloatingCard storageKey="rig-home-solo-rigs-collapsed" title="Solo rigs" count={soloRigRows.length}>
+          <FloatingCard
+            storageKey="rig-home-solo-rigs-collapsed"
+            title="Rigs"
+            count={soloRigRows.length}
+            headerAction={
+              <button
+                type="button"
+                onClick={startFreshOrCreate}
+                className="bg-bg-2 text-text-muted hover:text-text-primary flex items-center gap-1 rounded-chip px-2 py-0.5 text-xs transition-colors"
+              >
+                <Plus className="size-3 shrink-0" strokeWidth={1.5} />
+                New
+              </button>
+            }
+          >
             <RigsRail
               rows={soloRigRows}
               identities={identities}
               onOpenPath={onOpenPath}
               onOpenSession={onContinueSession}
-              onOpenFolder={onOpenFolder}
-              onCreateRig={startFreshOrCreate}
               highlightBindingId={highlightBindingId}
             />
           </FloatingCard>

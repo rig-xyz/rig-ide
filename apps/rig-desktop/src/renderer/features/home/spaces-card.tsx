@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, FolderSearch, LogOut, MoreHorizontal, Pencil, Plus, Star, Trash2 } from 'lucide-react';
+import { Download, FolderSearch, Loader2, LogOut, MoreHorizontal, Pencil, Plus, Star, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
@@ -29,6 +29,7 @@ import {
 } from './space-status-state';
 import { SpaceStatusTile } from './space-status-tile';
 import { FloatingCard } from './floating-card';
+import { generateSpaceName } from './space-create';
 
 const SHOWN_CAP = 6;
 const FACES_MAX = 3;
@@ -60,8 +61,24 @@ export function SpacesCard({
 }) {
   const [filter, setFilter] = useState<SpaceRowFilter>('all');
   const [showAll, setShowAll] = useState(false);
-  const [naming, setNaming] = useState(false);
+  // Polish round 2, lane F: "+ New" is one click now (Dylan's "boom, you're
+  // in" — no typed name), the same one-click action Home's own primary
+  // "New space" CTA drives (`new-space-cta.tsx`) — a generated name, then
+  // straight into the Room via `onCreateSpace` (`home.tsx`'s `createSpace`,
+  // unchanged).
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const { pinned, toggle: togglePinned } = useSpacePins();
+
+  const createOneClick = async () => {
+    if (creating) return;
+    setCreating(true);
+    setCreateError(null);
+    const existingNames = new Set(rows.map((r) => r.name).filter((n): n is string => !!n));
+    const failure = await onCreateSpace(generateSpaceName(existingNames));
+    setCreating(false);
+    if (failure) setCreateError(failure);
+  };
 
   const now = Date.now();
   const filtered = filterSpaceRows(rows, filter, {
@@ -89,20 +106,20 @@ export function SpacesCard({
       headerAction={
         <button
           type="button"
-          onClick={() => setNaming(true)}
-          className="bg-bg-2 text-text-muted hover:text-text-primary flex items-center gap-1 rounded-chip px-2 py-0.5 text-xs transition-colors"
+          onClick={() => void createOneClick()}
+          disabled={creating}
+          className="bg-bg-2 text-text-muted hover:text-text-primary flex items-center gap-1 rounded-chip px-2 py-0.5 text-xs transition-colors disabled:pointer-events-none disabled:opacity-60"
         >
-          <Plus className="size-3 shrink-0" strokeWidth={1.5} />
+          {creating ? (
+            <Loader2 className="size-3 shrink-0 animate-spin" strokeWidth={1.5} />
+          ) : (
+            <Plus className="size-3 shrink-0" strokeWidth={1.5} />
+          )}
           New
         </button>
       }
     >
-      {naming && (
-        <NameSpaceInline
-          onCreate={onCreateSpace}
-          onDone={() => setNaming(false)}
-        />
-      )}
+      {createError && <p className="text-danger px-1 text-xs">{createError}</p>}
       {rows.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-0.5">
           {(Object.keys(SPACE_FILTER_LABELS) as SpaceRowFilter[]).map((f) => (
@@ -171,56 +188,6 @@ function useSpacePins(): { pinned: ReadonlySet<string>; toggle: (bindingId: stri
     });
   };
   return { pinned, toggle };
-}
-
-/** The inline "#name" compose row — ported from the pre-restructure `rigs-rail.tsx`'s own `SpacesGroup`, unchanged in behavior. */
-function NameSpaceInline({
-  onCreate,
-  onDone,
-}: {
-  onCreate: (name: string) => Promise<string | null>;
-  onDone: () => void;
-}) {
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async () => {
-    const trimmed = name.trim().replace(/^#+/, '');
-    if (!trimmed || busy) return;
-    setBusy(true);
-    setError(null);
-    const failure = await onCreate(trimmed);
-    setBusy(false);
-    if (failure) {
-      setError(failure);
-      return;
-    }
-    onDone();
-  };
-
-  return (
-    <div className="flex flex-col gap-1 px-0.5">
-      <label className="border-border-hairline bg-bg-0 focus-within:border-accent flex h-8 items-center gap-1 rounded-control border px-2 transition-colors">
-        <span className="font-mono text-sm text-text-muted">#</span>
-        <input
-          autoFocus
-          value={name}
-          disabled={busy}
-          placeholder="growth-q3"
-          aria-label="Space name"
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void submit();
-            if (e.key === 'Escape') onDone();
-          }}
-          className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
-        />
-        {busy && <span className="text-2xs text-text-muted font-mono">creating…</span>}
-      </label>
-      {error && <p className="text-danger text-xs">{error}</p>}
-    </div>
-  );
 }
 
 function useSpaceMembers(bindingId: string) {

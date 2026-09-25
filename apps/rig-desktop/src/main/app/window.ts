@@ -53,12 +53,15 @@ export function createMainWindow(): BrowserWindow {
           titleBarStyle: 'hiddenInset',
           // The renderer's topbar (App.tsx's `Topbar`) is a 40px (`h-10`)
           // row; the lights are 12px circles, so y = (40 − 12) / 2 = 14
-          // centers them on the bar's own axis (y = 20) BY CONSTRUCTION —
-          // the bar and every child just use plain items-center, no
-          // per-child offset arithmetic. x = 14 is eyeballed against
-          // reference apps (Codex/Claude Desktop keep a similar inset).
+          // would center them on the bar's own 40px axis BY CONSTRUCTION —
+          // but the buttons' own container (macOS draws a few px of padding
+          // around each circle) is closer to 16px tall, not 12, so y = 14
+          // sat visibly high against the bar. Polish round 2, lane F
+          // (Dylan): y = 12 centers that 16px container instead —
+          // (40 − 16) / 2 = 12. x = 14 is unchanged (eyeballed against
+          // reference apps — Codex/Claude Desktop keep a similar inset).
           // Change the bar's height and this y must move with it.
-          trafficLightPosition: { x: 14, y: 14 },
+          trafficLightPosition: { x: 14, y: 12 },
           acceptFirstMouse: true,
         }
       : {}),

@@ -9,7 +9,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
  *  - the layout switch (Room | Split | Doc) shows only once a doc is open
  *    beside a space's Room; a plain rig keeps it on regardless;
  *  - the open doc joins the breadcrumb, with its own close control;
- *  - a space's member faces (People) and its accent Share pill are two
+ *  - a space's member faces (People) and its accent Invite pill are two
  *    separate triggers, not one combined button.
  * `pinned-card.test.tsx` covers the "Details" panel header; `time-format.
  * test.ts` covers the duration formatter.
@@ -129,7 +129,7 @@ describe('Topbar', () => {
   });
 
   describe('People and Share', () => {
-    it('renders the member faces and the accent Share pill as two separate triggers for a space', async () => {
+    it('renders the member faces and the accent Invite pill as two separate triggers for a space', async () => {
       mocks.shareMembers.mockResolvedValue({
         success: true,
         data: { members: [{ userId: 'u1', name: 'Dylan', email: 'dylan@acme.com', avatarUrl: null, role: 'owner' }], selfRole: 'owner' },
@@ -145,10 +145,13 @@ describe('Topbar', () => {
 
       const peopleButton = host.querySelector<HTMLButtonElement>('[aria-label="People"]');
       expect(peopleButton).toBeTruthy();
-      const shareButtons = [...host.querySelectorAll('button')].filter((b) => b.textContent === 'Share');
-      expect(shareButtons).toHaveLength(1);
+      // Polish round 2, lane F: the pill reads "Invite" now, not "Share" —
+      // the faces trigger beside it already covers "who's here."
+      const inviteButtons = [...host.querySelectorAll('button')].filter((b) => b.textContent === 'Invite');
+      expect(inviteButtons).toHaveLength(1);
+      expect(host.textContent).not.toContain('Share');
       // Two distinct buttons, not one combined trigger.
-      expect(peopleButton).not.toBe(shareButtons[0]);
+      expect(peopleButton).not.toBe(inviteButtons[0]);
       // The People trigger opens its own popover (portaled to document.body,
       // like every other `Popover` in this app), separate from Share's.
       await act(async () => click(peopleButton!));

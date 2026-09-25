@@ -19,7 +19,6 @@ import {
   Pause,
   Pencil,
   Play,
-  Plus,
   Trash2,
   Users,
   type LucideIcon,
@@ -89,26 +88,28 @@ import {
  *
  * Polish round, lane C ("spaces first"): spaces moved out to their own
  * `SpacesCard` (with a live status tile per row) — `rows` here is always
- * plain (non-space) rigs now, demoted into the "Solo rigs" floating card
+ * plain (non-space) rigs now, demoted into the "Rigs" floating card
  * `home.tsx` wraps this in (`FloatingCard`, which owns the title/count/
  * collapse chrome this component used to render its own mono "Your rigs"
  * label for).
+ *
+ * Polish round 2, lane F: the header's own "New rig"/"Open" buttons moved
+ * OUT — `home.tsx` now renders "+ New" as this card's `FloatingCard`
+ * `headerAction` (the same slot/style the Spaces card's own "+ New" already
+ * uses), and "Open a folder…" is gone entirely per Dylan's ask. This
+ * component starts straight at the filter/sort row.
  */
 export function RigsRail({
   rows,
   identities,
   onOpenPath,
   onOpenSession,
-  onOpenFolder,
-  onCreateRig,
   highlightBindingId,
 }: {
   rows: readonly HomeRigRow[];
   identities: Map<string, AgentIdentity>;
   onOpenPath: (path: string) => void;
   onOpenSession: (path: string, sessionId: string) => void;
-  onOpenFolder: () => void;
-  onCreateRig: () => void;
   /**
    * Home restructure — pulse round: a rig-name link clicked in
    * `BriefingSpine` (WHAT'S NEW / ACROSS YOUR RIGS) that has no local match
@@ -146,29 +147,7 @@ export function RigsRail({
 
   return (
     <div className="flex w-full flex-col gap-3 text-left">
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-end px-1">
-          <div className="-mr-1 flex items-center">
-            <button
-              type="button"
-              onClick={onCreateRig}
-              className="flex items-center gap-1 rounded-control px-1.5 py-0.5 text-xs text-text-muted transition-colors hover:text-text-primary"
-            >
-              <Plus className="size-3 shrink-0" strokeWidth={1.5} />
-              New rig
-            </button>
-            <button
-              type="button"
-              onClick={onOpenFolder}
-              className="flex items-center gap-1 rounded-control px-1.5 py-0.5 text-xs text-text-muted transition-colors hover:text-text-primary"
-            >
-              <FolderOpen className="size-3 shrink-0" strokeWidth={1.5} />
-              Open
-            </button>
-          </div>
-        </div>
-        {rows.length > 0 && <RigsFilterSortMenu view={view} onChange={setView} />}
-      </div>
+      {rows.length > 0 && <RigsFilterSortMenu view={view} onChange={setView} />}
       {rows.length === 0 ? (
         <p className="px-1 text-xs text-text-muted">Private workspaces. Share one to make it a space.</p>
       ) : visibleRows.length === 0 ? (

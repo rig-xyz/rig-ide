@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Share2, X } from 'lucide-react';
+import { Check, Copy, Link as LinkIcon, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { isOfflineError } from '@renderer/features/docs/comments/comments-cache';
 import { relativeTime } from '@renderer/features/chat/session-history';
@@ -13,13 +13,19 @@ import type { RigShareLink, RigShareLinkError, SharePermission } from '@shared/r
 import { deriveMintedDisplay, deriveRevokeTarget, needsRemint, type MintedLink } from './share-mint-state';
 
 /**
- * The desktop end of the live share-link feature — a "Share" button in the
+ * The desktop end of the live share-link feature — a "Link" button in the
  * artifact view header that opens a popover: choose read/comment, mint a
  * link, copy it, see and revoke this file's existing ones. Portal/dismissal/
  * positioning come from the shared `Popover` primitive
  * (`@renderer/lib/ui/popover`), right-aligned — this popover has real
  * interactive surface (a permission choice, a Create button, per-link
  * Revoke buttons) where a stray click shouldn't blur-and-close it.
+ *
+ * Polish round 2, lane F (Dylan): relabeled from "Share" to "Link", ghost/
+ * quiet styling (no border, muted text) — this mints a public FILE link,
+ * a different, secondary thing from a space's accent "Invite" pill
+ * (`rig-share/rig-share-button.tsx`), and the two must never read as the
+ * same action.
  */
 export function ShareButton({ absPath, className }: { absPath: string; className?: string }) {
   const [open, setOpen] = useState(false);
@@ -34,12 +40,12 @@ export function ShareButton({ absPath, className }: { absPath: string; className
         aria-haspopup="true"
         aria-expanded={open}
         className={cn(
-          'border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex shrink-0 items-center gap-1 border bg-transparent px-2 py-1 text-xs transition-colors',
+          'text-text-muted hover:bg-bg-2 hover:text-text-primary rounded-control flex shrink-0 items-center gap-1 px-2 py-1 text-xs transition-colors',
           className
         )}
       >
-        <Share2 className="size-3.5" strokeWidth={1.5} />
-        Share
+        <LinkIcon className="size-3.5" strokeWidth={1.5} />
+        Link
       </button>
 
       <Popover
@@ -51,7 +57,7 @@ export function ShareButton({ absPath, className }: { absPath: string; className
         gap={6}
         estimatedWidth={280}
         minWidth={280}
-        ariaLabel="Share"
+        ariaLabel="Link"
       >
         <SharePopoverContent absPath={absPath} />
       </Popover>

@@ -1330,19 +1330,6 @@ export function Topbar({
   /** Room chrome round: the doc open beside a space's Room, if any — extends the breadcrumb with `› name ×`. */
   docBreadcrumb?: { name: string; onClose: () => void } | null;
 }) {
-  // Room chrome round: the space's one-line Pulse story, muted and
-  // truncating after the switcher — same cached briefing `PinnedCard`'s own
-  // Changes row shows, just the headline without its detail. Hook runs
-  // unconditionally (Home renders this component too); the lookup below
-  // only does anything once `isSpace` and a rig is actually bound.
-  const { state: pulseBriefingState } = usePulseBriefing();
-  const spaceSummary =
-    isSpace && context.kind === 'rig' && pulseBriefingState.kind === 'data'
-      ? (() => {
-          const entry = pulseBriefingState.briefing.perRig.find((item) => item.bindingId === context.bindingId);
-          return entry ? stripRigPrefix(entry.line, entry.rigName) : null;
-        })()
-      : null;
   return (
     // The window is `titleBarStyle: 'hiddenInset'` (main/app/window.ts) — no
     // native title bar, just the traffic lights at (10, 10). This header is
@@ -1354,8 +1341,10 @@ export function Topbar({
     // Header-dedup round, take 3 (Dylan's inspection): aligned BY
     // CONSTRUCTION, comfortable height. `trafficLightPosition` is OURS to
     // set — instead of contorting the bar around the lights' default spot,
-    // `main/app/window.ts` places the 12px circles at y = 14 so they center
-    // on this 40px (`h-10`) bar's own axis, y = 20. One flex row, plain
+    // `main/app/window.ts` places the buttons' own ~16px container at
+    // y = 12 (polish round 2 — see that file's own comment for why 12, not
+    // 14) so it centers on this 40px (`h-10`) bar's own axis, y = 20. One
+    // flex row, plain
     // `items-center`, no per-child heights or pixel offsets: title, house
     // button (24px), avatar trigger (28px) and gear (28px) all center at 20
     // because the row is 40 and the lights were MOVED to 20. Both content
@@ -1415,6 +1404,7 @@ export function Topbar({
               name={context.name}
               onOpenPath={onOpenPath}
               onOpenFolder={onOpenFolder}
+              onGoHome={onGoHome}
               autoEdit={autoEditRigName}
               onAutoEditHandled={onAutoEditRigNameHandled}
               isSpace={isSpace}
@@ -1434,12 +1424,6 @@ export function Topbar({
                   <X className="size-3" strokeWidth={1.5} />
                 </button>
               </>
-            )}
-            {/* Room chrome round: the space's Pulse one-liner, right after
-                the switcher — muted, truncating, never pushing the right
-                cluster around on a narrow window. */}
-            {spaceSummary && (
-              <span className="min-w-0 truncate text-text-muted">· {spaceSummary}</span>
             )}
             {/* Feedback round 3: Share belongs WITH the rig it shares —
                 beside the name, not in the account cluster where its
