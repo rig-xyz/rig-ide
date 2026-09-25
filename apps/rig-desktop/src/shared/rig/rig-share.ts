@@ -136,3 +136,37 @@ export type RigMyInviteAccepted = {
   bindingId: string;
   becameMember: boolean;
 };
+
+/**
+ * Home's "Join with a link": `POST /v1/invites/:secret/accept` (the
+ * secret-based accept), REDUCED like `RigMyInviteAccepted` — the device
+ * token never leaves the main process. `spaceName` comes from the invite's
+ * public preview (`GET /v1/invites/:secret`); `null` when that didn't say.
+ * Already being a member is a success (`becameMember: false`).
+ */
+export type RigInviteLinkJoined = {
+  bindingId: string;
+  spaceName: string | null;
+  becameMember: boolean;
+};
+
+export type RigInviteLinkError = {
+  kind:
+    /** Not a `userig.xyz/join/<secret>` link. */
+    | 'invalidLink'
+    /** No usable sign-in on this device — the caller falls back to the browser. */
+    | 'notSignedIn'
+    | 'expired'
+    | 'revoked'
+    /** Used up (a single-use link someone already accepted). */
+    | 'used'
+    /** No such invite on the relay. */
+    | 'notFound'
+    /** Addressed to a different email than the signed-in account's. */
+    | 'wrongAccount'
+    /** The relay couldn't be reached. */
+    | 'network'
+    | 'relay';
+  message: string;
+  status?: number;
+};

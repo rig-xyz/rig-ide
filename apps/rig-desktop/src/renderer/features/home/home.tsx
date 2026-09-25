@@ -467,7 +467,7 @@ export function Home({
                 onHighlightRig={setHighlightBindingId}
               />
               {spacesEnabled && signedIn && (
-                <NewSpaceCta existingNames={spaceNames} onCreateSpace={createSpace} />
+                <NewSpaceCta existingNames={spaceNames} onCreateSpace={createSpace} onOpenPath={onOpenPath} />
               )}
               <NeedsYouSection
                 spaceRows={spaceRows}

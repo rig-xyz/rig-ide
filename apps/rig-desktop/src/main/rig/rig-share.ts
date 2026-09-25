@@ -5,6 +5,8 @@ import { createRPCController } from '@shared/lib/ipc/rpc';
 import type {
   RigInvite,
   RigInviteEmailOutcome,
+  RigInviteLinkError,
+  RigInviteLinkJoined,
   RigInviteList,
   RigInviteMinted,
   RigInviteRole,
@@ -15,6 +17,7 @@ import type {
   RigMyInviteList,
   RigShareError,
 } from '@shared/rig/rig-share';
+import { extractInviteSecret } from '@shared/rig/invite-link';
 import { rigJoinPageUrl } from '@shared/urls';
 import { resolveRelayUrl } from './account';
 import { notAMemberMessage, readSelfUserId, toMember } from './comments';
@@ -332,6 +335,41 @@ export function toMyInvite(value: unknown): RigMyInvite | null {
       avatarUrl: typeof inviter?.avatarUrl === 'string' ? inviter.avatarUrl : null,
     },
   };
+}
+
+// ── join by link ─────────────────────────────────────────────────────────────
+
+const INVITE_LINK_NOT_FOUND: RigInviteLinkError = {
+  kind: 'notFound',
+  status: 404,
+  message: "This invite link doesn't exist — check it, or ask for a new one.",
+};
+
+/** The relay's `invite_invalid` reasons (and the preview's `status`) → this plane's typed kinds. */
+function inviteLinkInvalid(reason: unknown): RigInviteLinkError {
+  switch (reason) {
+    case 'expired':
+      return { kind: 'expired', status: 400, message: 'This invite link has expired — ask for a new one.' };
+    case 'revoked':
+      return { kind: 'revoked', status: 400, message: 'This invite link was revoked — ask for a new one.' };
+    case 'exhausted':
+      return { kind: 'used', status: 400, message: 'This invite link has already been used — ask for a new one.' };
+    case 'email_mismatch':
+      return {
+        kind: 'wrongAccount',
+        status: 400,
+        message: "This invite is for a different email than the one you're signed in with.",
+      };
+    default:
+      return { kind: 'relay', status: 400, message: 'This invite link is no longer valid — ask for a new one.' };
+  }
+}
+
+/** Like `transportError`, but the logged error text is scrubbed of the secret (it rides in the request URL). */
+function inviteLinkTransportError(action: string, error: unknown, secret: string): RigInviteLinkError {
+  const scrubbed = String(error).split(secret).join('…').split(encodeURIComponent(secret)).join('…');
+  log.warn('Rig share: invite link request failed', { action, error: scrubbed });
+  return { kind: 'network', message: `Could not ${action} — the relay is unreachable.` };
 }
 
 // ── controller ───────────────────────────────────────────────────────────────
@@ -669,6 +707,97 @@ export const rigShareController = createRPCController({
       return ok({ declined: data?.declined === true });
     } catch (error) {
       return err(transportError(action, error));
+    }
+  },
+
+  /**
+   * Home's "Join with a link": accepts a pasted `userig.xyz/join/<secret>`
+   * link against the signed-in account's relay — `GET /v1/invites/:secret`
+   * (public preview: the space's name, and an early no for a revoked or
+   * expired link), then `POST /v1/invites/:secret/accept` (user auth). The
+   * device token the accept mints is dropped, same deliberate reduction as
+   * `acceptMyInvite` above; the renderer then runs `join.attach` like the
+   * emailed-invite flow. Accepting a link to a space you're already in
+   * succeeds (the relay answers 201 with `member: null`). The secret is
+   * never logged, and never part of an error message.
+   */
+  acceptInviteLink: async ({
+    link,
+  }: {
+    link: string;
+  }): Promise<Result<RigInviteLinkJoined, RigInviteLinkError>> => {
+    const secret = extractInviteSecret(link);
+    if (!secret) {
+      return err<RigInviteLinkError>({ kind: 'invalidLink', message: "That doesn't look like a rig invite link." });
+    }
+    const ctx = await resolveAccountContext();
+    if (isAccountError(ctx)) {
+      return err<RigInviteLinkError>(
+        ctx.kind === 'unauthenticated'
+          ? { kind: 'notSignedIn', message: ctx.message }
+          : { kind: 'relay', message: ctx.message }
+      );
+    }
+    const action = 'join with this link';
+    const inviteUrl = `${ctx.url.replace(/\/+$/, '')}/v1/invites/${encodeURIComponent(secret)}`;
+
+    let spaceName: string | null = null;
+    try {
+      const preview = await fetch(inviteUrl, {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (preview.status === 404) return err(INVITE_LINK_NOT_FOUND);
+      // Any other non-2xx (rate limit, a relay hiccup) — the accept below is authoritative anyway.
+      if (preview.ok) {
+        const data = asRecord(await preview.json());
+        if (data?.status === 'revoked' || data?.status === 'expired') return err(inviteLinkInvalid(data.status));
+        const name = asRecord(data?.binding)?.name;
+        spaceName = typeof name === 'string' && name ? name : null;
+      }
+    } catch (error) {
+      return err(inviteLinkTransportError(action, error, secret));
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(`${inviteUrl}/accept`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${ctx.token}`,
+          accept: 'application/json',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      return err(inviteLinkTransportError(action, error, secret));
+    }
+    if (!response.ok) {
+      const body = asRecord(await response.json().catch(() => null));
+      if (response.status === 401) {
+        return err<RigInviteLinkError>({ kind: 'notSignedIn', status: 401, message: 'Your sign-in has expired.' });
+      }
+      if (response.status === 404) return err(INVITE_LINK_NOT_FOUND);
+      if (response.status === 400 && body?.error === 'invite_invalid') return err(inviteLinkInvalid(body.reason));
+      const code = typeof body?.error === 'string' ? body.error : null;
+      return err<RigInviteLinkError>({
+        kind: 'relay',
+        status: response.status,
+        message: code ? `Could not ${action} (relay: ${code}).` : `Could not ${action} (relay ${response.status}).`,
+      });
+    }
+
+    try {
+      const data = asRecord(await response.json());
+      const bindingId = typeof data?.bindingId === 'string' ? data.bindingId : null;
+      if (!bindingId) return err<RigInviteLinkError>({ kind: 'relay', message: `Could not ${action}.` });
+      telemetryService.capture('invite_accepted', {});
+      return ok({ bindingId, spaceName, becameMember: asRecord(data?.member) !== null });
+    } catch (error) {
+      return err(inviteLinkTransportError(action, error, secret));
     }
   },
 });
