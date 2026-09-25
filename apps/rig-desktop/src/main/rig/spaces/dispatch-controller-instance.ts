@@ -19,6 +19,7 @@ import {
 import { SpacesDispatchController, type SpacesDispatchControllerDeps } from './dispatch-controller';
 import { createHttpSpacesRelayApi } from './relay-api';
 import { RequestClaimPoller } from './request-claim';
+import { rigToolsServer } from './rig-tools-instance';
 import { createFileSpaceSessionStore } from './session-store';
 
 /**
@@ -66,6 +67,7 @@ function realDeps(): SpacesDispatchControllerDeps {
             global: ids.filter((id) => global.has(id)),
           };
         },
+        rigTools: (scope) => rigToolsServer.serverFor(scope),
         defaultConfig: (agent) => {
           const settings = rigSettingsStore.get();
           const model = settings.lastModelByHarness[agent];

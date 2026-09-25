@@ -9,8 +9,9 @@ import { err, ok, type Result } from '@emdash/shared';
 import { ReplicaLog, ReplicaState } from '@emdash/wire';
 import type { AcpRuntimeClient } from '@main/core/acp/controller';
 import { log } from '@main/lib/logger';
-import { connectorById, RUN_CONNECTORS_EVENT, type ConnectorGap } from '@shared/spaces/connectors';
+import { connectorById, RIG_TOOLS_SERVER, RUN_CONNECTORS_EVENT, type ConnectorGap } from '@shared/spaces/connectors';
 import type { SessionConnectors } from '../connectors/connections';
+import type { RigToolScope } from './rig-tools';
 import type { AgentRequest, SessionAgent, SessionStatus, SpacesRelayApi } from './relay-api';
 import { markRequestSettled, type ClaimDispatchResult } from './request-claim';
 import { SessionEventPublisher } from './session-publisher';
@@ -191,6 +192,8 @@ type PersistentSession = {
   heldPermissions: Map<string, { request: AcpPermissionRequest; turn: QueuedTurn }>;
   /** Which connector servers (and tokens) the session was started with; a change means reloading it. */
   connectorsFingerprint: string;
+  /** Whether the session has rig's own tools (the `rig` server), so its context can point at them. */
+  rigTools: boolean;
   /** Undoes the raw-event and permission subscriptions, for a reload. */
   unsubscribes: Array<() => void>;
 };
@@ -257,7 +260,8 @@ export function connectorsHiddenContext(
  */
 export function spacesHiddenContext(
   request: Pick<AgentRequest, 'bindingId'>,
-  roomLines: readonly string[] = []
+  roomLines: readonly string[] = [],
+  rigTools = false
 ): string {
   const lines = [
     '<rig_space_context>',
@@ -274,6 +278,11 @@ export function spacesHiddenContext(
     // at every launch (`installBundledRigSkill`).
     'For anything else rig does here (who has access, the chat, file comments, history, sync), read the rig skill at `~/.agents/skills/rig/SKILL.md` before running `rig` commands; `rig --help` lists them all.',
   ];
+  if (rigTools) {
+    lines.push(
+      "You also have rig's own tools for this space (rig_invite, rig_people, rig_recent_changes, rig_file_comments, rig_comment): use them instead of the `rig` CLI (including `rig share`) to invite people, see who's here, see what changed and read or add file comments; fall back to the CLI only if a tool fails."
+    );
+  }
   if (roomLines.length > 0) {
     lines.push(
       '',
@@ -461,6 +470,8 @@ export function createSpacesDispatcher(deps: {
   defaultConfig?: (agent: SessionAgent) => AgentConfigChange;
   /** The space's connectors for the owner's session with this agent: servers with fresh tokens, the ones it can't reach, and the ones it has from its own setup. */
   connectors?: (bindingId: string, agent: SessionAgent) => Promise<SessionConnectors>;
+  /** Rig's own tools for the owner's session in this space: the local `rig` MCP server, with that session's token (see `rig-tools-server.ts`). */
+  rigTools?: (scope: RigToolScope) => Promise<AcpMcpServerWire | null>;
 }): {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
@@ -666,26 +677,42 @@ export function createSpacesDispatcher(deps: {
     }
   }
 
+  /** The session's MCP servers: the space's connectors, plus rig's own tools when there are any. */
+  async function withRigTools(scope: RigToolScope, servers: AcpMcpServerWire[]): Promise<AcpMcpServerWire[]> {
+    if (!deps.rigTools) return servers;
+    try {
+      const rig = await deps.rigTools(scope);
+      return rig ? [...servers, rig] : servers;
+    } catch (error) {
+      log.warn('Rig spaces dispatch: could not start the rig tools', { bindingId: scope.bindingId, error: String(error) });
+      return servers;
+    }
+  }
+
   /**
    * The owner's persistent session for this space and agent, started (or
    * resumed) on first use. `connectors`, when given, are the servers the
    * session should have: if they changed since it started (a new connection,
    * a removed connector, a refreshed token), an idle session is closed and
    * resumed with them. The agent keeps its context; a busy one keeps its
-   * current servers until the next turn.
+   * current servers until the next turn. Rig's own tools ride along with the
+   * connectors, in the same fingerprint.
    */
   async function ensureSession(
     key: PersistentKey,
     bindingId: string,
+    ownerUserId: string,
     providerId: SessionAgent,
     cwd: string,
     connectors?: SessionConnectors
   ): Promise<Result<PersistentSession, string>> {
     const existing = sessions.get(key);
+    const scope: RigToolScope = { bindingId, ownerUserId, agent: providerId, cwd };
+    const wanted = connectors ? await withRigTools(scope, connectors.servers) : null;
     /** The settings a reloaded session had, re-applied after the reload (some agents reset them on load). */
     let carried: AgentConfigChange | undefined;
     if (existing) {
-      const unchanged = !connectors || connectorsFingerprint(connectors.servers) === existing.connectorsFingerprint;
+      const unchanged = !wanted || connectorsFingerprint(wanted) === existing.connectorsFingerprint;
       const busy = existing.current !== null || existing.pending.length > 0;
       if (unchanged || busy || !deps.acp.stopSession) return ok(existing);
       log.info('Rig spaces dispatch: connectors changed, reloading the space session', {
@@ -697,7 +724,7 @@ export function createSpacesDispatcher(deps: {
       for (const unsubscribe of existing.unsubscribes) unsubscribe();
       await deps.acp.stopSession(existing.conversationId);
     }
-    const { servers } = connectors ?? (await loadConnectors(bindingId, providerId));
+    const servers = wanted ?? (await withRigTools(scope, (await loadConnectors(bindingId, providerId)).servers));
 
     // Memory across restarts: reuse the stored conversation and resume the
     // agent's own session (same cwd) rather than starting from nothing.
@@ -712,6 +739,7 @@ export function createSpacesDispatcher(deps: {
       current: null,
       heldPermissions: new Map(),
       connectorsFingerprint: connectorsFingerprint(servers),
+      rigTools: servers.some((server) => server.name === RIG_TOOLS_SERVER),
       unsubscribes: [],
     };
     // Raw events: subscribe BEFORE the session exists so nothing from the
@@ -828,7 +856,7 @@ export function createSpacesDispatcher(deps: {
       ms: Date.now() - t0,
     });
     const connectors = await loadConnectors(spec.bindingId, spec.agent);
-    const sessionResult = await ensureSession(key, spec.bindingId, spec.agent, cwd, connectors);
+    const sessionResult = await ensureSession(key, spec.bindingId, spec.ownerUserId, spec.agent, cwd, connectors);
     log.info('Rig spaces dispatch: agent session ready', {
       runId: created.data.id,
       ok: sessionResult.success,
@@ -865,7 +893,8 @@ export function createSpacesDispatcher(deps: {
       await roomContextLines(deps.api, contextRequest, created.data.id).catch((error: unknown) => {
         log.warn('Rig spaces dispatch: could not load room context', { error: String(error) });
         return [];
-      })
+      }),
+      session.rigTools
     );
     const connectorsContext = connectorsHiddenContext(
       connectors.servers.map((server) => server.name),
@@ -974,7 +1003,7 @@ export function createSpacesDispatcher(deps: {
     if (!deps.acp.readConfig) return err('this agent runtime has no settings to show');
     const cwd = await deps.resolveWorkspace(bindingId);
     if (!cwd) return err("this space's folder isn't open on this device");
-    const session = await ensureSession(keyFor(bindingId, ownerUserId, agent), bindingId, agent, cwd);
+    const session = await ensureSession(keyFor(bindingId, ownerUserId, agent), bindingId, ownerUserId, agent, cwd);
     if (!session.success) return err(session.error);
     const config = await deps.acp.readConfig(session.data.conversationId);
     return config ? ok(config) : err("the agent hasn't reported its settings yet");
@@ -989,7 +1018,7 @@ export function createSpacesDispatcher(deps: {
     if (!deps.acp.setConfig) return err("this agent runtime can't change settings");
     const cwd = await deps.resolveWorkspace(bindingId);
     if (!cwd) return err("this space's folder isn't open on this device");
-    const session = await ensureSession(keyFor(bindingId, ownerUserId, agent), bindingId, agent, cwd);
+    const session = await ensureSession(keyFor(bindingId, ownerUserId, agent), bindingId, ownerUserId, agent, cwd);
     if (!session.success) return err(session.error);
     const set = await deps.acp.setConfig(session.data.conversationId, change);
     if (!set.success) return err(set.error);

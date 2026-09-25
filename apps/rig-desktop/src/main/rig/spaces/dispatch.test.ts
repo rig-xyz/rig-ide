@@ -1322,3 +1322,88 @@ describe('connectors', () => {
     expect(text).not.toContain('Connected tools');
   });
 });
+
+describe('rig tools', () => {
+  const LINEAR = { type: 'http' as const, name: 'linear', url: 'https://mcp.linear.app/mcp', headers: [{ name: 'Authorization', value: 'Bearer t1' }] };
+  const rigServer = (token: string) => ({
+    type: 'http' as const,
+    name: 'rig',
+    url: 'http://127.0.0.1:4000/mcp',
+    headers: [{ name: 'Authorization', value: `Bearer ${token}` }],
+  });
+
+  it("hands every room session rig's own tools next to the space's connectors, scoped to the owner and space", async () => {
+    const { api, postedEvents } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const rigTools = vi.fn(async () => rigServer('rig-token'));
+    const { dispatch } = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      connectors: async () => ({ servers: [LINEAR], gaps: [] }),
+      rigTools,
+    });
+
+    await dispatch(makeRequest({ targetAgent: 'codex' }));
+
+    expect(rigTools).toHaveBeenCalledWith({ bindingId: 'binding-1', ownerUserId: 'owner-1', agent: 'codex', cwd: '/rigs/one' });
+    expect(fake.started[0]).toMatchObject({ mcpServers: [LINEAR, rigServer('rig-token')] });
+    const hidden = fake.queued[0]!.hiddenContext!;
+    expect(hidden).toContain("You also have rig's own tools for this space (rig_invite, rig_people");
+    // Rig's tools aren't a connector: the connectors note only names Linear.
+    expect(hidden).toContain('Connected tools you can use, through your owner\'s own login: Linear.');
+    expect(hidden).not.toContain('rig-token');
+    expect(JSON.stringify(postedEvents)).not.toContain('rig-token');
+  });
+
+  it('says nothing about rig tools when the session has none', async () => {
+    const fake = makeFakeAcp();
+    const { dispatch } = createSpacesDispatcher({
+      api: makeFakeApi().api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      rigTools: async () => {
+        throw new Error('port in use');
+      },
+    });
+    expect(await dispatch(makeRequest())).toEqual({ runId: 'run-1' });
+    expect(fake.started[0]).toMatchObject({ mcpServers: [] });
+    expect(fake.queued[0]!.hiddenContext).not.toContain("rig's own tools");
+  });
+
+  it('keeps the session while its rig token is the same, and reloads an idle one when it changes', async () => {
+    const fake = makeFakeAcp();
+    let token = 'first';
+    const { dispatch } = createSpacesDispatcher({
+      api: makeFakeApi().api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      connectors: async () => ({ servers: [], gaps: [] }),
+      rigTools: async () => rigServer(token),
+    });
+
+    await dispatch(makeRequest());
+    const conversationId = fake.started[0]!.conversationId;
+    fake.emitTurnStart(conversationId, 'turn-1');
+    fake.emitTurnEnd(conversationId, 'turn-1', 'end_turn');
+
+    await dispatch(makeRequest({ id: 'req2' }));
+    expect(fake.stopped).toEqual([]);
+    fake.emitTurnStart(conversationId, 'turn-2');
+    fake.emitTurnEnd(conversationId, 'turn-2', 'end_turn');
+
+    token = 'second';
+    await dispatch(makeRequest({ id: 'req3' }));
+    expect(fake.stopped).toEqual([conversationId]);
+    expect(fake.started[1]).toMatchObject({ mcpServers: [rigServer('second')] });
+  });
+
+  it('points the agent at the tools only when it has them', () => {
+    expect(spacesHiddenContext(makeRequest())).not.toContain('rig_invite');
+    const context = spacesHiddenContext(makeRequest(), [], true);
+    expect(context).toContain('use them instead of the `rig` CLI (including `rig share`)');
+    // One added line: the skill pointer and the CLI invite line stay as they were.
+    expect(context.split('\n')).toHaveLength(spacesHiddenContext(makeRequest()).split('\n').length + 1);
+    expect(context).toContain('run `rig share <email>`');
+  });
+});
