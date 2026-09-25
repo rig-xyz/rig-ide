@@ -567,3 +567,105 @@ describe('SessionEventPublisher: hidden context never leaves in an echo', () => 
     expect(sent()[0]?.payload).toEqual(tool);
   });
 });
+
+describe('SessionEventPublisher: Room sees', () => {
+  const root = '/Users/alice/Rig/launch';
+
+  function publisher(level: 'answer' | 'steps' | 'everything', maxBatchSize = 32) {
+    const { api, calls } = fakeApi();
+    const clock = fakeClock();
+    const local: SessionEventInput[] = [];
+    const pub = new SessionEventPublisher({
+      api,
+      bindingId: 'b1',
+      runId: 'run1',
+      prompt: 'What did the board say?',
+      roomSees: { level, spaceRoot: root },
+      onLocalEvent: (event) => local.push(event),
+      maxBatchSize,
+      now: clock.now,
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+    });
+    return { pub, calls, sent: () => calls.flat(), local };
+  }
+
+  function granolaTurn(pub: SessionEventPublisher) {
+    pub.record('agent_thought_chunk', { content: { type: 'text', text: 'THOUGHT about Bob' } });
+    pub.record('tool_call', {
+      sessionUpdate: 'tool_call',
+      toolCallId: 'g1',
+      kind: 'other',
+      title: 'mcp__granola__list_meetings',
+      rawInput: { query: 'board' },
+      _meta: { claudeCode: { toolName: 'mcp__granola__list_meetings' } },
+    });
+    pub.record('tool_call_update', {
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'g1',
+      status: 'completed',
+      rawOutput: 'GRANOLA_OUT: Bob asked for 180k',
+    });
+    pub.record('agent_message_chunk', { messageId: 'm1', content: { type: 'text', text: 'The board approved it.' } });
+    pub.record('turn_ended', { status: 'done' });
+  }
+
+  it('uploads only what the level lets out, and keeps every event for the owner, unfiltered and in order', async () => {
+    const { pub, sent, local } = publisher('steps');
+    granolaTurn(pub);
+    await pub.finish('done');
+
+    const uploaded = JSON.stringify(sent());
+    expect(uploaded).not.toContain('GRANOLA_OUT');
+    expect(uploaded).not.toContain('THOUGHT');
+    expect(uploaded).not.toContain('"board"');
+    expect(sent().map((e) => e.kind)).toEqual(['tool_call', 'tool_call_update', 'agent_message_chunk', 'turn_ended']);
+    expect(sent()[1]?.payload).toMatchObject({ title: 'mcp__granola__list_meetings', private: true });
+    expect(sent().map((e) => e.seq)).toEqual([1, 2, 3, 4]);
+
+    expect(local.map((e) => e.kind)).toEqual([
+      'agent_thought_chunk',
+      'tool_call',
+      'tool_call_update',
+      'agent_message_chunk',
+      'turn_ended',
+    ]);
+    expect(local.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5]);
+    expect(JSON.stringify(local)).toContain('GRANOLA_OUT');
+  });
+
+  it('at Answer uploads the step count, the end and the answer', async () => {
+    const { pub, sent } = publisher('answer');
+    granolaTurn(pub);
+    await pub.finish('done');
+    expect(sent().map((e) => [e.kind, e.payload])).toEqual([
+      ['private_progress', { steps: 1 }],
+      ['agent_message_chunk', { sessionUpdate: 'agent_message_chunk', messageId: 'm1', content: { type: 'text', text: 'The board approved it.' } }],
+      ['private_progress', { steps: 1, final: true }],
+      ['turn_ended', { status: 'done' }],
+    ]);
+  });
+
+  it('at Everything uploads as before', async () => {
+    const { pub, sent, local } = publisher('everything');
+    granolaTurn(pub);
+    await pub.finish('done');
+    expect(JSON.stringify(sent())).toContain('GRANOLA_OUT');
+    expect(sent().map((e) => e.kind)).toEqual(local.map((e) => e.kind));
+  });
+
+  it("sends each piece of a long held-back answer in a batch of its own, so the relay can't merge them past its cap", async () => {
+    const { pub, calls } = publisher('steps');
+    pub.record('tool_call', { toolCallId: 't1', kind: 'execute', title: 'ls' });
+    pub.record('agent_message_chunk', { messageId: 'm', content: { type: 'text', text: 'y'.repeat(8000) } });
+    pub.record('turn_ended', { status: 'done' });
+    await pub.finish('done');
+    expect(calls.map((batch) => batch.map((e) => e.kind))).toEqual([
+      ['tool_call'],
+      ['agent_message_chunk'],
+      ['agent_message_chunk'],
+      ['agent_message_chunk'],
+      ['turn_ended'],
+    ]);
+  });
+});

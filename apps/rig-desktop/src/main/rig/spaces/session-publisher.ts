@@ -1,5 +1,7 @@
 import { log } from '@main/lib/logger';
+import type { RoomSees } from '@shared/spaces/room-sees';
 import type { RelayApiError, SessionEventInput, SessionStatus, SpacesRelayApi } from './relay-api';
+import { RoomSeesFilter, type FilteredEvent } from './trace-privacy';
 
 /**
  * Whether a failed `postSessionEvents` call is worth retrying at all.
@@ -117,6 +119,17 @@ export type SessionPublisherOptions = {
   runId: string;
   /** The member's visible prompt for this run: what a published session title becomes (see `redactPromptEcho`). */
   prompt?: string;
+  /**
+   * How much of the run the room sees (`trace-privacy.ts`), and the space's
+   * folder its labels are relative to. Omitted: everything, as before.
+   */
+  roomSees?: { level: RoomSees; spaceRoot: string };
+  /**
+   * The owner's own copy of every event, before the Room-sees filter (after
+   * the prompt-echo redaction), numbered on its own: the owner always sees
+   * all of their agent's work, and answers its approvals from it.
+   */
+  onLocalEvent?: (event: SessionEventInput) => void;
   /** Flush cadence — defaults match the session-log spike's own 250ms/32. */
   flushIntervalMs?: number;
   maxBatchSize?: number;
@@ -152,6 +165,11 @@ export class SessionEventPublisher {
   private readonly prompt: string;
   /** The hidden context the dispatcher sent with this run's prompt, as a whitespace-tolerant pattern; null until `setHiddenContext`. */
   private hiddenContext: RegExp | null = null;
+  private readonly filter: RoomSeesFilter | null;
+  private readonly onLocalEvent: ((event: SessionEventInput) => void) | undefined;
+  private nextLocalSeq = 1;
+  /** Queued events that go in a batch of their own (see `FilteredEvent.ownBatch`). */
+  private readonly ownBatchSeqs = new Set<number>();
 
   private queue: SessionEventInput[] = [];
   private nextSeq = 1;
@@ -176,6 +194,11 @@ export class SessionEventPublisher {
     this.cancelTimeout = options.clearTimeout ?? ((handle) => clearTimeout(handle as NodeJS.Timeout));
     this.random = options.random ?? Math.random;
     this.prompt = options.prompt ?? '';
+    this.filter =
+      options.roomSees && options.roomSees.level !== 'everything'
+        ? new RoomSeesFilter(options.roomSees.level, options.roomSees.spaceRoot)
+        : null;
+    this.onLocalEvent = options.onLocalEvent;
   }
 
   /**
@@ -193,8 +216,10 @@ export class SessionEventPublisher {
   }
 
   /**
-   * Queues one event with the next sequence number, minus any echo of the
-   * prompt's hidden context (`redactPromptEcho`). Synchronous, never
+   * Queues one event, minus any echo of the prompt's hidden context
+   * (`redactPromptEcho`), as the Room-sees level lets it out (none, one, or
+   * the held-back answer at turn end), each with the next sequence number.
+   * The owner's local copy gets it unfiltered first. Synchronous, never
    * throws. Flushes immediately once the queue reaches `maxBatchSize`;
    * otherwise arms (or leaves armed) the flush timer.
    */
@@ -202,6 +227,19 @@ export class SessionEventPublisher {
     if (this.disposed) return;
     const redacted = redactPromptEcho(kind, payload, { visible: this.prompt, hidden: this.hiddenContext });
     if (!redacted) return;
+    if (this.onLocalEvent) {
+      try {
+        this.onLocalEvent({ seq: this.nextLocalSeq, kind, payload: redacted });
+      } catch (error) {
+        log.warn('Rig spaces publisher: the local copy of an event failed', { runId: this.runId, error: String(error) });
+      }
+      this.nextLocalSeq += 1;
+    }
+    const out: FilteredEvent[] = this.filter ? this.filter.filter(kind, redacted) : [{ kind, payload: redacted }];
+    for (const event of out) this.enqueue(event);
+  }
+
+  private enqueue(event: FilteredEvent): void {
     if (this.queue.length >= this.maxQueueSize) {
       const dropped = this.queue.shift();
       log.warn('Rig spaces publisher: retry queue full, dropping the oldest event', {
@@ -209,8 +247,10 @@ export class SessionEventPublisher {
         droppedKind: dropped?.kind,
         droppedSeq: dropped?.seq,
       });
+      if (dropped) this.ownBatchSeqs.delete(dropped.seq);
     }
-    this.queue.push({ seq: this.nextSeq, kind, payload: redacted });
+    this.queue.push({ seq: this.nextSeq, kind: event.kind, payload: event.payload });
+    if (event.ownBatch) this.ownBatchSeqs.add(this.nextSeq);
     this.nextSeq += 1;
 
     if (this.queue.length >= this.maxBatchSize) {
@@ -285,12 +325,21 @@ export class SessionEventPublisher {
   /** Drops the batch at the head of the queue (sent or given up on) and, if more is queued, arms an immediate flush for it. */
   private dropHeadBatch(batchLength: number): void {
     this.retryState = null;
+    for (const event of this.queue.slice(0, batchLength)) this.ownBatchSeqs.delete(event.seq);
     this.queue = this.queue.slice(batchLength);
     if (this.queue.length > 0 && !this.disposed) this.armTimer(0);
   }
 
-  private async sendBatch(): Promise<void> {
+  /** The head of the queue, up to `maxBatchSize`, cut so an own-batch event travels alone. */
+  private headBatch(): SessionEventInput[] {
     const batch = this.queue.slice(0, this.maxBatchSize);
+    if (this.ownBatchSeqs.has(batch[0]!.seq)) return batch.slice(0, 1);
+    const cut = batch.findIndex((event) => this.ownBatchSeqs.has(event.seq));
+    return cut > 0 ? batch.slice(0, cut) : batch;
+  }
+
+  private async sendBatch(): Promise<void> {
+    const batch = this.headBatch();
     const result = await this.api.postSessionEvents(this.bindingId, this.runId, batch);
     if (result.success) {
       this.dropHeadBatch(batch.length);
