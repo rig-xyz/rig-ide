@@ -1,5 +1,4 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { motion, useReducedMotion } from 'framer-motion';
 import { ChevronRight, Home as HomeIcon, MessageSquare, Settings as SettingsIcon, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArtefactPane } from '@renderer/features/artifact/artefact-pane';
@@ -33,6 +32,7 @@ import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { RigPeopleButton, RigShareButton } from '@renderer/features/rig-share/rig-share-button';
 import { InvitesBell } from '@renderer/features/shell/invites-bell';
 import { LayoutSwitcher, type RigLayout } from '@renderer/features/shell/layout-switcher';
+import { paneRevealClassName } from '@renderer/features/shell/pane-reveal';
 import {
   deriveNativeCloseTarget,
   type FocusedRigPane,
@@ -284,17 +284,10 @@ export function App() {
   // resolves bound (see the effect below) — same "carry the extra target
   // across the async round trip" pattern `pendingActiveSessionId` already
   // uses. `justCreatedRig` additionally arms the topbar's inline
-  // auto-rename and the artefact pane's one-time landing fade; both are
-  // consumed (and cleared) by what they drive, never by a timeout.
+  // auto-rename; both are consumed (and cleared) by what they drive, never
+  // by a timeout.
   const [pendingOpenAbsPath, setPendingOpenAbsPath] = useState<string | null>(null);
   const [justCreatedRig, setJustCreatedRig] = useState(false);
-  // Motion round (docs/onboarding-flow-spec.md §5): one reveal, the FIRST
-  // time the landing doc's pane mounts — set alongside opening it (below),
-  // cleared once the fade has actually played so a later file/tab switch
-  // never replays it. `prefersReducedMotion` (framer-motion's own
-  // `matchMedia` hook) skips the transform/fade entirely, per the spec.
-  const [showLandingFade, setShowLandingFade] = useState(false);
-  const prefersReducedMotion = useReducedMotion();
   // Session-first viewer: the artefact pane's tabs. Empty means the pane
   // doesn't exist — the session owns the window and the pinned card floats
   // over it (state A). See `features/artifact/artefact-tabs.ts`.
@@ -308,12 +301,47 @@ export function App() {
   // against each other, so there it shows the file with the chat collapsed.
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   useEffect(() => {
-    const onResize = () => setWindowWidth(window.innerWidth);
+    // Split-resize perf round: the window `resize` event can fire faster
+    // than paint during a drag — committing at most once per animation
+    // frame keeps a window resize from re-rendering this whole tree (and
+    // everything `layout`/`windowWidth` feed into below) more often than
+    // the screen can actually show it.
+    let frame = 0;
+    const onResize = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        setWindowWidth(window.innerWidth);
+      });
+    };
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (frame) cancelAnimationFrame(frame);
+    };
   }, []);
   const layout: RigLayout = windowWidth < NARROW_WINDOW_PX && rigLayout === 'split' ? 'files' : rigLayout;
   const [focusedRigPane, setFocusedRigPane] = useState<FocusedRigPane>('chat');
+  // Doc-focus round: opening a doc beside the Room/session (any layout flip
+  // away from 'chat') fades + slides the artefact pane in instead of it
+  // popping into place — see the pane's own render below for the
+  // transition itself. `paneEntered` starts false and flips true one
+  // animation frame after the pane mounts (the effect below), so the CSS
+  // transition has a real "from" frame to animate out of instead of both
+  // frames landing in the same commit. Closing stays an instant unmount
+  // (unchanged): delaying it would leave the exiting pane and the chat
+  // panel both `flex-1` for the transition's duration — a visible
+  // split-then-snap glitch worse than the jump it would replace.
+  const paneOpen = layout !== 'chat';
+  const [paneEntered, setPaneEntered] = useState(false);
+  useEffect(() => {
+    if (!paneOpen) {
+      setPaneEntered(false);
+      return;
+    }
+    const frame = requestAnimationFrame(() => setPaneEntered(true));
+    return () => cancelAnimationFrame(frame);
+  }, [paneOpen]);
   // Spaces (lane 2): the Room UI, built against a recorded feed — a dev
   // entry point only, gated by `spacesEnabled` (Settings → Experimental).
   // Per-window, deliberately not persisted; closes back to whatever layout
@@ -701,7 +729,6 @@ export function App() {
     setPendingActiveSessionId(null);
     setPendingOpenAbsPath(null);
     setJustCreatedRig(false);
-    setShowLandingFade(false);
   }, []);
 
   // Round (beyond-markdown): every file opens now — `ArtifactView` itself
@@ -732,12 +759,13 @@ export function App() {
   // its landing doc the same way any other file-open does (Preview is
   // already the default for markdown, `preview-mode-memory.ts`) — this is
   // the async round trip `openCreatedRig` above armed `pendingOpenAbsPath`
-  // for.
+  // for. It gets the same doc-focus open reveal as any other file (see the
+  // artefact pane's own entrance animation below) — no separate one-shot
+  // fade needed for it any more.
   useEffect(() => {
     if (!boundRoot || !pendingOpenAbsPath) return;
     openFile(pendingOpenAbsPath);
     setPendingOpenAbsPath(null);
-    setShowLandingFade(true);
   }, [boundRoot, pendingOpenAbsPath, openFile]);
 
   const openFocus = useCallback(() => {
@@ -847,26 +875,43 @@ export function App() {
     if (artefact.tabs.length === 0 && rigLayout !== 'chat') setRigLayout('chat');
   }, [artefact.tabs.length, rigLayout]);
 
+  // Split-resize perf round: `pointermove` can fire far more often than the
+  // screen repaints (especially with a high-poll-rate mouse/trackpad), and
+  // every one of these used to call `setChatWidth` directly — a React
+  // commit (this width flows into `RoomView`'s own ResizeObserver too, see
+  // its header comment) per raw input event instead of per painted frame.
+  // Committing at most once per `requestAnimationFrame` instead caps it to
+  // the display's own rate; `latestWidth` (a plain closure var, not the
+  // ref) always holds the true up-to-the-pixel value so a fast flick
+  // followed immediately by pointerup still persists the real end width,
+  // not whatever the last COMMITTED frame happened to be.
   const onChatResizeStart = useCallback((event: React.PointerEvent) => {
     event.preventDefault();
     const startX = event.clientX;
     const startWidth = chatWidthRef.current;
     const sign = CHAT_PANEL_ORDER === 1 ? 1 : -1;
+    let latestWidth = startWidth;
+    let frame = 0;
 
+    const commit = () => {
+      frame = 0;
+      setChatWidth(latestWidth);
+    };
     const onMove = (moveEvent: PointerEvent) => {
-      setChatWidth(
-        clamp(startWidth + sign * (moveEvent.clientX - startX), CHAT_WIDTH_MIN, CHAT_WIDTH_MAX)
-      );
+      latestWidth = clamp(startWidth + sign * (moveEvent.clientX - startX), CHAT_WIDTH_MIN, CHAT_WIDTH_MAX);
+      if (!frame) frame = requestAnimationFrame(commit);
     };
     const onUp = () => {
+      if (frame) cancelAnimationFrame(frame);
+      setChatWidth(latestWidth);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       try {
-        localStorage.setItem(CHAT_WIDTH_STORAGE_KEY, String(chatWidthRef.current));
+        localStorage.setItem(CHAT_WIDTH_STORAGE_KEY, String(latestWidth));
       } catch {
         // localStorage unavailable — width just won't persist.
       }
-      void rpc.rig.settings.set({ chatPanelWidth: chatWidthRef.current });
+      void rpc.rig.settings.set({ chatPanelWidth: latestWidth });
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -1095,7 +1140,11 @@ export function App() {
             className={cn(
               'relative flex shrink-0 flex-col overflow-hidden bg-bg-1',
               layout === 'chat' && 'min-w-0 flex-1',
-              layout === 'files' && 'border-border-hairline w-10 border-r'
+              layout === 'files' &&
+                // Doc-focus round: a space's own rail (`SpaceRail`) carries
+                // 32px tiles plus breathing room, a touch wider than plain
+                // `ChatPanel`'s own icon-only collapsed rail below it.
+                (boundIsSpace ? 'border-border-hairline w-12 border-r' : 'border-border-hairline w-10 border-r')
             )}
           >
             {boundIsSpace ? (
@@ -1169,34 +1218,21 @@ export function App() {
                   onOpenFocus={openFocus}
                 />
               );
-              // Motion round: the landing doc's pane fades up on its first
-              // mount after creation (docs/onboarding-flow-spec.md §5) — a
-              // plain opacity reveal, no transform, skipped entirely under
-              // reduced motion. `showLandingFade` is one-shot: cleared the
-              // moment the fade finishes, so switching tabs later never
-              // replays it.
-              if (showLandingFade && !prefersReducedMotion) {
-                return (
-                  <motion.div
-                    style={{ order: ARTIFACT_PANEL_ORDER }}
-                    onPointerDownCapture={() => setFocusedRigPane('artifact')}
-                    onFocusCapture={() => setFocusedRigPane('artifact')}
-                    className="flex min-h-0 min-w-0 flex-1 flex-col"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ duration: 0.25, ease: 'easeOut' }}
-                    onAnimationComplete={() => setShowLandingFade(false)}
-                  >
-                    {pane}
-                  </motion.div>
-                );
-              }
               return (
                 <div
                   style={{ order: ARTIFACT_PANEL_ORDER }}
                   onPointerDownCapture={() => setFocusedRigPane('artifact')}
                   onFocusCapture={() => setFocusedRigPane('artifact')}
-                  className="flex min-h-0 min-w-0 flex-1 flex-col"
+                  data-testid="artefact-pane"
+                  // Doc-focus round: a doc opening beside the Room/session
+                  // gets a short opacity+scale reveal instead of a jump
+                  // (`paneEntered`, set above). Transform + opacity only —
+                  // never `width` — so this can't fight the split handle's
+                  // own resize-drag perf fix (`onChatResizeStart` above):
+                  // that one still only ever commits a plain flex width,
+                  // never a measured/animated one. `motion-reduce:` drops
+                  // the transition to instant, per OS preference.
+                  className={cn('flex min-h-0 min-w-0 flex-1 flex-col', paneRevealClassName(paneEntered))}
                 >
                   {pane}
                 </div>

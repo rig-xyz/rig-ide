@@ -1,5 +1,5 @@
 import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
 import type { ConnectorId, GlobalServer } from '@shared/spaces/connectors';
@@ -12,6 +12,7 @@ import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
 import { Composer, type ComposerSendContext } from './composer';
 import { RoomTranscript } from './room-transcript';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
+import { SpaceRail } from './space-rail';
 import { AgentSettingsContext, type AgentSettingsApi } from './agent-settings';
 import { ConnectorGallery } from './connector-gallery';
 import { ConnectorsSection } from './connectors-panel';
@@ -216,13 +217,33 @@ export function RoomView({
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [bodyWidth, setBodyWidth] = useState(0);
+  // Split-resize perf round: this used to run with no dependency array —
+  // tearing the `ResizeObserver` down and standing a new one up again on
+  // EVERY render of this component, not just when the body actually
+  // resized. `[]` mounts it once, like any other subscription. The
+  // callback itself is now rAF-throttled too: a live window/split drag can
+  // report a new `contentRect` faster than the screen paints, and each one
+  // used to commit straight to state — re-rendering the whole Room (and,
+  // through it, `RoomTranscript`'s own per-message projection below) once
+  // per raw resize notification instead of once per painted frame.
   useEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
-    const observer = new ResizeObserver(([entry]) => setBodyWidth(entry.contentRect.width));
+    let frame = 0;
+    const observer = new ResizeObserver(([entry]) => {
+      if (frame) cancelAnimationFrame(frame);
+      const width = entry!.contentRect.width;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        setBodyWidth(width);
+      });
+    });
     observer.observe(el);
-    return () => observer.disconnect();
-  });
+    return () => {
+      observer.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
   // Room for a ~44rem transcript beside the 304px panel.
   const narrow = bodyWidth > 0 && bodyWidth < ROOM_WIDE_PX;
   const hasPanel = !!renderPanel;
@@ -395,33 +416,52 @@ export function RoomView({
     });
   };
 
+  // Split-resize perf round: `RoomTranscript` memoizes its own node list
+  // against its props (its own `mapEntries`/render loop), which only pays
+  // off when those props are referentially stable. These three used to be
+  // freshly-created closures on every render — defeating that memo on
+  // every window/split resize (each one re-renders this component via
+  // `bodyWidth` above) even though nothing the transcript actually shows
+  // had changed. `useCallback` keeps the same function identity across a
+  // resize; the `source instanceof RelayRoomSource` gate stays at the
+  // exposed-value level below so a fixture-mode Room still gets `undefined`
+  // (same as before — `RoomTranscript` hides the button/pill without one).
+  //
   // Only meaningful against the real relay — there's nothing running to
   // stop behind the scripted demo, so `RoomTranscript` never even offers
   // the button in that case (see its own `onStopSession` prop).
-  const handleStopSession =
-    source instanceof RelayRoomSource
-      ? async (runId: string): Promise<boolean> => {
-          const result = await rpc.rig.spacesDispatch.stopRun({ runId, bindingId }).catch(() => null);
-          return result?.stopped === true;
-        }
-      : undefined;
-  const handleResolvePermission =
-    source instanceof RelayRoomSource
-      ? (runId: string, requestId: string, optionId: string) => {
-          void rpc.rig.spacesDispatch.resolvePermission({ runId, requestId, optionId });
-        }
-      : undefined;
+  const stopSession = useCallback(async (runId: string): Promise<boolean> => {
+    const result = await rpc.rig.spacesDispatch.stopRun({ runId, bindingId }).catch(() => null);
+    return result?.stopped === true;
+  }, [bindingId]);
+  const handleStopSession = source instanceof RelayRoomSource ? stopSession : undefined;
+
+  const resolvePermission = useCallback((runId: string, requestId: string, optionId: string) => {
+    void rpc.rig.spacesDispatch.resolvePermission({ runId, requestId, optionId });
+  }, []);
+  const handleResolvePermission = source instanceof RelayRoomSource ? resolvePermission : undefined;
+
   // Shared by the transcript's connector pills (a `connectors_added` card,
   // an agent turn's footer gap) — the fuller add/consent/catalog flow lives
   // in the space panel's `ConnectorsSection` instead.
-  const handleConnectorConnect =
-    source instanceof RelayRoomSource
-      ? async (id: string) => {
-          const result = await connectorsApi.connect(id as ConnectorId);
-          await source.refreshConnections();
-          return result;
-        }
-      : undefined;
+  const connectorConnect = useCallback(
+    async (id: string) => {
+      const result = await connectorsApi.connect(id as ConnectorId);
+      if (source instanceof RelayRoomSource) await source.refreshConnections();
+      return result;
+    },
+    [source]
+  );
+  const handleConnectorConnect = source instanceof RelayRoomSource ? connectorConnect : undefined;
+
+  const rerun = useCallback(
+    (agent: AgentKind, prompt: string) => {
+      if (!(source instanceof RelayRoomSource)) return;
+      void source.requestOwnAgent(agent, prompt).then(() => rpc.rig.spacesDispatch.checkNow());
+    },
+    [source]
+  );
+  const handleRerun = source instanceof RelayRoomSource ? rerun : undefined;
 
   if (connectError) {
     return (
@@ -442,26 +482,13 @@ export function RoomView({
     return <div className="bg-bg-0 flex h-full min-h-0 flex-col" data-testid="room-view" />;
   }
 
-  // Room chrome round: doc-focus layout. The Room stays connected (every
-  // hook above keeps running) but draws only a small floating chip —
-  // faces plus the same live status the panel's own collapsed chip shows
-  // (`SpaceChipSummary`, shared styling) — bottom-right, fixed so it isn't
-  // clipped by the sliver this component is mounted into.
+  // Doc-focus round: the Room stays connected in doc focus (every hook
+  // above keeps running) but draws only the slim left rail — see
+  // `SpaceRail`'s own header comment for what replaced here (a floating
+  // bottom-right chip that drew OVER the doc instead of living in the
+  // column App.tsx already reserves for it).
   if (collapsed) {
-    return (
-      <div className="pointer-events-none fixed inset-0 z-30" data-testid="room-collapsed-chip">
-        <button
-          type="button"
-          onClick={onExpandCollapsed}
-          aria-label="Back to the Room"
-          className="border-border-hairline bg-bg-1 shadow-float pointer-events-auto absolute bottom-4 right-4 flex h-9 items-center gap-2 rounded-chip border px-3 transition-colors hover:bg-bg-2"
-        >
-          {source instanceof RelayRoomSource && (
-            <SpaceChipSummary snapshot={snapshot} selfUserId={selfUserId} unseenCount={0} />
-          )}
-        </button>
-      </div>
-    );
+    return <SpaceRail snapshot={snapshot} onExpand={onExpandCollapsed} />;
   }
 
   return (
@@ -520,13 +547,7 @@ export function RoomView({
             onOpenFile={onOpenFile}
             onReply={source instanceof RelayRoomSource ? setReplyTo : undefined}
             readKey={source instanceof RelayRoomSource ? bindingId : undefined}
-            onRerun={
-              source instanceof RelayRoomSource
-                ? (agent, prompt) => {
-                    void source.requestOwnAgent(agent, prompt).then(() => rpc.rig.spacesDispatch.checkNow());
-                  }
-                : undefined
-            }
+            onRerun={handleRerun}
             onConnectorConnect={handleConnectorConnect}
             globalSetup={globalSetup}
           />

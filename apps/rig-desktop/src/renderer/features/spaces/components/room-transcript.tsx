@@ -437,10 +437,14 @@ export function RoomTranscript({
     writeLastSeen(readKey, Math.max(...snapshot.messages.map((m) => m.seq)));
   }, [readKey, pinned, snapshot.messages]);
 
-  const mapEntries = useMemo(
-    () => mapEntriesFor(groupThreads(snapshot.messages), snapshot, ownId),
-    [snapshot, ownId]
-  );
+  // Split-resize perf round: `groupThreads` used to run twice a render —
+  // once here, once again inline below to build the actual rows — so any
+  // re-render this component takes for a reason that has nothing to do
+  // with new messages (a window/split resize bubbling down from `RoomView`,
+  // say) grouped the same messages over again for no reason. One pass,
+  // shared by both.
+  const units = useMemo(() => groupThreads(snapshot.messages), [snapshot.messages]);
+  const mapEntries = useMemo(() => mapEntriesFor(units, snapshot, ownId), [units, snapshot, ownId]);
 
   const agentWorking = Object.values(snapshot.sessionMetaByRun).some(
     (meta) => meta.status === 'running' && snapshot.sessionEventsByRun[meta.id]?.every((e) => e.kind !== 'turn_ended')
@@ -465,7 +469,6 @@ export function RoomTranscript({
       <div ref={contentRef} className="relative mx-auto flex max-w-[44rem] flex-col gap-4 px-3 pt-6 pb-12">
         <AnimatePresence initial={false}>
           {(() => {
-            const units = groupThreads(snapshot.messages);
             const nodes: ReactNode[] = [];
             let lastDay = Number.NEGATIVE_INFINITY;
             let prevMessage: RoomMessage | undefined;

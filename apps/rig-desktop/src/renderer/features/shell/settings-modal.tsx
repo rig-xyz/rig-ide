@@ -1,7 +1,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Monitor, Moon, Sun, TriangleAlert } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AgentAuthTrailing } from '@renderer/features/agents/agent-auth-trailing';
+import { AgentSignInDialog } from '@renderer/features/agents/agent-sign-in-dialog';
+import { useAgentAuthProbe } from '@renderer/features/agents/use-agent-auth-probe';
 import { useAgentIdentities, type AgentIdentity } from '@renderer/features/chat/use-runnable-agents';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { deriveCliVersionRow } from '@renderer/features/shell/cli-versions';
@@ -114,7 +116,9 @@ function Section({
 }) {
   return (
     <div ref={containerRef} className="flex flex-col gap-2">
-      <p className="text-text-muted font-mono text-xs tracking-wide uppercase">{label}</p>
+      <p className="text-text-muted text-xs" data-testid="settings-section-label">
+        {label}
+      </p>
       {children}
     </div>
   );
@@ -261,17 +265,104 @@ function AgentRow({ row }: { row: AgentListRow }) {
   );
 }
 
+/** Settings' own plain, sentence-case status pill — same shape as the "N new" chip `agent-rows.tsx` already uses in the Room panel, never the mono/uppercase label the onboarding-borrowed `AgentAuthTrailing`/`agentStatusLabel` pair renders. */
+function Pill({ tone = 'muted', children }: { tone?: 'muted' | 'success' | 'warning'; children: ReactNode }) {
+  return (
+    <span
+      data-testid="agent-status-pill"
+      className={cn(
+        'bg-bg-2 shrink-0 rounded-chip px-2 py-0.5 text-xs',
+        tone === 'success' && 'text-success',
+        tone === 'warning' && 'text-danger',
+        tone === 'muted' && 'text-text-secondary'
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function notAvailableLabel(status: DependencyStatus | undefined): string {
+  if (status === 'missing') return 'Not installed';
+  if (status === 'error') return 'Error';
+  return 'Checking…';
+}
+
+/**
+ * Claude/Codex's own trailing pill: same underlying auth state
+ * `AgentAuthTrailing` reads (`useAgentAuthProbe`, so the same probe, cache
+ * and `AgentSignInDialog` flow — this only changes what it looks like),
+ * as a plain "Signed in"/"Sign in" pill instead of that component's mono
+ * uppercase "SIGNED IN" text. Kept local to Settings rather than changed
+ * in `agent-auth-trailing.tsx` itself, which onboarding's agents-step.tsx
+ * also renders and isn't part of this round.
+ */
+function PrimaryAgentStatus({ agent }: { agent: AgentPayload }) {
+  const { loginMethod, state, markSignedIn } = useAgentAuthProbe(agent);
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  if (state.kind === 'noAuthSupport') return <Pill>Installed</Pill>;
+  if (state.kind === 'probing') return <Pill>Checking…</Pill>;
+  if (state.kind === 'signedIn') return <Pill tone="success">Signed in</Pill>;
+
+  // notSignedIn — loginMethod is guaranteed non-null here (deriveAgentAuthRowState
+  // only reaches this branch when one exists), same as AgentAuthTrailing's own.
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setDialogOpen(true)}
+        className="bg-accent-subtle text-accent shrink-0 rounded-chip px-2 py-0.5 text-xs transition-opacity hover:opacity-80"
+      >
+        Sign in
+      </button>
+      {loginMethod && (
+        <AgentSignInDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          providerId={agent.id}
+          methodId={loginMethod.id}
+          providerName={agent.name}
+          onSuccess={() => {
+            markSignedIn();
+            setDialogOpen(false);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+/** Rig's own two harnesses — always shown, installed or not, so this reads as "here's what Rig runs" rather than a probe result. */
+function PrimaryAgentRow({ row }: { row: AgentListRow }) {
+  return (
+    <div className="flex min-h-9 items-center gap-2 px-1 py-1.5" data-testid="primary-agent-row" data-agent-id={row.id}>
+      <AgentIcon icon={row.icon} size={16} />
+      <span className="text-text-primary min-w-0 flex-1 truncate text-sm">{row.name}</span>
+      {row.agent?.status === 'available' ? (
+        <PrimaryAgentStatus agent={row.agent} />
+      ) : (
+        <Pill tone={row.agent?.status === 'error' ? 'warning' : 'muted'}>{notAvailableLabel(row.agent?.status)}</Pill>
+      )}
+    </div>
+  );
+}
+
+const PRIMARY_AGENT_IDS = ['claude', 'codex'] as const;
+
 /**
  * Round: the full ~35-agent catalog used to render every entry inline,
  * installed and not, in whatever order `useAgentIdentities()` happened to
  * hold — installed/auth-capable rows (the ones actually worth looking at)
- * got buried under a long tail of "not installed" ones. Now: installed
- * agents first (unconditionally shown — this is still where the sign-in
- * rows live), the rest collapsed behind a muted "+N more available"
- * expander, same spirit as onboarding's catalog footnote card but genuinely
- * interactive here (that one's a static count; this expands in place, per
- * the round's own instruction) since this section has the room and the
- * reason to show the full list on request.
+ * got buried under a long tail of "not installed" ones.
+ *
+ * Settings cleanup round: Claude and Codex — the two harnesses Rig actually
+ * runs — are the list now, always shown with their own logos and a plain
+ * status pill (`PrimaryAgentRow`), installed or not. Everything else in the
+ * catalog collapses behind a quiet "More agents" disclosure (same
+ * expand-in-place behavior as the old "+N more available" it replaces,
+ * just without the loud mono count) rather than crowding two agents most
+ * people never touch above the two that matter.
  */
 function AgentsSection() {
   const identities = useAgentIdentities();
@@ -289,19 +380,18 @@ function AgentsSection() {
     return <p className="text-text-muted text-xs">No agents found.</p>;
   }
 
-  const rows: AgentListRow[] = [...identities.entries()].map(([id, identity]) => ({
-    id,
-    icon: identity.icon,
-    name: identity.name,
-    agent: agentById.get(id),
-  }));
-  const installedRows = rows.filter((row) => row.agent?.status === 'available');
-  const restRows = rows.filter((row) => row.agent?.status !== 'available');
+  const primaryRows: AgentListRow[] = PRIMARY_AGENT_IDS.flatMap((id) => {
+    const identity = identities.get(id);
+    return identity ? [{ id, icon: identity.icon, name: identity.name, agent: agentById.get(id) }] : [];
+  });
+  const restRows: AgentListRow[] = [...identities.entries()]
+    .filter(([id]) => !(PRIMARY_AGENT_IDS as readonly string[]).includes(id))
+    .map(([id, identity]) => ({ id, icon: identity.icon, name: identity.name, agent: agentById.get(id) }));
 
   return (
     <div className="flex flex-col gap-1.5">
-      {installedRows.map((row) => (
-        <AgentRow key={row.id} row={row} />
+      {primaryRows.map((row) => (
+        <PrimaryAgentRow key={row.id} row={row} />
       ))}
       {restRows.length > 0 &&
         (expanded ? (
@@ -323,7 +413,7 @@ function AgentsSection() {
             onClick={() => setExpanded(true)}
             className="text-text-muted hover:text-text-primary self-start px-1 py-1 text-xs transition-colors"
           >
-            +{restRows.length} more available
+            More agents
           </button>
         ))}
     </div>
