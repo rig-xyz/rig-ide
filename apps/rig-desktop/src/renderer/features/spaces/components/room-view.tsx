@@ -8,6 +8,7 @@ import { buildRoomFeed } from '../fixtures/room-feed';
 import { RelayRoomSource, type RelayRoomClient } from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
 import { writeOpenedAt } from '../room-read-marker';
+import { useRefreshMemberReadsOnRosterChange } from '../roster-refresh';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
 import { Composer, type ComposerSendContext } from './composer';
@@ -355,6 +356,11 @@ export function RoomView({
     }
   }, [source, snapshot, selfUserId, bindingId]);
 
+  // The top bar's faces, the Details panel's People row and the share
+  // popover read the members from the relay on their own; keep them in step
+  // with the Room's live roster.
+  useRefreshMemberReadsOnRosterChange(snapshot?.members ?? null, bindingId, live);
+
   // Every hook sits above the early returns below: React needs the same
   // hooks in the same order on every render.
   const configCache = useRef(new Map<AgentKind, ReturnType<AgentSettingsApi['load']>>());
@@ -620,7 +626,13 @@ export function RoomView({
                 onExpand={refreshGlobalSetup}
               />
             </>,
-            new Set(snapshot.members.filter((m) => m.online !== false).map((m) => m.id)),
+            // Presence comes over the realtime socket; without it (the Room
+            // is polling) nobody's presence is known, so nobody is dimmed.
+            new Set(
+              snapshot.members
+                .filter((m) => snapshot.connection !== 'online' || m.online !== false)
+                .map((m) => m.id)
+            ),
             {
               startCollapsed: narrow,
               chipSummary: ({ unseenCount }) => (
