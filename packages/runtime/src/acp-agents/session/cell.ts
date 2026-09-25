@@ -212,13 +212,14 @@ export class SessionCell {
     return result;
   }
 
-  queuePrompt(input: PromptInput): Result<void, InvalidStateError> {
+  queuePrompt(input: PromptInput): Result<{ turnId: string }, InvalidStateError> {
     const now = Date.now();
+    const turnId = crypto.randomUUID();
     const result = this.dispatchFor<InvalidStateError>(
       {
         type: 'QueuePrompt',
         prompt: {
-          id: crypto.randomUUID(),
+          id: turnId,
           ...input,
           createdAt: now,
           updatedAt: now,
@@ -228,7 +229,7 @@ export class SessionCell {
     );
     if (!result.success) return result;
     this.clearDraft();
-    return ok();
+    return ok({ turnId });
   }
 
   setPromptDraft(update: PromptDraftUpdate): Result<void, never> {
@@ -504,6 +505,8 @@ export class SessionCell {
     );
     if (!started) return ok({ queued: true });
 
+    this.deps.callbacks?.onTurnBoundary?.({ kind: 'turn_start', turnId: prompt.id });
+
     const messageId = `${this.conversationId}-${this.machine.nextTurnIndex}-user`;
     this.transcript.pushEvent({
       kind: 'message',
@@ -549,6 +552,15 @@ export class SessionCell {
         sessionId: this.acpSessionId,
         stopReason: response.stopReason,
       });
+      // ACP guarantees this turn's `session/update` notifications were all
+      // delivered before this response — emitted here, at resolve time, a
+      // `turn_end` marker on the same raw stream is therefore ordered after
+      // every one of them, including the final `agent_message_chunk`.
+      this.deps.callbacks?.onTurnBoundary?.({
+        kind: 'turn_end',
+        turnId: prompt.id,
+        stopReason: response.stopReason,
+      });
       this.settleTurn(outcomeFromStopReason(response.stopReason));
       return ok({ queued: false });
     } catch (e) {
@@ -558,6 +570,7 @@ export class SessionCell {
         sessionId: this.acpSessionId,
         stopReason: null,
       });
+      this.deps.callbacks?.onTurnBoundary?.({ kind: 'turn_end', turnId: prompt.id, stopReason: null });
       this.settleTurn({ kind: 'error', reason: 'prompt_failed' });
       return err;
     }

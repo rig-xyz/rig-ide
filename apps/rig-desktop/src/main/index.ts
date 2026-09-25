@@ -54,6 +54,7 @@ import {
 } from './rig/bundled-cli';
 import { registerRigBridge } from './rig/intent-bridge';
 import { rigSettingsStore } from './rig/settings-instance';
+import { spacesDispatchController } from './rig/spaces/dispatch-controller-instance';
 import { bufferOpenFilePath } from './rig/workspace';
 import { rpcRouter } from './rpc';
 import { resolveUserEnv } from './utils/userEnv';
@@ -190,6 +191,7 @@ void app.whenReady().then(async () => {
   startRuntimeWithRetry('agent-config runtime process', initializeAgentConfigRuntimeProcess);
   acpAgentStatusBridge.initialize();
   registerRigBridge();
+  spacesDispatchController.initialize();
 
   registerRPCRouter(rpcRouter, app.isPackaged ? ipcMain : withRpcLogging(ipcMain));
 

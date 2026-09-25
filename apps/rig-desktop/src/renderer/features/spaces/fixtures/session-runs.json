@@ -1,0 +1,62 @@
+[
+  {
+    "id": "run_b4794c576014d663416603ce",
+    "key": "run-c-claude-bigoutput",
+    "agent": "claude",
+    "model": "synthetic",
+    "title": "Run C \u2014 Claude: worst-case tool output [synthetic]",
+    "status": "done",
+    "startedAt": "2026-09-23T16:20:41.368418-04:00",
+    "endedAt": "2026-09-23T16:20:43.297-04:00"
+  },
+  {
+    "id": "run_63bc5f42ae3116182e81a93e",
+    "key": "run-b-codex",
+    "agent": "codex",
+    "model": null,
+    "title": "Run B \u2014 Codex: plan + summary",
+    "status": "done",
+    "startedAt": "2026-09-23T16:33:06.338149-04:00",
+    "endedAt": "2026-09-23T16:33:36.289-04:00"
+  },
+  {
+    "id": "run_5ac546c32e61db39d7e31ed3",
+    "key": "run-b2-codex-planned",
+    "agent": "codex",
+    "model": null,
+    "title": "Run B2 \u2014 Codex: plan + summary, explicit 3-step plan first",
+    "status": "done",
+    "startedAt": "2026-09-23T16:33:52.167905-04:00",
+    "endedAt": "2026-09-23T16:34:18.553-04:00"
+  },
+  {
+    "id": "run_32d2bb800f4ecf17e2474a2a",
+    "key": "run-c-codex-bigoutput",
+    "agent": "codex",
+    "model": null,
+    "title": "Run C \u2014 Codex: worst-case tool output",
+    "status": "done",
+    "startedAt": "2026-09-23T16:34:29.561491-04:00",
+    "endedAt": "2026-09-23T16:34:56.344-04:00"
+  },
+  {
+    "id": "run_f4cf979b9678a7818f50a899",
+    "key": "run-a-claude",
+    "agent": "claude",
+    "model": null,
+    "title": "Run A \u2014 Claude: plan + summary",
+    "status": "done",
+    "startedAt": "2026-09-23T16:36:11.17209-04:00",
+    "endedAt": "2026-09-23T16:36:44.857-04:00"
+  },
+  {
+    "id": "run_25d02109e17780c87935c169",
+    "key": "run-c2-claude-bigoutput",
+    "agent": "claude",
+    "model": null,
+    "title": "Run C2 \u2014 Claude: worst-case tool output",
+    "status": "done",
+    "startedAt": "2026-09-23T16:36:55.140386-04:00",
+    "endedAt": "2026-09-23T16:37:12.019-04:00"
+  }
+]

@@ -341,6 +341,7 @@ export function toMember(value: unknown): RigCommentMember | null {
   if (!raw || typeof raw.userId !== 'string') return null;
   return {
     userId: raw.userId,
+    clerkUserId: typeof raw.clerkUserId === 'string' ? raw.clerkUserId : null,
     name: typeof raw.name === 'string' ? raw.name : null,
     avatarUrl: typeof raw.imageUrl === 'string' ? raw.imageUrl : null,
     email: typeof raw.email === 'string' ? raw.email : null,

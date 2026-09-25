@@ -92,6 +92,7 @@ export function SettingsModal({
           </Section>
           <Section label="Experimental">
             <SmartHighlighterRow />
+            <SpacesRow />
           </Section>
           <Section label="About" containerRef={aboutRef}>
             <AboutSection />
@@ -492,6 +493,61 @@ function SmartHighlighterRow() {
         role="switch"
         aria-checked={enabled}
         aria-label="Smart Highlighter"
+        onClick={toggle}
+        className={cn(
+          'relative mt-0.5 h-4 w-7 shrink-0 rounded-full transition-colors',
+          enabled ? 'bg-border-strong' : 'bg-bg-2 border-border-hairline border'
+        )}
+      >
+        <span
+          className={cn(
+            'bg-bg-1 absolute top-0.5 left-0.5 size-3 rounded-full transition-transform',
+            enabled && 'translate-x-3'
+          )}
+        />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Spaces round: the Room UI (`renderer/features/spaces`) lands behind this
+ * toggle for the same reason `SmartHighlighterRow` above does — off by
+ * default (`shared/rig/settings.ts`'s `spacesEnabled`), same persistence
+ * mechanism, same switch shape. Enabling it just reveals the "Room
+ * (preview)" dev entry point; nothing else in the app changes while it's
+ * off.
+ */
+function SpacesRow() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['rig', 'settings', 'spacesEnabled'],
+    queryFn: () => rpc.rig.settings.get(),
+  });
+  const enabled = data?.spacesEnabled ?? false;
+
+  const toggle = () => {
+    void rpc.rig.settings.set({ spacesEnabled: !enabled }).then(() => {
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'settings', 'spacesEnabled'] });
+    });
+  };
+
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <label htmlFor="spaces-enabled" className="text-text-primary text-xs font-medium">
+          Spaces
+        </label>
+        <p className="text-text-muted text-xs">
+          Open a rig as a shared room with people and their agents.
+        </p>
+      </div>
+      <button
+        id="spaces-enabled"
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        aria-label="Spaces"
         onClick={toggle}
         className={cn(
           'relative mt-0.5 h-4 w-7 shrink-0 rounded-full transition-colors',

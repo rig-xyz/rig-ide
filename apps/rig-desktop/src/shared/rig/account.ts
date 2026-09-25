@@ -28,6 +28,8 @@ export type RigWorkspaceBinding = {
   id: string;
   name: string;
   role: string;
+  /** A space (a rig with a Room, named with #) or a plain rig. Promoting a space flips it. */
+  kind: 'rig' | 'space';
   /**
    * Most recent time the caller's OWN device synced this binding; null if
    * the caller has never synced it from this account.

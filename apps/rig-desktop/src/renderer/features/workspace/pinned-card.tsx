@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronRight, Cloud, Diff, FolderTree, Loader2, Sparkles, Users } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { ChevronRight, Cloud, Diff, FolderTree, Loader2, PanelRightOpen, Sparkles, Users } from 'lucide-react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { NavigatorContent } from '@renderer/features/artifact/navigator-popover';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import {
@@ -115,6 +115,10 @@ export function PinnedCard({
   syncing,
   onOpenFile,
   onOpenFocus,
+  extraRows,
+  onlineUserIds,
+  startCollapsed,
+  chipSummary,
 }: {
   root: string;
   rootId: string;
@@ -125,9 +129,20 @@ export function PinnedCard({
   /** Opens in an editor tab; relPath rides along so this card can mark it seen. */
   onOpenFile: (absPath: string, relPath: string) => void;
   onOpenFocus: () => void;
+  /** Rows a host view adds under People, in the same row grammar (the Room adds your agents). */
+  extraRows?: ReactNode;
+  /** Who is here right now (the Room's live presence); members not in it are dimmed. Absent: no presence shown. */
+  onlineUserIds?: ReadonlySet<string>;
+  /** Show as the chip whenever this turns true (e.g. the host became too narrow for the card); not persisted. */
+  startCollapsed?: boolean;
+  /** What the collapsed chip says instead of the rig's name (the Room shows who's here and what's working). */
+  chipSummary?: ReactNode;
 }) {
   const queryClient = useQueryClient();
   const [collapsed, setCollapsed] = useState(readCollapsed);
+  useEffect(() => {
+    if (startCollapsed) setCollapsed(true);
+  }, [startCollapsed]);
   const [importOpen, setImportOpen] = useState(false);
   const toggleCollapsed = () => {
     setCollapsed((current) => {
@@ -286,20 +301,31 @@ export function PinnedCard({
 
   if (collapsed) {
     return (
-      <button
-        type="button"
-        onClick={toggleCollapsed}
-        aria-label="Show rig details"
-        className="card-pop-in border-border-hairline bg-bg-1 shadow-float hover:bg-bg-2 absolute top-[52px] right-4 z-20 flex origin-top-right items-center gap-1.5 rounded-chip border py-1 pr-2.5 pl-2 transition-colors"
-      >
-        <span className={cn('size-1.5 rounded-full', syncing ? 'bg-warning' : 'bg-success')} />
-        <span className="max-w-36 truncate text-xs text-text-primary">{name ?? 'This rig'}</span>
-        {unseenFiles.size > 0 && (
-          <span className="bg-accent-subtle text-accent rounded-chip px-1.5 font-mono text-2xs">
-            {unseenFiles.size}
-          </span>
-        )}
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              aria-label="Show details"
+              className="card-pop-in border-border-hairline bg-bg-1 shadow-float hover:bg-bg-2 absolute top-[52px] right-4 z-20 flex h-8 origin-top-right items-center gap-2 rounded-chip border pr-3 pl-2.5 transition-colors"
+            >
+              <PanelRightOpen className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+              {chipSummary ?? <span className="max-w-36 truncate text-xs text-text-primary">{name ?? 'This rig'}</span>}
+              {syncing && <span className="text-2xs text-warning">Syncing</span>}
+              {unseenFiles.size > 0 && (
+                <span
+                  className="bg-accent-subtle text-accent rounded-chip px-1.5 text-2xs tabular-nums"
+                  title={`${unseenFiles.size} new or changed ${unseenFiles.size === 1 ? 'file' : 'files'}`}
+                >
+                  {unseenFiles.size} new
+                </span>
+              )}
+            </button>
+          }
+        />
+        <TooltipContent side="bottom">Show details</TooltipContent>
+      </Tooltip>
     );
   }
 
@@ -542,7 +568,11 @@ export function PinnedCard({
                       avatarUrl={member.avatarUrl}
                       sizeClassName="size-4"
                       textClassName="text-2xs"
-                      className={cn('ring-bg-1 ring-1', index > 0 && '-ml-1')}
+                      className={cn(
+                        'ring-bg-1 ring-1',
+                        index > 0 && '-ml-1',
+                        onlineUserIds && !onlineUserIds.has(member.userId) && 'opacity-45'
+                      )}
                     />
                   ))}
                   {members.length > 3 && (
@@ -568,6 +598,8 @@ export function PinnedCard({
           )}
         </>
       )}
+
+      {extraRows}
 
       {/* ── ACTIVITY — the working set, same geometry, no icon column ── */}
       {activity.length > 0 && (

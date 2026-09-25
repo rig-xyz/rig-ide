@@ -35,7 +35,11 @@ import { TerminalPort } from '../agent-ports/terminal-port';
 import { createAcpConnectionSource, type AcpConnectionSource } from '../connection/source';
 import type { SessionLiveModels, SessionsListModel } from '../state/live-models';
 import type { StoredAttachment } from './attachment-store';
-import { SessionManager, type HistoryPage } from './session-manager';
+import {
+  SessionManager,
+  type HistoryPage,
+  type RawSessionEventObserver,
+} from './session-manager';
 import { TerminalLiveRegistry } from './terminal-live-registry';
 import type { AcpRuntimeDeps, AcpStartInput } from './types';
 
@@ -94,7 +98,7 @@ export class AcpRuntime {
   queuePrompt(
     conversationId: string,
     prompt: PromptInput
-  ): Result<{ queued: boolean }, AcpQueuePromptError> {
+  ): Result<{ queued: boolean; turnId: string }, AcpQueuePromptError> {
     return this.manager.queuePrompt({ conversationId, prompt });
   }
 
@@ -231,6 +235,16 @@ export class AcpRuntime {
 
   terminalOutputLog(terminalId: string): LiveLog | null {
     return this.terminalLiveRegistry.getTerminalLog(terminalId);
+  }
+
+  /** See `SessionManager.observeRawSessionEvents` — the opt-in raw ACP notification hook. */
+  observeRawSessionEvents(conversationId: string, observer: RawSessionEventObserver): () => void {
+    return this.manager.observeRawSessionEvents(conversationId, observer);
+  }
+
+  /** See `SessionManager.rawEventsLog` — the wire-subscribable form of the same raw events. */
+  sessionRawEventsLog(conversationId: string): LiveLog {
+    return this.manager.rawEventsLog(conversationId);
   }
 
   async dispose(): Promise<void> {

@@ -106,10 +106,17 @@ describe('toBinding', () => {
       id: 'bnd_1',
       name: 'my-rig',
       role: 'owner',
+      kind: 'rig',
       lastSyncedAt: '2026-01-01T00:00:00Z',
       createdAt: '2026-05-12T00:00:00Z',
       relayHost: 'tap-relay.fly.dev',
     });
+  });
+
+  it('reads a space binding\'s kind', () => {
+    expect(
+      toBinding({ binding: { id: 'bnd_2', name: 'growth', kind: 'space' }, role: 'owner' }, 'relay')?.kind
+    ).toBe('space');
   });
 
   it('degrades a null lastSyncedAt (never synced from this account)', () => {

@@ -16,9 +16,11 @@ import {
 } from '@shared/rig/create';
 import { resolveCliAccountEnv } from './account';
 import { commandFailureMessage } from './auth-output';
+import { findBindingConfig } from './binding';
 import { resolveCliBin } from './bundled-cli';
 import { rigFileRootRegistry } from './file-root-registry';
 import { ensureRigHomeDir, resolveHomeLandingDir } from './home';
+import { setBindingKind } from './spaces/relay-api';
 
 /**
  * Creates a rig by driving the bundled CLI headlessly — the same
@@ -255,12 +257,29 @@ async function withRegisteredRoot(
   return { ...result, rootId: registered.success ? registered.data.rootId : null };
 }
 
+/**
+ * Marks a just-synced rig's binding as a space. Best-effort: if it fails the
+ * folder is still a working, synced rig, it just won't show under Spaces.
+ */
+async function flagAsSpace(targetDir: string): Promise<void> {
+  const binding = findBindingConfig(targetDir);
+  if (!binding) {
+    log.warn('Rig create: new space has no binding to flag', { targetDir });
+    return;
+  }
+  const flagged = await setBindingKind(binding.config.bindingId, 'space');
+  if (!flagged.success) {
+    log.warn('Rig create: could not flag the binding as a space', { error: flagged.error.message });
+  }
+}
+
 export const rigCreateController = createRPCController({
   create: async ({
     parentDir,
     name,
     sync,
     seedDoc,
+    kind,
   }: RigCreateRequest): Promise<Result<RigCreateResult, RigCreateError>> => {
     const invalid = validateRigName(name);
     if (invalid) return err<RigCreateError>({ kind: 'invalidName', message: invalid });
@@ -341,6 +360,7 @@ export const rigCreateController = createRPCController({
         })
       );
     }
+    if (kind === 'space') await flagAsSpace(targetDir);
     return ok(
       await withRegisteredRoot({
         path: targetDir,

@@ -172,6 +172,10 @@ class RigIntentBridge {
   private syncConversations(summaries: SessionSummaryList): void {
     const seen = new Set<string>();
     for (const summary of Object.values(summaries)) {
+      // Space sessions (projectId 'space', see spaces/dispatch.ts) already
+      // show as session cards in the Room; tracking them here would add a
+      // second, duplicate "in progress" intent to Changes.
+      if (summary.projectId === 'space') continue;
       seen.add(summary.conversationId);
       const tracker = this.conversations.get(summary.conversationId);
       if (tracker) {

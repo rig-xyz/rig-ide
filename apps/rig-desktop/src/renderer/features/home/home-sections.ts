@@ -51,6 +51,8 @@ export type HomeRecentSession = {
 export type HomeBinding = {
   bindingId: string;
   name: string;
+  /** Absent means a plain rig. */
+  kind?: 'rig' | 'space';
   lastSyncedAt: string | null;
   role: string;
   /** When the binding was created — the one human-meaningful tie-breaker for two visible rows sharing a name (see `disambiguateByName`). */
@@ -133,7 +135,14 @@ export function deriveHomeRegions(input: HomeRegionsInput): HomeRegions {
 export type WorkspacesQueryResult =
   | {
       success: true;
-      data: readonly { id: string; name: string; lastSyncedAt: string | null; role: string; createdAt: string }[];
+      data: readonly {
+        id: string;
+        name: string;
+        kind?: 'rig' | 'space';
+        lastSyncedAt: string | null;
+        role: string;
+        createdAt: string;
+      }[];
     }
   | { success: false; error: { kind: string } };
 
@@ -161,6 +170,7 @@ export function deriveWorkspacesState(
     bindings: query.data.data.map((b) => ({
       bindingId: b.id,
       name: b.name,
+      kind: b.kind,
       lastSyncedAt: b.lastSyncedAt,
       role: b.role,
       createdAt: b.createdAt,
@@ -180,6 +190,8 @@ export type HomeRigRow =
   | {
       kind: 'local';
       bindingId: string;
+      /** A space (named with #, opens Room-first) rather than a plain rig. Absent means a rig. */
+      isSpace?: boolean;
       name: string | null;
       path: string;
       lastOpenedAt: number;
@@ -211,6 +223,7 @@ export type HomeRigRow =
   | {
       kind: 'relayOnly';
       bindingId: string;
+      isSpace?: boolean;
       name: string;
       /**
        * "created May 12" style, mono subtext — populated ONLY when this row's
@@ -465,11 +478,15 @@ export function buildHomeRigRows(
     workspaces.status === 'ok'
       ? new Map(workspaces.bindings.map((b) => [b.bindingId, b.role]))
       : new Map<string, string>();
+  const spaceBindings = new Set(
+    workspaces.status === 'ok' ? workspaces.bindings.filter((b) => b.kind === 'space').map((b) => b.bindingId) : []
+  );
 
   const localRows: HomeRigRow[] = localRigs
     .map((r) => ({
       kind: 'local' as const,
       bindingId: r.bindingId,
+      ...(spaceBindings.has(r.bindingId) ? { isSpace: true } : {}),
       name: r.name,
       path: r.path,
       lastOpenedAt: r.lastOpenedAt,
@@ -489,6 +506,7 @@ export function buildHomeRigRows(
   const relayOnlyRows: HomeRigRow[] = disambiguateByName(relayOnly).map((b) => ({
     kind: 'relayOnly',
     bindingId: b.bindingId,
+    ...(b.kind === 'space' ? { isSpace: true } : {}),
     name: b.name,
     disambiguator: b.disambiguator,
     canAutoJoin: canAutoJoin(b.role),

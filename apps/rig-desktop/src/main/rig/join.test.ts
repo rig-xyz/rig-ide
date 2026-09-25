@@ -7,7 +7,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const mockApp = vi.hoisted(() => ({ isPackaged: false }));
 vi.mock('electron', () => ({ app: mockApp }));
 
-import { buildAttachArgs, classifyAttachFailure, deriveLocateOutcome, parseAttachSuccess } from './join';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as joinPath } from 'node:path';
+import {
+  buildAttachArgs,
+  classifyAttachFailure,
+  deriveLocateOutcome,
+  existingCopyAt,
+  parseAttachSuccess,
+} from './join';
 
 afterEach(() => {
   mockApp.isPackaged = false;
@@ -160,3 +169,27 @@ describe('buildAttachArgs', () => {
     ]);
   });
 });
+
+describe('existingCopyAt — Download notices the copy already at its destination', () => {
+  const home = mkdtempSync(joinPath(tmpdir(), 'rig-home-'));
+  const bind = (dir: string, bindingId: string) => {
+    mkdirSync(joinPath(dir, '.rig'), { recursive: true });
+    writeFileSync(
+      joinPath(dir, '.rig', 'tap-binding.local.json'),
+      JSON.stringify({ bindingId, relayUrl: 'http://relay.test', deviceId: 'dev', token: 'test-token' })
+    );
+  };
+  afterEach(() => rmSync(joinPath(home, 'growth'), { recursive: true, force: true }));
+
+  it('finds the same binding in <home>/<slug>', () => {
+    bind(joinPath(home, 'growth'), 'bnd_1');
+    expect(existingCopyAt(home, 'bnd_1', 'Growth')).toBe(joinPath(home, 'growth'));
+  });
+
+  it('ignores a folder there that holds a different binding, or none', () => {
+    bind(joinPath(home, 'growth'), 'bnd_other');
+    expect(existingCopyAt(home, 'bnd_1', 'growth')).toBeNull();
+    expect(existingCopyAt(home, 'bnd_1', 'nothing-here')).toBeNull();
+  });
+});
+

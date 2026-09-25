@@ -1,13 +1,17 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { app } from 'electron';
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
+import { rigSlug } from '@shared/rig/create';
 import type { RigAttachError, RigJoinResult, RigLocateError } from '@shared/rig/join';
 import { resolveCliAccountEnv } from './account';
 import { commandFailureMessage } from './auth-output';
 import { findBindingConfig } from './binding';
 import { resolveCliBin } from './bundled-cli';
+import { readRigHomeDir } from './home';
 
 /**
  * Self-service local setup for a relay-only binding the signed-in user is a
@@ -301,6 +305,27 @@ export function deriveLocateOutcome(
   return { kind: 'matched', localPath: found.workspaceRoot };
 }
 
+/**
+ * The one folder "Download" would land in, `<home>/<slug>`, when it's already
+ * this same binding (e.g. set up from a terminal with `rig join`): open that
+ * instead of making a second copy. Checks only that single destination, never
+ * scans the home folder (see `recent-rigs.ts` on why the app doesn't
+ * enumerate folders).
+ */
+async function existingCopyInHome(bindingId: string, name: string): Promise<string | null> {
+  return existingCopyAt(await readRigHomeDir(), bindingId, name);
+}
+
+/** `existingCopyInHome` against a given home folder (exported for tests). */
+export function existingCopyAt(home: string, bindingId: string, name: string): string | null {
+  const candidate = join(home, rigSlug(name));
+  if (!existsSync(candidate)) return null;
+  const binding = findBindingConfig(candidate);
+  return binding && binding.workspaceRoot === candidate && binding.config.bindingId === bindingId
+    ? candidate
+    : null;
+}
+
 export const rigJoinController = createRPCController({
   /**
    * Drives `rig attach` for `bindingId` — works for any explicit member
@@ -315,10 +340,17 @@ export const rigJoinController = createRPCController({
   attach: async ({
     bindingId,
     targetDir,
+    name,
   }: {
     bindingId: string;
     targetDir?: string | null;
+    /** The rig's name, when the caller knows it: lets "Download" notice the copy that's already there. */
+    name?: string | null;
   }): Promise<Result<RigJoinResult, RigAttachError>> => {
+    if (!targetDir && name) {
+      const existing = await existingCopyInHome(bindingId, name);
+      if (existing) return ok({ localPath: existing, rigName: name, syncing: true });
+    }
     return spawnAttach(bindingId, targetDir ?? null);
   },
 

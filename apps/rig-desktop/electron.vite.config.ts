@@ -6,6 +6,7 @@ import { desktopWorkerBuildInputs } from './src/main/worker-manifest';
 
 const workspaceAliases = {
   '@emdash/core/acp/client': resolve('../../packages/core/src/acp/client.ts'),
+  '@emdash/core/acp/transcript-parser': resolve('../../packages/core/src/acp/reducer/index.ts'),
   '@emdash/core/acp': resolve('../../packages/core/src/acp/index.ts'),
   '@emdash/core/agents/agent-env': resolve('../../packages/core/src/agents/agent-env.ts'),
   '@emdash/core/agents/spawn-context': resolve('../../packages/core/src/agents/spawn-context.ts'),

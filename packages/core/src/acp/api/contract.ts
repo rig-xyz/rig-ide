@@ -26,6 +26,7 @@ import {
   exportAcpTranscriptCommandSchema,
   exportRawAcpLogCommandSchema,
   queuePromptCommandSchema,
+  queuePromptResponseSchema,
   resolvePermissionCommandSchema,
   resumeSessionCommandSchema,
   sendPromptCommandSchema,
@@ -86,7 +87,7 @@ export const acpApiContract = defineContract({
   }),
   queuePrompt: fallible({
     input: queuePromptCommandSchema,
-    data: sendPromptResponseSchema,
+    data: queuePromptResponseSchema,
     error: acpQueuePromptErrorSchema,
   }),
   editQueuedPrompt: fallible({
@@ -180,6 +181,16 @@ export const acpApiContract = defineContract({
     },
   }),
   terminalOutput: liveLog({ key: terminalOutputKeySchema }),
+  // Opt-in, per-session stream of raw ACP session notifications (the exact
+  // `{kind:'acp_update', sessionId, update}` triples SessionCell reduces
+  // into transcript state) interleaved with in-band `{kind:'turn_start'}` /
+  // `{kind:'turn_end'}` markers (see `SessionCellCallbacks.onTurnBoundary`)
+  // so a subscriber never has to infer turn ownership from a separately
+  // delivered busy/idle signal — newline-delimited JSON over the same
+  // append-only log transport `terminalOutput` already uses. Subscribing is
+  // what makes it exist at all — see `SessionManager.rawEventsLog`'s own
+  // doc comment.
+  sessionRawEvents: liveLog({ key: sessionKeySchema }),
 });
 
 export type AcpApiContract = typeof acpApiContract;

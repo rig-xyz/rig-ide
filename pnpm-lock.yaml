@@ -428,6 +428,9 @@ importers:
       '@gitbeaker/rest':
         specifier: ^43.8.0
         version: 43.8.0
+      '@hocuspocus/provider':
+        specifier: ^4
+        version: 4.7.0(y-protocols@1.0.7(yjs@13.6.33))(yjs@13.6.33)
       '@lezer/highlight':
         specifier: ^1.2.3
         version: 1.2.3
@@ -518,6 +521,9 @@ importers:
       turndown-plugin-gfm:
         specifier: ^1.0.2
         version: 1.0.2
+      yjs:
+        specifier: ^13.6.33
+        version: 13.6.33
       zod:
         specifier: ^4.3.6
         version: 4.4.3
@@ -540,6 +546,9 @@ importers:
       '@electron/rebuild':
         specifier: ^4.0.1
         version: 4.0.4
+      '@hocuspocus/server':
+        specifier: ^4
+        version: 4.7.0(y-protocols@1.0.7(yjs@13.6.33))(yjs@13.6.33)
       '@monaco-editor/react':
         specifier: ^4.7.0
         version: 4.7.0(monaco-editor@0.55.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -2373,6 +2382,22 @@ packages:
     peerDependencies:
       graphql: ^0.8.0 || ^0.9.0 || ^0.10.0 || ^0.11.0 || ^0.12.0 || ^0.13.0 || ^14.0.0 || ^15.0.0 || ^16.0.0 || ^17.0.0
 
+  '@hocuspocus/common@4.7.0':
+    resolution: {integrity: sha512-KyS6dXoIcWsd+v3gwd6nnZW04M77df5XstPNkOwqoDxwuncygobEN7xsf0x2PmdvlQdQyRaLm2SF4r1GZZGRnA==}
+
+  '@hocuspocus/provider@4.7.0':
+    resolution: {integrity: sha512-BOAqoj6g4EZQ9pTwIiR7bNl1QkMAnrr8EY69jMcdhSLFtTrsKaE8hsDIEncPFnGq+khWRFCAPEJSM7F9HC7fvQ==}
+    peerDependencies:
+      y-protocols: ^1.0.6
+      yjs: ^13.6.8
+
+  '@hocuspocus/server@4.7.0':
+    resolution: {integrity: sha512-rlHSxGXEkYvHgQa9Q8prjMHChIl7daZlXL1pezifS8j+svLHQPKLfevNBxFKc+ZW5pLpUiUJGU++O8eJlSt3Ew==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      y-protocols: ^1.0.6
+      yjs: ^13.6.8
+
   '@hono/node-server@1.19.14':
     resolution: {integrity: sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw==}
     engines: {node: '>=18.14.1'}
@@ -2703,6 +2728,9 @@ packages:
 
   '@lezer/yaml@1.0.4':
     resolution: {integrity: sha512-2lrrHqxalACEbxIbsjhqGpSW8kWpUKuY6RHgnSAFZa6qK62wvnPxA8hGOwOoDbwHcOFs5M4o27mjGu+P7TvBmw==}
+
+  '@lifeomic/attempt@3.1.0':
+    resolution: {integrity: sha512-QZqem4QuAnAyzfz+Gj5/+SLxqwCAw2qmt7732ZXodr6VDWGeYLG6w1i/vYLa55JQM9wRuBKLmXmiZ2P0LtE5rw==}
 
   '@linear/sdk@77.0.0':
     resolution: {integrity: sha512-pI7ZNh/UZF12JoVhCi8tdubYnCp2DJ1hkraMA+kDyYqjU+elKOVd5yAdN/SoAR17V7Kg8dtDabgArjknvUnQSA==}
@@ -5297,6 +5325,9 @@ packages:
     resolution: {integrity: sha512-NW2cX8m1Q7KPA7a5M2ULQeZ2wR5qI5PAbw5L0UOMxdioVk9PMZ0h1TmyZEkPYrCvYjDlFICusOu1dlEKAAeXBw==}
     engines: {node: '>=0.12.0'}
 
+  async-mutex@0.5.0:
+    resolution: {integrity: sha512-1A94B18jkJ3DYq284ohPxoXbfTA5HsQ7/Mf4DEhcyLx3Bz27Rh59iScbB6EPiP+B+joue6YCxcMXSbFC1tZKwA==}
+
   async@3.2.6:
     resolution: {integrity: sha512-htCUDlxyyCLMgaM3xXg0C0LW2xqfuQ6p05pCEIsXuyQ+a1koYKTuBMzRNwmybfLgvJDMd0r1LTn4+E0Ti6C2AA==}
 
@@ -5780,6 +5811,14 @@ packages:
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
     engines: {node: '>= 8'}
+
+  crossws@0.4.12:
+    resolution: {integrity: sha512-aypfsr6t0uNvkqaZc6zvBfXzC6pLI0/sIulpkV6RwCVtZqG5ebBzv4weImKK0VNCj91Wl9F5j7p5WU4MNrybng==}
+    peerDependencies:
+      srvx: '>=0.11.5'
+    peerDependenciesMeta:
+      srvx:
+        optional: true
 
   css-tree@3.2.1:
     resolution: {integrity: sha512-X7sjQzceUhu1u7Y/ylrRZFU2FS6LRiFVp6rKLPg23y3x3c3DOKAwuXGDp+PAGjh6CSnCjYeAul8pcT8bAl+lSA==}
@@ -7155,6 +7194,9 @@ packages:
     resolution: {integrity: sha512-FFUtZMpoZ8RqHS3XeXEmHWLA4thH+ZxCv2lOiPIn1Xc7CxrqhWzNSDzD+/chS/zbYezmiwWLdQC09JdQKmthOw==}
     engines: {node: '>=20'}
 
+  isomorphic.js@0.2.5:
+    resolution: {integrity: sha512-PIeMbHqMt4DnUP3MA/Flc0HElYjMXArsw1qwJZcm9sqR8mq3l8NYizFMty0pWwE/tzIGH3EKK5+jes5mAr85yw==}
+
   istanbul-lib-coverage@3.2.2:
     resolution: {integrity: sha512-O8dpsF+r0WV/8MNRKfnmrtCWhuKjxrq2w+jpzBL5UZKTi2LeVWnWOmWRxFlesJONmc+wLAGvKQZEOanko0LFTg==}
     engines: {node: '>=8'}
@@ -7406,6 +7448,10 @@ packages:
   khroma@2.1.0:
     resolution: {integrity: sha512-Ls993zuzfayK269Svk9hzpeGUKob/sIgZzyHYdjQoAdQetRKpOLj+k/QQQ/6Qi0Yz65mlROrfd+Ev+1+7dz9Kw==}
 
+  kleur@4.1.5:
+    resolution: {integrity: sha512-o+NO+8WrRiQEE4/7nwRJhN1HWpVmJm511pBHUxPLtp0BUISzlBplORYSmTclCnJvQq2tKu/sgl3xVpkc7ZWuQQ==}
+    engines: {node: '>=6'}
+
   kolorist@1.8.0:
     resolution: {integrity: sha512-Y+60/zizpJ3HRH8DCss+q95yr6145JXZo46OTpFvDZWLfRCE4qChOyk1b26nMaNpfHHgxagk9dXT5OP0Tfe+dQ==}
 
@@ -7421,6 +7467,11 @@ packages:
   leven@3.1.0:
     resolution: {integrity: sha512-qsda+H8jTaUaN/x5vzW2rzc+8Rw4TAQ/4KjB46IwK5VH+IlVeeeje/EoZRpiXvIqjFgK84QffqPztGI3VBLG1A==}
     engines: {node: '>=6'}
+
+  lib0@0.2.117:
+    resolution: {integrity: sha512-DeXj9X5xDCjgKLU/7RR+/HQEVzuuEUiwldwOGsHK/sfAfELGWEyTcf0x+uOvCvK3O2zPmZePXWL85vtia6GyZw==}
+    engines: {node: '>=16'}
+    hasBin: true
 
   lie@3.3.0:
     resolution: {integrity: sha512-UaiMJzeWRlEujzAuw5LokY1L5ecNQYZKfmyZ9L7wDHb/p5etKaxXhohBcrw0EYby+G/NA52vRSN4N39dxHAIwQ==}
@@ -9988,6 +10039,12 @@ packages:
     resolution: {integrity: sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==}
     engines: {node: '>=0.4'}
 
+  y-protocols@1.0.7:
+    resolution: {integrity: sha512-YSVsLoXxO67J6eE/nV4AtFtT3QEotZf5sK5BHxFBXso7VDUT3Tx07IfA6hsu5Q5OmBdMkQVmFZ9QOA7fikWvnw==}
+    engines: {node: '>=16.0.0', npm: '>=8.0.0'}
+    peerDependencies:
+      yjs: ^13.0.0
+
   y18n@5.0.8:
     resolution: {integrity: sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==}
     engines: {node: '>=10'}
@@ -10017,6 +10074,10 @@ packages:
 
   yauzl@2.10.0:
     resolution: {integrity: sha512-p4a9I6X6nu6IhoGmBqAcbJy1mlC4j27vEPZX9F4L4/vZT3Lyq1VkFHw/V/PUcB9Buo+DG3iHkT0x3Qya58zc3g==}
+
+  yjs@13.6.33:
+    resolution: {integrity: sha512-q/UYvr1gOk4XII+Cu1CW2dINjYqJJFifTzogEaIARznrvX7uOlHsdTEXcnOBMuIsrCGEEKdNxi74kyMLZlKVfw==}
+    engines: {node: '>=16.0.0', npm: '>=8.0.0'}
 
   yocto-queue@0.1.0:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
@@ -11050,6 +11111,30 @@ snapshots:
     dependencies:
       graphql: 16.8.2
 
+  '@hocuspocus/common@4.7.0':
+    dependencies:
+      lib0: 0.2.117
+
+  '@hocuspocus/provider@4.7.0(y-protocols@1.0.7(yjs@13.6.33))(yjs@13.6.33)':
+    dependencies:
+      '@hocuspocus/common': 4.7.0
+      '@lifeomic/attempt': 3.1.0
+      lib0: 0.2.117
+      y-protocols: 1.0.7(yjs@13.6.33)
+      yjs: 13.6.33
+
+  '@hocuspocus/server@4.7.0(y-protocols@1.0.7(yjs@13.6.33))(yjs@13.6.33)':
+    dependencies:
+      '@hocuspocus/common': 4.7.0
+      async-mutex: 0.5.0
+      crossws: 0.4.12
+      kleur: 4.1.5
+      lib0: 0.2.117
+      y-protocols: 1.0.7(yjs@13.6.33)
+      yjs: 13.6.33
+    transitivePeerDependencies:
+      - srvx
+
   '@hono/node-server@1.19.14(hono@4.12.27)':
     dependencies:
       hono: 4.12.27
@@ -11449,6 +11534,8 @@ snapshots:
       '@lezer/common': 1.5.2
       '@lezer/highlight': 1.2.3
       '@lezer/lr': 1.4.10
+
+  '@lifeomic/attempt@3.1.0': {}
 
   '@linear/sdk@77.0.0(graphql@16.14.1)':
     dependencies:
@@ -13898,6 +13985,10 @@ snapshots:
 
   async-exit-hook@2.0.1: {}
 
+  async-mutex@0.5.0:
+    dependencies:
+      tslib: 2.8.1
+
   async@3.2.6: {}
 
   asynckit@0.4.0: {}
@@ -14416,6 +14507,8 @@ snapshots:
       path-key: 3.1.1
       shebang-command: 2.0.0
       which: 2.0.2
+
+  crossws@0.4.12: {}
 
   css-tree@3.2.1:
     dependencies:
@@ -15887,6 +15980,8 @@ snapshots:
 
   isexe@4.0.0: {}
 
+  isomorphic.js@0.2.5: {}
+
   istanbul-lib-coverage@3.2.2: {}
 
   istanbul-lib-instrument@6.0.3:
@@ -16354,6 +16449,8 @@ snapshots:
 
   khroma@2.1.0: {}
 
+  kleur@4.1.5: {}
+
   kolorist@1.8.0: {}
 
   layout-base@1.0.2: {}
@@ -16363,6 +16460,10 @@ snapshots:
   lazy-val@1.0.5: {}
 
   leven@3.1.0: {}
+
+  lib0@0.2.117:
+    dependencies:
+      isomorphic.js: 0.2.5
 
   lie@3.3.0:
     dependencies:
@@ -19450,6 +19551,11 @@ snapshots:
 
   xtend@4.0.2: {}
 
+  y-protocols@1.0.7(yjs@13.6.33):
+    dependencies:
+      lib0: 0.2.117
+      yjs: 13.6.33
+
   y18n@5.0.8: {}
 
   yallist@3.1.1: {}
@@ -19476,6 +19582,10 @@ snapshots:
     dependencies:
       buffer-crc32: 0.2.13
       fd-slicer: 1.1.0
+
+  yjs@13.6.33:
+    dependencies:
+      lib0: 0.2.117
 
   yocto-queue@0.1.0: {}
 
