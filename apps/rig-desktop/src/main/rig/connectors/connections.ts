@@ -512,6 +512,8 @@ async function identifyViaMcp(id: ConnectorId, url: string, accessToken: string)
         (t) => WHOAMI_NAME.test(t.name) && !((t.inputSchema as { required?: unknown[] })?.required?.length)
       );
       if (guess) call = { name: guess.name, arguments: {} };
+      // Once per connection (loginTried): which tools it has, to map its "who am I" by hand. Names only.
+      else log.warn('Rig connectors: no "who am I" tool found', { id, tools: tools.map((t) => t.name) });
     }
     if (!call) return null;
     const result = await client.callTool(call, undefined, { signal });
