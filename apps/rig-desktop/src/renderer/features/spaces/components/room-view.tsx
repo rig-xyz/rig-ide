@@ -1,5 +1,6 @@
 import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
 import type { ConnectorId, GlobalServer } from '@shared/spaces/connectors';
@@ -9,6 +10,7 @@ import { RelayRoomSource, type RelayRoomClient } from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
 import { writeOpenedAt } from '../room-read-marker';
 import { useRefreshMemberReadsOnRosterChange } from '../roster-refresh';
+import { resolveSpaceLink } from '../space-link';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
 import { Composer, type ComposerSendContext } from './composer';
@@ -361,6 +363,45 @@ export function RoomView({
   // with the Room's live roster.
   useRefreshMemberReadsOnRosterChange(snapshot?.members ?? null, bindingId, live);
 
+  // File links in the Room are written by agents: absolute paths (on the
+  // machine that ran them), `file://` URLs, relative paths. The editor opens
+  // only paths relative to the space's folder, so resolve each against it
+  // first (`space-link.ts`) and refuse, with a word, only what's outside.
+  const [spaceRoot, setSpaceRoot] = useState<string | null>(null);
+  useEffect(() => {
+    setSpaceRoot(null);
+    if (!live) return;
+    let alive = true;
+    void rpc.rig.recent
+      .resolveLocalPaths({ bindingIds: [bindingId] })
+      .then((paths) => {
+        if (alive) setSpaceRoot(paths[bindingId] ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [live, bindingId]);
+  const onOpenFileRef = useRef(onOpenFile);
+  onOpenFileRef.current = onOpenFile;
+  const openLink = useCallback(
+    (link: string) => {
+      const open = onOpenFileRef.current;
+      if (!open) return;
+      // Folder not known (yet): hand it over as before.
+      if (!spaceRoot) return open(link);
+      const resolved = resolveSpaceLink(link, spaceRoot);
+      if (resolved.kind === 'inside') return open(resolved.relPath);
+      if (resolved.kind === 'external') return void rpc.app.openExternal(link).catch(() => {});
+      toast({
+        title: 'That file isn’t in this space',
+        description: `${resolved.path} is outside ${spaceName}’s folder, so it can’t open here.`,
+      });
+    },
+    [spaceRoot, spaceName]
+  );
+  const handleOpenFile = onOpenFile ? openLink : undefined;
+
   // Every hook sits above the early returns below: React needs the same
   // hooks in the same order on every render.
   const configCache = useRef(new Map<AgentKind, ReturnType<AgentSettingsApi['load']>>());
@@ -563,7 +604,7 @@ export function RoomView({
             ownId={selfUserId}
             onStopSession={handleStopSession}
             onResolvePermission={handleResolvePermission}
-            onOpenFile={onOpenFile}
+            onOpenFile={handleOpenFile}
             onReply={source instanceof RelayRoomSource ? setReplyTo : undefined}
             readKey={source instanceof RelayRoomSource ? bindingId : undefined}
             onRerun={handleRerun}

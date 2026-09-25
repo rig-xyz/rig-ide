@@ -87,3 +87,52 @@ describe('SafeMarkdown — rigfile: link interception', () => {
     expect(mocks.openExternal).not.toHaveBeenCalled();
   });
 });
+
+/** A Room answer's links to files go to the caller (which resolves them against the space's folder), never to openExternal. */
+describe('SafeMarkdown — file links with onOpenPath', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    mocks.openExternal.mockReset().mockResolvedValue(undefined);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  async function clickLinks(content: string, onOpenPath?: (href: string) => void): Promise<void> {
+    await act(async () => {
+      root.render(<SafeMarkdown content={content} onOpenPath={onOpenPath} />);
+    });
+    for (const link of host.querySelectorAll('a')) {
+      await act(async () => link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+    }
+  }
+
+  it('hands relative, absolute and file:// links to onOpenPath as written; web links still open externally', async () => {
+    const onOpenPath = vi.fn();
+    await clickLinks(
+      '[a](notes/plan.md) [b](/Users/sam/Rig/growth/plan.md) [c](file:///Users/sam/Rig/growth/plan.md) [d](https://example.com) [e](#top)',
+      onOpenPath
+    );
+    expect(onOpenPath.mock.calls.map(([href]) => href)).toEqual([
+      'notes/plan.md',
+      '/Users/sam/Rig/growth/plan.md',
+      'file:///Users/sam/Rig/growth/plan.md',
+    ]);
+    expect(mocks.openExternal).toHaveBeenCalledTimes(1);
+    expect(mocks.openExternal).toHaveBeenCalledWith('https://example.com');
+  });
+
+  it('without a handler, a file:// link is still stripped (unchanged behavior)', async () => {
+    await act(async () => {
+      root.render(<SafeMarkdown content="[c](file:///etc/hosts)" />);
+    });
+    expect(host.querySelector('a')?.getAttribute('href') ?? '').toBe('');
+  });
+});

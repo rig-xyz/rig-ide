@@ -775,7 +775,7 @@ export function SessionCard({
 
         {card.finalAnswer && status !== 'failed' && (
           <div data-highlight-target className="rounded-card">
-            <SafeMarkdown content={card.finalAnswer} className="text-sm leading-relaxed text-text-prose" />
+            <SafeMarkdown content={card.finalAnswer} className="text-sm leading-relaxed text-text-prose" onOpenPath={onOpenFile} />
           </div>
         )}
         {card.finalAnswer && status === 'failed' && (

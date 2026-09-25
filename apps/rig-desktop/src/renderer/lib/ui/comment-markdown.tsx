@@ -77,6 +77,30 @@ function urlTransform(value: string): string {
   return value.startsWith('rigfile:') ? value : defaultUrlTransform(value);
 }
 
+/**
+ * With an `onOpenPath` handler, links to files are the caller's to resolve
+ * (a Room answer's `plan.md`, `/Users/…/plan.md`, `file:///…/plan.md` —
+ * see `features/spaces/space-link.ts`): `file:` survives both allowlists,
+ * and everything that isn't a web or mail link goes to the handler instead
+ * of `openExternal` (which only opens http/https and dropped these).
+ */
+const FILE_LINK_SANITIZE_SCHEMA = {
+  ...SANITIZE_SCHEMA,
+  protocols: {
+    ...SANITIZE_SCHEMA.protocols,
+    href: [...(SANITIZE_SCHEMA.protocols?.href ?? []), 'file'],
+  },
+};
+
+function fileLinkUrlTransform(value: string): string {
+  return /^file:/i.test(value) ? value : urlTransform(value);
+}
+
+/** A link the browser side can open: http(s) or mail. Everything else in an agent's answer is a file path. */
+function isWebLink(href: string): boolean {
+  return /^(https?|mailto):/i.test(href);
+}
+
 const MARKDOWN_BODY_CLASS = cn(
   'break-words text-sm leading-relaxed text-text-primary',
   '[&_p]:mb-1.5 [&_p:last-child]:mb-0',
@@ -101,18 +125,21 @@ export function SafeMarkdown({
   content,
   className,
   onOpenRigFile,
+  onOpenPath,
 }: {
   content: string;
   className?: string;
   /** Handles a `rigfile:<bindingId>/<relPath>` link — see this file's own header comment. */
   onOpenRigFile?: (bindingId: string, relPath: string) => void;
+  /** Handles a link to a file (relative, absolute or `file://`), as written — see `FILE_LINK_SANITIZE_SCHEMA`. */
+  onOpenPath?: (href: string) => void;
 }) {
   return (
     <div className={cn(MARKDOWN_BODY_CLASS, className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeSanitize, SANITIZE_SCHEMA]]}
-        urlTransform={urlTransform}
+        rehypePlugins={[[rehypeSanitize, onOpenPath ? FILE_LINK_SANITIZE_SCHEMA : SANITIZE_SCHEMA]]}
+        urlTransform={onOpenPath ? fileLinkUrlTransform : urlTransform}
         components={{
           a: ({ href, children }) => {
             const rigFile = href ? parseRigFileHref(href) : null;
@@ -124,6 +151,10 @@ export function SafeMarkdown({
                   event.preventDefault();
                   if (rigFile) {
                     onOpenRigFile?.(rigFile.bindingId, rigFile.relPath);
+                    return;
+                  }
+                  if (href && onOpenPath && !isWebLink(href)) {
+                    if (!href.startsWith('#')) onOpenPath(href);
                     return;
                   }
                   if (href) void rpc.app.openExternal(href);
