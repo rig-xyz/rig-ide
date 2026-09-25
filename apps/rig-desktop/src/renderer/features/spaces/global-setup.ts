@@ -57,24 +57,3 @@ export function viaGlobalSetupShortLabel(connectorId: string, servers: readonly 
   const agents = globalAgentsFor(connectorId, servers);
   return agents.size > 0 ? `Via ${globalAgentsLabel(agents)}` : null;
 }
-
-/** One agent's servers, for the panel's "also bring" disclosure. */
-export interface GlobalSetupGroup {
-  agent: AgentKind;
-  servers: GlobalServer[];
-}
-
-/** Groups by agent (Claude first, then Codex), leaving out an agent with nothing. */
-export function groupGlobalSetup(servers: readonly GlobalServer[]): GlobalSetupGroup[] {
-  const groups: GlobalSetupGroup[] = [];
-  for (const agent of ['claude', 'codex'] as const) {
-    const mine = servers.filter((s) => s.agent === agent);
-    if (mine.length > 0) groups.push({ agent, servers: mine });
-  }
-  return groups;
-}
-
-/** A server's own name with a leading "claude.ai " stripped, e.g. "claude.ai Linear" → "Linear". */
-export function displayServerName(name: string): string {
-  return name.replace(/^claude\.ai\s+/, '');
-}

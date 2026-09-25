@@ -1220,7 +1220,13 @@ describe('Connectors — gallery', () => {
     snapshot = connectorsSnapshot(),
     source = fakeConnectorsSource(),
     onClose = vi.fn(),
-    extra: { selfUserId?: string; focus?: ConnectorId | null; globalSetup?: GlobalServer[] } = {}
+    extra: {
+      selfUserId?: string;
+      focus?: ConnectorId | null;
+      globalSetup?: GlobalServer[];
+      initialScope?: 'all' | 'installed' | 'available';
+      initialSection?: 'global-setup' | null;
+    } = {}
   ) => {
     await act(async () => {
       root.render(
@@ -1232,13 +1238,15 @@ describe('Connectors — gallery', () => {
           rightInset={320}
           globalSetup={extra.globalSetup}
           focus={extra.focus}
+          initialScope={extra.initialScope}
+          initialSection={extra.initialSection}
         />
       );
     });
     return { source, onClose };
   };
 
-  it('groups tools: in this space (with your state), ones you can add, and ones coming soon', async () => {
+  it('groups connectors: in this space (with your state), ones you can add, and ones coming soon', async () => {
     await renderGallery(
       connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }] })
     );
@@ -1259,7 +1267,7 @@ describe('Connectors — gallery', () => {
     expect(host.querySelector('[data-testid="gallery-search"]')).toBeNull();
   });
 
-  it('"← All tools" returns from the detail view to the grid', async () => {
+  it('"← All connectors" returns from the detail view to the grid', async () => {
     await renderGallery(
       connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }] })
     );
@@ -1409,29 +1417,51 @@ describe('Connectors — gallery', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
-  it('notes a catalog tool your agents already have globally in the card footer', async () => {
+  it('notes a catalog connector your agents already have globally in the card footer', async () => {
     const globalSetup: GlobalServer[] = [
       { agent: 'claude', name: 'claude.ai PostHog', url: 'https://mcp.posthog.com/mcp', connectorId: 'posthog' },
     ];
     await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), { globalSetup });
     expect(cardOf('posthog').textContent).toContain('In your Claude setup');
-    // A tool none of your agents have keeps its plain category label.
+    // A connector none of your agents have keeps its plain category label.
     expect(cardOf('linear').textContent).toContain('Work tracking');
   });
 
-  it('shows a read-only "From your agents\' own setup" section at the foot of the grid, grouped by agent', async () => {
+  it('shows the "From your agents\' own setup" section as cards: a cleaned name (raw name kept in a title), a real logo when it matches the catalog, a neutral tile when it doesn\'t, and merged agents for the same catalog connector', async () => {
     const globalSetup: GlobalServer[] = [
       { agent: 'claude', name: 'claude.ai Linear', url: 'https://mcp.linear.app/mcp', connectorId: 'linear' },
-      { agent: 'codex', name: 'launchdarkly', url: null, connectorId: null },
+      { agent: 'codex', name: 'Linear', url: 'https://mcp.linear.app/mcp', connectorId: 'linear' },
+      { agent: 'codex', name: 'plugin:acme-tools:launchdarkly', url: null, connectorId: null },
     ];
     await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), { globalSetup });
     const section = host.querySelector('[data-testid="gallery-global-setup"]')!;
-    expect(section.textContent).toContain('Claude');
-    expect(section.textContent).toContain('Linear');
-    expect(section.textContent).toContain('Codex');
-    expect(section.textContent).toContain('launchdarkly');
-    // Nothing actionable in there — read-only.
-    expect(section.querySelectorAll('button')).toHaveLength(0);
+    const cards = [...section.querySelectorAll<HTMLElement>('[data-testid="gallery-setup-card"]')];
+    expect(cards).toHaveLength(2);
+
+    const linearCard = cards.find((c) => c.textContent?.includes('Linear'))!;
+    expect(linearCard.textContent).toContain('In your Claude and Codex setup');
+    expect(linearCard.querySelector('b')?.getAttribute('title')).toBe('claude.ai Linear');
+    expect(linearCard.querySelector('svg')).not.toBeNull();
+    expect(linearCard.getAttribute('data-connector')).toBe('linear');
+
+    const ldCard = cards.find((c) => c.textContent?.includes('launchdarkly'))!;
+    expect(ldCard.textContent).toContain('launchdarkly');
+    expect(ldCard.textContent).not.toContain('plugin:');
+    expect(ldCard.textContent).toContain('In your Codex setup');
+    // No catalog match: a neutral plug tile, and not clickable — nothing to open.
+    expect(ldCard.querySelector('svg.lucide-plug')).not.toBeNull();
+    expect(ldCard.getAttribute('data-connector')).toBeNull();
+    expect(ldCard.getAttribute('role')).toBeNull();
+  });
+
+  it('opens a matched global-setup card straight to that connector\'s detail view', async () => {
+    const globalSetup: GlobalServer[] = [
+      { agent: 'claude', name: 'claude.ai Linear', url: 'https://mcp.linear.app/mcp', connectorId: 'linear' },
+    ];
+    await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), { globalSetup });
+    const card = host.querySelector<HTMLElement>('[data-testid="gallery-setup-card"][data-connector="linear"]')!;
+    await act(async () => click(card));
+    expect(detail().getAttribute('data-connector')).toBe('linear');
   });
 
   it('draws a real brand mark for a Simple Icons connector, and the letter tile for one with no vector mark', async () => {
@@ -1439,6 +1469,92 @@ describe('Connectors — gallery', () => {
     expect(cardOf('linear').querySelector('svg')).not.toBeNull();
     expect(cardOf('amplitude').querySelector('svg')).toBeNull();
     expect(cardOf('amplitude').querySelector('span[aria-hidden]')?.textContent).toBe('A');
+  });
+
+  it('keeps the scope and category filters on one line that never wraps', async () => {
+    await renderGallery();
+    const row = host.querySelector('[data-testid="gallery-filters"]')!;
+    expect(row.className).not.toContain('flex-wrap');
+    expect(buttonIn(row, 'All')).toBeTruthy();
+    expect(buttonIn(row, 'Installed')).toBeTruthy();
+    expect(buttonIn(row, 'Available')).toBeTruthy();
+  });
+
+  it('scope "Installed" keeps what\'s in the space plus what your agents already reach on their own; "Available" drops what\'s already in the space', async () => {
+    const globalSetup: GlobalServer[] = [
+      { agent: 'claude', name: 'claude.ai PostHog', url: 'https://mcp.posthog.com/mcp', connectorId: 'posthog' },
+    ];
+    await renderGallery(
+      connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }] }),
+      fakeConnectorsSource(),
+      vi.fn(),
+      { globalSetup }
+    );
+    const ids = () => [...host.querySelectorAll('[data-testid="gallery-card"]')].map((c) => c.getAttribute('data-connector'));
+
+    await act(async () => click(buttonIn(host, 'Installed')));
+    expect(ids().sort()).toEqual(['linear', 'posthog']);
+    // Nothing to add and nothing coming soon under "Installed".
+    expect(host.querySelectorAll('[data-testid="gallery-soon"]').length).toBe(0);
+
+    await act(async () => click(buttonIn(host, 'Available')));
+    expect(ids()).not.toContain('linear');
+    expect(ids()).toContain('posthog');
+
+    await act(async () => click(buttonIn(host, 'All')));
+    expect(ids()).toContain('linear');
+  });
+
+  it('shows "From your agents\' own setup" under "All" and "Installed", not under "Available"', async () => {
+    const globalSetup: GlobalServer[] = [
+      { agent: 'claude', name: 'claude.ai Linear', url: 'https://mcp.linear.app/mcp', connectorId: 'linear' },
+    ];
+    await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), { globalSetup });
+    expect(host.querySelector('[data-testid="gallery-global-setup"]')).not.toBeNull();
+    await act(async () => click(buttonIn(host, 'Installed')));
+    expect(host.querySelector('[data-testid="gallery-global-setup"]')).not.toBeNull();
+    await act(async () => click(buttonIn(host, 'Available')));
+    expect(host.querySelector('[data-testid="gallery-global-setup"]')).toBeNull();
+  });
+
+  it('opens scrolled to "From your agents\' own setup" and scoped to Installed when asked to (the panel\'s "also bring" line)', async () => {
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {});
+    const globalSetup: GlobalServer[] = [
+      { agent: 'claude', name: 'claude.ai Linear', url: 'https://mcp.linear.app/mcp', connectorId: 'linear' },
+    ];
+    await renderGallery(
+      connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }] }),
+      fakeConnectorsSource(),
+      vi.fn(),
+      { globalSetup, initialScope: 'installed', initialSection: 'global-setup' }
+    );
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+    // Scoped to "Installed" from the start: "Coming soon" (never installed, never yours) is hidden.
+    expect(host.querySelectorAll('[data-testid="gallery-soon"]').length).toBe(0);
+    expect(host.querySelector('[data-testid="gallery-global-setup"]')).not.toBeNull();
+    scrollSpy.mockRestore();
+  });
+
+  it('detail\'s status card shows which of your agents can reach it, plus the connector\'s MCP host', async () => {
+    await renderGallery(
+      connectorsSnapshot({ connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }] })
+    );
+    await act(async () => click(cardOf('linear')));
+    const status = host.querySelector('[data-testid="gallery-detail-status"]')!;
+    // A space connector is wired into any of your agents' sessions.
+    expect(status.textContent).toContain('Available to your agents: Claude, Codex');
+    expect(status.textContent).toContain('mcp.linear.app');
+  });
+
+  it('detail\'s status card names just the one agent for a connector only reached via its own global setup', async () => {
+    const globalSetup: GlobalServer[] = [
+      { agent: 'codex', name: 'claude.ai PostHog', url: 'https://mcp.posthog.com/mcp', connectorId: 'posthog' },
+    ];
+    await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), { globalSetup });
+    await act(async () => click(cardOf('posthog')));
+    const status = host.querySelector('[data-testid="gallery-detail-status"]')!;
+    expect(status.textContent).toContain('Available to your agents: Codex');
+    expect(status.textContent).toContain('mcp.posthog.com');
   });
 });
 

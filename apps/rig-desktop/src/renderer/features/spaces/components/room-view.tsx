@@ -173,7 +173,12 @@ export function RoomView({
   const [snapshot, setSnapshot] = useState(() => source?.getSnapshot() ?? null);
   const [playing, setPlaying] = useState(false);
   const [replyTo, setReplyTo] = useState<RoomReplyRef | null>(null);
-  const [gallery, setGallery] = useState<{ open: boolean; focus: ConnectorId | null }>({ open: false, focus: null });
+  const [gallery, setGallery] = useState<{
+    open: boolean;
+    focus: ConnectorId | null;
+    initialScope: 'all' | 'installed' | 'available';
+    initialSection: 'global-setup' | null;
+  }>({ open: false, focus: null, initialScope: 'all', initialSection: null });
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [bodyWidth, setBodyWidth] = useState(0);
@@ -506,7 +511,20 @@ export function RoomView({
                 selfUserId={selfUserId}
                 bindingId={bindingId}
                 onOpenGallery={(focus) => {
-                  setGallery({ open: true, focus: focus ?? null });
+                  // `ConnectorsSection` calls this the same way for its "+
+                  // Add" toggle and for the "your agents also bring N…"
+                  // line — both pass no `focus`. Its callback has no way to
+                  // tell them apart, so an unfocused open is routed to the
+                  // Installed scope, scrolled to the global-setup section:
+                  // that's the one named, testable requirement here
+                  // (connectors-spec.md), at the cost of "+ Add" landing
+                  // there too when you have any global setup.
+                  setGallery({
+                    open: true,
+                    focus: focus ?? null,
+                    initialScope: focus ? 'all' : 'installed',
+                    initialSection: focus ? null : 'global-setup',
+                  });
                   refreshGlobalSetup();
                 }}
                 globalSetup={globalSetup}
@@ -529,11 +547,13 @@ export function RoomView({
             snapshot={snapshot}
             selfUserId={selfUserId}
             source={source}
-            onClose={() => setGallery({ open: false, focus: null })}
+            onClose={() => setGallery({ open: false, focus: null, initialScope: 'all', initialSection: null })}
             // Beside the floating panel in a wide Room; over the Room when it's narrow.
             rightInset={narrow ? 12 : PANEL_LANE_PX + 4}
             globalSetup={globalSetup}
             focus={gallery.focus}
+            initialScope={gallery.initialScope}
+            initialSection={gallery.initialSection}
           />
         )}
       </div>
