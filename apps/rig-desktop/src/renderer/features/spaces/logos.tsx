@@ -1,6 +1,6 @@
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { cn } from '@renderer/lib/utils';
-import { connectorById } from '@shared/spaces/connectors';
+import { connectorById, type ConnectorId } from '@shared/spaces/connectors';
 import type { LogoId, RoomConnector } from './types';
 
 /**
@@ -37,6 +37,59 @@ const LOGO_META: Record<Exclude<LogoId, 'rig'>, { viewBox: string; path: string;
   gads: { viewBox: '0 0 24 24', path: GADS_PATH, brandFill: '#4285F4' },
 };
 
+/**
+ * BYOA catalog connectors (connectors-spec.md's v1 list) with a real brand
+ * mark: official Simple Icons (CC0) paths, fetched verbatim from
+ * `simple-icons@latest`. Notion's mark is black in the source — like
+ * OpenAI's above, it renders in `currentColor` (bound to `text-text-primary`
+ * below) so it stays visible on the dark theme instead of vanishing.
+ * Amplitude, Granola and Attio have no clean vector mark to inline (no
+ * Simple Icons entry; their sites only ship a raster favicon/app icon or,
+ * for Attio, a wide wordmark with no standalone square icon), so they're
+ * left out here and fall back to the letter tile in `ConnectorLogo`.
+ */
+const LINEAR_PATH =
+  'M2.886 4.18A11.982 11.982 0 0 1 11.99 0C18.624 0 24 5.376 24 12.009c0 3.64-1.62 6.903-4.18 9.105L2.887 4.18ZM1.817 5.626l16.556 16.556c-.524.33-1.075.62-1.65.866L.951 7.277c.247-.575.537-1.126.866-1.65ZM.322 9.163l14.515 14.515c-.71.172-1.443.282-2.195.322L0 11.358a12 12 0 0 1 .322-2.195Zm-.17 4.862 9.823 9.824a12.02 12.02 0 0 1-9.824-9.824Z';
+
+const NOTION_PATH =
+  'M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z';
+
+const POSTHOG_PATH =
+  'M9.854 14.5 5 9.647.854 5.5A.5.5 0 0 0 0 5.854V8.44a.5.5 0 0 0 .146.353L5 13.647l.147.146L9.854 18.5l.146.147v-.049c.065.03.134.049.207.049h2.586a.5.5 0 0 0 .353-.854L9.854 14.5zm0-5-4-4a.487.487 0 0 0-.409-.144.515.515 0 0 0-.356.21.493.493 0 0 0-.089.288V8.44a.5.5 0 0 0 .147.353l9 9a.5.5 0 0 0 .853-.354v-2.585a.5.5 0 0 0-.146-.354l-5-5zm1-4a.5.5 0 0 0-.854.354V8.44a.5.5 0 0 0 .147.353l4 4a.5.5 0 0 0 .853-.354V9.854a.5.5 0 0 0-.146-.354l-4-4zm12.647 11.515a3.863 3.863 0 0 1-2.232-1.1l-4.708-4.707a.5.5 0 0 0-.854.354v6.585a.5.5 0 0 0 .5.5H23.5a.5.5 0 0 0 .5-.5v-.6c0-.276-.225-.497-.499-.532zm-5.394.032a.8.8 0 1 1 0-1.6.8.8 0 0 1 0 1.6zM.854 15.5a.5.5 0 0 0-.854.354v2.293a.5.5 0 0 0 .5.5h2.293c.222 0 .39-.135.462-.309a.493.493 0 0 0-.109-.545L.854 15.501zM5 14.647.854 10.5a.5.5 0 0 0-.854.353v2.586a.5.5 0 0 0 .146.353L4.854 18.5l.146.147h2.793a.5.5 0 0 0 .353-.854L5 14.647z';
+
+const SENTRY_PATH =
+  'M13.91 2.505c-.873-1.448-2.972-1.448-3.844 0L6.904 7.92a15.478 15.478 0 0 1 8.53 12.811h-2.221A13.301 13.301 0 0 0 5.784 9.814l-2.926 5.06a7.65 7.65 0 0 1 4.435 5.848H2.194a.365.365 0 0 1-.298-.534l1.413-2.402a5.16 5.16 0 0 0-1.614-.913L.296 19.275a2.182 2.182 0 0 0 .812 2.999 2.24 2.24 0 0 0 1.086.288h6.983a9.322 9.322 0 0 0-3.845-8.318l1.11-1.922a11.47 11.47 0 0 1 4.95 10.24h5.915a17.242 17.242 0 0 0-7.885-15.28l2.244-3.845a.37.37 0 0 1 .504-.13c.255.14 9.75 16.708 9.928 16.9a.365.365 0 0 1-.327.543h-2.287c.029.612.029 1.223 0 1.831h2.297a2.206 2.206 0 0 0 1.922-3.31z';
+
+const ATLASSIAN_PATH =
+  'M7.12 11.084a.683.683 0 00-1.16.126L.075 22.974a.703.703 0 00.63 1.018h8.19a.678.678 0 00.63-.39c1.767-3.65.696-9.203-2.406-12.52zM11.434.386a15.515 15.515 0 00-.906 15.317l3.95 7.9a.703.703 0 00.628.388h8.19a.703.703 0 00.63-1.017L12.63.38a.664.664 0 00-1.196.006z';
+
+const INTERCOM_PATH =
+  'M21 0H3C1.343 0 0 1.343 0 3v18c0 1.658 1.343 3 3 3h18c1.658 0 3-1.342 3-3V3c0-1.657-1.342-3-3-3zm-5.801 4.399c0-.44.36-.8.802-.8.44 0 .8.36.8.8v10.688c0 .442-.36.801-.8.801-.443 0-.802-.359-.802-.801V4.399zM11.2 3.994c0-.44.357-.799.8-.799s.8.359.8.799v11.602c0 .44-.357.8-.8.8s-.8-.36-.8-.8V3.994zm-4 .405c0-.44.359-.8.799-.8.443 0 .802.36.802.8v10.688c0 .442-.36.801-.802.801-.44 0-.799-.359-.799-.801V4.399zM3.199 6c0-.442.36-.8.802-.8.44 0 .799.358.799.8v7.195c0 .441-.359.8-.799.8-.443 0-.802-.36-.802-.8V6zM20.52 18.202c-.123.105-3.086 2.593-8.52 2.593-5.433 0-8.397-2.486-8.521-2.593-.335-.288-.375-.792-.086-1.128.285-.334.79-.375 1.125-.09.047.041 2.693 2.211 7.481 2.211 4.848 0 7.456-2.186 7.479-2.207.334-.289.839-.25 1.128.086.289.336.25.84-.086 1.128zm.281-5.007c0 .441-.36.8-.801.8-.441 0-.801-.36-.801-.8V6c0-.442.361-.8.801-.8.441 0 .801.357.801.8v7.195z';
+
+const CLICKUP_PATH =
+  'M2 18.439l3.69-2.828c1.961 2.56 4.044 3.739 6.363 3.739 2.307 0 4.33-1.166 6.203-3.704L22 18.405C19.298 22.065 15.941 24 12.053 24 8.178 24 4.788 22.078 2 18.439zM12.04 6.15l-6.568 5.66-3.036-3.52L12.055 0l9.543 8.296-3.05 3.509z';
+
+const AIRTABLE_PATH =
+  'M11.992 1.966c-.434 0-.87.086-1.28.257L1.779 5.917c-.503.208-.49.908.012 1.116l8.982 3.558a3.266 3.266 0 0 0 2.454 0l8.982-3.558c.503-.196.503-.908.012-1.116l-8.957-3.694a3.255 3.255 0 0 0-1.272-.257zM23.4 8.056a.589.589 0 0 0-.222.045l-10.012 3.877a.612.612 0 0 0-.38.564v8.896a.6.6 0 0 0 .821.552L23.62 18.1a.583.583 0 0 0 .38-.551V8.653a.6.6 0 0 0-.6-.596zM.676 8.095a.644.644 0 0 0-.48.19C.086 8.396 0 8.53 0 8.69v8.355c0 .442.515.737.908.54l6.27-3.006.307-.147 2.969-1.436c.466-.22.43-.908-.061-1.092L.883 8.138a.57.57 0 0 0-.207-.044z';
+
+const CONNECTOR_LOGO_META: Partial<Record<ConnectorId, { viewBox: string; path: string; brandFill: string }>> = {
+  linear: { viewBox: '0 0 24 24', path: LINEAR_PATH, brandFill: '#5E6AD2' },
+  notion: { viewBox: '0 0 24 24', path: NOTION_PATH, brandFill: 'currentColor' },
+  posthog: { viewBox: '0 0 24 24', path: POSTHOG_PATH, brandFill: '#F54E00' },
+  // Same mark the scripted demo already used for its pre-catalog Mixpanel logo.
+  mixpanel: { viewBox: '0 0 24 24', path: MIXPANEL_PATH, brandFill: '#7856FF' },
+  sentry: { viewBox: '0 0 24 24', path: SENTRY_PATH, brandFill: '#362D59' },
+  atlassian: { viewBox: '0 0 24 24', path: ATLASSIAN_PATH, brandFill: '#0C66E4' },
+  // Simple Icons ships Intercom's own hex (a pale #2E67F8-ish blue) too low-
+  // contrast on a light tile — the catalog's own `brand` (#1F8DED) reads better.
+  intercom: { viewBox: '0 0 24 24', path: INTERCOM_PATH, brandFill: '#1F8DED' },
+  clickup: { viewBox: '0 0 24 24', path: CLICKUP_PATH, brandFill: '#7B68EE' },
+  airtable: { viewBox: '0 0 24 24', path: AIRTABLE_PATH, brandFill: '#18BFFF' },
+  // Attio has no Simple Icons entry and its site ships only a wide wordmark
+  // (103x26, no standalone square icon) plus a raster .ico favicon — no
+  // clean vector mark to inline, so it falls back to the letter tile.
+};
+
 /** One brand mark. `openai` renders in the current text color (matches the demo's `--openai` ink token); everything else keeps its real brand fill. */
 export function BrandLogo({
   id,
@@ -68,11 +121,12 @@ export function agentLogoId(agent: 'claude' | 'codex'): LogoId {
 }
 
 /**
- * A BYOA catalog connector's stand-in mark (connectors-spec.md: no real
- * brand icons in v1) — its catalog `brand` color with its name's initial,
- * matching the design sketch's letter tiles.
+ * A BYOA catalog connector's fallback mark, for the two catalog entries with
+ * no clean vector logo to inline (Amplitude, Granola — see
+ * `CONNECTOR_LOGO_META` above): its catalog `brand` color with its name's
+ * initial, matching the design sketch's original letter tiles.
  */
-export function ConnectorTile({
+function ConnectorTile({
   name,
   brand,
   size = 18,
@@ -94,10 +148,44 @@ export function ConnectorTile({
   );
 }
 
-/** A `RoomConnector`'s mark: a catalog tile when it's a BYOA connector, else its `logo` brand mark (the scripted demo's pre-catalog connectors). */
+/**
+ * The one connector logo, drawn the same way everywhere a connector shows
+ * (space panel rows, the catalog, `ConnectorCard`, a turn's gap pill, a
+ * prettified step title): a real brand mark for the catalog ids in
+ * `CONNECTOR_LOGO_META`, else the letter tile above.
+ */
+export function ConnectorLogo({
+  id,
+  name,
+  brand,
+  size = 18,
+  className,
+}: {
+  id: string;
+  name: string;
+  brand: string;
+  size?: number;
+  className?: string;
+}) {
+  const meta = CONNECTOR_LOGO_META[id as ConnectorId];
+  if (!meta) return <ConnectorTile name={name} brand={brand} size={size} className={className} />;
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox={meta.viewBox}
+      className={cn('shrink-0', meta.brandFill === 'currentColor' && 'text-text-primary', className)}
+      aria-hidden
+    >
+      <path fill={meta.brandFill} d={meta.path} />
+    </svg>
+  );
+}
+
+/** A `RoomConnector`'s mark: `ConnectorLogo` for a BYOA catalog connector, else its `logo` brand mark (the scripted demo's pre-catalog connectors). */
 export function ConnectorMark({ connector, size = 16, className }: { connector: RoomConnector; size?: number; className?: string }) {
   const def = connectorById(connector.id);
-  if (def) return <ConnectorTile name={def.name} brand={def.brand} size={size} className={className} />;
+  if (def) return <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={size} className={className} />;
   if (connector.logo) return <BrandLogo id={connector.logo} size={size} className={className} />;
   return null;
 }

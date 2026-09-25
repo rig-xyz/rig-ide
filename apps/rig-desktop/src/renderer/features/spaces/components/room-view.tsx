@@ -483,8 +483,8 @@ export function RoomView({
         {source instanceof RelayRoomSource ? (
           (renderPanel?.(
             <>
-              <AgentRows snapshot={snapshot} selfUserId={selfUserId} />
-              <ConnectorsSection snapshot={snapshot} selfUserId={selfUserId} source={source} />
+              <AgentRows snapshot={snapshot} selfUserId={selfUserId} bindingId={bindingId} />
+              <ConnectorsSection snapshot={snapshot} selfUserId={selfUserId} source={source} bindingId={bindingId} />
             </>,
             new Set(snapshot.members.filter((m) => m.online !== false).map((m) => m.id)),
             { startCollapsed: narrow, chipSummary: <SpaceChipSummary snapshot={snapshot} /> }

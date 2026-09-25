@@ -1,6 +1,10 @@
+import { ChevronRight, Bot } from 'lucide-react';
+import { useState } from 'react';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { AgentKind, RoomSnapshot } from '../types';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
+import { cn } from '@renderer/lib/utils';
+import { readPanelSectionExpanded, writePanelSectionExpanded } from '../panel-section-storage';
 import { AgentConfigRow, prettyModelId } from './agent-settings';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 
@@ -9,8 +13,21 @@ import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
  * grammar): logo, name, and a pulse while one of its runs is working. In the
  * MVP a member can only tag their own agents, so these are the ones that
  * matter here; everyone's runs show up in the room as session cards.
+ *
+ * Collapsed by default behind one summary row (a small stack of the same
+ * agent marks, same disclosure grammar as the pinned card's People/Files/
+ * Skills rows) — remembered per space, like `ConnectorsSection`'s.
  */
-export function AgentRows({ snapshot, selfUserId }: { snapshot: RoomSnapshot; selfUserId: string }) {
+export function AgentRows({
+  snapshot,
+  selfUserId,
+  bindingId,
+}: {
+  snapshot: RoomSnapshot;
+  selfUserId: string;
+  /** Keys this section's remembered expanded/collapsed state to its space. */
+  bindingId: string;
+}) {
   const runs = Object.values(snapshot.sessionMetaByRun);
   const runsOf = (owner: string, kind: AgentKind) =>
     runs
@@ -35,44 +52,90 @@ export function AgentRows({ snapshot, selfUserId }: { snapshot: RoomSnapshot; se
     if (meta.owner === selfUserId) continue;
     theirs.set(`${meta.owner}:${meta.agent}`, { owner: meta.owner, agent: meta.agent });
   }
+
+  // Collapsed by default, remembered per space. Hook runs unconditionally,
+  // above the early return below (Rules of Hooks: `mine`/`theirs` can go
+  // from empty to non-empty between renders).
+  const [expanded, setExpanded] = useState(() => readPanelSectionExpanded(bindingId, 'agents') ?? false);
+  const toggleExpanded = () => {
+    setExpanded((current) => {
+      const next = !current;
+      writePanelSectionExpanded(bindingId, 'agents', next);
+      return next;
+    });
+  };
+
   if (mine.length === 0 && theirs.size === 0) return null;
+
+  const all = [...mine.map((agent) => ({ owner: selfUserId, agent: agent.agent })), ...theirs.values()];
 
   return (
     <>
-      {mine.map((agent) => {
-        const latest = runsOf(selfUserId, agent.agent)[0];
-        return (
-          <AgentConfigRow
-            key={agent.agent}
-            agent={agent.agent}
-            avatar={<AgentAvatar agent={agent.agent} owner={snapshot.members.find((m) => m.id === selfUserId)} size="sm" />}
-            busy={isWorking(selfUserId, agent.agent) ? <DotMatrix state="thinking" size="sm" /> : null}
-            lastModel={lastModel(selfUserId, agent.agent) ?? (agent.model || null)}
-            usage={latest ? cardOf(latest.id).usage : null}
+      <button
+        type="button"
+        onClick={toggleExpanded}
+        aria-expanded={expanded}
+        className="hover:bg-bg-2 flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-left transition-colors"
+        data-testid="agents-summary-row"
+      >
+        <Bot className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+        <span className="text-xs text-text-primary">Agents</span>
+        <span className="ml-auto flex items-center gap-1.5">
+          <span className="flex items-center">
+            {all.map(({ owner, agent }, i) => (
+              <AgentAvatar
+                key={`${owner}:${agent}`}
+                agent={agent}
+                owner={snapshot.members.find((m) => m.id === owner)}
+                size="sm"
+                className={cn('ring-bg-1 ring-2', i > 0 && '-ml-1.5')}
+              />
+            ))}
+          </span>
+          <ChevronRight
+            className={cn('size-3 shrink-0 text-text-muted transition-transform', expanded && 'rotate-90')}
+            strokeWidth={1.5}
           />
-        );
-      })}
-      {[...theirs.values()].map(({ owner, agent }) => {
-        const member = snapshot.members.find((m) => m.id === owner);
-        const ownerName = member?.name ?? owner;
-        return (
-          <div
-            key={`${owner}:${agent}`}
-            className="flex h-7 shrink-0 items-center gap-2 rounded-control px-2"
-            title={`Only ${ownerName} can change ${ownerName}'s ${AGENT_NAME[agent]}`}
-            data-testid="space-agent-row-theirs"
-          >
-            <AgentAvatar agent={agent} owner={member} size="sm" />
-            <span className="min-w-0 truncate text-xs text-text-secondary">
-              {ownerName}'s {AGENT_NAME[agent]}
-            </span>
-            <span className="ml-auto flex min-w-0 items-center gap-1.5 text-2xs text-text-muted">
-              {isWorking(owner, agent) && <DotMatrix state="thinking" size="sm" />}
-              <span className="truncate">{lastModel(owner, agent) ?? ''}</span>
-            </span>
-          </div>
-        );
-      })}
+        </span>
+      </button>
+      {expanded && (
+        <div className="popover-in flex shrink-0 flex-col" data-testid="agents-expanded">
+          {mine.map((agent) => {
+            const latest = runsOf(selfUserId, agent.agent)[0];
+            return (
+              <AgentConfigRow
+                key={agent.agent}
+                agent={agent.agent}
+                avatar={<AgentAvatar agent={agent.agent} owner={snapshot.members.find((m) => m.id === selfUserId)} size="sm" />}
+                busy={isWorking(selfUserId, agent.agent) ? <DotMatrix state="thinking" size="sm" /> : null}
+                lastModel={lastModel(selfUserId, agent.agent) ?? (agent.model || null)}
+                usage={latest ? cardOf(latest.id).usage : null}
+              />
+            );
+          })}
+          {[...theirs.values()].map(({ owner, agent }) => {
+            const member = snapshot.members.find((m) => m.id === owner);
+            const ownerName = member?.name ?? owner;
+            return (
+              <div
+                key={`${owner}:${agent}`}
+                className="flex h-7 shrink-0 items-center gap-2 rounded-control px-2"
+                title={`Only ${ownerName} can change ${ownerName}'s ${AGENT_NAME[agent]}`}
+                data-testid="space-agent-row-theirs"
+              >
+                <AgentAvatar agent={agent} owner={member} size="sm" />
+                <span className="min-w-0 truncate text-xs text-text-secondary">
+                  {ownerName}'s {AGENT_NAME[agent]}
+                </span>
+                <span className="ml-auto flex min-w-0 items-center gap-1.5 text-2xs text-text-muted">
+                  {isWorking(owner, agent) && <DotMatrix state="thinking" size="sm" />}
+                  <span className="truncate">{lastModel(owner, agent) ?? ''}</span>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </>
   );
 }

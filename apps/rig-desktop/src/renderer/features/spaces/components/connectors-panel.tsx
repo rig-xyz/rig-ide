@@ -1,10 +1,11 @@
-import { Plug } from 'lucide-react';
+import { ChevronRight, Plug } from 'lucide-react';
 import { useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { CONNECTORS, connectorById, type ConnectorId, type ConnectResult } from '@shared/spaces/connectors';
 import { connectorsApi } from '../connectors-api';
-import { ConnectorTile } from '../logos';
+import { ConnectorLogo, ConnectorMark } from '../logos';
+import { readPanelSectionExpanded, writePanelSectionExpanded } from '../panel-section-storage';
 import type { RelayRoomSource } from '../relay-room-source';
 import type { RoomConnector, RoomSnapshot } from '../types';
 
@@ -121,7 +122,7 @@ function ConnectorRow({
         data-state={phase ?? mine}
       >
         {def ? (
-          <ConnectorTile name={def.name} brand={def.brand} size={18} />
+          <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={18} />
         ) : (
           <span className="bg-bg-3 size-[18px] shrink-0 rounded" />
         )}
@@ -224,11 +225,14 @@ export function ConnectorsSection({
   snapshot,
   selfUserId,
   source,
+  bindingId,
 }: {
   snapshot: RoomSnapshot;
   selfUserId: string;
   /** Only ever rendered against the live relay — the scripted demo has no accounts/logins to connect. */
   source: RelayRoomSource;
+  /** Keys this section's remembered expanded/collapsed state to its space. */
+  bindingId: string;
 }) {
   const self = snapshot.members.find((m) => m.id === selfUserId);
   const canWrite = self?.role === 'owner' || self?.role === 'editor';
@@ -236,9 +240,23 @@ export function ConnectorsSection({
   const [pending, setPending] = useState<PendingConnect | null>(null);
   const [armedRemoveId, setArmedRemoveId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Collapsed by default; remembered per space. A connect flow in progress
+  // or the open catalog forces it open regardless (you can't hide the thing
+  // you're mid-way through), without disturbing the remembered preference.
+  const [expanded, setExpanded] = useState(() => readPanelSectionExpanded(bindingId, 'connectors') ?? false);
+  const toggleExpanded = () => {
+    setExpanded((current) => {
+      const next = !current;
+      writePanelSectionExpanded(bindingId, 'connectors', next);
+      return next;
+    });
+  };
+  const visible = expanded || catalogOpen || pending !== null;
 
   const connectors = snapshot.connectors;
   const catalog = CONNECTORS.filter((c) => !connectors.some((rc) => rc.id === c.id));
+  const needsAction = connectors.filter((c) => (c.mine ?? 'not_connected') !== 'connected');
+  const anyExpired = needsAction.some((c) => c.mine === 'expired');
 
   const startConnect = (id: string, isNew: boolean) => {
     setError(null);
@@ -292,16 +310,45 @@ export function ConnectorsSection({
   return (
     <div className="flex flex-col" data-testid="connectors-section">
       <div className="border-border-hairline mt-1.5 flex h-8 shrink-0 items-center gap-2 border-t px-2 pt-1.5">
-        <Plug className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
-        <span className="text-xs text-text-primary">Connectors</span>
-        {canWrite && (
+        <button
+          type="button"
+          onClick={toggleExpanded}
+          aria-expanded={visible}
+          className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
+          data-testid="connectors-summary-row"
+        >
+          <Plug className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+          <span className="text-xs text-text-primary">Connectors</span>
+          <span className="ml-auto flex min-w-0 items-center gap-1.5">
+            {!visible && connectors.length > 0 && (
+              <>
+                <span className="flex items-center">
+                  {connectors.slice(0, 4).map((c, i) => (
+                    <ConnectorMark key={c.id} connector={c} size={14} className={cn('ring-bg-1 ring-1', i > 0 && '-ml-1')} />
+                  ))}
+                </span>
+                <span className="font-mono text-2xs text-text-muted">{connectors.length}</span>
+              </>
+            )}
+            {!visible && needsAction.length > 0 && (
+              <span className={cn('text-2xs whitespace-nowrap', anyExpired ? 'text-warning' : 'text-text-muted')}>
+                {needsAction.length} to connect
+              </span>
+            )}
+            <ChevronRight
+              className={cn('size-3 shrink-0 text-text-muted transition-transform', visible && 'rotate-90')}
+              strokeWidth={1.5}
+            />
+          </span>
+        </button>
+        {canWrite && visible && (
           <button
             type="button"
             onClick={() => {
               setCatalogOpen((v) => !v);
               setPending(null);
             }}
-            className="hover:bg-bg-2 ml-auto rounded-chip px-2 py-0.5 text-2xs text-text-muted transition-colors hover:text-text-primary"
+            className="hover:bg-bg-2 ml-1 shrink-0 rounded-chip px-2 py-0.5 text-2xs text-text-muted transition-colors hover:text-text-primary"
             data-testid="connectors-add-toggle"
           >
             {catalogOpen ? 'Done' : '+ Add'}
@@ -309,81 +356,85 @@ export function ConnectorsSection({
         )}
       </div>
 
-      {error && (
-        <p className="px-2 pb-1 text-2xs text-danger" data-testid="connectors-error">
-          {error}
-        </p>
-      )}
+      {visible && (
+        <div className="popover-in flex shrink-0 flex-col" data-testid="connectors-expanded">
+          {error && (
+            <p className="px-2 pb-1 text-2xs text-danger" data-testid="connectors-error">
+              {error}
+            </p>
+          )}
 
-      {connectors.length === 0 && !catalogOpen && !newRowDef && (
-        <p className="px-2 pb-1.5 text-2xs text-text-muted" data-testid="connectors-empty">
-          None yet. Add a tool your team uses; each person&rsquo;s agent reaches it with their own login.
-        </p>
-      )}
+          {connectors.length === 0 && !catalogOpen && !newRowDef && (
+            <p className="px-2 pb-1.5 text-2xs text-text-muted" data-testid="connectors-empty">
+              None yet. Add a tool your team uses; each person&rsquo;s agent reaches it with their own login.
+            </p>
+          )}
 
-      {connectors.map((c) => (
-        <ConnectorRow
-          key={c.id}
-          connector={c}
-          addedByName={snapshot.members.find((m) => m.id === c.addedBy)?.name ?? c.addedBy}
-          isMine={c.addedBy === selfUserId}
-          canWrite={canWrite}
-          pending={pending?.id === c.id ? pending : null}
-          armedRemove={armedRemoveId === c.id}
-          onStart={() => startConnect(c.id, false)}
-          onGo={goConnect}
-          onCancel={cancelPending}
-          onDisconnect={async () => {
-            await connectorsApi.disconnect(c.id as ConnectorId);
-            await source.refreshConnections();
-          }}
-          onArmRemove={() => setArmedRemoveId(c.id)}
-          onRemove={async () => {
-            setArmedRemoveId(null);
-            const result = await source.removeConnector(c.id);
-            if (!result.ok) setError(result.message ?? "Couldn't remove this from the space.");
-          }}
-        />
-      ))}
-
-      {newRowDef && pending && (
-        <ConnectorRow
-          connector={{ id: newRowDef.id, name: newRowDef.name, addedBy: selfUserId }}
-          addedByName={self?.name ?? selfUserId}
-          isMine
-          canWrite={canWrite}
-          pending={pending}
-          armedRemove={false}
-          onStart={() => {}}
-          onGo={goConnect}
-          onCancel={cancelPending}
-          onDisconnect={async () => {}}
-          onArmRemove={() => {}}
-          onRemove={async () => {}}
-        />
-      )}
-
-      {catalogOpen && (
-        <div className="flex flex-col pb-1" data-testid="connectors-catalog">
-          {catalog.map((c) => (
-            <button
+          {connectors.map((c) => (
+            <ConnectorRow
               key={c.id}
-              type="button"
-              onClick={() => pickCatalog(c.id)}
-              className="group/cat hover:bg-bg-2 flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-left transition-colors"
-              data-testid="connector-catalog-row"
-            >
-              <ConnectorTile name={c.name} brand={c.brand} size={18} />
-              <span className="flex min-w-0 flex-1 flex-col leading-tight">
-                <b className="truncate text-xs font-medium text-text-primary">{c.name}</b>
-                <span className="truncate text-2xs text-text-muted">{c.blurb}</span>
-              </span>
-              <span className="text-accent ml-auto text-2xs opacity-0 transition-opacity group-hover/cat:opacity-100">
-                Add
-              </span>
-            </button>
+              connector={c}
+              addedByName={snapshot.members.find((m) => m.id === c.addedBy)?.name ?? c.addedBy}
+              isMine={c.addedBy === selfUserId}
+              canWrite={canWrite}
+              pending={pending?.id === c.id ? pending : null}
+              armedRemove={armedRemoveId === c.id}
+              onStart={() => startConnect(c.id, false)}
+              onGo={goConnect}
+              onCancel={cancelPending}
+              onDisconnect={async () => {
+                await connectorsApi.disconnect(c.id as ConnectorId);
+                await source.refreshConnections();
+              }}
+              onArmRemove={() => setArmedRemoveId(c.id)}
+              onRemove={async () => {
+                setArmedRemoveId(null);
+                const result = await source.removeConnector(c.id);
+                if (!result.ok) setError(result.message ?? "Couldn't remove this from the space.");
+              }}
+            />
           ))}
-          {catalog.length === 0 && <p className="px-2 py-1 text-2xs text-text-muted">Every catalog tool is already in this space.</p>}
+
+          {newRowDef && pending && (
+            <ConnectorRow
+              connector={{ id: newRowDef.id, name: newRowDef.name, addedBy: selfUserId }}
+              addedByName={self?.name ?? selfUserId}
+              isMine
+              canWrite={canWrite}
+              pending={pending}
+              armedRemove={false}
+              onStart={() => {}}
+              onGo={goConnect}
+              onCancel={cancelPending}
+              onDisconnect={async () => {}}
+              onArmRemove={() => {}}
+              onRemove={async () => {}}
+            />
+          )}
+
+          {catalogOpen && (
+            <div className="flex flex-col pb-1" data-testid="connectors-catalog">
+              {catalog.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => pickCatalog(c.id)}
+                  className="group/cat hover:bg-bg-2 flex min-h-8 items-center gap-2 rounded-control px-2 py-1 text-left transition-colors"
+                  data-testid="connector-catalog-row"
+                >
+                  <ConnectorLogo id={c.id} name={c.name} brand={c.brand} size={18} />
+                  <span className="flex min-w-0 flex-1 flex-col leading-tight">
+                    <b className="truncate text-xs font-medium text-text-primary">{c.name}</b>
+                    <span className="truncate text-2xs text-text-muted">{c.blurb}</span>
+                  </span>
+                  <span className="text-accent ml-auto text-2xs opacity-0 transition-opacity group-hover/cat:opacity-100">
+                    Add
+                  </span>
+                </button>
+              ))}
+              {catalog.length === 0 && <p className="px-2 py-1 text-2xs text-text-muted">Every catalog tool is already in this space.</p>}
+            </div>
+          )}
         </div>
       )}
     </div>

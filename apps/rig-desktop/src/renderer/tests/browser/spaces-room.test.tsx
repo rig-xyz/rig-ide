@@ -800,9 +800,13 @@ describe('Session card — plan and thinking', () => {
     await act(async () => {
       root.render(
         <AgentSettingsContext.Provider value={api}>
-          <AgentRows snapshot={snapshot} selfUserId="bob" />
+          <AgentRows snapshot={snapshot} selfUserId="bob" bindingId="space-agents-model" />
         </AgentSettingsContext.Provider>
       );
+    });
+    // Collapsed by default — expand the summary row before reaching in.
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="agents-summary-row"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await act(async () => {
       host.querySelector<HTMLButtonElement>('[data-testid="space-agent-row"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -813,6 +817,45 @@ describe('Session card — plan and thinking', () => {
     expect(theirs.length).toBeGreaterThan(0);
     expect(theirs[0]!.querySelector('button')).toBeNull();
     expect(theirs[0]!.title).toMatch(/^Only .+ can change/);
+  });
+
+  it('collapses Agents behind a summary row by default (with a logo stack), expands in place, and remembers that per space', async () => {
+    const api: AgentSettingsApi = {
+      load: async () => ({ model: { selected: 'default', options: [] }, effort: null, mode: { selected: 'default', options: [] } }),
+      change: async () => ({ error: 'unused' }),
+    };
+    const snapshot = replayedSnapshot();
+    const render = () =>
+      act(async () => {
+        root.render(
+          <AgentSettingsContext.Provider value={api}>
+            <AgentRows snapshot={snapshot} selfUserId="bob" bindingId="space-agents-collapse" />
+          </AgentSettingsContext.Provider>
+        );
+      });
+    await render();
+
+    const summary = host.querySelector<HTMLButtonElement>('[data-testid="agents-summary-row"]')!;
+    expect(summary.textContent).toContain('Agents');
+    // A stack of the agents' own marks (brand SVGs with an owner badge) stands in for the rows.
+    expect(summary.querySelectorAll('svg').length).toBeGreaterThan(0);
+    expect(summary.getAttribute('aria-expanded')).toBe('false');
+    expect(host.querySelector('[data-testid="space-agent-row"]')).toBeNull();
+    expect(host.querySelector('[data-testid="space-agent-row-theirs"]')).toBeNull();
+
+    await act(async () => summary.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(summary.getAttribute('aria-expanded')).toBe('true');
+    expect(host.querySelector('[data-testid="space-agent-row"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="space-agent-row-theirs"]')).not.toBeNull();
+
+    // Remounted against the same space: still expanded (remembered in localStorage).
+    await act(async () => root.unmount());
+    host.remove();
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await render();
+    expect(host.querySelector('[data-testid="space-agent-row"]')).not.toBeNull();
   });
 
   it('offers Retry on a failed run and Continue on a stopped one, as new turns for your agent', async () => {
@@ -928,16 +971,20 @@ describe('Connectors — space panel', () => {
     host.remove();
   });
 
+  /** Opens the collapsed section — every test below needs its rows visible. */
+  const openConnectors = () => act(async () => click(host.querySelector('[data-testid="connectors-summary-row"]')!));
+
   it('shows the empty state, and the Add pill only for a member who can write', async () => {
     const snapshot = connectorsSnapshot();
     await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} />);
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} bindingId="space-connectors-empty" />);
     });
+    await openConnectors();
     expect(host.querySelector('[data-testid="connectors-empty"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="connectors-add-toggle"]')).not.toBeNull();
 
     await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="sam" source={fakeConnectorsSource()} />);
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="sam" source={fakeConnectorsSource()} bindingId="space-connectors-empty" />);
     });
     expect(host.querySelector('[data-testid="connectors-add-toggle"]')).toBeNull();
   });
@@ -946,8 +993,9 @@ describe('Connectors — space panel', () => {
     const source = fakeConnectorsSource();
     const snapshot = connectorsSnapshot();
     await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={source} />);
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={source} bindingId="space-connectors-catalog" />);
     });
+    await openConnectors();
     await act(async () => click(host.querySelector('[data-testid="connectors-add-toggle"]')!));
     const rows = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="connector-catalog-row"]')];
     expect(rows.length).toBeGreaterThan(0);
@@ -974,8 +1022,9 @@ describe('Connectors — space panel', () => {
       connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'not_connected' }],
     });
     await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} />);
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} bindingId="space-connectors-waiting" />);
     });
+    await openConnectors();
     await act(async () => click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Connect')!));
     await act(async () => click([...host.querySelectorAll('button')].find((b) => b.textContent === 'Continue in browser')!));
     expect(host.textContent).toContain('Waiting for your browser');
@@ -995,8 +1044,9 @@ describe('Connectors — space panel', () => {
       ],
     });
     await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} />);
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} bindingId="space-connectors-rows" />);
     });
+    await openConnectors();
     const rowFor = (id: string) => host.querySelector<HTMLElement>(`[data-testid="connector-row"][data-connector="${id}"]`)!;
     expect(rowFor('linear').textContent).toContain('Connected as you');
     expect(rowFor('notion').textContent).toContain('Added by Sam');
@@ -1011,8 +1061,9 @@ describe('Connectors — space panel', () => {
       connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }],
     });
     await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={source} />);
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={source} bindingId="space-connectors-disconnect" />);
     });
+    await openConnectors();
     const row = host.querySelector<HTMLElement>('[data-testid="connector-row"]')!;
     await act(async () => click([...row.querySelectorAll('button')].find((b) => b.textContent === 'Disconnect')!));
     expect(connectorsApi.disconnect).toHaveBeenCalledWith('linear');
@@ -1025,8 +1076,9 @@ describe('Connectors — space panel', () => {
       connectors: [{ id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' }],
     });
     await act(async () => {
-      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={source} />);
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={source} bindingId="space-connectors-remove" />);
     });
+    await openConnectors();
     const row = host.querySelector<HTMLElement>('[data-testid="connector-row"]')!;
     const removeButton = () => [...row.querySelectorAll('button')].find((b) => b.textContent?.includes('Remove') || b.textContent === 'Remove for all?')!;
     await act(async () => click(removeButton()));
@@ -1034,6 +1086,89 @@ describe('Connectors — space panel', () => {
     expect(source.removeConnector).not.toHaveBeenCalled();
     await act(async () => click(removeButton()));
     expect(source.removeConnector).toHaveBeenCalledWith('linear');
+  });
+
+  it('collapses behind a summary row by default — stacked logos, a count, a quiet hint when action is needed — and remembers it open per space', async () => {
+    const snapshot = connectorsSnapshot({
+      connectors: [
+        { id: 'linear', name: 'Linear', addedBy: 'dylan', mine: 'connected' },
+        { id: 'notion', name: 'Notion', addedBy: 'dylan', mine: 'expired' },
+      ],
+    });
+    const render = (bindingId: string) =>
+      act(async () => {
+        root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} bindingId={bindingId} />);
+      });
+    await render('space-connectors-collapse-1');
+
+    const summary = host.querySelector<HTMLButtonElement>('[data-testid="connectors-summary-row"]')!;
+    expect(summary.getAttribute('aria-expanded')).toBe('false');
+    expect(summary.textContent).toContain('Connectors');
+    expect(summary.textContent).toContain('2'); // the count
+    expect(summary.textContent).toContain('1 to connect'); // Notion's expired login
+    expect(summary.querySelectorAll('svg').length).toBeGreaterThan(0); // the logo stack
+    expect(host.querySelector('[data-testid="connector-row"]')).toBeNull();
+
+    await act(async () => click(summary));
+    expect(summary.getAttribute('aria-expanded')).toBe('true');
+    expect(host.querySelectorAll('[data-testid="connector-row"]')).toHaveLength(2);
+
+    // Remounted against the same space: still expanded.
+    await act(async () => root.unmount());
+    host.remove();
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await render('space-connectors-collapse-1');
+    expect(host.querySelectorAll('[data-testid="connector-row"]')).toHaveLength(2);
+
+    // A different space starts fresh, collapsed.
+    await act(async () => root.unmount());
+    host.remove();
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await render('space-connectors-collapse-2');
+    expect(host.querySelector('[data-testid="connector-row"]')).toBeNull();
+  });
+
+  it('cannot be collapsed while the catalog is open or a connect is mid-flow', async () => {
+    const snapshot = connectorsSnapshot();
+    await act(async () => {
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} bindingId="space-connectors-autoexpand" />);
+    });
+    await openConnectors();
+    await act(async () => click(host.querySelector('[data-testid="connectors-add-toggle"]')!));
+    expect(host.querySelector('[data-testid="connectors-catalog"]')).not.toBeNull();
+
+    // Clicking the summary row while the catalog is open can't hide it.
+    await openConnectors();
+    expect(host.querySelector('[data-testid="connectors-catalog"]')).not.toBeNull();
+
+    const linearRow = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="connector-catalog-row"]')].find((r) =>
+      r.textContent?.includes('Linear')
+    )!;
+    await act(async () => click(linearRow));
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="connector-consent"]')).not.toBeNull());
+
+    // Same during the consent step of a connect.
+    await openConnectors();
+    expect(host.querySelector('[data-testid="connector-consent"]')).not.toBeNull();
+  });
+
+  it('draws a real brand mark for a Simple Icons connector, and the letter tile for one with no vector mark', async () => {
+    const snapshot = connectorsSnapshot();
+    await act(async () => {
+      root.render(<ConnectorsSection snapshot={snapshot} selfUserId="dylan" source={fakeConnectorsSource()} bindingId="space-connectors-logos" />);
+    });
+    await openConnectors();
+    await act(async () => click(host.querySelector('[data-testid="connectors-add-toggle"]')!));
+    const rows = [...host.querySelectorAll<HTMLElement>('[data-testid="connector-catalog-row"]')];
+    const linearRow = rows.find((r) => r.textContent?.includes('Linear'))!;
+    const amplitudeRow = rows.find((r) => r.textContent?.includes('Amplitude'))!;
+    expect(linearRow.querySelector('svg')).not.toBeNull();
+    expect(amplitudeRow.querySelector('svg')).toBeNull();
+    expect(amplitudeRow.querySelector('span[aria-hidden]')?.textContent).toBe('A');
   });
 });
 

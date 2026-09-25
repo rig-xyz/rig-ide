@@ -25,7 +25,7 @@ import { DotMatrix, type DotMatrixActivity, type DotMatrixState } from '@rendere
 import { cn } from '@renderer/lib/utils';
 import { connectorById, prettyConnectorTool, type ConnectResult } from '@shared/spaces/connectors';
 import { ConnectPill } from './connectors-panel';
-import { ConnectorTile } from '../logos';
+import { ConnectorLogo } from '../logos';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type {
   AgentKind,
@@ -158,7 +158,7 @@ function StepRow({
         ) : failed ? (
           <X className="size-3.5 shrink-0 text-danger" strokeWidth={1.5} />
         ) : pretty ? (
-          <ConnectorTile name={pretty.connector.name} brand={pretty.connector.brand} size={14} className="rounded" />
+          <ConnectorLogo id={pretty.connector.id} name={pretty.connector.name} brand={pretty.connector.brand} size={14} className="rounded" />
         ) : (
           <Icon className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
         )}
@@ -766,7 +766,7 @@ export function SessionCard({
                   data-testid="connector-gap-pill"
                   data-connector={gap.id}
                 >
-                  {def && <ConnectorTile name={def.name} brand={def.brand} size={16} />}
+                  {def && <ConnectorLogo id={def.id} name={def.name} brand={def.brand} size={16} />}
                   {gap.state === 'expired' ? `Your ${name} login expired` : `${name} isn't connected for you`}
                   <ConnectPill
                     label={gap.state === 'expired' ? 'Reconnect' : 'Connect'}
