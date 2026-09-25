@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { Hash, Link as LinkIcon, Loader2 } from 'lucide-react';
+import { Hash, Link as LinkIcon, Loader2, Plus } from 'lucide-react';
 import { useReducedMotion } from 'motion/react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { MY_INVITES_KEY_PREFIX } from '@renderer/features/shell/invites-inbox';
@@ -303,7 +303,7 @@ export function NewSpaceCta({
               type="button"
               onClick={() => void createOneClick()}
               disabled={creating}
-              className="text-accent-ink focus-visible:outline-accent absolute inset-y-0 left-0 z-10 flex items-center gap-2 rounded-full pl-4 text-sm font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-60"
+              className="text-accent-ink focus-visible:outline-accent absolute inset-y-0 left-0 z-10 flex items-center gap-2 rounded-full px-4 text-sm font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-60"
               style={{ width: bodyWidth, transition: ease(`width 550ms ${SPRING}`) }}
             >
               {creating ? (
@@ -312,6 +312,8 @@ export function NewSpaceCta({
                 <Hash className="size-4" strokeWidth={1.5} />
               )}
               {creating ? 'Starting…' : 'New space'}
+              {/* balances the "#": rides the body's right end as it pulls back for the bubble */}
+              <Plus className="ml-auto size-4" strokeWidth={1.5} aria-hidden data-testid="new-space-plus" />
             </button>
             <button
               type="button"

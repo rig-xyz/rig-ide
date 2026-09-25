@@ -150,6 +150,29 @@ describe('NewSpaceCta', () => {
     expect(host.textContent).toContain('The space could not go live.');
   });
 
+  it('at rest: "#" + "New space" on the left, a decorative "+" at the right end, and the accessible name stays "New space"', async () => {
+    await render();
+    const button = [...host.querySelectorAll('button')].find((b) => b.textContent?.includes('New space'))!;
+    const plus = host.querySelector<SVGElement>('[data-testid="new-space-plus"]')!;
+
+    expect(plus).toBeTruthy();
+    expect(button.contains(plus)).toBe(true);
+    expect(plus.getAttribute('aria-hidden')).toBe('true');
+    expect(button.textContent?.trim()).toBe('New space');
+    // The "+" sits in from the right edge by the same inset the "#" sits in from the left.
+    const hash = button.querySelector('svg')!;
+    const box = button.getBoundingClientRect();
+    const leftInset = hash.getBoundingClientRect().left - box.left;
+    const rightInset = box.right - plus.getBoundingClientRect().right;
+    expect(Math.abs(leftInset - rightInset)).toBeLessThan(1);
+  });
+
+  it('the "+" is not shown once the pill opens into the join field', async () => {
+    await render();
+    await openJoinField();
+    expect(host.querySelector('[data-testid="new-space-plus"]')).toBeNull();
+  });
+
   it('hovering the pill oozes out the link bubble (focusable only while it is out)', async () => {
     await render();
     expect(pill().dataset.out).toBeUndefined();
