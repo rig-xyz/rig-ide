@@ -81,17 +81,22 @@ export function AgentRows({
         <Bot className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
         <span className="text-xs text-text-primary">Agents</span>
         <span className="ml-auto flex items-center gap-1.5">
-          <span className="flex items-center">
-            {all.map(({ owner, agent }, i) => (
-              <AgentAvatar
-                key={`${owner}:${agent}`}
-                agent={agent}
-                owner={snapshot.members.find((m) => m.id === owner)}
-                size="sm"
-                className={cn('ring-bg-1 ring-2', i > 0 && '-ml-1.5')}
-              />
-            ))}
-          </span>
+          {/* Once expanded, the rows below already say who's who — the
+              summary's own logo stack is redundant then (same rule as
+              the Connectors row's logos). */}
+          {!expanded && (
+            <span className="flex items-center" data-testid="agents-avatar-stack">
+              {all.map(({ owner, agent }, i) => (
+                <AgentAvatar
+                  key={`${owner}:${agent}`}
+                  agent={agent}
+                  owner={snapshot.members.find((m) => m.id === owner)}
+                  size="sm"
+                  className={cn('ring-bg-1 ring-2', i > 0 && '-ml-1.5')}
+                />
+              ))}
+            </span>
+          )}
           <ChevronRight
             className={cn('size-3 shrink-0 text-text-muted transition-transform', expanded && 'rotate-90')}
             strokeWidth={1.5}
@@ -116,6 +121,10 @@ export function AgentRows({
           {[...theirs.values()].map(({ owner, agent }) => {
             const member = snapshot.members.find((m) => m.id === owner);
             const ownerName = member?.name ?? owner;
+            // `theirs` only holds agents with at least one run here, so a
+            // null model means that run just hasn't reported one yet — a
+            // quiet phantom reads truer than a blank or stale label.
+            const model = lastModel(owner, agent);
             return (
               <div
                 key={`${owner}:${agent}`}
@@ -129,7 +138,11 @@ export function AgentRows({
                 </span>
                 <span className="ml-auto flex min-w-0 items-center gap-1.5 text-2xs text-text-muted">
                   {isWorking(owner, agent) && <DotMatrix state="thinking" size="sm" />}
-                  <span className="truncate">{lastModel(owner, agent) ?? ''}</span>
+                  {model ? (
+                    <span className="truncate">{model}</span>
+                  ) : (
+                    <DotMatrix state="starting" size="sm" label="Loading" />
+                  )}
                 </span>
               </div>
             );

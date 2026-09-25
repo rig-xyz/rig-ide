@@ -840,6 +840,7 @@ describe('Session card — plan and thinking', () => {
     const summary = host.querySelector<HTMLButtonElement>('[data-testid="agents-summary-row"]')!;
     expect(summary.textContent).toContain('Agents');
     // A stack of the agents' own marks (brand SVGs with an owner badge) stands in for the rows.
+    expect(host.querySelector('[data-testid="agents-avatar-stack"]')).not.toBeNull();
     expect(summary.querySelectorAll('svg').length).toBeGreaterThan(0);
     expect(summary.getAttribute('aria-expanded')).toBe('false');
     expect(host.querySelector('[data-testid="space-agent-row"]')).toBeNull();
@@ -849,6 +850,10 @@ describe('Session card — plan and thinking', () => {
     expect(summary.getAttribute('aria-expanded')).toBe('true');
     expect(host.querySelector('[data-testid="space-agent-row"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="space-agent-row-theirs"]')).not.toBeNull();
+    // Once expanded, the rows below already say who's who — the summary's
+    // own logo stack (unlike its Bot/Chevron icons) is redundant now, same
+    // rule as the Connectors row's logos.
+    expect(host.querySelector('[data-testid="agents-avatar-stack"]')).toBeNull();
 
     // Remounted against the same space: still expanded (remembered in localStorage).
     await act(async () => root.unmount());
@@ -858,6 +863,49 @@ describe('Session card — plan and thinking', () => {
     root = createRoot(host);
     await render();
     expect(host.querySelector('[data-testid="space-agent-row"]')).not.toBeNull();
+  });
+
+  it("shows a quiet phantom instead of a blank label for another owner's agent whose run hasn't reported a model yet", async () => {
+    // `theirs` only ever holds agents with at least one run in this space,
+    // so a run whose meta model is 'unknown' and whose event log hasn't
+    // reported one either is exactly "just started, still loading" — not a
+    // permanently-empty state.
+    const loadingMeta: SessionRunMeta = {
+      id: 'run-loading',
+      agent: 'claude',
+      owner: 'alice',
+      model: 'unknown',
+      title: '',
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+    };
+    const snapshot = replayedSnapshot();
+    await act(async () => {
+      root.render(
+        <AgentRows
+          snapshot={{
+            ...snapshot,
+            sessionMetaByRun: { ...snapshot.sessionMetaByRun, 'run-loading': loadingMeta },
+            sessionEventsByRun: { ...snapshot.sessionEventsByRun, 'run-loading': [] },
+          }}
+          selfUserId="bob"
+          bindingId="space-agents-phantom"
+        />
+      );
+    });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="agents-summary-row"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const theirsRows = [...host.querySelectorAll<HTMLElement>('[data-testid="space-agent-row-theirs"]')];
+    // Alice only ever owns codex runs in the base fixture — this Claude row
+    // is exclusively the one just injected above.
+    const loadingRow = theirsRows.find((row) => row.title === "Only Alice can change Alice's Claude");
+    expect(loadingRow).toBeTruthy();
+    // No blank/stale text — a quiet phantom (the matrix's "starting" state) instead.
+    expect(loadingRow!.querySelector('[data-state="starting"]')).not.toBeNull();
+    expect(loadingRow!.textContent?.trim().endsWith("Alice's Claude")).toBe(true);
   });
 
   it('offers Retry on a failed run and Continue on a stopped one, as new turns for your agent', async () => {

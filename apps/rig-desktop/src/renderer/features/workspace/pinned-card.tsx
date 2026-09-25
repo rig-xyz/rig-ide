@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronRight, Cloud, Diff, FolderTree, Loader2, PanelRightOpen, Sparkles, Users } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { ChevronRight, Cloud, Diff, FolderTree, Loader2, Minus, PanelRightOpen, Sparkles, Users } from 'lucide-react';
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { NavigatorContent } from '@renderer/features/artifact/navigator-popover';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import {
@@ -61,6 +61,15 @@ const SUMMARY_OPEN_KEY = 'rig-changes-summary-open';
 const MAX_ACTIVITY_ROWS = 5;
 const CHANGED_RECENTLY_MS = 24 * 60 * 60 * 1000;
 
+// The collapsed chip's glass + oozing expand button, same technique as the
+// Room's context pill (`context-pill.tsx`): one liquid fill (an SVG goo
+// filter) behind crisp content, a forgiving hover with a close grace and an
+// invisible bridge over the gap to the button.
+const CHIP_FILL = 'var(--pill-fill)';
+const CHIP_SPRING = 'cubic-bezier(.34,1.56,.64,1)';
+const CHIP_CLOSE_GRACE_MS = 280;
+const CHIP_BUTTON_OUT_PX = 34;
+
 type CardSection = 'changes' | 'files' | 'skills' | 'people';
 
 function readCollapsed(): boolean {
@@ -107,6 +116,138 @@ function flattenFiles(nodes: readonly RigFileNode[]): RigFileNode[] {
   return out;
 }
 
+/**
+ * The collapsed panel as a chip: glassy like the Room's context pill
+ * (`context-pill.tsx`) — a backdrop-blurred, translucent fill behind a
+ * hairline edge. Hovering oozes a round "expand" button out of the chip's
+ * right edge (the same SVG goo-filter liquid and forgiving hover — a close
+ * grace plus an invisible bridge over the gap — as the context pill's own
+ * buttons); clicking either the button or the chip itself opens the panel.
+ */
+function CollapsedChip({
+  chipSummary,
+  name,
+  syncing,
+  unseenCount,
+  onExpand,
+}: {
+  chipSummary?: ReactNode;
+  name: string | null;
+  syncing: boolean;
+  unseenCount: number;
+  onExpand: () => void;
+}) {
+  const filterId = `pinned-chip-goo-${useId().replace(/:/g, '')}`;
+  const [out, setOut] = useState(false);
+  const leaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (leaveRef.current) clearTimeout(leaveRef.current);
+    },
+    []
+  );
+  const enter = () => {
+    if (leaveRef.current) clearTimeout(leaveRef.current);
+    setOut(true);
+  };
+  const leave = () => {
+    if (leaveRef.current) clearTimeout(leaveRef.current);
+    leaveRef.current = setTimeout(() => setOut(false), CHIP_CLOSE_GRACE_MS);
+  };
+  const btnX = out ? CHIP_BUTTON_OUT_PX : 0;
+
+  return (
+    <div
+      className="card-pop-in absolute top-[52px] right-4 z-20 flex h-8 origin-top-right items-center"
+      onMouseEnter={enter}
+      onMouseLeave={leave}
+      data-testid="pinned-chip"
+    >
+      <svg width="0" height="0" className="absolute" aria-hidden>
+        <defs>
+          <filter id={filterId} x="-20%" y="-150%" width="320%" height="400%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
+            <feColorMatrix
+              in="blur"
+              mode="matrix"
+              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -7"
+              result="goo"
+            />
+            <feBlend in="SourceGraphic" in2="goo" />
+          </filter>
+        </defs>
+      </svg>
+      {/* glass: blur of what's behind, then one liquid fill (chip + oozing button), then a thin edge */}
+      <span className="shadow-float absolute inset-0 rounded-chip backdrop-blur-md" aria-hidden />
+      <span
+        className="pointer-events-none absolute inset-0 opacity-90"
+        style={{ filter: `url(#${filterId})` }}
+        aria-hidden
+      >
+        <span className="absolute inset-0 rounded-chip" style={{ background: CHIP_FILL }} />
+        <span
+          className="absolute top-1 size-6 rounded-full motion-reduce:transition-none"
+          style={{
+            left: 'calc(100% - 28px)',
+            background: CHIP_FILL,
+            transform: `translateX(${btnX}px)`,
+            transition: `transform 550ms ${CHIP_SPRING}`,
+          }}
+        />
+      </span>
+      <span className="border-border-hairline pointer-events-none absolute inset-0 rounded-chip border" aria-hidden />
+      {/* an invisible bridge over the gap, so crossing to the button never counts as leaving */}
+      {out && (
+        <span
+          className="absolute top-[-6px] left-full h-10"
+          style={{ width: CHIP_BUTTON_OUT_PX + 8 }}
+          aria-hidden
+        />
+      )}
+
+      <button
+        type="button"
+        onClick={onExpand}
+        aria-label="Show details"
+        className="relative z-10 flex h-8 min-w-0 items-center gap-2 pr-3 pl-2.5 text-left"
+      >
+        {chipSummary ?? <span className="max-w-36 truncate text-xs text-text-primary">{name ?? 'This rig'}</span>}
+        {syncing && <span className="text-2xs text-warning">Syncing</span>}
+        {unseenCount > 0 && (
+          <span
+            className="bg-accent-subtle text-accent rounded-chip px-1.5 text-2xs tabular-nums"
+            title={`${unseenCount} new or changed ${unseenCount === 1 ? 'file' : 'files'}`}
+          >
+            {unseenCount} new
+          </span>
+        )}
+      </button>
+
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              onClick={onExpand}
+              aria-label="Show details"
+              tabIndex={out ? 0 : -1}
+              data-testid="pinned-chip-expand"
+              className={cn(
+                'absolute top-1 z-10 flex size-6 items-center justify-center rounded-full text-text-secondary transition-opacity duration-200 hover:text-text-primary motion-reduce:transition-none',
+                out ? 'pointer-events-auto opacity-100 delay-100' : 'pointer-events-none opacity-0'
+              )}
+              style={{ left: `calc(100% + ${btnX - 28}px)`, transition: `opacity 200ms, left 550ms ${CHIP_SPRING}` }}
+            >
+              <PanelRightOpen className="size-3.5" strokeWidth={1.5} />
+            </button>
+          }
+        />
+        <TooltipContent side="bottom">Show details</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
 export function PinnedCard({
   root,
   rootId,
@@ -119,6 +260,7 @@ export function PinnedCard({
   onlineUserIds,
   startCollapsed,
   chipSummary,
+  isSpace = false,
 }: {
   root: string;
   rootId: string;
@@ -137,6 +279,8 @@ export function PinnedCard({
   startCollapsed?: boolean;
   /** What the collapsed chip says instead of the rig's name (the Room shows who's here and what's working). */
   chipSummary?: ReactNode;
+  /** This binding is a space, not a plain rig: no Cloud row (spaces aren't backed up the same way), and People renders the compact share surface. */
+  isSpace?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [collapsed, setCollapsed] = useState(readCollapsed);
@@ -301,52 +445,36 @@ export function PinnedCard({
 
   if (collapsed) {
     return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              onClick={toggleCollapsed}
-              aria-label="Show details"
-              className="card-pop-in border-border-hairline bg-bg-1 shadow-float hover:bg-bg-2 absolute top-[52px] right-4 z-20 flex h-8 origin-top-right items-center gap-2 rounded-chip border pr-3 pl-2.5 transition-colors"
-            >
-              <PanelRightOpen className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
-              {chipSummary ?? <span className="max-w-36 truncate text-xs text-text-primary">{name ?? 'This rig'}</span>}
-              {syncing && <span className="text-2xs text-warning">Syncing</span>}
-              {unseenFiles.size > 0 && (
-                <span
-                  className="bg-accent-subtle text-accent rounded-chip px-1.5 text-2xs tabular-nums"
-                  title={`${unseenFiles.size} new or changed ${unseenFiles.size === 1 ? 'file' : 'files'}`}
-                >
-                  {unseenFiles.size} new
-                </span>
-              )}
-            </button>
-          }
-        />
-        <TooltipContent side="bottom">Show details</TooltipContent>
-      </Tooltip>
+      <CollapsedChip
+        chipSummary={chipSummary}
+        name={name}
+        syncing={syncing}
+        unseenCount={unseenFiles.size}
+        onExpand={toggleCollapsed}
+      />
     );
   }
 
   return (
     <div className="card-pop-in border-border-hairline bg-bg-1 shadow-float absolute top-[52px] right-4 z-20 flex max-h-[calc(100vh-140px)] w-[304px] origin-top-right flex-col overflow-y-auto rounded-card border p-2">
       <div className="flex h-6 shrink-0 items-center px-2">
-        <p className="font-mono text-2xs tracking-wide text-text-muted uppercase">Rig</p>
+        <p className="min-w-0 truncate text-xs font-medium text-text-primary">
+          {name ? name.replace(/^#/, '') : 'Rig'}
+        </p>
         <Tooltip>
           <TooltipTrigger
             render={
               <button
                 type="button"
                 onClick={toggleCollapsed}
-                aria-label="Hide rig details"
-                className="hover:bg-bg-2 hover:text-text-primary ml-auto flex size-5 items-center justify-center rounded-control text-text-muted transition-colors"
+                aria-label="Collapse"
+                className="hover:bg-bg-2 hover:text-text-primary ml-auto flex size-5 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors"
               >
-                <ChevronRight className="size-3.5" strokeWidth={1.5} />
+                <Minus className="size-3.5" strokeWidth={1.5} />
               </button>
             }
           />
-          <TooltipContent side="bottom">Hide</TooltipContent>
+          <TooltipContent side="bottom">Collapse</TooltipContent>
         </Tooltip>
       </div>
       <ImportDocDialog
@@ -474,32 +602,37 @@ export function PinnedCard({
         </div>
       )}
 
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <div className="flex h-7 shrink-0 items-center gap-2 rounded-control px-2">
-              <Cloud className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
-              <span className="text-xs text-text-primary">Cloud</span>
-              <span className="ml-auto flex items-center gap-1.5">
-                {syncing ? (
-                  <>
-                    <Loader2 className="size-3 animate-spin text-text-muted" strokeWidth={1.5} />
-                    <span className="text-2xs text-text-muted">Downloading…</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="size-1.5 rounded-full bg-success" />
-                    <span className="text-2xs text-text-muted">Backed up</span>
-                  </>
-                )}
-              </span>
-            </div>
-          }
-        />
-        <TooltipContent side="left">
-          {syncing ? 'Downloading this rig’s files' : 'Backed up to Rig’s cloud'}
-        </TooltipContent>
-      </Tooltip>
+      {/* Spaces aren't backed up as a rig is — the relay binding IS the
+          space's storage — so this row only means something for a plain
+          rig (`isSpace` false). */}
+      {!isSpace && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <div className="flex h-7 shrink-0 items-center gap-2 rounded-control px-2">
+                <Cloud className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+                <span className="text-xs text-text-primary">Cloud</span>
+                <span className="ml-auto flex items-center gap-1.5">
+                  {syncing ? (
+                    <>
+                      <Loader2 className="size-3 animate-spin text-text-muted" strokeWidth={1.5} />
+                      <span className="text-2xs text-text-muted">Downloading…</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="size-1.5 rounded-full bg-success" />
+                      <span className="text-2xs text-text-muted">Backed up</span>
+                    </>
+                  )}
+                </span>
+              </div>
+            }
+          />
+          <TooltipContent side="left">
+            {syncing ? 'Downloading this rig’s files' : 'Backed up to Rig’s cloud'}
+          </TooltipContent>
+        </Tooltip>
+      )}
 
       {skillFiles.length > 0 && (
         <>
@@ -593,7 +726,7 @@ export function PinnedCard({
           </button>
           {expanded === 'people' && (
             <div className="popover-in shrink-0 pb-1">
-              <RigSharePopoverContent root={root} name={name} />
+              <RigSharePopoverContent root={root} name={name} variant={isSpace ? 'compact' : 'full'} />
             </div>
           )}
         </>
@@ -605,9 +738,7 @@ export function PinnedCard({
       {activity.length > 0 && (
         <>
           <div className="bg-border-hairline mx-2 my-1.5 h-px shrink-0" />
-          <p className="flex h-6 shrink-0 items-center px-2 font-mono text-2xs tracking-wide text-text-muted uppercase">
-            Activity
-          </p>
+          <p className="flex h-6 shrink-0 items-center px-2 text-2xs text-text-muted">Activity</p>
           {activity.map((card) => {
             const active = activePaths.has(card.relPath);
             const unseen = !active && unseenFiles.has(card.relPath);

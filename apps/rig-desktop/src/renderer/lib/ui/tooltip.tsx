@@ -35,7 +35,7 @@ function TooltipContent({
         <TooltipPrimitive.Popup
           data-slot="tooltip-content"
           className={cn(
-            'bg-bg-2 text-text-primary border-border-hairline rounded-control z-50 w-fit max-w-xs border px-2.5 py-1.5 font-mono text-xs',
+            'bg-bg-2 text-text-primary border-border-hairline rounded-control z-50 w-fit max-w-xs border px-2.5 py-1.5 text-xs',
             // Charter v2 motion: tooltips fade/settle in 150ms after their
             // provider delay; Base UI keeps subsequent tooltips instant
             // while a provider-group is warm, which is the Raycast/Emil
