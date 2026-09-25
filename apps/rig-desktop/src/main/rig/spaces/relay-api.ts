@@ -20,7 +20,13 @@ import { isError, resolveContext, type Resolved } from '../account';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
-export type RelayApiError = RigAccountError;
+/**
+ * `RigAccountError` plus, on a 429 that carried one, the relay's
+ * `Retry-After` (seconds — see tap `packages/relay/src/rate-limit.ts`),
+ * converted to milliseconds so `SessionEventPublisher` can honor it directly
+ * without re-deriving the relay's own rate-limit window.
+ */
+export type RelayApiError = RigAccountError & { retryAfterMs?: number };
 
 export type SessionAgent = 'claude' | 'codex';
 export type SessionStatus = 'running' | 'waiting' | 'done' | 'stopped' | 'failed';
@@ -233,13 +239,22 @@ async function relayError(response: Response, action: string): Promise<RelayApiE
   if (response.status === 401 && code === 'invalid_token') {
     return { kind: 'invalidToken', message: 'Your sign-in has expired. Sign in again.' };
   }
+  const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
   return {
     kind: 'relay',
     status: response.status,
+    ...(retryAfterMs !== null ? { retryAfterMs } : {}),
     message: code
       ? `Could not ${action} (relay: ${code}).`
       : `Could not ${action} (relay ${response.status}).`,
   };
+}
+
+/** The relay's `Retry-After` is always whole seconds (see `rate-limit.ts`'s `rateLimit()`); null for anything else, so callers fall back to their own backoff. */
+function parseRetryAfterMs(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null;
 }
 
 async function request(

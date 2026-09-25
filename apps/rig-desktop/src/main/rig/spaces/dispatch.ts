@@ -441,6 +441,10 @@ function requestStatusFor(sessionStatus: SessionStatus): 'done' | 'failed' | 'ca
   return 'done';
 }
 
+/** How long, and how many, of this process's own finalized runs `closeOutStaleRun` remembers (see its own doc comment). */
+const RECENTLY_FINISHED_MAX = 200;
+const RECENTLY_FINISHED_MAX_AGE_MS = 60 * 60 * 1000;
+
 export function createSpacesDispatcher(deps: {
   api: SpacesRelayApi;
   acp: SpacesAcpSessions;
@@ -482,6 +486,30 @@ export function createSpacesDispatcher(deps: {
   const sessions = new Map<PersistentKey, PersistentSession>();
   /** Runs this process has started and not yet finalized: the only ones truly running here. */
   const liveRunIds = new Set<string>();
+  /**
+   * Runs this process finalized itself, with the status it actually ended
+   * with — so if the relay never got the events that would have told it so
+   * (e.g. every batch 429'd), `closeOutStaleRun` can re-post the REAL
+   * status instead of guessing 'stopped'. Bounded (oldest-first, by
+   * insertion order — `set()` always appends) so a long-lived process
+   * doesn't grow this forever; entries also age out after an hour, well
+   * past how long the Room's ~20s stale-run poll would take to notice.
+   */
+  const recentlyFinished = new Map<string, { status: SessionStatus; finishedAt: number }>();
+
+  function rememberFinished(runId: string, status: SessionStatus): void {
+    recentlyFinished.delete(runId); // re-insert at the end, so it reads as most-recent
+    recentlyFinished.set(runId, { status, finishedAt: Date.now() });
+    const cutoff = Date.now() - RECENTLY_FINISHED_MAX_AGE_MS;
+    for (const [id, entry] of recentlyFinished) {
+      if (entry.finishedAt < cutoff) recentlyFinished.delete(id);
+    }
+    while (recentlyFinished.size > RECENTLY_FINISHED_MAX) {
+      const oldest = recentlyFinished.keys().next().value;
+      if (oldest === undefined) break;
+      recentlyFinished.delete(oldest);
+    }
+  }
 
   function forwardRaw(session: PersistentSession, raw: RawSessionEvent): void {
     switch (raw.kind) {
@@ -529,6 +557,7 @@ export function createSpacesDispatcher(deps: {
     await turn.publisher.finish(status);
     deps.store?.clearInFlight?.(turn.runId);
     liveRunIds.delete(turn.runId);
+    rememberFinished(turn.runId, status);
     if (turn.requestId) {
       await markRequestSettled(
         deps.api,
@@ -958,24 +987,35 @@ export function createSpacesDispatcher(deps: {
     return agentConfig(bindingId, ownerUserId, agent);
   }
 
+  /**
+   * Closes out a run the relay still shows running whose end this process
+   * (or a previous one) already knows about — or, if not, assumes it was
+   * simply stopped. If THIS process finalized `runId` itself and just hasn't
+   * heard the relay catch up (e.g. its batches 429'd and are still retrying,
+   * or already gave up — see `session-publisher.ts`), that real status
+   * (`recentlyFinished`) is what gets posted, not a blind 'stopped': the run
+   * really did finish `done`/`failed`, and the Room shouldn't show it as cut
+   * off partway through just because the log post lagged behind.
+   */
   async function closeOutStaleRun(bindingId: string, runId: string): Promise<boolean> {
     const events = await deps.api.getSessionEvents(bindingId, runId, 0);
     if (!events.success) {
       log.warn('Rig spaces dispatch: could not read a stale run to close it out', { runId, error: events.error.message });
       return false;
     }
+    const finalStatus: SessionStatus = recentlyFinished.get(runId)?.status ?? 'stopped';
     const runEvents = events.data.events;
     if (!runEvents.some((e) => e.kind === 'turn_ended')) {
       const lastSeq = runEvents.reduce((max, e) => Math.max(max, e.seq), 0);
       const posted = await deps.api.postSessionEvents(bindingId, runId, [
-        { seq: lastSeq + 1, kind: 'turn_ended', payload: { status: 'stopped' } },
+        { seq: lastSeq + 1, kind: 'turn_ended', payload: { status: finalStatus } },
       ]);
       if (!posted.success) {
         log.warn('Rig spaces dispatch: could not close out a stale run', { runId, error: posted.error.message });
         return false;
       }
     }
-    await deps.api.patchSession(bindingId, runId, { status: 'stopped' });
+    await deps.api.patchSession(bindingId, runId, { status: finalStatus });
     deps.store?.clearInFlight?.(runId);
     return true;
   }

@@ -299,26 +299,138 @@ describe('SessionEventPublisher', () => {
     expect(patches).toEqual([{ status: 'done' }]);
   });
 
-  it('finish() patches status even when the tail never sent (relay unreachable)', async () => {
-    const { api, calls, patches, failNext } = fakeApi();
-    failNext(10);
+  it("finish() waits for a retrying tail but gives up once maxRetryMs elapses, still patching the terminal status", async () => {
+    // The relay never comes back (a transport failure every time), so the
+    // tail keeps retrying. finish() must not hang forever — it drains up to
+    // `maxRetryMs` of backoff, then drops the tail and patches status anyway.
+    const { api, calls, patches } = fakeApi({
+      postSessionEvents: async () => err<RelayApiError>({ kind: 'relay', message: 'relay unreachable' }),
+    });
     const clock = fakeClock();
     const pub = new SessionEventPublisher({
       api,
       bindingId: 'b1',
       runId: 'run1',
-      maxBatchSize: 32,
+      maxBatchSize: 1,
+      flushIntervalMs: 10,
+      maxRetryMs: 50,
+      now: clock.now,
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+      random: () => 0,
+    });
+
+    pub.record('agent_message_chunk', { text: 'x' });
+    const finished = pub.finish('failed');
+    // Advance in small steps (not one huge jump) so `now()` reflects a
+    // realistic, gradually-advancing clock at each retry — same as real
+    // wall time would. 50 steps of 5ms comfortably clears `maxRetryMs=50`.
+    for (let i = 0; i < 50; i += 1) await clock.advance(5);
+    await finished;
+
+    expect(calls).toHaveLength(0); // never got through
+    expect(pub.pending).toBe(0); // the still-unsent tail was dropped, not left queued forever
+    expect(patches).toEqual([{ status: 'failed' }]); // status patch still attempted
+  });
+
+  it('retries a batch that failed with 429, without losing or reordering its events', async () => {
+    const sent: SessionEventInput[][] = [];
+    let calls = 0;
+    const { api } = fakeApi({
+      postSessionEvents: async (_bindingId, _runId, events) => {
+        calls += 1;
+        if (calls === 1) return err<RelayApiError>({ kind: 'relay', status: 429, message: 'rate_limited' });
+        sent.push(events);
+        return ok({ inserted: events.length, upToSeq: events[events.length - 1]?.seq ?? null });
+      },
+    });
+    const clock = fakeClock();
+    const pub = new SessionEventPublisher({
+      api,
+      bindingId: 'b1',
+      runId: 'run1',
+      maxBatchSize: 2,
+      flushIntervalMs: 250,
+      now: clock.now,
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+      random: () => 0, // deterministic backoff: base/2 exactly
+    });
+
+    pub.record('tool_call', { a: 1 });
+    pub.record('tool_call', { a: 2 }); // crosses maxBatchSize -> immediate flush, which 429s
+    await clock.advance(0);
+    expect(sent).toHaveLength(0);
+    expect(pub.pending).toBe(2);
+
+    await clock.advance(125); // backoff for attempt 1: base=250 (flushIntervalMs), jitter(0)=125
+    expect(sent).toHaveLength(1);
+    expect(sent[0].map((e) => e.payload)).toEqual([{ a: 1 }, { a: 2 }]);
+    expect(pub.pending).toBe(0);
+  });
+
+  it('honors Retry-After on a 429 instead of computing its own backoff', async () => {
+    const sent: SessionEventInput[][] = [];
+    let calls = 0;
+    const { api } = fakeApi({
+      postSessionEvents: async (_bindingId, _runId, events) => {
+        calls += 1;
+        if (calls === 1) {
+          return err<RelayApiError>({ kind: 'relay', status: 429, message: 'rate_limited', retryAfterMs: 5000 });
+        }
+        sent.push(events);
+        return ok({ inserted: events.length, upToSeq: events[events.length - 1]?.seq ?? null });
+      },
+    });
+    const clock = fakeClock();
+    const pub = new SessionEventPublisher({
+      api,
+      bindingId: 'b1',
+      runId: 'run1',
+      maxBatchSize: 2,
       flushIntervalMs: 250,
       now: clock.now,
       setTimeout: clock.setTimeout,
       clearTimeout: clock.clearTimeout,
     });
 
-    pub.record('agent_message_chunk', { text: 'x' });
-    await pub.finish('failed');
+    pub.record('tool_call', { a: 1 });
+    pub.record('tool_call', { a: 2 });
+    await clock.advance(0);
+    expect(sent).toHaveLength(0);
 
-    expect(calls).toHaveLength(0); // never got through
-    expect(patches).toEqual([{ status: 'failed' }]); // status patch still attempted
+    await clock.advance(4999);
+    expect(sent).toHaveLength(0); // Retry-After (5000ms) hasn't elapsed yet
+    await clock.advance(1);
+    expect(sent).toHaveLength(1); // now it retries, exactly on the relay's own schedule
+  });
+
+  it('drops a batch rejected with a non-retryable 4xx instead of retrying it', async () => {
+    const sent: SessionEventInput[][] = [];
+    const { api } = fakeApi({
+      postSessionEvents: async (_bindingId, _runId, events) => {
+        sent.push(events);
+        return err<RelayApiError>({ kind: 'relay', status: 400, message: 'bad batch' });
+      },
+    });
+    const clock = fakeClock();
+    const pub = new SessionEventPublisher({
+      api,
+      bindingId: 'b1',
+      runId: 'run1',
+      maxBatchSize: 2,
+      flushIntervalMs: 250,
+      now: clock.now,
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+    });
+
+    pub.record('tool_call', { a: 1 });
+    pub.record('tool_call', { a: 2 });
+    await clock.advance(0);
+
+    expect(sent).toHaveLength(1); // tried exactly once
+    expect(pub.pending).toBe(0); // dropped, not kept around for a retry
   });
 
   it('record() never throws even after dispose()', () => {

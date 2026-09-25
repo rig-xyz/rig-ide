@@ -733,6 +733,46 @@ describe('createSpacesDispatcher', () => {
     expect(postedEvents.at(-1)).toEqual({ runId: 'lost-run', kinds: ['turn_ended'], payloads: [{ status: 'stopped' }] });
   });
 
+  it("settleIfNotLive re-posts a recently-finished run's real status instead of blindly 'stopped'", async () => {
+    // The relay's own copy of the log never got `turn_ended` — e.g. every
+    // batch that would have carried it 429'd (see session-publisher.ts) —
+    // so the relay still thinks the run is 'running' even though this
+    // process already finalized it as 'done'.
+    const { api, postedEvents, patchedSessions } = makeFakeApi({
+      getSessionEvents: async () =>
+        ok({
+          run: {
+            id: 'run-1',
+            bindingId: 'binding-1',
+            ownerUserId: 'owner-1',
+            agent: 'claude',
+            model: null,
+            status: 'running',
+            title: null,
+            commands: null,
+            startedAt: '',
+            endedAt: null,
+          },
+          events: [],
+        }),
+    });
+    const fake = makeFakeAcp();
+    const { dispatch, settleIfNotLive } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+
+    const result = await dispatch(makeRequest());
+    if ('failed' in result) throw new Error('expected success');
+    const conversationId = fake.started[0].conversationId;
+    const turnId = fake.queued[0].turnId;
+    fake.emitTurnStart(conversationId, turnId);
+    fake.emitTurnEnd(conversationId, turnId, 'end_turn'); // finalizes the run itself, with status 'done'
+    await vi.waitFor(() => expect(patchedSessions.length).toBeGreaterThan(0));
+
+    // The Room's stale-run poll (`settleIfNotLive`) now asks to settle it.
+    expect(await settleIfNotLive(result.runId, 'binding-1')).toBe(true);
+    expect(postedEvents.at(-1)).toEqual({ runId: result.runId, kinds: ['turn_ended'], payloads: [{ status: 'done' }] });
+    expect(patchedSessions.at(-1)).toEqual({ runId: result.runId, status: 'done' });
+  });
+
   it("reads and changes your space agent's settings on its persistent session", async () => {
     const { api } = makeFakeApi();
     const fake = makeFakeAcp();
