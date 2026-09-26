@@ -105,7 +105,7 @@ function PinBadge({ n }: { n: number }) {
   );
 }
 
-function PageChip({ url, title, pin }: { url: string; title?: string; pin?: number }) {
+function PageChip({ url, title }: { url: string; title?: string }) {
   const { kind, label } = classifyLink(url);
   const name = title || (kind === 'web' ? new URL(url).hostname : label);
   // Its pins are on the page: always beside the Room, whatever the site.
@@ -120,7 +120,6 @@ function PageChip({ url, title, pin }: { url: string; title?: string; pin?: numb
     >
       {LINK_ICON[kind] ?? <Globe className="size-3 text-text-secondary" strokeWidth={1.75} />}
       <span>{name}</span>
-      {pin !== undefined && <PinBadge n={pin} />}
     </a>
   );
 }
@@ -645,7 +644,7 @@ export function CommentMirrorLine({
       </div>
     );
   }
-  const pageChip = /^https?:\/\//.test(path) ? <PageChip url={path} title={message.meta.pageTitle} pin={pin} /> : null;
+  const pageChip = /^https?:\/\//.test(path) ? <PageChip url={path} title={message.meta.pageTitle} /> : null;
   const fileChip = pageChip ?? (onOpenFile ? (
     <button
       type="button"
@@ -654,12 +653,10 @@ export function CommentMirrorLine({
       title={`Open ${path}`}
     >
       {path}
-      {pin !== undefined && <PinBadge n={pin} />}
     </button>
   ) : (
     <span className="bg-bg-2 inline-flex items-center gap-1 rounded-control px-1 align-[-1px] font-mono text-xs text-text-primary">
       {path}
-      {pin !== undefined && <PinBadge n={pin} />}
     </span>
   ));
   return (
@@ -670,6 +667,12 @@ export function CommentMirrorLine({
           <span className="min-w-0 truncate text-sm text-text-secondary">
             <b className="font-medium text-text-primary">{name}</b> {isReply ? 'replied on' : 'commented on'}{' '}
             {fileChip}
+            {/* The thread's number, just outside the chip: the pin it wears on the page or beside the file's text. */}
+            {pin !== undefined && (
+              <span className="ml-1.5 inline-flex align-middle">
+                <PinBadge n={pin} />
+              </span>
+            )}
           </span>
           <RowTime message={message} />
         </div>
