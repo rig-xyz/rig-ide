@@ -1,7 +1,15 @@
 import { err, ok } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { RigCommentMessage } from '@shared/rig/comments';
-import { anchorFor, createRigTools, runRigTool, type RigTool, type RigToolScope, type RigToolsBackend } from './rig-tools';
+import {
+  anchorFor,
+  createRigTools,
+  PRE_APPROVED_RIG_TOOLS,
+  runRigTool,
+  type RigTool,
+  type RigToolScope,
+  type RigToolsBackend,
+} from './rig-tools';
 
 const SCOPE: RigToolScope = { bindingId: 'b1', ownerUserId: 'u-dylan', agent: 'claude', cwd: '/rigs/space' };
 const NOW = Date.parse('2026-09-25T12:00:00Z');
@@ -121,6 +129,15 @@ describe('rig tools', () => {
       'rig_recent_changes',
       'rig_file_comments',
     ]);
+  });
+
+  it('pre-approve only tools that are read-only', () => {
+    const tools = createRigTools(fakeBackend());
+    for (const name of PRE_APPROVED_RIG_TOOLS) {
+      expect(tools.find((t) => t.name === name)?.annotations.readOnlyHint).toBe(true);
+    }
+    expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_invite');
+    expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_comment');
   });
 
   it('refuse to act once the device is signed in as someone else', async () => {

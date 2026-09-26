@@ -1489,6 +1489,85 @@ describe('rig tools', () => {
     expect(fake.started[1]).toMatchObject({ mcpServers: [rigServer('second')] });
   });
 
+  describe('read-only rig tools run without asking', () => {
+    const request = (title: string, requestId = 'perm-1') =>
+      makePermissionRequest({
+        requestId,
+        toolCall: { id: requestId, seq: 1, toolCallId: requestId, title, status: 'running', kind: 'execute-tool-call' },
+        options: [
+          { optionId: 'allow-always', name: 'Always allow', kind: 'allow_always' },
+          { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' },
+        ],
+      });
+
+    async function startTurn(agent: 'claude' | 'codex', withRig = true) {
+      const fakeApi = makeFakeApi();
+      const fake = makeFakeAcp();
+      const dispatcher = createSpacesDispatcher({
+        api: fakeApi.api,
+        acp: fake.acp,
+        resolveWorkspace: async () => '/rigs/one',
+        connectors: async () => ({ servers: [LINEAR], gaps: [] }),
+        rigTools: async () => (withRig ? rigServer('rig-token') : null),
+      });
+      const result = await dispatcher.dispatch(makeRequest({ targetAgent: agent }));
+      if ('failed' in result) throw new Error('expected success');
+      const conversationId = fake.started[0]!.conversationId;
+      fake.emitTurnStart(conversationId, fake.queued[0]!.turnId);
+      const requested = () =>
+        fakeApi.postedEvents.flatMap((p) => p.kinds.map((kind, i) => ({ kind, payload: p.payloads[i] as { requestId?: string } })))
+          .filter((e) => e.kind === 'permission_requested')
+          .map((e) => e.payload.requestId);
+      return { fake, dispatcher, runId: result.runId, conversationId, requested };
+    }
+
+    it.each([
+      ['claude', 'mcp__rig__'],
+      ['codex', 'mcp.rig.'],
+    ] as const)('%s: rig_people, rig_recent_changes and rig_file_comments are allowed once, with no card', async (agent, prefix) => {
+      const { fake, conversationId, requested } = await startTurn(agent);
+      const tools = ['rig_people', 'rig_recent_changes', 'rig_file_comments'];
+      tools.forEach((tool, i) => fake.emitPermissionRequest(conversationId, request(`${prefix}${tool}`, `perm-${i}`)));
+
+      await vi.waitFor(() => expect(fake.resolvedPermissions).toHaveLength(3));
+      expect(fake.resolvedPermissions).toEqual(
+        tools.map((_, i) => ({ conversationId, requestId: `perm-${i}`, optionId: 'allow-once' }))
+      );
+      expect(requested()).toEqual([]);
+    });
+
+    it('still asks for rig_invite and rig_comment, a same-named tool on another server, and anything without rig tools', async () => {
+      const { fake, dispatcher, runId, conversationId, requested } = await startTurn('claude');
+      const asks = [
+        'mcp__rig__rig_invite',
+        'mcp.rig.rig_invite',
+        'mcp__rig__rig_comment',
+        'mcp.rig.rig_comment',
+        'mcp__granola__rig_people',
+        'mcp.linear.rig_people',
+        'rig_people',
+        'mcp__rig__rig_people_and_more',
+      ];
+      asks.forEach((title, i) => fake.emitPermissionRequest(conversationId, request(title, `ask-${i}`)));
+      // A pre-approved tool offering no plain "allow once" waits too, rather than being granted "always".
+      fake.emitPermissionRequest(conversationId, {
+        ...request('mcp__rig__rig_people', 'only-always'),
+        options: [{ optionId: 'allow-always', name: 'Always allow', kind: 'allow_always' }],
+      });
+
+      await vi.waitFor(() => expect(requested()).toHaveLength(asks.length + 1));
+      expect(fake.resolvedPermissions).toEqual([]);
+      // Held for the owner as before.
+      await expect(dispatcher.resolvePermission(runId, 'ask-0', 'reject-once')).resolves.toBe(true);
+
+      const without = await startTurn('codex', false);
+      without.fake.emitPermissionRequest(without.conversationId, request('mcp.rig.rig_people'));
+      await vi.waitFor(() => expect(without.requested()).toEqual(['perm-1']));
+      expect(without.fake.resolvedPermissions).toEqual([]);
+    });
+  });
+
   it('points the agent at the tools only when it has them', () => {
     expect(spacesHiddenContext(makeRequest())).not.toContain('rig_invite');
     const context = spacesHiddenContext(makeRequest(), [], true);

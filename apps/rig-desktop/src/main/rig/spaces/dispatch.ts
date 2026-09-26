@@ -12,7 +12,7 @@ import { log } from '@main/lib/logger';
 import { connectorById, RIG_TOOLS_SERVER, RUN_CONNECTORS_EVENT, type ConnectorGap } from '@shared/spaces/connectors';
 import { RUN_PRIVACY_EVENT, type LocalRunEvent, type RoomSees } from '@shared/spaces/room-sees';
 import type { SessionConnectors } from '../connectors/connections';
-import type { RigToolScope } from './rig-tools';
+import { preApprovedRigToolOption, type RigToolScope } from './rig-tools';
 import type { AgentRequest, SessionAgent, SessionStatus, SpacesRelayApi } from './relay-api';
 import { markRequestSettled, type ClaimDispatchResult } from './request-claim';
 import { SessionEventPublisher } from './session-publisher';
@@ -617,14 +617,25 @@ export function createSpacesDispatcher(deps: {
    * log with its options, and the owner's own session card answers it via
    * `resolvePermission` below. Other members see the same log event and
    * render at most a muted "waiting on approval" line. Nothing is ever
-   * auto-approved or auto-declined. Normal chat sessions never reach this;
-   * their own permission flow is untouched.
+   * auto-declined; the one thing auto-approved (once) is a read-only rig tool
+   * on a session that has rig's tools (`preApprovedRigToolOption`). Normal
+   * chat sessions never reach this; their own permission flow is untouched.
    *
    * Permission requests arrive on a different channel (session state) from
    * the raw event stream, so if one beats its own `turn_start` marker it's
    * attributed to the oldest queued turn — the one about to start.
    */
   function holdPermission(session: PersistentSession, request: AcpPermissionRequest): void {
+    const preApproved = session.rigTools ? preApprovedRigToolOption(request) : null;
+    if (preApproved) {
+      deps.acp.resolvePermission(session.conversationId, request.requestId, preApproved).catch((error: unknown) => {
+        log.warn('Rig spaces dispatch: could not allow a read-only rig tool', {
+          conversationId: session.conversationId,
+          error: String(error),
+        });
+      });
+      return;
+    }
     const turn = session.current ?? session.pending[0] ?? null;
     if (!turn) {
       log.warn('Rig spaces dispatch: permission request with no turn to attribute it to', {

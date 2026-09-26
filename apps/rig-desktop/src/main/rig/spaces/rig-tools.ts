@@ -1,6 +1,8 @@
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import type { AcpPermissionRequest } from '@emdash/core/acp';
 import { err, ok, type Result } from '@emdash/shared';
 import { z } from 'zod';
+import { RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
 import { filterToContentOnly } from '@shared/rig/file-navigator-categories';
 import type { RigCommentAnchor, RigCommentMessage } from '@shared/rig/comments';
 import type { RigFileNode } from '@shared/rig/files';
@@ -35,6 +37,33 @@ export type RigToolScope = {
   /** The space's folder on this device. */
   cwd: string;
 };
+
+/**
+ * Rig's own tools a room agent runs without asking its owner: the read-only
+ * ones (who's here, what changed lately, a file's comments). `rig_invite` and
+ * `rig_comment` act on the space, so they still ask.
+ */
+export const PRE_APPROVED_RIG_TOOLS: ReadonlySet<string> = new Set([
+  'rig_people',
+  'rig_recent_changes',
+  'rig_file_comments',
+]);
+
+/** Their exact names as agents report them: Claude `mcp__rig__rig_people`, Codex `mcp.rig.rig_people`. */
+const PRE_APPROVED_TOOL_NAMES = new Set(
+  [...PRE_APPROVED_RIG_TOOLS].flatMap((tool) => [`mcp__${RIG_TOOLS_SERVER}__${tool}`, `mcp.${RIG_TOOLS_SERVER}.${tool}`])
+);
+
+/**
+ * The option that answers `request` without asking — its "allow once", never
+ * an "always" — when it's one of the pre-approved rig tools above; null for
+ * anything else (other rig tools, other servers, a request with no plain
+ * allow), which waits for the owner as before.
+ */
+export function preApprovedRigToolOption(request: AcpPermissionRequest): string | null {
+  if (!PRE_APPROVED_TOOL_NAMES.has(request.toolCall.title)) return null;
+  return request.options.find((option) => option.kind === 'allow_once')?.optionId ?? null;
+}
 
 type Failure = { message: string };
 
