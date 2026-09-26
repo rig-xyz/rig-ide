@@ -1,10 +1,24 @@
-import { Check, CircleAlert, Copy, CornerUpLeft, Link as LinkIcon, Plug, UserPlus } from 'lucide-react';
+import {
+  Check,
+  CircleAlert,
+  Copy,
+  CornerUpLeft,
+  FileText,
+  Github,
+  Link as LinkIcon,
+  Plug,
+  Presentation,
+  Sheet,
+  UserPlus,
+} from 'lucide-react';
 import { Children, type ReactNode, useEffect, useState } from 'react';
+import { rpc } from '@renderer/lib/ipc';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import { formatClock, formatClockShort, formatFull } from '@renderer/lib/time-format';
 import type { ConnectResult } from '@shared/spaces/connectors';
-import { ConnectorMark } from '../logos';
+import { classifyLink, trimUrl, URL_PATTERN, type LinkKind } from '@shared/spaces/links';
+import { BrandLogo, ConnectorMark } from '../logos';
 import type { RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 import { ConnectPill } from './connectors-panel';
@@ -23,20 +37,66 @@ function memberOf(snapshot: RoomSnapshot, id: string): RoomMember | undefined {
   return snapshot.members.find((m) => m.id === id);
 }
 
-/** Inline emphasis for @mentions, /commands and +file.md references — same markup rules as the reference demo's `rich()`, done as React nodes instead of HTML string concatenation. */
+const LINK_ICON: Partial<Record<LinkKind, ReactNode>> = {
+  'claude-artifact': <BrandLogo id="claude" size={12} />,
+  'claude-chat': <BrandLogo id="claude" size={12} />,
+  'google-doc': <FileText className="size-3 text-text-secondary" strokeWidth={1.75} />,
+  'google-sheet': <Sheet className="size-3 text-text-secondary" strokeWidth={1.75} />,
+  'google-slides': <Presentation className="size-3 text-text-secondary" strokeWidth={1.75} />,
+  github: <Github className="size-3 text-text-secondary" strokeWidth={1.75} />,
+};
+
+/** A link in a message: a chip for the kinds we know ("Claude artifact", "Google Doc", "acme/app"), else the URL itself. Opens in the browser. */
+function MessageLink({ url }: { url: string }) {
+  const { kind, label } = classifyLink(url);
+  const open = (event: { preventDefault(): void }) => {
+    event.preventDefault();
+    void rpc.app.openExternal(url);
+  };
+  if (kind === 'web') {
+    return (
+      <a href={url} onClick={open} className="break-all underline decoration-dotted underline-offset-2" data-testid="message-link">
+        {url}
+      </a>
+    );
+  }
+  return (
+    <a
+      href={url}
+      onClick={open}
+      title={url}
+      className="border-border-hairline bg-bg-1 hover:bg-bg-2 inline-flex items-center gap-1 rounded-control border px-1.5 align-[-1px] text-text-primary"
+      data-testid="message-link-chip"
+      data-kind={kind}
+    >
+      {LINK_ICON[kind]}
+      <span>{label}</span>
+    </a>
+  );
+}
+
+/** Inline emphasis for links, @mentions, /commands and +file.md references — same markup rules as the reference demo's `rich()`, done as React nodes instead of HTML string concatenation. */
 export function richText(text: string, ownId: string): ReactNode[] {
-  // @ only starts a mention after whitespace, the start, or opening
+  // Links first, so nothing inside a URL reads as a mention or a file. @
+  // only starts a mention after whitespace, the start, or opening
   // punctuation (an email's "@gmail" stays plain), and a /command only at
   // the very start of the message (a path like "/etc/hosts" stays plain).
-  const pattern = /((?<![\w.@/:-])@[a-z]+)|(^\/[a-z-]+(?![\w/.]))|(\+[\w./-]+\.md)|(reviews\/[\w.-]+\.md)/g;
+  const pattern = new RegExp(
+    `(${URL_PATTERN.source})|((?<![\\w.@/:-])@[a-z]+)|(^\\/[a-z-]+(?![\\w/.]))|(\\+[\\w./-]+\\.md)|(reviews\\/[\\w.-]+\\.md)`,
+    'g'
+  );
   const nodes: ReactNode[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   let key = 0;
   while ((match = pattern.exec(text))) {
     if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
-    const token = match[0];
-    if (token.startsWith('@')) {
+    let token = match[0];
+    if (match[1]) {
+      // The sentence's own punctuation after a link stays text.
+      token = trimUrl(token);
+      nodes.push(<MessageLink key={key++} url={token} />);
+    } else if (token.startsWith('@')) {
       const mentioned = token.slice(1) === ownId;
       nodes.push(
         <span
@@ -63,6 +123,7 @@ export function richText(text: string, ownId: string): ReactNode[] {
       );
     }
     lastIndex = match.index + token.length;
+    pattern.lastIndex = lastIndex;
   }
   if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
   return nodes;
