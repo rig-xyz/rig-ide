@@ -171,10 +171,9 @@ describe('paintbrush mode toggle — zero layout shift on the document container
     await waitFor(() => loadingGone(host));
 
     const container = findContainer();
-    // Every visual cue this container ever wears is class-driven (a
-    // Tailwind `ring`, which compiles to `box-shadow` — never a layout-
-    // affecting property) — there must be no inline style at all, at rest.
-    expect(container.getAttribute('style')).toBeNull();
+    // Its one inline style is the comment margin's reserve (canvas board 17),
+    // which depends on the panel's width, never on comment mode.
+    const restingStyle = container.getAttribute('style');
 
     const restingChildTags = Array.from(container.children).map((child) => child.tagName);
     const restingComputed = getComputedStyle(container);
@@ -198,11 +197,11 @@ describe('paintbrush mode toggle — zero layout shift on the document container
       armButton!.click();
     });
 
-    // Armed: still no inline style anywhere on the container, no new
+    // Armed: the same inline style on the container, no new
     // direct child inserted into the scroll area (the cursor chip and the
     // coach-mark popover both portal to `document.body` — see their own
     // files), and no change to the computed box model.
-    expect(container.getAttribute('style')).toBeNull();
+    expect(container.getAttribute('style')).toBe(restingStyle);
     expect(Array.from(container.children).map((child) => child.tagName)).toEqual(
       restingChildTags
     );
@@ -223,7 +222,7 @@ describe('paintbrush mode toggle — zero layout shift on the document container
       disarmButton!.click();
     });
 
-    expect(container.getAttribute('style')).toBeNull();
+    expect(container.getAttribute('style')).toBe(restingStyle);
     expect(Array.from(container.children).map((child) => child.tagName)).toEqual(
       restingChildTags
     );

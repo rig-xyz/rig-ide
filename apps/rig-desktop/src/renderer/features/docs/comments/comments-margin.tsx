@@ -45,7 +45,14 @@ import {
   type CommentThread,
   type DocCommentsStore,
 } from './comments-store';
-import { layoutMarginCards, MARGIN_CARD_GAP, type MarginLayoutItem } from './margin-layout';
+import {
+  layoutMarginCards,
+  MARGIN_CARD_GAP,
+  RAIL_RIGHT,
+  RAIL_WIDTH,
+  type MarginLayoutItem,
+  type MarginMode,
+} from './margin-layout';
 import { minimalScrollDelta } from './pending-reveal';
 import { formatFull, formatRelative } from '@renderer/lib/time-format';
 import { plainAllowOptionId, rawPermissionDetailText, summarizePermissionDetail } from './permission-summary';
@@ -71,10 +78,15 @@ import {
  * the active card gets a short one, fading in. The stacking math itself lives
  * in `margin-layout.ts` as a pure, unit-tested function; this file is purely
  * about feeding it live anchor/height measurements and rendering the result.
+ *
+ * Two modes (canvas board 17, `marginMode`): with room, a real margin beside
+ * the text (the text column moves left for it, see `artifact-view.tsx`); in a
+ * narrow panel, pins only, and the thread you open (or the draft) is a card
+ * right under its passage. Numbered pins are `comment-pins.tsx`.
  */
 
-const RAIL_WIDTH = 260;
-const RAIL_RIGHT = 24;
+/** A thread card opened from a pin, in a narrow panel. */
+const POPOVER_WIDTH = 320;
 const DEFAULT_CARD_HEIGHT = 90;
 /** Keeps a revealed anchor off the scroll container's exact edge. */
 const REVEAL_PADDING = 24;
@@ -681,6 +693,9 @@ function ActiveConnector({ muted }: { muted?: boolean }) {
   );
 }
 
+/** Which margin the cards are in; a card opened from a pin needs no connector to the text. */
+const MarginModeContext = createContext<MarginMode>('rail');
+
 const Card = observer(function Card({
   children,
   active,
@@ -712,6 +727,7 @@ const Card = observer(function Card({
   onActivate?: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const mode = useContext(MarginModeContext);
 
   // The active card nudges toward the document — the Docs "this one's mine"
   // cue. It does NOT scroll itself into view: that used to live here, guarded
@@ -740,8 +756,10 @@ const Card = observer(function Card({
         // Resolved stays gray "everywhere, active or not" — a resolved thread
         // never gets the accent border, even while active; it gets the same
         // neutral emphasis a hovered (but inactive) card gets instead.
-        active && (muted ? 'border-border-strong -translate-x-1' : 'border-accent -translate-x-1'),
-        !active && hovered && 'border-border-strong -translate-x-0.5',
+        active && (muted ? 'border-border-strong' : 'border-accent'),
+        active && mode === 'rail' && '-translate-x-1',
+        !active && hovered && 'border-border-strong',
+        !active && hovered && mode === 'rail' && '-translate-x-0.5',
         compact ? 'py-1' : 'py-2.5',
         // The gray BORDER treatment above stays "everywhere, active or not"
         // (Dylan) — but the dimmed OPACITY doesn't: a resolved thread
@@ -754,7 +772,7 @@ const Card = observer(function Card({
         streaming && !active && 'border-accent/50'
       )}
     >
-      {active && hasAnchor && <ActiveConnector muted={muted} />}
+      {active && hasAnchor && mode === 'rail' && <ActiveConnector muted={muted} />}
       {children}
     </div>
   );
@@ -1036,6 +1054,7 @@ export const ThreadCard = observer(function ThreadCard({
   const collapsed = store.isThreadCollapsed(root.id);
   const unread = store.isThreadUnread(thread);
   const agent = useThreadAgent(store, thread);
+  const number = store.threadNumbers.get(root.id);
 
   const summary = shortenQuote(root.anchor?.exact ?? root.body, 140);
 
@@ -1069,6 +1088,18 @@ export const ThreadCard = observer(function ThreadCard({
           !collapsed && 'mb-2'
         )}
       >
+        {number !== undefined && (
+          // The same number as the thread's pin beside the text.
+          <span
+            className={cn(
+              'grid size-4 shrink-0 place-items-center rounded-[999px_999px_999px_2px] text-[9px] font-bold',
+              active && !thread.resolved ? 'bg-accent text-white' : 'bg-text-muted/80 text-bg-1',
+              thread.resolved && 'bg-border-strong text-text-muted'
+            )}
+          >
+            {number}
+          </span>
+        )}
         {collapsed ? (
           <ChevronRight className="text-text-muted size-3 shrink-0" />
         ) : (
@@ -1336,10 +1367,18 @@ export const NewThreadCard = observer(function NewThreadCard({
 
 // ── rail: anchored, reflowing positioning ───────────────────────────────────
 
+/** `end`: where the passage ends, so a card opened under it (pins mode) clears the whole passage. */
 type RailItem =
-  | { key: string; kind: 'composer'; index: number | null }
-  | { key: string; kind: 'thread'; index: number | null; thread: CommentThread }
-  | { key: string; kind: 'resolved-toggle'; index: number | null };
+  | { key: string; kind: 'composer'; index: number | null; end: number | null }
+  | { key: string; kind: 'thread'; index: number | null; end: number | null; thread: CommentThread };
+
+function threadItem(thread: CommentThread): RailItem {
+  const end = thread.index !== null && thread.root.anchor ? thread.index + thread.root.anchor.exact.length : thread.index;
+  return { key: thread.root.id, kind: 'thread', index: thread.index, end, thread };
+}
+
+/** Where the passages are, for a card opened under one (pins mode), in the container's content coordinates. */
+type Geometry = { anchorBottoms: Map<string, number>; columnLeft: number | null; width: number };
 
 function mapsEqual(a: Map<string, number>, b: Map<string, number>): boolean {
   if (a.size !== b.size) return false;
@@ -1379,9 +1418,11 @@ function useMarginLayout(
   surfaceEpoch: number
 ): {
   tops: Map<string, number>;
+  geometry: Geometry;
   setCardRef: (key: string) => (el: HTMLDivElement | null) => void;
 } {
   const [tops, setTops] = useState<Map<string, number>>(new Map());
+  const [geometry, setGeometry] = useState<Geometry>({ anchorBottoms: new Map(), columnLeft: null, width: 0 });
   const cardRefs = useRef(new Map<string, HTMLDivElement>());
   const roRef = useRef<ResizeObserver | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -1397,6 +1438,7 @@ function useMarginLayout(
     const containerRect = container.getBoundingClientRect();
     const scrollTop = container.scrollTop;
     const docLength = surface.docLength();
+    const anchorBottoms = new Map<string, number>();
 
     const layoutItems: MarginLayoutItem[] = itemsRef.current.map((item) => {
       const pos = item.index !== null ? Math.min(item.index, docLength) : null;
@@ -1411,12 +1453,25 @@ function useMarginLayout(
       // can't move a card relative to its anchor just because the two
       // adapters computed "top" differently.
       const anchorTop = coords !== null ? coords.top - containerRect.top + scrollTop : null;
+      // The passage's last character (one past it can be a line break, which Preview can't measure).
+      const last = item.end !== null && pos !== null ? Math.max(pos, Math.min(item.end, docLength) - 1) : null;
+      const endCoords = last !== null ? surface.coordsAtPos(last) : coords;
+      const bottom = Math.max(coords?.bottom ?? -Infinity, endCoords?.bottom ?? -Infinity);
+      if (Number.isFinite(bottom)) anchorBottoms.set(item.key, bottom - containerRect.top + scrollTop);
       const height = cardRefs.current.get(item.key)?.offsetHeight ?? DEFAULT_CARD_HEIGHT;
       return { key: item.key, anchorTop, height };
     });
 
     const next = layoutMarginCards(layoutItems, MARGIN_CARD_GAP, activeIndexRef.current);
     setTops((prev) => (mapsEqual(prev, next) ? prev : next));
+    const left = surface.columnLeft();
+    const columnLeft = left === null ? null : Math.round(left - containerRect.left);
+    const width = container.clientWidth;
+    setGeometry((prev) =>
+      prev.columnLeft === columnLeft && prev.width === width && mapsEqual(prev.anchorBottoms, anchorBottoms)
+        ? prev
+        : { anchorBottoms, columnLeft, width }
+    );
   }, [containerRef, surface]);
 
   const scheduleRecompute = useCallback(() => {
@@ -1477,16 +1532,24 @@ function useMarginLayout(
     [scheduleRecompute]
   );
 
-  return { tops, setCardRef };
+  return { tops, geometry, setCardRef };
 }
 
 export const MarginRail = observer(function MarginRail({
   store,
   containerRef,
+  mode,
+  showResolved,
+  onShowResolved,
 }: {
   store: DocCommentsStore;
   /** The shared scroll container both the doc and this rail live in — see `artifact-view.tsx`. */
   containerRef: RefObject<HTMLDivElement | null>;
+  /** A real margin beside the text, or pins only with the open thread under its passage (`marginMode`). */
+  mode: MarginMode;
+  /** Resolved threads are shown (the header's "N resolved" chip). */
+  showResolved: boolean;
+  onShowResolved: (show: boolean) => void;
 }) {
   // Whichever surface is currently painting markers — CM6 by default, the
   // Preview surface adapter while Preview is showing (`DocCommentsStore
@@ -1494,17 +1557,17 @@ export const MarginRail = observer(function MarginRail({
   // rather than cached: `MarginRail` is already an `observer()`, so it
   // re-renders on every relevant store change regardless.
   const surface = store.surface;
-  const [showResolved, setShowResolved] = useState(false);
 
   const listed = store.visibleThreads;
   const resolved = store.visibleResolvedThreads;
   const activeIsResolved = resolved.some((thread) => thread.root.id === store.activeThreadId);
   useEffect(() => {
-    if (activeIsResolved) setShowResolved(true);
+    if (activeIsResolved) onShowResolved(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeIsResolved]);
 
   const nothingToList =
-    listed.length === 0 && resolved.length === 0 && store.composerQuote === null;
+    mode === 'rail' && listed.length === 0 && resolved.length === 0 && store.composerQuote === null;
 
   // The composer positions itself the same way a thread card would: at the Y
   // of the (still-unposted) quote it was opened on. Preview's selection→
@@ -1528,21 +1591,21 @@ export const MarginRail = observer(function MarginRail({
   const items = useMemo<RailItem[]>(() => {
     const out: RailItem[] = [];
     if (store.composerQuote !== null) {
-      out.push({ key: '__composer', kind: 'composer', index: composerIndex });
+      const end = composerIndex !== null && store.composerQuote !== null ? composerIndex + store.composerQuote.length : null;
+      out.push({ key: '__composer', kind: 'composer', index: composerIndex, end });
     }
-    for (const thread of listed) {
-      out.push({ key: thread.root.id, kind: 'thread', index: thread.index, thread });
+    // Pins only: just the draft, or the thread you opened from its pin.
+    if (mode === 'pins') {
+      if (out.length > 0) return out;
+      const active = [...listed, ...resolved].find((thread) => thread.root.id === store.activeThreadId);
+      return active ? [threadItem(active)] : [];
     }
-    if (resolved.length > 0) {
-      out.push({ key: '__resolved-toggle', kind: 'resolved-toggle', index: null });
-      if (showResolved) {
-        for (const thread of resolved) {
-          out.push({ key: thread.root.id, kind: 'thread', index: thread.index, thread });
-        }
-      }
-    }
+    // Resolved threads, when shown, sit at their own passage like any other.
+    const threads = showResolved ? [...listed, ...resolved] : [...listed];
+    threads.sort((a, b) => (a.index ?? Number.MAX_SAFE_INTEGER) - (b.index ?? Number.MAX_SAFE_INTEGER));
+    for (const thread of threads) out.push(threadItem(thread));
     return out;
-  }, [listed, resolved, showResolved, store.composerQuote, composerIndex]);
+  }, [mode, listed, resolved, showResolved, store.composerQuote, store.activeThreadId, composerIndex]);
 
   // Priority layout target: the composer (while open) or the active thread —
   // mutually exclusive in practice (opening the composer clears
@@ -1556,7 +1619,7 @@ export const MarginRail = observer(function MarginRail({
     return index === -1 ? null : index;
   }, [items, store.activeThreadId]);
 
-  const { tops, setCardRef } = useMarginLayout(
+  const { tops, geometry, setCardRef } = useMarginLayout(
     items,
     activeIndex,
     containerRef,
@@ -1613,15 +1676,24 @@ export const MarginRail = observer(function MarginRail({
   }, [pendingReveal]);
 
   const memberNames = useMemberNames(store.path);
+  // Pins only: the card opens just under its passage, lined up with the text column.
+  const popoverWidth = Math.min(POPOVER_WIDTH, Math.max(200, geometry.width - 24));
+  const popoverLeft = Math.max(12, Math.min(geometry.columnLeft ?? 12, geometry.width - popoverWidth - 12));
+  const placeFor = (key: string): React.CSSProperties => {
+    if (mode === 'rail') return { top: tops.get(key) ?? 0 };
+    const below = geometry.anchorBottoms.get(key);
+    return { top: below !== undefined ? below + 8 : (containerRef.current?.scrollTop ?? 0) + 12 };
+  };
   return (
     <MemberNamesContext.Provider value={memberNames}>
+    <MarginModeContext.Provider value={mode}>
     <div
       // Marks the rail's whole DOM subtree (every card, the composer) as "not
       // away" for `ArtifactView`'s click-away-dismisses-the-active-thread
       // handler — see that file for why this can't just be a Tailwind class.
       data-comments-rail
       className="absolute top-0"
-      style={{ right: RAIL_RIGHT, width: RAIL_WIDTH }}
+      style={mode === 'rail' ? { right: RAIL_RIGHT, width: RAIL_WIDTH } : { left: popoverLeft, width: popoverWidth }}
     >
       {store.state === 'offline' && (
         // Read-only mode, not an error: no warning color, no "something is
@@ -1671,31 +1743,19 @@ export const MarginRail = observer(function MarginRail({
             // with no z-index at all, so a later card in reading order paints
             // over an earlier one's lift/connector regardless of which is
             // actually selected.
-            index === activeIndex && 'z-10'
+            index === activeIndex && 'z-10',
+            mode === 'pins' && 'z-20 [&>*]:shadow-lg'
           )}
-          style={{ top: tops.get(item.key) ?? 0 }}
+          style={placeFor(item.key)}
         >
           {item.kind === 'composer' && (
             <NewThreadCard store={store} hasAnchor={item.index !== null} />
           )}
           {item.kind === 'thread' && <ThreadCard store={store} thread={item.thread} />}
-          {item.kind === 'resolved-toggle' && (
-            <button
-              type="button"
-              onClick={() => setShowResolved((open) => !open)}
-              className="text-text-muted hover:text-text-primary flex h-6 items-center gap-1 text-xs"
-            >
-              {showResolved ? (
-                <ChevronDown className="size-3 shrink-0" />
-              ) : (
-                <ChevronRight className="size-3 shrink-0" />
-              )}
-              {resolved.length} resolved
-            </button>
-          )}
         </div>
       ))}
     </div>
+    </MarginModeContext.Provider>
     </MemberNamesContext.Provider>
   );
 });

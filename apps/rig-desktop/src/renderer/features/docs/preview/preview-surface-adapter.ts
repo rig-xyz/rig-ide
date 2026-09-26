@@ -19,12 +19,15 @@ import type { PositionIndex } from './position-index';
 export function previewSurfaceAdapter(
   getIndex: () => PositionIndex | null,
   getSourceLength: () => number,
-  painter: PreviewCommentPainter
+  painter: PreviewCommentPainter,
+  /** The rendered markdown's root: its left edge is the text column's. */
+  getRoot: () => HTMLElement | null = () => null
 ): CommentSurfaceAdapter {
   return {
     ready: () => getIndex() !== null,
     docLength: getSourceLength,
     coordsAtPos: (pos) => rectAtSourcePos(getIndex(), getSourceLength(), pos),
+    columnLeft: () => getRoot()?.getBoundingClientRect().left ?? null,
     paintMarkers: (markers) => painter.paint(markers),
   };
 }

@@ -35,6 +35,8 @@ export interface CommentSurfaceAdapter {
   docLength(): number;
   /** Viewport-relative rect of a document offset, or null when it can't be measured. */
   coordsAtPos(pos: number): SurfaceRect | null;
+  /** Viewport x of the text column's left edge, where the comment pins hang (canvas board 17), or null when it can't be measured. */
+  columnLeft(): number | null;
   /** Paint (or clear) the current marker set on this surface. */
   paintMarkers(markers: readonly CommentMarker[]): void;
 }

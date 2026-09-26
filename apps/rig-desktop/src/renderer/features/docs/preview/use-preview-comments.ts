@@ -58,7 +58,7 @@ export function usePreviewComments({
   useLayoutEffect(() => {
     if (!active || !store) return;
     store.setSurfaceAdapter(
-      previewSurfaceAdapter(getIndex, () => sourceLengthRef.current, painter)
+      previewSurfaceAdapter(getIndex, () => sourceLengthRef.current, painter, getRoot)
     );
     return () => {
       store.setSurfaceAdapter(null);

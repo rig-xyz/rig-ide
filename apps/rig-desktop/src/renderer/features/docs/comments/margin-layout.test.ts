@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { layoutMarginCards } from './margin-layout';
+import { RAIL_RESERVE, layoutMarginCards, marginMode, numberThreads, pinSlots } from './margin-layout';
 
 describe('layoutMarginCards', () => {
   it('places well-separated cards exactly at their anchor Y', () => {
@@ -219,5 +219,52 @@ describe('layoutMarginCards with an active card (priority layout)', () => {
     // ordinary "first unanchored item starts at 0" rule, not the
     // active-priority pin reappearing under a different name.
     expect([...withActive]).toEqual([...withoutActive]);
+  });
+});
+
+describe('marginMode', () => {
+  it('keeps a real margin only when the text column still gets at least 520px beside it', () => {
+    expect(marginMode(RAIL_RESERVE + 520)).toBe('rail');
+    expect(marginMode(RAIL_RESERVE + 519)).toBe('pins');
+    expect(marginMode(1400)).toBe('rail');
+  });
+
+  it('falls back to pins in a panel as narrow as the one where cards covered the text (~880px)', () => {
+    expect(marginMode(820)).toBe('pins');
+  });
+});
+
+describe('pinSlots', () => {
+  it('gives every pin on its own line slot 0', () => {
+    const slots = pinSlots([
+      { key: 'a', top: 100 },
+      { key: 'b', top: 200 },
+    ]);
+    expect(slots.get('a')).toBe(0);
+    expect(slots.get('b')).toBe(0);
+  });
+
+  it('steps pins that share a line outward, in reading order', () => {
+    const slots = pinSlots([
+      { key: 'a', top: 100 },
+      { key: 'b', top: 102 },
+      { key: 'c', top: 101 },
+      { key: 'd', top: 160 },
+    ]);
+    expect(slots.get('a')).toBe(0);
+    expect(slots.get('c')).toBe(1);
+    expect(slots.get('b')).toBe(2);
+    expect(slots.get('d')).toBe(0);
+  });
+});
+
+describe('numberThreads', () => {
+  it('numbers threads in the order they were started, not where they sit', () => {
+    const numbers = numberThreads([
+      { id: 'late-but-first-in-doc', createdAt: '2026-09-26T10:00:00Z', seq: '9' },
+      { id: 'early', createdAt: '2026-09-25T10:00:00Z', seq: '3' },
+    ]);
+    expect(numbers.get('early')).toBe(1);
+    expect(numbers.get('late-but-first-in-doc')).toBe(2);
   });
 });

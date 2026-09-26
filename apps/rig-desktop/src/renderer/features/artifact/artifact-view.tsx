@@ -10,7 +10,9 @@ import { observer } from 'mobx-react-lite';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { commentDecorations } from '@renderer/features/docs/comments/comment-decorations';
 import { CommentSelectionButton } from '@renderer/features/docs/comments/comment-selection';
+import { CommentPins } from '@renderer/features/docs/comments/comment-pins';
 import { MarginRail, shouldShowMargin } from '@renderer/features/docs/comments/comments-margin';
+import { marginMode, RAIL_RESERVE, type MarginMode } from '@renderer/features/docs/comments/margin-layout';
 import {
   attachDocComments,
   disposeDocComments,
@@ -340,6 +342,8 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // text (they are document state), only the rail and the selection
   // affordance retire.
   const [showComments, setShowComments] = useState(true);
+  // The header's "N resolved" chip (canvas board 17): resolved threads' pins and cards.
+  const [showResolved, setShowResolved] = useState(false);
 
   // Comment mode (canvas board 16; the paintbrush, `docs/document-focus-
   // design.md` §2): the header's Comment control and who it's addressed to —
@@ -513,7 +517,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
       if (!(target instanceof Element)) return;
       // The anchor's own mark/dot already manages `activeThreadId` on its
       // own click (`onFocusThread` above) — never fight that here.
-      if (target.closest('.cm-rigComment, .cm-rigCommentGlyph')) return;
+      if (target.closest('.cm-rigComment, [data-comment-pin]')) return;
       // Any margin card, or the composer — both live in the rail's subtree.
       if (target.closest('[data-comments-rail]')) return;
       // Preview's highlights are painted via the CSS Custom Highlight API —
@@ -537,6 +541,13 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // `_reanchor`, …) — only the painted UI steps aside, same as it already
   // does for `showComments`.
   const showMargin = comments !== null && showComments && shouldShowMargin(comments);
+  // A real margin beside the text when the panel has room for one, pins only
+  // when it doesn't (`marginMode`). With room, the text column always gives
+  // the margin its space while comments are on, even before there are any,
+  // so opening a draft never moves the text out from under the selection.
+  const margin = useMarginMode(containerRef);
+  const reserveMargin = isMarkdown && comments !== null && showComments && margin === 'rail';
+  const resolvedCount = comments !== null && showComments ? comments.visibleResolvedThreads.length : 0;
 
   return (
     <div className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden">
@@ -556,6 +567,22 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 className="rounded-chip border border-border-hairline px-2 py-0.5 text-xs text-text-muted hover:bg-bg-2 hover:text-text-primary"
               >
                 Updated on disk · Reload
+              </button>
+            )}
+            {resolvedCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowResolved((v) => !v)}
+                aria-pressed={showResolved}
+                className={cn(
+                  'flex h-6 shrink-0 items-center rounded-full border px-2 text-xs transition-colors',
+                  showResolved
+                    ? 'border-border-strong bg-bg-2 text-text-primary'
+                    : 'border-border-hairline text-text-muted hover:text-text-primary'
+                )}
+                data-testid="doc-resolved-chip"
+              >
+                {resolvedCount} resolved
               </button>
             )}
             {isMarkdown && comments && (
@@ -610,6 +637,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
       <div
         ref={containerRef}
         className="relative min-h-0 flex-1 overflow-y-auto"
+        style={reserveMargin ? { paddingRight: RAIL_RESERVE } : undefined}
       >
         {resource.isLoading ? (
           <div className="flex h-full items-center justify-center text-sm text-text-muted">
@@ -645,7 +673,18 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 extraExtensions={resource.extensionFactories}
               />
             )}
-            {showMargin && comments && <MarginRail store={comments} containerRef={containerRef} />}
+            {comments && showComments && (
+              <CommentPins store={comments} containerRef={containerRef} showResolved={showResolved} />
+            )}
+            {showMargin && comments && (
+              <MarginRail
+                store={comments}
+                containerRef={containerRef}
+                mode={margin}
+                showResolved={showResolved}
+                onShowResolved={setShowResolved}
+              />
+            )}
             {mode === 'edit' && comments && showComments && (
               <CommentSelectionButton
                 resource={resource}
@@ -684,3 +723,19 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
     </div>
   );
 });
+
+/** The file panel's margin mode, following its width (`marginMode`). */
+function useMarginMode(containerRef: React.RefObject<HTMLDivElement | null>): MarginMode {
+  const [mode, setMode] = useState<MarginMode>('rail');
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    // The panel's full width, padding included: the reserve itself must not flip the mode back.
+    const measure = () => setMode(marginMode(el.getBoundingClientRect().width));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [containerRef]);
+  return mode;
+}

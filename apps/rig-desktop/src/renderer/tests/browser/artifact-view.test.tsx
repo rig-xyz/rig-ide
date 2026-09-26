@@ -134,6 +134,8 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
 
   beforeEach(() => {
     host = document.createElement('div');
+    // Wide enough for a real comment margin beside the text (`marginMode`); narrow panels get pins only.
+    host.style.width = '1280px';
     document.body.appendChild(host);
     root = createRoot(host);
     queryClient = new QueryClient();
@@ -465,6 +467,62 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
     // already has the threads), so this settles quickly.
     await waitFor(() => host.querySelectorAll('.cm-rigComment').length > 0);
     expect(host.querySelector('[data-comments-rail]')?.textContent).toContain('Nice catch!');
+  });
+
+  it('in a narrow panel shows numbered pins only, and opens a thread under its passage from its pin (canvas board 17)', async () => {
+    host.style.width = '700px';
+    mocks.read.mockImplementation(() =>
+      resolveOnMacrotask({
+        success: true,
+        data: { content: '# Notes\n\nThis paragraph has a commented phrase inside it.\n', truncated: false },
+      })
+    );
+    mocks.commentsResolveTarget.mockReset().mockResolvedValue({
+      success: true,
+      data: {
+        target: { bindingId: 'binding-1', relayUrl: 'https://relay.example', relPath: 'notes.md' },
+        selfUserId: 'user-1',
+      },
+    });
+    mocks.commentsList.mockReset().mockResolvedValue({
+      success: true,
+      data: {
+        messages: [
+          {
+            id: 'msg-1',
+            seq: '1',
+            bindingId: 'binding-1',
+            author: { userId: 'user-1', name: 'Dylan', avatarUrl: null, kind: 'user' },
+            kind: 'comment',
+            body: 'Nice catch!',
+            parentId: null,
+            intentId: null,
+            path: 'notes.md',
+            meta: null,
+            anchor: { exact: 'commented phrase' },
+            resolvedAt: null,
+            resolvedBy: null,
+            createdAt: '2026-08-27T00:00:00.000Z',
+            editedAt: null,
+            deletedAt: null,
+          },
+        ],
+      },
+    });
+
+    await renderArtifact('/repo/notes.md');
+    await waitFor(() => loadingGone(host));
+    await waitFor(() => host.querySelector('[data-comment-pin]') !== null, 8000);
+
+    const pin = host.querySelector<HTMLButtonElement>('[data-comment-pin]')!;
+    expect(pin.textContent).toBe('1');
+    // No card column squeezing the text: nothing is listed until a pin is opened.
+    expect(findCard('Nice catch!')).toBeUndefined();
+
+    await act(async () => pin.click());
+    await waitFor(() => findCard('Nice catch!') !== undefined);
+    // The card opens below its pin, not at the top of the document.
+    expect(cardTop('Nice catch!')).toBeGreaterThan(Number.parseFloat(pin.style.top));
   });
 
   /** The one `[data-comments-rail]` card whose body includes `text`, or undefined if none is listed yet. */

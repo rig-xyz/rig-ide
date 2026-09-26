@@ -1,10 +1,10 @@
-import { StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state';
-import { Decoration, EditorView, WidgetType } from '@codemirror/view';
+import { StateEffect, StateField, type Extension } from '@codemirror/state';
+import { Decoration, EditorView } from '@codemirror/view';
 import type { CommentSurfaceAdapter } from './surface-adapter';
 
 /**
  * The in-editor half of the comments layer: a subtle underline over each
- * anchored passage plus a dot beside the line the passage starts on.
+ * anchored passage (the numbered pin beside it is `comment-pins.tsx`).
  *
  * This extension is deliberately dumb — it fetches nothing and re-anchors
  * nothing. `DocCommentsStore` computes positions and pushes them in with
@@ -61,94 +61,8 @@ function markFor(marker: CommentMarker): Decoration {
   return marker.resolved ? MARKS.restingResolved : MARKS.resting;
 }
 
-// ── marker dot ───────────────────────────────────────────────────────────────
-
-/**
- * The dot beside a commented line.
- *
- * It lives in the content flow (an inline widget at the line start) rather than
- * in a gutter, so it tracks the centered writing column instead of the far left
- * edge of the scroller. The theme takes it out of flow with `position: absolute`
- * inside the relatively-positioned `.cm-line`, which is what keeps it from
- * adding any width or height to the line — no spacer needed.
- */
-class CommentGlyphWidget extends WidgetType {
-  constructor(
-    private readonly threadId: string,
-    private readonly resolved: boolean,
-    private readonly active: boolean,
-    private readonly onFocusThread: (id: string) => void
-  ) {
-    super();
-  }
-
-  eq(other: WidgetType): boolean {
-    return (
-      other instanceof CommentGlyphWidget &&
-      other.threadId === this.threadId &&
-      other.resolved === this.resolved &&
-      other.active === this.active
-    );
-  }
-
-  toDOM(): HTMLElement {
-    const glyph = document.createElement('span');
-    glyph.className = [
-      'cm-rigCommentGlyph',
-      this.resolved ? 'cm-rigCommentGlyphResolved' : '',
-      this.active ? 'cm-rigCommentGlyphActive' : '',
-    ]
-      .filter(Boolean)
-      .join(' ');
-    glyph.title = this.resolved ? 'Resolved comment' : 'Comment';
-    glyph.addEventListener('mousedown', (event) => {
-      // Focus the card without moving the caret into the widget.
-      event.preventDefault();
-      this.onFocusThread(this.threadId);
-    });
-    return glyph;
-  }
-
-  /** The editor should not treat clicks on the dot as content interaction. */
-  ignoreEvent(): boolean {
-    return true;
-  }
-}
-
-/** One dot per line that holds at least one anchor; unresolved wins. */
-function glyphsForLines(
-  state: EditorState,
-  onFocusThread: (id: string) => void
-): { from: number; widget: CommentGlyphWidget }[] {
-  const markers = state.field(markerField);
-  const docLength = state.doc.length;
-  // First marker on a line owns the click target; the dot only reads as
-  // resolved when every anchor starting on that line is resolved.
-  const byLineStart = new Map<number, { id: string; resolved: boolean; active: boolean }>();
-  for (const marker of markers) {
-    if (marker.from > docLength) continue;
-    const start = state.doc.lineAt(marker.from).from;
-    const seen = byLineStart.get(start);
-    if (seen === undefined) {
-      byLineStart.set(start, { id: marker.id, resolved: marker.resolved, active: marker.active });
-      continue;
-    }
-    if (!marker.resolved) seen.resolved = false;
-    // The selected thread takes its line's dot over: where two anchors share a
-    // line, the dot must not point away from the thread the reader is reading.
-    if (marker.active) {
-      seen.id = marker.id;
-      seen.active = true;
-    }
-  }
-  return [...byLineStart.entries()].map(([from, { id, resolved, active }]) => ({
-    from,
-    widget: new CommentGlyphWidget(id, resolved, active, onFocusThread),
-  }));
-}
-
-/** Underlines over every anchored passage plus a dot on each line they start. */
-function anchorDecorations(onFocusThread: (id: string) => void): Extension {
+/** Underlines over every anchored passage. The numbered pins beside them are `comment-pins.tsx`, one overlay for Edit and Preview. */
+function anchorDecorations(): Extension {
   return EditorView.decorations.compute([markerField], (state) => {
     const markers = state.field(markerField);
     if (markers.length === 0) return Decoration.none;
@@ -156,11 +70,6 @@ function anchorDecorations(onFocusThread: (id: string) => void): Extension {
     const ranges = markers
       .filter((marker) => marker.from < marker.to && marker.to <= docLength)
       .map((marker) => markFor(marker).range(marker.from, marker.to));
-    for (const { from, widget } of glyphsForLines(state, onFocusThread)) {
-      // `side: -1` puts the dot before anything else at the line start, so it
-      // never ends up nested inside an underline span.
-      ranges.push(Decoration.widget({ widget, side: -1 }).range(from));
-    }
     // `true` sorts the ranges: markers arrive in reading order but mapping can
     // reorder them, and overlapping anchors are legal.
     return Decoration.set(ranges, true);
@@ -173,7 +82,7 @@ const commentTheme = EditorView.theme({
   // Resting anchors carry an underline and nothing else. A tint here stacked
   // wherever two anchors overlapped, and two stacked tints read as a third
   // colour rather than as two comments — a hairline can only ever be a hairline.
-  // Recognising a comment at rest is the dot's job; telling *which* comment is
+  // Recognising a comment at rest is the pin's job; telling *which* comment is
   // the selection's, below.
   '.cm-rigComment': {
     borderBottom: '1px solid color-mix(in srgb, var(--accent) 45%, transparent)',
@@ -182,7 +91,7 @@ const commentTheme = EditorView.theme({
   '.cm-rigCommentResolved': {
     borderBottom: '1px dotted var(--border-strong)',
   },
-  // The selected passage and its card share one accent — `--accent`, the dot's
+  // The selected passage and its card share one accent — `--accent`, the active pin's
   // colour — because that shared colour is the only thing tying the two halves
   // of the selection together.
   //
@@ -208,42 +117,13 @@ const commentTheme = EditorView.theme({
     backgroundColor: 'color-mix(in srgb, var(--text-muted) 16%, transparent)',
     borderBottom: '1px solid var(--border-strong)',
   },
-  // Out of flow, so the dot costs the line no width and no height. `left` keeps
-  // it inside `.cm-content`'s padding — immediately beside the text, scrolling
-  // and re-centering with the writing column. Vertically centered on the
-  // line's first row: half of the 1.7 line-height, less half the dot.
-  '.cm-rigCommentGlyph': {
-    position: 'absolute',
-    left: '-18px',
-    top: 'calc(0.85em - 3px)',
-    width: '6px',
-    height: '6px',
-    borderRadius: '50%',
-    backgroundColor: 'var(--accent)',
-    cursor: 'pointer',
-  },
-  '.cm-rigCommentGlyphResolved': {
-    backgroundColor: 'var(--text-muted)',
-  },
-  // A halo rather than a bigger dot: `box-shadow` paints outside the box without
-  // changing it, so the selected marker cannot nudge the writing column.
-  '.cm-rigCommentGlyphActive': {
-    backgroundColor: 'var(--accent)',
-    boxShadow: '0 0 0 3px var(--accent-subtle)',
-  },
-  // Same "resolved stays gray" rule for the dot — (0,2,0) outranks the two
-  // (0,1,0) rules above regardless of source order.
-  '.cm-rigCommentGlyphResolved.cm-rigCommentGlyphActive': {
-    backgroundColor: 'var(--text-muted)',
-    boxShadow: '0 0 0 3px color-mix(in srgb, var(--text-muted) 14%, transparent)',
-  },
 });
 
 // ── extension ────────────────────────────────────────────────────────────────
 
 /**
  * @param onFocusThread called with a thread root id when the reader clicks an
- *   anchored passage or its marker dot. The store makes that thread the active
+ *   anchored passage. The store makes that thread the active
  *   one; nothing here tracks the selection.
  * @param onHoverThread called with a thread root id, or `null`, as the pointer
  *   enters/leaves an anchored passage — the doc→card half of the stronger
@@ -275,7 +155,7 @@ export function commentDecorations(
 
   return [
     markerField,
-    anchorDecorations(onFocusThread),
+    anchorDecorations(),
     commentTheme,
     EditorView.domEventHandlers({
       // Non-preventing: the caret still moves, we just also focus the card.
@@ -314,6 +194,12 @@ export function cm6SurfaceAdapter(getView: () => EditorView | null): CommentSurf
     ready: () => getView() !== null,
     docLength: () => getView()?.state.doc.length ?? 0,
     coordsAtPos: (pos) => getView()?.coordsAtPos(pos) ?? null,
+    columnLeft: () => {
+      const content = getView()?.contentDOM;
+      if (!content) return null;
+      // The text starts inside `.cm-content`'s own padding (doc-editor-theme.ts).
+      return content.getBoundingClientRect().left + parseFloat(getComputedStyle(content).paddingLeft || '0');
+    },
     paintMarkers: (markers) => {
       const view = getView();
       if (!view) return;

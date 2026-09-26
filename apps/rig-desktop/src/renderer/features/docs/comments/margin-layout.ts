@@ -116,3 +116,65 @@ function layoutActivePriority(
 
   return tops;
 }
+
+// ── margin mode: a real margin, or pins only (canvas board 17) ──────────────
+
+/** The margin's card column: its width, and its distance from the panel's right edge. */
+export const RAIL_WIDTH = 260;
+export const RAIL_RIGHT = 24;
+/** Space kept between the text column and the cards. */
+const RAIL_GUTTER = 24;
+/** What the panel gives up on its right for the cards, when they fit. */
+export const RAIL_RESERVE = RAIL_WIDTH + RAIL_RIGHT + RAIL_GUTTER;
+/** The narrowest text column worth keeping beside the cards; below it the cards would squeeze the text. */
+const MIN_TEXT_COLUMN = 520;
+
+export type MarginMode = 'rail' | 'pins';
+
+/**
+ * Whether the panel is wide enough for a real margin beside the text
+ * (`rail`: the text column moves left to make room and cards line up with
+ * their pins), or only for pins in the text's own margin (`pins`: a thread
+ * opens as a card under its pin). The old rail was a fixed overlay that
+ * covered the text whenever the panel was narrower than this.
+ */
+export function marginMode(panelWidth: number): MarginMode {
+  return panelWidth - RAIL_RESERVE >= MIN_TEXT_COLUMN ? 'rail' : 'pins';
+}
+
+/** A pin's box: its size, and how far apart two pins on the same line sit. */
+export const PIN_SIZE = 20;
+export const PIN_STEP = 24;
+
+/**
+ * Horizontal slots for pins that share a line (two threads anchored on the
+ * same line would otherwise sit on top of each other): 0 for the first pin on
+ * a line, 1 for the next, which sits one `PIN_STEP` further out into the
+ * margin. Pins arrive in reading order; "the same line" is a top within
+ * `tolerance` px of the line's first pin.
+ */
+export function pinSlots(pins: readonly { key: string; top: number }[], tolerance = 4): Map<string, number> {
+  const slots = new Map<string, number>();
+  let lineTop: number | null = null;
+  let slot = 0;
+  for (const pin of [...pins].sort((a, b) => a.top - b.top)) {
+    if (lineTop !== null && Math.abs(pin.top - lineTop) <= tolerance) {
+      slot += 1;
+    } else {
+      lineTop = pin.top;
+      slot = 0;
+    }
+    slots.set(pin.key, slot);
+  }
+  return slots;
+}
+
+/**
+ * Thread numbers, as the pins and cards show them: 1, 2, 3 in the order the
+ * threads were started, so a new comment never renumbers the others (the
+ * same rule as pins on a page). Resolved threads keep their number.
+ */
+export function numberThreads(roots: readonly { id: string; createdAt: string; seq: string }[]): Map<string, number> {
+  const ordered = [...roots].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.seq.localeCompare(b.seq));
+  return new Map(ordered.map((root, i) => [root.id, i + 1]));
+}

@@ -27,6 +27,7 @@ import {
   parseCommentsCache,
   toCacheEntry,
 } from './comments-cache';
+import { numberThreads } from './margin-layout';
 import { nextPendingReveal, shouldClearReveal, type PendingReveal } from './pending-reveal';
 import type { CommentSurfaceAdapter } from './surface-adapter';
 
@@ -560,6 +561,11 @@ export class DocCommentsStore {
 
   get resolvedThreads(): CommentThread[] {
     return this.threads.filter((thread) => thread.resolved);
+  }
+
+  /** Each thread's number, as its pin and card show it — `numberThreads` (creation order, stable). */
+  get threadNumbers(): Map<string, number> {
+    return numberThreads(this.threads.map((thread) => thread.root));
   }
 
   get hasContent(): boolean {
