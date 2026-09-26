@@ -3,12 +3,11 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * Polish round 2, lane F (Dylan): the doc header's own file-link button
- * (next to the view/code toggle, mints a public share link) is never
- * confused with a space's accent "Invite" pill — relabeled "Link", ghost/
- * quiet styling, no border. Only the closed trigger is exercised here
- * (`Popover` renders nothing until opened, so this needs no further RPC
- * mocking — see `rig-share-compact.test.tsx` for a popover-open example).
+ * The doc header's share button (Dylan, 2026-09-26): a quiet icon beside the
+ * file's name, "Share file", never confused with a space's accent "Invite"
+ * pill. Only the closed trigger is exercised here (`Popover` renders nothing
+ * until opened, so this needs no further RPC mocking — see
+ * `rig-share-compact.test.tsx` for a popover-open example).
  */
 
 vi.mock('@renderer/lib/ipc', () => ({
@@ -37,13 +36,13 @@ describe('the doc header\'s share-link button', () => {
     host.remove();
   });
 
-  it('reads "Link", not "Share", in a quiet/ghost style — never confused with Invite', async () => {
+  it('is a quiet icon labelled "Share file", never an accent pill', async () => {
     await act(async () => {
       root.render(<ShareButton absPath="/rigs/growth/notes.md" />);
     });
     const button = host.querySelector('button')!;
-    expect(button.textContent?.trim()).toBe('Link');
-    expect(button.textContent).not.toContain('Share');
+    expect(button.getAttribute('aria-label')).toBe('Share file');
+    expect(button.textContent?.trim()).toBe('');
     // Ghost/quiet: no bordered pill chrome.
     expect(button.className).not.toMatch(/\bborder\b/);
     expect(button.className).not.toContain('bg-accent');

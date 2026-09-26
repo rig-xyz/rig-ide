@@ -209,27 +209,6 @@ export type RigSettings = {
    */
   paintbrushAgent: string | null;
   /**
-   * Discoverability round (punch-list finding 4): whether the first-use
-   * coach mark ("Paintbrush is on. Select any text...") has already been
-   * shown once, ever — a plain global preference through the SAME
-   * persistence mechanism as `paintbrushAgent` above (`rpc.rig.settings`),
-   * not per-rig: seeing the mode explained once is enough regardless of
-   * which rig it happened in. `false` until the mode is ever turned on.
-   */
-  paintbrushCoachMarkSeen: boolean;
-  /**
-   * Experimental round: Smart Highlighter (the paintbrush) is feature-flagged
-   * behind Settings → Experimental so the branch that builds it can land on
-   * `main` without shipping it to users yet — same persistence mechanism as
-   * `paintbrushAgent`/`paintbrushCoachMarkSeen` above (`rpc.rig.settings`), a
-   * plain global preference, not per-rig. Default `false`; an existing
-   * settings.json that predates this field also loads it as `false`
-   * (`main/rig/settings.ts`'s `normalizeSettings`) — unlike `hasSeenOnboarding`,
-   * there is no "the file's own presence implies opt-in" case here, since this
-   * feature never shipped to anyone before this field existed.
-   */
-  smartHighlighterEnabled: boolean;
-  /**
    * Spaces: still switchable in Settings → Experimental, but on by default
    * since 0.4.3. Earlier builds saved `false` for everyone who never touched
    * it, so `normalizeSettings` turns it on once for a file without
@@ -268,8 +247,6 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   fileTreeViewByRig: {},
   autoApproveAgentActions: false,
   paintbrushAgent: null,
-  paintbrushCoachMarkSeen: false,
-  smartHighlighterEnabled: false,
   spacesEnabled: true,
   spacesDefaultOnApplied: true,
   spacesRoomSees: {},

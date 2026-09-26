@@ -24,6 +24,7 @@ export function ContextPill({
   pending = false,
   onDismiss,
   dismissLabel = 'Dismiss',
+  clear = false,
   testId,
 }: {
   children: ReactNode;
@@ -33,6 +34,8 @@ export function ContextPill({
   pending?: boolean;
   onDismiss?: () => void;
   dismissLabel?: string;
+  /** Clearer glass (less fill, more blur), for a pill floating over a document. */
+  clear?: boolean;
   testId?: string;
 }) {
   const filterId = `pill-goo-${useId().replace(/:/g, '')}`;
@@ -89,8 +92,16 @@ export function ContextPill({
         </defs>
       </svg>
       {/* glass: blur of what's behind, then one liquid fill, then a thin edge */}
-      <span className="shadow-float absolute inset-0 rounded-full backdrop-blur-md" aria-hidden />
-      <span className="pointer-events-none absolute inset-0 opacity-90" style={{ filter: `url(#${filterId})` }} aria-hidden>
+      <span
+        className={cn('shadow-float absolute inset-0 rounded-full', clear ? 'backdrop-blur-xl backdrop-saturate-150' : 'backdrop-blur-md')}
+        aria-hidden
+      />
+      {/* the fill's own opacity, after the goo filter: the filter makes it opaque, this lets the page show through */}
+      <span
+        className="pointer-events-none absolute inset-0"
+        style={{ filter: `url(#${filterId})`, opacity: clear ? 0.55 : 0.9 }}
+        aria-hidden
+      >
         <span className="absolute inset-0 rounded-full" style={{ background: FILL }} />
         {reason && (
           <span

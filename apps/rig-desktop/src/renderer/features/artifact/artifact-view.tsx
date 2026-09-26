@@ -144,11 +144,14 @@ function ArtifactHeaderBar({
   onNavigateFolder,
   trailing,
   status,
+  titleAction,
 }: {
   path: string;
   crumbs: readonly BreadcrumbSegment[];
   onNavigateFolder: (relPath: string) => void;
   trailing?: React.ReactNode;
+  /** Beside the file's name: its Share button. */
+  titleAction?: React.ReactNode;
   /** The transient save-status indicator, sitting right beside the file name. */
   status?: React.ReactNode;
 }) {
@@ -180,6 +183,7 @@ function ArtifactHeaderBar({
           </span>
         ))}
       </div>
+      {titleAction}
       {status}
       <span className="flex-1" />
       {trailing}
@@ -398,16 +402,8 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
       // Paintbrush's own independent decoration layer (`docs/document-focus-
       // design.md` §2) — deliberately a SEPARATE extension from
       // `commentDecorations` above, painting nothing until
-      // `usePaintbrushEditorSync` below ever dispatches an overlay. Also
-      // skipped entirely while Smart Highlighter is off
-      // (`smartHighlighterEnabled`) — reads `paintbrush.enabled` directly
-      // rather than through the deps array below on purpose: this whole
-      // `resource`/`comments` pair must NOT be torn down and recreated
-      // (losing the live CM6 view) just because the Experimental toggle
-      // flipped elsewhere, and the extension is a structural no-op anyway
-      // while arming itself stays impossible (`usePaintbrushMode`).
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      if (paintbrush.enabled) doc.extensionFactories.push(() => paintbrushDecorations());
+      // `usePaintbrushEditorSync` below ever dispatches an overlay.
+      doc.extensionFactories.push(() => paintbrushDecorations());
     }
     return { resource: doc, comments: store };
     // Recreated only when the open file actually changes — `key={path}` on
@@ -549,6 +545,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
         crumbs={crumbs}
         onNavigateFolder={onNavigateFolder}
         status={<SaveStatus resource={resource} />}
+        titleAction={showShare ? <ShareButton absPath={path} /> : undefined}
         trailing={
           <>
             {resource.hasDiskUpdate && (
@@ -599,7 +596,6 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 </TooltipContent>
               </Tooltip>
             )}
-            {showShare && <ShareButton absPath={path} />}
           </>
         }
       />
@@ -684,7 +680,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
           who={paintbrush.selected}
         />
       )}
-      {isMarkdown && paintbrush.on && !paintbrushComposerOpen && <CommentModeStatus who={paintbrush.selected} />}
+      {isMarkdown && paintbrush.on && !paintbrushComposerOpen && <CommentModeStatus who={paintbrush.selected} onLeave={() => paintbrush.setOn(false)} />}
     </div>
   );
 });

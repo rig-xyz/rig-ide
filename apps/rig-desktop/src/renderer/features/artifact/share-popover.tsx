@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Link as LinkIcon, X } from 'lucide-react';
+import { Check, Copy, Share, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { isOfflineError } from '@renderer/features/docs/comments/comments-cache';
 import { relativeTime } from '@renderer/features/chat/session-history';
@@ -8,13 +8,14 @@ import { useClipboard } from '@renderer/lib/hooks/use-clipboard';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { Popover } from '@renderer/lib/ui/popover';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import type { RigShareLink, RigShareLinkError, SharePermission } from '@shared/rig/share-links';
 import { deriveMintedDisplay, deriveRevokeTarget, needsRemint, type MintedLink } from './share-mint-state';
 
 /**
- * The desktop end of the live share-link feature — a "Link" button in the
- * artifact view header that opens a popover: choose read/comment, mint a
+ * The desktop end of the live share-link feature — a "Share file" icon
+ * beside the file's name in the artifact view header that opens a popover: choose read/comment, mint a
  * link, copy it, see and revoke this file's existing ones. Portal/dismissal/
  * positioning come from the shared `Popover` primitive
  * (`@renderer/lib/ui/popover`), right-aligned — this popover has real
@@ -31,33 +32,43 @@ export function ShareButton({ absPath, className }: { absPath: string; className
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
+  // A quiet icon right beside the file's name (Dylan, 2026-09-26): sharing
+  // belongs to the file, not to the view controls on the right.
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="true"
-        aria-expanded={open}
-        className={cn(
-          'text-text-muted hover:bg-bg-2 hover:text-text-primary rounded-control flex shrink-0 items-center gap-1 px-2 py-1 text-xs transition-colors',
-          className
-        )}
-      >
-        <LinkIcon className="size-3.5" strokeWidth={1.5} />
-        Link
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              ref={triggerRef}
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              aria-haspopup="true"
+              aria-expanded={open}
+              aria-label="Share file"
+              className={cn(
+                'text-text-muted hover:bg-bg-2 hover:text-text-primary rounded-control flex size-6 shrink-0 items-center justify-center transition-colors',
+                open && 'bg-bg-2 text-text-primary',
+                className
+              )}
+            >
+              <Share className="size-3.5" strokeWidth={1.5} />
+            </button>
+          }
+        />
+        <TooltipContent side="bottom">Share file</TooltipContent>
+      </Tooltip>
 
       <Popover
         anchor={triggerRef}
         open={open}
         onClose={() => setOpen(false)}
         role="dialog"
-        align="right"
+        align="left"
         gap={6}
         estimatedWidth={280}
         minWidth={280}
-        ariaLabel="Link"
+        ariaLabel="Share file"
       >
         <SharePopoverContent absPath={absPath} />
       </Popover>

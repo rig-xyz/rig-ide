@@ -4,6 +4,7 @@ import type { RunnableAgent } from '@renderer/features/chat/use-runnable-agents'
 import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { Popover } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/lib/utils';
+import { ContextPill } from '@renderer/features/spaces/components/context-pill';
 
 /**
  * The pieces of comment mode (canvas board 16) that files and pages share:
@@ -128,15 +129,22 @@ function Kbd({ children }: { children: React.ReactNode }) {
 const GLASS =
   'popover-in shadow-float border-border-hairline flex h-[30px] items-center gap-1.5 rounded-full border bg-[var(--pill-fill)]/80 text-xs whitespace-nowrap backdrop-blur-md';
 
-/** While comment mode is on (and no draft is open): a quiet pill at the bottom of the view, so it never stays on unnoticed. Place it in a relative container. */
-export function CommentModeStatus({ who }: { who: RunnableAgent | null }) {
+/**
+ * While comment mode is on (and no draft is open): a clear glass pill at the
+ * bottom of the view, so it never stays on unnoticed. The composer's liquid
+ * pill: hovering it lets "×" ooze out, which leaves the mode (as Esc does).
+ * Place it in a relative container.
+ */
+export function CommentModeStatus({ who, onLeave }: { who: RunnableAgent | null; onLeave: () => void }) {
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex justify-center" data-testid="comment-mode-status">
-      <span className={cn(GLASS, 'pr-2 pl-2.5 text-text-secondary')}>
-        <WhoIcon who={who} size={13} />
-        <b className="font-medium text-text-primary">{who ? `Asking ${who.name}` : 'Commenting'}</b>
-        <Kbd>Esc</Kbd>
-      </span>
+      <div className="popover-in pointer-events-auto">
+        <ContextPill clear onDismiss={onLeave} dismissLabel="Leave comment mode" testId="comment-mode-pill">
+          <WhoIcon who={who} size={13} />
+          <b className="font-medium text-text-primary">{who ? `Asking ${who.name}` : 'Commenting'}</b>
+          <Kbd>Esc</Kbd>
+        </ContextPill>
+      </div>
     </div>
   );
 }

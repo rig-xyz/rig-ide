@@ -287,7 +287,7 @@ export function PageView({
           />
         )}
         <PaintbrushCursorChip active={commenting && !draft} containerRef={layerRef} who={who} />
-        {commenting && !draft && <CommentModeStatus who={who} />}
+        {commenting && !draft && <CommentModeStatus who={who} onLeave={() => setCommenting(false)} />}
         {commenting && !draft && hover && (
           <div
             className="border-accent bg-accent/5 pointer-events-none absolute rounded-sm border-[1.5px]"

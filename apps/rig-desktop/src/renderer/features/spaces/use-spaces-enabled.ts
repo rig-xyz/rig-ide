@@ -3,9 +3,7 @@ import { events, rpc } from '@renderer/lib/ipc';
 import { rigSettingsChangedChannel } from '@shared/rig/settings';
 
 /**
- * Spaces (lane 2) feature-flag gate — same live-read pattern as
- * `docs/paintbrush/use-paintbrush.ts`'s read of `smartHighlighterEnabled`:
- * an initial `rpc.rig.settings.get()` plus a live subscription over
+ * Spaces (lane 2) feature-flag gate — a live read: an initial `rpc.rig.settings.get()` plus a live subscription over
  * `rigSettingsChangedChannel`, so flipping the Experimental toggle shows or
  * hides the "Room (preview)" entry point immediately, no restart.
  */

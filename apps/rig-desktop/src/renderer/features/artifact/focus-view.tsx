@@ -218,15 +218,13 @@ export function FocusView({
           {unseenFiles.size > 0 && ` · ${unseenFiles.size} new`}
         </span>
         <div className="ml-auto flex items-center gap-1">
-          {paintbrush.enabled && (
-            <CommentModeControl
-              on={paintbrush.on}
-              toggle={paintbrush.toggle}
-              who={paintbrush.selected}
-              agents={paintbrush.agents}
-              pick={paintbrush.pick}
-            />
-          )}
+          <CommentModeControl
+            on={paintbrush.on}
+            toggle={paintbrush.toggle}
+            who={paintbrush.selected}
+            agents={paintbrush.agents}
+            pick={paintbrush.pick}
+          />
           {/* Default (All) first — the resting state highlights the first pill. */}
           <FilterPill active={filter === 'all'} onClick={() => setFilter('all')}>
             All
@@ -356,7 +354,6 @@ export function FocusView({
                     onOpenFile ? () => onOpenFile(`${root}/${node.relPath}`, node.relPath) : null
                   }
                   paintbrush={{
-                    enabled: paintbrush.enabled,
                     on: paintbrush.on,
                     mention: paintbrush.mention,
                   }}
@@ -427,7 +424,7 @@ function FocusSection({
   onMarkViewed: () => void;
   /** Opens this file in its own tab on the right; null when the host can't open tabs. */
   onOpenAsTab: (() => void) | null;
-  paintbrush: { enabled: boolean; on: boolean; mention: AgentMention | null };
+  paintbrush: { on: boolean; mention: AgentMention | null };
 }) {
   return (
     <section className="border-border-hairline border-b">
@@ -530,7 +527,7 @@ const FocusBody = observer(function FocusBody({
   relPath: string;
   /** While the agent holds the pen: the document stays visible and live, but a skimming scroll can't type into a mid-thought edit. */
   readOnly?: boolean;
-  paintbrush: { enabled: boolean; on: boolean; mention: AgentMention | null };
+  paintbrush: { on: boolean; mention: AgentMention | null };
 }) {
   const absPath = `${root}/${relPath}`;
   const fileInfo = useFileType(root, rootId, absPath);
@@ -583,11 +580,8 @@ const FocusBody = observer(function FocusBody({
       // Paintbrush stays markdown-only, matching the editor tab
       // (`artifact-view.tsx`'s `commentsEnabled`), never while the agent
       // holds the pen — selecting into a mid-write buffer to start a
-      // stroke would race the very write it's reading — and never while
-      // Smart Highlighter is off (`paintbrush.enabled`), which also keeps
-      // `paintbrushDecorations()` below from ever registering while the
-      // setting is off.
-      paintbrushEligible={language === 'markdown' && !readOnly && paintbrush.enabled}
+      // stroke would race the very write it's reading.
+      paintbrushEligible={language === 'markdown' && !readOnly}
       paintbrush={paintbrush}
     />
   );
@@ -609,7 +603,7 @@ const FocusBodyEditor = observer(function FocusBodyEditor({
   language: EditorLanguage;
   readOnly: boolean;
   paintbrushEligible: boolean;
-  paintbrush: { enabled: boolean; on: boolean; mention: AgentMention | null };
+  paintbrush: { on: boolean; mention: AgentMention | null };
 }) {
   // Attached synchronously in a `useMemo` (not an effect) for the same
   // reason `artifact-view.tsx`'s `EditableArtifactPane` does it that way:

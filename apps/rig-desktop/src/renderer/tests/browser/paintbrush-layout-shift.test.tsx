@@ -62,12 +62,8 @@ vi.mock('@renderer/lib/ipc', () => ({
       context: {
         createTarget: (...args: unknown[]) => mocks.contextCreateTarget(args[0]),
       },
-      // The paintbrush header control reads/writes these (`use-paintbrush.ts`)
-      // regardless of whether an agent is ever picked in this test — arming
-      // the mode alone already queries them. `settingsGet` defaults (in
-      // `beforeEach` below) to Smart Highlighter ON, since this file's own
-      // job is exercising the ARMED-mode layout — the off-by-default gate
-      // itself is covered separately, below.
+      // The comment-mode header control reads/writes these (`use-comment-mode.ts`)
+      // regardless of whether an agent is ever picked in this test.
       settings: {
         get: () => mocks.settingsGet(),
         set: vi.fn(async () => ({ success: true, data: undefined })),
@@ -138,9 +134,7 @@ describe('paintbrush mode toggle — zero layout shift on the document container
       success: true,
       data: { targetRef: 'test-target' },
     });
-    // This file's own scenario (layout shift while ARMED) needs the gate
-    // open; the off-by-default test below overrides this per-test.
-    mocks.settingsGet.mockReset().mockResolvedValue({ smartHighlighterEnabled: true });
+    mocks.settingsGet.mockReset().mockResolvedValue({});
   });
 
   afterEach(async () => {
@@ -236,71 +230,3 @@ describe('paintbrush mode toggle — zero layout shift on the document container
   });
 });
 
-/**
- * Off-by-default coverage: Smart Highlighter (`shared/rig/settings.ts`'s
- * `smartHighlighterEnabled`) gates every paintbrush entry point, not just
- * arming — the header control itself must not render at all while the
- * setting is off (`use-paintbrush.ts`'s `enabled`), so a branch that ships
- * this feature can land on `main` without exposing it. `mocks.settingsGet`
- * here resolves without the field at all (an existing settings.json that
- * predates it), matching `main/rig/settings.ts`'s own "missing key loads as
- * false" normalization this pins from the renderer side.
- */
-describe('Smart Highlighter setting off by default — the header control does not render', () => {
-  let host: HTMLDivElement;
-  let root: Root;
-  let queryClient: QueryClient;
-
-  beforeEach(() => {
-    host = document.createElement('div');
-    document.body.appendChild(host);
-    root = createRoot(host);
-    queryClient = new QueryClient();
-    resetPreviewModeMemoryForTests();
-    mocks.read.mockReset();
-    mocks.write.mockReset().mockResolvedValue({ success: true, data: undefined });
-    mocks.watch.mockReset();
-    mocks.unwatch.mockReset();
-    mocks.readBinary.mockReset();
-    mocks.commentsCacheGet.mockReset().mockResolvedValue(null);
-    mocks.commentsCacheSet.mockReset().mockResolvedValue({ success: true, data: undefined });
-    mocks.commentsResolveTarget.mockReset().mockResolvedValue({
-      success: false,
-      error: { kind: 'notBound', message: 'Not bound' },
-    });
-    mocks.commentsList.mockReset().mockResolvedValue({ success: true, data: { messages: [] } });
-    mocks.commentsCreate.mockReset();
-    mocks.contextCreateTarget.mockReset().mockResolvedValue({
-      success: true,
-      data: { targetRef: 'test-target' },
-    });
-    // No `smartHighlighterEnabled` key at all — the "predates this field" case.
-    mocks.settingsGet.mockReset().mockResolvedValue({});
-  });
-
-  afterEach(async () => {
-    await act(async () => root.unmount());
-    host.remove();
-  });
-
-  it('renders no "Smart Highlighter" control in the document header', async () => {
-    mocks.read.mockImplementation(() =>
-      resolveOnMacrotask({
-        success: true,
-        data: { content: '# Notes\n\nSome body text.\n', truncated: false },
-      })
-    );
-
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <ArtifactView root="/repo" rootId="repo-1" path="/repo/notes.md" onNavigateFolder={() => {}} />
-        </QueryClientProvider>
-      );
-    });
-    await waitFor(() => loadingGone(host));
-
-    expect(host.querySelector('[aria-label="Turn on Smart Highlighter"]')).toBeNull();
-    expect(host.querySelector('[aria-label="Turn off Smart Highlighter"]')).toBeNull();
-  });
-});

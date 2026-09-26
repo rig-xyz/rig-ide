@@ -1,8 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { RunnableAgent } from '@renderer/features/chat/use-runnable-agents';
-import { events, rpc } from '@renderer/lib/ipc';
-import { rigSettingsChangedChannel } from '@shared/rig/settings';
+import { rpc } from '@renderer/lib/ipc';
 
 /**
  * Comment mode (canvas board 16): one mode for files and pages. On, a
@@ -43,25 +42,4 @@ export function useCommentMode(agents: RunnableAgent[]): {
   );
 
   return { on, setOn, toggle: () => setOn((v) => !v), who, pick };
-}
-
-/**
- * Experimental › Smart Highlighter: whether agents can be picked in a file's
- * comment mode (an agent there proposes edits in place). Read live, so the
- * setting reaches open documents without a restart.
- */
-export function useSmartHighlighterEnabled(): boolean {
-  const [enabled, setEnabled] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    void rpc.rig.settings.get().then((current) => {
-      if (alive) setEnabled(current.smartHighlighterEnabled);
-    });
-    const off = events.on(rigSettingsChangedChannel, (next) => setEnabled(next.smartHighlighterEnabled));
-    return () => {
-      alive = false;
-      off();
-    };
-  }, []);
-  return enabled;
 }
