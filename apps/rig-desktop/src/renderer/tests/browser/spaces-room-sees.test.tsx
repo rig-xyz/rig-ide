@@ -64,7 +64,7 @@ describe('Room sees — the setting in your agent card', () => {
     await vi.waitFor(() => expect(host.querySelector('[data-testid="agent-room-sees"]')).not.toBeNull());
 
     const row = host.querySelector('[data-testid="agent-room-sees"]')!;
-    expect(row.textContent).toContain('Room sees');
+    expect(row.textContent).toContain('Chat sees');
     const group = row.querySelector('[data-testid="agent-choices-roomSees"]')!;
     const chips = [...group.querySelectorAll('button')];
     // The current pick first, then the others, folded away until hover or focus.
@@ -222,8 +222,8 @@ describe('Room sees — Hide details', () => {
       root.render(<SessionCard meta={meta('done')} events={ownFull} owner={alice} viewerIsOwner onHideDetails={onHideDetails} />);
     });
     const button = host.querySelector<HTMLButtonElement>('[data-testid="session-hide-details"]')!;
-    expect(button.getAttribute('aria-label')).toBe('Hide steps from the room');
-    expect(button.getAttribute('title')).toBe('Hide steps from the room');
+    expect(button.getAttribute('aria-label')).toBe('Hide steps from the chat');
+    expect(button.getAttribute('title')).toBe('Hide steps from the chat');
     expect(button.querySelector('svg.lucide-eye-off')).not.toBeNull();
     // In the row's icon bar beside Copy, not tucked away in a menu.
     expect(button.parentElement?.getAttribute('data-testid')).toBe('row-actions');

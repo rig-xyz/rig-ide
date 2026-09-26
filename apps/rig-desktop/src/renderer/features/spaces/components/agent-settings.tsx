@@ -39,7 +39,7 @@ const DIMENSION_TITLE: Record<ChoiceDimension, string> = {
   model: 'Model',
   mode: 'Permissions',
   effort: 'Effort',
-  roomSees: 'Room sees',
+  roomSees: 'Chat sees',
 };
 
 /** "Room sees" as a row of choices; the one description is every choice's tooltip. */

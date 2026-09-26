@@ -88,7 +88,7 @@ export function SignInRows() {
           </div>
         );
       })}
-      <p className="text-xs text-text-muted">Pages beside the Room open as you. Agents see them only as you, while a turn runs.</p>
+      <p className="text-xs text-text-muted">Pages beside the chat open as you. Agents see them only as you, while a turn runs.</p>
     </div>
   );
 }

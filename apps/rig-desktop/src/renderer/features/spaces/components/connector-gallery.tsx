@@ -350,7 +350,7 @@ export function ConnectorGallery({
             <div className="flex flex-1 flex-col gap-0.5">
               <h2 className="text-base font-semibold text-text-primary">Connectors for {snapshot.name}</h2>
               <p className="text-xs text-text-muted">
-                Everyone connects with their own login. What an agent reads shows up in the Room.
+                Everyone connects with their own login. What an agent reads shows up in the chat.
               </p>
             </div>
             <button
@@ -627,7 +627,7 @@ function ConnectorDetail({
             <div className="border-border-hairline bg-bg-2 flex flex-col gap-2 rounded-card border p-3 text-xs text-text-secondary" data-testid="gallery-detail-consent">
               <span>
                 Results your agent gets from <b className="font-medium text-text-primary">{def.name}</b> will show up in this
-                Room. You&rsquo;ll sign in to {def.name} in your browser; everyone else in the space connects with their own
+                chat. You&rsquo;ll sign in to {def.name} in your browser; everyone else in the space connects with their own
                 login.
               </span>
               <span className="flex gap-1.5">

@@ -845,7 +845,7 @@ export function App() {
     <RoomView
       bindingId={target.bindingId}
       openDoc={inSpace && layout !== 'chat' ? openDocIn(target.root) : null}
-      spaceName={inSpace ? `#${target.name ?? 'space'}` : (target.name ?? 'Room')}
+      spaceName={inSpace ? `#${target.name ?? 'space'}` : (target.name ?? 'Chat')}
       // Room chrome round: doc-focus layout (the doc at full width) folds
       // the Room to a floating chip instead of unmounting it — see
       // `RoomView`'s own `collapsed` doc comment.
@@ -1112,7 +1112,7 @@ export function App() {
                     render={
                       <button
                         type="button"
-                        aria-label="Room (preview)"
+                        aria-label="Chat (preview)"
                         onClick={() => setRoomPreviewOpen(true)}
                         className="hover:bg-bg-2 flex size-7 items-center justify-center rounded-control text-text-muted transition-colors [-webkit-app-region:no-drag]"
                       >
@@ -1120,7 +1120,7 @@ export function App() {
                       </button>
                     }
                   />
-                  <TooltipContent side="bottom">Room (preview)</TooltipContent>
+                  <TooltipContent side="bottom">Chat (preview)</TooltipContent>
                 </Tooltip>
               )}
             </div>
@@ -1136,7 +1136,7 @@ export function App() {
         <div className="bg-bg-0 absolute inset-0 top-10 z-40 flex flex-col">
           <button
             type="button"
-            aria-label="Close Room preview"
+            aria-label="Close chat preview"
             onClick={() => setRoomPreviewOpen(false)}
             className="hover:bg-bg-2 absolute top-2 right-3 z-50 flex size-7 items-center justify-center rounded-control text-text-muted transition-colors"
           >

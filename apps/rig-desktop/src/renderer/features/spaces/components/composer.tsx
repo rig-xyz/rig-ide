@@ -400,7 +400,7 @@ export function Composer({
             <ContextPill
               reason={ownPill.reason}
               onDismiss={dropSuggestion}
-              dismissLabel="Send to the room"
+              dismissLabel="Send to the chat"
               testId="composer-own-agent-pill"
             >
               {ownPill.replyTo && <CornerUpLeft className="size-3.5 shrink-0" strokeWidth={1.5} />}
@@ -436,7 +436,7 @@ export function Composer({
           )}
           {docPill && (
             <ContextPill
-              reason="It's open beside the Room"
+              reason="It's open beside the chat"
               onDismiss={() => setDroppedDoc(true)}
               dismissLabel="Don't attach"
               testId="composer-doc-pill"

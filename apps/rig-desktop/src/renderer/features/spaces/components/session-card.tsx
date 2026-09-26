@@ -955,8 +955,8 @@ export function SessionCard({
               void onHideDetails().then((hidden) => setHiding(hidden ? 'idle' : 'failed'));
             }}
             disabled={hiding === 'busy'}
-            aria-label="Hide steps from the room"
-            title="Hide steps from the room"
+            aria-label="Hide steps from the chat"
+            title="Hide steps from the chat"
             className="enabled:hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs text-text-secondary transition-colors disabled:text-text-muted"
             data-testid="session-hide-details"
           >

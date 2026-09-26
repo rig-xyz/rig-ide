@@ -140,7 +140,7 @@ function RoomWelcome({
       </span>
       <div className="flex flex-col gap-1">
         <h2 className="font-display text-xl text-text-primary">This is {spaceName}</h2>
-        <p className="text-sm text-text-secondary">A room for you, your team and your agents.</p>
+        <p className="text-sm text-text-secondary">A space for you, your team and your agents.</p>
       </div>
       <div className="flex flex-wrap justify-center gap-2">
         <button type="button" className={action} onClick={() => onPrefill('@claude invite ')}>
@@ -207,7 +207,7 @@ export async function sendFromComposer(
   const asks = agent && ownAgents.includes(agent) ? agent : null;
   const sourceMessageId = await source.send(text, replyTo, asks ?? undefined);
   if (!asks) return;
-  const prompt = attach ? `${text}\n\n(Open beside the Room: ${attach})` : text;
+  const prompt = attach ? `${text}\n\n(Open beside the chat: ${attach})` : text;
   await source.requestOwnAgent(asks, prompt, sourceMessageId ?? undefined);
   wake();
 }
@@ -593,7 +593,7 @@ export function RoomView({
   if (connectError) {
     return (
       <div className="bg-bg-0 flex h-full min-h-0 flex-col items-center justify-center gap-3 text-sm text-text-muted">
-        <p>Could not connect to the room: {connectError}</p>
+        <p>Could not connect to the chat: {connectError}</p>
         <button
           type="button"
           onClick={() => setUseFixtures(true)}
@@ -689,7 +689,7 @@ export function RoomView({
               <p
                 className="mb-1.5 flex items-center gap-1.5 px-1 text-2xs text-text-muted"
                 role="status"
-                title="The live connection is down, so the Room checks for news every few seconds. Your agents keep working on this computer."
+                title="The live connection is down, so the chat checks for news every few seconds. Your agents keep working on this computer."
                 data-testid="room-offline"
               >
                 <span className="bg-border-strong size-1.5 shrink-0 rounded-full" />

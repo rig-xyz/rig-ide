@@ -121,7 +121,7 @@ export function SpacesCard({
         </div>
       )}
       {rows.length === 0 ? (
-        <p className="text-text-muted px-1 text-xs">A room for your team and your agents.</p>
+        <p className="text-text-muted px-1 text-xs">A space for your team and your agents.</p>
       ) : visible.length === 0 ? (
         <p className="text-text-muted px-1 text-xs">No spaces match this filter.</p>
       ) : (

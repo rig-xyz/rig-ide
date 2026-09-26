@@ -48,7 +48,7 @@ export function SpaceRail({
             <button
               type="button"
               onClick={() => onExpand?.()}
-              aria-label="Back to the Room"
+              aria-label="Back to the chat"
               data-testid="space-rail-back"
               className="text-text-muted hover:bg-bg-2 hover:text-text-primary flex size-8 shrink-0 items-center justify-center rounded-control transition-colors"
             >
@@ -56,7 +56,7 @@ export function SpaceRail({
             </button>
           }
         />
-        <TooltipContent side="right">Back to the Room</TooltipContent>
+        <TooltipContent side="right">Back to the chat</TooltipContent>
       </Tooltip>
 
       {snapshot.agents.length > 0 && (

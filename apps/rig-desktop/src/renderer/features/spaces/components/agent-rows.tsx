@@ -236,7 +236,7 @@ function ChipStatus({ status }: { status: SpaceChipStatus }) {
       return (
         <span
           className="flex items-center gap-1.5 text-text-muted"
-          title="The live connection is down, so the Room checks for news every few seconds."
+          title="The live connection is down, so the chat checks for news every few seconds."
           data-testid="chip-status"
           data-kind="offline"
         >

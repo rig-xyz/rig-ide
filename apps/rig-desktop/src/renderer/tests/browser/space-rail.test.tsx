@@ -95,7 +95,7 @@ describe('SpaceRail', () => {
 
     const back = host.querySelector<HTMLButtonElement>('[data-testid="space-rail-back"]');
     expect(back).not.toBeNull();
-    expect(back?.getAttribute('aria-label')).toBe('Back to the Room');
+    expect(back?.getAttribute('aria-label')).toBe('Back to the chat');
   });
 
   it('brings the Room back on "Back to Room"', async () => {

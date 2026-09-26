@@ -741,7 +741,7 @@ describe('Room composer — a plain reply to your own agent', () => {
     expect(ownPill()?.classList.contains('context-pill')).toBe(true);
     expect(ownPill()?.parentElement?.getAttribute('data-testid')).toBe('composer-pills');
     expect(why()).toBe(replyReason);
-    expect(ownPill()?.querySelector('[data-testid="context-pill-dismiss"]')?.getAttribute('aria-label')).toBe('Send to the room');
+    expect(ownPill()?.querySelector('[data-testid="context-pill-dismiss"]')?.getAttribute('aria-label')).toBe('Send to the chat');
     expect(host.querySelector('[data-testid="composer-own-agent-note"]')).toBeNull();
     expect(host.textContent).not.toContain('to send to the room');
     // One pill: no separate agent or reply pill, no doc pill.
