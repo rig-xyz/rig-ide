@@ -116,6 +116,16 @@ export class SessionManager implements InboundRouter {
    * load a session that is still closing, so a reload waits for its close.
    */
   private readonly closing = new Map<string, Promise<void>>();
+  /**
+   * Starts (new or load) in flight, by conversation id. A second start of
+   * the same conversation joins the first: it would otherwise fail on the
+   * first's live models (initialize_failed) or, once the first's record
+   * exists, get its still-loading session, which refuses prompts.
+   */
+  private readonly starting = new Map<
+    string,
+    Promise<Result<{ sessionId: string }, AcpStartSessionError>>
+  >();
   private readonly routes = new Map<string, Map<string, string>>();
   private readonly loadingConversations = new Map<string, Set<string>>();
   private readonly rawObservers = new Map<string, Set<RawSessionEventObserver>>();
@@ -129,6 +139,20 @@ export class SessionManager implements InboundRouter {
   ) {}
 
   async start(input: AcpStartInput): Promise<Result<{ sessionId: string }, AcpStartSessionError>> {
+    const inFlight = this.starting.get(input.conversationId);
+    if (inFlight) return inFlight;
+    const started = this.startNow(input);
+    this.starting.set(input.conversationId, started);
+    try {
+      return await started;
+    } finally {
+      if (this.starting.get(input.conversationId) === started) this.starting.delete(input.conversationId);
+    }
+  }
+
+  private async startNow(
+    input: AcpStartInput
+  ): Promise<Result<{ sessionId: string }, AcpStartSessionError>> {
     const existing = this.cells.get(input.conversationId);
     if (existing) return ok({ sessionId: existing.cell.acpSessionId });
 

@@ -303,9 +303,58 @@ describe('createSpacesDispatcher', () => {
 
     const result = await dispatch(makeRequest());
     if ('failed' in result) throw new Error('expected success');
-    reject?.('invalid_state');
+    reject?.('conversation_not_found');
 
     await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: makeRequest().id, status: 'failed' }]));
+  });
+
+  it('retries a prompt refused while the session was still loading once it is ready, and fails on a second refusal', async () => {
+    const { api, patchedRequests } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const rejects: Array<(reason: string) => void> = [];
+    fake.setQueuePromptImpl(async (_conversationId, _text, _hidden, onRejected) => {
+      if (onRejected) rejects.push(onRejected);
+      return ok({ turnId: null });
+    });
+    let ready!: (ready: boolean) => void;
+    fake.acp.waitUntilReady = vi.fn(() => new Promise<boolean>((resolve) => (ready = resolve)));
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+
+    const result = await dispatch(makeRequest());
+    if ('failed' in result) throw new Error('expected success');
+    rejects[0]!('invalid_state');
+    await vi.waitFor(() => expect(fake.acp.waitUntilReady).toHaveBeenCalledTimes(1));
+    // Not sent again until the session is ready; the run isn't failed meanwhile.
+    expect(rejects).toHaveLength(1);
+    ready(true);
+    await vi.waitFor(() => expect(rejects).toHaveLength(2));
+    expect(fake.callOrder.filter((c) => c.startsWith('queuePrompt:'))).toHaveLength(2);
+    expect(patchedRequests).toEqual([]);
+
+    // Refused again: only one retry.
+    rejects[1]!('invalid_state');
+    await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: makeRequest().id, status: 'failed' }]));
+    expect(fake.acp.waitUntilReady).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the retried prompt as the turn once it starts', async () => {
+    const { api, patchedRequests } = makeFakeApi();
+    const fake = makeFakeAcp();
+    let calls = 0;
+    fake.setQueuePromptImpl(async (_conversationId, _text, _hidden, onRejected) => {
+      calls += 1;
+      if (calls === 1) queueMicrotask(() => onRejected?.('invalid_state'));
+      return ok({ turnId: null });
+    });
+    fake.acp.waitUntilReady = async () => true;
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+
+    await dispatch(makeRequest());
+    await vi.waitFor(() => expect(calls).toBe(2));
+    const conversationId = fake.started[0]!.conversationId;
+    fake.emitTurnStart(conversationId, 't1');
+    fake.emitTurnEnd(conversationId, 't1', 'end_turn');
+    await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: makeRequest().id, status: 'done' }]));
   });
 
   it('reuses the same persistent session for a second request to the same space/owner/agent', async () => {
@@ -1066,7 +1115,43 @@ describe('memory across restarts', () => {
     expect('failed' in result).toBe(false);
     expect(fake.resumed).toHaveLength(1);
     expect(fake.started).toHaveLength(1);
-    expect(store.get('binding-1::owner-1::claude')?.acpSessionId).toBe('acp-new');
+    // Fresh on a new conversation, so a late load of the old one can't hand it a half-loaded session; the old one is closed.
+    const fresh = fake.started[0]!.conversationId;
+    expect(fresh).not.toBe('conv-old');
+    expect(fake.stopped).toEqual(['conv-old']);
+    expect(fake.callOrder.indexOf(`subscribeRaw:${fresh}`)).toBeLessThan(fake.callOrder.indexOf(`startSession:${fresh}`));
+    expect(fake.queued[0]?.conversationId).toBe(fresh);
+    expect(store.get('binding-1::owner-1::claude')).toMatchObject({ conversationId: fresh, acpSessionId: 'acp-new' });
+  });
+
+  it('resumes once when the Room reads the agent settings while a run starts, right after a restart', async () => {
+    const store = memoryStore();
+    store.set('binding-1::owner-1::claude', {
+      conversationId: 'conv-old',
+      acpSessionId: 'acp-old',
+      providerId: 'claude',
+      cwd: '/rigs/one',
+      updatedAt: 0,
+    });
+    const fake = makeFakeAcp();
+    let finishResume!: () => void;
+    const resumeSession = fake.acp.resumeSession.bind(fake.acp);
+    fake.acp.resumeSession = (input) =>
+      new Promise((resolve) => (finishResume = () => resolve(resumeSession(input))));
+    fake.acp.readConfig = async () => ({ model: null, effort: null, mode: null });
+    const dispatcher = createSpacesDispatcher({ api: makeFakeApi().api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one', store });
+
+    const settings = dispatcher.agentConfig('binding-1', 'owner-1', 'claude');
+    const run = dispatcher.dispatch(makeRequest({ bindingId: 'binding-1', targetOwnerUserId: 'owner-1' }));
+    await vi.waitFor(() => expect(finishResume).toBeDefined());
+    await new Promise((r) => setTimeout(r, 10));
+    finishResume();
+
+    expect((await settings).success).toBe(true);
+    expect('failed' in (await run)).toBe(false);
+    expect(fake.resumed).toEqual([{ conversationId: 'conv-old', sessionId: 'acp-old' }]);
+    expect(fake.started).toHaveLength(0);
+    expect(fake.queued.map((q) => q.conversationId)).toEqual(['conv-old']);
   });
 
   it("doesn't resume a session recorded for another folder", async () => {

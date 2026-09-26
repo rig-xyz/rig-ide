@@ -241,6 +241,35 @@ describe('AcpRuntime session manager', () => {
     expect(order).toEqual(['closed', 'load']);
   });
 
+  it('joins a start already under way for the same conversation instead of refusing it or handing out a half-loaded session', async () => {
+    const h = makeAcpHarness();
+    const rt = new AcpRuntime(h.deps);
+    let finishLoad!: () => void;
+    h.agent.loadSession = vi.fn(() => new Promise<Record<string, never>>((resolve) => (finishLoad = () => resolve({}))));
+    h.agent.prompt = vi.fn(async () => ({ stopReason: 'end_turn' as const }));
+
+    // A slow resume (loading history), and meanwhile a second resume and a
+    // fresh start of the same conversation.
+    const first = rt.resumeSession({ ...makeStartInput({ conversationId: 'conv-race' }), sessionId: 'session-old' });
+    await vi.waitFor(() => expect(h.agent.loadSession).toHaveBeenCalledTimes(1));
+    const second = rt.resumeSession({ ...makeStartInput({ conversationId: 'conv-race' }), sessionId: 'session-old' });
+    const fresh = rt.startSession(makeStartInput({ conversationId: 'conv-race' }));
+    let freshDone = false;
+    void fresh.then(() => (freshDone = true));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(freshDone).toBe(false);
+
+    finishLoad();
+    for (const result of [await first, await second, await fresh]) {
+      expect(isOk(result)).toBe(true);
+      if (isOk(result)) expect(result.data.sessionId).toBe('session-old');
+    }
+    expect(h.agent.loadSession).toHaveBeenCalledTimes(1);
+    expect(h.agent.newSession).not.toHaveBeenCalled();
+    // The session they all got takes a prompt.
+    expect(isOk(await rt.sendPrompt('conv-race', { text: 'the second one' }))).toBe(true);
+  });
+
   it('returns a resume result with replayed history', async () => {
     const h = makeAcpHarness();
     const rt = new AcpRuntime(h.deps);

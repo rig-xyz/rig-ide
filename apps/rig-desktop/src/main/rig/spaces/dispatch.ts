@@ -95,6 +95,12 @@ export interface SpacesAcpSessions {
   /** Best-effort: asks the runtime to cancel whatever turn is currently running. */
   cancelTurn(conversationId: string): Promise<void>;
   /**
+   * Resolves once the session can take a prompt (it's done starting or
+   * loading its history), true; false when it closed or never got there in
+   * time. A prompt refused as `invalid_state` is retried once after this.
+   */
+  waitUntilReady?(conversationId: string): Promise<boolean>;
+  /**
    * Registers a raw-event observer. Must be called (and resolved) BEFORE
    * `startSession`/the first `queuePrompt`, so nothing from the very first
    * turn is missed. Returns an unsubscribe function.
@@ -718,7 +724,36 @@ export function createSpacesDispatcher(deps: {
    * current servers until the next turn. Rig's own tools ride along with the
    * connectors, in the same fingerprint.
    */
-  async function ensureSession(
+  /** The ensure in progress per key: a second caller waits for it instead of starting (or resuming) the same session twice. */
+  const ensuring = new Map<PersistentKey, Promise<Result<PersistentSession, string>>>();
+
+  function ensureSession(
+    key: PersistentKey,
+    bindingId: string,
+    ownerUserId: string,
+    providerId: SessionAgent,
+    cwd: string,
+    connectors?: SessionConnectors
+  ): Promise<Result<PersistentSession, string>> {
+    // Two callers at once (a Room opening its agent's settings as a run
+    // starts, right after a restart) used to resume the same conversation
+    // twice: the runtime refused the second (initialize_failed), its
+    // fallback got the first's still-loading session, and the prompt was
+    // refused (invalid_state). One at a time: the second finds the first's.
+    const previous = ensuring.get(key);
+    const next = (previous ?? Promise.resolve(null)).then(
+      () => ensureSessionNow(key, bindingId, ownerUserId, providerId, cwd, connectors),
+      () => ensureSessionNow(key, bindingId, ownerUserId, providerId, cwd, connectors)
+    );
+    ensuring.set(key, next);
+    const done = () => {
+      if (ensuring.get(key) === next) ensuring.delete(key);
+    };
+    next.then(done, done);
+    return next;
+  }
+
+  async function ensureSessionNow(
     key: PersistentKey,
     bindingId: string,
     ownerUserId: string,
@@ -750,7 +785,7 @@ export function createSpacesDispatcher(deps: {
     // agent's own session (same cwd) rather than starting from nothing.
     const stored = deps.store?.get(key) ?? null;
     const resumable = stored && stored.providerId === providerId && stored.cwd === cwd ? stored : null;
-    const conversationId = resumable?.conversationId ?? randomUUID();
+    let conversationId = resumable?.conversationId ?? randomUUID();
     const session: PersistentSession = {
       conversationId,
       providerId,
@@ -781,6 +816,15 @@ export function createSpacesDispatcher(deps: {
           error: started.error,
         });
         started = null;
+        // Fresh means a new conversation: a load of the old one that is still
+        // going in the runtime can't hand this its half-loaded session (which
+        // refuses prompts), nor collide with it later. The old one is closed.
+        const abandoned = conversationId;
+        for (const unsubscribe of session.unsubscribes.splice(0)) unsubscribe();
+        await deps.acp.stopSession?.(abandoned).catch(() => {});
+        conversationId = randomUUID();
+        session.conversationId = conversationId;
+        session.unsubscribes.push(await deps.acp.subscribeRaw(conversationId, (raw) => forwardRaw(session, raw)));
       }
     }
     const fresh = started === null;
@@ -936,18 +980,32 @@ export function createSpacesDispatcher(deps: {
     // Agents echo their prompt back (Codex titles the session with all of
     // it): the publisher strips this block from anything it uploads.
     publisher.setHiddenContext(hiddenContext);
-    const queued = await deps.acp.queuePrompt(
-      session.conversationId,
-      spec.prompt,
-      hiddenContext,
-      (reason) => {
-        const idx = session.pending.indexOf(turn);
-        if (idx === -1) return; // already started; its turn_end settles it
-        session.pending.splice(idx, 1);
-        log.warn('Rig spaces dispatch: the runtime rejected a prompt', { runId: turn.runId, reason });
-        void finalizeTurn(turn, 'failed', `the agent refused the prompt (${reason})`);
-      }
-    );
+    const fail = (reason: string) => {
+      const idx = session.pending.indexOf(turn);
+      if (idx === -1) return; // already started (its turn_end settles it), or stopped
+      session.pending.splice(idx, 1);
+      log.warn('Rig spaces dispatch: the runtime rejected a prompt', { runId: turn.runId, reason });
+      void finalizeTurn(turn, 'failed', `the agent refused the prompt (${reason})`);
+    };
+    let retried = false;
+    const onRejected = (reason: string) => {
+      if (session.pending.indexOf(turn) === -1) return;
+      // Not ready yet (still starting or loading its history): once, wait
+      // for the session to be ready and send the prompt again.
+      if (reason !== 'invalid_state' || retried) return fail(reason);
+      retried = true;
+      log.info('Rig spaces dispatch: the agent session wasn’t ready for the prompt, retrying once it is', {
+        runId: turn.runId,
+      });
+      void (async () => {
+        const ready = await (deps.acp.waitUntilReady?.(session.conversationId) ?? Promise.resolve(true)).catch(() => false);
+        if (session.pending.indexOf(turn) === -1) return;
+        if (!ready) return fail(reason);
+        const again = await deps.acp.queuePrompt(session.conversationId, spec.prompt, hiddenContext, onRejected);
+        if (!again.success) fail(again.error);
+      })();
+    };
+    const queued = await deps.acp.queuePrompt(session.conversationId, spec.prompt, hiddenContext, onRejected);
     if (!queued.success) {
       const idx = session.pending.indexOf(turn);
       if (idx !== -1) session.pending.splice(idx, 1);
@@ -1175,6 +1233,9 @@ function describeAcpError(error: unknown): string {
   return String(error);
 }
 
+/** How long a prompt refused while its session was still loading waits for it before failing the run. */
+const SESSION_READY_TIMEOUT_MS = 60_000;
+
 export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClient>): SpacesAcpSessions {
   return {
     async startSession({ conversationId, providerId, cwd, mcpServers }) {
@@ -1249,6 +1310,27 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
           conversationId,
           error: describeAcpError(result.error),
         });
+      }
+    },
+
+    async waitUntilReady(conversationId) {
+      const client = await getClient();
+      let settle!: (ready: boolean) => void;
+      const result = new Promise<boolean>((resolve) => (settle = resolve));
+      const timer = setTimeout(() => settle(false), SESSION_READY_TIMEOUT_MS);
+      const replica = new ReplicaState<SessionState>(client.session.state({ conversationId }, 'state'), {
+        schema: sessionStateSchema,
+        onChange: (state) => {
+          if (state.lifecycle === 'closed') settle(false);
+          else if (state.lifecycle !== 'starting' && state.lifecycle !== 'replaying') settle(true);
+        },
+      });
+      replica.ready.catch(() => settle(false));
+      try {
+        return await result;
+      } finally {
+        clearTimeout(timer);
+        void replica.dispose();
       }
     },
 
