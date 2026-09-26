@@ -708,7 +708,9 @@ describe('Room composer — a plain reply to your own agent', () => {
   }
 
   const ownPill = () => host.querySelector('[data-testid="composer-own-agent-pill"]');
-  const note = () => host.querySelector('[data-testid="composer-own-agent-note"]');
+  /** The "?" bubble's reason, as the pill's own Why button carries it. */
+  const why = () => ownPill()?.querySelector('[data-testid="context-pill-why"]')?.getAttribute('aria-label');
+  const replyReason = "Why: Looks like your answer to Claude's question, so it goes to Claude.";
   const agentPill = () => host.querySelector('[data-testid="composer-agent-pill"]');
   const replyPill = () => host.querySelector('[data-testid="composer-reply"]');
   const enter = (textarea: HTMLTextAreaElement) =>
@@ -735,12 +737,18 @@ describe('Room composer — a plain reply to your own agent', () => {
     await vi.waitFor(() => expect(ownPill()?.textContent).toContain('Claude'));
     expect(ownPill()?.textContent).toContain('Linear it is — say the word and I file it');
     expect(ownPill()?.querySelector('svg.lucide-corner-up-left')).not.toBeNull();
-    expect(note()?.textContent).toBe('Sending to Claude as a reply · × to send to the room');
-    // One pill: no separate agent or reply pill, no doc pill, no "?" reason.
+    // The same glass pill as the others, with its liquid "?" and ×, and no line under it.
+    expect(ownPill()?.classList.contains('context-pill')).toBe(true);
+    expect(ownPill()?.parentElement?.getAttribute('data-testid')).toBe('composer-pills');
+    expect(why()).toBe(replyReason);
+    expect(ownPill()?.querySelector('[data-testid="context-pill-dismiss"]')?.getAttribute('aria-label')).toBe('Send to the room');
+    expect(host.querySelector('[data-testid="composer-own-agent-note"]')).toBeNull();
+    expect(host.textContent).not.toContain('to send to the room');
+    // One pill: no separate agent or reply pill, no doc pill.
     expect(agentPill()).toBeNull();
     expect(replyPill()).toBeNull();
     expect(host.querySelector('[data-testid="composer-doc-pill"]')).toBeNull();
-    expect(host.querySelectorAll('[data-testid="context-pill-why"]')).toHaveLength(0);
+    expect(host.querySelectorAll('[data-testid="context-pill-why"]')).toHaveLength(1);
     expect([...host.querySelectorAll('button')].some((b) => b.textContent?.startsWith('Ask Claude'))).toBe(true);
 
     // Rewritten into something else: the guess goes at once, before any new answer.
@@ -766,7 +774,6 @@ describe('Room composer — a plain reply to your own agent', () => {
     expect(settingsLoad).toHaveBeenCalled();
     expect(agentPill()?.textContent).toContain('Claude');
     expect(ownPill()).toBeNull();
-    expect(note()).toBeNull();
   });
 
   it('Enter sends it to your agent as a reply to its turn', async () => {
@@ -786,7 +793,6 @@ describe('Room composer — a plain reply to your own agent', () => {
     await vi.waitFor(() => expect(ownPill()).not.toBeNull());
     await dismiss();
     expect(ownPill()).toBeNull();
-    expect(note()).toBeNull();
 
     // Typing on doesn't bring it back for this draft.
     const calls = suggestReply.mock.calls.length;
@@ -840,15 +846,17 @@ describe('Room composer — a plain reply to your own agent', () => {
     };
 
     it.each([
-      ["hey claude what's up?", 'Claude'],
-      ['Claude, can you check the churn row?', 'Claude'],
-      ['codex: summarize', 'Codex'],
-    ])('"%s" shows the one pill for %s, with no reply target', async (draft, name) => {
+      ["hey claude what's up?", 'Claude', 'claude'],
+      ['Claude, can you check the churn row?', 'Claude', 'Claude'],
+      ['codex: summarize', 'Codex', 'codex'],
+    ])('"%s" shows the one pill for %s, with no reply target', async (draft, name, word) => {
       const textarea = await renderComposer(neverSure(), [], null, withCodex());
       await setTextareaValue(textarea, draft);
-      expect(ownPill()?.textContent).toContain(name);
+      expect(ownPill()?.querySelector('b')?.textContent).toBe(name);
+      expect(ownPill()?.querySelector('.truncate')).toBeNull();
+      expect(ownPill()?.classList.contains('context-pill')).toBe(true);
       expect(ownPill()?.querySelector('svg.lucide-corner-up-left')).toBeNull();
-      expect(note()?.textContent).toBe(`Sending to ${name} · × to send to the room`);
+      expect(why()).toBe(`Why: You started with "${word}", so it goes to ${name}.`);
       expect(agentPill()).toBeNull();
       expect(host.querySelector('[data-testid="agent-settings"]')).toBeNull();
     });
@@ -893,8 +901,8 @@ describe('Room composer — a plain reply to your own agent', () => {
       const sent: Array<[string, unknown]> = [];
       const textarea = await renderComposer(suggester(), sent);
       await setTextareaValue(textarea, 'hey claude, ok not this one');
-      expect(note()?.textContent).toBe('Sending to Claude · × to send to the room');
-      await vi.waitFor(() => expect(note()?.textContent).toBe('Sending to Claude as a reply · × to send to the room'));
+      expect(why()).toBe('Why: You started with "claude", so it goes to Claude.');
+      await vi.waitFor(() => expect(why()).toBe(replyReason));
       expect(ownPill()?.textContent).toContain('Linear it is');
       expect(host.querySelectorAll('[data-testid="composer-own-agent-pill"]')).toHaveLength(1);
       await enter(textarea);

@@ -26,11 +26,11 @@ export const SUGGEST_MIN_CONFIDENCE = 0.5;
  * A plain reply to your own agent (no @) reaches it too: on a typing pause
  * the composer asks `suggestReply` whether the draft answers one of your
  * agent's recent turns, and when it's sure enough shows one pill: your
- * agent and the turn it answers, with a line saying where it goes. A draft
- * that starts by calling one of your agents by name ("hey claude, …") gets
- * the same pill without a turn. No settings on it: the turn continues with
- * whatever your agent last ran with. × (or Esc) drops it for the rest of
- * the draft and the message goes to the room as plain chat.
+ * agent and the turn it answers ("?" says why). A draft that starts by
+ * calling one of your agents by name ("hey claude, …") gets the same pill
+ * without a turn. No settings on it: the turn continues with whatever your
+ * agent last ran with. × (or Esc) drops it for the rest of the draft and
+ * the message goes to the room as plain chat.
  */
 
 /** What the composer understood about a message, sent along with its text. */
@@ -48,9 +48,13 @@ function hasMention(text: string): boolean {
  * name later in the sentence ("I asked claude yesterday"), inside a word
  * ("claudette") or as a possessive ("claude's answer") doesn't count.
  */
-export function addressedAgent(draft: string, agents: readonly RoomAgent[]): AgentKind | null {
-  const name = /^(?:(?:hey|hi|hello|ok|okay|so|yo)[\s,!.]+)?([a-z]+)(?=$|[\s,:;!?.])/i.exec(draft.trim())?.[1];
-  return agents.find((a) => a.agent === name?.toLowerCase())?.agent ?? null;
+export function addressedAgent(
+  draft: string,
+  agents: readonly RoomAgent[]
+): { agent: AgentKind; word: string } | null {
+  const word = /^(?:(?:hey|hi|hello|ok|okay|so|yo)[\s,!.]+)?([a-z]+)(?=$|[\s,:;!?.])/i.exec(draft.trim())?.[1];
+  const agent = agents.find((a) => a.agent === word?.toLowerCase())?.agent;
+  return agent && word ? { agent, word } : null;
 }
 
 /** Still the draft a guess was made for: typed on, or trimmed back, not rewritten. */
@@ -280,10 +284,18 @@ export function Composer({
     !replyTo && !droppedSuggestion && !hasMention(value) ? addressedAgent(value, agents) : null;
   // Your agent without an @, as one pill: a guessed reply wins (it carries the
   // turn). Never beside the other pills: they need an @ or a Reply you chose.
-  const ownPill: { agent: AgentKind; replyTo: RoomReplyRef | null } | null = suggested
-    ? { agent: suggested.agent, replyTo: suggested.replyTo }
+  const ownPill: { agent: AgentKind; replyTo: RoomReplyRef | null; reason: string } | null = suggested
+    ? {
+        agent: suggested.agent,
+        replyTo: suggested.replyTo,
+        reason: `Looks like your answer to ${AGENT_NAME[suggested.agent]}'s question, so it goes to ${AGENT_NAME[suggested.agent]}.`,
+      }
     : addressed
-      ? { agent: addressed, replyTo: null }
+      ? {
+          agent: addressed.agent,
+          replyTo: null,
+          reason: `You started with "${addressed.word}", so it goes to ${AGENT_NAME[addressed.agent]}.`,
+        }
       : null;
   const agentPill = tagged && !droppedAgent ? tagged.agent : null;
   const replyPill = replyTo ?? null;
@@ -380,31 +392,25 @@ export function Composer({
         </div>
       )}
 
-      {!menuOpen && ownPill && (
-        // Your agent without an @: one pill, and a line saying where Enter sends it.
-        <div className="popover-in mb-2 px-1" data-testid="composer-pills">
-          <ContextPill onDismiss={dropSuggestion} dismissLabel="Send to the room" testId="composer-own-agent-pill">
-            {ownPill.replyTo && <CornerUpLeft className="size-3.5 shrink-0" strokeWidth={1.5} />}
-            <span className="card-pop-in flex">
-              <BrandLogo id={agentLogoId(ownPill.agent)} size={14} />
-            </span>
-            <b className="font-medium text-text-primary">{AGENT_NAME[ownPill.agent]}</b>
-            {ownPill.replyTo && (
-              <>
-                <span className="size-[3px] rounded-full bg-text-muted/60" aria-hidden />
-                <span className="max-w-56 truncate">{ownPill.replyTo.excerpt}</span>
-              </>
-            )}
-          </ContextPill>
-          <p className="mt-1.5 text-2xs text-text-muted" data-testid="composer-own-agent-note">
-            {`Sending to ${AGENT_NAME[ownPill.agent]}${ownPill.replyTo ? ' as a reply' : ''} · × to send to the room`}
-          </p>
-        </div>
-      )}
-
-      {!menuOpen && (replyPill || agentPill || docPill) && (
+      {!menuOpen && (ownPill || replyPill || agentPill || docPill) && (
         // In the flow, above the input: the Room makes room for it rather than being covered.
         <div className="popover-in mb-2 flex flex-wrap items-center gap-2 px-1" data-testid="composer-pills">
+          {ownPill && (
+            // Your agent without an @: one pill, no pickers (it runs as it last ran).
+            <ContextPill
+              reason={ownPill.reason}
+              onDismiss={dropSuggestion}
+              dismissLabel="Send to the room"
+              testId="composer-own-agent-pill"
+            >
+              {ownPill.replyTo && <CornerUpLeft className="size-3.5 shrink-0" strokeWidth={1.5} />}
+              <span className="card-pop-in flex">
+                <BrandLogo id={agentLogoId(ownPill.agent)} size={14} />
+              </span>
+              <b className="font-medium text-text-primary">{AGENT_NAME[ownPill.agent]}</b>
+              {ownPill.replyTo && <span className="max-w-56 truncate">{ownPill.replyTo.excerpt}</span>}
+            </ContextPill>
+          )}
           {replyPill && (
             <ContextPill reason="You pressed Reply" onDismiss={onCancelReply} dismissLabel="Not a reply" testId="composer-reply">
               <CornerUpLeft className="size-3.5 shrink-0" strokeWidth={1.5} />
