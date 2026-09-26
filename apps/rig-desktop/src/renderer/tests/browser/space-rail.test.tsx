@@ -18,6 +18,8 @@ vi.mock('@renderer/lib/ipc', () => ({
     app: { openExternal: async () => {} },
     rig: { spacesConnection: { getConnectionInfo: async () => ({ success: false, error: { message: 'offline' } }) } },
   },
+  // The Room listens for its owner overlay's pushes (never, with no relay).
+  events: { on: () => () => {} },
 }));
 
 import { RoomView } from '@renderer/features/spaces/components/room-view';

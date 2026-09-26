@@ -35,6 +35,8 @@ vi.mock('@renderer/lib/ipc', () => ({
     // No live relay here: the Room offers the scripted demo instead.
     rig: { spacesConnection: { getConnectionInfo: async () => ({ success: false, error: { message: 'offline' } }) } },
   },
+  // The Room listens for its owner overlay's pushes (never, with no relay).
+  events: { on: () => () => {} },
 }));
 
 // The connectors panel/pills go through this one wrapper (connectors-api.ts)
