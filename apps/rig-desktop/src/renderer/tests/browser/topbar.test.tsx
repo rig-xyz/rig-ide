@@ -6,7 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 /**
  * Room chrome round coverage for the topbar's own decisions — see each
  * covered prop's doc comment on `Topbar` in `App.tsx`:
- *  - the layout switch (Room | Split | Doc) shows only once a doc is open
+ *  - the layout switch (Chat | Split | Doc) shows only once a doc is open
  *    beside a space's Room; a plain rig keeps it on regardless;
  *  - the open doc joins the breadcrumb, with its own close control;
  *  - a space's member faces sit on the left of its accent Invite pill, as
