@@ -2249,6 +2249,35 @@ describe('Connectors — Room copy and turn footer', () => {
     expect(step.title).toBe('From your Claude setup');
   });
 
+  it('names a claude.ai connector that is not in the catalog (Claude Docs) in the live line and its approval, without a logo', async () => {
+    const running: SessionEvent[] = [
+      { seq: 1, kind: 'tool_call', payload: { toolCallId: 't1', title: 'mcp__claude_ai_Claude_Docs__update', kind: 'other', status: 'pending' } },
+    ];
+    await act(async () => {
+      root.render(<SessionCard meta={{ ...runMeta, status: 'running' }} events={running} owner={undefined} />);
+    });
+    expect(host.querySelector('[data-testid="session-live-line"]')?.textContent).toContain('Claude Docs · update');
+
+    const asking: SessionEvent[] = [
+      ...running,
+      {
+        seq: 2,
+        kind: 'permission_requested',
+        payload: {
+          requestId: 'perm-1',
+          toolCall: { toolCallId: 't1', title: 'mcp__claude_ai_Claude_Docs__update' },
+          options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }],
+        },
+      },
+    ];
+    await act(async () => {
+      root.render(
+        <SessionCard meta={{ ...runMeta, status: 'running' }} events={asking} owner={undefined} onResolvePermission={vi.fn()} />
+      );
+    });
+    expect(host.querySelector('[data-testid="approval-card"] code')?.textContent).toBe('Claude Docs · update');
+  });
+
   it("reads rig's own tools as \"Rig · invite hugo@…\", once their input streams in, in the live line, the approval and the step list", async () => {
     const running: SessionEvent[] = [
       { seq: 1, kind: 'tool_call', payload: { toolCallId: 't1', title: 'mcp__rig__rig_invite', kind: 'other', status: 'pending', rawInput: {} } },

@@ -1070,6 +1070,12 @@ describe('room context for the agent', () => {
     expect(context).toContain('`~/.agents/skills/rig/SKILL.md`');
     expect(context).toContain('`rig --help`');
   });
+
+  it('tells the agent to open Claude artifact links with its Claude Docs tools, not the web', () => {
+    const context = spacesHiddenContext(makeRequest());
+    expect(context).toContain('claude.ai/artifact/');
+    expect(context).toContain('open it with them (never WebFetch)');
+  });
 });
 
 describe('memory across restarts', () => {
@@ -1594,6 +1600,18 @@ describe('rig tools', () => {
         tools.map((_, i) => ({ conversationId, requestId: `perm-${i}`, optionId: 'allow-once' }))
       );
       expect(requested()).toEqual([]);
+    });
+
+    it("reads a linked Claude Doc without asking, but still asks before editing or commenting on it", async () => {
+      const { fake, conversationId, requested } = await startTurn('claude');
+      const reads = ['guide', 'read', 'query'].map((tool) => `mcp__claude_ai_Claude_Docs__${tool}`);
+      const writes = ['update', 'create', 'batch', 'delete'].map((tool) => `mcp__claude_ai_Claude_Docs__${tool}`);
+      reads.forEach((title, i) => fake.emitPermissionRequest(conversationId, request(title, `read-${i}`)));
+      writes.forEach((title, i) => fake.emitPermissionRequest(conversationId, request(title, `write-${i}`)));
+
+      await vi.waitFor(() => expect(requested()).toHaveLength(writes.length));
+      expect(fake.resolvedPermissions.map((p) => p.requestId)).toEqual(['read-0', 'read-1', 'read-2']);
+      expect(requested()).toEqual(['write-0', 'write-1', 'write-2', 'write-3']);
     });
 
     it('still asks for rig_invite and rig_comment, a same-named tool on another server, and anything without rig tools', async () => {

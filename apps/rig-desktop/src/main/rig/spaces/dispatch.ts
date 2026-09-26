@@ -301,6 +301,9 @@ export function spacesHiddenContext(
     // off), so point at the file itself. The packaged app writes this copy
     // at every launch (`installBundledRigSkill`).
     'For anything else rig does here (who has access, the chat, file comments, history, sync), read the rig skill at `~/.agents/skills/rig/SKILL.md` before running `rig` commands; `rig --help` lists them all.',
+    // Claude artifact links can't be web-fetched (they need the viewer's
+    // claude.ai login); Claude Docs ones open through the owner's connector.
+    "A claude.ai/artifact/… or claude.ai/code/artifact/… link is usually a Claude Doc: if you have Claude Docs tools, open it with them (never WebFetch), as your owner, to read, edit or comment on it. If it's refused, say plainly that it isn't shared with your owner (or isn't a Doc) instead of guessing its contents.",
   ];
   if (rigTools) {
     lines.push(

@@ -49,15 +49,23 @@ export const PRE_APPROVED_RIG_TOOLS: ReadonlySet<string> = new Set([
   'rig_file_comments',
 ]);
 
+/**
+ * The read-only half of the owner's claude.ai Claude Docs connector: reading a
+ * Doc someone linked in the room, its comments, and the connector's own how-to.
+ * Editing and commenting (`update`, `create`, `batch`, `delete`) still ask.
+ */
+const PRE_APPROVED_CLAUDE_DOCS_TOOLS = ['guide', 'read', 'query'].map((tool) => `mcp__claude_ai_Claude_Docs__${tool}`);
+
 /** Their exact names as agents report them: Claude `mcp__rig__rig_people`, Codex `mcp.rig.rig_people`. */
-const PRE_APPROVED_TOOL_NAMES = new Set(
-  [...PRE_APPROVED_RIG_TOOLS].flatMap((tool) => [`mcp__${RIG_TOOLS_SERVER}__${tool}`, `mcp.${RIG_TOOLS_SERVER}.${tool}`])
-);
+const PRE_APPROVED_TOOL_NAMES = new Set([
+  ...[...PRE_APPROVED_RIG_TOOLS].flatMap((tool) => [`mcp__${RIG_TOOLS_SERVER}__${tool}`, `mcp.${RIG_TOOLS_SERVER}.${tool}`]),
+  ...PRE_APPROVED_CLAUDE_DOCS_TOOLS,
+]);
 
 /**
  * The option that answers `request` without asking — its "allow once", never
- * an "always" — when it's one of the pre-approved rig tools above; null for
- * anything else (other rig tools, other servers, a request with no plain
+ * an "always" — when it's one of the pre-approved read-only tools above; null
+ * for anything else (other rig tools, other servers, a request with no plain
  * allow), which waits for the owner as before.
  */
 export function preApprovedRigToolOption(request: AcpPermissionRequest): string | null {

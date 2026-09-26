@@ -155,7 +155,9 @@ function summaryLine(card: SessionCardData, elapsed: string, countOnly = false):
  * before. A "setup" tool's tooltip names the run's agent, so "Linear · list
  * issues" reads as coming from your Claude setup rather than a connector
  * rig itself wired up. Rig's own tools ("rig") read as "Rig · invite
- * hugo@…", with the rig mark and no connector.
+ * hugo@…", with the rig mark and no connector. A claude.ai connector
+ * (`mcp__claude_ai_…`) is named by claude.ai itself, so it reads "Claude Docs ·
+ * read" even when it isn't in the catalog, just without a logo.
  */
 function prettyStepTitle(
   raw: string | undefined,
@@ -165,6 +167,9 @@ function prettyStepTitle(
   if (!raw) return null;
   const pretty = prettyAgentTool(raw, args);
   if (pretty?.via === 'rig') return { text: `${pretty.label} · ${pretty.action}`, connector: null };
+  if (pretty && !pretty.connector && raw.startsWith('mcp__claude_ai_')) {
+    return { text: `${pretty.label} · ${pretty.action}`, connector: null, tooltip: `From your ${AGENT_NAME[agent]} setup` };
+  }
   if (!pretty || !pretty.connector) return null;
   return {
     text: `${pretty.label} · ${pretty.action}`,
@@ -369,9 +374,9 @@ function ApprovalCard({
         : kind === 'fetch'
           ? ['Fetch a page', `${agentName} wants to fetch from the web.`, Globe]
           : ['Use a tool', `${agentName} wants your go-ahead first.`, ShieldAlert];
-  // Rig's own tools say what they'll do: "Rig · invite hugo@acme.co".
-  const rigTool = prettyAgentTool(request.title, step?.args);
-  const shownTitle = rigTool?.via === 'rig' ? `${rigTool.label} · ${rigTool.action}` : request.title;
+  // Tools from a server say what they'll do: "Rig · invite hugo@acme.co", "Claude Docs · update".
+  const serverTool = prettyAgentTool(request.title, step?.args);
+  const shownTitle = serverTool ? `${serverTool.label} · ${serverTool.action}` : request.title;
   // Deny quietest, "Always" in between, the one-off allow is the primary.
   const order = (k: string) => (k.startsWith('reject') ? 0 : k === 'allow_always' ? 1 : 2);
   const options = [...request.options].sort((a, b) => order(a.kind) - order(b.kind));
