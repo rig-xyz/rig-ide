@@ -187,11 +187,14 @@ function busyOwnAgents(snapshot: RoomSnapshot, selfUserId: string): AgentKind[] 
 
 /**
  * Sends what the composer understood: the message, then — when the pill
- * named one of your own agents (you tagged it, or the draft read as your
- * answer to it and you kept the pills) — an agent request for it, linked
- * to the message. The message is marked as asked (`meta.asks`) so the
- * relay's dispatcher doesn't run the same ask again. A reply target rides
- * on the message, so your agent's next turn follows its own question.
+ * named one of your own agents (you tagged it, called it by name, or the
+ * draft read as your answer to it, and you kept the pill) — an agent
+ * request for it, linked to the message. The message is marked as asked
+ * (`meta.asks`) so the relay's dispatcher doesn't run the same ask again.
+ * A reply target rides on the message, so your agent's next turn follows
+ * its own question. The request carries no settings: the turn runs in your
+ * agent's persistent session for this space, as its last turn did (only
+ * the @-pill's pickers change them, and they do it on the session itself).
  */
 export async function sendFromComposer(
   source: Pick<RelayRoomSource, 'send' | 'requestOwnAgent'>,

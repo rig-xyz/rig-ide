@@ -660,102 +660,142 @@ describe('Room composer — a plain reply to your own agent', () => {
     host.remove();
   });
 
-  const turn = { id: 'msg-turn', authorId: 'bob', label: 'Your Claude', excerpt: 'Which call did you mean?' };
+  const turn = { id: 'msg-turn', authorId: 'bob', label: 'Your Claude', excerpt: 'Linear it is — say the word and I file it' };
 
   /** Answers like the relay would: sure about "ok not this one", unsure about anything else. */
   function suggester() {
     return vi.fn(async (draft: string): Promise<ComposerSuggestion | null> =>
-      draft.startsWith('ok not this one')
+      /^(hey claude, )?ok not this one/.test(draft)
         ? { agent: 'claude', replyTo: turn, confidence: 0.8 }
         : { agent: 'claude', replyTo: turn, confidence: 0.3 }
     );
   }
 
+  /** The Room's settings api, so any pickers a pill has would show (and load). */
+  const settingsLoad = vi.fn(async () => ({
+    model: { selected: 'default', options: [{ id: 'default', name: 'Opus (1M context)' }] },
+    effort: null,
+    mode: { selected: 'default', options: [{ id: 'default', name: 'Manual' }] },
+  }));
+  const settingsApi: AgentSettingsApi = { load: settingsLoad, change: async () => ({ error: 'not in this test' }) };
+
   async function renderComposer(
     suggestReply: ReturnType<typeof suggester>,
     sent: Array<[string, unknown]> = [],
-    replyTo: typeof turn | null = null
+    replyTo: typeof turn | null = null,
+    agents?: RoomSnapshot['agents']
   ) {
     const snapshot = replayedSnapshot();
-    const own = snapshot.agents.filter((a) => a.owner === 'bob');
+    const own = agents ?? snapshot.agents.filter((a) => a.owner === 'bob');
+    settingsLoad.mockClear();
     await act(async () => {
       root.render(
-        <Composer
-          spaceName={snapshot.name}
-          members={snapshot.members}
-          agents={own}
-          skills={snapshot.skills}
-          onSend={(text, context) => sent.push([text, context])}
-          openDoc="docs/metrics.md"
-          replyTo={replyTo}
-          suggestReply={suggestReply}
-        />
+        <AgentSettingsContext.Provider value={settingsApi}>
+          <Composer
+            spaceName={snapshot.name}
+            members={snapshot.members}
+            agents={own}
+            skills={snapshot.skills}
+            onSend={(text, context) => sent.push([text, context])}
+            openDoc="docs/metrics.md"
+            replyTo={replyTo}
+            suggestReply={suggestReply}
+          />
+        </AgentSettingsContext.Provider>
       );
     });
     return host.querySelector<HTMLTextAreaElement>('textarea')!;
   }
 
+  const ownPill = () => host.querySelector('[data-testid="composer-own-agent-pill"]');
+  const note = () => host.querySelector('[data-testid="composer-own-agent-note"]');
   const agentPill = () => host.querySelector('[data-testid="composer-agent-pill"]');
   const replyPill = () => host.querySelector('[data-testid="composer-reply"]');
+  const enter = (textarea: HTMLTextAreaElement) =>
+    act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+  const dismiss = () =>
+    act(async () => {
+      host
+        .querySelector<HTMLButtonElement>('[data-testid="composer-own-agent-pill"] [data-testid="context-pill-dismiss"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
 
-  it('shows your agent and reply pills once the relay is at least 0.5 sure, and nothing below', async () => {
+  it('shows one pill, your agent and the turn it answers, once the relay is at least 0.5 sure', async () => {
     const suggestReply = suggester();
     const textarea = await renderComposer(suggestReply);
 
     await setTextareaValue(textarea, 'lunch at 1?');
     await vi.waitFor(() => expect(suggestReply).toHaveBeenCalledWith('lunch at 1?'));
     await new Promise((r) => setTimeout(r, 50));
-    expect(agentPill()).toBeNull();
-    expect(replyPill()).toBeNull();
+    expect(host.querySelector('[data-testid="composer-pills"]')).toBeNull();
 
     await setTextareaValue(textarea, 'ok not this one');
-    await vi.waitFor(() => expect(agentPill()?.textContent).toContain('Claude'));
-    expect(replyPill()?.textContent).toContain('Your Claude');
-    expect(replyPill()?.textContent).toContain('Which call did you mean?');
-    // The same pills an @claude + Reply would show, and nothing else (no doc pill for a guess).
+    await vi.waitFor(() => expect(ownPill()?.textContent).toContain('Claude'));
+    expect(ownPill()?.textContent).toContain('Linear it is — say the word and I file it');
+    expect(ownPill()?.querySelector('svg.lucide-corner-up-left')).not.toBeNull();
+    expect(note()?.textContent).toBe('Sending to Claude as a reply · × to send to the room');
+    // One pill: no separate agent or reply pill, no doc pill, no "?" reason.
+    expect(agentPill()).toBeNull();
+    expect(replyPill()).toBeNull();
     expect(host.querySelector('[data-testid="composer-doc-pill"]')).toBeNull();
+    expect(host.querySelectorAll('[data-testid="context-pill-why"]')).toHaveLength(0);
     expect([...host.querySelectorAll('button')].some((b) => b.textContent?.startsWith('Ask Claude'))).toBe(true);
 
     // Rewritten into something else: the guess goes at once, before any new answer.
     await setTextareaValue(textarea, 'lunch?');
-    expect(agentPill()).toBeNull();
+    expect(ownPill()).toBeNull();
+  });
+
+  it('has no model, mode or effort pickers: the reply continues with your agent as it last ran', async () => {
+    const textarea = await renderComposer(suggester());
+    await setTextareaValue(textarea, 'ok not this one');
+    await vi.waitFor(() => expect(ownPill()).not.toBeNull());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(host.querySelector('[data-testid="agent-settings"]')).toBeNull();
+    expect(host.querySelector('[data-testid^="agent-setting-"]')).toBeNull();
+    expect(settingsLoad).not.toHaveBeenCalled();
+  });
+
+  it('an explicit @claude still shows the agent pill with its pickers', async () => {
+    const textarea = await renderComposer(suggester());
+    await setTextareaValue(textarea, '@claude ok not this one');
+    await vi.waitFor(() => expect(agentPill()?.querySelector('[data-testid="agent-setting-model"]')).not.toBeNull());
+    expect(agentPill()?.querySelector('[data-testid="agent-setting-mode"]')?.textContent).toContain('Manual');
+    expect(settingsLoad).toHaveBeenCalled();
+    expect(agentPill()?.textContent).toContain('Claude');
+    expect(ownPill()).toBeNull();
+    expect(note()).toBeNull();
   });
 
   it('Enter sends it to your agent as a reply to its turn', async () => {
     const sent: Array<[string, unknown]> = [];
     const textarea = await renderComposer(suggester(), sent);
     await setTextareaValue(textarea, 'ok not this one');
-    await vi.waitFor(() => expect(agentPill()).not.toBeNull());
-    await act(async () => {
-      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    });
+    await vi.waitFor(() => expect(ownPill()).not.toBeNull());
+    await enter(textarea);
     expect(sent).toEqual([['ok not this one', { replyTo: turn, agent: 'claude', attach: null }]]);
   });
 
-  it('× drops the guess for this draft, and the message goes as plain chat', async () => {
+  it('× drops the guess for this draft, and the message goes to the room as plain chat', async () => {
     const sent: Array<[string, unknown]> = [];
     const suggestReply = suggester();
     const textarea = await renderComposer(suggestReply, sent);
     await setTextareaValue(textarea, 'ok not this one');
-    await vi.waitFor(() => expect(agentPill()).not.toBeNull());
-    await act(async () => {
-      host
-        .querySelector<HTMLButtonElement>('[data-testid="composer-agent-pill"] [data-testid="context-pill-dismiss"]')!
-        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    expect(agentPill()).toBeNull();
-    expect(replyPill()).toBeNull();
+    await vi.waitFor(() => expect(ownPill()).not.toBeNull());
+    await dismiss();
+    expect(ownPill()).toBeNull();
+    expect(note()).toBeNull();
 
     // Typing on doesn't bring it back for this draft.
     const calls = suggestReply.mock.calls.length;
     await setTextareaValue(textarea, 'ok not this one, the other');
     await new Promise((r) => setTimeout(r, 700));
     expect(suggestReply.mock.calls.length).toBe(calls);
-    expect(agentPill()).toBeNull();
+    expect(ownPill()).toBeNull();
 
-    await act(async () => {
-      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    });
+    await enter(textarea);
     expect(sent).toEqual([['ok not this one, the other', { replyTo: undefined, agent: null, attach: null }]]);
   });
 
@@ -768,29 +808,101 @@ describe('Room composer — a plain reply to your own agent', () => {
     expect(suggestReply).not.toHaveBeenCalled();
   });
 
-  it('never asks once you chose a Reply yourself', async () => {
+  it('never asks once you chose a Reply yourself, and keeps that Reply pill', async () => {
     const suggestReply = suggester();
     const textarea = await renderComposer(suggestReply, [], { ...turn, id: 'msg-other', label: 'Alice' });
     await setTextareaValue(textarea, 'ok not this one');
     await new Promise((r) => setTimeout(r, 700));
     expect(suggestReply).not.toHaveBeenCalled();
-    expect(agentPill()).toBeNull();
+    expect(ownPill()).toBeNull();
+    expect(replyPill()?.textContent).toContain('Replying to');
+    expect(replyPill()?.textContent).toContain('Alice');
   });
 
-  it('still shows the pills when the relay answers seconds later, as long as it is the same draft', async () => {
+  it('still shows the pill when the relay answers seconds later, as long as it is the same draft', async () => {
     let answer: (s: ComposerSuggestion) => void = () => {};
     const suggestReply = vi.fn(() => new Promise<ComposerSuggestion | null>((resolve) => (answer = resolve)));
     const textarea = await renderComposer(suggestReply as unknown as ReturnType<typeof suggester>);
     await setTextareaValue(textarea, 'ok not this one');
     await vi.waitFor(() => expect(suggestReply).toHaveBeenCalled());
     await new Promise((r) => setTimeout(r, 300));
-    expect(agentPill()).toBeNull();
+    expect(ownPill()).toBeNull();
     await act(async () => answer({ agent: 'claude', replyTo: turn, confidence: 0.98 }));
-    expect(agentPill()?.textContent).toContain('Claude');
-    expect(replyPill()?.textContent).toContain('Which call did you mean?');
+    expect(ownPill()?.textContent).toContain('Claude');
+    expect(ownPill()?.textContent).toContain('Linear it is');
   });
 
-  it('files the agent request with the reply on the message, marked as asked', async () => {
+  describe('calling your agent by name', () => {
+    const neverSure = () => vi.fn(async (): Promise<ComposerSuggestion | null> => null);
+    const withCodex = () => {
+      const own = replayedSnapshot().agents.filter((a) => a.owner === 'bob');
+      return [...own, { ...own[0]!, agent: 'codex' as const }];
+    };
+
+    it.each([
+      ["hey claude what's up?", 'Claude'],
+      ['Claude, can you check the churn row?', 'Claude'],
+      ['codex: summarize', 'Codex'],
+    ])('"%s" shows the one pill for %s, with no reply target', async (draft, name) => {
+      const textarea = await renderComposer(neverSure(), [], null, withCodex());
+      await setTextareaValue(textarea, draft);
+      expect(ownPill()?.textContent).toContain(name);
+      expect(ownPill()?.querySelector('svg.lucide-corner-up-left')).toBeNull();
+      expect(note()?.textContent).toBe(`Sending to ${name} · × to send to the room`);
+      expect(agentPill()).toBeNull();
+      expect(host.querySelector('[data-testid="agent-settings"]')).toBeNull();
+    });
+
+    it.each([["I asked claude yesterday"], ['claudette is here'], ["claude's answer was off"], ['codex: summarize']])(
+      '"%s" shows nothing (not calling one of your agents)',
+      async (draft) => {
+        // Bob has no Codex of his own here: Alice's isn't his to call.
+        const textarea = await renderComposer(neverSure());
+        await setTextareaValue(textarea, draft);
+        await new Promise((r) => setTimeout(r, 50));
+        expect(ownPill()).toBeNull();
+        expect(host.querySelector('[data-testid="composer-pills"]')).toBeNull();
+      }
+    );
+
+    it('Enter sends to that agent exactly like an @claude send', async () => {
+      const sent: Array<[string, unknown]> = [];
+      const textarea = await renderComposer(neverSure(), sent);
+      await setTextareaValue(textarea, "hey claude what's up?");
+      expect([...host.querySelectorAll('button')].some((b) => b.textContent?.startsWith('Ask Claude'))).toBe(true);
+      await enter(textarea);
+      expect(sent).toEqual([["hey claude what's up?", { replyTo: undefined, agent: 'claude', attach: null }]]);
+    });
+
+    it('× sticks for the rest of the draft', async () => {
+      const sent: Array<[string, unknown]> = [];
+      const textarea = await renderComposer(neverSure(), sent);
+      await setTextareaValue(textarea, 'claude, can you');
+      await dismiss();
+      expect(ownPill()).toBeNull();
+      await setTextareaValue(textarea, 'claude, can you look at this?');
+      expect(ownPill()).toBeNull();
+      await enter(textarea);
+      expect(sent).toEqual([['claude, can you look at this?', { replyTo: undefined, agent: null, attach: null }]]);
+      // A fresh draft starts clean.
+      await setTextareaValue(textarea, 'claude, one more');
+      expect(ownPill()).not.toBeNull();
+    });
+
+    it('a reply the relay is sure of wins over the name (it carries the turn)', async () => {
+      const sent: Array<[string, unknown]> = [];
+      const textarea = await renderComposer(suggester(), sent);
+      await setTextareaValue(textarea, 'hey claude, ok not this one');
+      expect(note()?.textContent).toBe('Sending to Claude · × to send to the room');
+      await vi.waitFor(() => expect(note()?.textContent).toBe('Sending to Claude as a reply · × to send to the room'));
+      expect(ownPill()?.textContent).toContain('Linear it is');
+      expect(host.querySelectorAll('[data-testid="composer-own-agent-pill"]')).toHaveLength(1);
+      await enter(textarea);
+      expect(sent).toEqual([['hey claude, ok not this one', { replyTo: turn, agent: 'claude', attach: null }]]);
+    });
+  });
+
+  it('files the agent request with the reply on the message, marked as asked, and changes no settings', async () => {
     const calls: unknown[] = [];
     const source = {
       send: vi.fn(async (...args: unknown[]) => {
@@ -803,13 +915,15 @@ describe('Room composer — a plain reply to your own agent', () => {
     };
     const wake = vi.fn();
     await sendFromComposer(source, ['claude'], 'ok not this one', { replyTo: turn, agent: 'claude', attach: null }, wake);
+    // Just the message and the request: nothing sets a model, mode or effort,
+    // so the turn runs in your agent's session as its last turn did.
     expect(calls).toEqual([
       ['send', 'ok not this one', turn, 'claude'],
       ['requestOwnAgent', 'claude', 'ok not this one', 'msg-new'],
     ]);
     expect(wake).toHaveBeenCalledOnce();
 
-    // Dropped pills: plain chat, no request, no mark.
+    // Dropped pill: plain chat, no request, no mark.
     calls.length = 0;
     await sendFromComposer(source, ['claude'], 'ok not this one', { replyTo: undefined, agent: null, attach: null }, wake);
     expect(calls).toEqual([['send', 'ok not this one', undefined, undefined]]);

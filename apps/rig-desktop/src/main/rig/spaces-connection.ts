@@ -68,8 +68,8 @@ export type SpaceSkill = { cmd: string; name: string; desc: string };
 export type DraftPreview = { answersTo: string | null; agent: SessionAgent | null; confidence: number };
 
 const NO_DRAFT_PREVIEW: DraftPreview = { answersTo: null, agent: null, confidence: 0 };
-/** The relay gives Jev 1.5s; past this the composer has moved on anyway. */
-const DRAFT_PREVIEW_TIMEOUT_MS = 2500;
+/** The relay gives Jev 2s; past this the composer has moved on anyway. */
+const DRAFT_PREVIEW_TIMEOUT_MS = 3000;
 
 export function parseDraftPreview(raw: unknown): DraftPreview {
   const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null;

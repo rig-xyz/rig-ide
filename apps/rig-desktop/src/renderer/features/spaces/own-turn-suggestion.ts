@@ -6,9 +6,9 @@ import { projectSessionCard } from './projection';
 import type { RoomSnapshot } from './types';
 
 /**
- * The relay's draft preview as the composer's pills: only when it names the
- * session message of a finished turn of YOUR agent that this Room shows
- * (with an answer to reply to). `answersTo` is the relay message id of that
+ * The relay's draft preview as the composer's reply pill: only when it
+ * names the session message of a finished turn of YOUR agent that this Room
+ * shows (with an answer to reply to). `answersTo` is the relay message id of that
  * `kind:'session'` message; the run it names is read from the Room's own
  * snapshot, which for your runs is this computer's full copy (the owner
  * overlay) and for everyone else's the relay's.
