@@ -671,7 +671,11 @@ describe('Room composer — a plain reply to your own agent', () => {
     );
   }
 
-  async function renderComposer(suggestReply: ReturnType<typeof suggester>, sent: Array<[string, unknown]> = []) {
+  async function renderComposer(
+    suggestReply: ReturnType<typeof suggester>,
+    sent: Array<[string, unknown]> = [],
+    replyTo: typeof turn | null = null
+  ) {
     const snapshot = replayedSnapshot();
     const own = snapshot.agents.filter((a) => a.owner === 'bob');
     await act(async () => {
@@ -683,6 +687,7 @@ describe('Room composer — a plain reply to your own agent', () => {
           skills={snapshot.skills}
           onSend={(text, context) => sent.push([text, context])}
           openDoc="docs/metrics.md"
+          replyTo={replyTo}
           suggestReply={suggestReply}
         />
       );
@@ -761,6 +766,28 @@ describe('Room composer — a plain reply to your own agent', () => {
     await setTextareaValue(textarea, 'ok not this one @Alice');
     await new Promise((r) => setTimeout(r, 700));
     expect(suggestReply).not.toHaveBeenCalled();
+  });
+
+  it('never asks once you chose a Reply yourself', async () => {
+    const suggestReply = suggester();
+    const textarea = await renderComposer(suggestReply, [], { ...turn, id: 'msg-other', label: 'Alice' });
+    await setTextareaValue(textarea, 'ok not this one');
+    await new Promise((r) => setTimeout(r, 700));
+    expect(suggestReply).not.toHaveBeenCalled();
+    expect(agentPill()).toBeNull();
+  });
+
+  it('still shows the pills when the relay answers seconds later, as long as it is the same draft', async () => {
+    let answer: (s: ComposerSuggestion) => void = () => {};
+    const suggestReply = vi.fn(() => new Promise<ComposerSuggestion | null>((resolve) => (answer = resolve)));
+    const textarea = await renderComposer(suggestReply as unknown as ReturnType<typeof suggester>);
+    await setTextareaValue(textarea, 'ok not this one');
+    await vi.waitFor(() => expect(suggestReply).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 300));
+    expect(agentPill()).toBeNull();
+    await act(async () => answer({ agent: 'claude', replyTo: turn, confidence: 0.98 }));
+    expect(agentPill()?.textContent).toContain('Claude');
+    expect(replyPill()?.textContent).toContain('Which call did you mean?');
   });
 
   it('files the agent request with the reply on the message, marked as asked', async () => {

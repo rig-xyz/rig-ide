@@ -15,8 +15,7 @@ import { resolveSpaceLink } from '../space-link';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
 import { Composer, type ComposerSendContext, type ComposerSuggestion } from './composer';
-import { AGENT_NAME } from './identity';
-import { excerptOf } from './transcript-items';
+import { ownTurnSuggestion } from '../own-turn-suggestion';
 import { RoomTranscript } from './room-transcript';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
 import { SpaceRail } from './space-rail';
@@ -504,19 +503,7 @@ export function RoomView({
     async (draft: string): Promise<ComposerSuggestion | null> => {
       if (!(source instanceof RelayRoomSource)) return null;
       const preview = await source.previewDraft(draft);
-      const snap = snapshotRef.current;
-      if (!snap || !preview.answersTo || !preview.agent) return null;
-      const message = snap.messages.find((m) => m.id === preview.answersTo);
-      if (message?.meta.kind !== 'session') return null;
-      const meta = snap.sessionMetaByRun[message.meta.runId];
-      if (!meta || meta.owner !== selfUserId || meta.agent !== preview.agent) return null;
-      const answer = projectSessionCard(snap.sessionEventsByRun[meta.id] ?? []).finalAnswer;
-      if (!answer) return null;
-      return {
-        agent: meta.agent,
-        confidence: preview.confidence,
-        replyTo: { id: message.id, authorId: meta.owner, label: `Your ${AGENT_NAME[meta.agent]}`, excerpt: excerptOf(answer) },
-      };
+      return ownTurnSuggestion(snapshotRef.current, selfUserId, preview);
     },
     [source, selfUserId]
   );

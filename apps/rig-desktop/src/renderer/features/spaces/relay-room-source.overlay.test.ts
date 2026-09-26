@@ -2,6 +2,7 @@ import { ok } from '@emdash/shared';
 import type { RoomMessageRow, SessionEventRow, SessionRun } from '@main/rig/spaces/relay-api';
 import type { LocalRunEvent } from '@shared/spaces/room-sees';
 import { describe, expect, it, vi } from 'vitest';
+import { ownTurnSuggestion } from './own-turn-suggestion';
 import { projectSessionCard } from './projection';
 import { RelayRoomSource, type LocalRunsClient, type RealtimeProvider, type RelayRoomClient } from './relay-room-source';
 
@@ -170,6 +171,31 @@ describe('RelayRoomSource: the owner overlay', () => {
     for (const event of LOCAL_EVENTS) push('mine', event);
     await vi.waitFor(() => expect(card('mine').thinking).toBe('Checking the board notes'));
     expect(card('mine').steps[0]?.private).toBeUndefined();
+    source.dispose();
+  });
+
+  it("offers the reply pills for your agent's question shown from this computer's copy", async () => {
+    // Sam's case: the run's card came up with only its first local event;
+    // the question itself arrived as pushed events afterwards.
+    const local = new Map<string, LocalRunEvent[]>([['mine', [{ seq: 1, kind: 'run_privacy', payload: { level: 'steps' } }]]]);
+    const { source, push, card } = setup({ runs: [{ id: 'mine', owner: ME }, { id: 'theirs', owner: 'u2' }], local });
+    source.play();
+    await vi.waitFor(() => expect(source.getSnapshot().sessionEventsByRun.mine?.length).toBe(1));
+    push('mine', { seq: 2, kind: 'agent_message_chunk', payload: { messageId: 'm', content: { type: 'text', text: 'Signal or Beacon' } } });
+    push('mine', { seq: 3, kind: 'agent_message_chunk', payload: { messageId: 'm', content: { type: 'text', text: ' for the metrics doc?' } } });
+    push('mine', { seq: 4, kind: 'turn_ended', payload: { status: 'done' } });
+    await vi.waitFor(() => expect(card('mine').status).toBe('done'));
+
+    const preview = { answersTo: 'msg-mine', agent: 'claude' as const, confidence: 0.98 };
+    expect(ownTurnSuggestion(source.getSnapshot(), ME, preview)).toEqual({
+      agent: 'claude',
+      confidence: 0.98,
+      replyTo: { id: 'msg-mine', authorId: ME, label: 'Your Claude', excerpt: 'Signal or Beacon for the metrics doc?' },
+    });
+    // Never someone else's turn, another of your agents, or a message the Room doesn't show.
+    expect(ownTurnSuggestion(source.getSnapshot(), ME, { ...preview, answersTo: 'msg-theirs' })).toBeNull();
+    expect(ownTurnSuggestion(source.getSnapshot(), ME, { ...preview, agent: 'codex' })).toBeNull();
+    expect(ownTurnSuggestion(source.getSnapshot(), ME, { ...preview, answersTo: 'msg-gone' })).toBeNull();
     source.dispose();
   });
 });
