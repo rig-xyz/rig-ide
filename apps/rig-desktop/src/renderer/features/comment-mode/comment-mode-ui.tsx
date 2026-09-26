@@ -71,10 +71,11 @@ export function WhoIcon({ who, size = 14 }: { who: RunnableAgent | null; size?: 
 }
 
 /**
- * The comments group in a file's or a page's header, built like the top
+ * The comments group in a file's or a page's header, shaped like the top
  * bar's people-and-invite trigger (Dylan, 2026-09-26): what's there on the
- * left (`count`, see `CommentCount`), the action as an accent pill on the
- * right: "Comment ▾" or "Ask Claude ▾" (canvas board 17, option B). The
+ * left (`count`, see `CommentCount`), the action as a quiet pill on the
+ * right: "Comment ▾" or "Ask Claude ▾" (canvas board 17, option B). An
+ * outline around the whole group on hover; no accent, it was too loud. The
  * pill's main part turns comment mode on, its chevron picks who.
  */
 export function CommentModeControl({
@@ -99,33 +100,26 @@ export function CommentModeControl({
   const [open, setOpen] = useState(false);
   const chevronRef = useRef<HTMLButtonElement>(null);
   return (
-    <div className="flex h-7 shrink-0 items-center gap-1" data-testid={testId}>
+    <div
+      className="rounded-chip flex h-8 shrink-0 items-center gap-1 py-0.5 pr-0.5 pl-1 ring-1 ring-transparent transition-shadow duration-150 hover:ring-border-hairline has-[:focus-visible]:ring-border-hairline motion-reduce:transition-none"
+      data-testid={testId}
+    >
       {count}
       <div
         className={cn(
-          'bg-accent text-bg-0 rounded-chip flex h-7 items-center text-xs font-medium transition-shadow duration-150 motion-reduce:transition-none',
-          // On: the same pill, ringed, so it reads as held down.
-          on && 'ring-accent/45 ring-offset-bg-1 ring-2 ring-offset-1'
+          'rounded-chip text-text-primary flex h-7 items-center text-xs font-medium transition-colors duration-150 motion-reduce:transition-none',
+          // On: held down, a neutral edge (accent is for what you're pointing at).
+          on ? 'bg-bg-2 ring-border-strong ring-1 ring-inset' : 'bg-bg-2/70 hover:bg-bg-2'
         )}
       >
         <button
           type="button"
           aria-pressed={on}
           onClick={toggle}
-          className={cn(
-            'flex h-7 items-center gap-1.5 rounded-chip hover:opacity-90',
-            agents.length > 0 ? 'pr-1 pl-2.5' : 'px-2.5'
-          )}
+          className={cn('flex h-7 items-center gap-1.5 rounded-chip', agents.length > 0 ? 'pr-1 pl-2.5' : 'px-2.5')}
           data-testid={testId && `${testId}-toggle`}
         >
-          {who ? (
-            // The agent's own mark on a small disc, so its colors hold up on the accent.
-            <span className="bg-bg-1 grid size-4 shrink-0 place-items-center rounded-full">
-              <WhoIcon who={who} size={11} />
-            </span>
-          ) : (
-            <WhoIcon who={null} size={14} />
-          )}
+          <WhoIcon who={who} size={14} />
           <span className="max-w-32 truncate">{who ? `Ask ${shortAgentName(who.name)}` : 'Comment'}</span>
         </button>
         {agents.length > 0 && (
@@ -136,7 +130,7 @@ export function CommentModeControl({
             aria-expanded={open}
             aria-label="Choose who you're talking to"
             onClick={() => setOpen((v) => !v)}
-            className="flex h-7 items-center rounded-chip pr-2 pl-0.5 opacity-75 hover:opacity-100"
+            className="text-text-muted flex h-7 items-center rounded-chip pr-2 pl-0.5 hover:text-text-primary"
             data-testid={testId && `${testId}-who`}
           >
             <ChevronDown className="size-3" strokeWidth={2} />
