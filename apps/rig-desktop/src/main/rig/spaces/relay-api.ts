@@ -213,8 +213,20 @@ export interface SpacesRelayApi {
   ): Promise<Result<RoomMessageRow[], RelayApiError>>;
   postMessage(
     bindingId: string,
-    input: { body: string; kind?: string; meta?: Record<string, unknown> }
+    input: {
+      body: string;
+      kind?: string;
+      meta?: Record<string, unknown>;
+      /** A comment: its file or page link and anchor, or the thread it replies to. */
+      path?: string;
+      anchor?: Record<string, unknown>;
+      parentId?: string;
+      /** Written by the member's agent (joint authorship: still the member's post). */
+      authorKind?: 'agent';
+    }
   ): Promise<Result<RoomMessageRow, RelayApiError>>;
+  /** Resolve (or reopen) a comment thread. */
+  resolveThread?(bindingId: string, messageId: string, resolved: boolean): Promise<Result<void, RelayApiError>>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -708,6 +720,19 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
             .filter((m): m is RoomMessageRow => m !== null)
         : [];
       return ok(messages);
+    },
+
+    async resolveThread(bindingId, messageId, resolved) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(
+        ctxResult.data,
+        'POST',
+        `/v1/me/bindings/${bindingId}/messages/${encodeURIComponent(messageId)}/resolve`,
+        resolved ? 'resolve the thread' : 'reopen the thread',
+        { resolved }
+      );
+      return result.success ? ok(undefined) : err(result.error);
     },
 
     async postMessage(bindingId, input) {

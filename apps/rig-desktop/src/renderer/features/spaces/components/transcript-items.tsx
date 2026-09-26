@@ -11,13 +11,13 @@ import {
   Sheet,
   UserPlus,
 } from 'lucide-react';
-import { Children, type ReactNode, useEffect, useState } from 'react';
+import { Children, createContext, type ReactNode, useContext, useEffect, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import { formatClock, formatClockShort, formatFull } from '@renderer/lib/time-format';
 import type { ConnectResult } from '@shared/spaces/connectors';
-import { classifyLink, trimUrl, URL_PATTERN, type LinkKind } from '@shared/spaces/links';
+import { canonicalPageUrl, classifyLink, trimUrl, URL_PATTERN, type LinkKind } from '@shared/spaces/links';
 import { BrandLogo, ConnectorMark } from '../logos';
 import type { RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
@@ -46,13 +46,29 @@ const LINK_ICON: Partial<Record<LinkKind, ReactNode>> = {
   github: <Github className="size-3 text-text-secondary" strokeWidth={1.75} />,
 };
 
-/** A link in a message: a chip for the kinds we know ("Claude artifact", "Google Doc", "acme/app"), else the URL itself. Opens in the browser. */
+/**
+ * Opens a web page beside the Room (the Room provides it). Claude artifacts
+ * and Google documents open there, signed in as the member, so the space can
+ * pin comments on them; everything else opens in the browser.
+ */
+export const OpenPageContext = createContext<((url: string, title: string) => void) | null>(null);
+
+const PANEL_PAGE_KINDS: ReadonlySet<LinkKind> = new Set(['claude-artifact', 'google-doc', 'google-sheet', 'google-slides']);
+
+/** `inPanel`: open any page beside the Room (a page with pins on it), not just the kinds above. */
+function useOpenLink(url: string, title: string, inPanel = false): (event: { preventDefault(): void }) => void {
+  const openPage = useContext(OpenPageContext);
+  return (event) => {
+    event.preventDefault();
+    if (openPage && (inPanel || PANEL_PAGE_KINDS.has(classifyLink(url).kind))) openPage(canonicalPageUrl(url), title);
+    else void rpc.app.openExternal(url);
+  };
+}
+
+/** A link in a message: a chip for the kinds we know ("Claude artifact", "Google Doc", "acme/app"), else the URL itself. */
 function MessageLink({ url }: { url: string }) {
   const { kind, label } = classifyLink(url);
-  const open = (event: { preventDefault(): void }) => {
-    event.preventDefault();
-    void rpc.app.openExternal(url);
-  };
+  const open = useOpenLink(url, label);
   if (kind === 'web') {
     return (
       <a href={url} onClick={open} className="break-all underline decoration-dotted underline-offset-2" data-testid="message-link">
@@ -71,6 +87,26 @@ function MessageLink({ url }: { url: string }) {
     >
       {LINK_ICON[kind]}
       <span>{label}</span>
+    </a>
+  );
+}
+
+/** The page a comment is pinned on, as the same chip its link gets in a message. */
+function PageChip({ url }: { url: string }) {
+  const { kind, label } = classifyLink(url);
+  const name = kind === 'web' ? new URL(url).hostname : label;
+  // Its pins are on the page: always beside the Room, whatever the site.
+  const open = useOpenLink(url, name, true);
+  return (
+    <a
+      href={url}
+      onClick={open}
+      title={url}
+      className="border-border-hairline bg-bg-1 hover:bg-bg-2 inline-flex items-center gap-1 rounded-control border px-1.5 align-[-1px] text-xs text-text-primary"
+      data-testid="comment-page-chip"
+    >
+      {LINK_ICON[kind] ?? null}
+      <span>{name}</span>
     </a>
   );
 }
@@ -595,7 +631,8 @@ export function CommentMirrorLine({
       </div>
     );
   }
-  const fileChip = onOpenFile ? (
+  const pageChip = /^https?:\/\//.test(path) ? <PageChip url={path} /> : null;
+  const fileChip = pageChip ?? (onOpenFile ? (
     <button
       type="button"
       onClick={() => onOpenFile(path)}
@@ -606,7 +643,7 @@ export function CommentMirrorLine({
     </button>
   ) : (
     <span className="bg-bg-2 rounded-control px-1 font-mono text-xs text-text-primary">{path}</span>
-  );
+  ));
   return (
     <div className={cn(ROW_GRID, 'group py-1')} data-testid="comment-mirror-line">
       {avatar('md', 'mt-0.5')}

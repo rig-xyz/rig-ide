@@ -1,5 +1,8 @@
 import type { WebContents, WebFrameMain } from 'electron';
-import { frameCall, framePin, type FrameHit, type FrameLocate, type PageAnchor } from './page-frame-scripts';
+import type { PageAnchor, PagePlace } from '@shared/spaces/pages';
+import { frameCall, framePin, type FrameHit, type FrameLocate } from './page-frame-scripts';
+
+export type { PagePlace } from '@shared/spaces/pages';
 
 /**
  * Main-process side of page pins: walks a page's frames across origins,
@@ -36,16 +39,6 @@ export async function hitPage(page: WebContents, x: number, y: number): Promise<
     y = r.y;
   }
   return null;
-}
-
-export interface PagePlace {
-  found: boolean;
-  why?: string;
-  /** The pin's point, and the element's size, in the page's viewport. */
-  x?: number;
-  y?: number;
-  w?: number;
-  h?: number;
 }
 
 /** Where an anchor is now, in the page's viewport. */

@@ -1,9 +1,12 @@
-import { FolderTree, Plus, Rows3, X } from 'lucide-react';
+import { FolderTree, Globe, Plus, Rows3, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { PageView } from '@renderer/features/pages/page-view';
+import { BrandLogo } from '@renderer/features/spaces/logos';
 import { iconFor } from '@renderer/features/workspace/file-tree';
 import { Popover, PopoverMenuItem } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
+import { classifyLink } from '@shared/spaces/links';
 import { type ArtefactTabsState } from './artefact-tabs';
 import { ArtifactView } from './artifact-view';
 import { FocusView } from './focus-view';
@@ -34,6 +37,7 @@ export function ArtefactPane({
   onMoveTab,
   onOpenFile,
   onOpenFocus,
+  selfName,
 }: {
   root: string;
   rootId: string;
@@ -45,6 +49,8 @@ export function ArtefactPane({
   /** Opens (or re-activates) an editor tab; relPath rides along for seen-state. */
   onOpenFile: (absPath: string, relPath: string) => void;
   onOpenFocus: () => void;
+  /** The signed-in member's name, for a page's "as dylan". */
+  selfName?: string | null;
 }) {
   const plusRef = useRef<HTMLButtonElement>(null);
   const filesRef = useRef<HTMLButtonElement>(null);
@@ -119,6 +125,32 @@ export function ArtefactPane({
           className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 py-1.5 [mask-image:linear-gradient(to_right,transparent,black_12px,black_calc(100%-12px),transparent)]"
         >
           {state.tabs.map((tab, index) => {
+            if (tab.kind === 'page') {
+              return (
+                <PaneTab
+                  key={tab.url}
+                  active={index === state.active}
+                  dragging={dragIndex === index}
+                  title={tab.url}
+                  onSelect={() => onActivateTab(index)}
+                  onClose={() => onCloseTab(index)}
+                  onDragStart={() => setDragIndex(index)}
+                  onDragOverTab={() => {
+                    if (dragIndex === null || dragIndex === index) return;
+                    onMoveTab(dragIndex, index);
+                    setDragIndex(index);
+                  }}
+                  onDragEnd={() => setDragIndex(null)}
+                >
+                  {classifyLink(tab.url).kind.startsWith('claude') ? (
+                    <BrandLogo id="claude" size={12} />
+                  ) : (
+                    <Globe className="size-3 shrink-0 text-text-muted" strokeWidth={1.5} />
+                  )}
+                  <span className="max-w-40 truncate">{tab.title}</span>
+                </PaneTab>
+              );
+            }
             const isFocus = tab.kind === 'focus';
             const name = isFocus ? 'Focus' : (tab.path.split('/').pop() ?? tab.path);
             const Icon = isFocus ? Rows3 : iconFor(name);
@@ -201,6 +233,8 @@ export function ArtefactPane({
       <div className="min-h-0 flex-1">
         {active === null ? null : active.kind === 'focus' ? (
           <FocusView root={root} rootId={rootId} bindingId={bindingId} onOpenFile={onOpenFile} />
+        ) : active.kind === 'page' ? (
+          <PageView key={active.url} url={active.url} title={active.title} bindingId={bindingId} selfName={selfName ?? null} />
         ) : (
           <ArtifactView
             key={active.path}

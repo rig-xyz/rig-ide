@@ -5,7 +5,7 @@
  * real state (the session owns the window and the pinned card floats over
  * it), not an empty pane.
  *
- * Two tab kinds: a file (one per path — re-opening an open file activates
+ * Three tab kinds: a web page (one per link), a file (one per path — re-opening an open file activates
  * its existing tab, browser convention) and the focus view (at most one —
  * it is a lens over the whole working set, so a second copy could only
  * disagree with the first).
@@ -15,7 +15,11 @@
  * and the singleton rules are testable without a DOM.
  */
 
-export type ArtefactTab = { kind: 'file'; path: string } | { kind: 'focus' };
+export type ArtefactTab =
+  | { kind: 'file'; path: string }
+  | { kind: 'focus' }
+  /** A web page (a Claude artifact, a Google Doc) opened beside the Room, one per link. */
+  | { kind: 'page'; url: string; title: string };
 
 export type ArtefactTabsState = {
   tabs: readonly ArtefactTab[];
@@ -34,6 +38,13 @@ export function openFileTab(state: ArtefactTabsState, path: string): ArtefactTab
   const existing = state.tabs.findIndex((tab) => tab.kind === 'file' && tab.path === path);
   if (existing !== -1) return { tabs: state.tabs, active: existing };
   return { tabs: [...state.tabs, { kind: 'file', path }], active: state.tabs.length };
+}
+
+/** Open (or re-activate) the tab for a page's link. */
+export function openPageTab(state: ArtefactTabsState, url: string, title: string): ArtefactTabsState {
+  const existing = state.tabs.findIndex((tab) => tab.kind === 'page' && tab.url === url);
+  if (existing !== -1) return { tabs: state.tabs, active: existing };
+  return { tabs: [...state.tabs, { kind: 'page', url, title }], active: state.tabs.length };
 }
 
 /** Open (or re-activate) the single focus tab. */

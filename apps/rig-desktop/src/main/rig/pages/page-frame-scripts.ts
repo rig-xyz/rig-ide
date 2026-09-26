@@ -13,26 +13,9 @@
  * Proven on the real canvas in the pins spike (rig-experiments-spaces/artifact-pins).
  */
 
-export interface PageAnchorHop {
-  /** Which same-origin frame (a canvas board): its words, then its position. */
-  index: number;
-  sig: string | null;
-}
+import type { PageAnchor } from '@shared/spaces/pages';
 
-/** Where a pin points, found again after reloads, pan/zoom, edits and reordering. */
-export interface PageAnchor {
-  /** Cross-origin frames to go through first (origin + index among same-origin siblings). */
-  xo: { origin: string; index: number }[];
-  hops: PageAnchorHop[];
-  /** CSS path within the innermost document. */
-  path: string;
-  tag: string;
-  /** The element's text (trimmed, ≤160 chars); empty for a chart bar or an image. */
-  text: string;
-  /** Where in the element the pin sits, 0..1. */
-  fx: number;
-  fy: number;
-}
+export type { PageAnchor, PageAnchorHop } from '@shared/spaces/pages';
 
 export type FrameHit =
   | (Omit<PageAnchor, 'xo'> & { crossOrigin?: undefined })

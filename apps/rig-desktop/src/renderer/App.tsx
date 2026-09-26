@@ -10,6 +10,7 @@ import {
   moveTab,
   NO_TABS,
   openFileTab,
+  openPageTab,
   openFocusTab,
   type ArtefactTabsState,
 } from '@renderer/features/artifact/artefact-tabs';
@@ -795,6 +796,18 @@ export function App() {
     [boundRoot, boundBindingId]
   );
 
+  /** A web page (a Claude artifact, a Google Doc) as a tab beside the Room. */
+  const openPage = useCallback((url: string, title: string) => {
+    setRigLayout((current) => (current === 'chat' ? 'split' : current));
+    setFocusedRigPane('artifact');
+    setArtefact((current) => openPageTab(current, url, title));
+  }, []);
+  // Dev builds only: lets the sandbox open any page (e.g. a local stand-in canvas) as a page tab.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    (window as unknown as { __rigOpenPage?: typeof openPage }).__rigOpenPage = openPage;
+  }, [openPage]);
+
   // Onboarding flow round: once the just-created rig actually binds, open
   // its landing doc the same way any other file-open does (Preview is
   // already the default for markdown, `preview-mode-memory.ts`) — this is
@@ -842,6 +855,13 @@ export function App() {
         // Agents report the files they changed by absolute path; doc comments by relative.
         openFile(path.startsWith('/') ? path : `${target.root.replace(/\/+$/, '')}/${path}`);
       }}
+      onOpenPage={
+        inSpace
+          ? (url, title) => {
+              openPage(url, title);
+            }
+          : undefined
+      }
       // The space panel IS the rig's pinned card (a space is a rig binding),
       // plus the Room's agent rows. Full-width layout only, as for rigs.
       renderPanel={

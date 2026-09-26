@@ -58,6 +58,7 @@ import { rigSeenStateController } from './rig/seen-state';
 import { rigSessionsController } from './rig/sessions';
 import { rigSettingsController } from './rig/settings-instance';
 import { rigConnectorsController } from './rig/connectors/connections-instance';
+import { rigPagesController } from './rig/pages/pages-controller';
 import { rigSpacesConnectionController } from './rig/spaces-connection';
 import { rigSpacesDispatchController } from './rig/spaces/dispatch-controller-instance';
 import { rigShareLinksController } from './rig/share-links';
@@ -161,6 +162,9 @@ export const rpcRouter = createRPCRouter({
     // connect/cancel/disconnect. Tokens never cross to the renderer; see
     // `rig/connectors/connections.ts`.
     connectors: rigConnectorsController,
+    // Web pages opened beside the Room: pins placed and found on the panel's
+    // page, and a page's comment threads — see `pages/pages-controller.ts`.
+    pages: rigPagesController,
     // Public share links (mint/list/revoke) for the currently-open file —
     // its own key rather than folded into `comments` (own resource, own
     // error shape: 403 for a viewer-only member, 404 for an untracked

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RoomMessageRow } from '../spaces/relay-api';
-import { pinsFromRows } from './page-pins';
+import { pinsFromRows, threadsFromRows } from './page-pins';
 
 const place = { xo: [], hops: [{ index: 2, sig: 'By quarter' }], path: 'body>td:nth-of-type(1)', tag: 'td', text: '398', fx: 0.5, fy: 0.5 };
 const row = (over: Partial<RoomMessageRow>): RoomMessageRow => ({
@@ -33,5 +33,20 @@ describe('pinsFromRows', () => {
     ]);
     expect(pins[1]!.anchor).toEqual(place);
     expect(pins[1]!.quote).toBe('398');
+  });
+});
+
+describe('threadsFromRows', () => {
+  it('gathers each pin with its replies in order, naming the agent on agent replies', () => {
+    const threads = threadsFromRows([
+      row({ id: 'p', seq: 1, body: '@codex does the chart match the table?' }),
+      row({ id: 'r2', seq: 4, parentId: 'p', body: 'Thanks', author: { userId: 'u2', name: 'janis', avatarUrl: null, kind: 'user' } }),
+      row({ id: 'r1', seq: 3, parentId: 'p', body: 'No: +28%, not +41%.', meta: { agent: 'codex' }, author: { userId: 'u1', name: 'dylan', avatarUrl: null, kind: 'agent' } }),
+    ]);
+    expect(threads).toHaveLength(1);
+    expect(threads[0]!.replies.map((r) => [r.id, r.agent, r.authorName])).toEqual([
+      ['r1', 'codex', 'dylan'],
+      ['r2', null, 'janis'],
+    ]);
   });
 });

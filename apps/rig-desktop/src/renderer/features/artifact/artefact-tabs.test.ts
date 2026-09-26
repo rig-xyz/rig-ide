@@ -8,6 +8,7 @@ import {
   NO_TABS,
   openFileTab,
   openFocusTab,
+  openPageTab,
   type ArtefactTabsState,
 } from './artefact-tabs';
 
@@ -109,5 +110,20 @@ describe('closeActiveTab', () => {
     const state = closeActiveTab(open('/rig/a.md', '/rig/b.md'));
     expect(state.tabs).toEqual([{ kind: 'file', path: '/rig/a.md' }]);
     expect(state.active).toBe(0);
+  });
+});
+
+describe('openPageTab', () => {
+  it('opens one tab per page link, beside file tabs, and re-activates it when opened again', () => {
+    let state = openFileTab(NO_TABS, '/rigs/one/plan.md');
+    state = openPageTab(state, 'https://claude.ai/artifact/abc', 'Claude artifact');
+    expect(state.tabs).toEqual([
+      { kind: 'file', path: '/rigs/one/plan.md' },
+      { kind: 'page', url: 'https://claude.ai/artifact/abc', title: 'Claude artifact' },
+    ]);
+    state = activateTab(state, 0);
+    state = openPageTab(state, 'https://claude.ai/artifact/abc', 'Claude artifact');
+    expect(state).toMatchObject({ active: 1 });
+    expect(state.tabs).toHaveLength(2);
   });
 });

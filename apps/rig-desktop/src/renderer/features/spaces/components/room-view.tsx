@@ -17,6 +17,7 @@ import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
 import { Composer, type ComposerSendContext, type ComposerSuggestion } from './composer';
 import { ownTurnSuggestion } from '../own-turn-suggestion';
 import { RoomTranscript } from './room-transcript';
+import { OpenPageContext } from './transcript-items';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
 import { SpaceRail } from './space-rail';
 import { AgentSettingsContext, type AgentSettingsApi } from './agent-settings';
@@ -215,6 +216,7 @@ export function RoomView({
   bindingId,
   spaceName,
   onOpenFile,
+  onOpenPage,
   openDoc = null,
   renderPanel,
   collapsed = false,
@@ -224,6 +226,8 @@ export function RoomView({
   spaceName: string;
   /** Opens a space file (relative path) in the editor. */
   onOpenFile?: (relPath: string) => void;
+  /** Opens a web page (a Claude artifact, a Google Doc) beside the Room. */
+  onOpenPage?: (url: string, title: string) => void;
   /** The doc open beside the Room (its path in the space), if any. */
   openDoc?: string | null;
   /** Renders the live space panel (the rig's pinned card), given the Room's own rows to add to it. */
@@ -662,6 +666,7 @@ export function RoomView({
               onPrefill={(text) => setPrefill({ text, nonce: Date.now() })}
             />
           ) : (
+          <OpenPageContext.Provider value={onOpenPage ?? null}>
           <RoomTranscript
             snapshot={snapshot}
             ownId={selfUserId}
@@ -675,6 +680,7 @@ export function RoomView({
             globalSetup={globalSetup}
             onHideDetails={handleHideDetails}
           />
+          </OpenPageContext.Provider>
           )}
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
             {/* No live socket: the source polls instead, so nothing is
