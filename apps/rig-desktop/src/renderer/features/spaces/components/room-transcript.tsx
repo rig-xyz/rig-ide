@@ -555,16 +555,23 @@ export function RoomTranscript({
       </div>
     </motion.div>
       <ConversationMap scrollRef={scrollRef} contentRef={contentRef} entries={mapEntries} onJump={jumpTo} />
-      {!pinned && (unseen > 0 || agentWorking) && (
+      {/* Whenever you've scrolled up (Dylan, 2026-09-26): a round down arrow
+          when nothing's new, the labelled pill when something is. */}
+      {!pinned && (
         <button
           type="button"
           onClick={() => pinToBottom('smooth')}
-          className="card-pop-in border-border-hairline bg-bg-1 shadow-float hover:bg-bg-2 absolute bottom-3 left-1/2 flex h-8 -translate-x-1/2 items-center gap-2 rounded-chip border px-3 text-xs text-text-primary transition-colors"
+          aria-label="Go to the latest message"
+          title="Go to the latest message"
+          className={cn(
+            'card-pop-in border-border-hairline bg-bg-1 shadow-float hover:bg-bg-2 absolute bottom-3 left-1/2 flex h-8 -translate-x-1/2 items-center rounded-chip border text-xs text-text-primary transition-colors',
+            unseen > 0 || agentWorking ? 'gap-2 px-3' : 'w-8 justify-center'
+          )}
           data-testid="jump-to-latest"
         >
           {agentWorking && <DotMatrix state="thinking" size="sm" />}
-          {unseen > 0 ? `${unseen} new ${unseen === 1 ? 'message' : 'messages'}` : 'Jump to latest'}
-          <ArrowDown className="size-3.5 text-text-muted" strokeWidth={1.5} />
+          {unseen > 0 ? `${unseen} new ${unseen === 1 ? 'message' : 'messages'}` : agentWorking ? 'Jump to latest' : null}
+          <ArrowDown className={cn('size-3.5', unseen > 0 || agentWorking ? 'text-text-muted' : 'text-text-secondary')} strokeWidth={1.5} />
         </button>
       )}
     </div>
