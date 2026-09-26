@@ -34,30 +34,48 @@ export function CommentCount({
   onToggleResolved: () => void;
 }) {
   if (open === 0 && resolved === 0) return null;
-  return (
-    <span className="text-text-muted flex h-7 items-center gap-1 px-1 text-xs" data-testid="comment-count">
-      <MessageCircle className="size-3.5 shrink-0" strokeWidth={1.5} />
+  const label = (
+    <>
+      {/* Filled while the resolved threads are shown: the whole count is the
+          toggle, so its state lives on the icon, not in a box around a word. */}
+      <MessageCircle
+        className={cn('size-3.5 shrink-0 transition-colors', showResolved && 'fill-current')}
+        strokeWidth={1.5}
+      />
       {open > 0 && (
         <span className="text-text-secondary tabular-nums" title={`${open} open`}>
           {open}
         </span>
       )}
       {resolved > 0 && (
-        <button
-          type="button"
-          onClick={onToggleResolved}
-          aria-pressed={showResolved}
-          className={cn(
-            'rounded-control px-1 transition-colors hover:text-text-primary',
-            showResolved && 'bg-bg-2 text-text-primary'
-          )}
-          data-testid="resolved-toggle"
-        >
+        <span>
           {open > 0 ? '· ' : ''}
           {resolved} resolved
-        </button>
+        </span>
       )}
-    </span>
+    </>
+  );
+  if (resolved === 0) {
+    return (
+      <span className="text-text-muted flex h-7 items-center gap-1 px-1.5 text-xs" data-testid="comment-count">
+        {label}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onToggleResolved}
+      aria-pressed={showResolved}
+      title={showResolved ? 'Hide resolved comments' : 'Show resolved comments'}
+      className={cn(
+        'flex h-7 items-center gap-1 rounded-chip px-1.5 text-xs transition-colors hover:text-text-primary',
+        showResolved ? 'text-text-primary' : 'text-text-muted'
+      )}
+      data-testid="comment-count"
+    >
+      {label}
+    </button>
   );
 }
 
