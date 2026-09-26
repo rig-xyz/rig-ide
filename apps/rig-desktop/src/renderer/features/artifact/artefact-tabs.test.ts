@@ -9,6 +9,7 @@ import {
   openFileTab,
   openFocusTab,
   openPageTab,
+  renamePageTab,
   type ArtefactTabsState,
 } from './artefact-tabs';
 
@@ -125,5 +126,16 @@ describe('openPageTab', () => {
     state = openPageTab(state, 'https://claude.ai/artifact/abc', 'Claude artifact');
     expect(state).toMatchObject({ active: 1 });
     expect(state.tabs).toHaveLength(2);
+  });
+});
+
+describe('renamePageTab', () => {
+  it("takes the page's own title, leaving everything else as it was", () => {
+    const state = openPageTab(openFileTab(NO_TABS, '/rigs/one/a.md'), 'https://claude.ai/artifact/abc', 'Claude artifact');
+    const renamed = renamePageTab(state, 'https://claude.ai/artifact/abc', '  Pilot deck ');
+    expect(renamed.tabs[1]).toEqual({ kind: 'page', url: 'https://claude.ai/artifact/abc', title: 'Pilot deck' });
+    expect(renamed.active).toBe(state.active);
+    expect(renamePageTab(renamed, 'https://claude.ai/artifact/abc', '')).toBe(renamed);
+    expect(renamePageTab(renamed, 'https://other.example', 'x')).toBe(renamed);
   });
 });

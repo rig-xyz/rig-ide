@@ -7,8 +7,9 @@ import { Button } from '@renderer/lib/ui/button';
 import { Textarea } from '@renderer/lib/ui/textarea';
 import { cn } from '@renderer/lib/utils';
 import { formatRelative } from '@renderer/lib/time-format';
-import { RIG_PAGES_PARTITION } from '@shared/spaces/links';
+import { classifyLink, RIG_PAGES_PARTITION } from '@shared/spaces/links';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
+import { FirstOpen, useSignInStatus, type SignInSite } from './sign-in';
 
 /**
  * A web page (a Claude artifact, a Google Doc) open beside the Room, as the
@@ -32,6 +33,11 @@ function mentionedAgent(body: string): 'claude' | 'codex' | null {
 }
 const THREADS_EVERY_MS = 4000;
 
+function siteOf(url: string): SignInSite | null {
+  const kind = classifyLink(url).kind;
+  return kind.startsWith('claude') ? 'claude' : kind.startsWith('google') ? 'google' : null;
+}
+
 function hostOf(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, '');
@@ -44,16 +50,19 @@ export function PageView({
   url,
   title,
   bindingId,
-  selfName,
   onTitle,
 }: {
   url: string;
   title: string;
   bindingId: string;
-  /** How the member is named on the page's header ("as dylan"). */
-  selfName: string | null;
+  /** The page's own title, once it loads: the tab takes it. */
   onTitle?: (title: string) => void;
 }) {
+  const me = useQuery({ queryKey: ['rig', 'account', 'me'], queryFn: () => rpc.rig.account.me() });
+  const selfName = me.data?.success ? (me.data.data.name ?? me.data.data.email?.split('@')[0] ?? null) : null;
+  // Held in a ref: a new callback from the parent must not recreate the page.
+  const onTitleRef = useRef(onTitle);
+  onTitleRef.current = onTitle;
   const hostRef = useRef<HTMLDivElement>(null);
   const [stageWidth, setStageWidth] = useState(800);
   useEffect(() => {
@@ -68,6 +77,14 @@ export function PageView({
   const [openId, setOpenId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [places, setPlaces] = useState<Record<string, Place>>({});
+  const [showResolved, setShowResolved] = useState(false);
+  const [firstOpenDone, setFirstOpenDone] = useState(false);
+  const viewRef = useRef<WebviewTag | null>(null);
+  const site = siteOf(url);
+  const signIn = useSignInStatus();
+  const needsSignIn = site !== null && !firstOpenDone && (signIn.data === undefined || !signIn.data[site]);
+  const needsSignInRef = useRef(needsSignIn);
+  needsSignInRef.current = needsSignIn;
   const browserId = useMemo(() => `rig-page-${Math.random().toString(36).slice(2)}`, []);
   const queryClient = useQueryClient();
 
@@ -80,6 +97,7 @@ export function PageView({
     void rpc.browser.registerSession({ browserId, partition: RIG_PAGES_PARTITION }).then(() => {
       if (cancelled || !hostRef.current) return;
       view = document.createElement('webview') as WebviewTag;
+      viewRef.current = view;
       view.setAttribute('partition', RIG_PAGES_PARTITION);
       view.setAttribute('src', url);
       view.className = 'absolute inset-0 size-full';
@@ -88,7 +106,10 @@ export function PageView({
         setWebContentsId(id);
         void rpc.browser.bindWebContents({ browserId, webContentsId: id });
       });
-      view.addEventListener('page-title-updated', (event) => onTitle?.((event as unknown as { title: string }).title));
+      view.addEventListener('page-title-updated', (event) => {
+        // Behind the first-open screen the page is its site's sign-in page: not a title for the tab.
+        if (!needsSignInRef.current) onTitleRef.current?.((event as unknown as { title: string }).title);
+      });
       hostRef.current.appendChild(view);
     });
     return () => {
@@ -97,7 +118,7 @@ export function PageView({
       void rpc.browser.unregisterSession(browserId);
     };
     // A new link is a new tab (keyed by url), so url never changes here.
-  }, [browserId, url, onTitle]);
+  }, [browserId, url]);
 
   const threadsKey = ['page-threads', bindingId, url];
   const threads = useQuery({
@@ -108,7 +129,8 @@ export function PageView({
     },
     refetchInterval: THREADS_EVERY_MS,
   });
-  const open = (threads.data ?? []).filter((t) => !t.resolved);
+  const resolvedCount = (threads.data ?? []).filter((t) => t.resolved).length;
+  const open = (threads.data ?? []).filter((t) => showResolved || !t.resolved);
   const refresh = () => queryClient.invalidateQueries({ queryKey: threadsKey });
 
   // Pins follow their elements as the page scrolls, zooms or changes.
@@ -160,6 +182,19 @@ export function PageView({
           {selfName ? ` · as ${selfName}` : ''}
         </span>
         <span className="ml-auto flex shrink-0 items-center gap-1">
+          {resolvedCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowResolved((on) => !on)}
+              aria-pressed={showResolved}
+              className={cn(
+                'flex h-7 items-center rounded-control px-2 text-xs transition-colors',
+                showResolved ? 'bg-bg-2 text-text-primary' : 'hover:bg-bg-2 text-text-muted'
+              )}
+            >
+              {resolvedCount} resolved
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -189,6 +224,16 @@ export function PageView({
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <div ref={hostRef} className="absolute inset-0" />
+        {needsSignIn && site && signIn.data !== undefined && (
+          <FirstOpen
+            site={site}
+            onDone={() => {
+              setFirstOpenDone(true);
+              viewRef.current?.reload();
+            }}
+            onOpenInBrowser={() => void rpc.app.openExternal(url)}
+          />
+        )}
         {commenting && (
           <div className="absolute inset-0 cursor-crosshair" onClick={(event) => void pinAt(event)} data-testid="page-comment-layer" />
         )}
@@ -202,7 +247,8 @@ export function PageView({
               onClick={() => setOpenId((current) => (current === t.id ? null : t.id))}
               style={{ left: p.x, top: p.y }}
               className={cn(
-                'bg-accent absolute -mt-5 -ml-0.5 grid size-5 place-items-center rounded-[999px_999px_999px_3px] text-[10px] font-bold text-white shadow-[0_0_0_2px_white,0_3px_8px_rgba(20,40,90,.25)] transition-transform',
+                'absolute -mt-5 -ml-0.5 grid size-5 place-items-center rounded-[999px_999px_999px_3px] text-[10px] font-bold text-white shadow-[0_0_0_2px_white,0_3px_8px_rgba(20,40,90,.25)] transition-transform',
+                t.resolved ? 'bg-text-muted' : 'bg-accent',
                 openId === t.id && 'scale-110'
               )}
               data-testid="page-pin"
@@ -223,7 +269,7 @@ export function PageView({
               await refresh();
             }}
             onResolve={async () => {
-              await rpc.rig.pages.resolve({ bindingId, id: openThread.id, resolved: true });
+              await rpc.rig.pages.resolve({ bindingId, id: openThread.id, resolved: !openThread.resolved });
               setOpenId(null);
               await refresh();
             }}
@@ -318,7 +364,7 @@ function ThreadCard({
       />
       <div className="flex justify-end">
         <button type="button" onClick={() => void onResolve()} className="text-xs text-text-muted hover:text-text-primary">
-          Resolve
+          {thread.resolved ? 'Reopen' : 'Resolve'}
         </button>
       </div>
     </div>

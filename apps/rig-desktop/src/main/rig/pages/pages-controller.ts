@@ -6,6 +6,7 @@ import { log } from '@main/lib/logger';
 import { runCommentTurnInRoom } from '../spaces/dispatch-controller-instance';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
 import { pagesSession } from './agent-pages';
+import { importChromeSignIn, type ChromeSignInResult, type SignInSite } from './chrome-sign-in';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { hitPage, locateOnPage } from './page-frames';
 import { threadsFromRows } from './page-pins';
@@ -52,7 +53,32 @@ export function pinHiddenContext(url: string, thread: Pick<PageThread, 'n' | 'qu
 
 const AGENT_LABEL = { claude: 'claude-code', codex: 'codex' } as const;
 
+const SITE_DOMAINS: Record<SignInSite, string> = { claude: 'claude.ai', google: 'google.com' };
+
+/** Whether the pages profile holds any cookie for a site (names only are looked at, never values). */
+async function signedIn(site: SignInSite): Promise<boolean> {
+  return (await pagesSession().cookies.get({ domain: SITE_DOMAINS[site] })).length > 0;
+}
+
 export const rigPagesController = createRPCController({
+  /** Which sites pages open signed in to. */
+  signInStatus: async (): Promise<Record<SignInSite, boolean>> => ({ claude: await signedIn('claude'), google: await signedIn('google') }),
+
+  /** "Use Chrome sign-in": the person's click; macOS asks them before anything is read. */
+  signIn: ({ site }: { site: SignInSite }): Promise<ChromeSignInResult> => {
+    const ses = pagesSession();
+    return importChromeSignIn(site, (cookie) => ses.cookies.set(cookie));
+  },
+
+  /** Forget a site's sign-in in the pages profile (Chrome is untouched). */
+  signOut: async ({ site }: { site: SignInSite }): Promise<void> => {
+    const ses = pagesSession();
+    for (const cookie of await ses.cookies.get({ domain: SITE_DOMAINS[site] })) {
+      const host = (cookie.domain ?? SITE_DOMAINS[site]).replace(/^\./, '');
+      await ses.cookies.remove(`https://${host}${cookie.path ?? '/'}`, cookie.name).catch(() => {});
+    }
+  },
+
   hit: async ({ webContentsId, x, y }: { webContentsId: number; x: number; y: number }): Promise<Result<{ anchor: PageAnchor; quote: string } | null, Failure>> => {
     const page = pageContents(webContentsId);
     if (!page) return err({ message: 'That page is no longer open.' });

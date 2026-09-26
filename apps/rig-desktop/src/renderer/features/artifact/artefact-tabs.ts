@@ -47,6 +47,16 @@ export function openPageTab(state: ArtefactTabsState, url: string, title: string
   return { tabs: [...state.tabs, { kind: 'page', url, title }], active: state.tabs.length };
 }
 
+/** A page's tab takes the page's own title once it loads. */
+export function renamePageTab(state: ArtefactTabsState, url: string, title: string): ArtefactTabsState {
+  const index = state.tabs.findIndex((tab) => tab.kind === 'page' && tab.url === url);
+  const tab = state.tabs[index];
+  if (!tab || tab.kind !== 'page' || !title.trim() || tab.title === title) return state;
+  const tabs = [...state.tabs];
+  tabs[index] = { ...tab, title: title.trim() };
+  return { tabs, active: state.active };
+}
+
 /** Open (or re-activate) the single focus tab. */
 export function openFocusTab(state: ArtefactTabsState): ArtefactTabsState {
   const existing = state.tabs.findIndex((tab) => tab.kind === 'focus');

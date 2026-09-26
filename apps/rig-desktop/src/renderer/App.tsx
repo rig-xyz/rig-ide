@@ -11,6 +11,7 @@ import {
   NO_TABS,
   openFileTab,
   openPageTab,
+  renamePageTab,
   openFocusTab,
   type ArtefactTabsState,
 } from '@renderer/features/artifact/artefact-tabs';
@@ -1278,6 +1279,7 @@ export function App() {
                   onMoveTab={(from, to) => setArtefact((current) => moveTab(current, from, to))}
                   onOpenFile={(absPath) => openFile(absPath)}
                   onOpenFocus={openFocus}
+                  onPageTitle={(url, title) => setArtefact((current) => renamePageTab(current, url, title))}
                 />
               );
               return (

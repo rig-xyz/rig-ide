@@ -5,6 +5,7 @@ import { AgentAuthTrailing } from '@renderer/features/agents/agent-auth-trailing
 import { AgentSignInDialog } from '@renderer/features/agents/agent-sign-in-dialog';
 import { useAgentAuthProbe } from '@renderer/features/agents/use-agent-auth-probe';
 import { useAgentIdentities, type AgentIdentity } from '@renderer/features/chat/use-runnable-agents';
+import { SignInRows } from '@renderer/features/pages/sign-in';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { deriveCliVersionRow } from '@renderer/features/shell/cli-versions';
 import { deriveUpdateAction, deriveUpdateStatusLine } from '@renderer/features/shell/update-status';
@@ -88,6 +89,9 @@ export function SettingsModal({
           </Section>
           <Section label="Rig folder">
             <RigHomeRow />
+          </Section>
+          <Section label="Sign-ins">
+            <SignInRows />
           </Section>
           <Section label="Privacy">
             <TelemetryRow />

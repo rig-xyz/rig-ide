@@ -37,7 +37,7 @@ export function ArtefactPane({
   onMoveTab,
   onOpenFile,
   onOpenFocus,
-  selfName,
+  onPageTitle,
 }: {
   root: string;
   rootId: string;
@@ -49,8 +49,8 @@ export function ArtefactPane({
   /** Opens (or re-activates) an editor tab; relPath rides along for seen-state. */
   onOpenFile: (absPath: string, relPath: string) => void;
   onOpenFocus: () => void;
-  /** The signed-in member's name, for a page's "as dylan". */
-  selfName?: string | null;
+  /** A page tab's page loaded with this title. */
+  onPageTitle?: (url: string, title: string) => void;
 }) {
   const plusRef = useRef<HTMLButtonElement>(null);
   const filesRef = useRef<HTMLButtonElement>(null);
@@ -234,7 +234,13 @@ export function ArtefactPane({
         {active === null ? null : active.kind === 'focus' ? (
           <FocusView root={root} rootId={rootId} bindingId={bindingId} onOpenFile={onOpenFile} />
         ) : active.kind === 'page' ? (
-          <PageView key={active.url} url={active.url} title={active.title} bindingId={bindingId} selfName={selfName ?? null} />
+          <PageView
+            key={active.url}
+            url={active.url}
+            title={active.title}
+            bindingId={bindingId}
+            onTitle={(title) => onPageTitle?.(active.url, title)}
+          />
         ) : (
           <ArtifactView
             key={active.path}
