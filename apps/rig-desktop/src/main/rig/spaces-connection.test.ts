@@ -70,6 +70,31 @@ describe('rigSpacesConnectionController', () => {
     expect(whoami).not.toHaveBeenCalled();
   });
 
+  it('previewDraft posts the draft to the relay and reads anything unclear as "none"', async () => {
+    resolveContext.mockResolvedValue({ url: 'https://relay.test/', token: 'pat' });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ answersTo: 'm9', agent: 'claude', confidence: 0.8 })));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { rigSpacesConnectionController, parseDraftPreview } = await import('./spaces-connection');
+      const result = await rigSpacesConnectionController.previewDraft({ bindingId: 'b1', text: 'ok not this one' });
+      expect(result).toEqual({ answersTo: 'm9', agent: 'claude', confidence: 0.8 });
+      const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      expect(url).toBe('https://relay.test/v1/me/bindings/b1/draft-preview');
+      expect(JSON.parse(String(init.body))).toEqual({ text: 'ok not this one' });
+
+      fetchMock.mockImplementationOnce(async () => new Response('{}', { status: 429 }));
+      expect(await rigSpacesConnectionController.previewDraft({ bindingId: 'b1', text: 'x' })).toEqual({
+        answersTo: null,
+        agent: null,
+        confidence: 0,
+      });
+      expect(parseDraftPreview({ answersTo: 'm9', agent: 'gemini', confidence: 1 }).answersTo).toBeNull();
+      expect(parseDraftPreview({ answersTo: null, agent: null, confidence: 0 }).answersTo).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('mintRealtimeTicket delegates to the relay client for the given binding', async () => {
     mintRealtimeTicket.mockResolvedValue(ok({ ticket: 'rrtk_abc', expiresAt: '2026-09-23T00:10:00Z' }));
 

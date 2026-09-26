@@ -60,6 +60,25 @@ const api = createHttpSpacesRelayApi();
 export type SpaceSkill = { cmd: string; name: string; desc: string };
 
 /**
+ * The relay's draft preview (`POST /v1/me/bindings/:id/draft-preview`):
+ * whether the message being typed answers one of your own agent's recent
+ * turns (`answersTo`, a room message id), and how sure Jev is. Anything
+ * short of a clear answer is "none".
+ */
+export type DraftPreview = { answersTo: string | null; agent: SessionAgent | null; confidence: number };
+
+const NO_DRAFT_PREVIEW: DraftPreview = { answersTo: null, agent: null, confidence: 0 };
+/** The relay gives Jev 1.5s; past this the composer has moved on anyway. */
+const DRAFT_PREVIEW_TIMEOUT_MS = 2500;
+
+export function parseDraftPreview(raw: unknown): DraftPreview {
+  const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null;
+  if (!r || typeof r.answersTo !== 'string' || (r.agent !== 'claude' && r.agent !== 'codex')) return NO_DRAFT_PREVIEW;
+  const confidence = typeof r.confidence === 'number' && Number.isFinite(r.confidence) ? r.confidence : 0;
+  return { answersTo: r.answersTo, agent: r.agent, confidence };
+}
+
+/**
  * The skills the space itself ships (`.claude/skills/<name>/SKILL.md` in its
  * folder on this device): shared with every member because they're files in
  * the space, and what the room agent runs with. Reads only that folder.
@@ -150,6 +169,30 @@ export const rigSpacesConnectionController = createRPCController({
     meta?: Record<string, unknown>;
   }): Promise<Result<RoomMessageRow, RelayApiError>> =>
     api.postMessage(input.bindingId, { body: input.body, kind: input.kind, meta: input.meta }),
+
+  /** See `DraftPreview`. Never fails: no account, a slow or failed call, all read as "none". */
+  previewDraft: async (input: { bindingId: string; text: string }): Promise<DraftPreview> => {
+    const ctx = await resolveContext();
+    if (isError(ctx)) return NO_DRAFT_PREVIEW;
+    try {
+      const response = await fetch(
+        `${ctx.url.replace(/\/+$/, '')}/v1/me/bindings/${encodeURIComponent(input.bindingId)}/draft-preview`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${ctx.token}`,
+            accept: 'application/json',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ text: input.text }),
+          signal: AbortSignal.timeout(DRAFT_PREVIEW_TIMEOUT_MS),
+        }
+      );
+      return response.ok ? parseDraftPreview(await response.json()) : NO_DRAFT_PREVIEW;
+    } catch {
+      return NO_DRAFT_PREVIEW;
+    }
+  },
 
   /** Files an agent request targeting the SENDER's own agent — see `RelayRoomSource.requestOwnAgent`'s own doc comment for why it's never a teammate's. */
   requestOwnAgent: async (input: {

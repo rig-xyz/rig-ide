@@ -9,6 +9,10 @@ import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 
 const TYPING_IDLE_MS = 4000;
 const DRAFT_PREFIX = 'rig-room-draft:';
+/** A typing pause this long asks whether the draft answers your agent. */
+const SUGGEST_DEBOUNCE_MS = 500;
+/** How sure the relay must be before the draft goes to your agent by default. */
+export const SUGGEST_MIN_CONFIDENCE = 0.5;
 
 /**
  * Spaces: the Room's composer. `/` at the start opens the space's skills,
@@ -18,9 +22,28 @@ const DRAFT_PREFIX = 'rig-room-draft:';
  * unsent draft is kept per space on this computer, so switching away never
  * costs the sentence. When your agent is mid-turn, mentioning it says the
  * request will wait its turn.
+ *
+ * A plain reply to your own agent (no @) reaches it too: on a typing pause
+ * the composer asks `suggestReply` whether the draft answers one of your
+ * agent's recent turns, and when it's sure enough shows the same pills an
+ * @claude plus Reply would (your agent, "Replying to" its turn). × on
+ * either drops the guess for this draft and the message goes as plain chat.
  */
 
 /** What the composer understood about a message, sent along with its text. */
+/** The composer's guess that a plain draft answers your own agent's turn. */
+export type ComposerSuggestion = { agent: AgentKind; replyTo: RoomReplyRef; confidence: number };
+
+/** Any @mention, of an agent or a person (an email's `x@y.com` isn't one). */
+function hasMention(text: string): boolean {
+  return /(^|\s)@[a-z0-9_-]+/i.test(text);
+}
+
+/** Still the draft a guess was made for: typed on, or trimmed back, not rewritten. */
+function sameDraft(guessedFor: string, now: string): boolean {
+  return !!now && (now.startsWith(guessedFor) || guessedFor.startsWith(now));
+}
+
 export type ComposerSendContext = {
   replyTo?: RoomReplyRef;
   /** Your agent this message asks (its @tag, unless you dropped the pill); null for plain chat. */
@@ -71,6 +94,7 @@ export function Composer({
   prefill,
   openDoc = null,
   agentModels,
+  suggestReply,
 }: {
   spaceName: string;
   /** Where this composer keeps its unsent draft (the space's id); no draft kept without one. */
@@ -91,6 +115,8 @@ export function Composer({
   openDoc?: string | null;
   /** The model each of your agents last ran here, shown in its pill until its own list loads. */
   agentModels?: Partial<Record<AgentKind, string | null>>;
+  /** Whether a plain draft answers one of your own agent's turns; null when not (or unsure). */
+  suggestReply?: (draft: string) => Promise<ComposerSuggestion | null>;
 }) {
   const [value, setValue] = useState(() => readDraft(draftKey));
   const [focused, setFocused] = useState(false);
@@ -99,10 +125,14 @@ export function Composer({
   // Pills you dropped for this message; a fresh message starts clean.
   const [droppedAgent, setDroppedAgent] = useState(false);
   const [droppedDoc, setDroppedDoc] = useState(false);
+  // The guess that this draft answers your agent, and whether you dropped it.
+  const [suggestion, setSuggestion] = useState<{ draft: string; value: ComposerSuggestion } | null>(null);
+  const [droppedSuggestion, setDroppedSuggestion] = useState(false);
   useEffect(() => {
     if (value.trim()) return;
     setDroppedAgent(false);
     setDroppedDoc(false);
+    setDroppedSuggestion(false);
   }, [value]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -116,6 +146,28 @@ export function Composer({
     setValue(prefill.text);
     textareaRef.current?.focus();
   }, [prefill]);
+
+  // Ask on a typing pause; a newer keystroke drops the answer to an older one.
+  useEffect(() => {
+    const draft = value.trim();
+    if (!suggestReply || replyTo || droppedSuggestion || !draft || draft.startsWith('/') || hasMention(draft)) {
+      setSuggestion(null);
+      return;
+    }
+    let stale = false;
+    const timer = setTimeout(() => {
+      void suggestReply(draft)
+        .catch(() => null)
+        .then((guess) => {
+          if (stale) return;
+          setSuggestion(guess && guess.confidence >= SUGGEST_MIN_CONFIDENCE ? { draft, value: guess } : null);
+        });
+    }, SUGGEST_DEBOUNCE_MS);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [value, suggestReply, replyTo, droppedSuggestion]);
 
   const skillQuery = /^\/(\S*)$/.exec(value)?.[1] ?? null;
   const mentionQuery = useMemo(() => /(?:^|\s)@([a-z]*)$/i.exec(value)?.[1] ?? null, [value]);
@@ -198,14 +250,29 @@ export function Composer({
   // Your agent is tagged once its @name is written out; dropping the pill
   // sends the message as plain chat instead.
   const tagged = agents.find((a) => new RegExp(`(^|\\s)@${a.agent}(\\s|$)`, 'i').test(value));
-  const agentPill = tagged && !droppedAgent ? tagged.agent : null;
-  const docPill = agentPill && openDoc && !droppedDoc ? openDoc : null;
+  // Only a guess about your own agent, and only while it's still this draft.
+  const suggested =
+    suggestion &&
+    !droppedSuggestion &&
+    !replyTo &&
+    agents.some((a) => a.agent === suggestion.value.agent) &&
+    sameDraft(suggestion.draft, value.trim())
+      ? suggestion.value
+      : null;
+  const agentPill = tagged && !droppedAgent ? tagged.agent : (suggested?.agent ?? null);
+  const replyPill = replyTo ?? suggested?.replyTo ?? null;
+  const docPill = agentPill && !suggested && openDoc && !droppedDoc ? openDoc : null;
+  const dropSuggestion = () => {
+    setDroppedSuggestion(true);
+    textareaRef.current?.focus();
+  };
 
   const send = () => {
     const trimmed = value.trim();
     if (!trimmed) return;
-    onSend(trimmed, { replyTo: replyTo ?? undefined, agent: agentPill, attach: docPill });
+    onSend(trimmed, { replyTo: replyPill ?? undefined, agent: agentPill, attach: docPill });
     setValue('');
+    setSuggestion(null);
     setTyping(false);
   };
 
@@ -286,26 +353,26 @@ export function Composer({
         </div>
       )}
 
-      {!menuOpen && (replyTo || agentPill || docPill) && (
+      {!menuOpen && (replyPill || agentPill || docPill) && (
         // In the flow, above the input: the Room makes room for it rather than being covered.
         <div className="popover-in mb-2 flex flex-wrap items-center gap-2 px-1" data-testid="composer-pills">
-          {replyTo && (
+          {replyPill && (
             <ContextPill
-              reason="You pressed Reply"
-              onDismiss={onCancelReply}
+              reason={replyTo || !suggested ? 'You pressed Reply' : `It reads like your answer to ${AGENT_NAME[suggested.agent]}`}
+              onDismiss={replyTo ? onCancelReply : dropSuggestion}
               dismissLabel="Not a reply"
               testId="composer-reply"
             >
               <CornerUpLeft className="size-3.5 shrink-0" strokeWidth={1.5} />
               <span>Replying to</span>
-              <b className="font-medium text-text-primary">{replyTo.label}</b>
-              <span className="max-w-56 truncate">{replyTo.excerpt}</span>
+              <b className="font-medium text-text-primary">{replyPill.label}</b>
+              <span className="max-w-56 truncate">{replyPill.excerpt}</span>
             </ContextPill>
           )}
           {agentPill && (
             <ContextPill
-              reason={`You tagged @${agentPill}`}
-              onDismiss={() => setDroppedAgent(true)}
+              reason={tagged ? `You tagged @${agentPill}` : `It reads like your answer to ${AGENT_NAME[agentPill]}`}
+              onDismiss={tagged ? () => setDroppedAgent(true) : dropSuggestion}
               dismissLabel="Send as a plain message"
               testId="composer-agent-pill"
             >
@@ -371,6 +438,11 @@ export function Composer({
               onCancelReply?.();
               return;
             }
+            if (e.key === 'Escape' && suggested) {
+              e.preventDefault();
+              dropSuggestion();
+              return;
+            }
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
               send();
@@ -415,7 +487,7 @@ export function Composer({
               value.trim() ? 'bg-accent text-accent-ink' : 'bg-bg-2 text-text-secondary'
             )}
           >
-            {agentPill ? `Ask ${AGENT_NAME[agentPill]}` : replyTo ? 'Reply' : 'Send'}
+            {agentPill ? `Ask ${AGENT_NAME[agentPill]}` : replyPill ? 'Reply' : 'Send'}
             <CornerDownLeft className="size-3" strokeWidth={1.5} />
           </button>
         </div>

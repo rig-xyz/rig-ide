@@ -628,6 +628,69 @@ describe('RelayRoomSource', () => {
     expect(id).toBe('posted-1');
   });
 
+  it('send() carries the reply and the asked mark in the message meta', async () => {
+    const metas: unknown[] = [];
+    const fake = makeFakeRelay({
+      async postMessage(_bindingId, input) {
+        metas.push(input.meta);
+        return ok(message({ id: 'posted-2', seq: 1000, body: input.body }));
+      },
+    });
+    fake.queueMessages([]);
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: () => new FakeProvider(),
+    });
+    const replyTo = { id: 'm9', authorId: 'u1', label: 'Your Claude', excerpt: 'Which call did you mean?' };
+    await source.send('ok not this one', replyTo, 'claude');
+    await source.send('just chat');
+    expect(metas).toEqual([{ replyTo, asks: 'claude' }, undefined]);
+  });
+
+  it('previewDraft() asks the relay, and reads a failure or no client as "none"', async () => {
+    const asked: Array<[string, string]> = [];
+    const none = { answersTo: null, agent: null, confidence: 0 };
+    const withPreview = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: makeFakeRelay({
+        async previewDraft(bindingId, text) {
+          asked.push([bindingId, text]);
+          return { answersTo: 'm9', agent: 'claude', confidence: 0.8 };
+        },
+      }).relay,
+      createProvider: () => new FakeProvider(),
+    });
+    expect(await withPreview.previewDraft('ok not this one')).toEqual({ answersTo: 'm9', agent: 'claude', confidence: 0.8 });
+    expect(asked).toEqual([[BINDING, 'ok not this one']]);
+
+    const failing = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: makeFakeRelay({ previewDraft: async () => Promise.reject(new Error('ipc down')) }).relay,
+      createProvider: () => new FakeProvider(),
+    });
+    expect(await failing.previewDraft('x')).toEqual(none);
+
+    const without = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: makeFakeRelay().relay,
+      createProvider: () => new FakeProvider(),
+    });
+    expect(await without.previewDraft('x')).toEqual(none);
+  });
+
   it('requestOwnAgent() files an agent request targeting the sender', async () => {
     const fake = makeFakeRelay();
     fake.queueMessages([]);

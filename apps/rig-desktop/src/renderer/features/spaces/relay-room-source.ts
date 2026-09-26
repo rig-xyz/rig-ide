@@ -46,6 +46,7 @@ import type {
   SessionRun,
 } from '@main/rig/spaces/relay-api';
 import { connectorById, type ConnectionStatus } from '@shared/spaces/connectors';
+import type { LocalRunEvent } from '@shared/spaces/room-sees';
 import type { AgentKind, MessageKind, RoomConnector, RoomEvent, RoomReplyRef, RoomSnapshot, SessionRunMeta } from './types';
 import { reduceRoom } from './fixtures/room-feed';
 import { effectiveRunStatus, projectSessionCard } from './projection';
@@ -166,6 +167,19 @@ export interface ConnectionsClient {
   list(): Promise<ConnectionStatus[]>;
 }
 
+/**
+ * The owner overlay: this computer's own full copy of the runs it runs
+ * (`main/rig/spaces/local-runs.ts`), before the "Room sees" filter. Your own
+ * runs show from it instead of the relay's filtered copy, so you always see
+ * all of your agent's work and answer its approvals with the real command.
+ */
+export interface LocalRunsClient {
+  /** A run's full local copy, or null when this computer doesn't hold one. */
+  events(runId: string): Promise<LocalRunEvent[] | null>;
+  /** Every event as it's recorded; returns an unsubscribe. */
+  subscribe(listener: (update: { bindingId: string; runId: string; event: LocalRunEvent }) => void): () => void;
+}
+
 /** A statelessly-pushed "something changed" notification — never the payload itself, per `SPACES_NOTES.md`. */
 type RoomNotification =
   | { type: 'message_created'; id: string; seq: number; kind: string }
@@ -182,6 +196,8 @@ export type RelayRoomSourceOptions = {
   relay: RelayRoomClient;
   /** This device's own connection states, for `RoomConnector.mine` — omitted, `mine` stays undefined everywhere. */
   connections?: ConnectionsClient;
+  /** The owner overlay (see `LocalRunsClient`) — omitted, your own runs show from the relay like everyone else's. */
+  localRuns?: LocalRunsClient;
   createProvider?: (options: {
     wsUrl: string;
     documentName: string;
@@ -254,12 +270,20 @@ function emptySnapshot(name: string, selfUserId: string): RoomSnapshot {
  * `replayAll()` is a no-op — there is no script to fast-forward.
  */
 export class RelayRoomSource implements RoomSource {
-  private readonly opts: Required<Omit<RelayRoomSourceOptions, 'createProvider' | 'log' | 'connections' | 'pollIntervalMs' | 'connectGraceMs'>>;
+  private readonly opts: Required<
+    Omit<RelayRoomSourceOptions, 'createProvider' | 'log' | 'connections' | 'localRuns' | 'pollIntervalMs' | 'connectGraceMs'>
+  >;
   private readonly pollIntervalMs: number;
   private readonly connectGraceMs: number;
   private readonly makeProvider: NonNullable<RelayRoomSourceOptions['createProvider']>;
   private readonly log: (message: string, extra?: Record<string, unknown>) => void;
   private readonly connections: ConnectionsClient | undefined;
+  private readonly localRuns: LocalRunsClient | undefined;
+  /** Your runs shown from this computer's own copy: the relay's catch-up leaves them alone. */
+  private readonly localRunIds = new Set<string>();
+  /** One local-copy operation per run at a time, in order (a load, then the events pushed meanwhile). */
+  private readonly localRunTasks = new Map<string, Promise<unknown>>();
+  private unsubscribeLocalRuns: (() => void) | null = null;
 
   private snapshot: RoomSnapshot;
   private readonly listeners = new Set<Listener>();
@@ -297,6 +321,7 @@ export class RelayRoomSource implements RoomSource {
     this.pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
     this.connectGraceMs = options.connectGraceMs ?? CONNECT_GRACE_MS;
     this.connections = options.connections;
+    this.localRuns = options.localRuns;
     this.makeProvider = options.createProvider ?? createHocuspocusProvider;
     this.log = options.log ?? (() => {});
     this.snapshot = emptySnapshot(options.spaceName, options.selfUserId);
@@ -341,6 +366,8 @@ export class RelayRoomSource implements RoomSource {
 
   dispose(): void {
     this.disposed = true;
+    this.unsubscribeLocalRuns?.();
+    this.unsubscribeLocalRuns = null;
     this.stopPolling();
     this.provider?.destroy();
     this.provider = null;
@@ -353,6 +380,9 @@ export class RelayRoomSource implements RoomSource {
     if (this.provider) {
       this.provider.connect();
       return;
+    }
+    if (this.localRuns && !this.unsubscribeLocalRuns) {
+      this.unsubscribeLocalRuns = this.localRuns.subscribe((update) => void this.onLocalRunEvent(update));
     }
     await this.bootstrap();
     let provider: RealtimeProvider;
@@ -679,6 +709,8 @@ export class RelayRoomSource implements RoomSource {
 
   private async catchUpRuns(): Promise<void> {
     for (const runId of Object.keys(this.snapshot.sessionMetaByRun)) {
+      // Your runs shown from this computer's own copy get their news from it.
+      if (this.localRunIds.has(runId)) continue;
       // Polling (no socket): only runs that are still going can have news.
       if (!this.connected && !this.isRunLive(runId)) continue;
       const after = this.lastRunSeq.get(runId) ?? 0;
@@ -807,6 +839,10 @@ export class RelayRoomSource implements RoomSource {
       endedAt: run?.endedAt ?? null,
     };
     apply({ type: 'session_started', runId, meta });
+    // Yours, run on this computer: shown from its own full copy instead.
+    if (meta.owner === this.opts.selfUserId && this.localRuns) {
+      if (await this.withLocalRun(runId, () => this.loadLocalRun(runId, apply))) return;
+    }
 
     for (const event of events) {
       apply({
@@ -823,6 +859,64 @@ export class RelayRoomSource implements RoomSource {
       });
       this.lastRunSeq.set(runId, event.seq);
     }
+  }
+
+  // ── the owner overlay ───────────────────────────────────────────────────
+
+  /** Runs `task` after any earlier local-copy operation on the same run, so a load and the events pushed meanwhile never interleave. */
+  private withLocalRun<T>(runId: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.localRunTasks.get(runId) ?? Promise.resolve();
+    const next = previous.then(task, task);
+    this.localRunTasks.set(runId, next.catch(() => undefined));
+    return next;
+  }
+
+  /** Replaces a run's events with this computer's full copy of it. False (nothing changed) when there's no copy here. */
+  private async loadLocalRun(runId: string, apply: (event: RoomEvent) => void): Promise<boolean> {
+    const meta = this.snapshot.sessionMetaByRun[runId];
+    if (!meta || !this.localRuns) return false;
+    const events = await this.localRuns.events(runId).catch(() => null);
+    if (!events || this.disposed) return false;
+    this.localRunIds.add(runId);
+    // `session_started` starts the run's events over.
+    apply({ type: 'session_started', runId, meta });
+    for (const event of events) {
+      apply({ type: 'session_event_appended', runId, seq: event.seq, event });
+      this.lastRunSeq.set(runId, event.seq);
+    }
+    if (events.length === 0) this.lastRunSeq.set(runId, 0);
+    return true;
+  }
+
+  /**
+   * An event of one of your runs, pushed as this computer records it. The
+   * next one in order is appended; a run still showing the relay's copy (its
+   * card came up before its first local event), or a gap, loads the whole
+   * local copy instead. A run not in the Room yet is left to its session
+   * message, whose `ingestRun` reads the local copy.
+   */
+  private onLocalRunEvent(update: { bindingId: string; runId: string; event: LocalRunEvent }): Promise<void> {
+    const { runId, event } = update;
+    if (update.bindingId !== this.opts.bindingId || this.disposed) return Promise.resolve();
+    return this.withLocalRun(runId, async () => {
+      const meta = this.snapshot.sessionMetaByRun[runId];
+      if (!meta || meta.owner !== this.opts.selfUserId) return;
+      if (this.localRunIds.has(runId)) {
+        const last = this.lastRunSeq.get(runId) ?? 0;
+        if (event.seq <= last) return;
+        if (event.seq === last + 1) {
+          this.applyLocal({ type: 'session_event_appended', runId, seq: event.seq, event });
+          this.lastRunSeq.set(runId, event.seq);
+          return;
+        }
+      }
+      let lastEvent: RoomEvent | null = null;
+      const loaded = await this.loadLocalRun(runId, (e) => {
+        this.reduceLocal(e);
+        lastEvent = e;
+      });
+      if (loaded && lastEvent) this.notifyListeners(lastEvent);
+    });
   }
 
   // ── outgoing ────────────────────────────────────────────────────────────

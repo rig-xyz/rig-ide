@@ -2,7 +2,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConnectorId, ConnectResult, GlobalServer } from '@shared/spaces/connectors';
-import { Composer } from '@renderer/features/spaces/components/composer';
+import { Composer, type ComposerSuggestion } from '@renderer/features/spaces/components/composer';
 import { ConversationMap } from '@renderer/features/spaces/components/conversation-map';
 import {
   AgentConfigRow,
@@ -14,7 +14,7 @@ import { AgentRows } from '@renderer/features/spaces/components/agent-rows';
 import { ConnectorGallery } from '@renderer/features/spaces/components/connector-gallery';
 import { ConnectorsSection } from '@renderer/features/spaces/components/connectors-panel';
 import { groupThreads, RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
-import { RoomLoadingSkeleton, RoomView } from '@renderer/features/spaces/components/room-view';
+import { RoomLoadingSkeleton, RoomView, sendFromComposer } from '@renderer/features/spaces/components/room-view';
 import { SessionCard } from '@renderer/features/spaces/components/session-card';
 import { ConnectorCard } from '@renderer/features/spaces/components/transcript-items';
 import { connectorsApi } from '@renderer/features/spaces/connectors-api';
@@ -640,6 +640,150 @@ describe('Room composer — palette on "/"', () => {
       textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
     expect(sent.at(-1)).toEqual(['@claude this is just chat', { replyTo: undefined, agent: null, attach: null }]);
+  });
+});
+
+describe('Room composer — a plain reply to your own agent', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  const turn = { id: 'msg-turn', authorId: 'bob', label: 'Your Claude', excerpt: 'Which call did you mean?' };
+
+  /** Answers like the relay would: sure about "ok not this one", unsure about anything else. */
+  function suggester() {
+    return vi.fn(async (draft: string): Promise<ComposerSuggestion | null> =>
+      draft.startsWith('ok not this one')
+        ? { agent: 'claude', replyTo: turn, confidence: 0.8 }
+        : { agent: 'claude', replyTo: turn, confidence: 0.3 }
+    );
+  }
+
+  async function renderComposer(suggestReply: ReturnType<typeof suggester>, sent: Array<[string, unknown]> = []) {
+    const snapshot = replayedSnapshot();
+    const own = snapshot.agents.filter((a) => a.owner === 'bob');
+    await act(async () => {
+      root.render(
+        <Composer
+          spaceName={snapshot.name}
+          members={snapshot.members}
+          agents={own}
+          skills={snapshot.skills}
+          onSend={(text, context) => sent.push([text, context])}
+          openDoc="docs/metrics.md"
+          suggestReply={suggestReply}
+        />
+      );
+    });
+    return host.querySelector<HTMLTextAreaElement>('textarea')!;
+  }
+
+  const agentPill = () => host.querySelector('[data-testid="composer-agent-pill"]');
+  const replyPill = () => host.querySelector('[data-testid="composer-reply"]');
+
+  it('shows your agent and reply pills once the relay is at least 0.5 sure, and nothing below', async () => {
+    const suggestReply = suggester();
+    const textarea = await renderComposer(suggestReply);
+
+    await setTextareaValue(textarea, 'lunch at 1?');
+    await vi.waitFor(() => expect(suggestReply).toHaveBeenCalledWith('lunch at 1?'));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(agentPill()).toBeNull();
+    expect(replyPill()).toBeNull();
+
+    await setTextareaValue(textarea, 'ok not this one');
+    await vi.waitFor(() => expect(agentPill()?.textContent).toContain('Claude'));
+    expect(replyPill()?.textContent).toContain('Your Claude');
+    expect(replyPill()?.textContent).toContain('Which call did you mean?');
+    // The same pills an @claude + Reply would show, and nothing else (no doc pill for a guess).
+    expect(host.querySelector('[data-testid="composer-doc-pill"]')).toBeNull();
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent?.startsWith('Ask Claude'))).toBe(true);
+
+    // Rewritten into something else: the guess goes at once, before any new answer.
+    await setTextareaValue(textarea, 'lunch?');
+    expect(agentPill()).toBeNull();
+  });
+
+  it('Enter sends it to your agent as a reply to its turn', async () => {
+    const sent: Array<[string, unknown]> = [];
+    const textarea = await renderComposer(suggester(), sent);
+    await setTextareaValue(textarea, 'ok not this one');
+    await vi.waitFor(() => expect(agentPill()).not.toBeNull());
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(sent).toEqual([['ok not this one', { replyTo: turn, agent: 'claude', attach: null }]]);
+  });
+
+  it('× drops the guess for this draft, and the message goes as plain chat', async () => {
+    const sent: Array<[string, unknown]> = [];
+    const suggestReply = suggester();
+    const textarea = await renderComposer(suggestReply, sent);
+    await setTextareaValue(textarea, 'ok not this one');
+    await vi.waitFor(() => expect(agentPill()).not.toBeNull());
+    await act(async () => {
+      host
+        .querySelector<HTMLButtonElement>('[data-testid="composer-agent-pill"] [data-testid="context-pill-dismiss"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(agentPill()).toBeNull();
+    expect(replyPill()).toBeNull();
+
+    // Typing on doesn't bring it back for this draft.
+    const calls = suggestReply.mock.calls.length;
+    await setTextareaValue(textarea, 'ok not this one, the other');
+    await new Promise((r) => setTimeout(r, 700));
+    expect(suggestReply.mock.calls.length).toBe(calls);
+    expect(agentPill()).toBeNull();
+
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(sent).toEqual([['ok not this one, the other', { replyTo: undefined, agent: null, attach: null }]]);
+  });
+
+  it('never asks while the draft has an @mention', async () => {
+    const suggestReply = suggester();
+    const textarea = await renderComposer(suggestReply);
+    await setTextareaValue(textarea, '@claude ok not this one');
+    await setTextareaValue(textarea, 'ok not this one @Alice');
+    await new Promise((r) => setTimeout(r, 700));
+    expect(suggestReply).not.toHaveBeenCalled();
+  });
+
+  it('files the agent request with the reply on the message, marked as asked', async () => {
+    const calls: unknown[] = [];
+    const source = {
+      send: vi.fn(async (...args: unknown[]) => {
+        calls.push(['send', ...args]);
+        return 'msg-new';
+      }),
+      requestOwnAgent: vi.fn(async (...args: unknown[]) => {
+        calls.push(['requestOwnAgent', ...args]);
+      }),
+    };
+    const wake = vi.fn();
+    await sendFromComposer(source, ['claude'], 'ok not this one', { replyTo: turn, agent: 'claude', attach: null }, wake);
+    expect(calls).toEqual([
+      ['send', 'ok not this one', turn, 'claude'],
+      ['requestOwnAgent', 'claude', 'ok not this one', 'msg-new'],
+    ]);
+    expect(wake).toHaveBeenCalledOnce();
+
+    // Dropped pills: plain chat, no request, no mark.
+    calls.length = 0;
+    await sendFromComposer(source, ['claude'], 'ok not this one', { replyTo: undefined, agent: null, attach: null }, wake);
+    expect(calls).toEqual([['send', 'ok not this one', undefined, undefined]]);
   });
 });
 

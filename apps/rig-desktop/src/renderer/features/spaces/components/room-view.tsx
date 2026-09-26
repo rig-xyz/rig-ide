@@ -13,7 +13,9 @@ import { useRefreshMemberReadsOnRosterChange } from '../roster-refresh';
 import { resolveSpaceLink } from '../space-link';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
-import { Composer, type ComposerSendContext } from './composer';
+import { Composer, type ComposerSendContext, type ComposerSuggestion } from './composer';
+import { AGENT_NAME } from './identity';
+import { excerptOf } from './transcript-items';
 import { RoomTranscript } from './room-transcript';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
 import { SpaceRail } from './space-rail';
@@ -39,6 +41,7 @@ function createRelayRoomClient(): RelayRoomClient {
     getSessionEvents: (bindingId, runId, after) => client.getSessionEvents({ bindingId, runId, after }),
     postMessage: (bindingId, input) => client.postMessage({ bindingId, ...input }),
     requestOwnAgent: (bindingId, input) => client.requestOwnAgent({ bindingId, ...input }),
+    previewDraft: (bindingId, text) => client.previewDraft({ bindingId, text }),
     listConnectors: (bindingId) => client.listConnectors({ bindingId }),
     addConnector: (bindingId, connectorId) => client.addConnector({ bindingId, connectorId }),
     removeConnector: (bindingId, connectorId) => client.removeConnector({ bindingId, connectorId }),
@@ -172,6 +175,29 @@ function busyOwnAgents(snapshot: RoomSnapshot, selfUserId: string): AgentKind[] 
     if (status === 'running') busy.add(meta.agent);
   }
   return [...busy];
+}
+
+/**
+ * Sends what the composer understood: the message, then — when the pill
+ * named one of your own agents (you tagged it, or the draft read as your
+ * answer to it and you kept the pills) — an agent request for it, linked
+ * to the message. The message is marked as asked (`meta.asks`) so the
+ * relay's dispatcher doesn't run the same ask again. A reply target rides
+ * on the message, so your agent's next turn follows its own question.
+ */
+export async function sendFromComposer(
+  source: Pick<RelayRoomSource, 'send' | 'requestOwnAgent'>,
+  ownAgents: readonly AgentKind[],
+  text: string,
+  { replyTo, agent, attach }: ComposerSendContext,
+  wake: () => void
+): Promise<void> {
+  const asks = agent && ownAgents.includes(agent) ? agent : null;
+  const sourceMessageId = await source.send(text, replyTo, asks ?? undefined);
+  if (!asks) return;
+  const prompt = attach ? `${text}\n\n(Open beside the Room: ${attach})` : text;
+  await source.requestOwnAgent(asks, prompt, sourceMessageId ?? undefined);
+  wake();
 }
 
 export function RoomView({
@@ -450,6 +476,32 @@ export function RoomView({
     [source, bindingId]
   );
 
+  // A plain draft that reads as your answer to one of your own agent's
+  // turns: the relay asks Jev, and only a finished turn of YOUR agent that
+  // this Room shows comes back as the composer's pills.
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
+  const suggestReply = useCallback(
+    async (draft: string): Promise<ComposerSuggestion | null> => {
+      if (!(source instanceof RelayRoomSource)) return null;
+      const preview = await source.previewDraft(draft);
+      const snap = snapshotRef.current;
+      if (!snap || !preview.answersTo || !preview.agent) return null;
+      const message = snap.messages.find((m) => m.id === preview.answersTo);
+      if (message?.meta.kind !== 'session') return null;
+      const meta = snap.sessionMetaByRun[message.meta.runId];
+      if (!meta || meta.owner !== selfUserId || meta.agent !== preview.agent) return null;
+      const answer = projectSessionCard(snap.sessionEventsByRun[meta.id] ?? []).finalAnswer;
+      if (!answer) return null;
+      return {
+        agent: meta.agent,
+        confidence: preview.confidence,
+        replyTo: { id: message.id, authorId: meta.owner, label: `Your ${AGENT_NAME[meta.agent]}`, excerpt: excerptOf(answer) },
+      };
+    },
+    [source, selfUserId]
+  );
+
   const togglePlay = () => {
     if (!source || source.isDone()) return;
     if (source.isPlaying()) {
@@ -461,19 +513,12 @@ export function RoomView({
     }
   };
 
-  const handleSend = (text: string, { replyTo, agent, attach }: ComposerSendContext) => {
+  const handleSend = (text: string, context: ComposerSendContext) => {
     if (!(source instanceof RelayRoomSource) || !snapshot) return;
     setReplyTo(null);
-    void source.send(text, replyTo).then((sourceMessageId) => {
-      // The composer's pill decides: your agent when you tagged it and kept
-      // the pill, plain chat when you dropped it.
-      if (!agent || !snapshot.agents.some((a) => a.agent === agent && a.owner === selfUserId)) return;
-      const prompt = attach ? `${text}\n\n(Open beside the Room: ${attach})` : text;
-      // Wake this device's claim poller rather than waiting for its next tick.
-      void source
-        .requestOwnAgent(agent, prompt, sourceMessageId ?? undefined)
-        .then(() => rpc.rig.spacesDispatch.checkNow());
-    });
+    const ownAgents = snapshot.agents.filter((a) => a.owner === selfUserId).map((a) => a.agent);
+    // Wake this device's claim poller rather than waiting for its next tick.
+    void sendFromComposer(source, ownAgents, text, context, () => void rpc.rig.spacesDispatch.checkNow());
   };
 
   // Split-resize perf round: `RoomTranscript` memoizes its own node list
@@ -641,6 +686,7 @@ export function RoomView({
               agents={snapshot.agents.filter((a) => a.owner === selfUserId)}
               skills={snapshot.skills}
               onSend={handleSend}
+              suggestReply={live ? suggestReply : undefined}
               onTypingChange={
                 source instanceof RelayRoomSource ? (typing) => source.setTyping(typing) : undefined
               }
