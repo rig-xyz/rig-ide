@@ -45,6 +45,7 @@ import type {
   SessionEventRow,
   SessionRun,
 } from '@main/rig/spaces/relay-api';
+import type { DraftPreview } from '@main/rig/spaces-connection';
 import { connectorById, type ConnectionStatus } from '@shared/spaces/connectors';
 import type { LocalRunEvent } from '@shared/spaces/room-sees';
 import type { AgentKind, MessageKind, RoomConnector, RoomEvent, RoomReplyRef, RoomSnapshot, SessionRunMeta } from './types';
@@ -149,6 +150,8 @@ export interface RelayRoomClient {
       sourceMessageId?: string;
     }
   ): Promise<Result<AgentRequest, RelayApiError>>;
+  /** Whether a draft answers one of your own agent's recent turns — `POST /v1/me/bindings/:id/draft-preview`. Never rejects. */
+  previewDraft?(bindingId: string, text: string): Promise<DraftPreview>;
   /** The space's connectors (connectors-spec.md) — `GET /v1/me/bindings/:id/connectors`. */
   listConnectors?(
     bindingId: string
@@ -926,15 +929,25 @@ export class RelayRoomSource implements RoomSource {
    * round-trips it back through `catchUp()` — this never optimistically
    * applies it locally, so the message the UI shows is always exactly what
    * the relay stored. Returns the new message's id (for `requestOwnAgent`'s
-   * `sourceMessageId`), or `null` if the post failed.
+   * `sourceMessageId`), or `null` if the post failed. `asks` marks a message
+   * this app is about to hand to your own agent itself, so the relay's
+   * dispatcher doesn't run the same ask a second time.
    */
-  async send(text: string, replyTo?: RoomReplyRef): Promise<string | null> {
+  async send(text: string, replyTo?: RoomReplyRef, asks?: AgentKind): Promise<string | null> {
+    const meta = { ...(replyTo ? { replyTo } : {}), ...(asks ? { asks } : {}) };
     const result = await this.opts.relay.postMessage(this.opts.bindingId, {
       body: text,
       kind: 'text',
-      ...(replyTo ? { meta: { replyTo } } : {}),
+      ...(Object.keys(meta).length > 0 ? { meta } : {}),
     });
     return result.success ? result.data.id : null;
+  }
+
+  /** Whether `text` answers one of your own agent's recent turns (the relay asks Jev); "none" when it can't tell. */
+  async previewDraft(text: string): Promise<DraftPreview> {
+    const none: DraftPreview = { answersTo: null, agent: null, confidence: 0 };
+    if (!this.opts.relay.previewDraft) return none;
+    return this.opts.relay.previewDraft(this.opts.bindingId, text).catch(() => none);
   }
 
   /**
