@@ -1098,6 +1098,65 @@ describe('memory across restarts', () => {
     expect([...store.entries.values()][0]).toMatchObject({ acpSessionId: 'acp-resumed' });
   });
 
+  it('re-applies the settings you picked when it resumes after a restart', async () => {
+    const store = memoryStore();
+
+    // First app run: you pick a model for your space agent; it's remembered with the session.
+    const first = makeFakeAcp();
+    first.acp.setConfig = async () => ok(undefined);
+    first.acp.readConfig = async () => ({ model: { selected: 'gpt-6-sol', options: [] }, effort: null, mode: null });
+    const run1 = createSpacesDispatcher({ api: makeFakeApi().api, acp: first.acp, resolveWorkspace: async () => '/rigs/one', store });
+    const set = await run1.setAgentConfig('binding-1', 'owner-1', 'codex', { model: 'gpt-6-sol', effort: 'high' });
+    expect(set.success).toBe(true);
+    expect(store.get('binding-1::owner-1::codex')?.config).toEqual({ model: 'gpt-6-sol', effort: 'high' });
+
+    // After a restart the agent may reset its model on load: the resume re-applies your pick.
+    const second = makeFakeAcp();
+    const applied: unknown[] = [];
+    second.acp.setConfig = async (_c, change) => {
+      applied.push(change);
+      return ok(undefined);
+    };
+    const run2 = createSpacesDispatcher({
+      api: makeFakeApi().api,
+      acp: second.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      store,
+      defaultConfig: () => ({ model: 'something-else' }),
+    });
+    await run2.dispatch(makeRequest({ id: 'req2', bindingId: 'binding-1', targetOwnerUserId: 'owner-1', targetAgent: 'codex' }));
+    expect(second.resumed).toHaveLength(1);
+    expect(applied).toEqual([{ model: 'gpt-6-sol', effort: 'high' }]);
+  });
+
+  it('resumes a session saved before settings were remembered with your usual settings', async () => {
+    const store = memoryStore();
+    store.set('binding-1::owner-1::claude', {
+      conversationId: 'conv-old',
+      acpSessionId: 'acp-old',
+      providerId: 'claude',
+      cwd: '/rigs/one',
+      updatedAt: 0,
+    });
+    const fake = makeFakeAcp();
+    const applied: unknown[] = [];
+    fake.acp.setConfig = async (_c, change) => {
+      applied.push(change);
+      return ok(undefined);
+    };
+    const { dispatch } = createSpacesDispatcher({
+      api: makeFakeApi().api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      store,
+      defaultConfig: () => ({ model: 'sonnet' }),
+    });
+    await dispatch(makeRequest({ bindingId: 'binding-1', targetOwnerUserId: 'owner-1' }));
+    expect(fake.resumed).toHaveLength(1);
+    expect(applied).toEqual([{ model: 'sonnet' }]);
+    expect(store.get('binding-1::owner-1::claude')?.config).toEqual({ model: 'sonnet' });
+  });
+
   it('starts fresh when the resume fails, and remembers the new session', async () => {
     const store = memoryStore();
     store.set('binding-1::owner-1::claude', {

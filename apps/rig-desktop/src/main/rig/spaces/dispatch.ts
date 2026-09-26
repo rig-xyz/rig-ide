@@ -153,6 +153,8 @@ export type StoredSpaceSession = {
   providerId: SessionAgent;
   cwd: string;
   updatedAt: number;
+  /** The model / effort / mode last applied, re-applied on resume (some agents reset them when a session is reloaded). */
+  config?: AgentConfigChange;
 };
 
 /** Where persistent space sessions are remembered across restarts (a small file in the app's data folder). */
@@ -841,9 +843,13 @@ export function createSpacesDispatcher(deps: {
     const fresh = started === null;
     started ??= await deps.acp.startSession({ conversationId, providerId, cwd, mcpServers: servers });
     if (!started.success) return err(started.error);
-    // A brand-new session starts from your usual settings for this agent; a
-    // resumed one keeps whatever it already had (a reload re-applies them).
-    const defaults = carried ?? (fresh ? deps.defaultConfig?.(providerId) : undefined);
+    // A brand-new session starts from your usual settings for this agent. A
+    // reload carries the settings it had, and a resume after a restart gets
+    // the ones last applied (some agents, Codex among them, reset their model
+    // when a session is loaded); older saved sessions fall back to your usual
+    // settings.
+    const defaults =
+      carried ?? (fresh ? deps.defaultConfig?.(providerId) : (resumable?.config ?? deps.defaultConfig?.(providerId)));
     if (defaults && Object.keys(defaults).length > 0 && deps.acp.setConfig) {
       const applied = await deps.acp.setConfig(conversationId, defaults);
       if (!applied.success) {
@@ -856,6 +862,7 @@ export function createSpacesDispatcher(deps: {
       providerId,
       cwd,
       updatedAt: Date.now(),
+      ...(defaults && Object.keys(defaults).length > 0 ? { config: defaults } : {}),
     });
 
     // Permissions: the session-state topic only exists once the session
@@ -1122,6 +1129,10 @@ export function createSpacesDispatcher(deps: {
     if (!session.success) return err(session.error);
     const set = await deps.acp.setConfig(session.data.conversationId, change);
     if (!set.success) return err(set.error);
+    // Remember the pick so a resume after a restart re-applies it.
+    const key = keyFor(bindingId, ownerUserId, agent);
+    const stored = deps.store?.get(key);
+    if (stored) deps.store?.set(key, { ...stored, config: { ...stored.config, ...change }, updatedAt: Date.now() });
     return agentConfig(bindingId, ownerUserId, agent);
   }
 
