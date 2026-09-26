@@ -3,7 +3,7 @@ import type { WebviewTag } from 'electron';
 import { ExternalLink } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRunnableAgents, type RunnableAgent } from '@renderer/features/chat/use-runnable-agents';
-import { CommentModeControl, CommentModeStatus } from '@renderer/features/comment-mode/comment-mode-ui';
+import { CommentModeControl, CommentModeStatus, shortAgentName } from '@renderer/features/comment-mode/comment-mode-ui';
 import { useCommentMode } from '@renderer/features/comment-mode/use-comment-mode';
 import { PaintbrushCursorChip } from '@renderer/features/docs/paintbrush/paintbrush-cursor-chip';
 import { rpc } from '@renderer/lib/ipc';
@@ -464,7 +464,7 @@ function DraftCard({
             void onSubmit(body.trim());
           }
         }}
-        placeholder={to ? `Ask ${to.name} about this` : 'Comment, @ to mention'}
+        placeholder={to ? `Ask ${shortAgentName(to.name)} about this` : 'Comment, @ to mention'}
         className="min-h-14 text-sm"
       />
       <div className="flex justify-end gap-1.5">
@@ -472,7 +472,7 @@ function DraftCard({
           Cancel
         </Button>
         <Button size="sm" disabled={!body.trim()} onClick={() => void onSubmit(body.trim())}>
-          {to ? `Ask ${to.name}` : 'Comment'}
+          {to ? `Ask ${shortAgentName(to.name)}` : 'Comment'}
         </Button>
       </div>
     </div>

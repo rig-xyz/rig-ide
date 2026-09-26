@@ -13,6 +13,11 @@ import { ContextPill } from '@renderer/features/spaces/components/context-pill';
  * kept for what you're pointing at.
  */
 
+/** An agent's short name, as people say it: "Claude Code" → "Claude", "Gemini CLI" → "Gemini". */
+export function shortAgentName(name: string): string {
+  return name.replace(/\s+(code|cli)$/i, '');
+}
+
 /** You get a speech bubble; an agent gets its own logo. */
 export function WhoIcon({ who, size = 14 }: { who: RunnableAgent | null; size?: number }) {
   return who ? (
@@ -22,7 +27,7 @@ export function WhoIcon({ who, size = 14 }: { who: RunnableAgent | null; size?: 
   );
 }
 
-/** "Comment ▾" in a file's or a page's header: the main part turns the mode on, the chevron picks who. */
+/** "Comment ▾" or "Ask Claude ▾" in a file's or a page's header (canvas board 17, option B): the main part turns the mode on, the chevron picks who. */
 export function CommentModeControl({
   on,
   toggle,
@@ -57,7 +62,7 @@ export function CommentModeControl({
         data-testid={testId && `${testId}-toggle`}
       >
         <WhoIcon who={who} size={14} />
-        <span className="max-w-28 truncate">{who ? who.name : 'Comment'}</span>
+        <span className="max-w-32 truncate">{who ? `Ask ${shortAgentName(who.name)}` : 'Comment'}</span>
       </button>
       {agents.length > 0 && (
         <button
@@ -83,13 +88,17 @@ export function CommentModeControl({
         minWidth={220}
         ariaLabel="Who you're talking to"
       >
-        <WhoItem label="Just me" selected={who === null} onPick={() => (pick(null), setOpen(false))}>
+        <WhoItem label="Comment" selected={who === null} onPick={() => (pick(null), setOpen(false))}>
           <WhoIcon who={null} />
         </WhoItem>
-        <p className="border-border-hairline mt-1 border-t px-2.5 pt-2 pb-1 text-2xs text-text-muted">Ask an agent</p>
-        <div className="max-h-56 overflow-y-auto">
+        <div className="border-border-hairline mt-1 max-h-56 overflow-y-auto border-t pt-1">
           {agents.map((agent) => (
-            <WhoItem key={agent.id} label={agent.name} selected={who?.id === agent.id} onPick={() => (pick(agent.id), setOpen(false))}>
+            <WhoItem
+              key={agent.id}
+              label={`Ask ${shortAgentName(agent.name)}`}
+              selected={who?.id === agent.id}
+              onPick={() => (pick(agent.id), setOpen(false))}
+            >
               <WhoIcon who={agent} />
             </WhoItem>
           ))}
@@ -141,7 +150,7 @@ export function CommentModeStatus({ who, onLeave }: { who: RunnableAgent | null;
       <div className="popover-in pointer-events-auto">
         <ContextPill clear onDismiss={onLeave} dismissLabel="Leave comment mode" testId="comment-mode-pill">
           <WhoIcon who={who} size={13} />
-          <b className="font-medium text-text-primary">{who ? `Asking ${who.name}` : 'Commenting'}</b>
+          <b className="font-medium text-text-primary">{who ? `Asking ${shortAgentName(who.name)}` : 'Commenting'}</b>
           <Kbd>Esc</Kbd>
         </ContextPill>
       </div>
@@ -198,8 +207,8 @@ export function CommentSelectionPill({
           key={agent.id}
           type="button"
           onClick={() => onAsk(agent)}
-          aria-label={`Ask ${agent.name}`}
-          title={`Ask ${agent.name}`}
+          aria-label={`Ask ${shortAgentName(agent.name)}`}
+          title={`Ask ${shortAgentName(agent.name)}`}
           className="grid size-6 place-items-center rounded-full hover:bg-bg-2/70"
         >
           <AgentIcon icon={agent.icon} size={14} />
