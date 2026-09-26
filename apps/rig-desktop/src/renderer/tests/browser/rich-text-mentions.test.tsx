@@ -14,7 +14,8 @@ describe('richText mentions', () => {
   });
 
   it('highlights a /command but not path or URL segments', () => {
-    expect(highlighted('try /summarize now')).toEqual(['/summarize']);
+    expect(highlighted('/summarize the plan')).toEqual(['/summarize']);
+    expect(highlighted('read the file /etc/hosts and run /date')).toEqual([]);
     expect(highlighted('see https://userig.xyz/join/abc and docs/plan')).toEqual([]);
   });
 
