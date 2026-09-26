@@ -161,6 +161,29 @@ export function PageView({
     return () => window.removeEventListener('keydown', onKey);
   }, [draft, commenting]);
 
+  // Comment mode's hover: outline what a click would pin. One lookup in
+  // flight at a time; the latest pointer position wins.
+  const [hover, setHover] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const peekRef = useRef<{ busy: boolean; next: { x: number; y: number } | null }>({ busy: false, next: null });
+  const peekAt = (x: number, y: number) => {
+    if (webContentsId === null) return;
+    const state = peekRef.current;
+    state.next = { x, y };
+    if (state.busy) return;
+    state.busy = true;
+    void (async () => {
+      while (state.next) {
+        const point = state.next;
+        state.next = null;
+        setHover(await rpc.rig.pages.peek({ webContentsId, ...point }));
+      }
+      state.busy = false;
+    })();
+  };
+  useEffect(() => {
+    if (!commenting || draft) setHover(null);
+  }, [commenting, draft]);
+
   const pinAt = async (event: React.MouseEvent<HTMLDivElement>) => {
     if (webContentsId === null) return;
     const box = event.currentTarget.getBoundingClientRect();
@@ -235,7 +258,23 @@ export function PageView({
           />
         )}
         {commenting && (
-          <div className="absolute inset-0 cursor-crosshair" onClick={(event) => void pinAt(event)} data-testid="page-comment-layer" />
+          <div
+            className="absolute inset-0 cursor-crosshair"
+            onClick={(event) => void pinAt(event)}
+            onMouseMove={(event) => {
+              const box = event.currentTarget.getBoundingClientRect();
+              peekAt(event.clientX - box.left, event.clientY - box.top);
+            }}
+            onMouseLeave={() => setHover(null)}
+            data-testid="page-comment-layer"
+          />
+        )}
+        {commenting && !draft && hover && (
+          <div
+            className="border-accent bg-accent/5 pointer-events-none absolute rounded-sm border-[1.5px]"
+            style={{ left: hover.x - 2, top: hover.y - 2, width: hover.w + 4, height: hover.h + 4 }}
+            data-testid="page-hover-outline"
+          />
         )}
         {open.map((t) => {
           const p = places[t.id];
@@ -281,7 +320,7 @@ export function PageView({
             width={stageWidth}
             onCancel={() => setDraft(null)}
             onSubmit={async (body) => {
-              const result = await rpc.rig.pages.comment({ bindingId, url, body, quote: draft.quote, anchor: draft.anchor });
+              const result = await rpc.rig.pages.comment({ bindingId, url, title, body, quote: draft.quote, anchor: draft.anchor });
               setDraft(null);
               setCommenting(false);
               await refresh();

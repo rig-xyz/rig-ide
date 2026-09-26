@@ -199,6 +199,8 @@ export type MessageMeta =
       replyFromAgent?: AgentKind;
       /** A reply in the comment thread rather than the thread's first comment. */
       isReply?: boolean;
+      /** A pin on a web page: the page's title when it was pinned (the path is its link). */
+      pageTitle?: string;
     }
   | { kind: 'system'; event: string; /** Set on `connectors_added`/`connectors_removed` — see connectors-spec.md. */ connectorIds?: string[] };
 

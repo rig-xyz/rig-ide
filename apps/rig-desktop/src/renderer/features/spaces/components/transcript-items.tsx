@@ -92,9 +92,9 @@ function MessageLink({ url }: { url: string }) {
 }
 
 /** The page a comment is pinned on, as the same chip its link gets in a message. */
-function PageChip({ url }: { url: string }) {
+function PageChip({ url, title }: { url: string; title?: string }) {
   const { kind, label } = classifyLink(url);
-  const name = kind === 'web' ? new URL(url).hostname : label;
+  const name = title || (kind === 'web' ? new URL(url).hostname : label);
   // Its pins are on the page: always beside the Room, whatever the site.
   const open = useOpenLink(url, name, true);
   return (
@@ -631,7 +631,7 @@ export function CommentMirrorLine({
       </div>
     );
   }
-  const pageChip = /^https?:\/\//.test(path) ? <PageChip url={path} /> : null;
+  const pageChip = /^https?:\/\//.test(path) ? <PageChip url={path} title={message.meta.pageTitle} /> : null;
   const fileChip = pageChip ?? (onOpenFile ? (
     <button
       type="button"

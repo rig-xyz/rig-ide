@@ -86,6 +86,17 @@ export const rigPagesController = createRPCController({
     return ok(anchor ? { anchor, quote: quoteFor(anchor).slice(0, 2000) } : null);
   },
 
+  /** What a click at (x, y) would pin, as its outline on the page: comment mode's hover. */
+  peek: async ({ webContentsId, x, y }: { webContentsId: number; x: number; y: number }): Promise<{ x: number; y: number; w: number; h: number } | null> => {
+    const page = pageContents(webContentsId);
+    if (!page) return null;
+    const anchor = await hitPage(page, x, y).catch(() => null);
+    if (!anchor) return null;
+    const at = await locateOnPage(page, anchor).catch(() => null);
+    if (!at?.found || at.x === undefined || at.y === undefined || at.w === undefined || at.h === undefined) return null;
+    return { x: at.x - anchor.fx * at.w, y: at.y - anchor.fy * at.h, w: at.w, h: at.h };
+  },
+
   locate: async ({ webContentsId, pins }: { webContentsId: number; pins: { id: string; anchor: PageAnchor }[] }): Promise<Result<({ id: string } & PagePlace)[], Failure>> => {
     const page = pageContents(webContentsId);
     if (!page) return err({ message: 'That page is no longer open.' });
@@ -106,11 +117,13 @@ export const rigPagesController = createRPCController({
     return ok(threadsFromRows(rows.data, (id) => (id ? (names.get(id) ?? null) : null)));
   },
 
-  comment: async (input: { bindingId: string; url: string; body: string; quote: string; anchor: PageAnchor }): Promise<Result<{ id: string }, Failure>> => {
+  comment: async (input: { bindingId: string; url: string; title?: string; body: string; quote: string; anchor: PageAnchor }): Promise<Result<{ id: string }, Failure>> => {
     const posted = await api.postMessage(input.bindingId, {
       body: input.body,
       path: canonicalPageUrl(input.url),
       anchor: { exact: input.quote.slice(0, 2000), page: input.anchor as unknown as Record<string, unknown> },
+      // So the Room names the page for everyone, whether or not they can open it.
+      ...(input.title ? { meta: { pageTitle: input.title.slice(0, 200) } } : {}),
     });
     return posted.success ? ok({ id: posted.data.id }) : err({ message: posted.error.message });
   },

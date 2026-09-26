@@ -1063,6 +1063,7 @@ export class RelayRoomSource implements RoomSource {
       quote: row.quote ?? parentQuote,
       ...(row.parentId ? { isReply: true } : {}),
       ...(agent === 'claude' || agent === 'codex' ? { replyFromAgent: agent } : {}),
+      ...(typeof row.meta?.pageTitle === 'string' && row.meta.pageTitle ? { pageTitle: row.meta.pageTitle } : {}),
     };
   }
 
