@@ -3,7 +3,7 @@ import type { WebviewTag } from 'electron';
 import { ExternalLink } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRunnableAgents, type RunnableAgent } from '@renderer/features/chat/use-runnable-agents';
-import { CommentModeControl, CommentModeStatus, shortAgentName } from '@renderer/features/comment-mode/comment-mode-ui';
+import { CommentCount, CommentModeControl, CommentModeStatus, shortAgentName } from '@renderer/features/comment-mode/comment-mode-ui';
 import { useCommentMode } from '@renderer/features/comment-mode/use-comment-mode';
 import { PaintbrushCursorChip } from '@renderer/features/docs/paintbrush/paintbrush-cursor-chip';
 import { rpc } from '@renderer/lib/ipc';
@@ -223,19 +223,6 @@ export function PageView({
           {selfName ? ` · as ${selfName}` : ''}
         </span>
         <span className="ml-auto flex shrink-0 items-center gap-1">
-          {resolvedCount > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowResolved((on) => !on)}
-              aria-pressed={showResolved}
-              className={cn(
-                'flex h-7 items-center rounded-control px-2 text-xs transition-colors',
-                showResolved ? 'bg-bg-2 text-text-primary' : 'hover:bg-bg-2 text-text-muted'
-              )}
-            >
-              {resolvedCount} resolved
-            </button>
-          )}
           <CommentModeControl
             on={commenting}
             toggle={() => {
@@ -248,6 +235,14 @@ export function PageView({
               commentMode.pick(id);
               setDraft(null);
             }}
+            count={
+              <CommentCount
+                open={(threads.data ?? []).length - resolvedCount}
+                resolved={resolvedCount}
+                showResolved={showResolved}
+                onToggleResolved={() => setShowResolved((on) => !on)}
+              />
+            }
             testId="page-comment-mode"
           />
           <button

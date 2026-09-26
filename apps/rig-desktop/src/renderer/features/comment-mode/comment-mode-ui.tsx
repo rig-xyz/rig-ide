@@ -18,6 +18,49 @@ export function shortAgentName(name: string): string {
   return name.replace(/\s+(code|cli)$/i, '');
 }
 
+/**
+ * How many comments are open, with a quiet toggle for the resolved ones:
+ * the left half of the comments group. Nothing when there are none.
+ */
+export function CommentCount({
+  open,
+  resolved,
+  showResolved,
+  onToggleResolved,
+}: {
+  open: number;
+  resolved: number;
+  showResolved: boolean;
+  onToggleResolved: () => void;
+}) {
+  if (open === 0 && resolved === 0) return null;
+  return (
+    <span className="text-text-muted flex h-7 items-center gap-1 px-1 text-xs" data-testid="comment-count">
+      <MessageCircle className="size-3.5 shrink-0" strokeWidth={1.5} />
+      {open > 0 && (
+        <span className="text-text-secondary tabular-nums" title={`${open} open`}>
+          {open}
+        </span>
+      )}
+      {resolved > 0 && (
+        <button
+          type="button"
+          onClick={onToggleResolved}
+          aria-pressed={showResolved}
+          className={cn(
+            'rounded-control px-1 transition-colors hover:text-text-primary',
+            showResolved && 'bg-bg-2 text-text-primary'
+          )}
+          data-testid="resolved-toggle"
+        >
+          {open > 0 ? '· ' : ''}
+          {resolved} resolved
+        </button>
+      )}
+    </span>
+  );
+}
+
 /** You get a speech bubble; an agent gets its own logo. */
 export function WhoIcon({ who, size = 14 }: { who: RunnableAgent | null; size?: number }) {
   return who ? (
@@ -27,13 +70,20 @@ export function WhoIcon({ who, size = 14 }: { who: RunnableAgent | null; size?: 
   );
 }
 
-/** "Comment ▾" or "Ask Claude ▾" in a file's or a page's header (canvas board 17, option B): the main part turns the mode on, the chevron picks who. */
+/**
+ * The comments group in a file's or a page's header, built like the top
+ * bar's people-and-invite trigger (Dylan, 2026-09-26): what's there on the
+ * left (`count`, see `CommentCount`), the action as an accent pill on the
+ * right: "Comment ▾" or "Ask Claude ▾" (canvas board 17, option B). The
+ * pill's main part turns comment mode on, its chevron picks who.
+ */
 export function CommentModeControl({
   on,
   toggle,
   who,
   agents,
   pick,
+  count,
   testId,
 }: {
   on: boolean;
@@ -42,42 +92,57 @@ export function CommentModeControl({
   /** The agents that can be asked here; none hides the chevron. */
   agents: RunnableAgent[];
   pick: (agentId: string | null) => void;
+  /** The comment count on the pill's left (`CommentCount`). */
+  count?: React.ReactNode;
   testId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const chevronRef = useRef<HTMLButtonElement>(null);
   return (
-    <div
-      className={cn(
-        'flex h-7 shrink-0 items-center rounded-control transition-colors duration-150 motion-reduce:transition-none',
-        on ? 'bg-bg-2 ring-1 ring-inset ring-border-strong text-text-primary' : 'text-text-secondary hover:bg-bg-2/60'
-      )}
-      data-testid={testId}
-    >
-      <button
-        type="button"
-        aria-pressed={on}
-        onClick={toggle}
-        className={cn('flex h-7 items-center gap-1.5 text-xs', agents.length > 0 ? 'pr-1 pl-2' : 'px-2')}
-        data-testid={testId && `${testId}-toggle`}
+    <div className="flex h-7 shrink-0 items-center gap-1" data-testid={testId}>
+      {count}
+      <div
+        className={cn(
+          'bg-accent text-bg-0 rounded-chip flex h-7 items-center text-xs font-medium transition-shadow duration-150 motion-reduce:transition-none',
+          // On: the same pill, ringed, so it reads as held down.
+          on && 'ring-accent/45 ring-offset-bg-1 ring-2 ring-offset-1'
+        )}
       >
-        <WhoIcon who={who} size={14} />
-        <span className="max-w-32 truncate">{who ? `Ask ${shortAgentName(who.name)}` : 'Comment'}</span>
-      </button>
-      {agents.length > 0 && (
         <button
-          ref={chevronRef}
           type="button"
-          aria-haspopup="menu"
-          aria-expanded={open}
-          aria-label="Choose who you're talking to"
-          onClick={() => setOpen((v) => !v)}
-          className="flex h-7 items-center pr-1.5 pl-0.5 text-text-muted hover:text-text-primary"
-          data-testid={testId && `${testId}-who`}
+          aria-pressed={on}
+          onClick={toggle}
+          className={cn(
+            'flex h-7 items-center gap-1.5 rounded-chip hover:opacity-90',
+            agents.length > 0 ? 'pr-1 pl-2.5' : 'px-2.5'
+          )}
+          data-testid={testId && `${testId}-toggle`}
         >
-          <ChevronDown className="size-3" strokeWidth={1.5} />
+          {who ? (
+            // The agent's own mark on a small disc, so its colors hold up on the accent.
+            <span className="bg-bg-1 grid size-4 shrink-0 place-items-center rounded-full">
+              <WhoIcon who={who} size={11} />
+            </span>
+          ) : (
+            <WhoIcon who={null} size={14} />
+          )}
+          <span className="max-w-32 truncate">{who ? `Ask ${shortAgentName(who.name)}` : 'Comment'}</span>
         </button>
-      )}
+        {agents.length > 0 && (
+          <button
+            ref={chevronRef}
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            aria-label="Choose who you're talking to"
+            onClick={() => setOpen((v) => !v)}
+            className="flex h-7 items-center rounded-chip pr-2 pl-0.5 opacity-75 hover:opacity-100"
+            data-testid={testId && `${testId}-who`}
+          >
+            <ChevronDown className="size-3" strokeWidth={2} />
+          </button>
+        )}
+      </div>
       <Popover
         anchor={chevronRef}
         open={open}

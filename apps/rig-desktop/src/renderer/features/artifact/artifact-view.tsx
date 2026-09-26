@@ -20,7 +20,7 @@ import {
 import { useRigDocumentContext } from '@renderer/features/docs/context/use-rig-document-context';
 import { DocEditor } from '@renderer/features/docs/doc-editor';
 import { DocTabResource } from '@renderer/features/docs/doc-file-sync';
-import { CommentModeControl, CommentModeStatus } from '@renderer/features/comment-mode/comment-mode-ui';
+import { CommentCount, CommentModeControl, CommentModeStatus } from '@renderer/features/comment-mode/comment-mode-ui';
 import { PaintbrushCursorChip } from '@renderer/features/docs/paintbrush/paintbrush-cursor-chip';
 import { paintbrushDecorations } from '@renderer/features/docs/paintbrush/paintbrush-decorations';
 import { usePaintbrushEditorSync } from '@renderer/features/docs/paintbrush/use-paintbrush-editor-sync';
@@ -239,8 +239,8 @@ const SaveStatus = observer(function SaveStatus({ resource }: { resource: DocTab
  * markdown-only, rendered by `EditableArtifactPane` only when `language ===
  * 'markdown'`. Same segmented-icon-toggle grammar as the topbar's
  * `LayoutSwitcher` (`features/shell/layout-switcher.tsx`): a
- * `radiogroup`/`radio` pair in a bordered pill, the selected segment lifted
- * to `bg-bg-2`, rather than inventing a second toggle visual language.
+ * `radiogroup`/`radio` pair that rests on the current mode's icon and opens
+ * on hover, rather than inventing a second toggle visual language.
  */
 function PreviewModeToggle({
   mode,
@@ -253,37 +253,51 @@ function PreviewModeToggle({
     { value: 'preview', label: 'Preview', Icon: Eye },
     { value: 'edit', label: 'Edit', Icon: CodeIcon },
   ];
+  // Same treatment as the top bar's layout switch: at rest just the current
+  // mode's icon, no frame; the other slides out on its left on hover or
+  // keyboard focus, and the current one never moves.
+  const ordered = [...segments.filter((s) => s.value !== mode), ...segments.filter((s) => s.value === mode)];
   return (
     <div
       role="radiogroup"
       aria-label="View mode"
-      className="flex items-center gap-0.5 rounded-control border border-border-hairline bg-bg-1 p-0.5"
+      className="group flex items-center rounded-control border border-transparent p-0.5 transition-colors duration-200 hover:border-border-hairline hover:bg-bg-1 has-[:focus-visible]:border-border-hairline has-[:focus-visible]:bg-bg-1"
     >
-      {segments.map(({ value, label, Icon }) => {
+      {ordered.map(({ value, label, Icon }) => {
         const selected = mode === value;
         return (
-          <Tooltip key={value}>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  aria-label={label}
-                  onClick={() => onChange(value)}
-                  className={cn(
-                    'flex h-6 w-7 items-center justify-center rounded-control transition-colors',
-                    selected
-                      ? 'bg-bg-2 text-text-primary'
-                      : 'text-text-muted hover:bg-bg-2/60 hover:text-text-primary'
-                  )}
-                >
-                  <Icon className="size-3.5" strokeWidth={1.5} />
-                </button>
-              }
-            />
-            <TooltipContent side="bottom">{label}</TooltipContent>
-          </Tooltip>
+          <span
+            key={value}
+            className={cn(
+              'flex shrink-0 transition-[max-width,opacity,margin] duration-200 ease-out motion-reduce:transition-none',
+              selected
+                ? 'max-w-7'
+                : 'max-w-0 overflow-hidden opacity-0 group-hover:mr-0.5 group-hover:max-w-7 group-hover:opacity-100 group-has-[:focus-visible]:mr-0.5 group-has-[:focus-visible]:max-w-7 group-has-[:focus-visible]:opacity-100'
+            )}
+          >
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    aria-label={label}
+                    onClick={() => onChange(value)}
+                    className={cn(
+                      'flex h-6 w-7 items-center justify-center rounded-control transition-colors',
+                      selected
+                        ? 'text-text-primary group-hover:bg-bg-2 group-has-[:focus-visible]:bg-bg-2'
+                        : 'text-text-muted hover:bg-bg-2/60 hover:text-text-primary'
+                    )}
+                  >
+                    <Icon className="size-3.5" strokeWidth={1.5} />
+                  </button>
+                }
+              />
+              <TooltipContent side="bottom">{label}</TooltipContent>
+            </Tooltip>
+          </span>
         );
       })}
     </div>
@@ -547,6 +561,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // so opening a draft never moves the text out from under the selection.
   const margin = useMarginMode(containerRef);
   const commentsOn = isMarkdown && comments !== null && showComments;
+  const openCount = comments !== null && showComments ? comments.visibleThreads.length : 0;
   const resolvedCount = comments !== null && showComments ? comments.visibleResolvedThreads.length : 0;
 
   return (
@@ -569,22 +584,6 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 Updated on disk · Reload
               </button>
             )}
-            {resolvedCount > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowResolved((v) => !v)}
-                aria-pressed={showResolved}
-                className={cn(
-                  'flex h-6 shrink-0 items-center rounded-full border px-2 text-xs transition-colors',
-                  showResolved
-                    ? 'border-border-strong bg-bg-2 text-text-primary'
-                    : 'border-border-hairline text-text-muted hover:text-text-primary'
-                )}
-                data-testid="doc-resolved-chip"
-              >
-                {resolvedCount} resolved
-              </button>
-            )}
             {isMarkdown && comments && (
               <CommentModeControl
                 on={paintbrush.on}
@@ -592,6 +591,14 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 who={paintbrush.selected}
                 agents={paintbrush.agents}
                 pick={paintbrush.pick}
+                count={
+                  <CommentCount
+                    open={openCount}
+                    resolved={resolvedCount}
+                    showResolved={showResolved}
+                    onToggleResolved={() => setShowResolved((v) => !v)}
+                  />
+                }
                 testId="doc-comment-mode"
               />
             )}
