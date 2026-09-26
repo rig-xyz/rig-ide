@@ -4,13 +4,9 @@ import { useTheme } from '@renderer/lib/hooks/use-theme';
 import { cn } from '@renderer/lib/utils';
 
 /**
- * One orb, everywhere (punch-list finding 3 — "one orb, everywhere"): the
- * header pill (`paintbrush-control.tsx`), the pointer chip
- * (`paintbrush-cursor-chip.tsx`), and a streaming thread's card
- * (`comments-margin.tsx`'s `AgentReplyCard`) all render THIS component
- * rather than their own copy, so a reader sees one consistent "this is the
- * agent, and here's how hard it's working" language instead of three
- * different-looking indicators.
+ * The agent-at-work orb on a streaming thread's card (`comments-margin.tsx`'s
+ * `AgentReplyCard`). Comment mode's header, pill and pointer chip no longer
+ * use it (canvas board 16: the agent's own logo says who you're asking).
  *
  * `thinking-orbs`'s only nine animations are genuinely different designs
  * (`OrbState`) — armed/idle/streaming must NOT pick different ones (that

@@ -915,7 +915,8 @@ export function App() {
   useEffect(() => {
     if (artefact.tabs.length === 0 || rigLayout === 'chat') return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      // A view that used this Esc (leaving comment mode, closing a draft) says so.
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
       const target = event.target;
       if (
         target instanceof Element &&

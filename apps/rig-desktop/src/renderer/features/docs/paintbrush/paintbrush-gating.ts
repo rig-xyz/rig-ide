@@ -1,24 +1,20 @@
+import type { RunnableAgent } from '@renderer/features/chat/use-runnable-agents';
 import type { AgentMention } from '../comments/comments-store';
 
 /**
- * The paintbrush props both selection components (`comments/comment-selection.tsx`,
+ * The comment-mode props both selection components (`comments/comment-selection.tsx`,
  * `preview/preview-comment-selection.tsx`) accept — `undefined` for every
- * caller that hasn't wired paintbrush in at all, matching plain-comment
- * behavior exactly (`isPaintbrushArmed` below returns false either way).
+ * caller that hasn't wired it in, matching plain-comment behavior exactly.
+ * `agents` are the one-click asks on the selection pill while the mode is off.
  */
-export type PaintbrushArming = { on: boolean; mention: AgentMention | null } | undefined;
+export type PaintbrushArming = { on: boolean; mention: AgentMention | null; agents?: RunnableAgent[] } | undefined;
 
 /**
- * Whether a text selection's release should auto-open the paintbrush
- * composer (pre-populated with the armed agent) instead of the plain
- * floating "Comment" button — `docs/document-focus-design.md` §2, steps
- * 2-3. True only once BOTH the mode is on AND an agent has actually been
- * chosen: arming the mode alone changes nothing yet — the header's own pill
- * only expands once a model is picked too (§2, step 1), and the selection
- * gesture follows the same rule. Pure so the CM6/DOM-selection glue in
- * either component stays exactly as thin as the pre-paintbrush code was,
- * and so this one decision can't drift between the two surfaces.
+ * Whether a text selection's release opens the composer straight away
+ * (addressed to `mention`, or to nobody for just you) instead of showing the
+ * selection pill: whenever comment mode is on (canvas board 16). Pure so
+ * this one decision can't drift between the two surfaces.
  */
 export function isPaintbrushArmed(paintbrush: PaintbrushArming): boolean {
-  return paintbrush?.on === true && paintbrush.mention !== null;
+  return paintbrush?.on === true;
 }

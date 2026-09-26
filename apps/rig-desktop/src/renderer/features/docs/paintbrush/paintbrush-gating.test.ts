@@ -12,11 +12,11 @@ describe('isPaintbrushArmed', () => {
     expect(isPaintbrushArmed({ on: false, mention: MENTION })).toBe(false);
   });
 
-  it('is false while the mode is on but no agent has been chosen yet', () => {
-    expect(isPaintbrushArmed({ on: true, mention: null })).toBe(false);
+  it('is true while the mode is on as just you (comment mode, canvas board 16)', () => {
+    expect(isPaintbrushArmed({ on: true, mention: null })).toBe(true);
   });
 
-  it('is true only once both the mode is on and an agent is chosen', () => {
+  it('is true while the mode is on with an agent picked', () => {
     expect(isPaintbrushArmed({ on: true, mention: MENTION })).toBe(true);
   });
 });

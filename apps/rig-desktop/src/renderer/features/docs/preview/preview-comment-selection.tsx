@@ -1,7 +1,11 @@
-import { MessageSquarePlus } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { DocCommentsStore } from '../comments/comments-store';
+import {
+  CommentSelectionPill,
+  SELECTION_PILL_HEIGHT,
+  selectionPillWidth,
+} from '@renderer/features/comment-mode/comment-mode-ui';
+import type { AgentMention, DocCommentsStore } from '../comments/comments-store';
 import { isPaintbrushArmed, type PaintbrushArming } from '../paintbrush/paintbrush-gating';
 import type { PositionIndex } from './position-index';
 
@@ -82,48 +86,46 @@ export function PreviewCommentSelectionButton({
     };
   }, [pending]);
 
-  const start = useCallback(() => {
-    if (pending === null) return;
-    const index = getIndex();
-    const mapped = index ? index.rangeToSource(pending.range) : null;
-    if (mapped) {
-      store.openComposer(content.slice(mapped.start, mapped.end), mapped);
-    } else {
-      store.openComposer(pending.text);
-    }
-    setPending(null);
-    window.getSelection()?.removeAllRanges();
-  }, [pending, store, getIndex, content]);
+  const start = useCallback(
+    (mention: AgentMention | null) => {
+      if (pending === null) return;
+      const index = getIndex();
+      const mapped = index ? index.rangeToSource(pending.range) : null;
+      if (mapped) {
+        store.openComposer(content.slice(mapped.start, mapped.end), mapped, mention);
+      } else {
+        store.openComposer(pending.text, undefined, mention);
+      }
+      setPending(null);
+      window.getSelection()?.removeAllRanges();
+    },
+    [pending, store, getIndex, content]
+  );
 
   if (pending === null) return null;
-  const { top, left } = place(pending.rect);
+  const agents = paintbrush?.agents ?? [];
+  const { top, left } = place(pending.rect, selectionPillWidth(agents));
 
   return createPortal(
-    <button
-      type="button"
-      // Keep the selection: a plain click here would blur it away.
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={start}
-      style={{ top, left, width: BUTTON_WIDTH, height: BUTTON_HEIGHT }}
-      className="border-border-hairline bg-bg-1 text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control fixed z-50 flex items-center justify-center gap-1.5 border text-xs shadow-soft"
-    >
-      <MessageSquarePlus className="size-3.5 shrink-0" />
-      Comment
-    </button>,
+    <CommentSelectionPill
+      top={top}
+      left={left}
+      agents={agents}
+      onComment={() => start(null)}
+      onAsk={(agent) => start({ providerId: agent.id, name: agent.name })}
+    />,
     document.body
   );
 }
 
-const BUTTON_WIDTH = 104;
-const BUTTON_HEIGHT = 26;
 const GAP = 6;
 const EDGE = 8;
 
-function place(rect: DOMRect): { top: number; left: number } {
+function place(rect: DOMRect, width: number): { top: number; left: number } {
   const below = rect.bottom + GAP;
-  const fitsBelow = below + BUTTON_HEIGHT + EDGE <= window.innerHeight;
+  const fitsBelow = below + SELECTION_PILL_HEIGHT + EDGE <= window.innerHeight;
   return {
-    top: fitsBelow ? below : Math.max(EDGE, rect.top - BUTTON_HEIGHT - GAP),
-    left: Math.min(Math.max(rect.left, EDGE), window.innerWidth - BUTTON_WIDTH - EDGE),
+    top: fitsBelow ? below : Math.max(EDGE, rect.top - SELECTION_PILL_HEIGHT - GAP),
+    left: Math.min(Math.max(rect.left, EDGE), window.innerWidth - width - EDGE),
   };
 }

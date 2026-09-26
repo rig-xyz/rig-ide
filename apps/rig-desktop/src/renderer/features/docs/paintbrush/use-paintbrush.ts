@@ -1,133 +1,43 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { events, rpc } from '@renderer/lib/ipc';
 import { useRunnableAgents, type RunnableAgent } from '@renderer/features/chat/use-runnable-agents';
-import { rigSettingsChangedChannel } from '@shared/rig/settings';
+import { useCommentMode, useSmartHighlighterEnabled } from '@renderer/features/comment-mode/use-comment-mode';
 import type { AgentMention } from '../comments/comments-store';
 
 /**
- * The paintbrush header control's own state (`docs/document-focus-design.md`
- * §2): whether the mode is armed, and which agent strokes are sent to.
- *
- * Two different lifetimes, deliberately: whether the mode is ON is
- * per-window UI state (plain `useState`, gone the moment this document
- * closes or the app restarts — the spec's own wording) while the CHOSEN
- * agent is a standing preference, worth remembering across sessions the same
- * way the chat panel's own harness choice is (`shared/rig/settings.ts`'s
- * `lastHarness`) — same storage mechanism (`rpc.rig.settings`), a sibling
- * field (`paintbrushAgent`) rather than reusing `lastHarness` itself, since
- * "which agent edits inline for me" and "which agent my chat panel talks to"
- * are two different questions that happen to often share an answer.
+ * A Markdown file's comment mode (canvas board 16), which the paintbrush now
+ * is: the header's Comment control arms it, and a selection release opens
+ * the composer addressed to whoever was picked. Picking an agent is the old
+ * Smart Highlighter: its reply proposes an edit in place.
  */
 export function usePaintbrushMode(): {
   /**
-   * Whether the Experimental → Smart Highlighter setting is on at all — the
-   * feature-flag gate (`shared/rig/settings.ts`'s `smartHighlighterEnabled`,
-   * default `false`). Every entry point (the header control, the cursor
-   * chip, the CM6 decoration extension) checks this before rendering or
-   * registering, not just `on` below — `on` alone would let a control
-   * rendered before the setting was ever read flash into an armable state.
+   * Experimental › Smart Highlighter (`smartHighlighterEnabled`): whether
+   * agents can be picked here, and whether the paintbrush's decoration layer
+   * is registered. Comment mode itself works either way.
    */
   enabled: boolean;
-  /** Whether the header's orb is armed. Always false while `enabled` is false. */
   on: boolean;
-  /** No-ops while `enabled` is false — arming is impossible with the setting off. */
+  setOn(on: boolean): void;
   toggle(): void;
-  /** Every agent this machine can actually run right now, for the dropdown. */
+  /** The agents that can be picked here: every runnable one with the setting on, none without. */
   agents: RunnableAgent[];
-  /** The agent the dropdown currently has selected, or null before a first choice. */
+  /** The agent drafts are addressed to, or null for just you. */
   selected: RunnableAgent | null;
-  /** Persists the choice (`rig.settings`) — survives restarts, global (not per-rig). */
-  selectAgent(id: string): void;
-  /** `selected`, reshaped for `DocCommentsStore.create`/`openComposer` — null until an agent is actually chosen. */
+  pick(agentId: string | null): void;
+  /** `selected`, shaped for `DocCommentsStore.openComposer`. */
   mention: AgentMention | null;
-  /**
-   * Discoverability round (punch-list finding 4): true while the mode is
-   * armed and the reader has never dismissed the first-use coach mark —
-   * `PaintbrushControl` renders it anchored to the header pill.
-   */
-  showCoachMark: boolean;
-  /** Persists `paintbrushCoachMarkSeen` so the coach mark never shows again this install. */
-  dismissCoachMark(): void;
 } {
-  const [on, setOn] = useState(false);
-  const { agents } = useRunnableAgents();
-  const queryClient = useQueryClient();
-
-  // The feature-flag gate — read live via `rigSettingsChangedChannel`
-  // rather than the react-query cache below, since the Experimental
-  // toggle lives in a completely different part of the tree (the Settings
-  // modal) and must reach every open document immediately, no restart.
-  const [enabled, setEnabled] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    void rpc.rig.settings.get().then((current) => {
-      if (alive) setEnabled(current.smartHighlighterEnabled);
-    });
-    const off = events.on(rigSettingsChangedChannel, (next) => {
-      setEnabled(next.smartHighlighterEnabled);
-    });
-    return () => {
-      alive = false;
-      off();
-    };
-  }, []);
-
-  // Turning the setting off while the mode happens to be armed must disarm
-  // it immediately — no stale armed state surviving a setting flip.
-  useEffect(() => {
-    if (!enabled) setOn(false);
-  }, [enabled]);
-
-  const { data: settings } = useQuery({
-    queryKey: ['rig', 'settings', 'paintbrushAgent'],
-    queryFn: () => rpc.rig.settings.get(),
-  });
-  const selectedId = settings?.paintbrushAgent ?? null;
-  const selected = useMemo(
-    () => agents.find((agent) => agent.id === selectedId) ?? null,
-    [agents, selectedId]
-  );
-
-  const selectAgent = useCallback(
-    (id: string) => {
-      void rpc.rig.settings.set({ paintbrushAgent: id }).then(() => {
-        void queryClient.invalidateQueries({ queryKey: ['rig', 'settings', 'paintbrushAgent'] });
-      });
-    },
-    [queryClient]
-  );
-
-  const mention: AgentMention | null = selected
-    ? { providerId: selected.id, name: selected.name }
-    : null;
-
-  // Optimistic local flag ahead of the settings round trip landing — a
-  // reader dismissing the coach mark must not see it flash back for the
-  // frame or two before `rig.settings.set` resolves and this query
-  // refetches.
-  const [dismissedLocally, setDismissedLocally] = useState(false);
-  const coachMarkSeen = (settings?.paintbrushCoachMarkSeen ?? false) || dismissedLocally;
-  const showCoachMark = on && !coachMarkSeen;
-  const dismissCoachMark = useCallback(() => {
-    setDismissedLocally(true);
-    void rpc.rig.settings.set({ paintbrushCoachMarkSeen: true }).then(() => {
-      void queryClient.invalidateQueries({ queryKey: ['rig', 'settings', 'paintbrushAgent'] });
-    });
-  }, [queryClient]);
-
+  const enabled = useSmartHighlighterEnabled();
+  const { agents: runnable } = useRunnableAgents();
+  const agents = enabled ? runnable : [];
+  const mode = useCommentMode(agents);
   return {
     enabled,
-    on,
-    toggle: () => {
-      if (!enabled) return;
-      setOn((v) => !v);
-    },
+    on: mode.on,
+    setOn: mode.setOn,
+    toggle: mode.toggle,
     agents,
-    selected,
-    selectAgent,
-    mention,
-    showCoachMark,
-    dismissCoachMark,
+    selected: mode.who,
+    pick: mode.pick,
+    mention: mode.who ? { providerId: mode.who.id, name: mode.who.name } : null,
   };
 }

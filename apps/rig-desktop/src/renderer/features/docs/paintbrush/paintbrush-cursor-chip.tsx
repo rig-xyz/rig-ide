@@ -1,36 +1,31 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { PaintbrushOrb } from './paintbrush-orb';
+import type { RunnableAgent } from '@renderer/features/chat/use-runnable-agents';
+import { WhoIcon } from '@renderer/features/comment-mode/comment-mode-ui';
 
 /**
- * The v1 data-URI cursor (`paintbrush-decorations.ts`'s old `PAINTBRUSH_CURSOR`)
- * read as a weird, unfamiliar pointer — punch-list finding 3. Removed
- * entirely: the cursor over the document is the plain native one (an
- * I-beam over text, same as ordinary selection), and THIS renders a small
- * orb chip that follows the pointer instead — offset down-and-right so it
- * never sits under the cursor itself, `pointer-events: none` so it can
- * never intercept the click/drag that makes the selection, and shown only
- * while the mode is actually armed and the pointer is over the document
- * surface (never while the composer is open — the caller's own `active`
- * already folds that in, same fade-out the spec asks for).
- *
- * Rebuilt (punch-list finding 3 — "one orb, everywhere"): a plain purple
- * CSS circle read as an unrelated indicator next to the header's own
- * `ThinkingOrb`. This now renders the exact same `PaintbrushOrb` — the
- * `searching` animation, one shared tint — at a small size, so the chip
- * and the header read as one system rather than two.
+ * Comment mode's cursor (canvas board 16): the plain native pointer (an
+ * I-beam over text), with a small chip trailing it that says who you're
+ * talking to — a speech bubble for you, the agent's own logo. Offset
+ * down-and-right so it never covers the cursor, `pointer-events: none` so it
+ * never takes the click/drag that makes the selection, and shown only while
+ * the mode is on and the pointer is over the document (never while the
+ * composer is open — the caller's own `active` folds that in).
  *
  * Position updates are rAF-throttled: a raw `pointermove` handler can fire
  * far faster than a frame, and there is nothing to gain from re-rendering
  * more often than the screen can show.
  */
 
-/** Small enough to trail the pointer without competing with the caret; big enough that the orb's animation still reads. */
+/** Small enough to trail the pointer without competing with the caret. */
 const CHIP_SIZE = 18;
 export function PaintbrushCursorChip({
   active,
   containerRef,
+  who,
 }: {
+  /** Who comment mode is addressed to: a speech bubble for you, the agent's own logo (canvas board 16: no orb). */
+  who: RunnableAgent | null;
   /** Armed AND the composer isn't open — the caller decides both; this only tracks the pointer. */
   active: boolean;
   containerRef: RefObject<HTMLElement | null>;
@@ -83,15 +78,14 @@ export function PaintbrushCursorChip({
   if (!active || pos === null) return null;
 
   return createPortal(
-    // A solid little disc behind the orb: on its own, the orb's fine dots
-    // vanish against body text — the chip has to read over any background,
-    // including a white page in the light theme (hence the stronger
-    // surface and border, not the hairline).
+    // A solid little disc, so the icon reads over any background, including
+    // a white page in the light theme.
     <div
-      className="border-border-strong bg-bg-2 pointer-events-none fixed z-50 flex items-center justify-center rounded-full border p-0.5 shadow-soft"
-      style={{ left: pos.x + OFFSET, top: pos.y + OFFSET }}
+      className="border-border-hairline bg-bg-1 text-text-secondary pointer-events-none fixed z-50 grid place-items-center rounded-full border shadow-soft"
+      style={{ left: pos.x + OFFSET, top: pos.y + OFFSET, width: CHIP_SIZE + 4, height: CHIP_SIZE + 4 }}
+      data-testid="comment-cursor-chip"
     >
-      <PaintbrushOrb spin="idle" size={CHIP_SIZE} />
+      <WhoIcon who={who} size={12} />
     </div>,
     document.body
   );

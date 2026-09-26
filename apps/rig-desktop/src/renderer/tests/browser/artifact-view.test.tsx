@@ -369,9 +369,10 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
         return anchor?.exact === sourceSelection;
       })
     );
-    const commentButton = Array.from(document.body.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Comment'
-    );
+    // The selection pill's Comment, not the header's comment-mode control.
+    const commentButton = Array.from(
+      document.body.querySelectorAll('[data-testid="comment-selection-pill"] button')
+    ).find((button) => button.textContent?.trim() === 'Comment') as HTMLButtonElement | undefined;
     expect(commentButton).toBeTruthy();
 
     await act(async () => commentButton!.click());

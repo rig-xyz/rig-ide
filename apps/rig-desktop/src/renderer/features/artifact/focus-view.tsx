@@ -27,7 +27,7 @@ import {
 } from '@renderer/features/docs/comments/comments-store';
 import { isPaintbrushArmed } from '@renderer/features/docs/paintbrush/paintbrush-gating';
 import { paintbrushDecorations } from '@renderer/features/docs/paintbrush/paintbrush-decorations';
-import { PaintbrushControl } from '@renderer/features/docs/paintbrush/paintbrush-control';
+import { CommentModeControl } from '@renderer/features/comment-mode/comment-mode-ui';
 import { usePaintbrushEditorSync } from '@renderer/features/docs/paintbrush/use-paintbrush-editor-sync';
 import { usePaintbrushMode } from '@renderer/features/docs/paintbrush/use-paintbrush';
 import { useEverWrittenPaths, useRecentWrites } from '@renderer/features/workspace/write-activity';
@@ -219,15 +219,12 @@ export function FocusView({
         </span>
         <div className="ml-auto flex items-center gap-1">
           {paintbrush.enabled && (
-            <PaintbrushControl
+            <CommentModeControl
               on={paintbrush.on}
               toggle={paintbrush.toggle}
+              who={paintbrush.selected}
               agents={paintbrush.agents}
-              selected={paintbrush.selected}
-              selectAgent={paintbrush.selectAgent}
-              streaming={false}
-              showCoachMark={paintbrush.showCoachMark}
-              dismissCoachMark={paintbrush.dismissCoachMark}
+              pick={paintbrush.pick}
             />
           )}
           {/* Default (All) first — the resting state highlights the first pill. */}

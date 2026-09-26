@@ -1,33 +1,36 @@
-import { MessageSquarePlus } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import {
+  CommentSelectionPill,
+  SELECTION_PILL_HEIGHT,
+  selectionPillWidth,
+} from '@renderer/features/comment-mode/comment-mode-ui';
 import type { DocSelectionRect } from '../doc-editor';
 import type { DocTabResource } from '../doc-file-sync';
 import { isPaintbrushArmed, type PaintbrushArming } from '../paintbrush/paintbrush-gating';
-import type { DocCommentsStore } from './comments-store';
+import type { AgentMention, DocCommentsStore } from './comments-store';
 
 /**
- * The "Comment" affordance that floats next to a live text selection, Docs-style.
- * Ported from emdash's `comment-selection.tsx`, retextured onto this app's tokens.
+ * The "Comment" affordance that floats next to a live text selection, Docs-style:
+ * comment mode's selection pill (canvas board 16), with one-click asks for
+ * your first agents.
  *
  * Rendered in a portal at fixed position because the rect CM6 hands us is in
  * viewport coordinates. Any scroll invalidates that rect, so we dismiss rather
  * than try to keep up.
  */
 
-const BUTTON_WIDTH = 104;
-const BUTTON_HEIGHT = 26;
 const GAP = 6;
 const EDGE = 8;
 
 type Pending = { quote: string; rect: DocSelectionRect };
 
-function place(rect: DocSelectionRect): { top: number; left: number } {
+function place(rect: DocSelectionRect, width: number): { top: number; left: number } {
   const below = rect.bottom + GAP;
-  const fitsBelow = below + BUTTON_HEIGHT + EDGE <= window.innerHeight;
+  const fitsBelow = below + SELECTION_PILL_HEIGHT + EDGE <= window.innerHeight;
   return {
-    top: fitsBelow ? below : Math.max(EDGE, rect.top - BUTTON_HEIGHT - GAP),
-    left: Math.min(Math.max(rect.left, EDGE), window.innerWidth - BUTTON_WIDTH - EDGE),
+    top: fitsBelow ? below : Math.max(EDGE, rect.top - SELECTION_PILL_HEIGHT - GAP),
+    left: Math.min(Math.max(rect.left, EDGE), window.innerWidth - width - EDGE),
   };
 }
 
@@ -39,12 +42,9 @@ export function CommentSelectionButton({
   resource: DocTabResource;
   store: DocCommentsStore;
   /**
-   * Paintbrush mode (`docs/document-focus-design.md` §2, step 2-3): while
-   * armed, a selection release auto-opens the composer pre-populated with
-   * `mention` instead of showing this floating button — `mention` is null
-   * until the reader has actually chosen an agent in the header dropdown,
-   * in which case this behaves exactly as it always has (mode alone, with
-   * no agent picked yet, is not enough to change anything here).
+   * Comment mode (canvas board 16): while it's on, a selection release
+   * opens the composer straight away, addressed to `mention` (null for just
+   * you), instead of showing the pill.
    */
   paintbrush?: PaintbrushArming;
 }) {
@@ -86,27 +86,27 @@ export function CommentSelectionButton({
     };
   }, [pending]);
 
-  const start = useCallback(() => {
-    if (pending === null) return;
-    store.openComposer(pending.quote);
-    setPending(null);
-  }, [pending, store]);
+  const start = useCallback(
+    (mention: AgentMention | null) => {
+      if (pending === null) return;
+      store.openComposer(pending.quote, undefined, mention);
+      setPending(null);
+    },
+    [pending, store]
+  );
 
   if (pending === null) return null;
-  const { top, left } = place(pending.rect);
+  const agents = paintbrush?.agents ?? [];
+  const { top, left } = place(pending.rect, selectionPillWidth(agents));
 
   return createPortal(
-    <button
-      type="button"
-      // Keep the editor's selection: a plain click here would blur it away.
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={start}
-      style={{ top, left, width: BUTTON_WIDTH, height: BUTTON_HEIGHT }}
-      className="border-border-hairline bg-bg-1 text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control fixed z-50 flex items-center justify-center gap-1.5 border text-xs shadow-soft"
-    >
-      <MessageSquarePlus className="size-3.5 shrink-0" />
-      Comment
-    </button>,
+    <CommentSelectionPill
+      top={top}
+      left={left}
+      agents={agents}
+      onComment={() => start(null)}
+      onAsk={(agent) => start({ providerId: agent.id, name: agent.name })}
+    />,
     document.body
   );
 }

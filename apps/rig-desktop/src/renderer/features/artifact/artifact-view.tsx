@@ -18,7 +18,7 @@ import {
 import { useRigDocumentContext } from '@renderer/features/docs/context/use-rig-document-context';
 import { DocEditor } from '@renderer/features/docs/doc-editor';
 import { DocTabResource } from '@renderer/features/docs/doc-file-sync';
-import { PaintbrushControl } from '@renderer/features/docs/paintbrush/paintbrush-control';
+import { CommentModeControl, CommentModeStatus } from '@renderer/features/comment-mode/comment-mode-ui';
 import { PaintbrushCursorChip } from '@renderer/features/docs/paintbrush/paintbrush-cursor-chip';
 import { paintbrushDecorations } from '@renderer/features/docs/paintbrush/paintbrush-decorations';
 import { usePaintbrushEditorSync } from '@renderer/features/docs/paintbrush/use-paintbrush-editor-sync';
@@ -337,10 +337,10 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // affordance retire.
   const [showComments, setShowComments] = useState(true);
 
-  // Paintbrush (`docs/document-focus-design.md` §2): the header orb's own
-  // mode/agent state — v1 scope is markdown-only (`isMarkdown` below gates
-  // where the control renders and where selection release auto-opens the
-  // composer), same as comments themselves.
+  // Comment mode (canvas board 16; the paintbrush, `docs/document-focus-
+  // design.md` §2): the header's Comment control and who it's addressed to —
+  // markdown-only (`isMarkdown` below gates where the control renders and
+  // where selection release opens the composer), same as comments themselves.
   const paintbrush = usePaintbrushMode();
 
   // Preview ⇄ Edit (`preview-mode-spec.md` "Shape"): markdown-only, Preview
@@ -473,6 +473,21 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // stroke is already being typed).
   const paintbrushComposerOpen = comments?.composerQuote != null;
 
+  // Esc leaves comment mode (a draft in progress keeps it: Esc there is the
+  // composer's). Capture phase, and marked used, so the panel's own Esc
+  // (close the tab) waits for the next one.
+  const setCommentMode = paintbrush.setOn;
+  useEffect(() => {
+    if (!paintbrush.on) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || comments?.composerQuote != null) return;
+      setCommentMode(false);
+      event.preventDefault();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [paintbrush.on, comments, setCommentMode]);
+
   // Prompt-scoped provenance target: the chat panel is a sibling, so this
   // hook publishes only the main-validated locator for the active document
   // and its latest Edit/Preview selection. No document text crosses that
@@ -528,7 +543,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   const showMargin = comments !== null && showComments && shouldShowMargin(comments);
 
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+    <div className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden">
       <ArtifactHeaderBar
         path={path}
         crumbs={crumbs}
@@ -546,16 +561,14 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 Updated on disk · Reload
               </button>
             )}
-            {isMarkdown && comments && paintbrush.enabled && (
-              <PaintbrushControl
+            {isMarkdown && comments && (
+              <CommentModeControl
                 on={paintbrush.on}
                 toggle={paintbrush.toggle}
+                who={paintbrush.selected}
                 agents={paintbrush.agents}
-                selected={paintbrush.selected}
-                selectAgent={paintbrush.selectAgent}
-                streaming={paintbrushOverlay?.streaming ?? false}
-                showCoachMark={paintbrush.showCoachMark}
-                dismissCoachMark={paintbrush.dismissCoachMark}
+                pick={paintbrush.pick}
+                testId="doc-comment-mode"
               />
             )}
             {isMarkdown && <PreviewModeToggle mode={mode} onChange={setMode} />}
@@ -600,16 +613,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
 
       <div
         ref={containerRef}
-        className={cn(
-          'relative min-h-0 flex-1 overflow-y-auto transition-shadow duration-200 ease-out motion-reduce:transition-none',
-          // Document-level armed cue (punch-list finding 4): `box-shadow`
-          // via Tailwind's `ring` utility, deliberately — never a border,
-          // padding, or outline, none of which may affect this container's
-          // box (layout-shift audit, punch-list finding B). `ring-inset`
-          // keeps it inside the element's own border-box either way, but
-          // `box-shadow` costs nothing in layout regardless of inset/outset.
-          isMarkdown && paintbrush.on && 'ring-1 ring-inset ring-accent/25'
-        )}
+        className="relative min-h-0 flex-1 overflow-y-auto"
       >
         {resource.isLoading ? (
           <div className="flex h-full items-center justify-center text-sm text-text-muted">
@@ -650,7 +654,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
               <CommentSelectionButton
                 resource={resource}
                 store={comments}
-                paintbrush={{ on: paintbrush.on, mention: paintbrush.mention }}
+                paintbrush={{ on: paintbrush.on, mention: paintbrush.mention, agents: paintbrush.agents }}
               />
             )}
             {mode === 'preview' && comments && (
@@ -667,18 +671,20 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 getIndex={() => previewRef.current?.getIndex() ?? null}
                 content={resource.content}
                 store={comments}
-                paintbrush={{ on: paintbrush.on, mention: paintbrush.mention }}
+                paintbrush={{ on: paintbrush.on, mention: paintbrush.mention, agents: paintbrush.agents }}
               />
             )}
           </>
         )}
       </div>
-      {paintbrush.enabled && (
+      {isMarkdown && comments && (
         <PaintbrushCursorChip
           active={paintbrush.on && !paintbrushComposerOpen}
           containerRef={containerRef}
+          who={paintbrush.selected}
         />
       )}
+      {isMarkdown && paintbrush.on && !paintbrushComposerOpen && <CommentModeStatus who={paintbrush.selected} />}
     </div>
   );
 });

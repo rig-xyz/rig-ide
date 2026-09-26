@@ -1,7 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { WebviewTag } from 'electron';
-import { ExternalLink, MessageCircle } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRunnableAgents, type RunnableAgent } from '@renderer/features/chat/use-runnable-agents';
+import { CommentModeControl, CommentModeStatus } from '@renderer/features/comment-mode/comment-mode-ui';
+import { useCommentMode } from '@renderer/features/comment-mode/use-comment-mode';
+import { PaintbrushCursorChip } from '@renderer/features/docs/paintbrush/paintbrush-cursor-chip';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { Textarea } from '@renderer/lib/ui/textarea';
@@ -26,10 +30,14 @@ type Draft = { anchor: PageAnchor; quote: string; x: number; y: number };
 
 const LOCATE_EVERY_MS = 150;
 
+type RoomAgent = 'claude' | 'codex';
+/** The agents that answer pins: the ones a space's Room can run. */
+const ROOM_AGENTS: readonly string[] = ['claude', 'codex'] satisfies RoomAgent[];
+
 /** Which of the member's agents a comment asks, if any: "@claude …", "@codex …". */
-function mentionedAgent(body: string): 'claude' | 'codex' | null {
+function mentionedAgent(body: string): RoomAgent | null {
   const m = /(?:^|\s)@(claude|codex)\b/i.exec(body);
-  return m ? (m[1]!.toLowerCase() as 'claude' | 'codex') : null;
+  return m ? (m[1]!.toLowerCase() as RoomAgent) : null;
 }
 const THREADS_EVERY_MS = 4000;
 
@@ -73,7 +81,13 @@ export function PageView({
     return () => observer.disconnect();
   }, []);
   const [webContentsId, setWebContentsId] = useState<number | null>(null);
-  const [commenting, setCommenting] = useState(false);
+  const { agents: runnable } = useRunnableAgents();
+  const agents = useMemo(() => runnable.filter((a) => ROOM_AGENTS.includes(a.id)), [runnable]);
+  const commentMode = useCommentMode(agents);
+  const commenting = commentMode.on;
+  const setCommenting = commentMode.setOn;
+  const who = commentMode.who;
+  const layerRef = useRef<HTMLDivElement>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [places, setPlaces] = useState<Record<string, Place>>({});
@@ -149,17 +163,21 @@ export function PageView({
     };
   }, [webContentsId, open.map((t) => t.id).join(',')]);
 
-  // Esc leaves comment mode, or closes what's open.
+  // Esc closes the draft, then leaves comment mode, then closes the open
+  // thread. Capture phase, and marked used, so the panel's own Esc (close
+  // the tab) waits for the next one.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       if (draft) setDraft(null);
       else if (commenting) setCommenting(false);
-      else setOpenId(null);
+      else if (openId) setOpenId(null);
+      else return;
+      event.preventDefault();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [draft, commenting]);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [draft, commenting, openId, setCommenting]);
 
   // Comment mode's hover: outline what a click would pin. One lookup in
   // flight at a time; the latest pointer position wins.
@@ -218,22 +236,20 @@ export function PageView({
               {resolvedCount} resolved
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              setCommenting((on) => !on);
+          <CommentModeControl
+            on={commenting}
+            toggle={() => {
+              setCommenting(!commenting);
               setDraft(null);
             }}
-            aria-pressed={commenting}
-            className={cn(
-              'flex h-7 items-center gap-1.5 rounded-control px-2 text-xs transition-colors',
-              commenting ? 'bg-accent-subtle text-accent' : 'hover:bg-bg-2 text-text-secondary'
-            )}
-            data-testid="page-comment-toggle"
-          >
-            <MessageCircle className="size-3.5" strokeWidth={1.5} />
-            Comment
-          </button>
+            who={who}
+            agents={agents}
+            pick={(id) => {
+              commentMode.pick(id);
+              setDraft(null);
+            }}
+            testId="page-comment-mode"
+          />
           <button
             type="button"
             onClick={() => void rpc.app.openExternal(url)}
@@ -259,7 +275,8 @@ export function PageView({
         )}
         {commenting && (
           <div
-            className="absolute inset-0 cursor-crosshair"
+            ref={layerRef}
+            className="absolute inset-0"
             onClick={(event) => void pinAt(event)}
             onMouseMove={(event) => {
               const box = event.currentTarget.getBoundingClientRect();
@@ -269,6 +286,8 @@ export function PageView({
             data-testid="page-comment-layer"
           />
         )}
+        <PaintbrushCursorChip active={commenting && !draft} containerRef={layerRef} who={who} />
+        {commenting && !draft && <CommentModeStatus who={who} />}
         {commenting && !draft && hover && (
           <div
             className="border-accent bg-accent/5 pointer-events-none absolute rounded-sm border-[1.5px]"
@@ -317,9 +336,12 @@ export function PageView({
         {draft && (
           <DraftCard
             draft={draft}
+            to={who}
             width={stageWidth}
             onCancel={() => setDraft(null)}
-            onSubmit={async (body) => {
+            onSubmit={async (typed) => {
+              // Addressed to an agent: the comment says so, as if typed.
+              const body = who && !mentionedAgent(typed) ? `@${who.id} ${typed}` : typed;
               const result = await rpc.rig.pages.comment({ bindingId, url, title, body, quote: draft.quote, anchor: draft.anchor });
               setDraft(null);
               setCommenting(false);
@@ -412,11 +434,14 @@ function ThreadCard({
 
 function DraftCard({
   draft,
+  to,
   width,
   onCancel,
   onSubmit,
 }: {
   draft: Draft;
+  /** The agent comment mode is addressed to, or null for a plain comment. */
+  to: RunnableAgent | null;
   width: number;
   onCancel: () => void;
   onSubmit: (body: string) => Promise<void>;
@@ -439,7 +464,7 @@ function DraftCard({
             void onSubmit(body.trim());
           }
         }}
-        placeholder="Comment, @ to mention"
+        placeholder={to ? `Ask ${to.name} about this` : 'Comment, @ to mention'}
         className="min-h-14 text-sm"
       />
       <div className="flex justify-end gap-1.5">
@@ -447,7 +472,7 @@ function DraftCard({
           Cancel
         </Button>
         <Button size="sm" disabled={!body.trim()} onClick={() => void onSubmit(body.trim())}>
-          Comment
+          {to ? `Ask ${to.name}` : 'Comment'}
         </Button>
       </div>
     </div>
