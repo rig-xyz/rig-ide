@@ -9,8 +9,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
  *  - the layout switch (Room | Split | Doc) shows only once a doc is open
  *    beside a space's Room; a plain rig keeps it on regardless;
  *  - the open doc joins the breadcrumb, with its own close control;
- *  - a space's member faces (People) and its accent Invite pill are two
- *    separate triggers, not one combined button.
+ *  - a space's member faces sit on the left of its accent Invite pill, as
+ *    one trigger for one people-and-invite popover.
  * `pinned-card.test.tsx` covers the "Details" panel header; `time-format.
  * test.ts` covers the duration formatter.
  */
@@ -38,7 +38,7 @@ vi.mock('@renderer/lib/ipc', () => ({
 
 import { Topbar } from '@renderer/App';
 import type { RigLayout } from '@renderer/features/shell/layout-switcher';
-import { RigPeopleButton, RigShareButton } from '@renderer/features/rig-share/rig-share-button';
+import { RigShareButton } from '@renderer/features/rig-share/rig-share-button';
 
 function click(el: Element): void {
   el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -129,32 +129,29 @@ describe('Topbar', () => {
   });
 
   describe('People and Share', () => {
-    it('renders the member faces and the accent Invite pill as two separate triggers for a space', async () => {
+    it('shows a space\'s member faces on the left of its Invite pill, as one trigger (people and invite are one thing)', async () => {
       mocks.shareMembers.mockResolvedValue({
         success: true,
         data: { members: [{ userId: 'u1', name: 'Dylan', email: 'dylan@acme.com', avatarUrl: null, role: 'owner' }], selfRole: 'owner' },
       });
       await render({
         isSpace: true,
-        peopleSlot: <RigPeopleButton root="/rigs/growth" name="growth" />,
         sharePillSlot: <RigShareButton root="/rigs/growth" name="growth" variant="pill" />,
       });
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
 
-      const peopleButton = host.querySelector<HTMLButtonElement>('[aria-label="People"]');
-      expect(peopleButton).toBeTruthy();
-      // Polish round 2, lane F: the pill reads "Invite" now, not "Share" —
-      // the faces trigger beside it already covers "who's here."
-      const inviteButtons = [...host.querySelectorAll('button')].filter((b) => b.textContent === 'Invite');
-      expect(inviteButtons).toHaveLength(1);
+      const trigger = host.querySelector<HTMLButtonElement>('[aria-label="People and invites"]');
+      expect(trigger).toBeTruthy();
+      expect(trigger!.textContent).toContain('Invite');
+      // The faces live inside the same button, before the pill.
+      expect(trigger!.textContent!.indexOf('D')).toBeLessThan(trigger!.textContent!.indexOf('Invite'));
+      expect(host.querySelector('[aria-label="People"]')).toBeNull();
       expect(host.textContent).not.toContain('Share');
-      // Two distinct buttons, not one combined trigger.
-      expect(peopleButton).not.toBe(inviteButtons[0]);
-      // The People trigger opens its own popover (portaled to document.body,
-      // like every other `Popover` in this app), separate from Share's.
-      await act(async () => click(peopleButton!));
+      // One popover (portaled to document.body, like every other `Popover`
+      // in this app): who's here, and inviting someone new.
+      await act(async () => click(trigger!));
       expect(document.body.textContent).toContain('Dylan');
     });
 

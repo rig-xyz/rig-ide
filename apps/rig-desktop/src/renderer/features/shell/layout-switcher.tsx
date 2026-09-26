@@ -10,6 +10,9 @@ export type RigLayout = 'chat' | 'split' | 'files';
  * booleans that could disagree. Switching to split/files with no tabs open
  * opens the focus view — App owns that rule, this control only reports
  * the pick.
+ *
+ * At rest it shows only the current layout; hovering it (or tabbing into
+ * it) slides the other two out on its left (Dylan, 2026-09-26).
  */
 export function LayoutSwitcher({
   layout,
@@ -38,43 +41,62 @@ export function LayoutSwitcher({
         { value: 'files', label: 'Files' },
       ];
 
+  // The others first, the current one last: it's what the collapsed control
+  // shows, and it never moves when the others slide out on its left.
+  const ordered = [...segments.filter((s) => s.value !== layout), ...segments.filter((s) => s.value === layout)];
+  const hiddenTabsDot = hiddenTabCount > 0 && layout === 'chat';
+
   return (
     <div
       role="radiogroup"
       aria-label="Layout"
-      className="border-border-hairline bg-bg-1 flex items-center gap-0.5 rounded-control border p-0.5 [-webkit-app-region:no-drag]"
+      className="group border-border-hairline bg-bg-1 flex items-center rounded-control border p-0.5 [-webkit-app-region:no-drag]"
     >
-      {segments.map((segment) => {
+      {ordered.map((segment) => {
         const selected = layout === segment.value;
         return (
-          <Tooltip key={segment.value}>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  aria-label={segment.label}
-                  onClick={() => onChange(segment.value)}
-                  className={cn(
-                    'relative flex h-6 w-8 items-center justify-center rounded-control transition-colors',
-                    selected
-                      ? 'bg-bg-2 text-text-primary'
-                      : 'text-text-muted hover:bg-bg-2/60 hover:text-text-primary'
-                  )}
-                >
-                  <LayoutGlyph value={segment.value} />
-                  {/* One dot, one place — both reveal targets (split and
-                      files) would be noise; split is the direct door back
-                      to whatever tabs are hidden. */}
-                  {hiddenTabCount > 0 && layout === 'chat' && segment.value === 'split' && (
-                    <span className="bg-accent absolute -top-0.5 -right-0.5 size-1.5 rounded-full" />
-                  )}
-                </button>
-              }
-            />
-            <TooltipContent side="bottom">{segment.label}</TooltipContent>
-          </Tooltip>
+          <span
+            key={segment.value}
+            className={cn(
+              'flex shrink-0 transition-[max-width,opacity,margin] duration-200 ease-out motion-reduce:transition-none',
+              selected
+                ? 'max-w-8'
+                : 'max-w-0 overflow-hidden opacity-0 group-hover:mr-0.5 group-hover:max-w-8 group-hover:opacity-100 group-focus-within:mr-0.5 group-focus-within:max-w-8 group-focus-within:opacity-100'
+            )}
+          >
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    aria-label={segment.label}
+                    onClick={() => onChange(segment.value)}
+                    className={cn(
+                      'relative flex h-6 w-8 items-center justify-center rounded-control transition-colors',
+                      selected
+                        ? 'bg-bg-2 text-text-primary'
+                        : 'text-text-muted hover:bg-bg-2/60 hover:text-text-primary'
+                    )}
+                  >
+                    <LayoutGlyph value={segment.value} />
+                    {/* One dot, one place — both reveal targets (split and
+                        files) would be noise; split is the direct door back
+                        to whatever tabs are hidden. Collapsed, the current
+                        segment carries it until the control opens. */}
+                    {hiddenTabsDot && segment.value === 'split' && (
+                      <span className="bg-accent absolute -top-0.5 -right-0.5 size-1.5 rounded-full" />
+                    )}
+                    {hiddenTabsDot && selected && (
+                      <span className="bg-accent absolute -top-0.5 -right-0.5 size-1.5 rounded-full transition-opacity group-focus-within:opacity-0 group-hover:opacity-0" />
+                    )}
+                  </button>
+                }
+              />
+              <TooltipContent side="bottom">{segment.label}</TooltipContent>
+            </Tooltip>
+          </span>
         );
       })}
     </div>

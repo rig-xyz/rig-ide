@@ -32,7 +32,7 @@ import { RecoveryBoundary } from '@renderer/features/recovery/recovery-boundary'
 import { RecoverySurface } from '@renderer/features/recovery/recovery-surface';
 import { reportRendererFailure } from '@renderer/features/recovery/renderer-error-reporting';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
-import { RigPeopleButton, RigShareButton } from '@renderer/features/rig-share/rig-share-button';
+import { RigShareButton } from '@renderer/features/rig-share/rig-share-button';
 import { InvitesBell } from '@renderer/features/shell/invites-bell';
 import { LayoutSwitcher, type RigLayout } from '@renderer/features/shell/layout-switcher';
 import { paneRevealClassName } from '@renderer/features/shell/pane-reveal';
@@ -1091,11 +1091,9 @@ export function App() {
         }
         // Session-first viewer: rig-level Share lives in the topbar now —
         // the panel header that used to carry it went with the resident
-        // file browser. A space instead shows the member faces (People) and
-        // a separate accent Share pill on the right (below) — see Topbar's
-        // own doc comment for why the split.
+        // file browser. A space instead shows its member faces on the left
+        // of an accent Invite pill, one trigger, on the right (below).
         shareSlot={bound && !boundIsSpace ? <RigShareButton root={bound.root} name={bound.name} /> : undefined}
-        peopleSlot={bound && boundIsSpace ? <RigPeopleButton root={bound.root} name={bound.name} /> : undefined}
         sharePillSlot={
           bound && boundIsSpace ? <RigShareButton root={bound.root} name={bound.name} variant="pill" /> : undefined
         }
@@ -1365,7 +1363,6 @@ export function Topbar({
   onOpenFolder,
   updateReady,
   shareSlot,
-  peopleSlot,
   sharePillSlot,
   layoutSwitcher = null,
   hasOpenDoc = false,
@@ -1404,11 +1401,9 @@ export function Topbar({
    * itself the moment `isUpdateReady` goes false again (after install).
    */
   updateReady: boolean;
-  /** Session-first viewer: the rig-level Share button (plain-rig view only — a space uses `peopleSlot`/`sharePillSlot` instead) — rendered beside the name. */
+  /** Session-first viewer: the rig-level Share button (plain-rig view only — a space uses `sharePillSlot` instead) — rendered beside the name. */
   shareSlot?: React.ReactNode;
-  /** Room chrome round: a space's member-faces trigger (opens People) — rendered in the right cluster, ahead of the Share pill. */
-  peopleSlot?: React.ReactNode;
-  /** Room chrome round: a space's own accent Share pill, split out from the faces so each reads as its own action. */
+  /** A space's people-and-invite trigger: its member faces on the left of an accent Invite pill (`RigShareButton` variant `pill`). */
   sharePillSlot?: React.ReactNode;
   /**
    * Layout-switcher round: the chat/split/files segmented control's own
@@ -1551,7 +1546,6 @@ export function Topbar({
           />
         )}
         {layoutSlot}
-        {peopleSlot}
         {sharePillSlot}
         {/* Invites addressed to me — renders nothing signed out; accent
             count dot only when invites exist (a live indicator, within the

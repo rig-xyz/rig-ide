@@ -55,16 +55,11 @@ export function RigShareButton({
   root: string;
   name: string | null;
   /**
-   * Room chrome round: a space's single top bar shows the member faces as
-   * their own trigger (`RigPeopleButton`, below) — so the Share trigger
-   * here is a plain accent pill, never the avatar stack, to avoid saying
-   * "who's here" twice. `'default'` keeps the combined avatar-stack-or-icon
-   * trigger every other surface (the rig file browser header) still uses.
-   *
-   * Polish round 2, lane F (Dylan): `'pill'` reads "Invite" with a
-   * `UserPlus` icon now, not "Share" — the faces trigger beside it already
-   * covers "who's here," so this pill's whole job is the one action that's
-   * actually distinct: inviting someone new. Same popover either way.
+   * `'pill'`: a space's top bar (Dylan, 2026-09-26: people and invite are
+   * one thing): the member faces on the left of an accent "Invite" pill,
+   * one trigger for one popover (who's here, and inviting someone new).
+   * `'default'` keeps the avatar-stack-or-icon "Share" trigger the rig file
+   * browser header uses.
    */
   variant?: 'default' | 'pill';
 }) {
@@ -82,6 +77,62 @@ export function RigShareButton({
 
   const stack = deriveAvatarStack(memberList?.members ?? []);
 
+  if (variant === 'pill') {
+    return (
+      <>
+        <button
+          ref={triggerRef}
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-haspopup="true"
+          aria-expanded={open}
+          aria-label="People and invites"
+          className={cn(
+            'group rounded-chip flex shrink-0 items-center gap-1.5 py-0.5 pr-0.5 pl-1 ring-1 ring-transparent transition-colors hover:bg-bg-2 hover:ring-border-hairline',
+            open && 'bg-bg-2 ring-border-hairline'
+          )}
+        >
+          {stack.visible.length > 0 && (
+            <span className="flex items-center">
+              {stack.visible.map((member, index) => (
+                <IdentityAvatar
+                  key={member.userId}
+                  name={member.name ?? member.email}
+                  avatarUrl={member.avatarUrl}
+                  sizeClassName="size-6"
+                  textClassName="text-2xs"
+                  className={cn('ring-bg-1 ring-1', index > 0 && '-ml-1.5')}
+                />
+              ))}
+              {stack.overflow > 0 && (
+                <span className="bg-bg-2 text-text-muted ring-bg-1 -ml-1.5 flex size-6 shrink-0 items-center justify-center rounded-full text-2xs font-medium ring-1">
+                  +{stack.overflow}
+                </span>
+              )}
+            </span>
+          )}
+          <span className="bg-accent text-bg-0 rounded-chip flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium transition-opacity group-hover:opacity-90">
+            <UserPlus className="size-3.5" strokeWidth={1.5} />
+            Invite
+          </span>
+        </button>
+        <Popover
+          anchor={triggerRef}
+          open={open}
+          onClose={() => setOpen(false)}
+          role="dialog"
+          align="right"
+          gap={6}
+          estimatedWidth={320}
+          minWidth={320}
+          ariaLabel="People and invites"
+        >
+          <RigSharePopoverContent root={root} name={name} />
+        </Popover>
+      </>
+    );
+  }
+
   return (
     <>
       <button
@@ -90,14 +141,9 @@ export function RigShareButton({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="true"
         aria-expanded={open}
-        className={
-          variant === 'pill'
-            ? 'bg-accent text-bg-0 hover:opacity-90 rounded-chip flex shrink-0 items-center gap-1.5 px-2.5 py-1 text-xs font-medium transition-opacity'
-            : 'border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex shrink-0 items-center gap-1.5 border bg-bg-1 px-2 py-1 text-xs transition-colors'
-        }
+        className="border-border-hairline text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control flex shrink-0 items-center gap-1.5 border bg-bg-1 px-2 py-1 text-xs transition-colors"
       >
-        {variant === 'default' &&
-          (stack.visible.length > 0 ? (
+        {stack.visible.length > 0 ? (
             <span className="flex items-center">
               {stack.visible.map((member, index) => (
                 <IdentityAvatar
@@ -117,9 +163,8 @@ export function RigShareButton({
             </span>
           ) : (
             <Share2 className="size-3.5" strokeWidth={1.5} />
-          ))}
-        {variant === 'pill' && <UserPlus className="size-3.5" strokeWidth={1.5} />}
-        {variant === 'pill' ? 'Invite' : 'Share'}
+          )}
+        Share
       </button>
 
       <Popover
@@ -140,96 +185,6 @@ export function RigShareButton({
 }
 
 /**
- * Room chrome round: the single top bar's member-faces trigger — the same
- * avatar stack `RigShareButton`'s `'default'` variant used to show inline,
- * now its own button so a click reads as "who's here" (opens People) and
- * stays distinct from the accent Share pill beside it (opens the invite
- * flow). Same members query, same `RigSharePopoverContent` surface — just a
- * second anchor for it, exactly as that component's own doc comment
- * describes for the pinned card's People row.
- */
-export function RigPeopleButton({ root, name }: { root: string; name: string | null }) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-
-  const membersQuery = useQuery({
-    queryKey: ['rig', 'share', 'members', root],
-    queryFn: () => rpc.rig.share.members({ root }),
-    staleTime: 60_000,
-  });
-  const memberList = membersQuery.data?.success ? membersQuery.data.data : null;
-  const stack = deriveAvatarStack(memberList?.members ?? []);
-
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="true"
-        aria-expanded={open}
-        aria-label="People"
-        // Polish round 2, lane F: a quiet ring (not just the bare `bg-2`
-        // wash every other icon trigger uses) so the faces GROUP itself —
-        // not just one avatar in it — reads as one hoverable/active thing.
-        className={cn(
-          'rounded-control ring-1 ring-transparent flex shrink-0 items-center px-1 py-1 transition-colors hover:bg-bg-2 hover:ring-border-hairline',
-          open && 'bg-bg-2 ring-border-hairline'
-        )}
-      >
-        {stack.visible.length > 0 ? (
-          <span className="flex items-center">
-            {stack.visible.map((member, index) => (
-              <IdentityAvatar
-                key={member.userId}
-                name={member.name ?? member.email}
-                avatarUrl={member.avatarUrl}
-                sizeClassName="size-6"
-                textClassName="text-2xs"
-                className={cn('ring-bg-1 ring-1', index > 0 && '-ml-1.5')}
-              />
-            ))}
-            {stack.overflow > 0 && (
-              <span className="bg-bg-2 text-text-muted ring-bg-1 -ml-1.5 flex size-6 shrink-0 items-center justify-center rounded-full text-2xs font-medium ring-1">
-                +{stack.overflow}
-              </span>
-            )}
-          </span>
-        ) : (
-          <span className="text-text-muted flex size-6 items-center justify-center">
-            <Users className="size-3.5" strokeWidth={1.5} />
-          </span>
-        )}
-      </button>
-
-      <Popover
-        anchor={triggerRef}
-        open={open}
-        onClose={() => setOpen(false)}
-        role="dialog"
-        align="right"
-        gap={6}
-        estimatedWidth={320}
-        minWidth={320}
-        ariaLabel="People"
-      >
-        <RigSharePopoverContent
-          root={root}
-          name={name}
-          variant="compact"
-          // Polish round 2, lane F: this popover has no OTHER "who this is"
-          // context around it (unlike the space panel's own People row,
-          // which sits right under that section's own label) — a header
-          // here, unlike there, so the rows read as "people on ___" rather
-          // than floating with no heading at all.
-          header={name ? `People on ${name}` : 'People'}
-        />
-      </Popover>
-    </>
-  );
-}
-
-/**
  * Exported for the pinned card's People row — same surface, second anchor.
  *
  * `variant`: `'full'` (default, the top-bar popover's own shape) renders the
@@ -238,22 +193,15 @@ export function RigPeopleButton({ root, name }: { root: string; name: string | n
  * panel's People row) shows only the member list; invite management collapses
  * into a single "Invite people" pill that expands the same invite form in
  * place, so the row doesn't default to showing a full form nobody asked for.
- *
- * `header`: `'compact'` only — the space panel's own People row already
- * says "who this is" (its own section label), so it passes nothing; a
- * standalone `'compact'` popover with no such context (`RigPeopleButton`'s
- * faces trigger) passes one so its rows don't float under no heading at all.
  */
 export function RigSharePopoverContent({
   root,
   name,
   variant = 'full',
-  header,
 }: {
   root: string;
   name: string | null;
   variant?: 'full' | 'compact';
-  header?: string;
 }) {
   const queryClient = useQueryClient();
   const [enablingSync, setEnablingSync] = useState(false);
@@ -345,7 +293,7 @@ export function RigSharePopoverContent({
   const showInvites = memberList.selfRole === 'owner' || memberList.selfRole === null;
 
   if (variant === 'compact') {
-    return <CompactSharePanel root={root} memberList={memberList} showInvites={showInvites} header={header} />;
+    return <CompactSharePanel root={root} memberList={memberList} showInvites={showInvites} />;
   }
 
   return (
@@ -390,30 +338,21 @@ function CompactMemberRow({ member }: { member: RigMember }) {
 /**
  * `variant: 'compact'`'s own shape: just the people, plus one pill that
  * expands the full invite form in place — no invite form shown by default,
- * no navigation to a different surface for either. No header by default
- * (the space panel's own row already says who this is) — `header`, when
- * passed (the faces trigger's standalone popover, which has no such
- * context of its own), sits at the SAME `pl-8` inset `CompactMemberRow`'s
- * own rows use, so the rows read as aligned under it rather than floating
- * at a different indent.
+ * no navigation to a different surface for either. No header (the space
+ * panel's own row already says who this is).
  */
 function CompactSharePanel({
   root,
   memberList,
   showInvites,
-  header,
 }: {
   root: string;
   memberList: RigMemberList;
   showInvites: boolean;
-  header?: string;
 }) {
   const [inviting, setInviting] = useState(false);
   return (
     <div className="flex flex-col">
-      {header && (
-        <p className="text-text-muted pt-1.5 pr-2 pb-1 pl-8 text-xs">{header}</p>
-      )}
       <div className="flex flex-col">
         {memberList.members.map((member) => (
           <CompactMemberRow key={member.userId} member={member} />
