@@ -500,7 +500,8 @@ export function Composer({
           }}
           placeholder={replyTo ? `Reply to ${replyTo.label}` : `Message ${spaceName}`}
           rows={1}
-          className="placeholder:text-text-muted min-h-[40px] w-full resize-none bg-transparent px-3.5 py-2.5 text-sm text-text-primary outline-none"
+          // Grows with what you type (field-sizing: content), up to 40% of the window, then scrolls.
+          className="placeholder:text-text-muted min-h-[40px] max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent px-3.5 py-2.5 text-sm text-text-primary outline-none [field-sizing:content]"
         />
         <div className="flex items-center gap-0.5 px-2 pb-2">
           <button
