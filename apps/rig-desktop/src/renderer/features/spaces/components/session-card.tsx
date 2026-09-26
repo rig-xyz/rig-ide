@@ -941,7 +941,8 @@ export function SessionCard({
         {!running && onRerun && prompt && (
           <RetryButton agent={meta.agent} otherAgents={otherAgents} onRerun={(agent) => onRerun(agent, prompt)} />
         )}
-        {!running && onHideDetails && !card.detailsHidden && card.privacy !== 'answer' && (
+        {/* Only where there's something to hide: your own finished turn with steps the room can see. */}
+        {!running && mine && onHideDetails && card.steps.length > 0 && !card.detailsHidden && card.privacy !== 'answer' && (
           <button
             type="button"
             onClick={() => {
@@ -949,8 +950,8 @@ export function SessionCard({
               void onHideDetails().then((hidden) => setHiding(hidden ? 'idle' : 'failed'));
             }}
             disabled={hiding === 'busy'}
-            aria-label="Hide details"
-            title="Hide details"
+            aria-label="Hide steps from the room"
+            title="Hide steps from the room"
             className="enabled:hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs text-text-secondary transition-colors disabled:text-text-muted"
             data-testid="session-hide-details"
           >

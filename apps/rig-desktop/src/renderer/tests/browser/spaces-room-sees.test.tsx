@@ -216,31 +216,42 @@ describe('Room sees — Hide details', () => {
     ended,
   ];
 
-  it('is offered on your own finished turn (EyeOff), and hides it', async () => {
+  it('is offered on your own finished turn as a fourth row action (EyeOff), and hides it', async () => {
     const onHideDetails = vi.fn().mockResolvedValue(true);
     await act(async () => {
       root.render(<SessionCard meta={meta('done')} events={ownFull} owner={alice} viewerIsOwner onHideDetails={onHideDetails} />);
     });
     const button = host.querySelector<HTMLButtonElement>('[data-testid="session-hide-details"]')!;
-    expect(button.getAttribute('aria-label')).toBe('Hide details');
+    expect(button.getAttribute('aria-label')).toBe('Hide steps from the room');
+    expect(button.getAttribute('title')).toBe('Hide steps from the room');
     expect(button.querySelector('svg.lucide-eye-off')).not.toBeNull();
+    // In the row's icon bar beside Copy, not tucked away in a menu.
+    expect(button.parentElement?.getAttribute('data-testid')).toBe('row-actions');
+    expect(button.parentElement?.querySelector('[aria-label="Copy"]')).not.toBeNull();
     await act(async () => click(button));
     expect(onHideDetails).toHaveBeenCalledTimes(1);
   });
 
-  it('is not offered while running, on a run already at Answer, or once hidden', async () => {
+  it('is not offered while running, on a zero-step turn, on a run already at Answer, once hidden, or on others\' turns', async () => {
     const onHideDetails = vi.fn().mockResolvedValue(true);
-    const cases: Array<[SessionRunMeta, SessionEvent[]]> = [
-      [meta('running'), ownFull.slice(0, 3)],
-      [meta('done'), [{ seq: 1, kind: 'run_privacy', payload: { level: 'answer' } }, answer, ended]],
-      [meta('done'), [...ownFull, { seq: 30, kind: 'details_hidden', payload: { steps: 2 } }]],
+    const cases: Array<[SessionRunMeta, SessionEvent[], boolean]> = [
+      [meta('running'), ownFull.slice(0, 3), true],
+      [meta('done'), [{ seq: 1, kind: 'run_privacy', payload: { level: 'steps' } }, answer, ended], true],
+      [meta('done'), [{ seq: 1, kind: 'run_privacy', payload: { level: 'answer' } }, ...ownFull.slice(1)], true],
+      [meta('done'), [...ownFull, { seq: 30, kind: 'details_hidden', payload: { steps: 2 } }], true],
+      [meta('done'), ownFull, false],
     ];
-    for (const [m, events] of cases) {
+    for (const [m, events, viewerIsOwner] of cases) {
       await act(async () => {
-        root.render(<SessionCard meta={m} events={events} owner={alice} viewerIsOwner onHideDetails={onHideDetails} />);
+        root.render(
+          <SessionCard meta={m} events={events} owner={alice} viewerIsOwner={viewerIsOwner} onHideDetails={onHideDetails} />
+        );
       });
       expect(host.querySelector('[data-testid="session-hide-details"]')).toBeNull();
+      // The rest of the bar is unchanged.
+      if (m.status === 'done') expect(host.querySelector('[aria-label="Copy"]')).not.toBeNull();
     }
+    expect(onHideDetails).not.toHaveBeenCalled();
   });
 
   it('after the fact: others drop to the answer; the owner keeps everything, marked "details hidden"', async () => {
