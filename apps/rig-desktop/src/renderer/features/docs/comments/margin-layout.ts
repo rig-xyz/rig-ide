@@ -145,6 +145,12 @@ export function marginMode(panelWidth: number): MarginMode {
 /** A pin's box: its size, and how far apart two pins on the same line sit. */
 export const PIN_SIZE = 20;
 export const PIN_STEP = 24;
+/**
+ * Extra room on the panel's left while comments are on: the text column's own
+ * padding (24px) is less than a pin plus its gap to the text, so in a narrow
+ * panel the pin would otherwise sit on the first letter.
+ */
+export const PIN_GUTTER = 16;
 
 /**
  * Horizontal slots for pins that share a line (two threads anchored on the

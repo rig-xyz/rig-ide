@@ -12,7 +12,7 @@ import { commentDecorations } from '@renderer/features/docs/comments/comment-dec
 import { CommentSelectionButton } from '@renderer/features/docs/comments/comment-selection';
 import { CommentPins } from '@renderer/features/docs/comments/comment-pins';
 import { MarginRail, shouldShowMargin } from '@renderer/features/docs/comments/comments-margin';
-import { marginMode, RAIL_RESERVE, type MarginMode } from '@renderer/features/docs/comments/margin-layout';
+import { marginMode, PIN_GUTTER, RAIL_RESERVE, type MarginMode } from '@renderer/features/docs/comments/margin-layout';
 import {
   attachDocComments,
   disposeDocComments,
@@ -546,7 +546,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // the margin its space while comments are on, even before there are any,
   // so opening a draft never moves the text out from under the selection.
   const margin = useMarginMode(containerRef);
-  const reserveMargin = isMarkdown && comments !== null && showComments && margin === 'rail';
+  const commentsOn = isMarkdown && comments !== null && showComments;
   const resolvedCount = comments !== null && showComments ? comments.visibleResolvedThreads.length : 0;
 
   return (
@@ -637,7 +637,11 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
       <div
         ref={containerRef}
         className="relative min-h-0 flex-1 overflow-y-auto"
-        style={reserveMargin ? { paddingRight: RAIL_RESERVE } : undefined}
+        style={
+          commentsOn
+            ? { paddingLeft: PIN_GUTTER, ...(margin === 'rail' ? { paddingRight: RAIL_RESERVE } : {}) }
+            : undefined
+        }
       >
         {resource.isLoading ? (
           <div className="flex h-full items-center justify-center text-sm text-text-muted">

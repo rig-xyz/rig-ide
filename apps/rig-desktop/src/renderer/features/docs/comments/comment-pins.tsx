@@ -103,7 +103,7 @@ export const CommentPins = observer(function CommentPins({
             onMouseLeave={() => store.setHoveredThread(null)}
             style={{ top: place.top, left: place.left, width: PIN_SIZE, height: PIN_SIZE }}
             className={cn(
-              'pointer-events-auto absolute grid place-items-center rounded-[999px_999px_999px_3px] text-[10px] font-bold shadow-[0_0_0_2px_var(--bg-1)] transition-[transform,background-color] duration-150',
+              'pointer-events-auto absolute grid place-items-center rounded-[999px_999px_999px_3px] text-[10px] font-bold shadow-[0_0_0_2px_var(--bg-1)] outline-none transition-[transform,background-color] duration-150 focus-visible:ring-2 focus-visible:ring-accent/60',
               active && !thread.resolved && 'bg-accent text-white',
               active && thread.resolved && 'bg-text-muted text-bg-1',
               !active && !thread.resolved && 'bg-text-muted/80 text-bg-1 hover:bg-text-muted',
