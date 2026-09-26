@@ -324,6 +324,30 @@ describe('RelayRoomSource', () => {
     });
   });
 
+  it('carries a comment thread\'s saved pin number onto its line and its replies', async () => {
+    const fake = makeFakeRelay();
+    fake.queueMessages([
+      message({ id: 'c1', seq: 1, body: 'Why the drop?', path: 'signups.md', parentId: null, quote: 'W2', meta: { pin: 3 } }),
+      message({ id: 'c2', seq: 2, body: 'Tracking bug.', path: 'signups.md', parentId: 'c1', quote: null }),
+      message({ id: 'c3', seq: 3, body: 'Older, no number.', path: 'signups.md', parentId: null, quote: 'W3' }),
+    ]);
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: () => new FakeProvider(),
+    });
+    source.play();
+    await flush();
+
+    const [first, reply, older] = source.getSnapshot().messages;
+    expect(first.meta).toMatchObject({ kind: 'comment_mirror', pin: 3 });
+    expect(reply.meta).toMatchObject({ kind: 'comment_mirror', isReply: true, pin: 3 });
+    expect(older.meta).not.toHaveProperty('pin');
+  });
+
   it('derives who is here and who is typing from awareness, never showing yourself typing', async () => {
     const fake = makeFakeRelay();
     fake.setMembers([member({ userId: 'u1' }), member({ userId: 'u2', name: 'Sam' }), member({ userId: 'u3', name: 'Carol' })]);

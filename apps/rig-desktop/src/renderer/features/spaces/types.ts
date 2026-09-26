@@ -201,6 +201,8 @@ export type MessageMeta =
       isReply?: boolean;
       /** A pin on a web page: the page's title when it was pinned (the path is its link). */
       pageTitle?: string;
+      /** The thread's number, as its pin shows it (saved on its first comment when it was made). */
+      pin?: number;
     }
   | { kind: 'system'; event: string; /** Set on `connectors_added`/`connectors_removed` — see connectors-spec.md. */ connectorIds?: string[] };
 

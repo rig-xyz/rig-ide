@@ -5,6 +5,7 @@ import {
   CornerUpLeft,
   FileText,
   Github,
+  Globe,
   Link as LinkIcon,
   Plug,
   Presentation,
@@ -92,7 +93,19 @@ function MessageLink({ url }: { url: string }) {
 }
 
 /** The page a comment is pinned on, as the same chip its link gets in a message. */
-function PageChip({ url, title }: { url: string; title?: string }) {
+/** A thread's number, as the same small teardrop its pin wears on the page or beside the file's text. */
+function PinBadge({ n }: { n: number }) {
+  return (
+    <span
+      className="bg-text-muted/80 text-bg-1 grid size-3.5 shrink-0 place-items-center rounded-[999px_999px_999px_2px] text-[8px] font-bold"
+      aria-label={`pin ${n}`}
+    >
+      {n}
+    </span>
+  );
+}
+
+function PageChip({ url, title, pin }: { url: string; title?: string; pin?: number }) {
   const { kind, label } = classifyLink(url);
   const name = title || (kind === 'web' ? new URL(url).hostname : label);
   // Its pins are on the page: always beside the Room, whatever the site.
@@ -105,8 +118,9 @@ function PageChip({ url, title }: { url: string; title?: string }) {
       className="border-border-hairline bg-bg-1 hover:bg-bg-2 inline-flex items-center gap-1 rounded-control border px-1.5 align-[-1px] text-xs text-text-primary"
       data-testid="comment-page-chip"
     >
-      {LINK_ICON[kind] ?? null}
+      {LINK_ICON[kind] ?? <Globe className="size-3 text-text-secondary" strokeWidth={1.75} />}
       <span>{name}</span>
+      {pin !== undefined && <PinBadge n={pin} />}
     </a>
   );
 }
@@ -605,7 +619,7 @@ export function CommentMirrorLine({
   inThread?: boolean;
 }) {
   if (message.meta.kind !== 'comment_mirror') return null;
-  const { path, quote, replyFromAgent, isReply } = message.meta;
+  const { path, quote, replyFromAgent, isReply, pin } = message.meta;
   const author = memberOf(snapshot, message.authorId);
   const who = author?.name ?? message.authorId;
   const name = replyFromAgent ? `${who}'s ${AGENT_NAME[replyFromAgent]}` : who;
@@ -631,18 +645,22 @@ export function CommentMirrorLine({
       </div>
     );
   }
-  const pageChip = /^https?:\/\//.test(path) ? <PageChip url={path} title={message.meta.pageTitle} /> : null;
+  const pageChip = /^https?:\/\//.test(path) ? <PageChip url={path} title={message.meta.pageTitle} pin={pin} /> : null;
   const fileChip = pageChip ?? (onOpenFile ? (
     <button
       type="button"
       onClick={() => onOpenFile(path)}
-      className="bg-bg-2 hover:bg-bg-3 rounded-control px-1 font-mono text-xs text-text-primary transition-colors"
+      className="bg-bg-2 hover:bg-bg-3 inline-flex items-center gap-1 rounded-control px-1 align-[-1px] font-mono text-xs text-text-primary transition-colors"
       title={`Open ${path}`}
     >
       {path}
+      {pin !== undefined && <PinBadge n={pin} />}
     </button>
   ) : (
-    <span className="bg-bg-2 rounded-control px-1 font-mono text-xs text-text-primary">{path}</span>
+    <span className="bg-bg-2 inline-flex items-center gap-1 rounded-control px-1 align-[-1px] font-mono text-xs text-text-primary">
+      {path}
+      {pin !== undefined && <PinBadge n={pin} />}
+    </span>
   ));
   return (
     <div className={cn(ROW_GRID, 'group py-1')} data-testid="comment-mirror-line">

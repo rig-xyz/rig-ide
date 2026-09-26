@@ -118,12 +118,17 @@ export const rigPagesController = createRPCController({
   },
 
   comment: async (input: { bindingId: string; url: string; title?: string; body: string; quote: string; anchor: PageAnchor }): Promise<Result<{ id: string }, Failure>> => {
+    const path = canonicalPageUrl(input.url);
+    // The pin's number, saved with it so the chat can show it without the
+    // page's whole history: pins number in the order they were made.
+    const existing = await api.listMessages(input.bindingId, { path, limit: 200 });
+    const pin = existing.success ? threadsFromRows(existing.data).length + 1 : undefined;
     const posted = await api.postMessage(input.bindingId, {
       body: input.body,
-      path: canonicalPageUrl(input.url),
+      path,
       anchor: { exact: input.quote.slice(0, 2000), page: input.anchor as unknown as Record<string, unknown> },
-      // So the Room names the page for everyone, whether or not they can open it.
-      ...(input.title ? { meta: { pageTitle: input.title.slice(0, 200) } } : {}),
+      // So the chat names the page for everyone, whether or not they can open it.
+      meta: { ...(input.title ? { pageTitle: input.title.slice(0, 200) } : {}), ...(pin ? { pin } : {}) },
     });
     return posted.success ? ok({ id: posted.data.id }) : err({ message: posted.error.message });
   },

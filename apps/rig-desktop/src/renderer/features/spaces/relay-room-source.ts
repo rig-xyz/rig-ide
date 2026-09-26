@@ -1056,6 +1056,8 @@ export class RelayRoomSource implements RoomSource {
     const parent = row.parentId ? this.snapshot.messages.find((m) => m.id === row.parentId) : undefined;
     const parentQuote = parent?.meta.kind === 'comment_mirror' ? parent.meta.quote : '';
     const agent = row.author.kind === 'agent' ? agentOfPost(row.meta) : undefined;
+    // A reply shows its thread's number, saved on the thread's first comment.
+    const pin = pinOf(row.meta) ?? (parent?.meta.kind === 'comment_mirror' ? parent.meta.pin : undefined);
     return {
       kind: 'comment_mirror',
       commentId: row.parentId ?? row.id,
@@ -1064,6 +1066,7 @@ export class RelayRoomSource implements RoomSource {
       ...(row.parentId ? { isReply: true } : {}),
       ...(agent === 'claude' || agent === 'codex' ? { replyFromAgent: agent } : {}),
       ...(typeof row.meta?.pageTitle === 'string' && row.meta.pageTitle ? { pageTitle: row.meta.pageTitle } : {}),
+      ...(pin !== undefined ? { pin } : {}),
     };
   }
 
@@ -1124,6 +1127,12 @@ function sessionRunIdOf(row: RoomMessageRow): string | null {
 
 
 /** Which agent wrote an agent-authored post: `meta.agent` when set, else inferred from `meta.model`. */
+/** A comment's saved pin number (`meta.pin`), when it has one. */
+function pinOf(meta: Record<string, unknown> | null): number | undefined {
+  const pin = meta?.pin;
+  return typeof pin === 'number' && Number.isInteger(pin) && pin > 0 ? pin : undefined;
+}
+
 function agentOfPost(meta: Record<string, unknown> | null): AgentKind | undefined {
   // `agent` may be a provider id ("claude") or a display label ("Claude Code").
   const agent = typeof meta?.agent === 'string' ? meta.agent.toLowerCase() : '';

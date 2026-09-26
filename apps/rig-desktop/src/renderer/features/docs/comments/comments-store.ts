@@ -936,7 +936,11 @@ export class DocCommentsStore {
         // design.md` §2 punch list, finding 5) depends on a FOLLOW-UP
         // turn still knowing this thread is a paintbrush stroke, which a
         // renderer-local-only Set could never survive.
-        ...(paintbrush ? { meta: { paintbrush: true } } : {}),
+        //
+        // `pin`: the thread's number (creation order, `numberThreads`), saved
+        // so the chat's row for it can show the same number without loading
+        // the file's whole comment history.
+        meta: { ...(paintbrush ? { paintbrush: true } : {}), pin: this.threads.length + 1 },
       });
       if (result.success) {
         newId = result.data.id;
