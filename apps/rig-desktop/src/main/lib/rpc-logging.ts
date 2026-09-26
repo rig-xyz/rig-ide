@@ -1,6 +1,9 @@
 import { type IpcMain } from 'electron';
 import { log } from './logger';
 
+/** Calls made several times a second (a page's pins following it): their results aren't logged, only their errors. */
+const QUIET_CHANNELS: ReadonlySet<string> = new Set(['rig.pages.locate']);
+
 export function withRpcLogging(target: IpcMain): IpcMain {
   return new Proxy(target, {
     get(obj, prop, receiver) {
@@ -9,7 +12,7 @@ export function withRpcLogging(target: IpcMain): IpcMain {
         obj.handle(channel, async (event, ...args: unknown[]) => {
           try {
             const result = await handler(event, ...args);
-            log.debug('rpc result', { channel, args, result });
+            if (!QUIET_CHANNELS.has(channel)) log.debug('rpc result', { channel, args, result });
             return result;
           } catch (err) {
             log.error('rpc error', { channel, args, err });

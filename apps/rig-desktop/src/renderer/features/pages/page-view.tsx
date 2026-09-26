@@ -24,6 +24,12 @@ type Place = PagePlace;
 type Draft = { anchor: PageAnchor; quote: string; x: number; y: number };
 
 const LOCATE_EVERY_MS = 150;
+
+/** Which of the member's agents a comment asks, if any: "@claude …", "@codex …". */
+function mentionedAgent(body: string): 'claude' | 'codex' | null {
+  const m = /(?:^|\s)@(claude|codex)\b/i.exec(body);
+  return m ? (m[1]!.toLowerCase() as 'claude' | 'codex') : null;
+}
 const THREADS_EVERY_MS = 4000;
 
 function hostOf(url: string): string {
@@ -212,6 +218,8 @@ export function PageView({
             width={stageWidth}
             onReply={async (body) => {
               await rpc.rig.pages.reply({ bindingId, parentId: openThread.id, body });
+              const agent = mentionedAgent(body);
+              if (agent) void rpc.rig.pages.askAgent({ bindingId, url, threadId: openThread.id, agent, question: body });
               await refresh();
             }}
             onResolve={async () => {
@@ -231,7 +239,11 @@ export function PageView({
               setDraft(null);
               setCommenting(false);
               await refresh();
-              if (result.success) setOpenId(result.data.id);
+              if (result.success) {
+                setOpenId(result.data.id);
+                const agent = mentionedAgent(body);
+                if (agent) void rpc.rig.pages.askAgent({ bindingId, url, threadId: result.data.id, agent, question: body });
+              }
             }}
           />
         )}

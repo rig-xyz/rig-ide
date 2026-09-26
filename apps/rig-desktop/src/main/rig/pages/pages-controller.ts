@@ -2,6 +2,8 @@ import { webContents as allWebContents, type WebContents } from 'electron';
 import { err, ok, type Result } from '@emdash/shared';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { canonicalPageUrl } from '@shared/spaces/links';
+import { log } from '@main/lib/logger';
+import { runCommentTurnInRoom } from '../spaces/dispatch-controller-instance';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
 import { pagesSession } from './agent-pages';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
@@ -30,6 +32,25 @@ function quoteFor(anchor: PageAnchor): string {
   const what = ['rect', 'svg', 'path', 'canvas', 'g', 'circle', 'line'].includes(anchor.tag) ? 'Chart' : anchor.tag === 'img' ? 'Image' : 'Element';
   return board ? `${what} · ${board}` : what;
 }
+
+/**
+ * What an agent asked from a pin is told, alongside the question: which page
+ * and pin, and how to look at it. Its final message becomes its reply in the
+ * pin's thread.
+ */
+export function pinHiddenContext(url: string, thread: Pick<PageThread, 'n' | 'quote' | 'anchor'>): string {
+  const board = thread.anchor.hops[0]?.sig?.split(/\s+/).slice(0, 8).join(' ');
+  return [
+    '<rig_page_pin>',
+    `This question was asked in a comment pinned on a web page open in the space: ${url}`,
+    `It is about pin ${thread.n}, on a ${thread.anchor.tag} reading "${thread.quote}"${board ? ` (on the board starting "${board}")` : ''}.`,
+    `Look at the page with browser_pins, browser_read and browser_screenshot (pin ${thread.n}) using that link; read a board in full rather than guessing at small text.`,
+    "Your final message is posted as your reply in that pin's thread, where the person asked: keep it to a few sentences.",
+    '</rig_page_pin>',
+  ].join('\n');
+}
+
+const AGENT_LABEL = { claude: 'claude-code', codex: 'codex' } as const;
 
 export const rigPagesController = createRPCController({
   hit: async ({ webContentsId, x, y }: { webContentsId: number; x: number; y: number }): Promise<Result<{ anchor: PageAnchor; quote: string } | null, Failure>> => {
@@ -71,6 +92,38 @@ export const rigPagesController = createRPCController({
   reply: async (input: { bindingId: string; parentId: string; body: string }): Promise<Result<{ id: string }, Failure>> => {
     const posted = await api.postMessage(input.bindingId, { body: input.body, parentId: input.parentId });
     return posted.success ? ok({ id: posted.data.id }) : err({ message: posted.error.message });
+  },
+
+  /**
+   * Your agent, asked from a pin: it runs in the Room like any turn (so
+   * everyone sees it work), with the pin as context, and its answer is posted
+   * as its reply in the pin's thread. Returns once the turn has started.
+   */
+  askAgent: async (input: { bindingId: string; url: string; threadId: string; agent: 'claude' | 'codex'; question: string }): Promise<Result<{ runId: string }, Failure>> => {
+    const url = canonicalPageUrl(input.url);
+    const rows = await api.listMessages(input.bindingId, { path: url, limit: 200 });
+    const thread = rows.success ? threadsFromRows(rows.data).find((t) => t.id === input.threadId) : undefined;
+    if (!thread) return err({ message: 'That pin is gone.' });
+    const run = await runCommentTurnInRoom({
+      bindingId: input.bindingId,
+      agent: input.agent,
+      prompt: input.question,
+      hiddenContext: pinHiddenContext(url, thread),
+      threadId: input.threadId,
+    });
+    if (!run) return err({ message: 'Your agents answer pins in a space only.' });
+    if (!run.success) return err({ message: `Your ${input.agent === 'claude' ? 'Claude' : 'Codex'} couldn't start: ${run.error}` });
+    void run.data.done.then(async ({ status, answer }) => {
+      if (status !== 'done' || !answer.trim()) return;
+      const posted = await api.postMessage(input.bindingId, {
+        body: answer.trim().slice(0, 8000),
+        parentId: input.threadId,
+        authorKind: 'agent',
+        meta: { agent: AGENT_LABEL[input.agent] },
+      });
+      if (!posted.success) log.warn('Rig pages: could not post the agent reply on the pin', { error: posted.error.message });
+    });
+    return ok({ runId: run.data.runId });
   },
 
   resolve: async (input: { bindingId: string; id: string; resolved: boolean }): Promise<Result<void, Failure>> => {
