@@ -56,7 +56,7 @@ import {
 import { minimalScrollDelta } from './pending-reveal';
 import { formatFull, formatRelative } from '@renderer/lib/time-format';
 import { plainAllowOptionId, rawPermissionDetailText, summarizePermissionDetail } from './permission-summary';
-import type { CommentSurfaceAdapter } from './surface-adapter';
+import { firstTextRect, type CommentSurfaceAdapter } from './surface-adapter';
 import {
   findMention,
   MENTION_TOKEN,
@@ -1456,7 +1456,9 @@ function useMarginLayout(
       // The passage's last character (one past it can be a line break, which Preview can't measure).
       const last = item.end !== null && pos !== null ? Math.max(pos, Math.min(item.end, docLength) - 1) : null;
       const endCoords = last !== null ? surface.coordsAtPos(last) : coords;
-      const bottom = Math.max(coords?.bottom ?? -Infinity, endCoords?.bottom ?? -Infinity);
+      // A thread that lost its passage opens under its pin at the start of the document (`comment-pins.tsx`).
+      const lostCoords = pos === null && item.kind === 'thread' ? firstTextRect(surface) : null;
+      const bottom = Math.max(coords?.bottom ?? -Infinity, endCoords?.bottom ?? -Infinity, lostCoords?.bottom ?? -Infinity);
       if (Number.isFinite(bottom)) anchorBottoms.set(item.key, bottom - containerRect.top + scrollTop);
       const height = cardRefs.current.get(item.key)?.offsetHeight ?? DEFAULT_CARD_HEIGHT;
       return { key: item.key, anchorTop, height };

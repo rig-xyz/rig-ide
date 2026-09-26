@@ -40,3 +40,17 @@ export interface CommentSurfaceAdapter {
   /** Paint (or clear) the current marker set on this surface. */
   paintMarkers(markers: readonly CommentMarker[]): void;
 }
+
+/**
+ * The rect of the document's first measurable character: where a comment
+ * whose passage is gone gets pinned. Position 0 alone isn't enough: in
+ * Preview a heading's "# " or front matter renders no text of its own.
+ */
+export function firstTextRect(surface: CommentSurfaceAdapter, scan = 400): SurfaceRect | null {
+  const end = Math.min(surface.docLength(), scan);
+  for (let pos = 0; pos <= end; pos++) {
+    const rect = surface.coordsAtPos(pos);
+    if (rect) return rect;
+  }
+  return null;
+}

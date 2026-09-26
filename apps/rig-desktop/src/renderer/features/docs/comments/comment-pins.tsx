@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObje
 import { cn } from '@renderer/lib/utils';
 import type { DocCommentsStore } from './comments-store';
 import { PIN_SIZE, PIN_STEP, pinSlots } from './margin-layout';
+import { firstTextRect } from './surface-adapter';
 
 /**
  * Numbered pins in the text's left margin, one per commented passage, beside
@@ -11,6 +12,9 @@ import { PIN_SIZE, PIN_STEP, pinSlots } from './margin-layout';
  * the thread you're in, dimmer once resolved. One overlay for both Edit and
  * Preview: positions come from the current surface adapter, so a pin sits at
  * the same place in either mode.
+ *
+ * A thread whose passage can't be found any more (edited away) gets a
+ * dashed pin at the top of the text column, so it can still be opened.
  *
  * Lives in the document's scroll container, in its content coordinates, so
  * scrolling carries the pins with the text for free; only layout changes
@@ -38,7 +42,7 @@ export const CommentPins = observer(function CommentPins({
   showResolved: boolean;
 }) {
   const surface = store.surface;
-  const threads = store.threads.filter((thread) => thread.index !== null && (showResolved || !thread.resolved));
+  const threads = store.threads.filter((thread) => showResolved || !thread.resolved);
   const numbers = store.threadNumbers;
   const [places, setPlaces] = useState<Map<string, Place>>(new Map());
   const threadsRef = useRef(threads);
@@ -53,7 +57,8 @@ export const CommentPins = observer(function CommentPins({
     const docLength = surface.docLength();
     const raw: { key: string; top: number }[] = [];
     for (const thread of threadsRef.current) {
-      const coords = surface.coordsAtPos(Math.min(thread.index!, docLength));
+      // Lost its passage: pinned at the start of the document instead.
+      const coords = thread.index === null ? firstTextRect(surface) : surface.coordsAtPos(Math.min(thread.index, docLength));
       if (!coords) continue;
       // Centered on the anchor's first line.
       const top = coords.top - box.top + container.scrollTop + (coords.bottom - coords.top - PIN_SIZE) / 2;
@@ -92,12 +97,14 @@ export const CommentPins = observer(function CommentPins({
         const id = thread.root.id;
         const active = store.activeThreadId === id;
         const hovered = store.hoveredThreadId === id;
+        const lost = thread.index === null;
         return (
           <button
             key={id}
             type="button"
             data-comment-pin
-            aria-label={`Comment ${numbers.get(id) ?? ''}${thread.resolved ? ', resolved' : ''}`}
+            aria-label={`Comment ${numbers.get(id) ?? ''}${thread.resolved ? ', resolved' : ''}${lost ? ', its passage is gone' : ''}`}
+            title={lost ? 'The text this comment was on has changed' : undefined}
             onClick={() => store.setActiveThread(active ? null : id)}
             onMouseEnter={() => store.setHoveredThread(id)}
             onMouseLeave={() => store.setHoveredThread(null)}
@@ -106,8 +113,9 @@ export const CommentPins = observer(function CommentPins({
               'pointer-events-auto absolute grid place-items-center rounded-[999px_999px_999px_3px] text-[10px] font-bold shadow-[0_0_0_2px_var(--bg-1)] outline-none transition-[transform,background-color] duration-150 focus-visible:ring-2 focus-visible:ring-accent/60',
               active && !thread.resolved && 'bg-accent text-white',
               active && thread.resolved && 'bg-text-muted text-bg-1',
-              !active && !thread.resolved && 'bg-text-muted/80 text-bg-1 hover:bg-text-muted',
-              !active && thread.resolved && 'bg-border-strong text-text-muted',
+              lost && !active && 'border-text-muted text-text-muted border border-dashed bg-bg-1',
+              !lost && !active && !thread.resolved && 'bg-text-muted/80 text-bg-1 hover:bg-text-muted',
+              !lost && !active && thread.resolved && 'bg-border-strong text-text-muted',
               (active || hovered) && 'scale-110'
             )}
           >

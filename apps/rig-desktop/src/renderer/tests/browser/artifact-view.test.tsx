@@ -525,6 +525,54 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
     expect(cardTop('Nice catch!')).toBeGreaterThan(Number.parseFloat(pin.style.top));
   });
 
+  it('gives a comment whose passage is gone a dashed pin at the top, so a narrow panel can still open it', async () => {
+    host.style.width = '700px';
+    mocks.read.mockImplementation(() =>
+      resolveOnMacrotask({ success: true, data: { content: '# Notes\n\nThe text was rewritten since.\n', truncated: false } })
+    );
+    mocks.commentsResolveTarget.mockReset().mockResolvedValue({
+      success: true,
+      data: {
+        target: { bindingId: 'binding-1', relayUrl: 'https://relay.example', relPath: 'notes.md' },
+        selfUserId: 'user-1',
+      },
+    });
+    mocks.commentsList.mockReset().mockResolvedValue({
+      success: true,
+      data: {
+        messages: [
+          {
+            id: 'msg-lost',
+            seq: '1',
+            bindingId: 'binding-1',
+            author: { userId: 'user-1', name: 'Dylan', avatarUrl: null, kind: 'user' },
+            kind: 'comment',
+            body: 'Where did this go?',
+            parentId: null,
+            intentId: null,
+            path: 'notes.md',
+            meta: null,
+            anchor: { exact: 'a phrase that is no longer here' },
+            resolvedAt: null,
+            resolvedBy: null,
+            createdAt: '2026-08-27T00:00:00.000Z',
+            editedAt: null,
+            deletedAt: null,
+          },
+        ],
+      },
+    });
+
+    await renderArtifact('/repo/notes.md');
+    await waitFor(() => loadingGone(host));
+    await waitFor(() => host.querySelector('[data-comment-pin]') !== null, 8000);
+
+    const pin = host.querySelector<HTMLButtonElement>('[data-comment-pin]')!;
+    expect(pin.getAttribute('aria-label')).toContain('its passage is gone');
+    await act(async () => pin.click());
+    await waitFor(() => findCard('Where did this go?') !== undefined);
+  });
+
   /** The one `[data-comments-rail]` card whose body includes `text`, or undefined if none is listed yet. */
   function findCard(text: string): HTMLElement | undefined {
     return Array.from(host.querySelectorAll('[data-comments-rail] > div')).find((div) =>
