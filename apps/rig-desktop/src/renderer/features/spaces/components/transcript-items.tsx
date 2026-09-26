@@ -12,7 +12,6 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { Children, createContext, type ReactNode, useContext, useEffect, useState } from 'react';
-import { rpc } from '@renderer/lib/ipc';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import { formatClock, formatClockShort, formatFull } from '@renderer/lib/time-format';
@@ -61,7 +60,8 @@ function useOpenLink(url: string, title: string, inPanel = false): (event: { pre
   return (event) => {
     event.preventDefault();
     if (openPage && (inPanel || PANEL_PAGE_KINDS.has(classifyLink(url).kind))) openPage(canonicalPageUrl(url), title);
-    else void rpc.app.openExternal(url);
+    // Loaded on click: these rows render in tests and previews with no Electron bridge.
+    else void import('@renderer/lib/ipc').then(({ rpc }) => rpc.app.openExternal(url));
   };
 }
 
