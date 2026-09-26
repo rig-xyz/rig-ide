@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import type { AcpMcpServerWire } from '@emdash/core/acp';
 import { log } from '@main/lib/logger';
 import { RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
-import { createRigTools, runRigTool, type RigToolScope, type RigToolsBackend } from './rig-tools';
+import { createRigTools, runRigTool, type RigTool, type RigToolScope, type RigToolsBackend } from './rig-tools';
 
 /**
  * The desktop's own MCP server for rig tools (`rig-tools.ts`), handed to each
@@ -75,8 +75,8 @@ function reply(res: ServerResponse, status: number, body?: Record<string, unknow
   res.end(body ? JSON.stringify(body) : undefined);
 }
 
-export function createRigToolsServer(deps: { backend: RigToolsBackend; now?: () => number }): RigToolsServer {
-  const tools = createRigTools(deps.backend, deps.now);
+export function createRigToolsServer(deps: { backend: RigToolsBackend; now?: () => number; extraTools?: RigTool[] }): RigToolsServer {
+  const tools = [...createRigTools(deps.backend, deps.now), ...(deps.extraTools ?? [])];
   /** Session key → its token, so the same session always gets the same one. */
   const tokenByKey = new Map<string, string>();
   /** Token hash → who and where it acts for. */
@@ -118,7 +118,7 @@ export function createRigToolsServer(deps: { backend: RigToolsBackend; now?: () 
         },
         async (input: Record<string, unknown>) => {
           const result = await runRigTool(deps.backend, tool, scope, input);
-          return { content: [{ type: 'text' as const, text: result.text }], ...(result.isError ? { isError: true } : {}) };
+          return { content: result.content ?? [{ type: 'text' as const, text: result.text }], ...(result.isError ? { isError: true } : {}) };
         }
       );
     }

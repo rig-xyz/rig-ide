@@ -49,6 +49,9 @@ export const PRE_APPROVED_RIG_TOOLS: ReadonlySet<string> = new Set([
   'rig_file_comments',
 ]);
 
+/** The browser tools (`pages/browser-tools.ts`) only read a page as the owner: no clicks, no typing. */
+export const PRE_APPROVED_BROWSER_TOOLS: ReadonlySet<string> = new Set(['browser_pins', 'browser_read', 'browser_screenshot']);
+
 /**
  * The read-only half of the owner's claude.ai Claude Docs connector: reading a
  * Doc someone linked in the room, its comments, and the connector's own how-to.
@@ -58,7 +61,7 @@ const PRE_APPROVED_CLAUDE_DOCS_TOOLS = ['guide', 'read', 'query'].map((tool) => 
 
 /** Their exact names as agents report them: Claude `mcp__rig__rig_people`, Codex `mcp.rig.rig_people`. */
 const PRE_APPROVED_TOOL_NAMES = new Set([
-  ...[...PRE_APPROVED_RIG_TOOLS].flatMap((tool) => [`mcp__${RIG_TOOLS_SERVER}__${tool}`, `mcp.${RIG_TOOLS_SERVER}.${tool}`]),
+  ...[...PRE_APPROVED_RIG_TOOLS, ...PRE_APPROVED_BROWSER_TOOLS].flatMap((tool) => [`mcp__${RIG_TOOLS_SERVER}__${tool}`, `mcp.${RIG_TOOLS_SERVER}.${tool}`]),
   ...PRE_APPROVED_CLAUDE_DOCS_TOOLS,
 ]);
 
@@ -106,7 +109,10 @@ export interface RigToolsBackend {
   }): Promise<Result<RigCommentMessage, Failure>>;
 }
 
-export type RigToolResult = { text: string; isError?: boolean };
+export type RigToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: 'image/png' };
+
+/** `text` for the agent; `content`, when set, replaces it (a screenshot plus its caption). */
+export type RigToolResult = { text: string; isError?: boolean; content?: RigToolContent[] };
 
 export type RigTool = {
   name: string;

@@ -307,7 +307,8 @@ export function spacesHiddenContext(
   ];
   if (rigTools) {
     lines.push(
-      "You also have rig's own tools for this space (rig_invite, rig_people, rig_recent_changes, rig_file_comments, rig_comment): use them instead of the `rig` CLI (including `rig share`) to invite people, see who's here, see what changed and read or add file comments; fall back to the CLI only if a tool fails."
+      "You also have rig's own tools for this space (rig_invite, rig_people, rig_recent_changes, rig_file_comments, rig_comment): use them instead of the `rig` CLI (including `rig share`) to invite people, see who's here, see what changed and read or add file comments; fall back to the CLI only if a tool fails.",
+      'To look at a web page posted or pinned in the room (a Claude artifact, a Google Doc, any link), use browser_pins, browser_read and browser_screenshot with its link: they open it as your owner, read-only, without moving anyone\'s view. Read a board in full or screenshot it rather than guessing at small text.'
     );
   }
   if (roomLines.length > 0) {

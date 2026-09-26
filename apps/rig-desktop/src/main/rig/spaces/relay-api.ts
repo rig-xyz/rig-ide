@@ -111,6 +111,9 @@ export type RoomMessageRow = {
   path?: string | null;
   parentId?: string | null;
   quote?: string | null;
+  /** The full anchor (a page pin keeps its place on the page in `anchor.page`), and when the thread was resolved. */
+  anchor?: Record<string, unknown> | null;
+  resolvedAt?: string | null;
 };
 
 /** One connector a space uses, as the relay lists it. */
@@ -206,7 +209,7 @@ export interface SpacesRelayApi {
   removeConnector?(bindingId: string, connectorId: string): Promise<Result<void, RelayApiError>>;
   listMessages(
     bindingId: string,
-    query: { latest?: number; after?: string }
+    query: { latest?: number; after?: string; path?: string; limit?: number }
   ): Promise<Result<RoomMessageRow[], RelayApiError>>;
   postMessage(
     bindingId: string,
@@ -665,6 +668,8 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
       const params = new URLSearchParams();
       if (query.latest !== undefined) params.set('latest', String(query.latest));
       if (query.after !== undefined) params.set('after', query.after);
+      if (query.path !== undefined) params.set('path', query.path);
+      if (query.limit !== undefined) params.set('limit', String(query.limit));
       const qs = params.toString();
       const result = await request(
         ctxResult.data,
@@ -696,6 +701,8 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
                 path: typeof row.path === 'string' ? row.path : null,
                 parentId: typeof row.parentId === 'string' ? row.parentId : null,
                 quote: anchorQuote(row.anchor),
+                anchor: asRecord(row.anchor),
+                resolvedAt: typeof row.resolvedAt === 'string' ? row.resolvedAt : null,
               };
             })
             .filter((m): m is RoomMessageRow => m !== null)

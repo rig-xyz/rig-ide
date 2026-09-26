@@ -19,6 +19,9 @@ export interface LinkInfo {
   label: string;
 }
 
+/** The browser profile pages open in (panel and agents alike); one of the app's registered browser partitions. */
+export const RIG_PAGES_PARTITION = 'persist:emdash-browser-rig-pages';
+
 /** `http(s)://…` up to whitespace or a quote/angle bracket. */
 export const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/g;
 
@@ -67,4 +70,22 @@ export function classifyLink(url: string): LinkInfo {
     return { kind: 'github', label: `${segments[0]}/${segments[1]}` };
   }
   return { kind: 'web', label: url };
+}
+
+/**
+ * The form a page's link is stored in, so every member's copy of it matches
+ * the same comments: no #fragment, and for Claude and Google documents no
+ * query either (`?usp=sharing`, a title slug's version marker).
+ */
+export function canonicalPageUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  parsed.hash = '';
+  const { kind } = classifyLink(url);
+  if (kind !== 'web' && kind !== 'github') parsed.search = '';
+  return parsed.toString();
 }

@@ -1590,12 +1590,12 @@ describe('rig tools', () => {
     it.each([
       ['claude', 'mcp__rig__'],
       ['codex', 'mcp.rig.'],
-    ] as const)('%s: rig_people, rig_recent_changes and rig_file_comments are allowed once, with no card', async (agent, prefix) => {
+    ] as const)('%s: the read-only rig and browser tools are allowed once, with no card', async (agent, prefix) => {
       const { fake, conversationId, requested } = await startTurn(agent);
-      const tools = ['rig_people', 'rig_recent_changes', 'rig_file_comments'];
+      const tools = ['rig_people', 'rig_recent_changes', 'rig_file_comments', 'browser_pins', 'browser_read', 'browser_screenshot'];
       tools.forEach((tool, i) => fake.emitPermissionRequest(conversationId, request(`${prefix}${tool}`, `perm-${i}`)));
 
-      await vi.waitFor(() => expect(fake.resolvedPermissions).toHaveLength(3));
+      await vi.waitFor(() => expect(fake.resolvedPermissions).toHaveLength(tools.length));
       expect(fake.resolvedPermissions).toEqual(
         tools.map((_, i) => ({ conversationId, requestId: `perm-${i}`, optionId: 'allow-once' }))
       );
@@ -1649,8 +1649,9 @@ describe('rig tools', () => {
     expect(spacesHiddenContext(makeRequest())).not.toContain('rig_invite');
     const context = spacesHiddenContext(makeRequest(), [], true);
     expect(context).toContain('use them instead of the `rig` CLI (including `rig share`)');
-    // One added line: the skill pointer and the CLI invite line stay as they were.
-    expect(context.split('\n')).toHaveLength(spacesHiddenContext(makeRequest()).split('\n').length + 1);
+    // Two added lines (rig tools, browser tools): the skill pointer and the CLI invite line stay as they were.
+    expect(context.split('\n')).toHaveLength(spacesHiddenContext(makeRequest()).split('\n').length + 2);
+    expect(context).toContain('use browser_pins, browser_read and browser_screenshot with its link');
     expect(context).toContain('run `rig share <email>`');
   });
 });

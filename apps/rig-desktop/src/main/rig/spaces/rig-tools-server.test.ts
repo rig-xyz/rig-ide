@@ -153,6 +153,30 @@ describe('rig tools server', () => {
     await other.close();
   });
 
+  it('serves extra tools next to the rig ones, passing an image result through, still only for the session owner', async () => {
+    const run = vi.fn(async () => ({
+      text: 'Board 2 at full size.',
+      content: [
+        { type: 'image' as const, data: 'iVBORw0KGgo=', mimeType: 'image/png' as const },
+        { type: 'text' as const, text: 'Board 2 at full size.' },
+      ],
+    }));
+    server = createRigToolsServer({
+      backend: fakeBackend(),
+      extraTools: [{ name: 'browser_screenshot', description: 'Look at a page.', inputSchema: {}, annotations: { title: 'Browser · screenshot', readOnlyHint: true }, run }],
+    });
+    const client = await connect(await server.serverFor(DYLAN));
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name).at(-1)).toBe('browser_screenshot');
+    const result = await client.callTool({ name: 'browser_screenshot', arguments: {} });
+    expect(result.content).toEqual([
+      { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' },
+      { type: 'text', text: 'Board 2 at full size.' },
+    ]);
+    expect(run).toHaveBeenCalledWith(DYLAN, {});
+    await client.close();
+  });
+
   it('reports bad tool input as a tool error', async () => {
     server = createRigToolsServer({ backend: fakeBackend() });
     const client = await connect(await server.serverFor(DYLAN));

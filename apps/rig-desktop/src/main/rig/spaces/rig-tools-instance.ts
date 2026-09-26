@@ -7,6 +7,7 @@ import { rigFileRootRegistry } from '../file-root-registry';
 import { rigFilesController } from '../files';
 import { rigPulseController } from '../pulse';
 import { rigShareController } from '../rig-share';
+import { browserRigTools } from '../pages/browser-rig-tools';
 import { createHttpSpacesRelayApi } from './relay-api';
 import type { RigToolsBackend } from './rig-tools';
 import { createRigToolsServer } from './rig-tools-server';
@@ -79,4 +80,4 @@ const backend: RigToolsBackend = {
     rigCommentsController.reply({ absPath, parentId, body, authorKind: 'agent', meta }),
 };
 
-export const rigToolsServer = createRigToolsServer({ backend });
+export const rigToolsServer = createRigToolsServer({ backend, extraTools: browserRigTools(api) });
