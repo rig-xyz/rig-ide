@@ -5,12 +5,20 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRunnableAgents, type RunnableAgent } from '@renderer/features/chat/use-runnable-agents';
 import { CommentCount, CommentModeControl, CommentModeStatus, shortAgentName } from '@renderer/features/comment-mode/comment-mode-ui';
 import { useCommentMode } from '@renderer/features/comment-mode/use-comment-mode';
+import {
+  COMMENT_PLACEHOLDER,
+  CommentCardAuthor,
+  CommentCardFrame,
+  CommentCardQuote,
+  CommentCardTo,
+  REPLY_PLACEHOLDER,
+} from '@renderer/features/comment-mode/comment-card';
 import { PaintbrushCursorChip } from '@renderer/features/docs/paintbrush/paintbrush-cursor-chip';
 import { rpc } from '@renderer/lib/ipc';
+import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { Button } from '@renderer/lib/ui/button';
 import { Textarea } from '@renderer/lib/ui/textarea';
 import { cn } from '@renderer/lib/utils';
-import { formatRelative } from '@renderer/lib/time-format';
 import { classifyLink, RIG_PAGES_PARTITION } from '@shared/spaces/links';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { FirstOpen, useSignInStatus, type SignInSite } from './sign-in';
@@ -378,31 +386,30 @@ function ThreadCard({
 }) {
   const [reply, setReply] = useState('');
   return (
-    <div
-      className="border-border-hairline bg-bg-1 absolute z-10 flex w-[288px] flex-col gap-2 rounded-card border p-3 shadow-lg"
+    <CommentCardFrame
+      active
+      resolved={thread.resolved}
+      className="absolute z-10 w-[288px] shadow-lg"
       style={cardStyle(at, width)}
       data-testid="page-thread-card"
     >
-      <p className="border-border-strong line-clamp-2 border-l-2 pl-2 text-xs text-text-muted">{thread.quote}</p>
-      <div className="flex items-baseline justify-between text-xs">
-        <b className="font-medium text-text-primary">{thread.authorName ?? 'Someone'}</b>
-        <span className="text-text-muted">{formatRelative(thread.createdAt)}</span>
-      </div>
+      <CommentCardQuote n={thread.n} quote={thread.quote} active resolved={thread.resolved} />
+      <CommentCardAuthor who={thread.authorName ?? 'Someone'} at={thread.createdAt} />
       <p className="text-sm text-text-primary">{thread.comment}</p>
       {thread.replies.map((r) => (
         <div key={r.id} className="border-border-hairline flex flex-col gap-1 border-t pt-2">
-          <div className="flex items-baseline justify-between text-xs">
-            <span className="text-text-secondary">
-              {r.agent ? (
+          <CommentCardAuthor
+            who={
+              r.agent ? (
                 <>
-                  {agentName(r.agent)} (with <b className="font-medium text-text-primary">{r.authorName ?? 'someone'}</b>)
+                  {agentName(r.agent)} <span className="font-normal text-text-muted">with {r.authorName ?? 'someone'}</span>
                 </>
               ) : (
-                <b className="font-medium text-text-primary">{r.authorName ?? 'Someone'}</b>
-              )}
-            </span>
-            <span className="text-text-muted">{formatRelative(r.createdAt)}</span>
-          </div>
+                (r.authorName ?? 'Someone')
+              )
+            }
+            at={r.createdAt}
+          />
           <p className="text-sm text-text-primary">{r.body}</p>
         </div>
       ))}
@@ -415,15 +422,16 @@ function ThreadCard({
             void onReply(reply.trim()).then(() => setReply(''));
           }
         }}
-        placeholder="Reply, @ to mention"
-        className="min-h-9 text-sm"
+        placeholder={REPLY_PLACEHOLDER}
+        rows={1}
+        className="max-h-32 min-h-8 py-1.5 text-sm"
       />
       <div className="flex justify-end">
         <button type="button" onClick={() => void onResolve()} className="text-xs text-text-muted hover:text-text-primary">
           {thread.resolved ? 'Reopen' : 'Resolve'}
         </button>
       </div>
-    </div>
+    </CommentCardFrame>
   );
 }
 
@@ -442,13 +450,11 @@ function DraftCard({
   onSubmit: (body: string) => Promise<void>;
 }) {
   const [body, setBody] = useState('');
+  const toName = to ? shortAgentName(to.name) : null;
   return (
-    <div
-      className="border-border-hairline bg-bg-1 absolute z-10 flex w-[288px] flex-col gap-2 rounded-card border p-3 shadow-lg"
-      style={cardStyle(draft, width)}
-      data-testid="page-draft-card"
-    >
-      <p className="border-border-strong line-clamp-2 border-l-2 pl-2 text-xs text-text-muted">{draft.quote}</p>
+    <CommentCardFrame active className="absolute z-10 w-[288px] shadow-lg" style={cardStyle(draft, width)} data-testid="page-draft-card">
+      <CommentCardQuote quote={draft.quote} />
+      {to && toName && <CommentCardTo icon={<AgentIcon icon={to.icon} size={12} className="shrink-0" />} name={toName} />}
       <Textarea
         autoFocus
         value={body}
@@ -459,18 +465,19 @@ function DraftCard({
             void onSubmit(body.trim());
           }
         }}
-        placeholder={to ? `Ask ${shortAgentName(to.name)} about this` : 'Comment, @ to mention'}
-        className="min-h-14 text-sm"
+        placeholder={toName ? `Ask ${toName} about this` : COMMENT_PLACEHOLDER}
+        rows={2}
+        className="max-h-40 min-h-14 py-1.5 text-sm"
       />
       <div className="flex justify-end gap-1.5">
-        <Button size="sm" variant="ghost" onClick={onCancel}>
+        <Button size="xs" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        <Button size="sm" disabled={!body.trim()} onClick={() => void onSubmit(body.trim())}>
-          {to ? `Ask ${shortAgentName(to.name)}` : 'Comment'}
+        <Button size="xs" disabled={!body.trim()} onClick={() => void onSubmit(body.trim())}>
+          {toName ? `Ask ${toName}` : 'Comment'}
         </Button>
       </div>
-    </div>
+    </CommentCardFrame>
   );
 }
 

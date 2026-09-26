@@ -381,7 +381,7 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
     await waitFor(
       () =>
         host.querySelector('[data-comments-rail]')?.textContent?.includes('The Q3') === true &&
-        host.querySelector('textarea[placeholder="Add a comment — @ to mention"]') !== null
+        host.querySelector('textarea[placeholder="Add a comment, @ to mention"]') !== null
     );
   });
 

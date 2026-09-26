@@ -33,6 +33,13 @@ import {
   type RigCommentPermissionRequest,
 } from '@shared/rig/comments';
 import { canApplyProposal } from '../paintbrush/paintbrush-apply';
+import {
+  COMMENT_PLACEHOLDER,
+  CommentCardQuote,
+  CommentCardTo,
+  CommentNumber,
+  REPLY_PLACEHOLDER,
+} from '@renderer/features/comment-mode/comment-card';
 import { PaintbrushOrb } from '../paintbrush/paintbrush-orb';
 import { shortenQuote } from './anchors';
 import { offlineChipLabel } from './comments-cache';
@@ -1088,18 +1095,8 @@ export const ThreadCard = observer(function ThreadCard({
           !collapsed && 'mb-2'
         )}
       >
-        {number !== undefined && (
-          // The same number as the thread's pin beside the text.
-          <span
-            className={cn(
-              'grid size-4 shrink-0 place-items-center rounded-[999px_999px_999px_2px] text-[9px] font-bold',
-              active && !thread.resolved ? 'bg-accent text-white' : 'bg-text-muted/80 text-bg-1',
-              thread.resolved && 'bg-border-strong text-text-muted'
-            )}
-          >
-            {number}
-          </span>
-        )}
+        {/* The same number as the thread's pin beside the text. */}
+        {number !== undefined && <CommentNumber n={number} active={active} resolved={thread.resolved} />}
         {collapsed ? (
           <ChevronRight className="text-text-muted size-3 shrink-0" />
         ) : (
@@ -1216,7 +1213,7 @@ const ReplyComposer = observer(function ReplyComposer({
         disabled={disabled || offline}
         onChange={setDraft}
         onSubmit={() => void send()}
-        placeholder={offline ? 'Reconnect to comment' : 'Reply — @ to mention'}
+        placeholder={offline ? 'Reconnect to comment' : REPLY_PLACEHOLDER}
         rows={1}
         className="max-h-32 min-h-8 py-1.5 text-sm"
       />
@@ -1289,12 +1286,7 @@ export const NewThreadCard = observer(function NewThreadCard({
     // border — an accent card around an accent input read as a double
     // outline (feedback round 5). One accent line, on the thing focused.
     <Card active muted hasAnchor={hasAnchor}>
-      <p
-        className="border-border-strong text-text-muted line-clamp-2 border-l-2 pl-2 text-xs"
-        title={quote}
-      >
-        {shortenQuote(quote, 140)}
-      </p>
+      <CommentCardQuote quote={shortenQuote(quote, 140)} />
 
       {store.state === 'unauthenticated' ? (
         <SignInNotice store={store} />
@@ -1303,11 +1295,15 @@ export const NewThreadCard = observer(function NewThreadCard({
       ) : (
         <div className="mt-2">
           {paintbrushAgent && (
-            <div className="bg-bg-2 text-text-secondary mb-1.5 inline-flex w-fit items-center gap-1.5 rounded-chip px-2 py-1 text-xs">
-              {icons.get(paintbrushAgent.providerId) !== undefined && (
-                <AgentIcon icon={icons.get(paintbrushAgent.providerId)!} size={12} className="shrink-0" />
-              )}
-              <span>{paintbrushAgent.name}</span>
+            <div className="mb-1.5">
+              <CommentCardTo
+                icon={
+                  icons.get(paintbrushAgent.providerId) !== undefined ? (
+                    <AgentIcon icon={icons.get(paintbrushAgent.providerId)!} size={12} className="shrink-0" />
+                  ) : null
+                }
+                name={paintbrushAgent.name}
+              />
             </div>
           )}
           {paintbrushAgent ? (
@@ -1338,7 +1334,7 @@ export const NewThreadCard = observer(function NewThreadCard({
               onChange={setDraft}
               onSubmit={() => void send()}
               onEscape={store.closeComposer}
-              placeholder="Add a comment — @ to mention"
+              placeholder={COMMENT_PLACEHOLDER}
               rows={2}
               className="max-h-40 min-h-14 py-1.5 text-sm"
             />
