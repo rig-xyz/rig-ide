@@ -25,4 +25,18 @@ describe('replaySessionTranscript', () => {
     expect(active).toBeNull();
     expect(JSON.stringify(committed)).toContain('Signups fell.');
   });
+
+  it('shows a rig tool by its readable name, as the turn does', () => {
+    const { committed } = replaySessionTranscript('run-r', [
+      {
+        seq: 1,
+        kind: 'tool_call',
+        payload: { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'mcp__rig__rig_people', kind: 'other', status: 'completed' },
+      },
+      { seq: 2, kind: 'turn_ended', payload: { status: 'done' } },
+    ]);
+    const json = JSON.stringify(committed);
+    expect(json).toContain('Rig · people');
+    expect(json).not.toContain('mcp__rig__rig_people');
+  });
 });

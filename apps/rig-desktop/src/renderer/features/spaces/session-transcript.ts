@@ -1,6 +1,7 @@
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
 // The browser-safe entry: '@emdash/core/acp' also pulls in Node-only transport code.
 import { AcpTranscriptParser, type TranscriptTurn } from '@emdash/core/acp/transcript-parser';
+import { prettyAgentTool, rigToolArgs } from '@shared/spaces/connectors';
 import type { SessionEvent } from './types';
 
 /**
@@ -21,7 +22,7 @@ export function replaySessionTranscript(
   const parser = new AcpTranscriptParser({ conversationId: runId });
   const push = (payload: Record<string, unknown>, at: number | undefined) => {
     if (typeof payload.sessionUpdate !== 'string') return;
-    parser.push(payload as unknown as SessionUpdate, at);
+    parser.push(readableToolTitle(payload) as unknown as SessionUpdate, at);
   };
 
   for (const event of events) {
@@ -40,4 +41,12 @@ export function replaySessionTranscript(
     }
   }
   return { committed: parser.history, active: parser.activeTurn };
+}
+
+/** An MCP tool call titled `mcp__rig__rig_people` reads "Rig · people" here too, as it does on the turn itself. */
+function readableToolTitle(payload: Record<string, unknown>): Record<string, unknown> {
+  const kind = payload.sessionUpdate;
+  if ((kind !== 'tool_call' && kind !== 'tool_call_update') || typeof payload.title !== 'string') return payload;
+  const pretty = prettyAgentTool(payload.title, rigToolArgs(payload.title, payload.rawInput));
+  return pretty ? { ...payload, title: `${pretty.label} · ${pretty.action}` } : payload;
 }
