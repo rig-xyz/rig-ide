@@ -622,6 +622,32 @@ describe('AcpRuntime session manager', () => {
       expect(kinds).toEqual(['agent_message_chunk']);
     });
 
+    it("keeps a conversation's raw log and observers when a failed resume falls back to a new session", async () => {
+      const h = makeAcpHarness();
+      const rt = new AcpRuntime(h.deps);
+      const conversationId = 'conv-resume-fallback';
+      // Subscribed before the session starts, as the Spaces dispatcher does.
+      const log = rt.sessionRawEventsLog(conversationId);
+      const observer = vi.fn();
+      rt.observeRawSessionEvents(conversationId, observer);
+      h.agent.loadSession = vi.fn(async () => {
+        throw new Error('thread not found');
+      });
+
+      const started = await rt.startSession(makeStartInput({ conversationId, sessionId: 'session-old' }));
+      expect(isOk(started)).toBe(true);
+      const sessionId = isOk(started) ? started.data.sessionId : '';
+      expect(sessionId).not.toBe('session-old');
+
+      await h.client().sessionUpdate({
+        sessionId,
+        update: { sessionUpdate: 'agent_message_chunk', sessionId, messageId: 'm1', content: { type: 'text', text: 'OK' } } as SessionUpdate,
+      });
+      expect(observer).toHaveBeenCalledWith(expect.objectContaining({ kind: 'acp_update', sessionId }));
+      expect(rt.sessionRawEventsLog(conversationId)).toBe(log);
+      expect(log.snapshot().data.text).toContain('"OK"');
+    });
+
     it("disposes a conversation's raw log and observers when its session is removed", async () => {
       const { h, rt, conversationId } = await startHarness('conv-rawlog-dispose');
       const before = rt.sessionRawEventsLog(conversationId);

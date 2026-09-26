@@ -234,7 +234,12 @@ export class SessionManager implements InboundRouter {
         }
 
         if (!loaded) {
-          this.removeRecord(input.conversationId, false);
+          // The same conversation carries on with a new session just below:
+          // keep its raw log and observers, which its consumers (the Spaces
+          // dispatcher) subscribed to before starting it. Dropping them here
+          // left every event of the new session going to a log nobody
+          // watches, and its turns never ending for them.
+          this.removeRecord(input.conversationId, false, { keepRawEvents: true });
           record = null;
         }
       }
@@ -723,7 +728,7 @@ export class SessionManager implements InboundRouter {
     });
   }
 
-  private removeRecord(conversationId: string, releaseConnection: boolean): void {
+  private removeRecord(conversationId: string, releaseConnection: boolean, options: { keepRawEvents?: boolean } = {}): void {
     const record = this.cells.get(conversationId);
     if (!record) return;
     record.cell.dispose();
@@ -737,8 +742,10 @@ export class SessionManager implements InboundRouter {
     // above, plus every other raw event) that otherwise outlives the
     // session it was built for, silently eating the 1MB replay buffer and
     // the IPC channel carrying it.
-    this.rawEventLogs.delete(conversationId);
-    this.rawObservers.delete(conversationId);
+    if (!options.keepRawEvents) {
+      this.rawEventLogs.delete(conversationId);
+      this.rawObservers.delete(conversationId);
+    }
     if (releaseConnection) void record.connectionLease.release();
   }
 
