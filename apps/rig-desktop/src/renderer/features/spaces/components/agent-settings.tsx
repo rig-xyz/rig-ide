@@ -1,9 +1,10 @@
 import { ChevronDown } from 'lucide-react';
 import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from 'react';
-import type { AgentConfig, AgentConfigChange } from '@main/rig/spaces/dispatch';
+import type { AgentConfig, AgentConfigChange, AgentConfigChoice } from '@main/rig/spaces/dispatch';
 import { decideModeSelect, isDangerousMode, shouldPersistMode } from '@renderer/features/chat/permission-mode';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
+import { ROOM_SEES_LABEL, ROOM_SEES_LEVELS, ROOM_SEES_TOOLTIP, type RoomSees } from '@shared/spaces/room-sees';
 import type { AgentKind, SessionCard } from '../types';
 import { AGENT_NAME } from './identity';
 
@@ -22,21 +23,34 @@ export type AgentSettingsApi = {
   change: (agent: AgentKind, change: AgentConfigChange) => Promise<AgentConfig | { error: string }>;
   /** Makes a pick your default for this agent everywhere (new chats and spaces). */
   remember?: (agent: AgentKind, change: AgentConfigChange) => void;
+  /** "Room sees" in this space: how much of your agents' work other members see. Kept on this computer. */
+  roomSees?: { load: () => Promise<RoomSees>; change: (level: RoomSees) => Promise<boolean> };
 };
 
 /** Provided by the Room (it knows the space and can reach the app); absent in the scripted demo. */
 export const AgentSettingsContext = createContext<AgentSettingsApi | null>(null);
 
 type Dimension = 'model' | 'mode' | 'effort';
+/** A row of choices: one of the agent's own settings, or the space's "Room sees". */
+type ChoiceDimension = Dimension | 'roomSees';
 type Option = { id: string; name: string; description?: string };
 
-const DIMENSION_TITLE: Record<Dimension, string> = {
+const DIMENSION_TITLE: Record<ChoiceDimension, string> = {
   model: 'Model',
   mode: 'Permissions',
   effort: 'Effort',
+  roomSees: 'Room sees',
 };
 
-function isDefaultOption(dimension: Dimension, option: Option): boolean {
+/** "Room sees" as a row of choices; the one description is every choice's tooltip. */
+function roomSeesChoice(level: RoomSees): AgentConfigChoice {
+  return {
+    selected: level,
+    options: ROOM_SEES_LEVELS.map((id) => ({ id, name: ROOM_SEES_LABEL[id], description: ROOM_SEES_TOOLTIP })),
+  };
+}
+
+function isDefaultOption(dimension: ChoiceDimension, option: Option): boolean {
   return dimension === 'model' && (option.id === 'default' || /^default\b/i.test(option.name));
 }
 
@@ -45,7 +59,7 @@ function isDefaultOption(dimension: Dimension, option: Option): boolean {
  * named by what it resolves to ("Opus 4.7 (1M)", from its own description),
  * so the pill and the list say the model, not the policy.
  */
-export function optionLabel(dimension: Dimension, option: Option): string {
+export function optionLabel(dimension: ChoiceDimension, option: Option): string {
   if (isDefaultOption(dimension, option)) {
     const resolved = option.description
       ?.split(' · ')[0]
@@ -70,7 +84,7 @@ export function prettyModelId(id: string): string {
  * lists (a remembered default from an older CLI): that still shows, by its
  * readable name, marked as no longer offered, rather than as nothing.
  */
-function currentOption(dimension: Dimension, group: NonNullable<AgentConfig[Dimension]>): (Option & { stale?: boolean }) | null {
+function currentOption(dimension: ChoiceDimension, group: AgentConfigChoice): (Option & { stale?: boolean }) | null {
   if (!group.selected) return null;
   const listed = group.options.find((o) => o.id === group.selected);
   if (listed) return listed;
@@ -136,8 +150,8 @@ function ChoiceChips({
   onPick,
   revealOnHover = false,
 }: {
-  dimension: Dimension;
-  group: NonNullable<AgentConfig[Dimension]>;
+  dimension: ChoiceDimension;
+  group: AgentConfigChoice;
   busy: boolean;
   onPick: (value: string) => void;
   /** Show only the current pick; hovering (or focusing) slides the other choices out to its right. */
@@ -406,6 +420,28 @@ export function AgentConfigRow({
   const { api, config, error, busy, warm, pick, label, retry } = useAgentConfig(agent);
   const [expanded, setExpanded] = useState(false);
   const [everywhere, setEverywhere] = useState(false);
+  const [roomSees, setRoomSees] = useState<RoomSees | null>(null);
+  const [roomSeesBusy, setRoomSeesBusy] = useState(false);
+  useEffect(() => {
+    if (!expanded || !api?.roomSees) return;
+    let alive = true;
+    void api.roomSees
+      .load()
+      .then((level) => alive && setRoomSees(level))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [expanded, api]);
+  const pickRoomSees = (value: string) => {
+    if (!api?.roomSees || value === roomSees) return;
+    const level = value as RoomSees;
+    setRoomSeesBusy(true);
+    void api.roomSees.change(level).then((changed) => {
+      setRoomSeesBusy(false);
+      if (changed) setRoomSees(level);
+    });
+  };
 
   const row = 'flex h-7 w-full shrink-0 items-center gap-2 rounded-control pr-2 pl-8 text-left transition-colors';
   if (!api) {
@@ -478,6 +514,18 @@ export function AgentConfigRow({
           {settingRow('model')}
           {settingRow('mode')}
           {settingRow('effort')}
+          {api.roomSees && roomSees && (
+            <div className="flex min-w-0 items-center gap-2" data-testid="agent-room-sees">
+              <span className="w-[4.5rem] shrink-0 text-2xs text-text-muted">{DIMENSION_TITLE.roomSees}</span>
+              <ChoiceChips
+                dimension="roomSees"
+                group={roomSeesChoice(roomSees)}
+                busy={roomSeesBusy}
+                onPick={pickRoomSees}
+                revealOnHover
+              />
+            </div>
+          )}
           <div className="flex items-center gap-2 pt-0.5 text-2xs text-text-muted">
             {usage && (
               <span className="flex items-center gap-1">

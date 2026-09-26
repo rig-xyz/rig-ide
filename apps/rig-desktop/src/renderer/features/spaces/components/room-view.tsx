@@ -1,12 +1,13 @@
 import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from '@renderer/lib/hooks/use-toast';
-import { rpc } from '@renderer/lib/ipc';
+import { events, rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
 import type { ConnectorId, GlobalServer } from '@shared/spaces/connectors';
+import { roomSeesFor, spacesLocalRunEventChannel } from '@shared/spaces/room-sees';
 import { connectorsApi } from '../connectors-api';
 import { buildRoomFeed } from '../fixtures/room-feed';
-import { RelayRoomSource, type RelayRoomClient } from '../relay-room-source';
+import { RelayRoomSource, type LocalRunsClient, type RelayRoomClient } from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
 import { writeOpenedAt } from '../room-read-marker';
 import { useRefreshMemberReadsOnRosterChange } from '../roster-refresh';
@@ -45,6 +46,14 @@ function createRelayRoomClient(): RelayRoomClient {
     listConnectors: (bindingId) => client.listConnectors({ bindingId }),
     addConnector: (bindingId, connectorId) => client.addConnector({ bindingId, connectorId }),
     removeConnector: (bindingId, connectorId) => client.removeConnector({ bindingId, connectorId }),
+  };
+}
+
+/** The owner overlay: this computer's own full copy of your runs (see `LocalRunsClient`). */
+function createLocalRunsClient(): LocalRunsClient {
+  return {
+    events: async (runId) => (await rpc.rig.spacesDispatch.localRunEvents({ runId }).catch(() => null))?.events ?? null,
+    subscribe: (listener) => events.on(spacesLocalRunEventChannel, listener),
   };
 }
 
@@ -338,6 +347,7 @@ export function RoomView({
         selfUserId: result.data.selfUserId,
         relay: createRelayRoomClient(),
         connections: connectorsApi,
+        localRuns: createLocalRunsClient(),
       });
       setSelfUserId(result.data.selfUserId);
       setSource(relaySource);
@@ -471,6 +481,15 @@ export function RoomView({
               if (result.success) configCache.current.set(agent, Promise.resolve(result.data));
               return result.success ? result.data : { error: result.error };
             },
+            // "Room sees" is this space's, on this computer: every agent of yours here shares it.
+            roomSees: {
+              load: async () => roomSeesFor((await rpc.rig.settings.get()).spacesRoomSees, bindingId),
+              change: async (level) =>
+                rpc.rig.settings
+                  .set({ spacesRoomSees: { [bindingId]: level } })
+                  .then(() => true)
+                  .catch(() => false),
+            },
           }
         : null,
     [source, bindingId]
@@ -545,6 +564,15 @@ export function RoomView({
     void rpc.rig.spacesDispatch.resolvePermission({ runId, requestId, optionId });
   }, []);
   const handleResolvePermission = source instanceof RelayRoomSource ? resolvePermission : undefined;
+
+  const hideDetails = useCallback(
+    async (runId: string): Promise<boolean> => {
+      const result = await rpc.rig.spacesDispatch.hideRunDetails({ bindingId, runId }).catch(() => null);
+      return result?.success === true;
+    },
+    [bindingId]
+  );
+  const handleHideDetails = source instanceof RelayRoomSource ? hideDetails : undefined;
 
   // Shared by the transcript's connector pills (a `connectors_added` card,
   // an agent turn's footer gap) — the fuller add/consent/catalog flow lives
@@ -655,6 +683,7 @@ export function RoomView({
             onRerun={handleRerun}
             onConnectorConnect={handleConnectorConnect}
             globalSetup={globalSetup}
+            onHideDetails={handleHideDetails}
           />
           )}
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">

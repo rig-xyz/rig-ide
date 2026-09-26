@@ -135,10 +135,12 @@ function stepCount(card: SessionCardData): number {
   return Math.max(card.steps.length, card.privateSteps);
 }
 
-function summaryLine(card: SessionCardData, elapsed: string): string {
+/** "Worked 28s · 3 steps · read 2 files"; `countOnly` stops at the step count (all the room gets at Answer). */
+function summaryLine(card: SessionCardData, elapsed: string, countOnly = false): string {
   const parts = [elapsed ? `Worked ${elapsed}` : 'Worked'];
   const steps = stepCount(card);
   if (steps > 0) parts.push(`${steps} ${steps === 1 ? 'step' : 'steps'}`);
+  if (countOnly) return parts.join(' · ');
   const reads = card.steps.filter((s) => s.kind === 'read').length;
   if (reads > 0) parts.push(`read ${reads} ${reads === 1 ? 'file' : 'files'}`);
   return parts.join(' · ');
@@ -752,7 +754,7 @@ export function SessionCard({
             {status !== 'done' && (
               <DotMatrix state={status === 'failed' ? 'failed' : 'stopped'} size="sm" className="mr-0.5" />
             )}
-            {summaryLine(card, elapsed)}
+            {summaryLine(card, elapsed, true)}
             <PrivateMark />
           </div>
         ) : (
