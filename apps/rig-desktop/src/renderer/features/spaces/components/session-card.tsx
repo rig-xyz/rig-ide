@@ -3,8 +3,10 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  EyeOff,
   FileText,
   Globe,
+  Lock,
   Pencil,
   RotateCcw,
   Search,
@@ -128,9 +130,15 @@ function optionLabel(option: { name: string; kind: string }): string {
   }
 }
 
+/** Steps the run took: the ones it shows, or the count the room was given instead ("Room sees" at Answer, Hide details). */
+function stepCount(card: SessionCardData): number {
+  return Math.max(card.steps.length, card.privateSteps);
+}
+
 function summaryLine(card: SessionCardData, elapsed: string): string {
   const parts = [elapsed ? `Worked ${elapsed}` : 'Worked'];
-  if (card.steps.length > 0) parts.push(`${card.steps.length} ${card.steps.length === 1 ? 'step' : 'steps'}`);
+  const steps = stepCount(card);
+  if (steps > 0) parts.push(`${steps} ${steps === 1 ? 'step' : 'steps'}`);
   const reads = card.steps.filter((s) => s.kind === 'read').length;
   if (reads > 0) parts.push(`read ${reads} ${reads === 1 ? 'file' : 'files'}`);
   return parts.join(' · ');
@@ -161,6 +169,17 @@ function prettyStepTitle(
     connector: pretty.connector,
     tooltip: pretty.via === 'setup' ? `From your ${AGENT_NAME[agent]} setup` : undefined,
   };
+}
+
+/** "· 🔒 private": only this step's label reached the room (or, with `label`, only the answer did). */
+function PrivateMark({ label = 'private', icon: Icon = Lock }: { label?: string; icon?: LucideIcon }) {
+  return (
+    <span className="flex shrink-0 items-center gap-1 text-text-muted" data-testid="session-private">
+      <span aria-hidden>·</span>
+      <Icon className="size-3" strokeWidth={1.5} />
+      {label}
+    </span>
+  );
 }
 
 function StepRow({
@@ -198,6 +217,7 @@ function StepRow({
         <span className="min-w-0 truncate" title={pretty?.tooltip ?? step.title}>
           {pretty ? pretty.text : (step.title ?? kind.past)}
         </span>
+        {step.private && <PrivateMark />}
       </div>
       {decision && (
         <span className="ml-[22px] text-2xs text-text-muted" data-testid="session-decision">
@@ -415,6 +435,8 @@ export function sourcesOf(card: SessionCardData): string[] {
   const sources: string[] = [];
   for (const step of card.steps) {
     if (step.kind !== 'read' && step.kind !== 'search' && step.kind !== 'fetch') continue;
+    // A private step's label names no file ("Read a file").
+    if (step.private || step.title === 'Read a file') continue;
     const paths = step.locations?.map((l) => l.path).filter(Boolean) ?? [];
     if (paths.length === 0 && step.kind === 'read' && step.title?.startsWith('Read ')) {
       paths.push(step.title.slice(5).trim());
@@ -552,6 +574,7 @@ export function SessionCard({
   onConnectorConnect,
   spaceConnectors,
   globalSetup,
+  onHideDetails,
 }: {
   meta: SessionRunMeta;
   events: SessionEvent[];
@@ -584,6 +607,8 @@ export function SessionCard({
   spaceConnectors?: RoomConnector[];
   /** Your agents' own global MCP setup — a gap this run's own agent (`meta.agent`) already reaches this way is dropped rather than nagging you to connect it (dispatch stops recording these going forward; older runs still carry them). */
   globalSetup?: GlobalServer[];
+  /** Your own finished run only: "Hide details", so the room sees only its answer from now on. Resolves false if it couldn't. */
+  onHideDetails?: () => Promise<boolean>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [traceOpen, setTraceOpen] = useState(false);
@@ -595,6 +620,12 @@ export function SessionCard({
     return () => clearTimeout(id);
   }, [stopFailed]);
   const [resolving, setResolving] = useState<{ requestId: string; optionId: string } | null>(null);
+  const [hiding, setHiding] = useState<'idle' | 'busy' | 'failed'>('idle');
+  useEffect(() => {
+    if (hiding !== 'failed') return;
+    const id = setTimeout(() => setHiding('idle'), 4000);
+    return () => clearTimeout(id);
+  }, [hiding]);
   const card = useMemo(() => projectSessionCard(events), [events]);
   // The run recorded what it couldn't reach; show only what's still missing
   // now (connected since: gone; removed from the space: gone; lapsed: Reconnect).
@@ -613,6 +644,9 @@ export function SessionCard({
   const agentName = AGENT_NAME[meta.agent];
   const ownerName = owner?.name ?? meta.owner;
   const mine = viewerIsOwner ?? !!onResolvePermission;
+  // "Room sees" at Answer, or details hidden after the fact: others get only
+  // the step count and the answer. The owner still sees all of their own work.
+  const answerOnly = !mine && (card.privacy === 'answer' || card.detailsHidden);
   const pending = card.permissions.pending[0] ?? null;
   const currentKind = stepKind(card.currentStep?.kind);
   // An edit waiting for approval hasn't happened yet: its file shows in the
@@ -631,6 +665,10 @@ export function SessionCard({
     ? card.permissions.decided.find((d) => d.toolCallId === card.currentStep!.toolCallId)
     : undefined;
   const currentDecision = !pending && currentDecided ? decisionLabel(currentDecided) : null;
+  const currentPrivate = card.currentStep
+    ? card.steps.some((s) => s.toolCallId === card.currentStep!.toolCallId && s.private)
+    : false;
+  const liveSteps = stepCount(card);
 
   const liveLabel = queued
     ? `Queued · after ${mine ? 'your' : `${ownerName}'s`} current ${agentName} turn`
@@ -638,6 +676,10 @@ export function SessionCard({
     ? onResolvePermission
       ? 'Waiting for your approval'
       : `Waiting on ${ownerName}'s approval`
+    : answerOnly
+      ? liveSteps > 0
+        ? `Working · ${liveSteps} ${liveSteps === 1 ? 'step' : 'steps'}`
+        : 'Working'
     : card.currentStep
       ? (liveStepTitle(card.currentStep.title, meta.agent, card.currentStep.args) ?? currentKind.live)
       : events.length > 0
@@ -686,22 +728,39 @@ export function SessionCard({
               <span className="active-shimmer-muted min-w-0 truncate" title={liveTooltip}>
                 {liveLabel}
               </span>
+              {(answerOnly || (currentPrivate && !pending && !queued)) && (
+                <span className="text-xs">
+                  <PrivateMark />
+                </span>
+              )}
               {!pending && !card.currentStep && card.thinking && !card.finalAnswer ? (
                 <span className="min-w-0 truncate text-xs text-text-muted italic">{lastSentence(card.thinking)}</span>
               ) : null}
               <span className="shrink-0 text-2xs text-text-muted tabular-nums">{elapsed}</span>
             </div>
-            {card.plan.length > 0 && <PlanBlock plan={card.plan} />}
-            {currentDecision && (
+            {!answerOnly && card.plan.length > 0 && <PlanBlock plan={card.plan} />}
+            {!answerOnly && currentDecision && (
               <span className="ml-6 text-2xs text-text-muted" data-testid="session-decision">
                 <span className={currentDecision.allowed ? 'text-success' : 'text-danger'}>{currentDecision.text}</span> by{' '}
                 {ownerName}
               </span>
             )}
-            <StepList card={card} ownerName={ownerName} agent={meta.agent} limit={3} finishedOnly />
+            {!answerOnly && <StepList card={card} ownerName={ownerName} agent={meta.agent} limit={3} finishedOnly />}
           </>
+        ) : answerOnly ? (
+          <div className="flex h-6 w-fit items-center gap-1.5 text-xs text-text-muted" data-testid="session-summary">
+            {status !== 'done' && (
+              <DotMatrix state={status === 'failed' ? 'failed' : 'stopped'} size="sm" className="mr-0.5" />
+            )}
+            {summaryLine(card, elapsed)}
+            <PrivateMark />
+          </div>
         ) : (
-          (card.steps.length > 0 || card.plan.length > 0 || card.thinking.trim() !== '' || status !== 'done') && (
+          (card.steps.length > 0 ||
+            card.privateSteps > 0 ||
+            card.plan.length > 0 ||
+            card.thinking.trim() !== '' ||
+            status !== 'done') && (
             <div className="flex flex-col gap-1">
               <button
                 type="button"
@@ -718,6 +777,7 @@ export function SessionCard({
                   strokeWidth={1.5}
                 />
                 {summaryLine(card, elapsed)}
+                {mine && card.detailsHidden && <PrivateMark label="details hidden" icon={EyeOff} />}
               </button>
               {expanded && (
                 <>
@@ -843,7 +903,7 @@ export function SessionCard({
 
       {/* Actions float at the row's top-right on hover or focus. */}
       <RowActions
-        forceVisible={stopping || stopFailed}
+        forceVisible={stopping || stopFailed || hiding !== 'idle'}
         onReply={
           onReply && !running && card.finalAnswer
             ? () =>
@@ -878,6 +938,23 @@ export function SessionCard({
         )}
         {!running && onRerun && prompt && (
           <RetryButton agent={meta.agent} otherAgents={otherAgents} onRerun={(agent) => onRerun(agent, prompt)} />
+        )}
+        {!running && onHideDetails && !card.detailsHidden && card.privacy !== 'answer' && (
+          <button
+            type="button"
+            onClick={() => {
+              setHiding('busy');
+              void onHideDetails().then((hidden) => setHiding(hidden ? 'idle' : 'failed'));
+            }}
+            disabled={hiding === 'busy'}
+            aria-label="Hide details"
+            title="Hide details"
+            className="enabled:hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs text-text-secondary transition-colors disabled:text-text-muted"
+            data-testid="session-hide-details"
+          >
+            <EyeOff className="size-3.5" strokeWidth={1.5} />
+            {hiding === 'busy' ? 'Hiding…' : hiding === 'failed' ? "Couldn't hide them" : null}
+          </button>
         )}
       </RowActions>
 

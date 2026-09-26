@@ -86,7 +86,8 @@ function renderItem(
   onJumpTo?: (messageId: string) => void,
   onRerun?: (agent: AgentKind, prompt: string) => void,
   onConnectorConnect?: (id: string) => Promise<ConnectResult>,
-  globalSetup?: GlobalServer[]
+  globalSetup?: GlobalServer[],
+  onHideDetails?: (runId: string) => Promise<boolean>
 ) {
   switch (message.meta.kind) {
     case 'text':
@@ -151,6 +152,7 @@ function renderItem(
           onConnectorConnect={meta.owner === ownId ? onConnectorConnect : undefined}
           spaceConnectors={snapshot.connectors}
           globalSetup={globalSetup}
+          onHideDetails={onHideDetails && meta.owner === ownId ? () => onHideDetails(meta.id) : undefined}
         />
       );
     }
@@ -298,6 +300,7 @@ export function RoomTranscript({
   onRerun,
   onConnectorConnect,
   globalSetup,
+  onHideDetails,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
@@ -315,6 +318,8 @@ export function RoomTranscript({
   onConnectorConnect?: (id: string) => Promise<ConnectResult>;
   /** Your agents' own global MCP setup, loaded once per Room by `RoomView` — a session card drops a footer gap its own run's agent already reaches this way. */
   globalSetup?: GlobalServer[];
+  /** "Hide details" on one of the viewer's own finished runs. Resolves false if it couldn't. */
+  onHideDetails?: (runId: string) => Promise<boolean>;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -492,7 +497,8 @@ export function RoomTranscript({
                   jumpTo,
                   onRerun,
                   onConnectorConnect,
-                  globalSetup
+                  globalSetup,
+                  onHideDetails
                 );
               const continuedUnit = unit.kind === 'message' && isContinuation(prevMessage, unit.message, snapshot);
               const node =
