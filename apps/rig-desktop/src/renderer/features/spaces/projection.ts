@@ -22,6 +22,7 @@
  */
 
 import { RUN_CONNECTORS_EVENT, rigToolArgs, type ConnectorGap } from '@shared/spaces/connectors';
+import { DETAILS_HIDDEN_EVENT, isRoomSees, PRIVATE_PROGRESS_EVENT, RUN_PRIVACY_EVENT } from '@shared/spaces/room-sees';
 import type {
   SessionCard,
   SessionEvent,
@@ -51,6 +52,9 @@ export function newSessionCard(): SessionCard {
     model: null,
     failureReason: null,
     connectorGaps: [],
+    privacy: null,
+    privateSteps: 0,
+    detailsHidden: false,
   };
 }
 
@@ -187,6 +191,7 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
         status: typeof p.status === 'string' ? p.status : 'pending',
         locations: Array.isArray(p.locations) ? (p.locations as SessionStep['locations']) : undefined,
       };
+      if (p.private === true) step.private = true;
       const args = rigToolArgs(step.title, p.rawInput);
       if (args) step.args = args;
       state.steps.push(step);
@@ -202,6 +207,7 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
         if (typeof p.title === 'string') step.title = p.title;
         if (typeof p.status === 'string') step.status = p.status;
         if (Array.isArray(p.locations)) step.locations = p.locations as SessionStep['locations'];
+        if (p.private === true) step.private = true;
         // Claude streams a tool's input in after the call opens.
         const args = rigToolArgs(step.title, p.rawInput);
         if (args) step.args = args;
@@ -294,6 +300,19 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
           ? [{ id: g.id, state: g.state } as ConnectorGap]
           : [];
       });
+      break;
+    }
+    case RUN_PRIVACY_EVENT: {
+      if (isRoomSees(p.level)) state.privacy = p.level;
+      break;
+    }
+    case PRIVATE_PROGRESS_EVENT: {
+      if (typeof p.steps === 'number') state.privateSteps = Math.max(state.privateSteps, p.steps);
+      break;
+    }
+    case DETAILS_HIDDEN_EVENT: {
+      state.detailsHidden = true;
+      if (typeof p.steps === 'number') state.privateSteps = Math.max(state.privateSteps, p.steps);
       break;
     }
     case 'turn_ended': {

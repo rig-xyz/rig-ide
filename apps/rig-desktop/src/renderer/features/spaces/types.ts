@@ -10,6 +10,7 @@
  */
 
 import type { ConnectionState, ConnectorGap, RigToolArgs } from '@shared/spaces/connectors';
+import type { RoomSees } from '@shared/spaces/room-sees';
 
 export type PersonId = string;
 export type AgentKind = 'claude' | 'codex';
@@ -70,6 +71,8 @@ export interface SessionStep {
   locations?: Array<{ path: string; line?: number | null }>;
   /** A rig tool's arguments (who, which file), so the step reads "Rig · invite hugo@…". */
   args?: RigToolArgs;
+  /** Only its label reached the room: a connector's result, or a file outside the space ("Room sees" at Steps). */
+  private?: boolean;
 }
 
 export interface SessionOutput {
@@ -139,6 +142,12 @@ export interface SessionCard {
   lastSeq: number;
   /** Connectors this run's agent couldn't reach (missing/expired), from a `run_connectors` event — connectors-spec.md's Nudge. Empty when the run recorded none. */
   connectorGaps: ConnectorGap[];
+  /** The "Room sees" level the run ran at (`run_privacy`); null for a run from before the setting. */
+  privacy: RoomSees | null;
+  /** Steps the room was only told the number of (`private_progress`, or `details_hidden`). */
+  privateSteps: number;
+  /** Its owner hid its details after the fact: the room now sees only the answer. */
+  detailsHidden: boolean;
 }
 
 /**

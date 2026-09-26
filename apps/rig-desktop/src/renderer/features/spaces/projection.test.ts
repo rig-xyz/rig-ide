@@ -250,3 +250,39 @@ describe('projectSessionCard — against real exported fixtures', () => {
     ]);
   });
 });
+
+describe('projectSessionCard — Room sees', () => {
+  it('reads the level a run ran at, private steps, and the step count at Answer', () => {
+    const card = projectSessionCard([
+      { seq: 1, kind: 'run_privacy', payload: { level: 'steps' } },
+      { seq: 2, kind: 'tool_call', payload: { toolCallId: 'g1', kind: 'other', title: 'mcp__granola__search', private: true } },
+      { seq: 3, kind: 'tool_call', payload: { toolCallId: 'r1', kind: 'read', title: 'Read a file' } },
+      { seq: 4, kind: 'tool_call_update', payload: { toolCallId: 'r1', title: 'Read a file', private: true } },
+      { seq: 5, kind: 'tool_call', payload: { toolCallId: 'e1', kind: 'edit', title: 'Edited plan.md' } },
+    ]);
+    expect(card.privacy).toBe('steps');
+    expect(card.steps.map((s) => s.private ?? false)).toEqual([true, true, false]);
+
+    const answer = projectSessionCard([
+      { seq: 1, kind: 'run_privacy', payload: { level: 'answer' } },
+      { seq: 2, kind: 'private_progress', payload: { steps: 1 } },
+      { seq: 3, kind: 'private_progress', payload: { steps: 2 } },
+      { seq: 4, kind: 'agent_message_chunk', payload: { messageId: 'm', content: { type: 'text', text: 'Done.' } } },
+      { seq: 5, kind: 'private_progress', payload: { steps: 2, final: true } },
+      { seq: 6, kind: 'turn_ended', payload: { status: 'done' } },
+    ]);
+    expect(answer).toMatchObject({ privacy: 'answer', privateSteps: 2, steps: [], finalAnswer: 'Done.', status: 'done' });
+    expect(projectSessionCard([{ seq: 1, kind: 'run_privacy', payload: { level: 'bogus' } }]).privacy).toBeNull();
+  });
+
+  it("marks a run whose details its owner hid, keeping the step count, and the relay's re-sent answer replaces the old one", () => {
+    const card = projectSessionCard([
+      { seq: 1, kind: 'tool_call', payload: { toolCallId: 't1', kind: 'read', title: 'Read a.md' } },
+      { seq: 2, kind: 'agent_message_chunk', payload: { messageId: 'm', content: { type: 'text', text: 'Answer.' } } },
+      { seq: 3, kind: 'turn_ended', payload: { status: 'done' } },
+      { seq: 4, kind: 'agent_message_chunk', payload: { messageId: 'hidden_run', content: { type: 'text', text: 'Answer.' } } },
+      { seq: 5, kind: 'details_hidden', payload: { steps: 3 } },
+    ]);
+    expect(card).toMatchObject({ detailsHidden: true, privateSteps: 3, finalAnswer: 'Answer.' });
+  });
+});
