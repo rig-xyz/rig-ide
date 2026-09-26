@@ -77,6 +77,14 @@ const workspaceRoot = resolve(process.cwd(), '../..');
 // the OS temp dir has no workspace above it, so the deploy tree is used as
 // given. Verified: same build, in-repo dir packs glob 7.2.3, temp dir packs
 // 13.0.6.
+// The app's workers (the ACP runtime among them) load the workspace
+// packages' built dist/, which isn't in git, and `pnpm deploy` below copies
+// them as they are: without this step a release shipped whatever build
+// happened to be on disk (2026-09-26: a runtime from the day before, missing
+// the fix for Codex turns that never ended).
+step('Building the workspace packages');
+exec('corepack pnpm --filter "./packages/**" run build', { cwd: workspaceRoot, echo: true });
+
 const deployDir = mkdtempSync(join(tmpdir(), 'rig-deploy-'));
 // Through corepack, not a bare `pnpm`: corepack resolves the version from the
 // workspace's own `packageManager` field, whereas a bare call gets whatever is
