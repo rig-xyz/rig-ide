@@ -1,8 +1,11 @@
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { richText } from '@renderer/features/spaces/components/transcript-items';
 
-vi.mock('@renderer/lib/ipc', () => ({ rpc: { app: { openExternal: async () => {} } } }));
+const linkTitle = vi.hoisted(() => vi.fn(async ({ url }: { url: string }) => (url.includes('/artifact/') ? 'Homepage explorations' : null)));
+vi.mock('@renderer/lib/ipc', () => ({ rpc: { app: { openExternal: async () => {} }, rig: { pages: { linkTitle } } } }));
 
 /** 0.4.3: "@gmail" inside an email address was styled as an @mention. */
 function highlighted(text: string): string[] {
@@ -106,5 +109,22 @@ describe('richText links', () => {
     expect(chips[0]!.title).toBe('https://claude.ai/artifact/6NZfLXaEewFt55zQ5tMn7d');
     // The mention still reads as one; nothing inside the URLs does.
     expect(host.querySelector('span.text-accent')?.textContent).toBe('@claude');
+  });
+
+  it("names a Claude artifact's chip after the artifact once its title is known, and keeps the kind in the tooltip", async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(<>{richText('see https://claude.ai/artifact/AbC123?x=1 and https://docs.google.com/document/d/1AbC/edit', 'bob')}</>);
+    });
+    await vi.waitFor(() => expect(host.querySelector('[data-kind="claude-artifact"]')?.textContent).toBe('Homepage explorations'));
+    const chip = host.querySelector<HTMLAnchorElement>('[data-kind="claude-artifact"]')!;
+    expect(chip.title).toBe('Claude artifact · https://claude.ai/artifact/AbC123?x=1');
+    // Asked for the link's canonical form; a doc that can't be named keeps its kind.
+    expect(linkTitle).toHaveBeenCalledWith({ url: 'https://claude.ai/artifact/AbC123' });
+    expect(host.querySelector('[data-kind="google-doc"]')?.textContent).toBe('Google Doc');
+    await act(async () => root.unmount());
+    host.remove();
   });
 });

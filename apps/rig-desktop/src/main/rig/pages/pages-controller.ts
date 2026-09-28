@@ -7,6 +7,7 @@ import { runCommentTurnInRoom } from '../spaces/dispatch-controller-instance';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
 import { pagesSession } from './agent-pages';
 import { importChromeSignIn, type ChromeSignInResult, type SignInSite } from './chrome-sign-in';
+import { linkTitle } from './link-titles';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { hitPage, locateOnPage } from './page-frames';
 import { threadsFromRows } from './page-pins';
@@ -69,6 +70,9 @@ export const rigPagesController = createRPCController({
     const ses = pagesSession();
     return importChromeSignIn(site, (cookie) => ses.cookies.set(cookie));
   },
+
+  /** The name behind a Claude or Google link chip, read from the page as the person sees it; null when it can't be named. */
+  linkTitle: ({ url }: { url: string }): Promise<string | null> => linkTitle(url),
 
   /** Forget a site's sign-in in the pages profile (Chrome is untouched). */
   signOut: async ({ site }: { site: SignInSite }): Promise<void> => {

@@ -66,9 +66,45 @@ function useOpenLink(url: string, title: string, inPanel = false): (event: { pre
   };
 }
 
-/** A link in a message: a chip for the kinds we know ("Claude artifact", "Google Doc", "acme/app"), else the URL itself. */
+const TITLED_KINDS: ReadonlySet<LinkKind> = new Set(['claude-artifact', 'claude-chat', 'google-doc', 'google-sheet', 'google-slides']);
+/** One lookup per link for the whole chat, shared by every chip showing it. */
+const linkTitles = new Map<string, Promise<string | null>>();
+
+/**
+ * The name behind a Claude or Google link ("Pilot deck"), read from the page
+ * by the main process as you see it; null until it's known, or if it can't
+ * be (then the chip keeps "Claude artifact").
+ */
+function useLinkTitle(url: string, kind: LinkKind): string | null {
+  const [title, setTitle] = useState<string | null>(null);
+  useEffect(() => {
+    if (!TITLED_KINDS.has(kind)) return;
+    const key = canonicalPageUrl(url);
+    let lookup = linkTitles.get(key);
+    if (!lookup) {
+      // Loaded lazily: these rows render in tests and previews with no Electron bridge.
+      lookup = import('@renderer/lib/ipc')
+        .then(({ rpc }) => rpc.rig.pages.linkTitle({ url: key }))
+        .catch(() => null);
+      linkTitles.set(key, lookup);
+      void lookup.then((name) => {
+        if (name === null) linkTitles.delete(key);
+      });
+    }
+    let live = true;
+    void lookup.then((name) => live && setTitle(name));
+    return () => {
+      live = false;
+    };
+  }, [url, kind]);
+  return title;
+}
+
+/** A link in a message: a chip for the kinds we know ("Pilot deck" once its name is known, else "Claude artifact", "Google Doc", "acme/app"), else the URL itself. */
 function MessageLink({ url }: { url: string }) {
-  const { kind, label } = classifyLink(url);
+  const { kind, label: kindLabel } = classifyLink(url);
+  const title = useLinkTitle(url, kind);
+  const label = title ?? kindLabel;
   const open = useOpenLink(url, label);
   if (kind === 'web') {
     return (
@@ -81,13 +117,13 @@ function MessageLink({ url }: { url: string }) {
     <a
       href={url}
       onClick={open}
-      title={url}
-      className="border-border-hairline bg-bg-1 hover:bg-bg-2 inline-flex items-center gap-1 rounded-control border px-1.5 align-[-1px] text-text-primary"
+      title={title ? `${kindLabel} · ${url}` : url}
+      className="border-border-hairline bg-bg-1 hover:bg-bg-2 inline-flex max-w-full items-center gap-1 rounded-control border px-1.5 align-[-1px] text-text-primary"
       data-testid="message-link-chip"
       data-kind={kind}
     >
       {LINK_ICON[kind]}
-      <span>{label}</span>
+      <span className="max-w-[32ch] min-w-0 truncate">{label}</span>
     </a>
   );
 }
