@@ -45,6 +45,8 @@ export interface FixtureProfile {
   legacyPath?: boolean;
   /** Leave out `last_update_utc` (older databases). */
   noUpdateColumn?: boolean;
+  /** ms epoch the browser last had the profile open (`active_time`, stored in seconds). */
+  activeAt?: number;
 }
 
 /** A temporary "Application Support" folder (with a space in its path, like the real one). */
@@ -75,7 +77,16 @@ export function writeBrowser(
   if (opts.installed !== false) installApp(root, dataDir);
   const dir = path.join(root, dataDir);
   mkdirSync(dir, { recursive: true });
-  const infoCache = Object.fromEntries(profiles.map((p) => [p.dir, { name: p.name, ...(p.email ? { user_name: p.email, gaia_name: p.name } : { user_name: '' }) }]));
+  const infoCache = Object.fromEntries(
+    profiles.map((p) => [
+      p.dir,
+      {
+        name: p.name,
+        ...(p.email ? { user_name: p.email, gaia_name: p.name } : { user_name: '' }),
+        ...(p.activeAt ? { active_time: p.activeAt / 1000 } : {}),
+      },
+    ])
+  );
   writeFileSync(path.join(dir, 'Local State'), JSON.stringify({ profile: { info_cache: infoCache, profiles_order: profiles.map((p) => p.dir), last_used: profiles[0]?.dir } }));
   const version = opts.dbVersion ?? 24;
   for (const p of profiles) {

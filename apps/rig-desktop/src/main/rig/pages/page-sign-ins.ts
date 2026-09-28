@@ -2,8 +2,11 @@ import {
   cookieHostMatches,
   signInSiteFor,
   signInSiteForUrl,
+  type AutoSignInReason,
   type BrowserAccess,
+  type BrowserConnection,
   type BrowserId,
+  type BrowserProfileInfo,
   type PageSignInRecord,
   type PageSignInsState,
   type ProfileWithSignIn,
@@ -81,14 +84,36 @@ export interface SignInsList {
   keepInStep: boolean;
   /** Installed browsers, with what rig knows of macOS's permissions for each. */
   browsers: ({ id: BrowserId; name: string } & BrowserAccess)[];
+  /** The connected browser profile, or null. */
+  connection: BrowserConnection | null;
 }
+
+/** "Connect Chrome": the installed browsers' profiles, most recently active first (reading them is what makes macOS ask about folder access). */
+export type ConnectOptions =
+  | { ok: true; browsers: { id: BrowserId; name: string }[]; profiles: BrowserProfileInfo[]; denied: BrowserId[] }
+  | { ok: false; reason: 'no_browser' | 'folder_access_denied' | 'failed'; browser?: BrowserId };
+
+export type ConnectOutcome = { ok: true; connection: BrowserConnection } | { ok: false; reason: SignInFailureReason; browser?: BrowserId };
+
+/** A page the person opened, signed in automatically from the connected profile, or why not. */
+export type AutoSignInOutcome = { ok: true; record: PageSignInRecord } | { ok: false; reason: AutoSignInReason; browser?: BrowserId };
 
 /** A silent Keychain read (Keep in step) that takes longer than this was about to ask: it's stopped. */
 const SILENT_KEYCHAIN_TIMEOUT_MS = 3_000;
 /** Keep in step looks at most this often, however often the window is focused. */
 const KEEP_IN_STEP_EVERY_MS = 60_000;
+/** A page's automatic sign-in is tried at most this often per site: never a loop. */
+export const AUTO_SIGN_IN_EVERY_MS = 5 * 60_000;
 
 const UNKNOWN_ACCESS: BrowserAccess = { folder: 'unknown', keychain: 'unknown' };
+
+/** The in-flight key for "Connect Chrome" (sites are keyed by domain, so this can't collide). */
+const CONNECT_FLIGHT = '<connect>';
+
+/** An automatic sign-in's result: "no sign-in in that profile" reads as the browser's, not the page's. */
+function autoOutcome(result: SignInOutcome): AutoSignInOutcome {
+  return !result.ok && result.reason === 'not_signed_in' ? { ...result, reason: 'not_signed_in_in_browser' } : result;
+}
 
 function failure(error: unknown): { reason: SignInFailureReason; browser?: BrowserId } {
   if (error instanceof SignInReadError) return { reason: error.reason, ...(error.browser ? { browser: error.browser } : {}) };
@@ -101,6 +126,9 @@ export function createPageSignIns(deps: PageSignInDeps) {
   const now = deps.now ?? Date.now;
   const inflight = new Map<string, AbortController>();
   let lastKeepInStep = 0;
+  /** Per site: when a page last tried an automatic sign-in, and whether the Keychain was asked this run of the app. */
+  const lastAuto = new Map<string, number>();
+  const askedKeychain = new Set<string>();
 
   function update(change: (state: PageSignInsState) => PageSignInsState): void {
     deps.setState(change(deps.getState()));
@@ -263,6 +291,7 @@ export function createPageSignIns(deps: PageSignInDeps) {
       sites: Object.values(state.sites).sort((a, b) => a.siteName.localeCompare(b.siteName)),
       keepInStep: state.keepInStep,
       browsers: installedBrowsers(appDirs).map((b) => ({ id: b.id, name: b.name, ...(state.access[b.id] ?? UNKNOWN_ACCESS) })),
+      connection: state.connection,
     };
   }
 
@@ -283,7 +312,7 @@ export function createPageSignIns(deps: PageSignInDeps) {
    */
   async function keepInStep(): Promise<void> {
     const state = deps.getState();
-    if (!state.keepInStep || now() - lastKeepInStep < KEEP_IN_STEP_EVERY_MS) return;
+    if (!state.connection || !state.keepInStep || now() - lastKeepInStep < KEEP_IN_STEP_EVERY_MS) return;
     lastKeepInStep = now();
     for (const record of Object.values(state.sites)) {
       const browser = specFor(record.browser);
@@ -316,7 +345,132 @@ export function createPageSignIns(deps: PageSignInDeps) {
     return deps.getState().sites[siteId] ?? null;
   }
 
-  return { options, signIn, refresh, cancel, signOut, list, setKeepInStep, markWall, keepInStep, siteFor, recordFor };
+  /**
+   * "Connect Chrome", first step: every installed browser's profiles, most
+   * recently active first. Reading the browser's profile list is what makes
+   * macOS ask about "data from other apps", so it runs after the heads-up.
+   */
+  function connectOptions(): ConnectOptions {
+    const browsers = installedBrowsers(appDirs);
+    if (browsers.length === 0) return { ok: false, reason: 'no_browser' };
+    const profiles: BrowserProfileInfo[] = [];
+    const denied: BrowserId[] = [];
+    for (const b of browsers) {
+      try {
+        profiles.push(...listProfiles(b, root));
+        noteAccess(b.id, { folder: 'granted' });
+      } catch (error) {
+        if (failure(error).reason !== 'folder_access_denied') continue;
+        denied.push(b.id);
+        noteAccess(b.id, { folder: 'denied' });
+      }
+    }
+    if (denied.length === browsers.length) return { ok: false, reason: 'folder_access_denied', browser: denied[0] };
+    profiles.sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0));
+    return { ok: true, browsers: browsers.map((b) => ({ id: b.id, name: b.name })), profiles, denied };
+  }
+
+  /** "Connect Chrome": the chosen profile, and the Keychain read once (macOS asks; Always Allow makes later reads silent). No cookie is read. */
+  function connect(input: { browser: BrowserId; profile: string }): Promise<ConnectOutcome> {
+    const spec = specFor(input.browser);
+    if (!spec) return Promise.resolve({ ok: false, reason: 'failed' });
+    return withFlight(CONNECT_FLIGHT, async (signal): Promise<ConnectOutcome> => {
+      try {
+        const profile = listProfiles(spec, root).find((p) => p.dir === input.profile);
+        noteAccess(spec.id, { folder: 'granted' });
+        if (!profile) return { ok: false, reason: 'failed', browser: spec.id };
+        const key = await deps.keychain(spec, { signal });
+        noteAccess(spec.id, { keychain: key.silent ? 'silent' : 'granted' });
+        const connection: BrowserConnection = {
+          browser: spec.id,
+          browserName: spec.name,
+          profile: profile.dir,
+          profileName: profile.name,
+          email: profile.email,
+          connectedAt: now(),
+        };
+        update((s) => ({ ...s, connection }));
+        return { ok: true, connection };
+      } catch (error) {
+        const f = failure(error);
+        if (f.reason === 'folder_access_denied') noteAccess(spec.id, { folder: 'denied' });
+        return { ok: false, reason: signal.aborted ? 'cancelled' : f.reason, browser: spec.id };
+      }
+    });
+  }
+
+  function cancelConnect(): void {
+    inflight.get(CONNECT_FLIGHT)?.abort();
+  }
+
+  /** Disconnect: no more automatic sign-ins. Sites already signed in stay, unless `signOutAll`. */
+  async function disconnect(opts: { signOutAll?: boolean } = {}): Promise<void> {
+    for (const controller of inflight.values()) controller.abort();
+    if (deps.getState().connection) update((s) => ({ ...s, connection: null }));
+    if (opts.signOutAll) for (const siteId of Object.keys(deps.getState().sites)) await signOut(siteId);
+  }
+
+  /**
+   * A page the person opened in the panel, signed in automatically from the
+   * connected profile: only that site's hosts, checked as ever. Never for an
+   * agent (the controller only calls this for a panel page). At most once per
+   * site every few minutes (`retry` is the person asking again), and the
+   * Keychain may ask at most once per site per run of the app.
+   */
+  async function autoSignIn(input: { pageUrl: string; retry?: boolean }): Promise<AutoSignInOutcome> {
+    const site = signInSiteForUrl(input.pageUrl);
+    if (!site) return { ok: false, reason: 'failed' };
+    const state = deps.getState();
+    const connection = state.connection;
+    if (!connection) return { ok: false, reason: 'not_connected' };
+    const existing = state.sites[site.id];
+    if (existing && !existing.expired) return { ok: true, record: existing };
+    const spec = specFor(connection.browser);
+    if (!spec) return { ok: false, reason: 'failed' };
+    const last = lastAuto.get(site.id);
+    if (inflight.has(site.id) || (!input.retry && last !== undefined && now() - last < AUTO_SIGN_IN_EVERY_MS)) return { ok: false, reason: 'rate_limited' };
+    lastAuto.set(site.id, now());
+    try {
+      // Timestamps only: is there anything to copy at all?
+      if (!siteActivity(spec, connection.profile, site.hosts, root, now())) return { ok: false, reason: 'not_signed_in_in_browser', browser: spec.id };
+    } catch (error) {
+      const f = failure(error);
+      if (f.reason === 'folder_access_denied') noteAccess(spec.id, { folder: 'denied' });
+      return { ok: false, ...f };
+    }
+    const run = (silent: boolean) =>
+      withFlight(site.id, (signal) => runImport({ site, browser: spec, profileDir: connection.profile, checkUrl: input.pageUrl, signal, silent }));
+    let result: SignInOutcome;
+    if ((state.access[spec.id] ?? UNKNOWN_ACCESS).keychain === 'silent') {
+      result = await run(true);
+      // A "silent" read that would have asked: this page's one ask, if it hasn't had it.
+      if (result.ok || result.reason !== 'keychain_denied') return autoOutcome(result);
+      noteAccess(spec.id, { keychain: 'granted' });
+    }
+    if (askedKeychain.has(site.id)) return { ok: false, reason: 'keychain_would_prompt', browser: spec.id };
+    askedKeychain.add(site.id);
+    result = await run(false);
+    return autoOutcome(result);
+  }
+
+  return {
+    options,
+    signIn,
+    refresh,
+    cancel,
+    signOut,
+    list,
+    setKeepInStep,
+    markWall,
+    keepInStep,
+    siteFor,
+    recordFor,
+    connectOptions,
+    connect,
+    cancelConnect,
+    disconnect,
+    autoSignIn,
+  };
 }
 
 export type PageSignIns = ReturnType<typeof createPageSignIns>;

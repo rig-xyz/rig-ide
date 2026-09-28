@@ -208,6 +208,7 @@ function isProfileDir(dir: string): boolean {
 interface LocalStateProfile {
   name?: unknown;
   user_name?: unknown;
+  active_time?: unknown;
 }
 
 /** The browser's own profile list, from `Local State`: names and account emails only, no cookies. */
@@ -236,6 +237,8 @@ export function listProfiles(browser: BrowserSpec, root = APP_SUPPORT): BrowserP
       dir,
       name: typeof p.name === 'string' && p.name ? p.name : dir,
       email: typeof p.user_name === 'string' && p.user_name ? p.user_name : null,
+      // Seconds since 1970, as a float.
+      ...(typeof p.active_time === 'number' && p.active_time > 0 ? { lastActiveAt: Math.round(p.active_time * 1000) } : {}),
     };
   });
 }

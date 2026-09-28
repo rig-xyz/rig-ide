@@ -10,7 +10,9 @@ import { createHttpSpacesRelayApi } from '../spaces/relay-api';
 import { pagesSession } from './agent-pages';
 import { CHROMIUM_BROWSERS, installedBrowsers } from './chrome-sign-in';
 import { linkTitle } from './link-titles';
+import type { AutoSignInOutcome } from './page-sign-ins';
 import { pageSignIns, startPageSignInsKeepInStep } from './page-sign-ins-instance';
+import { isPanelPage } from './panel-page';
 import { pageIsSignInWall } from './sign-in-check';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { hitPage, locateOnPage } from './page-frames';
@@ -87,6 +89,26 @@ export const rigPagesController = createRPCController({
   signOut: ({ site }: { site: string }) => pageSignIns.signOut(site),
 
   setKeepInStep: ({ on }: { on: boolean }): void => pageSignIns.setKeepInStep(on),
+
+  /** "Connect Chrome": installed browsers' profiles (after the heads-up: reading them is what macOS asks about). */
+  connectOptions: () => pageSignIns.connectOptions(),
+
+  /** "Connect Chrome": the chosen profile, with the one Keychain read. */
+  connect: (input: { browser: BrowserId; profile: string }) => pageSignIns.connect(input),
+
+  cancelConnect: (): void => pageSignIns.cancelConnect(),
+
+  disconnect: (opts: { signOutAll?: boolean }) => pageSignIns.disconnect(opts),
+
+  /**
+   * A page the person opened loaded (or hit a sign-in wall) and rig has no
+   * sign-in for its site: sign it in from the connected profile. Only for a
+   * panel page (`isPanelPage`), never an agent's tab.
+   */
+  autoSignIn: async (input: { webContentsId: number; pageUrl: string; retry?: boolean }): Promise<AutoSignInOutcome> => {
+    if (!isPanelPage(allWebContents.fromId(input.webContentsId), pagesSession())) return { ok: false, reason: 'not_a_panel_page' };
+    return pageSignIns.autoSignIn({ pageUrl: input.pageUrl, ...(input.retry ? { retry: true } : {}) });
+  },
 
   /**
    * Whether the page in a panel webview is on a sign-in wall (a known

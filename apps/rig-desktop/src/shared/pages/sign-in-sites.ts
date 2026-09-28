@@ -213,6 +213,8 @@ export interface BrowserProfileInfo {
   name: string;
   /** The account signed in to the browser profile, when there is one. */
   email: string | null;
+  /** ms epoch the browser last had this profile open (its `Local State`), when it says. */
+  lastActiveAt?: number;
 }
 
 /** A profile that holds a sign-in for the site, and when it was last used. */
@@ -251,14 +253,45 @@ export interface BrowserAccess {
   keychain: 'unknown' | 'granted' | 'silent';
 }
 
+/**
+ * "Connect Chrome" (board 18, revised): the one browser profile pages sign
+ * in from. Connected once, in Settings or from a page's banner; after that a
+ * page the person opens is signed in automatically from this profile.
+ */
+export interface BrowserConnection {
+  browser: BrowserId;
+  browserName: string;
+  /** The profile's folder. */
+  profile: string;
+  profileName: string;
+  email: string | null;
+  connectedAt: number;
+}
+
 export interface PageSignInsState {
   sites: Record<string, PageSignInRecord>;
   /** "Keep in step with Chrome": on app focus, pick up newer sign-ins for these sites only. */
   keepInStep: boolean;
   access: Partial<Record<BrowserId, BrowserAccess>>;
+  /** The connected browser profile, or null when not connected. */
+  connection: BrowserConnection | null;
 }
 
-export const DEFAULT_PAGE_SIGN_INS: PageSignInsState = { sites: {}, keepInStep: false, access: {} };
+export const DEFAULT_PAGE_SIGN_INS: PageSignInsState = { sites: {}, keepInStep: false, access: {}, connection: null };
+
+/**
+ * Why a page the person opened wasn't signed in automatically, beyond the
+ * sheet's reasons: not connected yet, no sign-in for the site in the
+ * connected profile, tried too recently, or the Keychain would ask again
+ * this session.
+ */
+export type AutoSignInReason =
+  | SignInFailureReason
+  | 'not_connected'
+  | 'not_signed_in_in_browser'
+  | 'rate_limited'
+  | 'keychain_would_prompt'
+  | 'not_a_panel_page';
 
 const BROWSER_IDS: readonly BrowserId[] = ['chrome', 'arc', 'brave', 'edge', 'chromium', 'vivaldi'];
 
@@ -311,5 +344,19 @@ export function normalizePageSignIns(value: unknown): PageSignInsState {
       access[id as BrowserId] = { folder, keychain };
     }
   }
-  return { sites, keepInStep: value.keepInStep === true, access };
+  return { sites, keepInStep: value.keepInStep === true, access, connection: normalizeConnection(value.connection) };
+}
+
+function normalizeConnection(value: unknown): BrowserConnection | null {
+  if (!isRecord(value)) return null;
+  const browser = value.browser as BrowserId;
+  if (!BROWSER_IDS.includes(browser) || typeof value.profile !== 'string' || !value.profile) return null;
+  return {
+    browser,
+    browserName: typeof value.browserName === 'string' ? value.browserName : browser,
+    profile: value.profile,
+    profileName: typeof value.profileName === 'string' ? value.profileName : value.profile,
+    email: typeof value.email === 'string' ? value.email : null,
+    connectedAt: typeof value.connectedAt === 'number' ? value.connectedAt : 0,
+  };
 }

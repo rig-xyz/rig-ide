@@ -116,8 +116,20 @@ describe('normalizePageSignIns', () => {
   };
 
   it('keeps well-formed state', () => {
-    const state = { sites: { 'google.com': record }, keepInStep: true, access: { chrome: { folder: 'granted', keychain: 'silent' } } };
+    const state = {
+      sites: { 'google.com': record },
+      keepInStep: true,
+      access: { chrome: { folder: 'granted', keychain: 'silent' } },
+      connection: { browser: 'chrome', browserName: 'Chrome', profile: 'Default', profileName: 'Personal', email: 'me@example.test', connectedAt: 5 },
+    };
     expect(normalizePageSignIns(state)).toEqual(state);
+  });
+
+  it('reads a malformed or missing connection as not connected', () => {
+    expect(normalizePageSignIns({ sites: {} }).connection).toBeNull();
+    expect(normalizePageSignIns({ connection: { browser: 'netscape', profile: 'Default' } }).connection).toBeNull();
+    expect(normalizePageSignIns({ connection: { browser: 'chrome', profile: '' } }).connection).toBeNull();
+    expect(normalizePageSignIns({ connection: { browser: 'arc', profile: 'Default' } }).connection).toMatchObject({ browserName: 'arc', email: null });
   });
 
   it('drops what is malformed instead of failing', () => {
