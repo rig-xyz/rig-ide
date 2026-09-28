@@ -954,6 +954,11 @@ export function App() {
     const sign = CHAT_PANEL_ORDER === 1 ? 1 : -1;
     let latestWidth = startWidth;
     let frame = 0;
+    // A page beside the chat is a <webview>: once the pointer crosses into
+    // it, the webview takes the moves and the drag stops. Let the pointer
+    // pass through every webview until the drag ends.
+    const views = Array.from(document.querySelectorAll<HTMLElement>('webview'));
+    for (const view of views) view.style.pointerEvents = 'none';
 
     const commit = () => {
       frame = 0;
@@ -965,6 +970,7 @@ export function App() {
     };
     const onUp = () => {
       if (frame) cancelAnimationFrame(frame);
+      for (const view of views) view.style.pointerEvents = '';
       setChatWidth(latestWidth);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
