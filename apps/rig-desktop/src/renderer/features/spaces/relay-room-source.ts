@@ -512,6 +512,22 @@ export class RelayRoomSource implements RoomSource {
   }
 
   /**
+   * "Try again": one reconnect attempt and one catch-up now, instead of
+   * waiting for the next automatic retry or poll. Resolves once the
+   * catch-up is done (a failure just leaves `relayUnreachable` set).
+   */
+  async retryNow(): Promise<void> {
+    if (this.disposed || this.paused) return;
+    if (!this.connected) this.provider?.connect();
+    await this.catchUp({ messages: true, runs: this.liveRunIds() });
+  }
+
+  private setRelayUnreachable(unreachable: boolean): void {
+    if (this.disposed || !!this.snapshot.relayUnreachable === unreachable) return;
+    this.applyLocal({ type: 'relay_reachability_changed', unreachable });
+  }
+
+  /**
    * Whether this Room is on screen (`room-source-cache.ts` keeps a few alive
    * behind other spaces). Hidden, it stops saying you're here or typing, but
    * keeps listening. Shown again: started if it never was, reconnected if its
@@ -604,6 +620,7 @@ export class RelayRoomSource implements RoomSource {
         'info'
       );
       this.everConnected = true;
+      this.setRelayUnreachable(false);
       this.applyLocal({ type: 'connection_changed', connection: 'online' });
       // New messages, plus only the runs that could have moved on: the ones
       // still going now, and the ones that were going when the socket
@@ -786,6 +803,7 @@ export class RelayRoomSource implements RoomSource {
     if (!messages.success) {
       this.log('Rig spaces: could not load room messages', { error: messages.error.message });
       if (isGone(messages.error)) return this.gone();
+      apply({ type: 'relay_reachability_changed', unreachable: true });
     } else {
       apply({ type: 'room_loaded' });
       for (const row of messages.data) {
@@ -867,6 +885,7 @@ export class RelayRoomSource implements RoomSource {
     let gap = false;
     if (!messages.success) {
       this.log('Rig spaces: could not catch up on room messages', { error: messages.error.message });
+      apply({ type: 'relay_reachability_changed', unreachable: true });
     } else {
       let rows = messages.data;
       if (rows.length >= DISK_GAP_MESSAGES) {
@@ -1124,8 +1143,10 @@ export class RelayRoomSource implements RoomSource {
     if (!result.success) {
       this.log('Rig spaces: could not catch up on room messages', { error: result.error.message });
       if (isGone(result.error)) this.gone();
+      else this.setRelayUnreachable(true);
       return;
     }
+    this.setRelayUnreachable(false);
     // A listing that came back is the Room's first load, if bootstrap's failed.
     if (this.snapshot.loaded === false) this.applyLocal({ type: 'room_loaded' });
     for (const row of result.data) {

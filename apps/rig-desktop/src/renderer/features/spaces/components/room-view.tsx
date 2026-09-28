@@ -1,5 +1,8 @@
 import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { deriveRoomConnection } from '@renderer/features/home/home-connection';
+import { ConnectionBanner } from '@renderer/features/shell/connection-banner';
+import { useAutoReconnect, useNavigatorOnline } from '@renderer/features/shell/use-connection';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
 import { formatClock } from '@renderer/lib/time-format';
@@ -416,6 +419,23 @@ export function RoomView({
   const narrow = bodyWidth > 0 && bodyWidth < ROOM_WIDE_PX;
   const hasPanel = !!renderPanel;
   const live = source instanceof RelayRoomSource;
+  // Offline round: the same banner Home shows, when there's no network or
+  // the relay's reads fail. Socket-down-but-polling stays the quiet note
+  // below. The source keeps polling on its own; "Try again" (and the
+  // network coming back) just does it now.
+  const navigatorOnline = useNavigatorOnline();
+  const roomConnection = live
+    ? deriveRoomConnection({
+        navigatorOnline,
+        connection: snapshot?.connection,
+        relayUnreachable: snapshot?.relayUnreachable,
+      })
+    : null;
+  const { retrying: reconnecting, tryAgain: reconnectNow } = useAutoReconnect({
+    down: roomConnection !== null,
+    autoRetry: false,
+    retry: () => (source instanceof RelayRoomSource ? source.retryNow() : Promise.resolve()),
+  });
   // The panel floats over the Room. The centered transcript only moves left
   // by as much as it takes to clear it, and not at all in a wide window.
   const panelClearance =
@@ -1040,7 +1060,15 @@ export function RoomView({
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
             {/* No live socket: the source polls instead, so nothing is
                 broken, just a few seconds behind. A quiet note, not an alarm. */}
-            {live && snapshot.connection === 'offline' && (
+            {roomConnection && (
+              <ConnectionBanner
+                connection={roomConnection}
+                retrying={reconnecting}
+                onTryAgain={reconnectNow}
+                className="mb-1.5"
+              />
+            )}
+            {live && !roomConnection && snapshot.connection === 'offline' && (
               <p
                 className="mb-1.5 flex items-center gap-1.5 px-1 text-2xs text-text-muted"
                 role="status"
@@ -1051,7 +1079,7 @@ export function RoomView({
                 Updating a little slower than usual
               </p>
             )}
-            {live && catchingUp && snapshot.connection !== 'offline' && (
+            {live && catchingUp && !roomConnection && snapshot.connection !== 'offline' && (
               <p
                 className="mb-1.5 flex items-center gap-1.5 px-1 text-2xs text-text-muted"
                 role="status"
@@ -1076,6 +1104,7 @@ export function RoomView({
               agents={snapshot.agents.filter((a) => a.owner === selfUserId)}
               skills={snapshot.skills}
               onSend={handleSend}
+              waitForConnection={roomConnection !== null}
               attachments={attachments}
               suggestReply={live ? suggestReply : undefined}
               onTypingChange={

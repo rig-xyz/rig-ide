@@ -26,6 +26,8 @@ const space = (id: string, name: string) => ({
 
 const mocks = vi.hoisted(() => ({
   online: true,
+  /** Nothing on this computer: no local rigs, no remembered spaces. */
+  empty: false,
   workspaces: vi.fn<() => Promise<unknown>>(),
   me: vi.fn<() => Promise<unknown>>(),
 }));
@@ -42,7 +44,7 @@ vi.mock('@renderer/lib/ipc', () => ({
       offline: {
         homeSnapshot: async () => ({
           accountId: 'u1',
-          workspaces: {
+          workspaces: mocks.empty ? null : {
             savedAt: 1,
             bindings: [space('s-local', 'design'), space('s-two', 'launch'), space('s-three', 'hiring')],
           },
@@ -50,7 +52,7 @@ vi.mock('@renderer/lib/ipc', () => ({
         }),
       },
       recent: {
-        recentRigs: async () => [
+        recentRigs: async () => mocks.empty ? [] : [
           {
             bindingId: 's-local',
             name: 'design',
@@ -134,6 +136,7 @@ describe('Home offline', () => {
 
   beforeEach(() => {
     mocks.online = true;
+    mocks.empty = false;
     mocks.me.mockReset().mockResolvedValue(fail);
     mocks.workspaces.mockReset().mockResolvedValue(fail);
     opened = [];
@@ -198,6 +201,17 @@ describe('Home offline', () => {
     expect(newSpace().disabled).toBe(false);
     expect(host.querySelector('[data-offline]')).toBeNull();
     expect(new Set(spaceNames())).toEqual(new Set(['design', 'launch', 'hiring']));
+  });
+
+  it('first run offline: "Start fresh" is disabled with "Needs a connection"', async () => {
+    mocks.empty = true;
+    mocks.online = false;
+    await mount();
+    const startFresh = [...host.querySelectorAll<HTMLButtonElement>('button')].find(
+      (b) => b.textContent?.trim() === 'Start fresh'
+    )!;
+    expect(startFresh.disabled).toBe(true);
+    expect(startFresh.closest('[data-needs-connection]')).not.toBeNull();
   });
 
   it('"Try again" re-asks the relay, quietly reconnecting meanwhile', async () => {

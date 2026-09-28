@@ -1,5 +1,6 @@
 import { AtSign, CornerDownLeft, CornerUpLeft, FileText, Paperclip, Sparkles } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { WILL_SEND_WHEN_ONLINE } from '@renderer/features/home/home-connection';
 import { cn } from '@renderer/lib/utils';
 import { isLargeBatch, type ComposerAttachment } from '../attachments';
 import { agentLogoId, BrandLogo } from '../logos';
@@ -124,6 +125,7 @@ export function Composer({
   agentModels,
   suggestReply,
   attachments,
+  waitForConnection = false,
 }: {
   spaceName: string;
   /** Where this composer keeps its unsent draft (the space's id); no draft kept without one. */
@@ -148,6 +150,11 @@ export function Composer({
   suggestReply?: (draft: string) => Promise<ComposerSuggestion | null>;
   /** The files waiting to go with the message; no paperclip without it. */
   attachments?: ComposerAttachments;
+  /**
+   * No connection to the relay: a message sent now stays in the box, text and
+   * files, and goes by itself once the connection is back.
+   */
+  waitForConnection?: boolean;
 }) {
   const [value, setValue] = useState(() => readDraft(draftKey));
   const [focused, setFocused] = useState(false);
@@ -328,10 +335,17 @@ export function Composer({
   const canSend = (!!value.trim() || hasFiles) && !held;
   // Sent while the files' checks are still out: it goes as soon as they're in (or not, if one comes back red).
   const [waitingToSend, setWaitingToSend] = useState(false);
+  // Sent with no connection: it waits here, as typed, and goes once it's back.
+  const [waitingForConnection, setWaitingForConnection] = useState(false);
   const send = () => {
     const trimmed = value.trim();
     if (!trimmed && !hasFiles) return;
     if (held) return;
+    if (waitForConnection) {
+      setWaitingForConnection(true);
+      return;
+    }
+    setWaitingForConnection(false);
     if (hasFiles && attachments?.pending) {
       setWaitingToSend(true);
       return;
@@ -362,6 +376,13 @@ export function Composer({
     if (!hasFiles || held) setWaitingToSend(false);
     else if (filesReady) sendRef.current();
   }, [waitingToSend, filesReady, held, hasFiles]);
+  const hasDraft = !!value.trim() || hasFiles;
+  useEffect(() => {
+    if (!waitingForConnection) return;
+    // Cleared out meanwhile: nothing left to send.
+    if (!hasDraft) setWaitingForConnection(false);
+    else if (!waitForConnection) sendRef.current();
+  }, [waitingForConnection, waitForConnection, hasDraft]);
 
   const mentionedBusy = busyAgents.find((agent) => new RegExp(`@${agent}\\b`, 'i').test(value));
 
@@ -590,7 +611,18 @@ export function Composer({
           >
             <AtSign className="size-3.5" strokeWidth={1.5} />
           </button>
-          {mentionedBusy && (
+          {waitingForConnection ? (
+            <span className="ml-1 flex items-center gap-1.5 text-xs text-text-muted" data-testid="composer-waiting-connection">
+              {WILL_SEND_WHEN_ONLINE}
+              <button
+                type="button"
+                onClick={() => setWaitingForConnection(false)}
+                className="text-text-secondary hover:text-text-primary underline"
+              >
+                Don&rsquo;t send
+              </button>
+            </span>
+          ) : mentionedBusy && (
             <span className="ml-1 text-xs text-text-muted" data-testid="composer-queue-note">
               Your {AGENT_NAME[mentionedBusy]} is working; this goes after its current turn.
             </span>
@@ -598,8 +630,8 @@ export function Composer({
           <button
             type="button"
             onClick={send}
-            disabled={!canSend || waitingToSend}
-            aria-busy={waitingToSend || undefined}
+            disabled={!canSend || waitingToSend || waitingForConnection}
+            aria-busy={waitingToSend || waitingForConnection || undefined}
             title={held ? (attachments?.holdReason ?? undefined) : undefined}
             className={cn(
               'ml-auto flex h-6.5 items-center gap-1.5 rounded-control px-2.5 text-xs transition-colors disabled:opacity-60',

@@ -212,6 +212,9 @@ export function reduceRoom(snapshot: RoomSnapshot, event: RoomEvent): RoomSnapsh
     case 'room_caught_up':
       return { ...snapshot, stale: false };
 
+    case 'relay_reachability_changed':
+      return { ...snapshot, relayUnreachable: event.unreachable };
+
     default:
       return snapshot;
   }

@@ -482,7 +482,13 @@ export function Home({
     // the plain first-run case.
     return (
       <div className="flex min-h-full w-full flex-col items-center justify-center gap-6 p-8">
-        <Welcome phase={welcomePhase} authLoading={authQuery.isLoading} onStartFresh={startFreshOrCreate} />
+        <Welcome
+          phase={welcomePhase}
+          authLoading={authQuery.isLoading}
+          onStartFresh={startFreshOrCreate}
+          // Signing in and creating both need the network.
+          needsConnection={connectionDown || !navigatorOnline}
+        />
         {pendingInvite && <PendingInviteInline invite={pendingInvite} onOpenPath={onOpenPath} />}
       </div>
     );
@@ -644,12 +650,14 @@ function Welcome({
   phase,
   authLoading,
   onStartFresh,
+  needsConnection,
 }: {
   phase: WelcomePhase;
   authLoading: boolean;
   onStartFresh: () => void;
+  needsConnection: boolean;
 }) {
-  const disabled = phase.kind !== 'idle' || authLoading;
+  const disabled = phase.kind !== 'idle' || authLoading || needsConnection;
   const waiting = phase.kind === 'signingIn' || phase.kind === 'creating';
   const label =
     phase.kind === 'signingIn' ? 'Waiting for sign-in…' : phase.kind === 'creating' ? 'Starting…' : 'Start fresh';
@@ -659,15 +667,17 @@ function Welcome({
       <p className="font-display text-text-primary text-xl">
         Collaborate with your agents, and everyone else&rsquo;s.
       </p>
-      <button
-        type="button"
-        onClick={onStartFresh}
-        disabled={disabled}
-        className="welcome-cta bg-accent text-accent-ink focus-visible:outline-accent inline-flex items-center gap-2 rounded-chip px-6 py-3 text-base font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-60"
-      >
-        {waiting && <Loader2 className="size-4 animate-spin" strokeWidth={1.5} />}
-        {label}
-      </button>
+      <NeedsConnection blocked={needsConnection && phase.kind === 'idle'}>
+        <button
+          type="button"
+          onClick={onStartFresh}
+          disabled={disabled}
+          className="welcome-cta bg-accent text-accent-ink focus-visible:outline-accent inline-flex items-center gap-2 rounded-chip px-6 py-3 text-base font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-60"
+        >
+          {waiting && <Loader2 className="size-4 animate-spin" strokeWidth={1.5} />}
+          {label}
+        </button>
+      </NeedsConnection>
       {phase.kind === 'signingIn' && (
         <p className="text-text-muted text-xs">Rig is collaborative — sign in to start.</p>
       )}

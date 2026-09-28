@@ -108,3 +108,22 @@ export function offlineLastActivity(
   const latest = Math.max(...times);
   return latest > 0 ? latest : null;
 }
+
+/**
+ * The same banner inside a space. The Room's own `connection: 'offline'`
+ * only means the live socket is down — it keeps polling, so that alone is
+ * the quiet "updating a little slower" note, not this banner. The banner
+ * shows with no network at all, or once the relay's reads actually fail.
+ */
+export function deriveRoomConnection(input: {
+  navigatorOnline: boolean;
+  connection: 'connecting' | 'online' | 'offline' | undefined;
+  relayUnreachable: boolean | undefined;
+}): 'offline' | 'unreachable' | null {
+  if (!input.navigatorOnline) return 'offline';
+  if (input.relayUnreachable && input.connection !== 'online') return 'unreachable';
+  return null;
+}
+
+/** The composer's note while a message waits for the connection. */
+export const WILL_SEND_WHEN_ONLINE = "Will send when you're back online";

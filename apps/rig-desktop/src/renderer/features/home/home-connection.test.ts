@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   deriveHomeConnection,
+  deriveRoomConnection,
   needsConnection,
   offlineLastActivity,
   reconnectDelayMs,
@@ -93,5 +94,24 @@ describe('offlineLastActivity', () => {
     expect(offlineLastActivity({ lastOpenedAt: 10, sessions: [{ updatedAt: 30 }] }, 20)).toBe(30);
     expect(offlineLastActivity({ lastOpenedAt: 10, sessions: [] }, 50)).toBe(50);
     expect(offlineLastActivity({ sessions: [] }, undefined)).toBeNull();
+  });
+});
+
+describe('deriveRoomConnection', () => {
+  const online = { navigatorOnline: true, connection: 'online' as const, relayUnreachable: false };
+
+  it('no banner while connected, or while polling still gets through', () => {
+    expect(deriveRoomConnection(online)).toBeNull();
+    expect(deriveRoomConnection({ ...online, connection: 'offline' })).toBeNull();
+  });
+
+  it('offline with no network; unreachable once the relay reads fail', () => {
+    expect(deriveRoomConnection({ ...online, navigatorOnline: false })).toBe('offline');
+    expect(deriveRoomConnection({ ...online, connection: 'offline', relayUnreachable: true })).toBe('unreachable');
+    expect(deriveRoomConnection({ ...online, connection: 'connecting', relayUnreachable: true })).toBe('unreachable');
+  });
+
+  it('a live socket wins over a stale failed read', () => {
+    expect(deriveRoomConnection({ ...online, relayUnreachable: true })).toBeNull();
   });
 });

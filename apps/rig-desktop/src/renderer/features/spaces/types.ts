@@ -290,7 +290,9 @@ export type RoomEvent =
   /** The space was renamed. */
   | { type: 'room_renamed'; name: string }
   /** A Room shown from disk has caught up with the relay (see `RoomSnapshot.stale`). */
-  | { type: 'room_caught_up' };
+  | { type: 'room_caught_up' }
+  /** The relay's last answer failed, or answered again (see `RoomSnapshot.relayUnreachable`). */
+  | { type: 'relay_reachability_changed'; unreachable: boolean };
 
 /** Full materialized state of a room — what components render from. */
 export interface RoomSnapshot {
@@ -320,6 +322,12 @@ export interface RoomSnapshot {
   sessionSummaryByRun?: Record<string, RunSummary>;
   /** Shown from the disk cache and not caught up with the relay yet ("Catching up…"; the "New" line waits). */
   stale?: boolean;
+  /**
+   * The relay's last read failed (down, timed out, no network) — distinct
+   * from `connection: 'offline'`, which only means the socket is down while
+   * polling may still be getting through. Cleared by the next answer.
+   */
+  relayUnreachable?: boolean;
 }
 
 /** Whether the Room is hearing the relay live: first connecting, connected, or without the socket (it retries on its own, and polls meanwhile). */
