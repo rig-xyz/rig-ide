@@ -49,4 +49,12 @@ export {
   runVersionProbe,
 } from './probe';
 export { compareVersionStrings } from './version-order';
+export {
+  checkLocalBinaryCompat,
+  describeIncompatibleBinary,
+  parseMachOArchs,
+  type BinaryCompat,
+  type BinaryCompatCheck,
+  type MachOArch,
+} from './binary-arch';
 export { agentResolveStatus, buildDescriptorFromProvider } from '../descriptor-from-provider';

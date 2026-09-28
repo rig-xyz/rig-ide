@@ -4,3 +4,4 @@ export type { StartSessionInput } from './api/contract';
 export type { HistoryPage, ResumeResult } from './api/queries';
 export type { AcpRuntimeError } from './errors';
 export * from './models';
+export { describeAgentStartError, describeSpawnFailure } from './start-error-message';

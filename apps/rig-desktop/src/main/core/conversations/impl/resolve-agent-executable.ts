@@ -1,5 +1,9 @@
 import type { DependencyId } from '@emdash/core/deps/runtime';
-import { resolveCommandPath } from '@emdash/core/deps/runtime';
+import {
+  checkLocalBinaryCompat,
+  resolveAllCommandPaths,
+  resolveCommandPath,
+} from '@emdash/core/deps/runtime';
 import type { IHostDependencyStore } from '@main/core/dependencies/host-dependency-store';
 import type { IExecutionContext } from '@main/core/execution-context/types';
 import { log } from '@main/lib/logger';
@@ -16,6 +20,19 @@ export function clearResolvedPathCache(providerId: string, connectionId?: string
 
 function cacheKey(providerId: string, connectionId?: string): string {
   return `${connectionId ?? 'local'}:${providerId}`;
+}
+
+/** False only for a local binary built for a processor this machine can't run. */
+async function canRunHere(path: string, ctx: IExecutionContext): Promise<boolean> {
+  if (!ctx.supportsLocalSpawn) return true;
+  return (await checkLocalBinaryCompat(path)).runnable;
+}
+
+async function firstRunnableOnPath(binaryName: string, ctx: IExecutionContext): Promise<string | null> {
+  for (const candidate of await resolveAllCommandPaths(binaryName, ctx)) {
+    if (await canRunHere(candidate, ctx)) return candidate;
+  }
+  return null;
 }
 
 /**
@@ -78,7 +95,7 @@ export async function resolveAgentExecutable({
   if (cached) return cached;
 
   // Use the dependency manager's in-memory probe result if available
-  if (cachedStatePath) {
+  if (cachedStatePath && (await canRunHere(cachedStatePath, ctx))) {
     resolvedPathCache.set(key, cachedStatePath);
     return cachedStatePath;
   }
@@ -86,7 +103,15 @@ export async function resolveAgentExecutable({
   // Live resolution via execution context
   const resolved = await resolveCommandPath(binaryName, ctx);
   if (resolved) {
-    resolvedPathCache.set(key, resolved);
+    // The PATH winner may be a build this Mac can't run (e.g. Intel-only
+    // without Rosetta); prefer a runnable copy further down PATH.
+    const runnable = (await canRunHere(resolved, ctx))
+      ? resolved
+      : await firstRunnableOnPath(binaryName, ctx);
+    if (runnable) {
+      resolvedPathCache.set(key, runnable);
+      return runnable;
+    }
     return resolved;
   }
 

@@ -2,6 +2,12 @@ import { Emitter, err, ok, type Result } from '@emdash/shared';
 import type { IExecutionContext } from '../../exec/execution-context';
 import { consoleLogger, type Logger } from '../../lib/logger';
 import type { InstallMethod, Platform } from '../capability';
+import {
+  checkLocalBinaryCompat,
+  describeIncompatibleBinary,
+  type BinaryCompat,
+  type BinaryCompatCheck,
+} from './binary-arch';
 import { resolveInstallOptions, pickInstallOption, toPlatform } from './install-options';
 import { createInstallMethodDetector, type InstallMethodDetector } from './method-detection';
 import {
@@ -165,6 +171,12 @@ export type HostDependencyManagerOptions = {
    * Inject a stub in tests to avoid live brew/npm queries.
    */
   installMethodDetector?: InstallMethodDetector;
+  /**
+   * Can this machine run the binary at `path` at all (e.g. an Intel-only
+   * build on a Mac without Rosetta)? Defaults to a Mach-O header check for
+   * local macOS contexts and "yes" everywhere else. Inject in tests.
+   */
+  checkBinaryCompat?: BinaryCompatCheck;
 };
 
 /**
@@ -201,6 +213,7 @@ export class HostDependencyManager {
   private readonly _dependencies: DependencyDescriptor[];
   private readonly _getDependencyDescriptor: (id: string) => DependencyDescriptor | undefined;
   private readonly detector: InstallMethodDetector;
+  private readonly checkBinaryCompat: BinaryCompatCheck;
   /** Platform of the target machine. Defaults to process.platform; SSH callers pass the remote platform. */
   readonly platform: Platform;
 
@@ -224,6 +237,11 @@ export class HostDependencyManager {
       options.getDependencyDescriptor ?? ((id) => this._dependencies.find((d) => d.id === id));
     this.detector =
       options.installMethodDetector ?? createInstallMethodDetector(this.ctx, this.platform);
+    this.checkBinaryCompat =
+      options.checkBinaryCompat ??
+      (ctx.supportsLocalSpawn && this.platform === 'macos'
+        ? checkLocalBinaryCompat
+        : () => Promise.resolve({ runnable: true }));
     this.onExecutableInvalidated.subscribe(() => this.candidateProbeCache.clear());
     this.runInstallCommand =
       options.runInstallCommand ??
@@ -282,6 +300,18 @@ export class HostDependencyManager {
 
     // Phase 1: path resolution
     const resolvedPath = await this.resolveFirstPath(descriptor);
+
+    // The only candidate left is one this machine can't execute (e.g. an
+    // Intel-only build on a Mac without Rosetta): say so plainly instead of
+    // running it just to collect "Bad CPU type in executable".
+    const compat = resolvedPath ? await this.checkBinaryCompat(resolvedPath) : null;
+    if (resolvedPath && compat && !compat.runnable) {
+      const unrunnable = this.incompatibleState(descriptor, resolvedPath, compat);
+      this.updateState(unrunnable);
+      await this.buildHostDependencyAfterProbe(id, descriptor, unrunnable, null);
+      return unrunnable;
+    }
+
     const pathState = dependencyStateFromProbeResult(descriptor, resolvedPath, null);
     this.updateState(pathState);
 
@@ -1086,6 +1116,13 @@ export class HostDependencyManager {
     const cached = this.candidateProbeCache.get(path);
     if (cached !== undefined) return cached;
 
+    // Built for a processor this machine can't run: skip it without spawning.
+    if (!(await this.checkBinaryCompat(path)).runnable) {
+      const unrunnable = { runnable: false, version: null };
+      this.candidateProbeCache.set(path, unrunnable);
+      return unrunnable;
+    }
+
     const versionArgs = descriptor.versionArgs ?? ['--version'];
     const probe = await runVersionProbe(
       descriptor.commands[0] ?? descriptor.id,
@@ -1100,6 +1137,29 @@ export class HostDependencyManager {
     };
     this.candidateProbeCache.set(path, result);
     return result;
+  }
+
+  /** State for a resolved binary this machine can't execute, with the reason people can act on. */
+  private incompatibleState(
+    descriptor: DependencyDescriptor,
+    path: string,
+    compat: Extract<BinaryCompat, { runnable: false }>
+  ): DependencyState {
+    return {
+      id: descriptor.id,
+      category: descriptor.category,
+      status: 'error',
+      version: null,
+      path,
+      checkedAt: Date.now(),
+      errorKind: compat.reason,
+      error: describeIncompatibleBinary({
+        name: descriptor.name,
+        path,
+        archs: compat.archs,
+        installCommand: pickInstallOption(descriptor, this.platform)?.command,
+      }),
+    };
   }
 
   private async refreshShellEnvIfRequested(options: DependencyProbeOptions = {}): Promise<void> {

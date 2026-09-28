@@ -6,6 +6,7 @@ import { buildDescriptorFromProvider } from '../../host-dependencies/descriptor-
 import { HostDependencyManager, type Platform } from '../../host-dependencies/runtime';
 import type { PluginFs } from '../runtime/fs';
 import {
+  CliUnrunnableError,
   createSpawnContextResolver,
   type SpawnContext,
   type SpawnContextError,
@@ -277,7 +278,14 @@ export class AgentPluginHost {
     }
 
     let state = this.dependencies.get(providerId);
-    if (!state?.path) state = await this.dependencies.probe(providerId);
+    // A CLI that couldn't run here last time is looked up again, in case it
+    // has been reinstalled since.
+    if (!state?.path || state.errorKind) state = await this.dependencies.probe(providerId);
+    if (state.path && state.errorKind === 'incompatible-arch') {
+      // Spawning it would only fail deep inside the agent adapter with an
+      // opaque error; stop here with the reason people can act on.
+      throw new CliUnrunnableError(state.error ?? `${providerId} can't run on this machine`, state.path);
+    }
     if (state.path) return state.path;
 
     const descriptor = this.descriptors.find((candidate) => candidate.id === providerId);

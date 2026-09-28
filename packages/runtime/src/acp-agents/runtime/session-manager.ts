@@ -38,7 +38,7 @@ import type {
   TranscriptTurn,
 } from '@emdash/core/acp';
 import { acpErr } from '@emdash/core/acp';
-import type { Lease, Result } from '@emdash/shared';
+import type { Lease, Result, SerializedError } from '@emdash/shared';
 import { ok, toSerializedError } from '@emdash/shared';
 import type { Logger } from '@emdash/shared/logger';
 import { LiveLog } from '@emdash/wire';
@@ -253,7 +253,7 @@ export class SessionManager implements InboundRouter {
           this.removeRecord(input.conversationId, false);
           await acquired.release();
           this.deleteSessionSummary(input.conversationId);
-          return acpErr.newSessionFailed(toSerializedError(e));
+          return acpErr.newSessionFailed(agentRequestError(e));
         }
         record = this.createRecord(input, connection, acquired, response.sessionId);
         record.cell.applySessionMeta({
@@ -286,7 +286,7 @@ export class SessionManager implements InboundRouter {
       if (isAuthRequiredError(e)) {
         return acpErr.authRequired(toSerializedError(e));
       }
-      return acpErr.initializeFailed(toSerializedError(e));
+      return acpErr.initializeFailed(agentRequestError(e));
     }
   }
 
@@ -818,6 +818,23 @@ export class SessionManager implements InboundRouter {
   private buildLoadSessionRequest(input: AcpStartInput, sessionId: string): LoadSessionRequest {
     return { cwd: input.cwd, sessionId, mcpServers: input.mcpServers ?? [] };
   }
+}
+
+/**
+ * Like `toSerializedError`, but keeps the agent's own explanation: adapters
+ * answer a failed request with a bare "Internal error" and put what actually
+ * went wrong (e.g. "spawn Unknown system error -86" when the agent's CLI is
+ * built for the wrong processor) in the JSON-RPC error's `data.details`.
+ */
+export function agentRequestError(error: unknown): SerializedError {
+  const serialized = toSerializedError(error);
+  const data = (error as { data?: unknown } | null)?.data;
+  const details =
+    data && typeof data === 'object' ? (data as { details?: unknown }).details : undefined;
+  if (typeof details !== 'string' || !details || serialized.message.includes(details)) {
+    return serialized;
+  }
+  return { ...serialized, message: `${serialized.message}: ${details}` };
 }
 
 function isAuthRequiredError(error: unknown): boolean {

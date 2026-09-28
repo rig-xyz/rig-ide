@@ -189,6 +189,36 @@ describe('createAcpConnectionSource', () => {
     expect(host.allHandles).toHaveLength(0);
   });
 
+  it('carries an unrunnable CLI\'s kind and reason through spawn_failed', async () => {
+    const agent = new FakeAcpAgent();
+    const host = new FakeAcpProcessHost();
+    const reason = "Claude Code (/usr/local/bin/claude) is built for Intel Macs and this Mac can't run it.";
+    const agentHost = {
+      buildAcpSpawn: vi.fn().mockResolvedValue(
+        err({
+          type: 'cli-unrunnable',
+          providerId: 'claude',
+          path: '/usr/local/bin/claude',
+          message: reason,
+        })
+      ),
+    } as unknown as AgentPluginHost;
+    const source = createAcpConnectionSource(sourceDeps(host, vi.fn(), agentHost));
+
+    const result = await acquireAsResult(
+      source,
+      makeAcpConnectionKey('claude', 'ws-1'),
+      acquireInput(agent),
+      isAcpConnectionError
+    );
+
+    expect(isErr(result)).toBe(true);
+    if (!isErr(result)) return;
+    expect(result.error.type).toBe('spawn_failed');
+    expect(result.error.cause).toMatchObject({ name: 'cli-unrunnable', message: reason });
+    expect(host.allHandles).toHaveLength(0);
+  });
+
   it('returns initialize_failed without notifying close when initialize fails', async () => {
     const agent = new FakeAcpAgent();
     agent.initialize = vi.fn().mockRejectedValue(new Error('init failed'));

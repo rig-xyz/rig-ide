@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createSpawnContextResolver } from './spawn-context';
+import { CliUnrunnableError, createSpawnContextResolver } from './spawn-context';
 
 describe('createSpawnContextResolver', () => {
   it('resolves cli and allowlisted env', async () => {
@@ -120,5 +120,25 @@ describe('createSpawnContextResolver', () => {
       success: false,
       error: { type: 'cli-not-found', providerId: 'test', message: 'not found' },
     });
+  });
+
+  it('keeps an unrunnable CLI apart from a missing one, with its path and reason', async () => {
+    const resolveCli = vi.fn(async () => {
+      throw new CliUnrunnableError('Built for Intel Macs.', '/usr/local/bin/test');
+    });
+    const resolver = createSpawnContextResolver({ resolveCli, env: {}, homeDir: '/home/test' });
+
+    await expect(resolver.resolve('test')).resolves.toEqual({
+      success: false,
+      error: {
+        type: 'cli-unrunnable',
+        providerId: 'test',
+        path: '/usr/local/bin/test',
+        message: 'Built for Intel Macs.',
+      },
+    });
+    // Not cached: a reinstall is picked up on the next attempt.
+    await resolver.resolve('test');
+    expect(resolveCli).toHaveBeenCalledTimes(2);
   });
 });

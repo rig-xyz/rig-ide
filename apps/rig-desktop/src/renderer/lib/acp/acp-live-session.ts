@@ -1,4 +1,5 @@
 import {
+  describeAgentStartError,
   planStateSchema,
   promptDraftSchema,
   sessionUsageSchema,
@@ -46,7 +47,8 @@ export function asValueSource<T>(replica: ReplicaState<T>): LiveValueSource<T> {
 
 export class AcpStartError extends Error {
   constructor(readonly runtimeError: AcpRuntimeError) {
-    super(runtimeError.message ?? runtimeError.cause?.message ?? runtimeError.type);
+    // In words, never the bare kind: "new_session_failed" tells people nothing.
+    super(describeAgentStartError(runtimeError));
     this.name = 'AcpStartError';
   }
 

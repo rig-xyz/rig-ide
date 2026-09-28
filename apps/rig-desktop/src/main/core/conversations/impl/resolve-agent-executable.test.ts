@@ -6,8 +6,17 @@ const resolveCommandPathMock = vi.hoisted(() =>
   vi.fn<() => Promise<string | null>>().mockResolvedValue(null)
 );
 
+const resolveAllCommandPathsMock = vi.hoisted(() =>
+  vi.fn<() => Promise<string[]>>().mockResolvedValue([])
+);
+const checkLocalBinaryCompatMock = vi.hoisted(() =>
+  vi.fn<(path: string) => Promise<{ runnable: boolean }>>().mockResolvedValue({ runnable: true })
+);
+
 vi.mock('@emdash/core/deps/runtime', () => ({
   resolveCommandPath: resolveCommandPathMock,
+  resolveAllCommandPaths: resolveAllCommandPathsMock,
+  checkLocalBinaryCompat: checkLocalBinaryCompatMock,
 }));
 
 vi.mock('@main/lib/logger', () => ({
@@ -170,6 +179,60 @@ describe('resolveAgentExecutable', () => {
         hostDependencyStore: makeStore(null),
       });
       expect(second).toBe('/v2/claude');
+    });
+  });
+
+  describe('binaries this Mac cannot run', () => {
+    const localCtx = { supportsLocalSpawn: true } as never;
+    const INTEL = '/usr/local/bin/claude';
+    const ARM = '/Users/dylan/.local/bin/claude';
+
+    beforeEach(() => {
+      checkLocalBinaryCompatMock.mockImplementation(async (path: string) => ({
+        runnable: path !== INTEL,
+      }));
+    });
+
+    it('skips an Intel-only PATH winner for a runnable copy further down PATH', async () => {
+      resolveCommandPathMock.mockResolvedValue(INTEL);
+      resolveAllCommandPathsMock.mockResolvedValue([INTEL, ARM]);
+
+      const result = await resolveAgentExecutable({
+        providerId: 'claude',
+        binaryName: 'claude',
+        ctx: localCtx,
+        hostDependencyStore: makeStore(null),
+      });
+
+      expect(result).toBe(ARM);
+    });
+
+    it('does not trust a cached probe path this Mac cannot run', async () => {
+      resolveCommandPathMock.mockResolvedValue(ARM);
+
+      const result = await resolveAgentExecutable({
+        providerId: 'claude',
+        binaryName: 'claude',
+        ctx: localCtx,
+        hostDependencyStore: makeStore(null),
+        cachedStatePath: INTEL,
+      });
+
+      expect(result).toBe(ARM);
+    });
+
+    it('does not check remote (SSH) contexts', async () => {
+      resolveCommandPathMock.mockResolvedValue(INTEL);
+
+      const result = await resolveAgentExecutable({
+        providerId: 'claude',
+        binaryName: 'claude',
+        ctx,
+        hostDependencyStore: makeStore(null),
+      });
+
+      expect(result).toBe(INTEL);
+      expect(checkLocalBinaryCompatMock).not.toHaveBeenCalled();
     });
   });
 });

@@ -23,6 +23,12 @@ export interface DependencyState {
   path: string | null;
   checkedAt: number;
   error?: string;
+  /**
+   * Set when `error` has a known cause callers should surface as-is:
+   * `incompatible-arch` = the binary is built for a processor this machine
+   * can't run (e.g. Intel-only on a Mac without Rosetta).
+   */
+  errorKind?: 'incompatible-arch';
   latestVersion?: string | null;
   updateAvailable?: boolean;
 }

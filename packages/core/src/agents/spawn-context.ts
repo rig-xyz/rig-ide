@@ -9,7 +9,23 @@ export type SpawnContext = {
 
 export type SpawnContextError =
   | { type: 'unknown-provider'; providerId: string }
-  | { type: 'cli-not-found'; providerId: string; message: string };
+  | { type: 'cli-not-found'; providerId: string; message: string }
+  /** A CLI was found but this machine can't execute it (e.g. an Intel-only build without Rosetta). */
+  | { type: 'cli-unrunnable'; providerId: string; path: string; message: string };
+
+/**
+ * Thrown by a `resolveCli` that found the agent's CLI but knows it can't run
+ * here; `message` is the plain-language reason to show people as-is.
+ */
+export class CliUnrunnableError extends Error {
+  constructor(
+    message: string,
+    readonly path: string
+  ) {
+    super(message);
+    this.name = 'CliUnrunnableError';
+  }
+}
 
 export interface SpawnContextResolver {
   resolve(providerId: string): Promise<Result<SpawnContext, SpawnContextError>>;
@@ -39,6 +55,14 @@ export function createSpawnContextResolver(
         if (input.generation === generation) cliCache.set(input.providerId, cli);
         return ok(cli) as Result<string, SpawnContextError>;
       } catch (error: unknown) {
+        if (error instanceof CliUnrunnableError) {
+          return err({
+            type: 'cli-unrunnable',
+            providerId: input.providerId,
+            path: error.path,
+            message: error.message,
+          } satisfies SpawnContextError);
+        }
         return err({
           type: 'cli-not-found',
           providerId: input.providerId,

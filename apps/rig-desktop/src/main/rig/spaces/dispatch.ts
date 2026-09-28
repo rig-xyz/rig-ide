@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  describeAgentStartError,
   sessionStateSchema,
   type AcpMcpServerWire,
   type AcpPermissionRequest,
@@ -963,7 +964,7 @@ export function createSpacesDispatcher(deps: {
       ms: Date.now() - t0,
     });
     if (!sessionResult.success) {
-      publisher.record('turn_ended', { status: 'failed', reason: `couldn't start the agent (${sessionResult.error})` });
+      publisher.record('turn_ended', { status: 'failed', reason: `couldn't start the agent: ${sessionResult.error}` });
       await publisher.finish('failed');
       return err(sessionResult.error);
     }
@@ -1264,6 +1265,11 @@ function describeAcpError(error: unknown): string {
   return String(error);
 }
 
+/** Why a session couldn't start, in words (the error's kind alone, e.g. `new_session_failed`, says nothing). */
+function describeStartError(providerId: string, error: unknown): string {
+  return describeAgentStartError(error, providerId === 'codex' ? 'Codex' : 'Claude');
+}
+
 /** How long a prompt refused while its session was still loading waits for it before failing the run. */
 const SESSION_READY_TIMEOUT_MS = 60_000;
 
@@ -1284,7 +1290,7 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
           ...(mcpServers?.length ? { mcpServers } : {}),
         },
       });
-      return result.success ? ok({ sessionId: result.data.sessionId }) : err(describeAcpError(result.error));
+      return result.success ? ok({ sessionId: result.data.sessionId }) : err(describeStartError(providerId, result.error));
     },
 
     async resumeSession({ conversationId, providerId, cwd, sessionId, mcpServers }) {
@@ -1302,7 +1308,7 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
           ...(mcpServers?.length ? { mcpServers } : {}),
         },
       });
-      return result.success ? ok({ sessionId: result.data.sessionId }) : err(describeAcpError(result.error));
+      return result.success ? ok({ sessionId: result.data.sessionId }) : err(describeStartError(providerId, result.error));
     },
 
     async stopSession(conversationId) {

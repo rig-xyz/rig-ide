@@ -172,6 +172,50 @@ describe('AgentPluginHost', () => {
     });
   });
 
+  it('refuses to build an ACP spawn around a CLI this machine cannot run, with the reason', async () => {
+    const buildSpawn = vi.fn();
+    const host = createHost([
+      plugin({
+        acp: { kind: 'supported' },
+        behavior: { acp: { buildSpawn } as unknown as IAcpBehavior },
+      }),
+    ]);
+    const reason =
+      "Test Agent (/usr/local/bin/test) is built for Intel Macs and this Mac can't run it. Reinstall it, then try again.";
+    const probe = vi.spyOn(host.dependencies, 'probe').mockResolvedValue({
+      id: 'test',
+      category: 'agent',
+      status: 'error',
+      version: null,
+      path: '/usr/local/bin/test',
+      checkedAt: 0,
+      errorKind: 'incompatible-arch',
+      error: reason,
+    });
+
+    const result = await host.buildAcpSpawn('test', { cwd: '/work' });
+
+    expect(result).toEqual({
+      success: false,
+      error: { type: 'cli-unrunnable', providerId: 'test', path: '/usr/local/bin/test', message: reason },
+    });
+    expect(buildSpawn).not.toHaveBeenCalled();
+
+    // Reinstalled since: the next attempt probes again and goes ahead.
+    probe.mockResolvedValue({
+      id: 'test',
+      category: 'agent',
+      status: 'available',
+      version: '1.0.0',
+      path: '/opt/homebrew/bin/test',
+      checkedAt: 1,
+    });
+    buildSpawn.mockReturnValue({ command: '/opt/homebrew/bin/test', args: [], env: {} });
+    const retried = await host.buildAcpSpawn('test', { cwd: '/work' });
+    expect(retried.success).toBe(true);
+    expect(buildSpawn).toHaveBeenCalledWith(expect.objectContaining({ cli: '/opt/homebrew/bin/test' }));
+  });
+
   it('binds machine dependencies for auth status checks', async () => {
     const checkStatus = vi.fn(async () => ({ kind: 'authenticated' as const, account: 'ada' }));
     const host = createHost([

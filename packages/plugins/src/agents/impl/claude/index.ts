@@ -81,6 +81,13 @@ export const plugin = definePlugin(
     hostDependency: {
       id: 'claude',
       binaryNames: ['claude'],
+      // Where the native installer and Homebrew put it, checked after PATH
+      // hits: an app launched from the Dock may not see the shell's PATH, and
+      // a stale PATH-first copy (e.g. an Intel-only build on a Mac without
+      // Rosetta) shouldn't hide a working one.
+      extraLocations: {
+        macos: ['~/.local/bin/claude', '~/.claude/local/claude', '/opt/homebrew/bin/claude'],
+      },
       installCommands: {
         macos: [
           {

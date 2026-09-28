@@ -110,8 +110,10 @@ async function provisionAcpConnection(
     env: input.env,
   });
   if (!spawn.success) {
-    throw acpErr.spawnFailed(toSerializedError(new Error(agentHostErrorMessage(spawn.error))))
-      .error;
+    const cause = new Error(agentHostErrorMessage(spawn.error));
+    // Keeps the kind (e.g. `cli-unrunnable`) next to the message for whoever shows it.
+    cause.name = spawn.error.type;
+    throw acpErr.spawnFailed(toSerializedError(cause)).error;
   }
 
   const connection = await createAcpAgentConnection(

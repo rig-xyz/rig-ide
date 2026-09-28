@@ -1,6 +1,7 @@
 import { err, ok } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { IExecutionContext } from '../../exec/execution-context';
+import type { BinaryCompatCheck } from './binary-arch';
 import { HostDependencyManager } from './host-dependency-manager';
 import type { InstallMethodDetector } from './method-detection';
 import { resolveActiveInstallation, type DependencyDescriptor, type Provenance } from './types';
@@ -1374,5 +1375,100 @@ describe('HostDependencyManager extraLocations + preferNewest resolution', () =>
     // unchanged from before this feature existed.
     expect(state.path).toBe(OLD_PATH);
     expect(state.version).toBe('0.100.0');
+  });
+});
+
+/**
+ * macOS without Rosetta (macOS 27+ on Apple silicon): an Intel-only `claude`
+ * first on PATH can't even be spawned ("Bad CPU type in executable"). The
+ * arch check skips it without running it, prefers a runnable copy further
+ * down, and when there is none, says why in words people can act on.
+ */
+describe('HostDependencyManager architecture-aware resolution', () => {
+  const INTEL_PATH = '/usr/local/bin/claude';
+  const ARM_PATH = '/Users/dylan/.local/bin/claude';
+  const INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash';
+  const CLAUDE: DependencyDescriptor = {
+    id: 'claude',
+    name: 'Claude Code',
+    category: 'agent',
+    commands: ['claude'],
+    versionArgs: ['--version'],
+    installCommands: { macos: [{ method: 'curl', command: INSTALL, recommended: true }] },
+  };
+  const intelOnly: BinaryCompatCheck = async (path) =>
+    path === INTEL_PATH
+      ? { runnable: false, reason: 'incompatible-arch', archs: ['x86_64'] }
+      : { runnable: true };
+
+  function claudeCtx(paths: string[]) {
+    return makeCtx(async (command, args = []) => {
+      if (command === 'which' && args[0] === '-a' && args[1] === 'claude') {
+        return { stdout: `${paths.join('\n')}\n`, stderr: '' };
+      }
+      if (command === 'realpath') return { stdout: `${args[0]}\n`, stderr: '' };
+      if (command === ARM_PATH && args[0] === '--version') {
+        return { stdout: '2.1.283 (Claude Code)\n', stderr: '' };
+      }
+      throw new Error(`Unexpected: ${command} ${args.join(' ')}`);
+    });
+  }
+
+  it('skips an Intel-only PATH-first binary and picks the runnable one, without spawning the Intel one', async () => {
+    const ctx = claudeCtx([INTEL_PATH, ARM_PATH]);
+    const manager = new HostDependencyManager(ctx, {
+      dependencies: [CLAUDE],
+      platform: 'macos',
+      installMethodDetector: unknownDetector,
+      checkBinaryCompat: intelOnly,
+    });
+
+    const state = await manager.probe('claude');
+
+    expect(state.path).toBe(ARM_PATH);
+    expect(state.status).toBe('available');
+    expect(state.errorKind).toBeUndefined();
+    expect(ctx.exec).not.toHaveBeenCalledWith(INTEL_PATH, expect.anything(), expect.anything());
+  });
+
+  it('reports a typed, plain-language reason when no runnable binary exists', async () => {
+    const ctx = claudeCtx([INTEL_PATH]);
+    const manager = new HostDependencyManager(ctx, {
+      dependencies: [CLAUDE],
+      platform: 'macos',
+      installMethodDetector: unknownDetector,
+      checkBinaryCompat: intelOnly,
+    });
+
+    const state = await manager.probe('claude');
+
+    expect(state).toMatchObject({
+      status: 'error',
+      path: INTEL_PATH,
+      errorKind: 'incompatible-arch',
+      error: `Claude Code (${INTEL_PATH}) is built for Intel Macs and this Mac can't run it. Reinstall it: ${INSTALL}`,
+    });
+    expect(manager.get('claude')?.errorKind).toBe('incompatible-arch');
+    expect(ctx.exec).not.toHaveBeenCalledWith(INTEL_PATH, expect.anything(), expect.anything());
+  });
+
+  it('does not check architectures on non-local contexts by default', async () => {
+    // makeCtx builds a context with supportsLocalSpawn: false (e.g. SSH).
+    const ctx = makeCtx(async (command, args = []) => {
+      if (command === 'which' && args[0] === '-a') return { stdout: `${INTEL_PATH}\n`, stderr: '' };
+      if (command === INTEL_PATH) return { stdout: '2.1.0 (Claude Code)\n', stderr: '' };
+      if (command === 'realpath') return { stdout: `${args[0]}\n`, stderr: '' };
+      throw new Error(`Unexpected: ${command} ${args.join(' ')}`);
+    });
+    const manager = new HostDependencyManager(ctx, {
+      dependencies: [CLAUDE],
+      platform: 'macos',
+      installMethodDetector: unknownDetector,
+    });
+
+    const state = await manager.probe('claude');
+
+    expect(state.status).toBe('available');
+    expect(state.path).toBe(INTEL_PATH);
   });
 });

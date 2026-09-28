@@ -15,3 +15,4 @@ export type {
 } from './transport';
 export { readTextFile, writeTextFile } from './transport';
 export * from './reducer/index';
+export { describeAgentStartError, describeSpawnFailure } from './start-error-message';

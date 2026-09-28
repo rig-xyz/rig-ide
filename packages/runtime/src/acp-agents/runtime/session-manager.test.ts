@@ -25,6 +25,28 @@ describe('AcpRuntime session manager', () => {
     if (!result.success) expect(result.error.type).toBe('auth_required');
   });
 
+  it("keeps the adapter's details when newSession fails with a bare Internal error", async () => {
+    // What claude-agent-acp answers when the host claude binary can't be
+    // spawned (an Intel-only build on a Mac without Rosetta).
+    const h = makeAcpHarness();
+    const rt = new AcpRuntime(h.deps);
+    h.agent.newSession.mockRejectedValueOnce(
+      Object.assign(new Error('Internal error'), {
+        code: -32603,
+        data: { details: 'spawn Unknown system error -86' },
+      })
+    );
+
+    const result = await rt.startSession(makeStartInput({ conversationId: 'conv-bad-cpu' }));
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.type).toBe('new_session_failed');
+    expect(result.error.type === 'new_session_failed' && result.error.cause?.message).toBe(
+      'Internal error: spawn Unknown system error -86'
+    );
+  });
+
   it('shares one process for conversations in the same provider/workspace and releases on last stop', async () => {
     // Only the keep-warm grace window's own timer is faked — everything else
     // (the harness's microtask plumbing) stays real.

@@ -44,7 +44,7 @@ vi.mock('@emdash/wire', async (importOriginal) => {
   };
 });
 
-import { AcpLiveSession } from './acp-live-session';
+import { AcpLiveSession, AcpStartError } from './acp-live-session';
 
 type FakeHandle = {
   ready: Promise<void>;
@@ -246,5 +246,26 @@ describe('AcpLiveSession startup lifecycle', () => {
     expect(session.acpSessionId).toBe('acp-session');
     expect(client.stopSession).not.toHaveBeenCalled();
     session.dispose();
+  });
+});
+
+describe('AcpStartError', () => {
+  // The chat panel shows this message when a session can't start; it used to
+  // be the bare kind ("new_session_failed") or the adapter's "Internal error".
+  it('explains why the agent could not start, in words', () => {
+    const reason =
+      "Claude Code (/usr/local/bin/claude) is built for Intel Macs and this Mac can't run it. Reinstall it: curl -fsSL https://claude.ai/install.sh | bash";
+    expect(
+      new AcpStartError({ type: 'spawn_failed', cause: { name: 'cli-unrunnable', message: reason } })
+        .message
+    ).toBe(reason);
+    expect(
+      new AcpStartError({
+        type: 'new_session_failed',
+        cause: { name: 'RequestError', message: 'Internal error: spawn Unknown system error -86' },
+      }).message
+    ).toBe(
+      "This Mac can't run the installed agent: it's built for a different processor. Reinstall it, then try again."
+    );
   });
 });
