@@ -212,7 +212,8 @@ export type RelayRoomSourceOptions = {
   pollIntervalMs?: number;
   /** How long the first connection gets before the Room stops waiting on it and starts polling. */
   connectGraceMs?: number;
-  log?: (message: string, extra?: Record<string, unknown>) => void;
+  /** Failures at `warn` (the default); per-stage open and catch-up timings at `info`. Never message bodies or credentials. */
+  log?: (message: string, extra?: Record<string, unknown>, level?: 'info' | 'warn') => void;
 };
 
 type Listener = (event: RoomEvent, snapshot: RoomSnapshot) => void;
@@ -233,8 +234,22 @@ const CONNECT_GRACE_MS = 5_000;
 /** The roster is re-read every Nth poll: joins already arrive as `member_joined` messages; this catches the rest. */
 const MEMBER_POLL_EVERY = 5;
 
-/** How many session runs `bootstrap()` fetches at once — enough that a history full of runs doesn't trickle in one at a time, capped so it doesn't open dozens of requests at once either. */
+/** How many session runs are fetched at once (bootstrap and catch-up) — enough that a history full of runs doesn't trickle in one at a time, capped so it doesn't open dozens of requests at once either. */
 const BOOTSTRAP_RUN_CONCURRENCY = 6;
+
+/** Wraps the relay client so every call it makes is counted — for the open and catch-up timing lines only. */
+function countingRelay(relay: RelayRoomClient, onCall: () => void): RelayRoomClient {
+  return new Proxy(relay, {
+    get(target, prop, receiver) {
+      const value: unknown = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        onCall();
+        return (value as (...a: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  });
+}
 
 /** One run's header + full event backlog, as fetched by `getSessionEvents(..., 0)` — `run: null` means the fetch failed (logged at the call site). */
 type RunFetchResult = { run: SessionRun | null; events: SessionEventRow[] };
@@ -262,6 +277,7 @@ function emptySnapshot(name: string, selfUserId: string): RoomSnapshot {
     sessionEventsByRun: {},
     typingUserIds: [],
     connection: 'connecting',
+    loaded: false,
   };
 }
 
@@ -279,7 +295,7 @@ export class RelayRoomSource implements RoomSource {
   private readonly pollIntervalMs: number;
   private readonly connectGraceMs: number;
   private readonly makeProvider: NonNullable<RelayRoomSourceOptions['createProvider']>;
-  private readonly log: (message: string, extra?: Record<string, unknown>) => void;
+  private readonly log: NonNullable<RelayRoomSourceOptions['log']>;
   private readonly connections: ConnectionsClient | undefined;
   private readonly localRuns: LocalRunsClient | undefined;
   /** Your runs shown from this computer's own copy: the relay's catch-up leaves them alone. */
@@ -307,7 +323,15 @@ export class RelayRoomSource implements RoomSource {
   private readonly lastRunSeq = new Map<string, number>();
   /** Guards against overlapping catch-up fetches from rapid-fire notifications. */
   private catchingUp = false;
-  private catchUpAgainRequested = false;
+  /** What the next catch-up pass still has to fetch: new messages, and/or these runs' new events — see `catchUp`. */
+  private pendingMessages = false;
+  private readonly pendingRuns = new Set<string>();
+  /** Runs still going when the socket dropped: the reconnect catch-up re-reads them. */
+  private readonly liveAtDisconnect = new Set<string>();
+  /** Relay calls made so far — only for the timing lines. */
+  private requests = 0;
+  private readonly createdAtMs = Date.now();
+  private everConnected = false;
 
   private ticket: { value: string; expiresAtMs: number } | null = null;
   private ticketMint: Promise<string> | null = null;
@@ -318,7 +342,9 @@ export class RelayRoomSource implements RoomSource {
       spaceName: options.spaceName,
       wsUrl: options.wsUrl,
       selfUserId: options.selfUserId,
-      relay: options.relay,
+      relay: countingRelay(options.relay, () => {
+        this.requests += 1;
+      }),
       bootstrapMessageCount: options.bootstrapMessageCount ?? 50,
     };
     this.pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
@@ -368,7 +394,11 @@ export class RelayRoomSource implements RoomSource {
   }
 
   dispose(): void {
+    // Anything still loading (bootstrap, a catch-up) checks this and stops:
+    // an abandoned open never keeps fetching, applying or notifying.
     this.disposed = true;
+    this.pendingMessages = false;
+    this.pendingRuns.clear();
     this.unsubscribeLocalRuns?.();
     this.unsubscribeLocalRuns = null;
     this.stopPolling();
@@ -388,6 +418,7 @@ export class RelayRoomSource implements RoomSource {
       this.unsubscribeLocalRuns = this.localRuns.subscribe((update) => void this.onLocalRunEvent(update));
     }
     await this.bootstrap();
+    if (this.disposed) return;
     let provider: RealtimeProvider;
     try {
       provider = await this.makeProvider({
@@ -412,10 +443,23 @@ export class RelayRoomSource implements RoomSource {
     provider.on('connect', () => {
       this.connected = true;
       this.stopPolling();
+      this.log(
+        'Rig spaces: room socket connected',
+        { bindingId: this.opts.bindingId, ms: Date.now() - this.createdAtMs, reconnect: this.everConnected },
+        'info'
+      );
+      this.everConnected = true;
       this.applyLocal({ type: 'connection_changed', connection: 'online' });
-      void this.catchUp();
+      // New messages, plus only the runs that could have moved on: the ones
+      // still going now, and the ones that were going when the socket
+      // dropped. A finished run's log can't grow, so a long history of
+      // settled runs costs nothing here.
+      const runs = [...this.liveRunIds(), ...this.liveAtDisconnect];
+      this.liveAtDisconnect.clear();
+      void this.catchUp({ messages: true, runs });
     });
     provider.on('disconnect', () => {
+      if (this.connected) for (const runId of this.liveRunIds()) this.liveAtDisconnect.add(runId);
       this.connected = false;
       this.goOffline();
     });
@@ -467,7 +511,8 @@ export class RelayRoomSource implements RoomSource {
     try {
       this.pollTicks += 1;
       if (this.pollTicks % MEMBER_POLL_EVERY === 0) await this.pollMembers();
-      await this.catchUp();
+      // Without the socket nothing says which run moved: re-read the live ones.
+      await this.catchUp({ messages: true, runs: this.liveRunIds() });
     } finally {
       this.pollInFlight = false;
     }
@@ -476,7 +521,7 @@ export class RelayRoomSource implements RoomSource {
   /** Re-reads the roster (and with it the invite cards), telling listeners only when someone joined, left or changed. */
   private async pollMembers(): Promise<void> {
     const result = await this.opts.relay.listMembers(this.opts.bindingId);
-    if (!result.success) return;
+    if (!result.success || this.disposed) return;
     const rosterKey = (): string =>
       this.snapshot.members.map((m) => `${m.id}:${m.name}:${m.role}:${m.avatarUrl ?? ''}`).join('|');
     const before = rosterKey();
@@ -491,6 +536,11 @@ export class RelayRoomSource implements RoomSource {
     const meta = this.snapshot.sessionMetaByRun[runId];
     if (!meta) return false;
     return effectiveRunStatus(meta.status, projectSessionCard(this.snapshot.sessionEventsByRun[runId] ?? [])) === 'running';
+  }
+
+  /** The runs the relay could still have news for: live, and not shown from this computer's own copy. */
+  private liveRunIds(): string[] {
+    return Object.keys(this.snapshot.sessionMetaByRun).filter((runId) => !this.localRunIds.has(runId) && this.isRunLive(runId));
   }
 
   /**
@@ -539,10 +589,31 @@ export class RelayRoomSource implements RoomSource {
    * Room's open feel jumpy; see this file's own header).
    */
   private async bootstrap(): Promise<void> {
-    const [members, messages] = await Promise.all([
-      this.opts.relay.listMembers(this.opts.bindingId),
-      this.opts.relay.listMessages(this.opts.bindingId, { latest: this.opts.bootstrapMessageCount }),
+    const startedMs = Date.now();
+    const { bindingId } = this.opts;
+    const relay = this.opts.relay;
+    // Every stage at once: the roster, the messages, the space's skills,
+    // invites and connectors. The runs the messages name start loading the
+    // moment the messages are in, alongside the rest.
+    const messagesLoad = relay.listMessages(bindingId, { latest: this.opts.bootstrapMessageCount });
+    let runsMs = 0;
+    const runsLoad = messagesLoad.then(async (messages) => {
+      if (!messages.success) return new Map<string, RunFetchResult>();
+      const runsStartedMs = Date.now();
+      const runs = await this.fetchRunsBounded(uniqueRunIds(messages.data));
+      runsMs = Date.now() - runsStartedMs;
+      return runs;
+    });
+    const [members, messages, skills, invites, connectors, prefetchedRuns] = await Promise.all([
+      relay.listMembers(bindingId),
+      messagesLoad,
+      // Skills are files in the space, so every member has the same list.
+      relay.listSkills?.(bindingId).catch(() => []),
+      this.fetchInvites(),
+      this.loadConnectors(),
+      runsLoad,
     ]);
+    if (this.disposed) return;
 
     // `member_joined` (the room-EVENT vocabulary) only flips an EXISTING
     // invited member's status in `reduceRoom` — there's no event for "here
@@ -550,12 +621,11 @@ export class RelayRoomSource implements RoomSource {
     if (members.success) this.seedMembers(members.data);
     else this.log('Rig spaces: could not load room members', { error: members.error.message });
 
-    // Skills are files in the space, so every member has the same list.
-    const skills = await this.opts.relay.listSkills?.(this.opts.bindingId).catch(() => []);
     if (skills?.length) {
       this.snapshot = { ...this.snapshot, skills: skills.map((skill) => ({ ...skill, addedBy: '' })) };
     }
-    await this.refreshInvites();
+    // After the roster: an invite reads as joined once a member has its email.
+    if (invites) this.applyInvites(invites);
 
     let lastEvent: RoomEvent | null = null;
     const apply = (event: RoomEvent): void => {
@@ -563,44 +633,58 @@ export class RelayRoomSource implements RoomSource {
       lastEvent = event;
     };
 
-    await this.refreshConnectors(apply);
+    if (connectors) apply({ type: 'connectors_synced', connectors });
 
     if (!messages.success) {
       this.log('Rig spaces: could not load room messages', { error: messages.error.message });
     } else {
-      // Every run a `kind:'session'` message names, fetched together — not
-      // one `await` per message the way the realtime catch-up path still
-      // does (that part is unchanged; see `ingestWireMessage`/`ingestRun`).
-      const runIds: string[] = [];
-      const seenRunIds = new Set<string>();
+      apply({ type: 'room_loaded' });
       for (const row of messages.data) {
-        const runId = sessionRunIdOf(row);
-        if (runId && !seenRunIds.has(runId)) {
-          seenRunIds.add(runId);
-          runIds.push(runId);
-        }
+        if (this.disposed) return;
+        await this.ingestWireMessage(row, apply, prefetchedRuns, { bootstrap: true });
       }
-      const prefetchedRuns = await this.fetchRunsBounded(runIds);
-      for (const row of messages.data) await this.ingestWireMessage(row, apply, prefetchedRuns);
     }
+    if (this.disposed) return;
 
     if (lastEvent) this.notifyListeners(lastEvent);
+    let eventBytes = 0;
+    for (const run of prefetchedRuns.values()) for (const event of run.events) eventBytes += event.bytes;
+    this.log(
+      'Rig spaces: room loaded and shown',
+      {
+        bindingId,
+        ms: Date.now() - startedMs,
+        calls: this.requests,
+        messages: messages.success ? messages.data.length : null,
+        runs: prefetchedRuns.size,
+        runsMs,
+        eventBytes,
+      },
+      'info'
+    );
   }
 
   /** Fetches every run in `runIds` via `getSessionEvents(..., 0)`, up to `BOOTSTRAP_RUN_CONCURRENCY` at once, rather than one after another. */
   private async fetchRunsBounded(runIds: readonly string[]): Promise<Map<string, RunFetchResult>> {
     const results = new Map<string, RunFetchResult>();
+    await this.eachBounded(runIds, async (runId) => {
+      results.set(runId, await this.fetchRun(runId));
+    });
+    return results;
+  }
+
+  /** Runs `task` over `items`, up to `BOOTSTRAP_RUN_CONCURRENCY` at once; stops taking new items once disposed. */
+  private async eachBounded<T>(items: readonly T[], task: (item: T) => Promise<void>): Promise<void> {
     let next = 0;
     const worker = async (): Promise<void> => {
-      while (next < runIds.length) {
-        const runId = runIds[next]!;
+      while (next < items.length && !this.disposed) {
+        const item = items[next]!;
         next += 1;
-        results.set(runId, await this.fetchRun(runId));
+        await task(item);
       }
     };
-    const workerCount = Math.min(BOOTSTRAP_RUN_CONCURRENCY, runIds.length);
+    const workerCount = Math.min(BOOTSTRAP_RUN_CONCURRENCY, items.length);
     await Promise.all(Array.from({ length: workerCount }, () => worker()));
-    return results;
   }
 
   private async fetchRun(runId: string): Promise<RunFetchResult> {
@@ -619,6 +703,7 @@ export class RelayRoomSource implements RoomSource {
   private async refreshMembersFor(userId: unknown): Promise<void> {
     if (typeof userId === 'string' && this.snapshot.members.some((m) => m.id === userId)) return;
     const members = await this.opts.relay.listMembers(this.opts.bindingId);
+    if (this.disposed) return;
     if (!members.success) {
       this.log('Rig spaces: could not refresh room members', { error: members.error.message });
       return;
@@ -659,8 +744,16 @@ export class RelayRoomSource implements RoomSource {
       return;
     }
 
-    if (notification.type === 'message_created' || notification.type === 'session_event_appended') {
-      await this.catchUp();
+    if (notification.type === 'message_created') {
+      // New messages only; a run a new message names is fetched as it's ingested.
+      await this.catchUp({ messages: true });
+      return;
+    }
+    if (notification.type === 'session_event_appended') {
+      // Just the run that moved (hide-details says so the same way). A
+      // notification naming no run falls back to every live one.
+      const runId = typeof notification.runId === 'string' ? notification.runId : null;
+      await this.catchUp({ runs: runId ? [runId] : this.liveRunIds() });
       return;
     }
     if (notification.type === 'agent_request_created') {
@@ -679,19 +772,41 @@ export class RelayRoomSource implements RoomSource {
     }
   }
 
-  /** Re-fetches anything new since the last known message/run seq — used on the initial `connect` and after every notification. Coalesces overlapping calls into one re-run rather than one per notification. */
-  private async catchUp(): Promise<void> {
-    if (this.catchingUp) {
-      this.catchUpAgainRequested = true;
-      return;
-    }
+  /**
+   * Re-fetches what `work` names since the last known seq: new messages
+   * (`?after=`), and/or these runs' new events. Called on connect, on every
+   * notification and on each poll. Overlapping calls coalesce: work asked
+   * for mid-pass is queued and picked up by the pass already running, never
+   * a second concurrent one.
+   */
+  private async catchUp(work: { messages?: boolean; runs?: Iterable<string> }): Promise<void> {
+    if (this.disposed) return;
+    if (work.messages) this.pendingMessages = true;
+    for (const runId of work.runs ?? []) this.pendingRuns.add(runId);
+    if (this.catchingUp) return;
     this.catchingUp = true;
     try {
-      do {
-        this.catchUpAgainRequested = false;
-        await this.catchUpMessages();
-        await this.catchUpRuns();
-      } while (this.catchUpAgainRequested);
+      while (!this.disposed && (this.pendingMessages || this.pendingRuns.size > 0)) {
+        const startedMs = Date.now();
+        const callsBefore = this.requests;
+        const messages = this.pendingMessages;
+        const runs = [...this.pendingRuns];
+        this.pendingMessages = false;
+        this.pendingRuns.clear();
+        if (messages) await this.catchUpMessages();
+        await this.catchUpRuns(runs);
+        this.log(
+          'Rig spaces: room catch-up',
+          {
+            bindingId: this.opts.bindingId,
+            ms: Date.now() - startedMs,
+            calls: this.requests - callsBefore,
+            messages,
+            runs: runs.length,
+          },
+          'info'
+        );
+      }
     } finally {
       this.catchingUp = false;
     }
@@ -703,29 +818,37 @@ export class RelayRoomSource implements RoomSource {
         ? { after: String(this.lastMessageSeq) }
         : { latest: this.opts.bootstrapMessageCount };
     const result = await this.opts.relay.listMessages(this.opts.bindingId, query);
+    if (this.disposed) return;
     if (!result.success) {
       this.log('Rig spaces: could not catch up on room messages', { error: result.error.message });
       return;
     }
-    for (const row of result.data) await this.ingestWireMessage(row);
+    // A listing that came back is the Room's first load, if bootstrap's failed.
+    if (this.snapshot.loaded === false) this.applyLocal({ type: 'room_loaded' });
+    for (const row of result.data) {
+      if (this.disposed) return;
+      await this.ingestWireMessage(row);
+    }
   }
 
-  private async catchUpRuns(): Promise<void> {
-    for (const runId of Object.keys(this.snapshot.sessionMetaByRun)) {
-      // Your runs shown from this computer's own copy get their news from it.
-      if (this.localRunIds.has(runId)) continue;
-      // Polling (no socket): only runs that are still going can have news.
-      if (!this.connected && !this.isRunLive(runId)) continue;
+  /** Fetches the new events of each run in `runIds` the Room knows and the relay speaks for, in parallel (bounded). */
+  private async catchUpRuns(runIds: readonly string[]): Promise<void> {
+    // Your runs shown from this computer's own copy get their news from it.
+    const due = [...new Set(runIds)].filter((runId) => this.snapshot.sessionMetaByRun[runId] && !this.localRunIds.has(runId));
+    await this.eachBounded(due, async (runId) => {
       const after = this.lastRunSeq.get(runId) ?? 0;
       const result = await this.opts.relay.getSessionEvents(this.opts.bindingId, runId, after);
+      // Switched to the local copy meanwhile: that copy already has these.
+      if (this.disposed || this.localRunIds.has(runId)) return;
       if (!result.success) {
         this.log('Rig spaces: could not catch up on session events', {
           runId,
           error: result.error.message,
         });
-        continue;
+        return;
       }
       for (const event of result.data.events) {
+        if (event.seq <= (this.lastRunSeq.get(runId) ?? 0)) continue;
         this.applyLocal({
           type: 'session_event_appended',
           runId,
@@ -740,7 +863,7 @@ export class RelayRoomSource implements RoomSource {
         });
         this.lastRunSeq.set(runId, event.seq);
       }
-    }
+    });
   }
 
   /**
@@ -753,12 +876,15 @@ export class RelayRoomSource implements RoomSource {
    * nothing notifies until the whole initial batch is in. `prefetchedRuns`
    * is `bootstrap()`'s own bounded-parallel fetch, keyed by run id — when a
    * run isn't in it (the realtime path never passes one), `ingestRun` fetches
-   * it itself, same as before.
+   * it itself, same as before. With `bootstrap`, the roster, invites and
+   * connectors were just loaded whole, so the per-message re-reads a live
+   * message triggers are skipped.
    */
   private async ingestWireMessage(
     row: RoomMessageRow,
     apply: (event: RoomEvent) => void = (event) => this.applyLocal(event),
-    prefetchedRuns?: ReadonlyMap<string, RunFetchResult>
+    prefetchedRuns?: ReadonlyMap<string, RunFetchResult>,
+    { bootstrap = false }: { bootstrap?: boolean } = {}
   ): Promise<void> {
     if (row.seq <= this.lastMessageSeq && this.snapshot.messages.some((m) => m.id === row.id)) {
       return; // already applied (bootstrap + catch-up overlap window)
@@ -768,7 +894,7 @@ export class RelayRoomSource implements RoomSource {
     // Someone new accepted an invite: re-read the roster BEFORE resolving
     // the author below, so "Sam joined" maps to Sam (not a raw Clerk id)
     // and an emailed invite's card flips to "Joined".
-    if (row.kind === 'system' && row.meta?.event === 'member_joined') {
+    if (!bootstrap && row.kind === 'system' && row.meta?.event === 'member_joined') {
       await this.refreshMembersFor(row.meta.userId);
     }
 
@@ -784,13 +910,14 @@ export class RelayRoomSource implements RoomSource {
       await this.ingestRun(runId, authorId, apply, prefetchedRuns?.get(runId));
     }
 
-    if (row.kind === 'invite' && typeof meta.inviteId === 'string' && !this.snapshot.invitesById[meta.inviteId]) {
+    if (!bootstrap && row.kind === 'invite' && typeof meta.inviteId === 'string' && !this.snapshot.invitesById[meta.inviteId]) {
       await this.refreshInvites();
     }
 
-    if (row.kind === 'system' && (meta.event === 'connectors_added' || meta.event === 'connectors_removed')) {
+    if (!bootstrap && row.kind === 'system' && (meta.event === 'connectors_added' || meta.event === 'connectors_removed')) {
       await this.refreshConnectors(apply);
     }
+    if (this.disposed) return;
 
     // Doc comments share the message table (they carry a `path`). Keep them
     // in the room, rendered as comment lines tied to their file and passage.
@@ -972,11 +1099,20 @@ export class RelayRoomSource implements RoomSource {
 
   /** Loads the space's invites into `invitesById`; an invite counts as joined once a member has its email. */
   private async refreshInvites(): Promise<void> {
+    const rows = await this.fetchInvites();
+    if (rows && !this.disposed) this.applyInvites(rows);
+  }
+
+  /** The space's invites, or null when there's no client for them or the read failed. */
+  private async fetchInvites(): Promise<RoomInviteRow[] | null> {
     const result = await this.opts.relay.listInvites?.(this.opts.bindingId).catch(() => null);
-    if (!result?.success) return;
+    return result?.success ? result.data : null;
+  }
+
+  private applyInvites(rows: readonly RoomInviteRow[]): void {
     const memberEmails = new Set(this.snapshot.members.map((m) => m.email.toLowerCase()).filter(Boolean));
     const invitesById: RoomSnapshot['invitesById'] = { ...this.snapshot.invitesById };
-    for (const invite of result.data) {
+    for (const invite of rows) {
       invitesById[invite.id] = {
         id: invite.id,
         by: invite.inviterUserId ?? '',
@@ -993,15 +1129,20 @@ export class RelayRoomSource implements RoomSource {
 
   /** Re-fetches the space's connector list from the relay, enriched with this device's own connection state — bootstrap, and every `connectors_added`/`connectors_removed` system message. `apply` defaults to `applyLocal` (mutate + notify); `bootstrap()` passes its own silent variant so this never notifies mid-batch. */
   private async refreshConnectors(apply: (event: RoomEvent) => void = (event) => this.applyLocal(event)): Promise<void> {
+    const connectors = await this.loadConnectors();
+    if (connectors && !this.disposed) apply({ type: 'connectors_synced', connectors });
+  }
+
+  /** The space's connector list with this device's own state on each, both read at once; null when there's no client for it or the read failed. */
+  private async loadConnectors(): Promise<RoomConnector[] | null> {
     const listFn = this.opts.relay.listConnectors;
-    if (!listFn) return;
-    const result = await listFn(this.opts.bindingId);
+    if (!listFn) return null;
+    const [result, mineById] = await Promise.all([listFn(this.opts.bindingId), this.connectionStates()]);
     if (!result.success) {
       this.log('Rig spaces: could not load the space’s connectors', { error: result.error.message });
-      return;
+      return null;
     }
-    const mineById = await this.connectionStates();
-    const connectors: RoomConnector[] = result.data.map((row) => {
+    return result.data.map((row) => {
       const def = connectorById(row.connectorId);
       const status = mineById.get(row.connectorId);
       return {
@@ -1012,7 +1153,6 @@ export class RelayRoomSource implements RoomSource {
         account: status?.account,
       };
     });
-    apply({ type: 'connectors_synced', connectors });
   }
 
   /** Just this device's own connection states, re-merged into the existing connector list — cheaper than `refreshConnectors()` for after a local connect/disconnect, which never changes the space's list itself. */
@@ -1105,12 +1245,14 @@ export class RelayRoomSource implements RoomSource {
 
   /** Folds an event into the snapshot AND notifies every listener — the realtime/catch-up path, and anything bootstrap wants to announce immediately. */
   private applyLocal(event: RoomEvent): void {
+    if (this.disposed) return;
     this.reduceLocal(event);
     this.notifyListeners(event);
   }
 
   /** Folds an event into the snapshot without notifying anyone — `bootstrap()`'s own silent `apply`, so the initial batch never trickles out one event at a time. */
   private reduceLocal(event: RoomEvent): void {
+    if (this.disposed) return;
     this.snapshot = reduceRoom(this.snapshot, event);
   }
 
@@ -1123,6 +1265,16 @@ export class RelayRoomSource implements RoomSource {
 function sessionRunIdOf(row: RoomMessageRow): string | null {
   const meta = row.meta ?? {};
   return row.kind === 'session' && typeof meta.runId === 'string' ? meta.runId : null;
+}
+
+/** Every run the rows' `kind:'session'` messages name, once each, in order. */
+function uniqueRunIds(rows: readonly RoomMessageRow[]): string[] {
+  const runIds = new Set<string>();
+  for (const row of rows) {
+    const runId = sessionRunIdOf(row);
+    if (runId) runIds.add(runId);
+  }
+  return [...runIds];
 }
 
 

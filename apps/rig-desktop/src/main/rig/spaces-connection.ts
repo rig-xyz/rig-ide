@@ -4,7 +4,8 @@ import { err, ok, type Result } from '@emdash/shared';
 import { parseFrontmatter } from '@shared/core/skills/validation';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import type { RigAccountError } from '@shared/rig/account';
-import { isError, resolveContext } from './account';
+import { log } from '@main/lib/logger';
+import { isError, resolveContext, resolveSelfUserId } from './account';
 import {
   createHttpSpacesRelayApi,
   type AgentRequest,
@@ -109,14 +110,21 @@ export const rigSpacesConnectionController = createRPCController({
     const ctx = await resolveContext();
     if (isError(ctx)) return err(ctx);
 
-    const who = await api.whoami();
+    // Remembered per token (`account.ts`): opening a space asks `/v1/me` once at most.
+    const who = await resolveSelfUserId();
     if (!who.success) return err(who.error);
 
     return ok({
       relayUrl: ctx.url,
       wsUrl: toWsUrl(ctx.url),
-      selfUserId: who.data.id,
+      selfUserId: who.data,
     });
+  },
+
+  /** The Room's own log lines (open/catch-up timings, failures) into main's log. Timings and ids only — the renderer never sends bodies or tokens. */
+  log: (input: { level: 'info' | 'warn'; message: string; extra?: Record<string, unknown> }): void => {
+    if (input.level === 'info') log.info(input.message, input.extra ?? {});
+    else log.warn(input.message, input.extra ?? {});
   },
 
   /** Mints this Room's realtime credential — see this file's own header comment. Re-mint before `expiresAt`, and on every reconnect. */

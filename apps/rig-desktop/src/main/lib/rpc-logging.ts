@@ -2,7 +2,7 @@ import { type IpcMain } from 'electron';
 import { log } from './logger';
 
 /** Calls made several times a second (a page's pins following it, comment mode's hover): their results aren't logged, only their errors. */
-const QUIET_CHANNELS: ReadonlySet<string> = new Set(['rig.pages.locate', 'rig.pages.peek']);
+const QUIET_CHANNELS: ReadonlySet<string> = new Set(['rig.pages.locate', 'rig.pages.peek', 'rig.spacesConnection.log']);
 
 export function withRpcLogging(target: IpcMain): IpcMain {
   return new Proxy(target, {

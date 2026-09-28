@@ -206,25 +206,66 @@ export type CurrentAccountId = { status: 'signedOut' } | { status: 'known'; id: 
 
 /** See `CurrentAccountId`'s own doc comment for why this exists alongside `me()`. */
 export async function getCurrentAccountId(): Promise<CurrentAccountId> {
-  const ctx = await resolveContext();
-  if (isError(ctx)) {
-    return ctx.kind === 'notSignedIn' ? { status: 'signedOut' } : { status: 'unknown' };
-  }
+  const result = await resolveSelfUserId();
+  if (result.success) return { status: 'known', id: result.data };
+  return result.error.kind === 'notSignedIn' ? { status: 'signedOut' } : { status: 'unknown' };
+}
 
+/**
+ * The signed-in user's id, remembered per signed-in token (and relay): the
+ * open path of a rig or space used to ask `GET /v1/me` three times in a row
+ * (`detect`, the Room's connection info, the connector states). A different
+ * token (sign-in, sign-out, another account) is a different key, so a stale
+ * id is never served; `forgetSelfUserId` drops it outright on sign-in/out.
+ * Only a successful answer is remembered — a relay hiccup is asked again.
+ * Concurrent callers share one in-flight request.
+ */
+let selfUserId: { key: string; id: string } | null = null;
+let selfUserIdLoad: { key: string; promise: Promise<Result<string, RigAccountError>> } | null = null;
+
+function selfUserIdKey(ctx: Resolved): string {
+  return `${ctx.url}\n${ctx.token}`;
+}
+
+export function forgetSelfUserId(): void {
+  selfUserId = null;
+  selfUserIdLoad = null;
+}
+
+export async function resolveSelfUserId(): Promise<Result<string, RigAccountError>> {
+  const ctx = await resolveContext();
+  if (isError(ctx)) return err(ctx);
+  const key = selfUserIdKey(ctx);
+  if (selfUserId?.key === key) return ok(selfUserId.id);
+  if (selfUserIdLoad?.key === key) return selfUserIdLoad.promise;
+  const load: { key: string; promise: Promise<Result<string, RigAccountError>> } = {
+    key,
+    promise: fetchSelfUserId(ctx).then((result) => {
+      // Only if nothing forgot it (or asked for another account) meanwhile.
+      if (selfUserIdLoad === load) {
+        selfUserIdLoad = null;
+        if (result.success) selfUserId = { key, id: result.data };
+      }
+      return result;
+    }),
+  };
+  selfUserIdLoad = load;
+  return load.promise;
+}
+
+async function fetchSelfUserId(ctx: Resolved): Promise<Result<string, RigAccountError>> {
   let response: Response;
   try {
     response = await relayGet(ctx, '/v1/me');
-  } catch {
-    return { status: 'unknown' };
+  } catch (error) {
+    return err(transportError('load your account', error));
   }
-  if (!response.ok) return { status: 'unknown' };
-
+  if (!response.ok) return err(await relayError(response, 'load your account'));
   try {
-    const data = asRecord(await response.json());
-    const user = toUser(data?.user);
-    return user ? { status: 'known', id: user.id } : { status: 'unknown' };
-  } catch {
-    return { status: 'unknown' };
+    const user = toUser(asRecord(await response.json())?.user);
+    return user ? ok(user.id) : err<RigAccountError>({ kind: 'relay', message: 'Could not load your account.' });
+  } catch (error) {
+    return err(transportError('load your account', error));
   }
 }
 
@@ -253,6 +294,8 @@ export const rigAccountController = createRPCController({
       if (!user) {
         return err<RigAccountError>({ kind: 'relay', message: 'Could not load your account.' });
       }
+      // The app asks this at launch: the first rig or space opened after it needs no `/v1/me` of its own.
+      selfUserId = { key: selfUserIdKey(ctx), id: user.id };
       return ok(user);
     } catch (error) {
       return err(transportError('load your account', error));

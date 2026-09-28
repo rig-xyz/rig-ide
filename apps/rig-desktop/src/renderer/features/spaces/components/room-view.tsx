@@ -52,6 +52,15 @@ function createRelayRoomClient(): RelayRoomClient {
   };
 }
 
+/** The Room's log lines into main's log (timings at info, failures at warn); never throws. */
+function roomLog(message: string, extra?: Record<string, unknown>, level: 'info' | 'warn' = 'warn'): void {
+  try {
+    void rpc.rig.spacesConnection.log({ level, message, ...(extra ? { extra } : {}) }).catch(() => {});
+  } catch {
+    // Logging never gets in the Room's way.
+  }
+}
+
 /** The owner overlay: this computer's own full copy of your runs (see `LocalRunsClient`). */
 function createLocalRunsClient(): LocalRunsClient {
   return {
@@ -379,8 +388,10 @@ export function RoomView({
     }
 
     let relaySource: RelayRoomSource | null = null;
+    const startedMs = Date.now();
     void rpc.rig.spacesConnection.getConnectionInfo().then((result) => {
       if (cancelled) return;
+      roomLog('Rig spaces: room connection info', { bindingId, ms: Date.now() - startedMs, ok: result.success }, 'info');
       if (!result.success) {
         setConnectError(result.error.message);
         return;
@@ -393,6 +404,7 @@ export function RoomView({
         relay: createRelayRoomClient(),
         connections: connectorsApi,
         localRuns: createLocalRunsClient(),
+        log: roomLog,
       });
       setSelfUserId(result.data.selfUserId);
       setSource(relaySource);
@@ -685,7 +697,12 @@ export function RoomView({
   }
 
   if (!snapshot) {
-    return <div className="bg-bg-0 flex h-full min-h-0 flex-col" data-testid="room-view" />;
+    // Still asking who you are and where the relay is: the opening skeleton, not a blank pane.
+    return (
+      <div className="bg-bg-0 flex h-full min-h-0 flex-col" data-testid="room-view">
+        {!collapsed && <RoomLoadingSkeleton />}
+      </div>
+    );
   }
 
   // Doc-focus round: the Room stays connected in doc focus (every hook
@@ -740,7 +757,9 @@ export function RoomView({
           {live && snapshot.messages.length === 0 ? (
             <RoomWelcome
               spaceName={snapshot.name}
-              connecting={snapshot.connection === 'connecting'}
+              // Until the first load is in, not until the socket is: an empty
+              // space is known to be empty as soon as its messages come back.
+              connecting={snapshot.loaded === false}
               hasSkills={snapshot.skills.length > 0}
               onPrefill={(text) => setPrefill({ text, nonce: Date.now() })}
             />

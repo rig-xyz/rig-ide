@@ -189,6 +189,9 @@ export function reduceRoom(snapshot: RoomSnapshot, event: RoomEvent): RoomSnapsh
     case 'space_ready_changed':
       return { ...snapshot, ready: event.ready };
 
+    case 'room_loaded':
+      return { ...snapshot, loaded: true };
+
     default:
       return snapshot;
   }

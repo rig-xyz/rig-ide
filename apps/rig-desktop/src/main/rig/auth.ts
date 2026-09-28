@@ -3,7 +3,7 @@ import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import type { RigAuthError, RigAuthStatus, RigLoginStarted } from '@shared/rig/auth';
-import { getCurrentAccountId } from './account';
+import { forgetSelfUserId, getCurrentAccountId } from './account';
 import { extractRigAuthUrl, loginFailureMessage, logoutFailureMessage } from './auth-output';
 import { resolveCliBin } from './bundled-cli';
 import { readRelayToken } from './config';
@@ -161,6 +161,7 @@ function startLogin(): LoginSession {
  * resolving to anything other than `'known'`.
  */
 async function resumeSignedInAccountRigs(): Promise<void> {
+  forgetSelfUserId();
   const current = await getCurrentAccountId();
   if (current.status === 'known') await resumeRigsForAccount(current.id);
 }
@@ -269,6 +270,7 @@ export const rigAuthController = createRPCController({
     cancelInFlightLogin();
     const current = await getCurrentAccountId();
     const result = await runLogout();
+    forgetSelfUserId();
     if (result.success && current.status === 'known') {
       await pauseRigsForAccount(current.id);
     }

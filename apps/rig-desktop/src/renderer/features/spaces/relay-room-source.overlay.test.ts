@@ -86,7 +86,24 @@ const LOCAL_EVENTS: LocalRunEvent[] = [
   },
 ];
 
-function setup(opts: { runs: Array<{ id: string; owner: string }>; local: Map<string, LocalRunEvent[]> }) {
+/** A provider whose `connect`/`stateless` handlers a test can fire. */
+function firingProvider() {
+  const handlers: Record<string, Array<(...args: never[]) => void>> = {};
+  const p: RealtimeProvider & { fire: (event: string, ...args: unknown[]) => void } = {
+    ...provider(),
+    on: (event: string, cb: (...args: never[]) => void) => void (handlers[event] ??= []).push(cb),
+    fire: (event, ...args) => {
+      for (const h of handlers[event] ?? []) (h as (...a: unknown[]) => void)(...args);
+    },
+  };
+  return p;
+}
+
+function setup(opts: {
+  runs: Array<{ id: string; owner: string }>;
+  local: Map<string, LocalRunEvent[]>;
+  createProvider?: () => RealtimeProvider;
+}) {
   let listener: ((u: { bindingId: string; runId: string; event: LocalRunEvent }) => void) | null = null;
   const relayFetches: string[] = [];
   const relay: RelayRoomClient = {
@@ -116,7 +133,7 @@ function setup(opts: { runs: Array<{ id: string; owner: string }>; local: Map<st
     selfUserId: ME,
     relay,
     localRuns,
-    createProvider: () => provider(),
+    createProvider: opts.createProvider ?? (() => provider()),
     connectGraceMs: 60_000,
   });
   const push = (runId: string, event: LocalRunEvent) => {
@@ -171,6 +188,25 @@ describe('RelayRoomSource: the owner overlay', () => {
     for (const event of LOCAL_EVENTS) push('mine', event);
     await vi.waitFor(() => expect(card('mine').thinking).toBe('Checking the board notes'));
     expect(card('mine').steps[0]?.private).toBeUndefined();
+    source.dispose();
+  });
+
+  it("never re-reads your locally shown run from the relay: not on connect, not on its notifications", async () => {
+    const live = firingProvider();
+    const { source, relayFetches } = setup({
+      runs: [{ id: 'mine', owner: ME }, { id: 'theirs', owner: 'u2' }],
+      local: new Map([['mine', LOCAL_EVENTS]]),
+      createProvider: () => live,
+    });
+    source.play();
+    await vi.waitFor(() => expect(source.getSnapshot().sessionEventsByRun.mine?.length).toBe(4));
+    relayFetches.length = 0;
+
+    live.fire('connect');
+    live.fire('stateless', { payload: JSON.stringify({ type: 'session_event_appended', runId: 'mine', seq: 5 }) });
+    live.fire('stateless', { payload: JSON.stringify({ type: 'session_event_appended', runId: 'theirs', seq: 3 }) });
+    await vi.waitFor(() => expect(relayFetches).toContain('theirs'));
+    expect(relayFetches).not.toContain('mine');
     source.dispose();
   });
 

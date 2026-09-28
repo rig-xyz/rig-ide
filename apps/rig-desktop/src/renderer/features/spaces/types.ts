@@ -276,7 +276,9 @@ export type RoomEvent =
   /** Who has the Room open right now; everyone else is away. */
   | { type: 'presence_changed'; onlineIds: PersonId[] }
   | { type: 'connection_changed'; connection: RoomConnection }
-  | { type: 'space_ready_changed'; ready: boolean };
+  | { type: 'space_ready_changed'; ready: boolean }
+  /** The Room's first read of the relay's messages came back (see `RoomSnapshot.loaded`). */
+  | { type: 'room_loaded' };
 
 /** Full materialized state of a room — what components render from. */
 export interface RoomSnapshot {
@@ -294,6 +296,8 @@ export interface RoomSnapshot {
   typingUserIds: PersonId[];
   /** The live link to the relay; absent for the scripted demo. */
   connection?: RoomConnection;
+  /** False until the live Room's first read of the relay's messages is in (the opening skeleton shows until then); absent for the scripted demo. */
+  loaded?: boolean;
 }
 
 /** Whether the Room is hearing the relay live: first connecting, connected, or without the socket (it retries on its own, and polls meanwhile). */

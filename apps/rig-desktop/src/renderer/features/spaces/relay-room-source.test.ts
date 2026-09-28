@@ -803,7 +803,7 @@ describe('RelayRoomSource — connectors (connectors-spec.md)', () => {
     expect(source.getSnapshot().connectors).toEqual([{ id: 'linear', name: 'Linear', addedBy: 'u1', mine: 'connected' }]);
   });
 
-  it('refetches the connector list when a connectors_added system message arrives', async () => {
+  it('refetches the connector list when a connectors_added system message arrives live, but not for one already in the history', async () => {
     let listCalls = 0;
     const fake = makeFakeRelay({
       listConnectors: async () => {
@@ -811,27 +811,31 @@ describe('RelayRoomSource — connectors (connectors-spec.md)', () => {
         return ok(listCalls === 1 ? [] : [{ connectorId: 'notion', addedBy: 'u1', addedAt: '' }]);
       },
     });
-    fake.queueMessages([
-      message({
-        id: 'm2',
-        seq: 2,
-        kind: 'system',
-        body: 'Dylan added Notion',
-        meta: { event: 'connectors_added', connectorIds: ['notion'] },
-      }),
-    ]);
+    const added = (id: string, seq: number) =>
+      message({ id, seq, kind: 'system', body: 'Dylan added Notion', meta: { event: 'connectors_added', connectorIds: ['notion'] } });
+    fake.queueMessages(
+      [added('m2', 2)], // history: bootstrap's own list already reflects it
+      [], // connect-time catch-up: nothing new
+      [added('m3', 3)] // live
+    );
+    let provider: FakeProvider | null = null;
     const source = new RelayRoomSource({
       bindingId: BINDING,
       spaceName: 'Growth',
       wsUrl: 'wss://relay.test/v1/realtime',
       selfUserId: 'u1',
       relay: fake.relay,
-      createProvider: () => new FakeProvider(),
+      createProvider: () => (provider = new FakeProvider()),
     });
     source.play();
     await flush();
-    // Bootstrap's own refresh (empty) plus one more triggered by the
-    // system message — the final snapshot reflects that second fetch.
+    expect(listCalls).toBe(1);
+
+    provider!.fire('connect');
+    await flush();
+    provider!.fire('stateless', { payload: JSON.stringify({ type: 'message_created', id: 'm3', seq: 3, kind: 'system' }) });
+    await flush();
+    // The live message's own refetch — the final snapshot reflects it.
     expect(listCalls).toBe(2);
     expect(source.getSnapshot().connectors.map((c) => c.id)).toEqual(['notion']);
   });
@@ -1138,6 +1142,262 @@ describe('RelayRoomSource without the realtime socket', () => {
     const paused = relay.calls().listMessages;
     await wait(50);
     expect(relay.calls().listMessages).toBe(paused);
+    source.dispose();
+  });
+});
+
+describe('RelayRoomSource — how many requests an open and its catch-ups make', () => {
+  /** A fake relay that records every call by name (and every run it fetches). */
+  function countingFake() {
+    const fake = makeFakeRelay();
+    const calls: string[] = [];
+    const eventCalls: string[] = [];
+    const relay = fake.relay;
+    for (const name of Object.keys(relay) as Array<keyof RelayRoomClient>) {
+      const original = relay[name] as (...args: unknown[]) => unknown;
+      (relay as unknown as Record<string, unknown>)[name] = (...args: unknown[]) => {
+        calls.push(name);
+        if (name === 'getSessionEvents') eventCalls.push(args[1] as string);
+        return original(...args);
+      };
+    }
+    return { fake, calls, eventCalls, reset: () => ((calls.length = 0), (eventCalls.length = 0)) };
+  }
+
+  function sessionMessages(runIds: string[], firstSeq = 1): RoomMessageRow[] {
+    return runIds.map((id, i) => message({ id: `m-${id}`, seq: firstSeq + i, kind: 'session', body: '', meta: { runId: id } }));
+  }
+
+  function open(relay: RelayRoomClient) {
+    let provider: FakeProvider | null = null;
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay,
+      createProvider: () => (provider = new FakeProvider()),
+    });
+    return { source, provider: () => provider! };
+  }
+
+  it('connecting with 30 finished runs in the history fetches none of them again', async () => {
+    const { fake, calls, eventCalls, reset } = countingFake();
+    const runIds = Array.from({ length: 30 }, (_, i) => `done${i}`);
+    for (const id of runIds) fake.setRun(id, run({ id, status: 'done' }), [sessionEvent({ runId: id, seq: 1 })]);
+    fake.queueMessages(sessionMessages(runIds), []);
+    const { source, provider } = open(fake.relay);
+    source.play();
+    await flush();
+    expect(new Set(eventCalls)).toEqual(new Set(runIds)); // bootstrap: each run once
+    expect(eventCalls).toHaveLength(30);
+
+    reset();
+    provider().fire('connect');
+    await flush();
+    expect(calls.filter((c) => c !== 'mintRealtimeTicket')).toEqual(['listMessages']);
+    source.dispose();
+  });
+
+  it('a session_event_appended notification for run X fetches only X', async () => {
+    const { fake, eventCalls, calls, reset } = countingFake();
+    for (const id of ['x', 'y', 'z']) fake.setRun(id, run({ id }), [sessionEvent({ runId: id, seq: 1 })]);
+    fake.queueMessages(sessionMessages(['x', 'y', 'z']), []);
+    const { source, provider } = open(fake.relay);
+    source.play();
+    await flush();
+    provider().fire('connect');
+    await flush();
+
+    reset();
+    fake.appendEvents('x', [sessionEvent({ runId: 'x', seq: 2, kind: 'tool_call_update' })]);
+    provider().fire('stateless', { payload: JSON.stringify({ type: 'session_event_appended', runId: 'x', seq: 2 }) });
+    await flush();
+    expect(eventCalls).toEqual(['x']);
+    expect(calls).toEqual(['getSessionEvents']); // no message listing either
+    expect(source.getSnapshot().sessionEventsByRun.x!.map((e) => e.seq)).toEqual([1, 2]);
+    source.dispose();
+  });
+
+  it('a new message fetches the messages since the last one, and only a run it newly names', async () => {
+    const { fake, eventCalls, calls, reset } = countingFake();
+    fake.setRun('old', run({ id: 'old' }), [sessionEvent({ runId: 'old', seq: 1 })]);
+    fake.setRun('new', run({ id: 'new' }), [sessionEvent({ runId: 'new', seq: 1 })]);
+    fake.queueMessages(sessionMessages(['old']), [], sessionMessages(['new'], 2));
+    const { source, provider } = open(fake.relay);
+    source.play();
+    await flush();
+    provider().fire('connect');
+    await flush();
+
+    reset();
+    provider().fire('stateless', { payload: JSON.stringify({ type: 'message_created', id: 'm-new', seq: 2, kind: 'session' }) });
+    await flush();
+    expect(calls).toEqual(['listMessages', 'getSessionEvents']);
+    expect(eventCalls).toEqual(['new']);
+    source.dispose();
+  });
+
+  it('a reconnect re-reads the runs that were going when the socket dropped, and no finished one', async () => {
+    const { fake, eventCalls, reset } = countingFake();
+    fake.setRun('live', run({ id: 'live' }), [sessionEvent({ runId: 'live', seq: 1 })]);
+    fake.setRun('done', run({ id: 'done', status: 'done' }), [sessionEvent({ runId: 'done', seq: 1 })]);
+    fake.queueMessages(sessionMessages(['live', 'done']), [], []);
+    const { source, provider } = open(fake.relay);
+    source.play();
+    await flush();
+    provider().fire('connect');
+    await flush();
+    provider().fire('disconnect');
+
+    // It finished while the socket was down.
+    fake.appendEvents('live', [sessionEvent({ runId: 'live', seq: 2, kind: 'turn_ended', payload: { status: 'done' } })]);
+    reset();
+    provider().fire('connect');
+    await flush();
+    expect(eventCalls).toEqual(['live']);
+    expect(source.getSnapshot().sessionEventsByRun.live!.map((e) => e.seq)).toEqual([1, 2]);
+    source.dispose();
+  });
+
+  it('dispose() mid-bootstrap stops further fetches, and nothing is applied or announced', async () => {
+    const { fake, eventCalls } = countingFake();
+    const runIds = Array.from({ length: 10 }, (_, i) => `run${i}`);
+    fake.queueMessages(sessionMessages(runIds));
+    const pending: Array<() => void> = [];
+    const relay: RelayRoomClient = {
+      ...fake.relay,
+      async getSessionEvents(bindingId, runId, after) {
+        eventCalls.push(runId);
+        await new Promise<void>((resolve) => pending.push(resolve));
+        return ok({ run: run({ id: runId }), events: [] });
+      },
+    };
+    const { source, provider } = open(relay);
+    const notified: string[] = [];
+    source.subscribe((event) => notified.push(event.type));
+    source.play();
+    await flush();
+    expect(eventCalls).toHaveLength(6); // the first bounded batch
+
+    source.dispose();
+    for (const resolve of pending.splice(0)) resolve();
+    await flush();
+    expect(eventCalls).toHaveLength(6); // the other 4 never started
+    expect(notified).toEqual([]);
+    expect(source.getSnapshot().messages).toEqual([]);
+    expect(provider()).toBeNull(); // never went on to open the socket
+  });
+
+  it('bootstrap asks for roster, messages, skills, invites and connectors all at once, and starts the runs before the rest is back', async () => {
+    const started: string[] = [];
+    const gate: Array<() => void> = [];
+    const held = <T,>(name: string, value: T) => async (): Promise<T> => {
+      started.push(name);
+      await new Promise<void>((resolve) => gate.push(resolve));
+      return value;
+    };
+    const fake = makeFakeRelay();
+    fake.setRun('run1', run(), []);
+    const relay: RelayRoomClient = {
+      ...fake.relay,
+      listMembers: held('listMembers', ok([member()])),
+      listSkills: held('listSkills', []),
+      listInvites: held('listInvites', ok([])),
+      listConnectors: held('listConnectors', ok([])),
+      listMessages: async () => {
+        started.push('listMessages');
+        return ok(sessionMessages(['run1']));
+      },
+      getSessionEvents: async (bindingId, runId, after) => {
+        started.push('getSessionEvents');
+        return fake.relay.getSessionEvents(bindingId, runId, after);
+      },
+    };
+    const { source } = open(relay);
+    source.play();
+    await flush();
+    // Nothing waits for anything else: the run is already loading while
+    // the roster, skills, invites and connectors are still out.
+    expect(new Set(started)).toEqual(
+      new Set(['listMembers', 'listMessages', 'listSkills', 'listInvites', 'listConnectors', 'getSessionEvents'])
+    );
+    for (const resolve of gate.splice(0)) resolve();
+    await flush();
+    expect(source.getSnapshot().messages).toHaveLength(1);
+    source.dispose();
+  });
+
+  it('bootstrap re-reads nothing per history message: a join, an invite and a connectors change cost no extra requests', async () => {
+    const { fake, calls } = countingFake();
+    const relay: RelayRoomClient = {
+      ...fake.relay,
+      listInvites: async () => {
+        calls.push('listInvites');
+        return ok([]);
+      },
+      listConnectors: async () => {
+        calls.push('listConnectors');
+        return ok([]);
+      },
+    };
+    fake.queueMessages([
+      message({ id: 'm1', seq: 1, kind: 'system', meta: { event: 'member_joined', userId: 'u-gone' } }),
+      message({ id: 'm2', seq: 2, kind: 'invite', meta: { inviteId: 'inv-unknown' } }),
+      message({ id: 'm3', seq: 3, kind: 'system', meta: { event: 'connectors_added', connectorIds: ['notion'] } }),
+    ]);
+    const { source } = open(relay);
+    source.play();
+    await flush();
+    expect(calls.filter((c) => c === 'listMembers')).toHaveLength(1);
+    expect(calls.filter((c) => c === 'listInvites')).toHaveLength(1);
+    expect(calls.filter((c) => c === 'listConnectors')).toHaveLength(1);
+    expect(source.getSnapshot().messages).toHaveLength(3);
+    source.dispose();
+  });
+
+  it('an empty space reads as loaded (and says so) once its messages are in, before any socket', async () => {
+    const fake = makeFakeRelay();
+    const { source } = open(fake.relay);
+    expect(source.getSnapshot().loaded).toBe(false);
+    const seen: string[] = [];
+    source.subscribe((event) => seen.push(event.type));
+    source.play();
+    await flush();
+    expect(source.getSnapshot().loaded).toBe(true);
+    expect(source.getSnapshot().connection).toBe('connecting');
+    expect(seen).toEqual(['room_loaded']);
+    source.dispose();
+  });
+
+  it('logs the open and each catch-up at info, with timings and counts only', async () => {
+    const fake = makeFakeRelay();
+    fake.setRun('run1', run(), [sessionEvent({ seq: 1, bytes: 120 })]);
+    fake.queueMessages(sessionMessages(['run1']), []);
+    const lines: Array<{ message: string; extra?: Record<string, unknown>; level?: string }> = [];
+    let provider: FakeProvider | null = null;
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: () => (provider = new FakeProvider()),
+      log: (message, extra, level) => lines.push({ message, extra, level }),
+    });
+    source.play();
+    await flush();
+    provider!.fire('connect');
+    await flush();
+    const info = lines.filter((l) => l.level === 'info');
+    expect(info.map((l) => l.message)).toEqual([
+      'Rig spaces: room loaded and shown',
+      'Rig spaces: room socket connected',
+      'Rig spaces: room catch-up',
+    ]);
+    expect(info[0]!.extra).toMatchObject({ bindingId: BINDING, messages: 1, runs: 1, eventBytes: 120 });
+    expect(info[2]!.extra).toMatchObject({ messages: true, runs: 1, calls: 2 });
+    expect(JSON.stringify(lines)).not.toContain('hello room');
     source.dispose();
   });
 });

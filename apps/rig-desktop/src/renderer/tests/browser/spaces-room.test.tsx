@@ -458,6 +458,21 @@ describe('Room view — renders through loading into content', () => {
     expect(skeleton?.querySelectorAll('.animate-pulse').length).toBeGreaterThanOrEqual(3);
     expect(skeleton?.querySelector('[data-state]')).toBeNull(); // no DotMatrix here
   });
+
+  it('shows the opening skeleton, not a blank pane, while it still asks who you are', async () => {
+    const { rpc } = await import('@renderer/lib/ipc');
+    const connection = rpc.rig.spacesConnection as { getConnectionInfo: () => Promise<unknown> };
+    const original = connection.getConnectionInfo;
+    connection.getConnectionInfo = () => new Promise(() => {}); // never answers
+    try {
+      await act(async () => {
+        root.render(<RoomView bindingId="b1" spaceName="#launch" />);
+      });
+      expect(host.querySelector('[data-testid="room-view"] [data-testid="room-loading-skeleton"]')).not.toBeNull();
+    } finally {
+      connection.getConnectionInfo = original;
+    }
+  });
 });
 
 describe('Room composer — palette on "/"', () => {

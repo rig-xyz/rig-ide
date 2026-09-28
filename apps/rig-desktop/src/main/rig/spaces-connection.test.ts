@@ -11,9 +11,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const resolveContext = vi.fn();
+const resolveSelfUserId = vi.fn();
 const isError = vi.fn((v: unknown) => typeof v === 'object' && v !== null && 'kind' in (v as object));
 vi.mock('./account', () => ({
   resolveContext: (...args: unknown[]) => resolveContext(...args),
+  resolveSelfUserId: (...args: unknown[]) => resolveSelfUserId(...args),
   isError: (v: unknown) => isError(v),
 }));
 
@@ -43,7 +45,7 @@ describe('rigSpacesConnectionController', () => {
 
   it('getConnectionInfo returns relayUrl/wsUrl/selfUserId and NO token field', async () => {
     resolveContext.mockResolvedValue({ url: 'https://relay.test', token: 'super-secret-pat' });
-    whoami.mockResolvedValue(ok({ id: 'u1' }));
+    resolveSelfUserId.mockResolvedValue(ok('u1'));
 
     const { rigSpacesConnectionController } = await import('./spaces-connection');
     const result = await rigSpacesConnectionController.getConnectionInfo();
@@ -67,6 +69,7 @@ describe('rigSpacesConnectionController', () => {
     const result = await rigSpacesConnectionController.getConnectionInfo();
 
     expect(result.success).toBe(false);
+    expect(resolveSelfUserId).not.toHaveBeenCalled();
     expect(whoami).not.toHaveBeenCalled();
   });
 
