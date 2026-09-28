@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url';
  *  floating range `^0.6.0`, so left unpinned tapd drifts independently of the
  *  CLI pin below it. Pin both explicitly and bump them in the same change. */
 const RIG_CLI_VERSION = '0.14.1';
-const TAPD_VERSION = '0.6.4';
+const TAPD_VERSION = '0.6.5';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, '..');
