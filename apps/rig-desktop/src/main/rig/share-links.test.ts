@@ -1,4 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// `./comments` imports telemetry → db/kv → db/client, which opens the app
+// SQLite DB via Electron's `app.getPath` at import time (unavailable here).
+vi.mock('@main/lib/telemetry', () => ({
+  telemetryService: { capture: vi.fn() },
+}));
+
 import { relayError, toShareLink } from './share-links';
 
 describe('toShareLink', () => {

@@ -1,7 +1,14 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// Telemetry imports db/kv → db/client, which opens the app SQLite DB via
+// Electron's `app.getPath` at import time (unavailable under node).
+vi.mock('@main/lib/telemetry', () => ({
+  telemetryService: { capture: vi.fn() },
+}));
+
 import { resolveCommentTarget, rigCommentsController } from './comments';
 
 /**

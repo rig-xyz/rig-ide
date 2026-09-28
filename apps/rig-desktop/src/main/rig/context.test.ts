@@ -1,7 +1,14 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// `./comments` imports telemetry → db/kv → db/client, which opens the app
+// SQLite DB via Electron's `app.getPath` at import time (unavailable here).
+vi.mock('@main/lib/telemetry', () => ({
+  telemetryService: { capture: vi.fn() },
+}));
+
 import { decodeRigContextTarget } from '@shared/rig/context';
 import { createRigContextTarget } from './context';
 import { rigFileRootRegistry } from './file-root-registry';
