@@ -54,7 +54,7 @@ export function InlineRigNameInput({
     setBusy(false);
     if (!result.success) {
       toast({
-        title: "Couldn't rename the rig",
+        title: "Couldn't rename it",
         description: result.error.message,
         variant: 'destructive',
       });

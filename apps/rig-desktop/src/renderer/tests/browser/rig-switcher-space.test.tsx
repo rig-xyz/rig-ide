@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   workspaces: vi.fn(),
   createSpace: vi.fn(),
   releaseRoot: vi.fn(),
+  rename: vi.fn(),
 }));
 
 vi.mock('@renderer/lib/ipc', () => ({
@@ -27,6 +28,7 @@ vi.mock('@renderer/lib/ipc', () => ({
       account: { workspaces: (...args: unknown[]) => mocks.workspaces(...args) },
       create: { create: (...args: unknown[]) => mocks.createSpace(...args) },
       files: { releaseRoot: (...args: unknown[]) => mocks.releaseRoot(...args) },
+      control: { rename: (...args: unknown[]) => mocks.rename(...args) },
     },
   },
   events: { on: vi.fn(() => () => {}) },
@@ -143,6 +145,38 @@ describe('RigSwitcher', () => {
     // Never collides with a space this account already has.
     expect(['growth', 'ops']).not.toContain(call.name);
     expect(onOpenPath).toHaveBeenCalledWith('/rigs/bright-harbor', { kind: 'space' });
+  });
+
+  it('"Rename…" puts the space\'s name in edit mode in place, and saving renames it', async () => {
+    mocks.rename.mockResolvedValue({ success: true, data: { name: 'growth team' } });
+    await openMenu({ isSpace: true });
+    const rename = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Rename…')!;
+    await act(async () => click(rename));
+    const input = host.querySelector<HTMLInputElement>('input')!;
+    expect(input.value).toBe('growth');
+
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setValue.call(input, 'growth team');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mocks.rename).toHaveBeenCalledWith({ bindingId: 'space-1', path: '/rigs/growth', name: 'growth team' });
+    expect(host.textContent).toContain('growth team');
+  });
+
+  it('double-clicking the name also renames it in place', async () => {
+    await openMenu({ isSpace: true });
+    const trigger = host.querySelector('button')!;
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+    expect(host.querySelector<HTMLInputElement>('input')?.value).toBe('growth');
   });
 
   it('a plain rig keeps the unfiltered menu with "Open folder…", no space-only items', async () => {

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Check, ChevronDown, FolderOpen, Hash, Home as HomeIcon, Loader2, Plus } from 'lucide-react';
+import { Check, ChevronDown, FolderOpen, Hash, Home as HomeIcon, Loader2, Pencil, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { generateSpaceName } from '@renderer/features/home/space-create';
 import { rpc } from '@renderer/lib/ipc';
@@ -164,6 +164,9 @@ export function RigSwitcher({
           onCommitted={(newName) => {
             setDisplayName(newName);
             setEditing(false);
+            // Home's lists show the name too (same refresh the Rename… dialog triggers there).
+            void queryClient.invalidateQueries({ queryKey: ['rig', 'recent'] });
+            void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
           }}
           onCancel={() => setEditing(false)}
           className="min-w-0 max-w-64 flex-1 rounded-control bg-bg-2 px-1 py-0.5 text-text-primary outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
@@ -195,6 +198,12 @@ export function RigSwitcher({
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
+        // Double-click the name to rename it in place, as in a file list.
+        onDoubleClick={() => {
+          setOpen(false);
+          setEditing(true);
+        }}
+        title="Double-click to rename"
         aria-haspopup="menu"
         aria-expanded={open}
         className="text-text-muted hover:bg-bg-2 hover:text-text-primary rounded-control flex min-w-0 shrink items-center gap-1 px-1 py-0.5 transition-colors [-webkit-app-region:no-drag]"
@@ -239,6 +248,19 @@ export function RigSwitcher({
           </button>
         ))}
         <div className="border-border-hairline mt-1 border-t pt-1">
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            onClick={() => {
+              setOpen(false);
+              setEditing(true);
+            }}
+            className="hover:bg-bg-2 text-text-secondary flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
+          >
+            <Pencil className="size-3.5 shrink-0" strokeWidth={1.5} />
+            Rename…
+          </button>
           {isSpace ? (
             <>
               <button
