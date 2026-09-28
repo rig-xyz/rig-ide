@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PAGE_SIGN_INS, type PageSignInsState } from '@shared/pages/sign-in-sites';
 import { RigSettingsStore } from '../settings';
-import { chromeTime, FIXTURE_PASSWORD, fixtureRoot, writeBrowser } from './chrome-fixture';
+import { chromeTime, FIXTURE_PASSWORD, fixtureApps, fixtureRoot, writeBrowser } from './chrome-fixture';
 import { SignInReadError, type CookieToSet, type JarCookie, type KeychainRead } from './chrome-sign-in';
 import { createPageSignIns, type CheckResult, type PageSignInDeps } from './page-sign-ins';
 
@@ -59,6 +59,7 @@ function setup(over: Partial<PageSignInDeps> = {}, initial: Partial<PageSignInsS
   const check = vi.fn<PageSignInDeps['check']>(async (_site, cookies) => ({ ok: true, cookies }));
   const flow = createPageSignIns({
     root,
+    appDirs: fixtureApps(root),
     now: () => now,
     getState: () => state,
     setState: (next) => {
@@ -86,9 +87,12 @@ describe('page sign-ins: options', () => {
     expect(state().access.chrome).toEqual({ folder: 'granted', keychain: 'unknown' });
   });
 
-  it('says when no browser is installed', () => {
+  it('says when no browser is installed, even with a data folder left behind', () => {
+    const root = fixtureRoot();
+    writeBrowser(root, 'Google/Chrome', [], { installed: false });
     const flow = createPageSignIns({
-      root: fixtureRoot(),
+      root,
+      appDirs: fixtureApps(root),
       getState: () => DEFAULT_PAGE_SIGN_INS,
       setState: () => {},
       keychain: vi.fn(),

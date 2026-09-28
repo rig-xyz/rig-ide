@@ -2,7 +2,7 @@ import { createCipheriv, createHash } from 'node:crypto';
 import { chmodSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FIXTURE_PASSWORD, fixtureRoot, writeBrowser } from './chrome-fixture';
+import { FIXTURE_PASSWORD, fixtureApps, fixtureRoot, installApp, writeBrowser } from './chrome-fixture';
 import {
   browserSpec,
   chromeCookieKey,
@@ -125,12 +125,18 @@ describe('browsers and profiles (fixture data folders)', () => {
     ]);
   }
 
-  it('finds installed Chromium browsers by their data folder', () => {
+  it('finds installed Chromium browsers by their app bundle, not by data left behind', () => {
     const root = fixtureRoot();
-    expect(installedBrowsers(root)).toEqual([]);
+    const apps = fixtureApps(root);
+    expect(installedBrowsers(apps)).toEqual([]);
     writeBrowser(root, 'Google/Chrome', []);
     writeBrowser(root, 'BraveSoftware/Brave-Browser', []);
-    expect(installedBrowsers(root).map((b) => b.name)).toEqual(['Chrome', 'Brave']);
+    // Edge's data outlived the app; Arc is installed but never opened.
+    writeBrowser(root, 'Microsoft Edge', [], { installed: false });
+    installApp(root, 'Arc/User Data');
+    expect(installedBrowsers(apps).map((b) => b.name)).toEqual(['Chrome', 'Arc', 'Brave']);
+    // Installed, never opened: no profiles, not a refusal.
+    expect(profilesWithSignIn(google, root, now, apps).browsers.map((b) => b.id)).toEqual(['chrome', 'arc', 'brave']);
   });
 
   it('lists profiles from Local State with their names and accounts, in the browser\'s order', () => {
@@ -147,7 +153,7 @@ describe('browsers and profiles (fixture data folders)', () => {
   it('says which profiles are signed in to a site, newest use first, hiding the others', () => {
     const root = fixtureRoot();
     twoProfiles(root);
-    const found = profilesWithSignIn(google, root, now);
+    const found = profilesWithSignIn(google, root, now, fixtureApps(root));
     expect(found.browsers).toEqual([{ id: 'chrome', name: 'Chrome' }]);
     expect(found.profiles.map((p) => [p.dir, p.name])).toEqual([
       ['Default', 'Personal'],
@@ -195,7 +201,8 @@ describe('browsers and profiles (fixture data folders)', () => {
     expect(reason(() => readSiteCookies(chrome, 'Profile 3', google, FIXTURE_PASSWORD, root, now))).toBe('not_signed_in');
     expect(reason(() => readSiteCookies(chrome, 'Profile 4', google, FIXTURE_PASSWORD, root, now))).toBe('not_signed_in');
     expect(reason(() => readSiteCookies(chrome, 'Default', google, 'wrong-password', root, now))).toBe('failed');
-    expect(reason(() => profilesWithSignIn(google, fixtureRoot(), now))).toBe('no_browser');
+    const empty = fixtureRoot();
+    expect(reason(() => profilesWithSignIn(google, empty, now, fixtureApps(empty)))).toBe('no_browser');
   });
 
   it("reads macOS's Files & Folders refusal as folder_access_denied, in listing and in reading", () => {
@@ -206,12 +213,12 @@ describe('browsers and profiles (fixture data folders)', () => {
     expect(() => readSiteCookies(chrome, 'Default', google, FIXTURE_PASSWORD, root, now)).toThrow(
       expect.objectContaining({ reason: 'folder_access_denied', browser: 'chrome' })
     );
-    // The whole browser folder refused: still "installed", listing says denied.
+    // The whole browser folder refused: still installed (the app is), listing says denied.
     chmodSync(dir, 0o000);
     locked.push(dir);
-    expect(installedBrowsers(root).map((b) => b.id)).toEqual(['chrome']);
+    expect(installedBrowsers(fixtureApps(root)).map((b) => b.id)).toEqual(['chrome']);
     expect(() => listProfiles(chrome, root)).toThrow(expect.objectContaining({ reason: 'folder_access_denied' }));
-    expect(() => profilesWithSignIn(google, root, now)).toThrow(expect.objectContaining({ reason: 'folder_access_denied', browser: 'chrome' }));
+    expect(() => profilesWithSignIn(google, root, now, fixtureApps(root))).toThrow(expect.objectContaining({ reason: 'folder_access_denied', browser: 'chrome' }));
   });
 
   it('keeps other browsers usable when one is refused', () => {
@@ -220,7 +227,7 @@ describe('browsers and profiles (fixture data folders)', () => {
     writeBrowser(root, 'Arc/User Data', [{ dir: 'Default', name: 'Arc', cookies: [{ host: '.google.com', name: 'SID', value: 'arc' }] }]);
     chmodSync(chromeDir, 0o000);
     locked.push(chromeDir);
-    const found = profilesWithSignIn(google, root, now);
+    const found = profilesWithSignIn(google, root, now, fixtureApps(root));
     expect(found.denied).toEqual(['chrome']);
     expect(found.profiles.map((p) => [p.browserName, p.name])).toEqual([['Arc', 'Arc']]);
   });

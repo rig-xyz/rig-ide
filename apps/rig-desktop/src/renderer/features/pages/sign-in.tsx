@@ -27,28 +27,55 @@ function siteOf(record: PageSignInRecord): SignInSite {
   return { ...signInSiteFor(record.site), name: record.siteName, hosts: record.hosts, checkUrl: record.checkUrl };
 }
 
-function BrowserAccessRow({ browser }: { browser: SignInsList['browsers'][number] }) {
+type Folder = SignInsList['browsers'][number]['folder'];
+
+function FolderStatus({ folder }: { folder: Folder }) {
+  return folder === 'granted' ? (
+    <span className="text-success">Allowed</span>
+  ) : folder === 'denied' ? (
+    <span className="text-warning">Not allowed</span>
+  ) : (
+    <span className="text-text-muted">Asks the first time</span>
+  );
+}
+
+/**
+ * One row for macOS's permission, naming the installed browsers ("Chrome,
+ * Arc") with one status; per browser only when they differ.
+ */
+function BrowserAccessRow({ browsers }: { browsers: SignInsList['browsers'] }) {
+  const folders = new Set(browsers.map((b) => b.folder));
+  const same = folders.size === 1;
+  const denied = folders.has('denied');
   return (
-    <div className="flex flex-col gap-1" data-testid="sign-in-access" data-folder={browser.folder}>
-      <div className="flex items-center gap-2 text-xs">
-        <span className="font-medium text-text-primary">{browser.name}</span>
-        <span className="min-w-0 flex-1 truncate text-text-muted">Rig can read one site's sign-in at a time from your {browser.name} profiles</span>
-        {browser.folder === 'granted' ? (
-          <span className="text-success shrink-0">Allowed</span>
-        ) : browser.folder === 'denied' ? (
-          <span className="text-warning shrink-0">Not allowed</span>
-        ) : (
-          <span className="shrink-0 text-text-muted">Asks the first time</span>
+    <div className="flex items-start justify-between gap-3" data-testid="sign-in-access" data-folder={same ? browsers[0]!.folder : 'mixed'}>
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-xs text-text-primary">
+          <b className="font-medium">Browser access</b>
+          <span className="text-text-muted"> · {browsers.map((b) => b.name).join(', ')}</span>
+        </span>
+        <p className="text-xs text-text-muted">
+          Rig reads one site's sign-in at a time from your browser profiles, and only for sites you pick.
+          {denied && ' Signed-in sites keep working; only new or refreshed sign-ins need it.'}
+        </p>
+        {!same && (
+          <ul className="flex flex-col text-xs" data-testid="sign-in-access-each">
+            {browsers.map((b) => (
+              <li key={b.id} className="text-text-secondary">
+                {b.name} · <FolderStatus folder={b.folder} />
+              </li>
+            ))}
+          </ul>
         )}
       </div>
-      {browser.folder === 'denied' && (
-        <div className="flex items-center gap-2">
+      <div className="flex shrink-0 flex-col items-end gap-1 text-xs">
+        {same && <FolderStatus folder={browsers[0]!.folder} />}
+        {denied && (
           <Button size="xs" variant="outline" onClick={() => void rpc.rig.pages.openPrivacySettings()}>
             Open System Settings
           </Button>
-          <span className="text-xs text-text-muted">Signed-in sites keep working; only new or refreshed sign-ins need it.</span>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -124,9 +151,7 @@ export function SignInRows() {
           No Chrome on this Mac. Pages can still be signed in by typing into them.
         </p>
       )}
-      {data?.browsers.map((b) => (
-        <BrowserAccessRow key={b.id} browser={b} />
-      ))}
+      {data && data.browsers.length > 0 && <BrowserAccessRow browsers={data.browsers} />}
       {(data?.sites.length ?? 0) > 0 && (
         <div className="border-border-hairline flex flex-col gap-2 border-t pt-3">
           {data!.sites.map((r) => (
@@ -163,7 +188,7 @@ export function SignInRows() {
         </div>
       )}
       <p className="text-xs text-text-muted">
-        Pages open as you. Agents see them only as you, only while a turn runs. Rig never copies a whole profile.
+        Pages open as you. Agents see them only as you, only while a turn runs.
       </p>
     </div>
   );

@@ -133,17 +133,22 @@ export interface BrowserSpec {
   keychainService: string;
   /** For "Open in <browser>". */
   bundleId: string;
+  /** Its app bundle in an Applications folder: how rig knows it's installed. */
+  app: string;
 }
 
 /** Chromium browsers on macOS: same cookie database, each with its own Keychain item. */
 export const CHROMIUM_BROWSERS: readonly BrowserSpec[] = [
-  { id: 'chrome', name: 'Chrome', dataDir: 'Google/Chrome', keychainService: 'Chrome Safe Storage', bundleId: 'com.google.Chrome' },
-  { id: 'arc', name: 'Arc', dataDir: 'Arc/User Data', keychainService: 'Arc Safe Storage', bundleId: 'company.thebrowser.Browser' },
-  { id: 'brave', name: 'Brave', dataDir: 'BraveSoftware/Brave-Browser', keychainService: 'Brave Safe Storage', bundleId: 'com.brave.Browser' },
-  { id: 'edge', name: 'Edge', dataDir: 'Microsoft Edge', keychainService: 'Microsoft Edge Safe Storage', bundleId: 'com.microsoft.edgemac' },
-  { id: 'chromium', name: 'Chromium', dataDir: 'Chromium', keychainService: 'Chromium Safe Storage', bundleId: 'org.chromium.Chromium' },
-  { id: 'vivaldi', name: 'Vivaldi', dataDir: 'Vivaldi', keychainService: 'Vivaldi Safe Storage', bundleId: 'com.vivaldi.Vivaldi' },
+  { id: 'chrome', name: 'Chrome', dataDir: 'Google/Chrome', keychainService: 'Chrome Safe Storage', bundleId: 'com.google.Chrome', app: 'Google Chrome.app' },
+  { id: 'arc', name: 'Arc', dataDir: 'Arc/User Data', keychainService: 'Arc Safe Storage', bundleId: 'company.thebrowser.Browser', app: 'Arc.app' },
+  { id: 'brave', name: 'Brave', dataDir: 'BraveSoftware/Brave-Browser', keychainService: 'Brave Safe Storage', bundleId: 'com.brave.Browser', app: 'Brave Browser.app' },
+  { id: 'edge', name: 'Edge', dataDir: 'Microsoft Edge', keychainService: 'Microsoft Edge Safe Storage', bundleId: 'com.microsoft.edgemac', app: 'Microsoft Edge.app' },
+  { id: 'chromium', name: 'Chromium', dataDir: 'Chromium', keychainService: 'Chromium Safe Storage', bundleId: 'org.chromium.Chromium', app: 'Chromium.app' },
+  { id: 'vivaldi', name: 'Vivaldi', dataDir: 'Vivaldi', keychainService: 'Vivaldi Safe Storage', bundleId: 'com.vivaldi.Vivaldi', app: 'Vivaldi.app' },
 ];
+
+/** Where apps are installed: the system Applications folder and the person's own; tests point this at fixtures. */
+export const APP_DIRS: readonly string[] = ['/Applications', path.join(homedir(), 'Applications')];
 
 export function browserSpec(id: BrowserId): BrowserSpec {
   return CHROMIUM_BROWSERS.find((b) => b.id === id)!;
@@ -179,18 +184,20 @@ function browserDir(browser: BrowserSpec, root: string): string {
 }
 
 /**
- * Installed Chromium browsers, by their data folder. A folder macOS won't
- * let rig into still counts: that's a permission to ask for, not a missing
- * browser.
+ * Installed Chromium browsers, by their app bundle in /Applications or
+ * ~/Applications: one stat each, and nothing of the person's data looked
+ * at (a data folder can outlive the app, and macOS may refuse to show it).
  */
-export function installedBrowsers(root = APP_SUPPORT): BrowserSpec[] {
-  return CHROMIUM_BROWSERS.filter((b) => {
-    try {
-      return statSync(browserDir(b, root)).isDirectory();
-    } catch (error) {
-      return isAccessDenied(error);
-    }
-  });
+export function installedBrowsers(appDirs: readonly string[] = APP_DIRS): BrowserSpec[] {
+  return CHROMIUM_BROWSERS.filter((b) =>
+    appDirs.some((dir) => {
+      try {
+        return statSync(path.join(dir, b.app)).isDirectory();
+      } catch {
+        return false;
+      }
+    })
+  );
 }
 
 /** A profile folder name from `Local State` that is safe to join onto a path. */
@@ -315,8 +322,8 @@ export interface SitePresence {
  * site. Throws `no_browser` with none installed, and `folder_access_denied`
  * when macOS refused every one of them.
  */
-export function profilesWithSignIn(hosts: readonly string[], root = APP_SUPPORT, now = Date.now()): SitePresence {
-  const browsers = installedBrowsers(root);
+export function profilesWithSignIn(hosts: readonly string[], root = APP_SUPPORT, now = Date.now(), appDirs: readonly string[] = APP_DIRS): SitePresence {
+  const browsers = installedBrowsers(appDirs);
   if (browsers.length === 0) throw new SignInReadError('no_browser');
   const out: SitePresence = { browsers: browsers.map((b) => ({ id: b.id, name: b.name })), profiles: [], denied: [] };
   for (const browser of browsers) {

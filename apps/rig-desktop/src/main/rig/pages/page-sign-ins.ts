@@ -11,6 +11,7 @@ import {
   type SignInSite,
 } from '@shared/pages/sign-in-sites';
 import {
+  APP_DIRS,
   APP_SUPPORT,
   CHROMIUM_BROWSERS,
   installedBrowsers,
@@ -45,6 +46,8 @@ export type CheckResult = { ok: true; cookies: CookieToSet[] } | { ok: false; re
 export interface PageSignInDeps {
   /** Where browsers keep their data (fixtures in tests). */
   root?: string;
+  /** Where browser apps are installed (fixtures in tests). */
+  appDirs?: readonly string[];
   now?: () => number;
   getState(): PageSignInsState;
   setState(next: PageSignInsState): void;
@@ -94,6 +97,7 @@ function failure(error: unknown): { reason: SignInFailureReason; browser?: Brows
 
 export function createPageSignIns(deps: PageSignInDeps) {
   const root = deps.root ?? APP_SUPPORT;
+  const appDirs = deps.appDirs ?? APP_DIRS;
   const now = deps.now ?? Date.now;
   const inflight = new Map<string, AbortController>();
   let lastKeepInStep = 0;
@@ -136,7 +140,7 @@ export function createPageSignIns(deps: PageSignInDeps) {
   function options(siteId: string, pageUrl?: string): SignInOptions {
     const site = siteFor(siteId, pageUrl);
     try {
-      const found = profilesWithSignIn(site.hosts, root, now());
+      const found = profilesWithSignIn(site.hosts, root, now(), appDirs);
       for (const b of found.browsers) noteAccess(b.id, { folder: found.denied.includes(b.id) ? 'denied' : 'granted' });
       return {
         ok: true,
@@ -258,7 +262,7 @@ export function createPageSignIns(deps: PageSignInDeps) {
     return {
       sites: Object.values(state.sites).sort((a, b) => a.siteName.localeCompare(b.siteName)),
       keepInStep: state.keepInStep,
-      browsers: installedBrowsers(root).map((b) => ({ id: b.id, name: b.name, ...(state.access[b.id] ?? UNKNOWN_ACCESS) })),
+      browsers: installedBrowsers(appDirs).map((b) => ({ id: b.id, name: b.name, ...(state.access[b.id] ?? UNKNOWN_ACCESS) })),
     };
   }
 

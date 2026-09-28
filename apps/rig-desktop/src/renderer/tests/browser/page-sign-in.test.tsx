@@ -472,6 +472,42 @@ describe('Settings › Sign-ins', () => {
     expect(document.querySelector('[data-testid="keep-in-step"]')).not.toBeNull();
   });
 
+  it('one "Browser access" row naming the installed browsers, with one status when they agree', async () => {
+    state.browsers = [
+      { id: 'chrome', name: 'Chrome', folder: 'unknown', keychain: 'unknown' },
+      { id: 'arc', name: 'Arc', folder: 'unknown', keychain: 'unknown' },
+    ];
+    await renderSettings();
+    const rows = document.querySelectorAll<HTMLElement>('[data-testid="sign-in-access"]');
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    expect(row.textContent).toContain('Browser access · Chrome, Arc');
+    expect(row.textContent!.match(/Asks the first time/g)).toHaveLength(1);
+    expect(row.textContent!.match(/one site's sign-in at a time/g)).toHaveLength(1);
+    expect(row.querySelector('[data-testid="sign-in-access-each"]')).toBeNull();
+    expect(row.textContent).not.toContain('Open System Settings');
+    // No sites yet: no site rows and no Keep in step, straight to Add a site.
+    expect(document.querySelector('[data-testid="sign-in-site"]')).toBeNull();
+    expect(document.querySelector('[data-testid="keep-in-step"]')).toBeNull();
+    expect(document.querySelector('input[aria-label="Add a site"]')).not.toBeNull();
+  });
+
+  it('shows each browser only when their statuses differ', async () => {
+    state.browsers = [
+      { id: 'chrome', name: 'Chrome', folder: 'granted', keychain: 'silent' },
+      { id: 'arc', name: 'Arc', folder: 'denied', keychain: 'unknown' },
+    ];
+    await renderSettings();
+    const row = document.querySelector<HTMLElement>('[data-testid="sign-in-access"]')!;
+    expect(row.dataset.folder).toBe('mixed');
+    expect(Array.from(row.querySelectorAll('[data-testid="sign-in-access-each"] li')).map((li) => li.textContent)).toEqual([
+      'Chrome · Allowed',
+      'Arc · Not allowed',
+    ]);
+    await click(button('Open System Settings'));
+    expect(pages.openPrivacySettings).toHaveBeenCalledOnce();
+  });
+
   it('with the permission off: says so and opens System Settings', async () => {
     state.browsers = [{ id: 'chrome', name: 'Chrome', folder: 'denied', keychain: 'unknown' }];
     await renderSettings();

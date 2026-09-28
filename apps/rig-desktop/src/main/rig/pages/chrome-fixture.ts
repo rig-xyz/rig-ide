@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { chromeCookieKey } from './chrome-sign-in';
+import { chromeCookieKey, CHROMIUM_BROWSERS } from './chrome-sign-in';
 
 /**
  * Test-only: a synthetic browser data folder (Local State + cookie
@@ -54,7 +54,25 @@ export function fixtureRoot(): string {
   return root;
 }
 
-export function writeBrowser(root: string, dataDir: string, profiles: FixtureProfile[], opts: { password?: string; dbVersion?: number } = {}): string {
+/** The fixture's Applications folder, beside its "Application Support". */
+export function fixtureApps(root: string): string[] {
+  return [path.join(path.dirname(root), 'Applications')];
+}
+
+/** Puts a browser's app bundle in the fixture's Applications folder: installed. */
+export function installApp(root: string, dataDir: string): void {
+  const spec = CHROMIUM_BROWSERS.find((b) => b.dataDir === dataDir)!;
+  mkdirSync(path.join(fixtureApps(root)[0]!, spec.app), { recursive: true });
+}
+
+/** A browser's data folder; installed too unless `installed: false` (data left behind by a removed app). */
+export function writeBrowser(
+  root: string,
+  dataDir: string,
+  profiles: FixtureProfile[],
+  opts: { password?: string; dbVersion?: number; installed?: boolean } = {}
+): string {
+  if (opts.installed !== false) installApp(root, dataDir);
   const dir = path.join(root, dataDir);
   mkdirSync(dir, { recursive: true });
   const infoCache = Object.fromEntries(profiles.map((p) => [p.dir, { name: p.name, ...(p.email ? { user_name: p.email, gaia_name: p.name } : { user_name: '' }) }]));
