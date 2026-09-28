@@ -1,4 +1,5 @@
 import { defineEvent } from '../lib/ipc/events';
+import { DEFAULT_PAGE_SIGN_INS, type PageSignInsState } from '../pages/sign-in-sites';
 import type { RoomSees } from '../spaces/room-sees';
 
 /**
@@ -229,6 +230,12 @@ export type RigSettings = {
    * it at once and only catches up. Off until the log lines show the win.
    */
   spacesRoomDiskCache: boolean;
+  /**
+   * Pages signed in from a browser (board 18): per site, which browser
+   * profile it came from and its hosts (never cookie values), "Keep in step",
+   * and what rig last saw of macOS's permissions. Main writes it alone.
+   */
+  pageSignIns: PageSignInsState;
 };
 
 export const DEFAULT_RIG_SETTINGS: RigSettings = {
@@ -257,6 +264,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   spacesDefaultOnApplied: true,
   spacesRoomSees: {},
   spacesRoomDiskCache: false,
+  pageSignIns: DEFAULT_PAGE_SIGN_INS,
 };
 
 /** The subset of legacy localStorage values the renderer can hand to `importLegacy`. */

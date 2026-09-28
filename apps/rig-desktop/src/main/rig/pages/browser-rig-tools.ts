@@ -1,8 +1,12 @@
+import { notSignedInForAgent, signInSiteForUrl } from '@shared/pages/sign-in-sites';
 import { canonicalPageUrl } from '@shared/spaces/links';
 import type { RigTool } from '../spaces/rig-tools';
 import type { SpacesRelayApi } from '../spaces/relay-api';
+import { agentPage } from './agent-pages';
 import { BROWSER_TOOLS } from './browser-tools';
 import { pinsFromRows } from './page-pins';
+import { pageSignIns } from './page-sign-ins-instance';
+import { pageIsSignInWall } from './sign-in-check';
 
 /**
  * The browser tools as rig tools: same server, same bearer token, same
@@ -29,6 +33,12 @@ export function browserRigTools(api: Pick<SpacesRelayApi, 'listMessages'>): RigT
                     .filter((p) => !p.resolved)
                     .map((p) => ({ n: p.n, comment: p.comment, anchor: p.anchor }))
                 : [];
+            },
+            signInWall: async (page) => {
+              if (!(await pageIsSignInWall(await agentPage(page)))) return null;
+              const site = signInSiteForUrl(page);
+              if (site) pageSignIns.markWall(site.id);
+              return notSignedInForAgent(page, site ? pageSignIns.recordFor(site.id) : null);
             },
           }
         );

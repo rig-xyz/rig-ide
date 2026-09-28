@@ -24,6 +24,12 @@ export interface PagePin {
 export interface BrowserToolsDeps {
   /** Pins (page comments) on this link in the agent's space, numbered as people see them. */
   pinsFor(url: string): Promise<PagePin[]>;
+  /**
+   * The page opened on a sign-in wall: returns what the agent is told
+   * instead of the page (and lets the owner's chip know). Absent, the page
+   * is read as it is.
+   */
+  signInWall?(url: string): Promise<string | null>;
 }
 
 export type BrowserToolContent =
@@ -97,6 +103,8 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
       if (!url) return say('Give the page link (http or https).', true);
       const pins = await deps.pinsFor(url);
       if (pins.length === 0) return say('No pins on this page.');
+      const wall = await deps.signInWall?.(url);
+      if (wall) return say(wall, true);
       const page = await agentPage(url);
       const boards = await boardsOf(url, false);
       const lines: string[] = [];
@@ -118,6 +126,8 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
     async run(input, deps) {
       const url = webUrl(input.url);
       if (!url) return say('Give the page link (http or https).', true);
+      const wall = await deps.signInWall?.(url);
+      if (wall) return say(wall, true);
       const page = await agentPage(url);
       const all = await boardsOf(url, true);
       if (all.length === 0) {
@@ -157,6 +167,8 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
     async run(input, deps) {
       const url = webUrl(input.url);
       if (!url) return say('Give the page link (http or https).', true);
+      const wall = await deps.signInWall?.(url);
+      if (wall) return say(wall, true);
       if (typeof input.pin === 'number') {
         const p = (await deps.pinsFor(url)).find((x) => x.n === input.pin);
         if (!p) return say(`There's no pin ${input.pin} on this page.`, true);

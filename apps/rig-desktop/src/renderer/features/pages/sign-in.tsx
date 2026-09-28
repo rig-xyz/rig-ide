@@ -19,14 +19,27 @@ export const SIGN_IN_SITES: { site: SignInSite; name: string }[] = [
   { site: 'google', name: 'Google' },
 ];
 
+/** Sign-ins are keyed by registrable domain now (board 18); this screen still offers these two until the chip replaces it. */
+const SITE_ID: Record<SignInSite, string> = { claude: 'claude.ai', google: 'google.com' };
+
 const STATUS_KEY = ['rig', 'pages', 'sign-in-status'];
 
 export function useSignInStatus() {
-  return useQuery({ queryKey: STATUS_KEY, queryFn: () => rpc.rig.pages.signInStatus() });
+  return useQuery({
+    queryKey: STATUS_KEY,
+    queryFn: async (): Promise<Record<SignInSite, boolean>> => {
+      const { sites } = await rpc.rig.pages.signIns();
+      const on = (site: SignInSite) => sites.some((s) => s.site === SITE_ID[site]);
+      return { claude: on('claude'), google: on('google') };
+    },
+  });
 }
 
 const FAILED: Record<string, string> = {
-  no_chrome: "Chrome isn't installed on this Mac.",
+  no_browser: "Chrome isn't installed on this Mac.",
+  folder_access_denied: 'macOS didn’t let rig read Chrome’s data. Turn it on in System Settings › Privacy & Security › Files & Folders.',
+  rejected_by_site: 'The site didn’t accept your Chrome sign-in in rig. Sign in here instead.',
+  cancelled: 'Stopped.',
   not_signed_in: "You're not signed in to it in Chrome. Sign in there first, then try again.",
   keychain_denied: 'macOS didn’t allow it. Try again and choose Allow.',
   failed: 'Something went wrong reading your Chrome sign-in.',
@@ -39,7 +52,12 @@ export function useChromeSignIn(): { signIn: (site: SignInSite) => Promise<boole
   const signIn = async (site: SignInSite) => {
     setBusy(site);
     try {
-      const result = await rpc.rig.pages.signIn({ site });
+      // Until the sheet's profile picker: the most recently used profile signed in to the site.
+      const options = await rpc.rig.pages.signInOptions({ site: SITE_ID[site] });
+      const profile = options.ok ? options.profiles[0] : undefined;
+      const result = profile
+        ? await rpc.rig.pages.signIn({ site: SITE_ID[site], browser: profile.browser, profile: profile.dir })
+        : { ok: false as const, reason: options.ok ? 'not_signed_in' : options.reason };
       await queryClient.invalidateQueries({ queryKey: STATUS_KEY });
       if (!result.ok) toast({ title: 'Couldn’t use your Chrome sign-in', description: FAILED[result.reason] });
       return result.ok;
@@ -74,7 +92,7 @@ export function SignInRows() {
                   size="sm"
                   variant="ghost"
                   onClick={() =>
-                    void rpc.rig.pages.signOut({ site }).then(() => queryClient.invalidateQueries({ queryKey: STATUS_KEY }))
+                    void rpc.rig.pages.signOut({ site: SITE_ID[site] }).then(() => queryClient.invalidateQueries({ queryKey: STATUS_KEY }))
                   }
                 >
                   Remove

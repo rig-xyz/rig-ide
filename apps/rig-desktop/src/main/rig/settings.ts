@@ -12,6 +12,7 @@ import {
   type RigSettingsPatch,
   type RigsRailView,
 } from '@shared/rig/settings';
+import { normalizePageSignIns } from '@shared/pages/sign-in-sites';
 import { isRoomSees, type RoomSees } from '@shared/spaces/room-sees';
 
 /**
@@ -183,6 +184,7 @@ function normalizeSettings(parsed: unknown): RigSettings {
     spacesDefaultOnApplied: true,
     spacesRoomSees: normalizeRoomSees(raw.spacesRoomSees),
     spacesRoomDiskCache: raw.spacesRoomDiskCache === true,
+    pageSignIns: normalizePageSignIns(raw.pageSignIns),
   };
 }
 

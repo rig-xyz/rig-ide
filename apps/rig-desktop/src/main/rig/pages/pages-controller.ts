@@ -1,13 +1,17 @@
-import { webContents as allWebContents, type WebContents } from 'electron';
+import { execFile } from 'node:child_process';
+import { webContents as allWebContents, shell, type WebContents } from 'electron';
 import { err, ok, type Result } from '@emdash/shared';
 import { createRPCController } from '@shared/lib/ipc/rpc';
+import { signInSiteForUrl, type BrowserId } from '@shared/pages/sign-in-sites';
 import { canonicalPageUrl } from '@shared/spaces/links';
 import { log } from '@main/lib/logger';
 import { runCommentTurnInRoom } from '../spaces/dispatch-controller-instance';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
 import { pagesSession } from './agent-pages';
-import { importChromeSignIn, type ChromeSignInResult, type SignInSite } from './chrome-sign-in';
+import { CHROMIUM_BROWSERS, installedBrowsers } from './chrome-sign-in';
 import { linkTitle } from './link-titles';
+import { pageSignIns, startPageSignInsKeepInStep } from './page-sign-ins-instance';
+import { pageIsSignInWall } from './sign-in-check';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { hitPage, locateOnPage } from './page-frames';
 import { threadsFromRows } from './page-pins';
@@ -54,34 +58,65 @@ export function pinHiddenContext(url: string, thread: Pick<PageThread, 'n' | 'qu
 
 const AGENT_LABEL = { claude: 'claude-code', codex: 'codex' } as const;
 
-const SITE_DOMAINS: Record<SignInSite, string> = { claude: 'claude.ai', google: 'google.com' };
+/** Privacy & Security › Files & Folders, where macOS's "access data from other apps" is turned back on. */
+export const FILES_AND_FOLDERS_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders';
 
-/** Whether the pages profile holds any cookie for a site (names only are looked at, never values). */
-async function signedIn(site: SignInSite): Promise<boolean> {
-  return (await pagesSession().cookies.get({ domain: SITE_DOMAINS[site] })).length > 0;
-}
+startPageSignInsKeepInStep();
 
 export const rigPagesController = createRPCController({
-  /** Which sites pages open signed in to. */
-  signInStatus: async (): Promise<Record<SignInSite, boolean>> => ({ claude: await signedIn('claude'), google: await signedIn('google') }),
+  /**
+   * Signing pages in (board 18). A site is its registrable domain
+   * (`@shared/pages/sign-in-sites`). Settings › Sign-ins and the page chip
+   * read `signIns`; the sheet runs `signInOptions` → `signIn`.
+   */
+  signIns: () => pageSignIns.list(),
 
-  /** "Use Chrome sign-in": the person's click; macOS asks them before anything is read. */
-  signIn: ({ site }: { site: SignInSite }): Promise<ChromeSignInResult> => {
-    const ses = pagesSession();
-    return importChromeSignIn(site, (cookie) => ses.cookies.set(cookie));
+  /** Profiles signed in to the site in each installed browser (names and last use, no cookies). */
+  signInOptions: ({ site, pageUrl }: { site: string; pageUrl?: string }) => pageSignIns.options(site, pageUrl),
+
+  /** The person's pick: macOS asks before the browser's key is handed over; cookies are written only once the check passes. */
+  signIn: (input: { site: string; browser: BrowserId; profile: string; pageUrl?: string }) => pageSignIns.signIn(input),
+
+  /** "Refresh from Chrome": the same profile again. */
+  refreshSignIn: ({ site }: { site: string }) => pageSignIns.refresh(site),
+
+  /** The sheet's Cancel, mid-read or mid-check: nothing is written. */
+  cancelSignIn: ({ site }: { site: string }): void => pageSignIns.cancel(site),
+
+  /** Forget a site's sign-in in rig's pages (every host that was copied); the browser is untouched. */
+  signOut: ({ site }: { site: string }) => pageSignIns.signOut(site),
+
+  setKeepInStep: ({ on }: { on: boolean }): void => pageSignIns.setKeepInStep(on),
+
+  /**
+   * Whether the page in a panel webview is on a sign-in wall (a known
+   * sign-in host, a sign-in path, a password field). A wall on the page's
+   * site (the one its link belongs to, not the sign-in host it was sent to)
+   * marks rig's copy of that sign-in expired.
+   */
+  signInWall: async ({ webContentsId, site }: { webContentsId: number; site?: string }): Promise<{ wall: boolean }> => {
+    const page = pageContents(webContentsId);
+    if (!page) return { wall: false };
+    const wall = await pageIsSignInWall(page);
+    if (wall && site) pageSignIns.markWall(site);
+    return { wall };
+  },
+
+  /** Opens System Settings at Files & Folders (case 2). */
+  openPrivacySettings: async (): Promise<void> => {
+    await shell.openExternal(FILES_AND_FOLDERS_URL);
+  },
+
+  /** "Open in Chrome": the page in the named browser (else the first Chromium one installed, else the default browser). */
+  openInBrowser: async ({ url, browser }: { url: string; browser?: BrowserId }): Promise<void> => {
+    if (!signInSiteForUrl(url)) return;
+    const spec = (browser && CHROMIUM_BROWSERS.find((b) => b.id === browser)) || installedBrowsers()[0];
+    if (!spec) return void (await shell.openExternal(url));
+    await new Promise<void>((resolve) => execFile('open', ['-b', spec.bundleId, url], () => resolve()));
   },
 
   /** The name behind a Claude or Google link chip, read from the page as the person sees it; null when it can't be named. */
   linkTitle: ({ url }: { url: string }): Promise<string | null> => linkTitle(url),
-
-  /** Forget a site's sign-in in the pages profile (Chrome is untouched). */
-  signOut: async ({ site }: { site: SignInSite }): Promise<void> => {
-    const ses = pagesSession();
-    for (const cookie of await ses.cookies.get({ domain: SITE_DOMAINS[site] })) {
-      const host = (cookie.domain ?? SITE_DOMAINS[site]).replace(/^\./, '');
-      await ses.cookies.remove(`https://${host}${cookie.path ?? '/'}`, cookie.name).catch(() => {});
-    }
-  },
 
   hit: async ({ webContentsId, x, y }: { webContentsId: number; x: number; y: number }): Promise<Result<{ anchor: PageAnchor; quote: string } | null, Failure>> => {
     const page = pageContents(webContentsId);
