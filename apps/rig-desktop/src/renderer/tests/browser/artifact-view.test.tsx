@@ -1,10 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { userEvent } from 'vitest/browser';
+import { EditorView } from '@codemirror/view';
 import { ArtifactView } from '@renderer/features/artifact/artifact-view';
 import { ImageArtifact } from '@renderer/features/artifact/image-artifact';
 import { resetPreviewModeMemoryForTests } from '@renderer/features/artifact/preview-mode-memory';
+import { rpc } from '@renderer/lib/ipc';
 // Real tokens, not a stub — the mono/highlight assertions below check actual
 // resolved `--accent`/`--text-primary` CSS custom properties, which only
 // exist once this stylesheet (normally loaded once at app boot) is present.
@@ -147,6 +150,7 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
     mocks.watch.mockReset();
     mocks.unwatch.mockReset();
     mocks.readBinary.mockReset();
+    vi.mocked(rpc.agents.list).mockResolvedValue([]);
     mocks.commentsCacheGet.mockReset().mockResolvedValue(null);
     mocks.commentsCacheSet.mockReset().mockResolvedValue({ success: true, data: undefined });
     // Settles the store into a terminal, non-polling state immediately —
@@ -384,6 +388,91 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
         host.querySelector('textarea[placeholder="Add a comment, @ to mention"]') !== null
     );
   });
+
+  // Dylan: the pill's agent logo did nothing while its Comment worked. The
+  // pill re-renders on its own click's mouseup (Preview re-reads the
+  // selection), and `AgentIcon` used to rewrite its <svg> on every render —
+  // the pressed node was gone before the click, so the button never got it.
+  it.each([
+    { surface: 'preview', margin: 'rail', button: 'Ask Claude', placeholder: 'Tell Claude Code' },
+    { surface: 'preview', margin: 'pins', button: 'Ask Claude', placeholder: 'Tell Claude Code' },
+    { surface: 'preview', margin: 'rail', button: 'Comment', placeholder: 'Add a comment' },
+    { surface: 'edit', margin: 'rail', button: 'Ask Claude', placeholder: 'Tell Claude Code' },
+  ] as const)(
+    'opens a draft from the $surface selection pill\'s $button with a real click ($margin)',
+    async ({ surface, margin, button, placeholder }) => {
+      if (margin === 'pins') host.style.width = '700px';
+      vi.mocked(rpc.agents.list).mockResolvedValue([
+        {
+          id: 'claude',
+          name: 'Claude Code',
+          status: 'available',
+          icon: { kind: 'svg', variants: [{ minSize: 0, light: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/></svg>' }] },
+        },
+      ] as never);
+      mocks.read.mockResolvedValue({
+        success: true,
+        data: { content: '# Forecast\n\nThe Q3 forecast is $4.2m.\n', truncated: false },
+      });
+      mocks.commentsResolveTarget.mockResolvedValue({
+        success: true,
+        data: {
+          target: { bindingId: 'binding-1', relayUrl: 'https://relay.example', relPath: 'forecast.md' },
+          selfUserId: 'user-1',
+        },
+      });
+
+      // The two Tailwind utilities a real pointer depends on here (this
+      // harness loads only `tokens.css`): the pill floats beside the
+      // selection instead of past the end of the page (a scroll to reach it
+      // would dismiss it), and the logo fills its box, so the click lands on
+      // the logo's own <svg> — as it does for a person.
+      const style = document.createElement('style');
+      style.textContent = '.fixed { position: fixed; } [data-testid="comment-selection-pill"] svg { width: 100%; height: 100%; }';
+      document.head.appendChild(style);
+      onTestFinished(() => style.remove());
+
+      await renderArtifact('/repo/forecast.md');
+      await waitFor(() => loadingGone(host));
+      // The pill only offers agents once the runnable list has landed.
+      await waitFor(() => vi.mocked(rpc.agents.list).mock.calls.length > 0);
+
+      if (surface === 'edit') {
+        const editButton = host.querySelector<HTMLButtonElement>('button[aria-label="Edit"]')!;
+        await act(async () => editButton.click());
+        await waitFor(() => host.querySelector('.cm-editor') !== null);
+        const view = EditorView.findFromDOM(host.querySelector<HTMLElement>('.cm-editor')!)!;
+        const from = view.state.doc.toString().indexOf('The Q3');
+        await act(async () => {
+          view.dispatch({ selection: { anchor: from, head: from + 'The Q3 forecast'.length } });
+        });
+      } else {
+        const paragraph = Array.from(host.querySelectorAll('p')).find((p) => p.textContent?.includes('The Q3'))!;
+        await act(async () => {
+          const range = document.createRange();
+          range.selectNodeContents(paragraph);
+          window.getSelection()?.removeAllRanges();
+          window.getSelection()?.addRange(range);
+          document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        });
+      }
+
+      const pillButton = () =>
+        Array.from(
+          document.body.querySelectorAll<HTMLButtonElement>('[data-testid="comment-selection-pill"] button')
+        ).find((b) => (b.getAttribute('aria-label') ?? b.textContent?.trim()) === button);
+      await waitFor(() => pillButton() !== undefined);
+
+      // A real pointer click (mousedown → mouseup → click), not `.click()`:
+      // the document-level mouseup the pill's own click fires is part of it.
+      await userEvent.click(pillButton()!);
+      await waitFor(
+        () =>
+          host.querySelector('[data-comments-rail]')?.textContent?.includes('The Q3') === true &&
+          host.querySelector(`textarea[placeholder^="${placeholder}"]`) !== null
+      );
+    }
+  );
 
   it('repaints CM6 markers and the margin after a Preview → Edit round-trip, with no content change (preview-mode-spec.md rollout step 3)', async () => {
     mocks.read.mockImplementation(() =>

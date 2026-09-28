@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useTheme } from '@renderer/lib/hooks/use-theme';
 import { cn } from '@renderer/lib/utils';
 import type { AgentIconAsset } from '@shared/core/agents/agent-payload';
@@ -27,10 +28,16 @@ export function AgentIcon({
 }) {
   const theme = useTheme();
   const variant = pickIconVariant(icon.variants, size);
+  const content = variant ? (theme === 'dark' && variant.dark ? variant.dark : variant.light) : '';
+  // Stable while the markup is: React rewrites `innerHTML` whenever this
+  // object's identity changes, replacing the <svg> on every re-render. A
+  // re-render mid-press on the logo (the selection pill re-renders on its own
+  // click's mouseup) then detaches the pressed node before the click, and
+  // the browser never fires that click on the button around it.
+  const html = useMemo(() => ({ __html: content }), [content]);
   if (!variant) return null;
 
   const shouldInvert = theme === 'dark' && icon.invertInDark;
-  const content = theme === 'dark' && variant.dark ? variant.dark : variant.light;
 
   const wrapperClass = cn(
     'inline-flex shrink-0 items-center justify-center [&>svg]:h-full [&>svg]:w-full',
@@ -52,7 +59,7 @@ export function AgentIcon({
       className={wrapperClass}
       style={{ width: size, height: size }}
       // eslint-disable-next-line react/no-danger
-      dangerouslySetInnerHTML={{ __html: content }}
+      dangerouslySetInnerHTML={html}
     />
   );
 }
