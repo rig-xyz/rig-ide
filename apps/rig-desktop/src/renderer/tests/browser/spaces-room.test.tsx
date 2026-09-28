@@ -14,7 +14,7 @@ import { AgentRows } from '@renderer/features/spaces/components/agent-rows';
 import { ConnectorGallery } from '@renderer/features/spaces/components/connector-gallery';
 import { ConnectorsSection } from '@renderer/features/spaces/components/connectors-panel';
 import { groupThreads, RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
-import { RoomLoadingSkeleton, RoomView, sendFromComposer } from '@renderer/features/spaces/components/room-view';
+import { RoomLoadingSkeleton, RoomView, sendFromComposer, withPendingSends } from '@renderer/features/spaces/components/room-view';
 import { SessionCard } from '@renderer/features/spaces/components/session-card';
 import { ConnectorCard } from '@renderer/features/spaces/components/transcript-items';
 import { connectorsApi } from '@renderer/features/spaces/connectors-api';
@@ -130,6 +130,29 @@ describe('Room transcript — flat rows', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     host.remove();
+  });
+
+  it('shows a message you just sent right away, as sending, until the relay hands it back', async () => {
+    const snapshot = replayedSnapshot();
+    const lastSeq = Math.max(...snapshot.messages.map((m) => m.seq));
+    const pending = { localId: 'sending-1', text: 'on my way', createdAt: '2026-09-27T20:00:00.000Z', id: null };
+    const shown = withPendingSends(snapshot, [pending], 'bob');
+    // At the end, yours, and never ahead of the relay's own numbering (the read marker uses it).
+    expect(shown.messages.at(-1)).toMatchObject({ id: 'sending-1', authorId: 'bob', body: 'on my way', sending: true, seq: lastSeq });
+
+    await act(async () => {
+      root.render(<RoomTranscript snapshot={shown} ownId="bob" />);
+    });
+    const row = Array.from(host.querySelectorAll<HTMLElement>('[data-testid="message-row"]')).at(-1)!;
+    expect(row.dataset.sending).toBe('true');
+    expect(row.textContent).toContain('Sending…');
+    expect(row.textContent).toContain('on my way');
+
+    // Once the real message (same id) is in the snapshot, the pending one is gone.
+    const real: RoomMessage = { ...shown.messages.at(-1)!, id: 'msg-9', seq: lastSeq + 1, sending: undefined };
+    const arrived = { ...snapshot, messages: [...snapshot.messages, real] };
+    const after = withPendingSends(arrived, [{ ...pending, id: 'msg-9' }], 'bob');
+    expect(after).toBe(arrived);
   });
 
   it('puts your messages on the right and names everyone else on the left', async () => {

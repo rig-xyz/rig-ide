@@ -124,14 +124,45 @@ function PageChip({ url, title }: { url: string; title?: string }) {
   );
 }
 
+/**
+ * The @mention whose "@" is at `at`, if any. A member's display name wins,
+ * longest first, so "@Hugo Renaudin" beats a member called "Hugo" and never
+ * swallows the word after it; the name must end at a word boundary ("@Hugonaut"
+ * isn't "@Hugo"). Otherwise a lowercase handle, the agent shape (`@claude`).
+ */
+function mentionAt(
+  text: string,
+  at: number,
+  members: readonly Pick<RoomMember, 'id' | 'name'>[]
+): { token: string; memberId?: string } | null {
+  const rest = text.slice(at + 1);
+  let best: { token: string; memberId: string } | null = null;
+  for (const member of members) {
+    const name = member.name.trim();
+    if (!name || (best && name.length < best.token.length)) continue;
+    const candidate = rest.slice(0, name.length);
+    if (candidate.toLowerCase() !== name.toLowerCase() || /[\p{L}\p{N}_]/u.test(rest.charAt(name.length))) continue;
+    best = { token: `@${candidate}`, memberId: member.id };
+  }
+  if (best) return best;
+  const handle = /^[a-z]+/.exec(rest)?.[0];
+  return handle ? { token: `@${handle}` } : null;
+}
+
 /** Inline emphasis for links, @mentions, /commands and +file.md references — same markup rules as the reference demo's `rich()`, done as React nodes instead of HTML string concatenation. */
-export function richText(text: string, ownId: string): ReactNode[] {
+export function richText(
+  text: string,
+  ownId: string,
+  /** The room's people, so a display-name mention ("@Hugo Renaudin", what the composer's Tab inserts) reads as one. */
+  members: readonly Pick<RoomMember, 'id' | 'name'>[] = []
+): ReactNode[] {
   // Links first, so nothing inside a URL reads as a mention or a file. @
   // only starts a mention after whitespace, the start, or opening
   // punctuation (an email's "@gmail" stays plain), and a /command only at
   // the very start of the message (a path like "/etc/hosts" stays plain).
+  // The mention group is just the "@"; `mentionAt` decides how far it runs.
   const pattern = new RegExp(
-    `(${URL_PATTERN.source})|((?<![\\w.@/:-])@[a-z]+)|(^\\/[a-z-]+(?![\\w/.]))|(\\+[\\w./-]+\\.md)|(reviews\\/[\\w.-]+\\.md)`,
+    `(${URL_PATTERN.source})|((?<![\\w.@/:-])@)|(^\\/[a-z-]+(?![\\w/.]))|(\\+[\\w./-]+\\.md)|(reviews\\/[\\w.-]+\\.md)`,
     'g'
   );
   const nodes: ReactNode[] = [];
@@ -139,14 +170,21 @@ export function richText(text: string, ownId: string): ReactNode[] {
   let match: RegExpExecArray | null;
   let key = 0;
   while ((match = pattern.exec(text))) {
+    const mention = match[2] ? mentionAt(text, match.index, members) : null;
+    if (match[2] && !mention) {
+      // A lone "@" (or "@Someone" who isn't here): stays in the surrounding text.
+      pattern.lastIndex = match.index + 1;
+      continue;
+    }
     if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
     let token = match[0];
     if (match[1]) {
       // The sentence's own punctuation after a link stays text.
       token = trimUrl(token);
       nodes.push(<MessageLink key={key++} url={token} />);
-    } else if (token.startsWith('@')) {
-      const mentioned = token.slice(1) === ownId;
+    } else if (mention) {
+      token = mention.token;
+      const mentioned = mention.memberId === ownId || token.slice(1) === ownId;
       nodes.push(
         <span
           key={key++}
@@ -332,7 +370,7 @@ export function MessageRow({
 }) {
   const author = memberOf(snapshot, message.authorId);
   const mine = message.authorId === ownId;
-  const body = message.body ? richText(message.body, ownId) : null;
+  const body = message.body ? richText(message.body, ownId, snapshot.members) : null;
   const replyTo = message.meta.kind === 'text' ? message.meta.replyTo : undefined;
   const actions = (
     <RowActions
@@ -359,15 +397,21 @@ export function MessageRow({
         data-author={message.authorId}
         data-mine="true"
         data-continued={continued}
+        data-sending={message.sending ? 'true' : undefined}
       >
-        <RowTime message={message} className="pb-1" />
+        {message.sending ? (
+          <span className="pb-1 text-xs text-text-muted">Sending…</span>
+        ) : (
+          <RowTime message={message} className="pb-1" />
+        )}
         <div className="flex min-w-0 flex-col items-end gap-1">
           {replyTo && <ReplyQuote replyTo={replyTo} mine onJumpTo={onJumpTo} />}
-          <p className={bubbleClass(true)} data-highlight-target>
+          <p className={cn(bubbleClass(true), message.sending && 'opacity-60')} data-highlight-target>
             {body}
           </p>
         </div>
-        {actions}
+        {/* Nothing to reply to or copy a link to until the relay has it. */}
+        {!message.sending && actions}
       </div>
     );
   }

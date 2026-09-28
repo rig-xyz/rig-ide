@@ -26,6 +26,58 @@ describe('richText mentions', () => {
   });
 });
 
+/**
+ * 0.4.4: Tab-completing "@Hu" inserts the member's display name ("@Hugo
+ * Renaudin"), but the bubble only recognised lowercase single-word handles,
+ * so a person mention rendered as plain text.
+ */
+describe('richText person mentions', () => {
+  const members = [
+    { id: 'u_hugo', name: 'Hugo Renaudin' },
+    { id: 'u_hugo2', name: 'Hugo' },
+    { id: 'bob', name: 'Bob Stone' },
+  ];
+  const spans = (text: string, ownId = 'bob') => {
+    const html = renderToStaticMarkup(<>{richText(text, ownId, members)}</>);
+    return [...html.matchAll(/<span([^>]*)>([^<]*)<\/span>/g)].map((m) => ({ attrs: m[1]!, text: m[2]! }));
+  };
+
+  it('highlights a multi-word member name as one mention, without swallowing the next word', () => {
+    expect(
+      spans('Actually can you just run @Hugo Renaudin through the changes in 0.4.3?').map((s) => s.text)
+    ).toEqual(['@Hugo Renaudin']);
+  });
+
+  it('resolves names that prefix each other to the longest', () => {
+    expect(spans('@Hugo Renaudin and @Hugo, both').map((s) => s.text)).toEqual(['@Hugo Renaudin', '@Hugo']);
+  });
+
+  it('keeps trailing punctuation and possessives outside the mention', () => {
+    expect(spans("ask @Hugo Renaudin's agent, or @Hugo Renaudin.").map((s) => s.text)).toEqual([
+      '@Hugo Renaudin',
+      '@Hugo Renaudin',
+    ]);
+  });
+
+  it('matches the name case-insensitively but not as a prefix of a longer word', () => {
+    expect(spans('@hugo renaudin hi').map((s) => s.text)).toEqual(['@hugo renaudin']);
+    // "@Hugonaut" is not "@Hugo": no person mention, and not the lowercase agent-style shape either.
+    expect(spans('@Hugonaut hi')).toEqual([]);
+  });
+
+  it('marks a mention of the viewer', () => {
+    const [you] = spans('thanks @Bob Stone');
+    expect(you!.text).toBe('@Bob Stone');
+    expect(you!.attrs).toContain('bg-accent-subtle');
+    const [other] = spans('thanks @Hugo Renaudin');
+    expect(other!.attrs).not.toContain('bg-accent-subtle');
+  });
+
+  it('keeps agent mentions and email addresses as before', () => {
+    expect(spans('@claude ping hugo.renaudin@gmail.com and @Hugo').map((s) => s.text)).toEqual(['@claude', '@Hugo']);
+  });
+});
+
 describe('richText links', () => {
   const render = (text: string) => {
     const host = document.createElement('div');

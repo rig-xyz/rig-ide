@@ -229,6 +229,8 @@ export interface RoomMessage {
   meta: MessageMeta;
   /** The doc comment thread this belongs to (its first comment's id): the comment itself, its replies, and agent runs answering it. */
   threadId?: string;
+  /** Your own message, shown the moment you send it, before the relay has it back. */
+  sending?: true;
 }
 
 export interface RoomInvite {

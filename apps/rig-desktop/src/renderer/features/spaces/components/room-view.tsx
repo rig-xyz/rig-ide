@@ -2,6 +2,7 @@ import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucid
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
+import { formatClock } from '@renderer/lib/time-format';
 import { cn } from '@renderer/lib/utils';
 import type { ConnectorId, GlobalServer } from '@shared/spaces/connectors';
 import { roomSeesFor, spacesLocalRunEventChannel } from '@shared/spaces/room-sees';
@@ -196,6 +197,7 @@ function busyOwnAgents(snapshot: RoomSnapshot, selfUserId: string): AgentKind[] 
  * its own question. The request carries no settings: the turn runs in your
  * agent's persistent session for this space, as its last turn did (only
  * the @-pill's pickers change them, and they do it on the session itself).
+ * Resolves to the message's id, or null when it wasn't sent.
  */
 export async function sendFromComposer(
   source: Pick<RelayRoomSource, 'send' | 'requestOwnAgent'>,
@@ -203,13 +205,47 @@ export async function sendFromComposer(
   text: string,
   { replyTo, agent, attach }: ComposerSendContext,
   wake: () => void
-): Promise<void> {
+): Promise<string | null> {
   const asks = agent && ownAgents.includes(agent) ? agent : null;
   const sourceMessageId = await source.send(text, replyTo, asks ?? undefined);
-  if (!asks) return;
+  if (!asks) return sourceMessageId;
   const prompt = attach ? `${text}\n\n(Open beside the chat: ${attach})` : text;
   await source.requestOwnAgent(asks, prompt, sourceMessageId ?? undefined);
   wake();
+  return sourceMessageId;
+}
+
+/** A message you've sent that the relay hasn't handed back yet; `id` once the post has returned. */
+type PendingSend = { localId: string; text: string; replyTo?: RoomReplyRef; createdAt: string; id: string | null };
+
+/**
+ * The snapshot with your pending messages at the end, so a message shows the
+ * moment you send it instead of vanishing until the relay's round trip. Each
+ * one drops out as soon as the real message (same id) is in the snapshot.
+ * They take the last real `seq`, so the read marker never counts past what
+ * the relay has.
+ */
+export function withPendingSends(snapshot: RoomSnapshot, pending: readonly PendingSend[], selfUserId: string): RoomSnapshot {
+  const have = new Set(snapshot.messages.map((m) => m.id));
+  const shown = pending.filter((send) => send.id === null || !have.has(send.id));
+  if (shown.length === 0) return snapshot;
+  const seq = snapshot.messages.reduce((max, m) => Math.max(max, m.seq), 0);
+  return {
+    ...snapshot,
+    messages: [
+      ...snapshot.messages,
+      ...shown.map((send) => ({
+        id: send.localId,
+        seq,
+        authorId: selfUserId,
+        createdAt: send.createdAt,
+        time: formatClock(send.createdAt),
+        body: send.text,
+        meta: { kind: 'text' as const, ...(send.replyTo ? { replyTo: send.replyTo } : {}) },
+        sending: true as const,
+      })),
+    ],
+  };
 }
 
 export function RoomView({
@@ -260,6 +296,7 @@ export function RoomView({
     initialSection: 'global-setup' | null;
   }>({ open: false, focus: null, initialScope: 'all', initialSection: null });
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
+  const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
   // The body only exists once the Room has a snapshot (and isn't folded into
   // the doc-focus rail), so it's tracked as state: the observer attaches when
   // the element appears, not at mount — a mount-time `[]` effect missed it
@@ -530,9 +567,40 @@ export function RoomView({
     if (!(source instanceof RelayRoomSource) || !snapshot) return;
     setReplyTo(null);
     const ownAgents = snapshot.agents.filter((a) => a.owner === selfUserId).map((a) => a.agent);
+    const localId = `sending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setPendingSends((current) => [
+      ...current,
+      { localId, text, ...(context.replyTo ? { replyTo: context.replyTo } : {}), createdAt: new Date().toISOString(), id: null },
+    ]);
+    // Not sent: it leaves the transcript and goes back in the composer, so nothing typed is lost.
+    const failed = () => {
+      setPendingSends((current) => current.filter((send) => send.localId !== localId));
+      setPrefill({ text, nonce: Date.now() });
+      toast({ title: 'Your message wasn’t sent', description: 'It’s back in the message box. Try sending it again.' });
+    };
     // Wake this device's claim poller rather than waiting for its next tick.
-    void sendFromComposer(source, ownAgents, text, context, () => void rpc.rig.spacesDispatch.checkNow());
+    sendFromComposer(source, ownAgents, text, context, () => void rpc.rig.spacesDispatch.checkNow()).then(
+      (id) =>
+        id === null
+          ? failed()
+          : setPendingSends((current) => current.map((send) => (send.localId === localId ? { ...send, id } : send))),
+      failed
+    );
   };
+
+  // A pending message is done once the real one is in the snapshot.
+  useEffect(() => {
+    if (!snapshot) return;
+    const have = new Set(snapshot.messages.map((m) => m.id));
+    setPendingSends((current) => {
+      const next = current.filter((send) => send.id === null || !have.has(send.id));
+      return next.length === current.length ? current : next;
+    });
+  }, [snapshot]);
+  const shownSnapshot = useMemo(
+    () => (snapshot ? withPendingSends(snapshot, pendingSends, selfUserId) : snapshot),
+    [snapshot, pendingSends, selfUserId]
+  );
 
   // Split-resize perf round: `RoomTranscript` memoizes its own node list
   // against its props (its own `mapEntries`/render loop), which only pays
@@ -668,7 +736,7 @@ export function RoomView({
           ) : (
           <OpenPageContext.Provider value={onOpenPage ?? null}>
           <RoomTranscript
-            snapshot={snapshot}
+            snapshot={shownSnapshot ?? snapshot}
             ownId={selfUserId}
             onStopSession={handleStopSession}
             onResolvePermission={handleResolvePermission}
