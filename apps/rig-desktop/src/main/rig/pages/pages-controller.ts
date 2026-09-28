@@ -194,7 +194,11 @@ export const rigPagesController = createRPCController({
     return ok(threadsFromRows(rows.data, (id) => (id ? (names.get(id) ?? null) : null)));
   },
 
-  comment: async (input: { bindingId: string; url: string; title?: string; body: string; quote: string; anchor: PageAnchor }): Promise<Result<{ id: string }, Failure>> => {
+  /**
+   * `asks`: the agent the renderer will ask itself right after (`askAgent`),
+   * saved as `meta.asks` so the relay's dispatcher doesn't ask it again.
+   */
+  comment: async (input: { bindingId: string; url: string; title?: string; body: string; quote: string; anchor: PageAnchor; asks?: 'claude' | 'codex' }): Promise<Result<{ id: string }, Failure>> => {
     const path = canonicalPageUrl(input.url);
     // The pin's number, saved with it so the chat can show it without the
     // page's whole history: pins number in the order they were made.
@@ -205,13 +209,21 @@ export const rigPagesController = createRPCController({
       path,
       anchor: { exact: input.quote.slice(0, 2000), page: input.anchor as unknown as Record<string, unknown> },
       // So the chat names the page for everyone, whether or not they can open it.
-      meta: { ...(input.title ? { pageTitle: input.title.slice(0, 200) } : {}), ...(pin ? { pin } : {}) },
+      meta: {
+        ...(input.title ? { pageTitle: input.title.slice(0, 200) } : {}),
+        ...(pin ? { pin } : {}),
+        ...(input.asks ? { asks: input.asks } : {}),
+      },
     });
     return posted.success ? ok({ id: posted.data.id }) : err({ message: posted.error.message });
   },
 
-  reply: async (input: { bindingId: string; parentId: string; body: string }): Promise<Result<{ id: string }, Failure>> => {
-    const posted = await api.postMessage(input.bindingId, { body: input.body, parentId: input.parentId });
+  reply: async (input: { bindingId: string; parentId: string; body: string; asks?: 'claude' | 'codex' }): Promise<Result<{ id: string }, Failure>> => {
+    const posted = await api.postMessage(input.bindingId, {
+      body: input.body,
+      parentId: input.parentId,
+      ...(input.asks ? { meta: { asks: input.asks } } : {}),
+    });
     return posted.success ? ok({ id: posted.data.id }) : err({ message: posted.error.message });
   },
 

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   listeners: new Map<string, Set<(data: unknown) => void>>(),
   askAgent: vi.fn<(input: unknown) => Promise<unknown>>(),
   commentsCreate: vi.fn<(input: unknown) => Promise<unknown>>(),
+  commentsReply: vi.fn<(input: unknown) => Promise<unknown>>(),
   commentsList: vi.fn<(input: unknown) => Promise<unknown>>(),
 }));
 
@@ -38,6 +39,7 @@ vi.mock('@renderer/lib/ipc', () => ({
         })),
         list: (...args: unknown[]) => mocks.commentsList(args[0]),
         create: (...args: unknown[]) => mocks.commentsCreate(args[0]),
+        reply: (...args: unknown[]) => mocks.commentsReply(args[0]),
         askAgent: (...args: unknown[]) => mocks.askAgent(args[0]),
       },
     },
@@ -88,6 +90,10 @@ describe('comment agent streaming', () => {
   beforeEach(async () => {
     mocks.listeners.clear();
     mocks.commentsCreate.mockReset().mockResolvedValue({ success: true, data: root });
+    mocks.commentsReply.mockReset().mockResolvedValue({
+      success: true,
+      data: { ...root, id: 'msg-reply', seq: '2', parentId: root.id, path: null, anchor: null },
+    });
     mocks.commentsList.mockReset().mockResolvedValue({
       success: true,
       data: { messages: [root] },
@@ -139,5 +145,26 @@ describe('comment agent streaming', () => {
       text: 'The recorded intent was',
       error: 'The agent connection closed.',
     });
+  });
+
+  // `meta.asks` tells the relay's dispatcher this app runs the agent itself,
+  // so it doesn't ask the same agent a second time (one answer, not two).
+  it('marks a comment the app answers with its own agent (meta.asks), and only that one', async () => {
+    await store.create(root.anchor!.exact, '@claude other options?', { providerId: 'claude', name: 'Claude' });
+    expect(mocks.commentsCreate.mock.calls[0]![0]).toMatchObject({ meta: { asks: 'claude' } });
+    expect(mocks.askAgent).toHaveBeenCalledTimes(1);
+
+    await store.create(root.anchor!.exact, 'just a note');
+    expect((mocks.commentsCreate.mock.calls[1]![0] as { meta: Record<string, unknown> }).meta).not.toHaveProperty(
+      'asks'
+    );
+  });
+
+  it('marks a reply that hands the thread to your agent', async () => {
+    await store.reply(root.id, 'and codex?', { providerId: 'codex', name: 'Codex' });
+    expect(mocks.commentsReply.mock.calls[0]![0]).toMatchObject({ parentId: root.id, meta: { asks: 'codex' } });
+
+    await store.reply(root.id, 'thanks');
+    expect(mocks.commentsReply.mock.calls[1]![0]).not.toHaveProperty('meta');
   });
 });

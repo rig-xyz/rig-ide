@@ -131,6 +131,16 @@ export type CommentsState =
 export type AgentMention = { providerId: string; name: string };
 
 /**
+ * `meta.asks` for a post this app answers with your own agent itself (the
+ * chat composer's marker too): the relay's dispatcher then leaves it alone
+ * instead of asking the same agent a second time.
+ */
+function asksMeta(mention: AgentMention | undefined): { asks?: 'claude' | 'codex' } {
+  const id = mention?.providerId;
+  return id === 'claude' || id === 'codex' ? { asks: id } : {};
+}
+
+/**
  * The store is the single owner of every scroll in the docs feature — no
  * component ever calls `scrollIntoView` on its own initiative. `pendingReveal`
  * (below) is set only by explicit user gestures (clicking an anchored
@@ -940,7 +950,11 @@ export class DocCommentsStore {
         // `pin`: the thread's number (creation order, `numberThreads`), saved
         // so the chat's row for it can show the same number without loading
         // the file's whole comment history.
-        meta: { ...(paintbrush ? { paintbrush: true } : {}), pin: this.threads.length + 1 },
+        meta: {
+          ...(paintbrush ? { paintbrush: true } : {}),
+          pin: this.threads.length + 1,
+          ...asksMeta(mention),
+        },
       });
       if (result.success) {
         newId = result.data.id;
@@ -992,10 +1006,12 @@ export class DocCommentsStore {
    */
   async reply(rootId: string, body: string, mention?: AgentMention): Promise<boolean> {
     return this._mutate(rootId, async () => {
+      const asks = asksMeta(mention);
       const result = await rpc.rig.comments.reply({
         absPath: this.path,
         parentId: rootId,
         body,
+        ...(asks.asks ? { meta: asks } : {}),
       });
       if (result.success && mention && result.data.author.kind !== 'agent') {
         // Built from the POST response rather than the next poll, so the agent

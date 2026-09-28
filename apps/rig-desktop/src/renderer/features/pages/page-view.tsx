@@ -423,8 +423,8 @@ export function PageView({
             at={{ x: openPlace.x!, y: openPlace.y! }}
             width={stageWidth}
             onReply={async (body) => {
-              await rpc.rig.pages.reply({ bindingId, parentId: openThread.id, body });
               const agent = mentionedAgent(body);
+              await rpc.rig.pages.reply({ bindingId, parentId: openThread.id, body, asks: agent ?? undefined });
               if (agent) void rpc.rig.pages.askAgent({ bindingId, url, threadId: openThread.id, agent, question: body });
               await refresh();
             }}
@@ -444,13 +444,21 @@ export function PageView({
             onSubmit={async (typed) => {
               // Addressed to an agent: the comment says so, as if typed.
               const body = who && !mentionedAgent(typed) ? `@${who.id} ${typed}` : typed;
-              const result = await rpc.rig.pages.comment({ bindingId, url, title, body, quote: draft.quote, anchor: draft.anchor });
+              const agent = mentionedAgent(body);
+              const result = await rpc.rig.pages.comment({
+                bindingId,
+                url,
+                title,
+                body,
+                quote: draft.quote,
+                anchor: draft.anchor,
+                asks: agent ?? undefined,
+              });
               setDraft(null);
               setCommenting(false);
               await refresh();
               if (result.success) {
                 setOpenId(result.data.id);
-                const agent = mentionedAgent(body);
                 if (agent) void rpc.rig.pages.askAgent({ bindingId, url, threadId: result.data.id, agent, question: body });
               }
             }}
