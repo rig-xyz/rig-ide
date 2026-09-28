@@ -107,7 +107,8 @@ export function SpacesCard({
     statusByBinding,
     attentionByBinding,
     selfUserId,
-    now
+    now,
+    offlineActivity
   );
   const visible = showAll ? sorted : sorted.slice(0, SHOWN_CAP);
   const needsYouCount = countNeedsApproval(rows, statusByBinding, selfUserId);

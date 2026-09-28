@@ -333,9 +333,18 @@ export function sortSpaceRowsByActivity<T extends { bindingId: string; name: str
   statusByBinding: ReadonlyMap<string, RigSpaceStatus>,
   attentionByBinding: ReadonlyMap<string, SpaceAttention>,
   selfUserId: string | null,
-  now: number
+  now: number,
+  /**
+   * Each space's last activity on this computer, counted alongside the live
+   * status so the order is already right before the statuses arrive (they
+   * load after the list; without this the first paint sorted every space as
+   * inactive, alphabetically, and reshuffled a moment later).
+   */
+  localActivity?: ReadonlyMap<string, number | null>
 ): T[] {
   const idle: SpaceAttention = { kind: 'idle', lastActivityAt: null };
+  const recency = (bindingId: string, status: RigSpaceStatus | undefined) =>
+    Math.max(spaceRecencyKey(status, now), localActivity?.get(bindingId) ?? 0);
   return [...rows].sort((a, b) => {
     const sa = statusByBinding.get(a.bindingId);
     const sb = statusByBinding.get(b.bindingId);
@@ -343,7 +352,7 @@ export function sortSpaceRowsByActivity<T extends { bindingId: string; name: str
       spaceActivityRank(sa, attentionByBinding.get(a.bindingId) ?? idle, selfUserId) -
       spaceActivityRank(sb, attentionByBinding.get(b.bindingId) ?? idle, selfUserId);
     if (rankDiff !== 0) return rankDiff;
-    const recencyDiff = spaceRecencyKey(sb, now) - spaceRecencyKey(sa, now);
+    const recencyDiff = recency(b.bindingId, sb) - recency(a.bindingId, sa);
     if (recencyDiff !== 0) return recencyDiff;
     return a.name.localeCompare(b.name);
   });

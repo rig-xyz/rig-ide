@@ -351,6 +351,30 @@ describe('sortSpaceRowsByActivity', () => {
     expect(sorted.map((r) => r.bindingId)).toEqual(['waiting', 'live', 'missed', 'quiet']);
   });
 
+  it('orders by local activity before the live statuses arrive, so nothing reshuffles when they do', () => {
+    const rows = [
+      { bindingId: 'alpha', name: 'a-alpha' },
+      { bindingId: 'recent', name: 'z-recent' },
+    ];
+    const local = new Map<string, number | null>([
+      ['alpha', NOW - 86_400_000],
+      ['recent', NOW - 60_000],
+    ]);
+    const idle = new Map(rows.map((r) => [r.bindingId, { kind: 'idle' as const, lastActivityAt: null }]));
+    // No statuses yet: recency from this computer, not the alphabet.
+    const before = sortSpaceRowsByActivity(rows, new Map(), idle, 'me', NOW, local);
+    expect(before.map((r) => r.bindingId)).toEqual(['recent', 'alpha']);
+    // Statuses land with an older relay activity for both: same order.
+    const statuses = new Map<string, RigSpaceStatus>(
+      rows.map((r) => [
+        r.bindingId,
+        { bindingId: r.bindingId, running: [], lastRun: { status: 'done', endedAt: new Date(NOW - 7 * 86_400_000).toISOString(), agent: 'claude', ownerUserId: 'u' } },
+      ])
+    );
+    const after = sortSpaceRowsByActivity(rows, statuses, idle, 'me', NOW, local);
+    expect(after.map((r) => r.bindingId)).toEqual(['recent', 'alpha']);
+  });
+
   it('orders idle spaces by their latest activity, messages included', () => {
     const rows = [
       { bindingId: 'old', name: 'a-old' },
