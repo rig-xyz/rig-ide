@@ -22,8 +22,10 @@
  */
 
 import { RUN_CONNECTORS_EVENT, rigToolArgs, type ConnectorGap } from '@shared/spaces/connectors';
+import type { RunSummary } from '@shared/spaces/room-cache';
 import { DETAILS_HIDDEN_EVENT, isRoomSees, PRIVATE_PROGRESS_EVENT, RUN_PRIVACY_EVENT } from '@shared/spaces/room-sees';
 import type {
+  RoomSnapshot,
   SessionCard,
   SessionEvent,
   SessionOutput,
@@ -344,6 +346,50 @@ export function projectSessionCard(events: readonly SessionEvent[]): SessionCard
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
   for (const event of sorted) applySessionEvent(card, event);
   return card;
+}
+
+/**
+ * A finished run's card as the disk cache keeps it (rig/docs/room-disk-cache-spec.md):
+ * only what survives "Hide details" — the answer, status, model, step
+ * count, failure, privacy. Never steps, thinking, plan or tool output.
+ */
+export function summarizeCard(card: SessionCard): RunSummary {
+  return {
+    answer: card.finalAnswer,
+    status: card.status,
+    model: card.model,
+    stepCount: Math.max(card.steps.length, card.privateSteps),
+    failureReason: card.failureReason,
+    privacy: card.privacy,
+    detailsHidden: card.detailsHidden,
+    lastSeq: card.lastSeq,
+  };
+}
+
+/** A card from a disk-cache summary: the answer and the step count, no step list (fetched when the card is expanded). */
+export function cardFromSummary(summary: RunSummary): SessionCard {
+  const status = ['running', 'waiting', 'done', 'stopped', 'failed'].includes(summary.status)
+    ? (summary.status as SessionStatus)
+    : 'done';
+  return {
+    ...newSessionCard(),
+    status,
+    model: summary.model,
+    failureReason: summary.failureReason,
+    finalAnswer: summary.answer,
+    privateSteps: summary.stepCount,
+    privacy: isRoomSees(summary.privacy) ? summary.privacy : null,
+    detailsHidden: summary.detailsHidden,
+    lastSeq: summary.lastSeq,
+  };
+}
+
+/** A run's card in a Room: from its log, or — shown from disk, log not fetched — from its summary. */
+export function runCard(snapshot: Pick<RoomSnapshot, 'sessionEventsByRun' | 'sessionSummaryByRun'>, runId: string): SessionCard {
+  const events = snapshot.sessionEventsByRun[runId];
+  const summary = snapshot.sessionSummaryByRun?.[runId];
+  if ((!events || events.length === 0) && summary) return cardFromSummary(summary);
+  return projectSessionCard(events ?? []);
 }
 
 /**

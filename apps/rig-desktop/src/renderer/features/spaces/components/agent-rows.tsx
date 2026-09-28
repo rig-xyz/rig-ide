@@ -1,6 +1,6 @@
 import { ChevronRight, Bot } from 'lucide-react';
 import { useState } from 'react';
-import { effectiveRunStatus, projectSessionCard } from '../projection';
+import { effectiveRunStatus, runCard } from '../projection';
 import type { AgentKind, RoomSnapshot } from '../types';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
@@ -33,7 +33,7 @@ export function AgentRows({
     runs
       .filter((m) => m.owner === owner && m.agent === kind)
       .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
-  const cardOf = (runId: string) => projectSessionCard(snapshot.sessionEventsByRun[runId] ?? []);
+  const cardOf = (runId: string) => runCard(snapshot, runId);
   const isWorking = (owner: string, kind: AgentKind) =>
     runsOf(owner, kind).some((meta) => effectiveRunStatus(meta.status, cardOf(meta.id)) === 'running');
   // The model an agent last ran here, as its latest run reported it.
@@ -180,7 +180,7 @@ export type SpaceChipStatus =
 export function spaceChipStatus(snapshot: RoomSnapshot, selfUserId: string, unseenCount: number): SpaceChipStatus | null {
   const running: Array<{ owner: string; agent: AgentKind }> = [];
   for (const meta of Object.values(snapshot.sessionMetaByRun)) {
-    const card = projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? []);
+    const card = runCard(snapshot, meta.id);
     if (effectiveRunStatus(meta.status, card) !== 'running') continue;
     if (meta.owner === selfUserId && card.permissions.pending.length > 0) return { kind: 'needs-you', agent: meta.agent };
     running.push({ owner: meta.owner, agent: meta.agent });

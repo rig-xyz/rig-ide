@@ -5,7 +5,7 @@ import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
 import type { ConnectResult, GlobalServer } from '@shared/spaces/connectors';
-import { effectiveRunStatus, projectSessionCard } from '../projection';
+import { effectiveRunStatus, runCard } from '../projection';
 import { readLastSeen, writeLastSeen } from '../room-read-marker';
 import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
 import { type MapEntry, ConversationMap } from './conversation-map';
@@ -60,9 +60,8 @@ function isContinuation(prev: RoomMessage | undefined, message: RoomMessage, sna
  * time per agent, so this one is waiting in line.
  */
 function isQueued(meta: SessionRunMeta, snapshot: RoomSnapshot): boolean {
-  if ((snapshot.sessionEventsByRun[meta.id] ?? []).length > 0) return false;
-  const running = (m: SessionRunMeta) =>
-    effectiveRunStatus(m.status, projectSessionCard(snapshot.sessionEventsByRun[m.id] ?? [])) === 'running';
+  if ((snapshot.sessionEventsByRun[meta.id] ?? []).length > 0 || snapshot.sessionSummaryByRun?.[meta.id]) return false;
+  const running = (m: SessionRunMeta) => effectiveRunStatus(m.status, runCard(snapshot, m.id)) === 'running';
   if (!running(meta)) return false;
   return Object.values(snapshot.sessionMetaByRun).some(
     (other) =>
@@ -87,7 +86,8 @@ function renderItem(
   onRerun?: (agent: AgentKind, prompt: string) => void,
   onConnectorConnect?: (id: string) => Promise<ConnectResult>,
   globalSetup?: GlobalServer[],
-  onHideDetails?: (runId: string) => Promise<boolean>
+  onHideDetails?: (runId: string) => Promise<boolean>,
+  onLoadRunLog?: (runId: string) => void
 ) {
   switch (message.meta.kind) {
     case 'text':
@@ -120,6 +120,8 @@ function renderItem(
       // Its log is still loading: hold its place (same row key, so the card replaces this in place).
       if (!meta) return snapshot.runsLoading?.[message.meta.runId] ? <SessionCardPlaceholder /> : null;
       const events = snapshot.sessionEventsByRun[message.meta.runId] ?? [];
+      // Shown from disk: its summary until the log is fetched (on expand).
+      const summary = events.length === 0 ? snapshot.sessionSummaryByRun?.[message.meta.runId] : undefined;
       const owner = snapshot.members.find((m) => m.id === meta.owner);
       // Stop is only ever offered for MY agent's own session — never a
       // teammate's, same "own agent only" rule the composer's @mention
@@ -132,6 +134,8 @@ function renderItem(
         <SessionCard
           meta={meta}
           events={events}
+          summary={summary}
+          onLoadLog={summary && onLoadRunLog ? () => onLoadRunLog(meta.id) : undefined}
           owner={owner}
           viewerIsOwner={meta.owner === ownId}
           continued={continued}
@@ -283,7 +287,7 @@ function mapEntriesFor(units: TranscriptUnit[], snapshot: RoomSnapshot, ownId: s
         id: m.id,
         tone: 'agent',
         label: `${meta.owner === ownId ? 'Your' : `${nameOf(meta.owner)}'s`} ${AGENT_NAME[meta.agent]} · ${m.time}`,
-        preview: () => projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? []).finalAnswer || 'Working…',
+        preview: () => runCard(snapshot, meta.id).finalAnswer || 'Working…',
       });
     }
   }
@@ -302,6 +306,7 @@ export function RoomTranscript({
   onConnectorConnect,
   globalSetup,
   onHideDetails,
+  onLoadRunLog,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
@@ -321,6 +326,8 @@ export function RoomTranscript({
   globalSetup?: GlobalServer[];
   /** "Hide details" on one of the viewer's own finished runs. Resolves false if it couldn't. */
   onHideDetails?: (runId: string) => Promise<boolean>;
+  /** A run shown from the disk cache (a summary only): fetch its log, when its card is expanded. */
+  onLoadRunLog?: (runId: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -424,18 +431,21 @@ export function RoomTranscript({
   // one you'd scrolled to, fixed for this visit (Slack's "New" line).
   const [newFromId, setNewFromId] = useState<string | null>(null);
   const markedRef = useRef(false);
+  // Shown from disk (`stale`), it waits for the catch-up: what came in since is exactly what's new.
+  const stale = snapshot.stale === true;
   useEffect(() => {
-    if (!readKey || markedRef.current || snapshot.messages.length === 0) return;
+    if (!readKey || markedRef.current || stale || snapshot.messages.length === 0) return;
     markedRef.current = true;
     const lastRead = readLastSeen(readKey);
     if (lastRead === null) return;
     const first = snapshot.messages.find((m) => m.seq > lastRead && m.authorId !== ownId);
     if (first) setNewFromId(first.id);
-  }, [readKey, snapshot.messages, ownId]);
+  }, [readKey, snapshot.messages, ownId, stale]);
   useEffect(() => {
-    if (!readKey || !pinned || snapshot.messages.length === 0) return;
+    // Nor is anything marked read before then: the marker would skip what's new.
+    if (!readKey || !pinned || stale || snapshot.messages.length === 0) return;
     writeLastSeen(readKey, Math.max(...snapshot.messages.map((m) => m.seq)));
-  }, [readKey, pinned, snapshot.messages]);
+  }, [readKey, pinned, snapshot.messages, stale]);
 
   // Split-resize perf round: `groupThreads` used to run twice a render —
   // once here, once again inline below to build the actual rows — so any
@@ -447,7 +457,10 @@ export function RoomTranscript({
   const mapEntries = useMemo(() => mapEntriesFor(units, snapshot, ownId), [units, snapshot, ownId]);
 
   const agentWorking = Object.values(snapshot.sessionMetaByRun).some(
-    (meta) => meta.status === 'running' && snapshot.sessionEventsByRun[meta.id]?.every((e) => e.kind !== 'turn_ended')
+    (meta) =>
+      meta.status === 'running' &&
+      !snapshot.sessionSummaryByRun?.[meta.id] && // a summary is a finished run's
+      snapshot.sessionEventsByRun[meta.id]?.every((e) => e.kind !== 'turn_ended')
   );
 
   return (
@@ -508,7 +521,8 @@ export function RoomTranscript({
                   onRerun,
                   onConnectorConnect,
                   globalSetup,
-                  onHideDetails
+                  onHideDetails,
+                  onLoadRunLog
                 );
               const continuedUnit = unit.kind === 'message' && isContinuation(prevMessage, unit.message, snapshot);
               const node =

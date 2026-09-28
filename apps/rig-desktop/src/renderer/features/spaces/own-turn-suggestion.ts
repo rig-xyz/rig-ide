@@ -2,7 +2,7 @@ import type { DraftPreview } from '@main/rig/spaces-connection';
 import type { ComposerSuggestion } from './components/composer';
 import { AGENT_NAME } from './components/identity';
 import { excerptOf } from './components/transcript-items';
-import { projectSessionCard } from './projection';
+import { runCard } from './projection';
 import type { RoomSnapshot } from './types';
 
 /**
@@ -23,7 +23,7 @@ export function ownTurnSuggestion(
   if (message?.meta.kind !== 'session') return null;
   const meta = snapshot.sessionMetaByRun[message.meta.runId];
   if (!meta || meta.owner !== selfUserId || meta.agent !== preview.agent) return null;
-  const answer = projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? []).finalAnswer;
+  const answer = runCard(snapshot, meta.id).finalAnswer;
   if (!answer) return null;
   return {
     agent: meta.agent,

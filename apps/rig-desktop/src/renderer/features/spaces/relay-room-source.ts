@@ -47,10 +47,11 @@ import type {
 } from '@main/rig/spaces/relay-api';
 import type { DraftPreview } from '@main/rig/spaces-connection';
 import { connectorById, type ConnectionStatus } from '@shared/spaces/connectors';
+import { ROOM_CACHE_FORMAT_VERSION, ROOM_CACHE_MAX_BYTES, type CachedRoomBlob } from '@shared/spaces/room-cache';
 import type { LocalRunEvent } from '@shared/spaces/room-sees';
 import type { AgentKind, MessageKind, RoomConnector, RoomEvent, RoomReplyRef, RoomSnapshot, SessionRunMeta } from './types';
 import { reduceRoom } from './fixtures/room-feed';
-import { effectiveRunStatus, projectSessionCard } from './projection';
+import { effectiveRunStatus, runCard, summarizeCard } from './projection';
 import type { RoomSource } from './room-source';
 import { formatClock } from '@renderer/lib/time-format';
 
@@ -214,6 +215,16 @@ export type RelayRoomSourceOptions = {
   connectGraceMs?: number;
   /** Failures at `warn` (the default); per-stage open and catch-up timings at `info`. Never message bodies or credentials. */
   log?: (message: string, extra?: Record<string, unknown>, level?: 'info' | 'warn') => void;
+  /**
+   * The disk cache (rig/docs/room-disk-cache-spec.md): `initial` is this
+   * space's last saved Room — shown at once, then caught up — and `diskCache`
+   * is where this Room saves itself as it changes. Both omitted, it never
+   * touches the disk.
+   */
+  initial?: CachedRoomBlob | null;
+  diskCache?: { put(blob: CachedRoomBlob): Promise<unknown> | void };
+  /** The relay says the space is gone (410) or no longer yours (404): the view shows it and stops keeping this Room. */
+  onGone?: () => void;
 };
 
 type Listener = (event: RoomEvent, snapshot: RoomSnapshot) => void;
@@ -244,6 +255,17 @@ const BOOTSTRAP_RUN_CONCURRENCY = 6;
  */
 const RUN_NOTIFY_EVERY = 6;
 const RUN_NOTIFY_MS = 32;
+
+/** The disk cache (rig/docs/room-disk-cache-spec.md): saved this long after the Room last changed. */
+const DISK_SAVE_SETTLE_MS = 3_000;
+/** The saved window: what the Room opens with (`bootstrapMessageCount`'s default). */
+const DISK_MESSAGE_WINDOW = 50;
+/** A saved Room older than this opens cold (message deletions are never signalled). */
+const DISK_MAX_AGE_MS = 14 * 24 * 60 * 60_000;
+/** An `?after=` catch-up this long (the relay's page) means a gap too big to patch: open cold. */
+const DISK_GAP_MESSAGES = 200;
+/** A saved answer over this is cut (only when the whole Room is over the size cap). */
+const DISK_TRIMMED_ANSWER_CHARS = 4_000;
 
 /** Wraps the relay client so every call it makes is counted — for the open and catch-up timing lines only. */
 function countingRelay(relay: RelayRoomClient, onCall: () => void): RelayRoomClient {
@@ -298,8 +320,20 @@ function emptySnapshot(name: string, selfUserId: string): RoomSnapshot {
  */
 export class RelayRoomSource implements RoomSource {
   private readonly opts: Required<
-    Omit<RelayRoomSourceOptions, 'createProvider' | 'log' | 'connections' | 'localRuns' | 'pollIntervalMs' | 'connectGraceMs'>
+    Omit<
+      RelayRoomSourceOptions,
+      'createProvider' | 'log' | 'connections' | 'localRuns' | 'pollIntervalMs' | 'connectGraceMs' | 'initial' | 'diskCache' | 'onGone'
+    >
   >;
+  private readonly diskCache: RelayRoomSourceOptions['diskCache'];
+  private readonly onGone: (() => void) | undefined;
+  /** Opened from the disk cache: when that Room was saved (else null — a cold open). */
+  private readonly restoredFrom: { savedAt: number } | null = null;
+  private diskTimer: ReturnType<typeof setTimeout> | null = null;
+  private diskWriting = false;
+  private diskQueued: CachedRoomBlob | null = null;
+  /** Runs whose log is being fetched because their summary-only card was expanded. */
+  private readonly loadingLogs = new Set<string>();
   private readonly pollIntervalMs: number;
   private readonly connectGraceMs: number;
   private readonly makeProvider: NonNullable<RelayRoomSourceOptions['createProvider']>;
@@ -377,7 +411,62 @@ export class RelayRoomSource implements RoomSource {
     this.localRuns = options.localRuns;
     this.makeProvider = options.createProvider ?? createHocuspocusProvider;
     this.log = options.log ?? (() => {});
+    this.diskCache = options.diskCache;
+    this.onGone = options.onGone;
     this.snapshot = emptySnapshot(options.spaceName, options.selfUserId);
+    const initial = options.initial;
+    if (initial) {
+      const ageMs = Date.now() - initial.savedAt;
+      if (ageMs > DISK_MAX_AGE_MS) {
+        this.log('Rig spaces: room cache discard', { bindingId: options.bindingId, reason: 'age', ageMs }, 'info');
+      } else {
+        this.restoreFrom(initial);
+        this.restoredFrom = { savedAt: initial.savedAt };
+      }
+    }
+  }
+
+  /**
+   * Seeds the snapshot from the disk cache, so the very first render shows
+   * the Room as it was — `stale` until it has caught up. A finished run
+   * comes back as its summary; a run that was still going as a placeholder,
+   * fetched in full first thing. Presence, typing and the connection start
+   * from nothing, as on any open.
+   */
+  private restoreFrom(blob: CachedRoomBlob): void {
+    const sessionMetaByRun: RoomSnapshot['sessionMetaByRun'] = {};
+    const sessionSummaryByRun: NonNullable<RoomSnapshot['sessionSummaryByRun']> = {};
+    let agents = this.snapshot.agents;
+    for (const [runId, run] of Object.entries(blob.runs)) {
+      if (run.live || !run.summary) {
+        this.runsLoading.set(runId, run.meta.owner);
+        continue;
+      }
+      sessionMetaByRun[runId] = run.meta;
+      sessionSummaryByRun[runId] = run.summary;
+      if (!agents.some((a) => a.agent === run.meta.agent && a.owner === run.meta.owner)) {
+        agents = [...agents, { agent: run.meta.agent, owner: run.meta.owner, model: run.meta.model, busy: false }];
+      }
+    }
+    this.lastMessageSeq = blob.lastMessageSeq;
+    this.snapshot = {
+      ...this.snapshot,
+      loaded: true,
+      stale: true,
+      agents,
+      messages: blob.messages as unknown as RoomSnapshot['messages'],
+      members: blob.members as unknown as RoomSnapshot['members'],
+      invitesById: blob.invitesById as unknown as RoomSnapshot['invitesById'],
+      connectors: blob.connectors as unknown as RoomSnapshot['connectors'],
+      skills: blob.skills as unknown as RoomSnapshot['skills'],
+      sessionMetaByRun,
+      sessionSummaryByRun,
+      ...(this.runsLoading.size > 0 ? { runsLoading: this.loadingRecord() } : {}),
+    };
+  }
+
+  private loadingRecord(): Record<string, true> {
+    return Object.fromEntries([...this.runsLoading.keys()].map((id) => [id, true as const]));
   }
 
   // ── RoomSource ──────────────────────────────────────────────────────────
@@ -433,6 +522,7 @@ export class RelayRoomSource implements RoomSource {
     if (!shown) {
       this.setTyping(false);
       this.provider?.awareness?.setLocalStateField('user', null);
+      this.saveToDisk(); // leaving the space: as it is now is what the next launch opens with
       return;
     }
     this.provider?.awareness?.setLocalStateField('user', { id: this.opts.selfUserId });
@@ -448,11 +538,16 @@ export class RelayRoomSource implements RoomSource {
   dispose(): void {
     // Anything still loading (bootstrap, a catch-up) checks this and stops:
     // an abandoned open never keeps fetching, applying or notifying.
+    // Nothing is saved here: a disposed Room was evicted (saved when hidden),
+    // or forgotten — deleted, left, signed out — and must not be written back.
     this.disposed = true;
     this.pendingMessages = false;
     this.pendingRuns.clear();
     if (this.runNotifyTimer) clearTimeout(this.runNotifyTimer);
     this.runNotifyTimer = null;
+    if (this.diskTimer) clearTimeout(this.diskTimer);
+    this.diskTimer = null;
+    this.diskQueued = null;
     this.unsubscribeLocalRuns?.();
     this.unsubscribeLocalRuns = null;
     this.stopPolling();
@@ -474,7 +569,8 @@ export class RelayRoomSource implements RoomSource {
     if (this.localRuns && !this.unsubscribeLocalRuns) {
       this.unsubscribeLocalRuns = this.localRuns.subscribe((update) => void this.onLocalRunEvent(update));
     }
-    await this.bootstrap();
+    // Shown from disk already: only catch up. Else the two-phase cold open.
+    await (this.restoredFrom ? this.resume(this.restoredFrom.savedAt) : this.bootstrap());
     if (this.disposed) return;
     let provider: RealtimeProvider;
     try {
@@ -599,7 +695,7 @@ export class RelayRoomSource implements RoomSource {
   private isRunLive(runId: string): boolean {
     const meta = this.snapshot.sessionMetaByRun[runId];
     if (!meta) return false;
-    return effectiveRunStatus(meta.status, projectSessionCard(this.snapshot.sessionEventsByRun[runId] ?? [])) === 'running';
+    return effectiveRunStatus(meta.status, runCard(this.snapshot, runId)) === 'running';
   }
 
   /** The runs the relay could still have news for: live, and not shown from this computer's own copy. */
@@ -687,6 +783,7 @@ export class RelayRoomSource implements RoomSource {
 
     if (!messages.success) {
       this.log('Rig spaces: could not load room messages', { error: messages.error.message });
+      if (isGone(messages.error)) return this.gone();
     } else {
       apply({ type: 'room_loaded' });
       for (const row of messages.data) {
@@ -704,6 +801,7 @@ export class RelayRoomSource implements RoomSource {
       'Rig spaces: room first paint',
       {
         bindingId,
+        source: 'network',
         ms: Date.now() - startedMs,
         calls: this.requests,
         messages: messages.success ? messages.data.length : null,
@@ -713,7 +811,107 @@ export class RelayRoomSource implements RoomSource {
     );
     // Newest first: the bottom of the transcript, where the view opens and
     // where a run still going (or waiting on an approval) almost always is.
-    if (messages.success) void this.loadRuns(uniqueRunIds(messages.data).reverse().filter((id) => this.runsLoading.has(id)), startedMs);
+    if (messages.success) void this.loadRuns(this.loadingNewestFirst(), startedMs);
+  }
+
+  /**
+   * The open from the disk cache (rig/docs/room-disk-cache-spec.md): the
+   * snapshot is already on screen (`restoreFrom`), so this only catches up —
+   * messages after the last one kept, the roster, invites and connectors
+   * (changes to those aren't all announced by messages), then the runs still
+   * loading: the ones that were going when it was saved, and any the new
+   * messages name. Finished runs are not fetched at all. A gap too big to
+   * patch (a full page of new messages) opens the message window cold.
+   */
+  private async resume(savedAt: number): Promise<void> {
+    const startedMs = Date.now();
+    const { bindingId } = this.opts;
+    const relay = this.opts.relay;
+    this.log(
+      'Rig spaces: room first paint',
+      {
+        bindingId,
+        source: 'disk',
+        ageMs: startedMs - savedAt,
+        messages: this.snapshot.messages.length,
+        runs: Object.keys(this.snapshot.sessionSummaryByRun ?? {}).length,
+        runsLoading: this.runsLoading.size,
+      },
+      'info'
+    );
+    const [members, messages, invites, connectors, skills] = await Promise.all([
+      relay.listMembers(bindingId),
+      relay.listMessages(bindingId, { after: String(this.lastMessageSeq) }),
+      this.fetchInvites(),
+      this.loadConnectors(),
+      // The space's own files on this computer, not the relay: cheap, and they may have changed.
+      relay.listSkills?.(bindingId).catch(() => null),
+    ]);
+    if (this.disposed) return;
+    if (!messages.success && isGone(messages.error)) return this.gone();
+
+    if (skills) this.snapshot = { ...this.snapshot, skills: skills.map((skill) => ({ ...skill, addedBy: '' })) };
+    // The roster first: new messages' authors are mapped through it.
+    if (members.success) this.seedMembers(members.data);
+    if (invites) this.applyInvites(invites);
+    let lastEvent: RoomEvent = { type: 'members_synced', members: this.snapshot.members };
+    const apply = (event: RoomEvent): void => {
+      this.reduceLocal(event);
+      lastEvent = event;
+    };
+    if (connectors) apply({ type: 'connectors_synced', connectors });
+
+    let caughtUp = 0;
+    let gap = false;
+    if (!messages.success) {
+      this.log('Rig spaces: could not catch up on room messages', { error: messages.error.message });
+    } else {
+      let rows = messages.data;
+      if (rows.length >= DISK_GAP_MESSAGES) {
+        gap = true;
+        this.log('Rig spaces: room cache discard', { bindingId, reason: 'gap' }, 'info');
+        const latest = await relay.listMessages(bindingId, { latest: this.opts.bootstrapMessageCount });
+        if (this.disposed) return;
+        this.lastMessageSeq = 0;
+        this.snapshot = { ...this.snapshot, messages: [] };
+        rows = latest.success ? latest.data : [];
+      }
+      for (const row of rows) {
+        if (this.disposed) return;
+        await this.ingestWireMessage(row, apply, { bootstrap: true });
+      }
+      caughtUp = rows.length;
+      this.snapshot = { ...this.snapshot, runsLoading: this.loadingRecord() };
+      apply({ type: 'room_caught_up' });
+    }
+    if (this.disposed) return;
+    this.notifyListeners(lastEvent);
+    this.log(
+      'Rig spaces: room catch-up',
+      { bindingId, source: 'disk', ms: Date.now() - startedMs, calls: this.requests, messages: caughtUp, gap },
+      'info'
+    );
+    void this.loadRuns(this.loadingNewestFirst(), startedMs);
+  }
+
+  /** The runs still loading, bottom of the transcript first. */
+  private loadingNewestFirst(): string[] {
+    const order: string[] = [];
+    const seen = new Set<string>();
+    for (let i = this.snapshot.messages.length - 1; i >= 0; i -= 1) {
+      const meta = this.snapshot.messages[i]!.meta;
+      if (meta.kind !== 'session' || seen.has(meta.runId) || !this.runsLoading.has(meta.runId)) continue;
+      seen.add(meta.runId);
+      order.push(meta.runId);
+    }
+    for (const runId of this.runsLoading.keys()) if (!seen.has(runId)) order.push(runId);
+    return order;
+  }
+
+  /** The relay says the space is gone or no longer yours: stop here, and let the view say so. */
+  private gone(): void {
+    this.log('Rig spaces: room gone', { bindingId: this.opts.bindingId }, 'info');
+    this.onGone?.();
   }
 
   /**
@@ -923,6 +1121,7 @@ export class RelayRoomSource implements RoomSource {
     if (this.disposed) return;
     if (!result.success) {
       this.log('Rig spaces: could not catch up on room messages', { error: result.error.message });
+      if (isGone(result.error)) this.gone();
       return;
     }
     // A listing that came back is the Room's first load, if bootstrap's failed.
@@ -931,6 +1130,8 @@ export class RelayRoomSource implements RoomSource {
       if (this.disposed) return;
       await this.ingestWireMessage(row);
     }
+    // Shown from disk, and the relay couldn't be reached then: caught up now.
+    if (this.snapshot.stale) this.applyLocal({ type: 'room_caught_up' });
   }
 
   /** Fetches the new events of each run in `runIds` the Room knows and the relay speaks for, in parallel (bounded). */
@@ -1359,6 +1560,136 @@ export class RelayRoomSource implements RoomSource {
 
   private notifyListeners(event: RoomEvent): void {
     for (const listener of this.listeners) listener(event, this.snapshot);
+    this.scheduleDiskSave();
+  }
+
+  // ── the disk cache (rig/docs/room-disk-cache-spec.md) ──────────────────
+
+  /** Saves the Room `DISK_SAVE_SETTLE_MS` after it last changed. */
+  private scheduleDiskSave(): void {
+    if (!this.diskCache || this.disposed) return;
+    if (this.diskTimer) clearTimeout(this.diskTimer);
+    this.diskTimer = setTimeout(() => {
+      this.diskTimer = null;
+      this.saveToDisk();
+    }, DISK_SAVE_SETTLE_MS);
+  }
+
+  /**
+   * Saves the Room now, if it's in a state worth opening with (see
+   * `toCached`) — on leaving it, on quitting, and after it settles. One
+   * write at a time; a newer Room replaces one still waiting.
+   */
+  saveToDisk(): void {
+    if (!this.diskCache || this.disposed) return;
+    if (this.diskTimer) clearTimeout(this.diskTimer);
+    this.diskTimer = null;
+    const blob = this.toCached();
+    if (!blob) return;
+    if (this.diskWriting) {
+      this.diskQueued = blob;
+      return;
+    }
+    const write = (next: CachedRoomBlob): void => {
+      this.diskWriting = true;
+      const startedMs = Date.now();
+      void Promise.resolve(this.diskCache?.put(next))
+        .catch(() => undefined)
+        .finally(() => {
+          this.diskWriting = false;
+          this.log(
+            'Rig spaces: room cache write',
+            { bindingId: this.opts.bindingId, bytes: blobBytes(next), ms: Date.now() - startedMs },
+            'info'
+          );
+          const queued = this.diskQueued;
+          this.diskQueued = null;
+          if (queued && !this.disposed) write(queued);
+        });
+    };
+    write(blob);
+  }
+
+  /**
+   * The Room as the disk cache keeps it, or null when it isn't worth saving
+   * yet: not loaded, still catching up from an earlier save, or run logs
+   * still loading. The latest `DISK_MESSAGE_WINDOW` messages; the runs they
+   * name as their header plus — finished — their hide-safe summary, or —
+   * still going — the header alone. Never a run's steps, thinking or tool
+   * output (nor this computer's own full copy of your runs), presence,
+   * typing, the connection, or your own connection state per connector.
+   */
+  toCached(): CachedRoomBlob | null {
+    const s = this.snapshot;
+    if (!s.loaded || s.stale || this.runsLoading.size > 0) return null;
+    const messages = s.messages.slice(-DISK_MESSAGE_WINDOW);
+    const blob: CachedRoomBlob = {
+      v: ROOM_CACHE_FORMAT_VERSION,
+      relayHost: '', // main stamps the relay it's signed in to
+      savedAt: Date.now(),
+      lastMessageSeq: Math.max(this.lastMessageSeq, ...messages.map((m) => m.seq)),
+      messages: messages as unknown as CachedRoomBlob['messages'],
+      members: s.members.map(({ online: _online, ...member }) => member) as unknown as CachedRoomBlob['members'],
+      invitesById: s.invitesById as unknown as CachedRoomBlob['invitesById'],
+      connectors: s.connectors.map(({ mine: _mine, account: _account, ...connector }) => connector),
+      skills: s.skills as unknown as CachedRoomBlob['skills'],
+      runs: this.cachedRuns(messages),
+    };
+    return this.fitToCap(blob);
+  }
+
+  private cachedRuns(messages: RoomSnapshot['messages']): CachedRoomBlob['runs'] {
+    const runs: CachedRoomBlob['runs'] = {};
+    for (const message of messages) {
+      if (message.meta.kind !== 'session' || runs[message.meta.runId]) continue;
+      const runId = message.meta.runId;
+      const meta = this.snapshot.sessionMetaByRun[runId];
+      if (!meta) continue;
+      const card = runCard(this.snapshot, runId);
+      const status = effectiveRunStatus(meta.status, card);
+      const live = status === 'running' || status === 'waiting' || card.permissions.pending.length > 0;
+      runs[runId] = live ? { meta, live: true } : { meta, summary: summarizeCard(card) };
+    }
+    return runs;
+  }
+
+  /** Within `ROOM_CACHE_MAX_BYTES`: oldest messages go first, then long answers are cut; null if it still won't fit. */
+  private fitToCap(blob: CachedRoomBlob): CachedRoomBlob | null {
+    let fitted = blob;
+    while (blobBytes(fitted) > ROOM_CACHE_MAX_BYTES && fitted.messages.length > 1) {
+      const messages = fitted.messages.slice(Math.max(1, Math.floor(fitted.messages.length / 10)));
+      const named = new Set(messages.map((m) => (m.meta as { runId?: unknown }).runId).filter((id) => typeof id === 'string'));
+      const runs = Object.fromEntries(Object.entries(fitted.runs).filter(([runId]) => named.has(runId)));
+      fitted = { ...fitted, messages, runs };
+    }
+    if (blobBytes(fitted) > ROOM_CACHE_MAX_BYTES) {
+      const runs = Object.fromEntries(
+        Object.entries(fitted.runs).map(([runId, run]) => [
+          runId,
+          run.summary ? { ...run, summary: { ...run.summary, answer: run.summary.answer.slice(0, DISK_TRIMMED_ANSWER_CHARS) } } : run,
+        ])
+      );
+      fitted = { ...fitted, runs };
+    }
+    return blobBytes(fitted) > ROOM_CACHE_MAX_BYTES ? null : fitted;
+  }
+
+  /**
+   * A run shown from the disk cache is a summary only; expanding its card
+   * fetches the log (the same one-run path a new run's message uses), which
+   * replaces the summary. A failed fetch leaves the summary as it was.
+   */
+  async loadRunLog(runId: string): Promise<void> {
+    if (this.disposed || !this.snapshot.sessionSummaryByRun?.[runId] || this.loadingLogs.has(runId)) return;
+    this.loadingLogs.add(runId);
+    try {
+      const fetched = await this.fetchRun(runId);
+      if (this.disposed || !fetched.run) return;
+      const owner = this.snapshot.sessionMetaByRun[runId]?.owner ?? fetched.run.ownerUserId;
+      await this.ingestRun(runId, owner, (event) => this.applyLocal(event), fetched);
+    } finally {
+      this.loadingLogs.delete(runId);
+    }
   }
 }
 
@@ -1368,14 +1699,14 @@ function sessionRunIdOf(row: RoomMessageRow): string | null {
   return row.kind === 'session' && typeof meta.runId === 'string' ? meta.runId : null;
 }
 
-/** Every run the rows' `kind:'session'` messages name, once each, in order. */
-function uniqueRunIds(rows: readonly RoomMessageRow[]): string[] {
-  const runIds = new Set<string>();
-  for (const row of rows) {
-    const runId = sessionRunIdOf(row);
-    if (runId) runIds.add(runId);
-  }
-  return [...runIds];
+/** A relay answer meaning the space is gone (410) or no longer yours (404). */
+function isGone(error: RelayApiError): boolean {
+  return error.kind === 'relay' && (error.status === 404 || error.status === 410);
+}
+
+/** Bytes of a blob as it would be written. */
+function blobBytes(blob: CachedRoomBlob): number {
+  return new TextEncoder().encode(JSON.stringify(blob)).length;
 }
 
 

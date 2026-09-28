@@ -37,7 +37,8 @@ import {
 import { ConnectPill } from './connectors-panel';
 import { globalAgentsFor } from '../global-setup';
 import { ConnectorLogo } from '../logos';
-import { effectiveRunStatus, projectSessionCard } from '../projection';
+import { cardFromSummary, effectiveRunStatus, projectSessionCard } from '../projection';
+import type { RunSummary } from '@shared/spaces/room-cache';
 import type {
   AgentKind,
   RoomConnector,
@@ -610,9 +611,15 @@ export function SessionCard({
   spaceConnectors,
   globalSetup,
   onHideDetails,
+  summary,
+  onLoadLog,
 }: {
   meta: SessionRunMeta;
   events: SessionEvent[];
+  /** Shown from the disk cache with no log yet: the card is drawn from this (answer, step count), and its steps load on expand. */
+  summary?: RunSummary;
+  /** Fetches this run's log (a summary-only card being expanded). */
+  onLoadLog?: () => void;
   owner: RoomMember | undefined;
   /** The viewer owns this agent: its name reads "yours" instead of "Sam's". Defaults to whether approvals were passed. */
   viewerIsOwner?: boolean;
@@ -661,7 +668,11 @@ export function SessionCard({
     const id = setTimeout(() => setHiding('idle'), 4000);
     return () => clearTimeout(id);
   }, [hiding]);
-  const card = useMemo(() => projectSessionCard(events), [events]);
+  const fromSummary = events.length === 0 && !!summary;
+  const card = useMemo(
+    () => (events.length === 0 && summary ? cardFromSummary(summary) : projectSessionCard(events)),
+    [events, summary]
+  );
   // The run recorded what it couldn't reach; show only what's still missing
   // now (connected since: gone; removed from the space: gone; lapsed: Reconnect).
   const liveGaps = card.connectorGaps.flatMap((gap) => {
@@ -799,7 +810,11 @@ export function SessionCard({
             <div className="flex flex-col gap-1">
               <button
                 type="button"
-                onClick={() => setExpanded((v) => !v)}
+                onClick={() => {
+                  // Shown from disk: its steps were never kept, so they're fetched now.
+                  if (!expanded && fromSummary) onLoadLog?.();
+                  setExpanded((v) => !v);
+                }}
                 aria-expanded={expanded}
                 className="flex h-6 w-fit items-center gap-1.5 text-xs text-text-muted transition-colors hover:text-text-primary"
                 data-testid="session-summary"
@@ -814,7 +829,12 @@ export function SessionCard({
                 {summaryLine(card, elapsed)}
                 {mine && card.detailsHidden && <PrivateMark label="details hidden" icon={EyeOff} />}
               </button>
-              {expanded && (
+              {expanded && fromSummary && (
+                <span className="ml-5 text-xs text-text-muted active-shimmer-muted" data-testid="session-steps-loading">
+                  Loading steps…
+                </span>
+              )}
+              {expanded && !fromSummary && (
                 <>
                   {card.thinking.trim() && <ThinkingBlock text={card.thinking} />}
                   {card.plan.length > 0 && <PlanBlock plan={card.plan} />}

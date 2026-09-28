@@ -1112,6 +1112,148 @@ describe('Room composer — a plain reply to your own agent', () => {
   });
 });
 
+describe('Room disk cache — a Room shown from disk', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  it("draws a finished run from its summary — answer and step count — and fetches its steps only when it's expanded", async () => {
+    const onLoadLog = vi.fn();
+    const meta: SessionRunMeta = {
+      id: 'r1',
+      agent: 'claude',
+      owner: 'alice',
+      model: 'opus',
+      title: '',
+      status: 'done',
+      startedAt: '2026-09-28T09:00:00Z',
+      endedAt: '2026-09-28T09:01:00Z',
+    };
+    const summary = {
+      answer: 'Answer kept on disk.',
+      status: 'done',
+      model: 'opus',
+      stepCount: 3,
+      failureReason: null,
+      privacy: null,
+      detailsHidden: false,
+      lastSeq: 9,
+    };
+    await act(async () => {
+      root.render(<SessionCard meta={meta} events={[]} summary={summary} onLoadLog={onLoadLog} owner={undefined} />);
+    });
+    expect(host.textContent).toContain('Answer kept on disk.');
+    const toggle = host.querySelector<HTMLButtonElement>('[data-testid="session-summary"]')!;
+    expect(toggle.textContent).toContain('3 steps');
+    expect(onLoadLog).not.toHaveBeenCalled();
+    await act(async () => {
+      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(onLoadLog).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[data-testid="session-steps-loading"]')).not.toBeNull();
+  });
+
+  it('puts the "New" line (and marks anything read) only once it has caught up', async () => {
+    const snapshot = replayedSnapshot();
+    const others = snapshot.messages.filter((m) => m.authorId !== 'bob');
+    const lastRead = others[Math.floor(others.length / 2)]!.seq;
+    localStorage.setItem('rig-room-last-seen:space-disk', String(lastRead));
+    try {
+      await act(async () => {
+        root.render(<RoomTranscript snapshot={{ ...snapshot, stale: true }} ownId="bob" readKey="space-disk" />);
+      });
+      expect(host.querySelector('[data-testid="new-divider"]')).toBeNull();
+      expect(localStorage.getItem('rig-room-last-seen:space-disk')).toBe(String(lastRead));
+
+      await act(async () => {
+        root.render(<RoomTranscript snapshot={{ ...snapshot, stale: false }} ownId="bob" readKey="space-disk" />);
+      });
+      expect(host.querySelector('[data-testid="new-divider"]')).not.toBeNull();
+    } finally {
+      localStorage.removeItem('rig-room-last-seen:space-disk');
+    }
+  });
+
+  it('says "Catching up…" only when catching up takes more than a moment', async () => {
+    const { ok } = await import('@emdash/shared');
+    const { rpc } = await import('@renderer/lib/ipc');
+    const { RelayRoomSource } = await import('@renderer/features/spaces/relay-room-source');
+    const { roomSourceCache } = await import('@renderer/features/spaces/room-source-cache');
+    const rig = rpc.rig as unknown as Record<string, unknown>;
+    rig.recent = { resolveLocalPaths: async () => ({}) };
+    const blob = {
+      v: 1 as const,
+      relayHost: 'tap-relay.fly.dev',
+      savedAt: Date.now(),
+      lastMessageSeq: 1,
+      messages: [{ id: 'd1', seq: 1, authorId: 'u2', createdAt: '2026-09-28T09:00:00Z', time: '09:00', body: 'from disk', meta: { kind: 'text' } }],
+      members: [{ id: 'u2', name: 'Sam', email: '', role: 'editor', initial: 'S', avatarUrl: null, status: 'here' }],
+      invitesById: {},
+      connectors: [],
+      skills: [],
+      runs: {},
+    };
+    const quietProvider = { connect: () => {}, disconnect: () => {}, destroy: () => {}, sendStateless: () => {}, on: () => {}, off: () => {}, awareness: null };
+    const relayAnswering = (answers: boolean) => ({
+      mintRealtimeTicket: async () => ok({ ticket: 't', expiresAt: new Date(Date.now() + 600_000).toISOString() }),
+      listMembers: async () => ok([]),
+      listMessages: (): Promise<never> | Promise<ReturnType<typeof ok<never[]>>> => (answers ? Promise.resolve(ok([])) : new Promise<never>(() => {})),
+      getSessionEvents: async () => ok({ run: null as never, events: [] }),
+      postMessage: async () => ok({} as never),
+      requestOwnAgent: async () => ok({} as never),
+    });
+    const showFromDisk = async (bindingId: string, answers: boolean) => {
+      roomSourceCache.rememberConnection({ selfUserId: 'u1', wsUrl: 'wss://relay.test/v1/realtime' });
+      roomSourceCache
+        .acquire('u1', bindingId, () =>
+          new RelayRoomSource({
+            bindingId,
+            spaceName: '#disk',
+            wsUrl: 'wss://relay.test/v1/realtime',
+            selfUserId: 'u1',
+            relay: relayAnswering(answers) as never,
+            initial: blob,
+            connectGraceMs: 60_000,
+            createProvider: () => quietProvider,
+          })
+        )
+        .release();
+      await act(async () => {
+        root.render(<RoomView bindingId={bindingId} spaceName="#disk" />);
+      });
+      expect(host.textContent).toContain('from disk'); // shown from disk either way
+    };
+    try {
+      await showFromDisk('b-slow', false);
+      expect(host.querySelector('[data-testid="room-catching-up"]')).toBeNull(); // not straight away
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+      });
+      expect(host.querySelector('[data-testid="room-catching-up"]')).not.toBeNull();
+
+      await act(async () => root.render(<div />));
+      await showFromDisk('b-quick', true);
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+      });
+      expect(host.querySelector('[data-testid="room-catching-up"]')).toBeNull();
+    } finally {
+      roomSourceCache.clear();
+      delete rig.recent;
+    }
+  });
+});
+
 describe('Session card — approvals belong to the owner', () => {
   let host: HTMLDivElement;
   let root: Root;

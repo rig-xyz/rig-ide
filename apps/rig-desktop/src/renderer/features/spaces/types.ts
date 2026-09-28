@@ -10,6 +10,7 @@
  */
 
 import type { ConnectionState, ConnectorGap, RigToolArgs } from '@shared/spaces/connectors';
+import type { RunSummary } from '@shared/spaces/room-cache';
 import type { RoomSees } from '@shared/spaces/room-sees';
 
 export type PersonId = string;
@@ -282,7 +283,9 @@ export type RoomEvent =
   /** The Room's first read of the relay's messages came back (see `RoomSnapshot.loaded`). */
   | { type: 'room_loaded' }
   /** The space was renamed. */
-  | { type: 'room_renamed'; name: string };
+  | { type: 'room_renamed'; name: string }
+  /** A Room shown from disk has caught up with the relay (see `RoomSnapshot.stale`). */
+  | { type: 'room_caught_up' };
 
 /** Full materialized state of a room — what components render from. */
 export interface RoomSnapshot {
@@ -304,6 +307,14 @@ export interface RoomSnapshot {
   loaded?: boolean;
   /** Runs a message names whose log is still loading: their cards show as placeholders until it lands. */
   runsLoading?: Record<string, true>;
+  /**
+   * Finished runs shown from the disk cache: only what survives "Hide
+   * details" (answer, status, step count…), until their log is fetched
+   * (the card expanded). See `runCard` in `projection.ts`.
+   */
+  sessionSummaryByRun?: Record<string, RunSummary>;
+  /** Shown from the disk cache and not caught up with the relay yet ("Catching up…"; the "New" line waits). */
+  stale?: boolean;
 }
 
 /** Whether the Room is hearing the relay live: first connecting, connected, or without the socket (it retries on its own, and polls meanwhile). */

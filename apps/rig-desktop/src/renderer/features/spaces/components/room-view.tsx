@@ -13,10 +13,11 @@ import { buildRoomFeed } from '../fixtures/room-feed';
 import { RelayRoomSource, type LocalRunsClient, type RelayRoomClient } from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
 import { roomSourceCache, type RoomConnectionInfo, type RoomLease } from '../room-source-cache';
+import type { CachedRoomBlob } from '@shared/spaces/room-cache';
 import { writeOpenedAt } from '../room-read-marker';
 import { useRefreshMemberReadsOnRosterChange } from '../roster-refresh';
 import { resolveSpaceLink } from '../space-link';
-import { effectiveRunStatus, projectSessionCard } from '../projection';
+import { effectiveRunStatus, runCard } from '../projection';
 import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
 import { Composer, keepUnsentAsDraft, type ComposerSendContext, type ComposerSuggestion } from './composer';
 import { ownTurnSuggestion } from '../own-turn-suggestion';
@@ -62,6 +63,19 @@ function roomLog(message: string, extra?: Record<string, unknown>, level: 'info'
   }
 }
 
+/** This space's Room from the disk cache, when the setting is on (rig/docs/room-disk-cache-spec.md). Never throws. */
+type DiskRoom = { enabled: boolean; blob: CachedRoomBlob | null };
+async function readDiskRoom(bindingId: string): Promise<DiskRoom> {
+  try {
+    const settings = await rpc.rig.settings.get();
+    if (!settings.spacesRoomDiskCache) return { enabled: false, blob: null };
+    const blob = await rpc.rig.roomCache.get({ bindingId }).catch(() => null);
+    return { enabled: true, blob };
+  } catch {
+    return { enabled: false, blob: null };
+  }
+}
+
 /** The owner overlay: this computer's own full copy of your runs (see `LocalRunsClient`). */
 function createLocalRunsClient(): LocalRunsClient {
   return {
@@ -95,6 +109,9 @@ const AGENT_CONFIG_TIMEOUT_MS = 20_000;
 const TRANSCRIPT_COLUMN_PX = 728;
 /** The floating panel's lane at the right edge: its 304px plus a margin. */
 const PANEL_LANE_PX = 320;
+
+/** How long a Room shown from disk may take to catch up before it says so. */
+const CATCHING_UP_AFTER_MS = 600;
 
 const FALLBACK_OWN_ID = 'bob'; // fixture-only identity; the relay source uses the signed-in user's real id
 
@@ -182,7 +199,7 @@ function lastModels(snapshot: RoomSnapshot, selfUserId: string): Partial<Record<
     .filter((m) => m.owner === selfUserId)
     .sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
   for (const meta of runs) {
-    const model = projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? []).model;
+    const model = runCard(snapshot, meta.id).model;
     if (model) models[meta.agent] = model;
   }
   return models;
@@ -193,7 +210,7 @@ function busyOwnAgents(snapshot: RoomSnapshot, selfUserId: string): AgentKind[] 
   const busy = new Set<AgentKind>();
   for (const meta of Object.values(snapshot.sessionMetaByRun)) {
     if (meta.owner !== selfUserId) continue;
-    const status = effectiveRunStatus(meta.status, projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? []));
+    const status = effectiveRunStatus(meta.status, runCard(snapshot, meta.id));
     if (status === 'running') busy.add(meta.agent);
   }
   return [...busy];
@@ -296,6 +313,8 @@ export function RoomView({
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  /** The relay says this space is gone or no longer yours (its Room is forgotten, memory and disk). */
+  const [gone, setGone] = useState(false);
   // A space kept alive behind others (`room-source-cache.ts`) shows its
   // snapshot on the very first render — no skeleton, no blank frame.
   const [source, setSource] = useState<RoomSource | null>(() => roomSourceCache.peek(bindingId));
@@ -366,6 +385,27 @@ export function RoomView({
     };
   }, [live, bindingId]);
 
+  // Quitting from inside a space: it's saved as it is (the disk cache, when on).
+  useEffect(() => {
+    if (!(source instanceof RelayRoomSource)) return;
+    const save = () => source.saveToDisk();
+    window.addEventListener('beforeunload', save);
+    return () => window.removeEventListener('beforeunload', save);
+  }, [source]);
+
+  // Shown from disk and still catching up: said quietly, and only if it takes
+  // a moment — a quick catch-up never flashes a line.
+  const stale = snapshot?.stale === true;
+  const [catchingUp, setCatchingUp] = useState(false);
+  useEffect(() => {
+    if (!stale) {
+      setCatchingUp(false);
+      return;
+    }
+    const id = setTimeout(() => setCatchingUp(true), CATCHING_UP_AFTER_MS);
+    return () => clearTimeout(id);
+  }, [stale]);
+
   // Your agents' own global MCP setup (connectors-spec.md's Surface) — this
   // device only, never part of the relay snapshot. Loaded once per Room;
   // main caches it (~5s the first time for Claude, instant after), so a
@@ -394,6 +434,7 @@ export function RoomView({
   useEffect(() => {
     let cancelled = false;
     setConnectError(null);
+    setGone(false);
 
     if (useFixtures) {
       const fixtureSource = new FixtureRoomSource(buildRoomFeed());
@@ -406,7 +447,7 @@ export function RoomView({
     // it's shown again as it was and catches up; else it opens fresh. This
     // view only borrows it — leaving hands it back, it isn't torn down.
     let lease: RoomLease | null = null;
-    const take = (info: RoomConnectionInfo) => {
+    const take = (info: RoomConnectionInfo, disk: DiskRoom | null) => {
       lease = roomSourceCache.acquire(info.selfUserId, bindingId, () =>
         new RelayRoomSource({
           bindingId,
@@ -417,31 +458,44 @@ export function RoomView({
           connections: connectorsApi,
           localRuns: createLocalRunsClient(),
           log: roomLog,
+          // The disk cache (`spacesRoomDiskCache`): opened from it, and saved to it.
+          initial: disk?.blob ?? null,
+          ...(disk?.enabled
+            ? { diskCache: { put: (blob) => rpc.rig.roomCache.put({ bindingId, selfUserId: info.selfUserId, blob }) } }
+            : {}),
+          onGone: () => {
+            roomSourceCache.forget(bindingId);
+            if (!cancelled) setGone(true);
+          },
         })
       );
-      if (lease.reused) roomLog('Rig spaces: room reused (cached)', { bindingId, hiddenMs: lease.hiddenMs }, 'info');
+      if (lease.reused) roomLog('Rig spaces: room first paint', { bindingId, source: 'memory', hiddenMs: lease.hiddenMs }, 'info');
       setSelfUserId(info.selfUserId);
       setSource(lease.source);
     };
     const known = roomSourceCache.connection;
-    if (known && roomSourceCache.peek(bindingId)) take(known);
+    const kept = !!(known && roomSourceCache.peek(bindingId));
+    if (known && kept) take(known, null);
     else setSource(null);
 
     // Still asked every time: who you are may have changed (another account).
+    // Not kept in memory: the disk cache is read alongside (both are local).
     const startedMs = Date.now();
-    void rpc.rig.spacesConnection.getConnectionInfo().then((result) => {
-      if (cancelled) return;
-      roomLog('Rig spaces: room connection info', { bindingId, ms: Date.now() - startedMs, ok: result.success }, 'info');
-      if (!result.success) {
-        // A kept-alive Room carries on (it polls without its socket); only a fresh open fails.
-        if (!lease) setConnectError(result.error.message);
-        return;
+    void Promise.all([rpc.rig.spacesConnection.getConnectionInfo(), kept ? null : readDiskRoom(bindingId)]).then(
+      ([result, disk]) => {
+        if (cancelled) return;
+        roomLog('Rig spaces: room connection info', { bindingId, ms: Date.now() - startedMs, ok: result.success }, 'info');
+        if (!result.success) {
+          // A kept-alive Room carries on (it polls without its socket); only a fresh open fails.
+          if (!lease) setConnectError(result.error.message);
+          return;
+        }
+        roomSourceCache.rememberConnection(result.data);
+        if (lease?.selfUserId === result.data.selfUserId) return;
+        lease?.release();
+        take(result.data, disk);
       }
-      roomSourceCache.rememberConnection(result.data);
-      if (lease?.selfUserId === result.data.selfUserId) return;
-      lease?.release();
-      take(result.data);
-    });
+    );
 
     return () => {
       cancelled = true;
@@ -476,7 +530,7 @@ export function RoomView({
     if (!(source instanceof RelayRoomSource) || !snapshot) return;
     for (const meta of Object.values(snapshot.sessionMetaByRun)) {
       if (meta.owner !== selfUserId || settleTriedRef.current.has(meta.id)) continue;
-      const card = projectSessionCard(snapshot.sessionEventsByRun[meta.id] ?? []);
+      const card = runCard(snapshot, meta.id);
       if (effectiveRunStatus(meta.status, card) !== 'running') continue;
       settleTriedRef.current.add(meta.id);
       // A "no" can just mean this device's dispatcher hasn't started yet
@@ -700,6 +754,15 @@ export function RoomView({
   );
   const handleHideDetails = source instanceof RelayRoomSource ? hideDetails : undefined;
 
+  // A run shown from disk (its summary only): expanding its card fetches the log.
+  const loadRunLog = useCallback(
+    (runId: string) => {
+      if (source instanceof RelayRoomSource) void source.loadRunLog(runId);
+    },
+    [source]
+  );
+  const handleLoadRunLog = source instanceof RelayRoomSource ? loadRunLog : undefined;
+
   // Shared by the transcript's connector pills (a `connectors_added` card,
   // an agent turn's footer gap) — the fuller add/consent/catalog flow lives
   // in the space panel's `ConnectorsSection` instead.
@@ -721,6 +784,17 @@ export function RoomView({
     [source]
   );
   const handleRerun = source instanceof RelayRoomSource ? rerun : undefined;
+
+  if (gone) {
+    return (
+      <div
+        className="bg-bg-0 flex h-full min-h-0 flex-col items-center justify-center gap-3 text-sm text-text-muted"
+        data-testid="room-gone"
+      >
+        <p>This space isn’t available to you anymore.</p>
+      </div>
+    );
+  }
 
   if (connectError) {
     return (
@@ -818,6 +892,7 @@ export function RoomView({
             onConnectorConnect={handleConnectorConnect}
             globalSetup={globalSetup}
             onHideDetails={handleHideDetails}
+            onLoadRunLog={handleLoadRunLog}
           />
           </OpenPageContext.Provider>
           )}
@@ -833,6 +908,16 @@ export function RoomView({
               >
                 <span className="bg-border-strong size-1.5 shrink-0 rounded-full" />
                 Updating a little slower than usual
+              </p>
+            )}
+            {live && catchingUp && snapshot.connection !== 'offline' && (
+              <p
+                className="mb-1.5 flex items-center gap-1.5 px-1 text-2xs text-text-muted"
+                role="status"
+                data-testid="room-catching-up"
+              >
+                <span className="bg-border-strong size-1.5 shrink-0 rounded-full" />
+                Catching up…
               </p>
             )}
             <Composer
