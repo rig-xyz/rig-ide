@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { LogIn } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { toast } from '@renderer/lib/hooks/use-toast';
+import { roomSourceCache } from '@renderer/features/spaces/room-source-cache';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
@@ -107,6 +108,7 @@ export function UserPill({ compact = false }: { compact?: boolean }) {
       toast({ title: 'Could not sign out', description: result.error.message, variant: 'destructive' });
       return;
     }
+    roomSourceCache.clear(); // no Room of this account outlives it
     setOpen(false);
     setConfirmingSignOut(false);
     void queryClient.invalidateQueries({ queryKey: ['rig', 'auth', 'status'] });

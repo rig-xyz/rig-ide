@@ -12,12 +12,13 @@ import { connectorsApi } from '../connectors-api';
 import { buildRoomFeed } from '../fixtures/room-feed';
 import { RelayRoomSource, type LocalRunsClient, type RelayRoomClient } from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
+import { roomSourceCache, type RoomConnectionInfo, type RoomLease } from '../room-source-cache';
 import { writeOpenedAt } from '../room-read-marker';
 import { useRefreshMemberReadsOnRosterChange } from '../roster-refresh';
 import { resolveSpaceLink } from '../space-link';
 import { effectiveRunStatus, projectSessionCard } from '../projection';
 import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
-import { Composer, type ComposerSendContext, type ComposerSuggestion } from './composer';
+import { Composer, keepUnsentAsDraft, type ComposerSendContext, type ComposerSuggestion } from './composer';
 import { ownTurnSuggestion } from '../own-turn-suggestion';
 import { RoomTranscript } from './room-transcript';
 import { OpenPageContext } from './transcript-items';
@@ -295,8 +296,12 @@ export function RoomView({
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
-  const [source, setSource] = useState<RoomSource | null>(null);
-  const [selfUserId, setSelfUserId] = useState(FALLBACK_OWN_ID);
+  // A space kept alive behind others (`room-source-cache.ts`) shows its
+  // snapshot on the very first render — no skeleton, no blank frame.
+  const [source, setSource] = useState<RoomSource | null>(() => roomSourceCache.peek(bindingId));
+  const [selfUserId, setSelfUserId] = useState(() =>
+    roomSourceCache.peek(bindingId) ? (roomSourceCache.connection?.selfUserId ?? FALLBACK_OWN_ID) : FALLBACK_OWN_ID
+  );
   const [snapshot, setSnapshot] = useState(() => source?.getSnapshot() ?? null);
   const [playing, setPlaying] = useState(false);
   const [replyTo, setReplyTo] = useState<RoomReplyRef | null>(null);
@@ -375,10 +380,20 @@ export function RoomView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, bindingId]);
 
+  const spaceNameRef = useRef(spaceName);
+  spaceNameRef.current = spaceName;
+  // A send still out when you leave finishes in the background (its message
+  // shows when you're back — the Room is kept alive); a failure is kept as a draft.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   useEffect(() => {
     let cancelled = false;
     setConnectError(null);
-    setSource(null);
 
     if (useFixtures) {
       const fixtureSource = new FixtureRoomSource(buildRoomFeed());
@@ -387,40 +402,64 @@ export function RoomView({
       return () => fixtureSource.dispose();
     }
 
-    let relaySource: RelayRoomSource | null = null;
+    // The live Room comes from the cache: kept alive behind other spaces,
+    // it's shown again as it was and catches up; else it opens fresh. This
+    // view only borrows it — leaving hands it back, it isn't torn down.
+    let lease: RoomLease | null = null;
+    const take = (info: RoomConnectionInfo) => {
+      lease = roomSourceCache.acquire(info.selfUserId, bindingId, () =>
+        new RelayRoomSource({
+          bindingId,
+          spaceName: spaceNameRef.current,
+          wsUrl: info.wsUrl,
+          selfUserId: info.selfUserId,
+          relay: createRelayRoomClient(),
+          connections: connectorsApi,
+          localRuns: createLocalRunsClient(),
+          log: roomLog,
+        })
+      );
+      if (lease.reused) roomLog('Rig spaces: room reused (cached)', { bindingId, hiddenMs: lease.hiddenMs }, 'info');
+      setSelfUserId(info.selfUserId);
+      setSource(lease.source);
+    };
+    const known = roomSourceCache.connection;
+    if (known && roomSourceCache.peek(bindingId)) take(known);
+    else setSource(null);
+
+    // Still asked every time: who you are may have changed (another account).
     const startedMs = Date.now();
     void rpc.rig.spacesConnection.getConnectionInfo().then((result) => {
       if (cancelled) return;
       roomLog('Rig spaces: room connection info', { bindingId, ms: Date.now() - startedMs, ok: result.success }, 'info');
       if (!result.success) {
-        setConnectError(result.error.message);
+        // A kept-alive Room carries on (it polls without its socket); only a fresh open fails.
+        if (!lease) setConnectError(result.error.message);
         return;
       }
-      relaySource = new RelayRoomSource({
-        bindingId,
-        spaceName,
-        wsUrl: result.data.wsUrl,
-        selfUserId: result.data.selfUserId,
-        relay: createRelayRoomClient(),
-        connections: connectorsApi,
-        localRuns: createLocalRunsClient(),
-        log: roomLog,
-      });
-      setSelfUserId(result.data.selfUserId);
-      setSource(relaySource);
+      roomSourceCache.rememberConnection(result.data);
+      if (lease?.selfUserId === result.data.selfUserId) return;
+      lease?.release();
+      take(result.data);
     });
 
     return () => {
       cancelled = true;
-      relaySource?.dispose();
+      (lease as RoomLease | null)?.release();
     };
-  }, [useFixtures, bindingId, spaceName]);
+  }, [useFixtures, bindingId]);
+
+  // Renamed (by you, or by an agent): the Room's own name follows.
+  useEffect(() => {
+    if (source instanceof RelayRoomSource) source.rename(spaceName);
+  }, [source, spaceName]);
 
   useEffect(() => {
     if (!source) return;
     setSnapshot(source.getSnapshot());
     const unsubscribe = source.subscribe((_event, next) => setSnapshot(next));
-    source.play();
+    // The cache starts (and resumes) the live Room; only the scripted demo is played here.
+    if (!(source instanceof RelayRoomSource)) source.play();
     setPlaying(true);
     return () => {
       unsubscribe();
@@ -597,6 +636,8 @@ export function RoomView({
     ]);
     // Not sent: it leaves the transcript and goes back in the composer, so nothing typed is lost.
     const failed = () => {
+      // You'd left the space meanwhile: it waits in that space's message box instead.
+      if (!mountedRef.current) keepUnsentAsDraft(bindingId, text);
       setPendingSends((current) => current.filter((send) => send.localId !== localId));
       setPrefill({ text, nonce: Date.now() });
       toast({ title: 'Your message wasn’t sent', description: 'It’s back in the message box. Try sending it again.' });

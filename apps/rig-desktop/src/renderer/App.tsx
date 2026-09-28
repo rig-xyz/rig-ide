@@ -43,6 +43,7 @@ import {
 import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
 import { SettingsModal } from '@renderer/features/shell/settings-modal';
 import { RoomView } from '@renderer/features/spaces/components/room-view';
+import { roomSourceCache } from '@renderer/features/spaces/room-source-cache';
 import { useSpacesEnabled } from '@renderer/features/spaces/use-spaces-enabled';
 import { readOpenRig, writeOpenRig } from '@renderer/features/shell/open-rig-memory';
 import { deriveBoundIsSpace, deriveTopbarContext, type TopbarContext } from '@renderer/features/shell/topbar-context';
@@ -268,6 +269,8 @@ export function App() {
   // only `<main>` (Home/`FolderResult`) ever sets this away from false.
   const [mainScrolled, setMainScrolled] = useState(false);
   const [folder, setFolder] = useState<FolderState>({ status: 'empty' });
+  const folderRef = useRef(folder);
+  folderRef.current = folder;
   const openPathRequests = useRef(new LatestRequestGate());
   // First-sync round: the one root, if any, `openPath` just marked as
   // "attached with syncing on" (see `lib/just-attached.ts`) — read by
@@ -378,6 +381,12 @@ export function App() {
     queryKey: ['rig', 'auth', 'status'],
     queryFn: () => rpc.rig.auth.status(),
   });
+  // However it happened (here, another window, the CLI): signed out, no
+  // space's Room is kept alive (`room-source-cache.ts`).
+  const signedOutNow = authStatusQuery.data?.signedIn === false;
+  useEffect(() => {
+    if (signedOutNow) roomSourceCache.clear();
+  }, [signedOutNow]);
 
   // One-time localStorage → main handshake (persistence-design.md Round A).
   // `importLegacy` is a no-op after its first successful call — main keys
@@ -479,7 +488,12 @@ export function App() {
     ) => {
       const requestToken = openPathRequests.current.begin();
       setArtefact(NO_TABS);
-      setFolder({ status: 'detecting', path: picked });
+      // Opening the rig or space that's already open: it stays on screen
+      // while it's checked again, rather than blinking out to "Opening…"
+      // and back (which also tore its Room view down and up).
+      const current = folderRef.current;
+      const reopening = current.status === 'detected' && current.path === picked && current.result.bound;
+      if (!reopening) setFolder({ status: 'detecting', path: picked });
       setOpenedAsSpace(opts?.kind === 'space');
       setPendingActiveSessionId(opts?.activeSessionId ?? null);
       if (opts?.openFilePath) setPendingOpenAbsPath(opts.openFilePath);
@@ -691,6 +705,8 @@ export function App() {
   const deletedByEmailForDeletion = bindingDeleted?.deletedBy.email ?? null;
   useEffect(() => {
     if (boundBindingIdForDeletion && deletedAtForDeletion) {
+      // A deleted space's Room is never kept alive behind others.
+      roomSourceCache.forget(boundBindingIdForDeletion);
       markBindingDeleted(boundBindingIdForDeletion, {
         deletedAt: deletedAtForDeletion,
         deletedBy: { name: deletedByNameForDeletion, email: deletedByEmailForDeletion },
@@ -1915,6 +1931,7 @@ function DeletedRigCard({
         setError(result.error.message);
         return;
       }
+      roomSourceCache.forget(bindingId);
       void queryClient.invalidateQueries({ queryKey: ['rig', 'recent', 'list'] });
       void queryClient.invalidateQueries({ queryKey: ['rig', 'account', 'workspaces'] });
       onBackToHome();

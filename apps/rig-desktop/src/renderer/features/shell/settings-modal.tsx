@@ -11,6 +11,7 @@ import { deriveCliVersionRow } from '@renderer/features/shell/cli-versions';
 import { deriveUpdateAction, deriveUpdateStatusLine } from '@renderer/features/shell/update-status';
 import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
 import { toast } from '@renderer/lib/hooks/use-toast';
+import { roomSourceCache } from '@renderer/features/spaces/room-source-cache';
 import { rpc } from '@renderer/lib/ipc';
 import { confirmOpenExternalLink } from '@renderer/lib/open-external-link';
 import { AgentIcon } from '@renderer/lib/ui/agent-icon';
@@ -205,6 +206,7 @@ function AccountSection() {
       toast({ title: 'Could not sign out', description: result.error.message, variant: 'destructive' });
       return;
     }
+    roomSourceCache.clear(); // no Room of this account outlives it
     setConfirmingSignOut(false);
     void queryClient.invalidateQueries({ queryKey: ['rig', 'auth', 'status'] });
     void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });

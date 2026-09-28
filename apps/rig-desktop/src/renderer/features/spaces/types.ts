@@ -280,7 +280,9 @@ export type RoomEvent =
   | { type: 'connection_changed'; connection: RoomConnection }
   | { type: 'space_ready_changed'; ready: boolean }
   /** The Room's first read of the relay's messages came back (see `RoomSnapshot.loaded`). */
-  | { type: 'room_loaded' };
+  | { type: 'room_loaded' }
+  /** The space was renamed. */
+  | { type: 'room_renamed'; name: string };
 
 /** Full materialized state of a room — what components render from. */
 export interface RoomSnapshot {

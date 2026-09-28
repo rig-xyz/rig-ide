@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { roomSourceCache } from '@renderer/features/spaces/room-source-cache';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '@renderer/lib/ui/dialog';
@@ -116,6 +117,8 @@ function DeleteRigForm({
         setError(result.error.message);
         return;
       }
+      // Deleted or left: its Room isn't kept alive behind other spaces.
+      roomSourceCache.forget(bindingId);
       void queryClient.invalidateQueries({ queryKey: ['rig', 'recent', 'list'] });
       void queryClient.invalidateQueries({ queryKey: ['rig', 'account', 'workspaces'] });
       void queryClient.invalidateQueries({ queryKey: ['rig', 'sessions', 'recentAcrossRigs'] });

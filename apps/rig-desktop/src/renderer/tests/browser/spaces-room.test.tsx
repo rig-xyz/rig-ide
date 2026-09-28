@@ -530,6 +530,71 @@ describe('Room view — renders through loading into content', () => {
     expect(skeleton?.querySelector('[data-state]')).toBeNull(); // no DotMatrix here
   });
 
+  it('re-opens a space kept alive behind others on its very first render — no skeleton — and only a shown view marks it read', async () => {
+    const { ok } = await import('@emdash/shared');
+    const { rpc } = await import('@renderer/lib/ipc');
+    const { RelayRoomSource } = await import('@renderer/features/spaces/relay-room-source');
+    const { roomSourceCache } = await import('@renderer/features/spaces/room-source-cache');
+    const { readLastSeen } = await import('@renderer/features/spaces/room-read-marker');
+    const { flushSync } = await import('react-dom');
+    const rig = rpc.rig as unknown as Record<string, unknown>;
+    rig.recent = { resolveLocalPaths: async () => ({}) };
+    const row = {
+      id: 'k1',
+      seq: 1,
+      author: { userId: 'u1', name: 'Alice', avatarUrl: null, kind: 'user' as const },
+      kind: 'text',
+      body: 'kept while you were away',
+      meta: null,
+      createdAt: '2026-09-28T09:00:00Z',
+    };
+    const relay = {
+      mintRealtimeTicket: async () => ok({ ticket: 't', expiresAt: new Date(Date.now() + 600_000).toISOString() }),
+      listMembers: async () => ok([{ userId: 'u1', clerkUserId: null, name: 'Alice', email: null, role: 'owner', avatarUrl: null }]),
+      listMessages: async (_b: string, query: { after?: string }) => ok(query.after ? [] : [row]),
+      getSessionEvents: async () => ok({ run: null as never, events: [] }),
+      postMessage: async () => ok(row),
+      requestOwnAgent: async () => ok({} as never),
+    };
+    const quietProvider = {
+      connect: () => {},
+      disconnect: () => {},
+      destroy: () => {},
+      sendStateless: () => {},
+      on: () => {},
+      off: () => {},
+      awareness: null,
+    };
+    try {
+      roomSourceCache.rememberConnection({ selfUserId: 'u1', wsUrl: 'wss://relay.test/v1/realtime' });
+      const lease = roomSourceCache.acquire('u1', 'b-kept', () =>
+        new RelayRoomSource({
+          bindingId: 'b-kept',
+          spaceName: '#kept',
+          wsUrl: 'wss://relay.test/v1/realtime',
+          selfUserId: 'u1',
+          relay,
+          connectGraceMs: 60_000,
+          createProvider: () => quietProvider,
+        })
+      );
+      await vi.waitFor(() => expect(lease.source.getSnapshot().messages).toHaveLength(1));
+      lease.release();
+      // Loaded, but never on screen: nothing marked it read.
+      expect(readLastSeen('b-kept')).toBeNull();
+
+      flushSync(() => root.render(<RoomView bindingId="b-kept" spaceName="#kept" />));
+      // The very first render, before any effect or request: the transcript, not a skeleton.
+      expect(host.querySelector('[data-testid="room-loading-skeleton"]')).toBeNull();
+      expect(host.textContent).toContain('kept while you were away');
+      await act(async () => {});
+      expect(host.textContent).not.toContain('Could not connect'); // offline, the kept Room carries on
+    } finally {
+      roomSourceCache.clear();
+      delete rig.recent;
+    }
+  });
+
   it('shows the opening skeleton, not a blank pane, while it still asks who you are', async () => {
     const { rpc } = await import('@renderer/lib/ipc');
     const connection = rpc.rig.spacesConnection as { getConnectionInfo: () => Promise<unknown> };

@@ -352,6 +352,10 @@ export class RelayRoomSource implements RoomSource {
   private requests = 0;
   private readonly createdAtMs = Date.now();
   private everConnected = false;
+  /** `connect()` has begun the open (bootstrap, then the socket). */
+  private started = false;
+  /** On screen — see `setShown`. */
+  private shown = true;
 
   private ticket: { value: string; expiresAtMs: number } | null = null;
   private ticketMint: Promise<string> | null = null;
@@ -406,11 +410,39 @@ export class RelayRoomSource implements RoomSource {
     void this.connect();
   }
 
+  /** Closes the socket (and stops polling), keeping the snapshot; `play()` reconnects and catches up. */
   pause(): void {
     this.paused = true;
     this.stopPolling();
+    // What was going now is what the reconnect catch-up has to re-read.
+    if (this.connected) for (const runId of this.liveRunIds()) this.liveAtDisconnect.add(runId);
     this.provider?.disconnect();
     this.connected = false;
+  }
+
+  /**
+   * Whether this Room is on screen (`room-source-cache.ts` keeps a few alive
+   * behind other spaces). Hidden, it stops saying you're here or typing, but
+   * keeps listening. Shown again: started if it never was, reconnected if its
+   * socket was closed for idling (the reconnect catches up), else one
+   * catch-up for anything a notification may not have covered.
+   */
+  setShown(shown: boolean): void {
+    if (this.disposed || shown === this.shown) return;
+    this.shown = shown;
+    if (!shown) {
+      this.setTyping(false);
+      this.provider?.awareness?.setLocalStateField('user', null);
+      return;
+    }
+    this.provider?.awareness?.setLocalStateField('user', { id: this.opts.selfUserId });
+    if (!this.started || this.paused) this.play();
+    else if (this.snapshot.loaded) void this.catchUp({ messages: true, runs: this.liveRunIds() });
+  }
+
+  /** The space was renamed: the Room's own name follows. */
+  rename(name: string): void {
+    if (name !== this.snapshot.name) this.applyLocal({ type: 'room_renamed', name });
   }
 
   dispose(): void {
@@ -436,6 +468,9 @@ export class RelayRoomSource implements RoomSource {
       this.provider.connect();
       return;
     }
+    // Already opening: that open connects when it's done (unless paused meanwhile).
+    if (this.started) return;
+    this.started = true;
     if (this.localRuns && !this.unsubscribeLocalRuns) {
       this.unsubscribeLocalRuns = this.localRuns.subscribe((update) => void this.onLocalRunEvent(update));
     }
@@ -458,9 +493,9 @@ export class RelayRoomSource implements RoomSource {
       return;
     }
     this.provider = provider;
-    // Presence: announce who this client is; everyone's states give who's
-    // here and who's typing.
-    provider.awareness?.setLocalStateField('user', { id: this.opts.selfUserId });
+    // Presence: announce who this client is (while it's on screen);
+    // everyone's states give who's here and who's typing.
+    provider.awareness?.setLocalStateField('user', this.shown ? { id: this.opts.selfUserId } : null);
     provider.awareness?.on('change', () => this.syncPresence());
     provider.on('connect', () => {
       this.connected = true;
@@ -492,6 +527,9 @@ export class RelayRoomSource implements RoomSource {
     provider.on('stateless', ({ payload }) => {
       void this.handleNotification(payload);
     });
+    // Paused while it was opening (e.g. it idled behind other spaces): stays
+    // closed until `play()`, which connects this provider.
+    if (this.paused) return;
     provider.connect();
     // A failed upgrade (a relay with realtime off answers it with a 404)
     // usually shows up as `disconnect`, but nothing guarantees one — a
@@ -1300,7 +1338,8 @@ export class RelayRoomSource implements RoomSource {
   }
 
   setTyping(isTyping: boolean): void {
-    this.provider?.awareness?.setLocalStateField('typing', isTyping);
+    // Never "typing" in a Room that isn't on screen.
+    this.provider?.awareness?.setLocalStateField('typing', isTyping && this.shown);
   }
 
   // ── plumbing ────────────────────────────────────────────────────────────

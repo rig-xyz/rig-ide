@@ -88,6 +88,11 @@ function readDraft(key: string | undefined): string {
   }
 }
 
+/** A message that failed to send after you'd left its space: it's waiting in that space's message box when you're back (never over a draft you've since started). */
+export function keepUnsentAsDraft(key: string, text: string): void {
+  if (!readDraft(key).trim()) writeDraft(key, text);
+}
+
 function writeDraft(key: string | undefined, value: string): void {
   if (!key) return;
   try {

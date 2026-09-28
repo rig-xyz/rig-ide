@@ -201,6 +201,9 @@ export function reduceRoom(snapshot: RoomSnapshot, event: RoomEvent): RoomSnapsh
     case 'room_loaded':
       return { ...snapshot, loaded: true };
 
+    case 'room_renamed':
+      return { ...snapshot, name: event.name };
+
     default:
       return snapshot;
   }

@@ -1,6 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { ArrowDown } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
@@ -395,6 +395,15 @@ export function RoomTranscript({
     observer.observe(content);
     return () => observer.disconnect();
   }, []);
+
+  // A new snapshot (a card's log landing in place of its placeholder, a row
+  // added) re-pins before paint, not whenever the observer above gets round
+  // to it: under load that could be late enough for the reader to see the
+  // bottom slide away.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
+  }, [snapshot]);
 
   // New messages while scrolled up are counted for the jump-back pill; one
   // you sent yourself always brings you back down.
