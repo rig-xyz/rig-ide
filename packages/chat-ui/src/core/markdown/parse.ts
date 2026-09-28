@@ -52,6 +52,7 @@ import type {
   InlineText,
   ProseBlock,
   ProseVariant,
+  QuoteRef,
   RuleBlock,
   TableBlock,
 } from './document';
@@ -213,12 +214,13 @@ function blockToBlocks(
   messageId: string,
   counter: { n: number },
   depth = 0,
-  /** Depth of the innermost enclosing blockquote's content; undefined outside quotes. */
-  quoteDepth?: number,
+  /** Enclosing blockquotes, outermost first (see QuoteRef). */
+  quotes: QuoteRef[] = [],
   /** True for a list nested in another list's item (no list-start gap). */
   inList = false
 ): Block[] {
-  const inQuote = quoteDepth !== undefined;
+  const inQuote = quotes.length > 0;
+  const quoteRefs = inQuote ? quotes : undefined;
   const nextId = (): BlockId => `${messageId}#${counter.n++}`;
   const blocks: Block[] = [];
 
@@ -233,6 +235,7 @@ function blockToBlocks(
           variant: inQuote ? 'quote' : 'body',
           runs,
           depth,
+          quotes: quoteRefs,
         } satisfies ProseBlock);
       }
       break;
@@ -254,9 +257,14 @@ function blockToBlocks(
     }
 
     case 'blockquote': {
+      // Id from the source offset, not the block counter, so block ids don't shift.
+      const quote: QuoteRef = {
+        id: `${messageId}:q${node.position?.start.offset ?? counter.n}`,
+        depth: depth + 1,
+      };
       for (const child of (node as Parent).children) {
         blocks.push(
-          ...blockToBlocks(child as BlockContent, messageId, counter, depth + 1, depth + 1)
+          ...blockToBlocks(child as BlockContent, messageId, counter, depth + 1, [...quotes, quote])
         );
       }
       break;
@@ -280,7 +288,7 @@ function blockToBlocks(
                 depth,
                 marker: !first ? '' : list.ordered ? `${(list.start ?? 1) + index}.` : undefined,
                 checked: first ? (item.checked ?? undefined) : undefined,
-                quoteDepth,
+                quotes: quoteRefs,
                 // A top-level list opens with a paragraph-sized gap, so two
                 // back-to-back lists don't read as one.
                 listStart: !inList && index === 0 && first ? true : undefined,
@@ -294,7 +302,7 @@ function blockToBlocks(
                 messageId,
                 counter,
                 depth + 1,
-                quoteDepth,
+                quotes,
                 true
               )
             );
@@ -318,6 +326,7 @@ function blockToBlocks(
           id: nextId(),
           code: node.value,
           lang: node.lang ?? undefined,
+          quotes: quoteRefs,
         });
       }
       break;
@@ -348,7 +357,7 @@ function blockToBlocks(
       const start = blocks.length;
       for (const child of def.children) {
         blocks.push(
-          ...blockToBlocks(child as BlockContent, messageId, counter, depth, quoteDepth, inList)
+          ...blockToBlocks(child as BlockContent, messageId, counter, depth, quotes, inList)
         );
       }
       const firstBlock = blocks[start];
@@ -377,6 +386,7 @@ function blockToBlocks(
         id: nextId(),
         code: node.value,
         lang: 'latex',
+        quotes: quoteRefs,
       });
       break;
     }

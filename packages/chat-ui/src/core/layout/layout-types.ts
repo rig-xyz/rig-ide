@@ -59,10 +59,6 @@ export type ProseLaidOut = {
   lineHeight: number;
   lines: LineLayout[];
   bullet?: BulletLayout;
-  /** True if a left-side quote rail should be drawn. */
-  quoteRail?: boolean;
-  /** Rail x in px when `quoteRail` (a list inside a quote sits past its text column). */
-  quoteRailX?: number;
 };
 
 /** Code block with pre-positioned source lines. */
@@ -75,6 +71,8 @@ export type CodeLaidOut = {
   contentWidth: number;
   lines: { top: number; text: string }[];
   lang?: string;
+  /** Left inset in px (a code block inside a quote starts at the quote's text column). */
+  indent?: number;
 };
 
 /** One table row: its height and each cell's runs laid out as body prose. */

@@ -128,20 +128,49 @@ describe('Claude output fixture renders every markdown element', () => {
     }
   });
 
-  it('a list inside a quote keeps the rail; back-to-back lists get a paragraph gap', async () => {
+  it('a quote draws one continuous bar across its paragraphs, list and code block', async () => {
     const { host, cleanup } = await mount(620);
     try {
-      const quotePara = proseFrame(host, 'Note:');
-      const quoteRail = quotePara.querySelector<HTMLElement>(`.${pquoteRail}`)!;
+      // The fixture has one blockquote: paragraph, 2 list items, code, paragraph.
+      const bars = Array.from(host.querySelectorAll<HTMLElement>(`.${pquoteRail}`));
+      expect(bars).toHaveLength(1);
+      const bar = bars[0]!.getBoundingClientRect();
+      const first = proseFrame(host, 'Note:').getBoundingClientRect();
+      const last = proseFrame(host, 'Ping me if it fails.').getBoundingClientRect();
+      // No vertical gap anywhere: one element from the first block's top to the last's bottom.
+      expect(bar.top).toBe(first.top);
+      expect(bar.bottom).toBe(last.bottom);
+      expect(bar.height).toBeGreaterThan(0);
+
+      const textLeft = Array.from(host.querySelectorAll('span'))
+        .find((s) => s.textContent === 'Note:')!
+        .getBoundingClientRect().left;
       for (const text of ['run it off-peak', 'watch the dashboard']) {
+        // List items: bullet past the quote's text column, within the bar's span.
         const item = proseFrame(host, text);
-        const rail = item.querySelector<HTMLElement>(`.${pquoteRail}`);
-        expect(rail).not.toBeNull();
-        // Same rail column as the quote's paragraphs, bullet past the quote text.
-        expect(rail!.getBoundingClientRect().left).toBe(quoteRail.getBoundingClientRect().left);
         const bullet = item.querySelector('[aria-hidden="true"]')!.getBoundingClientRect();
-        expect(bullet.left).toBeGreaterThan(quoteRail.getBoundingClientRect().left + 10);
+        expect(bullet.left).toBeGreaterThan(bar.right + 10);
+        expect(item.getBoundingClientRect().top).toBeGreaterThanOrEqual(bar.top);
       }
+
+      // Code block inside the quote: indented to the quote's text column,
+      // right of the bar, and inside the bar's vertical span.
+      const code = Array.from(host.querySelectorAll<HTMLElement>(`.${codeWrapper}`)).find((w) =>
+        w.textContent?.includes('pnpm backfill --dry-run')
+      )!;
+      const codeRect = code.getBoundingClientRect();
+      expect(codeRect.left).toBe(textLeft);
+      expect(codeRect.left).toBeGreaterThan(bar.right);
+      expect(codeRect.top).toBeGreaterThan(bar.top);
+      expect(codeRect.bottom).toBeLessThan(bar.bottom);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('back-to-back lists get a paragraph gap', async () => {
+    const { host, cleanup } = await mount(620);
+    try {
 
       const gap = (a: string, b: string) =>
         proseFrame(host, b).getBoundingClientRect().top -

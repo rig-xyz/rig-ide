@@ -130,6 +130,7 @@ export function Code(props: CodeProps) {
           wrapperEl = el;
         }}
         class={codeWrapper}
+        style={props.block.indent ? { left: `${props.block.indent}px` } : undefined}
       >
         <For each={props.block.lines}>
           {(line, i) => (

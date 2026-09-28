@@ -32,8 +32,6 @@ import {
   pf,
   pfVariants,
   pline,
-  pquoteRail,
-  quoteRailBar,
   strikeFragment,
   taskBox,
   taskBoxChecked,
@@ -340,7 +338,8 @@ function ProseLine(props: {
   );
 }
 
-// ── Bullet & QuoteRail ────────────────────────────────────────────────────────
+// ── Bullet ────────────────────────────────────────────────────────────────────
+// (Quote bars are drawn per quote by BlockStackView, spanning its blocks.)
 
 function ProseBullet(props: { bullet: BulletLayout }) {
   return (
@@ -361,10 +360,6 @@ function ProseBullet(props: { bullet: BulletLayout }) {
       </Show>
     </span>
   );
-}
-
-function ProseQuoteRail(props: { left: number }) {
-  return <div class={`${pquoteRail} ${quoteRailBar}`} style={{ left: `${props.left}px` }} />;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -433,11 +428,6 @@ export function Prose(props: ProseProps) {
 
   return (
     <BlockFrame layout={props.block}>
-      <Show when={props.block.quoteRail}>
-        <ProseQuoteRail
-          left={props.block.quoteRailX ?? (props.block.lines[0]?.left ?? 18) - 10}
-        />
-      </Show>
       <Show when={props.block.bullet}>{(bullet) => <ProseBullet bullet={bullet()} />}</Show>
       <For each={props.block.lines}>
         {(line, lineIdx) => {

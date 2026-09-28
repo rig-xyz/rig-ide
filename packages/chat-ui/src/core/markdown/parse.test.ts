@@ -299,12 +299,17 @@ describe('GFM structure beyond paragraphs', () => {
     expect(blocks[1]).toMatchObject({ kind: 'code', code: 'a+b', lang: 'latex' });
   });
 
-  it('list items inside a quote carry the quote depth (nested lists too)', () => {
-    const items = prose('> intro\n>\n> - a\n>   - b').filter((b) => b.variant === 'list-item');
-    expect(items.map((b) => [b.depth, b.quoteDepth])).toEqual([
-      [1, 1],
-      [2, 1],
-    ]);
+  it('blocks inside a quote share its QuoteRef (nested lists and code too)', () => {
+    const blocks = parseMarkdownToBlocks('t', '> intro\n>\n> - a\n>   - b\n>\n> ```\n> x\n> ```');
+    const quotes = blocks.map((b) => (b.kind === 'prose' || b.kind === 'code' ? b.quotes : null));
+    expect(quotes).toHaveLength(4);
+    expect(quotes.every((q) => q?.length === 1 && q[0].depth === 1 && q[0].id === quotes[0]![0].id)).toBe(true);
+    expect(blocks.map((b) => (b.kind === 'prose' ? b.depth : b.kind))).toEqual([1, 1, 2, 'code']);
+  });
+
+  it('a nested quote adds its own QuoteRef after the outer one', () => {
+    const [, inner] = prose('> outer\n>\n> > inner');
+    expect(inner.quotes?.map((q) => q.depth)).toEqual([1, 2]);
   });
 
   it('only the first item of a top-level list is a list start', () => {

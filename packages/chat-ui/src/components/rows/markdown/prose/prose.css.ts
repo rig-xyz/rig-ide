@@ -145,12 +145,11 @@ export const pbullet = style({
   // color — applied via visual class in Prose.tsx
 });
 
+/** Quote bar — positioned (left/top/height) by BlockStackView, one per quote run. */
 export const pquoteRail = style({
   position: 'absolute',
-  top: 0,
-  bottom: 0,
   width: '3px',
-  // background and borderRadius — applied in Prose.tsx via visual class
+  // background and borderRadius — applied via the quoteRailBar visual class
 });
 
 // ── Visual (no measurement impact — color, background, decoration only) ───────

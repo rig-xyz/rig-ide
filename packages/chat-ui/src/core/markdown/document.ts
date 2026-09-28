@@ -104,14 +104,20 @@ export type ProseBlock = {
   marker?: string;
   /** GFM task-list item state — draws a checkbox in place of the marker. */
   checked?: boolean;
-  /**
-   * List item inside a blockquote: the quote's content depth. The item is
-   * indented past the quote's text column and keeps the quote rail.
-   */
-  quoteDepth?: number;
+  /** Enclosing blockquotes (quote paragraphs, and list items inside a quote). */
+  quotes?: QuoteRef[];
   /** First item of a top-level list — opens with a paragraph-sized gap. */
   listStart?: boolean;
 };
+
+/**
+ * One enclosing blockquote, outermost first in a block's `quotes`. `depth` is
+ * the quote's content depth (its text column is (depth + 1) × the quote
+ * indent). Consecutive blocks sharing an `id` get one continuous bar
+ * (BlockStackView); list items and code blocks indent past the innermost
+ * quote's text column.
+ */
+export type QuoteRef = { id: string; depth: number };
 
 /**
  * A fenced or indented code block.
@@ -124,6 +130,8 @@ export type CodeBlock = {
   code: string;
   /** Optional language hint (e.g. "typescript"). */
   lang?: string;
+  /** Enclosing blockquotes — see QuoteRef. */
+  quotes?: QuoteRef[];
 };
 
 /** GFM column alignment from the delimiter row (`:--`, `:-:`, `--:`). */
