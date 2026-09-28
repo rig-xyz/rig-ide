@@ -46,10 +46,12 @@ import type {
   SessionRun,
 } from '@main/rig/spaces/relay-api';
 import type { DraftPreview } from '@main/rig/spaces-connection';
+import type { MessageAttachment } from '@shared/rig/attachments';
 import { connectorById, type ConnectionStatus } from '@shared/spaces/connectors';
 import { ROOM_CACHE_FORMAT_VERSION, ROOM_CACHE_MAX_BYTES, type CachedRoomBlob } from '@shared/spaces/room-cache';
 import type { LocalRunEvent } from '@shared/spaces/room-sees';
 import type { AgentKind, MessageKind, RoomConnector, RoomEvent, RoomReplyRef, RoomSnapshot, SessionRunMeta } from './types';
+import { parseMessageAttachments } from './attachments';
 import { reduceRoom } from './fixtures/room-feed';
 import { effectiveRunStatus, runCard, summarizeCard } from './projection';
 import type { RoomSource } from './room-source';
@@ -1361,8 +1363,19 @@ export class RelayRoomSource implements RoomSource {
    * this app is about to hand to your own agent itself, so the relay's
    * dispatcher doesn't run the same ask a second time.
    */
-  async send(text: string, replyTo?: RoomReplyRef, asks?: AgentKind): Promise<string | null> {
-    const meta = { ...(replyTo ? { replyTo } : {}), ...(asks ? { asks } : {}) };
+  async send(
+    text: string,
+    replyTo?: RoomReplyRef,
+    asks?: AgentKind,
+    files?: { attachments: MessageAttachment[]; autoBody: boolean }
+  ): Promise<string | null> {
+    const meta = {
+      ...(replyTo ? { replyTo } : {}),
+      ...(asks ? { asks } : {}),
+      ...(files && files.attachments.length > 0
+        ? { attachments: files.attachments, ...(files.autoBody ? { autoBody: true } : {}) }
+        : {}),
+    };
     const result = await this.opts.relay.postMessage(this.opts.bindingId, {
       body: text,
       kind: 'text',
@@ -1754,21 +1767,25 @@ function toMessageMeta(
       };
     default: {
       const reply = meta.replyTo as Record<string, unknown> | undefined;
-      return reply &&
+      const attachments = parseMessageAttachments(meta.attachments);
+      return {
+        kind: 'text',
+        ...(reply &&
         typeof reply === 'object' &&
         typeof reply.id === 'string' &&
         typeof reply.authorId === 'string' &&
         typeof reply.excerpt === 'string'
-        ? {
-            kind: 'text',
-            replyTo: {
-              id: reply.id,
-              authorId: reply.authorId,
-              label: typeof reply.label === 'string' ? reply.label : '',
-              excerpt: reply.excerpt,
-            },
-          }
-        : { kind: 'text' };
+          ? {
+              replyTo: {
+                id: reply.id,
+                authorId: reply.authorId,
+                label: typeof reply.label === 'string' ? reply.label : '',
+                excerpt: reply.excerpt,
+              },
+            }
+          : {}),
+        ...(attachments ? { attachments, ...(meta.autoBody === true ? { autoBody: true } : {}) } : {}),
+      };
     }
   }
 }

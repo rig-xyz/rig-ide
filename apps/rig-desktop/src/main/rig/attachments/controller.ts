@@ -1,12 +1,19 @@
-import { join } from 'node:path';
-import { app, dialog } from 'electron';
+import { isAbsolute, join } from 'node:path';
+import { stat } from 'node:fs/promises';
+import { app, dialog, nativeImage } from 'electron';
 import { getMainWindow } from '@main/app/window';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
-import type { AttachmentInput } from '@shared/rig/attachments';
+import {
+  ATTACHMENT_IMAGE_CONTENT_MAX_BYTES,
+  type AttachmentFileStatus,
+  type AttachmentInput,
+  type AttachmentStatusQuery,
+} from '@shared/rig/attachments';
 import { fetchWorkspaceBindings, isError, resolveContext } from '../account';
 import { resolveLocalPathsImpl } from '../recent-rigs';
 import { createAttachmentsService } from './service';
+import { attachmentStatus, resolveInSpace } from './status';
 import type { ManifestSize } from './usage';
 
 /**
@@ -61,8 +68,52 @@ async function roleIn(bindingId: string): Promise<string | null> {
   return roles.byBinding.get(bindingId) ?? null;
 }
 
+const resolveSpaceRoot = async (bindingId: string) => (await resolveLocalPathsImpl([bindingId]))[bindingId] ?? null;
+
+// The cards poll while files travel; one file-list read per space every 15 s at most.
+const MANIFEST_TTL_MS = 15_000;
+const manifestCache = new Map<string, { at: number; value: Promise<ManifestSize[] | null> }>();
+function cachedManifest(bindingId: string): Promise<ManifestSize[] | null> {
+  const hit = manifestCache.get(bindingId);
+  if (hit && Date.now() - hit.at < MANIFEST_TTL_MS) return hit.value;
+  const value = fetchManifest(bindingId);
+  manifestCache.set(bindingId, { at: Date.now(), value });
+  return value;
+}
+
+const THUMB_PX = 480;
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|heic|heif|tiff?|bmp)$/i;
+
+/** A small preview of an image file, made on this computer (Quick Look where there is one). */
+async function thumbnailOf(abs: string): Promise<string | null> {
+  if (!IMAGE_EXT.test(abs)) return null;
+  try {
+    const image = await nativeImage.createThumbnailFromPath(abs, { width: THUMB_PX, height: THUMB_PX });
+    if (!image.isEmpty()) return image.toDataURL();
+  } catch {
+    // no Quick Look here (Linux) or it declined: fall back below
+  }
+  try {
+    if ((await stat(abs)).size > ATTACHMENT_IMAGE_CONTENT_MAX_BYTES * 4) return null;
+    const image = nativeImage.createFromPath(abs);
+    if (image.isEmpty()) return null;
+    const { width, height } = image.getSize();
+    const scale = Math.min(1, THUMB_PX / Math.max(width, height));
+    return (scale < 1 ? image.resize({ width: Math.round(width * scale) }) : image).toDataURL();
+  } catch {
+    return null;
+  }
+}
+
+/** An image in the space (paths from messages stay inside it). */
+async function thumbnail(bindingId: string, path: string): Promise<string | null> {
+  const root = await resolveSpaceRoot(bindingId);
+  const abs = root ? await resolveInSpace(root, path) : null;
+  return abs ? thumbnailOf(abs) : null;
+}
+
 const service = createAttachmentsService({
-  resolveSpaceRoot: async (bindingId) => (await resolveLocalPathsImpl([bindingId]))[bindingId] ?? null,
+  resolveSpaceRoot,
   role: roleIn,
   fetchManifest,
   pasteDir: () => join(app.getPath('temp'), 'rig-pasted-attachments'),
@@ -88,6 +139,22 @@ export const rigAttachmentsController = createRPCController({
   prepare: ({ bindingId, files }: { bindingId: string; files: AttachmentInput[] }) => service.prepare(bindingId, files),
   /** At send: copy into `attachments/` (or link). All or nothing. */
   commit: ({ bindingId, files }: { bindingId: string; files: AttachmentInput[] }) => service.commit(bindingId, files),
+  /** Where each attached file is (here, synced, held back, on the relay) for the message cards; null when the space isn't linked here. */
+  status: ({
+    bindingId,
+    files,
+    withRelay = false,
+  }: {
+    bindingId: string;
+    files: AttachmentStatusQuery[];
+    withRelay?: boolean;
+  }): Promise<AttachmentFileStatus[] | null> =>
+    attachmentStatus({ resolveSpaceRoot, fetchManifest: cachedManifest }, bindingId, files.slice(0, 200), { withRelay }),
+  /** A data URL preview of an image in the space, or null. */
+  thumbnail: ({ bindingId, path }: { bindingId: string; path: string }): Promise<string | null> => thumbnail(bindingId, path),
+  /** A preview of a file the user just attached (the chip's thumbnail); images only. */
+  previewSource: ({ source }: { source: string }): Promise<string | null> =>
+    isAbsolute(source) ? thumbnailOf(source) : Promise.resolve(null),
   /** A pasted image's bytes → a temp file to attach. */
   savePastedImage: (args: { data: Uint8Array; mime: string; name?: string }) => service.savePastedImage(args),
 });

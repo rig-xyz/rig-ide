@@ -9,6 +9,7 @@
  * describes the SHAPE of that room — no rendering, no transport.
  */
 
+import type { MessageAttachment } from '@shared/rig/attachments';
 import type { ConnectionState, ConnectorGap, RigToolArgs } from '@shared/spaces/connectors';
 import type { RunSummary } from '@shared/spaces/room-cache';
 import type { RoomSees } from '@shared/spaces/room-sees';
@@ -188,6 +189,10 @@ export type MessageMeta =
       kind: 'text';
       /** A quote-reply: the message this one answers, with a short excerpt to show above it. */
       replyTo?: RoomReplyRef;
+      /** Files sent with the message (board 19), shown as cards. */
+      attachments?: MessageAttachment[];
+      /** The body was written for older apps because only files were sent; cards say it already. */
+      autoBody?: boolean;
     }
   | { kind: 'session'; runId: string }
   | { kind: 'invite'; inviteId: string }

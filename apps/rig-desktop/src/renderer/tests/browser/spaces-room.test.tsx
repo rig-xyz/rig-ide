@@ -33,7 +33,11 @@ vi.mock('@renderer/lib/ipc', () => ({
   rpc: {
     app: { openExternal: async () => {} },
     // No live relay here: the Room offers the scripted demo instead.
-    rig: { spacesConnection: { getConnectionInfo: async () => ({ success: false, error: { message: 'offline' } }) } },
+    rig: {
+      spacesConnection: { getConnectionInfo: async () => ({ success: false, error: { message: 'offline' } }) },
+      // A live Room asks once whether files can be attached here.
+      attachments: { prepare: async () => ({ space: { status: 'ok' }, files: [] }) },
+    },
   },
   // The Room listens for its owner overlay's pushes (never, with no relay).
   events: { on: () => () => {} },

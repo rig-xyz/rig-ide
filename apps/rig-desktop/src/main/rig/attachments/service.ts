@@ -132,7 +132,8 @@ export function createAttachmentsService(deps: AttachmentsDeps) {
     const adding = verdicts
       .filter((v) => v.disposition === 'copy' && v.state !== 'blocked')
       .reduce((sum, v) => sum + (v.size ?? 0), 0);
-    const usage = await usageFor(bindingId, gate.root, false);
+    // Nothing attached yet (the composer asking whether attaching is on): no usage read.
+    const usage = files.length > 0 ? await usageFor(bindingId, gate.root, false) : null;
     const overQuota = adding > 0 && (usage === null || usage.usedBytes + adding > limit);
     return {
       space: {

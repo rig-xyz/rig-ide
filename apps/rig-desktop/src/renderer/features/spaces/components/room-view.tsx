@@ -19,6 +19,10 @@ import { useRefreshMemberReadsOnRosterChange } from '../roster-refresh';
 import { resolveSpaceLink } from '../space-link';
 import { effectiveRunStatus, runCard } from '../projection';
 import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
+import type { MessageAttachment } from '@shared/rig/attachments';
+import { fallbackBody, toMessageAttachments, type ComposerAttachment } from '../attachments';
+import { useComposerAttachments } from '../use-composer-attachments';
+import { AttachmentSpaceContext, type AttachmentSpace } from './attachment-cards';
 import { Composer, keepUnsentAsDraft, type ComposerSendContext, type ComposerSuggestion } from './composer';
 import { ownTurnSuggestion } from '../own-turn-suggestion';
 import { RoomTranscript } from './room-transcript';
@@ -233,10 +237,16 @@ export async function sendFromComposer(
   ownAgents: readonly AgentKind[],
   text: string,
   { replyTo, agent, attach }: ComposerSendContext,
-  wake: () => void
+  wake: () => void,
+  attachments: readonly MessageAttachment[] = []
 ): Promise<string | null> {
   const asks = agent && ownAgents.includes(agent) ? agent : null;
-  const sourceMessageId = await source.send(text, replyTo, asks ?? undefined);
+  // Files only: the relay needs words, and older apps show them; the cards say it here.
+  const body = text || (attachments.length > 0 ? fallbackBody(attachments) : '');
+  const sourceMessageId =
+    attachments.length > 0
+      ? await source.send(body, replyTo, asks ?? undefined, { attachments: [...attachments], autoBody: !text })
+      : await source.send(body, replyTo, asks ?? undefined);
   if (!asks) return sourceMessageId;
   const prompt = attach ? `${text}\n\n(Open beside the chat: ${attach})` : text;
   await source.requestOwnAgent(asks, prompt, sourceMessageId ?? undefined);
@@ -245,7 +255,15 @@ export async function sendFromComposer(
 }
 
 /** A message you've sent that the relay hasn't handed back yet; `id` once the post has returned. */
-type PendingSend = { localId: string; text: string; replyTo?: RoomReplyRef; createdAt: string; id: string | null };
+type PendingSend = {
+  localId: string;
+  text: string;
+  replyTo?: RoomReplyRef;
+  createdAt: string;
+  id: string | null;
+  /** Shown as cards while the files are copied and the message posted. */
+  attachments?: MessageAttachment[];
+};
 
 /**
  * The snapshot with your pending messages at the end, so a message shows the
@@ -269,12 +287,32 @@ export function withPendingSends(snapshot: RoomSnapshot, pending: readonly Pendi
         authorId: selfUserId,
         createdAt: send.createdAt,
         time: formatClock(send.createdAt),
-        body: send.text,
-        meta: { kind: 'text' as const, ...(send.replyTo ? { replyTo: send.replyTo } : {}) },
+        body: send.text || undefined,
+        meta: {
+          kind: 'text' as const,
+          ...(send.replyTo ? { replyTo: send.replyTo } : {}),
+          ...(send.attachments?.length ? { attachments: send.attachments, autoBody: !send.text } : {}),
+        },
         sending: true as const,
       })),
     ],
   };
+}
+
+/** A drag carrying files (not text or a link dragged within the page). */
+function hasDraggedFiles(data: DataTransfer): boolean {
+  return Array.from(data.types).includes('Files');
+}
+
+/** Cards for files still being copied: what the chips knew about them, no path yet. */
+function pendingCards(files: readonly ComposerAttachment[]): MessageAttachment[] {
+  return files.map((f) => ({
+    name: f.verdict?.storedName ?? f.name ?? f.source.split('/').pop() ?? 'file',
+    size: f.verdict?.size ?? 0,
+    mime: f.verdict?.mime ?? 'application/octet-stream',
+    kind: f.verdict?.disposition === 'localOnly' ? 'local-only' : 'copied',
+    ...(f.verdict?.pageCount ? { pages: f.verdict.pageCount } : {}),
+  }));
 }
 
 export function RoomView({
@@ -332,6 +370,15 @@ export function RoomView({
   }>({ open: false, focus: null, initialScope: 'all', initialSection: null });
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
+  const attachments = useComposerAttachments(bindingId, source instanceof RelayRoomSource);
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+  // Which space the composer shows now: a send that fails after you've moved on never puts its files in another space's box.
+  const shownBindingRef = useRef(bindingId);
+  shownBindingRef.current = bindingId;
+  // Dragging files over the chat column: the whole column is the drop target.
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
   // The body only exists once the Room has a snapshot (and isn't folded into
   // the doc-focus rail), so it's tracked as state: the observer attaches when
   // the element appears, not at mount — a mount-time `[]` effect missed it
@@ -593,6 +640,22 @@ export function RoomView({
     [spaceRoot, spaceName]
   );
   const handleOpenFile = onOpenFile ? openLink : undefined;
+  const attachmentSpace = useMemo<AttachmentSpace | null>(
+    () =>
+      live
+        ? {
+            bindingId,
+            spaceRoot,
+            selfUserId,
+            onOpenFile,
+            status: (files, withRelay) => rpc.rig.attachments.status({ bindingId, files, withRelay }),
+            thumbnail: (path) => rpc.rig.attachments.thumbnail({ bindingId, path }),
+            reveal: (absPath) => void rpc.app.showItemInFolder(absPath).catch(() => {}),
+            copyText: (text) => void rpc.app.clipboardWriteText(text).catch(() => {}),
+          }
+        : null,
+    [live, bindingId, spaceRoot, selfUserId, onOpenFile]
+  );
 
   // Every hook sits above the early returns below: React needs the same
   // hooks in the same order on every render.
@@ -690,26 +753,58 @@ export function RoomView({
     setReplyTo(null);
     const ownAgents = snapshot.agents.filter((a) => a.owner === selfUserId).map((a) => a.agent);
     const localId = `sending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const files = context.files ?? [];
     setPendingSends((current) => [
       ...current,
-      { localId, text, ...(context.replyTo ? { replyTo: context.replyTo } : {}), createdAt: new Date().toISOString(), id: null },
+      {
+        localId,
+        text,
+        ...(context.replyTo ? { replyTo: context.replyTo } : {}),
+        createdAt: new Date().toISOString(),
+        id: null,
+        ...(files.length > 0 ? { attachments: pendingCards(files) } : {}),
+      },
     ]);
-    // Not sent: it leaves the transcript and goes back in the composer, so nothing typed is lost.
-    const failed = () => {
-      // You'd left the space meanwhile: it waits in that space's message box instead.
+    // Not sent: it leaves the transcript and goes back in the composer (text and files), so nothing is lost.
+    const failed = (reason?: { source?: string; message: string }) => {
+      // You'd left the space meanwhile: the text waits in that space's message box instead.
       if (!mountedRef.current) keepUnsentAsDraft(bindingId, text);
       setPendingSends((current) => current.filter((send) => send.localId !== localId));
-      setPrefill({ text, nonce: Date.now() });
-      toast({ title: 'Your message wasn’t sent', description: 'It’s back in the message box. Try sending it again.' });
+      if (text) setPrefill({ text, nonce: Date.now() });
+      if (files.length > 0 && mountedRef.current && shownBindingRef.current === bindingId) {
+        attachmentsRef.current.restore(files, reason);
+      }
+      toast({
+        title: 'Your message wasn’t sent',
+        description: reason
+          ? `${reason.message} It’s back in the message box.`
+          : 'It’s back in the message box. Try sending it again.',
+      });
     };
-    // Wake this device's claim poller rather than waiting for its next tick.
-    sendFromComposer(source, ownAgents, text, context, () => void rpc.rig.spacesDispatch.checkNow()).then(
-      (id) =>
-        id === null
-          ? failed()
-          : setPendingSends((current) => current.map((send) => (send.localId === localId ? { ...send, id } : send))),
-      failed
-    );
+    const post = (attachments: MessageAttachment[]) =>
+      // Wake this device's claim poller rather than waiting for its next tick.
+      sendFromComposer(source, ownAgents, text, context, () => void rpc.rig.spacesDispatch.checkNow(), attachments).then(
+        (id) =>
+          id === null
+            ? failed()
+            : setPendingSends((current) => current.map((send) => (send.localId === localId ? { ...send, id } : send))),
+        () => failed()
+      );
+    if (files.length === 0) {
+      void post([]);
+      return;
+    }
+    // Copy on send: the files go into the space first; a failed post leaves them there (they sync) and a retry reuses them.
+    void rpc.rig.attachments
+      .commit({ bindingId, files: files.map((f) => ({ source: f.source, ...(f.name ? { name: f.name } : {}), ...(f.shareAnyway ? { shareAnyway: true } : {}) })) })
+      .then(
+        (result) => {
+          if (!result.success) return failed({ source: result.error.source, message: result.error.message });
+          const verdicts = new Map(files.map((f) => [f.source, f.verdict]));
+          return post(toMessageAttachments(result.data, verdicts));
+        },
+        () => failed({ message: 'Rig couldn’t copy the files into the space.' })
+      );
   };
 
   // A pending message is done once the real one is in the snapshot.
@@ -874,7 +969,44 @@ export function RoomView({
       <div ref={bodyRef} className="relative flex min-h-0 flex-1">
         {/* Wide: keep the transcript clear of the floating panel. Narrow:
             the panel starts as its chip instead of covering the messages. */}
-        <div className="flex min-h-0 flex-1 flex-col" style={{ paddingRight: panelClearance }}>
+        <div
+          className="relative flex min-h-0 flex-1 flex-col"
+          style={{ paddingRight: panelClearance }}
+          onDragEnter={(e) => {
+            if (!hasDraggedFiles(e.dataTransfer)) return;
+            e.preventDefault();
+            dragDepth.current += 1;
+            setDragging(true);
+          }}
+          onDragOver={(e) => {
+            if (!hasDraggedFiles(e.dataTransfer)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = attachments.disabledReason ? 'none' : 'copy';
+          }}
+          onDragLeave={() => {
+            dragDepth.current = Math.max(0, dragDepth.current - 1);
+            if (dragDepth.current === 0) setDragging(false);
+          }}
+          onDrop={(e) => {
+            if (!hasDraggedFiles(e.dataTransfer)) return;
+            e.preventDefault();
+            dragDepth.current = 0;
+            setDragging(false);
+            if (attachments.disabledReason) {
+              toast({ title: 'Files can’t be added here', description: attachments.disabledReason });
+              return;
+            }
+            void attachments.addFiles(Array.from(e.dataTransfer.files));
+          }}
+        >
+          {dragging && (
+            <div
+              className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-[14px] border-[1.5px] border-dashed border-accent bg-accent/5 text-sm text-accent"
+              data-testid="attachment-drop-overlay"
+            >
+              {attachments.disabledReason ?? 'Drop to attach to your message'}
+            </div>
+          )}
           {live && snapshot.messages.length === 0 ? (
             <RoomWelcome
               spaceName={snapshot.name}
@@ -886,6 +1018,7 @@ export function RoomView({
             />
           ) : (
           <OpenPageContext.Provider value={onOpenPage ?? null}>
+          <AttachmentSpaceContext.Provider value={attachmentSpace}>
           <RoomTranscript
             snapshot={shownSnapshot ?? snapshot}
             ownId={selfUserId}
@@ -900,6 +1033,7 @@ export function RoomView({
             onHideDetails={handleHideDetails}
             onLoadRunLog={handleLoadRunLog}
           />
+          </AttachmentSpaceContext.Provider>
           </OpenPageContext.Provider>
           )}
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
@@ -941,6 +1075,7 @@ export function RoomView({
               agents={snapshot.agents.filter((a) => a.owner === selfUserId)}
               skills={snapshot.skills}
               onSend={handleSend}
+              attachments={attachments}
               suggestReply={live ? suggestReply : undefined}
               onTypingChange={
                 source instanceof RelayRoomSource ? (typing) => source.setTyping(typing) : undefined

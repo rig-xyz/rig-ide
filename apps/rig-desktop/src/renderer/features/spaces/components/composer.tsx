@@ -1,7 +1,10 @@
 import { AtSign, CornerDownLeft, CornerUpLeft, FileText, Paperclip, Sparkles } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@renderer/lib/utils';
+import { isLargeBatch, type ComposerAttachment } from '../attachments';
 import { agentLogoId, BrandLogo } from '../logos';
+import type { ComposerAttachments } from '../use-composer-attachments';
+import { AttachmentChips } from './attachment-chips';
 import type { AgentKind, RoomAgent, RoomMember, RoomReplyRef, RoomSkill } from '../types';
 import { AgentSettings } from './agent-settings';
 import { ContextPill } from './context-pill';
@@ -68,6 +71,8 @@ export type ComposerSendContext = {
   agent: AgentKind | null;
   /** A doc to give the agent as context. */
   attach: string | null;
+  /** Files attached on chips (copied into the space when the message is sent). */
+  files?: ComposerAttachment[];
 };
 
 type MenuItem = {
@@ -118,6 +123,7 @@ export function Composer({
   openDoc = null,
   agentModels,
   suggestReply,
+  attachments,
 }: {
   spaceName: string;
   /** Where this composer keeps its unsent draft (the space's id); no draft kept without one. */
@@ -140,6 +146,8 @@ export function Composer({
   agentModels?: Partial<Record<AgentKind, string | null>>;
   /** Whether a plain draft answers one of your own agent's turns; null when not (or unsure). */
   suggestReply?: (draft: string) => Promise<ComposerSuggestion | null>;
+  /** The files waiting to go with the message; no paperclip without it. */
+  attachments?: ComposerAttachments;
 }) {
   const [value, setValue] = useState(() => readDraft(draftKey));
   const [focused, setFocused] = useState(false);
@@ -311,13 +319,31 @@ export function Composer({
     textareaRef.current?.focus();
   };
 
+  const chips = attachments?.chips ?? [];
+  const hasFiles = chips.length > 0;
+  // Many files, or a lot of bytes, ask once before going.
+  const [confirmingBatch, setConfirmingBatch] = useState(false);
+  useEffect(() => setConfirmingBatch(false), [chips.length]);
+  const canSend = (!!value.trim() || hasFiles) && (!hasFiles || !!attachments?.ready);
   const send = () => {
     const trimmed = value.trim();
-    if (!trimmed) return;
-    onSend(trimmed, { replyTo: replyPill ?? ownPill?.replyTo ?? undefined, agent: sendsTo, attach: docPill });
+    if (!trimmed && !hasFiles) return;
+    if (hasFiles && !attachments?.ready) return;
+    if (hasFiles && isLargeBatch(chips) && !confirmingBatch) {
+      setConfirmingBatch(true);
+      return;
+    }
+    const files = hasFiles ? attachments!.clear() : undefined;
+    onSend(trimmed, {
+      replyTo: replyPill ?? ownPill?.replyTo ?? undefined,
+      agent: trimmed ? sendsTo : null,
+      attach: docPill,
+      ...(files ? { files } : {}),
+    });
     setValue('');
     setSuggestion(null);
     setTyping(false);
+    setConfirmingBatch(false);
   };
 
   const mentionedBusy = busyAgents.find((agent) => new RegExp(`@${agent}\\b`, 'i').test(value));
@@ -460,8 +486,17 @@ export function Composer({
           focused && 'border-accent shadow-[0_0_0_3px_var(--accent-subtle)]'
         )}
       >
+        {attachments && <AttachmentChips attachments={attachments} />}
         <textarea
           ref={textareaRef}
+          onPaste={(e) => {
+            // An image (or files copied in Finder) with no text: attach it instead of pasting nothing.
+            if (!attachments || attachments.disabledReason) return;
+            const files = Array.from(e.clipboardData.files);
+            if (files.length === 0 || e.clipboardData.getData('text/plain')) return;
+            e.preventDefault();
+            void attachments.addFiles(files);
+          }}
           value={value}
           onChange={(e) => {
             setValue(e.target.value);
@@ -511,9 +546,18 @@ export function Composer({
         <div className="flex items-center gap-0.5 px-2 pb-2">
           <button
             type="button"
-            aria-label="Attach a file"
-            title="Attach a file"
-            className="hover:bg-bg-2 flex size-7 items-center justify-center rounded-control text-text-muted transition-colors"
+            aria-label="Attach files"
+            // Not `disabled`: a disabled button shows no tooltip, and the tooltip says why.
+            aria-disabled={!attachments || !!attachments.disabledReason}
+            title={attachments?.disabledReason ?? 'Attach files'}
+            onClick={() => {
+              if (attachments && !attachments.disabledReason) void attachments.pick();
+            }}
+            className={cn(
+              'flex size-7 items-center justify-center rounded-control text-text-muted transition-colors',
+              attachments && !attachments.disabledReason ? 'hover:bg-bg-2' : 'cursor-default opacity-50'
+            )}
+            data-testid="composer-attach"
           >
             <Paperclip className="size-3.5" strokeWidth={1.5} />
           </button>
@@ -537,13 +581,20 @@ export function Composer({
           <button
             type="button"
             onClick={send}
-            disabled={!value.trim()}
+            disabled={!canSend}
+            title={hasFiles && attachments?.holdReason ? attachments.holdReason : undefined}
             className={cn(
               'ml-auto flex h-6.5 items-center gap-1.5 rounded-control px-2.5 text-xs transition-colors disabled:opacity-60',
-              value.trim() ? 'bg-accent text-accent-ink' : 'bg-bg-2 text-text-secondary'
+              canSend ? 'bg-accent text-accent-ink' : 'bg-bg-2 text-text-secondary'
             )}
           >
-            {sendsTo ? `Ask ${AGENT_NAME[sendsTo]}` : replyPill ? 'Reply' : 'Send'}
+            {confirmingBatch
+              ? `Send ${chips.length} files?`
+              : sendsTo && value.trim()
+                ? `Ask ${AGENT_NAME[sendsTo]}`
+                : replyPill
+                  ? 'Reply'
+                  : 'Send'}
             <CornerDownLeft className="size-3" strokeWidth={1.5} />
           </button>
         </div>

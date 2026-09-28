@@ -154,3 +154,36 @@ export function formatAttachmentBytes(bytes: number): string {
   const mb = bytes / (1024 * 1024);
   return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
 }
+
+/** One attached file to look up for a message card. */
+export type AttachmentStatusQuery = { path: string; hash?: string };
+
+export type AttachmentFileStatus = {
+  path: string;
+  /** The file is in the space folder on this computer. */
+  exists: boolean;
+  /** The sync daemon has shipped this exact content (null: no sync state here to tell). */
+  synced: boolean | null;
+  /** On the relay's file list (null: not asked, or unreachable). */
+  onRelay: boolean | null;
+  /** The sync daemon held it back. */
+  notSynced?: 'overQuota' | 'tooLarge';
+};
+
+/**
+ * One attachment as a chat message carries it (`meta.attachments`). Never an
+ * absolute path or anything outside the space: `path` is space-relative, and
+ * a local-only file has no path at all (it's named only).
+ */
+export type MessageAttachment = {
+  name: string;
+  size: number;
+  mime: string;
+  kind: AttachmentCommitKind;
+  /** Space-relative; absent for `local-only`. */
+  path?: string;
+  /** `sha256:<hex>`, to tell when this exact content has synced. */
+  hash?: string;
+  /** PDFs, when known. */
+  pages?: number;
+};

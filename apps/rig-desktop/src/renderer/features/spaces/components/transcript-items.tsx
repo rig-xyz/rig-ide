@@ -21,6 +21,7 @@ import { canonicalPageUrl, classifyLink, trimUrl, URL_PATTERN, type LinkKind } f
 import { BrandLogo, ConnectorMark } from '../logos';
 import type { RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
+import { MessageAttachments } from './attachment-cards';
 import { ConnectPill } from './connectors-panel';
 
 /**
@@ -406,8 +407,20 @@ export function MessageRow({
 }) {
   const author = memberOf(snapshot, message.authorId);
   const mine = message.authorId === ownId;
-  const body = message.body ? richText(message.body, ownId, snapshot.members) : null;
+  const files = message.meta.kind === 'text' ? message.meta.attachments : undefined;
+  // Only files were sent: the body was written for older apps; the cards say it.
+  const hideBody = !!files?.length && message.meta.kind === 'text' && message.meta.autoBody;
+  const body = message.body && !hideBody ? richText(message.body, ownId, snapshot.members) : null;
   const replyTo = message.meta.kind === 'text' ? message.meta.replyTo : undefined;
+  const cards = files?.length ? (
+    <MessageAttachments
+      attachments={files}
+      mine={mine}
+      sending={!!message.sending}
+      createdAt={message.createdAt}
+      senderName={author?.name ?? 'them'}
+    />
+  ) : null;
   const actions = (
     <RowActions
       onReply={
@@ -442,9 +455,12 @@ export function MessageRow({
         )}
         <div className="flex min-w-0 flex-col items-end gap-1">
           {replyTo && <ReplyQuote replyTo={replyTo} mine onJumpTo={onJumpTo} />}
-          <p className={cn(bubbleClass(true), message.sending && 'opacity-60')} data-highlight-target>
-            {body}
-          </p>
+          {cards}
+          {body && (
+            <p className={cn(bubbleClass(true), message.sending && 'opacity-60')} data-highlight-target>
+              {body}
+            </p>
+          )}
         </div>
         {/* Nothing to reply to or copy a link to until the relay has it. */}
         {!message.sending && actions}
@@ -472,9 +488,12 @@ export function MessageRow({
           </div>
         )}
         {replyTo && <ReplyQuote replyTo={replyTo} mine={false} onJumpTo={onJumpTo} />}
-        <p className={bubbleClass(false)} data-highlight-target>
-          {body}
-        </p>
+        {cards}
+        {body && (
+          <p className={bubbleClass(false)} data-highlight-target>
+            {body}
+          </p>
+        )}
       </div>
       {actions}
     </div>
