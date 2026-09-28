@@ -35,6 +35,7 @@ import { viewStateController } from './core/view-state/controller';
 import { projectSettingsController } from './core/workspaces/project-settings-controller';
 import { legacyPortController } from './db/legacy-port/controller';
 import { rigAccountController } from './rig/account';
+import { rigAttachmentsController } from './rig/attachments/controller';
 import { rigAuthController } from './rig/auth';
 import { rigBundledCliController } from './rig/bundled-cli';
 import { rigCommentAgentController } from './rig/comment-agent';
@@ -232,6 +233,9 @@ export const rpcRouter = createRPCRouter({
     // with its own failure taxonomy, not a plain one-shot CLI wrapper. See
     // `delete-rig.ts`'s own header comment.
     rigs: rigDeleteController,
+    // Chat file attachments: chip checks before send, copy into the space's
+    // `attachments/` at send, pasted images. See `attachments/service.ts`.
+    attachments: rigAttachmentsController,
   }),
   workspace: createRPCNamespace({
     gitWorktree: gitWorktreeController,
