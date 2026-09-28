@@ -660,6 +660,8 @@ export function RoomView({
     [spaceRoot, spaceName]
   );
   const handleOpenFile = onOpenFile ? openLink : undefined;
+  // The composer's `+` file suggestions: the space's files as the Files navigator shows them.
+  const listSpaceFiles = useCallback(() => rpc.rig.attachments.listFiles({ bindingId }), [bindingId]);
   const attachmentSpace = useMemo<AttachmentSpace | null>(
     () =>
       live
@@ -1106,6 +1108,7 @@ export function RoomView({
               onSend={handleSend}
               waitForConnection={roomConnection !== null}
               attachments={attachments}
+              listFiles={live ? listSpaceFiles : undefined}
               suggestReply={live ? suggestReply : undefined}
               onTypingChange={
                 source instanceof RelayRoomSource ? (typing) => source.setTyping(typing) : undefined

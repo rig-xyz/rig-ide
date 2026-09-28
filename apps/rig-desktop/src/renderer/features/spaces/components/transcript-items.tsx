@@ -21,7 +21,8 @@ import { canonicalPageUrl, classifyLink, trimUrl, URL_PATTERN, type LinkKind } f
 import { BrandLogo, ConnectorMark } from '../logos';
 import type { RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
-import { MessageAttachments } from './attachment-cards';
+import { FileTagChip, MessageAttachments } from './attachment-cards';
+import { FILE_TAG_SOURCE, tagPathOf } from '@shared/rig/file-tags';
 import { ConnectPill } from './connectors-panel';
 
 /**
@@ -186,7 +187,7 @@ function mentionAt(
   return handle ? { token: `@${handle}` } : null;
 }
 
-/** Inline emphasis for links, @mentions, /commands and +file.md references — same markup rules as the reference demo's `rich()`, done as React nodes instead of HTML string concatenation. */
+/** Inline emphasis for links, @mentions, /commands and +file tags — same markup rules as the reference demo's `rich()`, done as React nodes instead of HTML string concatenation. */
 export function richText(
   text: string,
   ownId: string,
@@ -199,7 +200,7 @@ export function richText(
   // the very start of the message (a path like "/etc/hosts" stays plain).
   // The mention group is just the "@"; `mentionAt` decides how far it runs.
   const pattern = new RegExp(
-    `(${URL_PATTERN.source})|((?<![\\w.@/:-])@)|(^\\/[a-z-]+(?![\\w/.]))|(\\+[\\w./-]+\\.md)|(reviews\\/[\\w.-]+\\.md)`,
+    `(${URL_PATTERN.source})|((?<![\\w.@/:-])@)|(^\\/[a-z-]+(?![\\w/.]))|(${FILE_TAG_SOURCE})|(reviews\\/[\\w.-]+\\.md)`,
     'g'
   );
   const nodes: ReactNode[] = [];
@@ -208,7 +209,9 @@ export function richText(
   let key = 0;
   while ((match = pattern.exec(text))) {
     const mention = match[2] ? mentionAt(text, match.index, members) : null;
-    if (match[2] && !mention) {
+    // A file tag (`+path` or `+"path"`, see `shared/rig/file-tags.ts`); one that would leave the space stays text.
+    const tagged = match[4] ? tagPathOf(match, 5, 6) : null;
+    if ((match[2] && !mention) || (match[4] && !tagged)) {
       // A lone "@" (or "@Someone" who isn't here): stays in the surrounding text.
       pattern.lastIndex = match.index + 1;
       continue;
@@ -233,6 +236,8 @@ export function richText(
           {token}
         </span>
       );
+    } else if (tagged) {
+      nodes.push(<FileTagChip key={key++} path={tagged} />);
     } else if (token.startsWith('/')) {
       nodes.push(
         <span key={key++} className="text-accent font-mono font-medium">

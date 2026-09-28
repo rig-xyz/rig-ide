@@ -21,7 +21,8 @@ import {
   attachedFilesContext,
   imageCandidates,
   promptImages,
-  sourceAttachments,
+  locateMentioned,
+  sourceFiles,
   waitForAttachments,
   type PrepareImage,
   type PromptImage,
@@ -968,7 +969,8 @@ export function createSpacesDispatcher(deps: {
 
     // Files attached to the message that asked: on another member's computer
     // they may still be arriving through sync, so wait a little for them.
-    const attachments = await sourceAttachments(deps.api, spec.bindingId, spec.sourceMessageId);
+    const { attached: attachments, mentioned: mentionedPaths } = await sourceFiles(deps.api, spec.bindingId, spec.sourceMessageId);
+    const mentioned = await locateMentioned(cwd, mentionedPaths);
     const located = attachments.length
       ? await waitForAttachments(cwd, attachments, deps.attachmentWait)
       : { present: new Map<string, string>(), missing: [] };
@@ -1041,6 +1043,7 @@ export function createSpacesDispatcher(deps: {
     const filesContext = attachedFilesContext(attachments, located, {
       askedOnThisComputer: spec.askedByOwner ?? false,
       asImages: spacePaths,
+      mentioned,
     });
     const hiddenContext = [spaceContext, connectorsContext, filesContext, spec.extraHiddenContext]
       .filter(Boolean)

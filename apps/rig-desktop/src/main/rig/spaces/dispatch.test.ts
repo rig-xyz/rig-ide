@@ -1790,9 +1790,9 @@ describe('createSpacesDispatcher — attached files', () => {
     expect(result).toEqual({ runId: 'run-1' });
     const hidden = calls[0]!.hiddenContext!;
     expect(hidden).toContain('<attached_files>');
-    expect(hidden).toContain('- attachments/shot.png (image/png, 3 B). Also attached as an image.');
-    expect(hidden).toContain('- attachments/deck.pdf (application/pdf, 3 B, 18 pages).');
-    expect(hidden).toContain('- app.sqlite (application/vnd.sqlite3, 10 B): only on this computer');
+    expect(hidden).toContain('- Attached: attachments/shot.png (image/png, 3 B). Also attached as an image.');
+    expect(hidden).toContain('- Attached: attachments/deck.pdf (application/pdf, 3 B, 18 pages).');
+    expect(hidden).toContain('- Attached: app.sqlite (application/vnd.sqlite3, 10 B): only on this computer');
     expect(hidden).not.toContain(dir);
     expect(calls[0]!.images).toEqual([
       { path: `${realpathSync(join(dir, 'attachments', 'shot.png'))}.small`, mimeType: 'image/png', name: 'shot.png' },
@@ -1809,7 +1809,7 @@ describe('createSpacesDispatcher — attached files', () => {
     const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => dir });
     await dispatch(makeRequest({ sourceMessageId: 'src' }));
     expect(calls[0]!.images).toBeUndefined();
-    expect(calls[0]!.hiddenContext).toContain('- attachments/shot.png (image/png, 3 B).');
+    expect(calls[0]!.hiddenContext).toContain('- Attached: attachments/shot.png (image/png, 3 B).');
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -1843,10 +1843,10 @@ describe('createSpacesDispatcher — attached files', () => {
     await dispatch(makeRequest({ sourceMessageId: 'src' }));
     expect(sleeps).toBe(60);
     const hidden = calls[0]!.hiddenContext!;
-    expect(hidden).toContain('- attachments/late.pdf (application/pdf, 3 B).');
-    expect(hidden).toContain("- attachments/never.pdf (application/pdf, 3 B): hadn't arrived on this computer yet.");
+    expect(hidden).toContain('- Attached: attachments/late.pdf (application/pdf, 3 B).');
+    expect(hidden).toContain("- Attached: attachments/never.pdf (application/pdf, 3 B): hadn't arrived on this computer yet.");
     // Asked by someone else: a local-only file is on their computer, and it's never waited for.
-    expect(hidden).toContain("- db.sqlite (x, 3 B): only on the sender's computer");
+    expect(hidden).toContain("- Attached: db.sqlite (x, 3 B): only on the sender's computer");
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -1867,7 +1867,33 @@ describe('createSpacesDispatcher — attached files', () => {
     // The unsafe path was dropped when the message was read: nothing to wait for, list or send.
     expect(sleep).not.toHaveBeenCalled();
     expect(prepareImage).not.toHaveBeenCalled();
-    expect(calls[0]!.hiddenContext).toContain("- x (image/png, 1 B): not available (its path isn't usable).");
+    expect(calls[0]!.hiddenContext).toContain("- Attached: x (image/png, 1 B): not available (its path isn't usable).");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('lists files the message tags with +path as Mentioned (paths only, no image content, nothing outside the space)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rig-dispatch-att-'));
+    mkdirSync(join(dir, 'notes'));
+    writeFileSync(join(dir, 'notes', 'plan.md'), '# plan');
+    writeFileSync(join(dir, 'Q3 deck.pdf'), 'pdf');
+    writeFileSync(join(dir, 'shot.png'), 'png');
+    const body = '@claude compare +notes/plan.md with +"Q3 deck.pdf", +shot.png and +gone.md (not +../../etc/hosts).';
+    const { api } = makeFakeApi({
+      listMembers: async () => ok([]),
+      listMessages: async () => ok([{ id: 'src', seq: 1, author, kind: 'text', body, meta: null, createdAt: '' }]),
+    });
+    const { fake, calls } = recordingAcp();
+    const prepareImage = vi.fn(async (abs: string) => ({ path: abs, mimeType: 'image/png' as const }));
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => dir, prepareImage });
+    await dispatch(makeRequest({ sourceMessageId: 'src' }));
+    const hidden = calls[0]!.hiddenContext!;
+    expect(hidden).toContain('- Mentioned: notes/plan.md (text/markdown, 6 B).');
+    expect(hidden).toContain('- Mentioned: Q3 deck.pdf (application/pdf, 3 B).');
+    expect(hidden).toContain('- Mentioned: shot.png (image/png, 3 B).');
+    expect(hidden).toContain('- Mentioned: gone.md: not on this computer.');
+    expect(hidden).not.toContain('etc/hosts');
+    expect(calls[0]!.images).toBeUndefined();
+    expect(prepareImage).not.toHaveBeenCalled();
     rmSync(dir, { recursive: true, force: true });
   });
 });

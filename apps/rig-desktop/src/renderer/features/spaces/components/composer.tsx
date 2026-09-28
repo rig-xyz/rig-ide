@@ -2,6 +2,7 @@ import { AtSign, CornerDownLeft, CornerUpLeft, FileText, Paperclip, Sparkles } f
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { WILL_SEND_WHEN_ONLINE } from '@renderer/features/home/home-connection';
 import { cn } from '@renderer/lib/utils';
+import { formatFileTag, rankTaggableFiles, type TaggableFile } from '@shared/rig/file-tags';
 import { isLargeBatch, type ComposerAttachment } from '../attachments';
 import { agentLogoId, BrandLogo } from '../logos';
 import type { ComposerAttachments } from '../use-composer-attachments';
@@ -12,6 +13,8 @@ import { ContextPill } from './context-pill';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 
 const TYPING_IDLE_MS = 4000;
+/** The `+` tag being typed at the end of the draft: group 1 a quoted name so far, group 2 a plain one. */
+const FILE_QUERY = /(?:^|\s)\+(?:"([^"\n]*)|([^\s"]*))$/;
 const DRAFT_PREFIX = 'rig-room-draft:';
 /** A typing pause this long asks whether the draft answers your agent. */
 const SUGGEST_DEBOUNCE_MS = 500;
@@ -126,6 +129,7 @@ export function Composer({
   suggestReply,
   attachments,
   waitForConnection = false,
+  listFiles,
 }: {
   spaceName: string;
   /** Where this composer keeps its unsent draft (the space's id); no draft kept without one. */
@@ -150,6 +154,8 @@ export function Composer({
   suggestReply?: (draft: string) => Promise<ComposerSuggestion | null>;
   /** The files waiting to go with the message; no paperclip without it. */
   attachments?: ComposerAttachments;
+  /** The space's files, for `+` tags; no file suggestions without it. */
+  listFiles?: () => Promise<TaggableFile[]>;
   /**
    * No connection to the relay: a message sent now stays in the box, text and
    * files, and goes by itself once the connection is back.
@@ -210,6 +216,31 @@ export function Composer({
 
   const skillQuery = /^\/(\S*)$/.exec(value)?.[1] ?? null;
   const mentionQuery = useMemo(() => /(?:^|\s)@([a-z]*)$/i.exec(value)?.[1] ?? null, [value]);
+  // `+` at the start or after a space: tag a file in the space (`shared/rig/file-tags.ts`); `+"` starts a quoted name.
+  const fileQuery = useMemo(() => {
+    if (!listFiles) return null;
+    const m = FILE_QUERY.exec(value);
+    return m ? (m[1] ?? m[2] ?? '') : null;
+  }, [value, listFiles]);
+  // The space's files, read when a `+` opens the list (again on each new `+`).
+  const [spaceFiles, setSpaceFiles] = useState<TaggableFile[] | null>(null);
+  const tagging = fileQuery !== null;
+  useEffect(() => {
+    if (!tagging || !listFiles) return;
+    let alive = true;
+    void listFiles()
+      .catch(() => [] as TaggableFile[])
+      .then((files) => alive && setSpaceFiles(files));
+    return () => {
+      alive = false;
+    };
+  }, [tagging, listFiles]);
+  const applyFileTag = (relPath: string) => {
+    const tag = formatFileTag(relPath);
+    if (!tag) return;
+    setValue((current) => current.replace(FILE_QUERY, (m) => `${/^\s/.test(m) ? m[0] : ''}${tag} `));
+    textareaRef.current?.focus();
+  };
 
   const applyMention = (label: string) => {
     setValue((current) => current.replace(/(?:^|\s)@([a-z]*)$/i, (m) => `${m[0] === ' ' ? ' ' : ''}@${label} `));
@@ -233,6 +264,20 @@ export function Composer({
             label: skill.cmd,
             detail: [skill.desc, addedBy ? `added by ${addedBy.name}` : ''].filter(Boolean).join(' · '),
             apply: () => applySkill(skill),
+          };
+        });
+    }
+    if (fileQuery !== null) {
+      return rankTaggableFiles(spaceFiles ?? [], fileQuery)
+        .filter((file) => formatFileTag(file.relPath) !== null)
+        .map((file) => {
+          const folder = file.relPath.includes('/') ? file.relPath.slice(0, file.relPath.lastIndexOf('/')) : '';
+          return {
+            key: `file-${file.relPath}`,
+            icon: <FileText className="size-3.5 text-text-muted" strokeWidth={1.5} />,
+            label: file.name,
+            detail: folder,
+            apply: () => applyFileTag(file.relPath),
           };
         });
     }
@@ -262,11 +307,13 @@ export function Composer({
     }
     return [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skillQuery, mentionQuery, skills, members, agents, busyAgents]);
+  }, [skillQuery, mentionQuery, fileQuery, spaceFiles, skills, members, agents, busyAgents]);
 
   const menuOpen = items.length > 0 && dismissedFor !== value;
-  const mentioning = menuOpen && skillQuery === null;
-  useEffect(() => setActive(0), [skillQuery, mentionQuery]);
+  // Skills and files open the list above the input; people and agents the pill row.
+  const listMenu = skillQuery !== null || fileQuery !== null;
+  const mentioning = menuOpen && !listMenu;
+  useEffect(() => setActive(0), [skillQuery, mentionQuery, fileQuery]);
 
   // Typing presence: on while there's input and recent keystrokes, off
   // after a short idle or on send.
@@ -388,13 +435,13 @@ export function Composer({
 
   return (
     <div className="relative">
-      {menuOpen && skillQuery !== null && (
+      {menuOpen && listMenu && (
         <div
           className="popover-in border-border-hairline bg-bg-1 shadow-float absolute right-0 bottom-full left-0 z-10 mb-2 flex max-h-72 flex-col overflow-y-auto rounded-card border p-1.5"
           data-testid="skills-palette"
           role="listbox"
         >
-          {skillQuery !== null && <p className="px-2 pt-1 pb-1 text-2xs text-text-muted">Skills in this space</p>}
+          <p className="px-2 pt-1 pb-1 text-2xs text-text-muted">{skillQuery !== null ? 'Skills in this space' : 'Files in this space'}</p>
           {items.map((item, i) => (
             <div key={item.key}>
               {item.section && item.section !== items[i - 1]?.section && (
@@ -414,7 +461,7 @@ export function Composer({
               >
                 <span className="flex size-5 shrink-0 items-center justify-center">{item.icon}</span>
                 <span className={cn('text-sm text-text-primary', skillQuery !== null && 'font-mono')}>
-                  {skillQuery !== null ? item.label : `@${item.label}`}
+                  {listMenu ? item.label : `@${item.label}`}
                 </span>
                 <span className="min-w-0 truncate text-xs text-text-muted">{item.detail}</span>
                 {i === active && (

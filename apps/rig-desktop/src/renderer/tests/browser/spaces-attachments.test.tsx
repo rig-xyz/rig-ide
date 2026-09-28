@@ -404,3 +404,126 @@ describe('sendFromComposer with files', () => {
     expect(send).toHaveBeenLastCalledWith('look', undefined, undefined, { attachments: files, autoBody: false });
   });
 });
+
+describe('+file tags', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  const files = [
+    { relPath: 'docs/roadmap.md', name: 'roadmap.md', mtimeMs: 1 },
+    { relPath: 'attachments/Q3 board deck.pdf', name: 'Q3 board deck.pdf', mtimeMs: 3 },
+    { relPath: 'research/interviews.md', name: 'interviews.md', mtimeMs: 2 },
+  ];
+
+  async function type(value: string) {
+    const textarea = host.querySelector('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, value);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await settle();
+  }
+  async function key(name: string) {
+    await act(async () => {
+      host.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true }));
+    });
+  }
+  const options = () => Array.from(host.querySelectorAll('[role="option"]')).map((o) => o.textContent);
+
+  it('suggests the space’s files on "+", filters as you type, inserts plain or quoted, and closes on Esc', async () => {
+    const listFiles = vi.fn(async () => files);
+    await act(async () =>
+      root.render(<Composer spaceName="#growth" members={[]} agents={[]} skills={[]} onSend={() => {}} listFiles={listFiles} />)
+    );
+    await type('compare +');
+    expect(listFiles).toHaveBeenCalled();
+    expect(host.textContent).toContain('Files in this space');
+    // Nothing typed yet: most recently changed first.
+    expect(options()[0]).toContain('Q3 board deck.pdf');
+
+    await type('compare +road');
+    expect(options()).toHaveLength(1);
+    expect(options()[0]).toContain('roadmap.md');
+    expect(options()[0]).toContain('docs');
+    await key('Enter');
+    expect(host.querySelector('textarea')!.value).toBe('compare +docs/roadmap.md ');
+
+    // A name with spaces goes in quoted.
+    await type('and +q3');
+    await key('Tab');
+    expect(host.querySelector('textarea')!.value).toBe('and +"attachments/Q3 board deck.pdf" ');
+
+    // Esc closes the list and leaves the text as typed.
+    await type('also +inter');
+    expect(options()).toHaveLength(1);
+    await key('Escape');
+    expect(host.querySelector('[role="option"]')).toBeNull();
+    expect(host.querySelector('textarea')!.value).toBe('also +inter');
+  });
+
+  it('shows tags in messages as file chips that open beside the chat; a missing file is muted', async () => {
+    const open = vi.fn();
+    const status = vi.fn(async (queries: Array<{ path: string }>) =>
+      queries.map((q) => ({ path: q.path, exists: q.path !== 'old/gone.md', synced: null, onRelay: null }))
+    );
+    const snapshot: RoomSnapshot = {
+      name: '#growth',
+      ready: true,
+      members: [{ id: 'dylan', name: 'Dylan', email: 'd@x.com', role: 'owner', initial: 'D', status: 'here' }],
+      agents: [],
+      connectors: [],
+      skills: [],
+      invitesById: {},
+      sessionMetaByRun: {},
+      sessionEventsByRun: {},
+      typingUserIds: [],
+      messages: [
+        {
+          id: 'm1',
+          seq: 1,
+          authorId: 'dylan',
+          createdAt: new Date().toISOString(),
+          time: '14:02',
+          body: 'See +docs/roadmap.md, +"attachments/Q3 board deck.pdf" and +old/gone.md. Not https://x.com/a+b.md nor +../secret.md or dylan+x@play.local',
+          meta: { kind: 'text' },
+        },
+      ],
+    };
+    await act(async () =>
+      root.render(
+        <AttachmentSpaceContext.Provider
+          value={{ bindingId: 'bnd_1', spaceRoot: '/s', selfUserId: 'sam', onOpenFile: open, status, thumbnail: async () => null, reveal: () => {}, copyText: () => {} }}
+        >
+          <RoomTranscript snapshot={snapshot} ownId="sam" />
+        </AttachmentSpaceContext.Provider>
+      )
+    );
+    await settle();
+    const chips = Array.from(host.querySelectorAll<HTMLButtonElement>('[data-testid="file-tag"]'));
+    expect(chips.map((c) => c.dataset.path)).toEqual(['docs/roadmap.md', 'attachments/Q3 board deck.pdf', 'old/gone.md']);
+    expect(chips[0]!.textContent).toBe('roadmap.md');
+    expect(chips[0]!.title).toBe('docs/roadmap.md');
+    expect(chips[1]!.textContent).toBe('Q3 board deck.pdf');
+    // The sentence's full stop stays text; the URL, the "..", and the email stay as written.
+    const bubble = host.querySelector('[data-highlight-target]')!;
+    expect(bubble.textContent).toContain('old/gone.md'.split('/').pop()! + '. Not');
+    expect(host.querySelector('a[href="https://x.com/a+b.md"]')).not.toBeNull();
+    expect(bubble.textContent).toContain('+../secret.md');
+    expect(bubble.textContent).toContain('dylan+x@play.local');
+
+    await act(async () => click(chips[0]!));
+    expect(open).toHaveBeenCalledWith('docs/roadmap.md');
+    expect(chips[2]!.dataset.missing).toBe('true');
+    expect(chips[2]!.disabled).toBe(true);
+    expect(chips[2]!.title).toBe('old/gone.md · Not on this computer');
+  });
+});

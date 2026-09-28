@@ -1,4 +1,4 @@
-import { Check, Copy, FolderOpen, MoreHorizontal } from 'lucide-react';
+import { Check, Copy, File as FileIcon, FileText, FolderOpen, Image as ImageIcon, MoreHorizontal } from 'lucide-react';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Popover, PopoverMenuItem } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/lib/utils';
@@ -318,5 +318,77 @@ export function MessageAttachments({
       {images.length > 0 && <div className={cn('flex max-w-full flex-wrap gap-1', mine && 'justify-end')}>{images.map(render)}</div>}
       {files.map(render)}
     </div>
+  );
+}
+
+// ── +file tags in messages ──
+
+const TAG_CHECK_TTL_MS = 30_000;
+const tagChecks = new Map<string, { at: number; exists: Promise<boolean> }>();
+
+/** Whether a tagged file is in the space on this computer (asked once per path for a little while). */
+function useTagExists(space: AttachmentSpace | null, path: string): boolean | null {
+  const [exists, setExists] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!space) return;
+    const key = `${space.bindingId}:${path}`;
+    let hit = tagChecks.get(key);
+    if (!hit || Date.now() - hit.at > TAG_CHECK_TTL_MS) {
+      hit = {
+        at: Date.now(),
+        exists: space
+          .status([{ path }], false)
+          .then((result) => !!result?.[0]?.exists)
+          .catch(() => false),
+      };
+      tagChecks.set(key, hit);
+    }
+    let alive = true;
+    void hit.exists.then((value) => alive && setExists(value));
+    return () => {
+      alive = false;
+    };
+  }, [space, path]);
+  return exists;
+}
+
+function tagIcon(path: string) {
+  if (/\.(png|jpe?g|gif|webp|heic|svg)$/i.test(path)) return ImageIcon;
+  if (/\.(md|mdx|txt|pdf|docx?|rtf)$/i.test(path)) return FileText;
+  return FileIcon;
+}
+
+/**
+ * A `+path` tag in a message: a small chip (type icon + file name, the path
+ * on hover) that opens the file beside the chat. Muted, and not a link, when
+ * the file isn't in the space on this computer.
+ */
+export function FileTagChip({ path }: { path: string }) {
+  const space = useContext(AttachmentSpaceContext);
+  const exists = useTagExists(space, path);
+  const Icon = tagIcon(path);
+  const name = path.split('/').pop() ?? path;
+  const openable = !!space?.onOpenFile && exists === true;
+  return (
+    <button
+      type="button"
+      disabled={!openable}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (openable) space!.onOpenFile!(path);
+      }}
+      title={exists === false ? `${path} · Not on this computer` : path}
+      className={cn(
+        'bg-bg-2 border-border-hairline mx-0.5 inline-flex max-w-[16rem] items-center gap-1 rounded-control border px-1.5 align-baseline text-xs leading-5',
+        openable ? 'hover:border-border-strong cursor-pointer text-text-primary' : 'cursor-default text-text-muted',
+        exists === false && 'border-dashed'
+      )}
+      data-testid="file-tag"
+      data-path={path}
+      data-missing={exists === false ? 'true' : undefined}
+    >
+      <Icon className="size-3 shrink-0" strokeWidth={1.75} aria-hidden />
+      <span className="truncate">{name}</span>
+    </button>
   );
 }

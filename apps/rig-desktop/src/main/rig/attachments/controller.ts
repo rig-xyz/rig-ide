@@ -10,7 +10,11 @@ import {
   type AttachmentInput,
   type AttachmentStatusQuery,
 } from '@shared/rig/attachments';
+import { filterToContentOnly } from '@shared/rig/file-navigator-categories';
+import type { RigFileNode } from '@shared/rig/files';
+import type { TaggableFile } from '@shared/rig/file-tags';
 import { fetchWorkspaceBindings, isError, resolveContext } from '../account';
+import { listDir } from '../files';
 import { resolveLocalPathsImpl } from '../recent-rigs';
 import { createAttachmentsService } from './service';
 import { attachmentStatus, resolveInSpace } from './status';
@@ -112,6 +116,31 @@ async function thumbnail(bindingId: string, path: string): Promise<string | null
   return abs ? thumbnailOf(abs) : null;
 }
 
+const TAGGABLE_MAX = 5000;
+
+/** The space's files as the Files navigator shows them (content only: no dot-folders, `rig.toml` or skills), flattened. */
+async function taggableFiles(bindingId: string): Promise<TaggableFile[]> {
+  const root = await resolveSpaceRoot(bindingId);
+  if (!root) return [];
+  let nodes: RigFileNode[];
+  try {
+    nodes = filterToContentOnly(await listDir(root, root));
+  } catch (error) {
+    log.warn('Rig attachments: could not list the space for +file suggestions', { error: String(error) });
+    return [];
+  }
+  const out: TaggableFile[] = [];
+  const walk = (list: RigFileNode[]) => {
+    for (const node of list) {
+      if (out.length >= TAGGABLE_MAX) return;
+      if (node.kind === 'dir') walk(node.children ?? []);
+      else out.push({ relPath: node.relPath, name: node.name, ...(node.mtimeMs ? { mtimeMs: node.mtimeMs } : {}) });
+    }
+  };
+  walk(nodes);
+  return out;
+}
+
 const service = createAttachmentsService({
   resolveSpaceRoot,
   role: roleIn,
@@ -161,6 +190,8 @@ export const rigAttachmentsController = createRPCController({
   /** A preview of a file the user just attached (the chip's thumbnail); images only. */
   previewSource: ({ source }: { source: string }): Promise<string | null> =>
     isAbsolute(source) ? thumbnailOf(source) : Promise.resolve(null),
+  /** The space's files for the composer's `+` suggestions (what the Files navigator shows). */
+  listFiles: ({ bindingId }: { bindingId: string }): Promise<TaggableFile[]> => taggableFiles(bindingId),
   /** A pasted image's bytes → a temp file to attach. */
   savePastedImage: (args: { data: Uint8Array; mime: string; name?: string }) => service.savePastedImage(args),
 });

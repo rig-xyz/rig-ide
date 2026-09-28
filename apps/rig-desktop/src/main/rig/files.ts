@@ -41,7 +41,8 @@ function sortKey(node: RigFileNode): string {
   return node.name;
 }
 
-async function listDir(absDir: string, root: string): Promise<RigFileNode[]> {
+/** The Files navigator's own listing (also the composer's +file suggestions, `attachments/controller.ts`). */
+export async function listDir(absDir: string, root: string): Promise<RigFileNode[]> {
   const entries = await readdir(absDir, { withFileTypes: true });
   const nodes: RigFileNode[] = [];
   for (const entry of entries) {
