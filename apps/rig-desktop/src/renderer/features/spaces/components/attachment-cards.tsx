@@ -186,7 +186,13 @@ function ImageThumb({
   const title = status ? `${attachment.name} · ${status.label}` : attachment.name;
   return (
     <div className="group/card relative" data-testid="attachment-card" data-kind="image">
-      <button type="button" onClick={open ?? undefined} className="block overflow-hidden rounded-2xl" title={title}>
+      {/* A hairline edge and a backdrop, so a dark screenshot doesn't melt into the chat around it. */}
+      <button
+        type="button"
+        onClick={open ?? undefined}
+        className="border-border-hairline bg-bg-1 block overflow-hidden rounded-2xl border"
+        title={title}
+      >
         <img src={thumb} alt={attachment.name} className="block h-auto max-h-[200px] w-auto max-w-[240px]" />
       </button>
       {status && (status.pending || status.tone === 'bad') && (

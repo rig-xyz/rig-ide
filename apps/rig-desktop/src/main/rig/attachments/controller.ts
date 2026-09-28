@@ -88,25 +88,41 @@ function cachedManifest(bindingId: string): Promise<ManifestSize[] | null> {
 const THUMB_PX = 480;
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|heic|heif|tiff?|bmp)$/i;
 
-/** A small preview of an image file, made on this computer (Quick Look where there is one). */
+/** Formats Chromium decodes itself: scaled directly, so the preview keeps the image's own proportions. */
+const DIRECT_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
+
+/**
+ * A small preview of an image file, made on this computer. Common formats
+ * are scaled from the image itself; Quick Look (asked for a square) pads a
+ * wide or tall image into that square with transparent space, which read as
+ * a letterboxed picture in the chat, so it's only used for the rest (HEIC,
+ * TIFF) or when scaling fails.
+ */
 async function thumbnailOf(abs: string): Promise<string | null> {
   if (!IMAGE_EXT.test(abs)) return null;
+  const scaled = async (): Promise<string | null> => {
+    try {
+      if ((await stat(abs)).size > ATTACHMENT_IMAGE_CONTENT_MAX_BYTES * 4) return null;
+      const image = nativeImage.createFromPath(abs);
+      if (image.isEmpty()) return null;
+      const { width, height } = image.getSize();
+      const scale = Math.min(1, THUMB_PX / Math.max(width, height));
+      return (scale < 1 ? image.resize({ width: Math.round(width * scale) }) : image).toDataURL();
+    } catch {
+      return null;
+    }
+  };
+  if (DIRECT_EXT.test(abs)) {
+    const direct = await scaled();
+    if (direct) return direct;
+  }
   try {
     const image = await nativeImage.createThumbnailFromPath(abs, { width: THUMB_PX, height: THUMB_PX });
     if (!image.isEmpty()) return image.toDataURL();
   } catch {
-    // no Quick Look here (Linux) or it declined: fall back below
+    // no Quick Look here (Linux) or it declined
   }
-  try {
-    if ((await stat(abs)).size > ATTACHMENT_IMAGE_CONTENT_MAX_BYTES * 4) return null;
-    const image = nativeImage.createFromPath(abs);
-    if (image.isEmpty()) return null;
-    const { width, height } = image.getSize();
-    const scale = Math.min(1, THUMB_PX / Math.max(width, height));
-    return (scale < 1 ? image.resize({ width: Math.round(width * scale) }) : image).toDataURL();
-  } catch {
-    return null;
-  }
+  return DIRECT_EXT.test(abs) ? null : scaled();
 }
 
 /** An image in the space (paths from messages stay inside it). */
