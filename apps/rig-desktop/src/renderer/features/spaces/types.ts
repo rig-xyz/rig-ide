@@ -271,6 +271,8 @@ export type RoomEvent =
   | { type: 'skill_added'; skill: RoomSkill }
   | { type: 'agent_busy_changed'; agent: AgentKind; owner: PersonId; busy: boolean }
   | { type: 'session_started'; runId: string; meta: SessionRunMeta }
+  /** A run's header and its whole log at once (`session_started` plus every event, in one step) — how a fetched log lands. */
+  | { type: 'session_log_loaded'; runId: string; meta: SessionRunMeta; events: SessionEvent[] }
   | { type: 'typing_started'; personId: PersonId }
   | { type: 'typing_stopped'; personId: PersonId }
   /** Who has the Room open right now; everyone else is away. */
@@ -298,6 +300,8 @@ export interface RoomSnapshot {
   connection?: RoomConnection;
   /** False until the live Room's first read of the relay's messages is in (the opening skeleton shows until then); absent for the scripted demo. */
   loaded?: boolean;
+  /** Runs a message names whose log is still loading: their cards show as placeholders until it lands. */
+  runsLoading?: Record<string, true>;
 }
 
 /** Whether the Room is hearing the relay live: first connecting, connected, or without the socket (it retries on its own, and polls meanwhile). */

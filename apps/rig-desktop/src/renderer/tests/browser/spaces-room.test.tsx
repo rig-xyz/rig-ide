@@ -1,6 +1,6 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ConnectorId, ConnectResult, GlobalServer } from '@shared/spaces/connectors';
 import { Composer, type ComposerSuggestion } from '@renderer/features/spaces/components/composer';
 import { ConversationMap } from '@renderer/features/spaces/components/conversation-map';
@@ -382,6 +382,77 @@ describe('Room transcript — flat rows', () => {
       const stillThere = host.querySelector<HTMLElement>(`[data-message-id="${row.dataset.messageId}"]`);
       expect(stillThere?.dataset.rowEntered).toBeUndefined();
     }
+  });
+});
+
+describe('Room transcript — run logs still loading', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    host.style.cssText = 'display:flex;flex-direction:column;height:360px;width:900px';
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  /** The replayed room with its newest run's log not in yet — what the open's first phase shows. */
+  function withNewestRunLoading(): { full: RoomSnapshot; loading: RoomSnapshot; messageId: string } {
+    const full = replayedSnapshot();
+    const message = [...full.messages].reverse().find((m) => m.meta.kind === 'session')!;
+    const runId = (message.meta as { runId: string }).runId;
+    const { [runId]: _meta, ...sessionMetaByRun } = full.sessionMetaByRun;
+    const { [runId]: _events, ...sessionEventsByRun } = full.sessionEventsByRun;
+    return { full, loading: { ...full, sessionMetaByRun, sessionEventsByRun, runsLoading: { [runId]: true } }, messageId: message.id };
+  }
+
+  it('holds a loading run\'s place with a quiet placeholder, then swaps the card into that same row', async () => {
+    const { full, loading, messageId } = withNewestRunLoading();
+    await act(async () => {
+      root.render(<RoomTranscript snapshot={loading} ownId="bob" />);
+    });
+    const row = host.querySelector<HTMLElement>(`[data-message-id="${messageId}"]`)!;
+    expect(row.querySelector('[data-testid="session-card-placeholder"]')).not.toBeNull();
+    expect(row.querySelector('[data-testid="session-card"]')).toBeNull();
+    expect(row.querySelector('[data-state]')).toBeNull(); // a shape, not a dot matrix
+    // The card's own frame, reserved: avatar, name line, summary line, answer lines.
+    expect(row.querySelectorAll('[data-testid="session-card-placeholder"] .animate-pulse').length).toBeGreaterThanOrEqual(5);
+
+    await act(async () => {
+      root.render(<RoomTranscript snapshot={full} ownId="bob" />);
+    });
+    const after = host.querySelector<HTMLElement>(`[data-message-id="${messageId}"]`)!;
+    expect(after).toBe(row); // replaced in place, not a new row
+    expect(after.querySelector('[data-testid="session-card"]')).not.toBeNull();
+    expect(after.querySelector('[data-testid="session-card-placeholder"]')).toBeNull();
+    expect(after.dataset.rowEntered).toBeUndefined(); // no entrance animation for it either
+  });
+
+  it('stays pinned to the bottom when a placeholder turns into its card', async () => {
+    // Utility classes aren't compiled here: give the scroller its real job inline.
+    const style = document.createElement('style');
+    style.textContent = '[data-testid="room-transcript"] { height: 300px; overflow-y: auto; }';
+    document.head.appendChild(style);
+    onTestFinished(() => style.remove());
+    const { full, loading } = withNewestRunLoading();
+    await act(async () => {
+      root.render(<RoomTranscript snapshot={loading} ownId="bob" />);
+    });
+    const scroller = host.querySelector<HTMLElement>('[data-testid="room-transcript"]')!;
+    const atBottom = () => scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
+    expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight);
+    await vi.waitFor(() => expect(atBottom()).toBe(true));
+
+    await act(async () => {
+      root.render(<RoomTranscript snapshot={full} ownId="bob" />);
+    });
+    await vi.waitFor(() => expect(atBottom()).toBe(true));
+    expect(host.querySelector('[data-testid="jump-to-latest"]')).toBeNull();
   });
 });
 

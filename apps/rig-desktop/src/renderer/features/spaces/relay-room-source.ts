@@ -237,6 +237,14 @@ const MEMBER_POLL_EVERY = 5;
 /** How many session runs are fetched at once (bootstrap and catch-up) — enough that a history full of runs doesn't trickle in one at a time, capped so it doesn't open dozens of requests at once either. */
 const BOOTSTRAP_RUN_CONCURRENCY = 6;
 
+/**
+ * Run logs loading behind an open Room land in small batches: listeners
+ * hear once every this many runs, or this long after the first unannounced
+ * one, whichever comes first — not once per run, not all at the very end.
+ */
+const RUN_NOTIFY_EVERY = 6;
+const RUN_NOTIFY_MS = 32;
+
 /** Wraps the relay client so every call it makes is counted — for the open and catch-up timing lines only. */
 function countingRelay(relay: RelayRoomClient, onCall: () => void): RelayRoomClient {
   return new Proxy(relay, {
@@ -328,6 +336,18 @@ export class RelayRoomSource implements RoomSource {
   private readonly pendingRuns = new Set<string>();
   /** Runs still going when the socket dropped: the reconnect catch-up re-reads them. */
   private readonly liveAtDisconnect = new Set<string>();
+  /** Runs the opening messages name whose log is still loading (the open's second phase), with the owner to fall back on. */
+  private readonly runsLoading = new Map<string, string>();
+  /**
+   * Loading runs that may have moved on since their fetch went out: a
+   * notification named one ('notified'), or the socket came up while it was
+   * loading ('ifLive'). Each is re-read, from its last seq, once its log is in.
+   */
+  private readonly recheckAfterLoad = new Map<string, 'notified' | 'ifLive'>();
+  /** The last loaded run not yet announced, and how many runs since the last announcement — see `RUN_NOTIFY_EVERY`. */
+  private runNotifyEvent: RoomEvent | null = null;
+  private runsSinceNotify = 0;
+  private runNotifyTimer: ReturnType<typeof setTimeout> | null = null;
   /** Relay calls made so far — only for the timing lines. */
   private requests = 0;
   private readonly createdAtMs = Date.now();
@@ -399,6 +419,8 @@ export class RelayRoomSource implements RoomSource {
     this.disposed = true;
     this.pendingMessages = false;
     this.pendingRuns.clear();
+    if (this.runNotifyTimer) clearTimeout(this.runNotifyTimer);
+    this.runNotifyTimer = null;
     this.unsubscribeLocalRuns?.();
     this.unsubscribeLocalRuns = null;
     this.stopPolling();
@@ -456,6 +478,10 @@ export class RelayRoomSource implements RoomSource {
       // settled runs costs nothing here.
       const runs = [...this.liveRunIds(), ...this.liveAtDisconnect];
       this.liveAtDisconnect.clear();
+      // A log still loading may miss what happened before the socket could say so.
+      for (const runId of this.runsLoading.keys()) {
+        if (!this.recheckAfterLoad.has(runId)) this.recheckAfterLoad.set(runId, 'ifLive');
+      }
       void this.catchUp({ messages: true, runs });
     });
     provider.on('disconnect', () => {
@@ -579,39 +605,25 @@ export class RelayRoomSource implements RoomSource {
   }
 
   /**
-   * Loads the initial snapshot (member roster + recent messages + each
-   * referenced run's full event log) before the realtime connection is ever
-   * opened — and before any listener hears about it. Runs referenced by the
-   * message history are fetched in parallel (bounded), and every event this
-   * produces is folded into `this.snapshot` silently (`apply` below); the
-   * Room only finds out once, at the very end, with the whole thing built —
-   * never message by message, run by run (that trickle is what made the
-   * Room's open feel jumpy; see this file's own header).
+   * Opens the Room in two phases. First, everything but the agent runs'
+   * logs — roster, recent messages, skills, invites, connectors, all asked
+   * at once — folded in silently (`apply` below) and announced ONCE, so the
+   * transcript shows whole, with a placeholder for each run still loading
+   * (`snapshot.runsLoading`). Then, in the background (`loadRuns`), each
+   * run's log, newest first — the view opens at the bottom — announced in
+   * small batches. The realtime connection opens between the two.
    */
   private async bootstrap(): Promise<void> {
     const startedMs = Date.now();
     const { bindingId } = this.opts;
     const relay = this.opts.relay;
-    // Every stage at once: the roster, the messages, the space's skills,
-    // invites and connectors. The runs the messages name start loading the
-    // moment the messages are in, alongside the rest.
-    const messagesLoad = relay.listMessages(bindingId, { latest: this.opts.bootstrapMessageCount });
-    let runsMs = 0;
-    const runsLoad = messagesLoad.then(async (messages) => {
-      if (!messages.success) return new Map<string, RunFetchResult>();
-      const runsStartedMs = Date.now();
-      const runs = await this.fetchRunsBounded(uniqueRunIds(messages.data));
-      runsMs = Date.now() - runsStartedMs;
-      return runs;
-    });
-    const [members, messages, skills, invites, connectors, prefetchedRuns] = await Promise.all([
+    const [members, messages, skills, invites, connectors] = await Promise.all([
       relay.listMembers(bindingId),
-      messagesLoad,
+      relay.listMessages(bindingId, { latest: this.opts.bootstrapMessageCount }),
       // Skills are files in the space, so every member has the same list.
       relay.listSkills?.(bindingId).catch(() => []),
       this.fetchInvites(),
       this.loadConnectors(),
-      runsLoad,
     ]);
     if (this.disposed) return;
 
@@ -641,36 +653,88 @@ export class RelayRoomSource implements RoomSource {
       apply({ type: 'room_loaded' });
       for (const row of messages.data) {
         if (this.disposed) return;
-        await this.ingestWireMessage(row, apply, prefetchedRuns, { bootstrap: true });
+        await this.ingestWireMessage(row, apply, { bootstrap: true });
+      }
+      if (this.runsLoading.size > 0) {
+        this.snapshot = { ...this.snapshot, runsLoading: Object.fromEntries([...this.runsLoading.keys()].map((id) => [id, true])) };
       }
     }
     if (this.disposed) return;
 
     if (lastEvent) this.notifyListeners(lastEvent);
-    let eventBytes = 0;
-    for (const run of prefetchedRuns.values()) for (const event of run.events) eventBytes += event.bytes;
     this.log(
-      'Rig spaces: room loaded and shown',
+      'Rig spaces: room first paint',
       {
         bindingId,
         ms: Date.now() - startedMs,
         calls: this.requests,
         messages: messages.success ? messages.data.length : null,
-        runs: prefetchedRuns.size,
-        runsMs,
+        runsLoading: this.runsLoading.size,
+      },
+      'info'
+    );
+    // Newest first: the bottom of the transcript, where the view opens and
+    // where a run still going (or waiting on an approval) almost always is.
+    if (messages.success) void this.loadRuns(uniqueRunIds(messages.data).reverse().filter((id) => this.runsLoading.has(id)), startedMs);
+  }
+
+  /**
+   * The open's second phase: each run's log, up to `BOOTSTRAP_RUN_CONCURRENCY`
+   * at once, in `runIds` order. Each lands in one reducer step, silently;
+   * listeners hear in batches (`noteRunLoaded`), and once more at the end.
+   */
+  private async loadRuns(runIds: readonly string[], openedMs: number): Promise<void> {
+    const startedMs = Date.now();
+    const callsBefore = this.requests;
+    let eventBytes = 0;
+    await this.eachBounded(runIds, async (runId) => {
+      const fetched = await this.fetchRun(runId);
+      const ownerFallback = this.runsLoading.get(runId);
+      if (this.disposed || ownerFallback === undefined) return;
+      for (const event of fetched.events) eventBytes += event.bytes;
+      let lastEvent: RoomEvent | null = null;
+      await this.ingestRun(runId, ownerFallback, (event) => {
+        this.reduceLocal(event);
+        lastEvent = event;
+      }, fetched);
+      this.runsLoading.delete(runId);
+      if (this.disposed) return;
+      if (lastEvent) this.noteRunLoaded(lastEvent);
+      const recheck = this.recheckAfterLoad.get(runId);
+      this.recheckAfterLoad.delete(runId);
+      if (recheck === 'notified' || (recheck === 'ifLive' && this.isRunLive(runId))) void this.catchUp({ runs: [runId] });
+    });
+    if (this.disposed) return;
+    this.flushRunNotify();
+    this.log(
+      'Rig spaces: room runs loaded',
+      {
+        bindingId: this.opts.bindingId,
+        ms: Date.now() - startedMs,
+        sinceOpenMs: Date.now() - openedMs,
+        runs: runIds.length,
+        calls: this.requests - callsBefore,
         eventBytes,
       },
       'info'
     );
   }
 
-  /** Fetches every run in `runIds` via `getSessionEvents(..., 0)`, up to `BOOTSTRAP_RUN_CONCURRENCY` at once, rather than one after another. */
-  private async fetchRunsBounded(runIds: readonly string[]): Promise<Map<string, RunFetchResult>> {
-    const results = new Map<string, RunFetchResult>();
-    await this.eachBounded(runIds, async (runId) => {
-      results.set(runId, await this.fetchRun(runId));
-    });
-    return results;
+  /** A run's log just landed (silently): tell listeners every `RUN_NOTIFY_EVERY` runs, or `RUN_NOTIFY_MS` after the first one nobody has heard about. */
+  private noteRunLoaded(event: RoomEvent): void {
+    this.runNotifyEvent = event;
+    this.runsSinceNotify += 1;
+    if (this.runsSinceNotify >= RUN_NOTIFY_EVERY) this.flushRunNotify();
+    else if (!this.runNotifyTimer) this.runNotifyTimer = setTimeout(() => this.flushRunNotify(), RUN_NOTIFY_MS);
+  }
+
+  private flushRunNotify(): void {
+    if (this.runNotifyTimer) clearTimeout(this.runNotifyTimer);
+    this.runNotifyTimer = null;
+    this.runsSinceNotify = 0;
+    const event = this.runNotifyEvent;
+    this.runNotifyEvent = null;
+    if (event && !this.disposed) this.notifyListeners(event);
   }
 
   /** Runs `task` over `items`, up to `BOOTSTRAP_RUN_CONCURRENCY` at once; stops taking new items once disposed. */
@@ -833,6 +897,9 @@ export class RelayRoomSource implements RoomSource {
 
   /** Fetches the new events of each run in `runIds` the Room knows and the relay speaks for, in parallel (bounded). */
   private async catchUpRuns(runIds: readonly string[]): Promise<void> {
+    // A run whose log is still loading: its fetch may have left before this
+    // news, so it's re-read once that log is in (see `loadRuns`).
+    for (const runId of runIds) if (this.runsLoading.has(runId)) this.recheckAfterLoad.set(runId, 'notified');
     // Your runs shown from this computer's own copy get their news from it.
     const due = [...new Set(runIds)].filter((runId) => this.snapshot.sessionMetaByRun[runId] && !this.localRunIds.has(runId));
     await this.eachBounded(due, async (runId) => {
@@ -873,17 +940,15 @@ export class RelayRoomSource implements RoomSource {
    * run this snapshot hasn't seen yet. `apply` is how each event reaches the
    * snapshot: defaults to `applyLocal` (mutate + notify, the realtime/
    * catch-up path, unchanged), but `bootstrap()` passes a silent variant so
-   * nothing notifies until the whole initial batch is in. `prefetchedRuns`
-   * is `bootstrap()`'s own bounded-parallel fetch, keyed by run id — when a
-   * run isn't in it (the realtime path never passes one), `ingestRun` fetches
-   * it itself, same as before. With `bootstrap`, the roster, invites and
-   * connectors were just loaded whole, so the per-message re-reads a live
-   * message triggers are skipped.
+   * nothing notifies until the whole initial batch is in. With `bootstrap`,
+   * a run the message names isn't fetched here — it's marked loading, and
+   * the open's second phase (`loadRuns`) fetches it — and the roster,
+   * invites and connectors were just loaded whole, so the per-message
+   * re-reads a live message triggers are skipped.
    */
   private async ingestWireMessage(
     row: RoomMessageRow,
     apply: (event: RoomEvent) => void = (event) => this.applyLocal(event),
-    prefetchedRuns?: ReadonlyMap<string, RunFetchResult>,
     { bootstrap = false }: { bootstrap?: boolean } = {}
   ): Promise<void> {
     if (row.seq <= this.lastMessageSeq && this.snapshot.messages.some((m) => m.id === row.id)) {
@@ -907,7 +972,12 @@ export class RelayRoomSource implements RoomSource {
     const runId = sessionRunIdOf(row);
 
     if (runId && !this.snapshot.sessionMetaByRun[runId]) {
-      await this.ingestRun(runId, authorId, apply, prefetchedRuns?.get(runId));
+      if (bootstrap) {
+        if (!this.runsLoading.has(runId)) this.runsLoading.set(runId, authorId);
+      } else if (!this.runsLoading.has(runId)) {
+        // (Still loading from the open: its own fetch lands it.)
+        await this.ingestRun(runId, authorId, apply);
+      }
     }
 
     if (!bootstrap && row.kind === 'invite' && typeof meta.inviteId === 'string' && !this.snapshot.invitesById[meta.inviteId]) {
@@ -950,7 +1020,7 @@ export class RelayRoomSource implements RoomSource {
     });
   }
 
-  /** Applies `session_started` followed by every event of a run's full backlog, once — the first time a room message references it. Uses `prefetched` (bootstrap's own bounded-parallel fetch) when given, else fetches it itself (the realtime path). */
+  /** Lands a run's header and full backlog in one step (`session_log_loaded`), once — the first time a room message references it. Uses `prefetched` (the open's `loadRuns`) when given, else fetches it itself (the realtime path). */
   private async ingestRun(
     runId: string,
     ownerFallback: string,
@@ -958,6 +1028,7 @@ export class RelayRoomSource implements RoomSource {
     prefetched?: RunFetchResult
   ): Promise<void> {
     const { run, events } = prefetched ?? (await this.fetchRun(runId));
+    if (this.disposed) return;
     const meta: SessionRunMeta = {
       id: runId,
       agent: run?.agent ?? 'claude',
@@ -968,27 +1039,24 @@ export class RelayRoomSource implements RoomSource {
       startedAt: run?.startedAt ?? new Date().toISOString(),
       endedAt: run?.endedAt ?? null,
     };
-    apply({ type: 'session_started', runId, meta });
     // Yours, run on this computer: shown from its own full copy instead.
     if (meta.owner === this.opts.selfUserId && this.localRuns) {
-      if (await this.withLocalRun(runId, () => this.loadLocalRun(runId, apply))) return;
+      if (await this.withLocalRun(runId, () => this.loadLocalRun(runId, apply, meta))) return;
     }
 
-    for (const event of events) {
-      apply({
-        type: 'session_event_appended',
-        runId,
+    apply({
+      type: 'session_log_loaded',
+      runId,
+      meta,
+      events: events.map((event) => ({
         seq: event.seq,
-        event: {
-          seq: event.seq,
-          kind: event.kind,
-          payload: event.payload,
-          ...(event.truncated ? { truncated: event.truncated } : {}),
-          ...(event.originalBytes != null ? { originalBytes: event.originalBytes } : {}),
-        },
-      });
-      this.lastRunSeq.set(runId, event.seq);
-    }
+        kind: event.kind,
+        payload: event.payload,
+        ...(event.truncated ? { truncated: event.truncated } : {}),
+        ...(event.originalBytes != null ? { originalBytes: event.originalBytes } : {}),
+      })),
+    });
+    for (const event of events) this.lastRunSeq.set(runId, Math.max(this.lastRunSeq.get(runId) ?? 0, event.seq));
   }
 
   // ── the owner overlay ───────────────────────────────────────────────────
@@ -1001,20 +1069,14 @@ export class RelayRoomSource implements RoomSource {
     return next;
   }
 
-  /** Replaces a run's events with this computer's full copy of it. False (nothing changed) when there's no copy here. */
-  private async loadLocalRun(runId: string, apply: (event: RoomEvent) => void): Promise<boolean> {
-    const meta = this.snapshot.sessionMetaByRun[runId];
+  /** Replaces a run's events with this computer's full copy of it, in one step. False (nothing changed) when there's no copy here. `meta` is for a run not in the snapshot yet (its first load). */
+  private async loadLocalRun(runId: string, apply: (event: RoomEvent) => void, meta = this.snapshot.sessionMetaByRun[runId]): Promise<boolean> {
     if (!meta || !this.localRuns) return false;
     const events = await this.localRuns.events(runId).catch(() => null);
     if (!events || this.disposed) return false;
     this.localRunIds.add(runId);
-    // `session_started` starts the run's events over.
-    apply({ type: 'session_started', runId, meta });
-    for (const event of events) {
-      apply({ type: 'session_event_appended', runId, seq: event.seq, event });
-      this.lastRunSeq.set(runId, event.seq);
-    }
-    if (events.length === 0) this.lastRunSeq.set(runId, 0);
+    apply({ type: 'session_log_loaded', runId, meta, events });
+    this.lastRunSeq.set(runId, events.at(-1)?.seq ?? 0);
     return true;
   }
 

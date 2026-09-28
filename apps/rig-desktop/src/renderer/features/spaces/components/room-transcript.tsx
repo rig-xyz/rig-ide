@@ -10,7 +10,7 @@ import { readLastSeen, writeLastSeen } from '../room-read-marker';
 import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
 import { type MapEntry, ConversationMap } from './conversation-map';
 import { AGENT_NAME } from './identity';
-import { SessionCard } from './session-card';
+import { SessionCard, SessionCardPlaceholder } from './session-card';
 import {
   CommentMirrorLine,
   DayDivider,
@@ -117,7 +117,8 @@ function renderItem(
       return <SystemRow message={message} snapshot={snapshot} onConnectorConnect={onConnectorConnect} />;
     case 'session': {
       const meta = snapshot.sessionMetaByRun[message.meta.runId];
-      if (!meta) return null;
+      // Its log is still loading: hold its place (same row key, so the card replaces this in place).
+      if (!meta) return snapshot.runsLoading?.[message.meta.runId] ? <SessionCardPlaceholder /> : null;
       const events = snapshot.sessionEventsByRun[message.meta.runId] ?? [];
       const owner = snapshot.members.find((m) => m.id === meta.owner);
       // Stop is only ever offered for MY agent's own session — never a

@@ -8,6 +8,7 @@ import type {
   SessionRun,
 } from '@main/rig/spaces/relay-api';
 import { describe, expect, it, vi } from 'vitest';
+import { buildRoomFeed, reduceRoom } from './fixtures/room-feed';
 import { RelayRoomSource, type RealtimeProvider, type RelayRoomClient } from './relay-room-source';
 
 /**
@@ -452,7 +453,7 @@ describe('RelayRoomSource', () => {
     expect(gotToken).toBe('ticket-1');
   });
 
-  it('the first message of kind "session" synthesizes session_started plus its full event backlog', async () => {
+  it('the first message of kind "session" shows at once, then its run lands with its full event backlog in one step', async () => {
     const fake = makeFakeRelay();
     fake.queueMessages([message({ kind: 'session', body: '', meta: { runId: 'run1' } })]);
     fake.setRun('run1', run(), [sessionEvent({ seq: 1, kind: 'tool_call', payload: { toolCallId: 't1' } })]);
@@ -471,11 +472,11 @@ describe('RelayRoomSource', () => {
     source.play();
     await flush();
 
-    // `session_started`/`session_event_appended` are folded into the
-    // snapshot silently during bootstrap (see "Calm Room open" below) —
-    // only the final event of the batch (this message itself) notifies.
-    expect(seen).toEqual(['message_created']);
+    // The message is announced first (its card a placeholder meanwhile),
+    // then the run's header and whole log together, as one event.
+    expect(seen).toEqual(['message_created', 'session_log_loaded']);
     const snapshot = source.getSnapshot();
+    expect(snapshot.runsLoading).toEqual({});
     expect(snapshot.sessionMetaByRun.run1.status).toBe('running');
     expect(snapshot.sessionEventsByRun.run1).toHaveLength(1);
     expect(snapshot.sessionEventsByRun.run1[0].kind).toBe('tool_call');
@@ -575,7 +576,7 @@ describe('RelayRoomSource', () => {
     expect(joined?.meta).toEqual({ kind: 'system', event: 'member_joined' });
   });
 
-  it('bootstrap fetches every referenced run in parallel, bounded, and notifies once for the whole batch (Calm Room open)', async () => {
+  it('shows the messages first, then loads the runs newest-first, bounded, announcing them in batches (Calm Room open)', async () => {
     const fake = makeFakeRelay();
     const runIds = ['run1', 'run2', 'run3', 'run4', 'run5', 'run6', 'run7', 'run8'];
     fake.queueMessages(
@@ -595,7 +596,7 @@ describe('RelayRoomSource', () => {
         maxInFlight = Math.max(maxInFlight, inFlight);
         await new Promise<void>((resolve) => pending.set(runId, () => resolve()));
         inFlight -= 1;
-        return ok({ run: run({ id: runId }), events: [] });
+        return ok({ run: run({ id: runId, status: 'done' }), events: [] });
       },
     };
 
@@ -608,28 +609,35 @@ describe('RelayRoomSource', () => {
       createProvider: () => new FakeProvider(),
     });
 
-    const notifications: number[] = [];
-    source.subscribe(() => notifications.push(Object.keys(source.getSnapshot().sessionMetaByRun).length));
+    const notifications: Array<{ messages: number; runs: number; loading: number }> = [];
+    source.subscribe((_event, snapshot) =>
+      notifications.push({
+        messages: snapshot.messages.length,
+        runs: Object.keys(snapshot.sessionMetaByRun).length,
+        loading: Object.keys(snapshot.runsLoading ?? {}).length,
+      })
+    );
     source.play();
     await flush();
 
-    // Only the first 6 (BOOTSTRAP_RUN_CONCURRENCY) are kicked off together —
-    // not all 8 at once (bounded), and not one at a time (parallel).
-    expect(pending.size).toBe(6);
+    // The whole transcript is already out, every card a placeholder, before
+    // a single run log has come back.
+    expect(notifications).toEqual([{ messages: 8, runs: 0, loading: 8 }]);
+    // Only 6 (BOOTSTRAP_RUN_CONCURRENCY) at once — bounded, and parallel —
+    // and the newest first: the bottom of the transcript, where it opens.
+    expect([...pending.keys()]).toEqual(['run8', 'run7', 'run6', 'run5', 'run4', 'run3']);
     expect(maxInFlight).toBe(6);
-    expect(notifications).toEqual([]); // nothing announced mid-bootstrap
 
     for (const resolve of [...pending.values()]) resolve();
     await flush();
 
-    // The 2 remaining runs started as soon as a slot freed up.
-    expect(pending.size).toBe(8);
+    // One announcement for those 6, not one per run; the last 2 started as slots freed up.
+    expect(notifications.slice(1)).toEqual([{ messages: 8, runs: 6, loading: 2 }]);
+    expect([...pending.keys()].slice(6)).toEqual(['run2', 'run1']);
     for (const resolve of [...pending.values()]) resolve();
     await flush();
 
-    // Exactly one notification for the entire bootstrap, once every run has
-    // loaded — never a trickle of one update per run or per message.
-    expect(notifications).toEqual([8]);
+    expect(notifications.slice(2)).toEqual([{ messages: 8, runs: 8, loading: 0 }]);
     expect(Object.keys(source.getSnapshot().sessionMetaByRun).sort()).toEqual(runIds);
   });
 
@@ -1260,7 +1268,7 @@ describe('RelayRoomSource — how many requests an open and its catch-ups make',
     source.dispose();
   });
 
-  it('dispose() mid-bootstrap stops further fetches, and nothing is applied or announced', async () => {
+  it('dispose() while run logs are loading stops further fetches, and nothing more is applied or announced', async () => {
     const { fake, eventCalls } = countingFake();
     const runIds = Array.from({ length: 10 }, (_, i) => `run${i}`);
     fake.queueMessages(sessionMessages(runIds));
@@ -1279,17 +1287,41 @@ describe('RelayRoomSource — how many requests an open and its catch-ups make',
     source.play();
     await flush();
     expect(eventCalls).toHaveLength(6); // the first bounded batch
+    expect(notified).toEqual(['message_created']); // the transcript, already out
 
     source.dispose();
     for (const resolve of pending.splice(0)) resolve();
     await flush();
     expect(eventCalls).toHaveLength(6); // the other 4 never started
-    expect(notified).toEqual([]);
-    expect(source.getSnapshot().messages).toEqual([]);
-    expect(provider()).toBeNull(); // never went on to open the socket
+    expect(notified).toEqual(['message_created']);
+    expect(source.getSnapshot().sessionMetaByRun).toEqual({});
+    expect(provider().destroyCalls).toBe(1);
   });
 
-  it('bootstrap asks for roster, messages, skills, invites and connectors all at once, and starts the runs before the rest is back', async () => {
+  it('dispose() before the messages are in: nothing is applied or announced, and no socket opens', async () => {
+    const fake = makeFakeRelay();
+    let answer: (() => void) | null = null;
+    const relay: RelayRoomClient = {
+      ...fake.relay,
+      listMessages: async () => {
+        await new Promise<void>((resolve) => (answer = resolve));
+        return ok([message()]);
+      },
+    };
+    const { source, provider } = open(relay);
+    const notified: string[] = [];
+    source.subscribe((event) => notified.push(event.type));
+    source.play();
+    await flush();
+    source.dispose();
+    answer!();
+    await flush();
+    expect(notified).toEqual([]);
+    expect(source.getSnapshot().messages).toEqual([]);
+    expect(provider()).toBeNull();
+  });
+
+  it('asks for roster, messages, skills, invites and connectors all at once, and shows them before any run log is back', async () => {
     const started: string[] = [];
     const gate: Array<() => void> = [];
     const held = <T,>(name: string, value: T) => async (): Promise<T> => {
@@ -1298,7 +1330,7 @@ describe('RelayRoomSource — how many requests an open and its catch-ups make',
       return value;
     };
     const fake = makeFakeRelay();
-    fake.setRun('run1', run(), []);
+    let answerRun: (() => void) | null = null;
     const relay: RelayRoomClient = {
       ...fake.relay,
       listMembers: held('listMembers', ok([member()])),
@@ -1309,22 +1341,120 @@ describe('RelayRoomSource — how many requests an open and its catch-ups make',
         started.push('listMessages');
         return ok(sessionMessages(['run1']));
       },
-      getSessionEvents: async (bindingId, runId, after) => {
+      getSessionEvents: async (_bindingId, runId) => {
         started.push('getSessionEvents');
-        return fake.relay.getSessionEvents(bindingId, runId, after);
+        await new Promise<void>((resolve) => (answerRun = resolve));
+        return ok({ run: run({ id: runId }), events: [sessionEvent({ runId, seq: 1 })] });
       },
     };
     const { source } = open(relay);
+    const seen: Array<{ type: string; runs: number }> = [];
+    source.subscribe((event, snapshot) => seen.push({ type: event.type, runs: Object.keys(snapshot.sessionMetaByRun).length }));
     source.play();
     await flush();
-    // Nothing waits for anything else: the run is already loading while
-    // the roster, skills, invites and connectors are still out.
-    expect(new Set(started)).toEqual(
-      new Set(['listMembers', 'listMessages', 'listSkills', 'listInvites', 'listConnectors', 'getSessionEvents'])
-    );
+    // All five out together; nothing waits for anything else.
+    expect(new Set(started)).toEqual(new Set(['listMembers', 'listMessages', 'listSkills', 'listInvites', 'listConnectors']));
     for (const resolve of gate.splice(0)) resolve();
     await flush();
-    expect(source.getSnapshot().messages).toHaveLength(1);
+    // Shown (with the run as a placeholder) while its log is still out.
+    expect(started).toContain('getSessionEvents');
+    expect(seen).toEqual([{ type: 'message_created', runs: 0 }]);
+    expect(source.getSnapshot().runsLoading).toEqual({ run1: true });
+
+    answerRun!();
+    await flush();
+    expect(seen).toEqual([
+      { type: 'message_created', runs: 0 },
+      { type: 'session_log_loaded', runs: 1 },
+    ]);
+    source.dispose();
+  });
+
+  it('a run waiting on an approval at the bottom is shown promptly, without waiting for the rest of the history', async () => {
+    const fake = makeFakeRelay();
+    const runIds = Array.from({ length: 10 }, (_, i) => `run${i}`); // run9 is the newest
+    fake.queueMessages(sessionMessages(runIds));
+    const answers = new Map<string, () => void>();
+    const relay: RelayRoomClient = {
+      ...fake.relay,
+      async getSessionEvents(_bindingId, runId) {
+        await new Promise<void>((resolve) => answers.set(runId, resolve));
+        const asking = runId === 'run9';
+        return ok({
+          run: run({ id: runId, status: asking ? 'running' : 'done' }),
+          events: asking
+            ? [sessionEvent({ runId, seq: 1, kind: 'permission_requested', payload: { requestId: 'p1', toolCall: { toolCallId: 't1', title: 'rm -rf build' }, options: [] } })]
+            : [],
+        });
+      },
+    };
+    const { source } = open(relay);
+    const announced: number[] = [];
+    source.subscribe((_event, snapshot) => announced.push(Object.keys(snapshot.sessionMetaByRun).length));
+    source.play();
+    await flush();
+    expect([...answers.keys()][0]).toBe('run9'); // asked first
+
+    answers.get('run9')!();
+    await wait(60); // one short batch window, not the whole history
+    expect(announced.at(-1)).toBe(1);
+    expect(source.getSnapshot().sessionEventsByRun.run9?.[0]?.kind).toBe('permission_requested');
+    for (const resolve of answers.values()) resolve();
+    source.dispose();
+  });
+
+  it('a run named by a notification while its log is still loading is re-read once that log is in', async () => {
+    const { fake, eventCalls } = countingFake();
+    let answer: (() => void) | null = null;
+    const relay: RelayRoomClient = {
+      ...fake.relay,
+      async getSessionEvents(bindingId, runId, after = 0) {
+        eventCalls.push(`${runId}@${after}`);
+        if (after === 0) await new Promise<void>((resolve) => (answer = resolve));
+        // The first fetch went out before seq 2 existed.
+        const events = after === 0 ? [sessionEvent({ runId, seq: 1 })] : [sessionEvent({ runId, seq: 2, kind: 'tool_call_update' })];
+        return ok({ run: run({ id: runId }), events });
+      },
+    };
+    fake.queueMessages(sessionMessages(['run1']), []);
+    const { source, provider } = open(relay);
+    source.play();
+    await flush();
+    provider().fire('connect');
+    provider().fire('stateless', { payload: JSON.stringify({ type: 'session_event_appended', runId: 'run1', seq: 2 }) });
+    await flush();
+    expect(eventCalls).toEqual(['run1@0']); // nothing fetched for it until its log is in
+
+    answer!();
+    await flush();
+    expect(eventCalls).toEqual(['run1@0', 'run1@1']);
+    expect(source.getSnapshot().sessionEventsByRun.run1!.map((e) => e.seq)).toEqual([1, 2]);
+    source.dispose();
+  });
+
+  it('a new message naming a run still loading from the open does not fetch it a second time', async () => {
+    const { fake, eventCalls } = countingFake();
+    let answer: (() => void) | null = null;
+    const relay: RelayRoomClient = {
+      ...fake.relay,
+      async getSessionEvents(_bindingId, runId) {
+        eventCalls.push(runId);
+        await new Promise<void>((resolve) => (answer = resolve));
+        return ok({ run: run({ id: runId, status: 'done' }), events: [] });
+      },
+    };
+    const again = message({ id: 'm-again', seq: 2, kind: 'session', body: '', meta: { runId: 'run1' } });
+    fake.queueMessages(sessionMessages(['run1']), [again]);
+    const { source, provider } = open(relay);
+    source.play();
+    await flush();
+    provider().fire('connect');
+    await flush();
+    expect(eventCalls).toEqual(['run1']);
+    answer!();
+    await flush();
+    expect(eventCalls).toEqual(['run1']);
+    expect(source.getSnapshot().messages.map((m) => m.id)).toEqual(['m-run1', 'm-again']);
     source.dispose();
   });
 
@@ -1370,6 +1500,34 @@ describe('RelayRoomSource — how many requests an open and its catch-ups make',
     source.dispose();
   });
 
+  it('a fetched log lands as one reducer step: header and every event at once, placeholder cleared', () => {
+    const events = [1, 2, 3].map((seq) => ({ seq, kind: 'tool_call', payload: {} }));
+    const meta = { id: 'run1', agent: 'claude' as const, owner: 'u1', model: 'm', title: '', status: 'done' as const, startedAt: '', endedAt: null };
+    const before = { ...buildRoomFeed().initialSnapshot, runsLoading: { run1: true as const, run2: true as const } };
+    const after = reduceRoom(before, { type: 'session_log_loaded', runId: 'run1', meta, events });
+    expect(after.sessionMetaByRun.run1).toBe(meta);
+    expect(after.sessionEventsByRun.run1).toBe(events); // the array as fetched: no per-event copies
+    expect(after.runsLoading).toEqual({ run2: true });
+  });
+
+  it('a run a live message names arrives as one event, not one per log entry', async () => {
+    const { fake } = countingFake();
+    fake.setRun('run2', run({ id: 'run2' }), [1, 2, 3].map((seq) => sessionEvent({ runId: 'run2', seq })));
+    fake.queueMessages([message()], [], sessionMessages(['run2'], 2));
+    const { source, provider } = open(fake.relay);
+    source.play();
+    await flush();
+    provider().fire('connect');
+    await flush();
+    const seen: string[] = [];
+    source.subscribe((event) => seen.push(event.type));
+    provider().fire('stateless', { payload: JSON.stringify({ type: 'message_created', id: 'm-run2', seq: 2, kind: 'session' }) });
+    await flush();
+    expect(seen).toEqual(['session_log_loaded', 'message_created']);
+    expect(source.getSnapshot().sessionEventsByRun.run2!.map((e) => e.seq)).toEqual([1, 2, 3]);
+    source.dispose();
+  });
+
   it('logs the open and each catch-up at info, with timings and counts only', async () => {
     const fake = makeFakeRelay();
     fake.setRun('run1', run(), [sessionEvent({ seq: 1, bytes: 120 })]);
@@ -1390,13 +1548,12 @@ describe('RelayRoomSource — how many requests an open and its catch-ups make',
     provider!.fire('connect');
     await flush();
     const info = lines.filter((l) => l.level === 'info');
-    expect(info.map((l) => l.message)).toEqual([
-      'Rig spaces: room loaded and shown',
-      'Rig spaces: room socket connected',
-      'Rig spaces: room catch-up',
-    ]);
-    expect(info[0]!.extra).toMatchObject({ bindingId: BINDING, messages: 1, runs: 1, eventBytes: 120 });
-    expect(info[2]!.extra).toMatchObject({ messages: true, runs: 1, calls: 2 });
+    const line = (message: string) => info.find((l) => l.message === `Rig spaces: room ${message}`);
+    expect(info[0]!.message).toBe('Rig spaces: room first paint');
+    expect(line('first paint')!.extra).toMatchObject({ bindingId: BINDING, messages: 1, runsLoading: 1 });
+    expect(line('runs loaded')!.extra).toMatchObject({ bindingId: BINDING, runs: 1, calls: 1, eventBytes: 120 });
+    expect(line('socket connected')!.extra).toMatchObject({ bindingId: BINDING, reconnect: false });
+    expect(line('catch-up')!.extra).toMatchObject({ messages: true, runs: 1, calls: 2 });
     expect(JSON.stringify(lines)).not.toContain('hello room');
     source.dispose();
   });

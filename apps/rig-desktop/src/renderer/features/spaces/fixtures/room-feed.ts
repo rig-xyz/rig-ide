@@ -106,6 +106,15 @@ export function reduceRoom(snapshot: RoomSnapshot, event: RoomEvent): RoomSnapsh
       };
     }
 
+    case 'session_log_loaded': {
+      // One copy of the whole log, not one array copy per event.
+      const started = reduceRoom(snapshot, { type: 'session_started', runId: event.runId, meta: event.meta });
+      const next = { ...started, sessionEventsByRun: { ...started.sessionEventsByRun, [event.runId]: event.events } };
+      if (!snapshot.runsLoading?.[event.runId]) return next;
+      const { [event.runId]: _loaded, ...runsLoading } = snapshot.runsLoading;
+      return { ...next, runsLoading };
+    }
+
     case 'agent_request_created':
       // Transient signal only (a request was made) — no components in
       // lane 2 render off it yet; kept in the event stream for lane 3's

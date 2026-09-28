@@ -563,6 +563,34 @@ function liveStepTitle(title: string | undefined, agent: AgentKind, args?: RigTo
   return prettyStepTitle(title, agent, args)?.text ?? title;
 }
 
+/**
+ * An agent run whose log is still loading (the Room shows its messages
+ * first): the card's own frame — avatar, name line, summary line and a
+ * short answer — quietly pulsing, sized like a collapsed finished card so
+ * the real one lands in about the same space. A shape, not a spinner.
+ */
+export function SessionCardPlaceholder() {
+  const bar = 'bg-bg-2 h-2 animate-pulse rounded-full';
+  return (
+    <div className={cn(ROW_GRID, 'py-1')} data-testid="session-card-placeholder" aria-busy="true">
+      <span className="bg-bg-2 mt-0.5 size-7 animate-pulse rounded-full" />
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <div className="flex h-5 items-center gap-2">
+          <span className={cn(bar, 'w-14')} />
+          <span className={cn(bar, 'w-24 opacity-70')} />
+        </div>
+        <div className="flex h-6 items-center">
+          <span className={cn(bar, 'w-36 opacity-70')} />
+        </div>
+        <div className="flex flex-col gap-2 py-1">
+          <span className={cn(bar, 'w-full')} />
+          <span className={cn(bar, 'w-2/3')} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function SessionCard({
   meta,
   events,
