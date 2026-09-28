@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import type { SignInOptions, SignInOutcome, SignInsList } from '@main/rig/pages/page-sign-ins';
 import { rpc } from '@renderer/lib/ipc';
-import type { BrowserId, PageSignInRecord, SignInFailureReason, SignInSite } from '@shared/pages/sign-in-sites';
+import type { AutoSignInReason, BrowserConnection, BrowserId, PageSignInRecord, SignInFailureReason, SignInSite } from '@shared/pages/sign-in-sites';
 
 /**
  * The sheet's walk-through, one per site (canvas board 18, B–D), kept
@@ -226,6 +226,29 @@ export const signInFlow = {
     });
     emit();
     await run(site.id, 'refresh');
+  },
+
+  /**
+   * An automatic sign-in failed (folder access, the Keychain, the site
+   * refusing): the sheet at that error, with its actions. Try again reads the
+   * connected profile again.
+   */
+  showError(site: SignInSite, pageUrl: string, reason: AutoSignInReason, connection: BrowserConnection | null, browser?: BrowserId): void {
+    stopWatch(site.id);
+    flows.set(site.id, {
+      site,
+      pageUrl,
+      step: { kind: 'error', reason: reason as SignInFailureReason, ...(browser ? { browser } : {}) },
+      open: true,
+      browsers: [],
+      options: null,
+      picked: connection ? { browser: connection.browser, profile: connection.profile } : null,
+      headsUpSeen: true,
+      switching: false,
+      busy: false,
+    });
+    emit();
+    void freshBrowsers().then((browsers) => flows.get(site.id) && set(site.id, { browsers }));
   },
 
   pick(siteId: string, browser: BrowserId, profile: string): void {

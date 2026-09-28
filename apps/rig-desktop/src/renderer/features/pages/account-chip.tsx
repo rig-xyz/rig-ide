@@ -1,11 +1,13 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowRightLeft, ExternalLink, Globe, KeyRound, LogOut, PenLine, RefreshCw, X } from 'lucide-react';
+import { ArrowRightLeft, ExternalLink, Globe, KeyRound, Loader2, LogOut, PenLine, RefreshCw, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { Popover, PopoverMenuItem, PopoverSeparator } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/lib/utils';
 import type { SignInSite } from '@shared/pages/sign-in-sites';
+import { clearAutoSignIn, openInChromeAndWatch, runAutoSignIn, useAutoSignIn } from './auto-sign-in';
+import { connectFlow, useConnectFlow } from './connect-flow';
 import { isUnfinished, signInFlow, useSignInFlow } from './sign-in-flow';
 import { Initial } from './sign-in-sheet';
 import { accountLabel, browserLabel, recordFor, SIGN_INS_KEY, useSignIns } from './use-sign-ins';
@@ -16,12 +18,25 @@ import { accountLabel, browserLabel, recordFor, SIGN_INS_KEY, useSignIns } from 
  * required. The menu always has a way in: the browser's sign-in, signing
  * in on the page itself, or the page in the browser.
  */
-export function AccountChip({ site, pageUrl, onSignInHere }: { site: SignInSite; pageUrl: string; onSignInHere: () => void }) {
+export function AccountChip({
+  site,
+  pageUrl,
+  where,
+  onSignInHere,
+}: {
+  site: SignInSite;
+  pageUrl: string;
+  /** The page's key for the Connect sheet (so it opens over this page). */
+  where: string;
+  onSignInHere: () => void;
+}) {
   const queryClient = useQueryClient();
   const list = useSignIns();
   const flow = useSignInFlow(site.id);
+  const auto = useAutoSignIn(site.id);
   const record = recordFor(list.data, site.id);
-  const browser = browserLabel(list.data, record?.browser);
+  const connection = list.data?.connection ?? null;
+  const browser = connection?.browserName ?? browserLabel(list.data, record?.browser);
   const hasBrowser = (list.data?.browsers.length ?? 0) > 0;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -31,6 +46,34 @@ export function AccountChip({ site, pageUrl, onSignInHere }: { site: SignInSite;
   };
   const openInBrowser = () => void rpc.rig.pages.openInBrowser({ url: pageUrl });
   const signOut = () => void rpc.rig.pages.signOut({ site: site.id }).then(() => queryClient.invalidateQueries({ queryKey: SIGN_INS_KEY }));
+  const here = () => {
+    clearAutoSignIn(site.id);
+    onSignInHere();
+  };
+  const signedIn = record && !record.expired;
+
+  if (!signedIn && auto?.phase === 'signing') {
+    return (
+      <span className="flex h-6 items-center gap-1.5 rounded-full px-2 text-xs text-text-muted" data-testid="account-chip" data-state="signing">
+        <Loader2 className="size-3 animate-spin" />
+        Signing in with {browser}…
+      </span>
+    );
+  }
+  if (!signedIn && auto?.phase === 'failed' && auto.reason !== 'not_signed_in_in_browser' && !flow?.open) {
+    // Folder access, the Keychain, or the site refusing: the sheet's clear error states, with their actions.
+    return (
+      <button
+        type="button"
+        onClick={() => signInFlow.showError(site, pageUrl, auto.reason, connection, auto.browser)}
+        className="border-warning/50 text-warning hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-full border px-2 text-xs transition-colors"
+        data-testid="account-chip"
+        data-state="failed"
+      >
+        Couldn't sign in
+      </button>
+    );
+  }
 
   if (isUnfinished(flow)) {
     return (
@@ -47,7 +90,7 @@ export function AccountChip({ site, pageUrl, onSignInHere }: { site: SignInSite;
     );
   }
 
-  const signedIn = record && !record.expired;
+  const notInChrome = auto?.phase === 'failed' && auto.reason === 'not_signed_in_in_browser' ? auto : null;
   return (
     <>
       <button
@@ -94,17 +137,38 @@ export function AccountChip({ site, pageUrl, onSignInHere }: { site: SignInSite;
               Rig's {site.name} sign-in has expired or was refused.
             </p>
             <PopoverMenuItem icon={RefreshCw} label={`Refresh from ${browser}`} onSelect={act(() => void signInFlow.refresh(site, record, pageUrl))} />
-            <PopoverMenuItem icon={PenLine} label="Sign in here" onSelect={act(onSignInHere)} />
+            <PopoverMenuItem icon={PenLine} label="Sign in here" onSelect={act(here)} />
             <PopoverMenuItem icon={ExternalLink} label={`Open in ${browser}`} onSelect={act(openInBrowser)} />
             <PopoverSeparator />
             <PopoverMenuItem icon={LogOut} label={`Sign out of ${site.name} in rig`} onSelect={act(signOut)} />
           </>
+        ) : notInChrome ? (
+          <>
+            <p className="px-2.5 pt-1 pb-1.5 text-xs text-text-muted" data-testid="not-in-chrome">
+              {notInChrome.watching === 'checking'
+                ? `Checking ${browser} again…`
+                : notInChrome.watching === 'waiting'
+                  ? `Sign in there, then come back: rig picks it up.`
+                  : notInChrome.watching === 'gave-up'
+                    ? `Still no ${site.name} sign-in in ${browser}. Open it there, then come back.`
+                    : `${browser}${connection ? ` · ${connection.profileName}` : ''} isn't signed in to ${site.name}.`}
+            </p>
+            <PopoverMenuItem icon={ExternalLink} label={`Open in ${browser}`} onSelect={act(() => void openInChromeAndWatch(site.id, pageUrl, connection?.browser))} />
+            <PopoverMenuItem icon={PenLine} label="Sign in here" onSelect={act(here)} />
+          </>
         ) : (
           <>
-            {hasBrowser && (
-              <PopoverMenuItem icon={KeyRound} label={`Use ${browser} sign-in for ${site.name}`} onSelect={act(() => void signInFlow.start(site, pageUrl))} />
+            {hasBrowser && !connection && (
+              <PopoverMenuItem
+                icon={KeyRound}
+                label={`Connect ${browser}…`}
+                onSelect={act(() => void connectFlow.start(where, () => void runAutoSignIn(site.id, { retry: true })))}
+              />
             )}
-            <PopoverMenuItem icon={PenLine} label="Sign in here" onSelect={act(onSignInHere)} />
+            {connection && (
+              <PopoverMenuItem icon={KeyRound} label={`Sign in with ${browser}`} onSelect={act(() => void runAutoSignIn(site.id, { retry: true }))} />
+            )}
+            <PopoverMenuItem icon={PenLine} label="Sign in here" onSelect={act(here)} />
             <PopoverMenuItem icon={hasBrowser ? ExternalLink : Globe} label={hasBrowser ? `Open in ${browser}` : 'Open in browser'} onSelect={act(openInBrowser)} />
           </>
         )}
@@ -121,28 +185,43 @@ export function AccountChip({ site, pageUrl, onSignInHere }: { site: SignInSite;
  * sign-in form and rig could sign it in. ✕ hides it for this page; the chip
  * keeps the option.
  */
-export function SignInBanner({ site, pageUrl, wall, dismissed, onDismiss }: { site: SignInSite; pageUrl: string; wall: boolean; dismissed: boolean; onDismiss: () => void }) {
+export function SignInBanner({
+  site,
+  pageUrl,
+  where,
+  wall,
+  dismissed,
+  onDismiss,
+}: {
+  site: SignInSite;
+  pageUrl: string;
+  where: string;
+  wall: boolean;
+  dismissed: boolean;
+  onDismiss: () => void;
+}) {
   const list = useSignIns();
   const flow = useSignInFlow(site.id);
+  const connecting = useConnectFlow(where);
   const record = recordFor(list.data, site.id);
-  const browser = browserLabel(list.data, record?.browser);
-  if (!wall || dismissed || flow?.open || !list.data || list.data.browsers.length === 0) return null;
+  if (!wall || dismissed || flow?.open || connecting || !list.data || list.data.browsers.length === 0) return null;
   if (record && !record.expired) return null;
-  const unfinished = isUnfinished(flow);
+  const connection = list.data.connection;
+  const browser = connection?.browserName ?? browserLabel(list.data, record?.browser);
+  // Connected and never signed in: the automatic sign-in and the chip handle it.
+  if (connection && !record) return null;
   return (
     <div className="border-border-hairline bg-bg-1 flex shrink-0 items-center gap-2.5 border-b px-4 py-1.5 text-xs" data-testid="sign-in-banner">
       <span className="min-w-0 flex-1 text-text-secondary">
-        {record
-          ? `Your ${site.name} sign-in in rig has expired.`
-          : `This page wants you signed in. Use your ${browser} sign-in for ${site.name}?`}
+        {record ? `Your ${site.name} sign-in in rig has expired.` : `Connect ${browser} to open pages as you.`}
       </span>
       {record ? (
         <Button size="xs" onClick={() => void signInFlow.refresh(site, record, pageUrl)}>
           Refresh from {browser}
         </Button>
       ) : (
-        <Button size="xs" onClick={() => void signInFlow.start(site, pageUrl)}>
-          {unfinished ? 'Finish signing in' : `Use ${browser} sign-in`}
+        <Button size="xs" onClick={() => void connectFlow.start(where, () => void runAutoSignIn(site.id, { retry: true }))}>
+          Connect
         </Button>
       )}
       <button type="button" aria-label="Hide for this page" onClick={onDismiss} className="hover:bg-bg-2 grid size-5 place-items-center rounded-control text-text-muted">

@@ -64,15 +64,15 @@ export function SignInSheet({ siteId, inline = false, onSignInHere }: { siteId: 
   );
 }
 
-function Title({ children }: { children: ReactNode }) {
+export function Title({ children }: { children: ReactNode }) {
   return <p className="pr-6 text-sm font-medium text-text-primary">{children}</p>;
 }
 
-function Body({ children }: { children: ReactNode }) {
+export function Body({ children }: { children: ReactNode }) {
   return <p className="text-xs text-text-secondary">{children}</p>;
 }
 
-function Actions({ children }: { children: ReactNode }) {
+export function Actions({ children }: { children: ReactNode }) {
   return <div className="flex flex-wrap items-center gap-1.5 pt-1">{children}</div>;
 }
 
@@ -209,7 +209,7 @@ function HeadsUpStep({ flow, browser, notNow }: { flow: SignInFlow; browser: str
   );
 }
 
-function Prompt({ icon, text, button }: { icon: ReactNode; text: string; button: string }) {
+export function Prompt({ icon, text, button }: { icon: ReactNode; text: string; button: string }) {
   return (
     <div className="bg-bg-2 flex items-center gap-2 rounded-control px-2 py-1.5">
       <span className="bg-bg-3 grid size-6 shrink-0 place-items-center rounded-control text-text-secondary">{icon}</span>

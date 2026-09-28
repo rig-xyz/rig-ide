@@ -19,10 +19,12 @@ import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { Button } from '@renderer/lib/ui/button';
 import { Textarea } from '@renderer/lib/ui/textarea';
 import { cn } from '@renderer/lib/utils';
-import { isSignInWall, signInSiteForUrl } from '@shared/pages/sign-in-sites';
+import { isSignInWall, KNOWN_SIGN_IN_SITES, signInSiteForUrl } from '@shared/pages/sign-in-sites';
 import { RIG_PAGES_PARTITION } from '@shared/spaces/links';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { AccountChip, SignInBanner } from './account-chip';
+import { clearAutoSignIn, getAutoState, registerPanelPage, runAutoSignIn } from './auto-sign-in';
+import { ConnectSheet } from './connect-sheet';
 import { SignInSheet } from './sign-in-sheet';
 import { recordFor, useSignIns } from './use-sign-ins';
 
@@ -111,7 +113,11 @@ export function PageView({
   const [bannerHidden, setBannerHidden] = useState(() => bannerDismissed.has(url));
   const siteIdRef = useRef(site?.id);
   siteIdRef.current = site?.id;
+  // Read from the webview's events: whether this page should try an automatic sign-in now.
+  const wantsAutoRef = useRef(false);
+  wantsAutoRef.current = !!site && !!signIns.data?.connection && (!record || !!record.expired);
   const browserId = useMemo(() => `rig-page-${Math.random().toString(36).slice(2)}`, []);
+  const where = `page:${browserId}`;
   const queryClient = useQueryClient();
 
   // The page itself: registered as one of the app's browsers (so the
@@ -121,6 +127,8 @@ export function PageView({
     let cancelled = false;
     let view: WebviewTag | null = null;
     let wallTimer: ReturnType<typeof setTimeout> | null = null;
+    let unregister: (() => void) | null = null;
+    let looked = false;
     void rpc.browser.registerSession({ browserId, partition: RIG_PAGES_PARTITION }).then(() => {
       if (cancelled || !hostRef.current) return;
       view = document.createElement('webview') as WebviewTag;
@@ -132,6 +140,8 @@ export function PageView({
         const id = view!.getWebContentsId();
         setWebContentsId(id);
         void rpc.browser.bindWebContents({ browserId, webContentsId: id });
+        // The page the person opened: where this site's automatic sign-in (and its retries) goes.
+        if (siteIdRef.current && !unregister) unregister = registerPanelPage(siteIdRef.current, { webContentsId: id, pageUrl: url });
       });
       view.addEventListener('page-title-updated', (event) => {
         // A sign-in page's title ("Sign in – Google Accounts") is not a title for the tab.
@@ -144,7 +154,18 @@ export function PageView({
           if (cancelled || !view) return;
           void rpc.rig.pages
             .signInWall({ webContentsId: view.getWebContentsId(), ...(siteIdRef.current ? { site: siteIdRef.current } : {}) })
-            .then((r) => !cancelled && setWall(r.wall))
+            .then((r) => {
+              if (cancelled) return;
+              setWall(r.wall);
+              // Connected and not signed in: on a sign-in wall, and on first load only for a known
+              // sign-in site (Google, claude.ai, Notion…). Any other site's first load could be a
+              // public page whose analytics cookies would get copied (and a Keychain prompt with
+              // it), so it waits for a wall. Never a retry.
+              const site = siteIdRef.current;
+              const firstLoad = !looked && !!site && site in KNOWN_SIGN_IN_SITES;
+              if ((r.wall || firstLoad) && wantsAutoRef.current && site) void runAutoSignIn(site);
+              looked = true;
+            })
             .catch(() => {});
         }, WALL_CHECK_DELAY_MS);
       };
@@ -155,6 +176,7 @@ export function PageView({
     return () => {
       cancelled = true;
       if (wallTimer) clearTimeout(wallTimer);
+      unregister?.();
       view?.remove();
       void rpc.browser.unregisterSession(browserId);
     };
@@ -170,7 +192,12 @@ export function PageView({
     if (lastSignedInAt.current !== null && lastSignedInAt.current !== signedInAt) viewRef.current?.reload();
     lastSignedInAt.current = signedInAt;
   }, [signedInAt]);
+  // Signed in (automatically or through the sheet): an earlier automatic failure no longer applies.
+  useEffect(() => {
+    if (site && record && !record.expired && getAutoState(site.id)) clearAutoSignIn(site.id);
+  }, [site, record]);
   const signInHere = () => {
+    if (site) clearAutoSignIn(site.id);
     bannerDismissed.add(url);
     setBannerHidden(true);
     viewRef.current?.focus();
@@ -261,7 +288,7 @@ export function PageView({
       <div className="border-border-hairline flex h-11 shrink-0 items-center gap-2 border-b px-4">
         <b className="min-w-0 truncate text-sm font-medium text-text-primary">{title}</b>
         <span className="shrink-0 text-xs text-text-muted">{hostOf(url)}</span>
-        {site && <AccountChip site={site} pageUrl={url} onSignInHere={signInHere} />}
+        {site && <AccountChip site={site} pageUrl={url} where={where} onSignInHere={signInHere} />}
         <span className="ml-auto flex shrink-0 items-center gap-1">
           <CommentModeControl
             on={commenting}
@@ -299,6 +326,7 @@ export function PageView({
         <SignInBanner
           site={site}
           pageUrl={url}
+          where={where}
           wall={wall}
           dismissed={bannerHidden}
           onDismiss={() => {
@@ -311,6 +339,7 @@ export function PageView({
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <div ref={hostRef} className="absolute inset-0" />
         {site && <SignInSheet siteId={site.id} onSignInHere={signInHere} />}
+        <ConnectSheet where={where} />
         {commenting && (
           <div
             ref={layerRef}

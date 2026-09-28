@@ -2,13 +2,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PageSignInRecord } from '@shared/pages/sign-in-sites';
+import type { BrowserConnection, PageSignInRecord } from '@shared/pages/sign-in-sites';
 
 /**
- * Signing pages in (canvas board 18), renderer side: the page header's
- * account chip and its menus, the sign-in-wall banner, the sheet's steps
- * and exits, abandoning it midway, and the error states' actions.
- * Settings › Sign-ins too. Main is a mock: no browser data anywhere.
+ * Signing pages in (canvas board 18, revised: connect Chrome once, then
+ * automatic per page), renderer side: the page header's chip and its menus,
+ * the banner, the Connect sheet, automatic sign-in on open, the per-site
+ * sheet's error states and exits, and Settings › Sign-ins. Main is a mock:
+ * no browser data anywhere. That agents can't trigger any of it is main's
+ * (`panel-page.test.ts`).
  */
 
 type Access = { id: 'chrome' | 'arc'; name: string; folder: 'granted' | 'denied' | 'unknown'; keychain: 'unknown' | 'granted' | 'silent' };
@@ -17,6 +19,7 @@ const state = vi.hoisted(() => ({
   sites: [] as PageSignInRecord[],
   keepInStep: false,
   browsers: [] as Access[],
+  connection: null as BrowserConnection | null,
 }));
 
 const pages = vi.hoisted(() => ({
@@ -29,6 +32,11 @@ const pages = vi.hoisted(() => ({
   setKeepInStep: vi.fn(async () => {}),
   openPrivacySettings: vi.fn(async () => {}),
   openInBrowser: vi.fn(async () => {}),
+  connectOptions: vi.fn(),
+  connect: vi.fn(),
+  cancelConnect: vi.fn(async () => {}),
+  disconnect: vi.fn(async () => {}),
+  autoSignIn: vi.fn(),
 }));
 
 vi.mock('@renderer/lib/ipc', () => ({
@@ -37,6 +45,9 @@ vi.mock('@renderer/lib/ipc', () => ({
 }));
 
 import { AccountChip, SignInBanner } from '@renderer/features/pages/account-chip';
+import { CHROME_WATCH_RETRY_MS, registerPanelPage, resetAutoSignIn, runAutoSignIn } from '@renderer/features/pages/auto-sign-in';
+import { resetConnectFlow } from '@renderer/features/pages/connect-flow';
+import { ConnectSheet } from '@renderer/features/pages/connect-sheet';
 import { SignInRows } from '@renderer/features/pages/sign-in';
 import { resetSignInFlows, signInFlow, WATCH_RETRY_MS } from '@renderer/features/pages/sign-in-flow';
 import { SignInSheet } from '@renderer/features/pages/sign-in-sheet';
@@ -68,6 +79,9 @@ function record(over: Partial<PageSignInRecord> = {}): PageSignInRecord {
 }
 
 const options = (profiles: (typeof personal)[]) => ({ ok: true, site: google, browsers: [{ id: 'chrome', name: 'Chrome' }], profiles, denied: [] });
+const connectOptions = (profiles: (typeof personal)[], browsers = [{ id: 'chrome', name: 'Chrome' }]) => ({ ok: true, browsers, profiles, denied: [] });
+const CONNECTED: BrowserConnection = { browser: 'chrome', browserName: 'Chrome', profile: 'Default', profileName: 'Personal', email: 'me@example.test', connectedAt: 1 };
+const WHERE = 'page:test';
 
 beforeAll(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -81,11 +95,24 @@ const onDismiss = vi.fn();
 
 beforeEach(() => {
   resetSignInFlows();
+  resetConnectFlow();
+  resetAutoSignIn();
   state.sites = [];
   state.keepInStep = false;
   state.browsers = [{ id: 'chrome', name: 'Chrome', folder: 'unknown', keychain: 'unknown' }];
+  state.connection = null;
   for (const fn of Object.values(pages)) fn.mockClear();
-  pages.signIns.mockImplementation(async () => ({ sites: state.sites, keepInStep: state.keepInStep, browsers: state.browsers }));
+  pages.signIns.mockImplementation(async () => ({ sites: state.sites, keepInStep: state.keepInStep, browsers: state.browsers, connection: state.connection }));
+  pages.connectOptions.mockReset().mockResolvedValue(connectOptions([work, personal]));
+  pages.connect.mockReset().mockImplementation(async (input: { profile: string }) => {
+    const c = input.profile === 'Profile 2' ? { ...CONNECTED, profile: 'Profile 2', profileName: 'Work', email: 'you@work.example' } : CONNECTED;
+    state.connection = c;
+    return { ok: true, connection: c };
+  });
+  pages.autoSignIn.mockReset().mockImplementation(async () => {
+    state.sites = [record()];
+    return { ok: true, record: record() };
+  });
   pages.signInOptions.mockReset().mockResolvedValue(options([personal, work]));
   pages.signIn.mockReset().mockImplementation(async (input: { profile: string }) => {
     const r = record(input.profile === 'Profile 2' ? { profile: 'Profile 2', profileName: 'Work', account: 'you@work.example' } : {});
@@ -121,12 +148,13 @@ async function renderPage(site = google, url = DOC, opts: { wall?: boolean; dism
     root.render(
       <QueryClientProvider client={queryClient}>
         <div style={{ position: 'relative', width: 800, height: 600 }}>
-          <AccountChip site={site} pageUrl={url} onSignInHere={onSignInHere} />
-          <SignInBanner site={site} pageUrl={url} wall={opts.wall ?? false} dismissed={opts.dismissed ?? false} onDismiss={onDismiss} />
+          <AccountChip site={site} pageUrl={url} where={WHERE} onSignInHere={onSignInHere} />
+          <SignInBanner site={site} pageUrl={url} where={WHERE} wall={opts.wall ?? false} dismissed={opts.dismissed ?? false} onDismiss={onDismiss} />
           <button type="button" data-testid="page-content">
             the page
           </button>
           <SignInSheet siteId={site.id} onSignInHere={onSignInHere} />
+          <ConnectSheet where={WHERE} />
         </div>
       </QueryClientProvider>
     );
@@ -137,6 +165,8 @@ async function renderPage(site = google, url = DOC, opts: { wall?: boolean; dism
 const chip = () => document.querySelector<HTMLElement>('[data-testid="account-chip"]')!;
 const sheet = () => document.querySelector<HTMLElement>('[data-testid="sign-in-sheet"]');
 const step = () => sheet()?.dataset.step ?? null;
+const connectSheet = () => document.querySelector<HTMLElement>('[data-testid="connect-sheet"]');
+const connectStep = () => connectSheet()?.dataset.step ?? null;
 
 function button(text: string | RegExp): HTMLElement {
   const all = Array.from(document.querySelectorAll<HTMLElement>('button, [role="menuitem"]'));
@@ -153,12 +183,12 @@ async function click(el: HTMLElement) {
 const menuTexts = () => Array.from(document.querySelectorAll('[role="menuitem"]')).map((m) => m.textContent?.trim());
 
 describe('the account chip', () => {
-  it('signed out: offers the browser sign-in, signing in here, and the page in the browser', async () => {
+  it('not connected: offers to connect Chrome, signing in here, and the page in the browser', async () => {
     await renderPage(notion, NOTION);
     expect(chip().dataset.state).toBe('signed-out');
     expect(chip().textContent).toBe('Not signed in');
     await click(chip());
-    expect(menuTexts()).toEqual(['Use Chrome sign-in for Notion', 'Sign in here', 'Open in Chrome']);
+    expect(menuTexts()).toEqual(['Connect Chrome…', 'Sign in here', 'Open in Chrome']);
     expect(document.body.textContent).toContain('Agents see them only as you, only while a turn runs.');
     await click(button('Open in Chrome'));
     expect(pages.openInBrowser).toHaveBeenCalledWith({ url: NOTION });
@@ -178,7 +208,17 @@ describe('the account chip', () => {
     state.browsers = [{ id: 'arc', name: 'Arc', folder: 'unknown', keychain: 'unknown' }];
     await renderPage();
     await click(chip());
-    expect(menuTexts()[0]).toBe('Use Arc sign-in for Google');
+    expect(menuTexts()[0]).toBe('Connect Arc…');
+  });
+
+  it('connected but not signed in to the site yet: "Sign in with Chrome" asks main, as the person\'s action', async () => {
+    state.connection = CONNECTED;
+    registerPanelPage('google.com', { webContentsId: 7, pageUrl: DOC });
+    await renderPage();
+    await click(chip());
+    expect(menuTexts()).toEqual(['Sign in with Chrome', 'Sign in here', 'Open in Chrome']);
+    await click(button('Sign in with Chrome'));
+    expect(pages.autoSignIn).toHaveBeenCalledWith({ webContentsId: 7, pageUrl: DOC, retry: true });
   });
 
   it('signed in: shows the account, where it came from, switch / refresh / sign out in rig', async () => {
@@ -205,14 +245,25 @@ describe('the account chip', () => {
 });
 
 describe('the sign-in-wall banner', () => {
-  it('shows on a sign-in wall, opens the sheet, and hides with ✕', async () => {
+  it('not connected, on a sign-in wall: "Connect Chrome to open pages as you", Connect, then this page is signed in', async () => {
+    state.browsers = [{ id: 'chrome', name: 'Chrome', folder: 'granted', keychain: 'silent' }];
+    pages.connectOptions.mockResolvedValue(connectOptions([personal]));
+    registerPanelPage('google.com', { webContentsId: 7, pageUrl: DOC });
     await renderPage(google, DOC, { wall: true });
     const banner = document.querySelector('[data-testid="sign-in-banner"]')!;
-    expect(banner.textContent).toContain('This page wants you signed in. Use your Chrome sign-in for Google?');
+    expect(banner.textContent).toContain('Connect Chrome to open pages as you.');
     await click(banner.querySelector<HTMLElement>('[aria-label="Hide for this page"]')!);
     expect(onDismiss).toHaveBeenCalled();
-    await click(button('Use Chrome sign-in'));
-    expect(step()).toBe('share');
+    await click(button('Connect'));
+    // Already allowed, one profile: straight to connecting, then this page, as the person's action.
+    expect(pages.connect).toHaveBeenCalledWith({ browser: 'chrome', profile: 'Default' });
+    expect(connectStep()).toBe('done');
+    expect(pages.autoSignIn).toHaveBeenCalledWith({ webContentsId: 7, pageUrl: DOC, retry: true });
+  });
+
+  it('connected and never signed in: no banner (the automatic sign-in and the chip handle it)', async () => {
+    state.connection = CONNECTED;
+    await renderPage(google, DOC, { wall: true });
     expect(document.querySelector('[data-testid="sign-in-banner"]')).toBeNull();
   });
 
@@ -224,11 +275,13 @@ describe('the sign-in-wall banner', () => {
   });
 });
 
-describe('the sheet', () => {
+// The per-site sheet: still how an automatic sign-in's errors, a refresh and a
+// switch of account for one site are walked through.
+describe('the per-site sheet', () => {
   it('first time: hosts → macOS heads-up → profiles listed → pick → checking → done', async () => {
     await renderPage();
-    await click(chip());
-    await click(button('Use Chrome sign-in for Google'));
+    await act(async () => void signInFlow.start(google, DOC));
+    await settle();
     expect(step()).toBe('share');
     expect(document.querySelector('[data-testid="sign-in-hosts"]')?.textContent).toBe('docs.google.comaccounts.google.comgoogle.com');
     // Listing profiles would make macOS ask before the heads-up: not yet.
@@ -445,6 +498,101 @@ describe('the error states and their ways out', () => {
   });
 });
 
+describe('automatic sign-in on open', () => {
+  beforeEach(() => {
+    state.connection = CONNECTED;
+    registerPanelPage('google.com', { webContentsId: 7, pageUrl: DOC });
+  });
+
+  it('a page loading asks once, without retry; the chip reads "Signing in with Chrome…", then the account', async () => {
+    let finish!: (v: unknown) => void;
+    pages.autoSignIn.mockImplementationOnce(() => new Promise((r) => (finish = r)));
+    await renderPage();
+    await act(async () => void runAutoSignIn('google.com'));
+    expect(pages.autoSignIn).toHaveBeenCalledWith({ webContentsId: 7, pageUrl: DOC });
+    expect(chip().dataset.state).toBe('signing');
+    expect(chip().textContent).toBe('Signing in with Chrome…');
+    state.sites = [record()];
+    await act(async () => finish({ ok: true, record: record() }));
+    await act(async () => void queryClient.invalidateQueries());
+    await settle();
+    expect(chip().dataset.state).toBe('signed-in');
+    expect(chip().textContent).toContain('me@example.test');
+  });
+
+  it('Chrome not signed in to the site: "Not signed in" with Open in Chrome (looked at again on return) and Sign in here', async () => {
+    pages.autoSignIn.mockResolvedValue({ ok: false, reason: 'not_signed_in_in_browser', browser: 'chrome' });
+    await renderPage();
+    await act(async () => void runAutoSignIn('google.com'));
+    await settle();
+    expect(chip().textContent).toBe('Not signed in');
+    await click(chip());
+    expect(document.querySelector('[data-testid="not-in-chrome"]')?.textContent).toBe("Chrome · Personal isn't signed in to Google.");
+    expect(menuTexts()).toEqual(['Open in Chrome', 'Sign in here']);
+    await click(button('Open in Chrome'));
+    expect(pages.openInBrowser).toHaveBeenCalledWith({ url: DOC, browser: 'chrome' });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await act(async () => void window.dispatchEvent(new Event('focus')));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(pages.autoSignIn).toHaveBeenLastCalledWith({ webContentsId: 7, pageUrl: DOC, retry: true });
+    // Chrome saves it a little later: the next look finds it.
+    pages.autoSignIn.mockResolvedValue({ ok: true, record: record() });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CHROME_WATCH_RETRY_MS);
+    });
+    vi.useRealTimers();
+    expect(pages.autoSignIn).toHaveBeenCalledTimes(3);
+  });
+
+  it('Sign in here quiets it: the chip goes back to plain "Not signed in"', async () => {
+    pages.autoSignIn.mockResolvedValue({ ok: false, reason: 'not_signed_in_in_browser', browser: 'chrome' });
+    await renderPage();
+    await act(async () => void runAutoSignIn('google.com'));
+    await settle();
+    await click(chip());
+    await click(button('Sign in here'));
+    expect(onSignInHere).toHaveBeenCalledOnce();
+    await click(chip());
+    expect(menuTexts()).toEqual(['Sign in with Chrome', 'Sign in here', 'Open in Chrome']);
+  });
+
+  it('the Keychain denied: "Couldn\'t sign in" opens the clear error, and Try again reads the connected profile', async () => {
+    pages.autoSignIn.mockResolvedValue({ ok: false, reason: 'keychain_denied', browser: 'chrome' });
+    await renderPage();
+    await act(async () => void runAutoSignIn('google.com'));
+    await settle();
+    expect(chip().dataset.state).toBe('failed');
+    await click(chip());
+    const error = document.querySelector<HTMLElement>('[data-testid="sign-in-error"]')!;
+    expect(error.dataset.reason).toBe('keychain_denied');
+    await click(button('Try again'));
+    expect(pages.signIn).toHaveBeenCalledWith({ site: 'google.com', browser: 'chrome', profile: 'Default', pageUrl: DOC });
+    expect(step()).toBe('done');
+  });
+
+  it('the site refused the copy: the existing error, Sign in here first', async () => {
+    pages.autoSignIn.mockResolvedValue({ ok: false, reason: 'rejected_by_site', browser: 'chrome' });
+    await renderPage();
+    await act(async () => void runAutoSignIn('google.com'));
+    await settle();
+    await click(chip());
+    expect(document.querySelector('[data-testid="sign-in-error"]')?.textContent).toContain("Google didn't accept your Chrome sign-in in rig");
+    await click(button('Sign in here'));
+    expect(onSignInHere).toHaveBeenCalled();
+  });
+
+  it('rate-limited or would-prompt answers leave the chip quiet', async () => {
+    pages.autoSignIn.mockResolvedValue({ ok: false, reason: 'rate_limited' });
+    await renderPage();
+    await act(async () => void runAutoSignIn('google.com'));
+    await settle();
+    expect(chip().dataset.state).toBe('signed-out');
+    expect(chip().textContent).toBe('Not signed in');
+  });
+});
+
 describe('Settings › Sign-ins', () => {
   async function renderSettings() {
     await act(async () => {
@@ -459,71 +607,118 @@ describe('Settings › Sign-ins', () => {
 
   const text = () => document.querySelector('[data-testid="settings-sign-ins"]')!.textContent ?? '';
 
-  async function type(value: string) {
-    const input = document.querySelector<HTMLInputElement>('input[aria-label="Site to sign in to"]')!;
-    await act(async () => {
-      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
-      set.call(input, value);
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-  }
-
-  it('no sites yet: leads with what it is for and one action, the field only once asked for', async () => {
+  it('not connected: what it is for and one button, "Connect Chrome"; no URL field anywhere', async () => {
     await renderSettings();
-    expect(text()).toContain('Open pages as you');
-    expect(text()).toContain('using your Chrome sign-in for just that site');
+    expect(text()).toContain('Use your Chrome sign-ins');
+    expect(text()).toContain('Pages you open beside a chat open signed in as you. Rig copies only the site you open, when you open it.');
+    expect(button('Connect Chrome')).toBeTruthy();
     expect(document.querySelector('input')).toBeNull();
-    expect(document.querySelector('[data-testid="sign-in-site"]')).toBeNull();
+    expect(document.querySelector('[data-testid="sign-in-sites"]')).toBeNull();
     expect(document.querySelector('[data-testid="keep-in-step"]')).toBeNull();
-    await click(button('Sign in to a site…'));
-    const input = document.querySelector<HTMLInputElement>('input[aria-label="Site to sign in to"]')!;
-    expect(input.placeholder).toBe('docs.google.com or a link');
-    expect((button('Continue') as HTMLButtonElement).disabled).toBe(true);
-    await click(button('Cancel'));
-    expect(document.querySelector('input')).toBeNull();
   });
 
-  it('the field takes a site or a link and starts the same sheet, inline', async () => {
+  it('Connect Chrome: macOS heads-up → profile picker (several) → connected, inline', async () => {
     await renderSettings();
-    await click(button('Sign in to a site…'));
-    await type('https://dash.acme.dev/q4');
+    await click(button('Connect Chrome'));
+    expect(connectStep()).toBe('heads-up');
+    expect(connectSheet()!.textContent).toContain('macOS will check with you, twice');
+    // Listing profiles is what macOS asks about: not before Continue.
+    expect(pages.connectOptions).not.toHaveBeenCalled();
     await click(button('Continue'));
-    expect(step()).toBe('share');
-    expect(document.querySelector('[data-testid="sign-in-hosts"]')?.textContent).toBe('acme.devwww.acme.devdash.acme.dev');
-    expect(document.querySelector('input')).toBeNull();
+    expect(connectStep()).toBe('pick');
+    const profiles = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="connect-profile"]'));
+    expect(profiles.map((p) => p.textContent)).toEqual([expect.stringContaining('Work'), expect.stringContaining('Personal')]);
+    expect(profiles[0]!.getAttribute('aria-checked')).toBe('true');
+    await click(profiles[1]!);
+    await click(button('Connect'));
+    expect(pages.connect).toHaveBeenCalledWith({ browser: 'chrome', profile: 'Default' });
+    expect(connectStep()).toBe('done');
+    expect(connectSheet()!.textContent).toContain('Chrome connected');
+    await click(button('Done'));
+    expect(connectSheet()).toBeNull();
+    expect(document.querySelector('[data-testid="sign-in-connection"]')?.textContent).toContain('Chrome · Personal · me@example.test');
   });
 
-  it('with sites: the sites first, then "Sign in to another site…", then Keep in step; Remove signs out in rig', async () => {
-    state.sites = [record(), record({ site: 'claude.ai', siteName: 'Claude', hosts: ['claude.ai'], expired: true, checkUrl: 'https://claude.ai/recents' })];
-    state.browsers = [{ id: 'chrome', name: 'Chrome', folder: 'granted', keychain: 'silent' }];
-    await renderSettings();
-    expect(text()).not.toContain('Open pages as you');
-    const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="sign-in-site"]'));
-    expect(rows.map((r) => r.dataset.site)).toEqual(['google.com', 'claude.ai']);
-    expect(rows[0]!.textContent).toContain('Google · me@example.test');
-    expect(rows[0]!.textContent).toContain('From Chrome · Personal');
-    expect(rows[1]!.textContent).toContain('expired');
-    expect(rows[1]!.textContent).toContain('Refresh from Chrome');
-    const order = text();
-    expect(order.indexOf('From Chrome · Personal')).toBeLessThan(order.indexOf('Sign in to another site…'));
-    expect(order.indexOf('Sign in to another site…')).toBeLessThan(order.indexOf('Keep in step with Chrome'));
-    // Allowed: the footnote says which browser, nothing about macOS.
-    expect(document.querySelector('[data-testid="sign-in-access"]')?.textContent).toBe('Uses your Chrome sign-in.');
-    expect(text().trim().endsWith('Agents see these pages only as you, only while a turn runs.')).toBe(true);
-    await click(Array.from(rows[0]!.querySelectorAll('button')).find((b) => b.textContent === 'Remove')!);
-    expect(pages.signOut).toHaveBeenCalledWith({ site: 'google.com' });
-  });
-
-  it('browser access is a footnote: other browsers named, macOS asks the first time', async () => {
+  it('Connect with several browsers installed offers a choice', async () => {
     state.browsers = [
       { id: 'chrome', name: 'Chrome', folder: 'unknown', keychain: 'unknown' },
       { id: 'arc', name: 'Arc', folder: 'unknown', keychain: 'unknown' },
     ];
-    await renderSettings();
-    expect(document.querySelector('[data-testid="sign-in-access"]')?.textContent).toBe(
-      'Uses your Chrome sign-in (Arc also found). macOS asks for access the first time.'
+    pages.connectOptions.mockResolvedValue(
+      connectOptions([personal, { ...personal, browser: 'arc' as never, browserName: 'Arc', dir: 'Default', name: 'Arc profile' }], [
+        { id: 'chrome', name: 'Chrome' },
+        { id: 'arc', name: 'Arc' },
+      ])
     );
-    expect(document.querySelector('[data-testid="sign-in-access-denied"]')).toBeNull();
+    await renderSettings();
+    await click(button('Connect Chrome'));
+    await click(button('Arc'));
+    await click(button('Continue'));
+    // One Arc profile: straight to connecting it.
+    expect(pages.connect).toHaveBeenCalledWith({ browser: 'arc', profile: 'Default' });
+  });
+
+  it('Connect: folder access refused → Open System Settings, retried when rig is focused again', async () => {
+    pages.connectOptions.mockResolvedValue({ ok: false, reason: 'folder_access_denied', browser: 'chrome' });
+    await renderSettings();
+    await click(button('Connect Chrome'));
+    await click(button('Continue'));
+    const error = document.querySelector<HTMLElement>('[data-testid="connect-error"]')!;
+    expect(error.dataset.reason).toBe('folder_access_denied');
+    expect(error.textContent).toContain('Turn on Google Chrome under System Settings › Privacy & Security › Files & Folders › Rig');
+    await click(button('Open System Settings'));
+    expect(pages.openPrivacySettings).toHaveBeenCalledOnce();
+    pages.connectOptions.mockResolvedValue(connectOptions([personal]));
+    await act(async () => void window.dispatchEvent(new Event('focus')));
+    await settle();
+    expect(pages.connect).toHaveBeenCalledOnce();
+    expect(connectStep()).toBe('done');
+  });
+
+  it('Connect: Keychain denied → Try again; Not now keeps nothing', async () => {
+    pages.connectOptions.mockResolvedValue(connectOptions([personal]));
+    pages.connect.mockResolvedValueOnce({ ok: false, reason: 'keychain_denied', browser: 'chrome' });
+    await renderSettings();
+    await click(button('Connect Chrome'));
+    await click(button('Continue'));
+    expect(document.querySelector('[data-testid="connect-error"]')?.textContent).toContain("macOS didn't hand over Chrome's key");
+    await click(button('Try again'));
+    expect(pages.connect).toHaveBeenCalledTimes(2);
+    expect(connectStep()).toBe('done');
+    await click(button('Done'));
+    await click(button('Change profile'));
+    await click(button('Not now'));
+    expect(connectSheet()).toBeNull();
+  });
+
+  it('connected: the profile with Change profile / Disconnect, sites signed in automatically with Remove, Keep in step', async () => {
+    state.connection = CONNECTED;
+    state.sites = [record(), record({ site: 'claude.ai', siteName: 'Claude', hosts: ['claude.ai'], expired: true, checkUrl: 'https://claude.ai/recents' })];
+    state.browsers = [{ id: 'chrome', name: 'Chrome', folder: 'granted', keychain: 'silent' }];
+    await renderSettings();
+    expect(text()).not.toContain('Use your Chrome sign-ins');
+    expect(document.querySelector('[data-testid="sign-in-connection"]')?.textContent).toContain('Chrome · Personal · me@example.test');
+    const list = document.querySelector<HTMLElement>('[data-testid="sign-in-sites"]')!;
+    expect(list.textContent).toContain('Signed in automatically');
+    const rows = Array.from(list.querySelectorAll<HTMLElement>('[data-testid="sign-in-site"]'));
+    expect(rows.map((r) => r.dataset.site)).toEqual(['google.com', 'claude.ai']);
+    expect(rows[0]!.textContent).toContain('Google · me@example.test');
+    expect(rows[1]!.textContent).toContain('expired');
+    expect(rows[1]!.textContent).toContain('Refresh from Chrome');
+    expect(document.querySelector('[data-testid="keep-in-step"]')).not.toBeNull();
+    expect(document.querySelector('input')).toBeNull();
+    expect(text().trim().endsWith('Agents see these pages only as you, only while a turn runs.')).toBe(true);
+    await click(Array.from(rows[0]!.querySelectorAll('button')).find((b) => b.textContent === 'Remove')!);
+    expect(pages.signOut).toHaveBeenCalledWith({ site: 'google.com' });
+    await click(button('Disconnect'));
+    expect(pages.disconnect).toHaveBeenCalledWith({});
+  });
+
+  it('names the browser to connect when Chrome is not installed', async () => {
+    state.browsers = [{ id: 'arc', name: 'Arc', folder: 'unknown', keychain: 'unknown' }];
+    await renderSettings();
+    expect(text()).toContain('Use your Arc sign-ins');
+    expect(button('Connect Arc')).toBeTruthy();
   });
 
   it('permission off: a clear warning with what to turn on, and the button', async () => {
@@ -533,7 +728,6 @@ describe('Settings › Sign-ins', () => {
     expect(warning.textContent).toContain("Rig can't read Chrome's data — turn on Google Chrome under Privacy & Security › Files & Folders › Rig");
     await click(button('Open System Settings'));
     expect(pages.openPrivacySettings).toHaveBeenCalledOnce();
-    expect(document.querySelector('[data-testid="sign-in-access"]')).toBeNull();
   });
 
   it('differing statuses: only the refused browser is warned about', async () => {
@@ -545,26 +739,13 @@ describe('Settings › Sign-ins', () => {
     const warnings = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="sign-in-access-denied"]'));
     expect(warnings.map((w) => w.dataset.browser)).toEqual(['arc']);
     expect(warnings[0]!.textContent).toContain("Rig can't read Arc's data — turn on Arc under");
-    expect(document.querySelector('[data-testid="sign-in-access"]')?.textContent).toBe('Uses your Chrome sign-in.');
-  });
-
-  it('Switch opens the picker for that site', async () => {
-    state.sites = [record()];
-    state.browsers = [{ id: 'chrome', name: 'Chrome', folder: 'granted', keychain: 'silent' }];
-    pages.signInOptions.mockResolvedValue(options([personal]));
-    await renderSettings();
-    await click(button('Switch'));
-    expect(step()).toBe('share');
-    expect(sheet()!.textContent).toContain('Switch the Google account');
-    expect(document.querySelectorAll('[data-testid="sign-in-profile"]')).toHaveLength(1);
   });
 
   it('says plainly when there is no Chrome', async () => {
     state.browsers = [];
     await renderSettings();
-    expect(text()).toContain('Open pages as you');
+    expect(text()).toContain('Use your Chrome sign-ins');
     expect(document.querySelector('[data-testid="sign-in-no-browser"]')?.textContent).toContain('Sign in here');
-    expect(Array.from(document.querySelectorAll('button')).some((b) => /Sign in to/.test(b.textContent ?? ''))).toBe(false);
-    expect(document.querySelector('[data-testid="sign-in-access"]')).toBeNull();
+    expect(Array.from(document.querySelectorAll('button')).some((b) => /Connect/.test(b.textContent ?? ''))).toBe(false);
   });
 });
