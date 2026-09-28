@@ -107,8 +107,8 @@ export function layoutBlockStack(
             contentWidth: 0,
             colWidths: [],
             tableWidth: 0,
-            header: (block as TableBlock).header,
-            rows: (block as TableBlock).rows,
+            align: (block as TableBlock).align,
+            rows: [],
             raw: block,
           };
         })(),

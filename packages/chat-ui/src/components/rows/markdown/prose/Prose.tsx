@@ -3,6 +3,7 @@ import { useStreamAnimation } from '@components/contexts/StreamContext';
 import { useTheme } from '@components/contexts/ThemeContext';
 import { BlockFrame } from '@components/engine/block-frame';
 import {
+  IconCheck,
   MentionAtIcon,
   MentionFileIcon,
   MentionIssueIcon,
@@ -32,6 +33,9 @@ import {
   pline,
   pquoteRail,
   quoteRailBar,
+  strikeFragment,
+  taskBox,
+  taskBoxChecked,
 } from './prose.css';
 import { streamWord } from '@styles/effects.css';
 
@@ -69,6 +73,7 @@ function fragVisualClass(run: InlineRun, variant: string): string {
     return mentionPlain;
   }
   if (run.kind === 'text' && run.href) return linkFragment;
+  if (run.kind === 'text' && run.strike) return strikeFragment;
   return '';
 }
 
@@ -339,7 +344,16 @@ function ProseBullet(props: { bullet: BulletLayout }) {
       style={{ left: `${props.bullet.x}px`, top: `${props.bullet.top}px` }}
       aria-hidden="true"
     >
-      {props.bullet.char}
+      <Show when={props.bullet.checked !== undefined} fallback={props.bullet.char}>
+        <span
+          class={`${taskBox}${props.bullet.checked ? ` ${taskBoxChecked}` : ''}`}
+          data-checked={props.bullet.checked ? 'true' : 'false'}
+        >
+          <Show when={props.bullet.checked}>
+            <IconCheck />
+          </Show>
+        </span>
+      </Show>
     </span>
   );
 }

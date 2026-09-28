@@ -258,3 +258,44 @@ describe('blockquote paragraphs → variant: quote', () => {
     expect(prose?.depth).toBe(1);
   });
 });
+
+describe('GFM structure beyond paragraphs', () => {
+  const prose = (text: string) =>
+    parseMarkdownToBlocks('t', text).filter((b): b is ProseBlock => b.kind === 'prose');
+
+  it('ordered items carry their number; a continuation paragraph carries no marker', () => {
+    const items = prose('3. first\n\n   more of first\n4. second');
+    expect(items.map((b) => b.marker)).toEqual(['3.', '', '4.']);
+  });
+
+  it('task items carry checked state', () => {
+    expect(prose('- [x] done\n- [ ] todo\n- plain').map((b) => b.checked)).toEqual([
+      true,
+      false,
+      undefined,
+    ]);
+  });
+
+  it('table cells keep inline runs and column alignment', () => {
+    const [table] = parseMarkdownToBlocks('t', '| a | b |\n|:-:|--:|\n| `x` | [y](https://y) |');
+    expect(table.kind).toBe('table');
+    if (table.kind !== 'table') return;
+    expect(table.align).toEqual(['center', 'right']);
+    expect(table.rows[0][0]).toEqual([{ kind: 'code', text: 'x' }]);
+    expect((table.rows[0][1][0] as InlineText).href).toBe('https://y');
+  });
+
+  it('footnote reference and definition both render their label', () => {
+    const blocks = prose('Claim[^1].\n\n[^1]: Source.');
+    expect(blocks.map((b) => b.runs.map((r) => ('text' in r ? r.text : '')).join(''))).toEqual([
+      'Claim[1].',
+      '[1] Source.',
+    ]);
+  });
+
+  it('math keeps its TeX source (inline code chip / latex code block)', () => {
+    const blocks = parseMarkdownToBlocks('t', 'Cost $n^2$.\n\n$$\na+b\n$$');
+    expect((blocks[0] as ProseBlock).runs).toContainEqual({ kind: 'code', text: 'n^2' });
+    expect(blocks[1]).toMatchObject({ kind: 'code', code: 'a+b', lang: 'latex' });
+  });
+});

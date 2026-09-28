@@ -22,14 +22,17 @@
 import type {
   BlockContent,
   DefinitionContent,
+  FootnoteDefinition,
   Heading,
   Image,
   InlineCode,
   Link,
+  List,
   ListItem,
   Parent,
   PhrasingContent,
   Root,
+  Table,
   TableCell,
   TableRow,
 } from 'mdast';
@@ -180,14 +183,22 @@ function phrasingsToRuns(
       }
 
       // mdast extension — math inline (remark-math attaches 'inlineMath' type)
+      // Shown as its TeX source in a code chip — no KaTeX here, and the
+      // source is far more useful than a placeholder.
       case 'inlineMath': {
-        const run: InlineMention = { kind: 'mention', label: '∑ math', tone: 'math' };
-        runs.push(run);
+        runs.push({ kind: 'code', text: (node as { value: string }).value } satisfies ICode);
+        break;
+      }
+
+      // GFM footnote marker `[^1]` → "[1]"; the definition renders at its own
+      // position (see 'footnoteDefinition' in blockToBlocks).
+      case 'footnoteReference': {
+        runs.push({ kind: 'text', text: `[${node.label ?? node.identifier}]`, ...opts });
         break;
       }
 
       default:
-        // Ignore unknown inline node types (html, footnote references, …)
+        // Ignore unknown inline node types (html, …)
         break;
     }
   }
@@ -246,20 +257,25 @@ function blockToBlocks(
     }
 
     case 'list': {
-      const list = node as Parent;
-      for (const child of list.children) {
-        const item = child as ListItem;
-        for (const itemChild of (item as Parent).children) {
+      const list = node as List;
+      list.children.forEach((item: ListItem, index) => {
+        let first = true;
+        for (const itemChild of item.children) {
           if (itemChild.type === 'paragraph') {
             const runs = phrasingsToRuns((itemChild as Parent).children as PhrasingContent[]);
             if (runs.length > 0) {
+              // Only an item's first paragraph carries its marker (number /
+              // checkbox); later paragraphs hang under it with none.
               blocks.push({
                 kind: 'prose',
                 id: nextId(),
                 variant: 'list-item',
                 runs,
                 depth,
+                marker: !first ? '' : list.ordered ? `${(list.start ?? 1) + index}.` : undefined,
+                checked: first ? (item.checked ?? undefined) : undefined,
               } satisfies ProseBlock);
+              first = false;
             }
           } else {
             blocks.push(
@@ -267,7 +283,7 @@ function blockToBlocks(
             );
           }
         }
-      }
+      });
       break;
     }
 
@@ -291,15 +307,11 @@ function blockToBlocks(
     }
 
     case 'table': {
-      const tableNode = node as Parent;
-      const allRows = tableNode.children.map((row) =>
-        (row as TableRow).children.map((cell) => {
-          const cellNode = cell as TableCell & Parent;
-          // Table cell text is plain: @mentions and /commands become their label text
-          return phrasingsToRuns(cellNode.children as PhrasingContent[])
-            .map((r) => ('text' in r ? r.text : 'label' in r ? r.label : ''))
-            .join('');
-        })
+      const tableNode = node as Table;
+      const allRows = tableNode.children.map((row: TableRow) =>
+        row.children.map((cell: TableCell) =>
+          phrasingsToRuns(cell.children as PhrasingContent[])
+        )
       );
       const [header = [], ...rows] = allRows;
       blocks.push({
@@ -307,7 +319,26 @@ function blockToBlocks(
         id: nextId(),
         header,
         rows,
+        align: header.map((_, i) => tableNode.align?.[i] ?? null),
       } satisfies TableBlock);
+      break;
+    }
+
+    // `[^1]: …` — rendered in place (GFM puts them at the end anyway), each
+    // paragraph prefixed with its "[1]" label so the reference reads back.
+    case 'footnoteDefinition': {
+      const def = node as FootnoteDefinition;
+      const start = blocks.length;
+      for (const child of def.children) {
+        blocks.push(...blockToBlocks(child as BlockContent, messageId, counter, depth, inQuote));
+      }
+      const firstBlock = blocks[start];
+      if (firstBlock?.kind === 'prose') {
+        firstBlock.runs = [
+          { kind: 'text', text: `[${def.label ?? def.identifier}] ` },
+          ...firstBlock.runs,
+        ];
+      }
       break;
     }
 
@@ -319,14 +350,15 @@ function blockToBlocks(
       break;
     }
 
-    // remark-math adds 'math' (block-level) — rendered as plain text for now.
+    // remark-math adds 'math' (block-level) — no KaTeX here, so show the TeX
+    // source as a code block (monospace, keeps its line structure).
     case 'math': {
       blocks.push({
-        kind: 'prose',
+        kind: 'code',
         id: nextId(),
-        variant: 'body',
-        runs: [{ kind: 'text', text: node.value }],
-      } satisfies ProseBlock);
+        code: node.value,
+        lang: 'latex',
+      });
       break;
     }
 

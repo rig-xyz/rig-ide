@@ -2,32 +2,46 @@
  * Table — Solid component rendering a TableLaidOut block.
  *
  * Uses BlockFrame (not MeasuredBlockFrame) because the height is fully
- * determined by the formula in layoutTable — no DOM write-back needed.
+ * determined by layoutTable — no DOM write-back needed.
  *
- * Column widths are enforced via <colgroup> + table-layout:fixed so that
- * text-overflow:ellipsis truncation works on every cell. Wide tables (where
- * tableWidth > contentWidth) scroll horizontally inside the scroll wrapper.
+ * Column widths are enforced via <colgroup> + table-layout:fixed. Each cell
+ * renders its pretext-laid-out lines through the regular Prose component
+ * (so code chips, links and emphasis look exactly like body text) inside a
+ * box of the cell's measured height. Wide tables (tableWidth > contentWidth)
+ * scroll horizontally inside the scroll wrapper.
  *
- * Each cell receives a native `title` attribute so the full content is
- * accessible on hover via the browser tooltip.
- *
- * Visual styles (overflow, border-color, header bg, truncation) use Tailwind.
- * Geometry-coupled rules (cell padding, font-size, line-height) remain in
- * table.module.css because they define TABLE_ROW_H = 32, which the layout
- * engine and a parity test both enforce.
+ * Geometry-coupled rules (cell padding, font-size, line-height) live in
+ * table.css.ts because layoutTable's row-height formula depends on them.
  */
 
 import { BlockFrame } from '@components/engine/block-frame';
-import type { TableLaidOut } from '@core/layout/layout-types';
+import type { TableLaidOut, TableRowLayout } from '@core/layout/layout-types';
 import { For } from 'solid-js';
-import { tableScroll, tdCell, tdCellLastRow, thCell } from './table-visual.css';
+import { Prose } from '../prose/Prose';
+import { cellBody, tableScroll, tdCell, tdCellLastRow, thCell } from './table-visual.css';
 import { pchatTable } from './table.css';
 
 export type TableProps = {
   block: TableLaidOut;
 };
 
+function TableCellBody(props: { cell: TableRowLayout['cells'][number] }) {
+  return (
+    <div
+      class={cellBody}
+      style={{ height: `${Math.max(props.cell.laid.height, props.cell.laid.lineHeight)}px` }}
+    >
+      <Prose block={props.cell.laid} runs={props.cell.runs} variant="body" />
+    </div>
+  );
+}
+
 export function Table(props: TableProps) {
+  const header = () => props.block.rows[0]?.cells ?? [];
+  const body = () => props.block.rows.slice(1);
+  // layoutTable draws no border under the last row — header included when
+  // the table has no body rows.
+  const lastRow = (i: number) => (i === body().length - 1 ? ` ${tdCellLastRow}` : '');
   return (
     <BlockFrame layout={props.block}>
       <div class={tableScroll}>
@@ -40,26 +54,23 @@ export function Table(props: TableProps) {
           </colgroup>
           <thead>
             <tr>
-              <For each={props.block.header}>
+              <For each={header()}>
                 {(cell) => (
-                  <th class={thCell} title={cell}>
-                    {cell}
+                  <th class={`${thCell}${lastRow(-1)}`}>
+                    <TableCellBody cell={cell} />
                   </th>
                 )}
               </For>
             </tr>
           </thead>
           <tbody>
-            <For each={props.block.rows}>
+            <For each={body()}>
               {(row, i) => (
                 <tr>
-                  <For each={row}>
+                  <For each={row.cells}>
                     {(cell) => (
-                      <td
-                        class={`${tdCell}${i() === props.block.rows.length - 1 ? ` ${tdCellLastRow}` : ''}`}
-                        title={cell}
-                      >
-                        {cell}
+                      <td class={`${tdCell}${lastRow(i())}`}>
+                        <TableCellBody cell={cell} />
                       </td>
                     )}
                   </For>

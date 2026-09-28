@@ -136,3 +136,58 @@ describe('SafeMarkdown — file links with onOpenPath', () => {
     expect(host.querySelector('a')?.getAttribute('href') ?? '').toBe('');
   });
 });
+
+/**
+ * Agent answers rendered through `SafeMarkdown` (Room final answer, pulse
+ * Ask) carry full GFM. Tailwind isn't loaded in browser tests, so this
+ * asserts structure: a table sits in its own scroll wrapper (never widening
+ * the column), header cells and column alignment survive sanitizing, and
+ * task-list checkboxes keep their state.
+ */
+describe('SafeMarkdown — GFM agent output', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  it('wraps tables in a horizontal scroller and keeps headers, alignment and task checkboxes', async () => {
+    const content = [
+      '## Summary',
+      '',
+      '| Area | Status | Owner |',
+      '|------|:------:|------:|',
+      '| `sync` | done | [ana](https://example.com) |',
+      '',
+      '- [x] shipped',
+      '- [ ] docs',
+    ].join('\n');
+    await act(async () => {
+      root.render(<SafeMarkdown content={content} />);
+    });
+
+    const table = host.querySelector('table');
+    expect(table).not.toBeNull();
+    expect(table?.parentElement?.className).toContain('overflow-x-auto');
+    expect(Array.from(host.querySelectorAll('thead th'), (th) => th.textContent)).toEqual(['Area', 'Status', 'Owner']);
+    // react-markdown turns GFM `align` into an inline text-align style.
+    expect(Array.from(host.querySelectorAll<HTMLElement>('tbody td'), (td) => td.style.textAlign)).toEqual([
+      '',
+      'center',
+      'right',
+    ]);
+    expect(host.querySelector('tbody td code')?.textContent).toBe('sync');
+    expect(host.querySelector('h2')?.textContent).toBe('Summary');
+    const boxes = Array.from(host.querySelectorAll<HTMLInputElement>('input[type=checkbox]'));
+    expect(boxes.map((b) => b.checked)).toEqual([true, false]);
+    expect(host.querySelector('ul')?.className).toContain('contains-task-list');
+  });
+});

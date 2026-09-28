@@ -166,7 +166,7 @@ export function layoutProse(
       }
 
       maxRight = Math.max(maxRight, textLeft + x);
-      lines.push({ top: globalLine * lineHeight, left: textLeft, fragments: frags });
+      lines.push({ top: globalLine * lineHeight, left: textLeft, width: x, fragments: frags });
       globalLine++;
     });
   }
@@ -174,13 +174,15 @@ export function layoutProse(
   const height = globalLine * lineHeight;
 
   let bullet: BulletLayout | undefined;
-  if (isListItem) {
+  // marker '' is a continuation paragraph: indented like its item, no marker.
+  if (isListItem && (block.marker !== '' || block.checked !== undefined)) {
     bullet = {
       // Anchor at the indent line; the renderer centers the glyph on this point
       // (translate(-50%, -50%)) for true horizontal + vertical centering.
       x: indent,
       top: lineHeight / 2,
-      char: '•',
+      char: block.marker || '•',
+      checked: block.checked,
     };
   }
 

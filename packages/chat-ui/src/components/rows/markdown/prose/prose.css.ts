@@ -1,4 +1,4 @@
-import { style } from '@vanilla-extract/css';
+import { globalStyle, style } from '@vanilla-extract/css';
 import { vars } from '@styles/theme.css';
 
 // ── Geometry (feeds pretext measurement — do not change without updating metrics.ts) ──
@@ -250,7 +250,33 @@ export const linkFragment = style({
   cursor: 'pointer',
 });
 
+/** `~~deleted~~` text — decoration only, no measurement impact. */
+export const strikeFragment = style({
+  textDecoration: 'line-through',
+  textDecorationThickness: '1px',
+});
+
 export const bulletColor = style({ color: vars.fgMuted });
+
+/** GFM task-list checkbox, drawn in the bullet slot (centered on its anchor). */
+export const taskBox = style({
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: '12px',
+  height: '12px',
+  boxSizing: 'border-box',
+  borderRadius: '3px',
+  border: `1px solid ${vars.fgPassive}`,
+});
+
+export const taskBoxChecked = style({
+  background: vars.link,
+  borderColor: vars.link,
+  color: vars.bg,
+});
+
+globalStyle(`${taskBox} svg`, { width: '10px', height: '10px', strokeWidth: 2 });
 
 export const quoteRailBar = style({
   background: vars.border,

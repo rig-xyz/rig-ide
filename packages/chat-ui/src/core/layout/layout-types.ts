@@ -27,6 +27,8 @@ export type LineLayout = {
   top: number;
   /** Left indent in px (for list items, blockquotes). */
   left: number;
+  /** Occupied text width in px (excluding `left`). */
+  width: number;
   fragments: FragmentLayout[];
 };
 
@@ -35,6 +37,8 @@ export type BulletLayout = {
   x: number;
   top: number;
   char: string;
+  /** Task-list item — a checkbox replaces `char`. */
+  checked?: boolean;
 };
 
 /** Prose block with pre-computed line/fragment geometry. */
@@ -71,19 +75,27 @@ export type CodeLaidOut = {
   lang?: string;
 };
 
-/** Table block: formula-measured, single-line truncated cells. */
+/** One table row: its height and each cell's runs laid out as body prose. */
+export type TableRowLayout = {
+  /** Row height in px including cell padding and the row's bottom border. */
+  height: number;
+  cells: { laid: ProseLaidOut; runs: InlineRun[] }[];
+};
+
+/** Table block: pretext-measured, cells wrap within content-sized columns. */
 export type TableLaidOut = {
   kind: 'table';
   id: string;
   top: number;
   height: number;
   contentWidth: number;
-  /** Width of each column in px (equal distribution, floored at TABLE_MIN_COL_W). */
+  /** Width of each column in px (sized to content, see layoutTable). */
   colWidths: number[];
-  /** Total table width = colWidths.length * colW; may exceed contentWidth (triggers scroll). */
+  /** Sum of colWidths; may exceed contentWidth (triggers scroll). */
   tableWidth: number;
-  header: string[];
-  rows: string[][];
+  align: TableAlign[];
+  /** Header row first, then the data rows. */
+  rows: TableRowLayout[];
 };
 
 export type BlockLaidOut = ProseLaidOut | CodeLaidOut | TableLaidOut;
@@ -97,9 +109,11 @@ export type BlockLaidOut = ProseLaidOut | CodeLaidOut | TableLaidOut;
 import type {
   Block,
   CodeBlock,
+  InlineRun,
   MermaidBlock,
   ProseBlock,
   RuleBlock,
+  TableAlign,
 } from '@core/markdown/document';
 
 export type ProseLeafLayout = ProseLaidOut & { raw: ProseBlock };

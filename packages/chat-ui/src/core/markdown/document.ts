@@ -97,6 +97,13 @@ export type ProseBlock = {
   runs: InlineRun[];
   /** Nesting depth (for list items and blockquotes). */
   depth?: number;
+  /**
+   * List-item marker glyph. Absent → '•'; an ordered item carries its number
+   * ('3.'); '' draws no marker (a list item's continuation paragraph).
+   */
+  marker?: string;
+  /** GFM task-list item state — draws a checkbox in place of the marker. */
+  checked?: boolean;
 };
 
 /**
@@ -112,17 +119,22 @@ export type CodeBlock = {
   lang?: string;
 };
 
+/** GFM column alignment from the delimiter row (`:--`, `:-:`, `--:`). */
+export type TableAlign = 'left' | 'center' | 'right' | null;
+
 /**
- * A markdown table — formula-measured (static row height), no DOM write-back.
- * Height = (1 + rows.length) * TABLE_ROW_H + TABLE_BORDER.
+ * A markdown table — pretext-measured (cells wrap like prose), no DOM write-back.
+ * Each cell keeps its inline runs so code chips, links and emphasis survive.
  */
 export type TableBlock = {
   kind: 'table';
   id: BlockId;
-  /** Column header labels. */
-  header: string[];
-  /** Data rows — each row is an array of cell strings, same length as header. */
-  rows: string[][];
+  /** Header cells. */
+  header: InlineRun[][];
+  /** Data rows — each row is an array of cells, same length as header. */
+  rows: InlineRun[][][];
+  /** Per-column alignment, same length as header. */
+  align: TableAlign[];
 };
 
 /**

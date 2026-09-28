@@ -24,7 +24,9 @@ export function blockPlainText(block: Block): string {
   if (block.kind === 'mermaid') return block.source;
   if (block.kind === 'table') {
     const allRows = [block.header, ...block.rows];
-    return allRows.map((row) => row.join(' | ')).join('\n');
+    return allRows
+      .map((row) => row.map((cell) => cell.map(inlineRunText).join('')).join(' | '))
+      .join('\n');
   }
   return '';
 }
