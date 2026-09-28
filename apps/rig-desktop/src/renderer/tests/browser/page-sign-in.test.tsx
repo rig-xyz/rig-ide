@@ -457,78 +457,95 @@ describe('Settings › Sign-ins', () => {
     await settle();
   }
 
-  it('lists any signed-in site with where it came from and its hosts; Remove signs out in rig', async () => {
+  const text = () => document.querySelector('[data-testid="settings-sign-ins"]')!.textContent ?? '';
+
+  async function type(value: string) {
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Site to sign in to"]')!;
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      set.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  it('no sites yet: leads with what it is for and one action, the field only once asked for', async () => {
+    await renderSettings();
+    expect(text()).toContain('Open pages as you');
+    expect(text()).toContain('using your Chrome sign-in for just that site');
+    expect(document.querySelector('input')).toBeNull();
+    expect(document.querySelector('[data-testid="sign-in-site"]')).toBeNull();
+    expect(document.querySelector('[data-testid="keep-in-step"]')).toBeNull();
+    await click(button('Sign in to a site…'));
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Site to sign in to"]')!;
+    expect(input.placeholder).toBe('docs.google.com or a link');
+    expect((button('Continue') as HTMLButtonElement).disabled).toBe(true);
+    await click(button('Cancel'));
+    expect(document.querySelector('input')).toBeNull();
+  });
+
+  it('the field takes a site or a link and starts the same sheet, inline', async () => {
+    await renderSettings();
+    await click(button('Sign in to a site…'));
+    await type('https://dash.acme.dev/q4');
+    await click(button('Continue'));
+    expect(step()).toBe('share');
+    expect(document.querySelector('[data-testid="sign-in-hosts"]')?.textContent).toBe('acme.devwww.acme.devdash.acme.dev');
+    expect(document.querySelector('input')).toBeNull();
+  });
+
+  it('with sites: the sites first, then "Sign in to another site…", then Keep in step; Remove signs out in rig', async () => {
     state.sites = [record(), record({ site: 'claude.ai', siteName: 'Claude', hosts: ['claude.ai'], expired: true, checkUrl: 'https://claude.ai/recents' })];
     state.browsers = [{ id: 'chrome', name: 'Chrome', folder: 'granted', keychain: 'silent' }];
     await renderSettings();
+    expect(text()).not.toContain('Open pages as you');
     const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="sign-in-site"]'));
     expect(rows.map((r) => r.dataset.site)).toEqual(['google.com', 'claude.ai']);
-    expect(rows[0]!.textContent).toContain('Chrome · Personal · docs.google.com, accounts.google.com, google.com');
+    expect(rows[0]!.textContent).toContain('Google · me@example.test');
+    expect(rows[0]!.textContent).toContain('From Chrome · Personal');
     expect(rows[1]!.textContent).toContain('expired');
     expect(rows[1]!.textContent).toContain('Refresh from Chrome');
-    expect(document.querySelector('[data-testid="sign-in-access"]')?.textContent).toContain('Allowed');
+    const order = text();
+    expect(order.indexOf('From Chrome · Personal')).toBeLessThan(order.indexOf('Sign in to another site…'));
+    expect(order.indexOf('Sign in to another site…')).toBeLessThan(order.indexOf('Keep in step with Chrome'));
+    // Allowed: the footnote says which browser, nothing about macOS.
+    expect(document.querySelector('[data-testid="sign-in-access"]')?.textContent).toBe('Uses your Chrome sign-in.');
+    expect(text().trim().endsWith('Agents see these pages only as you, only while a turn runs.')).toBe(true);
     await click(Array.from(rows[0]!.querySelectorAll('button')).find((b) => b.textContent === 'Remove')!);
     expect(pages.signOut).toHaveBeenCalledWith({ site: 'google.com' });
-    expect(document.querySelector('[data-testid="keep-in-step"]')).not.toBeNull();
   });
 
-  it('one "Browser access" row naming the installed browsers, with one status when they agree', async () => {
+  it('browser access is a footnote: other browsers named, macOS asks the first time', async () => {
     state.browsers = [
       { id: 'chrome', name: 'Chrome', folder: 'unknown', keychain: 'unknown' },
       { id: 'arc', name: 'Arc', folder: 'unknown', keychain: 'unknown' },
     ];
     await renderSettings();
-    const rows = document.querySelectorAll<HTMLElement>('[data-testid="sign-in-access"]');
-    expect(rows).toHaveLength(1);
-    const row = rows[0]!;
-    expect(row.textContent).toContain('Browser access · Chrome, Arc');
-    expect(row.textContent!.match(/Asks the first time/g)).toHaveLength(1);
-    expect(row.textContent!.match(/one site's sign-in at a time/g)).toHaveLength(1);
-    expect(row.querySelector('[data-testid="sign-in-access-each"]')).toBeNull();
-    expect(row.textContent).not.toContain('Open System Settings');
-    // No sites yet: no site rows and no Keep in step, straight to Add a site.
-    expect(document.querySelector('[data-testid="sign-in-site"]')).toBeNull();
-    expect(document.querySelector('[data-testid="keep-in-step"]')).toBeNull();
-    expect(document.querySelector('input[aria-label="Add a site"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="sign-in-access"]')?.textContent).toBe(
+      'Uses your Chrome sign-in (Arc also found). macOS asks for access the first time.'
+    );
+    expect(document.querySelector('[data-testid="sign-in-access-denied"]')).toBeNull();
   });
 
-  it('shows each browser only when their statuses differ', async () => {
+  it('permission off: a clear warning with what to turn on, and the button', async () => {
+    state.browsers = [{ id: 'chrome', name: 'Chrome', folder: 'denied', keychain: 'unknown' }];
+    await renderSettings();
+    const warning = document.querySelector<HTMLElement>('[data-testid="sign-in-access-denied"]')!;
+    expect(warning.textContent).toContain("Rig can't read Chrome's data — turn on Google Chrome under Privacy & Security › Files & Folders › Rig");
+    await click(button('Open System Settings'));
+    expect(pages.openPrivacySettings).toHaveBeenCalledOnce();
+    expect(document.querySelector('[data-testid="sign-in-access"]')).toBeNull();
+  });
+
+  it('differing statuses: only the refused browser is warned about', async () => {
     state.browsers = [
       { id: 'chrome', name: 'Chrome', folder: 'granted', keychain: 'silent' },
       { id: 'arc', name: 'Arc', folder: 'denied', keychain: 'unknown' },
     ];
     await renderSettings();
-    const row = document.querySelector<HTMLElement>('[data-testid="sign-in-access"]')!;
-    expect(row.dataset.folder).toBe('mixed');
-    expect(Array.from(row.querySelectorAll('[data-testid="sign-in-access-each"] li')).map((li) => li.textContent)).toEqual([
-      'Chrome · Allowed',
-      'Arc · Not allowed',
-    ]);
-    await click(button('Open System Settings'));
-    expect(pages.openPrivacySettings).toHaveBeenCalledOnce();
-  });
-
-  it('with the permission off: says so and opens System Settings', async () => {
-    state.browsers = [{ id: 'chrome', name: 'Chrome', folder: 'denied', keychain: 'unknown' }];
-    await renderSettings();
-    const access = document.querySelector<HTMLElement>('[data-testid="sign-in-access"]')!;
-    expect(access.textContent).toContain('Not allowed');
-    expect(access.textContent).toContain('Signed-in sites keep working');
-    await click(button('Open System Settings'));
-    expect(pages.openPrivacySettings).toHaveBeenCalledOnce();
-  });
-
-  it('Add a site runs the same sheet inline for any site', async () => {
-    await renderSettings();
-    const input = document.querySelector<HTMLInputElement>('input[aria-label="Add a site"]')!;
-    await act(async () => {
-      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
-      set.call(input, 'dash.acme.dev');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await click(button('Add a site'));
-    expect(step()).toBe('share');
-    expect(document.querySelector('[data-testid="sign-in-hosts"]')?.textContent).toBe('acme.devwww.acme.devdash.acme.dev');
+    const warnings = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="sign-in-access-denied"]'));
+    expect(warnings.map((w) => w.dataset.browser)).toEqual(['arc']);
+    expect(warnings[0]!.textContent).toContain("Rig can't read Arc's data — turn on Arc under");
+    expect(document.querySelector('[data-testid="sign-in-access"]')?.textContent).toBe('Uses your Chrome sign-in.');
   });
 
   it('Switch opens the picker for that site', async () => {
@@ -545,7 +562,9 @@ describe('Settings › Sign-ins', () => {
   it('says plainly when there is no Chrome', async () => {
     state.browsers = [];
     await renderSettings();
-    expect(document.querySelector('[data-testid="sign-in-no-browser"]')).not.toBeNull();
-    expect(document.querySelector('input[aria-label="Add a site"]')).toBeNull();
+    expect(text()).toContain('Open pages as you');
+    expect(document.querySelector('[data-testid="sign-in-no-browser"]')?.textContent).toContain('Sign in here');
+    expect(Array.from(document.querySelectorAll('button')).some((b) => /Sign in to/.test(b.textContent ?? ''))).toBe(false);
+    expect(document.querySelector('[data-testid="sign-in-access"]')).toBeNull();
   });
 });
