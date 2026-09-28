@@ -14,18 +14,21 @@ import {
   REPLY_PLACEHOLDER,
 } from '@renderer/features/comment-mode/comment-card';
 import { PaintbrushCursorChip } from '@renderer/features/docs/paintbrush/paintbrush-cursor-chip';
-import { rpc } from '@renderer/lib/ipc';
+import { roomSourceCache } from '@renderer/features/spaces/room-source-cache';
+import { events, rpc } from '@renderer/lib/ipc';
 import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { Button } from '@renderer/lib/ui/button';
 import { Textarea } from '@renderer/lib/ui/textarea';
 import { cn } from '@renderer/lib/utils';
+import { pagePinsMovedChannel } from '@shared/pages/pin-events';
 import { isSignInWall, KNOWN_SIGN_IN_SITES, signInSiteForUrl } from '@shared/pages/sign-in-sites';
-import { RIG_PAGES_PARTITION } from '@shared/spaces/links';
+import { canonicalPageUrl, RIG_PAGES_PARTITION } from '@shared/spaces/links';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { AccountChip, SignInBanner } from './account-chip';
 import { clearAutoSignIn, getAutoState, registerPanelPage, runAutoSignIn } from './auto-sign-in';
 import { ConnectSheet } from './connect-sheet';
 import { NotSharedNotice } from './not-shared-notice';
+import { startRelocator, type Relocator } from './pin-relocator';
 import { SignInSheet } from './sign-in-sheet';
 import { recordFor, useSignIns } from './use-sign-ins';
 
@@ -42,8 +45,6 @@ type Thread = PageThread;
 type Place = PagePlace;
 type Draft = { anchor: PageAnchor; quote: string; x: number; y: number };
 
-const LOCATE_EVERY_MS = 150;
-
 type RoomAgent = 'claude' | 'codex';
 /** The agents that answer pins: the ones a space's Room can run. */
 const ROOM_AGENTS: readonly string[] = ['claude', 'codex'] satisfies RoomAgent[];
@@ -53,7 +54,8 @@ function mentionedAgent(body: string): RoomAgent | null {
   const m = /(?:^|\s)@(claude|codex)\b/i.exec(body);
   return m ? (m[1]!.toLowerCase() as RoomAgent) : null;
 }
-const THREADS_EVERY_MS = 4000;
+/** The threads' slow poll: new pins and replies arrive live from the Room; this catches resolves and a Room that isn't open. */
+const THREADS_EVERY_MS = 15_000;
 
 /** Pages whose sign-in banner was hidden (✕), for this run of the app. */
 const bannerDismissed = new Set<string>();
@@ -216,27 +218,53 @@ export function PageView({
       const result = await rpc.rig.pages.threads({ bindingId, url });
       return result.success ? result.data : [];
     },
+    // Live: the space's Room says when a pin or reply lands (below); this slow poll and focus catch the rest (resolves).
     refetchInterval: THREADS_EVERY_MS,
+    refetchOnWindowFocus: true,
   });
   const resolvedCount = (threads.data ?? []).filter((t) => t.resolved).length;
   const open = (threads.data ?? []).filter((t) => showResolved || !t.resolved);
   const refresh = () => queryClient.invalidateQueries({ queryKey: threadsKey });
+  const openRef = useRef(open);
+  openRef.current = open;
 
-  // Pins follow their elements as the page scrolls, zooms or changes.
+  // A pin or a reply on this page, arriving in the space's live Room: the threads now, not at the next poll.
   useEffect(() => {
-    if (webContentsId === null || open.length === 0) return;
-    let stopped = false;
-    const tick = async () => {
-      const result = await rpc.rig.pages.locate({ webContentsId, pins: open.map((t) => ({ id: t.id, anchor: t.anchor })) });
-      if (stopped) return;
-      if (result.success) setPlaces(Object.fromEntries(result.data.map((p) => [p.id, p])));
-      setTimeout(() => void tick(), LOCATE_EVERY_MS);
-    };
-    void tick();
+    const room = roomSourceCache.peek(bindingId);
+    if (!room) return;
+    const path = canonicalPageUrl(url);
+    return room.subscribe((event) => {
+      if (event.type !== 'message_created') return;
+      const m = event.message;
+      const onThisPage = m.meta.kind === 'comment_mirror' && m.meta.path === path;
+      if (onThisPage || (m.threadId && openRef.current.some((t) => t.id === m.threadId))) void queryClient.invalidateQueries({ queryKey: ['page-threads', bindingId, url] });
+    });
+  }, [bindingId, url, queryClient]);
+
+  // Pins follow their elements when the page says it moved (scroll, resize,
+  // zoom, change), once per frame while it moves, plus a slow safety tick;
+  // nothing runs while the page is still.
+  const relocatorRef = useRef<Relocator | null>(null);
+  const pinIds = open.map((t) => t.id).join(',');
+  useEffect(() => {
+    if (webContentsId === null || !pinIds) return;
+    void rpc.rig.pages.watchPins({ webContentsId });
+    const relocator = startRelocator({
+      locate: async () => {
+        const pins = openRef.current.map((t) => ({ id: t.id, anchor: t.anchor }));
+        const result = await rpc.rig.pages.locate({ webContentsId, pins });
+        if (result.success) setPlaces(Object.fromEntries(result.data.map((p) => [p.id, p])));
+      },
+      subscribe: (onMoved) => events.on(pagePinsMovedChannel, (d) => d.webContentsId === webContentsId && onMoved()),
+    });
+    relocatorRef.current = relocator;
     return () => {
-      stopped = true;
+      relocator.stop();
+      relocatorRef.current = null;
     };
-  }, [webContentsId, open.map((t) => t.id).join(',')]);
+  }, [webContentsId, pinIds]);
+  // The panel itself resized: the page moved under the pins.
+  useEffect(() => relocatorRef.current?.poke(), [stageWidth]);
 
   // Esc closes the draft, then leaves comment mode, then closes the open
   // thread. Capture phase, and marked used, so the panel's own Esc (close

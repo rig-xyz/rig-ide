@@ -266,6 +266,64 @@ export function frameBoardSnapshot(q: { i?: number; sig?: string | null; words?:
   };
 }
 
+/**
+ * A small watcher left in a panel page's frame, so pins move with the page
+ * instead of being looked for every few milliseconds: scrolling (any
+ * scroller, captured), resizing, pinch-zoom (visualViewport) and DOM
+ * changes (a canvas's pan/zoom is a style change) each say "moved" by
+ * logging `marker` (a per-page nonce main listens for), at most once per
+ * `every` ms. Same-origin child frames (a canvas's boards) are watched too.
+ * Idempotent per frame and world. It carries nothing but the marker: a page
+ * that copies it can only make rig look for its pins again.
+ */
+export function frameWatch(marker: string, every: number): boolean {
+  const w = window as unknown as { __rigPinWatch?: string };
+  if (w.__rigPinWatch === marker) return false;
+  w.__rigPinWatch = marker;
+  const log = console.debug.bind(console);
+  let last = 0;
+  let pending: ReturnType<typeof setTimeout> | null = null;
+  const signal = () => {
+    const now = Date.now();
+    if (now - last >= every) {
+      last = now;
+      log(marker);
+    } else if (!pending) {
+      pending = setTimeout(() => {
+        pending = null;
+        last = Date.now();
+        log(marker);
+      }, every - (now - last));
+    }
+  };
+  const watched = new WeakSet<Document>();
+  const watch = (doc: Document) => {
+    if (watched.has(doc)) return;
+    watched.add(doc);
+    const win = doc.defaultView;
+    doc.addEventListener('scroll', signal, { capture: true, passive: true });
+    win?.addEventListener('resize', signal, { passive: true });
+    win?.visualViewport?.addEventListener('resize', signal, { passive: true });
+    win?.visualViewport?.addEventListener('scroll', signal, { passive: true });
+    new MutationObserver(() => {
+      signal();
+      frames(doc);
+    }).observe(doc.documentElement, { attributes: true, childList: true, subtree: true, characterData: true });
+    frames(doc);
+  };
+  const frames = (doc: Document) => {
+    for (const f of Array.from(doc.querySelectorAll('iframe'))) {
+      try {
+        if (f.contentDocument?.documentElement) watch(f.contentDocument);
+      } catch {
+        // Cross-origin: main watches that frame itself.
+      }
+    }
+  };
+  watch(document);
+  return true;
+}
+
 /** `(fn)(args)` source for executeJavaScript. */
 export function frameCall(fn: (...args: any[]) => unknown, ...args: unknown[]): string {
   return `(${fn.toString()})(${args.map((a) => JSON.stringify(a)).join(',')})`;

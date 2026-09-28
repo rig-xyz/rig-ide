@@ -13,7 +13,10 @@ import { linkTitle } from './link-titles';
 import type { AutoSignInOutcome } from './page-sign-ins';
 import { pageSignIns, startPageSignInsKeepInStep } from './page-sign-ins-instance';
 import { isPanelPage } from './panel-page';
+import { watchPins } from './pin-watch';
 import { pageAccess } from './sign-in-check';
+import { events } from '@main/lib/events';
+import { pagePinsMovedChannel } from '@shared/pages/pin-events';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { hitPage, locateOnPage } from './page-frames';
 import { threadsFromRows } from './page-pins';
@@ -157,6 +160,18 @@ export const rigPagesController = createRPCController({
     const at = await locateOnPage(page, anchor).catch(() => null);
     if (!at?.found || at.x === undefined || at.y === undefined || at.w === undefined || at.h === undefined) return null;
     return { x: at.x - anchor.fx * at.w, y: at.y - anchor.fy * at.h, w: at.w, h: at.h };
+  },
+
+  /**
+   * Pins follow the page by events, not polling: a watcher in the panel
+   * page says when it moved, and `pagePinsMovedChannel` tells the renderer
+   * to `locate` again. Panel pages only; once per page.
+   */
+  watchPins: ({ webContentsId }: { webContentsId: number }): boolean => {
+    const wc = allWebContents.fromId(webContentsId);
+    if (!wc || !isPanelPage(wc, pagesSession())) return false;
+    watchPins(wc, () => events.emit(pagePinsMovedChannel, { webContentsId }));
+    return true;
   },
 
   locate: async ({ webContentsId, pins }: { webContentsId: number; pins: { id: string; anchor: PageAnchor }[] }): Promise<Result<({ id: string } & PagePlace)[], Failure>> => {
