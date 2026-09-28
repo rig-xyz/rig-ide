@@ -24,6 +24,7 @@ import {
   createSpacesDispatcher,
 } from './dispatch';
 import { SpacesDispatchController, type SpacesDispatchControllerDeps } from './dispatch-controller';
+import { createImagePreparer } from './agent-images';
 import { LocalRunStore } from './local-runs';
 import { createHttpSpacesRelayApi } from './relay-api';
 import { RequestClaimPoller } from './request-claim';
@@ -86,6 +87,8 @@ function realDeps(): SpacesDispatchControllerDeps {
         rigTools: (scope) => rigToolsServer.serverFor(scope),
         roomSees: (bindingId) => roomSeesFor(rigSettingsStore.get().spacesRoomSees, bindingId),
         recordLocal: (bindingId, runId, event) => localRuns.append(bindingId, runId, event),
+        // Attached images go in as image content, shrunk to fit when they must.
+        prepareImage: createImagePreparer(join(app.getPath('temp'), 'rig-agent-images')),
         defaultConfig: (agent) => {
           const settings = rigSettingsStore.get();
           const model = settings.lastModelByHarness[agent];

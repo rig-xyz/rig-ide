@@ -17,6 +17,15 @@ import { ALWAYS_ASK_RIG_TOOLS, ownerApprovals, preApprovedRigToolOption, rigTool
 import type { AgentRequest, SessionAgent, SessionStatus, SpacesRelayApi } from './relay-api';
 import { markRequestSettled, type ClaimDispatchResult } from './request-claim';
 import { SessionEventPublisher } from './session-publisher';
+import {
+  attachedFilesContext,
+  imageCandidates,
+  promptImages,
+  sourceAttachments,
+  waitForAttachments,
+  type PrepareImage,
+  type PromptImage,
+} from './attachment-context';
 import { classifyProviderAnswer } from '../comment-agent-answer-classify';
 
 /**
@@ -91,7 +100,9 @@ export interface SpacesAcpSessions {
     conversationId: string,
     text: string,
     hiddenContext?: string,
-    onRejected?: (reason: string) => void
+    onRejected?: (reason: string) => void,
+    /** Images to send as image content with the prompt (files on this computer, already sized to fit). */
+    images?: PromptImage[]
   ): Promise<Result<{ turnId: string | null }, string>>;
   /** Best-effort: asks the runtime to cancel whatever turn is currently running. */
   cancelTurn(conversationId: string): Promise<void>;
@@ -507,6 +518,10 @@ export function createSpacesDispatcher(deps: {
   roomSees?: (bindingId: string) => RoomSees;
   /** The owner overlay: every event of a run, before the Room-sees filter (see `local-runs.ts`). */
   recordLocal?: (bindingId: string, runId: string, event: LocalRunEvent) => void;
+  /** Sizes an attached image for image content (long side 2000 px, 5 MB); omitted: images go by path only. */
+  prepareImage?: PrepareImage;
+  /** How long a turn waits for attached files still arriving through sync (tests shorten it). */
+  attachmentWait?: Parameters<typeof waitForAttachments>[2];
 }): {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
@@ -894,6 +909,8 @@ export function createSpacesDispatcher(deps: {
     requestId: string | null;
     /** The room message that asked, excluded from the room context. */
     sourceMessageId: string | null;
+    /** The owner asked their own agent (so a local-only attachment is on this computer). */
+    askedByOwner?: boolean;
     /** Extra hidden context for this turn (e.g. a doc comment thread), after the space context. */
     extraHiddenContext?: string;
     /** The doc comment thread this run answers; its card is grouped with that thread in the Room. */
@@ -948,6 +965,19 @@ export function createSpacesDispatcher(deps: {
     });
     // First, so every card knows why details are missing.
     publisher.record(RUN_PRIVACY_EVENT, { level: roomSees });
+
+    // Files attached to the message that asked: on another member's computer
+    // they may still be arriving through sync, so wait a little for them.
+    const attachments = await sourceAttachments(deps.api, spec.bindingId, spec.sourceMessageId);
+    const located = attachments.length
+      ? await waitForAttachments(cwd, attachments, deps.attachmentWait)
+      : { present: new Map<string, string>(), missing: [] };
+    if (located.missing.length > 0) {
+      log.info('Rig spaces dispatch: running without attached files that haven’t arrived', {
+        runId: created.data.id,
+        missing: located.missing.length,
+      });
+    }
 
     // The card is up; now reach the agent. Resuming a session after a
     // restart can take seconds, so it happens after the card, never before.
@@ -1004,7 +1034,22 @@ export function createSpacesDispatcher(deps: {
       connectors.global,
       roomSees
     );
-    const hiddenContext = [spaceContext, connectorsContext, spec.extraHiddenContext].filter(Boolean).join('\n\n');
+    const { images, spacePaths } = await promptImages(
+      imageCandidates(attachments, located, spec.agent),
+      deps.prepareImage
+    );
+    const filesContext = attachedFilesContext(attachments, located, {
+      askedOnThisComputer: spec.askedByOwner ?? false,
+      asImages: spacePaths,
+    });
+    const hiddenContext = [spaceContext, connectorsContext, filesContext, spec.extraHiddenContext]
+      .filter(Boolean)
+      .join('\n\n');
+    // Only pass images when there are some (keeps the call as it always was otherwise).
+    const queue = (onRejectedCb: (reason: string) => void) =>
+      images.length > 0
+        ? deps.acp.queuePrompt(session.conversationId, spec.prompt, hiddenContext, onRejectedCb, images)
+        : deps.acp.queuePrompt(session.conversationId, spec.prompt, hiddenContext, onRejectedCb);
     // Agents echo their prompt back (Codex titles the session with all of
     // it): the publisher strips this block from anything it uploads.
     publisher.setHiddenContext(hiddenContext);
@@ -1029,11 +1074,11 @@ export function createSpacesDispatcher(deps: {
         const ready = await (deps.acp.waitUntilReady?.(session.conversationId) ?? Promise.resolve(true)).catch(() => false);
         if (session.pending.indexOf(turn) === -1) return;
         if (!ready) return fail(reason);
-        const again = await deps.acp.queuePrompt(session.conversationId, spec.prompt, hiddenContext, onRejected);
+        const again = await queue(onRejected);
         if (!again.success) fail(again.error);
       })();
     };
-    const queued = await deps.acp.queuePrompt(session.conversationId, spec.prompt, hiddenContext, onRejected);
+    const queued = await queue(onRejected);
     if (!queued.success) {
       const idx = session.pending.indexOf(turn);
       if (idx !== -1) session.pending.splice(idx, 1);
@@ -1056,6 +1101,7 @@ export function createSpacesDispatcher(deps: {
       prompt: request.prompt,
       requestId: request.id,
       sourceMessageId: request.sourceMessageId,
+      askedByOwner: request.requestedByUserId === request.targetOwnerUserId,
     });
     return started.success ? { runId: started.data.runId } : { failed: true, reason: started.error };
   }
@@ -1322,14 +1368,27 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
       }
     },
 
-    async queuePrompt(conversationId, text, hiddenContext, onRejected) {
+    async queuePrompt(conversationId, text, hiddenContext, onRejected, images) {
       const client = await getClient();
+      const attachments = images?.map((image) => ({
+        type: 'local-file' as const,
+        originalPath: image.path,
+        mimeType: image.mimeType,
+        name: image.name,
+      }));
       // `sendPrompt`, not `queuePrompt`: the runtime's queue only drains when
       // a turn ends, so a prompt queued on an idle session never starts.
       // `sendPrompt` starts it when idle (or queues it when busy), and only
       // resolves once the turn is over, so don't wait for it here.
       void client
-        .sendPrompt({ conversationId, prompt: hiddenContext ? { text, hiddenContext } : { text } })
+        .sendPrompt({
+          conversationId,
+          prompt: {
+            text,
+            ...(hiddenContext ? { hiddenContext } : {}),
+            ...(attachments?.length ? { attachments } : {}),
+          },
+        })
         .then(
           (result) => {
             if (!result.success) onRejected?.(describeAcpError(result.error));

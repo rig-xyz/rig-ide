@@ -1,5 +1,8 @@
 import type { AcpPermissionRequest } from '@emdash/core/acp';
 import { err, ok, type Result } from '@emdash/shared';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createDeviceIdResolver,
@@ -1747,5 +1750,124 @@ describe('Room sees', () => {
     expect(at('answer')).toContain('The room sees only your final message and the files you change, not your steps.');
     expect(connectorsHiddenContext(['linear'], [], [], 'steps')).toContain("The room doesn't see what they return");
     expect(connectorsHiddenContext(['linear'], [], [], 'everything')).toContain('shows up in the room');
+  });
+});
+
+describe('createSpacesDispatcher — attached files', () => {
+  const author = { userId: 'clerk_d', name: null, avatarUrl: null, kind: 'user' };
+  function withAttachments(attachments: unknown[]) {
+    return makeFakeApi({
+      listMembers: async () => ok([]),
+      listMessages: async () =>
+        ok([{ id: 'src', seq: 1, author, kind: 'text', body: '@claude look', meta: { attachments }, createdAt: '' }]),
+    });
+  }
+  function recordingAcp() {
+    const fake = makeFakeAcp();
+    const calls: Array<{ hiddenContext?: string; images?: unknown }> = [];
+    fake.acp.queuePrompt = vi.fn(async (_c: string, _t: string, hiddenContext?: string, _r?: unknown, images?: unknown) => {
+      calls.push({ hiddenContext, images });
+      return ok({ turnId: 'turn-x' });
+    }) as SpacesAcpSessions['queuePrompt'];
+    return { fake, calls };
+  }
+
+  it('lists the files with the prompt and sends images as image content when the agent takes them', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rig-dispatch-att-'));
+    mkdirSync(join(dir, 'attachments'));
+    writeFileSync(join(dir, 'attachments', 'shot.png'), 'png');
+    writeFileSync(join(dir, 'attachments', 'deck.pdf'), 'pdf');
+    const { api } = withAttachments([
+      { name: 'shot.png', size: 3, mime: 'image/png', kind: 'copied', path: 'attachments/shot.png' },
+      { name: 'deck.pdf', size: 3, mime: 'application/pdf', kind: 'copied', path: 'attachments/deck.pdf', pages: 18 },
+      { name: 'app.sqlite', size: 10, mime: 'application/vnd.sqlite3', kind: 'local-only' },
+    ]);
+    const { fake, calls } = recordingAcp();
+    const prepareImage = vi.fn(async (abs: string) => ({ path: `${abs}.small`, mimeType: 'image/png' as const }));
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => dir, prepareImage });
+
+    const result = await dispatch(makeRequest({ sourceMessageId: 'src', requestedByUserId: 'owner-1' }));
+    expect(result).toEqual({ runId: 'run-1' });
+    const hidden = calls[0]!.hiddenContext!;
+    expect(hidden).toContain('<attached_files>');
+    expect(hidden).toContain('- attachments/shot.png (image/png, 3 B). Also attached as an image.');
+    expect(hidden).toContain('- attachments/deck.pdf (application/pdf, 3 B, 18 pages).');
+    expect(hidden).toContain('- app.sqlite (application/vnd.sqlite3, 10 B): only on this computer');
+    expect(hidden).not.toContain(dir);
+    expect(calls[0]!.images).toEqual([
+      { path: `${realpathSync(join(dir, 'attachments', 'shot.png'))}.small`, mimeType: 'image/png', name: 'shot.png' },
+    ]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('falls back to paths only when there is no image preparer', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rig-dispatch-att-'));
+    mkdirSync(join(dir, 'attachments'));
+    writeFileSync(join(dir, 'attachments', 'shot.png'), 'png');
+    const { api } = withAttachments([{ name: 'shot.png', size: 3, mime: 'image/png', kind: 'copied', path: 'attachments/shot.png' }]);
+    const { fake, calls } = recordingAcp();
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => dir });
+    await dispatch(makeRequest({ sourceMessageId: 'src' }));
+    expect(calls[0]!.images).toBeUndefined();
+    expect(calls[0]!.hiddenContext).toContain('- attachments/shot.png (image/png, 3 B).');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('waits for files still arriving, then runs with a note naming the ones that never came', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rig-dispatch-att-'));
+    mkdirSync(join(dir, 'attachments'));
+    const { api } = withAttachments([
+      { name: 'late.pdf', size: 3, mime: 'application/pdf', kind: 'copied', path: 'attachments/late.pdf' },
+      { name: 'never.pdf', size: 3, mime: 'application/pdf', kind: 'copied', path: 'attachments/never.pdf' },
+      { name: 'db.sqlite', size: 3, mime: 'x', kind: 'local-only' },
+    ]);
+    const { fake, calls } = recordingAcp();
+    let clock = 0;
+    let sleeps = 0;
+    const { dispatch } = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => dir,
+      attachmentWait: {
+        timeoutMs: 60_000,
+        pollMs: 1_000,
+        now: () => clock,
+        sleep: async (ms) => {
+          sleeps += 1;
+          clock += ms;
+          // The first file lands through sync a few seconds in.
+          if (clock === 3_000) writeFileSync(join(dir, 'attachments', 'late.pdf'), 'pdf');
+        },
+      },
+    });
+    await dispatch(makeRequest({ sourceMessageId: 'src' }));
+    expect(sleeps).toBe(60);
+    const hidden = calls[0]!.hiddenContext!;
+    expect(hidden).toContain('- attachments/late.pdf (application/pdf, 3 B).');
+    expect(hidden).toContain("- attachments/never.pdf (application/pdf, 3 B): hadn't arrived on this computer yet.");
+    // Asked by someone else: a local-only file is on their computer, and it's never waited for.
+    expect(hidden).toContain("- db.sqlite (x, 3 B): only on the sender's computer");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("doesn't wait when everything is here, and never reads paths outside the space", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rig-dispatch-att-'));
+    const { api } = withAttachments([{ name: 'x', size: 1, mime: 'image/png', kind: 'copied', path: '../../etc/hosts' }]);
+    const { fake, calls } = recordingAcp();
+    const sleep = vi.fn(async () => {});
+    const prepareImage = vi.fn();
+    const { dispatch } = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => dir,
+      prepareImage,
+      attachmentWait: { sleep },
+    });
+    await dispatch(makeRequest({ sourceMessageId: 'src' }));
+    // The unsafe path was dropped when the message was read: nothing to wait for, list or send.
+    expect(sleep).not.toHaveBeenCalled();
+    expect(prepareImage).not.toHaveBeenCalled();
+    expect(calls[0]!.hiddenContext).toContain("- x (image/png, 1 B): not available (its path isn't usable).");
+    rmSync(dir, { recursive: true, force: true });
   });
 });

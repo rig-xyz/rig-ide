@@ -1,10 +1,14 @@
 import {
   formatAttachmentBytes,
+  parseMessageAttachments,
+  safeMessagePath,
   type AttachmentCommitted,
   type AttachmentFileStatus,
   type AttachmentVerdict,
   type MessageAttachment,
 } from '@shared/rig/attachments';
+
+export { parseMessageAttachments, safeMessagePath };
 
 /**
  * Chat attachments in the Room (board 19): what a message carries in
@@ -52,36 +56,6 @@ export function toMessageAttachments(
       ...(pages ? { pages } : {}),
     };
   });
-}
-
-/** A space-relative path fit for a message, or undefined (absolute, `..`, backslashes…). */
-export function safeMessagePath(path: string | undefined): string | undefined {
-  if (!path || path.startsWith('/') || path.includes('\\') || /^[a-z]:/i.test(path) || path.includes('\0')) return undefined;
-  const parts = path.split('/');
-  return parts.some((p) => p === '' || p === '.' || p === '..') ? undefined : path;
-}
-
-/** `meta.attachments` as another member's client wrote it: shapes checked, unsafe paths dropped. */
-export function parseMessageAttachments(raw: unknown): MessageAttachment[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const out: MessageAttachment[] = [];
-  for (const item of raw.slice(0, 100)) {
-    if (!item || typeof item !== 'object') continue;
-    const r = item as Record<string, unknown>;
-    if (typeof r.name !== 'string' || !r.name) continue;
-    const kind = r.kind === 'linked' || r.kind === 'local-only' ? r.kind : 'copied';
-    const path = kind === 'local-only' ? undefined : safeMessagePath(typeof r.path === 'string' ? r.path : undefined);
-    out.push({
-      name: r.name.slice(0, 255),
-      size: typeof r.size === 'number' && r.size >= 0 ? r.size : 0,
-      mime: typeof r.mime === 'string' ? r.mime : 'application/octet-stream',
-      kind,
-      ...(path ? { path } : {}),
-      ...(typeof r.hash === 'string' && r.hash.startsWith('sha256:') ? { hash: r.hash } : {}),
-      ...(typeof r.pages === 'number' && r.pages > 0 ? { pages: Math.floor(r.pages) } : {}),
-    });
-  }
-  return out.length > 0 ? out : undefined;
 }
 
 /** The message text when only files are sent (the relay needs a body; older apps show it). */
