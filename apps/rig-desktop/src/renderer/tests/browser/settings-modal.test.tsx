@@ -57,12 +57,19 @@ const codex = agentPayload('codex', 'Codex', 'missing');
 // collapsed behind it.
 const gemini = agentPayload('gemini', 'Gemini', 'missing');
 
+const settingsMock = vi.hoisted(() => ({
+  current: {} as Record<string, unknown>,
+  set: vi.fn(async (_patch: Record<string, unknown>) => ({})),
+  clearRoomCache: vi.fn(async () => {}),
+}));
+
 vi.mock('@renderer/lib/ipc', () => ({
   rpc: {
     rig: {
       auth: { status: async () => ({ signedIn: false }) },
       account: { me: async () => ({ success: false, error: { message: 'signed out' } }) },
-      settings: { get: async () => ({}), set: async () => ({}) },
+      settings: { get: async () => settingsMock.current, set: settingsMock.set },
+      roomCache: { clear: settingsMock.clearRoomCache },
       home: { get: async () => ({ home: '/home/test/Rig', displayPath: '~/Rig' }) },
       bundledCli: { getVersionReport: async () => ({ rig: undefined, tapd: undefined }) },
     },
@@ -114,6 +121,28 @@ describe('SettingsModal', () => {
       await Promise.resolve();
     });
   }
+
+  it('"Open spaces instantly" turns the disk cache on, and turning it off deletes what was kept', async () => {
+    settingsMock.current = {};
+    settingsMock.set.mockClear();
+    settingsMock.clearRoomCache.mockClear();
+    await renderSettings();
+    const toggle = () => document.querySelector<HTMLButtonElement>('#spaces-disk-cache')!;
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
+    await act(async () => toggle().click());
+    expect(settingsMock.set).toHaveBeenCalledWith({ spacesRoomDiskCache: true });
+    expect(settingsMock.clearRoomCache).not.toHaveBeenCalled();
+
+    settingsMock.current = { spacesRoomDiskCache: true };
+    await act(async () => {
+      await queryClient.invalidateQueries();
+    });
+    await vi.waitFor(() => expect(toggle().getAttribute('aria-checked')).toBe('true'));
+    await act(async () => toggle().click());
+    expect(settingsMock.set).toHaveBeenLastCalledWith({ spacesRoomDiskCache: false });
+    await vi.waitFor(() => expect(settingsMock.clearRoomCache).toHaveBeenCalledOnce());
+    settingsMock.current = {};
+  });
 
   it('renders section headers in the regular font, sentence case, not mono/uppercase', async () => {
     await renderSettings();

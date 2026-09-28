@@ -99,6 +99,7 @@ export function SettingsModal({
           </Section>
           <Section label="Experimental">
             <SpacesRow />
+            <SpacesDiskCacheRow />
           </Section>
           <Section label="About" containerRef={aboutRef}>
             <AboutSection />
@@ -553,6 +554,61 @@ function TelemetryRow() {
  * (preview)" dev entry point; nothing else in the app changes while it's
  * off.
  */
+/**
+ * `spacesRoomDiskCache`: each space's last state kept on this computer, so
+ * the first open after launch shows at once and then catches up. Turning it
+ * off also deletes what was kept. Takes effect the next time a space opens.
+ */
+function SpacesDiskCacheRow() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['rig', 'settings', 'spacesRoomDiskCache'],
+    queryFn: () => rpc.rig.settings.get(),
+  });
+  const enabled = data?.spacesRoomDiskCache ?? false;
+
+  const toggle = () => {
+    void rpc.rig.settings
+      .set({ spacesRoomDiskCache: !enabled })
+      .then(() => (enabled ? rpc.rig.roomCache.clear() : undefined))
+      .then(() => {
+        void queryClient.invalidateQueries({ queryKey: ['rig', 'settings', 'spacesRoomDiskCache'] });
+      });
+  };
+
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <label htmlFor="spaces-disk-cache" className="text-text-primary text-xs font-medium">
+          Open spaces instantly
+        </label>
+        <p className="text-text-muted text-xs">
+          Keep each space's latest messages on this computer so it shows at once after launch, then catches up.
+        </p>
+      </div>
+      <button
+        id="spaces-disk-cache"
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        aria-label="Open spaces instantly"
+        onClick={toggle}
+        className={cn(
+          'relative mt-0.5 h-4 w-7 shrink-0 rounded-full transition-colors',
+          enabled ? 'bg-border-strong' : 'bg-bg-2 border-border-hairline border'
+        )}
+      >
+        <span
+          className={cn(
+            'bg-bg-1 absolute top-0.5 left-0.5 size-3 rounded-full transition-transform',
+            enabled && 'translate-x-3'
+          )}
+        />
+      </button>
+    </div>
+  );
+}
+
 function SpacesRow() {
   const queryClient = useQueryClient();
   const { data } = useQuery({
