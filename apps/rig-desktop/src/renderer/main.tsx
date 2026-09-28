@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ReactDOM from 'react-dom/client';
 import { Toaster } from 'sonner';
+import { PULSE_QUERY_KEY } from '@renderer/features/home/briefing-spine';
 import { RecoveryBoundary } from '@renderer/features/recovery/recovery-boundary';
 import { installRendererErrorReporting } from '@renderer/features/recovery/renderer-error-reporting';
 import { events } from '@renderer/lib/ipc';
@@ -18,10 +19,13 @@ import '@renderer/lib/chat/chat-theme.css';
 const queryClient = new QueryClient();
 installRendererErrorReporting();
 
-// An agent renamed a space: refresh the rig lists, as the Rename dialog does after its own rename.
+// A rig or space was renamed (the Rename dialog, an agent, or a rig.toml edit main pushed to the relay):
+// refresh the rig lists, and the pulse briefing, whose prose names rigs (the relay regenerates it once a
+// binding changed after it was written).
 events.on(rigRenamedChannel, () => {
   void queryClient.invalidateQueries({ queryKey: ['rig', 'recent', 'list'] });
   void queryClient.invalidateQueries({ queryKey: ['rig', 'account', 'workspaces'] });
+  void queryClient.invalidateQueries({ queryKey: PULSE_QUERY_KEY });
 });
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(

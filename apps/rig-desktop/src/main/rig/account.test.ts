@@ -113,6 +113,13 @@ describe('toBinding', () => {
     });
   });
 
+  it('reads updatedAt when the relay sends it (relay-name sync compares it with rig.toml)', () => {
+    expect(
+      toBinding({ binding: { id: 'b', name: 'n', updatedAt: '2026-09-01T00:00:00Z' }, role: 'owner' }, 'h')?.updatedAt
+    ).toBe('2026-09-01T00:00:00Z');
+    expect(toBinding({ binding: { id: 'b', name: 'n' }, role: 'owner' }, 'h')).not.toHaveProperty('updatedAt');
+  });
+
   it('reads a space binding\'s kind', () => {
     expect(
       toBinding({ binding: { id: 'bnd_2', name: 'growth', kind: 'space' }, role: 'owner' }, 'relay')?.kind

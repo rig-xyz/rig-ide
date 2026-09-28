@@ -1,13 +1,17 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
+import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
+import { rigRenamedChannel } from '@shared/rig/workspace';
 import { commandFailureMessage } from './auth-output';
 import { runRig, type SpawnOutcome } from './create';
 import { extractJsonObjects, parseJsonErrorEnvelope } from './join';
 import { existsAsDirectory, getRigPathsForAccount, updateRigName, updateRigPath } from './recent-rigs';
+import { relayNameSync } from './relay-name-sync-instance';
 import { setTomlRigName } from './rig-toml';
+import { SPACE_NAME_MAX } from './spaces/rig-tools';
 import { isRigSyncPaused, writeSyncPausedReason } from './sync-paused';
 
 /**
@@ -171,21 +175,22 @@ export function resumeRigsForAccount(accountId: string): Promise<void> {
  * every other member on its own the moment tapd picks it up — no relay
  * call needed for that half.
  *
- * TODO(rig CLI / relay): there is no `rig rename` CLI subcommand and no
- * relay "rename binding" endpoint today (`PATCH /v1/me/bindings/:id` only
- * accepts `{org, visibility}` — checked against `tap`'s own
- * `packages/relay/src/routes/account.ts`), so the binding's OWN name on the
- * relay (as opposed to the `rig.toml` this app and the CLI actually read
- * display names from) stays whatever it was minted with. Wire a relay PATCH
- * once one exists, if that divergence ever becomes a real problem.
+ * The relay keeps its own copy of the name (what pulse and the web show),
+ * so after the local write this also PATCHes it (`relayNameSync.pushRename`).
+ * That half never fails the rename: a relay refusal comes back as
+ * `relayWarning` for the caller to show quietly. Then every window is told
+ * (`rigRenamedChannel`) so Home's lists and pulse refetch.
  */
 export async function renameRig(
   bindingId: string,
   path: string,
   newName: string
-): Promise<Result<{ name: string }, { message: string }>> {
+): Promise<Result<{ name: string; relayWarning?: string }, { message: string }>> {
   const trimmed = newName.trim();
   if (!trimmed) return err({ message: 'Name cannot be empty.' });
+  if (trimmed.length > SPACE_NAME_MAX) {
+    return err({ message: `That name is ${trimmed.length} characters; keep it to ${SPACE_NAME_MAX} or fewer.` });
+  }
 
   const tomlPath = join(path, 'rig.toml');
   let raw: string;
@@ -207,7 +212,9 @@ export async function renameRig(
   }
 
   await updateRigName(bindingId, trimmed);
-  return ok({ name: trimmed });
+  const relayWarning = await relayNameSync.pushRename(bindingId, trimmed);
+  events.emit(rigRenamedChannel, { bindingId, name: trimmed });
+  return ok(relayWarning ? { name: trimmed, relayWarning } : { name: trimmed });
 }
 
 export const rigControlController = createRPCController({

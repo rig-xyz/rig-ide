@@ -44,6 +44,12 @@ export type RigWorkspaceBinding = {
    */
   createdAt: string;
   /**
+   * When the binding's own metadata (name, org, kind) last changed on the
+   * relay. Main's relay-name sync compares it with rig.toml's mtime so a
+   * member whose rig.toml hasn't synced yet never pushes the old name back.
+   */
+  updatedAt?: string;
+  /**
    * Host of the relay this binding was read from. `GET /v1/me/bindings`
    * itself carries no per-binding relay URL — every binding it returns lives
    * on the one relay the request was made to, so this is that relay's host,

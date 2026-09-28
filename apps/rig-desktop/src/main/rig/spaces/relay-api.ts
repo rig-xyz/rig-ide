@@ -26,7 +26,11 @@ const REQUEST_TIMEOUT_MS = 10_000;
  * converted to milliseconds so `SessionEventPublisher` can honor it directly
  * without re-deriving the relay's own rate-limit window.
  */
-export type RelayApiError = RigAccountError & { retryAfterMs?: number };
+export type RelayApiError = RigAccountError & {
+  retryAfterMs?: number;
+  /** The relay's `{error}` code, when its answer carried one (e.g. `no_changes`). */
+  code?: string;
+};
 
 export type SessionAgent = 'claude' | 'codex';
 export type SessionStatus = 'running' | 'waiting' | 'done' | 'stopped' | 'failed';
@@ -261,6 +265,7 @@ async function relayError(response: Response, action: string): Promise<RelayApiE
     kind: 'relay',
     status: response.status,
     ...(retryAfterMs !== null ? { retryAfterMs } : {}),
+    ...(code ? { code } : {}),
     message: code
       ? `Could not ${action} (relay: ${code}).`
       : `Could not ${action} (relay ${response.status}).`,
@@ -356,6 +361,19 @@ export async function setBindingKind(
   const ctx = await resolveContext();
   if (isError(ctx)) return err(ctx);
   const result = await request(ctx, 'PATCH', `/v1/me/bindings/${bindingId}`, 'update the space', { kind });
+  return result.success ? ok(undefined) : err(result.error);
+}
+
+/**
+ * Renames a binding on the relay (`PATCH /v1/me/bindings/:id {name}`,
+ * owner or editor), so pulse and the web show the name rig.toml has. A
+ * relay from before renames existed answers 400 `no_changes` (it ignores
+ * `name`), or 403 for an editor (its PATCH was owner-only).
+ */
+export async function setBindingName(bindingId: string, name: string): Promise<Result<void, RelayApiError>> {
+  const ctx = await resolveContext();
+  if (isError(ctx)) return err(ctx);
+  const result = await request(ctx, 'PATCH', `/v1/me/bindings/${bindingId}`, 'update the name on Rig', { name });
   return result.success ? ok(undefined) : err(result.error);
 }
 

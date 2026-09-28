@@ -61,6 +61,7 @@ export function InlineRigNameInput({
       onCancel();
       return;
     }
+    if (result.data.relayWarning) toast({ description: result.data.relayWarning });
     onCommitted(result.data.name);
   };
 

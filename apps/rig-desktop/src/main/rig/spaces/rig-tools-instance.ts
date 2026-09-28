@@ -2,7 +2,6 @@ import { readFile, stat } from 'node:fs/promises';
 import { err, ok, type Result } from '@emdash/shared';
 import { events } from '@main/lib/events';
 import type { RigFileNode } from '@shared/rig/files';
-import { rigRenamedChannel } from '@shared/rig/workspace';
 import { spacesAgentConfigChangedChannel } from '@shared/spaces/agent-settings';
 import { roomSeesFor } from '@shared/spaces/room-sees';
 import { findBindingConfig } from '../binding';
@@ -86,11 +85,9 @@ const backend: RigToolsBackend = {
     rigCommentsController.create({ absPath, body, anchor, authorKind: 'agent', meta }),
   replyComment: ({ absPath, parentId, body, meta }) =>
     rigCommentsController.reply({ absPath, parentId, body, authorKind: 'agent', meta }),
+  // renameRig itself updates the relay's name and tells every window (rigRenamedChannel).
   renameSpace: async (bindingId, root, name) => {
-    const renamed = await renameRig(bindingId, root, name);
-    // The Rename dialog refreshes the rig lists itself; an agent's rename tells every window to.
-    if (renamed.success) events.emit(rigRenamedChannel, { bindingId, name: renamed.data.name });
-    return renamed;
+    return renameRig(bindingId, root, name);
   },
   listMessages: (bindingId, query) => api.listMessages(bindingId, query),
   runAnswer: async (bindingId, runId) => {

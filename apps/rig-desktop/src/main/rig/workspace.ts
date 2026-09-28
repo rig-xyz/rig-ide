@@ -29,7 +29,7 @@ export function bufferOpenFilePath(path: string): void {
   pendingOpenFilePath = path;
 }
 
-function readRigName(workspaceRoot: string): string | null {
+export function readRigName(workspaceRoot: string): string | null {
   let raw: string;
   try {
     raw = readFileSync(join(workspaceRoot, 'rig.toml'), 'utf8');
@@ -141,7 +141,8 @@ export const rigWorkspaceController = createRPCController({
 
   /**
    * Title-reactivity round: a plain re-read of `rig.toml`'s own name, no
-   * side effects (unlike `detect`, which also upserts `rig_rigs` and touches
+   * side effects beyond a debounced relay-name check when the name changed
+   * (unlike `detect`, which also upserts `rig_rigs` and touches
    * macOS's Open Recent list on every call) — safe to call on every
    * file-watcher event for the open rig's root, not just once at open time.
    * Fixes the freshly-downloaded-rig case where `rig.toml` hadn't synced
@@ -151,6 +152,12 @@ export const rigWorkspaceController = createRPCController({
    */
   readName: async (rootId: string): Promise<string | null> => {
     const workspaceRoot = await rigFileRootRegistry.getVerified(rootId);
-    return workspaceRoot.success ? readRigName(workspaceRoot.data) : null;
+    if (!workspaceRoot.success) return null;
+    const name = readRigName(workspaceRoot.data);
+    // A rig.toml name that changed outside the Rename dialog (an agent's edit, a sync) goes to the relay too.
+    void import('./relay-name-sync-instance')
+      .then(({ relayNameSync }) => relayNameSync.noteLocalName(workspaceRoot.data, name))
+      .catch((error: unknown) => log.warn('rig: relay name sync failed', { error: String(error) }));
+    return name;
   },
 });

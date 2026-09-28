@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { toast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '@renderer/lib/ui/dialog';
@@ -80,6 +81,7 @@ function RenameRigForm({
       setError(result.error.message);
       return;
     }
+    if (result.data.relayWarning) toast({ description: result.data.relayWarning });
     onRenamed(result.data.name);
     onClose();
   };

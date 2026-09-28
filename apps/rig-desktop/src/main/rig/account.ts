@@ -182,6 +182,7 @@ export function toBinding(value: unknown, relayHost: string): RigWorkspaceBindin
     kind: binding.kind === 'space' ? 'space' : 'rig',
     lastSyncedAt: typeof raw?.lastSyncedAt === 'string' ? raw.lastSyncedAt : null,
     createdAt: typeof binding.createdAt === 'string' ? binding.createdAt : '',
+    ...(typeof binding.updatedAt === 'string' ? { updatedAt: binding.updatedAt } : {}),
     relayHost,
   };
 }
@@ -309,29 +310,47 @@ export const rigAccountController = createRPCController({
     }
   },
 
-  /** `GET /v1/me/bindings` — every workspace the signed-in user is a member of. */
+  /**
+   * `GET /v1/me/bindings` — every workspace the signed-in user is a member of.
+   * Home asks this whenever it shows, which is also when a rig.toml name
+   * that changed outside the app (an agent's edit, a sync) gets pushed to
+   * the relay — see `relay-name-sync.ts`. Loaded lazily: that module reaches
+   * back into this one.
+   */
   workspaces: async (): Promise<Result<RigWorkspaceBinding[], RigAccountError>> => {
-    const ctx = await resolveContext();
-    if (isError(ctx)) return err(ctx);
-
-    let response: Response;
-    try {
-      response = await relayGet(ctx, '/v1/me/bindings');
-    } catch (error) {
-      return err(transportError('load your workspaces', error));
+    const result = await fetchWorkspaceBindings();
+    if (result.success) {
+      const bindings = result.data;
+      void import('./relay-name-sync-instance')
+        .then(({ relayNameSync }) => relayNameSync.reconcile(bindings))
+        .catch((error: unknown) => log.warn('rig: relay name sync failed', { error: String(error) }));
     }
-    if (!response.ok) return err(await relayError(response, 'load your workspaces'));
-
-    try {
-      const data = asRecord(await response.json());
-      const raw = Array.isArray(data?.bindings) ? data.bindings : [];
-      const relayHost = new URL(ctx.url).host;
-      const bindings = raw
-        .map((row) => toBinding(row, relayHost))
-        .filter((binding): binding is RigWorkspaceBinding => binding !== null);
-      return ok(bindings);
-    } catch (error) {
-      return err(transportError('load your workspaces', error));
-    }
+    return result;
   },
 });
+
+/** `GET /v1/me/bindings`, parsed. The controller's `workspaces` without its side effects. */
+export async function fetchWorkspaceBindings(): Promise<Result<RigWorkspaceBinding[], RigAccountError>> {
+  const ctx = await resolveContext();
+  if (isError(ctx)) return err(ctx);
+
+  let response: Response;
+  try {
+    response = await relayGet(ctx, '/v1/me/bindings');
+  } catch (error) {
+    return err(transportError('load your workspaces', error));
+  }
+  if (!response.ok) return err(await relayError(response, 'load your workspaces'));
+
+  try {
+    const data = asRecord(await response.json());
+    const raw = Array.isArray(data?.bindings) ? data.bindings : [];
+    const relayHost = new URL(ctx.url).host;
+    const bindings = raw
+      .map((row) => toBinding(row, relayHost))
+      .filter((binding): binding is RigWorkspaceBinding => binding !== null);
+    return ok(bindings);
+  } catch (error) {
+    return err(transportError('load your workspaces', error));
+  }
+}
