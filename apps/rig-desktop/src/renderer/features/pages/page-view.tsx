@@ -19,9 +19,12 @@ import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { Button } from '@renderer/lib/ui/button';
 import { Textarea } from '@renderer/lib/ui/textarea';
 import { cn } from '@renderer/lib/utils';
-import { classifyLink, RIG_PAGES_PARTITION } from '@shared/spaces/links';
+import { isSignInWall, signInSiteForUrl } from '@shared/pages/sign-in-sites';
+import { RIG_PAGES_PARTITION } from '@shared/spaces/links';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
-import { FirstOpen, useSignInStatus, type SignInSite } from './sign-in';
+import { AccountChip, SignInBanner } from './account-chip';
+import { SignInSheet } from './sign-in-sheet';
+import { recordFor, useSignIns } from './use-sign-ins';
 
 /**
  * A web page (a Claude artifact, a Google Doc) open beside the Room, as the
@@ -49,10 +52,10 @@ function mentionedAgent(body: string): RoomAgent | null {
 }
 const THREADS_EVERY_MS = 4000;
 
-function siteOf(url: string): SignInSite | null {
-  const kind = classifyLink(url).kind;
-  return kind.startsWith('claude') ? 'claude' : kind.startsWith('google') ? 'google' : null;
-}
+/** Pages whose sign-in banner was hidden (✕), for this run of the app. */
+const bannerDismissed = new Set<string>();
+/** After a load settles, a moment for script redirects before looking for a sign-in wall. */
+const WALL_CHECK_DELAY_MS = 700;
 
 function hostOf(url: string): string {
   try {
@@ -74,8 +77,6 @@ export function PageView({
   /** The page's own title, once it loads: the tab takes it. */
   onTitle?: (title: string) => void;
 }) {
-  const me = useQuery({ queryKey: ['rig', 'account', 'me'], queryFn: () => rpc.rig.account.me() });
-  const selfName = me.data?.success ? (me.data.data.name ?? me.data.data.email?.split('@')[0] ?? null) : null;
   // Held in a ref: a new callback from the parent must not recreate the page.
   const onTitleRef = useRef(onTitle);
   onTitleRef.current = onTitle;
@@ -100,13 +101,16 @@ export function PageView({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [places, setPlaces] = useState<Record<string, Place>>({});
   const [showResolved, setShowResolved] = useState(false);
-  const [firstOpenDone, setFirstOpenDone] = useState(false);
   const viewRef = useRef<WebviewTag | null>(null);
-  const site = siteOf(url);
-  const signIn = useSignInStatus();
-  const needsSignIn = site !== null && !firstOpenDone && (signIn.data === undefined || !signIn.data[site]);
-  const needsSignInRef = useRef(needsSignIn);
-  needsSignInRef.current = needsSignIn;
+  // Signing the page in (board 18): the chip in the header, the banner on a
+  // sign-in wall, the sheet over the page. The page always loads.
+  const site = useMemo(() => signInSiteForUrl(url), [url]);
+  const signIns = useSignIns();
+  const record = recordFor(signIns.data, site?.id);
+  const [wall, setWall] = useState(false);
+  const [bannerHidden, setBannerHidden] = useState(() => bannerDismissed.has(url));
+  const siteIdRef = useRef(site?.id);
+  siteIdRef.current = site?.id;
   const browserId = useMemo(() => `rig-page-${Math.random().toString(36).slice(2)}`, []);
   const queryClient = useQueryClient();
 
@@ -116,6 +120,7 @@ export function PageView({
   useEffect(() => {
     let cancelled = false;
     let view: WebviewTag | null = null;
+    let wallTimer: ReturnType<typeof setTimeout> | null = null;
     void rpc.browser.registerSession({ browserId, partition: RIG_PAGES_PARTITION }).then(() => {
       if (cancelled || !hostRef.current) return;
       view = document.createElement('webview') as WebviewTag;
@@ -129,18 +134,47 @@ export function PageView({
         void rpc.browser.bindWebContents({ browserId, webContentsId: id });
       });
       view.addEventListener('page-title-updated', (event) => {
-        // Behind the first-open screen the page is its site's sign-in page: not a title for the tab.
-        if (!needsSignInRef.current) onTitleRef.current?.((event as unknown as { title: string }).title);
+        // A sign-in page's title ("Sign in – Google Accounts") is not a title for the tab.
+        if (!isSignInWall({ url: view!.getURL() })) onTitleRef.current?.((event as unknown as { title: string }).title);
       });
+      // Did the page land on a sign-in form? Asked again after every load.
+      const lookForWall = () => {
+        if (wallTimer) clearTimeout(wallTimer);
+        wallTimer = setTimeout(() => {
+          if (cancelled || !view) return;
+          void rpc.rig.pages
+            .signInWall({ webContentsId: view.getWebContentsId(), ...(siteIdRef.current ? { site: siteIdRef.current } : {}) })
+            .then((r) => !cancelled && setWall(r.wall))
+            .catch(() => {});
+        }, WALL_CHECK_DELAY_MS);
+      };
+      view.addEventListener('did-stop-loading', lookForWall);
+      view.addEventListener('did-navigate-in-page', lookForWall);
       hostRef.current.appendChild(view);
     });
     return () => {
       cancelled = true;
+      if (wallTimer) clearTimeout(wallTimer);
       view?.remove();
       void rpc.browser.unregisterSession(browserId);
     };
     // A new link is a new tab (keyed by url), so url never changes here.
   }, [browserId, url]);
+
+  // A new sign-in for the site (the sheet, Settings, Keep in step), or one
+  // removed, reloads the page as that account (cases 9 and 13).
+  const signedInAt = signIns.isSuccess ? (record?.importedAt ?? 0) : null;
+  const lastSignedInAt = useRef(signedInAt);
+  useEffect(() => {
+    if (signedInAt === null) return;
+    if (lastSignedInAt.current !== null && lastSignedInAt.current !== signedInAt) viewRef.current?.reload();
+    lastSignedInAt.current = signedInAt;
+  }, [signedInAt]);
+  const signInHere = () => {
+    bannerDismissed.add(url);
+    setBannerHidden(true);
+    viewRef.current?.focus();
+  };
 
   const threadsKey = ['page-threads', bindingId, url];
   const threads = useQuery({
@@ -226,10 +260,8 @@ export function PageView({
     <div className="flex h-full min-h-0 flex-col" data-testid="page-view">
       <div className="border-border-hairline flex h-11 shrink-0 items-center gap-2 border-b px-4">
         <b className="min-w-0 truncate text-sm font-medium text-text-primary">{title}</b>
-        <span className="shrink-0 text-xs text-text-muted">
-          {hostOf(url)}
-          {selfName ? ` · as ${selfName}` : ''}
-        </span>
+        <span className="shrink-0 text-xs text-text-muted">{hostOf(url)}</span>
+        {site && <AccountChip site={site} pageUrl={url} onSignInHere={signInHere} />}
         <span className="ml-auto flex shrink-0 items-center gap-1">
           <CommentModeControl
             on={commenting}
@@ -263,19 +295,22 @@ export function PageView({
           </button>
         </span>
       </div>
+      {site && (
+        <SignInBanner
+          site={site}
+          pageUrl={url}
+          wall={wall}
+          dismissed={bannerHidden}
+          onDismiss={() => {
+            bannerDismissed.add(url);
+            setBannerHidden(true);
+          }}
+        />
+      )}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <div ref={hostRef} className="absolute inset-0" />
-        {needsSignIn && site && signIn.data !== undefined && (
-          <FirstOpen
-            site={site}
-            onDone={() => {
-              setFirstOpenDone(true);
-              viewRef.current?.reload();
-            }}
-            onOpenInBrowser={() => void rpc.app.openExternal(url)}
-          />
-        )}
+        {site && <SignInSheet siteId={site.id} onSignInHere={signInHere} />}
         {commenting && (
           <div
             ref={layerRef}
