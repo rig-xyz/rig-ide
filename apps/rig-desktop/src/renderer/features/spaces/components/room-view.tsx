@@ -1,5 +1,5 @@
 import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucide-react';
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
 import { formatClock } from '@renderer/lib/time-format';
@@ -338,6 +338,12 @@ export function RoomView({
   // and left `bodyWidth` at 0, which shoved the transcript left.
   const [bodyEl, bodyRef] = useState<HTMLDivElement | null>(null);
   const [bodyWidth, setBodyWidth] = useState(0);
+  // Measured before the first paint: with messages showing at once, a first
+  // frame laid out at width 0 (full panel clearance) visibly jumped the
+  // transcript left, then back once the observer below reported.
+  useLayoutEffect(() => {
+    if (bodyEl) setBodyWidth(bodyEl.getBoundingClientRect().width);
+  }, [bodyEl]);
   // rAF-throttled: a live window/split drag can report a new `contentRect`
   // faster than the screen paints, and each one used to re-render the whole
   // Room once per raw resize notification instead of once per painted frame.
