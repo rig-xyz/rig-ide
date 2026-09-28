@@ -274,10 +274,13 @@ function useAgentConfig(agent: AgentKind) {
   const [config, setConfig] = useState<AgentConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
   useEffect(() => api?.watch?.(agent, setConfig), [api, agent]);
   const warm = () => {
-    if (!api || config) return;
+    if (!api || config || loading) return;
+    setLoading(true);
     void api.load(agent).then((loaded) => {
+      setLoading(false);
       if ('error' in loaded) setError(loaded.error);
       else {
         setError(null);
@@ -314,7 +317,7 @@ function useAgentConfig(agent: AgentKind) {
       else setConfig(loaded);
     });
   };
-  return { api, config, error, busy, warm, pick, label, retry };
+  return { api, config, error, busy, loading, warm, pick, label, retry };
 }
 
 /**
@@ -333,7 +336,7 @@ export function AgentSettings({
   /** Fetch the choices right away (you're about to ask this agent). */
   prefetch?: boolean;
 }) {
-  const { api, config, busy, warm, pick, label } = useAgentConfig(agent);
+  const { api, config, error, busy, loading, warm, pick, label } = useAgentConfig(agent);
   const [openDim, setOpenDim] = useState<Dimension | null>(null);
   const rootRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
@@ -365,6 +368,10 @@ export function AgentSettings({
   };
   const dims: Dimension[] = ['model', 'mode', ...(config?.effort ? (['effort'] as const) : [])];
   const group = openDim ? config?.[openDim] : null;
+  // Nothing to pick until the agent's own choices are in: while they load the
+  // settings read as pending, and if they can't load (the agent won't start)
+  // they say so instead of opening onto nothing.
+  const unavailable = !config && (loading || !!error);
 
   return (
     <span ref={rootRef} className="flex min-w-0 items-center gap-0.5" data-testid="agent-settings" onMouseEnter={warm} onFocus={warm}>
@@ -382,21 +389,33 @@ export function AgentSettings({
           <button
             key={dimension}
             type="button"
+            disabled={unavailable}
+            aria-busy={loading && !config}
             onClick={() => {
               warm();
-              setOpenDim(dimension);
+              if (config) setOpenDim(dimension);
             }}
-            title={DIMENSION_TITLE[dimension]}
+            title={
+              !config && error
+                ? `Couldn't load ${DIMENSION_TITLE[dimension].toLowerCase()}: ${error}`
+                : !config && loading
+                  ? 'Loading…'
+                  : DIMENSION_TITLE[dimension]
+            }
             className={cn(
-              'group/setting flex h-6 max-w-40 items-center gap-1 rounded-full px-2 text-xs text-text-primary transition-colors',
-              tint[dimension]
+              'group/setting flex h-6 max-w-40 items-center gap-1 rounded-full px-2 text-xs transition-colors',
+              unavailable ? 'cursor-default text-text-muted' : cn('text-text-primary', tint[dimension]),
+              loading && !config && 'animate-pulse'
             )}
             data-testid={`agent-setting-${dimension}`}
+            data-state={!config && error ? 'unavailable' : !config && loading ? 'loading' : 'ready'}
           >
             <span className="truncate">
               {label(dimension) ?? (dimension === 'model' ? (model ?? 'Model') : DIMENSION_TITLE[dimension])}
             </span>
-            <ChevronDown className="size-3 shrink-0 opacity-40 transition-opacity group-hover/setting:opacity-100" strokeWidth={1.5} />
+            {!unavailable && (
+              <ChevronDown className="size-3 shrink-0 opacity-40 transition-opacity group-hover/setting:opacity-100" strokeWidth={1.5} />
+            )}
           </button>
         ))
       )}

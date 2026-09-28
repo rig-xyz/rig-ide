@@ -828,6 +828,34 @@ describe('Room composer — palette on "/"', () => {
     expect(host.querySelector('[data-testid="agent-setting-model"]')?.textContent).toContain('Sonnet');
   });
 
+  it("keeps the pill's settings inert while the agent's choices load, and says why when they can't", async () => {
+    const snapshot = replayedSnapshot();
+    const own = snapshot.agents.filter((a) => a.owner === 'bob');
+    let finish: (value: { error: string }) => void = () => {};
+    const api: AgentSettingsApi = {
+      load: () => new Promise((resolve) => (finish = resolve)),
+      change: async () => ({ error: 'unused' }),
+    };
+    await act(async () => {
+      root.render(
+        <AgentSettingsContext.Provider value={api}>
+          <Composer spaceName={snapshot.name} members={snapshot.members} agents={own} skills={snapshot.skills} onSend={() => {}} />
+        </AgentSettingsContext.Provider>
+      );
+    });
+    await setTextareaValue(host.querySelector<HTMLTextAreaElement>('textarea'), '@claude hi');
+    const mode = () => host.querySelector<HTMLButtonElement>('[data-testid="agent-setting-mode"]')!;
+    await vi.waitFor(() => expect(mode().dataset.state).toBe('loading'));
+    expect(mode().disabled).toBe(true);
+    await act(async () => mode().dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(host.querySelector('[data-testid="agent-choices-mode"]')).toBeNull();
+
+    await act(async () => finish({ error: "Claude couldn't start" }));
+    await vi.waitFor(() => expect(mode().dataset.state).toBe('unavailable'));
+    expect(mode().disabled).toBe(true);
+    expect(mode().title).toContain("Claude couldn't start");
+  });
+
   it('shows pills for your tagged agent and the open doc, and dropping the agent pill sends plain chat', async () => {
     const snapshot = replayedSnapshot();
     const own = snapshot.agents.filter((a) => a.owner === 'bob');
