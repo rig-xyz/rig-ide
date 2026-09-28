@@ -1007,7 +1007,8 @@ export function RoomView({
               {attachments.disabledReason ?? 'Drop to attach to your message'}
             </div>
           )}
-          {live && snapshot.messages.length === 0 ? (
+          {/* Your own message the moment you send it counts: a new space's welcome never hides it while files copy. */}
+          {live && (shownSnapshot ?? snapshot).messages.length === 0 ? (
             <RoomWelcome
               spaceName={snapshot.name}
               // Until the first load is in, not until the socket is: an empty

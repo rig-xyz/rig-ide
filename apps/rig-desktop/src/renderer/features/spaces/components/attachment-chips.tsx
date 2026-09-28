@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { Popover } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/lib/utils';
-import { formatAttachmentBytes } from '@shared/rig/attachments';
 import {
   chipDetail,
   chipState,
@@ -18,8 +17,8 @@ import type { ComposerAttachments } from '../use-composer-attachments';
  * The composer's attachment chips (board 19, B): a preview or type badge,
  * the name (double-click to rename), size or the problem, and ✕. Amber is a
  * warning (sent, but only on your computer, or a secret you chose to share),
- * red holds Send. Many files fold into one summary chip. The footer counts
- * what's attached against the space's 50 MB.
+ * red holds Send. Many files fold into one summary chip. Under them, only
+ * the reason Send is held, when it is.
  */
 
 const BADGE_TONE: Record<string, string> = {
@@ -200,12 +199,11 @@ function SummaryChip({ chips, onClear }: { chips: ComposerAttachment[]; onClear:
 }
 
 export function AttachmentChips({ attachments }: { attachments: ComposerAttachments }) {
-  const { chips, space } = attachments;
+  const { chips } = attachments;
   if (chips.length === 0) return null;
   const large = isLargeBatch(chips);
   // Folded into one chip, the ones with a problem still show on their own so they can be removed.
   const shown = large ? chips.filter((c) => chipState(c) === 'blocked' || chipState(c) === 'warn') : chips;
-  const summary = composerSummary(chips);
   return (
     <div className="flex flex-col gap-1.5 px-3 pt-2.5" data-testid="attachment-chips">
       <div className="flex flex-wrap gap-2">
@@ -214,16 +212,12 @@ export function AttachmentChips({ attachments }: { attachments: ComposerAttachme
           <Chip key={chip.id} chip={chip} attachments={attachments} />
         ))}
       </div>
-      <p className="text-2xs text-text-muted" data-testid="attachment-footer">
-        {[summary.label, space?.usedBytes != null ? `space ${formatAttachmentBytes(space.usedBytes)} / ${formatAttachmentBytes(space.limitBytes)}` : '']
-          .filter(Boolean)
-          .join(' · ')}
-        {attachments.holdReason && attachments.holdReason !== 'Checking the files…' && (
-          <span className={cn(space?.overQuota || attachments.disabledReason ? 'text-danger' : 'text-text-muted')}>
-            {` · ${attachments.holdReason}`}
-          </span>
-        )}
-      </p>
+      {/* Only when Send is held, and only the one reason. */}
+      {attachments.holdReason && (
+        <p className="text-2xs text-danger" data-testid="attachment-hold-reason">
+          {attachments.holdReason}
+        </p>
+      )}
     </div>
   );
 }

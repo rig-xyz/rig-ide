@@ -1,8 +1,8 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ATTACHMENT_MAX_BYTES } from '@shared/rig/attachments';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ATTACHMENT_MAX_BYTES, quotaCheck } from '@shared/rig/attachments';
 import { ATTACHMENT_SYNC_EXCEPTIONS } from './rules';
 import { createAttachmentsService, type AttachmentsDeps } from './service';
 import type { ManifestSize } from './usage';
@@ -73,7 +73,7 @@ describe('prepare: space checks', () => {
     expect(result.space.status).toBe('ok');
   });
 
-  it('reports usage from the relay manifest plus unsynced attachments', async () => {
+  it('reports usage from the relay manifest plus unsynced attachments, separately from the file checks', async () => {
     mkdirSync(join(space, 'attachments'));
     file(join(space, 'attachments'), 'pending.bin', Buffer.alloc(300));
     file(join(space, 'attachments'), 'synced.bin', Buffer.alloc(200));
@@ -82,31 +82,31 @@ describe('prepare: space checks', () => {
       { path: 'attachments/synced.bin', size: 200 },
       { path: 'folder', size: null },
     ];
-    const result = await service({ manifest }).prepare('bnd_space', [{ source: file(outside, 'a.txt', 'hello') }]);
-    expect(result.space).toMatchObject({ usedBytes: 1500, usageSource: 'relay', addingBytes: 5, overQuota: false });
+    const fetchManifest = vi.fn(async () => manifest);
+    const svc = service({ fetchManifest });
+    const result = await svc.prepare('bnd_space', [{ source: file(outside, 'a.txt', 'hello') }]);
+    // The per-file checks never wait on the relay.
+    expect(fetchManifest).not.toHaveBeenCalled();
+    expect(result.space).toEqual({ status: 'ok', limitBytes: 50 * 1024 * 1024, addingBytes: 5 });
+    expect(await svc.usage('bnd_space')).toEqual({ usedBytes: 1500, usageSource: 'relay', limitBytes: 50 * 1024 * 1024 });
+    expect(await svc.usage('bnd_other')).toBeNull();
   });
 
-  it('flags going over the quota before anything is copied', async () => {
-    const result = await service({ manifest: [{ path: 'big.bin', size: 90 }], limitBytes: 100 }).prepare('bnd_space', [
-      { source: file(outside, 'a.txt', 'x'.repeat(20)) },
-    ]);
-    expect(result.space.overQuota).toBe(true);
-    expect(result.space.quotaMessage).toMatch(/over its/);
-    expect(attachments()).toEqual([]);
-  });
-
-  it("falls back to the sync daemon's state offline", async () => {
+  it("falls back to the sync daemon's state offline, and unknown usage counts as over (conservative)", async () => {
+    expect(await service({ manifest: null }).usage('bnd_space')).toMatchObject({ usedBytes: null, usageSource: null });
     mkdirSync(join(space, '.rig', 'tap'), { recursive: true });
     file(space, 'notes.md', Buffer.alloc(400));
     writeFileSync(join(space, '.rig', 'tap', 'state.local.db'), JSON.stringify({ version: 1, meta: {}, paths: { 'notes.md': { lastSeenHash: 'sha256:x', localDirty: false } } }));
-    const result = await service({ manifest: null }).prepare('bnd_space', [{ source: file(outside, 'a.txt', 'a') }]);
-    expect(result.space).toMatchObject({ usedBytes: 400, usageSource: 'local', overQuota: false });
+    expect(await service({ manifest: null }).usage('bnd_space')).toMatchObject({ usedBytes: 400, usageSource: 'local' });
   });
+});
 
-  it('treats unknown usage as over the quota (conservative)', async () => {
-    const result = await service({ manifest: null }).prepare('bnd_space', [{ source: file(outside, 'a.txt', 'a') }]);
-    expect(result.space).toMatchObject({ usedBytes: null, overQuota: true });
-    expect(result.space.quotaMessage).toMatch(/Couldn’t check/);
+describe('quotaCheck', () => {
+  it('is over when the files would cross the limit, or when usage is unknown', () => {
+    expect(quotaCheck(90, 20, 100)).toEqual({ overQuota: true, message: expect.stringMatching(/over its/) });
+    expect(quotaCheck(50, 20, 100)).toEqual({ overQuota: false });
+    expect(quotaCheck(null, 20, 100)).toEqual({ overQuota: true, message: expect.stringMatching(/Couldn’t check/) });
+    expect(quotaCheck(null, 0, 100)).toEqual({ overQuota: false });
   });
 });
 

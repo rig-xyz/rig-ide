@@ -13,6 +13,8 @@ import {
   type AttachmentPastedImage,
   type AttachmentPrepareResult,
   type AttachmentSpaceCheck,
+  type AttachmentUsage,
+  quotaCheck,
 } from '@shared/rig/attachments';
 import {
   findSameContent,
@@ -67,15 +69,6 @@ const PASTE_EXT: Record<string, string> = {
 
 const NOT_LINKED = 'This space isn’t on this computer yet — Link it to add files.';
 const VIEWER = 'Viewers can’t add files. Ask an owner or editor.';
-const USAGE_UNKNOWN = 'Couldn’t check how full the space is. Try again when you’re online.';
-
-function mb(bytes: number): string {
-  return `${Math.round(bytes / (1024 * 1024))} MB`;
-}
-
-function quotaMessage(used: number, limit: number): string {
-  return `This would put the space over its ${mb(limit)} (at ${mb(used)} now).`;
-}
 
 function copyFailure(error: unknown, source: string): AttachmentError {
   const code = (error as NodeJS.ErrnoException)?.code;
@@ -114,15 +107,7 @@ export function createAttachmentsService(deps: AttachmentsDeps) {
   async function prepare(bindingId: string, files: AttachmentInput[]): Promise<AttachmentPrepareResult> {
     const gate = await spaceGate(bindingId);
     if (!('root' in gate)) {
-      const space: AttachmentSpaceCheck = {
-        status: gate.status,
-        message: gate.message,
-        usedBytes: null,
-        usageSource: null,
-        limitBytes: limit,
-        addingBytes: 0,
-        overQuota: false,
-      };
+      const space: AttachmentSpaceCheck = { status: gate.status, message: gate.message, limitBytes: limit, addingBytes: 0 };
       return { space, files: [] };
     }
     const ctx = await loadSpaceContext(gate.root);
@@ -132,21 +117,16 @@ export function createAttachmentsService(deps: AttachmentsDeps) {
     const adding = verdicts
       .filter((v) => v.disposition === 'copy' && v.state !== 'blocked')
       .reduce((sum, v) => sum + (v.size ?? 0), 0);
-    // Nothing attached yet (the composer asking whether attaching is on): no usage read.
-    const usage = files.length > 0 ? await usageFor(bindingId, gate.root, false) : null;
-    const overQuota = adding > 0 && (usage === null || usage.usedBytes + adding > limit);
-    return {
-      space: {
-        status: 'ok',
-        usedBytes: usage?.usedBytes ?? null,
-        usageSource: usage?.source ?? null,
-        limitBytes: limit,
-        addingBytes: adding,
-        overQuota,
-        ...(overQuota ? { quotaMessage: usage ? quotaMessage(usage.usedBytes, limit) : USAGE_UNKNOWN } : {}),
-      },
-      files: verdicts,
-    };
+    // No usage read here: that may wait on the relay, and the chips shouldn't (see `usage`).
+    return { space: { status: 'ok', limitBytes: limit, addingBytes: adding }, files: verdicts };
+  }
+
+  /** How full the space is (cached briefly); null when the space isn't linked here. */
+  async function usage(bindingId: string): Promise<AttachmentUsage | null> {
+    const root = await deps.resolveSpaceRoot(bindingId);
+    if (!root) return null;
+    const value = await usageFor(bindingId, root, false);
+    return { usedBytes: value?.usedBytes ?? null, usageSource: value?.source ?? null, limitBytes: limit };
   }
 
   /** Appends the attachment sync exceptions to the space's `.tapignore` when any are missing. */
@@ -211,9 +191,9 @@ export function createAttachmentsService(deps: AttachmentsDeps) {
       .filter((i) => i.verdict.disposition === 'copy')
       .reduce((sum, i) => sum + (i.verdict.size ?? 0), 0);
     if (adding > 0) {
-      const usage = await usageFor(bindingId, gate.root, true);
-      if (!usage) return err({ kind: 'overQuota', message: USAGE_UNKNOWN });
-      if (usage.usedBytes + adding > limit) return err({ kind: 'overQuota', message: quotaMessage(usage.usedBytes, limit) });
+      const current = await usageFor(bindingId, gate.root, true);
+      const quota = quotaCheck(current?.usedBytes ?? null, adding, limit);
+      if (quota.overQuota) return err({ kind: 'overQuota', message: quota.message! });
     }
 
     // Files this commit created, removed again if a later one fails (a failed send leaves nothing behind).
@@ -297,7 +277,7 @@ export function createAttachmentsService(deps: AttachmentsDeps) {
     }
   }
 
-  return { prepare, commit, savePastedImage };
+  return { prepare, usage, commit, savePastedImage };
 }
 
 async function cleanOldPastes(root: string, nowMs: number): Promise<void> {

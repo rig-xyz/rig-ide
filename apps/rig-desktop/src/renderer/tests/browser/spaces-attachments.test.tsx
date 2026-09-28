@@ -14,7 +14,10 @@ const api = vi.hoisted(() => ({
   gate: { status: 'ok' as string, message: undefined as string | undefined },
   verdicts: new Map<string, Partial<AttachmentVerdict>>(),
   statuses: [] as AttachmentFileStatus[],
-  pick: vi.fn(async () => [] as string[]),
+  pick: vi.fn(async () => [] as Array<{ path: string; size: number | null }>),
+  usedBytes: 18 * 1024 * 1024 as number | null,
+  /** When set, `prepare` for files waits on it (checks still out). */
+  hold: null as Promise<void> | null,
   savePastedImage: vi.fn(async () => ({ success: true, data: { path: '/tmp/paste/Screenshot 14.52.png', name: 'Screenshot 14.52.png', size: 3 } })),
   status: vi.fn(),
 }));
@@ -32,15 +35,15 @@ vi.mock('@renderer/lib/ipc', () => ({
           api.status(args);
           return api.statuses;
         },
-        prepare: async ({ files }: { files: AttachmentInput[] }) => ({
+        usage: async () => ({ usedBytes: api.usedBytes, usageSource: 'relay', limitBytes: 50 * 1024 * 1024 }),
+        prepare: async ({ files }: { files: AttachmentInput[] }) => {
+          if (files.length && api.hold) await api.hold;
+          return {
           space: {
             status: api.gate.status,
             message: api.gate.message,
-            usedBytes: files.length ? 18 * 1024 * 1024 : null,
-            usageSource: files.length ? 'relay' : null,
             limitBytes: 50 * 1024 * 1024,
-            addingBytes: 0,
-            overQuota: false,
+            addingBytes: files.reduce((sum, f) => sum + ((api.verdicts.get(f.source)?.size as number | undefined) ?? 1024 * 1024), 0),
           },
           files: files.map((f) => {
             const name = f.name ?? f.source.split('/').pop()!;
@@ -60,7 +63,8 @@ vi.mock('@renderer/lib/ipc', () => ({
               ...(secret && f.shareAnyway ? { state: 'warn' } : {}),
             } satisfies AttachmentVerdict;
           }),
-        }),
+          };
+        },
       },
     },
   },
@@ -93,6 +97,8 @@ describe('Composer attachments', () => {
     api.gate = { status: 'ok', message: undefined };
     api.verdicts.clear();
     api.pick.mockClear();
+    api.usedBytes = 18 * 1024 * 1024;
+    api.hold = null;
     api.savePastedImage.mockClear();
   });
   afterEach(async () => {
@@ -100,22 +106,36 @@ describe('Composer attachments', () => {
     host.remove();
   });
 
-  it('the paperclip opens the picker; chips show the files and the footer counts them against the space', async () => {
-    api.pick.mockResolvedValueOnce(['/Users/me/Q3 board deck.pdf', '/Users/me/whiteboard.jpg']);
+  it('the paperclip opens the picker; chips show name and size at once, with no footer and no "checking"', async () => {
+    api.pick.mockResolvedValueOnce([
+      { path: '/Users/me/Q3 board deck.pdf', size: 4404019 },
+      { path: '/Users/me/whiteboard.jpg', size: 2048 },
+    ]);
+    let release!: () => void;
+    api.hold = new Promise<void>((resolve) => (release = resolve));
     const onSend = vi.fn();
     await act(async () => root.render(<ComposerWithFiles onSend={onSend} />));
     await settle();
     await act(async () => click(host.querySelector('[data-testid="composer-attach"]')!));
     await settle();
+    // Main hasn't answered yet: name and size already, no state label.
     const chips = host.querySelectorAll('[data-testid="attachment-chip"]');
     expect(chips).toHaveLength(2);
     expect(chips[0]!.textContent).toContain('Q3 board deck.pdf');
-    expect(host.querySelector('[data-testid="attachment-footer"]')!.textContent).toContain('2 files · 2.0 MB · space 18 MB / 50 MB');
+    expect(chips[0]!.textContent).toContain('4.2 MB');
+    expect(chips[1]!.textContent).toContain('2 KB');
+    expect(host.textContent).not.toContain('Checking');
+    expect(host.querySelector('[data-testid="attachment-footer"]')).toBeNull();
+    expect(host.querySelector('[data-testid="attachment-hold-reason"]')).toBeNull();
 
-    // Files alone can be sent; the chips go with the message and leave the composer.
+    // Send while the checks are out: it waits for them, then goes.
     const send = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.startsWith('Send'))!;
     expect(send.disabled).toBe(false);
     await act(async () => click(send));
+    expect(onSend).not.toHaveBeenCalled();
+    expect(send.getAttribute('aria-busy')).toBe('true');
+    await act(async () => release());
+    await settle();
     expect(onSend).toHaveBeenCalledOnce();
     const [text, ctx] = onSend.mock.calls[0]! as [string, ComposerSendContext];
     expect(text).toBe('');
@@ -123,8 +143,20 @@ describe('Composer attachments', () => {
     expect(host.querySelectorAll('[data-testid="attachment-chip"]')).toHaveLength(0);
   });
 
+  it("holds Send with one reason line when the files would put the space over its limit", async () => {
+    api.usedBytes = 49.5 * 1024 * 1024;
+    api.pick.mockResolvedValueOnce([{ path: '/Users/me/deck.pdf', size: 1024 * 1024 }]);
+    await act(async () => root.render(<ComposerWithFiles onSend={() => {}} />));
+    await settle();
+    await act(async () => click(host.querySelector('[data-testid="composer-attach"]')!));
+    await settle();
+    expect(host.querySelector('[data-testid="attachment-hold-reason"]')!.textContent).toBe('This would put the space over its 50 MB (at 50 MB now).');
+    const send = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.startsWith('Send'))!;
+    expect(send.disabled).toBe(true);
+  });
+
   it('a red chip holds Send until it is removed', async () => {
-    api.pick.mockResolvedValueOnce(['/Users/me/demo.mp4']);
+    api.pick.mockResolvedValueOnce([{ path: '/Users/me/demo.mp4', size: 31 * 1024 * 1024 }]);
     api.verdicts.set('/Users/me/demo.mp4', {
       size: 31 * 1024 * 1024,
       state: 'blocked',
@@ -144,7 +176,7 @@ describe('Composer attachments', () => {
   });
 
   it('a secret needs the typed "share" before it can go', async () => {
-    api.pick.mockResolvedValueOnce(['/Users/me/deploy.pem']);
+    api.pick.mockResolvedValueOnce([{ path: '/Users/me/deploy.pem', size: 100 }]);
     api.verdicts.set('/Users/me/deploy.pem', {
       state: 'blocked',
       problems: [{ kind: 'secret', message: 'This looks like a secret. Everyone in the space (and their agents) would get it.' }],
@@ -240,7 +272,7 @@ describe('Message cards', () => {
     ...over,
   });
 
-  async function render(snapshot: RoomSnapshot, ownId: string, onOpenFile = vi.fn()) {
+  async function render(snapshot: RoomSnapshot, ownId: string, onOpenFile = vi.fn(), thumbnail: (path: string) => Promise<string | null> = async () => null) {
     await act(async () =>
       root.render(
         <AttachmentSpaceContext.Provider
@@ -253,7 +285,7 @@ describe('Message cards', () => {
               api.status({ bindingId: 'bnd_1', files, withRelay });
               return api.statuses;
             },
-            thumbnail: async () => null,
+            thumbnail,
             reveal: () => {},
             copyText: () => {},
           }}
@@ -266,14 +298,16 @@ describe('Message cards', () => {
     return onOpenFile;
   }
 
-  it('your files say Syncing… until the sync daemon has them; a click opens one beside the chat', async () => {
+  it('your files say syncing until the sync daemon has them; a click opens one beside the chat', async () => {
     api.statuses = [{ path: 'attachments/Q3 board deck.pdf', exists: true, synced: false, onRelay: null }];
     const open = await render(snapshotWith([message({})]), 'dylan');
     const cards = host.querySelectorAll<HTMLElement>('[data-testid="attachment-card"]');
     expect(cards).toHaveLength(2);
-    expect(cards[0]!.textContent).toContain('18 pages · 4.2 MB');
-    expect(cards[0]!.textContent).toContain('Syncing…');
-    expect(cards[1]!.textContent).toContain('Only on your computer');
+    expect(cards[0]!.textContent).toContain('4.2 MB · 18 pages');
+    const status = cards[0]!.querySelector<HTMLElement>('[data-testid="attachment-status"]')!;
+    expect(status.textContent).toBe('syncing');
+    expect(status.title).toBe('Syncing…');
+    expect(cards[1]!.textContent).toContain('only on your computer');
     // Files only: the "Shared 2 files" text for older apps isn't shown twice.
     expect(host.querySelector('[data-testid="message-row"]')!.textContent).not.toContain('Shared 2 files');
     await act(async () => click(cards[0]!));
@@ -282,19 +316,70 @@ describe('Message cards', () => {
     expect(api.status).toHaveBeenLastCalledWith({ bindingId: 'bnd_1', files: [{ path: 'attachments/Q3 board deck.pdf', hash: 'sha256:d' }], withRelay: false });
   });
 
-  it("others see Arriving from the sender until the file is here, and whose computer a local-only file is on", async () => {
+  it("others see arriving until the file is here, and whose computer a local-only file is on", async () => {
     api.statuses = [{ path: 'attachments/Q3 board deck.pdf', exists: false, synced: null, onRelay: true }];
     await render(snapshotWith([message({})]), 'sam');
     const cards = host.querySelectorAll<HTMLElement>('[data-testid="attachment-card"]');
-    expect(cards[0]!.textContent).toContain('Arriving from Dylan…');
-    expect(cards[1]!.textContent).toContain('Only on Dylan’s computer');
+    const status = cards[0]!.querySelector<HTMLElement>('[data-testid="attachment-status"]')!;
+    expect(status.textContent).toBe('arriving');
+    expect(status.title).toBe('Arriving from Dylan…');
+    expect(cards[1]!.textContent).toContain('only on Dylan’s computer');
   });
 
   it('a message sent over the quota says so on your card', async () => {
     api.statuses = [{ path: 'attachments/Q3 board deck.pdf', exists: true, synced: false, onRelay: null, notSynced: 'overQuota' }];
     await render(snapshotWith([message({ meta: { kind: 'text', attachments: [deck] } , body: 'here it is' })]), 'dylan');
-    expect(host.textContent).toContain('Not synced: over the space’s 50 MB');
+    const status = host.querySelector<HTMLElement>('[data-testid="attachment-status"]')!;
+    expect(status.textContent).toBe('not synced · space full');
+    expect(status.title).toBe('Not synced: over the space’s 50 MB');
     expect(host.textContent).toContain('here it is');
+  });
+
+  it('lays files out like the chat: compact cards and bare thumbnails, right-aligned above your bubble, status never cut', async () => {
+    const shot: MessageAttachment = { name: 'Screenshot 14.52.png', size: 400_000, mime: 'image/png', kind: 'copied', path: 'attachments/Screenshot 14.52.png', hash: 'sha256:s' };
+    const notes: MessageAttachment = { name: 'notes.md', size: 2048, mime: 'text/markdown', kind: 'copied', path: 'attachments/notes.md', hash: 'sha256:n' };
+    api.statuses = [
+      { path: 'attachments/Screenshot 14.52.png', exists: true, synced: true, onRelay: null },
+      { path: 'attachments/notes.md', exists: true, synced: true, onRelay: null },
+    ];
+    // A 400×300 picture: shown at its own shape, no wider than 240 px.
+    const picture = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="teal"/></svg>')}`;
+    await render(
+      snapshotWith([message({ meta: { kind: 'text', attachments: [shot, notes] }, body: 'this layout is off' })]),
+      'dylan',
+      vi.fn(),
+      async (path) => (path.endsWith('.png') ? picture : null)
+    );
+    await settle();
+    await vi.waitFor(() => expect(host.querySelector('[data-kind="image"] img')).not.toBeNull());
+    // Tailwind isn't compiled in these tests, so the layout is checked through its classes.
+    const row = host.querySelector<HTMLElement>('[data-testid="message-row"]')!;
+    const thumb = row.querySelector<HTMLElement>('[data-testid="attachment-card"][data-kind="image"]')!;
+    const img = thumb.querySelector<HTMLImageElement>('img')!;
+    expect(img.src).toBe(picture);
+    // The picture itself at its own shape, capped, rounded like a bubble: no tile, no caption row.
+    expect(img.className).toContain('max-w-[240px]');
+    expect(img.className).toContain('max-h-[200px]');
+    expect(img.className).toContain('w-auto');
+    expect(thumb.querySelector('button')!.className).toContain('rounded-2xl');
+    expect(thumb.textContent).toBe('');
+    expect(thumb.querySelector<HTMLElement>('button')!.title).toBe('Screenshot 14.52.png · Synced');
+
+    // Other files: the compact card, one per line.
+    const card = row.querySelector<HTMLElement>('[data-testid="attachment-card"][data-kind="copied"]')!;
+    expect(card.className).toContain('h-[52px]');
+    expect(card.className).toContain('w-[260px]');
+    const status = card.querySelector<HTMLElement>('[data-testid="attachment-status"]')!;
+    expect(status.textContent).toBe('synced');
+    // The status never gives way (the size does).
+    expect(status.className).toContain('shrink-0');
+    expect(status.className).toContain('whitespace-nowrap');
+
+    // Your message: grouped right-aligned, directly above the bubble, in the same column as a reply header.
+    const group = row.querySelector<HTMLElement>('[data-testid="message-attachments"]')!;
+    expect(group.className).toContain('items-end');
+    expect(group.nextElementSibling).toBe(row.querySelector('[data-highlight-target]'));
+    expect(group.parentElement!.className).toContain('gap-1');
   });
 
   it('pending sends show their files as cards while they go', () => {

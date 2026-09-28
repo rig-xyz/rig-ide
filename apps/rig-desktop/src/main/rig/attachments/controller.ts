@@ -121,7 +121,7 @@ const service = createAttachmentsService({
 
 export const rigAttachmentsController = createRPCController({
   /** The native picker: several files, no folders. Empty when cancelled. */
-  pick: async (): Promise<string[]> => {
+  pick: async (): Promise<Array<{ path: string; size: number | null }>> => {
     const options: Electron.OpenDialogOptions = {
       title: 'Attach files',
       properties: ['openFile', 'multiSelections'],
@@ -129,7 +129,11 @@ export const rigAttachmentsController = createRPCController({
     try {
       const win = getMainWindow();
       const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
-      return result.canceled ? [] : result.filePaths;
+      if (result.canceled) return [];
+      // Sizes too, so a chip shows name and size before its checks come back.
+      return Promise.all(
+        result.filePaths.map(async (path) => ({ path, size: await stat(path).then((s) => (s.isFile() ? s.size : null), () => null) }))
+      );
     } catch (error) {
       log.warn('Rig attachments: picker failed', { error: String(error) });
       throw error;
@@ -137,6 +141,8 @@ export const rigAttachmentsController = createRPCController({
   },
   /** What each chip should say, and whether the space can take them. Copies nothing. */
   prepare: ({ bindingId, files }: { bindingId: string; files: AttachmentInput[] }) => service.prepare(bindingId, files),
+  /** How full the space is, for the pre-send quota check; separate from `prepare` since it may wait on the relay. */
+  usage: ({ bindingId }: { bindingId: string }) => service.usage(bindingId),
   /** At send: copy into `attachments/` (or link). All or nothing. */
   commit: ({ bindingId, files }: { bindingId: string; files: AttachmentInput[] }) => service.commit(bindingId, files),
   /** Where each attached file is (here, synced, held back, on the relay) for the message cards; null when the space isn't linked here. */

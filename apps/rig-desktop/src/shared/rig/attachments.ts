@@ -92,16 +92,44 @@ export type AttachmentSpaceCheck = {
   status: AttachmentSpaceStatus;
   /** Why attaching is off, when `status` isn't `ok`. */
   message?: string;
+  limitBytes: number;
+  /** Bytes these files would add (copies only; links, reuses and local-only files add nothing). */
+  addingBytes: number;
+};
+
+/** How full the space is, read separately from the per-file checks (it may take a relay round trip). */
+export type AttachmentUsage = {
   /** Bytes of current files in the space, or null when unknown (offline and no local sync state). */
   usedBytes: number | null;
   /** `relay`: the space's file list on the relay (what the quota counts), plus attachments not synced yet. `local`: this computer's sync state (offline estimate). */
   usageSource: 'relay' | 'local' | null;
   limitBytes: number;
-  /** Bytes these files would add (copies only; links, reuses and local-only files add nothing). */
-  addingBytes: number;
-  overQuota: boolean;
-  quotaMessage?: string;
 };
+
+const USAGE_UNKNOWN = 'Couldn’t check how full the space is. Try again when you’re online.';
+
+function wholeMb(bytes: number): string {
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
+}
+
+/**
+ * Whether adding `addingBytes` would put the space over its limit. Unknown
+ * usage counts as over (an over-quota upload stalls older sync daemons), so
+ * the check is conservative. Shared by the composer and `commit`.
+ */
+export function quotaCheck(
+  usedBytes: number | null,
+  addingBytes: number,
+  limitBytes: number
+): { overQuota: boolean; message?: string } {
+  if (addingBytes <= 0) return { overQuota: false };
+  if (usedBytes === null) return { overQuota: true, message: USAGE_UNKNOWN };
+  if (usedBytes + addingBytes <= limitBytes) return { overQuota: false };
+  return {
+    overQuota: true,
+    message: `This would put the space over its ${wholeMb(limitBytes)} (at ${wholeMb(usedBytes)} now).`,
+  };
+}
 
 export type AttachmentPrepareResult = {
   space: AttachmentSpaceCheck;

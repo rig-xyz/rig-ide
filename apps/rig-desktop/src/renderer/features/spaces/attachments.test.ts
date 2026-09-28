@@ -111,9 +111,9 @@ describe('cardStatus', () => {
   });
 
   it('keeps checking only while something can still change', () => {
-    expect(cardSettled({ label: 'Syncing…', tone: 'muted' }, file, true)).toBe(false);
-    expect(cardSettled({ label: 'Synced', tone: 'ok' }, file, true)).toBe(true);
-    expect(cardSettled({ label: 'Arriving from Dylan…', tone: 'muted' }, file, false)).toBe(false);
+    expect(cardSettled({ label: 'Syncing…', short: 'syncing', tone: 'muted' }, file, true)).toBe(false);
+    expect(cardSettled({ label: 'Synced', short: 'synced', tone: 'ok' }, file, true)).toBe(true);
+    expect(cardSettled({ label: 'Arriving from Dylan…', short: 'arriving', tone: 'muted' }, file, false)).toBe(false);
     expect(cardSettled(null, file, false)).toBe(true);
   });
 });
@@ -138,7 +138,9 @@ describe('composer chips', () => {
     expect(chipDetail(chip({ verdict: verdict({ size: 31 * 1024 * 1024, problems: [{ kind: 'tooLarge', message: 'x' }] }) }))).toBe(
       '31 MB · over 25 MB'
     );
-    expect(chipDetail(chip({ verdict: undefined }))).toBe('Checking…');
+    // Before main's checks: the size it was added with, no "checking" label.
+    expect(chipDetail(chip({ verdict: undefined }))).toBe('');
+    expect(chipDetail(chip({ verdict: undefined, size: 2048 }))).toBe('2 KB');
     expect(chipDetail(chip({ error: 'The disk is full.' }))).toBe('The disk is full.');
   });
 

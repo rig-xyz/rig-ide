@@ -599,6 +599,54 @@ describe('Room view — renders through loading into content', () => {
     }
   });
 
+  it('a new space leaves its welcome the moment you send, before the relay has the message', async () => {
+    const { ok } = await import('@emdash/shared');
+    const { rpc } = await import('@renderer/lib/ipc');
+    const { RelayRoomSource } = await import('@renderer/features/spaces/relay-room-source');
+    const { roomSourceCache } = await import('@renderer/features/spaces/room-source-cache');
+    const rig = rpc.rig as unknown as Record<string, unknown>;
+    rig.recent = { resolveLocalPaths: async () => ({}) };
+    const relay = {
+      mintRealtimeTicket: async () => ok({ ticket: 't', expiresAt: new Date(Date.now() + 600_000).toISOString() }),
+      listMembers: async () => ok([{ userId: 'u1', clerkUserId: null, name: 'Alice', email: null, role: 'owner', avatarUrl: null }]),
+      listMessages: async () => ok([]),
+      getSessionEvents: async () => ok({ run: null as never, events: [] }),
+      // Still uploading: the post never answers in this test.
+      postMessage: () => new Promise<never>(() => {}),
+      requestOwnAgent: async () => ok({} as never),
+    };
+    const quietProvider = { connect: () => {}, disconnect: () => {}, destroy: () => {}, sendStateless: () => {}, on: () => {}, off: () => {}, awareness: null };
+    try {
+      roomSourceCache.rememberConnection({ selfUserId: 'u1', wsUrl: 'wss://relay.test/v1/realtime' });
+      const lease = roomSourceCache.acquire('u1', 'b-new', () =>
+        new RelayRoomSource({
+          bindingId: 'b-new',
+          spaceName: '#new',
+          wsUrl: 'wss://relay.test/v1/realtime',
+          selfUserId: 'u1',
+          relay,
+          connectGraceMs: 60_000,
+          createProvider: () => quietProvider,
+        })
+      );
+      await vi.waitFor(() => expect(lease.source.getSnapshot().loaded).not.toBe(false));
+      lease.release();
+      await act(async () => root.render(<RoomView bindingId="b-new" spaceName="#new" />));
+      expect(host.querySelector('[data-testid="room-welcome"]')).not.toBeNull();
+
+      await setTextareaValue(host.querySelector('textarea'), 'first words');
+      await act(async () => {
+        host.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      });
+      expect(host.querySelector('[data-testid="room-welcome"]')).toBeNull();
+      const row = host.querySelector<HTMLElement>('[data-testid="message-row"][data-sending="true"]')!;
+      expect(row.textContent).toContain('first words');
+    } finally {
+      roomSourceCache.clear();
+      delete rig.recent;
+    }
+  });
+
   it('shows the opening skeleton, not a blank pane, while it still asks who you are', async () => {
     const { rpc } = await import('@renderer/lib/ipc');
     const connection = rpc.rig.spacesConnection as { getConnectionInfo: () => Promise<unknown> };
@@ -1956,6 +2004,28 @@ describe('Connectors — space panel', () => {
     await act(async () => click(host.querySelector('[data-testid="global-setup-line"]')!));
     expect(onOpenGlobalSetup).toHaveBeenCalledTimes(1);
     expect(onOpenGallery).not.toHaveBeenCalled();
+  });
+
+  it('sits right under the Agents row, as evenly spaced as the rows above it', async () => {
+    const snapshot = replayedSnapshot();
+    await act(async () => {
+      root.render(
+        <div className="flex flex-col">
+          <AgentRows snapshot={snapshot} selfUserId="bob" bindingId="space-rows-spacing" />
+          <ConnectorsSection snapshot={snapshot} selfUserId="bob" bindingId="space-rows-spacing" />
+        </div>
+      );
+    });
+    // Tailwind isn't compiled in these tests, so the spacing is checked through the rows' classes:
+    // both rows are the same fixed height, and neither adds space of its own above or below.
+    const agents = host.querySelector<HTMLElement>('[data-testid="agents-summary-row"]')!;
+    const connectors = host.querySelector<HTMLElement>('[data-testid="connectors-summary-row"]')!.parentElement!;
+    const spacing = /(^|\s)-?(m|mt|mb|my|pt|pb|py)-/;
+    for (const row of [agents, connectors]) {
+      expect(row.className).toContain('h-8');
+      expect(row.className).not.toMatch(spacing);
+    }
+    expect(host.querySelector('[data-testid="connectors-section"]')!.className).not.toMatch(spacing);
   });
 });
 

@@ -20,6 +20,8 @@ export { parseMessageAttachments, safeMessagePath };
 export type ComposerAttachment = {
   id: string;
   source: string;
+  /** Known the moment it's added (the dropped file, or a quick look at the picked one), before main's checks. */
+  size?: number;
   /** What the user typed on the chip, if they renamed it. */
   name?: string;
   shareAnyway?: boolean;
@@ -63,7 +65,12 @@ export function fallbackBody(attachments: readonly MessageAttachment[]): string 
   return attachments.length === 1 ? `Shared ${attachments[0]!.name}` : `Shared ${attachments.length} files`;
 }
 
-export type CardStatus = { label: string; tone: 'muted' | 'ok' | 'warn' | 'bad' };
+/**
+ * `label` is the full sentence (the tooltip); `short` is what fits on the
+ * card's one line without ever being cut ("syncing", "synced"…); `pending`
+ * marks a journey still under way (a small dot on an image).
+ */
+export type CardStatus = { label: string; short: string; tone: 'muted' | 'ok' | 'warn' | 'bad'; pending?: boolean };
 
 /** What a card says under the file: its journey to everyone, or null when there's nothing to say. */
 export function cardStatus(args: {
@@ -77,22 +84,24 @@ export function cardStatus(args: {
 }): CardStatus | null {
   const { attachment, mine, senderName, status } = args;
   if (attachment.kind === 'local-only') {
-    return { label: mine ? 'Only on your computer' : `Only on ${senderName}’s computer`, tone: 'muted' };
+    const label = mine ? 'Only on your computer' : `Only on ${senderName}’s computer`;
+    return { label, short: label.charAt(0).toLowerCase() + label.slice(1), tone: 'muted' };
   }
   if (args.sending) return null;
   if (!attachment.path || !status) return null;
+  const removed: CardStatus = { label: 'Removed from the space', short: 'removed', tone: 'bad' };
   if (mine) {
-    if (!status.exists) return { label: 'Removed from the space', tone: 'bad' };
-    if (status.notSynced === 'overQuota') return { label: 'Not synced: over the space’s 50 MB', tone: 'bad' };
-    if (status.notSynced === 'tooLarge') return { label: 'Not synced: too large', tone: 'bad' };
-    if (status.synced === null) return { label: 'Added', tone: 'muted' };
-    return status.synced ? { label: 'Synced', tone: 'ok' } : { label: 'Syncing…', tone: 'muted' };
+    if (!status.exists) return removed;
+    if (status.notSynced === 'overQuota') return { label: 'Not synced: over the space’s 50 MB', short: 'not synced · space full', tone: 'bad' };
+    if (status.notSynced === 'tooLarge') return { label: 'Not synced: too large', short: 'not synced · too large', tone: 'bad' };
+    if (status.synced === null) return { label: 'Added', short: 'added', tone: 'muted' };
+    return status.synced
+      ? { label: 'Synced', short: 'synced', tone: 'ok' }
+      : { label: 'Syncing…', short: 'syncing', tone: 'muted', pending: true };
   }
   if (status.exists) return null;
-  if (status.onRelay === false && args.messageAgeMs > ARRIVING_GRACE_MS) {
-    return { label: 'Removed from the space', tone: 'bad' };
-  }
-  return { label: `Arriving from ${senderName}…`, tone: 'muted' };
+  if (status.onRelay === false && args.messageAgeMs > ARRIVING_GRACE_MS) return removed;
+  return { label: `Arriving from ${senderName}…`, short: 'arriving', tone: 'muted', pending: true };
 }
 
 /** Whether a card's status can still change on its own (worth checking again). */
@@ -104,7 +113,7 @@ export function cardSettled(status: CardStatus | null, attachment: MessageAttach
 
 /** "3 files · 6.3 MB", counting what would actually be sent. */
 export function composerSummary(chips: readonly ComposerAttachment[]): { count: number; bytes: number; label: string } {
-  const bytes = chips.reduce((sum, chip) => sum + (chip.verdict?.size ?? 0), 0);
+  const bytes = chips.reduce((sum, chip) => sum + (chipSize(chip) ?? 0), 0);
   const count = chips.length;
   return { count, bytes, label: `${count} ${count === 1 ? 'file' : 'files'} · ${formatAttachmentBytes(bytes)}` };
 }
@@ -121,18 +130,24 @@ export function chipState(chip: ComposerAttachment): 'pending' | 'ok' | 'warn' |
   return chip.verdict ? chip.verdict.state : 'pending';
 }
 
-/** What a chip's second line says (size, pages, or its problem). */
+/** The chip's size: main's answer once it's in, else what was known when it was added. */
+export function chipSize(chip: ComposerAttachment): number | null {
+  return chip.verdict?.size ?? chip.size ?? null;
+}
+
+/** What a chip's second line says: size (and pages), or its problem. Never a "checking" label. */
 export function chipDetail(chip: ComposerAttachment): string {
   if (chip.error) return chip.error;
   const v = chip.verdict;
-  if (!v) return 'Checking…';
+  const bytes = chipSize(chip);
+  const size = bytes !== null ? formatAttachmentBytes(bytes) : '';
+  if (!v) return size;
   const problem = v.problems.find((p) => p.kind !== 'secret' || !chip.shareAnyway);
-  const size = v.size !== null ? formatAttachmentBytes(v.size) : '';
   if (problem?.kind === 'tooLarge') return `${size} · over 25 MB`;
   if (problem?.kind === 'secret') return 'Looks like a secret';
-  if (problem?.kind === 'localOnly') return 'Only on your computer';
+  if (problem?.kind === 'localOnly') return `${size} · only on your computer`;
   if (problem) return problem.message;
-  const extra = v.pageCount ? `${v.pageCount} ${v.pageCount === 1 ? 'page' : 'pages'}` : v.disposition === 'link' ? 'In the space' : '';
+  const extra = v.pageCount ? `${v.pageCount} ${v.pageCount === 1 ? 'page' : 'pages'}` : v.disposition === 'link' ? 'in the space' : '';
   return [size, extra].filter(Boolean).join(' · ');
 }
 

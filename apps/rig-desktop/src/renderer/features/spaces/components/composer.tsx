@@ -324,11 +324,19 @@ export function Composer({
   // Many files, or a lot of bytes, ask once before going.
   const [confirmingBatch, setConfirmingBatch] = useState(false);
   useEffect(() => setConfirmingBatch(false), [chips.length]);
-  const canSend = (!!value.trim() || hasFiles) && (!hasFiles || !!attachments?.ready);
+  const held = hasFiles && !!attachments?.holdReason;
+  const canSend = (!!value.trim() || hasFiles) && !held;
+  // Sent while the files' checks are still out: it goes as soon as they're in (or not, if one comes back red).
+  const [waitingToSend, setWaitingToSend] = useState(false);
   const send = () => {
     const trimmed = value.trim();
     if (!trimmed && !hasFiles) return;
-    if (hasFiles && !attachments?.ready) return;
+    if (held) return;
+    if (hasFiles && attachments?.pending) {
+      setWaitingToSend(true);
+      return;
+    }
+    setWaitingToSend(false);
     if (hasFiles && isLargeBatch(chips) && !confirmingBatch) {
       setConfirmingBatch(true);
       return;
@@ -345,6 +353,15 @@ export function Composer({
     setTyping(false);
     setConfirmingBatch(false);
   };
+
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  const filesReady = !!attachments?.ready;
+  useEffect(() => {
+    if (!waitingToSend) return;
+    if (!hasFiles || held) setWaitingToSend(false);
+    else if (filesReady) sendRef.current();
+  }, [waitingToSend, filesReady, held, hasFiles]);
 
   const mentionedBusy = busyAgents.find((agent) => new RegExp(`@${agent}\\b`, 'i').test(value));
 
@@ -581,8 +598,9 @@ export function Composer({
           <button
             type="button"
             onClick={send}
-            disabled={!canSend}
-            title={hasFiles && attachments?.holdReason ? attachments.holdReason : undefined}
+            disabled={!canSend || waitingToSend}
+            aria-busy={waitingToSend || undefined}
+            title={held ? (attachments?.holdReason ?? undefined) : undefined}
             className={cn(
               'ml-auto flex h-6.5 items-center gap-1.5 rounded-control px-2.5 text-xs transition-colors disabled:opacity-60',
               canSend ? 'bg-accent text-accent-ink' : 'bg-bg-2 text-text-secondary'
