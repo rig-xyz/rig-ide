@@ -33,6 +33,11 @@ describe('codex acp behavior', () => {
       expect(result.env?.ELECTRON_RUN_AS_NODE).toBe('1');
     });
 
+    it("keeps session MCP servers that share a name with the user's Codex config", () => {
+      const result = acpBehavior().buildSpawn(spawnCtx);
+      expect(result.env?.DISABLE_MCP_CONFIG_FILTERING).toBe('true');
+    });
+
     it('uses process.execPath as command', () => {
       const result = acpBehavior().buildSpawn(spawnCtx);
       expect(result.command).toBe(process.execPath);

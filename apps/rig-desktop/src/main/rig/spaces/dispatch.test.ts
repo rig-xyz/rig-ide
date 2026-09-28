@@ -14,6 +14,7 @@ import {
   type SpacesAcpSessions,
   type StoredSpaceSession,
 } from './dispatch';
+import { ownerApprovals } from './rig-tools';
 import type {
   AgentRequest,
   RelayApiError,
@@ -1643,16 +1644,41 @@ describe('rig tools', () => {
       await vi.waitFor(() => expect(without.requested()).toEqual(['perm-1']));
       expect(without.fake.resolvedPermissions).toEqual([]);
     });
+
+    it("always asks for rig_update_settings, and hands its tool the owner's allow, never a decline", async () => {
+      const { fake, dispatcher, runId, conversationId, requested } = await startTurn('claude');
+      const key = 'binding-1::owner-1::claude';
+      ownerApprovals.take(key);
+      fake.emitPermissionRequest(conversationId, request('mcp__rig__rig_update_settings', 'settings-1'));
+      fake.emitPermissionRequest(conversationId, request('mcp__rig__rig_update_settings', 'settings-2'));
+      await vi.waitFor(() => expect(requested()).toEqual(['settings-1', 'settings-2']));
+      expect(fake.resolvedPermissions).toEqual([]);
+
+      await dispatcher.resolvePermission(runId, 'settings-1', 'reject-once');
+      expect(ownerApprovals.take(key)).toBe(false);
+      await dispatcher.resolvePermission(runId, 'settings-2', 'allow-once');
+      expect(ownerApprovals.take(key)).toBe(true);
+      expect(ownerApprovals.take(key)).toBe(false);
+    });
   });
 
   it('points the agent at the tools only when it has them', () => {
     expect(spacesHiddenContext(makeRequest())).not.toContain('rig_invite');
     const context = spacesHiddenContext(makeRequest(), [], true);
-    expect(context).toContain('use them instead of the `rig` CLI (including `rig share`)');
-    // Two added lines (rig tools, browser tools): the skill pointer and the CLI invite line stay as they were.
+    expect(context).toContain('use them instead of the `rig` CLI (including `rig share` and `rig chat`)');
+    // Two added lines (rig tools, browser tools): the skill pointer and the CLI invite line stay.
     expect(context.split('\n')).toHaveLength(spacesHiddenContext(makeRequest()).split('\n').length + 2);
     expect(context).toContain('use browser_pins, browser_read and browser_screenshot with its link');
     expect(context).toContain('run `rig share <email>`');
+  });
+
+  it('sends older or full chat messages to rig_chat_history, not the skill, when the agent has the tools', () => {
+    const withTools = spacesHiddenContext(makeRequest(), [], true);
+    expect(withTools).toContain('for older messages, a message in full, or to find what someone said, use rig_chat_history');
+    expect(withTools).toContain('(who has access, file comments, history, sync), read the rig skill');
+    const without = spacesHiddenContext(makeRequest());
+    expect(without).not.toContain('rig_chat_history');
+    expect(without).toContain('(who has access, the chat, file comments, history, sync), read the rig skill');
   });
 });
 

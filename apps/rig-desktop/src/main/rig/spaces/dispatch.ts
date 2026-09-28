@@ -12,7 +12,7 @@ import { log } from '@main/lib/logger';
 import { connectorById, RIG_TOOLS_SERVER, RUN_CONNECTORS_EVENT, type ConnectorGap } from '@shared/spaces/connectors';
 import { RUN_PRIVACY_EVENT, type LocalRunEvent, type RoomSees } from '@shared/spaces/room-sees';
 import type { SessionConnectors } from '../connectors/connections';
-import { preApprovedRigToolOption, type RigToolScope } from './rig-tools';
+import { ALWAYS_ASK_RIG_TOOLS, ownerApprovals, preApprovedRigToolOption, rigToolOf, type RigToolScope } from './rig-tools';
 import type { AgentRequest, SessionAgent, SessionStatus, SpacesRelayApi } from './relay-api';
 import { markRequestSettled, type ClaimDispatchResult } from './request-claim';
 import { SessionEventPublisher } from './session-publisher';
@@ -300,14 +300,16 @@ export function spacesHiddenContext(
     // don't reliably act on (Codex's listing cuts the rig skill's triggers
     // off), so point at the file itself. The packaged app writes this copy
     // at every launch (`installBundledRigSkill`).
-    'For anything else rig does here (who has access, the chat, file comments, history, sync), read the rig skill at `~/.agents/skills/rig/SKILL.md` before running `rig` commands; `rig --help` lists them all.',
+    // With rig tools, the chat has its own (rig_chat_history, below).
+    `For anything else rig does here (who has access, ${rigTools ? '' : 'the chat, '}file comments, history, sync), read the rig skill at \`~/.agents/skills/rig/SKILL.md\` before running \`rig\` commands; \`rig --help\` lists them all.`,
     // Claude artifact links can't be web-fetched (they need the viewer's
     // claude.ai login); Claude Docs ones open through the owner's connector.
     "A claude.ai/artifact/… or claude.ai/code/artifact/… link is usually a Claude Doc: if you have Claude Docs tools, open it with them (never WebFetch), as your owner, to read, edit or comment on it. If it's refused, say plainly that it isn't shared with your owner (or isn't a Doc) instead of guessing its contents.",
   ];
   if (rigTools) {
     lines.push(
-      "You also have rig's own tools for this space (rig_invite, rig_people, rig_recent_changes, rig_file_comments, rig_comment): use them instead of the `rig` CLI (including `rig share`) to invite people, see who's here, see what changed and read or add file comments; fall back to the CLI only if a tool fails.",
+      "You also have rig's own tools for this space (rig_invite, rig_people, rig_recent_changes, rig_chat_history, rig_file_comments, rig_comment, rig_rename_space, rig_settings, rig_update_settings): use them instead of the `rig` CLI (including `rig share` and `rig chat`) to invite people, see who's here, see what changed, read the chat, read or add file comments, rename the space, and read or change your own settings here; fall back to the CLI only if a tool fails. " +
+        "The recent room conversation you're given is only the latest messages, with long ones cut: for older messages, a message in full, or to find what someone said, use rig_chat_history.",
       'To look at a web page posted or pinned in the room (a Claude artifact, a Google Doc, any link), use browser_pins, browser_read and browser_screenshot with its link: they open it as your owner, read-only, without moving anyone\'s view. Read a board in full or screenshot it rather than guessing at small text.'
     );
   }
@@ -689,13 +691,16 @@ export function createSpacesDispatcher(deps: {
   }
 
   async function resolvePermission(runId: string, requestId: string, optionId: string): Promise<boolean> {
-    for (const session of sessions.values()) {
+    for (const [key, session] of sessions) {
       const held = session.heldPermissions.get(requestId);
       if (!held || held.turn.runId !== runId) continue;
       const option = held.request.options.find((o) => o.optionId === optionId);
       if (!option) return false;
       session.heldPermissions.delete(requestId);
       notifyPermissions(session, held.turn);
+      // The owner just allowed an always-ask rig tool call: the receipt that call needs (`ownerApprovals`).
+      const rigTool = rigToolOf(held.request.toolCall.title);
+      if (rigTool && ALWAYS_ASK_RIG_TOOLS.has(rigTool) && !option.kind.startsWith('reject')) ownerApprovals.record(key);
       // Recorded before resolving: once the tool runs, the turn can end (and
       // its publisher finish) before the resolve call even returns.
       recordPermissionDecided(

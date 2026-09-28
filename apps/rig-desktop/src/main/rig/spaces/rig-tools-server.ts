@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 import type { AcpMcpServerWire } from '@emdash/core/acp';
 import { log } from '@main/lib/logger';
+import { z } from 'zod';
 import { RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
 import { createRigTools, runRigTool, type RigTool, type RigToolScope, type RigToolsBackend } from './rig-tools';
 
@@ -27,10 +28,12 @@ import { createRigTools, runRigTool, type RigTool, type RigToolScope, type RigTo
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
-const INSTRUCTIONS =
-  'Rig tools for the shared rig space this session works in. They act as your owner, with their permissions, on this space only. ' +
-  "Prefer them over the `rig` CLI to invite someone (rig_invite), see who's in the space (rig_people), see what changed recently (rig_recent_changes), " +
-  'and read or add comments on a file (rig_file_comments, rig_comment).';
+/**
+ * Kept to one sentence: Codex shows it ahead of every tool's description in
+ * its (truncated) tool listing, so a long one made all the rig tools look
+ * alike. What each tool does leads its own description instead.
+ */
+const INSTRUCTIONS = "Rig's tools for this space, acting as your owner: prefer them over the `rig` CLI.";
 
 export interface RigToolsServer {
   /**
@@ -113,7 +116,12 @@ export function createRigToolsServer(deps: { backend: RigToolsBackend; now?: () 
         {
           title: tool.annotations.title,
           description: tool.description,
-          inputSchema: tool.inputSchema,
+          // A plain shape drops unknown arguments; a tool that must refuse them gets a strict object.
+          inputSchema: tool.unknownArgs
+            ? z.strictObject(tool.inputSchema, {
+                error: (issue) => (issue.code === 'unrecognized_keys' ? `Can't change ${issue.keys.join(', ')}. ${tool.unknownArgs}` : undefined),
+              })
+            : tool.inputSchema,
           annotations: tool.annotations,
         },
         async (input: Record<string, unknown>) => {

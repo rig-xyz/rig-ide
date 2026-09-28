@@ -1,22 +1,30 @@
 import { readFile, stat } from 'node:fs/promises';
 import { err, ok, type Result } from '@emdash/shared';
+import { events } from '@main/lib/events';
 import type { RigFileNode } from '@shared/rig/files';
+import { rigRenamedChannel } from '@shared/rig/workspace';
+import { spacesAgentConfigChangedChannel } from '@shared/spaces/agent-settings';
+import { roomSeesFor } from '@shared/spaces/room-sees';
 import { findBindingConfig } from '../binding';
+import { rigSettingsStore } from '../settings-instance';
 import { rigCommentsController } from '../comments';
 import { rigFileRootRegistry } from '../file-root-registry';
 import { rigFilesController } from '../files';
 import { rigPulseController } from '../pulse';
+import { renameRig } from '../rig-controls';
 import { rigShareController } from '../rig-share';
 import { browserRigTools } from '../pages/browser-rig-tools';
+import { finalAnswerFromEvents } from './dispatch';
 import { createHttpSpacesRelayApi } from './relay-api';
-import type { RigToolsBackend } from './rig-tools';
+import { ownerApprovals, rigToolScopeKey, type RigToolsBackend } from './rig-tools';
 import { createRigToolsServer } from './rig-tools-server';
 
 /**
  * Boot-only wiring for the rig tools server: the real backends, each the one
  * the desktop already uses for the same thing (the Share popover's invite,
  * the Room's member and invite lists, Details → Changes' file listing and
- * Pulse line, the doc margin's comments). Kept out of `rig-tools.ts` and
+ * Pulse line, the doc margin's comments, the row menu's Rename…, the Room's
+ * message list and run logs). Kept out of `rig-tools.ts` and
  * `rig-tools-server.ts` for the same reason as `dispatch-controller-instance.ts`:
  * these modules touch Electron at load time, so nothing under test may import
  * this file.
@@ -78,6 +86,52 @@ const backend: RigToolsBackend = {
     rigCommentsController.create({ absPath, body, anchor, authorKind: 'agent', meta }),
   replyComment: ({ absPath, parentId, body, meta }) =>
     rigCommentsController.reply({ absPath, parentId, body, authorKind: 'agent', meta }),
+  renameSpace: async (bindingId, root, name) => {
+    const renamed = await renameRig(bindingId, root, name);
+    // The Rename dialog refreshes the rig lists itself; an agent's rename tells every window to.
+    if (renamed.success) events.emit(rigRenamedChannel, { bindingId, name: renamed.data.name });
+    return renamed;
+  },
+  listMessages: (bindingId, query) => api.listMessages(bindingId, query),
+  runAnswer: async (bindingId, runId) => {
+    const log = await api.getSessionEvents(bindingId, runId);
+    if (!log.success) return null;
+    return { agent: log.data.run.agent, text: finalAnswerFromEvents(log.data.events), endedAt: log.data.run.endedAt };
+  },
+  // The agent settings pill's own path. Imported on use: the dispatch controller imports this module.
+  agentConfig: async ({ bindingId, ownerUserId, agent }) => {
+    const { spacesDispatchController } = await import('./dispatch-controller-instance');
+    const config = await spacesDispatchController.agentConfig(bindingId, ownerUserId, agent);
+    return config.success ? config : err({ message: config.error });
+  },
+  setAgentConfig: async ({ bindingId, ownerUserId, agent }, change) => {
+    const { spacesDispatchController } = await import('./dispatch-controller-instance');
+    const config = await spacesDispatchController.setAgentConfig(bindingId, ownerUserId, agent, change);
+    if (!config.success) return err({ message: config.error });
+    // The pill changes its own copy; an agent's change tells every open pill.
+    events.emit(spacesAgentConfigChangedChannel, { bindingId, agent, config: config.data });
+    return config;
+  },
+  // The pill's save path: settings-changed reaches its windows, and each turn's trace filter reads it.
+  roomSees: (bindingId) => roomSeesFor(rigSettingsStore.get().spacesRoomSees, bindingId),
+  setRoomSees: (bindingId, level) => {
+    rigSettingsStore.set({ spacesRoomSees: { [bindingId]: level } });
+  },
+  // The connectors panel's calls; the relay posts the "added/removed" line the Room refreshes on.
+  listSpaceConnectors: async (bindingId) => {
+    const listed = api.listConnectors ? await api.listConnectors(bindingId) : ok([]);
+    return listed.success ? ok(listed.data.map((c) => c.connectorId)) : err(listed.error);
+  },
+  addSpaceConnector: async (bindingId, connectorId) => {
+    if (!api.addConnector) return err({ message: "this relay can't add connectors" });
+    const added = await api.addConnector(bindingId, connectorId);
+    return added.success ? ok(undefined) : err(added.error);
+  },
+  removeSpaceConnector: async (bindingId, connectorId) => {
+    if (!api.removeConnector) return err({ message: "this relay can't remove connectors" });
+    return api.removeConnector(bindingId, connectorId);
+  },
+  takeOwnerApproval: (scope) => ownerApprovals.take(rigToolScopeKey(scope)),
 };
 
 export const rigToolsServer = createRigToolsServer({ backend, extraTools: browserRigTools(api) });

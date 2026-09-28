@@ -3,7 +3,9 @@ import ReactDOM from 'react-dom/client';
 import { Toaster } from 'sonner';
 import { RecoveryBoundary } from '@renderer/features/recovery/recovery-boundary';
 import { installRendererErrorReporting } from '@renderer/features/recovery/renderer-error-reporting';
+import { events } from '@renderer/lib/ipc';
 import { TooltipProvider } from '@renderer/lib/ui/tooltip';
+import { rigRenamedChannel } from '@shared/rig/workspace';
 import { App } from './App';
 import './index.css';
 // @emdash/chat-ui's own base styles, then this app's host-override binding
@@ -15,6 +17,12 @@ import '@renderer/lib/chat/chat-theme.css';
 
 const queryClient = new QueryClient();
 installRendererErrorReporting();
+
+// An agent renamed a space: refresh the rig lists, as the Rename dialog does after its own rename.
+events.on(rigRenamedChannel, () => {
+  void queryClient.invalidateQueries({ queryKey: ['rig', 'recent', 'list'] });
+  void queryClient.invalidateQueries({ queryKey: ['rig', 'account', 'workspaces'] });
+});
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <RecoveryBoundary scope="Application">

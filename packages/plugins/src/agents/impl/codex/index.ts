@@ -146,6 +146,10 @@ export const provider = registerPluginBehavior(plugin, {
       env: {
         ELECTRON_RUN_AS_NODE: '1',
         CODEX_PATH: ctx.cli,
+        // codex-acp otherwise drops a per-session MCP server (e.g. rig's own `rig`
+        // tools) whose name matches one in the user's own Codex config
+        // (`shouldDeduplicateMcpConflicts` in its dist/index.js).
+        DISABLE_MCP_CONFIG_FILTERING: 'true',
       },
     }),
     connect: (io, toClient) => {

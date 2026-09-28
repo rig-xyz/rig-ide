@@ -5,6 +5,8 @@ import { events, rpc } from '@renderer/lib/ipc';
 import { formatClock } from '@renderer/lib/time-format';
 import { cn } from '@renderer/lib/utils';
 import type { ConnectorId, GlobalServer } from '@shared/spaces/connectors';
+import { rigSettingsChangedChannel } from '@shared/rig/settings';
+import { spacesAgentConfigChangedChannel } from '@shared/spaces/agent-settings';
 import { roomSeesFor, spacesLocalRunEventChannel } from '@shared/spaces/room-sees';
 import { connectorsApi } from '../connectors-api';
 import { buildRoomFeed } from '../fixtures/room-feed';
@@ -524,6 +526,13 @@ export function RoomView({
               if (result.success) configCache.current.set(agent, Promise.resolve(result.data));
               return result.success ? result.data : { error: result.error };
             },
+            // Your agent changed its own settings (rig_update_settings).
+            watch: (agent, onChange) =>
+              events.on(spacesAgentConfigChangedChannel, (changed) => {
+                if (changed.bindingId !== bindingId || changed.agent !== agent) return;
+                configCache.current.set(agent, Promise.resolve(changed.config));
+                onChange(changed.config);
+              }),
             // "Room sees" is this space's, on this computer: every agent of yours here shares it.
             roomSees: {
               load: async () => roomSeesFor((await rpc.rig.settings.get()).spacesRoomSees, bindingId),
@@ -532,6 +541,8 @@ export function RoomView({
                   .set({ spacesRoomSees: { [bindingId]: level } })
                   .then(() => true)
                   .catch(() => false),
+              watch: (onChange) =>
+                events.on(rigSettingsChangedChannel, (settings) => onChange(roomSeesFor(settings.spacesRoomSees, bindingId))),
             },
           }
         : null,

@@ -24,6 +24,17 @@ function fakeBackend(): RigToolsBackend {
     readText: async () => null,
     createComment: vi.fn(),
     replyComment: vi.fn(),
+    renameSpace: vi.fn(),
+    listMessages: vi.fn(async () => ok([])),
+    runAnswer: async () => null,
+    agentConfig: async () => ok({ model: null, effort: null, mode: null }),
+    setAgentConfig: vi.fn(),
+    roomSees: () => 'steps',
+    setRoomSees: vi.fn(),
+    listSpaceConnectors: async () => ok([]),
+    addSpaceConnector: vi.fn(),
+    removeSpaceConnector: vi.fn(),
+    takeOwnerApproval: () => false,
   };
 }
 
@@ -134,22 +145,35 @@ describe('rig tools server', () => {
       'rig_invite',
       'rig_people',
       'rig_recent_changes',
+      'rig_chat_history',
       'rig_file_comments',
       'rig_comment',
+      'rig_rename_space',
+      'rig_settings',
+      'rig_update_settings',
     ]);
     expect(tools.find((t) => t.name === 'rig_people')?.annotations?.readOnlyHint).toBe(true);
-    expect(client.getInstructions()).toContain('Prefer them over the `rig` CLI');
+    // Permissions mode and auto-approve aren't settings it takes: no extra arguments at all.
+    expect(tools.find((t) => t.name === 'rig_update_settings')?.inputSchema).toMatchObject({ additionalProperties: false });
+    expect(tools.find((t) => t.name === 'rig_chat_history')?.annotations?.readOnlyHint).toBe(true);
+    // One short sentence: Codex shows it ahead of each tool's own description.
+    expect(client.getInstructions()).toBe("Rig's tools for this space, acting as your owner: prefer them over the `rig` CLI.");
 
     const result = await client.callTool({ name: 'rig_people', arguments: {} });
     expect(result.isError).toBeFalsy();
     expect((result.content as Array<{ text: string }>)[0]!.text).toContain('Dylan in b1');
     expect(backend.listMembers).toHaveBeenCalledWith('b1');
+    const chat = await client.callTool({ name: 'rig_chat_history', arguments: { tail: 5 } });
+    expect((chat.content as Array<{ text: string }>)[0]!.text).toBe("No messages in this space's chat yet.");
+    expect(backend.listMessages).toHaveBeenCalledWith('b1', { latest: 5 });
     await client.close();
 
     // Another space's token acts on that space.
     const other = await connect(await server.serverFor(OTHER_SPACE));
     const otherResult = await other.callTool({ name: 'rig_people', arguments: {} });
     expect((otherResult.content as Array<{ text: string }>)[0]!.text).toContain('Dylan in b2');
+    await other.callTool({ name: 'rig_chat_history', arguments: {} });
+    expect(backend.listMessages).toHaveBeenLastCalledWith('b2', { latest: 30 });
     await other.close();
   });
 
@@ -182,6 +206,20 @@ describe('rig tools server', () => {
     const client = await connect(await server.serverFor(DYLAN));
     const result = await client.callTool({ name: 'rig_invite', arguments: { email: 'hugo@acme.co', role: 'owner' } });
     expect(result.isError).toBe(true);
+    await client.close();
+  });
+
+  it('refuses permissions mode and auto-approve in rig_update_settings, saying the owner changes those', async () => {
+    const backend = fakeBackend();
+    server = createRigToolsServer({ backend });
+    const client = await connect(await server.serverFor(DYLAN));
+    const result = await client.callTool({ name: 'rig_update_settings', arguments: { mode: 'bypassPermissions', auto_approve: true } });
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0]!.text;
+    expect(text).toContain("Can't change mode, auto_approve.");
+    // The SDK quotes the validation issue as JSON, so the message's own quotes come escaped.
+    expect(text).toContain("Permissions mode and \\\"Auto-approve agent actions\\\" are your owner's to change themselves");
+    expect(backend.setAgentConfig).not.toHaveBeenCalled();
     await client.close();
   });
 

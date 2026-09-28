@@ -23,8 +23,15 @@ export type AgentSettingsApi = {
   change: (agent: AgentKind, change: AgentConfigChange) => Promise<AgentConfig | { error: string }>;
   /** Makes a pick your default for this agent everywhere (new chats and spaces). */
   remember?: (agent: AgentKind, change: AgentConfigChange) => void;
+  /** Calls back with the agent's new settings when they change from elsewhere (its own `rig_update_settings`). */
+  watch?: (agent: AgentKind, onChange: (config: AgentConfig) => void) => () => void;
   /** "Room sees" in this space: how much of your agents' work other members see. Kept on this computer. */
-  roomSees?: { load: () => Promise<RoomSees>; change: (level: RoomSees) => Promise<boolean> };
+  roomSees?: {
+    load: () => Promise<RoomSees>;
+    change: (level: RoomSees) => Promise<boolean>;
+    /** Calls back with the level whenever the saved settings change (the pill, or your agent's `rig_update_settings`). */
+    watch?: (onChange: (level: RoomSees) => void) => () => void;
+  };
 };
 
 /** Provided by the Room (it knows the space and can reach the app); absent in the scripted demo. */
@@ -267,6 +274,7 @@ function useAgentConfig(agent: AgentKind) {
   const [config, setConfig] = useState<AgentConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  useEffect(() => api?.watch?.(agent, setConfig), [api, agent]);
   const warm = () => {
     if (!api || config) return;
     void api.load(agent).then((loaded) => {
@@ -429,8 +437,10 @@ export function AgentConfigRow({
       .load()
       .then((level) => alive && setRoomSees(level))
       .catch(() => {});
+    const unwatch = api.roomSees.watch?.(setRoomSees);
     return () => {
       alive = false;
+      unwatch?.();
     };
   }, [expanded, api]);
   const pickRoomSees = (value: string) => {

@@ -2,12 +2,14 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { AcpPermissionRequest } from '@emdash/core/acp';
 import { err, ok, type Result } from '@emdash/shared';
 import { z } from 'zod';
-import { RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
+import { CONNECTORS, connectorById, isConnectorId, RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
+import { ROOM_SEES_LEVELS, type RoomSees } from '@shared/spaces/room-sees';
 import { filterToContentOnly } from '@shared/rig/file-navigator-categories';
 import type { RigCommentAnchor, RigCommentMessage } from '@shared/rig/comments';
 import type { RigFileNode } from '@shared/rig/files';
 import type { RigInviteMinted, RigInviteRole } from '@shared/rig/rig-share';
-import type { RoomInviteRow, RoomMemberRow, SessionAgent } from './relay-api';
+import type { AgentConfig, AgentConfigChoice } from './dispatch';
+import type { RoomInviteRow, RoomMemberRow, RoomMessageRow, SessionAgent } from './relay-api';
 
 /**
  * Rig tools: first-class tools a room agent calls directly (invite someone,
@@ -24,7 +26,9 @@ import type { RoomInviteRow, RoomMemberRow, SessionAgent } from './relay-api';
  * No new backend: each tool reuses what the desktop already does — the Share
  * popover's invite, the Room's member and invite lists, Details → Changes
  * (the space's files by last change, and Pulse's one-line story of who did
- * what), and the doc margin's comments layer. `RigToolsBackend` is that seam,
+ * what), the doc margin's comments layer, the row menu's Rename… (a
+ * `rig.toml` edit that syncs to everyone), and the Room's own message list
+ * and run logs for the chat. `RigToolsBackend` is that seam,
  * faked in tests; `rig-tools-instance.ts` wires the real one.
  */
 
@@ -40,14 +44,30 @@ export type RigToolScope = {
 
 /**
  * Rig's own tools a room agent runs without asking its owner: the read-only
- * ones (who's here, what changed lately, a file's comments). `rig_invite` and
- * `rig_comment` act on the space, so they still ask.
+ * ones (who's here, what changed lately, a file's comments, the chat).
+ * `rig_invite` and `rig_comment` act on the space, so they still ask.
  */
 export const PRE_APPROVED_RIG_TOOLS: ReadonlySet<string> = new Set([
   'rig_people',
   'rig_recent_changes',
   'rig_file_comments',
+  'rig_chat_history',
+  'rig_settings',
 ]);
+
+/**
+ * Rig tools never answered without the owner, whatever else is on: not
+ * pre-approved here, and a change of theirs that widens who sees or reaches
+ * what also needs the owner's own fresh "allow" (`ownerApprovals`), which an
+ * agent's never-ask permission mode or an "allow always" can't stand in for.
+ */
+export const ALWAYS_ASK_RIG_TOOLS: ReadonlySet<string> = new Set(['rig_update_settings']);
+
+/** `rig_people` from a rig tool call's title as agents report it (Claude `mcp__rig__rig_people`, Codex `mcp.rig.rig_people`); null for any other tool. */
+export function rigToolOf(title: string): string | null {
+  const match = new RegExp(`^mcp__${RIG_TOOLS_SERVER}__(.+)$|^mcp\\.${RIG_TOOLS_SERVER}\\.(.+)$`).exec(title);
+  return match ? (match[1] ?? match[2]!) : null;
+}
 
 /** The browser tools (`pages/browser-tools.ts`) only read a page as the owner: no clicks, no typing. */
 export const PRE_APPROVED_BROWSER_TOOLS: ReadonlySet<string> = new Set(['browser_pins', 'browser_read', 'browser_screenshot']);
@@ -72,9 +92,42 @@ const PRE_APPROVED_TOOL_NAMES = new Set([
  * allow), which waits for the owner as before.
  */
 export function preApprovedRigToolOption(request: AcpPermissionRequest): string | null {
+  const rigTool = rigToolOf(request.toolCall.title);
+  if (rigTool && ALWAYS_ASK_RIG_TOOLS.has(rigTool)) return null;
   if (!PRE_APPROVED_TOOL_NAMES.has(request.toolCall.title)) return null;
   return request.options.find((option) => option.kind === 'allow_once')?.optionId ?? null;
 }
+
+/** One session's key (space, member, agent): the dispatcher's and the rig tools server's. */
+export function rigToolScopeKey(scope: Pick<RigToolScope, 'bindingId' | 'ownerUserId' | 'agent'>): string {
+  return `${scope.bindingId}::${scope.ownerUserId}::${scope.agent}`;
+}
+
+/** How long the owner's "allow" stays good for the call it answered. */
+const OWNER_APPROVAL_TTL_MS = 2 * 60_000;
+
+/**
+ * The owner's own "allow" on an always-ask rig tool call, as a one-use
+ * receipt per session. The dispatcher records one when the owner allows the
+ * call on their card (`resolvePermission`); the tool takes it when it runs.
+ * No receipt (the agent's mode never asks, an earlier "allow always", or it's
+ * stale) means the owner didn't just approve this call.
+ */
+export function createOwnerApprovals(now: () => number = Date.now) {
+  const at = new Map<string, number>();
+  return {
+    record(key: string): void {
+      at.set(key, now());
+    },
+    take(key: string): boolean {
+      const when = at.get(key);
+      at.delete(key);
+      return when !== undefined && now() - when <= OWNER_APPROVAL_TTL_MS;
+    },
+  };
+}
+
+export const ownerApprovals = createOwnerApprovals();
 
 type Failure = { message: string };
 
@@ -107,6 +160,27 @@ export interface RigToolsBackend {
     body: string;
     meta: Record<string, unknown>;
   }): Promise<Result<RigCommentMessage, Failure>>;
+  /** The row menu's Rename…: sets the name in the space's `rig.toml` (whose folder is `root`), which syncs to every member. */
+  renameSpace(bindingId: string, root: string, name: string): Promise<Result<{ name: string }, Failure>>;
+  /** The space's chat as the Room loads it (`listMessages`): the newest `latest` rows, or up to `limit` rows after a seq; oldest first either way. */
+  listMessages(bindingId: string, query: { latest?: number; after?: string; limit?: number }): Promise<Result<RoomMessageRow[], Failure>>;
+  /** An agent run's final answer (read from its log, as the dispatcher's room context does), its agent and end time; null when unreadable. */
+  runAnswer(bindingId: string, runId: string): Promise<{ agent: SessionAgent; text: string; endedAt: string | null } | null>;
+  /** The session's own agent settings in its space: the agent settings pill's `agentConfig`. */
+  agentConfig(scope: RigToolScope): Promise<Result<AgentConfig, Failure>>;
+  /** The pill's `setAgentConfig` (model / effort; applies from the next turn), for the session's own agent only. */
+  setAgentConfig(scope: RigToolScope, change: { model?: string; effort?: string }): Promise<Result<AgentConfig, Failure>>;
+  /** "Chat sees" in a space, on this computer (`RigSettings.spacesRoomSees`). */
+  roomSees(bindingId: string): RoomSees;
+  /** Saves it the way the pill does, so the pill and `trace-privacy.ts` pick it up. */
+  setRoomSees(bindingId: string, level: RoomSees): void;
+  /** The connectors on in a space (the connectors panel's list): ids. */
+  listSpaceConnectors(bindingId: string): Promise<Result<string[], Failure>>;
+  /** The connectors panel's add / remove (owner or editor; the relay refuses a viewer). */
+  addSpaceConnector(bindingId: string, connectorId: string): Promise<Result<void, Failure>>;
+  removeSpaceConnector(bindingId: string, connectorId: string): Promise<Result<void, Failure>>;
+  /** Takes the owner's fresh approval of this session's always-ask call (`ownerApprovals`): true once, when they just allowed it. */
+  takeOwnerApproval(scope: RigToolScope): boolean;
 }
 
 export type RigToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: 'image/png' };
@@ -118,11 +192,15 @@ export type RigTool = {
   name: string;
   description: string;
   inputSchema: z.ZodRawShape;
+  /** When set, any argument outside `inputSchema` is refused with this message instead of being dropped. */
+  unknownArgs?: string;
   annotations: { title: string; readOnlyHint: boolean; destructiveHint?: boolean; openWorldHint?: boolean };
   run: (scope: RigToolScope, input: Record<string, unknown>) => Promise<RigToolResult>;
 };
 
 const RECENT_FILES_MAX = 25;
+/** A space name is a one-line label (the `# name` in the bar and the Home rail). */
+export const SPACE_NAME_MAX = 80;
 /** Context kept around a new comment's quote: the CLI's and the doc margin's (`renderer/features/docs/comments/anchors.ts`). */
 const ANCHOR_CONTEXT = 32;
 
@@ -195,6 +273,139 @@ function agentLabel(agent: SessionAgent): string {
   return agent === 'claude' ? 'claude-code' : agent;
 }
 
+const CHAT_TAIL_DEFAULT = 30;
+const CHAT_TAIL_MAX = 200;
+/** The relay's largest page of messages (it caps `latest` and `limit` at 500); also how many one `query` searches. */
+const RELAY_PAGE = 500;
+/** Roughly the most one rig_chat_history call returns, so a long chat never floods the agent's context. */
+export const CHAT_HISTORY_MAX_CHARS = 40_000;
+/** Relay requests one call may make paging back through a long chat. */
+const CHAT_MAX_REQUESTS = 20;
+/** Run answers read at once (each is a run-log fetch). */
+const ANSWER_BATCH = 8;
+
+/** "Claude" for the agent names runs and agent-written messages carry. */
+function agentName(agent: unknown): string {
+  if (agent === 'claude' || agent === 'claude-code') return 'Claude';
+  if (agent === 'codex') return 'Codex';
+  return typeof agent === 'string' && agent ? agent : 'agent';
+}
+
+/**
+ * Up to `count` chat rows before seq `before` (or the newest), oldest first,
+ * and whether older ones may exist. The relay only gives the newest N
+ * (`latest`) or pages forward (`after`), and seqs are shared by every space,
+ * so rows older than its newest page are found by walking forward from
+ * ever-earlier seqs.
+ */
+async function chatWindow(
+  backend: RigToolsBackend,
+  bindingId: string,
+  before: number | undefined,
+  count: number
+): Promise<Result<{ rows: RoomMessageRow[]; older: boolean }, Failure>> {
+  const latest = await backend.listMessages(bindingId, { latest: before === undefined ? count : RELAY_PAGE });
+  if (!latest.success) return latest;
+  if (before === undefined) return ok({ rows: latest.data, older: latest.data.length >= count });
+  const below = latest.data.filter((row) => row.seq < before);
+  const whole = latest.data.length < RELAY_PAGE;
+  if (whole || below.length >= count) return ok({ rows: below.slice(-count), older: !whole || below.length > count });
+
+  let requests = 1;
+  let span = 2 * Math.max(1_000, before - latest.data[0]!.seq);
+  while (requests < CHAT_MAX_REQUESTS) {
+    const from = Math.max(0, before - span);
+    const rows: RoomMessageRow[] = [];
+    let dropped = false;
+    let after = from;
+    let reached = false;
+    while (!reached && requests < CHAT_MAX_REQUESTS) {
+      const page = await backend.listMessages(bindingId, { after: String(after), limit: RELAY_PAGE });
+      requests += 1;
+      if (!page.success) return page;
+      for (const row of page.data) {
+        if (row.seq >= before) {
+          reached = true;
+          break;
+        }
+        rows.push(row);
+      }
+      if (rows.length > count) {
+        rows.splice(0, rows.length - count);
+        dropped = true;
+      }
+      if (page.data.length < RELAY_PAGE) reached = true;
+      else after = page.data.at(-1)!.seq;
+    }
+    if (!reached) break;
+    if (rows.length >= count || from === 0) return ok({ rows, older: dropped || from > 0 });
+    span *= 4;
+  }
+  return err({ message: `the chat before #${before} is too long to page back through in one call` });
+}
+
+/** What each "chat sees" level shows other members, narrowest first (`ROOM_SEES_LEVELS`). */
+const CHAT_SEES_MEANING: Record<RoomSees, string> = {
+  answer: 'only your final reply',
+  steps: 'your steps, not what your tools returned',
+  everything: 'every step and result',
+};
+
+const UPDATE_SETTINGS_KEYS: ReadonlySet<string> = new Set(['model', 'effort', 'chat_sees', 'connectors']);
+
+const SETTINGS_OUT_OF_SCOPE =
+  "rig_update_settings only changes model, effort, chat_sees and connectors. Permissions mode and \"Auto-approve agent actions\" are your owner's to change themselves, in the agent's settings.";
+
+const NEEDS_OWNER_APPROVAL =
+  "Raising chat sees or turning a connector on or off needs your owner's approval every time, and they didn't just approve this call (their permission settings may skip asking). Ask them to allow it when prompted, or to change it themselves in the space panel.";
+
+export type SettingsChange = {
+  model?: string;
+  effort?: string;
+  chat_sees?: RoomSees;
+  connectors?: { enable?: readonly string[]; disable?: readonly string[] };
+};
+
+/**
+ * The parts of a settings change that widen who sees or reaches what (chat
+ * sees raised, a connector turned on): these always need the owner's own
+ * approval, however the agent's permissions are set. Empty for a change that
+ * only narrows, or only touches model and effort.
+ */
+export function wideningParts(change: SettingsChange, current: { chatSees: RoomSees; connectors: readonly string[] }): string[] {
+  const parts: string[] = [];
+  if (change.chat_sees && ROOM_SEES_LEVELS.indexOf(change.chat_sees) > ROOM_SEES_LEVELS.indexOf(current.chatSees)) {
+    parts.push(`chat sees ${current.chatSees} → ${change.chat_sees}`);
+  }
+  for (const id of change.connectors?.enable ?? []) {
+    if (!current.connectors.includes(id)) parts.push(`turn on ${connectorById(id)?.name ?? id}`);
+  }
+  return parts;
+}
+
+function optionName(option: { id: string; name: string }): string {
+  return option.name && option.name !== option.id ? `${option.id} (${option.name})` : option.id;
+}
+
+function selectedName(group: AgentConfigChoice | null): string {
+  const option = group?.options.find((o) => o.id === group.selected);
+  return option ? optionName(option) : (group?.selected ?? 'not set');
+}
+
+/** A choice's id from what the agent gave: its id, or its id or name in any case. */
+function pickOption(group: AgentConfigChoice, value: string): string | null {
+  const exact = group.options.find((o) => o.id === value);
+  if (exact) return exact.id;
+  const lower = value.toLowerCase();
+  return group.options.find((o) => o.id.toLowerCase() === lower || o.name.toLowerCase() === lower)?.id ?? null;
+}
+
+/** What a query matches: a message's text, and a file comment's file and passage. */
+function chatHaystack(row: RoomMessageRow): string {
+  const meta = row.meta ?? {};
+  return [row.body, row.path ?? meta.path, row.quote ?? meta.quote].filter((s) => typeof s === 'string').join('\n').toLowerCase();
+}
+
 export function createRigTools(backend: RigToolsBackend, now: () => number = Date.now): RigTool[] {
   return [
     {
@@ -258,7 +469,7 @@ export function createRigTools(backend: RigToolsBackend, now: () => number = Dat
     {
       name: 'rig_recent_changes',
       description:
-        "What changed recently in this rig space: the files changed in the last `hours` (default 24), newest first, and rig's one-line summary of who (people and their agents) did what. " +
+        "List the files changed recently in this rig space and who did what: files changed in the last `hours` (default 24), newest first, and rig's one-line summary of who (people and their agents) did what. " +
         "Use it when asked what's new, what changed, or what people have been working on. For one file's full history, use `rig history <path>`.",
       inputSchema: {
         hours: z.number().int().min(1).max(24 * 14).optional().describe('How far back to look, in hours (default 24).'),
@@ -284,6 +495,120 @@ export function createRigTools(backend: RigToolsBackend, now: () => number = Dat
           lines.push(`${changed.length} ${changed.length === 1 ? 'file' : 'files'} changed in the last ${hours} h, newest first:`);
           for (const f of changed.slice(0, RECENT_FILES_MAX)) lines.push(`- ${f.relPath} (${ago(f.mtimeMs!, at)})`);
           if (changed.length > RECENT_FILES_MAX) lines.push(`- …and ${changed.length - RECENT_FILES_MAX} more`);
+        }
+        return { text: lines.join('\n') };
+      },
+    },
+    {
+      name: 'rig_chat_history',
+      description:
+        "Read this space's chat history in full: messages from people and agents (with each agent's reply), file comments and joins, oldest first, each with its #seq, time, author and kind. " +
+        'Use it whenever you need chat older than the recent messages in your context, a message in full, or to find what someone said, instead of `rig chat`. ' +
+        `tail is how many messages (default ${CHAT_TAIL_DEFAULT}, max ${CHAT_TAIL_MAX}); before_seq pages back (pass the oldest #seq you have). ` +
+        `query keeps only messages whose text, file or quoted passage contains it (any case; agents' replies aren't searched), within the ${RELAY_PAGE} messages before before_seq.`,
+      inputSchema: {
+        tail: z.number().int().min(1).max(CHAT_TAIL_MAX).optional().describe(`How many messages, newest last (default ${CHAT_TAIL_DEFAULT}).`),
+        before_seq: z.number().int().min(1).optional().describe('Only messages before this #seq, to page back.'),
+        query: z.string().optional().describe('Text to search for (case-insensitive).'),
+      },
+      annotations: { title: "This space's chat", readOnlyHint: true },
+      run: async (scope, input) => {
+        const tail = typeof input.tail === 'number' ? input.tail : CHAT_TAIL_DEFAULT;
+        const before = typeof input.before_seq === 'number' ? input.before_seq : undefined;
+        const rawQuery = typeof input.query === 'string' ? input.query.trim() : '';
+        const query = rawQuery.toLowerCase();
+        const [members, fetched] = await Promise.all([
+          backend.listMembers(scope.bindingId),
+          chatWindow(backend, scope.bindingId, before, query ? RELAY_PAGE : tail),
+        ]);
+        if (!fetched.success) return failed(`Couldn't load the space's chat: ${fetched.error.message}`);
+        const rows = fetched.data.rows;
+
+        // Message authors carry a Clerk id; members carry both ids (the Room's own mapping).
+        const names = new Map<string, string>();
+        for (const m of members.success ? members.data : []) {
+          const name = m.name ?? m.email?.split('@')[0] ?? 'someone';
+          names.set(m.userId, name);
+          if (m.clerkUserId) names.set(m.clerkUserId, name);
+        }
+        const byId = new Map(rows.map((row) => [row.id, row]));
+        const matches = query ? rows.filter((row) => chatHaystack(row).includes(query)) : rows;
+        const selected = matches.slice(-tail);
+
+        const entry = async (row: RoomMessageRow): Promise<string | null> => {
+          const meta = row.meta ?? {};
+          const person = names.get(row.author.userId ?? '') ?? row.author.name ?? 'someone';
+          const by = row.author.kind === 'agent' ? `${person}'s ${agentName(meta.agent)}` : person;
+          const head = (at: string, who: string, kind: string) => `#${row.seq} · ${at} · ${who} · ${kind}`;
+          if (row.kind === 'session') {
+            const runId = typeof meta.runId === 'string' ? meta.runId : null;
+            const run = runId ? await backend.runAnswer(scope.bindingId, runId).catch(() => null) : null;
+            const agent = `${person}'s ${agentName(run?.agent)}`;
+            const ask = `${head(row.createdAt, person, `asked ${agent}`)}\n${row.body}`;
+            return run?.text ? `${ask}\n\n${head(run.endedAt ?? row.createdAt, agent, 'reply')}\n${run.text}` : ask;
+          }
+          if (!row.body) return null; // deleted
+          const parent = row.parentId ? byId.get(row.parentId) : undefined;
+          // Doc comments share the chat (as in the Room): a reply carries no path, its thread's root does.
+          const path = row.path ?? (typeof meta.path === 'string' ? meta.path : null) ?? parent?.path ?? null;
+          if (path || row.kind === 'comment_mirror') {
+            const on = path ? ` on ${path}` : '';
+            const quote = row.quote ?? (typeof meta.quote === 'string' ? meta.quote : null);
+            const text = row.parentId
+              ? `replied${on} — ${row.body}`
+              : `commented${on}${quote ? `: “${oneLine(quote).slice(0, 200)}”` : ''} — ${row.body}`;
+            return `${head(row.createdAt, by, 'comment')}\n${text}`;
+          }
+          return `${head(row.createdAt, by, row.kind === 'text' ? 'message' : row.kind)}\n${row.body}`;
+        };
+
+        // Newest first until the budget runs out, so a cut always drops the oldest.
+        const blocks: string[] = [];
+        let used = 0;
+        let oldestShown: number | null = null;
+        let cut = false;
+        for (let end = selected.length; end > 0 && !cut; end -= ANSWER_BATCH) {
+          const batch = selected.slice(Math.max(0, end - ANSWER_BATCH), end).reverse();
+          const rendered = await Promise.all(batch.map(entry));
+          for (const [i, block] of rendered.entries()) {
+            if (block === null) continue;
+            if (used + block.length > CHAT_HISTORY_MAX_CHARS) {
+              if (blocks.length === 0) {
+                blocks.push(`${block.slice(0, CHAT_HISTORY_MAX_CHARS)}\n…(cut: this message is too long to show in full)`);
+                oldestShown = batch[i]!.seq;
+              }
+              cut = true;
+              break;
+            }
+            blocks.push(block);
+            used += block.length + 2;
+            oldestShown = batch[i]!.seq;
+          }
+        }
+        blocks.reverse();
+
+        const hidden = cut || matches.length > selected.length;
+        const older = fetched.data.older || hidden;
+        const nextBefore = hidden ? oldestShown : (rows[0]?.seq ?? null);
+        const lines: string[] = [];
+        if (query) {
+          const searched = rows.length > 0 ? ` (#${rows[0]!.seq}–#${rows.at(-1)!.seq})` : '';
+          lines.push(
+            blocks.length === 0
+              ? `No messages matching "${rawQuery}" in the ${rows.length} messages searched${searched}.`
+              : `${matches.length} of the ${rows.length} messages searched${searched} match "${rawQuery}"; ${blocks.length} shown, oldest first:`
+          );
+        } else if (blocks.length === 0) {
+          lines.push(before === undefined ? "No messages in this space's chat yet." : `No messages before #${before}.`);
+        } else {
+          lines.push(`This space's chat, oldest first (${blocks.length} ${blocks.length === 1 ? 'message' : 'messages'}):`);
+        }
+        if (blocks.length > 0) lines.push('', blocks.join('\n\n'));
+        if (cut) lines.push('', `(Stopped at about ${CHAT_HISTORY_MAX_CHARS / 1000}k characters.)`);
+        if (older && nextBefore !== null) {
+          lines.push('', `${query ? 'To search' : 'For'} older messages, call rig_chat_history with before_seq=${nextBefore}.`);
+        } else if (rows.length > 0) {
+          lines.push('', "That's the start of the chat.");
         }
         return { text: lines.join('\n') };
       },
@@ -359,6 +684,196 @@ export function createRigTools(backend: RigToolsBackend, now: () => number = Dat
         const posted = await backend.createComment({ absPath, body, anchor, meta });
         if (!posted.success) return failed(`Couldn't post the comment on ${relPath}: ${posted.error.message}`);
         return { text: `Commented on ${relPath} (thread ${posted.data.id}).` };
+      },
+    },
+    {
+      name: 'rig_rename_space',
+      description:
+        "Rename this rig space: the new name shows for everyone in it. Use it whenever you're asked to rename the space (or give it a name), instead of editing rig.toml yourself: the request is the go-ahead. " +
+        `name is the new name, one line, up to ${SPACE_NAME_MAX} characters. ` +
+        'Owners and editors can rename; if your owner is a viewer, the result says so.',
+      inputSchema: {
+        name: z.string().describe(`The new name, e.g. Launch planning (up to ${SPACE_NAME_MAX} characters).`),
+      },
+      annotations: { title: 'Rename this space', readOnlyHint: false, destructiveHint: false },
+      run: async (scope, input) => {
+        const name = String(input.name ?? '').replace(/\s+/g, ' ').trim();
+        if (!name) return failed('The space needs a name: give some text.');
+        if (name.length > SPACE_NAME_MAX) {
+          return failed(`That name is ${name.length} characters; keep it to ${SPACE_NAME_MAX} or fewer.`);
+        }
+        if (backend.bindingAt(scope.cwd) !== scope.bindingId) {
+          return failed("This space's folder on this device isn't linked to the space any more, so it wasn't renamed.");
+        }
+        // Renaming edits the space's shared rig.toml, so it takes edit rights: a viewer can't.
+        const members = await backend.listMembers(scope.bindingId);
+        if (!members.success) return failed(`Couldn't check your owner's role in this space, so it wasn't renamed: ${members.error.message}`);
+        const role = members.data.find((m) => m.userId === scope.ownerUserId)?.role;
+        if (!role) return failed("Your owner isn't a member of this space any more, so it wasn't renamed.");
+        if (role === 'viewer') {
+          return failed("Your owner is a viewer in this space, so they can't rename it. Ask an owner or editor to.");
+        }
+        const renamed = await backend.renameSpace(scope.bindingId, scope.cwd, name);
+        if (!renamed.success) return failed(`Couldn't rename the space: ${renamed.error.message}`);
+        return { text: `Renamed this space to "${renamed.data.name}". Everyone in it will see the new name.` };
+      },
+    },
+    {
+      name: 'rig_settings',
+      description:
+        "Read your own agent settings in this space: model, effort, permissions, how much of your work the chat sees, and the space's connectors, with the valid choices for each. " +
+        'Use it when asked about your settings, and before changing them with rig_update_settings.',
+      inputSchema: {},
+      annotations: { title: 'Your settings in this space', readOnlyHint: true },
+      run: async (scope) => {
+        const [config, connectors] = await Promise.all([backend.agentConfig(scope), backend.listSpaceConnectors(scope.bindingId)]);
+        const chatSees = backend.roomSees(scope.bindingId);
+        const lines = [`Your owner's ${agentName(scope.agent)} in this space (only yours: other members' agents have their own settings):`];
+        if (config.success) {
+          for (const [label, group] of [['Model', config.data.model], ['Effort', config.data.effort]] as const) {
+            lines.push(group ? `- ${label}: ${selectedName(group)}; choices: ${group.options.map(optionName).join(', ')}` : `- ${label}: not offered by this agent`);
+          }
+          if (config.data.mode) lines.push(`- Permissions: ${selectedName(config.data.mode)} (your owner changes this themselves, in the space panel)`);
+        } else {
+          lines.push(`- Model, effort, permissions: couldn't read them (${config.error.message})`);
+        }
+        lines.push(
+          `- Chat sees: ${chatSees}, ${CHAT_SEES_MEANING[chatSees]}; choices: ${ROOM_SEES_LEVELS.map((level) => `${level} (${CHAT_SEES_MEANING[level]})`).join(', ')}`
+        );
+        if (connectors.success) {
+          const on = connectors.data.filter(isConnectorId);
+          lines.push(
+            `- Connectors on in this space (the space's, for every member, each with their own login): ${on.length > 0 ? on.map((id) => `${id} (${connectorById(id)!.name})`).join(', ') : 'none'}`,
+            `  Others that can be turned on: ${CONNECTORS.filter((c) => !on.includes(c.id)).map((c) => c.id).join(', ')}`
+          );
+        } else {
+          lines.push(`- Connectors: couldn't read them (${connectors.error.message})`);
+        }
+        lines.push(
+          '',
+          "Change model, effort, chat sees or connectors with rig_update_settings. Raising chat sees or turning a connector on always needs your owner's approval."
+        );
+        return { text: lines.join('\n') };
+      },
+    },
+    {
+      name: 'rig_update_settings',
+      description:
+        "Change your own agent settings in this space: model, effort, chat_sees (answer, steps or everything: how much of your work other members see) and the space's connectors (for every member). " +
+        'Use it when your owner asks you to change these; rig_settings lists the valid values. Give only what changes; the rest stays. ' +
+        "Raising chat_sees or turning a connector on always needs your owner's approval. Permissions mode and auto-approve can't be changed here: your owner changes those themselves.",
+      inputSchema: {
+        model: z.string().optional().describe('A model id from rig_settings.'),
+        effort: z.string().optional().describe('An effort id from rig_settings.'),
+        chat_sees: z.enum(['answer', 'steps', 'everything']).optional().describe('How much of your work other members see.'),
+        connectors: z
+          .object({
+            enable: z.array(z.string()).optional().describe('Connector ids to turn on, e.g. linear.'),
+            disable: z.array(z.string()).optional().describe('Connector ids to turn off.'),
+          })
+          .strict()
+          .optional()
+          .describe("The space's connectors to turn on or off."),
+      },
+      unknownArgs: SETTINGS_OUT_OF_SCOPE,
+      annotations: { title: 'Change your settings in this space', readOnlyHint: false, destructiveHint: false },
+      run: async (scope, input) => {
+        const unknown = Object.keys(input).filter((key) => !UPDATE_SETTINGS_KEYS.has(key));
+        if (unknown.length > 0) return failed(`Can't change ${unknown.join(', ')}. ${SETTINGS_OUT_OF_SCOPE}`);
+        // Taken first, whatever happens next: an approval answers this one call only.
+        const approved = backend.takeOwnerApproval(scope);
+        const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+        const wanted = { model: text(input.model), effort: text(input.effort) };
+        const chatSees = ROOM_SEES_LEVELS.find((level) => level === input.chat_sees);
+        const ids = (value: unknown) => [...new Set(Array.isArray(value) ? value.map(text).filter(Boolean) : [])];
+        const connectorsInput = (input.connectors ?? {}) as { enable?: unknown; disable?: unknown };
+        const enable = ids(connectorsInput.enable);
+        const disable = ids(connectorsInput.disable);
+        if (!wanted.model && !wanted.effort && !chatSees && enable.length === 0 && disable.length === 0) {
+          return failed('Nothing to change: give model, effort, chat_sees or connectors.');
+        }
+        const unknownIds = [...enable, ...disable].filter((id) => !isConnectorId(id));
+        if (unknownIds.length > 0) {
+          return failed(`No connector called ${unknownIds.join(', ')}, so nothing changed. rig_settings lists the ids (e.g. ${CONNECTORS.slice(0, 3).map((c) => c.id).join(', ')}).`);
+        }
+        if (enable.some((id) => disable.includes(id))) return failed('A connector is in both enable and disable, so nothing changed.');
+
+        // Model and effort: validated against the agent's own choices before anything changes.
+        let config: AgentConfig | null = null;
+        const configChange: { model?: string; effort?: string } = {};
+        if (wanted.model || wanted.effort) {
+          const loaded = await backend.agentConfig(scope);
+          if (!loaded.success) return failed(`Couldn't read your settings, so nothing changed: ${loaded.error.message}`);
+          config = loaded.data;
+          for (const dimension of ['model', 'effort'] as const) {
+            const value = wanted[dimension];
+            if (!value) continue;
+            const group = config[dimension];
+            if (!group) return failed(`This agent has no ${dimension} setting, so nothing changed.`);
+            const id = pickOption(group, value);
+            if (!id) return failed(`"${value}" isn't one of the ${dimension} choices (${group.options.map((o) => o.id).join(', ')}), so nothing changed.`);
+            if (id !== group.selected) configChange[dimension] = id;
+          }
+        }
+        let connectorsOn: string[] = [];
+        if (enable.length > 0 || disable.length > 0) {
+          const listed = await backend.listSpaceConnectors(scope.bindingId);
+          if (!listed.success) return failed(`Couldn't read the space's connectors, so nothing changed: ${listed.error.message}`);
+          connectorsOn = listed.data;
+        }
+        const seesBefore = backend.roomSees(scope.bindingId);
+        const blocked = !approved && wideningParts({ chat_sees: chatSees, connectors: { enable } }, { chatSees: seesBefore, connectors: connectorsOn }).length > 0;
+
+        const changed: string[] = [];
+        const refused: string[] = [];
+        if (config && Object.keys(configChange).length > 0) {
+          const set = await backend.setAgentConfig(scope, configChange);
+          if (!set.success) refused.push(`${Object.keys(configChange).join(' and ')}: ${set.error.message}`);
+          else {
+            for (const dimension of ['model', 'effort'] as const) {
+              if (configChange[dimension]) changed.push(`${dimension}: ${selectedName(config[dimension])} → ${selectedName(set.data[dimension])}`);
+            }
+          }
+        }
+        if (chatSees && chatSees !== seesBefore) {
+          const widens = ROOM_SEES_LEVELS.indexOf(chatSees) > ROOM_SEES_LEVELS.indexOf(seesBefore);
+          if (widens && blocked) refused.push(`chat sees ${seesBefore} → ${chatSees}: needs your owner's approval`);
+          else {
+            backend.setRoomSees(scope.bindingId, chatSees);
+            changed.push(`chat sees: ${seesBefore} → ${chatSees} (${CHAT_SEES_MEANING[chatSees]})`);
+          }
+        }
+        for (const id of enable.filter((id) => !connectorsOn.includes(id))) {
+          const name = connectorById(id)!.name;
+          if (blocked) {
+            refused.push(`turn on ${name}: needs your owner's approval`);
+            continue;
+          }
+          const added = await backend.addSpaceConnector(scope.bindingId, id);
+          if (added.success) changed.push(`${name}: turned on in this space`);
+          else refused.push(`turn on ${name}: ${added.error.message}`);
+        }
+        // Turning one off takes it away from everyone in the space, so it needs the owner's own "allow" too.
+        let disableBlocked = false;
+        for (const id of disable.filter((id) => connectorsOn.includes(id))) {
+          const name = connectorById(id)!.name;
+          if (!approved) {
+            disableBlocked = true;
+            refused.push(`turn off ${name}: changes it for everyone in the space, needs your owner's approval`);
+            continue;
+          }
+          const removed = await backend.removeSpaceConnector(scope.bindingId, id);
+          if (removed.success) changed.push(`${name}: turned off in this space`);
+          else refused.push(`turn off ${name}: ${removed.error.message}`);
+        }
+
+        const lines =
+          changed.length > 0
+            ? ['Changed, from your next turn:', ...changed.map((line) => `- ${line}`)]
+            : [refused.length > 0 ? 'Nothing changed.' : 'Nothing changed: those are already your settings.'];
+        if (refused.length > 0) lines.push('', 'Not changed:', ...refused.map((line) => `- ${line}`));
+        if (blocked || disableBlocked) lines.push('', NEEDS_OWNER_APPROVAL);
+        return { text: lines.join('\n'), ...(changed.length === 0 && refused.length > 0 ? { isError: true } : {}) };
       },
     },
   ];
