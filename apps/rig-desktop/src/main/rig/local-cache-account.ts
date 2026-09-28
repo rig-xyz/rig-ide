@@ -4,6 +4,7 @@ import { db } from '@main/db/client';
 import { KV } from '@main/db/kv';
 import { rigCommentsCache, rigRoomCache } from '@main/db/schema';
 import { log } from '@main/lib/logger';
+import type { RigWorkspaceBinding } from '@shared/rig/account';
 import { isError, peekSelfUserId, resolveContext } from './account';
 
 /**
@@ -19,7 +20,18 @@ import { isError, peekSelfUserId, resolveContext } from './account';
  */
 
 type Remembered = { fingerprint: string; accountId: string };
-const memory = new KV<{ account: Remembered }>('rig-local-cache');
+/**
+ * The account's last `GET /v1/me/bindings` answer, so Home can still list
+ * its spaces while the relay is out of reach. Same account/relay gate as the
+ * Room cache; purged with it.
+ */
+type RememberedWorkspaces = {
+  accountId: string;
+  relayHost: string;
+  savedAt: number;
+  bindings: RigWorkspaceBinding[];
+};
+const memory = new KV<{ account: Remembered; workspaces: RememberedWorkspaces }>('rig-local-cache');
 
 /** The account these caches belong to right now, or null (signed out, or not known yet for this token). */
 export async function localCacheAccountId(): Promise<string | null> {
@@ -37,6 +49,48 @@ export async function localCacheAccountId(): Promise<string | null> {
   return known;
 }
 
+async function currentRelayHost(): Promise<string | null> {
+  const ctx = await resolveContext();
+  if (isError(ctx)) return null;
+  try {
+    return new URL(ctx.url).host;
+  } catch {
+    return null;
+  }
+}
+
+/** Keeps the account's workspace list for offline use. Best-effort; never stored without a known account. */
+export async function rememberWorkspaces(bindings: readonly RigWorkspaceBinding[]): Promise<void> {
+  try {
+    const accountId = await localCacheAccountId();
+    const relayHost = await currentRelayHost();
+    if (!accountId || !relayHost) return;
+    await memory.set('workspaces', { accountId, relayHost, savedAt: Date.now(), bindings: [...bindings] });
+  } catch (error) {
+    log.warn('Rig local caches: could not remember workspaces', { error: String(error) });
+  }
+}
+
+/** The signed-in account's last known workspace list on the current relay, or null. Never asks the relay. */
+export async function readRememberedWorkspaces(): Promise<{
+  accountId: string | null;
+  workspaces: { savedAt: number; bindings: RigWorkspaceBinding[] } | null;
+}> {
+  try {
+    const accountId = await localCacheAccountId();
+    if (!accountId) return { accountId: null, workspaces: null };
+    const stored = await memory.get('workspaces');
+    const relayHost = await currentRelayHost();
+    if (!stored || stored.accountId !== accountId || stored.relayHost !== relayHost) {
+      return { accountId, workspaces: null };
+    }
+    return { accountId, workspaces: { savedAt: stored.savedAt, bindings: stored.bindings } };
+  } catch (error) {
+    log.warn('Rig local caches: could not read remembered workspaces', { error: String(error) });
+    return { accountId: null, workspaces: null };
+  }
+}
+
 /**
  * Deletes cached Rooms and comment threads: every account's on sign-out
  * (no `keepAccountId`), or every account's but this one's on a switch.
@@ -50,10 +104,13 @@ export async function purgeLocalCaches(options: { keepAccountId?: string } = {})
       await db
         .delete(rigCommentsCache)
         .where(or(isNull(rigCommentsCache.accountId), ne(rigCommentsCache.accountId, keep)));
+      const workspaces = await memory.get('workspaces');
+      if (workspaces && workspaces.accountId !== keep) await memory.del('workspaces');
     } else {
       await db.delete(rigRoomCache);
       await db.delete(rigCommentsCache);
       await memory.del('account');
+      await memory.del('workspaces');
     }
   } catch (error) {
     log.warn('Rig local caches: could not purge', { error: String(error) });
@@ -65,6 +122,10 @@ export async function forgetLocalCaches(bindingId: string): Promise<void> {
   try {
     await db.delete(rigRoomCache).where(eq(rigRoomCache.bindingId, bindingId));
     await db.delete(rigCommentsCache).where(eq(rigCommentsCache.bindingId, bindingId));
+    const workspaces = await memory.get('workspaces');
+    if (workspaces?.bindings.some((b) => b.id === bindingId)) {
+      await memory.set('workspaces', { ...workspaces, bindings: workspaces.bindings.filter((b) => b.id !== bindingId) });
+    }
   } catch (error) {
     log.warn('Rig local caches: could not forget a space', { bindingId, error: String(error) });
   }

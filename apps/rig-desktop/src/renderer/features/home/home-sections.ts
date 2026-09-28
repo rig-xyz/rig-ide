@@ -74,8 +74,7 @@ export type HomeWorkspacesState =
 
 export type HomeHealthMessage =
   | { kind: 'noAgent'; text: string }
-  | { kind: 'signedOut'; text: string }
-  | { kind: 'relayUnreachable'; text: string };
+  | { kind: 'signedOut'; text: string };
 
 export type HomeRegions = {
   /** True = the true empty state (no rigs anywhere) — the hero is the ONLY thing that renders. */
@@ -123,9 +122,9 @@ export function deriveHomeRegions(input: HomeRegionsInput): HomeRegions {
       };
     } else if (!input.signedIn) {
       health = { kind: 'signedOut', text: "Sign in to see your team's rigs" };
-    } else if (input.workspaces.status === 'unreachable') {
-      health = { kind: 'relayUnreachable', text: 'offline · team rigs unavailable right now' };
     }
+    // Relay unreachable is no longer a health line: Home's connection banner
+    // (`home-connection.ts`) says it, with a way to try again.
   }
 
   return { showEmptyState, showRigs, health };

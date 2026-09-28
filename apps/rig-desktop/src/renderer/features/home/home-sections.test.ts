@@ -118,7 +118,7 @@ describe('deriveHomeRegions', () => {
     expect(regions.health?.kind).toBe('noAgent');
   });
 
-  it('relay-unreachable only surfaces once signed in and an agent exists', () => {
+  it('relay-unreachable is not a health line (the connection banner says it)', () => {
     const regions = deriveHomeRegions({
       ...BASE,
       localRigs: [RIG_A],
@@ -126,7 +126,7 @@ describe('deriveHomeRegions', () => {
       hasRunnableAgent: true,
       workspaces: { status: 'unreachable' },
     });
-    expect(regions.health).toEqual({ kind: 'relayUnreachable', text: 'offline · team rigs unavailable right now' });
+    expect(regions.health).toBeNull();
   });
 });
 

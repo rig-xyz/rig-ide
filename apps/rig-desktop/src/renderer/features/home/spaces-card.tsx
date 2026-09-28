@@ -8,6 +8,7 @@ import {
   writeLastSeen,
   writeOpenedAt,
 } from '@renderer/features/spaces/room-read-marker';
+import { NeedsConnection } from '@renderer/features/shell/needs-connection';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
@@ -17,6 +18,7 @@ import { cn } from '@renderer/lib/utils';
 import { deriveDeleteRigMode, deriveRigMenuLabel } from '@shared/rig/delete-rig';
 import type { RigSpaceStatus } from '@shared/rig/space-status';
 import { DeleteRigDialog } from './delete-rig-dialog';
+import { NEEDS_CONNECTION_TOOLTIP } from './home-connection';
 import {
   canAutoJoin,
   deriveRelayOnlyRowStatus,
@@ -61,19 +63,35 @@ export function SpacesCard({
   selfUserId,
   onOpenPath,
   highlightBindingId,
+  offline = false,
+  offlineActivity,
+  emptyHint,
 }: {
   rows: readonly HomeRigRow[];
   statusByBinding: ReadonlyMap<string, RigSpaceStatus>;
   selfUserId: string | null;
   onOpenPath: (path: string) => void;
   highlightBindingId?: string | null;
+  /**
+   * The relay is out of reach: rows come from this computer, show no live
+   * status, and actions that need the relay are disabled.
+   */
+  offline?: boolean;
+  /** Offline only: each space's last activity from local data (`offlineLastActivity`). */
+  offlineActivity?: ReadonlyMap<string, number | null>;
+  /** Replaces the empty card's line (e.g. while the list is still loading). */
+  emptyHint?: string;
 }) {
   const [filter, setFilter] = useState<SpaceRowFilter>('all');
   const [showAll, setShowAll] = useState(false);
   // No "+ New" of its own: Home's "New space" pill floats right above this
   // card (`new-space-cta.tsx`) and is the one create/join entry point.
   const { pinned, toggle: togglePinned } = useSpacePins();
-  const attentionByBinding = useSpaceAttention(rows, statusByBinding, selfUserId);
+  const liveAttention = useSpaceAttention(rows, statusByBinding, selfUserId);
+  // Offline: no live status at all — each row is idle as of its last local activity.
+  const attentionByBinding: Map<string, SpaceAttention> = offline
+    ? new Map(rows.map((r) => [r.bindingId, { kind: 'idle', lastActivityAt: offlineActivity?.get(r.bindingId) ?? null }]))
+    : liveAttention;
 
   const now = Date.now();
   const filtered = filterSpaceRows(rows, filter, {
@@ -121,7 +139,7 @@ export function SpacesCard({
         </div>
       )}
       {rows.length === 0 ? (
-        <p className="text-text-muted px-1 text-xs">A space for your team and your agents.</p>
+        <p className="text-text-muted px-1 text-xs">{emptyHint ?? 'A space for your team and your agents.'}</p>
       ) : visible.length === 0 ? (
         <p className="text-text-muted px-1 text-xs">No spaces match this filter.</p>
       ) : (
@@ -136,6 +154,7 @@ export function SpacesCard({
               pinned={pinned.has(row.bindingId)}
               onTogglePinned={() => togglePinned(row.bindingId)}
               isHighlighted={row.bindingId === highlightBindingId}
+              offline={offline}
             />
           ))}
         </div>
@@ -247,6 +266,7 @@ function SpaceRow({
   pinned,
   onTogglePinned,
   isHighlighted,
+  offline,
 }: {
   row: HomeRigRow;
   status: RigSpaceStatus | undefined;
@@ -255,6 +275,7 @@ function SpaceRow({
   pinned: boolean;
   onTogglePinned: () => void;
   isHighlighted: boolean;
+  offline: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -265,7 +286,9 @@ function SpaceRow({
   // Lane J: a joined-but-not-downloaded space is no dead end — clicking the
   // row downloads it (the menu's "Download") and opens it. An unrecognized
   // role can't auto-join, so that row still only offers ⋯ → Locate.
-  const downloadable = row.kind === 'relayOnly' && relayStatus?.kind === 'notSetUp' && canAutoJoin(row.role);
+  const canDownload = row.kind === 'relayOnly' && relayStatus?.kind === 'notSetUp' && canAutoJoin(row.role);
+  // Downloading needs the relay: offline, the row stays but can't be clicked.
+  const downloadable = canDownload && !offline;
 
   const download = async () => {
     if (row.kind !== 'relayOnly') return;
@@ -309,6 +332,9 @@ function SpaceRow({
     }
   };
 
+  const notSetUpTooltip =
+    canDownload && offline ? NEEDS_CONNECTION_TOOLTIP : downloadable ? SPACE_NOT_SET_UP_TOOLTIP : NOT_SET_UP_TOOLTIP;
+
   const subtext = busy
     ? 'Downloading…'
     : relayStatus?.kind === 'checking'
@@ -321,8 +347,14 @@ function SpaceRow({
         'group flex items-center gap-2.5 rounded-control px-2 py-2 transition-colors',
         isHighlighted ? 'bg-accent-subtle' : 'hover:bg-bg-2'
       )}
+      data-testid="space-row"
+      data-offline={offline || undefined}
     >
-      <SpaceStatusTile attention={attention} seed={row.bindingId} />
+      <SpaceStatusTile
+        attention={attention}
+        seed={row.bindingId}
+        className={cn(offline && 'opacity-50')}
+      />
       <button
         type="button"
         onClick={() => (openablePath ? onOpenPath(openablePath) : downloadable ? void download() : undefined)}
@@ -338,16 +370,12 @@ function SpaceRow({
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span
-                    aria-label={downloadable ? SPACE_NOT_SET_UP_TOOLTIP : NOT_SET_UP_TOOLTIP}
-                    tabIndex={0}
-                    className="text-text-muted inline-flex"
-                  >
+                  <span aria-label={notSetUpTooltip} tabIndex={0} className="text-text-muted inline-flex">
                     <FolderSearch className="size-3 shrink-0" strokeWidth={1.5} />
                   </span>
                 }
               />
-              <TooltipContent side="top">{downloadable ? SPACE_NOT_SET_UP_TOOLTIP : NOT_SET_UP_TOOLTIP}</TooltipContent>
+              <TooltipContent side="top">{notSetUpTooltip}</TooltipContent>
             </Tooltip>
           )}
         </span>
@@ -375,6 +403,7 @@ function SpaceRow({
         busy={busy}
         onDownload={() => void download()}
         onLocate={() => void locate()}
+        offline={offline}
       />
     </div>
   );
@@ -387,6 +416,7 @@ function SpaceRowMenu({
   busy,
   onDownload,
   onLocate,
+  offline,
 }: {
   row: HomeRigRow;
   pinned: boolean;
@@ -394,6 +424,7 @@ function SpaceRowMenu({
   busy: boolean;
   onDownload: () => void;
   onLocate: () => void;
+  offline: boolean;
 }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -453,19 +484,22 @@ function SpaceRowMenu({
       </button>
       <Popover anchor={triggerRef} open={open} onClose={() => setOpen(false)} role="menu" gap={4} estimatedWidth={170} minWidth={170}>
         {row.kind === 'relayOnly' && canAutoJoin(row.role) && (
-          <button
-            type="button"
-            role="menuitem"
-            tabIndex={-1}
-            onClick={() => {
-              setOpen(false);
-              onDownload();
-            }}
-            className="hover:bg-bg-2 flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary"
-          >
-            <Download className="size-3.5 shrink-0" strokeWidth={1.5} />
-            Download
-          </button>
+          <NeedsConnection blocked={offline} className="block w-full cursor-not-allowed">
+            <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              disabled={offline}
+              onClick={() => {
+                setOpen(false);
+                onDownload();
+              }}
+              className="hover:bg-bg-2 flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary disabled:pointer-events-none disabled:opacity-50"
+            >
+              <Download className="size-3.5 shrink-0" strokeWidth={1.5} />
+              Download
+            </button>
+          </NeedsConnection>
         )}
         {row.kind === 'relayOnly' && (
           <button
@@ -511,23 +545,26 @@ function SpaceRowMenu({
           {pinned ? 'Unpin' : 'Pin'}
         </button>
         <div className="border-border-hairline my-1 border-t" />
-        <button
-          type="button"
-          role="menuitem"
-          tabIndex={-1}
-          onClick={() => {
-            setOpen(false);
-            setDeleteOpen(true);
-          }}
-          className="hover:bg-danger/10 text-danger flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm"
-        >
-          {deleteMode === 'leave' ? (
-            <LogOut className="size-3.5 shrink-0" strokeWidth={1.5} />
-          ) : (
-            <Trash2 className="size-3.5 shrink-0" strokeWidth={1.5} />
-          )}
-          {deriveRigMenuLabel(deleteMode, 'space')}
-        </button>
+        <NeedsConnection blocked={offline} className="block w-full cursor-not-allowed">
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            disabled={offline}
+            onClick={() => {
+              setOpen(false);
+              setDeleteOpen(true);
+            }}
+            className="hover:bg-danger/10 text-danger flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm disabled:pointer-events-none disabled:opacity-50"
+          >
+            {deleteMode === 'leave' ? (
+              <LogOut className="size-3.5 shrink-0" strokeWidth={1.5} />
+            ) : (
+              <Trash2 className="size-3.5 shrink-0" strokeWidth={1.5} />
+            )}
+            {deriveRigMenuLabel(deleteMode, 'space')}
+          </button>
+        </NeedsConnection>
       </Popover>
     </>
   );

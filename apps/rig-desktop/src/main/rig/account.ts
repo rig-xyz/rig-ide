@@ -22,7 +22,9 @@ import { checkRelayTrust } from './relay-trust';
  * carve-out for "there's nothing to lie about it this time."
  */
 
-const REQUEST_TIMEOUT_MS = 10_000;
+// Generous on purpose: a slow network that would still answer must not read
+// as "offline" (Home shows a "still connecting" hint while it waits).
+const REQUEST_TIMEOUT_MS = 30_000;
 
 /** Mirrors the rig CLI's own default — see src/config.mjs:87 in the rig repo. */
 const DEFAULT_RELAY_URL = 'https://tap-relay.fly.dev';
@@ -321,6 +323,10 @@ export const rigAccountController = createRPCController({
     const result = await fetchWorkspaceBindings();
     if (result.success) {
       const bindings = result.data;
+      // Home lists these again while the relay is out of reach (`local-cache-account.ts`).
+      void import('./local-cache-account')
+        .then(({ rememberWorkspaces }) => rememberWorkspaces(bindings))
+        .catch(() => undefined);
       void import('./relay-name-sync-instance')
         .then(({ relayNameSync }) => relayNameSync.reconcile(bindings))
         .catch((error: unknown) => log.warn('rig: relay name sync failed', { error: String(error) }));

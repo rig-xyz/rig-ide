@@ -3,6 +3,7 @@ import { Hash, Link as LinkIcon, Loader2, Plus } from 'lucide-react';
 import { useReducedMotion } from 'motion/react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { MY_INVITES_KEY_PREFIX } from '@renderer/features/shell/invites-inbox';
+import { NeedsConnection } from '@renderer/features/shell/needs-connection';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { Button } from '@renderer/lib/ui/button';
@@ -49,12 +50,15 @@ export function NewSpaceCta({
   existingNames,
   onCreateSpace,
   onOpenPath,
+  needsConnection = false,
 }: {
   /** Every space name this account already has, for `generateSpaceName`'s collision check. */
   existingNames: ReadonlySet<string>;
   onCreateSpace: (name: string) => Promise<string | null>;
   /** Opens a joined space's local folder — Home's own `onOpenPath`. */
   onOpenPath: (path: string, opts?: { kind?: 'space' }) => void;
+  /** Offline: creating and joining need the relay, so both are disabled (with a tooltip saying why). */
+  needsConnection?: boolean;
 }) {
   const queryClient = useQueryClient();
   const reduceMotion = useReducedMotion() ?? false;
@@ -87,7 +91,7 @@ export function NewSpaceCta({
 
   const enter = () => {
     if (leaveRef.current) clearTimeout(leaveRef.current);
-    setOut(true);
+    if (!needsConnection) setOut(true);
   };
   const leave = () => {
     if (leaveRef.current) clearTimeout(leaveRef.current);
@@ -169,7 +173,14 @@ export function NewSpaceCta({
     onOpenPath(attached.data.localPath, { kind: 'space' });
   };
 
-  const bubbleOut = out && !joinOpen && !creating;
+  // Going offline mid-hover or mid-paste folds the bubble and the field away.
+  useEffect(() => {
+    if (!needsConnection) return;
+    setOut(false);
+    if (!joining) setJoinOpen(false);
+  }, [needsConnection, joining]);
+
+  const bubbleOut = out && !joinOpen && !creating && !needsConnection;
   const bodyWidth = bubbleOut ? `calc(100% - ${PULL_BACK}px)` : '100%';
   const bubbleLeft = joinOpen ? `${INSET}px` : `calc(100% - ${BUBBLE + INSET}px)`;
   const fill = joinOpen ? 'var(--bg-1)' : 'var(--accent)';
@@ -178,13 +189,15 @@ export function NewSpaceCta({
 
   return (
     <div className="flex flex-col gap-1.5">
+      <NeedsConnection blocked={needsConnection} className="block w-full cursor-not-allowed">
       <div
-        className="relative h-10 w-full"
+        className={cn('relative h-10 w-full', needsConnection && 'pointer-events-none opacity-50')}
         onMouseEnter={enter}
         onMouseLeave={leave}
         onFocus={enter}
         onBlur={leave}
         data-testid="new-space-cta"
+        data-needs-connection={needsConnection || undefined}
         data-out={bubbleOut || undefined}
         data-join={joinOpen || undefined}
       >
@@ -318,7 +331,7 @@ export function NewSpaceCta({
               ref={createRef}
               type="button"
               onClick={() => void createOneClick()}
-              disabled={creating}
+              disabled={creating || needsConnection}
               className="text-accent-ink focus-visible:outline-accent absolute inset-y-0 left-0 z-10 flex items-center gap-2 rounded-full px-4 text-sm font-medium outline-none focus-visible:outline-2 focus-visible:outline-offset-2 disabled:pointer-events-none disabled:opacity-60"
               style={{ width: bodyWidth, transition: ease(`width 550ms ${SPRING}`) }}
             >
@@ -346,6 +359,7 @@ export function NewSpaceCta({
           </>
         )}
       </div>
+      </NeedsConnection>
       {error && (
         <p className="text-danger px-3 text-xs" role="alert">
           {error}

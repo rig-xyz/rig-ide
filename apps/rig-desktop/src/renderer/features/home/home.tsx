@@ -4,18 +4,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
 import { deriveSignedIn } from '@renderer/features/rig-account/auth-state';
 import { useRigSignIn, type RigSignInPhase } from '@renderer/features/rig-account/use-rig-sign-in';
+import { ConnectionBanner } from '@renderer/features/shell/connection-banner';
 import {
   MY_INVITES_KEY_PREFIX,
   myInvitesQueryKey,
   shapeMyInvites,
   type MyInviteRow,
 } from '@renderer/features/shell/invites-inbox';
+import { NeedsConnection } from '@renderer/features/shell/needs-connection';
+import { useAutoReconnect, useNavigatorOnline, useWaitedLong } from '@renderer/features/shell/use-connection';
 import { useSpacesEnabled } from '@renderer/features/spaces/use-spaces-enabled';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { cn } from '@renderer/lib/utils';
 import { BriefingSpine } from './briefing-spine';
 import { FloatingCard } from './floating-card';
+import {
+  deriveHomeConnection,
+  needsConnection,
+  offlineLastActivity,
+  resolveHomeAccountId,
+  SLOW_AFTER_MS,
+  withRememberedWorkspaces,
+} from './home-connection';
 import {
   buildHomeRigRows,
   deriveHomeRegions,
@@ -232,11 +243,23 @@ export function Home({
   // resolved yet (never filter on a guess), `null` once confidently signed
   // out, else the signed-in account's own id — see
   // `filterLocalRigsByAccount`'s own doc comment for what each does below.
-  const currentAccountId: string | null | undefined = !signedIn
-    ? null
-    : meQuery.data?.success
-      ? meQuery.data.data.id
-      : undefined;
+  //
+  // Offline round: while `/v1/me` hasn't answered (or can't), the account
+  // this same token was last seen as — read from this computer — stands in,
+  // so an offline Home never shows another account's rows
+  // (`resolveHomeAccountId`).
+  const offlineSnapshotQuery = useQuery({
+    queryKey: ['rig', 'offline', 'homeSnapshot'],
+    queryFn: () => rpc.rig.offline.homeSnapshot(),
+    enabled: authStatusSignedIn,
+  });
+  const offlineSnapshot = offlineSnapshotQuery.data;
+  const currentAccountId: string | null | undefined = resolveHomeAccountId({
+    signedIn,
+    meId: meQuery.data?.success ? meQuery.data.data.id : undefined,
+    meFailed: meQuery.data?.success === false,
+    rememberedAccountId: offlineSnapshotQuery.isLoading ? undefined : (offlineSnapshot?.accountId ?? null),
+  });
 
   // Part C (feedback round): Home's own read of "invites addressed to me" —
   // shares the exact same account-scoped cache key the topbar bell uses
@@ -256,6 +279,37 @@ export function Home({
     isLoading: workspacesQuery.isLoading,
     data: workspacesQuery.data,
   });
+  // What the rows are built from: the live list, or — while it loads or the
+  // relay is out of reach — this account's last known one from this computer.
+  const rowWorkspaces = withRememberedWorkspaces(workspaces, offlineSnapshot?.workspaces?.bindings ?? null);
+
+  // Offline round: slow is not offline. Only a failed answer (or no network
+  // at all) flips Home to "showing what's on this computer"; a first load
+  // that's merely slow gets a quiet hint after `SLOW_AFTER_MS`.
+  const navigatorOnline = useNavigatorOnline();
+  const waitedLong = useWaitedLong(signedIn && workspaces.status === 'loading', SLOW_AFTER_MS);
+  const connection = deriveHomeConnection({ signedIn, navigatorOnline, workspaces, waitedLong });
+  const connectionDown = needsConnection(connection);
+  const { retrying, tryAgain } = useAutoReconnect({
+    down: connectionDown,
+    autoRetry: connection === 'unreachable',
+    retry: () => {
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'spaceStatus'] });
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'pulse'] });
+      void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY_PREFIX });
+      return Promise.all([
+        workspacesQuery.refetch(),
+        offlineSnapshotQuery.refetch(),
+        ...(authStatusSignedIn ? [meQuery.refetch()] : []),
+      ]);
+    },
+  });
+  // A list that just failed: re-read the remembered one, which the last
+  // success this session may have updated since launch.
+  const refetchOfflineSnapshot = offlineSnapshotQuery.refetch;
+  useEffect(() => {
+    if (workspaces.status === 'unreachable') void refetchOfflineSnapshot();
+  }, [workspaces.status, refetchOfflineSnapshot]);
 
   // Part B (feedback round, docs/onboarding-flow-spec.md "Accounts &
   // rigs"): a legacy row only counts as this account's own once its
@@ -269,8 +323,8 @@ export function Home({
   // render) or a `Set` built from it (same problem), so the backfill
   // effect below depends on this instead, via the memoized `ownedBindingIds`.
   const ownedBindingIdsKey =
-    workspaces.status === 'ok'
-      ? [...workspaces.bindings]
+    rowWorkspaces.status === 'ok'
+      ? [...rowWorkspaces.bindings]
           .map((b) => b.bindingId)
           .sort()
           .join(',')
@@ -280,7 +334,7 @@ export function Home({
     [ownedBindingIdsKey]
   );
   const legacyVisibility: LegacyRowVisibility =
-    workspaces.status === 'ok' ? { kind: 'ownedOnly', bindingIds: ownedBindingIds } : { kind: 'showAll' };
+    rowWorkspaces.status === 'ok' ? { kind: 'ownedOnly', bindingIds: ownedBindingIds } : { kind: 'showAll' };
 
   // Filtered once, here, so every consumer below (the rail, and the pulse
   // briefing's own "your rigs" via `BriefingSpine`) agrees on the same
@@ -324,8 +378,8 @@ export function Home({
 
   const localBindingIds = new Set(localRigs.map((r) => r.bindingId));
   const relayOnlyBindingIds =
-    workspaces.status === 'ok'
-      ? workspaces.bindings.map((b) => b.bindingId).filter((id) => !localBindingIds.has(id))
+    rowWorkspaces.status === 'ok'
+      ? rowWorkspaces.bindings.map((b) => b.bindingId).filter((id) => !localBindingIds.has(id))
       : [];
   const localPathsQuery = useQuery({
     queryKey: ['rig', 'recent', 'resolveLocalPaths', relayOnlyBindingIds],
@@ -340,11 +394,17 @@ export function Home({
   const localPathsPending = relayOnlyBindingIds.length > 0 && localPathsQuery.isLoading;
 
   const regions = localReady
-    ? deriveHomeRegions({ signedIn, hasRunnableAgent: agents.length > 0, localRigs, recentSessions, workspaces })
+    ? deriveHomeRegions({
+        signedIn,
+        hasRunnableAgent: agents.length > 0,
+        localRigs,
+        recentSessions,
+        workspaces: rowWorkspaces,
+      })
     : { showRigs: false, showEmptyState: true, health: null };
 
   const rigRows = regions.showRigs
-    ? buildHomeRigRows(localRigs, workspaces, recentSessions, localPaths, localPathsPending)
+    ? buildHomeRigRows(localRigs, rowWorkspaces, recentSessions, localPaths, localPathsPending)
     : [];
 
   // Home restructure, "spaces first": spaces get their own floating card
@@ -355,6 +415,16 @@ export function Home({
   const soloRigRows = spacesEnabled ? rigRows.filter((row) => !row.isSpace) : rigRows;
   // New-space CTA: the collision check `generateSpaceName` runs against.
   const spaceNames = new Set(spaceRows.map((row) => row.name).filter((name): name is string => !!name));
+  // Offline: each space's last activity from this computer (opened here, its chats, its saved chat).
+  const offlineActivity = new Map(
+    spaceRows.map((row) => [
+      row.bindingId,
+      offlineLastActivity(
+        row.kind === 'local' ? row : { sessions: [] },
+        offlineSnapshot?.roomSavedAt[row.bindingId]
+      ),
+    ])
+  );
 
   const showPulse = shouldShowPulseSection(
     signedIn,
@@ -371,8 +441,9 @@ export function Home({
   // `users.id`, which is exactly what `RigSpaceRunningItem.ownerUserId`
   // is keyed on (confirmed against `tap`'s `session_runs.owner_user_id`).
   const spaceStatusQuery = useSpaceStatus(spacesEnabled && signedIn);
+  // Offline, a status read before the drop is no longer live: none is shown.
   const statusByBinding = indexSpaceStatuses(
-    spaceStatusQuery.data?.success ? spaceStatusQuery.data.data : []
+    spaceStatusQuery.data?.success && !connectionDown ? spaceStatusQuery.data.data : []
   );
   const selfUserId = currentAccountId ?? null;
 
@@ -431,6 +502,9 @@ export function Home({
     // alpha hits zero before either horizontal edge. Padding widened per
     // Dylan: the column was crowding the rail.
     <div className="hero-glow flex min-h-full w-full flex-col gap-4 px-10 pt-4 pb-8">
+      {connection !== 'online' && (
+        <ConnectionBanner connection={connection} retrying={retrying} onTryAgain={tryAgain} />
+      )}
       {regions.health && <HealthLine message={regions.health} onSignIn={signIn} signInPhase={signInPhase} />}
       {/*
        * D6 fix: below `lg` (this app's own window can go as narrow as
@@ -487,13 +561,28 @@ export function Home({
           {spacesEnabled && signedIn && (
             <>
               {/* Quick-create, floating above the Spaces card: "New space", or its link bubble to join one. */}
-              <NewSpaceCta existingNames={spaceNames} onCreateSpace={createSpace} onOpenPath={onOpenPath} />
+              <NewSpaceCta
+                existingNames={spaceNames}
+                onCreateSpace={createSpace}
+                onOpenPath={onOpenPath}
+                needsConnection={connectionDown}
+              />
               <SpacesCard
                 rows={spaceRows}
                 statusByBinding={statusByBinding}
                 selfUserId={selfUserId}
-                onOpenPath={onOpenPath}
+                // Opened as a space even while the relay can't confirm its kind.
+                onOpenPath={(path) => onOpenPath(path, { kind: 'space' })}
                 highlightBindingId={highlightBindingId}
+                offline={connectionDown}
+                offlineActivity={offlineActivity}
+                emptyHint={
+                  rowWorkspaces.status === 'loading'
+                    ? 'Loading your spaces…'
+                    : connectionDown
+                      ? 'Your spaces show here once rig is reachable.'
+                      : undefined
+                }
               />
             </>
           )}
@@ -502,14 +591,18 @@ export function Home({
             title="Rigs"
             count={soloRigRows.length}
             headerAction={
-              <button
-                type="button"
-                onClick={startFreshOrCreate}
-                className="bg-bg-2 text-text-muted hover:text-text-primary flex items-center gap-1 rounded-chip px-2 py-0.5 text-xs transition-colors"
-              >
-                <Plus className="size-3 shrink-0" strokeWidth={1.5} />
-                New
-              </button>
+              // A new rig syncs from the start, so it needs the relay too.
+              <NeedsConnection blocked={connectionDown}>
+                <button
+                  type="button"
+                  onClick={startFreshOrCreate}
+                  disabled={connectionDown}
+                  className="bg-bg-2 text-text-muted hover:text-text-primary flex items-center gap-1 rounded-chip px-2 py-0.5 text-xs transition-colors disabled:pointer-events-none disabled:opacity-50"
+                >
+                  <Plus className="size-3 shrink-0" strokeWidth={1.5} />
+                  New
+                </button>
+              </NeedsConnection>
             }
           >
             <RigsRail
@@ -718,8 +811,8 @@ function RigAppIcon({ size = 112, className }: { size?: number; className?: stri
 /**
  * One quiet mono line above the grid — no dashboard chrome, just the
  * honest current mode. Only `signedOut` is actionable (runs the same
- * `useRigSignIn` flow the topbar pill does); `noAgent`/`relayUnreachable`
- * are stated once, not clickable.
+ * `useRigSignIn` flow the topbar pill does); `noAgent` is stated once, not
+ * clickable. Connection trouble is `ConnectionBanner`'s, not this line's.
  */
 function HealthLine({
   message,

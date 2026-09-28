@@ -25,7 +25,13 @@ vi.mock('./account', () => ({
   peekSelfUserId: async () => (mocks.ctx ? mocks.self : null),
 }));
 
-const { localCacheAccountId, purgeLocalCaches } = await import('./local-cache-account');
+const { forgetLocalCaches, localCacheAccountId, purgeLocalCaches, readRememberedWorkspaces, rememberWorkspaces } =
+  await import('./local-cache-account');
+const { offlineHomeSnapshot } = await import('./offline-home');
+
+function binding(id: string, kind: 'rig' | 'space' = 'space') {
+  return { id, name: `name-${id}`, role: 'owner', kind, lastSyncedAt: null, createdAt: '', relayHost: 'tap-relay.fly.dev' };
+}
 
 let fixture: Awaited<ReturnType<typeof openFixture>>;
 
@@ -100,5 +106,53 @@ describe('purgeLocalCaches', () => {
     expect(owners('rig_comments_cache')).toEqual([]);
     mocks.self = null;
     await expect(localCacheAccountId()).resolves.toBeNull(); // no offline fallback left either
+  });
+});
+
+describe('remembered workspaces (Home offline)', () => {
+  it('serves the account its own last list offline, and nothing for another token', async () => {
+    await rememberWorkspaces([binding('s1'), binding('r1', 'rig')]);
+    mocks.self = null; // relaunched offline
+    const mine = await readRememberedWorkspaces();
+    expect(mine.accountId).toBe('u1');
+    expect(mine.workspaces?.bindings.map((b) => b.id)).toEqual(['s1', 'r1']);
+    mocks.ctx = { url: 'https://tap-relay.fly.dev', token: 'token-b' };
+    await expect(readRememberedWorkspaces()).resolves.toEqual({ accountId: null, workspaces: null });
+  });
+
+  it('is not served on another relay', async () => {
+    await rememberWorkspaces([binding('s1')]);
+    await localCacheAccountId();
+    mocks.ctx = { url: 'https://other-relay.example', token: 'token-a' };
+    mocks.self = 'u1';
+    expect((await readRememberedWorkspaces()).workspaces).toBeNull();
+  });
+
+  it('is never stored without a known account', async () => {
+    mocks.self = null;
+    await rememberWorkspaces([binding('s1')]);
+    mocks.self = 'u1';
+    expect((await readRememberedWorkspaces()).workspaces).toBeNull();
+  });
+
+  it('goes on sign-out and on an account switch; a forgotten space drops out of it', async () => {
+    await rememberWorkspaces([binding('s1'), binding('s2')]);
+    await forgetLocalCaches('s1');
+    expect((await readRememberedWorkspaces()).workspaces?.bindings.map((b) => b.id)).toEqual(['s2']);
+    mocks.self = 'u2';
+    mocks.ctx = { url: 'https://tap-relay.fly.dev', token: 'token-b' };
+    expect((await readRememberedWorkspaces()).workspaces).toBeNull();
+    await rememberWorkspaces([binding('s3')]);
+    await purgeLocalCaches();
+    expect((await readRememberedWorkspaces()).workspaces).toBeNull();
+  });
+
+  it('the Home snapshot carries only this account’s saved-chat times', async () => {
+    await rememberWorkspaces([binding('b1')]);
+    seed();
+    const snapshot = await offlineHomeSnapshot();
+    expect(snapshot.accountId).toBe('u1');
+    expect(snapshot.roomSavedAt).toEqual({ b1: 1 });
+    expect(snapshot.workspaces?.bindings.map((b) => b.id)).toEqual(['b1']);
   });
 });
