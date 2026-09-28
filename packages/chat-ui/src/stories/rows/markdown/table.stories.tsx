@@ -30,7 +30,8 @@ export const Default: Story = {
   ),
 };
 
-// 8 columns — exercises horizontal scroll when container is narrower than tableWidth.
+// 8 columns — exercises horizontal scroll when the columns can't fit the
+// container even at their minimum widths; the long cell wraps within its column.
 export const Wide: Story = {
   name: 'Wide (8 columns)',
   render: () => (
@@ -45,7 +46,7 @@ export const Wide: Story = {
             '|-------|------|-------|-------|---------|------|-----|-------|',
             '| aaa-1 | bbb-1 | ccc-1 | ddd-1 | eee-1 | fff-1 | ggg-1 | hhh-1 |',
             '| aaa-2 | bbb-2 | ccc-2 | ddd-2 | eee-2 | fff-2 | ggg-2 | hhh-2 |',
-            '| This cell has a very long value that should be truncated with an ellipsis | short | short | short | short | short | short | short |',
+            '| This cell has a very long value that should wrap onto several lines | short | short | short | short | short | short | short |',
           ].join('\n'),
         },
       ]}
@@ -54,7 +55,7 @@ export const Wide: Story = {
   ),
 };
 
-// 20 rows — verifies formula height calculation for tall tables.
+// 20 rows — verifies the per-row height calculation for tall tables.
 export const Tall: Story = {
   name: 'Tall (20 rows)',
   render: () => {

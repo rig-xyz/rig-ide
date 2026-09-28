@@ -298,4 +298,17 @@ describe('GFM structure beyond paragraphs', () => {
     expect((blocks[0] as ProseBlock).runs).toContainEqual({ kind: 'code', text: 'n^2' });
     expect(blocks[1]).toMatchObject({ kind: 'code', code: 'a+b', lang: 'latex' });
   });
+
+  it('list items inside a quote carry the quote depth (nested lists too)', () => {
+    const items = prose('> intro\n>\n> - a\n>   - b').filter((b) => b.variant === 'list-item');
+    expect(items.map((b) => [b.depth, b.quoteDepth])).toEqual([
+      [1, 1],
+      [2, 1],
+    ]);
+  });
+
+  it('only the first item of a top-level list is a list start', () => {
+    const items = prose('- a\n  - nested\n- b\n\n1. c');
+    expect(items.map((b) => b.listStart ?? false)).toEqual([true, false, false, true]);
+  });
 });

@@ -19,7 +19,7 @@ export const proseBlockDef = defineBlock<ProseBlock, ProseLeafLayout>({
       case 'h6':
         return { top: 10, bottom: 4 };
       case 'list-item':
-        return { top: 2, bottom: 2 };
+        return { top: block.listStart ? 6 : 2, bottom: 2 };
       case 'quote':
         return { top: 6, bottom: 6 };
       default:

@@ -213,8 +213,12 @@ function blockToBlocks(
   messageId: string,
   counter: { n: number },
   depth = 0,
-  inQuote = false
+  /** Depth of the innermost enclosing blockquote's content; undefined outside quotes. */
+  quoteDepth?: number,
+  /** True for a list nested in another list's item (no list-start gap). */
+  inList = false
 ): Block[] {
+  const inQuote = quoteDepth !== undefined;
   const nextId = (): BlockId => `${messageId}#${counter.n++}`;
   const blocks: Block[] = [];
 
@@ -251,7 +255,9 @@ function blockToBlocks(
 
     case 'blockquote': {
       for (const child of (node as Parent).children) {
-        blocks.push(...blockToBlocks(child as BlockContent, messageId, counter, depth + 1, true));
+        blocks.push(
+          ...blockToBlocks(child as BlockContent, messageId, counter, depth + 1, depth + 1)
+        );
       }
       break;
     }
@@ -274,12 +280,23 @@ function blockToBlocks(
                 depth,
                 marker: !first ? '' : list.ordered ? `${(list.start ?? 1) + index}.` : undefined,
                 checked: first ? (item.checked ?? undefined) : undefined,
+                quoteDepth,
+                // A top-level list opens with a paragraph-sized gap, so two
+                // back-to-back lists don't read as one.
+                listStart: !inList && index === 0 && first ? true : undefined,
               } satisfies ProseBlock);
               first = false;
             }
           } else {
             blocks.push(
-              ...blockToBlocks(itemChild as BlockContent, messageId, counter, depth + 1, false)
+              ...blockToBlocks(
+                itemChild as BlockContent,
+                messageId,
+                counter,
+                depth + 1,
+                quoteDepth,
+                true
+              )
             );
           }
         }
@@ -330,7 +347,9 @@ function blockToBlocks(
       const def = node as FootnoteDefinition;
       const start = blocks.length;
       for (const child of def.children) {
-        blocks.push(...blockToBlocks(child as BlockContent, messageId, counter, depth, inQuote));
+        blocks.push(
+          ...blockToBlocks(child as BlockContent, messageId, counter, depth, quoteDepth, inList)
+        );
       }
       const firstBlock = blocks[start];
       if (firstBlock?.kind === 'prose') {

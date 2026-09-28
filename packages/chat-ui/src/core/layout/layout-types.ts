@@ -61,6 +61,8 @@ export type ProseLaidOut = {
   bullet?: BulletLayout;
   /** True if a left-side quote rail should be drawn. */
   quoteRail?: boolean;
+  /** Rail x in px when `quoteRail` (a list inside a quote sits past its text column). */
+  quoteRailX?: number;
 };
 
 /** Code block with pre-positioned source lines. */

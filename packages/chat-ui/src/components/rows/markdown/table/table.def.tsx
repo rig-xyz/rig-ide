@@ -2,8 +2,10 @@ import { defineBlock } from '@components/rows/markdown/block-def';
 import type { Measured, MeasureCtx } from '@core/define';
 import type { TableLeafLayout } from '@core/layout/layout-types';
 import type { TableBlock } from '@core/markdown/document';
+import { horizontalScrollbarHeight } from '@core/measure/scrollbar';
 import { layoutTable } from './layout';
 import { Table } from './Table';
+import { tableScroll } from './table-visual.css';
 
 export const tableBlockDef = defineBlock<TableBlock, TableLeafLayout>({
   kind: 'table',
@@ -15,7 +17,8 @@ export const tableBlockDef = defineBlock<TableBlock, TableLeafLayout>({
       0,
       ctx.width,
       ctx.theme.fonts,
-      ctx.caches.prepareRichInline.bind(ctx.caches)
+      ctx.caches.prepareRichInline.bind(ctx.caches),
+      horizontalScrollbarHeight(tableScroll)
     );
     const layout: TableLeafLayout = { ...laid, raw: block };
     return { height: laid.height, width: laid.contentWidth, layout };

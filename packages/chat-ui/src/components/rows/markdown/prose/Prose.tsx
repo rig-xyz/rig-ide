@@ -24,6 +24,7 @@ import {
   inlineCodeChip,
   inlineCodeChipLink,
   linkFragment,
+  linkStrikeFragment,
   mentionChip,
   mentionChipByKind,
   mentionPlain,
@@ -55,7 +56,9 @@ function fragKey(run: InlineRun, variant: string): string {
 }
 
 function fragVisualClass(run: InlineRun, variant: string): string {
-  if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(variant)) return '';
+  if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(variant)) {
+    return run.kind === 'text' && run.strike ? strikeFragment : '';
+  }
   if (run.kind === 'code') {
     // A linked code chip (a backtick-quoted file mention) keeps the same
     // chip chrome (background/padding/inset — no width change, see
@@ -72,7 +75,9 @@ function fragVisualClass(run: InlineRun, variant: string): string {
     if (mention.mentionKind) return mentionChipByKind[mention.mentionKind] ?? mentionChip;
     return mentionPlain;
   }
-  if (run.kind === 'text' && run.href) return linkFragment;
+  if (run.kind === 'text' && run.href) {
+    return run.strike ? `${linkFragment} ${linkStrikeFragment}` : linkFragment;
+  }
   if (run.kind === 'text' && run.strike) return strikeFragment;
   return '';
 }
@@ -429,7 +434,9 @@ export function Prose(props: ProseProps) {
   return (
     <BlockFrame layout={props.block}>
       <Show when={props.block.quoteRail}>
-        <ProseQuoteRail left={(props.block.lines[0]?.left ?? 18) - 10} />
+        <ProseQuoteRail
+          left={props.block.quoteRailX ?? (props.block.lines[0]?.left ?? 18) - 10}
+        />
       </Show>
       <Show when={props.block.bullet}>{(bullet) => <ProseBullet bullet={bullet()} />}</Show>
       <For each={props.block.lines}>

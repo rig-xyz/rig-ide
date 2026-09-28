@@ -3,73 +3,36 @@
  * construct Claude/Codex routinely emit) through the real chat view and
  * checks each element survives with its structure: tables keep inline
  * formatting, wrap instead of truncating, respect alignment and reserve
- * exactly their DOM height; lists keep numbers and task checkboxes;
- * strikethrough, math source and footnotes aren't dropped.
+ * exactly their DOM height; over-wide code chips break inside their cell;
+ * lists keep numbers and task checkboxes, a list in a quote keeps the rail;
+ * strikethrough (incl. links and headings), math source and footnotes
+ * aren't dropped. The non-overlay scrollbar case lives in
+ * claude-output-scrollbars.contract.test.tsx.
  *
  * Browser project: real layout + vanilla-extract CSS.
  */
 
-import { DEFAULT_THEME } from '@core/theme';
+import { codeWrapper } from '@components/rows/markdown/code/code.css';
+import { pquoteRail } from '@components/rows/markdown/prose/prose.css';
+import { horizontalScrollbarHeight } from '@core/measure/scrollbar';
 import { describe, expect, it } from 'vitest';
-import { createChatContext } from '@/chat-context';
-import { createChatView } from '@/chat-view';
-import { createChatState } from '@/state/chat-state';
-import type { ChatMessage, TranscriptTurn } from '@/model';
-import { CLAUDE_OUTPUT_FIXTURE } from './claude-output-fixture';
-
-const nextPaint = (): Promise<void> =>
-  new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-
-async function mount(width: number) {
-  const ctx = createChatContext({ theme: DEFAULT_THEME });
-  const state = createChatState(ctx);
-  const msg: ChatMessage = {
-    kind: 'message',
-    id: 'm1',
-    seq: 0,
-    role: 'assistant',
-    text: CLAUDE_OUTPUT_FIXTURE,
-  };
-  const turn: TranscriptTurn = {
-    id: 't1',
-    seq: 0,
-    initiator: 'agent',
-    items: [msg] as TranscriptTurn['items'],
-  };
-  state.transcript.history.seed([turn]);
-  const host = document.createElement('div');
-  // Tall enough that the whole message is inside the virtualizer's window.
-  host.style.cssText = `position:fixed;top:0;left:0;width:${width}px;height:4000px;`;
-  document.body.appendChild(host);
-  const view = createChatView({ context: ctx, state, parent: host });
-  await nextPaint();
-  await nextPaint();
-  const cleanup = () => {
-    view.dispose();
-    ctx.dispose();
-    state.dispose();
-    host.remove();
-  };
-  return { host, cleanup };
-}
-
-const texts = (els: Iterable<Element>) => Array.from(els, (el) => el.textContent?.trim() ?? '');
+import { expectReservedExactly, frameOf, mount, proseFrame, texts } from './claude-output-harness';
 
 describe('Claude output fixture renders every markdown element', () => {
   it('tables: scroll wrapper, header cells, inline formatting, wrapping, alignment, exact height', async () => {
     const { host, cleanup } = await mount(620);
     try {
       const tables = Array.from(host.querySelectorAll('table'));
-      expect(tables).toHaveLength(3);
+      expect(tables).toHaveLength(4);
 
       for (const table of tables) {
         const wrapper = table.parentElement!;
-        const frame = table.closest<HTMLElement>('[data-block-id]')!;
+        const frame = frameOf(table);
         // Wrapped in a horizontal scroller that never exceeds the chat column.
         expect(getComputedStyle(wrapper).overflowX).toBe('auto');
         expect(wrapper.clientWidth).toBeLessThanOrEqual(frame.clientWidth);
-        // Reserved (layout) height === rendered height (+2 wrapper border).
-        expect(table.offsetHeight + 2).toBe(frame.offsetHeight);
+        // Reserved (layout) height === rendered height, scrollbar track included.
+        expectReservedExactly(wrapper, frame, table.offsetHeight);
         expect(table.querySelectorAll('thead th').length).toBeGreaterThan(0);
       }
 
@@ -115,6 +78,10 @@ describe('Claude output fixture renders every markdown element', () => {
         (s) => s.textContent === 'blocker'
       )!;
       expect(getComputedStyle(struck).textDecorationLine).toContain('line-through');
+      const struckLink = Array.from(host.querySelectorAll('a')).find((a) => a.textContent === 'old RFC')!;
+      expect(getComputedStyle(struckLink).textDecorationLine).toBe('underline line-through');
+      const struckHeading = Array.from(host.querySelectorAll('span')).find((s) => s.textContent === 'v1')!;
+      expect(getComputedStyle(struckHeading).textDecorationLine).toContain('line-through');
 
       const text = host.textContent ?? '';
       expect(text).toContain('O(n \\log n)');
@@ -130,10 +97,74 @@ describe('Claude output fixture renders every markdown element', () => {
     const { host, cleanup } = await mount(360);
     try {
       for (const table of Array.from(host.querySelectorAll('table'))) {
-        const frame = table.closest<HTMLElement>('[data-block-id]')!;
+        const frame = frameOf(table);
         expect(table.parentElement!.clientWidth).toBeLessThanOrEqual(frame.clientWidth);
-        expect(table.offsetHeight + 2).toBe(frame.offsetHeight);
+        expectReservedExactly(table.parentElement!, frame, table.offsetHeight);
       }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('a code chip wider than its column breaks across lines inside the cell', async () => {
+    for (const width of [620, 360]) {
+      const { host, cleanup } = await mount(width);
+      try {
+        const cell = host.querySelectorAll('table')[3]!.querySelectorAll('tbody td')[1] as HTMLElement;
+        const path = '/Users/sam/Rig/growth/quarterly-planning/2026/q4/drafts/relay-sync-migration-notes-final-v3.md';
+        // Nothing lost (line-end spaces are trimmed by the layout).
+        expect(cell.textContent?.replace(/\s+/g, '')).toBe(`see${path}`);
+        const cellRight = cell.getBoundingClientRect().right;
+        const chunks = Array.from(cell.querySelectorAll('span')).filter((s) =>
+          path.includes(s.textContent ?? '\0')
+        );
+        expect(chunks.length).toBeGreaterThan(1);
+        for (const chunk of chunks) {
+          expect(chunk.getBoundingClientRect().right).toBeLessThanOrEqual(cellRight);
+        }
+      } finally {
+        cleanup();
+      }
+    }
+  });
+
+  it('a list inside a quote keeps the rail; back-to-back lists get a paragraph gap', async () => {
+    const { host, cleanup } = await mount(620);
+    try {
+      const quotePara = proseFrame(host, 'Note:');
+      const quoteRail = quotePara.querySelector<HTMLElement>(`.${pquoteRail}`)!;
+      for (const text of ['run it off-peak', 'watch the dashboard']) {
+        const item = proseFrame(host, text);
+        const rail = item.querySelector<HTMLElement>(`.${pquoteRail}`);
+        expect(rail).not.toBeNull();
+        // Same rail column as the quote's paragraphs, bullet past the quote text.
+        expect(rail!.getBoundingClientRect().left).toBe(quoteRail.getBoundingClientRect().left);
+        const bullet = item.querySelector('[aria-hidden="true"]')!.getBoundingClientRect();
+        expect(bullet.left).toBeGreaterThan(quoteRail.getBoundingClientRect().left + 10);
+      }
+
+      const gap = (a: string, b: string) =>
+        proseFrame(host, b).getBoundingClientRect().top -
+        proseFrame(host, a).getBoundingClientRect().bottom;
+      expect(gap('Ship the desktop build', 'Announce it')).toBe(2);
+      expect(gap('Announce it', 'Write the migration')).toBe(6);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('code blocks that scroll sideways reserve the scrollbar track and clip nothing', async () => {
+    const { host, cleanup } = await mount(620);
+    try {
+      const wrappers = Array.from(host.querySelectorAll<HTMLElement>(`.${codeWrapper}`));
+      expect(wrappers.some((w) => w.scrollWidth > w.clientWidth)).toBe(true);
+      for (const wrapper of wrappers) {
+        const lines = wrapper.children.length;
+        expectReservedExactly(wrapper, frameOf(wrapper), lines * 20 + 16);
+      }
+      // The layout-time probe agrees with the real track thickness.
+      const wide = wrappers.find((w) => w.scrollWidth > w.clientWidth)!;
+      expect(horizontalScrollbarHeight(codeWrapper)).toBe(wide.offsetHeight - wide.clientHeight - 2);
     } finally {
       cleanup();
     }

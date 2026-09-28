@@ -16,7 +16,8 @@
  *     column gets up to TABLE_SCROLL_COL_W (never below its min).
  *
  * Height is deterministic: each row is its tallest cell + vertical padding +
- * a 1px row border (none under the last row), plus the wrapper's border.
+ * a 1px row border (none under the last row), plus the wrapper's border and,
+ * for a scrolling table, the scrollbar track (0 where scrollbars overlay).
  */
 
 import type { FontConfig } from '@core/config';
@@ -86,6 +87,37 @@ function words(runs: InlineRun[]): InlineRun[] {
   );
 }
 
+/**
+ * Code chips never break inside pretext (`break: 'never'`), so one wider than
+ * its cell would overflow it. Split such a chip into cell-wide chunks, each
+ * on its own line (explicit breaks keep the wrap deterministic). Inline code
+ * is monospace, so chunk length comes from a measured per-char width.
+ */
+function splitWideCode(
+  runs: InlineRun[],
+  innerW: number,
+  width: (runs: InlineRun[]) => number
+): InlineRun[] {
+  const out: InlineRun[] = [];
+  let lineHasContent = false;
+  for (const run of runs) {
+    if (run.kind !== 'code' || width([run]) <= innerW) {
+      out.push(run);
+      lineHasContent = run.kind !== 'break';
+      continue;
+    }
+    const one = width([{ ...run, text: '0' }]);
+    const charW = (width([{ ...run, text: '0'.repeat(11) }]) - one) / 10;
+    const perLine = Math.max(1, Math.floor((innerW - (one - charW)) / charW));
+    for (let i = 0; i < run.text.length; i += perLine) {
+      if (i > 0 || lineHasContent) out.push({ kind: 'break' });
+      out.push({ ...run, text: run.text.slice(i, i + perLine) });
+    }
+    lineHasContent = true;
+  }
+  return out;
+}
+
 /** Shift each line right/center within the cell for GFM column alignment. */
 function alignCell(laid: ProseLaidOut, align: TableAlign, innerW: number): ProseLaidOut {
   if (align !== 'right' && align !== 'center') return laid;
@@ -101,7 +133,9 @@ export function layoutTable(
   blockTop: number,
   contentWidth: number,
   fonts: FontConfig,
-  prepareRichInline?: PrepareRichInlineFn
+  prepareRichInline?: PrepareRichInlineFn,
+  /** Horizontal scrollbar thickness (0 for overlay scrollbars); reserved when the table scrolls. */
+  scrollbarHeight = 0
 ): TableLaidOut {
   const colCount = Math.max(1, block.header.length);
   // Header cells render bold (thCell); measure them bold too.
@@ -129,13 +163,14 @@ export function layoutTable(
 
   // The visible table sits inside a 1px-bordered wrapper, so the usable inner
   // width is contentWidth minus the left+right border.
-  const colWidths = columnWidths(min, max, contentWidth - 2 * TABLE_BORDER);
+  const available = contentWidth - 2 * TABLE_BORDER;
+  const colWidths = columnWidths(min, max, available);
   const tableWidth = sum(colWidths);
 
   const rows: TableRowLayout[] = allRows.map((row, r) => {
     const cells = colWidths.map((colW, c) => {
       const innerW = Math.max(1, colW - CELL_CHROME_X);
-      const runs = row[c] ?? [];
+      const runs = splitWideCode(row[c] ?? [], innerW, width);
       const laid = layoutProse(
         cellBlock(`${block.id}:${r}:${c}`, runs),
         innerW,
@@ -157,7 +192,11 @@ export function layoutTable(
     kind: 'table',
     id: block.id,
     top: blockTop,
-    height: reserveHeight({ content: sum(rows.map((row) => row.height)), border: TABLE_BORDER }),
+    height: reserveHeight({
+      // A scrolling table also reserves room for a non-overlay scrollbar track.
+      content: sum(rows.map((row) => row.height)) + (tableWidth > available ? scrollbarHeight : 0),
+      border: TABLE_BORDER,
+    }),
     contentWidth: tableWidth,
     colWidths,
     tableWidth,

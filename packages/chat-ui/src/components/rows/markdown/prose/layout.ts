@@ -56,9 +56,23 @@ function proseIndent(block: ProseBlock): { indent: number; textLeft: number } {
   const isListItem = block.variant === 'list-item';
   const isQuote = block.variant === 'quote';
   const indentPerLevel = isListItem ? LIST_INDENT : isQuote ? BLOCKQUOTE_INDENT : 0;
-  const indent = (depth + 1) * indentPerLevel;
+  // A list inside a quote starts from the quote's text column, not the margin.
+  const quoteDepth = isListItem ? block.quoteDepth : undefined;
+  const indent =
+    quoteDepth === undefined
+      ? (depth + 1) * indentPerLevel
+      : (quoteDepth + 1) * BLOCKQUOTE_INDENT + (depth - quoteDepth + 1) * LIST_INDENT;
   const textLeft = isListItem ? indent + LIST_BULLET_GAP : indent;
   return { indent, textLeft };
+}
+
+/** Quote rail x: 10px left of the quote's text column (see Prose.tsx). */
+function quoteRailX(block: ProseBlock): number | undefined {
+  if (block.variant === 'quote') return proseIndent(block).indent - 10;
+  if (block.variant === 'list-item' && block.quoteDepth !== undefined) {
+    return (block.quoteDepth + 1) * BLOCKQUOTE_INDENT - 10;
+  }
+  return undefined;
 }
 
 /**
@@ -128,7 +142,6 @@ export function layoutProse(
     };
   }
 
-  const isQuote = block.variant === 'quote';
   const isListItem = block.variant === 'list-item';
   const { indent, textLeft } = proseIndent(block);
   const effectiveWidth = Math.max(1, width - textLeft);
@@ -195,6 +208,7 @@ export function layoutProse(
     lineHeight,
     lines,
     bullet,
-    quoteRail: isQuote,
+    quoteRail: quoteRailX(block) !== undefined,
+    quoteRailX: quoteRailX(block),
   };
 }

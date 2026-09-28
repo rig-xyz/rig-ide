@@ -256,6 +256,11 @@ export const strikeFragment = style({
   textDecorationThickness: '1px',
 });
 
+/** Struck-through link — keeps linkFragment's underline (declared after it, so it wins). */
+export const linkStrikeFragment = style({
+  textDecorationLine: 'underline line-through',
+});
+
 export const bulletColor = style({ color: vars.fgMuted });
 
 /** GFM task-list checkbox, drawn in the bullet slot (centered on its anchor). */

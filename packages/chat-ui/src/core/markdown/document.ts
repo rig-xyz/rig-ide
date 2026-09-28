@@ -104,6 +104,13 @@ export type ProseBlock = {
   marker?: string;
   /** GFM task-list item state — draws a checkbox in place of the marker. */
   checked?: boolean;
+  /**
+   * List item inside a blockquote: the quote's content depth. The item is
+   * indented past the quote's text column and keeps the quote rail.
+   */
+  quoteDepth?: number;
+  /** First item of a top-level list — opens with a paragraph-sized gap. */
+  listStart?: boolean;
 };
 
 /**
