@@ -142,7 +142,7 @@ export function marginMode(panelWidth: number): MarginMode {
   return panelWidth - RAIL_RESERVE >= MIN_TEXT_COLUMN ? 'rail' : 'pins';
 }
 
-/** A pin's box: its size, and how far apart two pins on the same line sit. */
+/** A pin's box: its size, and how far apart the pins of a line sit once its stack fans out. */
 export const PIN_SIZE = 20;
 export const PIN_STEP = 24;
 /**
@@ -153,26 +153,20 @@ export const PIN_STEP = 24;
 export const PIN_GUTTER = 16;
 
 /**
- * Horizontal slots for pins that share a line (two threads anchored on the
- * same line would otherwise sit on top of each other): 0 for the first pin on
- * a line, 1 for the next, which sits one `PIN_STEP` further out into the
- * margin. Pins arrive in reading order; "the same line" is a top within
- * `tolerance` px of the line's first pin.
+ * Pins grouped by the line they sit on. Threads anchored on the same line
+ * share one spot in the margin as a stack (stepping them sideways ran out of
+ * gutter and clipped them at the panel's edge). "The same line" is a top
+ * within `tolerance` px of the line's first pin; lines come top to bottom and
+ * keep the pins in the order given.
  */
-export function pinSlots(pins: readonly { key: string; top: number }[], tolerance = 4): Map<string, number> {
-  const slots = new Map<string, number>();
-  let lineTop: number | null = null;
-  let slot = 0;
+export function pinLines(pins: readonly { key: string; top: number }[], tolerance = 4): { top: number; keys: string[] }[] {
+  const lines: { top: number; keys: string[] }[] = [];
   for (const pin of [...pins].sort((a, b) => a.top - b.top)) {
-    if (lineTop !== null && Math.abs(pin.top - lineTop) <= tolerance) {
-      slot += 1;
-    } else {
-      lineTop = pin.top;
-      slot = 0;
-    }
-    slots.set(pin.key, slot);
+    const line = lines.at(-1);
+    if (line && Math.abs(pin.top - line.top) <= tolerance) line.keys.push(pin.key);
+    else lines.push({ top: pin.top, keys: [pin.key] });
   }
-  return slots;
+  return lines;
 }
 
 /**

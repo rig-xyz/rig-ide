@@ -522,7 +522,76 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
     await act(async () => pin.click());
     await waitFor(() => findCard('Nice catch!') !== undefined);
     // The card opens below its pin, not at the top of the document.
-    expect(cardTop('Nice catch!')).toBeGreaterThan(Number.parseFloat(pin.style.top));
+    expect(cardTop('Nice catch!')).toBeGreaterThan(Number.parseFloat(pin.parentElement!.style.top));
+  });
+
+  it('stacks comments on the same line into one spot, the open one on top', async () => {
+    host.style.width = '700px';
+    mocks.read.mockImplementation(() =>
+      resolveOnMacrotask({
+        success: true,
+        data: { content: '# Rig 0.4.3 — Bugs & Wishlist\n\nSomething else below.\n', truncated: false },
+      })
+    );
+    mocks.commentsResolveTarget.mockReset().mockResolvedValue({
+      success: true,
+      data: {
+        target: { bindingId: 'binding-1', relayUrl: 'https://relay.example', relPath: 'notes.md' },
+        selfUserId: 'user-1',
+      },
+    });
+    const comment = (id: string, seq: string, body: string, exact: string) => ({
+      id,
+      seq,
+      bindingId: 'binding-1',
+      author: { userId: 'user-1', name: 'Dylan', avatarUrl: null, kind: 'user' },
+      kind: 'comment',
+      body,
+      parentId: null,
+      intentId: null,
+      path: 'notes.md',
+      meta: null,
+      anchor: { exact },
+      resolvedAt: null,
+      resolvedBy: null,
+      createdAt: `2026-08-27T00:00:0${seq}.000Z`,
+      editedAt: null,
+      deletedAt: null,
+    });
+    mocks.commentsList.mockReset().mockResolvedValue({
+      success: true,
+      data: {
+        messages: [
+          comment('msg-1', '1', 'On the version', '0.4.3'),
+          comment('msg-2', '2', 'On the bugs', 'Bugs'),
+          comment('msg-3', '3', 'On the wishlist', 'Wishlist'),
+        ],
+      },
+    });
+
+    await renderArtifact('/repo/notes.md');
+    await waitFor(() => loadingGone(host));
+    await waitFor(() => host.querySelectorAll('[data-comment-pin]').length === 3, 8000);
+
+    // One spot for the line, all three pins inside it, lowest number on top.
+    const stacks = host.querySelectorAll<HTMLElement>('[data-testid="comment-pin-stack"]');
+    expect(stacks).toHaveLength(1);
+    const numbersInStack = () =>
+      Array.from(stacks[0].querySelectorAll<HTMLButtonElement>('[data-comment-pin]')).map((pin) => pin.textContent);
+    expect(numbersInStack()).toEqual(['1', '2', '3']);
+    // Every pin stays inside the panel, none pushed off its left edge.
+    const panelLeft = host.getBoundingClientRect().left;
+    for (const pin of stacks[0].querySelectorAll('[data-comment-pin]')) {
+      expect(pin.getBoundingClientRect().left).toBeGreaterThanOrEqual(panelLeft);
+    }
+
+    // Opening one brings it to the top of the stack.
+    const third = Array.from(stacks[0].querySelectorAll<HTMLButtonElement>('[data-comment-pin]')).find(
+      (pin) => pin.textContent === '3'
+    )!;
+    await act(async () => third.click());
+    await waitFor(() => findCard('On the wishlist') !== undefined);
+    await waitFor(() => numbersInStack()[0] === '3');
   });
 
   it('gives a comment whose passage is gone a dashed pin at the top, so a narrow panel can still open it', async () => {

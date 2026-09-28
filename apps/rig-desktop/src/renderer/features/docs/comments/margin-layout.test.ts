@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RAIL_RESERVE, layoutMarginCards, marginMode, numberThreads, pinSlots } from './margin-layout';
+import { RAIL_RESERVE, layoutMarginCards, marginMode, numberThreads, pinLines } from './margin-layout';
 
 describe('layoutMarginCards', () => {
   it('places well-separated cards exactly at their anchor Y', () => {
@@ -234,27 +234,29 @@ describe('marginMode', () => {
   });
 });
 
-describe('pinSlots', () => {
-  it('gives every pin on its own line slot 0', () => {
-    const slots = pinSlots([
+describe('pinLines', () => {
+  it('gives every pin on its own line a line of its own', () => {
+    const lines = pinLines([
       { key: 'a', top: 100 },
       { key: 'b', top: 200 },
     ]);
-    expect(slots.get('a')).toBe(0);
-    expect(slots.get('b')).toBe(0);
+    expect(lines).toEqual([
+      { top: 100, keys: ['a'] },
+      { top: 200, keys: ['b'] },
+    ]);
   });
 
-  it('steps pins that share a line outward, in reading order', () => {
-    const slots = pinSlots([
+  it('stacks pins that share a line into one spot, top to bottom', () => {
+    const lines = pinLines([
+      { key: 'd', top: 160 },
       { key: 'a', top: 100 },
       { key: 'b', top: 102 },
       { key: 'c', top: 101 },
-      { key: 'd', top: 160 },
     ]);
-    expect(slots.get('a')).toBe(0);
-    expect(slots.get('c')).toBe(1);
-    expect(slots.get('b')).toBe(2);
-    expect(slots.get('d')).toBe(0);
+    expect(lines).toEqual([
+      { top: 100, keys: ['a', 'c', 'b'] },
+      { top: 160, keys: ['d'] },
+    ]);
   });
 });
 
