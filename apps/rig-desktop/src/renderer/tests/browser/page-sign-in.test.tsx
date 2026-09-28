@@ -50,6 +50,7 @@ import { resetConnectFlow } from '@renderer/features/pages/connect-flow';
 import { ConnectSheet } from '@renderer/features/pages/connect-sheet';
 import { SignInRows } from '@renderer/features/pages/sign-in';
 import { resetSignInFlows, signInFlow, WATCH_RETRY_MS } from '@renderer/features/pages/sign-in-flow';
+import { NotSharedNotice } from '@renderer/features/pages/not-shared-notice';
 import { SignInSheet } from '@renderer/features/pages/sign-in-sheet';
 import { signInSiteForUrl } from '@shared/pages/sign-in-sites';
 
@@ -747,5 +748,60 @@ describe('Settings › Sign-ins', () => {
     expect(text()).toContain('Use your Chrome sign-ins');
     expect(document.querySelector('[data-testid="sign-in-no-browser"]')?.textContent).toContain('Sign in here');
     expect(Array.from(document.querySelectorAll('button')).some((b) => /Connect/.test(b.textContent ?? ''))).toBe(false);
+  });
+});
+
+describe("this page isn't shared with the account (case 8)", () => {
+  const onHide = vi.fn();
+
+  async function renderNotShared(url = DOC) {
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <div style={{ position: 'relative', width: 800, height: 600 }}>
+            <AccountChip site={google} pageUrl={url} where={WHERE} onSignInHere={onSignInHere} notShared />
+            <button type="button" data-testid="page-content">
+              the page
+            </button>
+            <NotSharedNotice site={google} pageUrl={url} onHide={onHide} />
+            <SignInSheet siteId={google.id} onSignInHere={onSignInHere} />
+          </div>
+        </QueryClientProvider>
+      );
+    });
+    await settle();
+  }
+
+  it('names the page and the account, over the page, with Switch account and Open in Chrome', async () => {
+    state.sites = [record()];
+    await renderNotShared();
+    const notice = document.querySelector<HTMLElement>('[data-testid="not-shared"]')!;
+    expect(notice.textContent).toContain("This Doc isn't shared with me@example.test");
+    expect(notice.textContent).toContain('Comments on it are still in the chat.');
+    // A card over the page, not a cover: the page is still there and usable.
+    expect(document.querySelector('[data-testid="page-content"]')).not.toBeNull();
+    expect(chip().dataset.state).toBe('not-shared');
+    expect(chip().textContent).toContain('me@example.test· no access');
+    await click(button('Open in Chrome'));
+    expect(pages.openInBrowser).toHaveBeenCalledWith({ url: DOC });
+    await click(button('Switch account'));
+    expect(step()).toBe('share');
+    expect(sheet()!.textContent).toContain('Switch the Google account');
+  });
+
+  it('falls back to the connected profile, then to "your account"', async () => {
+    state.connection = { ...CONNECTED, email: 'you@work.example' };
+    await renderNotShared('https://docs.google.com/spreadsheets/d/1/edit');
+    expect(document.querySelector('[data-testid="not-shared"]')?.textContent).toContain("This Sheet isn't shared with you@work.example");
+    state.connection = null;
+    await act(async () => void queryClient.invalidateQueries());
+    await settle();
+    expect(document.querySelector('[data-testid="not-shared"]')?.textContent).toContain("This Sheet isn't shared with your account");
+  });
+
+  it('hides with ✕', async () => {
+    await renderNotShared();
+    await click(document.querySelector<HTMLElement>('[data-testid="not-shared"] [aria-label="Hide"]')!);
+    expect(onHide).toHaveBeenCalledOnce();
   });
 });

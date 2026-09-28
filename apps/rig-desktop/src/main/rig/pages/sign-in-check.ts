@@ -1,5 +1,6 @@
 import { BrowserWindow, type WebContents } from 'electron';
 import { configureBrowserProfileSession } from '@main/core/browser/browser-profile-session';
+import { isNotSharedPage } from '@shared/pages/page-access';
 import { cookieHostMatches, isSignInWall, type SignInSite } from '@shared/pages/sign-in-sites';
 import { jarCookieToSet, type CookieToSet } from './chrome-sign-in';
 import type { CheckResult } from './page-sign-ins';
@@ -28,6 +29,24 @@ export async function pageIsSignInWall(wc: WebContents): Promise<boolean> {
     .then((v: unknown) => v === true)
     .catch(() => false);
   return isSignInWall({ url: wc.getURL(), hasPasswordField });
+}
+
+/**
+ * The post-load look at a panel page: a sign-in wall, or (signed in) the
+ * site's own "this isn't shared with you" page (case 8). Reads the title
+ * and the start of the visible text; nothing leaves main but the verdict.
+ */
+export async function pageAccess(wc: WebContents): Promise<{ wall: boolean; notShared: boolean }> {
+  const seen = await wc
+    .executeJavaScript(
+      `({ password: !!document.querySelector('input[type="password"]'), title: document.title, text: document.body ? document.body.innerText.slice(0, 4000) : '' })`,
+      true
+    )
+    .then((v: unknown) => v as { password: boolean; title: string; text: string })
+    .catch(() => ({ password: false, title: '', text: '' }));
+  const url = wc.getURL();
+  const wall = isSignInWall({ url, hasPasswordField: seen.password });
+  return { wall, notShared: !wall && isNotSharedPage({ url, title: seen.title, text: seen.text }) };
 }
 
 let queue: Promise<unknown> = Promise.resolve();

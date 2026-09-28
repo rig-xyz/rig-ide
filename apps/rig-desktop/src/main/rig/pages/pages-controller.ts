@@ -13,7 +13,7 @@ import { linkTitle } from './link-titles';
 import type { AutoSignInOutcome } from './page-sign-ins';
 import { pageSignIns, startPageSignInsKeepInStep } from './page-sign-ins-instance';
 import { isPanelPage } from './panel-page';
-import { pageIsSignInWall } from './sign-in-check';
+import { pageAccess } from './sign-in-check';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { hitPage, locateOnPage } from './page-frames';
 import { threadsFromRows } from './page-pins';
@@ -114,14 +114,15 @@ export const rigPagesController = createRPCController({
    * Whether the page in a panel webview is on a sign-in wall (a known
    * sign-in host, a sign-in path, a password field). A wall on the page's
    * site (the one its link belongs to, not the sign-in host it was sent to)
-   * marks rig's copy of that sign-in expired.
+   * marks rig's copy of that sign-in expired. `notShared`: signed in, but
+   * the site's own page says this account can't see it (case 8; known sites only).
    */
-  signInWall: async ({ webContentsId, site }: { webContentsId: number; site?: string }): Promise<{ wall: boolean }> => {
+  signInWall: async ({ webContentsId, site }: { webContentsId: number; site?: string }): Promise<{ wall: boolean; notShared: boolean }> => {
     const page = pageContents(webContentsId);
-    if (!page) return { wall: false };
-    const wall = await pageIsSignInWall(page);
-    if (wall && site) pageSignIns.markWall(site);
-    return { wall };
+    if (!page) return { wall: false, notShared: false };
+    const access = await pageAccess(page);
+    if (access.wall && site) pageSignIns.markWall(site);
+    return access;
   },
 
   /** Opens System Settings at Files & Folders (case 2). */

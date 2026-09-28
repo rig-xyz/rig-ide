@@ -23,12 +23,15 @@ export function AccountChip({
   pageUrl,
   where,
   onSignInHere,
+  notShared = false,
 }: {
   site: SignInSite;
   pageUrl: string;
   /** The page's key for the Connect sheet (so it opens over this page). */
   where: string;
   onSignInHere: () => void;
+  /** Signed in, but the site says this account can't see the page (case 8). */
+  notShared?: boolean;
 }) {
   const queryClient = useQueryClient();
   const list = useSignIns();
@@ -101,15 +104,16 @@ export function AccountChip({
         onClick={() => setOpen((o) => !o)}
         className={cn(
           'hover:bg-bg-2 flex h-6 max-w-56 items-center gap-1.5 rounded-full border px-2 text-xs text-text-secondary transition-colors',
-          signedIn ? 'border-border-hairline' : 'border-border-strong border-dashed'
+          signedIn ? (notShared ? 'border-warning/50' : 'border-border-hairline') : 'border-border-strong border-dashed'
         )}
         data-testid="account-chip"
-        data-state={signedIn ? 'signed-in' : record ? 'expired' : 'signed-out'}
+        data-state={signedIn ? (notShared ? 'not-shared' : 'signed-in') : record ? 'expired' : 'signed-out'}
       >
         {signedIn ? (
           <>
             <Initial text={accountLabel(record)} className="size-4" />
             <span className="truncate">{accountLabel(record)}</span>
+            {notShared && <span className="text-warning shrink-0">· no access</span>}
             {record.refreshAvailable && <span className="bg-accent size-1.5 shrink-0 rounded-full" aria-label="A newer sign-in is available" />}
           </>
         ) : (

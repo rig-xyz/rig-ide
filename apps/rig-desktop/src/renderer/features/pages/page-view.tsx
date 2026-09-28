@@ -25,6 +25,7 @@ import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { AccountChip, SignInBanner } from './account-chip';
 import { clearAutoSignIn, getAutoState, registerPanelPage, runAutoSignIn } from './auto-sign-in';
 import { ConnectSheet } from './connect-sheet';
+import { NotSharedNotice } from './not-shared-notice';
 import { SignInSheet } from './sign-in-sheet';
 import { recordFor, useSignIns } from './use-sign-ins';
 
@@ -110,6 +111,9 @@ export function PageView({
   const signIns = useSignIns();
   const record = recordFor(signIns.data, site?.id);
   const [wall, setWall] = useState(false);
+  // Signed in, but the site's own page says this account can't see it (case 8); hidden for this load with ✕.
+  const [notShared, setNotShared] = useState(false);
+  const [notSharedHidden, setNotSharedHidden] = useState(false);
   const [bannerHidden, setBannerHidden] = useState(() => bannerDismissed.has(url));
   const siteIdRef = useRef(site?.id);
   siteIdRef.current = site?.id;
@@ -157,6 +161,8 @@ export function PageView({
             .then((r) => {
               if (cancelled) return;
               setWall(r.wall);
+              setNotShared(r.notShared);
+              if (!r.notShared) setNotSharedHidden(false);
               // Connected and not signed in: on a sign-in wall, and on first load only for a known
               // sign-in site (Google, claude.ai, Notion…). Any other site's first load could be a
               // public page whose analytics cookies would get copied (and a Keychain prompt with
@@ -288,7 +294,7 @@ export function PageView({
       <div className="border-border-hairline flex h-11 shrink-0 items-center gap-2 border-b px-4">
         <b className="min-w-0 truncate text-sm font-medium text-text-primary">{title}</b>
         <span className="shrink-0 text-xs text-text-muted">{hostOf(url)}</span>
-        {site && <AccountChip site={site} pageUrl={url} where={where} onSignInHere={signInHere} />}
+        {site && <AccountChip site={site} pageUrl={url} where={where} onSignInHere={signInHere} notShared={notShared} />}
         <span className="ml-auto flex shrink-0 items-center gap-1">
           <CommentModeControl
             on={commenting}
@@ -338,6 +344,7 @@ export function PageView({
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <div ref={hostRef} className="absolute inset-0" />
+        {site && notShared && !notSharedHidden && <NotSharedNotice site={site} pageUrl={url} onHide={() => setNotSharedHidden(true)} />}
         {site && <SignInSheet siteId={site.id} onSignInHere={signInHere} />}
         <ConnectSheet where={where} />
         {commenting && (
