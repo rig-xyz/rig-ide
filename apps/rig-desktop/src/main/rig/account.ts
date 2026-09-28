@@ -232,6 +232,13 @@ export function forgetSelfUserId(): void {
   selfUserIdLoad = null;
 }
 
+/** The signed-in user's id when it's already known for the current token — never asks the relay (null otherwise). */
+export async function peekSelfUserId(): Promise<string | null> {
+  const ctx = await resolveContext();
+  if (isError(ctx)) return null;
+  return selfUserId?.key === selfUserIdKey(ctx) ? selfUserId.id : null;
+}
+
 export async function resolveSelfUserId(): Promise<Result<string, RigAccountError>> {
   const ctx = await resolveContext();
   if (isError(ctx)) return err(ctx);

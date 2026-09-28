@@ -561,6 +561,32 @@ describe('RigSettingsStore', () => {
     });
   });
 
+  describe('spacesRoomDiskCache (off until it has shown its win)', () => {
+    it('is off by default, and for a file from before it existed', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().spacesRoomDiskCache).toBe(false);
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(settingsPath, JSON.stringify({ version: 1, theme: null }));
+      const older = new RigSettingsStore(settingsPath);
+      older.initialize();
+      expect(older.get().spacesRoomDiskCache).toBe(false);
+    });
+
+    it('turned on, it stays on; anything but true reads as off', () => {
+      const first = new RigSettingsStore(settingsPath);
+      first.initialize();
+      first.set({ spacesRoomDiskCache: true });
+      const second = new RigSettingsStore(settingsPath);
+      second.initialize();
+      expect(second.get().spacesRoomDiskCache).toBe(true);
+      writeFileSync(settingsPath, JSON.stringify({ ...DEFAULT_RIG_SETTINGS, spacesRoomDiskCache: 'yes' }));
+      const third = new RigSettingsStore(settingsPath);
+      third.initialize();
+      expect(third.get().spacesRoomDiskCache).toBe(false);
+    });
+  });
+
   describe('spacesEnabled (on by default since 0.4.3)', () => {
 
     it('defaults to true before anything is ever set', () => {

@@ -163,7 +163,11 @@ function startLogin(): LoginSession {
 async function resumeSignedInAccountRigs(): Promise<void> {
   forgetSelfUserId();
   const current = await getCurrentAccountId();
-  if (current.status === 'known') await resumeRigsForAccount(current.id);
+  if (current.status !== 'known') return;
+  // Another account signed in: the previous one's cached Rooms and comment
+  // threads go (`localCacheAccountId` purges on a switch). Lazy: it opens the app DB.
+  await (await import('./local-cache-account')).localCacheAccountId().catch(() => null);
+  await resumeRigsForAccount(current.id);
 }
 
 /** Stops an in-flight login — used both by the explicit `cancel` RPC and by `logout`. */
@@ -271,6 +275,8 @@ export const rigAuthController = createRPCController({
     const current = await getCurrentAccountId();
     const result = await runLogout();
     forgetSelfUserId();
+    // Signed out: no cached Room or comment thread of anyone's stays on disk.
+    if (result.success) await (await import('./local-cache-account')).purgeLocalCaches().catch(() => undefined);
     if (result.success && current.status === 'known') {
       await pauseRigsForAccount(current.id);
     }

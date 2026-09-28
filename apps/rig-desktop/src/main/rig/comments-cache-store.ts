@@ -5,6 +5,7 @@ import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import type { RigCommentMessage, RigCommentsCacheEntry } from '@shared/rig/comments';
 import { resolveCommentTarget } from './comments';
+import { localCacheAccountId } from './local-cache-account';
 
 /**
  * `rig_comments_cache` reads/writes — graduated from `comments-store.ts`'s
@@ -31,13 +32,17 @@ export const rigCommentsCacheController = createRPCController({
     const target = resolveCommentTarget(absPath);
     if (!target) return null;
     try {
+      // Only the account that wrote it reads it back (`local-cache-account.ts`).
+      const accountId = await localCacheAccountId();
+      if (!accountId) return null;
       const [row] = await db
         .select()
         .from(rigCommentsCache)
         .where(
           and(
             eq(rigCommentsCache.bindingId, target.bindingId),
-            eq(rigCommentsCache.relPath, target.relPath)
+            eq(rigCommentsCache.relPath, target.relPath),
+            eq(rigCommentsCache.accountId, accountId)
           )
         )
         .limit(1);
@@ -77,12 +82,14 @@ export const rigCommentsCacheController = createRPCController({
     const syncedAt = Number.isFinite(parsed) ? parsed : Date.now();
     const threadsJson = JSON.stringify(messages);
     try {
+      const accountId = await localCacheAccountId();
+      if (!accountId) return;
       await db
         .insert(rigCommentsCache)
-        .values({ bindingId: target.bindingId, relPath: target.relPath, threadsJson, syncedAt })
+        .values({ bindingId: target.bindingId, relPath: target.relPath, threadsJson, syncedAt, accountId })
         .onConflictDoUpdate({
           target: [rigCommentsCache.bindingId, rigCommentsCache.relPath],
-          set: { threadsJson, syncedAt },
+          set: { threadsJson, syncedAt, accountId },
         });
     } catch (error) {
       log.warn('Rig comments: failed to write the comments cache', { absPath, error: String(error) });

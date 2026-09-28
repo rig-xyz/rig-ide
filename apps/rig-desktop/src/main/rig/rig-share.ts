@@ -202,6 +202,12 @@ async function relayError(response: Response, action: string, target?: Target): 
   if (response.status === 410) {
     const deleted = parseBindingDeletedBody(body);
     if (deleted) {
+      // A deleted rig's cached Room and comment threads go too (lazy: the cache module opens the app DB).
+      if (target) {
+        void import('./local-cache-account')
+          .then((m) => m.forgetLocalCaches(target.bindingId))
+          .catch(() => undefined);
+      }
       return {
         kind: 'bindingDeleted',
         message: 'This rig was deleted.',

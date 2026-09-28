@@ -60,6 +60,7 @@ import { rigSettingsController } from './rig/settings-instance';
 import { rigConnectorsController } from './rig/connectors/connections-instance';
 import { rigPagesController } from './rig/pages/pages-controller';
 import { rigSpacesConnectionController } from './rig/spaces-connection';
+import { rigRoomCacheController } from './rig/room-cache-store';
 import { rigSpacesDispatchController } from './rig/spaces/dispatch-controller-instance';
 import { rigShareLinksController } from './rig/share-links';
 import { rigWorkspaceController } from './rig/workspace';
@@ -154,6 +155,7 @@ export const rpcRouter = createRPCRouter({
     // renderer the PAT itself rather than proxying every relay call, unlike
     // every other key in this namespace.
     spacesConnection: rigSpacesConnectionController,
+    roomCache: rigRoomCacheController,
     // Spaces (lane 4): the Room session card's Stop button. Cancels the
     // claimed request's ACP turn if — and only if — THIS device is the one
     // running it; see `dispatch-controller.ts`'s own header comment.

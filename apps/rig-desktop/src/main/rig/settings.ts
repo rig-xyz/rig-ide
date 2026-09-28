@@ -182,6 +182,7 @@ function normalizeSettings(parsed: unknown): RigSettings {
     spacesEnabled: raw.spacesDefaultOnApplied === true ? raw.spacesEnabled === true : true,
     spacesDefaultOnApplied: true,
     spacesRoomSees: normalizeRoomSees(raw.spacesRoomSees),
+    spacesRoomDiskCache: raw.spacesRoomDiskCache === true,
   };
 }
 

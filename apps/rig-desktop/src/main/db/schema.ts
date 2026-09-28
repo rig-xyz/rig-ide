@@ -619,9 +619,43 @@ export const rigCommentsCache = sqliteTable(
     relPath: text('rel_path').notNull(),
     threadsJson: text('threads_json').notNull(),
     syncedAt: integer('synced_at').notNull(),
+    /**
+     * Whose copy this is (the signed-in user id when it was written). Read
+     * back only for that same account; null (written before this column)
+     * is never read back. Purged on sign-out and account switch
+     * (`local-cache-purge.ts`).
+     */
+    accountId: text('account_id'),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.bindingId, table.relPath] }),
+  })
+);
+
+/**
+ * Spaces (rig/docs/room-disk-cache-spec.md): each space's last Room, per
+ * account, so the first open after launch shows it at once and only
+ * catches up. One versioned JSON blob per (account, binding): messages
+ * window, roster, invites, connectors, run metas and finished runs'
+ * hide-safe card summaries — never steps, tool output, presence or tokens.
+ * Capped per row and in count (`room-cache-store.ts`).
+ */
+export const rigRoomCache = sqliteTable(
+  'rig_room_cache',
+  {
+    accountId: text('account_id').notNull(),
+    bindingId: text('binding_id').notNull(),
+    /** The relay the snapshot came from; another relay's is never served. */
+    relayHost: text('relay_host').notNull(),
+    formatVersion: integer('format_version').notNull(),
+    snapshotJson: text('snapshot_json').notNull(),
+    bytes: integer('bytes').notNull(),
+    savedAt: integer('saved_at').notNull(),
+    /** Last read or written: the least recently opened rows are evicted first. */
+    openedAt: integer('opened_at').notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.accountId, table.bindingId] }),
   })
 );
 

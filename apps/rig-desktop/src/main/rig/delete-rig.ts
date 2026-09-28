@@ -161,7 +161,11 @@ async function trashFolderImpl(path: string): Promise<Result<void, { message: st
 const realDeps: DeleteRigDeps = {
   stopSync: (path) => stopSyncForDeletion(path),
   callRelay: (bindingId, mode) => callDeleteOrLeave(bindingId, mode),
-  forgetLocal: (bindingId) => forgetRig(bindingId),
+  forgetLocal: async (bindingId) => {
+    await forgetRig(bindingId);
+    // Its cached Room and comment threads go with it (lazy: the cache module opens the app DB).
+    await (await import('./local-cache-account')).forgetLocalCaches(bindingId);
+  },
   trashFolder: (path) => trashFolderImpl(path),
 };
 

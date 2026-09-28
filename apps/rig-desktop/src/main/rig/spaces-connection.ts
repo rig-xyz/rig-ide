@@ -105,6 +105,22 @@ export async function listSpaceSkillsIn(root: string): Promise<SpaceSkill[]> {
   return skills;
 }
 
+/**
+ * A space the relay says is gone (410) or no longer yours (404 on its
+ * roster or messages): its cached Room and comment threads are forgotten
+ * (rig/docs/room-disk-cache-spec.md). Returns `result` unchanged.
+ */
+async function forgetIfGone<T>(bindingId: string, result: Result<T, RelayApiError>): Promise<Result<T, RelayApiError>> {
+  const status = !result.success && result.error.kind === 'relay' ? result.error.status : undefined;
+  if (status === 404 || status === 410) {
+    // Lazy: the cache module opens the app database, which this module's tests don't have.
+    await import('./local-cache-account')
+      .then((m) => m.forgetLocalCaches(bindingId))
+      .catch(() => undefined);
+  }
+  return result;
+}
+
 export const rigSpacesConnectionController = createRPCController({
   getConnectionInfo: async (): Promise<Result<SpacesConnectionInfo, RigAccountError>> => {
     const ctx = await resolveContext();
@@ -143,7 +159,7 @@ export const rigSpacesConnectionController = createRPCController({
     return root ? listSpaceSkillsIn(root) : [];
   },
   listMembers: async (input: { bindingId: string }): Promise<Result<RoomMemberRow[], RelayApiError>> =>
-    api.listMembers(input.bindingId),
+    forgetIfGone(input.bindingId, await api.listMembers(input.bindingId)),
 
   // Connectors (connectors-spec.md): which tools the space uses. Ids only;
   // your own logins stay in main (`rpc.rig.connectors`).
@@ -161,7 +177,8 @@ export const rigSpacesConnectionController = createRPCController({
   listMessages: async (input: {
     bindingId: string;
     query: { latest?: number; after?: string };
-  }): Promise<Result<RoomMessageRow[], RelayApiError>> => api.listMessages(input.bindingId, input.query),
+  }): Promise<Result<RoomMessageRow[], RelayApiError>> =>
+    forgetIfGone(input.bindingId, await api.listMessages(input.bindingId, input.query)),
 
   getSessionEvents: async (input: {
     bindingId: string;

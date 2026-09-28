@@ -34,6 +34,7 @@ describe('0020_rig_tables', () => {
       'rig_comments_cache',
       'rig_profiles',
       'rig_rigs',
+      'rig_room_cache',
       'rig_seen_files',
       'rig_session_events',
       'rig_sessions',

@@ -223,6 +223,12 @@ export type RigSettings = {
    * (`shared/spaces/room-sees.ts`). Only ever read on this computer.
    */
   spacesRoomSees: Record<string, RoomSees>;
+  /**
+   * Spaces: keep each space's last Room on disk (`rig_room_cache`, see
+   * rig/docs/room-disk-cache-spec.md), so the first open after launch shows
+   * it at once and only catches up. Off until the log lines show the win.
+   */
+  spacesRoomDiskCache: boolean;
 };
 
 export const DEFAULT_RIG_SETTINGS: RigSettings = {
@@ -250,6 +256,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   spacesEnabled: true,
   spacesDefaultOnApplied: true,
   spacesRoomSees: {},
+  spacesRoomDiskCache: false,
 };
 
 /** The subset of legacy localStorage values the renderer can hand to `importLegacy`. */
