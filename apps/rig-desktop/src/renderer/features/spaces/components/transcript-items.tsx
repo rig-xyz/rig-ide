@@ -12,12 +12,20 @@ import {
   Sheet,
   UserPlus,
 } from 'lucide-react';
-import { Children, createContext, type ReactNode, useContext, useEffect, useState } from 'react';
+import { Children, createContext, type MouseEvent, type ReactNode, useContext, useEffect, useState } from 'react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import { formatClock, formatClockShort, formatFull } from '@renderer/lib/time-format';
 import type { ConnectResult } from '@shared/spaces/connectors';
-import { canonicalPageUrl, classifyLink, trimUrl, URL_PATTERN, type LinkKind } from '@shared/spaces/links';
+import {
+  canonicalPageUrl,
+  classifyLink,
+  opensBesideChat,
+  trimUrl,
+  URL_PATTERN,
+  webLinkLabel,
+  type LinkKind,
+} from '@shared/spaces/links';
 import { BrandLogo, ConnectorMark } from '../logos';
 import type { RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
@@ -49,22 +57,35 @@ const LINK_ICON: Partial<Record<LinkKind, ReactNode>> = {
 };
 
 /**
- * Opens a web page beside the Room (the Room provides it). Claude artifacts
- * and Google documents open there, signed in as the member, so the space can
- * pin comments on them; everything else opens in the browser.
+ * Opens a web page beside the Room (the Room provides it), signed in as the
+ * member, so the space can pin comments on it. Every web page opens there
+ * except meetings, downloads and non-web links (`opensBesideChat`), which
+ * go to the browser, as does a ⌘/ctrl- or middle-click on any link.
  */
 export const OpenPageContext = createContext<((url: string, title: string) => void) | null>(null);
 
-const PANEL_PAGE_KINDS: ReadonlySet<LinkKind> = new Set(['claude-artifact', 'google-doc', 'google-sheet', 'google-slides']);
-
-/** `inPanel`: open any page beside the Room (a page with pins on it), not just the kinds above. */
-function useOpenLink(url: string, title: string, inPanel = false): (event: { preventDefault(): void }) => void {
+/** `inPanel`: open the page beside the Room whatever it is (a page with pins on it). */
+function useOpenLink(
+  url: string,
+  title: string,
+  inPanel = false
+): { onClick: (event: MouseEvent<HTMLAnchorElement>) => void; onAuxClick: (event: MouseEvent<HTMLAnchorElement>) => void } {
   const openPage = useContext(OpenPageContext);
-  return (event) => {
-    event.preventDefault();
-    if (openPage && (inPanel || PANEL_PAGE_KINDS.has(classifyLink(url).kind))) openPage(canonicalPageUrl(url), title);
-    // Loaded on click: these rows render in tests and previews with no Electron bridge.
-    else void import('@renderer/lib/ipc').then(({ rpc }) => rpc.app.openExternal(url));
+  // Loaded on click: these rows render in tests and previews with no Electron bridge.
+  const openExternal = () => void import('@renderer/lib/ipc').then(({ rpc }) => rpc.app.openExternal(url));
+  return {
+    onClick: (event) => {
+      event.preventDefault();
+      const toBrowser = event.metaKey || event.ctrlKey;
+      if (openPage && !toBrowser && (inPanel || opensBesideChat(url))) openPage(canonicalPageUrl(url), title);
+      else openExternal();
+    },
+    // A middle-click: the browser, always.
+    onAuxClick: (event) => {
+      if (event.button !== 1) return;
+      event.preventDefault();
+      openExternal();
+    },
   };
 }
 
@@ -102,29 +123,27 @@ function useLinkTitle(url: string, kind: LinkKind): string | null {
   return title;
 }
 
-/** A link in a message: a chip for the kinds we know ("Pilot deck" once its name is known, else "Claude artifact", "Google Doc", "acme/app"), else the URL itself. */
+/**
+ * A link in a message, as a chip: for the kinds we know, what it is ("Pilot
+ * deck" once its name is known, else "Claude artifact", "Google Doc",
+ * "acme/app"); for any other page, its site ("userig.xyz/download", from the
+ * URL alone: nothing is fetched for it). The full URL is in the tooltip.
+ */
 function MessageLink({ url }: { url: string }) {
   const { kind, label: kindLabel } = classifyLink(url);
   const title = useLinkTitle(url, kind);
-  const label = title ?? kindLabel;
+  const label = kind === 'web' ? webLinkLabel(url) : (title ?? kindLabel);
   const open = useOpenLink(url, label);
-  if (kind === 'web') {
-    return (
-      <a href={url} onClick={open} className="break-all underline decoration-dotted underline-offset-2" data-testid="message-link">
-        {url}
-      </a>
-    );
-  }
   return (
     <a
       href={url}
-      onClick={open}
+      {...open}
       title={title ? `${kindLabel} · ${url}` : url}
       className="border-border-hairline bg-bg-1 hover:bg-bg-2 inline-flex max-w-full items-center gap-1 rounded-control border px-1.5 align-[-1px] text-text-primary"
       data-testid="message-link-chip"
       data-kind={kind}
     >
-      {LINK_ICON[kind]}
+      {LINK_ICON[kind] ?? <Globe className="size-3 shrink-0 text-text-secondary" strokeWidth={1.75} />}
       <span className="max-w-[32ch] min-w-0 truncate">{label}</span>
     </a>
   );
@@ -151,7 +170,7 @@ function PageChip({ url, title }: { url: string; title?: string }) {
   return (
     <a
       href={url}
-      onClick={open}
+      {...open}
       title={url}
       className="border-border-hairline bg-bg-1 hover:bg-bg-2 inline-flex items-center gap-1 rounded-control border px-1.5 align-[-1px] text-xs text-text-primary"
       data-testid="comment-page-chip"

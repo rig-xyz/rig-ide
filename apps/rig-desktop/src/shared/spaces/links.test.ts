@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalPageUrl, classifyLink, trimUrl } from './links';
+import { canonicalPageUrl, classifyLink, opensBesideChat, trimUrl, webLinkLabel } from './links';
 
 describe('classifyLink', () => {
   it.each([
@@ -46,5 +46,50 @@ describe('canonicalPageUrl', () => {
     expect(canonicalPageUrl('https://docs.google.com/document/d/1AbC/edit?usp=sharing')).toBe('https://docs.google.com/document/d/1AbC/edit');
     // Anywhere else the query can matter, only the fragment goes.
     expect(canonicalPageUrl('https://example.com/report?id=7#s2')).toBe('https://example.com/report?id=7');
+  });
+});
+
+describe('opensBesideChat', () => {
+  it.each([
+    'https://example.com/report?id=7',
+    'http://localhost:3000/',
+    'https://docs.google.com/document/d/1AbC/edit',
+    'https://github.com/rig-xyz/rig-ide',
+    'https://userig.xyz/download',
+  ])('%s opens beside the chat', (url) => {
+    expect(opensBesideChat(url)).toBe(true);
+  });
+
+  it.each([
+    'mailto:sam@acme.com',
+    'slack://channel?team=T1&id=C1',
+    'vscode://file/Users/sam/app.ts',
+    'https://zoom.us/j/123456',
+    'https://acme.zoom.us/j/123456?pwd=x',
+    'https://meet.google.com/abc-defg-hij',
+    'https://teams.microsoft.com/l/meetup-join/19%3a',
+    'https://dl.userig.xyz/Rig-0.4.5-arm64.dmg',
+    'https://example.com/files/export.ZIP',
+    'https://example.com/a/archive.tar.gz',
+    'https://example.com/setup.exe',
+    'https://example.com/Installer.pkg',
+    'https://cdn.example.com/demo.mp4?t=3',
+    'https://cdn.example.com/clip.mov',
+    'not a url',
+  ])('%s goes to the browser (or its own app)', (url) => {
+    expect(opensBesideChat(url)).toBe(false);
+  });
+});
+
+describe('webLinkLabel', () => {
+  it.each([
+    ['https://www.userig.xyz/download', 'userig.xyz/download'],
+    ['https://example.com', 'example.com'],
+    ['https://example.com/?q=1#top', 'example.com'],
+    ['https://notion.so/acme/Plan-123', 'notion.so/acme'],
+    ['https://example.com/caf%C3%A9', 'example.com/café'],
+    ['https://example.com/a-very-long-first-path-segment-indeed', 'example.com/a-very-long-first-path-…'],
+  ])('%s → %s', (url, label) => {
+    expect(webLinkLabel(url)).toBe(label);
   });
 });

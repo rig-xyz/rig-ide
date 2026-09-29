@@ -89,3 +89,50 @@ export function canonicalPageUrl(url: string): string {
   if (kind !== 'web' && kind !== 'github') parsed.search = '';
   return parsed.toString();
 }
+
+/** Meetings open in their own app (via the browser), never beside the chat. */
+const MEETING_HOSTS = ['zoom.us', 'meet.google.com', 'teams.microsoft.com', 'teams.live.com'];
+const DOWNLOAD_PATH = /\.(dmg|zip|pkg|exe|tar\.gz|mp4|mov)$/i;
+
+/**
+ * Whether a link opens beside the chat (the pages panel takes any site) or
+ * goes to the browser: every http(s) page does, except a meeting (Zoom, Meet,
+ * Teams), an obvious download (.dmg, .zip, .mp4…), and anything that isn't
+ * http(s) at all (mailto:, an app's own link).
+ */
+export function opensBesideChat(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  const host = parsed.hostname.toLowerCase();
+  if (MEETING_HOSTS.some((h) => host === h || host.endsWith(`.${h}`))) return false;
+  return !DOWNLOAD_PATH.test(parsed.pathname);
+}
+
+/**
+ * A web link's chip name, from its URL alone (no page is loaded for it): the
+ * site without "www.", and the first step of its path when there is one
+ * ("userig.xyz/download", "notion.so/acme"), cut short if it's long.
+ */
+export function webLinkLabel(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  const host = parsed.hostname.replace(/^www\./, '');
+  const first = parsed.pathname.split('/').find(Boolean);
+  if (!first) return host;
+  let step = first;
+  try {
+    step = decodeURIComponent(first);
+  } catch {
+    // Not valid percent-encoding: shown as written.
+  }
+  return `${host}/${step.length > 24 ? `${step.slice(0, 23)}…` : step}`;
+}

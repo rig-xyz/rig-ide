@@ -2,10 +2,11 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { richText } from '@renderer/features/spaces/components/transcript-items';
+import { OpenPageContext, richText } from '@renderer/features/spaces/components/transcript-items';
 
 const linkTitle = vi.hoisted(() => vi.fn(async ({ url }: { url: string }) => (url.includes('/artifact/') ? 'Homepage explorations' : null)));
-vi.mock('@renderer/lib/ipc', () => ({ rpc: { app: { openExternal: async () => {} }, rig: { pages: { linkTitle } } } }));
+const openExternal = vi.hoisted(() => vi.fn(async (_url: string) => {}));
+vi.mock('@renderer/lib/ipc', () => ({ rpc: { app: { openExternal }, rig: { pages: { linkTitle } } } }));
 
 /** 0.4.3: "@gmail" inside an email address was styled as an @mention. */
 function highlighted(text: string): string[] {
@@ -21,7 +22,8 @@ describe('richText mentions', () => {
   it('highlights a /command but not path or URL segments', () => {
     expect(highlighted('/summarize the plan')).toEqual(['/summarize']);
     expect(highlighted('read the file /etc/hosts and run /date')).toEqual([]);
-    expect(highlighted('see https://userig.xyz/join/abc and docs/plan')).toEqual([]);
+    // Only the link's own chip label: nothing inside the URL reads as a /command.
+    expect(highlighted('see https://userig.xyz/join/abc and docs/plan')).toEqual(['userig.xyz/join']);
   });
 
   it('still highlights a mention after opening punctuation', () => {
@@ -88,12 +90,63 @@ describe('richText links', () => {
     return host;
   };
 
-  it('makes a plain web link clickable, leaving the sentence punctuation outside it', () => {
-    const host = render('see https://userig.xyz/download.');
-    const link = host.querySelector<HTMLAnchorElement>('[data-testid="message-link"]')!;
-    expect(link.getAttribute('href')).toBe('https://userig.xyz/download');
-    expect(link.textContent).toBe('https://userig.xyz/download');
-    expect(host.textContent).toBe('see https://userig.xyz/download.');
+  it('shows a plain web link as a chip named for its site, leaving the sentence punctuation outside it', () => {
+    const host = render('see https://www.userig.xyz/download. and https://example.com');
+    const chips = [...host.querySelectorAll<HTMLAnchorElement>('[data-testid="message-link-chip"]')];
+    expect(chips.map((c) => [c.dataset.kind, c.textContent, c.getAttribute('href'), c.title])).toEqual([
+      ['web', 'userig.xyz/download', 'https://www.userig.xyz/download', 'https://www.userig.xyz/download'],
+      ['web', 'example.com', 'https://example.com', 'https://example.com'],
+    ]);
+    expect(host.textContent).toBe('see userig.xyz/download. and example.com');
+    // A globe, never a favicon fetched from the site; one line, cut short rather than wrapped mid-address.
+    expect(chips[0]!.querySelector('svg.lucide-globe')).not.toBeNull();
+    expect(chips[0]!.querySelector('img')).toBeNull();
+    expect(host.innerHTML).not.toContain('break-all');
+    expect(chips[0]!.querySelector('span')!.className).toContain('truncate');
+  });
+
+  it("opens a web link beside the chat; ⌘/ctrl- or middle-click, a meeting or a download go to the browser, and nothing asks the site for a title", async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const openPage = vi.fn();
+    openExternal.mockClear();
+    linkTitle.mockClear();
+    await act(async () => {
+      root.render(
+        <OpenPageContext.Provider value={openPage}>
+          {richText('see https://www.userig.xyz/download#top, https://zoom.us/j/123 and https://dl.userig.xyz/Rig-0.4.5.dmg', 'bob')}
+        </OpenPageContext.Provider>
+      );
+    });
+    const [page, meeting, download] = [...host.querySelectorAll<HTMLAnchorElement>('[data-testid="message-link-chip"]')];
+    const click = (el: Element, init: MouseEventInit = {}, type = 'click') =>
+      act(async () => {
+        el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, ...init }));
+      });
+
+    await click(page!);
+    expect(openPage).toHaveBeenCalledExactlyOnceWith('https://www.userig.xyz/download', 'userig.xyz/download');
+    expect(openExternal).not.toHaveBeenCalled();
+
+    await click(page!, { metaKey: true });
+    await click(page!, { ctrlKey: true });
+    await click(page!, { button: 1 }, 'auxclick');
+    await click(meeting!);
+    await click(download!);
+    await vi.waitFor(() => expect(openExternal).toHaveBeenCalledTimes(5));
+    // Each click loads the bridge lazily, so the calls can land in any order.
+    expect(openExternal.mock.calls.map(([url]) => url).sort()).toEqual([
+      'https://dl.userig.xyz/Rig-0.4.5.dmg',
+      'https://www.userig.xyz/download#top',
+      'https://www.userig.xyz/download#top',
+      'https://www.userig.xyz/download#top',
+      'https://zoom.us/j/123',
+    ]);
+    expect(openPage).toHaveBeenCalledOnce();
+    expect(linkTitle).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+    host.remove();
   });
 
   it('shows known links as a chip named for what they are, keeping the URL on hover', () => {
