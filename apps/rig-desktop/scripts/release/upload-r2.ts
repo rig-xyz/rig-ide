@@ -30,7 +30,11 @@ if (manifests.length === 0) {
   );
 }
 
-const files = [...manifests, ...findInstallers(values.prefix), ...findBlockmaps()];
+// Manifests go LAST: a manifest names the zip auto-update downloads, so
+// publishing it before that zip exists (e.g. an upload that times out on a
+// slow link, as on 0.4.5) sends every updating app to a missing file, and
+// Cloudflare caches that 404 on dl.userig.xyz for hours.
+const files = [...findInstallers(values.prefix), ...findBlockmaps(), ...manifests];
 
 step(`Uploading ${files.length} artifact(s) to R2`);
 
