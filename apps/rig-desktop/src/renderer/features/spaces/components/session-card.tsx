@@ -517,14 +517,34 @@ function FileCard({ output, onOpen }: { output: SessionOutput; onOpen?: () => vo
   );
 }
 
+/**
+ * One click files one new turn (Retry, Continue): the relay can take seconds
+ * to file it, and a second click would file another. 'busy' while it files,
+ * 'sent' once it has (the button goes), back to 'idle' if it couldn't.
+ */
+function useFileTurn(): ['idle' | 'busy' | 'sent', (file: () => void | Promise<boolean>) => void] {
+  const [state, setState] = useState<'idle' | 'busy' | 'sent'>('idle');
+  const fileTurn = (file: () => void | Promise<boolean>) => {
+    setState('busy');
+    void Promise.resolve(file()).then(
+      (filed) => setState(filed === false ? 'idle' : 'sent'),
+      () => setState('idle')
+    );
+  };
+  return [state, fileTurn];
+}
+
 /** Retry this turn: straight away with the same agent, or pick one of your others from a small menu. */
 function RetryButton({
   agent,
   otherAgents,
+  busy,
   onRerun,
 }: {
   agent: AgentKind;
   otherAgents: AgentKind[];
+  /** A retry is being filed: no second one meanwhile. */
+  busy: boolean;
   onRerun: (agent: AgentKind) => void;
 }) {
   const ref = useRef<HTMLButtonElement>(null);
@@ -535,12 +555,15 @@ function RetryButton({
         ref={ref}
         type="button"
         onClick={() => (otherAgents.length > 0 ? setOpen(true) : onRerun(agent))}
-        aria-label="Retry"
-        title={otherAgents.length > 0 ? 'Retry…' : 'Retry'}
+        disabled={busy}
+        aria-label={busy ? 'Retrying…' : 'Retry'}
+        title={busy ? 'Retrying…' : otherAgents.length > 0 ? 'Retry…' : 'Retry'}
         aria-haspopup={otherAgents.length > 0 ? 'menu' : undefined}
-        className="hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs text-text-secondary transition-colors"
+        className="enabled:hover:bg-bg-2 flex h-6 items-center gap-1.5 rounded-chip px-2 text-xs text-text-secondary transition-colors disabled:text-text-muted"
+        data-testid="session-retry-action"
       >
         <RotateCcw className="size-3.5" strokeWidth={1.5} />
+        {busy && 'Retrying…'}
       </button>
       <Popover anchor={ref} open={open} onClose={() => setOpen(false)} align="right" minWidth={180}>
         <PopoverMenuItem label={`Again with ${AGENT_NAME[agent]}`} icon={RotateCcw} onSelect={() => { setOpen(false); onRerun(agent); }} />
@@ -663,7 +686,12 @@ export function SessionCard({
   }, [stopFailed]);
   const [resolving, setResolving] = useState<{ requestId: string; optionId: string } | null>(null);
   // One Continue is one new turn: the relay can take seconds to file it, and a second click would file another.
-  const [continuing, setContinuing] = useState<'idle' | 'busy' | 'sent'>('idle');
+  const [continuing, fileContinue] = useFileTurn();
+  // Retry (the failed run's button, or the row's): one retry at a time, gone once filed.
+  const [retrying, fileRetry] = useFileTurn();
+  const retry = (agent: AgentKind) => {
+    if (onRerun && prompt) fileRetry(() => onRerun(agent, prompt));
+  };
   const [hiding, setHiding] = useState<'idle' | 'busy' | 'failed'>('idle');
   useEffect(() => {
     if (hiding !== 'failed') return;
@@ -879,10 +907,17 @@ export function SessionCard({
               <span className="text-sm text-text-primary">{agentName} couldn't finish</span>
               {card.failureReason && <span className="text-xs text-text-secondary">{card.failureReason}</span>}
             </div>
-            {onRerun && prompt && (
-              <Button size="sm" variant="outline" className="ml-auto" onClick={() => onRerun(meta.agent, prompt)}>
+            {onRerun && prompt && retrying !== 'sent' && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto"
+                disabled={retrying === 'busy'}
+                onClick={() => retry(meta.agent)}
+                data-testid="session-retry"
+              >
                 <RotateCcw />
-                Retry
+                {retrying === 'busy' ? 'Retrying…' : 'Retry'}
               </Button>
             )}
           </div>
@@ -898,12 +933,7 @@ export function SessionCard({
                 size="sm"
                 variant="ghost"
                 disabled={continuing === 'busy'}
-                onClick={() => {
-                  setContinuing('busy');
-                  void Promise.resolve(onRerun(meta.agent, 'Continue where you left off.')).then((filed) =>
-                    setContinuing(filed === false ? 'idle' : 'sent')
-                  );
-                }}
+                onClick={() => fileContinue(() => onRerun(meta.agent, 'Continue where you left off.'))}
                 data-testid="session-continue"
               >
                 {continuing === 'busy' ? 'Continuing…' : 'Continue'}
@@ -966,7 +996,7 @@ export function SessionCard({
 
       {/* Actions float at the row's top-right on hover or focus. */}
       <RowActions
-        forceVisible={stopping || stopFailed || hiding !== 'idle'}
+        forceVisible={stopping || stopFailed || hiding !== 'idle' || retrying === 'busy'}
         onReply={
           onReply && !running && card.finalAnswer
             ? () =>
@@ -999,8 +1029,8 @@ export function SessionCard({
             {stopping ? 'Stopping…' : stopFailed ? "Couldn't stop it from here" : queued ? 'Cancel' : 'Stop'}
           </button>
         )}
-        {!running && onRerun && prompt && (
-          <RetryButton agent={meta.agent} otherAgents={otherAgents} onRerun={(agent) => onRerun(agent, prompt)} />
+        {!running && onRerun && prompt && retrying !== 'sent' && (
+          <RetryButton agent={meta.agent} otherAgents={otherAgents} busy={retrying === 'busy'} onRerun={retry} />
         )}
         {/* Only where there's something to hide: your own finished turn with steps the room can see. */}
         {!running && mine && onHideDetails && card.steps.length > 0 && !card.detailsHidden && card.privacy !== 'answer' && (
