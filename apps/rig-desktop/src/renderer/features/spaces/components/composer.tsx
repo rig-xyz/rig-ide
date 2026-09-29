@@ -50,6 +50,19 @@ function hasMention(text: string): boolean {
 }
 
 /**
+ * Which of your agents the draft @-tags: the first one written, as the
+ * relay's dispatcher reads it too ("@codex, look at what @claude said" asks
+ * Codex). A tag ends at anything that can't be in a name ("@codex," counts).
+ */
+function taggedAgent(text: string, agents: readonly RoomAgent[]): AgentKind | null {
+  for (const m of text.matchAll(/(?:^|\s)@([a-z0-9_-]+)/gi)) {
+    const agent = agents.find((a) => a.agent === m[1]!.toLowerCase())?.agent;
+    if (agent) return agent;
+  }
+  return null;
+}
+
+/**
  * Which of your agents a plain draft starts by calling by name, maybe after
  * a greeting: "hey claude what's up?", "Claude, can you…", "codex: …". A
  * name later in the sentence ("I asked claude yesterday"), inside a word
@@ -333,9 +346,9 @@ export function Composer({
     []
   );
 
-  // Your agent is tagged once its @name is written out; dropping the pill
-  // sends the message as plain chat instead.
-  const tagged = agents.find((a) => new RegExp(`(^|\\s)@${a.agent}(\\s|$)`, 'i').test(value));
+  // Your agent is tagged once its @name is written out, and a tag always
+  // beats the no-@ pill; dropping the pill sends the message as plain chat.
+  const tagged = taggedAgent(value, agents);
   // Only a guess about your own agent, and only while it's still this draft.
   const suggested =
     suggestion &&
@@ -364,7 +377,7 @@ export function Composer({
           reason: `You started with "${addressed.word}", so it goes to ${AGENT_NAME[addressed.agent]}.`,
         }
       : null;
-  const agentPill = tagged && !droppedAgent ? tagged.agent : null;
+  const agentPill = tagged && !droppedAgent ? tagged : null;
   const replyPill = replyTo ?? null;
   const docPill = agentPill && openDoc && !droppedDoc ? openDoc : null;
   const sendsTo = agentPill ?? ownPill?.agent ?? null;

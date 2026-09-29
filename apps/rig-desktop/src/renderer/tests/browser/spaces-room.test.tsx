@@ -1151,6 +1151,30 @@ describe('Room composer — a plain reply to your own agent', () => {
       expect(ownPill()).not.toBeNull();
     });
 
+    it('a typed @mention beats the pill: "@codex hi" asks Codex, and the pill follows as you type', async () => {
+      const sent: Array<[string, unknown]> = [];
+      const textarea = await renderComposer(neverSure(), sent, null, withCodex());
+      await setTextareaValue(textarea, 'claude, can you');
+      expect(ownPill()?.querySelector('b')?.textContent).toBe('Claude');
+      await setTextareaValue(textarea, '@codex hi');
+      expect(ownPill()).toBeNull();
+      expect(agentPill()?.querySelector('b')?.textContent).toBe('Codex');
+      expect([...host.querySelectorAll('button')].some((b) => b.textContent?.startsWith('Ask Codex'))).toBe(true);
+      await enter(textarea);
+      expect(sent).toEqual([['@codex hi', { replyTo: undefined, agent: 'codex', attach: 'docs/metrics.md' }]]);
+    });
+
+    it('several of your agents tagged: the first one written is asked, as the relay reads it', async () => {
+      const sent: Array<[string, unknown]> = [];
+      const textarea = await renderComposer(neverSure(), sent, null, withCodex());
+      await setTextareaValue(textarea, '@codex, check what @claude wrote');
+      expect(agentPill()?.querySelector('b')?.textContent).toBe('Codex');
+      await enter(textarea);
+      expect(sent).toEqual([
+        ['@codex, check what @claude wrote', { replyTo: undefined, agent: 'codex', attach: 'docs/metrics.md' }],
+      ]);
+    });
+
     it('a reply the relay is sure of wins over the name (it carries the turn)', async () => {
       const sent: Array<[string, unknown]> = [];
       const textarea = await renderComposer(suggester(), sent);
@@ -1190,6 +1214,14 @@ describe('Room composer — a plain reply to your own agent', () => {
     calls.length = 0;
     await sendFromComposer(source, ['claude'], 'ok not this one', { replyTo: undefined, agent: null, attach: null }, wake);
     expect(calls).toEqual([['send', 'ok not this one', undefined, undefined]]);
+
+    // "@codex hi": marked as asking Codex, and only Codex is requested.
+    calls.length = 0;
+    await sendFromComposer(source, ['claude', 'codex'], '@codex hi', { replyTo: undefined, agent: 'codex', attach: null }, wake);
+    expect(calls).toEqual([
+      ['send', '@codex hi', undefined, 'codex'],
+      ['requestOwnAgent', 'codex', '@codex hi', 'msg-new'],
+    ]);
   });
 });
 
@@ -1778,6 +1810,44 @@ describe('Session card — plan and thinking', () => {
     await act(async () => filings[1]!(true));
     expect(filings).toHaveLength(2);
     expect(button()).toBeNull();
+  });
+
+  it('one Retry files one new turn: busy while the relay files it (both Retry controls), gone once it has, back if it failed', async () => {
+    const failed: SessionEvent[] = [{ seq: 1, kind: 'turn_ended', payload: { status: 'failed', reason: 'timed out' } }];
+    const filings: Array<(filed: boolean) => void> = [];
+    await act(async () => {
+      root.render(
+        <SessionCard
+          meta={{ ...meta, status: 'failed' }}
+          events={failed}
+          owner={undefined}
+          prompt="why did organic drop?"
+          onRerun={() => new Promise<boolean>((resolve) => filings.push(resolve))}
+        />
+      );
+    });
+    const button = () => host.querySelector<HTMLButtonElement>('[data-testid="session-retry"]');
+    const rowAction = () => host.querySelector<HTMLButtonElement>('[data-testid="session-retry-action"]');
+    const click = (el: HTMLButtonElement) => act(async () => el.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    await click(button()!);
+    expect(button()!.disabled).toBe(true);
+    expect(button()!.textContent).toBe('Retrying…');
+    expect(rowAction()!.disabled).toBe(true);
+    await click(button()!); // the relay is slow: a second click, on either control, does nothing
+    await click(rowAction()!);
+    expect(filings).toHaveLength(1);
+
+    await act(async () => filings[0]!(false));
+    expect(button()!.disabled).toBe(false);
+    expect(button()!.textContent).toBe('Retry');
+
+    await click(rowAction()!);
+    expect(button()!.textContent).toBe('Retrying…');
+    await act(async () => filings[1]!(true));
+    expect(filings).toHaveLength(2);
+    expect(button()).toBeNull();
+    expect(rowAction()).toBeNull();
   });
 });
 
