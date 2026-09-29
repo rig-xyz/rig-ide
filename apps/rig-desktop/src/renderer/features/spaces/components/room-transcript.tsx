@@ -83,7 +83,7 @@ function renderItem(
   continued = false,
   onReply?: (ref: RoomReplyRef) => void,
   onJumpTo?: (messageId: string) => void,
-  onRerun?: (agent: AgentKind, prompt: string) => void,
+  onRerun?: (agent: AgentKind, prompt: string) => void | Promise<boolean>,
   onConnectorConnect?: (id: string) => Promise<ConnectResult>,
   globalSetup?: GlobalServer[],
   onHideDetails?: (runId: string) => Promise<boolean>,
@@ -318,8 +318,8 @@ export function RoomTranscript({
   onReply?: (ref: RoomReplyRef) => void;
   /** Where to remember how far the viewer has read (the space's id); no "New" line without one. */
   readKey?: string;
-  /** Files a new turn for one of the viewer's own agents (Retry, Continue). */
-  onRerun?: (agent: AgentKind, prompt: string) => void;
+  /** Files a new turn for one of the viewer's own agents (Retry, Continue); resolves false when it couldn't. */
+  onRerun?: (agent: AgentKind, prompt: string) => void | Promise<boolean>;
   /** Runs the connect flow for a connector's Connect/Reconnect pill (a `connectors_added` card, or an agent turn's footer gap). */
   onConnectorConnect?: (id: string) => Promise<ConnectResult>;
   /** Your agents' own global MCP setup, loaded once per Room by `RoomView` — a session card drops a footer gap its own run's agent already reaches this way. */

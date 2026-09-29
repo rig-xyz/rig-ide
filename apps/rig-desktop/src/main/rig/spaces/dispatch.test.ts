@@ -151,6 +151,18 @@ function makeFakeApi(overrides: Partial<SpacesRelayApi> = {}) {
   return { api, createdRuns, patchedSessions, postedEvents, postedPrivacy, postedMessages, patchedRequests, mintedDevices };
 }
 
+/** A session store whose in-flight list starts with `runs` (runs a previous process of this app started). */
+function inFlightStore(runs: Array<{ runId: string; bindingId: string }>): SpaceSessionStore {
+  const inFlight = new Map(runs.map((r) => [r.runId, r.bindingId]));
+  return {
+    get: () => null,
+    set: () => {},
+    markInFlight: (runId, bindingId) => void inFlight.set(runId, bindingId),
+    clearInFlight: (runId) => void inFlight.delete(runId),
+    inFlight: () => [...inFlight].map(([runId, bindingId]) => ({ runId, bindingId })),
+  };
+}
+
 /** A fully controllable fake `SpacesAcpSessions` — the seam this module is built to be tested against. */
 function makeFakeAcp() {
   const rawHandlers = new Map<string, (raw: RawSessionEvent) => void>();
@@ -757,8 +769,9 @@ describe('createSpacesDispatcher', () => {
     expect(await stopRun('someone-elses-run')).toBe(false);
   });
 
-  it('stopRun closes out a run with no live turn here, so every card stops spinning', async () => {
-    // The run's end never reached the relay: its log stops mid-answer.
+  it('stopRun closes out a run this app started with no live turn here, so every card stops spinning', async () => {
+    // The run's end never reached the relay (its log stops mid-answer), and
+    // the app that started it quit: its in-flight record is all that's left.
     const { api, postedEvents, patchedSessions } = makeFakeApi({
       getSessionEvents: async () =>
         ok({
@@ -780,7 +793,12 @@ describe('createSpacesDispatcher', () => {
         }),
     });
     const fake = makeFakeAcp();
-    const { stopRun } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+    const { stopRun } = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      store: inFlightStore([{ runId: 'stale-run', bindingId: 'b1' }]),
+    });
 
     expect(await stopRun('stale-run', 'b1')).toBe(true);
     expect(fake.cancelled).toEqual([]);
@@ -788,7 +806,7 @@ describe('createSpacesDispatcher', () => {
     expect(patchedSessions).toEqual([{ runId: 'stale-run', status: 'stopped' }]);
   });
 
-  it('settleIfNotLive leaves a run this process is running alone, and closes out one it is not', async () => {
+  it('settleIfNotLive leaves a run this process is running alone, and closes out one this app started but lost', async () => {
     const { api, postedEvents } = makeFakeApi({
       getSessionEvents: async () =>
         ok({
@@ -808,7 +826,12 @@ describe('createSpacesDispatcher', () => {
         }),
     });
     const fake = makeFakeAcp();
-    const { dispatch, settleIfNotLive } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+    const { dispatch, settleIfNotLive } = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      store: inFlightStore([{ runId: 'lost-run', bindingId: 'b1' }]),
+    });
     const result = await dispatch(makeRequest({ id: 'req-live' }));
     if ('failed' in result) throw new Error('expected success');
 
@@ -855,6 +878,143 @@ describe('createSpacesDispatcher', () => {
     expect(await settleIfNotLive(result.runId, 'binding-1')).toBe(true);
     expect(postedEvents.at(-1)).toEqual({ runId: result.runId, kinds: ['turn_ended'], payloads: [{ status: 'done' }] });
     expect(patchedSessions.at(-1)).toEqual({ runId: result.runId, status: 'done' });
+  });
+
+  it("stopping one agent's run leaves the owner's other agent running in the same space", async () => {
+    const { api, patchedSessions } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const { dispatch, stopRun, settleIfNotLive } = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+    });
+    const claude = await dispatch(makeRequest({ id: 'req-claude', targetAgent: 'claude' }));
+    const codex = await dispatch(makeRequest({ id: 'req-codex', targetAgent: 'codex' }));
+    if ('failed' in claude || 'failed' in codex) throw new Error('expected success');
+    const [claudeConv, codexConv] = fake.started.map((s) => s.conversationId);
+    fake.emitTurnStart(claudeConv!, fake.queued[0]!.turnId);
+    fake.emitTurnStart(codexConv!, fake.queued[1]!.turnId);
+
+    expect(await stopRun(claude.runId, 'binding-1')).toBe(true);
+    expect(fake.cancelled).toEqual([claudeConv]);
+    fake.emitTurnEnd(claudeConv!, fake.queued[0]!.turnId, 'cancelled');
+    // The Room's stale-run poll asks about the codex run too: it's live here.
+    expect(await settleIfNotLive(codex.runId, 'binding-1')).toBe(false);
+
+    fake.emitTurnEnd(codexConv!, fake.queued[1]!.turnId, 'end_turn');
+    await vi.waitFor(() => expect(patchedSessions).toHaveLength(2));
+    expect(patchedSessions).toEqual([
+      { runId: claude.runId, status: 'stopped' },
+      { runId: codex.runId, status: 'done' },
+    ]);
+  });
+
+  it("never closes out a run another app on the same account is running (a second computer, a dev build)", async () => {
+    // The incident: this app ran your Claude; another app signed in as you
+    // claimed the Codex request and was still running it. Stopping Claude
+    // here, then the Room's stale-run poll, marked Codex "stopped" too while
+    // it kept going on the other app and later finished.
+    const otherAppsRun = 'run-on-the-other-app';
+    const { api, postedEvents, patchedSessions } = makeFakeApi({
+      getSessionEvents: async (bindingId, runId) =>
+        ok({
+          run: {
+            id: runId,
+            bindingId,
+            ownerUserId: 'owner-1',
+            agent: 'codex',
+            model: null,
+            status: 'running',
+            title: null,
+            commands: null,
+            startedAt: '',
+            endedAt: null,
+          },
+          events: [],
+        }),
+    });
+    const fake = makeFakeAcp();
+    const { dispatch, stopRun, settleIfNotLive } = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+    });
+    const claude = await dispatch(makeRequest({ id: 'req-claude', targetAgent: 'claude' }));
+    if ('failed' in claude) throw new Error('expected success');
+    fake.emitTurnStart(fake.started[0]!.conversationId, fake.queued[0]!.turnId);
+
+    expect(await stopRun(claude.runId, 'binding-1')).toBe(true);
+    expect(await settleIfNotLive(otherAppsRun, 'binding-1')).toBe(false);
+    // Nor can this app's Stop reach it: saying so beats a card that says "stopped" over a run that isn't.
+    expect(await stopRun(otherAppsRun, 'binding-1')).toBe(false);
+    expect(postedEvents.filter((e) => e.runId === otherAppsRun)).toEqual([]);
+    expect(patchedSessions.filter((p) => p.runId === otherAppsRun)).toEqual([]);
+  });
+
+  it('Stop while the run is still reaching its agent: the prompt is never sent, and the run ends stopped', async () => {
+    const { api, patchedSessions, patchedRequests } = makeFakeApi();
+    const fake = makeFakeAcp();
+    let sessionUp!: () => void;
+    const starting = new Promise<void>((resolve) => (sessionUp = resolve));
+    const startSession = fake.acp.startSession.bind(fake.acp);
+    fake.acp.startSession = async (input) => {
+      await starting;
+      return startSession(input);
+    };
+    const { dispatch, stopRun } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+
+    const dispatched = dispatch(makeRequest({ id: 'req-slow' }));
+    await vi.waitFor(() => expect(fake.callOrder.some((c) => c.startsWith('subscribeRaw:'))).toBe(true));
+    // The card is up (the run exists) but the agent session is still starting.
+    expect(await stopRun('run-1', 'binding-1')).toBe(true);
+    sessionUp();
+    await dispatched;
+
+    expect(fake.queued).toEqual([]);
+    await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: 'req-slow', status: 'cancelled' }]));
+    expect(patchedSessions).toEqual([{ runId: 'run-1', status: 'stopped' }]);
+  });
+
+  it('a turn stopped while it waited in the queue is cancelled when the runtime starts it, and never takes the next turn', async () => {
+    const { api, postedEvents, patchedSessions } = makeFakeApi();
+    const fake = makeFakeAcp();
+    // The real runtime acknowledges a prompt without a turn id: turns are matched in order.
+    fake.setQueuePromptImpl(async () => ok({ turnId: null }));
+    const { dispatch, stopRun } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+
+    const a = await dispatch(makeRequest({ id: 'reqA' }));
+    const b = await dispatch(makeRequest({ id: 'reqB' }));
+    if ('failed' in a || 'failed' in b) throw new Error('expected success');
+    const conversationId = fake.started[0]!.conversationId;
+    fake.emitTurnStart(conversationId, 'tA');
+
+    // B is queued behind A — in the runtime too. Stop it, then Continue files C.
+    expect(await stopRun(b.runId)).toBe(true);
+    await vi.waitFor(() => expect(patchedSessions).toEqual([{ runId: b.runId, status: 'stopped' }]));
+    const c = await dispatch(makeRequest({ id: 'reqC', prompt: 'Continue where you left off.' }));
+    if ('failed' in c) throw new Error('expected success');
+
+    fake.emitTurnEnd(conversationId, 'tA', 'end_turn');
+    // The runtime starts B's prompt anyway: it's cancelled, and its work is nobody's.
+    fake.emitTurnStart(conversationId, 'tB');
+    expect(fake.cancelled).toEqual([conversationId]);
+    fake.emitUpdate(conversationId, { sessionUpdate: 'agent_message_chunk', messageId: 'mB', content: { type: 'text', text: 'B work' } });
+    fake.emitTurnEnd(conversationId, 'tB', 'cancelled');
+    // Then C runs as C.
+    fake.emitTurnStart(conversationId, 'tC');
+    fake.emitUpdate(conversationId, { sessionUpdate: 'agent_message_chunk', messageId: 'mC', content: { type: 'text', text: 'C answer' } });
+    fake.emitTurnEnd(conversationId, 'tC', 'end_turn');
+
+    await vi.waitFor(() => expect(patchedSessions.map((p) => p.runId)).toContain(c.runId));
+    expect(patchedSessions).toEqual([
+      { runId: b.runId, status: 'stopped' },
+      { runId: a.runId, status: 'done' },
+      { runId: c.runId, status: 'done' },
+    ]);
+    const posted = (runId: string) => JSON.stringify(postedEvents.filter((e) => e.runId === runId));
+    expect(posted(b.runId)).not.toContain('B work');
+    expect(posted(c.runId)).not.toContain('B work');
+    expect(posted(c.runId)).toContain('C answer');
   });
 
   it("reads and changes your space agent's settings on its persistent session", async () => {

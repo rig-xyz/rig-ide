@@ -200,6 +200,10 @@ type QueuedTurn = {
    * they travel over different sub-channels of the same connection.
    */
   turnId: string | null;
+  /** Its prompt has gone to the runtime, which runs it even if the run is stopped first (see `stopLocal`). */
+  promptSent?: boolean;
+  /** Its end is recorded; a stopped turn stays in `pending` until the runtime gets to it, so it's cancelled then and never claims another turn's start. */
+  finalized?: boolean;
 };
 
 type PersistentSession = {
@@ -553,6 +557,8 @@ export function createSpacesDispatcher(deps: {
   const sessions = new Map<PersistentKey, PersistentSession>();
   /** Runs this process has started and not yet finalized: the only ones truly running here. */
   const liveRunIds = new Set<string>();
+  /** Runs stopped while still reaching their agent (no turn yet): they end stopped instead of sending the prompt. */
+  const stopRequested = new Set<string>();
   /**
    * Runs this process finalized itself, with the status it actually ended
    * with — so if the relay never got the events that would have told it so
@@ -583,6 +589,8 @@ export function createSpacesDispatcher(deps: {
       case 'turn_start': {
         const turn = claimTurn(session, raw.turnId);
         if (turn) session.current = turn;
+        // Stopped while it waited in the runtime's queue: the runtime started it anyway.
+        if (turn?.finalized) void deps.acp.cancelTurn(session.conversationId);
         return;
       }
       case 'turn_end': {
@@ -592,6 +600,7 @@ export function createSpacesDispatcher(deps: {
         // finalized this turn from the pending queue).
         if (!turn || turn.turnId !== raw.turnId) return;
         session.current = null;
+        if (turn.finalized) return;
         releaseHeldPermissions(session, turn);
         const ended = statusForEndedTurn(turn, raw.stopReason);
         // Some adapters (Codex) report a provider error as the answer text
@@ -609,7 +618,7 @@ export function createSpacesDispatcher(deps: {
         // 19–50KB each and useless in the log — see the goal's own instruction.
         if (raw.update.sessionUpdate === 'available_commands_update') return;
         const turn = session.current;
-        if (!turn) return;
+        if (!turn || turn.finalized) return;
         turn.publisher.record(raw.update.sessionUpdate, raw.update);
         if (raw.update.sessionUpdate === 'agent_message_chunk') collectAnswer(turn, raw.update);
         return;
@@ -618,6 +627,8 @@ export function createSpacesDispatcher(deps: {
   }
 
   async function finalizeTurn(turn: QueuedTurn, status: SessionStatus, reason?: string): Promise<void> {
+    if (turn.finalized) return;
+    turn.finalized = true;
     // The card flips out of "running" on this event (run status changes
     // aren't broadcast to the Room), so it must land before `finish`.
     turn.publisher.record('turn_ended', reason ? { status, reason } : { status });
@@ -662,6 +673,8 @@ export function createSpacesDispatcher(deps: {
       return;
     }
     const turn = session.current ?? session.pending[0] ?? null;
+    // A stopped turn the runtime started anyway is being cancelled, which settles its asks.
+    if (turn?.finalized) return;
     if (!turn) {
       log.warn('Rig spaces dispatch: permission request with no turn to attribute it to', {
         conversationId: session.conversationId,
@@ -934,6 +947,8 @@ export function createSpacesDispatcher(deps: {
     });
     if (!created.success) return err(created.error.message);
     liveRunIds.add(created.data.id);
+    // Recorded now, not once the agent is reached: only runs this app started are ever closed out by it (`startedHere`).
+    deps.store?.markInFlight?.(created.data.id, spec.bindingId);
 
     // The session card only appears in the Room when a `kind:'session'`
     // message points at the run, so announce it. Not fatal if it fails:
@@ -998,6 +1013,10 @@ export function createSpacesDispatcher(deps: {
     if (!sessionResult.success) {
       publisher.record('turn_ended', { status: 'failed', reason: `couldn't start the agent: ${sessionResult.error}` });
       await publisher.finish('failed');
+      deps.store?.clearInFlight?.(created.data.id);
+      liveRunIds.delete(created.data.id);
+      stopRequested.delete(created.data.id);
+      rememberFinished(created.data.id, 'failed');
       return err(sessionResult.error);
     }
     const session = sessionResult.data;
@@ -1006,7 +1025,6 @@ export function createSpacesDispatcher(deps: {
     if (model) publisher.record('run_model', { model });
     // The space's connectors this turn couldn't reach, so the card can offer Connect to its owner.
     if (connectors.gaps.length > 0) publisher.record(RUN_CONNECTORS_EVENT, { gaps: connectors.gaps });
-    deps.store?.markInFlight?.(created.data.id, spec.bindingId);
     const turn: QueuedTurn = {
       requestId: spec.requestId,
       bindingId: spec.bindingId,
@@ -1018,6 +1036,11 @@ export function createSpacesDispatcher(deps: {
       onSettled: spec.onSettled,
       onPermissionsChanged: spec.onPermissionsChanged,
     };
+    // Stopped while it was still reaching the agent: it ends here, and the prompt never goes.
+    if (stopRequested.delete(turn.runId)) {
+      void finalizeTurn(turn, 'stopped');
+      return ok({ runId: created.data.id });
+    }
     session.pending.push(turn);
 
     const contextRequest = { bindingId: spec.bindingId, sourceMessageId: spec.sourceMessageId };
@@ -1060,6 +1083,7 @@ export function createSpacesDispatcher(deps: {
       const idx = session.pending.indexOf(turn);
       if (idx === -1) return; // already started (its turn_end settles it), or stopped
       session.pending.splice(idx, 1);
+      if (turn.finalized) return; // stopped while queued: nothing left to run
       log.warn('Rig spaces dispatch: the runtime rejected a prompt', { runId: turn.runId, reason });
       void finalizeTurn(turn, 'failed', `the agent refused the prompt (${reason})`);
     };
@@ -1068,7 +1092,7 @@ export function createSpacesDispatcher(deps: {
       if (session.pending.indexOf(turn) === -1) return;
       // Not ready yet (still starting or loading its history): once, wait
       // for the session to be ready and send the prompt again.
-      if (reason !== 'invalid_state' || retried) return fail(reason);
+      if (reason !== 'invalid_state' || retried || turn.finalized) return fail(reason);
       retried = true;
       log.info('Rig spaces dispatch: the agent session wasn’t ready for the prompt, retrying once it is', {
         runId: turn.runId,
@@ -1076,11 +1100,14 @@ export function createSpacesDispatcher(deps: {
       void (async () => {
         const ready = await (deps.acp.waitUntilReady?.(session.conversationId) ?? Promise.resolve(true)).catch(() => false);
         if (session.pending.indexOf(turn) === -1) return;
-        if (!ready) return fail(reason);
+        if (!ready || turn.finalized) return fail(reason);
         const again = await queue(onRejected);
         if (!again.success) fail(again.error);
       })();
     };
+    // Stopped while its context was gathered (`stopLocal` took it off the queue): don't send it.
+    if (session.pending.indexOf(turn) === -1) return ok({ runId: created.data.id });
+    turn.promptSent = true;
     const queued = await queue(onRejected);
     if (!queued.success) {
       const idx = session.pending.indexOf(turn);
@@ -1142,7 +1169,23 @@ export function createSpacesDispatcher(deps: {
    */
   async function stopRun(runId: string, bindingId?: string): Promise<boolean> {
     if (await stopLocal(runId)) return true;
-    return bindingId ? closeOutStaleRun(bindingId, runId) : false;
+    // Still reaching its agent (no turn yet): it ends stopped there instead of running.
+    if (liveRunIds.has(runId)) {
+      stopRequested.add(runId);
+      return true;
+    }
+    return bindingId && startedHere(runId) ? closeOutStaleRun(bindingId, runId) : false;
+  }
+
+  /**
+   * Runs this app started, in this process or a previous one that quit
+   * mid-run (the in-flight store): the only ones it may close out. Another
+   * app signed in to the same account (a second computer, a dev build next
+   * to the release) runs its own, and from here its live runs look exactly
+   * like lost ones.
+   */
+  function startedHere(runId: string): boolean {
+    return recentlyFinished.has(runId) || (deps.store?.inFlight?.() ?? []).some((run) => run.runId === runId);
   }
 
   /**
@@ -1152,7 +1195,7 @@ export function createSpacesDispatcher(deps: {
    * process started and hasn't finished.
    */
   async function settleIfNotLive(runId: string, bindingId: string): Promise<boolean> {
-    if (liveRunIds.has(runId)) return false;
+    if (liveRunIds.has(runId) || !startedHere(runId)) return false;
     return closeOutStaleRun(bindingId, runId);
   }
 
@@ -1237,7 +1280,11 @@ export function createSpacesDispatcher(deps: {
       }
       const idx = session.pending.findIndex((turn) => turn.runId === runId);
       if (idx !== -1) {
-        const [turn] = session.pending.splice(idx, 1);
+        const turn = session.pending[idx]!;
+        // Its prompt is already in the runtime's queue, which will start it
+        // anyway: it stays in line, so its start is matched to it (and
+        // cancelled) rather than to the next turn's.
+        if (!turn.promptSent) session.pending.splice(idx, 1);
         releaseHeldPermissions(session, turn);
         void finalizeTurn(turn, 'stopped');
         return true;

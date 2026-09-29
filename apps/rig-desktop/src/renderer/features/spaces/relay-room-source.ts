@@ -1417,19 +1417,21 @@ export class RelayRoomSource implements RoomSource {
    * the SENDER (per the lane-3 brief: "a message that mentions @claude/
    * @codex (the sender's own agent) also creates an agent request
    * targeting the sender"). `sourceMessageId` links it back to the chat
-   * message the composer already sent for the human-visible text.
+   * message the composer already sent for the human-visible text. Resolves
+   * to whether the relay filed it.
    */
   async requestOwnAgent(
     targetAgent: AgentKind,
     prompt: string,
     sourceMessageId?: string
-  ): Promise<void> {
-    await this.opts.relay.requestOwnAgent(this.opts.bindingId, {
+  ): Promise<boolean> {
+    const result = await this.opts.relay.requestOwnAgent(this.opts.bindingId, {
       targetOwnerUserId: this.opts.selfUserId,
       targetAgent,
       prompt,
       ...(sourceMessageId ? { sourceMessageId } : {}),
     });
+    return result.success;
   }
 
   /** Loads the space's invites into `invitesById`; an invite counts as joined once a member has its email. */

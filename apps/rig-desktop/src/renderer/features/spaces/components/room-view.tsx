@@ -900,9 +900,11 @@ export function RoomView({
   const handleConnectorConnect = source instanceof RelayRoomSource ? connectorConnect : undefined;
 
   const rerun = useCallback(
-    (agent: AgentKind, prompt: string) => {
-      if (!(source instanceof RelayRoomSource)) return;
-      void source.requestOwnAgent(agent, prompt).then(() => rpc.rig.spacesDispatch.checkNow());
+    async (agent: AgentKind, prompt: string): Promise<boolean> => {
+      if (!(source instanceof RelayRoomSource)) return false;
+      const filed = await source.requestOwnAgent(agent, prompt).catch(() => false);
+      if (filed) void rpc.rig.spacesDispatch.checkNow();
+      return filed;
     },
     [source]
   );

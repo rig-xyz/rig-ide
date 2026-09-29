@@ -637,8 +637,8 @@ export function SessionCard({
   messageId?: string;
   /** Another turn of the same agent is running ahead of this one: it waits its turn. */
   queued?: boolean;
-  /** Your own run only: files a new turn for one of your agents with this prompt (Retry, Continue). */
-  onRerun?: (agent: AgentKind, prompt: string) => void;
+  /** Your own run only: files a new turn for one of your agents with this prompt (Retry, Continue); resolves false when it couldn't. */
+  onRerun?: (agent: AgentKind, prompt: string) => void | Promise<boolean>;
   /** What this run was asked, for Retry. */
   prompt?: string;
   /** Your other agents, offered by Retry. */
@@ -662,6 +662,8 @@ export function SessionCard({
     return () => clearTimeout(id);
   }, [stopFailed]);
   const [resolving, setResolving] = useState<{ requestId: string; optionId: string } | null>(null);
+  // One Continue is one new turn: the relay can take seconds to file it, and a second click would file another.
+  const [continuing, setContinuing] = useState<'idle' | 'busy' | 'sent'>('idle');
   const [hiding, setHiding] = useState<'idle' | 'busy' | 'failed'>('idle');
   useEffect(() => {
     if (hiding !== 'failed') return;
@@ -891,14 +893,20 @@ export function SessionCard({
               <Square className="size-2.5" strokeWidth={1.5} fill="currentColor" />
               Stopped{card.finalAnswer ? ' partway' : ''}
             </span>
-            {onRerun && (
+            {onRerun && continuing !== 'sent' && (
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => onRerun(meta.agent, 'Continue where you left off.')}
+                disabled={continuing === 'busy'}
+                onClick={() => {
+                  setContinuing('busy');
+                  void Promise.resolve(onRerun(meta.agent, 'Continue where you left off.')).then((filed) =>
+                    setContinuing(filed === false ? 'idle' : 'sent')
+                  );
+                }}
                 data-testid="session-continue"
               >
-                Continue
+                {continuing === 'busy' ? 'Continuing…' : 'Continue'}
               </Button>
             )}
           </div>

@@ -1173,6 +1173,7 @@ describe('Room composer — a plain reply to your own agent', () => {
       }),
       requestOwnAgent: vi.fn(async (...args: unknown[]) => {
         calls.push(['requestOwnAgent', ...args]);
+        return true;
       }),
     };
     const wake = vi.fn();
@@ -1713,7 +1714,9 @@ describe('Session card — plan and thinking', () => {
           events={failed}
           owner={undefined}
           prompt="why did organic drop?"
-          onRerun={(agent, prompt) => reruns.push([agent, prompt])}
+          onRerun={(agent, prompt) => {
+            reruns.push([agent, prompt]);
+          }}
         />
       );
     });
@@ -1729,7 +1732,9 @@ describe('Session card — plan and thinking', () => {
           events={stopped}
           owner={undefined}
           prompt="why did organic drop?"
-          onRerun={(agent, prompt) => reruns.push([agent, prompt])}
+          onRerun={(agent, prompt) => {
+            reruns.push([agent, prompt]);
+          }}
         />
       );
     });
@@ -1740,6 +1745,39 @@ describe('Session card — plan and thinking', () => {
       ['claude', 'why did organic drop?'],
       ['claude', 'Continue where you left off.'],
     ]);
+  });
+
+  it('one Continue files one new turn: busy while the relay files it, gone once it has, back if it failed', async () => {
+    const stopped: SessionEvent[] = [{ seq: 1, kind: 'turn_ended', payload: { status: 'stopped' } }];
+    const filings: Array<(filed: boolean) => void> = [];
+    await act(async () => {
+      root.render(
+        <SessionCard
+          meta={{ ...meta, status: 'stopped' }}
+          events={stopped}
+          owner={undefined}
+          prompt="why did organic drop?"
+          onRerun={() => new Promise<boolean>((resolve) => filings.push(resolve))}
+        />
+      );
+    });
+    const button = () => host.querySelector<HTMLButtonElement>('[data-testid="session-continue"]');
+    const click = () => act(async () => button()!.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    await click();
+    expect(button()!.disabled).toBe(true);
+    expect(button()!.textContent).toBe('Continuing…');
+    await click(); // the relay is slow: a second click does nothing
+    expect(filings).toHaveLength(1);
+
+    await act(async () => filings[0]!(false));
+    expect(button()!.disabled).toBe(false);
+    expect(button()!.textContent).toBe('Continue');
+
+    await click();
+    await act(async () => filings[1]!(true));
+    expect(filings).toHaveLength(2);
+    expect(button()).toBeNull();
   });
 });
 
