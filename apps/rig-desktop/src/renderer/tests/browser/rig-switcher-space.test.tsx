@@ -26,7 +26,7 @@ vi.mock('@renderer/lib/ipc', () => ({
       auth: { status: (...args: unknown[]) => mocks.authStatus(...args) },
       recent: { recentRigs: (...args: unknown[]) => mocks.recentRigs(...args) },
       account: { workspaces: (...args: unknown[]) => mocks.workspaces(...args) },
-      create: { create: (...args: unknown[]) => mocks.createSpace(...args) },
+      spaceSetup: { start: (...args: unknown[]) => mocks.createSpace(...args), list: async () => [] },
       files: { releaseRoot: (...args: unknown[]) => mocks.releaseRoot(...args) },
       control: { rename: (...args: unknown[]) => mocks.rename(...args) },
     },
@@ -35,6 +35,7 @@ vi.mock('@renderer/lib/ipc', () => ({
 }));
 
 import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
+import { onOpenSetupRequest } from '@renderer/features/spaces/space-setup-store';
 
 function click(el: Element): void {
   el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -126,11 +127,23 @@ describe('RigSwitcher', () => {
     expect(onGoHome).toHaveBeenCalledTimes(1);
   });
 
-  it('"New space" creates one click with a generated name and opens it', async () => {
+  it('"New space" starts one with a generated name and opens its Room at once', async () => {
     mocks.createSpace.mockResolvedValue({
       success: true,
-      data: { path: '/rigs/bright-harbor', rootId: 'root-1', rigName: 'bright-harbor', synced: true, homeUrl: null, syncError: null, docPath: null },
+      data: {
+        id: 'setup-1',
+        name: 'bright-harbor',
+        path: '/rigs/bright-harbor',
+        status: 'working',
+        step: 'goingLive',
+        bindingId: null,
+        homeUrl: null,
+        error: null,
+        removable: true,
+      },
     });
+    const openedSetups: string[] = [];
+    const off = onOpenSetupRequest((id) => openedSetups.push(id));
     const { onOpenPath } = await openMenu({ isSpace: true });
     const newSpace = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New space')!;
     await act(async () => click(newSpace));
@@ -140,11 +153,13 @@ describe('RigSwitcher', () => {
 
     expect(mocks.createSpace).toHaveBeenCalledTimes(1);
     const call = mocks.createSpace.mock.calls[0]![0];
-    expect(call.kind).toBe('space');
     expect(call.name).toMatch(/^[a-z]+-[a-z]+$/);
     // Never collides with a space this account already has.
     expect(['growth', 'ops']).not.toContain(call.name);
-    expect(onOpenPath).toHaveBeenCalledWith('/rigs/bright-harbor', { kind: 'space' });
+    // Its Room opens now (App), while it's set up in the background.
+    expect(openedSetups).toEqual(['setup-1']);
+    expect(onOpenPath).not.toHaveBeenCalled();
+    off();
   });
 
   it('"Rename…" puts the space\'s name in edit mode in place, and saving renames it', async () => {

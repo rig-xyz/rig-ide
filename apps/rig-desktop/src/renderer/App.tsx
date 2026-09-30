@@ -44,6 +44,12 @@ import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
 import { SettingsModal } from '@renderer/features/shell/settings-modal';
 import { RoomView } from '@renderer/features/spaces/components/room-view';
 import { roomSourceCache } from '@renderer/features/spaces/room-source-cache';
+import {
+  onOpenSetupRequest,
+  removeSpaceSetup,
+  retrySpaceSetup,
+  useSpaceSetups,
+} from '@renderer/features/spaces/space-setup-store';
 import { useSpacesEnabled } from '@renderer/features/spaces/use-spaces-enabled';
 import { readOpenRig, writeOpenRig } from '@renderer/features/shell/open-rig-memory';
 import { deriveBoundIsSpace, deriveTopbarContext, type TopbarContext } from '@renderer/features/shell/topbar-context';
@@ -63,6 +69,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/toolti
 import { cn } from '@renderer/lib/utils';
 import { relPathFromRoot } from '@shared/rig/file-navigator-categories';
 import { rigFileChangeChannel } from '@shared/rig/files';
+import { SPACE_SETUP_PENDING_REASON } from '@shared/rig/space-setup';
 import {
   type RigSettings,
   type RigSettingsLegacyImport,
@@ -299,6 +306,11 @@ export function App() {
   // the bar and panes take the space form from the first bound frame,
   // before the workspaces listing names the new binding (`deriveBoundIsSpace`).
   const [openedAsSpace, setOpenedAsSpace] = useState(false);
+  // Instant new space: the space whose Room is on screen while main sets it
+  // up (`space-setup-store.ts`). Cleared once its real Room has opened, or
+  // when anything else takes the window; the setup itself carries on.
+  const [setupId, setSetupId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   // Session-first viewer: the artefact pane's tabs. Empty means the pane
   // doesn't exist — the session owns the window and the pinned card floats
   // over it (state A). See `features/artifact/artefact-tabs.ts`.
@@ -657,6 +669,19 @@ export function App() {
       : undefined,
     openedAsSpace,
   });
+  // Instant new space: its Room shows while nothing else has the window —
+  // on Home's slot, and on through the open of its own folder once it's
+  // live (`openPath` below), so the Room never blinks out on the way.
+  const spaceSetups = useSpaceSetups();
+  const setup = setupId ? (spaceSetups.get(setupId) ?? null) : null;
+  const showSetup =
+    !!setup && (folder.status === 'empty' || (folder.status === 'detecting' && folder.path === setup.path));
+  const setupTarget =
+    showSetup && setup ? { root: setup.path, rootId: '', name: setup.name, bindingId: '' } : null;
+  /** What the rig layout shows: the bound rig, or the space still being set up. */
+  const rigView = bound ?? setupTarget;
+  const rigViewIsSpace = boundIsSpace || !!setupTarget;
+
   // Remember this window's open rig for a reload (`open-rig-memory.ts`);
   // `goHome` forgets it.
   const boundRootForMemory = bound?.root ?? null;
@@ -786,8 +811,53 @@ export function App() {
     setPendingOpenAbsPath(null);
     setJustCreatedRig(false);
     setOpenedAsSpace(false);
+    setSetupId(null);
     writeOpenRig(null);
   }, []);
+
+  // Instant new space: "New space" (Home's pill, the space switcher) asks
+  // for its Room the moment the folder exists (`startSpaceSetup`); so does
+  // a "Setting up…" row on Home.
+  const handedOffRef = useRef<string | null>(null);
+  const openSetupRoom = useCallback((id: string) => {
+    openPathRequests.current.invalidate();
+    handedOffRef.current = null;
+    setFolder({ status: 'empty' });
+    setArtefact(NO_TABS);
+    setRigLayout('chat');
+    setSyncingRoot(null);
+    setPendingActiveSessionId(null);
+    setPendingOpenAbsPath(null);
+    setJustCreatedRig(false);
+    setOpenedAsSpace(true);
+    writeOpenRig(null);
+    setSetupId(id);
+  }, []);
+  useEffect(() => onOpenSetupRequest(openSetupRoom), [openSetupRoom]);
+
+  // Live: open its folder the normal way. The Room on screen stays mounted
+  // through it and becomes the live Room (RoomView's own `setup` doc).
+  const setupLive = setup?.status === 'live';
+  useEffect(() => {
+    if (!setup || !setupLive || !showSetup || handedOffRef.current === setup.id) return;
+    handedOffRef.current = setup.id;
+    void openPath(setup.path, { source: 'create', kind: 'space' });
+  }, [setup, setupLive, showSetup, openPath]);
+  // Once its folder has opened (or failed to), or another rig took the
+  // window, or the setup was removed: the setup's Room is done here.
+  useEffect(() => {
+    if (setupId && !showSetup && (folder.status !== 'empty' || !setup)) setSetupId(null);
+  }, [setupId, showSetup, folder.status, setup]);
+  // A space that just went live shows up in every list (Home's rows, the switcher).
+  const liveSetupIds = [...spaceSetups.values()]
+    .filter((s) => s.status === 'live')
+    .map((s) => s.id)
+    .join(',');
+  useEffect(() => {
+    if (!liveSetupIds) return;
+    void queryClient.invalidateQueries({ queryKey: ['rig', 'recent'] });
+    void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
+  }, [liveSetupIds, queryClient]);
 
   // Round (beyond-markdown): every file opens now — `ArtifactView` itself
   // routes on real type detection (markdown/text/image/unsupported, see
@@ -860,6 +930,26 @@ export function App() {
   const renderRoom = (target: NonNullable<typeof bound>, { inSpace }: { inSpace: boolean }) => (
     <RoomView
       bindingId={target.bindingId}
+      setup={
+        setupTarget && setup && target === setupTarget
+          ? {
+              id: setup.id,
+              status: setup.status,
+              error: setup.error?.message ?? null,
+              removable: setup.removable,
+              onRetry: () => void retrySpaceSetup(setup.id),
+              onRemove: () => {
+                void removeSpaceSetup(setup.id).then((removed) => {
+                  toast({
+                    title: `Removed #${setup.name}`,
+                    description: removed?.removedFolder ? 'Its empty folder is gone too.' : 'Its folder stays on this computer.',
+                  });
+                });
+                goHome();
+              },
+            }
+          : null
+      }
       openDoc={inSpace && layout !== 'chat' ? openDocIn(target.root) : null}
       spaceName={inSpace ? `#${target.name ?? 'space'}` : (target.name ?? 'Chat')}
       // Room chrome round: doc-focus layout (the doc at full width) folds
@@ -882,7 +972,7 @@ export function App() {
       // The space panel IS the rig's pinned card (a space is a rig binding),
       // plus the Room's agent rows. Full-width layout only, as for rigs.
       renderPanel={
-        inSpace && layout !== 'chat'
+        (inSpace && layout !== 'chat') || !target.rootId
           ? undefined
           : (extraRows, onlineUserIds, { startCollapsed, chipSummary }) => (
               <PinnedCard
@@ -1082,10 +1172,10 @@ export function App() {
     <div className="relative flex h-full flex-col">
       <Topbar
         context={deriveTopbarContext(
-          bound ? { name: bound.name, bindingId: bound.bindingId, path: bound.root } : null
+          rigView ? { name: rigView.name, bindingId: rigView.bindingId, path: rigView.root } : null
         )}
-        variant={bound ? 'rig' : 'home'}
-        scrolled={!bound && mainScrolled}
+        variant={rigView ? 'rig' : 'home'}
+        scrolled={!rigView && mainScrolled}
         onGoHome={goHome}
         onOpenSettings={openSettings}
         onOpenPath={openPath}
@@ -1093,7 +1183,7 @@ export function App() {
         updateReady={isUpdateReady(updateStatus.state)}
         autoEditRigName={justCreatedRig}
         onAutoEditRigNameHandled={() => setJustCreatedRig(false)}
-        isSpace={boundIsSpace}
+        isSpace={rigViewIsSpace}
         // Room chrome round: with a doc open beside a space's Room, the
         // breadcrumb grows one more segment (`# growth › metrics.md ×`) —
         // the same open tab `openDocIn` already names for the composer's
@@ -1117,7 +1207,15 @@ export function App() {
         // of an accent Invite pill, one trigger, on the right (below).
         shareSlot={bound && !boundIsSpace ? <RigShareButton root={bound.root} name={bound.name} /> : undefined}
         sharePillSlot={
-          bound && boundIsSpace ? <RigShareButton root={bound.root} name={bound.name} variant="pill" /> : undefined
+          rigView && rigViewIsSpace ? (
+            <RigShareButton
+              root={rigView.root}
+              name={rigView.name}
+              variant="pill"
+              // A space still being set up can't invite anyone yet.
+              pendingReason={setupTarget ? SPACE_SETUP_PENDING_REASON : undefined}
+            />
+          ) : undefined
         }
         layoutSwitcher={
           bound
@@ -1193,7 +1291,7 @@ export function App() {
             onBackToHome={goHome}
           />
         </div>
-      ) : bound ? (
+      ) : rigView ? (
         // The bar sits above ChatPanel/FileBrowser/ArtifactView here, but
         // none of them scroll directly beneath it — each owns its own
         // header chrome (FileBrowser/ArtifactView's own breadcrumb bar,
@@ -1228,23 +1326,23 @@ export function App() {
                 // Doc-focus round: a space's own rail (`SpaceRail`) carries
                 // 32px tiles plus breathing room, a touch wider than plain
                 // `ChatPanel`'s own icon-only collapsed rail below it.
-                (boundIsSpace ? 'border-border-hairline w-12 border-r' : 'border-border-hairline w-10 border-r')
+                (rigViewIsSpace ? 'border-border-hairline w-12 border-r' : 'border-border-hairline w-10 border-r')
             )}
           >
-            {boundIsSpace ? (
+            {rigViewIsSpace ? (
               // Room chrome round: kept mounted across all three layouts now
               // (`RoomView`'s own `collapsed` prop draws the doc-focus
               // floating chip instead) — its connection and live state stay
               // up rather than tearing down and reconnecting on every
               // layout flip.
-              <RecoveryBoundary scope="Room">{renderRoom(bound, { inSpace: true })}</RecoveryBoundary>
+              <RecoveryBoundary scope="Room">{renderRoom(rigView, { inSpace: true })}</RecoveryBoundary>
             ) : (
             <RecoveryBoundary scope="Chat panel">
               <ChatPanel
-                root={bound.root}
-                rootId={bound.rootId}
-                bindingId={bound.bindingId}
-                name={bound.name}
+                root={rigView.root}
+                rootId={rigView.rootId}
+                bindingId={rigView.bindingId}
+                name={rigView.name}
                 initialActiveSessionId={pendingActiveSessionId}
                 onOpenFile={openFile}
                 collapsed={layout === 'files'}
@@ -1257,13 +1355,13 @@ export function App() {
               />
             </RecoveryBoundary>
             )}
-            {layout === 'chat' && !boundIsSpace && (
+            {layout === 'chat' && !rigViewIsSpace && (
               <PinnedCard
-                root={bound.root}
-                rootId={bound.rootId}
-                bindingId={bound.bindingId}
-                name={bound.name}
-                syncing={bound.root === syncingRoot}
+                root={rigView.root}
+                rootId={rigView.rootId}
+                bindingId={rigView.bindingId}
+                name={rigView.name}
+                syncing={rigView.root === syncingRoot}
                 onOpenFile={(absPath) => openFile(absPath)}
                 onOpenFocus={openFocus}
               />
@@ -1291,9 +1389,9 @@ export function App() {
             (() => {
               const pane = (
                 <ArtefactPane
-                  root={bound.root}
-                  rootId={bound.rootId}
-                  bindingId={bound.bindingId}
+                  root={rigView.root}
+                  rootId={rigView.rootId}
+                  bindingId={rigView.bindingId}
                   state={artefact}
                   onActivateTab={(index) => setArtefact((current) => activateTab(current, index))}
                   onCloseTab={(index) => setArtefact((current) => closeTab(current, index))}

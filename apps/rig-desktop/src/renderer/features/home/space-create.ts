@@ -1,10 +1,10 @@
 /**
  * Polish round 2, lane F — the one-click "New space" flow (Google-Meet
  * style: one click, land straight in the Room). The actual creation goes
- * through the SAME path the Spaces card's manual "#name" field already used
- * (`rpc.rig.create.create({ kind: 'space', ... })`, via `home.tsx`'s own
- * `createSpace`) — this module only supplies the one thing a one-click flow
- * needs that a typed name skips: a friendly, auto-generated name.
+ * through `startSpaceSetup` (`features/spaces/space-setup-store.ts`: the
+ * Room opens at once and the space is set up in the background) — this
+ * module only supplies the one thing a one-click flow needs that a typed
+ * name skips: a friendly, auto-generated name.
  *
  * Two short, common words — never a slug of random characters — so a
  * freshly-created space still reads as something a person named, not a

@@ -126,6 +126,14 @@ export function keepUnsentAsDraft(key: string, text: string): void {
   if (!readDraft(key).trim()) writeDraft(key, text);
 }
 
+/** A draft kept under one key (a space still being set up) moves to another (its binding id), unless one is already there. */
+export function moveComposerDraft(from: string, to: string): void {
+  const text = readDraft(from);
+  if (!text.trim()) return;
+  keepUnsentAsDraft(to, text);
+  writeDraft(from, '');
+}
+
 function writeDraft(key: string | undefined, value: string): void {
   if (!key) return;
   try {
@@ -153,6 +161,7 @@ export function Composer({
   suggestReply,
   attachments,
   waitForConnection = false,
+  waitingNote = WILL_SEND_WHEN_ONLINE,
   listFiles,
 }: {
   spaceName: string;
@@ -185,6 +194,8 @@ export function Composer({
    * files, and goes by itself once the connection is back.
    */
   waitForConnection?: boolean;
+  /** What a message waiting on `waitForConnection` says (a new space: once it's ready). */
+  waitingNote?: string;
 }) {
   const [value, setValue] = useState(() => readDraft(draftKey));
   const [focused, setFocused] = useState(false);
@@ -754,7 +765,7 @@ export function Composer({
           <EmojiPickerPopover anchor={smileyRef} open={picking} onClose={() => setPicking(false)} onPick={insertEmoji} align="left" />
           {waitingForConnection ? (
             <span className="ml-1 flex items-center gap-1.5 text-xs text-text-muted" data-testid="composer-waiting-connection">
-              {WILL_SEND_WHEN_ONLINE}
+              {waitingNote}
               <button
                 type="button"
                 onClick={() => setWaitingForConnection(false)}

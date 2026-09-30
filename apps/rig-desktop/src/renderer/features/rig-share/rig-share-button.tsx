@@ -51,6 +51,7 @@ export function RigShareButton({
   root,
   name,
   variant = 'default',
+  pendingReason,
 }: {
   root: string;
   name: string | null;
@@ -62,6 +63,13 @@ export function RigShareButton({
    * browser header uses.
    */
   variant?: 'default' | 'pill';
+  /**
+   * Instant new space: set while the space is still being set up — the
+   * pill shows, disabled, with this as its reason, and nothing is asked of
+   * the relay (the folder has no binding yet; a cached "not bound" answer
+   * would outlive the setup).
+   */
+  pendingReason?: string;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -69,6 +77,7 @@ export function RigShareButton({
   const membersQuery = useQuery({
     queryKey: ['rig', 'share', 'members', root],
     queryFn: () => rpc.rig.share.members({ root }),
+    enabled: !pendingReason,
     // The trigger's avatar stack wants this before the popover ever opens;
     // membership changes rarely, so a quiet minute of staleness is fine.
     staleTime: 60_000,
@@ -83,12 +92,19 @@ export function RigShareButton({
         <button
           ref={triggerRef}
           type="button"
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => {
+            if (!pendingReason) setOpen((v) => !v);
+          }}
           aria-haspopup="true"
           aria-expanded={open}
           aria-label="People and invites"
+          // Not `disabled`: a disabled button shows no tooltip, and the tooltip says why.
+          aria-disabled={pendingReason ? true : undefined}
+          title={pendingReason}
+          data-testid="invite-pill"
           className={cn(
-            'group rounded-chip flex shrink-0 items-center gap-1.5 py-0.5 pr-0.5 pl-1 ring-1 ring-transparent transition-colors hover:bg-bg-2 hover:ring-border-hairline',
+            'group rounded-chip flex shrink-0 items-center gap-1.5 py-0.5 pr-0.5 pl-1 ring-1 ring-transparent transition-colors',
+            pendingReason ? 'cursor-default opacity-50' : 'hover:bg-bg-2 hover:ring-border-hairline',
             open && 'bg-bg-2 ring-border-hairline'
           )}
         >
@@ -111,7 +127,12 @@ export function RigShareButton({
               )}
             </span>
           )}
-          <span className="bg-accent text-bg-0 rounded-chip flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium transition-opacity group-hover:opacity-90">
+          <span
+            className={cn(
+              'bg-accent text-bg-0 rounded-chip flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium transition-opacity',
+              !pendingReason && 'group-hover:opacity-90'
+            )}
+          >
             <UserPlus className="size-3.5" strokeWidth={1.5} />
             Invite
           </span>

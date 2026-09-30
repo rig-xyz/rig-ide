@@ -14,7 +14,9 @@ import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { Popover } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
+import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
+import type { SpaceSetup } from '@shared/rig/space-setup';
 import { deriveDeleteRigMode, deriveRigMenuLabel } from '@shared/rig/delete-rig';
 import type { RigSpaceStatus } from '@shared/rig/space-status';
 import { DeleteRigDialog } from './delete-rig-dialog';
@@ -59,6 +61,8 @@ const FACES_MAX = 3;
  */
 export function SpacesCard({
   rows,
+  settingUp = [],
+  onOpenSetup,
   statusByBinding,
   selfUserId,
   onOpenPath,
@@ -68,6 +72,10 @@ export function SpacesCard({
   emptyHint,
 }: {
   rows: readonly HomeRigRow[];
+  /** New spaces still being set up (or that failed to), listed first until they're real rows. */
+  settingUp?: readonly SpaceSetup[];
+  /** Opens a setting-up space's Room. */
+  onOpenSetup?: (id: string) => void;
   statusByBinding: ReadonlyMap<string, RigSpaceStatus>;
   selfUserId: string | null;
   onOpenPath: (path: string) => void;
@@ -117,8 +125,15 @@ export function SpacesCard({
     <FloatingCard
       storageKey="rig-home-spaces-collapsed"
       title="Spaces"
-      count={rows.length}
+      count={rows.length + settingUp.length}
     >
+      {settingUp.length > 0 && (
+        <div className="flex flex-col gap-1">
+          {settingUp.map((setup) => (
+            <SettingUpRow key={setup.id} setup={setup} onOpen={() => onOpenSetup?.(setup.id)} />
+          ))}
+        </div>
+      )}
       {rows.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-0.5">
           {(Object.keys(SPACE_FILTER_LABELS) as SpaceRowFilter[]).map((f) => (
@@ -140,7 +155,9 @@ export function SpacesCard({
         </div>
       )}
       {rows.length === 0 ? (
-        <p className="text-text-muted px-1 text-xs">{emptyHint ?? 'A space for your team and your agents.'}</p>
+        settingUp.length === 0 && (
+          <p className="text-text-muted px-1 text-xs">{emptyHint ?? 'A space for your team and your agents.'}</p>
+        )
       ) : visible.length === 0 ? (
         <p className="text-text-muted px-1 text-xs">No spaces match this filter.</p>
       ) : (
@@ -173,6 +190,38 @@ export function SpacesCard({
         </div>
       )}
     </FloatingCard>
+  );
+}
+
+/**
+ * A new space still being set up in the background (instant new space):
+ * the dot matrix's "starting" ripple and "Setting up…", or why it
+ * couldn't be. Clicking opens its Room, where Retry and "Remove it" are.
+ */
+function SettingUpRow({ setup, onOpen }: { setup: SpaceSetup; onOpen: () => void }) {
+  const failed = setup.status === 'failed';
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="hover:bg-bg-2 flex items-center gap-2.5 rounded-control px-2 py-2 text-left transition-colors"
+      data-testid="space-setup-row"
+      data-status={setup.status}
+    >
+      {/* Same tile as a live row's `SpaceStatusTile`. */}
+      <span className="bg-bg-2 inline-flex shrink-0 items-center justify-center rounded-control p-1.5" aria-hidden>
+        <DotMatrix state={failed ? 'failed' : 'starting'} size="md" />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col items-start">
+        <span className="flex min-w-0 items-center gap-1">
+          <span className="text-text-muted font-mono text-sm">#</span>
+          <span className="text-text-primary truncate text-sm">{setup.name}</span>
+        </span>
+        <span className={cn('truncate text-xs', failed ? 'text-danger' : 'text-text-muted')}>
+          {failed ? 'Couldn’t finish setting up' : 'Setting up…'}
+        </span>
+      </span>
+    </button>
   );
 }
 

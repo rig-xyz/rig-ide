@@ -315,7 +315,7 @@ type RunFetchResult = { run: SessionRun | null; events: SessionEventRow[] };
  * composer needs. If one isn't installed, the dispatch fails and the
  * request settles as failed.
  */
-function emptySnapshot(name: string, selfUserId: string): RoomSnapshot {
+export function emptySnapshot(name: string, selfUserId: string): RoomSnapshot {
   return {
     name,
     ready: true,

@@ -43,6 +43,7 @@ import { rigCommentsController } from './rig/comments';
 import { rigCommentsCacheController } from './rig/comments-cache-store';
 import { rigContextController } from './rig/context';
 import { rigCreateController } from './rig/create';
+import { rigSpaceSetupController } from './rig/space-setup';
 import { rigDeepLinkController } from './rig/deep-link';
 import { rigDeleteController } from './rig/delete-rig';
 import { rigFileMentionsController } from './rig/file-mentions';
@@ -199,6 +200,10 @@ export const rpcRouter = createRPCRouter({
     // Its own key, like `join` above: a one-shot creation action, not a
     // data surface. See `create.ts`'s own header comment.
     create: rigCreateController,
+    // Instant new space: "New space" opens the Room at once; this sets the
+    // space up in the background and reports each step on
+    // `rigSpaceSetupChannel`. See `space-setup.ts`.
+    spaceSetup: rigSpaceSetupController,
     // Google Docs / .docx → markdown import into a bound rig (the create
     // dialog's "Start from a Google Doc" section and the open-rig Import
     // action). One-shot action like `create` above — see `import-doc.ts`'s

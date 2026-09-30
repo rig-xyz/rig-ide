@@ -161,40 +161,65 @@ export async function runRig(args: string[], cwd: string, timeoutMs: number): Pr
 export async function enableSyncInDir(
   dir: string
 ): Promise<Result<{ homeUrl: string | null }, RigCreateSyncError>> {
-  const live = await runRig(['sync', '--json'], dir, SYNC_TIMEOUT_MS);
-  if (live.kind === 'spawnFailed') {
+  const live = interpretGoLive(await runRig(['sync', '--json'], dir, SYNC_TIMEOUT_MS), 'sync');
+  return live.success ? ok({ homeUrl: live.data.homeUrl }) : live;
+}
+
+/** What a go-live call (`rig sync --json`, or `rig init --json --live`) reported. */
+export type GoLive = { homeUrl: string | null; bindingId: string | null; kind: string | null };
+
+/**
+ * Reduces a go-live spawn to live-or-why-not, with the CLI's own message
+ * carried verbatim (not_logged_in, the relay's 50MB quota, …). Both verbs
+ * report `state: 'live'` and `workspace: { bindingId, homeUrl, kind? }`;
+ * `rig init --live` reports a failed go-live as `state: 'local'` plus
+ * `syncError` (the rig itself was created). Pure — exported for tests.
+ */
+export function interpretGoLive(outcome: SpawnOutcome, verb: 'sync' | 'init'): Result<GoLive, RigCreateSyncError> {
+  if (outcome.kind === 'spawnFailed') {
     return err<RigCreateSyncError>({
       code: 'cli_missing',
-      message: `Could not run \`${live.bin}\` to enable sync.`,
+      message: `Could not run \`${outcome.bin}\` to enable sync.`,
     });
   }
-  if (live.kind === 'timedOut') {
+  if (outcome.kind === 'timedOut') {
     return err<RigCreateSyncError>({
       code: 'timeout',
       message: 'Enabling sync timed out — run `rig sync` in the folder to retry.',
     });
   }
-  const parsed = parseRigCliOutput(live.stdout);
+  const parsed = parseRigCliOutput(outcome.stdout);
   if (parsed.kind === 'error') {
     return err<RigCreateSyncError>({ code: parsed.code, message: parsed.message });
   }
-  if (parsed.kind === 'unparseable' || live.exitCode !== 0) {
+  if (parsed.kind === 'unparseable' || outcome.exitCode !== 0) {
     return err<RigCreateSyncError>({
       code: 'error',
-      message: commandFailureMessage('sync', `${live.stdout}\n${live.stderr}`, live.exitCode),
+      message: commandFailureMessage(verb, `${outcome.stdout}\n${outcome.stderr}`, outcome.exitCode),
     });
   }
+  const syncError =
+    typeof parsed.body.syncError === 'object' && parsed.body.syncError !== null
+      ? (parsed.body.syncError as Record<string, unknown>)
+      : null;
   if (parsed.body.state !== 'live') {
     return err<RigCreateSyncError>({
-      code: 'error',
-      message: 'Sync did not come on — run `rig sync` in the folder to retry.',
+      code: typeof syncError?.code === 'string' ? syncError.code : 'error',
+      message:
+        typeof syncError?.message === 'string' && syncError.message
+          ? syncError.message
+          : 'Sync did not come on — run `rig sync` in the folder to retry.',
     });
   }
   const workspace =
     typeof parsed.body.workspace === 'object' && parsed.body.workspace !== null
       ? (parsed.body.workspace as Record<string, unknown>)
       : null;
-  return ok({ homeUrl: typeof workspace?.homeUrl === 'string' ? workspace.homeUrl : null });
+  return ok({
+    homeUrl: typeof workspace?.homeUrl === 'string' ? workspace.homeUrl : null,
+    bindingId: typeof workspace?.bindingId === 'string' ? workspace.bindingId : null,
+    kind: typeof workspace?.kind === 'string' ? workspace.kind : null,
+  });
 }
 
 // ── seed doc (onboarding flow round) ──────────────────────────────────────────
@@ -260,17 +285,20 @@ async function withRegisteredRoot(
 /**
  * Marks a just-synced rig's binding as a space. Best-effort: if it fails the
  * folder is still a working, synced rig, it just won't show under Spaces.
+ * Only needed when the CLI couldn't create it as a space to begin with (a
+ * CLI before `--kind`, or a tapd before 0.6.7) — see `space-setup.ts`.
  */
-async function flagAsSpace(targetDir: string): Promise<void> {
+export async function flagAsSpace(targetDir: string): Promise<boolean> {
   const binding = findBindingConfig(targetDir);
   if (!binding) {
     log.warn('Rig create: new space has no binding to flag', { targetDir });
-    return;
+    return false;
   }
   const flagged = await setBindingKind(binding.config.bindingId, 'space');
   if (!flagged.success) {
     log.warn('Rig create: could not flag the binding as a space', { error: flagged.error.message });
   }
+  return flagged.success;
 }
 
 export const rigCreateController = createRPCController({
@@ -308,10 +336,23 @@ export const rigCreateController = createRPCController({
       });
     }
 
-    const init = await runRig(
-      ['init', '--json', ...(sync ? ['--sync'] : [])],
-      targetDir,
-      INIT_TIMEOUT_MS
+    // One log line per creation with each step's milliseconds, so a real
+    // creation shows where its time went.
+    const started = Date.now();
+    const ms: Record<string, number> = {};
+    const timed = async <T>(label: string, fn: () => Promise<T>): Promise<T> => {
+      const t0 = Date.now();
+      try {
+        return await fn();
+      } finally {
+        ms[label] = Date.now() - t0;
+      }
+    };
+    const logTimings = (outcome: string) =>
+      log.info('Rig create: timings', { outcome, sync, kind: kind ?? 'rig', totalMs: Date.now() - started, ...ms });
+
+    const init = await timed('initMs', () =>
+      runRig(['init', '--json', ...(sync ? ['--sync'] : [])], targetDir, INIT_TIMEOUT_MS)
     );
     const initError = interpretInitFailure(init);
     if (initError) {
@@ -322,6 +363,7 @@ export const rigCreateController = createRPCController({
       } catch {
         // not empty or already gone — leave it
       }
+      logTimings('initFailed');
       return err(initError);
     }
 
@@ -331,9 +373,10 @@ export const rigCreateController = createRPCController({
       initBody?.kind === 'ok' && typeof initBody.body.name === 'string' ? initBody.body.name : slug;
 
     // Seeded before any sync attempt, so a first `rig sync` mirrors it too.
-    const docPath = seedDoc ? await writeSeedDoc(targetDir) : null;
+    const docPath = seedDoc ? await timed('seedMs', () => writeSeedDoc(targetDir)) : null;
 
     if (!sync) {
+      logTimings('local');
       return ok(
         await withRegisteredRoot({
           path: targetDir,
@@ -347,8 +390,9 @@ export const rigCreateController = createRPCController({
     }
 
     // Go live. Every failure from here is PARTIAL: the rig exists on disk.
-    const live = await enableSyncInDir(targetDir);
+    const live = await timed('syncMs', () => enableSyncInDir(targetDir));
     if (!live.success) {
+      logTimings('syncFailed');
       return ok(
         await withRegisteredRoot({
           path: targetDir,
@@ -360,7 +404,8 @@ export const rigCreateController = createRPCController({
         })
       );
     }
-    if (kind === 'space') await flagAsSpace(targetDir);
+    if (kind === 'space') await timed('markSpaceMs', () => flagAsSpace(targetDir));
+    logTimings('live');
     return ok(
       await withRegisteredRoot({
         path: targetDir,
@@ -389,7 +434,7 @@ export const rigCreateController = createRPCController({
 });
 
 /** Init failures end the creation (nothing usable exists yet) — map each spawn outcome to the typed error. */
-function interpretInitFailure(outcome: SpawnOutcome): RigCreateError | null {
+export function interpretInitFailure(outcome: SpawnOutcome): RigCreateError | null {
   if (outcome.kind === 'spawnFailed') {
     return {
       kind: 'cliMissing',

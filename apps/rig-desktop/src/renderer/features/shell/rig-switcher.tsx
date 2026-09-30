@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from 'framer-motion';
 import { Check, ChevronDown, FolderOpen, Hash, Home as HomeIcon, Loader2, Pencil, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { generateSpaceName } from '@renderer/features/home/space-create';
+import { startSpaceSetup } from '@renderer/features/spaces/space-setup-store';
 import { rpc } from '@renderer/lib/ipc';
 import { Popover } from '@renderer/lib/ui/popover';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
@@ -128,29 +129,14 @@ export function RigSwitcher({
     const existingNames = new Set(
       displayRows.map((row) => row.name).filter((n): n is string => !!n)
     );
-    const result = await rpc.rig.create.create({
-      parentDir: null,
-      name: generateSpaceName(existingNames),
-      sync: true,
-      seedDoc: false,
-      kind: 'space',
-    });
+    // Opens the new space's Room at once; it's set up in the background.
+    const failure = await startSpaceSetup(generateSpaceName(existingNames));
     setCreatingSpace(false);
-    if (!result.success) {
-      setCreateSpaceError(result.error.message);
-      return;
-    }
-    if (result.data.rootId) void rpc.rig.files.releaseRoot({ rootId: result.data.rootId });
-    void queryClient.invalidateQueries({ queryKey: ['rig', 'recent'] });
-    void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
-    if (!result.data.synced) {
-      setCreateSpaceError(
-        result.data.syncError?.message ?? 'The space was created locally but could not go live.'
-      );
+    if (failure) {
+      setCreateSpaceError(failure);
       return;
     }
     setOpen(false);
-    onOpenPath(result.data.path, { kind: 'space' });
   };
 
   if (editing) {

@@ -13,7 +13,7 @@ import { spacesAgentConfigChangedChannel } from '@shared/spaces/agent-settings';
 import { roomSeesFor, spacesLocalRunEventChannel } from '@shared/spaces/room-sees';
 import { connectorsApi } from '../connectors-api';
 import { buildRoomFeed } from '../fixtures/room-feed';
-import { RelayRoomSource, type LocalRunsClient, type RelayRoomClient } from '../relay-room-source';
+import { emptySnapshot, RelayRoomSource, type LocalRunsClient, type RelayRoomClient } from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
 import { roomSourceCache, type RoomConnectionInfo, type RoomLease } from '../room-source-cache';
 import type { CachedRoomBlob } from '@shared/spaces/room-cache';
@@ -37,6 +37,10 @@ import { AgentSettingsContext, type AgentSettingsApi } from './agent-settings';
 import { ConnectorGallery } from './connector-gallery';
 import { ConnectorsSection } from './connectors-panel';
 import { SpaceCard } from './space-card';
+import { SpaceSetupState, type RoomSetup } from './space-setup-state';
+import { setupDraftKey } from '../space-setup-store';
+import { moveComposerDraft } from './composer';
+import { SPACE_SETUP_PENDING_REASON } from '@shared/rig/space-setup';
 
 /**
  * A thin 1:1 pass-through over `rpc.rig.spacesConnection` — see
@@ -331,7 +335,9 @@ export function RoomView({
   renderPanel,
   collapsed = false,
   onExpand: onExpandCollapsed,
+  setup = null,
 }: {
+  /** Empty while `setup` is still making the space (it has no binding yet). */
   bindingId: string;
   spaceName: string;
   /** Opens a space file (relative path) in the editor. */
@@ -355,6 +361,14 @@ export function RoomView({
   collapsed?: boolean;
   /** Brings the Room back beside the doc (the chip's own click target). */
   onExpand?: () => void;
+  /**
+   * Instant new space: the space is still being set up in the background.
+   * The Room shows at once under its name with a calm "Setting up…" body;
+   * the composer works (a message sent now waits and goes once the space
+   * is live), Attach waits. Once App hands over the real `bindingId`, this
+   * same Room becomes the live one — no remount, the waiting message sends.
+   */
+  setup?: RoomSetup | null;
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -377,9 +391,34 @@ export function RoomView({
   }>({ open: false, focus: null, initialScope: 'all', initialSection: null });
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
+  // Instant new space: from the first setup frame until the live Room has
+  // loaded, the Room shows the setup body and holds sends back (so a
+  // message typed meanwhile goes to the real space with your real agents).
+  const [cameFromSetup, setCameFromSetup] = useState(!!setup);
+  const setupIdRef = useRef<string | null>(setup?.id ?? null);
+  if (setup) setupIdRef.current = setup.id;
+  const liveLoaded = source instanceof RelayRoomSource && !!snapshot && snapshot.loaded !== false;
+  useEffect(() => {
+    if (setup) setCameFromSetup(true);
+    else if (liveLoaded || !bindingId) setCameFromSetup(false);
+  }, [setup, liveLoaded, bindingId]);
+  const awaitingLive = !!setup || (cameFromSetup && !liveLoaded);
+  // The composer's draft lives under the setup's key until the space has
+  // a binding id, then under that id (moved here in case the store's own
+  // move on the live event hasn't happened yet).
+  const draftKey = useMemo(() => {
+    const setupId = setupIdRef.current;
+    if (bindingId && setupId) moveComposerDraft(setupDraftKey(setupId), bindingId);
+    return bindingId || (setupId ? setupDraftKey(setupId) : undefined);
+  }, [bindingId]);
   const attachments = useComposerAttachments(bindingId, source instanceof RelayRoomSource);
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
+  // Attaching needs the live space: said, not hidden, while it's set up.
+  const composerAttachments = useMemo(
+    () => (awaitingLive ? { ...attachments, disabledReason: SPACE_SETUP_PENDING_REASON } : attachments),
+    [awaitingLive, attachments]
+  );
   // Which space the composer shows now: a send that fails after you've moved on never puts its files in another space's box.
   const shownBindingRef = useRef(bindingId);
   shownBindingRef.current = bindingId;
@@ -518,6 +557,12 @@ export function RoomView({
       setSource(fixtureSource);
       setSelfUserId(FALLBACK_OWN_ID);
       return () => fixtureSource.dispose();
+    }
+
+    // Still being set up: there's no space on the relay to connect to yet.
+    if (!bindingId) {
+      setSource(null);
+      return;
     }
 
     // The live Room comes from the cache: kept alive behind other spaces,
@@ -919,6 +964,14 @@ export function RoomView({
   );
   const handleRerun = source instanceof RelayRoomSource ? rerun : undefined;
 
+  // While set up (and until the live Room has loaded): an empty Room under
+  // the space's name stands in, so the layout and the composer are the same
+  // elements before and after — nothing remounts when it goes live.
+  const placeholder = useMemo(
+    () => (awaitingLive && !liveLoaded ? emptySnapshot(spaceName, selfUserId) : null),
+    [awaitingLive, liveLoaded, spaceName, selfUserId]
+  );
+
   if (gone) {
     return (
       <div
@@ -945,7 +998,8 @@ export function RoomView({
     );
   }
 
-  if (!snapshot) {
+  const room = placeholder ?? snapshot;
+  if (!room) {
     // Still asking who you are and where the relay is: the opening skeleton, not a blank pane.
     return (
       <div className="bg-bg-0 flex h-full min-h-0 flex-col" data-testid="room-view">
@@ -960,7 +1014,7 @@ export function RoomView({
   // bottom-right chip that drew OVER the doc instead of living in the
   // column App.tsx already reserves for it).
   if (collapsed) {
-    return <SpaceRail snapshot={snapshot} selfUserId={selfUserId} onExpand={onExpandCollapsed} />;
+    return <SpaceRail snapshot={room} selfUserId={selfUserId} onExpand={onExpandCollapsed} />;
   }
 
   return (
@@ -973,7 +1027,7 @@ export function RoomView({
           there's no other bar in view. */}
       {showDemoToggle && (
         <div className="border-border-hairline bg-bg-1 flex h-9 shrink-0 items-center gap-2 border-b px-3">
-          <span className="text-xs font-medium text-text-primary">{snapshot.name}</span>
+          <span className="text-xs font-medium text-text-primary">{room.name}</span>
           <button
             type="button"
             onClick={() => setUseFixtures((v) => !v)}
@@ -1014,7 +1068,7 @@ export function RoomView({
           onDragOver={(e) => {
             if (!hasDraggedFiles(e.dataTransfer)) return;
             e.preventDefault();
-            e.dataTransfer.dropEffect = attachments.disabledReason ? 'none' : 'copy';
+            e.dataTransfer.dropEffect = composerAttachments.disabledReason ? 'none' : 'copy';
           }}
           onDragLeave={() => {
             dragDepth.current = Math.max(0, dragDepth.current - 1);
@@ -1025,8 +1079,8 @@ export function RoomView({
             e.preventDefault();
             dragDepth.current = 0;
             setDragging(false);
-            if (attachments.disabledReason) {
-              toast({ title: 'Files can’t be added here', description: attachments.disabledReason });
+            if (composerAttachments.disabledReason) {
+              toast({ title: 'Files can’t be added here', description: composerAttachments.disabledReason });
               return;
             }
             void attachments.addFiles(Array.from(e.dataTransfer.files));
@@ -1040,18 +1094,27 @@ export function RoomView({
               data-testid="attachment-drop-overlay"
             >
               <span className="rounded-full bg-accent-subtle px-3 py-1.5 text-sm text-accent">
-                {attachments.disabledReason ?? 'Drop to attach to your message'}
+                {composerAttachments.disabledReason ?? 'Drop to attach to your message'}
               </span>
             </div>
           )}
           {/* Your own message the moment you send it counts: a new space's welcome never hides it while files copy. */}
-          {live && (shownSnapshot ?? snapshot).messages.length === 0 ? (
+          {awaitingLive ? (
+            <SpaceSetupState
+              spaceName={spaceName}
+              failed={setup?.status === 'failed'}
+              error={setup?.error ?? null}
+              removable={setup?.removable ?? false}
+              onRetry={() => setup?.onRetry()}
+              onRemove={() => setup?.onRemove()}
+            />
+          ) : live && (shownSnapshot ?? room).messages.length === 0 ? (
             <RoomWelcome
-              spaceName={snapshot.name}
+              spaceName={room.name}
               // Until the first load is in, not until the socket is: an empty
               // space is known to be empty as soon as its messages come back.
-              connecting={snapshot.loaded === false}
-              hasSkills={snapshot.skills.length > 0}
+              connecting={room.loaded === false}
+              hasSkills={room.skills.length > 0}
               onPrefill={(text) => setPrefill({ text, nonce: Date.now() })}
             />
           ) : (
@@ -1059,7 +1122,7 @@ export function RoomView({
           <AttachmentSpaceContext.Provider value={attachmentSpace}>
           <ReactionsContext.Provider value={reactionsApi}>
           <RoomTranscript
-            snapshot={shownSnapshot ?? snapshot}
+            snapshot={shownSnapshot ?? room}
             ownId={selfUserId}
             onStopSession={handleStopSession}
             onResolvePermission={handleResolvePermission}
@@ -1087,7 +1150,7 @@ export function RoomView({
                 className="mb-1.5"
               />
             )}
-            {live && !roomConnection && snapshot.connection === 'offline' && (
+            {live && !roomConnection && room.connection === 'offline' && (
               <p
                 className="mb-1.5 flex items-center gap-1.5 px-1 text-2xs text-text-muted"
                 role="status"
@@ -1098,7 +1161,7 @@ export function RoomView({
                 Updating a little slower than usual
               </p>
             )}
-            {live && catchingUp && !roomConnection && snapshot.connection !== 'offline' && (
+            {live && catchingUp && !roomConnection && room.connection !== 'offline' && (
               <p
                 className="mb-1.5 flex items-center gap-1.5 px-1 text-2xs text-text-muted"
                 role="status"
@@ -1110,21 +1173,22 @@ export function RoomView({
             )}
             <Composer
               prefill={prefill}
-              spaceName={snapshot.name}
-              draftKey={bindingId}
+              spaceName={room.name}
+              draftKey={draftKey}
               replyTo={replyTo}
               onCancelReply={() => setReplyTo(null)}
-              busyAgents={busyOwnAgents(snapshot, selfUserId)}
+              busyAgents={busyOwnAgents(room, selfUserId)}
               openDoc={live ? openDoc : null}
-              agentModels={lastModels(snapshot, selfUserId)}
-              members={snapshot.members}
+              agentModels={lastModels(room, selfUserId)}
+              members={room.members}
               // Own agents only: @claude/@codex always means the sender's
               // own agent (no cross-person delegation in the MVP).
-              agents={snapshot.agents.filter((a) => a.owner === selfUserId)}
-              skills={snapshot.skills}
+              agents={room.agents.filter((a) => a.owner === selfUserId)}
+              skills={room.skills}
               onSend={handleSend}
-              waitForConnection={roomConnection !== null}
-              attachments={attachments}
+              waitForConnection={roomConnection !== null || awaitingLive}
+              waitingNote={awaitingLive ? 'Sends once the space is ready.' : undefined}
+              attachments={composerAttachments}
               listFiles={live ? listSpaceFiles : undefined}
               suggestReply={live ? suggestReply : undefined}
               onTypingChange={
@@ -1133,12 +1197,12 @@ export function RoomView({
             />
           </div>
         </div>
-        {source instanceof RelayRoomSource ? (
+        {awaitingLive && !(source instanceof RelayRoomSource) ? null : source instanceof RelayRoomSource ? (
           (renderPanel?.(
             <>
-              <AgentRows snapshot={snapshot} selfUserId={selfUserId} bindingId={bindingId} />
+              <AgentRows snapshot={room} selfUserId={selfUserId} bindingId={bindingId} />
               <ConnectorsSection
-                snapshot={snapshot}
+                snapshot={room}
                 selfUserId={selfUserId}
                 bindingId={bindingId}
                 onOpenGallery={(focus) => {
@@ -1156,23 +1220,23 @@ export function RoomView({
             // Presence comes over the realtime socket; without it (the Room
             // is polling) nobody's presence is known, so nobody is dimmed.
             new Set(
-              snapshot.members
-                .filter((m) => snapshot.connection !== 'online' || m.online !== false)
+              room.members
+                .filter((m) => room.connection !== 'online' || m.online !== false)
                 .map((m) => m.id)
             ),
             {
               startCollapsed: narrow,
               chipSummary: ({ unseenCount }) => (
-                <SpaceChipSummary snapshot={snapshot} selfUserId={selfUserId} unseenCount={unseenCount} />
+                <SpaceChipSummary snapshot={room} selfUserId={selfUserId} unseenCount={unseenCount} />
               ),
             }
           ) ?? null)
         ) : (
-          <SpaceCard snapshot={snapshot} />
+          <SpaceCard snapshot={room} />
         )}
         {gallery.open && source instanceof RelayRoomSource && (
           <ConnectorGallery
-            snapshot={snapshot}
+            snapshot={room}
             selfUserId={selfUserId}
             source={source}
             onClose={() => setGallery({ open: false, focus: null, initialScope: 'all', initialSection: null })}
