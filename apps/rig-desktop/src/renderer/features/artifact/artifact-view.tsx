@@ -34,6 +34,7 @@ import { classifyEntryCategory, relPathFromRoot } from '@shared/rig/file-navigat
 import { breadcrumbSegments, type BreadcrumbSegment } from './breadcrumb';
 import type { EditorLanguage } from './file-type';
 import { ImageArtifact } from './image-artifact';
+import { PdfArtifact } from './pdf-artifact';
 import { getPreviewMode, setPreviewMode, type PreviewMode } from './preview-mode-memory';
 import { PreviewPane, type PreviewHandle } from './preview-pane';
 import { ShareButton } from './share-popover';
@@ -119,6 +120,8 @@ export const ArtifactView = observer(function ArtifactView({
           </div>
         ) : type.category === 'image' ? (
           <ImageArtifact root={root} rootId={rootId} path={path} mime={type.mime} />
+        ) : type.category === 'pdf' ? (
+          <PdfArtifact root={root} rootId={rootId} path={path} />
         ) : (
           <UnsupportedArtifact
             root={root}

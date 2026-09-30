@@ -163,6 +163,7 @@
     "oxfmt": "^0.51.0",
     "oxlint": "^1.66.0",
     "oxlint-tsgolint": "^0.23.0",
+    "pdfjs-dist": "^6.3.289",
     "postcss": "^8.4.32",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

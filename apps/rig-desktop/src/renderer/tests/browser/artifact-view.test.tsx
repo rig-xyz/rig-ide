@@ -8,6 +8,7 @@ import { ArtifactView } from '@renderer/features/artifact/artifact-view';
 import { ImageArtifact } from '@renderer/features/artifact/image-artifact';
 import { resetPreviewModeMemoryForTests } from '@renderer/features/artifact/preview-mode-memory';
 import { rpc } from '@renderer/lib/ipc';
+import { tinyPdfBase64 } from './pdf-fixture';
 // Real tokens, not a stub — the mono/highlight assertions below check actual
 // resolved `--accent`/`--text-primary` CSS custom properties, which only
 // exist once this stylesheet (normally loaded once at app boot) is present.
@@ -268,6 +269,28 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
 
     expect(host.textContent).not.toContain('Loading…');
     expect(host.textContent).toContain('No preview for this file type.');
+  });
+
+  it('opens a PDF in the PDF viewer, not the unsupported state (other binaries still get it)', async () => {
+    mocks.readBinary.mockResolvedValue({ success: true, data: { data: tinyPdfBase64(2), truncated: false, size: 900 } });
+
+    await renderArtifact('/repo/attachments/deck-compressed.pdf');
+    await waitFor(() => host.querySelector('[data-testid="pdf-page"]') !== null, 8000);
+
+    expect(host.querySelector('[data-testid="pdf-viewer"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="pdf-page-indicator"]')?.textContent).toBe('Page 1 of 2');
+    expect(host.textContent).not.toContain('No preview for this file type.');
+    // Read by extension alone: one full read, no sniff first.
+    expect(mocks.readBinary).toHaveBeenCalledTimes(1);
+    expect(mocks.readBinary.mock.calls[0]![0]).toMatchObject({ relativePath: 'attachments/deck-compressed.pdf' });
+
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    mocks.readBinary.mockReset().mockResolvedValue({ success: true, data: { data: btoa('PK\0\x03zip'), truncated: false, size: 8 } });
+    await renderArtifact('/repo/archive.zip');
+    await waitFor(() => loadingGone(host));
+    expect(host.textContent).toContain('No preview for this file type.');
+    expect(host.querySelector('[data-testid="pdf-viewer"]')).toBeNull();
   });
 
   it('renders extensionless text content instead of hanging on Loading… forever', async () => {

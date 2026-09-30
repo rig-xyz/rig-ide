@@ -316,6 +316,20 @@ describe('Message cards', () => {
     expect(api.status).toHaveBeenLastCalledWith({ bindingId: 'bnd_1', files: [{ path: 'attachments/Q3 board deck.pdf', hash: 'sha256:d' }], withRelay: false });
   });
 
+  it("a PDF keeps its card (name, size, pages) with its first page in place of the badge", async () => {
+    api.statuses = [{ path: 'attachments/Q3 board deck.pdf', exists: true, synced: true, onRelay: null }];
+    const page = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="160"/>')}`;
+    const thumbnail = vi.fn(async (path: string) => (path.endsWith('.pdf') ? page : null));
+    await render(snapshotWith([message({ meta: { kind: 'text', attachments: [deck] }, body: 'deck' })]), 'dylan', vi.fn(), thumbnail);
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="attachment-page-thumb"]')).not.toBeNull());
+    expect(thumbnail).toHaveBeenCalledWith('attachments/Q3 board deck.pdf');
+    const card = host.querySelector<HTMLElement>('[data-testid="attachment-card"]')!;
+    expect(card.dataset.kind).toBe('copied'); // the card, not a bare image
+    expect(card.querySelector<HTMLImageElement>('[data-testid="attachment-page-thumb"]')!.src).toBe(page);
+    expect(card.textContent).toContain('Q3 board deck.pdf');
+    expect(card.textContent).toContain('4.2 MB · 18 pages');
+  });
+
   it("others see arriving until the file is here, and whose computer a local-only file is on", async () => {
     api.statuses = [{ path: 'attachments/Q3 board deck.pdf', exists: false, synced: null, onRelay: true }];
     await render(snapshotWith([message({})]), 'sam');

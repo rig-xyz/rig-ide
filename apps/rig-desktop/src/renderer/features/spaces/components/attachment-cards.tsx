@@ -13,8 +13,8 @@ import { cardSettled, cardStatus, typeBadge, type CardStatus } from '../attachme
 /**
  * Files on a chat message (board 19, B): images as thumbnails made on this
  * computer from the space's copy, everything else as a card with its size
- * (and pages for a PDF). A click opens it beside the chat; ⋯ reveals it in
- * Finder or copies its path. Under each, where it is on its way to everyone:
+ * (and pages for a PDF, its first page in place of the badge). A click
+ * opens it beside the chat; ⋯ reveals it in Finder or copies its path. Under each, where it is on its way to everyone:
  * yours "Syncing…" until the sync daemon has shipped it, others' "Arriving
  * from Sam…" until it's on this computer.
  */
@@ -88,7 +88,7 @@ function useThumbnail(space: AttachmentSpace | null, attachment: MessageAttachme
   const [url, setUrl] = useState<string | null>(null);
   const path = attachment.path;
   useEffect(() => {
-    if (!space || !path || !present || !attachment.mime.startsWith('image/')) return;
+    if (!space || !path || !present || !(attachment.mime.startsWith('image/') || attachment.mime === 'application/pdf')) return;
     const cacheKey = `${space.bindingId}:${path}:${attachment.hash ?? ''}`;
     let pending = thumbs.get(cacheKey);
     if (!pending) {
@@ -218,11 +218,14 @@ function FileCard({
   status,
   open,
   space,
+  thumb = null,
 }: {
   attachment: MessageAttachment;
   status: CardStatus | null;
   open: (() => void) | null;
   space: AttachmentSpace | null;
+  /** A PDF's first page, shown in place of the type badge. */
+  thumb?: string | null;
 }) {
   const detail = [
     attachment.size ? formatAttachmentBytes(attachment.size) : '',
@@ -249,9 +252,18 @@ function FileCard({
       data-testid="attachment-card"
       data-kind={attachment.kind}
     >
-      <span className="bg-bg-3 flex size-8 shrink-0 items-center justify-center rounded-lg text-2xs font-bold text-text-secondary">
-        {typeBadge(attachment.name)}
-      </span>
+      {thumb ? (
+        <img
+          src={thumb}
+          alt=""
+          className="border-border-hairline h-9 w-8 shrink-0 rounded-sm border bg-white object-cover object-top"
+          data-testid="attachment-page-thumb"
+        />
+      ) : (
+        <span className="bg-bg-3 flex size-8 shrink-0 items-center justify-center rounded-lg text-2xs font-bold text-text-secondary">
+          {typeBadge(attachment.name)}
+        </span>
+      )}
       <div className="flex min-w-0 flex-1 flex-col leading-tight">
         <b className="truncate text-xs font-medium text-text-primary">{attachment.name}</b>
         <span className="flex min-w-0 items-center gap-1 text-2xs text-text-muted">
@@ -281,10 +293,11 @@ function AttachmentItem({
   const openable = present && !!attachment.path && !!space?.onOpenFile;
   const open = openable ? () => space!.onOpenFile!(attachment.path!) : null;
   // No thumbnail yet (still arriving, or not an image we can preview): the compact card, never an empty square.
-  return thumb ? (
+  // A PDF keeps its card (name, size, pages), its first page in place of the badge.
+  return thumb && attachment.mime !== 'application/pdf' ? (
     <ImageThumb attachment={attachment} thumb={thumb} status={status} open={open} space={space} />
   ) : (
-    <FileCard attachment={attachment} status={status} open={open} space={space} />
+    <FileCard attachment={attachment} status={status} open={open} space={space} thumb={thumb} />
   );
 }
 

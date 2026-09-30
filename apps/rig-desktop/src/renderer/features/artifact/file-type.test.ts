@@ -87,6 +87,12 @@ describe('detectByExtension', () => {
     expect(detectByExtension('.env')).toEqual({ category: 'text', language: null });
   });
 
+  it('a PDF, by extension alone (its binary bytes never reach the sniff)', () => {
+    expect(detectByExtension('deck-compressed.pdf')).toEqual({ category: 'pdf' });
+    expect(detectByExtension('/space/attachments/SCAN.PDF')).toEqual({ category: 'pdf' });
+    expect(resolveFileType('deck.pdf', new Uint8Array([0x25, 0x50, 0x44, 0x46, 0]))).toEqual({ category: 'pdf' });
+  });
+
   it('a dotfile known to be text', () => {
     expect(detectByExtension('.gitignore')).toEqual({ category: 'text', language: null });
   });

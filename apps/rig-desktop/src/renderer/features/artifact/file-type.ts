@@ -56,6 +56,8 @@ export type DetectedFileType =
   | { category: 'markdown' }
   | { category: 'text'; language: EditorLanguage }
   | { category: 'image'; mime: string }
+  /** Read-only pages (`pdf-artifact.tsx`). */
+  | { category: 'pdf' }
   | { category: 'unsupported' };
 
 /** The bytes actually sampled for the binary sniff — small, since it only ever needs to answer "does a null byte show up early." */
@@ -181,6 +183,7 @@ export function detectByExtension(filename: string): DetectedFileType | null {
   if (MARKDOWN_EXTENSIONS.has(ext)) return { category: 'markdown' };
   const mime = IMAGE_MIME_BY_EXTENSION[ext];
   if (mime) return { category: 'image', mime };
+  if (ext === 'pdf') return { category: 'pdf' };
   const grammarLanguage = GRAMMAR_LANGUAGE_BY_EXTENSION[ext];
   if (grammarLanguage) return { category: 'text', language: grammarLanguage };
   if (KNOWN_TEXT_EXTENSIONS.has(ext)) return { category: 'text', language: null };

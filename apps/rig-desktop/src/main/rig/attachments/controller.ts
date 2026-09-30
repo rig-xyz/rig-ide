@@ -90,6 +90,9 @@ const IMAGE_EXT = /\.(png|jpe?g|gif|webp|heic|heif|tiff?|bmp)$/i;
 
 /** Formats Chromium decodes itself: scaled directly, so the preview keeps the image's own proportions. */
 const DIRECT_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
+const PDF_EXT = /\.pdf$/i;
+/** A PDF's first page is shown small, in its card's badge. */
+const PDF_THUMB_PX = 160;
 
 /**
  * A small preview of an image file, made on this computer. Common formats
@@ -99,6 +102,7 @@ const DIRECT_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
  * TIFF) or when scaling fails.
  */
 async function thumbnailOf(abs: string): Promise<string | null> {
+  if (PDF_EXT.test(abs)) return pdfThumbnailOf(abs);
   if (!IMAGE_EXT.test(abs)) return null;
   const scaled = async (): Promise<string | null> => {
     try {
@@ -125,7 +129,17 @@ async function thumbnailOf(abs: string): Promise<string | null> {
   return DIRECT_EXT.test(abs) ? null : scaled();
 }
 
-/** An image in the space (paths from messages stay inside it). */
+/** A PDF's first page, from Quick Look (macOS); null where there's none (Linux, Windows) or it declined. */
+async function pdfThumbnailOf(abs: string): Promise<string | null> {
+  try {
+    const image = await nativeImage.createThumbnailFromPath(abs, { width: PDF_THUMB_PX, height: PDF_THUMB_PX });
+    return image.isEmpty() ? null : image.toDataURL();
+  } catch {
+    return null;
+  }
+}
+
+/** An image or a PDF in the space (paths from messages stay inside it). */
 async function thumbnail(bindingId: string, path: string): Promise<string | null> {
   const root = await resolveSpaceRoot(bindingId);
   const abs = root ? await resolveInSpace(root, path) : null;
@@ -201,9 +215,9 @@ export const rigAttachmentsController = createRPCController({
     withRelay?: boolean;
   }): Promise<AttachmentFileStatus[] | null> =>
     attachmentStatus({ resolveSpaceRoot, fetchManifest: cachedManifest }, bindingId, files.slice(0, 200), { withRelay }),
-  /** A data URL preview of an image in the space, or null. */
+  /** A data URL preview of an image in the space (a PDF's first page), or null. */
   thumbnail: ({ bindingId, path }: { bindingId: string; path: string }): Promise<string | null> => thumbnail(bindingId, path),
-  /** A preview of a file the user just attached (the chip's thumbnail); images only. */
+  /** A preview of a file the user just attached (the chip's thumbnail; the composer asks for images only). */
   previewSource: ({ source }: { source: string }): Promise<string | null> =>
     isAbsolute(source) ? thumbnailOf(source) : Promise.resolve(null),
   /** The space's files for the composer's `+` suggestions (what the Files navigator shows). */

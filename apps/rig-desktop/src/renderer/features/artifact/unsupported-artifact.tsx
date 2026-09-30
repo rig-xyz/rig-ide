@@ -16,16 +16,31 @@ import { formatFileSize } from './file-type';
  * existing, already-wired RPCs (no main-process change needed for this
  * piece).
  */
+/** Hands the file to the OS's default app for it; a toast when that fails. */
+export async function openInDefaultApp(path: string): Promise<void> {
+  const result = await rpc.app.openPath(path);
+  if (!result.success) {
+    toast({
+      title: "Couldn't open this file",
+      description: result.error,
+      variant: 'destructive',
+    });
+  }
+}
+
 export function UnsupportedArtifact({
   root,
   rootId,
   path,
   size,
+  message = 'No preview for this file type.',
 }: {
   root: string;
   rootId: string;
   path: string;
   size: number | null;
+  /** The one sentence naming the gap — a type with a viewer that couldn't show this file says why instead. */
+  message?: string;
 }) {
   // Most callers already know the size for free (the binary sniff that
   // got this file classified as unsupported in the first place also
@@ -62,17 +77,6 @@ export function UnsupportedArtifact({
   const dot = filename.lastIndexOf('.');
   const extension = dot > 0 ? filename.slice(dot + 1).toUpperCase() : null;
 
-  const openInDefaultApp = async () => {
-    const result = await rpc.app.openPath(path);
-    if (!result.success) {
-      toast({
-        title: "Couldn't open this file",
-        description: result.error,
-        variant: 'destructive',
-      });
-    }
-  };
-
   const revealInFinder = async () => {
     const result = await rpc.app.showItemInFolder(path);
     if (!result.success) {
@@ -96,11 +100,11 @@ export function UnsupportedArtifact({
             : '…'}
         {extension ? ` · ${extension}` : ''}
       </p>
-      <p className="text-xs text-text-muted">No preview for this file type.</p>
+      <p className="text-xs text-text-muted">{message}</p>
       <div className="flex items-center gap-4 pt-2">
         <button
           type="button"
-          onClick={() => void openInDefaultApp()}
+          onClick={() => void openInDefaultApp(path)}
           className="flex items-center gap-1.5 text-xs text-accent transition-opacity hover:opacity-80"
         >
           <ExternalLink className="size-3.5" strokeWidth={1.5} />
