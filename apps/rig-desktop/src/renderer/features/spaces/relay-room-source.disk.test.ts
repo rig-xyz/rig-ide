@@ -281,7 +281,13 @@ describe('opening from what was saved', () => {
     });
     const afters: number[] = [];
     const source = open(
-      { ...relay, getSessionEvents: (b, id, after) => (afters.push(after ?? 0), relay.getSessionEvents(b, id, after)) },
+      {
+        ...relay,
+        getSessionEvents: (b, id, after) => {
+          afters.push(after ?? 0);
+          return relay.getSessionEvents(b, id, after);
+        },
+      },
       { initial: blob, runEndRefreshMs: 0 }
     );
     source.play();
