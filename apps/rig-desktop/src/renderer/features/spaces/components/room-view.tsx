@@ -1034,10 +1034,14 @@ export function RoomView({
         >
           {dragging && (
             <div
-              className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-[14px] border-[1.5px] border-dashed border-accent bg-accent/5 text-sm text-accent"
+              // Opaque enough to cover the Room: a see-through tint let the
+              // welcome's chips show through the label (worst in light mode).
+              className="bg-bg-1/90 pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-[14px] border-[1.5px] border-dashed border-accent backdrop-blur-sm"
               data-testid="attachment-drop-overlay"
             >
-              {attachments.disabledReason ?? 'Drop to attach to your message'}
+              <span className="rounded-full bg-accent-subtle px-3 py-1.5 text-sm text-accent">
+                {attachments.disabledReason ?? 'Drop to attach to your message'}
+              </span>
             </div>
           )}
           {/* Your own message the moment you send it counts: a new space's welcome never hides it while files copy. */}
