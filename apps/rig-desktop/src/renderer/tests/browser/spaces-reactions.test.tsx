@@ -206,12 +206,25 @@ describe('reaction chips', () => {
     expect(all.textContent).toContain('Person 11');
   });
 
-  it("the hover bar's quick five toggle yours, and + opens the picker", async () => {
+  it("the hover bar shows only the smiley; hovering it offers the quick five, which toggle yours; clicking it opens the picker", async () => {
     await render(message([{ emoji: '👍', count: 1, reactors: [{ userId: 'me', agent: null }] }]));
-    const quick = [...host.querySelectorAll<HTMLElement>('[data-testid="quick-reaction"]')];
+    const smiley = host.querySelector<HTMLElement>('[data-testid="quick-reaction-more"]')!;
+    expect(document.querySelector('[data-testid="quick-reaction"]')).toBeNull();
+    const hoverSmiley = async () => {
+      await act(async () => {
+        smiley.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      });
+      return [...document.querySelectorAll<HTMLElement>('[data-testid="quick-reaction"]')];
+    };
+    let quick = await hoverSmiley();
     expect(quick.map((b) => b.textContent)).toEqual(['👍', '❤️', '😂', '🎉', '👀']);
+    // The row floats outside the message, so the bar stays up while it shows.
+    expect(host.querySelector<HTMLElement>('[data-testid="row-actions"]')!.className).toContain('opacity-100');
     await act(async () => click(quick[0]!));
     expect(react).toHaveBeenLastCalledWith('msg-1', '👍', false);
+    expect(document.querySelector('[data-testid="quick-reactions"]')).toBeNull();
+    quick = await hoverSmiley();
     await act(async () => click(quick[4]!));
     expect(react).toHaveBeenLastCalledWith('msg-1', '👀', true);
 
@@ -241,6 +254,8 @@ describe('reaction chips', () => {
     localStorage.removeItem('rig-emoji-frequent');
     await render(message(undefined));
     await act(async () => click(host.querySelector('[data-testid="quick-reaction-more"]')!));
+    // The category bar is there from the first frame, so the picker's height never changes and it can't flip.
+    expect(document.querySelectorAll('[data-testid="emoji-picker"] [role="tab"]')).toHaveLength(9);
     await loadEmojiIndex();
     await flush();
     const picker = document.querySelector<HTMLElement>('[data-testid="emoji-picker"]')!;
@@ -279,7 +294,7 @@ describe('reaction chips', () => {
       null
     );
     expect(host.querySelector('[data-testid="reaction-chip"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="quick-reaction"]')).toBeNull();
+    expect(host.querySelector('[data-testid="quick-reaction-more"]')).toBeNull();
     await act(async () => click(host.querySelector('[data-testid="reaction-chip"]')!));
     expect(react).not.toHaveBeenCalled();
   });

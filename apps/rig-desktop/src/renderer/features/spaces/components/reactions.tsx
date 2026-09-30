@@ -119,7 +119,7 @@ function ReactorList({
           <button
             type="button"
             onClick={onShowAll}
-            className="self-start text-xs text-text-secondary underline-offset-2 hover:text-text-primary hover:underline"
+            className="cursor-pointer self-start text-xs text-text-secondary underline-offset-2 hover:text-text-primary hover:underline"
             data-testid="reactors-show-all"
           >
             and {others} {others === 1 ? 'other' : 'others'}
@@ -213,7 +213,7 @@ function ReactionChip({
         onFocus={() => setHover(true)}
         onBlur={() => schedule(false)}
         className={cn(
-          'inline-flex h-6 items-center gap-1 rounded-chip border px-2 text-xs tabular-nums transition-colors',
+          'inline-flex h-6 cursor-pointer items-center gap-1 rounded-chip border px-2 text-xs tabular-nums transition-colors',
           mine
             ? 'border-accent/40 bg-accent-subtle text-text-primary'
             : 'border-border-hairline bg-bg-1 text-text-secondary hover:bg-bg-2',
@@ -297,7 +297,7 @@ export function ReactionChips({
             title="Add reaction"
             onClick={() => setPicking((p) => !p)}
             className={cn(
-              'hover:bg-bg-2 flex h-6 items-center rounded-chip border border-border-hairline px-1.5 text-text-muted transition-opacity group-hover:opacity-100 focus-visible:opacity-100',
+              'hover:bg-bg-2 flex h-6 cursor-pointer items-center rounded-chip border border-border-hairline px-1.5 text-text-muted transition-opacity group-hover:opacity-100 focus-visible:opacity-100',
               picking ? 'opacity-100' : 'opacity-0'
             )}
           >
@@ -325,12 +325,13 @@ export function ReactionChips({
 }
 
 const barButton =
-  'hover:bg-bg-2 flex h-6 items-center rounded-chip px-1.5 text-text-secondary transition-colors';
+  'hover:bg-bg-2 flex h-6 cursor-pointer items-center rounded-chip px-1.5 text-text-secondary transition-colors';
 
 /**
- * A row's hover bar reactions: the quick five and "+" for the picker. Each
- * toggles yours. `onPickerChange` keeps the bar showing while the picker is
- * open. Nothing when the Room can't react.
+ * A row's hover bar reaction button: just the smiley. Hovering it shows
+ * the quick five above it (each toggles yours); clicking it opens the
+ * picker. `onPickerChange` keeps the row's bar showing while either is
+ * open, since both float outside the row. Nothing when the Room can't react.
  */
 export function QuickReactions({
   messageId,
@@ -346,8 +347,20 @@ export function QuickReactions({
   const api = useContext(ReactionsContext);
   const plusRef = useRef<HTMLButtonElement>(null);
   const [picking, setPicking] = useState(false);
-  useEffect(() => onPickerChange?.(picking), [picking, onPickerChange]);
+  const [quick, setQuick] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => onPickerChange?.(picking || quick), [picking, quick, onPickerChange]);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    []
+  );
   if (!api) return null;
+  const schedule = (open: boolean) => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setQuick(open), open ? HOVER_OPEN_MS : HOVER_CLOSE_MS);
+  };
   const toggle = (emoji: string) => {
     const on = !hasReacted(reactions, emoji, { userId: ownId, agent: null });
     if (on) recordEmojiUse(emoji);
@@ -355,31 +368,35 @@ export function QuickReactions({
   };
   return (
     <>
-      {QUICK_REACTIONS.map((emoji) => (
-        <button
-          key={emoji}
-          type="button"
-          aria-label={`React ${emoji}`}
-          title={`React ${emoji}`}
-          onClick={() => toggle(emoji)}
-          className={cn(barButton, 'text-sm leading-none')}
-          data-testid="quick-reaction"
-        >
-          {emoji}
-        </button>
-      ))}
       <button
         ref={plusRef}
         type="button"
-        aria-label="More reactions"
-        title="More reactions"
-        onClick={() => setPicking((p) => !p)}
+        aria-label="Add reaction"
+        title="Add reaction"
+        onClick={() => {
+          if (timer.current) clearTimeout(timer.current);
+          setQuick(false);
+          setPicking((p) => !p);
+        }}
+        onMouseEnter={() => !picking && schedule(true)}
+        onMouseLeave={() => schedule(false)}
         className={barButton}
         data-testid="quick-reaction-more"
       >
         <SmilePlus className="size-3.5" strokeWidth={1.5} />
       </button>
       <span className="mx-0.5 h-4 w-px bg-border-hairline" aria-hidden />
+      {quick && !picking && plusRef.current && (
+        <QuickRow
+          anchor={plusRef.current}
+          onEnter={() => schedule(true)}
+          onLeave={() => schedule(false)}
+          onPick={(emoji) => {
+            setQuick(false);
+            toggle(emoji);
+          }}
+        />
+      )}
       <EmojiPickerPopover
         anchor={plusRef}
         open={picking}
@@ -390,6 +407,52 @@ export function QuickReactions({
         }}
       />
     </>
+  );
+}
+
+/** The quick five, floating just above the smiley (below it near the top of the window), outside the transcript's clipping. */
+function QuickRow({
+  anchor,
+  onEnter,
+  onLeave,
+  onPick,
+}: {
+  anchor: HTMLElement;
+  onEnter: () => void;
+  onLeave: () => void;
+  onPick: (emoji: string) => void;
+}) {
+  const rect = anchor.getBoundingClientRect();
+  const below = rect.top < 56;
+  const center = rect.left + rect.width / 2;
+  return createPortal(
+    <div
+      role="toolbar"
+      aria-label="Quick reactions"
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+      style={{
+        left: Math.max(8, Math.min(center - 96, window.innerWidth - 200)),
+        ...(below ? { top: rect.bottom + 4 } : { bottom: window.innerHeight - rect.top + 4 }),
+      }}
+      className="popover-in fixed z-50 flex items-center gap-0.5 rounded-full border border-border-hairline bg-bg-1 p-0.5 shadow-float"
+      data-testid="quick-reactions"
+    >
+      {QUICK_REACTIONS.map((emoji) => (
+        <button
+          key={emoji}
+          type="button"
+          aria-label={`React ${emoji}`}
+          title={`React ${emoji}`}
+          onClick={() => onPick(emoji)}
+          className="flex size-7 cursor-pointer items-center justify-center rounded-full text-base leading-none transition-colors hover:bg-bg-2"
+          data-testid="quick-reaction"
+        >
+          {emoji}
+        </button>
+      ))}
+    </div>,
+    document.body
   );
 }
 
@@ -423,7 +486,7 @@ function EmojiButton({
       title={title}
       aria-label={title}
       onClick={() => onPick(emoji)}
-      className="flex size-8 items-center justify-center rounded-control text-xl leading-none hover:bg-bg-2"
+      className="flex size-8 cursor-pointer items-center justify-center rounded-control text-xl leading-none hover:bg-bg-2"
       data-testid="emoji-option"
       data-emoji={emoji}
     >
@@ -466,7 +529,7 @@ export function EmojiPicker({ onPick }: { onPick: (emoji: string) => void }) {
   };
 
   return (
-    <div className="flex w-[304px] flex-col" data-testid="emoji-picker">
+    <div className="flex w-full min-w-0 flex-col" data-testid="emoji-picker">
       <div className="flex items-center gap-1.5 border-b border-border-hairline px-2.5 py-2">
         <Search className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
         <input
@@ -485,32 +548,38 @@ export function EmojiPicker({ onPick }: { onPick: (emoji: string) => void }) {
           data-testid="emoji-search"
         />
       </div>
-      {!results && index && (
-        <div
-          className="flex items-center gap-0.5 border-b border-border-hairline px-1.5 py-1"
-          role="tablist"
-          aria-label="Categories"
-        >
-          {index.groups.map((group) => (
+      <div
+        className="flex items-center gap-0.5 border-b border-border-hairline px-1.5 py-1"
+        role="tablist"
+        aria-label="Categories"
+      >
+        {Object.entries(GROUP_ICON).map(([key, icon]) => {
+          const group = index?.groups.find((g) => g.key === key);
+          return (
             <button
-              key={group.key}
+              key={key}
               type="button"
               role="tab"
-              title={group.label}
-              aria-label={group.label}
+              title={group?.label}
+              aria-label={group?.label ?? key}
+              disabled={!group}
               onClick={() => {
-                const section = scroller.current?.querySelector(`[data-group="${group.key}"]`);
-                if (section && scroller.current)
-                  scroller.current.scrollTop = (section as HTMLElement).offsetTop - 4;
+                setQuery('');
+                // After the search results give way to the categories.
+                requestAnimationFrame(() => {
+                  const section = scroller.current?.querySelector(`[data-group="${key}"]`);
+                  if (section && scroller.current)
+                    scroller.current.scrollTop = (section as HTMLElement).offsetTop - 4;
+                });
               }}
-              className="flex size-7 items-center justify-center rounded-control text-base leading-none opacity-80 hover:bg-bg-2 hover:opacity-100"
+              className="flex size-7 cursor-pointer items-center justify-center rounded-control text-base leading-none opacity-80 hover:bg-bg-2 hover:opacity-100 disabled:cursor-default disabled:opacity-40"
             >
-              {GROUP_ICON[group.key] ?? group.entries[0]!.emoji}
+              {icon}
             </button>
-          ))}
-        </div>
-      )}
-      <div ref={scroller} className="relative h-64 overflow-y-auto px-1.5 py-1.5">
+          );
+        })}
+      </div>
+      <div ref={scroller} className="relative h-64 overflow-x-hidden overflow-y-auto px-1.5 py-1.5">
         {results ? (
           results.length > 0 ? (
             <div className="grid grid-cols-8" data-testid="emoji-results">
