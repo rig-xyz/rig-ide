@@ -149,7 +149,8 @@ export function isPulseStale(generatedAt: string, now: number): boolean {
 // surface anywhere to browse that channel, so a bare message id has nowhere
 // to go and no context (author, thread) to make it explicable either;
 // dropped from the UI entirely below rather than shown as an inert citation
-// (recommendation, not silently applied — see the PR/report).
+// (recommendation, not silently applied — see the PR/report). Superseded
+// 2026-09-30: see the note above `AskSourceListItem`.
 //
 // TWO gaps confirmed against the wire shape, not assumed:
 //   1. `RigAskSource` carries NO rig name — only `bindingId`. Resolved
@@ -163,30 +164,58 @@ export function isPulseStale(generatedAt: string, now: number): boolean {
 //      the brief isn't achievable honestly today; every intent row gets ONE
 //      neutral, non-status-implying icon instead of a fabricated one.
 
-/** One row in the (collapsed-by-default) Ask-sources list — `'message'` sources never reach this shape, filtered out in `deriveAskSourceItems`. */
+// 2026-09-30 (Hugo: the Home agent should link back to what it read): a
+// MESSAGE now has a destination — spaces put the chat front and center, so a
+// cited message (like a cited agent run, `session`) opens its space. A
+// `change` opens the file it touched in its rig. Every kind renders.
+
+/** One row in the (collapsed-by-default) Ask-sources list. */
 export type AskSourceListItem = {
   ref: string;
-  kind: 'intent' | 'rig';
-  /** The intent's title, or — for a `'rig'` source — the rig's own name (the citation IS the rig itself). */
+  kind: RigAskSource['kind'];
+  /** The intent's title, the message's excerpt, the run's prompt, the file change ("write docs/a.md"), or — for a `'rig'` source — the rig's own name (the citation IS the rig itself). */
   title: string;
   bindingId: string;
   /** Resolved via `rigNameOf`; `null` when the binding is genuinely unknown to any data this component already has. */
   rigName: string | null;
+  /** A `'change'` source's file, relative to its rig's folder. */
+  path?: string;
 };
 
 export function deriveAskSourceItems(
   sources: readonly RigAskSource[],
   rigNameOf: (bindingId: string) => string | null
 ): AskSourceListItem[] {
-  return sources
-    .filter((s): s is RigAskSource & { kind: 'intent' | 'rig' } => s.kind !== 'message')
-    .map((s) => ({
-      ref: s.ref,
-      kind: s.kind,
-      title: s.label,
-      bindingId: s.bindingId,
-      rigName: s.kind === 'rig' ? s.label : rigNameOf(s.bindingId),
-    }));
+  return sources.map((s) => ({
+    ref: s.ref,
+    kind: s.kind,
+    title: s.label,
+    bindingId: s.bindingId,
+    rigName: s.kind === 'rig' ? s.label : rigNameOf(s.bindingId),
+    ...(s.path ? { path: s.path } : {}),
+  }));
+}
+
+/**
+ * Where clicking a source goes: a file change opens that file in its rig
+ * (when the rig is on this computer); everything else opens the rig or space
+ * it came from. A rig that isn't here is highlighted in the rail instead.
+ */
+export type AskSourceClick =
+  | { kind: 'open'; path: string; openFilePath?: string }
+  | { kind: 'highlight'; bindingId: string };
+
+export function resolveAskSourceClick(
+  item: Pick<AskSourceListItem, 'bindingId' | 'kind' | 'path'>,
+  localRigs: readonly { bindingId: string; path: string }[]
+): AskSourceClick {
+  const local = localRigs.find((r) => r.bindingId === item.bindingId);
+  if (!local) return { kind: 'highlight', bindingId: item.bindingId };
+  if (item.kind === 'change' && item.path) {
+    const relative = item.path.replace(/^\/+/, '');
+    return { kind: 'open', path: local.path, openFilePath: `${local.path.replace(/\/+$/, '')}/${relative}` };
+  }
+  return { kind: 'open', path: local.path };
 }
 
 /**

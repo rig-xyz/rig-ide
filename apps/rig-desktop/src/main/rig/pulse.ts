@@ -183,12 +183,13 @@ function toAskSource(value: unknown): RigAskSource | null {
   const raw = asRecord(value);
   const kind = raw?.kind;
   if (!raw || typeof raw.ref !== 'string' || typeof raw.bindingId !== 'string') return null;
-  if (kind !== 'intent' && kind !== 'message' && kind !== 'rig') return null;
+  if (kind !== 'intent' && kind !== 'message' && kind !== 'session' && kind !== 'change' && kind !== 'rig') return null;
   return {
     kind,
     bindingId: raw.bindingId,
     ref: raw.ref,
     label: typeof raw.label === 'string' && raw.label.trim() ? raw.label : raw.ref,
+    ...(kind === 'change' && typeof raw.path === 'string' && raw.path ? { path: raw.path } : {}),
   };
 }
 

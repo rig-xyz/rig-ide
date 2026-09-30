@@ -55,12 +55,18 @@ export type RigPulseBriefing = {
   degraded: boolean;
 };
 
-/** A cited source behind an Ask answer — grounds the model's claim in a real intent/message/rig. */
+/**
+ * A cited source behind an Ask answer — grounds the model's claim in a real
+ * intent, chat message, agent run (`session`, ref = run id), file change
+ * (`change`, with the file's `path` inside the rig) or rig.
+ */
 export type RigAskSource = {
-  kind: 'intent' | 'message' | 'rig';
+  kind: 'intent' | 'message' | 'session' | 'change' | 'rig';
   bindingId: string;
   ref: string;
   label: string;
+  /** For a `change`: the file it touched, relative to the rig's folder. */
+  path?: string;
 };
 
 export type RigAskAnswer = {

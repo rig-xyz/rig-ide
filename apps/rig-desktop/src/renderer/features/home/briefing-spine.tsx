@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronRight, Circle, FolderOpen, Send, X } from 'lucide-react';
+import { Bot, ChevronRight, Circle, FileText, FolderOpen, MessageSquare, Send, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { rpc } from '@renderer/lib/ipc';
@@ -17,6 +17,7 @@ import {
   deriveAskSourceItems,
   derivePulseSectionState,
   isPulseStale,
+  resolveAskSourceClick,
   summarizeAskSources,
   type AskSourceListItem,
 } from './pulse-state';
@@ -153,6 +154,16 @@ export function BriefingSpine({
     [localRigs, onOpenPath, onHighlightRig]
   );
 
+  // An Ask source opens where it came from: its file (a change), else its rig or space.
+  const onClickSource = useCallback(
+    (item: AskSourceListItem) => {
+      const action = resolveAskSourceClick(item, localRigs);
+      if (action.kind === 'highlight') onHighlightRig(action.bindingId);
+      else onOpenPath(action.path, action.openFilePath ? { openFilePath: action.openFilePath } : undefined);
+    },
+    [localRigs, onOpenPath, onHighlightRig]
+  );
+
   // Ask-sources round: the ask response has no rig name of its own, only a
   // `bindingId` — resolved from whatever THIS component already knows: the
   // local rig list first, then the SAME briefing's own `pickBackUp`/`perRig`
@@ -219,7 +230,7 @@ export function BriefingSpine({
         )}
       </div>
 
-      <PulseAsk onClickRig={onClickRig} rigNameOf={rigNameOf} />
+      <PulseAsk onClickSource={onClickSource} rigNameOf={rigNameOf} />
     </div>
   );
 }
@@ -317,10 +328,10 @@ function HeaderSkeleton() {
  * 429, not just whatever string the relay happened to send.
  */
 function PulseAsk({
-  onClickRig,
+  onClickSource,
   rigNameOf,
 }: {
-  onClickRig: (bindingId: string) => void;
+  onClickSource: (item: AskSourceListItem) => void;
   rigNameOf: (bindingId: string) => string | null;
 }) {
   const [question, setQuestion] = useState('');
@@ -410,7 +421,7 @@ function PulseAsk({
           answer={answer}
           error={error}
           onClear={clear}
-          onClickRig={onClickRig}
+          onClickSource={onClickSource}
           rigNameOf={rigNameOf}
         />
       )}
@@ -444,7 +455,7 @@ function QuestionAndAnswer({
   answer,
   error,
   onClear,
-  onClickRig,
+  onClickSource,
   rigNameOf,
 }: {
   question: string;
@@ -452,7 +463,7 @@ function QuestionAndAnswer({
   answer: RigAskAnswer | null;
   error: RigPulseError | null;
   onClear: () => void;
-  onClickRig: (bindingId: string) => void;
+  onClickSource: (item: AskSourceListItem) => void;
   rigNameOf: (bindingId: string) => string | null;
 }) {
   const meQuery = useQuery({ queryKey: ['rig', 'account', 'me'], queryFn: () => rpc.rig.account.me() });
@@ -490,7 +501,7 @@ function QuestionAndAnswer({
           <div className="flex flex-col gap-2 pl-7">
             <SafeMarkdown content={answer.answer} className="text-sm" />
             {answer.sources.length > 0 && (
-              <AskSourcesSection sources={answer.sources} rigNameOf={rigNameOf} onClickRig={onClickRig} />
+              <AskSourcesSection sources={answer.sources} rigNameOf={rigNameOf} onClickSource={onClickSource} />
             )}
           </div>
         )
@@ -520,11 +531,11 @@ function QuestionAndAnswer({
 function AskSourcesSection({
   sources,
   rigNameOf,
-  onClickRig,
+  onClickSource,
 }: {
   sources: readonly RigAskSource[];
   rigNameOf: (bindingId: string) => string | null;
-  onClickRig: (bindingId: string) => void;
+  onClickSource: (item: AskSourceListItem) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const items = deriveAskSourceItems(sources, rigNameOf);
@@ -558,7 +569,7 @@ function AskSourcesSection({
       {expanded && (
         <div className="flex flex-col gap-2 pl-4">
           {items.map((item) => (
-            <SourceRow key={item.ref} item={item} onClickRig={onClickRig} />
+            <SourceRow key={item.ref} item={item} onClickSource={onClickSource} />
           ))}
         </div>
       )}
@@ -567,48 +578,58 @@ function AskSourcesSection({
 }
 
 /**
- * One expanded row (not a pill). A `'rig'` item's title IS the rig's own
- * name, so the whole row links (`onClickRig`); an `'intent'` item has no
- * honest destination of its own — only its OWNING rig does — so the row
- * stays non-interactive and just the mono rig-name sub-label links. No status icon: the
- * ask response carries no intent status at all (verified, not assumed —
- * see `pulse-state.ts`), so every intent gets the same neutral `Circle`
- * rather than a fabricated open/closed distinction.
+ * One expanded row (not a pill), per cited source. Every row links back to
+ * where it came from: a file change opens the file in its rig, a message or
+ * an agent run opens its space, an intent its rig, a rig itself. The mono
+ * sub-label names the rig or space. No status icon: the ask response
+ * carries no intent status (see `pulse-state.ts`).
  */
+const SOURCE_ICON = {
+  rig: FolderOpen,
+  intent: Circle,
+  message: MessageSquare,
+  session: Bot,
+  change: FileText,
+} as const;
+
+const SOURCE_KIND_LABEL: Record<AskSourceListItem['kind'], string | null> = {
+  rig: null,
+  intent: null,
+  message: 'Message',
+  session: 'Agent run',
+  change: 'File',
+};
+
 function SourceRow({
   item,
-  onClickRig,
+  onClickSource,
 }: {
   item: AskSourceListItem;
-  onClickRig: (bindingId: string) => void;
+  onClickSource: (item: AskSourceListItem) => void;
 }) {
-  if (item.kind === 'rig') {
-    return (
-      <button
-        type="button"
-        onClick={() => onClickRig(item.bindingId)}
-        className="group flex items-start gap-2 text-left"
-      >
-        <FolderOpen className="text-text-muted mt-0.5 size-3 shrink-0" strokeWidth={1.5} />
-        <span className="text-text-primary group-hover:text-accent min-w-0 flex-1 text-xs leading-snug transition-colors">
-          {item.title}
-        </span>
-      </button>
-    );
-  }
+  const Icon = SOURCE_ICON[item.kind];
+  const kindLabel = SOURCE_KIND_LABEL[item.kind];
+  const title = item.kind === 'change' && item.path ? item.path : item.title;
   return (
-    <div className="flex items-start gap-2">
-      <Circle className="text-text-muted mt-0.5 size-3 shrink-0" strokeWidth={1.5} />
-      <div className="min-w-0 flex-1">
-        <p className="text-text-primary text-xs leading-snug">{item.title}</p>
-        <button
-          type="button"
-          onClick={() => onClickRig(item.bindingId)}
-          className="text-text-muted hover:text-text-primary font-mono text-2xs underline decoration-dotted underline-offset-2 transition-colors"
-        >
-          {item.rigName ?? 'this rig'}
-        </button>
-      </div>
-    </div>
+    <button
+      type="button"
+      onClick={() => onClickSource(item)}
+      className="group flex items-start gap-2 text-left"
+      data-testid="ask-source"
+      data-kind={item.kind}
+    >
+      <Icon className="text-text-muted mt-0.5 size-3 shrink-0" strokeWidth={1.5} />
+      <span className="min-w-0 flex-1">
+        <span className="text-text-primary group-hover:text-accent block text-xs leading-snug transition-colors">
+          {title}
+        </span>
+        {item.kind !== 'rig' && (
+          <span className="text-text-muted font-mono text-2xs">
+            {kindLabel ? `${kindLabel} · ` : ''}
+            {item.rigName ?? 'this rig'}
+          </span>
+        )}
+      </span>
+    </button>
   );
 }

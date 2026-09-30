@@ -108,6 +108,20 @@ describe('toAskAnswer', () => {
     expect(result?.sources).toEqual([{ kind: 'intent', bindingId: 'bnd_1', ref: 'int_1', label: 'ok' }]);
   });
 
+  it('keeps agent-run (session) and file-change sources, with the change\'s path', () => {
+    const result = toAskAnswer({
+      answer: 'Answer.',
+      sources: [
+        { kind: 'session', bindingId: 'bnd_1', ref: 'run_1', label: 'Draft the launch post' },
+        { kind: 'change', bindingId: 'bnd_1', ref: 'chg_9', label: 'write docs/a.md', path: 'docs/a.md' },
+      ],
+    });
+    expect(result?.sources).toEqual([
+      { kind: 'session', bindingId: 'bnd_1', ref: 'run_1', label: 'Draft the launch post' },
+      { kind: 'change', bindingId: 'bnd_1', ref: 'chg_9', label: 'write docs/a.md', path: 'docs/a.md' },
+    ]);
+  });
+
   it('falls back to ref as the label when the relay omits one', () => {
     const result = toAskAnswer({
       answer: 'Answer.',

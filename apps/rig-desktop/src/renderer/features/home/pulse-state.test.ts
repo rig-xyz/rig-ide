@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   askErrorMessage,
   deriveAskSourceItems,
+  resolveAskSourceClick,
   derivePulseSectionState,
   isFreshPickBackUp,
   isPulseStale,
@@ -229,10 +230,21 @@ describe('deriveAskSourceItems', () => {
     ).toEqual([{ ref: 'b1', kind: 'rig', title: 'rig-bike', bindingId: 'b1', rigName: 'rig-bike' }]);
   });
 
-  it('a message source is dropped entirely — not rendered, no in-app destination or context to explain it', () => {
+  it('keeps message, agent-run and file-change sources — each links back to where it came from', () => {
     expect(
-      deriveAskSourceItems([{ kind: 'message', bindingId: 'b1', ref: 'msg_1', label: 'hey can we...' }], rigNameOf)
-    ).toEqual([]);
+      deriveAskSourceItems(
+        [
+          { kind: 'message', bindingId: 'b1', ref: 'msg_1', label: 'hey can we...' },
+          { kind: 'session', bindingId: 'b1', ref: 'run_1', label: 'Draft the launch post' },
+          { kind: 'change', bindingId: 'b1', ref: 'chg_1', label: 'write docs/a.md', path: 'docs/a.md' },
+        ],
+        rigNameOf
+      )
+    ).toEqual([
+      { ref: 'msg_1', kind: 'message', title: 'hey can we...', bindingId: 'b1', rigName: 'rig-bike' },
+      { ref: 'run_1', kind: 'session', title: 'Draft the launch post', bindingId: 'b1', rigName: 'rig-bike' },
+      { ref: 'chg_1', kind: 'change', title: 'write docs/a.md', bindingId: 'b1', rigName: 'rig-bike', path: 'docs/a.md' },
+    ]);
   });
 
   it('an unresolvable binding degrades rigName to null, never a guessed name', () => {
@@ -245,12 +257,37 @@ describe('deriveAskSourceItems', () => {
     const result = deriveAskSourceItems(
       [
         { kind: 'intent', bindingId: 'b1', ref: 'int_1', label: 'Fix the bug' },
-        { kind: 'message', bindingId: 'b1', ref: 'msg_1', label: 'dropped' },
+        { kind: 'message', bindingId: 'b1', ref: 'msg_1', label: 'kept' },
         { kind: 'rig', bindingId: 'b1', ref: 'b1', label: 'rig-bike' },
       ],
       rigNameOf
     );
-    expect(result.map((i) => i.ref)).toEqual(['int_1', 'b1']);
+    expect(result.map((i) => i.ref)).toEqual(['int_1', 'msg_1', 'b1']);
+  });
+});
+
+describe('resolveAskSourceClick', () => {
+  const localRigs = [{ bindingId: 'b1', path: '/Users/h/Rig/growth/' }];
+
+  it('opens a file change on that file, inside its rig', () => {
+    expect(resolveAskSourceClick({ bindingId: 'b1', kind: 'change', path: 'docs/a.md' }, localRigs)).toEqual({
+      kind: 'open',
+      path: '/Users/h/Rig/growth/',
+      openFilePath: '/Users/h/Rig/growth/docs/a.md',
+    });
+  });
+
+  it('opens the space a message or agent run came from', () => {
+    for (const kind of ['message', 'session', 'intent', 'rig'] as const) {
+      expect(resolveAskSourceClick({ bindingId: 'b1', kind }, localRigs)).toEqual({ kind: 'open', path: '/Users/h/Rig/growth/' });
+    }
+  });
+
+  it('highlights the rail row when the rig is not on this computer', () => {
+    expect(resolveAskSourceClick({ bindingId: 'b9', kind: 'change', path: 'a.md' }, localRigs)).toEqual({
+      kind: 'highlight',
+      bindingId: 'b9',
+    });
   });
 });
 
