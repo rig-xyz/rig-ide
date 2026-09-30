@@ -32,6 +32,7 @@ import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 import { FileTagChip, MessageAttachments } from './attachment-cards';
 import { FILE_TAG_SOURCE, tagPathOf } from '@shared/rig/file-tags';
 import { ConnectPill } from './connectors-panel';
+import { QuickReactions, ReactionChips } from './reactions';
 
 /**
  * Spaces (lane 2): the non-session transcript row kinds — human message
@@ -436,6 +437,17 @@ export function MessageRow({
   const hideBody = !!files?.length && message.meta.kind === 'text' && message.meta.autoBody;
   const body = message.body && !hideBody ? richText(message.body, ownId, snapshot.members) : null;
   const replyTo = message.meta.kind === 'text' ? message.meta.replyTo : undefined;
+  // The emoji picker open from the hover bar keeps the bar showing.
+  const [picking, setPicking] = useState(false);
+  const chips = (
+    <ReactionChips
+      messageId={message.id}
+      reactions={message.reactions}
+      members={snapshot.members}
+      ownId={ownId}
+      className={mine ? 'justify-end' : undefined}
+    />
+  );
   const cards = files?.length ? (
     <MessageAttachments
       attachments={files}
@@ -459,7 +471,10 @@ export function MessageRow({
           : undefined
       }
       copyText={message.body}
-    />
+      forceVisible={picking}
+    >
+      <QuickReactions messageId={message.id} reactions={message.reactions} ownId={ownId} onPickerChange={setPicking} />
+    </RowActions>
   );
   if (mine) {
     // Your own words: on the right, no avatar or name, time on hover beside the bubble.
@@ -485,6 +500,7 @@ export function MessageRow({
               {body}
             </p>
           )}
+          {chips}
         </div>
         {/* Nothing to reply to or copy a link to until the relay has it. */}
         {!message.sending && actions}
@@ -518,6 +534,7 @@ export function MessageRow({
             {body}
           </p>
         )}
+        {chips}
       </div>
       {actions}
     </div>

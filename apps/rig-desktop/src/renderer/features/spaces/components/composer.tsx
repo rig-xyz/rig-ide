@@ -1,20 +1,28 @@
-import { AtSign, CornerDownLeft, CornerUpLeft, FileText, Paperclip, Sparkles } from 'lucide-react';
+import { AtSign, CornerDownLeft, CornerUpLeft, FileText, Paperclip, Smile, Sparkles } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { WILL_SEND_WHEN_ONLINE } from '@renderer/features/home/home-connection';
 import { cn } from '@renderer/lib/utils';
 import { formatFileTag, rankTaggableFiles, type TaggableFile } from '@shared/rig/file-tags';
 import { isLargeBatch, type ComposerAttachment } from '../attachments';
+import { loadEmojiIndex, matchShortcodes, recordEmojiUse, type EmojiIndex } from '../emoji-data';
 import { agentLogoId, BrandLogo } from '../logos';
 import type { ComposerAttachments } from '../use-composer-attachments';
 import { AttachmentChips } from './attachment-chips';
 import type { AgentKind, RoomAgent, RoomMember, RoomReplyRef, RoomSkill } from '../types';
 import { AgentSettings } from './agent-settings';
 import { ContextPill } from './context-pill';
+import { EmojiPickerPopover } from './reactions';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 
 const TYPING_IDLE_MS = 4000;
 /** The `+` tag being typed at the end of the draft: group 1 a quoted name so far, group 2 a plain one. */
 const FILE_QUERY = /(?:^|\s)\+(?:"([^"\n]*)|([^\s"]*))$/;
+/**
+ * An emoji shortcode being typed at the end of the draft: `:` at the start or
+ * after a space, then at least two letters. So a time (10:30), a link
+ * (https://…) or "Note: …" never opens it.
+ */
+export const EMOJI_QUERY = /(?:^|\s):([a-z]{2}[a-z0-9_+-]*)$/i;
 const DRAFT_PREFIX = 'rig-room-draft:';
 /** A typing pause this long asks whether the draft answers your agent. */
 const SUGGEST_DEBOUNCE_MS = 500;
@@ -25,6 +33,9 @@ export const SUGGEST_MIN_CONFIDENCE = 0.5;
  * Spaces: the Room's composer. `/` at the start opens the space's skills,
  * `@` opens people and agents (agents first, each labelled); both menus
  * filter as you type, move with ↑/↓, pick with ↵ or Tab and close with Esc.
+ * `:` and two letters opens matching emoji the same way (↵ puts the emoji
+ * itself in, not its shortcode); the smiley button opens the emoji picker,
+ * which inserts at the cursor.
  * A quote-reply shows as a banner above the input (Esc or × drops it). An
  * unsent draft is kept per space on this computer, so switching away never
  * costs the sentence. When your agent is mid-turn, mentioning it says the
@@ -255,6 +266,50 @@ export function Composer({
     textareaRef.current?.focus();
   };
 
+  // `:ta` → 🎉 :tada:. The emoji data loads the first time a shortcode is typed.
+  const emojiQuery = useMemo(() => EMOJI_QUERY.exec(value)?.[1] ?? null, [value]);
+  const [emojiIndex, setEmojiIndex] = useState<EmojiIndex | null>(null);
+  const wantsEmoji = emojiQuery !== null;
+  useEffect(() => {
+    if (!wantsEmoji || emojiIndex) return;
+    let alive = true;
+    loadEmojiIndex().then(
+      (index) => alive && setEmojiIndex(index),
+      () => undefined
+    );
+    return () => {
+      alive = false;
+    };
+  }, [wantsEmoji, emojiIndex]);
+  const applyEmoji = (emoji: string) => {
+    recordEmojiUse(emoji);
+    setValue((current) => current.replace(EMOJI_QUERY, (m) => `${/^\s/.test(m) ? m[0] : ''}${emoji} `));
+    textareaRef.current?.focus();
+  };
+  // The picker puts its emoji where the cursor was when it opened.
+  const smileyRef = useRef<HTMLButtonElement>(null);
+  const [picking, setPicking] = useState(false);
+  const selectionRef = useRef<{ start: number; end: number } | null>(null);
+  const openPicker = () => {
+    const el = textareaRef.current;
+    selectionRef.current = el ? { start: el.selectionStart, end: el.selectionEnd } : null;
+    setPicking((p) => !p);
+  };
+  const insertEmoji = (emoji: string) => {
+    recordEmojiUse(emoji);
+    setPicking(false);
+    const at = selectionRef.current ?? { start: value.length, end: value.length };
+    const next = value.slice(0, at.start) + emoji + value.slice(at.end);
+    const caret = at.start + emoji.length;
+    setValue(next);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(caret, caret);
+    });
+  };
+
   const applyMention = (label: string) => {
     setValue((current) => current.replace(/(?:^|\s)@([a-z]*)$/i, (m) => `${m[0] === ' ' ? ' ' : ''}@${label} `));
     textareaRef.current?.focus();
@@ -279,6 +334,17 @@ export function Composer({
             apply: () => applySkill(skill),
           };
         });
+    }
+    if (emojiQuery !== null) {
+      return emojiIndex
+        ? matchShortcodes(emojiIndex, emojiQuery).map(({ entry, shortcode }) => ({
+            key: `emoji-${entry.emoji}`,
+            icon: <span className="text-base leading-none">{entry.emoji}</span>,
+            label: `:${shortcode}:`,
+            detail: '',
+            apply: () => applyEmoji(entry.emoji),
+          }))
+        : [];
     }
     if (fileQuery !== null) {
       return rankTaggableFiles(spaceFiles ?? [], fileQuery)
@@ -320,13 +386,13 @@ export function Composer({
     }
     return [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skillQuery, mentionQuery, fileQuery, spaceFiles, skills, members, agents, busyAgents]);
+  }, [skillQuery, mentionQuery, fileQuery, emojiQuery, emojiIndex, spaceFiles, skills, members, agents, busyAgents]);
 
   const menuOpen = items.length > 0 && dismissedFor !== value;
-  // Skills and files open the list above the input; people and agents the pill row.
-  const listMenu = skillQuery !== null || fileQuery !== null;
+  // Skills, files and emoji open the list above the input; people and agents the pill row.
+  const listMenu = skillQuery !== null || fileQuery !== null || emojiQuery !== null;
   const mentioning = menuOpen && !listMenu;
-  useEffect(() => setActive(0), [skillQuery, mentionQuery, fileQuery]);
+  useEffect(() => setActive(0), [skillQuery, mentionQuery, fileQuery, emojiQuery]);
 
   // Typing presence: on while there's input and recent keystrokes, off
   // after a short idle or on send.
@@ -454,7 +520,9 @@ export function Composer({
           data-testid="skills-palette"
           role="listbox"
         >
-          <p className="px-2 pt-1 pb-1 text-2xs text-text-muted">{skillQuery !== null ? 'Skills in this space' : 'Files in this space'}</p>
+          <p className="px-2 pt-1 pb-1 text-2xs text-text-muted">
+            {skillQuery !== null ? 'Skills in this space' : emojiQuery !== null ? 'Emoji' : 'Files in this space'}
+          </p>
           {items.map((item, i) => (
             <div key={item.key}>
               {item.section && item.section !== items[i - 1]?.section && (
@@ -671,6 +739,19 @@ export function Composer({
           >
             <AtSign className="size-3.5" strokeWidth={1.5} />
           </button>
+          <button
+            ref={smileyRef}
+            type="button"
+            aria-label="Emoji"
+            title="Emoji"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={openPicker}
+            className="hover:bg-bg-2 flex size-7 items-center justify-center rounded-control text-text-muted transition-colors"
+            data-testid="composer-emoji"
+          >
+            <Smile className="size-3.5" strokeWidth={1.5} />
+          </button>
+          <EmojiPickerPopover anchor={smileyRef} open={picking} onClose={() => setPicking(false)} onPick={insertEmoji} align="left" />
           {waitingForConnection ? (
             <span className="ml-1 flex items-center gap-1.5 text-xs text-text-muted" data-testid="composer-waiting-connection">
               {WILL_SEND_WHEN_ONLINE}

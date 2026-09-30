@@ -77,6 +77,18 @@ export function reduceRoom(snapshot: RoomSnapshot, event: RoomEvent): RoomSnapsh
     case 'message_created':
       return { ...snapshot, messages: [...snapshot.messages, event.message] };
 
+    case 'reactions_changed': {
+      let changed = false;
+      const messages = snapshot.messages.map((m) => {
+        const next = event.reactions[m.id];
+        if (!next) return m;
+        changed = true;
+        const { reactions: _old, ...rest } = m;
+        return next.length > 0 ? { ...rest, reactions: next } : rest;
+      });
+      return changed ? { ...snapshot, messages } : snapshot;
+    }
+
     case 'session_event_appended': {
       const existing = snapshot.sessionEventsByRun[event.runId] ?? [];
       return {

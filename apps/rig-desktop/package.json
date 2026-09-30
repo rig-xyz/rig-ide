@@ -92,6 +92,7 @@
     "cronstrue": "^3.14.0",
     "drizzle-orm": "^0.32.1",
     "electron-updater": "^6.3.9",
+    "emojibase-data": "^17.0.0",
     "geist": "^1.7.2",
     "glob": "^13.0.6",
     "human-id": "^4.1.2",

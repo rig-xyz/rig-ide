@@ -1,6 +1,7 @@
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
 import type { RigAccountError } from '@shared/rig/account';
+import { parseReactions, type MessageReaction, type ReactionAgent } from '@shared/spaces/reactions';
 import { isError, resolveContext, type Resolved } from '../account';
 
 /**
@@ -118,6 +119,8 @@ export type RoomMessageRow = {
   /** The full anchor (a page pin keeps its place on the page in `anchor.page`), and when the thread was resolved. */
   anchor?: Record<string, unknown> | null;
   resolvedAt?: string | null;
+  /** Who reacted with what (reactor ids are Clerk ids, like `author.userId`); empty when none. */
+  reactions?: MessageReaction[];
 };
 
 /** One connector a space uses, as the relay lists it. */
@@ -231,6 +234,20 @@ export interface SpacesRelayApi {
   ): Promise<Result<RoomMessageRow, RelayApiError>>;
   /** Resolve (or reopen) a comment thread. */
   resolveThread?(bindingId: string, messageId: string, resolved: boolean): Promise<Result<void, RelayApiError>>;
+  /**
+   * Adds (`on`) or removes your reaction on a message, as you or as one of
+   * your own agents (`agent`); both are no-ops when already so. Answers with
+   * the message's reactions. Never a message, never asks an agent.
+   */
+  setReaction?(
+    bindingId: string,
+    messageId: string,
+    input: { emoji: string; on: boolean; agent?: ReactionAgent }
+  ): Promise<Result<MessageReaction[], RelayApiError>>;
+  /** One message's reactions (what the Room re-reads on `reactions_changed`). */
+  getReactions?(bindingId: string, messageId: string): Promise<Result<MessageReaction[], RelayApiError>>;
+  /** Every message after `afterSeq` that has reactions, by message id (a catch-up after the live connection dropped). */
+  listReactionsAfter?(bindingId: string, afterSeq: number): Promise<Result<Record<string, MessageReaction[]>, RelayApiError>>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -733,6 +750,7 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
                 quote: anchorQuote(row.anchor),
                 anchor: asRecord(row.anchor),
                 resolvedAt: typeof row.resolvedAt === 'string' ? row.resolvedAt : null,
+                reactions: parseReactions(row.reactions),
               };
             })
             .filter((m): m is RoomMessageRow => m !== null)
@@ -751,6 +769,48 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         { resolved }
       );
       return result.success ? ok(undefined) : err(result.error);
+    },
+
+    async setReaction(bindingId, messageId, input) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(
+        ctxResult.data,
+        input.on ? 'POST' : 'DELETE',
+        `/v1/me/bindings/${bindingId}/messages/${encodeURIComponent(messageId)}/reactions`,
+        input.on ? 'add the reaction' : 'remove the reaction',
+        { emoji: input.emoji, ...(input.agent ? { agent: input.agent } : {}) }
+      );
+      if (!result.success) return err(result.error);
+      return ok(parseReactions(asRecord(result.data)?.reactions));
+    },
+
+    async getReactions(bindingId, messageId) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(
+        ctxResult.data,
+        'GET',
+        `/v1/me/bindings/${bindingId}/messages/${encodeURIComponent(messageId)}/reactions`,
+        'load reactions'
+      );
+      if (!result.success) return err(result.error);
+      return ok(parseReactions(asRecord(result.data)?.reactions));
+    },
+
+    async listReactionsAfter(bindingId, afterSeq) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const after = Math.max(0, Math.floor(afterSeq));
+      const result = await request(ctxResult.data, 'GET', `/v1/me/bindings/${bindingId}/reactions?after=${after}`, 'load reactions');
+      if (!result.success) return err(result.error);
+      const raw = asRecord(result.data)?.messages;
+      const byMessage: Record<string, MessageReaction[]> = {};
+      for (const item of Array.isArray(raw) ? raw : []) {
+        const r = asRecord(item);
+        if (r && typeof r.messageId === 'string') byMessage[r.messageId] = parseReactions(r.reactions);
+      }
+      return ok(byMessage);
     },
 
     async postMessage(bindingId, input) {
@@ -783,6 +843,7 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         body: typeof raw.body === 'string' ? raw.body : '',
         meta: asRecord(raw.meta),
         createdAt: String(raw.createdAt ?? ''),
+        reactions: parseReactions(raw.reactions),
       });
     },
   };

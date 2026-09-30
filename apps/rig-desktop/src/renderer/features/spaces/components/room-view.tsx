@@ -30,6 +30,7 @@ import { Composer, keepUnsentAsDraft, type ComposerSendContext, type ComposerSug
 import { ownTurnSuggestion } from '../own-turn-suggestion';
 import { RoomTranscript } from './room-transcript';
 import { OpenPageContext } from './transcript-items';
+import { ReactionsContext, type ReactionsApi } from './reactions';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
 import { SpaceRail } from './space-rail';
 import { AgentSettingsContext, type AgentSettingsApi } from './agent-settings';
@@ -58,6 +59,9 @@ function createRelayRoomClient(): RelayRoomClient {
     listConnectors: (bindingId) => client.listConnectors({ bindingId }),
     addConnector: (bindingId, connectorId) => client.addConnector({ bindingId, connectorId }),
     removeConnector: (bindingId, connectorId) => client.removeConnector({ bindingId, connectorId }),
+    setReaction: (bindingId, input) => client.setReaction({ bindingId, ...input }),
+    getReactions: (bindingId, messageId) => client.getReactions({ bindingId, messageId }),
+    listReactionsAfter: (bindingId, afterSeq) => client.listReactionsAfter({ bindingId, afterSeq }),
   };
 }
 
@@ -682,6 +686,11 @@ export function RoomView({
   // Every hook sits above the early returns below: React needs the same
   // hooks in the same order on every render.
   const configCache = useRef(new Map<AgentKind, ReturnType<AgentSettingsApi['load']>>());
+  // Reactions: yours, on the live Room only (the scripted demo shows them but can't change them).
+  const reactionsApi = useMemo<ReactionsApi | null>(
+    () => (source instanceof RelayRoomSource ? { react: (messageId, emoji, on) => void source.react(messageId, emoji, on) } : null),
+    [source]
+  );
   const agentSettingsApi = useMemo<AgentSettingsApi | null>(
     () =>
       source instanceof RelayRoomSource
@@ -1044,6 +1053,7 @@ export function RoomView({
           ) : (
           <OpenPageContext.Provider value={onOpenPage ?? null}>
           <AttachmentSpaceContext.Provider value={attachmentSpace}>
+          <ReactionsContext.Provider value={reactionsApi}>
           <RoomTranscript
             snapshot={shownSnapshot ?? snapshot}
             ownId={selfUserId}
@@ -1058,6 +1068,7 @@ export function RoomView({
             onHideDetails={handleHideDetails}
             onLoadRunLog={handleLoadRunLog}
           />
+          </ReactionsContext.Provider>
           </AttachmentSpaceContext.Provider>
           </OpenPageContext.Provider>
           )}

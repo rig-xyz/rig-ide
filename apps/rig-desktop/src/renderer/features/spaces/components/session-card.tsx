@@ -39,6 +39,7 @@ import { globalAgentsFor } from '../global-setup';
 import { ConnectorLogo } from '../logos';
 import { cardFromSummary, effectiveRunStatus, projectSessionCard } from '../projection';
 import type { RunSummary } from '@shared/spaces/room-cache';
+import type { MessageReaction } from '@shared/spaces/reactions';
 import type {
   AgentKind,
   RoomConnector,
@@ -56,6 +57,7 @@ import type {
 import { AGENT_NAME, AgentAvatar } from './identity';
 import { SessionTrace } from './session-trace';
 import { excerptOf, ROW_GRID, RowActions, RowTime } from './transcript-items';
+import { QuickReactions, ReactionChips } from './reactions';
 
 /**
  * Spaces: one agent turn in the Room, drawn like any other speaker's row
@@ -636,6 +638,9 @@ export function SessionCard({
   onHideDetails,
   summary,
   onLoadLog,
+  reactions,
+  members = [],
+  ownId,
 }: {
   meta: SessionRunMeta;
   events: SessionEvent[];
@@ -674,8 +679,15 @@ export function SessionCard({
   globalSetup?: GlobalServer[];
   /** Your own finished run only: "Hide details", so the room sees only its answer from now on. Resolves false if it couldn't. */
   onHideDetails?: () => Promise<boolean>;
+  /** The Room message's reactions (chips under the answer), and who's who for them. */
+  reactions?: MessageReaction[];
+  members?: RoomMember[];
+  /** The viewer's member id; reactions are offered once the turn is done. */
+  ownId?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // The emoji picker open from the hover bar keeps the bar showing.
+  const [picking, setPicking] = useState(false);
   const [traceOpen, setTraceOpen] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [stopFailed, setStopFailed] = useState(false);
@@ -992,11 +1004,14 @@ export function SessionCard({
             ))}
           </div>
         )}
+        {messageId && ownId !== undefined && (
+          <ReactionChips messageId={messageId} reactions={reactions} members={members} ownId={ownId} />
+        )}
       </div>
 
       {/* Actions float at the row's top-right on hover or focus. */}
       <RowActions
-        forceVisible={stopping || stopFailed || hiding !== 'idle' || retrying === 'busy'}
+        forceVisible={stopping || stopFailed || hiding !== 'idle' || retrying === 'busy' || picking}
         onReply={
           onReply && !running && card.finalAnswer
             ? () =>
@@ -1028,6 +1043,9 @@ export function SessionCard({
             <Square className="size-2.5" strokeWidth={1.5} fill="currentColor" />
             {stopping ? 'Stopping…' : stopFailed ? "Couldn't stop it from here" : queued ? 'Cancel' : 'Stop'}
           </button>
+        )}
+        {!running && messageId && ownId !== undefined && (
+          <QuickReactions messageId={messageId} reactions={reactions} ownId={ownId} onPickerChange={setPicking} />
         )}
         {!running && onRerun && prompt && retrying !== 'sent' && (
           <RetryButton agent={meta.agent} otherAgents={otherAgents} busy={retrying === 'busy'} onRerun={retry} />

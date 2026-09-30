@@ -5,6 +5,7 @@ import { parseFrontmatter } from '@shared/core/skills/validation';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import type { RigAccountError } from '@shared/rig/account';
 import { log } from '@main/lib/logger';
+import type { MessageReaction } from '@shared/spaces/reactions';
 import { isError, resolveContext, resolveSelfUserId } from './account';
 import {
   createHttpSpacesRelayApi,
@@ -186,6 +187,24 @@ export const rigSpacesConnectionController = createRPCController({
     after?: number;
   }): Promise<Result<{ run: SessionRun; events: SessionEventRow[] }, RelayApiError>> =>
     api.getSessionEvents(input.bindingId, input.runId, input.after),
+
+  /** Your own reaction on a message, on or off (never as an agent: that's `rig_react`'s). */
+  setReaction: async (input: {
+    bindingId: string;
+    messageId: string;
+    emoji: string;
+    on: boolean;
+  }): Promise<Result<MessageReaction[], RelayApiError>> =>
+    api.setReaction
+      ? api.setReaction(input.bindingId, input.messageId, { emoji: input.emoji, on: input.on })
+      : err<RelayApiError>({ kind: 'relay', message: 'Reactions are not available.' }),
+  getReactions: async (input: { bindingId: string; messageId: string }): Promise<Result<MessageReaction[], RelayApiError>> =>
+    api.getReactions ? api.getReactions(input.bindingId, input.messageId) : ok([]),
+  listReactionsAfter: async (input: {
+    bindingId: string;
+    afterSeq: number;
+  }): Promise<Result<Record<string, MessageReaction[]>, RelayApiError>> =>
+    api.listReactionsAfter ? api.listReactionsAfter(input.bindingId, input.afterSeq) : ok({}),
 
   postMessage: async (input: {
     bindingId: string;

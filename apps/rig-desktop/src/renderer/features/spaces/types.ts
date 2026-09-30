@@ -13,6 +13,7 @@ import type { MessageAttachment } from '@shared/rig/attachments';
 import type { ConnectionState, ConnectorGap, RigToolArgs } from '@shared/spaces/connectors';
 import type { RunSummary } from '@shared/spaces/room-cache';
 import type { RoomSees } from '@shared/spaces/room-sees';
+import type { MessageReaction } from '@shared/spaces/reactions';
 
 export type PersonId = string;
 export type AgentKind = 'claude' | 'codex';
@@ -237,6 +238,8 @@ export interface RoomMessage {
   threadId?: string;
   /** Your own message, shown the moment you send it, before the relay has it back. */
   sending?: true;
+  /** Emoji reactions, as chips under it; reactor ids are member ids. Absent or empty when none. */
+  reactions?: MessageReaction[];
 }
 
 export interface RoomInvite {
@@ -292,7 +295,9 @@ export type RoomEvent =
   /** A Room shown from disk has caught up with the relay (see `RoomSnapshot.stale`). */
   | { type: 'room_caught_up' }
   /** The relay's last answer failed, or answered again (see `RoomSnapshot.relayUnreachable`). */
-  | { type: 'relay_reachability_changed'; unreachable: boolean };
+  | { type: 'relay_reachability_changed'; unreachable: boolean }
+  /** These messages' reactions, whole (an empty list clears them); messages not named keep theirs. */
+  | { type: 'reactions_changed'; reactions: Record<string, MessageReaction[]> };
 
 /** Full materialized state of a room — what components render from. */
 export interface RoomSnapshot {

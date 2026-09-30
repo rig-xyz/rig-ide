@@ -158,6 +158,9 @@ function renderItem(
           spaceConnectors={snapshot.connectors}
           globalSetup={globalSetup}
           onHideDetails={onHideDetails && meta.owner === ownId ? () => onHideDetails(meta.id) : undefined}
+          reactions={message.reactions}
+          members={snapshot.members}
+          ownId={ownId}
         />
       );
     }

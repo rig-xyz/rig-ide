@@ -50,6 +50,7 @@ import type { MessageAttachment } from '@shared/rig/attachments';
 import { connectorById, type ConnectionStatus } from '@shared/spaces/connectors';
 import { ROOM_CACHE_FORMAT_VERSION, ROOM_CACHE_MAX_BYTES, type CachedRoomBlob } from '@shared/spaces/room-cache';
 import type { LocalRunEvent } from '@shared/spaces/room-sees';
+import { canonicalEmoji, withReaction, type MessageReaction } from '@shared/spaces/reactions';
 import type { AgentKind, MessageKind, RoomConnector, RoomEvent, RoomReplyRef, RoomSnapshot, SessionRunMeta } from './types';
 import { parseMessageAttachments } from './attachments';
 import { reduceRoom } from './fixtures/room-feed';
@@ -166,6 +167,15 @@ export interface RelayRoomClient {
   ): Promise<Result<{ connectorId: string; addedBy: string; addedAt: string }, RelayApiError>>;
   /** `DELETE /v1/me/bindings/:id/connectors/:connectorId`. */
   removeConnector?(bindingId: string, connectorId: string): Promise<Result<void, RelayApiError>>;
+  /** Your own reaction on a message, on or off; answers with the message's reactions (reactor ids are Clerk ids). */
+  setReaction?(
+    bindingId: string,
+    input: { messageId: string; emoji: string; on: boolean }
+  ): Promise<Result<MessageReaction[], RelayApiError>>;
+  /** One message's reactions — re-read on `reactions_changed`. */
+  getReactions?(bindingId: string, messageId: string): Promise<Result<MessageReaction[], RelayApiError>>;
+  /** Every message after `afterSeq` that has reactions (a message in the window that's missing has none). */
+  listReactionsAfter?(bindingId: string, afterSeq: number): Promise<Result<Record<string, MessageReaction[]>, RelayApiError>>;
 }
 
 /** This device's own connection states — `connectorsApi.list()`, injected so this file never imports `@renderer/lib/ipc`. */
@@ -191,6 +201,7 @@ type RoomNotification =
   | { type: 'message_created'; id: string; seq: number; kind: string }
   | { type: 'session_event_appended'; runId: string; seq: number }
   | { type: 'agent_request_created'; id: string; targetOwner: string }
+  | { type: 'reactions_changed'; messageId: string; seq: number }
   | { type: string; [key: string]: unknown };
 
 export type RelayRoomSourceOptions = {
@@ -369,6 +380,7 @@ export class RelayRoomSource implements RoomSource {
   private catchingUp = false;
   /** What the next catch-up pass still has to fetch: new messages, and/or these runs' new events — see `catchUp`. */
   private pendingMessages = false;
+  private pendingReactions = false;
   private readonly pendingRuns = new Set<string>();
   /** Runs still going when the socket dropped: the reconnect catch-up re-reads them. */
   private readonly liveAtDisconnect = new Set<string>();
@@ -612,6 +624,8 @@ export class RelayRoomSource implements RoomSource {
     provider.awareness?.setLocalStateField('user', this.shown ? { id: this.opts.selfUserId } : null);
     provider.awareness?.on('change', () => this.syncPresence());
     provider.on('connect', () => {
+      // A reconnect may have missed reactions to messages already shown (the first connect just loaded them).
+      const reconnect = this.everConnected;
       this.connected = true;
       this.stopPolling();
       this.log(
@@ -632,7 +646,7 @@ export class RelayRoomSource implements RoomSource {
       for (const runId of this.runsLoading.keys()) {
         if (!this.recheckAfterLoad.has(runId)) this.recheckAfterLoad.set(runId, 'ifLive');
       }
-      void this.catchUp({ messages: true, runs });
+      void this.catchUp({ messages: true, runs, reactions: reconnect });
     });
     provider.on('disconnect', () => {
       if (this.connected) for (const runId of this.liveRunIds()) this.liveAtDisconnect.add(runId);
@@ -689,9 +703,11 @@ export class RelayRoomSource implements RoomSource {
     this.pollInFlight = true;
     try {
       this.pollTicks += 1;
-      if (this.pollTicks % MEMBER_POLL_EVERY === 0) await this.pollMembers();
-      // Without the socket nothing says which run moved: re-read the live ones.
-      await this.catchUp({ messages: true, runs: this.liveRunIds() });
+      const everyFew = this.pollTicks % MEMBER_POLL_EVERY === 0;
+      if (everyFew) await this.pollMembers();
+      // Without the socket nothing says which run moved: re-read the live ones
+      // (and, every few polls, the reactions on what's shown).
+      await this.catchUp({ messages: true, runs: this.liveRunIds(), reactions: everyFew });
     } finally {
       this.pollInFlight = false;
     }
@@ -903,6 +919,12 @@ export class RelayRoomSource implements RoomSource {
       }
       caughtUp = rows.length;
       this.snapshot = { ...this.snapshot, runsLoading: this.loadingRecord() };
+      // Reactions to messages kept on disk may have changed meanwhile.
+      if (!gap) {
+        const reactions = await this.reactionsSince();
+        if (this.disposed) return;
+        if (reactions) apply({ type: 'reactions_changed', reactions });
+      }
       apply({ type: 'room_caught_up' });
     }
     if (this.disposed) return;
@@ -1070,6 +1092,11 @@ export class RelayRoomSource implements RoomSource {
       await this.catchUp({ messages: true });
       return;
     }
+    if (notification.type === 'reactions_changed') {
+      const messageId = typeof notification.messageId === 'string' ? notification.messageId : null;
+      if (messageId) await this.refreshReactions(messageId);
+      return;
+    }
     if (notification.type === 'session_event_appended') {
       // Just the run that moved (hide-details says so the same way). A
       // notification naming no run falls back to every live one.
@@ -1100,21 +1127,25 @@ export class RelayRoomSource implements RoomSource {
    * for mid-pass is queued and picked up by the pass already running, never
    * a second concurrent one.
    */
-  private async catchUp(work: { messages?: boolean; runs?: Iterable<string> }): Promise<void> {
+  private async catchUp(work: { messages?: boolean; runs?: Iterable<string>; reactions?: boolean }): Promise<void> {
     if (this.disposed) return;
     if (work.messages) this.pendingMessages = true;
+    if (work.reactions) this.pendingReactions = true;
     for (const runId of work.runs ?? []) this.pendingRuns.add(runId);
     if (this.catchingUp) return;
     this.catchingUp = true;
     try {
-      while (!this.disposed && (this.pendingMessages || this.pendingRuns.size > 0)) {
+      while (!this.disposed && (this.pendingMessages || this.pendingRuns.size > 0 || this.pendingReactions)) {
         const startedMs = Date.now();
         const callsBefore = this.requests;
         const messages = this.pendingMessages;
+        const reactions = this.pendingReactions;
         const runs = [...this.pendingRuns];
         this.pendingMessages = false;
+        this.pendingReactions = false;
         this.pendingRuns.clear();
         if (messages) await this.catchUpMessages();
+        if (reactions) await this.catchUpReactions();
         await this.catchUpRuns(runs);
         this.log(
           'Rig spaces: room catch-up',
@@ -1273,6 +1304,7 @@ export class RelayRoomSource implements RoomSource {
         time: formatClock(row.createdAt),
         body: row.body || undefined,
         meta: comment ?? toMessageMeta(row.kind, meta),
+        ...(row.reactions?.length ? { reactions: this.memberReactions(row.reactions) } : {}),
         ...(comment
           ? { threadId: row.parentId ?? row.id }
           : runId && typeof meta.threadId === 'string'
@@ -1432,6 +1464,72 @@ export class RelayRoomSource implements RoomSource {
       ...(sourceMessageId ? { sourceMessageId } : {}),
     });
     return result.success;
+  }
+
+  // ── reactions ────────────────────────────────────────────────────────────
+
+  /**
+   * Your reaction on a message, on or off: shown at once, then settled to
+   * what the relay answers (or put back, if it refused). Never a message:
+   * nothing is posted and no agent is asked. Resolves to whether the relay
+   * took it.
+   */
+  async react(messageId: string, emoji: string, on: boolean): Promise<boolean> {
+    const spelled = canonicalEmoji(emoji);
+    const message = this.snapshot.messages.find((m) => m.id === messageId);
+    if (!spelled || !message || message.sending || !this.opts.relay.setReaction) return false;
+    const before = message.reactions ?? [];
+    const self = { userId: this.opts.selfUserId, agent: null };
+    this.applyLocal({ type: 'reactions_changed', reactions: { [messageId]: withReaction(before, spelled, self, on) } });
+    const result = await this.opts.relay.setReaction(this.opts.bindingId, { messageId, emoji: spelled, on });
+    if (this.disposed) return result.success;
+    if (result.success) {
+      this.applyLocal({ type: 'reactions_changed', reactions: { [messageId]: this.memberReactions(result.data) } });
+      return true;
+    }
+    this.log('Rig spaces: could not change a reaction', { error: result.error.message });
+    // Put it back as it was, unless something else changed it meanwhile.
+    const now = this.snapshot.messages.find((m) => m.id === messageId)?.reactions ?? [];
+    const undone = withReaction(now, spelled, self, !on);
+    this.applyLocal({ type: 'reactions_changed', reactions: { [messageId]: undone } });
+    return false;
+  }
+
+  /** Re-reads one message's reactions (a `reactions_changed` notification). */
+  private async refreshReactions(messageId: string): Promise<void> {
+    if (!this.opts.relay.getReactions || !this.snapshot.messages.some((m) => m.id === messageId)) return;
+    const result = await this.opts.relay.getReactions(this.opts.bindingId, messageId);
+    if (this.disposed || !result.success) return;
+    this.applyLocal({ type: 'reactions_changed', reactions: { [messageId]: this.memberReactions(result.data) } });
+  }
+
+  /** The reactions on every shown message that changed since they were read, or null when nothing did (or the relay can't say). */
+  private async reactionsSince(): Promise<Record<string, MessageReaction[]> | null> {
+    const shown = this.snapshot.messages.filter((m) => !m.sending);
+    if (!this.opts.relay.listReactionsAfter || shown.length === 0) return null;
+    const oldest = shown.reduce((min, m) => Math.min(min, m.seq), Number.POSITIVE_INFINITY);
+    const result = await this.opts.relay.listReactionsAfter(this.opts.bindingId, oldest - 1);
+    if (this.disposed || !result.success) return null;
+    const changed: Record<string, MessageReaction[]> = {};
+    for (const message of this.snapshot.messages) {
+      if (message.sending || message.seq < oldest) continue;
+      const next = this.memberReactions(result.data[message.id] ?? []);
+      if (JSON.stringify(next) !== JSON.stringify(message.reactions ?? [])) changed[message.id] = next;
+    }
+    return Object.keys(changed).length > 0 ? changed : null;
+  }
+
+  private async catchUpReactions(): Promise<void> {
+    const reactions = await this.reactionsSince();
+    if (reactions && !this.disposed) this.applyLocal({ type: 'reactions_changed', reactions });
+  }
+
+  /** The relay names reactors by Clerk id; the Room by member id (as it does message authors). */
+  private memberReactions(reactions: readonly MessageReaction[]): MessageReaction[] {
+    return reactions.map((r) => ({
+      ...r,
+      reactors: r.reactors.map((x) => ({ ...x, userId: x.userId ? (this.userIdByClerkId.get(x.userId) ?? x.userId) : null })),
+    }));
   }
 
   /** Loads the space's invites into `invitesById`; an invite counts as joined once a member has its email. */
