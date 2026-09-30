@@ -36,6 +36,11 @@ const FOLLOW_THRESHOLD_PX = 60;
 /** A follow-up from the same person within this long drops its name and avatar, Slack-style. */
 const CONTINUE_WITHIN_MS = 5 * 60_000;
 
+/** A row's React key: your sending copy of a message and the relay's copy share its client id. */
+function rowKey(message: RoomMessage): string {
+  return message.clientId ?? message.id;
+}
+
 /** Who a row speaks as, for grouping follow-ups: a person, or one person's agent. */
 function speakerOf(message: RoomMessage, snapshot: RoomSnapshot): string | null {
   if (message.meta.kind === 'text') return `person:${message.authorId}`;
@@ -348,9 +353,9 @@ export function RoomTranscript({
   // (reflects the PREVIOUS commit's ids), written after in the effect below
   // — same timing trick `lastCountRef` below already relies on — so a row's
   // very first render sees it as new, and every later re-render doesn't.
-  const [seenIds] = useState(() => new Set(snapshot.messages.map((m) => m.id)));
+  const [seenIds] = useState(() => new Set(snapshot.messages.map(rowKey)));
   useEffect(() => {
-    for (const m of snapshot.messages) seenIds.add(m.id);
+    for (const m of snapshot.messages) seenIds.add(rowKey(m));
   }, [snapshot.messages, seenIds]);
 
   const pinToBottom = (behavior: ScrollBehavior = 'auto') => {
@@ -549,10 +554,11 @@ export function RoomTranscript({
               // short fade + 4px rise. `seenIds` starts pre-loaded with
               // every id from that first mount (see above), so the whole
               // initial batch reads as "already seen."
-              const isNewRow = !!placed && !seenIds.has(placed.id);
+              const isNewRow = !!placed && !seenIds.has(rowKey(placed));
               nodes.push(
                 <motion.div
-                  key={unit.kind === 'message' ? unit.message.id : `thread-${unit.threadId}`}
+                  // Your sending copy and the relay's share a key: the one bubble turns solid in place.
+                  key={unit.kind === 'message' ? rowKey(unit.message) : `thread-${unit.threadId}`}
                   data-message-id={unit.kind === 'message' ? unit.message.id : unit.threadId}
                   data-row-entered={isNewRow ? 'true' : undefined}
                   // Room between speakers; a follow-up from the same one sits close.

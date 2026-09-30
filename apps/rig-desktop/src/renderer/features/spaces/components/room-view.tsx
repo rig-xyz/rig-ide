@@ -5,7 +5,6 @@ import { ConnectionBanner } from '@renderer/features/shell/connection-banner';
 import { useAutoReconnect, useNavigatorOnline } from '@renderer/features/shell/use-connection';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
-import { formatClock } from '@renderer/lib/time-format';
 import { cn } from '@renderer/lib/utils';
 import type { ConnectorId, GlobalServer } from '@shared/spaces/connectors';
 import { rigSettingsChangedChannel } from '@shared/rig/settings';
@@ -28,6 +27,7 @@ import { useComposerAttachments } from '../use-composer-attachments';
 import { AttachmentSpaceContext, type AttachmentSpace } from './attachment-cards';
 import { Composer, keepUnsentAsDraft, type ComposerSendContext, type ComposerSuggestion } from './composer';
 import { ownTurnSuggestion } from '../own-turn-suggestion';
+import { settlePendingSends, withPendingSends, type PendingSend } from '../pending-sends';
 import { RoomTranscript } from './room-transcript';
 import { OpenPageContext } from './transcript-items';
 import { ReactionsContext, type ReactionsApi } from './reactions';
@@ -231,6 +231,8 @@ function busyOwnAgents(snapshot: RoomSnapshot, selfUserId: string): AgentKind[] 
   return [...busy];
 }
 
+export { withPendingSends };
+
 /**
  * Sends what the composer understood: the message, then — when the pill
  * named one of your own agents (you tagged it, called it by name, or the
@@ -249,65 +251,25 @@ export async function sendFromComposer(
   text: string,
   { replyTo, agent, attach }: ComposerSendContext,
   wake: () => void,
-  attachments: readonly MessageAttachment[] = []
+  attachments: readonly MessageAttachment[] = [],
+  clientId?: string
 ): Promise<string | null> {
   const asks = agent && ownAgents.includes(agent) ? agent : null;
   // Files only: the relay needs words, and older apps show them; the cards say it here.
   const body = text || (attachments.length > 0 ? fallbackBody(attachments) : '');
+  const extra = {
+    ...(attachments.length > 0 ? { attachments: [...attachments], autoBody: !text } : {}),
+    ...(clientId ? { clientId } : {}),
+  };
   const sourceMessageId =
-    attachments.length > 0
-      ? await source.send(body, replyTo, asks ?? undefined, { attachments: [...attachments], autoBody: !text })
+    Object.keys(extra).length > 0
+      ? await source.send(body, replyTo, asks ?? undefined, extra)
       : await source.send(body, replyTo, asks ?? undefined);
   if (!asks) return sourceMessageId;
   const prompt = attach ? `${text}\n\n(Open beside the chat: ${attach})` : text;
   await source.requestOwnAgent(asks, prompt, sourceMessageId ?? undefined);
   wake();
   return sourceMessageId;
-}
-
-/** A message you've sent that the relay hasn't handed back yet; `id` once the post has returned. */
-type PendingSend = {
-  localId: string;
-  text: string;
-  replyTo?: RoomReplyRef;
-  createdAt: string;
-  id: string | null;
-  /** Shown as cards while the files are copied and the message posted. */
-  attachments?: MessageAttachment[];
-};
-
-/**
- * The snapshot with your pending messages at the end, so a message shows the
- * moment you send it instead of vanishing until the relay's round trip. Each
- * one drops out as soon as the real message (same id) is in the snapshot.
- * They take the last real `seq`, so the read marker never counts past what
- * the relay has.
- */
-export function withPendingSends(snapshot: RoomSnapshot, pending: readonly PendingSend[], selfUserId: string): RoomSnapshot {
-  const have = new Set(snapshot.messages.map((m) => m.id));
-  const shown = pending.filter((send) => send.id === null || !have.has(send.id));
-  if (shown.length === 0) return snapshot;
-  const seq = snapshot.messages.reduce((max, m) => Math.max(max, m.seq), 0);
-  return {
-    ...snapshot,
-    messages: [
-      ...snapshot.messages,
-      ...shown.map((send) => ({
-        id: send.localId,
-        seq,
-        authorId: selfUserId,
-        createdAt: send.createdAt,
-        time: formatClock(send.createdAt),
-        body: send.text || undefined,
-        meta: {
-          kind: 'text' as const,
-          ...(send.replyTo ? { replyTo: send.replyTo } : {}),
-          ...(send.attachments?.length ? { attachments: send.attachments, autoBody: !send.text } : {}),
-        },
-        sending: true as const,
-      })),
-    ],
-  };
 }
 
 /** A drag carrying files (not text or a link dragged within the page). */
@@ -859,7 +821,7 @@ export function RoomView({
     };
     const post = (attachments: MessageAttachment[]) =>
       // Wake this device's claim poller rather than waiting for its next tick.
-      sendFromComposer(source, ownAgents, text, context, () => void rpc.rig.spacesDispatch.checkNow(), attachments).then(
+      sendFromComposer(source, ownAgents, text, context, () => void rpc.rig.spacesDispatch.checkNow(), attachments, localId).then(
         (id) =>
           id === null
             ? failed()
@@ -883,14 +845,10 @@ export function RoomView({
       );
   };
 
-  // A pending message is done once the real one is in the snapshot.
+  // A pending message is done once the real one (same client id, or id) is in the snapshot.
   useEffect(() => {
     if (!snapshot) return;
-    const have = new Set(snapshot.messages.map((m) => m.id));
-    setPendingSends((current) => {
-      const next = current.filter((send) => send.id === null || !have.has(send.id));
-      return next.length === current.length ? current : next;
-    });
+    setPendingSends((current) => settlePendingSends(current, snapshot));
   }, [snapshot]);
   const shownSnapshot = useMemo(
     () => (snapshot ? withPendingSends(snapshot, pendingSends, selfUserId) : snapshot),

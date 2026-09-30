@@ -238,6 +238,8 @@ export interface RoomMessage {
   threadId?: string;
   /** Your own message, shown the moment you send it, before the relay has it back. */
   sending?: true;
+  /** The id the sending app gave it (`meta.clientId`): its sending copy and the relay's are the same message. */
+  clientId?: string;
   /** Emoji reactions, as chips under it; reactor ids are member ids. Absent or empty when none. */
   reactions?: MessageReaction[];
 }

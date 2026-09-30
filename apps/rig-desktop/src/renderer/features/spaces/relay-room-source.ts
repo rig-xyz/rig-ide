@@ -1330,6 +1330,7 @@ export class RelayRoomSource implements RoomSource {
         body: row.body || undefined,
         meta: comment ?? toMessageMeta(row.kind, meta),
         ...(row.reactions?.length ? { reactions: this.memberReactions(row.reactions) } : {}),
+        ...(typeof meta.clientId === 'string' && meta.clientId ? { clientId: meta.clientId } : {}),
         ...(comment
           ? { threadId: row.parentId ?? row.id }
           : runId && typeof meta.threadId === 'string'
@@ -1439,20 +1440,23 @@ export class RelayRoomSource implements RoomSource {
    * the relay stored. Returns the new message's id (for `requestOwnAgent`'s
    * `sourceMessageId`), or `null` if the post failed. `asks` marks a message
    * this app is about to hand to your own agent itself, so the relay's
-   * dispatcher doesn't run the same ask a second time.
+   * dispatcher doesn't run the same ask a second time. `clientId` names the
+   * app's own sending copy; the relay's copy carries it back, so the two are
+   * matched whichever of the post's answer and the realtime echo comes first.
    */
   async send(
     text: string,
     replyTo?: RoomReplyRef,
     asks?: AgentKind,
-    files?: { attachments: MessageAttachment[]; autoBody: boolean }
+    extra?: { attachments?: MessageAttachment[]; autoBody?: boolean; clientId?: string }
   ): Promise<string | null> {
     const meta = {
       ...(replyTo ? { replyTo } : {}),
       ...(asks ? { asks } : {}),
-      ...(files && files.attachments.length > 0
-        ? { attachments: files.attachments, ...(files.autoBody ? { autoBody: true } : {}) }
+      ...(extra?.attachments && extra.attachments.length > 0
+        ? { attachments: extra.attachments, ...(extra.autoBody ? { autoBody: true } : {}) }
         : {}),
+      ...(extra?.clientId ? { clientId: extra.clientId } : {}),
     };
     const result = await this.opts.relay.postMessage(this.opts.bindingId, {
       body: text,
