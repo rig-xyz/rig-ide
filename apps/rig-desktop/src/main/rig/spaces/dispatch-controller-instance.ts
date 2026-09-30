@@ -8,6 +8,7 @@ import { isError, resolveContext, rigAccountController } from '../account';
 import { resolveLocalPathsImpl } from '../recent-rigs';
 import { rigSettingsStore } from '../settings-instance';
 import { connections, globalSetupFor } from '../connectors/connections-instance';
+import { sessionConnectorsFor } from '../connectors/global-setup';
 import { isConnectorId } from '@shared/spaces/connectors';
 import {
   DETAILS_HIDDEN_EVENT,
@@ -72,17 +73,11 @@ function realDeps(): SpacesDispatchControllerDeps {
             return { servers: [], gaps: [] };
           }
           const ids = listed.data.map((c) => c.connectorId).filter(isConnectorId);
-          const [session, own] = await Promise.all([
-            connections.forSession(ids),
-            // This agent's own global setup: a tool it already has there is never a gap.
-            globalSetupFor(bindingId).catch(() => []),
-          ]);
-          const global = new Set(own.filter((s) => s.agent === agent && s.connectorId).map((s) => s.connectorId!));
-          return {
-            servers: session.servers,
-            gaps: session.gaps.filter((gap) => !global.has(gap.id)),
-            global: ids.filter((id) => global.has(id)),
-          };
+          // A tool this agent already has from its own setup is used that way: never a gap, never injected twice.
+          return sessionConnectorsFor(ids, agent, {
+            forSession: (rest) => connections.forSession(rest),
+            globalSetup: () => globalSetupFor(bindingId),
+          });
         },
         rigTools: (scope) => rigToolsServer.serverFor(scope),
         roomSees: (bindingId) => roomSeesFor(rigSettingsStore.get().spacesRoomSees, bindingId),

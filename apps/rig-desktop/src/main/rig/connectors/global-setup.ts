@@ -1,5 +1,6 @@
 import { log } from '@main/lib/logger';
-import { connectorIdForUrl, type GlobalServer } from '@shared/spaces/connectors';
+import { connectorIdForUrl, type ConnectorId, type GlobalServer } from '@shared/spaces/connectors';
+import type { SessionConnectors } from './connections';
 
 /**
  * What your agents bring from their own global setup: your claude.ai
@@ -95,4 +96,33 @@ export function createGlobalSetup(deps: { run: RunCli; now?: () => number; ttlMs
       cache.clear();
     },
   };
+}
+
+/**
+ * The connectors one agent's session gets for a space, when the agent may
+ * already reach some of them from its own global setup.
+ *
+ * Precedence (decided 2026-09-30): the agent's own connection wins. A space
+ * connector the agent being run already has globally (e.g. Mixpanel in your
+ * claude.ai connectors) is NOT injected by rig, even when you also have a rig
+ * login for it: the agent would otherwise see the same service twice (Claude's
+ * `claude_ai_Mixpanel` and rig's `mixpanel`), and 0.4.2 promised rig won't
+ * make you reconnect tools your agent already has. It's listed as `global`
+ * (the agent is told it has it) and is never a gap. Rig's own login only
+ * serves agents that don't have the tool themselves — e.g. your Codex, when
+ * only your Claude has it.
+ */
+export async function sessionConnectorsFor(
+  ids: readonly ConnectorId[],
+  agent: 'claude' | 'codex',
+  deps: {
+    forSession: (ids: readonly ConnectorId[]) => Promise<SessionConnectors>;
+    globalSetup: () => Promise<GlobalServer[]>;
+  }
+): Promise<SessionConnectors> {
+  const own = await deps.globalSetup().catch(() => [] as GlobalServer[]);
+  const theirs = new Set(own.filter((s) => s.agent === agent && s.connectorId).map((s) => s.connectorId!));
+  const global = ids.filter((id) => theirs.has(id));
+  const session = await deps.forSession(ids.filter((id) => !theirs.has(id)));
+  return { servers: session.servers, gaps: session.gaps, global };
 }

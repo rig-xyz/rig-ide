@@ -204,12 +204,15 @@ export function ConnectorGallery({
   /**
    * The primary action, wherever it's triggered from (the grid card's "Add"
    * pill, or the detail view's own Connect/Reconnect/Add button): straight
-   * to the space when you're already connected and it's new to the space,
-   * otherwise opens the detail view mid-flow (consent, then the browser).
+   * to the space when it's new to the space and you can already reach it —
+   * connected via rig, or one of your agents has it from its own setup (e.g.
+   * a claude.ai connector: adding just declares it for the space, and that
+   * agent keeps using its own connection; see `sessionConnectorsFor` in
+   * main) — otherwise opens the detail view mid-flow (consent, then the browser).
    */
   const startFlow = (def: ConnectorDef, isNew: boolean) => {
     setError(null);
-    if (isNew && mine.get(def.id)?.state === 'connected') {
+    if (isNew && (mine.get(def.id)?.state === 'connected' || globalAgentsFor(def.id, globalSetup).size > 0)) {
       void source.addConnector(def.id).then((added) => {
         if (!added.ok) fail(def.id, added.message ?? "Couldn't add this to the space.");
       });
@@ -292,11 +295,7 @@ export function ConnectorGallery({
           ) : (
             <GalleryPill
               accent
-              title={
-                viaAgents.length > 0
-                  ? 'Adds it to the space, so everyone’s agents can use it with their own logins.'
-                  : undefined
-              }
+              title={viaAgents.length > 0 ? declareHint(def.name, viaAgents) : undefined}
               onClick={(e) => {
                 e.stopPropagation();
                 startFlow(def, true);
@@ -610,7 +609,7 @@ function ConnectorDetail({
               <span className="flex shrink-0 items-center gap-2">
                 {connected ? (
                   <DetailPill onClick={() => void onDisconnect()}>Disconnect</DetailPill>
-                ) : inSpace ? (
+                ) : inSpace && !coversAllAgents(viaAgents) ? (
                   <DetailPill accent onClick={onStart}>
                     {expired ? 'Reconnect' : viaAgents.length > 0 ? 'Connect here' : 'Connect'}
                   </DetailPill>
@@ -662,6 +661,11 @@ function ConnectorDetail({
                 </DetailPill>
               ))}
           </div>
+          {!inSpace && viaAgents.length > 0 && phase === null && (
+            <p className="text-2xs leading-relaxed text-text-muted" data-testid="gallery-detail-declare-hint">
+              {declareHint(def.name, viaAgents)}
+            </p>
+          )}
         </DetailSection>
 
         <DetailSection title="Details">
@@ -687,15 +691,35 @@ function ConnectorDetail({
   );
 }
 
-/** One block of the detail view — a quiet label plus its content, separated from its neighbors by space and a hairline rather than boxed (Dylan: no more one big card mixing everything). */
-/** What "Connect here" adds when one of your agents already reaches the connector through its own setup. */
+/** Whether every agent rig runs already has this tool from its own setup — then a rig login would never be used (the agent's own connection wins). */
+function coversAllAgents(via: readonly AgentKind[]): boolean {
+  return via.includes('claude') && via.includes('codex');
+}
+
+/**
+ * For a space connector one of your agents already reaches through its own
+ * setup: it already works for that agent here, and that agent keeps using
+ * its own connection (rig never injects a second one for it). "Connect here"
+ * only matters for your other agent.
+ */
 function viaHint(via: readonly AgentKind[]): string {
   const names = via.map((a) => AGENT_NAME[a]).join(' and ');
   const others = (['claude', 'codex'] as const).filter((a) => !via.includes(a)).map((a) => AGENT_NAME[a]);
-  return `Your ${names} already reaches it through your own setup. Connecting here signs you in for this space, so ${
-    others.length > 0 ? `your ${others.join(' and ')} can use it too` : 'every agent you run here uses the same login'
-  }.`;
+  const works = `Already works here: your ${names} uses ${via.length > 1 ? 'their' : 'its'} own connection, so you don’t need to sign in again.`;
+  return others.length > 0 ? `${works} Connect here only if you also want your ${others.join(' and ')} to use it.` : works;
 }
+
+/**
+ * What "Add to space" means for a tool one of your agents already has from
+ * its own setup: no sign-in for you, it just tells the space the tool is
+ * used here, so everyone else sees it and connects their own login.
+ */
+function declareHint(name: string, via: readonly AgentKind[]): string {
+  const names = via.map((a) => AGENT_NAME[a]).join(' and ');
+  return `${name} already works for your ${names} here, through ${via.length > 1 ? 'their' : 'its'} own connection. Adding it won’t ask you to sign in again: it tells everyone in the space it’s used here, so they can connect their own.`;
+}
+
+/** One block of the detail view — a quiet label plus its content, separated from its neighbors by space and a hairline rather than boxed (Dylan: no more one big card mixing everything). */
 
 function DetailSection({ title, children }: { title: string; children: ReactNode }) {
   return (

@@ -2445,6 +2445,53 @@ describe('Connectors — gallery', () => {
     expect(detail().getAttribute('data-connector')).toBe('linear');
   });
 
+  it('adds a tool your Claude already has (claude.ai connector) without a second sign-in, from its card or its setup card', async () => {
+    const globalSetup: GlobalServer[] = [
+      { agent: 'claude', name: 'claude.ai Mixpanel', url: 'https://mcp.mixpanel.com/mcp', connectorId: 'mixpanel' },
+    ];
+    const { source } = await renderGallery(connectorsSnapshot(), fakeConnectorsSource(), vi.fn(), { globalSetup });
+    await act(async () => click(buttonIn(cardOf('mixpanel'), 'Add')));
+    await vi.waitFor(() => expect(source.addConnector).toHaveBeenCalledWith('mixpanel'));
+    expect(connectorsApi.connect).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-testid="gallery-detail-consent"]')).toBeNull();
+
+    // Same from the "From your agents' own setup" group, through the detail view — which says so plainly.
+    vi.mocked(source.addConnector).mockClear();
+    const setupCard = host.querySelector<HTMLElement>('[data-testid="gallery-setup-card"][data-connector="mixpanel"]')!;
+    await act(async () => click(setupCard));
+    expect(detail().querySelector('[data-testid="gallery-detail-declare-hint"]')?.textContent).toContain(
+      'Mixpanel already works for your Claude here'
+    );
+    expect(detail().textContent).toContain('won’t ask you to sign in again');
+    await act(async () => click(buttonIn(detail(), 'Add to space')));
+    await vi.waitFor(() => expect(source.addConnector).toHaveBeenCalledWith('mixpanel'));
+    expect(connectorsApi.connect).not.toHaveBeenCalled();
+    expect(detail().querySelector('[data-testid="gallery-detail-consent"]')).toBeNull();
+  });
+
+  it('in the space, a tool your Claude has reads as already working; Connect here is only offered for your other agent', async () => {
+    const snapshot = connectorsSnapshot({ connectors: [{ id: 'mixpanel', name: 'Mixpanel', addedBy: 'dylan', mine: 'not_connected' }] });
+    await renderGallery(snapshot, fakeConnectorsSource(), vi.fn(), {
+      focus: 'mixpanel',
+      globalSetup: [{ agent: 'claude', name: 'claude.ai Mixpanel', url: 'https://mcp.mixpanel.com/mcp', connectorId: 'mixpanel' }],
+    });
+    const hint = detail().querySelector('[data-testid="gallery-detail-via-hint"]')?.textContent ?? '';
+    expect(hint).toContain('Already works here');
+    expect(hint).toContain('your Codex');
+    expect(buttonIn(detail(), 'Connect here')).toBeTruthy();
+
+    // Both agents have it: a rig login would never be used, so there's nothing to connect.
+    await renderGallery(snapshot, fakeConnectorsSource(), vi.fn(), {
+      focus: 'mixpanel',
+      globalSetup: [
+        { agent: 'claude', name: 'claude.ai Mixpanel', url: 'https://mcp.mixpanel.com/mcp', connectorId: 'mixpanel' },
+        { agent: 'codex', name: 'mixpanel', url: 'https://mcp.mixpanel.com/mcp', connectorId: 'mixpanel' },
+      ],
+    });
+    expect([...detail().querySelectorAll('button')].some((b) => b.textContent === 'Connect here')).toBe(false);
+    expect(detail().querySelector('[data-testid="gallery-detail-via-hint"]')?.textContent).not.toContain('Connect here');
+  });
+
   it('draws a real brand mark for a Simple Icons connector, and the letter tile for one with no vector mark', async () => {
     await renderGallery();
     expect(cardOf('linear').querySelector('svg')).not.toBeNull();
