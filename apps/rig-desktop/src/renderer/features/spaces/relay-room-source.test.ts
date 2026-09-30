@@ -1154,6 +1154,91 @@ describe('RelayRoomSource without the realtime socket', () => {
   });
 });
 
+describe('RelayRoomSource — a finished run’s end time', () => {
+  // A run's status change isn't broadcast: the Room only hears its events.
+  // The header it read when the run started says running, no end time, and
+  // the card used to measure "Worked …" against the clock from then on.
+  function open(fake: ReturnType<typeof makeFakeRelay>) {
+    let provider: FakeProvider | null = null;
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: () => (provider = new FakeProvider()),
+      runEndRefreshMs: 0,
+    });
+    return { source, provider: () => provider! };
+  }
+
+  function recordingAfter(fake: ReturnType<typeof makeFakeRelay>): number[] {
+    const afters: number[] = [];
+    const original = fake.relay.getSessionEvents;
+    fake.relay.getSessionEvents = (bindingId, runId, after) => {
+      afters.push(after ?? 0);
+      return original(bindingId, runId, after);
+    };
+    return afters;
+  }
+
+  it('re-reads the header once the log says it ended, so the card shows ended − started', async () => {
+    const fake = makeFakeRelay();
+    fake.queueMessages([message({ kind: 'session', body: '', meta: { runId: 'run1' } })], []);
+    fake.setRun('run1', run(), [sessionEvent({ seq: 1 })]);
+    const afters = recordingAfter(fake);
+    const { source, provider } = open(fake);
+    source.play();
+    await flush();
+    provider().fire('connect');
+    await flush();
+    expect(source.getSnapshot().sessionMetaByRun.run1).toMatchObject({ status: 'running', endedAt: null });
+
+    // It finishes: its last event lands, and the relay stamps its end.
+    fake.setRun('run1', run({ status: 'done', endedAt: '2026-09-23T09:00:13.500Z' }), [
+      sessionEvent({ seq: 1 }),
+      sessionEvent({ seq: 2, kind: 'turn_ended', payload: { status: 'done' } }),
+    ]);
+    afters.length = 0;
+    provider().fire('stateless', { payload: JSON.stringify({ type: 'session_event_appended', runId: 'run1', seq: 2 }) });
+    await flush();
+
+    expect(source.getSnapshot().sessionMetaByRun.run1).toMatchObject({ status: 'done', endedAt: '2026-09-23T09:00:13.500Z' });
+    // The events since seq 1, then the header alone (no events again).
+    expect(afters).toHaveLength(2);
+    expect(afters[0]).toBe(1);
+    expect(afters[1]).toBeGreaterThan(1_000_000);
+    source.dispose();
+  });
+
+  it('a relay that has not stamped the end yet is asked again, a few times at most', async () => {
+    const fake = makeFakeRelay();
+    fake.queueMessages([message({ kind: 'session', body: '', meta: { runId: 'run1' } })], []);
+    fake.setRun('run1', run(), [sessionEvent({ seq: 1 }), sessionEvent({ seq: 2, kind: 'turn_ended', payload: { status: 'done' } })]);
+    const afters = recordingAfter(fake);
+    const { source } = open(fake);
+    source.play();
+    await flush(20);
+    expect(afters.filter((a) => a > 1_000_000)).toHaveLength(3);
+    expect(source.getSnapshot().sessionMetaByRun.run1!.endedAt).toBeNull();
+    source.dispose();
+  });
+
+  it('a run whose header already says it finished is not re-read', async () => {
+    const fake = makeFakeRelay();
+    fake.queueMessages([message({ kind: 'session', body: '', meta: { runId: 'run1' } })], []);
+    fake.setRun('run1', run({ status: 'done', endedAt: '2026-09-23T09:00:10Z' }), [
+      sessionEvent({ seq: 1, kind: 'turn_ended', payload: { status: 'done' } }),
+    ]);
+    const afters = recordingAfter(fake);
+    const { source } = open(fake);
+    source.play();
+    await flush(20);
+    expect(afters).toEqual([0]);
+    source.dispose();
+  });
+});
+
 describe('RelayRoomSource — how many requests an open and its catch-ups make', () => {
   /** A fake relay that records every call by name (and every run it fetches). */
   function countingFake() {

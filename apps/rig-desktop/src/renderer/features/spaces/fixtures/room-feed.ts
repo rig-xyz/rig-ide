@@ -132,6 +132,12 @@ export function reduceRoom(snapshot: RoomSnapshot, event: RoomEvent): RoomSnapsh
       return { ...next, runsLoading };
     }
 
+    case 'session_meta_updated': {
+      const meta = snapshot.sessionMetaByRun[event.runId];
+      if (!meta) return snapshot;
+      return { ...snapshot, sessionMetaByRun: { ...snapshot.sessionMetaByRun, [event.runId]: { ...meta, ...event.meta } } };
+    }
+
     case 'agent_request_created':
       // Transient signal only (a request was made) — no components in
       // lane 2 render off it yet; kept in the event stream for lane 3's

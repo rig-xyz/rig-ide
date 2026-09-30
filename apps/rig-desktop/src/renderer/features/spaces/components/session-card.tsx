@@ -727,7 +727,11 @@ export function SessionCard({
   const status = effectiveRunStatus(meta.status, card);
   const running = status === 'running';
   const now = useNow(running);
-  const elapsed = formatElapsed(elapsedMs(meta.startedAt, meta.endedAt, now));
+  // A finished run is its end minus its start. Without an end time (a header
+  // read while it ran, until the Room re-reads it) it shows no duration rather
+  // than one measured against the clock, which grew for as long as it stayed on screen.
+  const finished = status === 'done' || status === 'failed' || status === 'stopped';
+  const elapsed = finished && !meta.endedAt ? '' : formatElapsed(elapsedMs(meta.startedAt, meta.endedAt, now));
   const model = card.model ?? (meta.model && meta.model !== 'unknown' ? meta.model : null);
   const agentName = AGENT_NAME[meta.agent];
   const ownerName = owner?.name ?? meta.owner;

@@ -271,6 +271,28 @@ describe('opening from what was saved', () => {
     source.dispose();
   });
 
+  it('a finished run saved before its end time was known re-reads its header (alone) on open', async () => {
+    // Saved by a Room that saw it start: header "running", no end time; its log ended.
+    const blob = await savedRoom([session(1, 'r1')], { r1: { run: run('r1', 'running'), events: doneLog('r1') } });
+    expect(blob.runs.r1).toMatchObject({ meta: { status: 'running', endedAt: null }, summary: { status: 'done' } });
+
+    const { relay, calls } = relayWith([session(1, 'r1')], {
+      r1: { run: { ...run('r1'), startedAt: '2026-09-28T09:00:00Z', endedAt: '2026-09-28T09:00:13Z' }, events: doneLog('r1') },
+    });
+    const afters: number[] = [];
+    const source = open(
+      { ...relay, getSessionEvents: (b, id, after) => (afters.push(after ?? 0), relay.getSessionEvents(b, id, after)) },
+      { initial: blob, runEndRefreshMs: 0 }
+    );
+    source.play();
+    await flush();
+    expect(source.getSnapshot().sessionMetaByRun.r1).toMatchObject({ status: 'done', endedAt: '2026-09-28T09:00:13Z' });
+    expect(calls.filter((c) => c === 'events:r1')).toHaveLength(1);
+    expect(afters[0]).toBeGreaterThan(1_000_000); // the header, not the log
+    expect(source.getSnapshot().sessionSummaryByRun?.r1).toBeDefined(); // still the summary
+    source.dispose();
+  });
+
   it('a new message naming a new run fetches that run too', async () => {
     const { blob, log, runs } = await saved();
     log.push(session(4, 'fresh'));

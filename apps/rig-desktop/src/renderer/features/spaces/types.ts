@@ -282,6 +282,8 @@ export type RoomEvent =
   | { type: 'session_started'; runId: string; meta: SessionRunMeta }
   /** A run's header and its whole log at once (`session_started` plus every event, in one step) — how a fetched log lands. */
   | { type: 'session_log_loaded'; runId: string; meta: SessionRunMeta; events: SessionEvent[] }
+  /** A run's header, re-read once it finished (its end time; a run's status change is never broadcast). */
+  | { type: 'session_meta_updated'; runId: string; meta: Pick<SessionRunMeta, 'status' | 'endedAt'> }
   | { type: 'typing_started'; personId: PersonId }
   | { type: 'typing_stopped'; personId: PersonId }
   /** Who has the Room open right now; everyone else is away. */

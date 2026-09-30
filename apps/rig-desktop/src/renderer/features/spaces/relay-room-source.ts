@@ -226,6 +226,8 @@ export type RelayRoomSourceOptions = {
   pollIntervalMs?: number;
   /** How long the first connection gets before the Room stops waiting on it and starts polling. */
   connectGraceMs?: number;
+  /** How long after a run is seen finishing its header is re-read for its end time — see `RUN_END_REFRESH_MS`. */
+  runEndRefreshMs?: number;
   /** Failures at `warn` (the default); per-stage open and catch-up timings at `info`. Never message bodies or credentials. */
   log?: (message: string, extra?: Record<string, unknown>, level?: 'info' | 'warn') => void;
   /**
@@ -255,6 +257,16 @@ const TICKET_REFRESH_MARGIN_MS = 60_000;
 const POLL_INTERVAL_MS = 4_000;
 /** How long the first connection gets before polling starts anyway (a failed upgrade may never say so). */
 const CONNECT_GRACE_MS = 5_000;
+/**
+ * A run's status change isn't broadcast to the Room: a run it saw start keeps
+ * the header it read then (running, no end time) after its log says it
+ * ended. It's re-read this long after that (the relay stamps the end just
+ * after the run's last event lands), up to `RUN_END_REFRESH_TRIES` times.
+ */
+const RUN_END_REFRESH_MS = 1_500;
+const RUN_END_REFRESH_TRIES = 3;
+/** `?after=` past any real seq: a run's header alone, none of its events. */
+const HEADER_ONLY_AFTER = 2_147_483_647;
 /** The roster is re-read every Nth poll: joins already arrive as `member_joined` messages; this catches the rest. */
 const MEMBER_POLL_EVERY = 5;
 
@@ -335,7 +347,7 @@ export class RelayRoomSource implements RoomSource {
   private readonly opts: Required<
     Omit<
       RelayRoomSourceOptions,
-      'createProvider' | 'log' | 'connections' | 'localRuns' | 'pollIntervalMs' | 'connectGraceMs' | 'initial' | 'diskCache' | 'onGone'
+      'createProvider' | 'log' | 'connections' | 'localRuns' | 'pollIntervalMs' | 'connectGraceMs' | 'runEndRefreshMs' | 'initial' | 'diskCache' | 'onGone'
     >
   >;
   private readonly diskCache: RelayRoomSourceOptions['diskCache'];
@@ -396,6 +408,11 @@ export class RelayRoomSource implements RoomSource {
   private runNotifyEvent: RoomEvent | null = null;
   private runsSinceNotify = 0;
   private runNotifyTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Finished runs whose header has no end time yet, due a re-read, and how many re-reads each has had — see `RUN_END_REFRESH_MS`. */
+  private readonly runEndDue = new Set<string>();
+  private readonly runEndTries = new Map<string, number>();
+  private runEndTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly runEndRefreshMs: number;
   /** Relay calls made so far — only for the timing lines. */
   private requests = 0;
   private readonly createdAtMs = Date.now();
@@ -421,6 +438,7 @@ export class RelayRoomSource implements RoomSource {
     };
     this.pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
     this.connectGraceMs = options.connectGraceMs ?? CONNECT_GRACE_MS;
+    this.runEndRefreshMs = options.runEndRefreshMs ?? RUN_END_REFRESH_MS;
     this.connections = options.connections;
     this.localRuns = options.localRuns;
     this.makeProvider = options.createProvider ?? createHocuspocusProvider;
@@ -450,6 +468,7 @@ export class RelayRoomSource implements RoomSource {
   private restoreFrom(blob: CachedRoomBlob): void {
     const sessionMetaByRun: RoomSnapshot['sessionMetaByRun'] = {};
     const sessionSummaryByRun: NonNullable<RoomSnapshot['sessionSummaryByRun']> = {};
+    const staleEnds: string[] = [];
     let agents = this.snapshot.agents;
     for (const [runId, run] of Object.entries(blob.runs)) {
       if (run.live || !run.summary) {
@@ -458,6 +477,8 @@ export class RelayRoomSource implements RoomSource {
       }
       sessionMetaByRun[runId] = run.meta;
       sessionSummaryByRun[runId] = run.summary;
+      // Saved before its end time was known: re-read it.
+      if (isFinished(run.summary.status)) staleEnds.push(runId);
       if (!agents.some((a) => a.agent === run.meta.agent && a.owner === run.meta.owner)) {
         agents = [...agents, { agent: run.meta.agent, owner: run.meta.owner, model: run.meta.model, busy: false }];
       }
@@ -477,6 +498,7 @@ export class RelayRoomSource implements RoomSource {
       sessionSummaryByRun,
       ...(this.runsLoading.size > 0 ? { runsLoading: this.loadingRecord() } : {}),
     };
+    for (const runId of staleEnds) this.noteRunEnd(runId);
   }
 
   private loadingRecord(): Record<string, true> {
@@ -575,6 +597,9 @@ export class RelayRoomSource implements RoomSource {
     this.pendingRuns.clear();
     if (this.runNotifyTimer) clearTimeout(this.runNotifyTimer);
     this.runNotifyTimer = null;
+    if (this.runEndTimer) clearTimeout(this.runEndTimer);
+    this.runEndTimer = null;
+    this.runEndDue.clear();
     if (this.diskTimer) clearTimeout(this.diskTimer);
     this.diskTimer = null;
     this.diskQueued = null;
@@ -1690,6 +1715,40 @@ export class RelayRoomSource implements RoomSource {
   private reduceLocal(event: RoomEvent): void {
     if (this.disposed) return;
     this.snapshot = reduceRoom(this.snapshot, event);
+    // Every way a run's log lands (bootstrap, catch-up, the owner's own copy) passes here.
+    if (event.type === 'session_event_appended' && event.event.kind === 'turn_ended') this.noteRunEnd(event.runId);
+    if (event.type === 'session_log_loaded' && event.events.some((e) => e.kind === 'turn_ended')) this.noteRunEnd(event.runId);
+  }
+
+  // ── a finished run's end time ─────────────────────────────────────────
+
+  /** A run whose log ended while its header (read as it ran) has no end time: queued for a re-read — see `RUN_END_REFRESH_MS`. */
+  private noteRunEnd(runId: string): void {
+    const meta = this.snapshot.sessionMetaByRun[runId];
+    if (this.disposed || !meta || meta.endedAt || isFinished(meta.status)) return;
+    if ((this.runEndTries.get(runId) ?? 0) >= RUN_END_REFRESH_TRIES) return;
+    this.runEndDue.add(runId);
+    this.runEndTimer ??= setTimeout(() => {
+      this.runEndTimer = null;
+      void this.refreshRunEnds();
+    }, this.runEndRefreshMs);
+  }
+
+  /** Re-reads the due runs' headers (header only, no events); one still without an end time goes back in the queue while it has tries left. */
+  private async refreshRunEnds(): Promise<void> {
+    const due = [...this.runEndDue];
+    this.runEndDue.clear();
+    await this.eachBounded(due, async (runId) => {
+      this.runEndTries.set(runId, (this.runEndTries.get(runId) ?? 0) + 1);
+      const result = await this.opts.relay.getSessionEvents(this.opts.bindingId, runId, HEADER_ONLY_AFTER);
+      if (this.disposed) return;
+      const header = result.success ? result.data.run : null;
+      if (header?.endedAt && this.snapshot.sessionMetaByRun[runId]) {
+        this.applyLocal({ type: 'session_meta_updated', runId, meta: { status: header.status, endedAt: header.endedAt } });
+        return;
+      }
+      this.noteRunEnd(runId);
+    });
   }
 
   private notifyListeners(event: RoomEvent): void {
@@ -1825,6 +1884,10 @@ export class RelayRoomSource implements RoomSource {
       this.loadingLogs.delete(runId);
     }
   }
+}
+
+function isFinished(status: string): boolean {
+  return status === 'done' || status === 'failed' || status === 'stopped';
 }
 
 /** The run a `kind:'session'` message names, or `null` for any other message. */
