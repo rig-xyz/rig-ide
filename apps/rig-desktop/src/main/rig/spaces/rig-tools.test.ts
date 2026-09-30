@@ -127,6 +127,10 @@ function fakeBackend(over: Partial<RigToolsBackend> = {}): RigToolsBackend {
     addSpaceConnector: vi.fn(async () => ok(undefined)),
     removeSpaceConnector: vi.fn(async () => ok(undefined)),
     takeOwnerApproval: vi.fn(() => false),
+    react: vi.fn(async (_bindingId, _messageId, emoji) =>
+      ok([{ emoji, count: 2, reactors: [{ userId: 'c2', agent: null }, { userId: 'c1', agent: 'claude' as const }] }])
+    ),
+    currentRunId: vi.fn(async () => 'run-1'),
     ...over,
   };
 }
@@ -182,13 +186,14 @@ async function call(backend: RigToolsBackend, name: string, input: Record<string
 }
 
 describe('rig tools', () => {
-  it('are the nine tools, each saying when to use it', () => {
+  it('are the ten tools, each saying when to use it', () => {
     const tools = createRigTools(fakeBackend());
     expect(tools.map((t) => t.name)).toEqual([
       'rig_invite',
       'rig_people',
       'rig_recent_changes',
       'rig_chat_history',
+      'rig_react',
       'rig_file_comments',
       'rig_comment',
       'rig_rename_space',
@@ -208,14 +213,16 @@ describe('rig tools', () => {
   it('each say what they do up front, so a truncated listing still tells them apart', () => {
     const openings = createRigTools(fakeBackend()).map((t) => t.description.slice(0, 60));
     expect(new Set(openings).size).toBe(openings.length);
-    for (const opening of openings) expect(opening).toMatch(/^(Invite|List|Read|Add|Rename|Change) /);
+    for (const opening of openings) expect(opening).toMatch(/^(Invite|List|Read|Add|React|Rename|Change) /);
   });
 
-  it('pre-approve only tools that are read-only', () => {
+  it('pre-approve only tools that are read-only, and rig_react (an emoji, a few per turn)', () => {
     const tools = createRigTools(fakeBackend());
     for (const name of PRE_APPROVED_RIG_TOOLS) {
+      if (name === 'rig_react') continue;
       expect(tools.find((t) => t.name === name)?.annotations.readOnlyHint).toBe(true);
     }
+    expect([...PRE_APPROVED_RIG_TOOLS]).toContain('rig_react');
     expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_invite');
     expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_comment');
     expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_rename_space');
@@ -377,6 +384,25 @@ describe('rig_chat_history', () => {
     expect(long.length).toBeGreaterThan(600);
   });
 
+  it('shows each message\'s reactions as counts only, never who reacted', async () => {
+    const backend = fakeBackend({
+      listMessages: chatRelay([
+        msg(1, {
+          body: 'Ship Friday?',
+          reactions: [
+            { emoji: '👍', count: 4, reactors: [{ userId: 'c1', agent: null }] },
+            { emoji: '🎉', count: 2, reactors: [{ userId: 'c2', agent: 'claude' }] },
+          ],
+        }),
+        msg(2, { body: 'No reactions here' }),
+      ]),
+    });
+    const result = await call(backend, 'rig_chat_history');
+    expect(result.text).toContain('#1 · 2026-09-25T10:00:00Z · Sam · message\nShip Friday?\n[reactions: 👍 4 🎉 2]');
+    expect(result.text).toContain('#2 · 2026-09-25T10:00:00Z · Sam · message\nNo reactions here\n\n');
+    expect(result.text).not.toContain('Dylan');
+  });
+
   it('pages back with before_seq, and says where to go next', async () => {
     const history = Array.from({ length: 40 }, (_, i) => msg((i + 1) * 7));
     const backend = fakeBackend({ listMessages: chatRelay(history) });
@@ -464,6 +490,73 @@ describe('rig_chat_history', () => {
     expect(backend.listMessages).toHaveBeenCalledWith('b2', { latest: 30 });
     expect(backend.listMessages).not.toHaveBeenCalledWith('b1', expect.anything());
     expect(result).toEqual({ text: "Couldn't load the space's chat: You are offline.", isError: true });
+  });
+});
+
+describe('rig_react', () => {
+  it('reacts as the session\'s agent to a message by #seq or id, and answers with counts only', async () => {
+    const backend = fakeBackend({ listMessages: chatRelay([msg(40), msg(42)]) });
+    const bySeq = await call(backend, 'rig_react', { messageId: '#42', emoji: '✅' });
+    expect(backend.react).toHaveBeenCalledWith('b1', 'm42', '✅', 'claude');
+    expect(bySeq).toEqual({ text: "Reacted ✅. The message's reactions: ✅ 2." });
+    await call(backend, 'rig_react', { messageId: 'msg_abc123', emoji: '👍' });
+    expect(backend.react).toHaveBeenLastCalledWith('b1', 'msg_abc123', '👍', 'claude');
+    // The same emoji however it's spelled.
+    await call(backend, 'rig_react', { messageId: '40', emoji: '👍\uFE0F' });
+    expect(backend.react).toHaveBeenLastCalledWith('b1', 'm40', '👍', 'claude');
+  });
+
+  it('refuses text, shortcodes, a missing message, and passes on a relay refusal', async () => {
+    const backend = fakeBackend({ listMessages: chatRelay([msg(40)]) });
+    expect((await call(backend, 'rig_react', { messageId: '#40', emoji: ':tada:' })).isError).toBe(true);
+    expect((await call(backend, 'rig_react', { messageId: '#40', emoji: 'ok' })).isError).toBe(true);
+    const missing = await call(backend, 'rig_react', { messageId: '#41', emoji: '👍' });
+    expect(missing).toEqual({ text: "There's no message #41 in this space's chat.", isError: true });
+    expect(backend.react).not.toHaveBeenCalled();
+    const refused = fakeBackend({ react: vi.fn(async () => err({ message: 'Could not add the reaction (relay: not_found).' })) });
+    expect(await call(refused, 'rig_react', { messageId: 'msg_x', emoji: '👍' })).toEqual({
+      text: "Couldn't react: Could not add the reaction (relay: not_found).",
+      isError: true,
+    });
+  });
+
+  it('allows at most 10 reactions per run, then says so; a new run starts over', async () => {
+    let run = 'run-1';
+    const backend = fakeBackend({ currentRunId: vi.fn(async () => run) });
+    const react = tool(backend, 'rig_react');
+    const results = [];
+    for (let i = 0; i < 11; i++) results.push(await runRigTool(backend, react, SCOPE, { messageId: 'msg_a', emoji: '👍' }));
+    expect(results.slice(0, 10).every((r) => !r.isError)).toBe(true);
+    expect(results[10]).toEqual({
+      text: "You've already reacted 10 times this turn, the most one turn can. Say the rest in your reply instead.",
+      isError: true,
+    });
+    expect(backend.react).toHaveBeenCalledTimes(10);
+    // Another session (another agent) has its own count.
+    expect((await runRigTool(backend, react, { ...SCOPE, agent: 'codex' }, { messageId: 'msg_a', emoji: '👍' })).isError).toBeUndefined();
+    run = 'run-2';
+    expect((await runRigTool(backend, react, SCOPE, { messageId: 'msg_a', emoji: '👍' })).isError).toBeUndefined();
+  });
+
+  it('a failed reaction does not count toward the cap', async () => {
+    const backend = fakeBackend({ react: vi.fn(async () => err({ message: 'offline' })) });
+    const react = tool(backend, 'rig_react');
+    for (let i = 0; i < 12; i++) await runRigTool(backend, react, SCOPE, { messageId: 'msg_a', emoji: '👍' });
+    expect(backend.react).toHaveBeenCalledTimes(12);
+  });
+
+  it('is answered without asking the owner, like the read-only tools', () => {
+    const request = (title: string) =>
+      ({
+        toolCall: { toolCallId: 't1', title },
+        options: [
+          { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'always', name: 'Always', kind: 'allow_always' },
+          { optionId: 'no', name: 'Reject', kind: 'reject_once' },
+        ],
+      }) as unknown as AcpPermissionRequest;
+    expect(preApprovedRigToolOption(request('mcp__rig__rig_react'))).toBe('allow');
+    expect(preApprovedRigToolOption(request('mcp.rig.rig_react'))).toBe('allow');
   });
 });
 

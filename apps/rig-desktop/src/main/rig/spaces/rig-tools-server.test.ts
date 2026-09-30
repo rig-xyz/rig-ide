@@ -35,6 +35,8 @@ function fakeBackend(): RigToolsBackend {
     addSpaceConnector: vi.fn(),
     removeSpaceConnector: vi.fn(),
     takeOwnerApproval: () => false,
+    react: vi.fn(),
+    currentRunId: async () => null,
   };
 }
 
@@ -146,6 +148,7 @@ describe('rig tools server', () => {
       'rig_people',
       'rig_recent_changes',
       'rig_chat_history',
+      'rig_react',
       'rig_file_comments',
       'rig_comment',
       'rig_rename_space',

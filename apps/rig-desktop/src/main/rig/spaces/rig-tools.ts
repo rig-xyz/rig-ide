@@ -4,6 +4,7 @@ import { err, ok, type Result } from '@emdash/shared';
 import { z } from 'zod';
 import { CONNECTORS, connectorById, isConnectorId, RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
 import { ROOM_SEES_LEVELS, type RoomSees } from '@shared/spaces/room-sees';
+import { canonicalEmoji, MAX_REACTIONS_PER_RUN, reactionCounts, type MessageReaction } from '@shared/spaces/reactions';
 import { filterToContentOnly } from '@shared/rig/file-navigator-categories';
 import type { RigCommentAnchor, RigCommentMessage } from '@shared/rig/comments';
 import type { RigFileNode } from '@shared/rig/files';
@@ -44,8 +45,10 @@ export type RigToolScope = {
 
 /**
  * Rig's own tools a room agent runs without asking its owner: the read-only
- * ones (who's here, what changed lately, a file's comments, the chat).
- * `rig_invite` and `rig_comment` act on the space, so they still ask.
+ * ones (who's here, what changed lately, a file's comments, the chat), and
+ * `rig_react`, which only puts an emoji on a message (a few per turn, never a
+ * message, never asks anyone). `rig_invite` and `rig_comment` act on the
+ * space, so they still ask.
  */
 export const PRE_APPROVED_RIG_TOOLS: ReadonlySet<string> = new Set([
   'rig_people',
@@ -53,6 +56,7 @@ export const PRE_APPROVED_RIG_TOOLS: ReadonlySet<string> = new Set([
   'rig_file_comments',
   'rig_chat_history',
   'rig_settings',
+  'rig_react',
 ]);
 
 /**
@@ -181,6 +185,10 @@ export interface RigToolsBackend {
   removeSpaceConnector(bindingId: string, connectorId: string): Promise<Result<void, Failure>>;
   /** Takes the owner's fresh approval of this session's always-ask call (`ownerApprovals`): true once, when they just allowed it. */
   takeOwnerApproval(scope: RigToolScope): boolean;
+  /** Puts an emoji on a message as the session's agent (the owner's own agent, "Maya's Claude"); answers with the message's reactions. */
+  react(bindingId: string, messageId: string, emoji: string, agent: SessionAgent): Promise<Result<MessageReaction[], Failure>>;
+  /** The run the session is on right now (per-turn limits); null when unknown. */
+  currentRunId(scope: RigToolScope): Promise<string | null>;
 }
 
 export type RigToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: 'image/png' };
@@ -406,7 +414,28 @@ function chatHaystack(row: RoomMessageRow): string {
   return [row.body, row.path ?? meta.path, row.quote ?? meta.quote].filter((s) => typeof s === 'string').join('\n').toLowerCase();
 }
 
+/**
+ * A message the agent names: its #seq (as rig_chat_history shows it) or its
+ * id. Seqs are shared by every space, so a seq is looked up in this space's
+ * own chat.
+ */
+async function messageIdFor(backend: RigToolsBackend, bindingId: string, value: unknown): Promise<Result<string, string>> {
+  const raw = String(value ?? '').trim();
+  const bySeq = /^#?(\d+)$/.exec(raw);
+  if (bySeq) {
+    const seq = Number(bySeq[1]);
+    const page = await backend.listMessages(bindingId, { after: String(seq - 1), limit: 1 });
+    if (!page.success) return err(`Couldn't find message #${seq}: ${page.error.message}`);
+    const row = page.data[0];
+    return row && row.seq === seq ? ok(row.id) : err(`There's no message #${seq} in this space's chat.`);
+  }
+  if (/^msg_[A-Za-z0-9]+$/.test(raw)) return ok(raw);
+  return err(`"${raw}" isn't a message: give its #seq (from rig_chat_history) or its id.`);
+}
+
 export function createRigTools(backend: RigToolsBackend, now: () => number = Date.now): RigTool[] {
+  /** Reactions each session has added on its current run (`MAX_REACTIONS_PER_RUN`). */
+  const reactionsByScope = new Map<string, { runId: string | null; count: number }>();
   return [
     {
       name: 'rig_invite',
@@ -502,7 +531,7 @@ export function createRigTools(backend: RigToolsBackend, now: () => number = Dat
     {
       name: 'rig_chat_history',
       description:
-        "Read this space's chat history in full: messages from people and agents (with each agent's reply), file comments and joins, oldest first, each with its #seq, time, author and kind. " +
+        "Read this space's chat history in full: messages from people and agents (with each agent's reply), file comments and joins, oldest first, each with its #seq, time, author and kind, and its reactions as counts. " +
         'Use it whenever you need chat older than the recent messages in your context, a message in full, or to find what someone said, instead of `rig chat`. ' +
         `tail is how many messages (default ${CHAT_TAIL_DEFAULT}, max ${CHAT_TAIL_MAX}); before_seq pages back (pass the oldest #seq you have). ` +
         `query keeps only messages whose text, file or quoted passage contains it (any case; agents' replies aren't searched), within the ${RELAY_PAGE} messages before before_seq.`,
@@ -536,6 +565,12 @@ export function createRigTools(backend: RigToolsBackend, now: () => number = Dat
         const selected = matches.slice(-tail);
 
         const entry = async (row: RoomMessageRow): Promise<string | null> => {
+          const text = await entryText(row);
+          // Counts only, never who: a reaction can't carry anyone's words here.
+          const counts = reactionCounts(row.reactions);
+          return text !== null && counts ? `${text}\n[reactions: ${counts}]` : text;
+        };
+        const entryText = async (row: RoomMessageRow): Promise<string | null> => {
           const meta = row.meta ?? {};
           const person = names.get(row.author.userId ?? '') ?? row.author.name ?? 'someone';
           const by = row.author.kind === 'agent' ? `${person}'s ${agentName(meta.agent)}` : person;
@@ -611,6 +646,50 @@ export function createRigTools(backend: RigToolsBackend, now: () => number = Dat
           lines.push('', "That's the start of the chat.");
         }
         return { text: lines.join('\n') };
+      },
+    },
+    {
+      name: 'rig_react',
+      description:
+        "React to a message in this space's chat with one emoji, as yourself (it shows as your owner's agent). " +
+        'Use it whenever a reaction says enough: to acknowledge a message (👍, 👀), vote or pick when asked, or mark a request done (✅), instead of posting words. ' +
+        `A reaction never asks an agent and is not your reply: your final message still answers. Up to ${MAX_REACTIONS_PER_RUN} per turn. ` +
+        "messageId is the message's #seq (from rig_chat_history) or its id; emoji is the emoji itself (👍), not its name.",
+      inputSchema: {
+        messageId: z.string().describe('The message: its #seq (e.g. "#42") or its id.'),
+        emoji: z.string().describe('One emoji, e.g. 👍 ✅ 👀 🎉.'),
+      },
+      annotations: { title: 'React to a message', readOnlyHint: false, destructiveHint: false },
+      run: async (scope, input) => {
+        const emoji = canonicalEmoji(String(input.emoji ?? ''));
+        if (!emoji) return failed(`"${String(input.emoji ?? '')}" isn't a single emoji. Give the emoji itself, like 👍.`);
+        const key = rigToolScopeKey(scope);
+        const runId = await backend.currentRunId(scope).catch(() => null);
+        const used = reactionsByScope.get(key);
+        const tally = used && used.runId === runId ? used : { runId, count: 0 };
+        if (tally.count >= MAX_REACTIONS_PER_RUN) {
+          return failed(
+            `You've already reacted ${MAX_REACTIONS_PER_RUN} times this turn, the most one turn can. Say the rest in your reply instead.`
+          );
+        }
+        // Counted before the call, so reactions made at once can't overshoot; a failed one is given back.
+        tally.count += 1;
+        reactionsByScope.set(key, tally);
+        const giveBack = () => {
+          tally.count -= 1;
+        };
+        const messageId = await messageIdFor(backend, scope.bindingId, input.messageId);
+        if (!messageId.success) {
+          giveBack();
+          return failed(messageId.error);
+        }
+        const reacted = await backend.react(scope.bindingId, messageId.data, emoji, scope.agent);
+        if (!reacted.success) {
+          giveBack();
+          return failed(`Couldn't react: ${reacted.error.message}`);
+        }
+        const counts = reactionCounts(reacted.data);
+        return { text: `Reacted ${emoji}.${counts ? ` The message's reactions: ${counts}.` : ''}` };
       },
     },
     {

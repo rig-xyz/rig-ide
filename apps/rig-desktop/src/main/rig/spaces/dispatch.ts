@@ -11,6 +11,7 @@ import { ReplicaLog, ReplicaState } from '@emdash/wire';
 import type { AcpRuntimeClient } from '@main/core/acp/controller';
 import { log } from '@main/lib/logger';
 import { connectorById, RIG_TOOLS_SERVER, RUN_CONNECTORS_EVENT, type ConnectorGap } from '@shared/spaces/connectors';
+import { reactionCounts } from '@shared/spaces/reactions';
 import { RUN_PRIVACY_EVENT, type LocalRunEvent, type RoomSees } from '@shared/spaces/room-sees';
 import type { SessionConnectors } from '../connectors/connections';
 import { ALWAYS_ASK_RIG_TOOLS, ownerApprovals, preApprovedRigToolOption, rigToolOf, type RigToolScope } from './rig-tools';
@@ -297,7 +298,7 @@ const ROOM_SEES_CONTEXT: Record<RoomSees, string> = {
 };
 
 export function spacesHiddenContext(
-  request: Pick<AgentRequest, 'bindingId'>,
+  request: Pick<AgentRequest, 'bindingId'> & { sourceMessageId?: string | null },
   roomLines: readonly string[] = [],
   rigTools = false,
   roomSees: RoomSees = 'everything'
@@ -325,8 +326,10 @@ export function spacesHiddenContext(
   ];
   if (rigTools) {
     lines.push(
-      "You also have rig's own tools for this space (rig_invite, rig_people, rig_recent_changes, rig_chat_history, rig_file_comments, rig_comment, rig_rename_space, rig_settings, rig_update_settings): use them instead of the `rig` CLI (including `rig share` and `rig chat`) to invite people, see who's here, see what changed, read the chat, read or add file comments, rename the space, and read or change your own settings here; fall back to the CLI only if a tool fails. " +
-        "The recent room conversation you're given is only the latest messages, with long ones cut: for older messages, a message in full, or to find what someone said, use rig_chat_history.",
+      "You also have rig's own tools for this space (rig_invite, rig_people, rig_recent_changes, rig_chat_history, rig_file_comments, rig_comment, rig_react, rig_rename_space, rig_settings, rig_update_settings): use them instead of the `rig` CLI (including `rig share` and `rig chat`) to invite people, see who's here, see what changed, read the chat, read or add file comments, react to a message, rename the space, and read or change your own settings here; fall back to the CLI only if a tool fails. " +
+        "The recent room conversation you're given is only the latest messages, with long ones cut: for older messages, a message in full, or to find what someone said, use rig_chat_history. " +
+        'Use rig_react to acknowledge a message (👍, 👀), vote or pick when asked, or mark a request done (✅) instead of posting words; a reaction never asks an agent and is not your reply (your final message still answers), up to 10 per turn, and reactions show as counts after room messages (e.g. "👍 4 🎉 2").' +
+        (request.sourceMessageId ? ` The message that asked you is ${request.sourceMessageId}.` : ''),
       'To look at a web page posted or pinned in the room (a Claude artifact, a Google Doc, any link), use browser_pins, browser_read and browser_screenshot with its link: they open it as your owner, read-only, without moving anyone\'s view. Read a board in full or screenshot it rather than guessing at small text.'
     );
   }
@@ -378,7 +381,9 @@ export function finalAnswerFromEvents(events: readonly { kind: string; payload: 
  * The recent room conversation as "name: text" lines for the agent's
  * context: human messages, and for earlier agent runs the prompt plus the
  * agent's final answer (which lives in the run's log, not in a room
- * message). Best-effort: any relay failure just yields fewer lines.
+ * message). A message's reactions follow it as counts only ("(reactions:
+ * 👍 4 🎉 2)"), never who reacted. Best-effort: any relay failure just
+ * yields fewer lines.
  */
 export async function roomContextLines(
   api: SpacesRelayApi,
@@ -406,16 +411,19 @@ export async function roomContextLines(
     if (row.id === request.sourceMessageId) continue;
     const who = names.get(row.author.userId ?? '') ?? row.author.name ?? 'someone';
     const runId = row.kind === 'session' && typeof row.meta?.runId === 'string' ? row.meta.runId : null;
+    const counts = reactionCounts(row.reactions);
+    const reacted = counts ? ` (reactions: ${counts})` : '';
     if (row.path) {
       const on = row.quote ? ` on “${clip(row.quote, 160)}”` : '';
-      lines.push(`${who} ${row.parentId ? 'replied to a comment' : 'commented'} in ${row.path}${on}: ${clip(row.body)}`);
+      lines.push(`${who} ${row.parentId ? 'replied to a comment' : 'commented'} in ${row.path}${on}: ${clip(row.body)}${reacted}`);
     } else if (row.kind === 'text') {
-      lines.push(`${who}: ${clip(row.body)}`);
+      lines.push(`${who}: ${clip(row.body)}${reacted}`);
     } else if (runId && runId !== currentRunId) {
-      lines.push(`${who} asked their agent: ${clip(row.body)}`);
       const events = await api.getSessionEvents(request.bindingId, runId);
       const answer = events.success ? finalAnswerFromEvents(events.data.events) : '';
-      if (answer) lines.push(`${who}'s agent replied: ${clip(answer)}`);
+      // A run's card shows its answer: reactions to it follow the answer (or the ask, with none).
+      lines.push(`${who} asked their agent: ${clip(row.body)}${answer ? '' : reacted}`);
+      if (answer) lines.push(`${who}'s agent replied: ${clip(answer)}${reacted}`);
     }
   }
 
@@ -553,6 +561,8 @@ export function createSpacesDispatcher(deps: {
   }) => Promise<Result<{ runId: string; done: Promise<{ status: SessionStatus; answer: string }> }, string>>;
   /** Answers a held permission request on one of this device's runs. Returns false if this device holds no such request for that run, or the option isn't one it offered. */
   resolvePermission: (runId: string, requestId: string, optionId: string) => Promise<boolean>;
+  /** The run the owner's session with this agent is on right now (or about to start), for per-turn limits on rig tools; null when idle. */
+  currentRunId: (bindingId: string, ownerUserId: string, agent: SessionAgent) => string | null;
 } {
   const sessions = new Map<PersistentKey, PersistentSession>();
   /** Runs this process has started and not yet finalized: the only ones truly running here. */
@@ -1309,6 +1319,11 @@ export function createSpacesDispatcher(deps: {
     }
   }
 
+  function currentRunId(bindingId: string, ownerUserId: string, agent: SessionAgent): string | null {
+    const session = sessions.get(keyFor(bindingId, ownerUserId, agent));
+    return session?.current?.runId ?? session?.pending[0]?.runId ?? null;
+  }
+
   return {
     dispatch,
     runLocal,
@@ -1318,6 +1333,7 @@ export function createSpacesDispatcher(deps: {
     settleIfNotLive,
     agentConfig,
     setAgentConfig,
+    currentRunId,
   };
 }
 

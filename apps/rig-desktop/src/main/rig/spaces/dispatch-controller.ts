@@ -80,6 +80,11 @@ export class SpacesDispatchController {
   }
 
   /** Your agent's settings in a space (model, effort, permission mode). */
+  /** The run the owner's session with this agent is on now (or about to start); null when idle or not running here. */
+  currentRunId(bindingId: string, ownerUserId: string, agent: 'claude' | 'codex'): string | null {
+    return this.dispatcher?.currentRunId(bindingId, ownerUserId, agent) ?? null;
+  }
+
   async agentConfig(
     bindingId: string,
     ownerUserId: string,

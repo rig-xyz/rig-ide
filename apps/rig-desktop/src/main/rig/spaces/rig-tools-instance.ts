@@ -129,6 +129,16 @@ const backend: RigToolsBackend = {
     return api.removeConnector(bindingId, connectorId);
   },
   takeOwnerApproval: (scope) => ownerApprovals.take(rigToolScopeKey(scope)),
+  // As the session's agent: the relay stores it under the owner, labelled with the agent.
+  react: async (bindingId, messageId, emoji, agent) => {
+    if (!api.setReaction) return err({ message: "this relay can't take reactions" });
+    return api.setReaction(bindingId, messageId, { emoji, on: true, agent });
+  },
+  // Imported on use, like `agentConfig`: the dispatch controller imports this module.
+  currentRunId: async ({ bindingId, ownerUserId, agent }) => {
+    const { spacesDispatchController } = await import('./dispatch-controller-instance');
+    return spacesDispatchController.currentRunId(bindingId, ownerUserId, agent);
+  },
 };
 
 export const rigToolsServer = createRigToolsServer({ backend, extraTools: browserRigTools(api) });
