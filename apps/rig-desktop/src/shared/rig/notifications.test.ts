@@ -25,13 +25,13 @@ describe('decideBanner', () => {
     expect(decideBanner(row(), ctx())).toEqual({ show: true });
   });
 
-  it('follows the master switch and the type toggles', () => {
-    expect(decideBanner(row(), ctx({ prefs: { ...DEFAULT_NOTIFICATION_PREFS, enabled: false } }))).toMatchObject({
+  it("follows 'Show banners for': Nothing, or About me only", () => {
+    expect(decideBanner(row(), ctx({ prefs: { ...DEFAULT_NOTIFICATION_PREFS, banners: 'nothing' } }))).toMatchObject({
       reason: 'disabled',
     });
-    const noMessages = { ...DEFAULT_NOTIFICATION_PREFS, types: { ...DEFAULT_NOTIFICATION_PREFS.types, message: false } };
-    expect(decideBanner(row(), ctx({ prefs: noMessages }))).toMatchObject({ reason: 'type' });
-    expect(decideBanner(row({ type: 'mention', tier: 'direct' }), ctx({ prefs: noMessages }))).toEqual({ show: true });
+    const aboutMe = { ...DEFAULT_NOTIFICATION_PREFS, banners: 'aboutMe' as const };
+    expect(decideBanner(row(), ctx({ prefs: aboutMe }))).toMatchObject({ reason: 'type' });
+    expect(decideBanner(row({ type: 'mention', tier: 'direct' }), ctx({ prefs: aboutMe }))).toEqual({ show: true });
     expect(decideBanner(row({ type: 'reaction', tier: 'direct' }), ctx())).toMatchObject({ reason: 'type' });
   });
 
@@ -72,8 +72,8 @@ describe('dockCount', () => {
     expect(
       dockCount({
         spaces: [
-          { bindingId: 'a', level: 'all', lastReadSeq: 0, spaceUnread: 40, directUnread: 2, directUnreadNoMessage: 1 },
-          { bindingId: 'b', level: 'nothing', lastReadSeq: 0, spaceUnread: 7, directUnread: 1, directUnreadNoMessage: 0 },
+          { bindingId: 'a', name: null, latestDirect: null, level: 'all', lastReadSeq: 0, spaceUnread: 40, directUnread: 2, directUnreadNoMessage: 1 },
+          { bindingId: 'b', name: null, latestDirect: null, level: 'nothing', lastReadSeq: 0, spaceUnread: 7, directUnread: 1, directUnreadNoMessage: 0 },
         ],
         invitesUnread: 1,
         directUnreadTotal: 4,
@@ -85,10 +85,12 @@ describe('dockCount', () => {
 describe('prefs and targets', () => {
   it('normalizes partial or broken prefs to the defaults', () => {
     expect(normalizeNotificationPrefs(undefined)).toEqual(DEFAULT_NOTIFICATION_PREFS);
-    const p = normalizeNotificationPrefs({ sound: false, types: { message: false, mention: 'yes' } });
-    expect(p.sound).toBe(false);
-    expect(p.types.message).toBe(false);
-    expect(p.types.mention).toBe(true);
+    const p = normalizeNotificationPrefs({ sound: false, banners: 'aboutMe' });
+    expect(p).toMatchObject({ sound: false, banners: 'aboutMe' });
+    // Prefs saved before the one choice migrate.
+    expect(normalizeNotificationPrefs({ enabled: false }).banners).toBe('nothing');
+    expect(normalizeNotificationPrefs({ enabled: true, types: { message: false, comment: false } }).banners).toBe('aboutMe');
+    expect(normalizeNotificationPrefs({ enabled: true, types: { message: false } }).banners).toBe('everything');
   });
 
   it('opens a space at the row, never for an invite', () => {
@@ -97,6 +99,7 @@ describe('prefs and targets', () => {
       spaceName: 'Launch',
       messageId: 'msg_1',
       messageSeq: 10,
+      preview: 'hello',
       runId: null,
       path: 'docs/a.md',
     });

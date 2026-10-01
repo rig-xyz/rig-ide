@@ -504,7 +504,7 @@ export function RoomView({
       if (!windowIsLooking()) return;
       void rpc.rig.notifications.setViewing({ bindingId }).catch(() => {});
       // What the transcript marked while the window was in the background
-      // (`writeLastSeen` holds it back from the relay until now).
+      // (`markReadThrough` holds it back from the relay until now).
       const seq = readLastSeen(bindingId);
       reportSpaceRead(bindingId, { ...(seq !== null ? { seq } : {}), seen: true }, true);
     };

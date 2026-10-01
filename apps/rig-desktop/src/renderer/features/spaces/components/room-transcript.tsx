@@ -6,7 +6,7 @@ import { cn } from '@renderer/lib/utils';
 import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
 import type { ConnectResult, GlobalServer } from '@shared/spaces/connectors';
 import { effectiveRunStatus, runCard } from '../projection';
-import { readLastSeen, writeLastSeen } from '../room-read-marker';
+import { markReadThrough, readLastSeen } from '../room-read-marker';
 import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
 import { type MapEntry, ConversationMap } from './conversation-map';
 import { AGENT_NAME } from './identity';
@@ -494,7 +494,7 @@ export function RoomTranscript({
   useEffect(() => {
     // Nor is anything marked read before then: the marker would skip what's new.
     if (!readKey || !pinned || stale || snapshot.messages.length === 0) return;
-    writeLastSeen(readKey, Math.max(...snapshot.messages.map((m) => m.seq)));
+    markReadThrough(readKey, Math.max(...snapshot.messages.map((m) => m.seq)));
   }, [readKey, pinned, snapshot.messages, stale]);
 
   // Split-resize perf round: `groupThreads` used to run twice a render —

@@ -23,7 +23,7 @@ function setup(opts: { rows?: RigNotification[]; cursor?: string | null; summary
   let pushEvent: ((e: SseEvent) => void) | null = null;
   let endStream: (() => void) | null = null;
   const summary: RigNotificationSummary = opts.summary ?? {
-    spaces: [{ bindingId: 'bnd_a', level: 'all', lastReadSeq: 0, spaceUnread: 3, directUnread: 1, directUnreadNoMessage: 1 }],
+    spaces: [{ bindingId: 'bnd_a', name: null, latestDirect: null, level: 'all', lastReadSeq: 0, spaceUnread: 3, directUnread: 1, directUnreadNoMessage: 1 }],
     invitesUnread: 0,
     directUnreadTotal: 1,
   };
@@ -128,7 +128,7 @@ describe('NotificationService', () => {
       cursor: '0',
       rows: [row({ id: '1', type: 'mention', tier: 'direct', createdAt: fresh() })],
       summary: {
-        spaces: [{ bindingId: 'bnd_a', level: 'nothing', lastReadSeq: 0, spaceUnread: 0, directUnread: 1, directUnreadNoMessage: 0 }],
+        spaces: [{ bindingId: 'bnd_a', name: null, latestDirect: null, level: 'nothing', lastReadSeq: 0, spaceUnread: 0, directUnread: 1, directUnreadNoMessage: 0 }],
         invitesUnread: 0,
         directUnreadTotal: 1,
       },
@@ -155,7 +155,7 @@ describe('NotificationService', () => {
     const rows = Array.from({ length: 230 }, (_, i) => row({ id: String(i + 1), createdAt: fresh() }));
     const t = setup({ cursor: '0', rows });
     current = t;
-    t.setPrefs({ ...DEFAULT_NOTIFICATION_PREFS, enabled: false });
+    t.setPrefs({ ...DEFAULT_NOTIFICATION_PREFS, banners: 'nothing' });
     t.service.start();
     await t.connected();
     expect(t.cursors.get('u_me')).toBe('230');

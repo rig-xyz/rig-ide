@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell } from 'lucide-react';
+import { Bell, BellOff } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { InviteRow } from '@renderer/features/shell/invites-bell';
 import { deriveBellState, emptyInvitesMessage, myInvitesQueryKey, shapeMyInvites } from '@renderer/features/shell/invites-inbox';
 import { events, rpc } from '@renderer/lib/ipc';
+import { Button } from '@renderer/lib/ui/button';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { Popover } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
@@ -16,7 +17,13 @@ import {
   type RigNotification,
 } from '@shared/rig/notifications';
 import type { RigMyInvite } from '@shared/rig/rig-share';
-import { NOTIFICATION_ACTIVITY_KEY, NOTIFICATION_SUMMARY_KEY, useNotificationSummary } from './use-notifications';
+import {
+  NOTIFICATION_ACTIVITY_KEY,
+  NOTIFICATION_SUMMARY_KEY,
+  useNotificationPermission,
+  useNotificationSummary,
+  useRequestNotificationPermission,
+} from './use-notifications';
 
 /**
  * The topbar Activity bell — `invites-bell.tsx`'s replacement
@@ -30,8 +37,8 @@ import { NOTIFICATION_ACTIVITY_KEY, NOTIFICATION_SUMMARY_KEY, useNotificationSum
  * the same helpers the old invites bell polled with (`invites-inbox.ts`):
  * focus refetch plus a slow 5-minute interval, under an account-scoped key.
  *
- * The bell's count is pending invites plus `summary.directUnreadTotal`:
- * the same rows Home's space rows fold into their status line ("Hugo
+ * The bell's count is `summary.directUnreadTotal`, the Dock's number too,
+ * and the same rows Home's space rows fold into their status line ("Hugo
  * mentioned you"), so every surface agrees.
  */
 
@@ -93,12 +100,10 @@ export function ActivityBell({
   // Reuses `deriveBellState` for the signed-out carve-out only — its count
   // here is pending invites plus direct unread, not invites alone, so the
   // real total isn't hidden behind the invites fetch still being in flight.
-  // `directUnreadTotal` already counts unread invite rows; pending invites
-  // are counted from the invite list instead, so take those rows back out.
-  const bell = deriveBellState(
-    signedIn,
-    (invites?.length ?? 0) + summary.directUnreadTotal - summary.invitesUnread
-  );
+  // The Dock's number exactly (`dockCount`): unread rows about you, invite
+  // rows included. A pending invite you've already seen stays listed below,
+  // it just isn't counted again.
+  const bell = deriveBellState(signedIn, summary.directUnreadTotal);
   if (!bell.visible) return null;
 
   return (
@@ -146,6 +151,7 @@ export function ActivityBell({
             onOpenPath={onOpenPath}
             onClose={() => setOpen(false)}
           />
+          <PermissionCard hasActivity={(activity?.length ?? 0) > 0} />
           <ActivitySection
             activity={activity}
             error={activityQuery.isError || activityQuery.data?.success === false}
@@ -158,6 +164,75 @@ export function ActivityBell({
         </div>
       </Popover>
     </>
+  );
+}
+
+const ASK_DISMISSED_KEY = 'rig-notifications-ask-dismissed';
+
+function readDismissed(): boolean {
+  try {
+    return localStorage.getItem(ASK_DISMISSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * macOS's side, where it matters (spec §5, onboarding; Dylan 2026-10-01:
+ * ask when it first matters). Banners only show once macOS allows them,
+ * and Electron never asks on its own:
+ *   - never asked, and something about you has arrived: ask, in context,
+ *     once (Not now is remembered on this computer);
+ *   - turned off: say so, with rig's page in System Settings one click away.
+ * Allowed, or not a Mac: nothing.
+ */
+function PermissionCard({ hasActivity }: { hasActivity: boolean }) {
+  const permission = useNotificationPermission();
+  const request = useRequestNotificationPermission();
+  const [dismissed, setDismissed] = useState(readDismissed);
+
+  if (permission === 'denied') {
+    return (
+      <div className="border-border-hairline flex items-start gap-2 border-b px-3.5 py-2.5" data-testid="notification-permission-card">
+        <BellOff className="text-text-muted mt-0.5 size-3.5 shrink-0" strokeWidth={1.5} />
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <p className="text-text-primary text-xs">Banners are off for rig in macOS, so you won't hear about these.</p>
+          <Button
+            variant="outline"
+            size="xs"
+            className="self-start"
+            onClick={() => void rpc.rig.notifications.openSystemSettings()}
+          >
+            Open System Settings
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  if (permission !== 'notDetermined' || !hasActivity || dismissed) return null;
+  const notNow = () => {
+    setDismissed(true);
+    try {
+      localStorage.setItem(ASK_DISMISSED_KEY, '1');
+    } catch {
+      // not remembered: it asks again next time, which is fine
+    }
+  };
+  return (
+    <div className="border-border-hairline flex items-start gap-2 border-b px-3.5 py-2.5" data-testid="notification-permission-card">
+      <Bell className="text-accent mt-0.5 size-3.5 shrink-0" strokeWidth={1.5} />
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <p className="text-text-primary text-xs">Get a banner when someone needs you, even with rig in the background.</p>
+        <div className="flex items-center gap-1">
+          <Button size="xs" onClick={request}>
+            Turn on
+          </Button>
+          <Button variant="ghost" size="xs" onClick={notNow}>
+            Not now
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 

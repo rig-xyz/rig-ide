@@ -927,7 +927,11 @@ export function App() {
   // commented file) when there is one. Main holds a click that lands before
   // this listener is up (`consumePendingOpen`). A space not set up on this
   // computer has nowhere to open: Home lists it to set up.
-  const [roomJump, setRoomJump] = useState<{ bindingId: string; request: RoomJumpRequest } | null>(null);
+  const [roomJump, setRoomJump] = useState<{
+    bindingId: string;
+    request: RoomJumpRequest;
+    preview: string | null;
+  } | null>(null);
   const openSpaceAt = useCallback(
     async (target: OpenSpaceAt) => {
       const paths = await rpc.rig.recent.resolveLocalPaths({ bindingIds: [target.bindingId] }).catch(() => ({}));
@@ -961,6 +965,7 @@ export function App() {
       if (target.messageId || target.runId) {
         setRoomJump({
           bindingId: target.bindingId,
+          preview: target.preview ?? null,
           request: {
             messageId: target.messageId ?? null,
             messageSeq: target.messageSeq ?? null,
@@ -1015,7 +1020,12 @@ export function App() {
       onJumpMissed={() =>
         toast({
           title: 'That message is further back',
-          description: 'The space opened at its latest messages. Older ones aren\'t shown here yet.',
+          // Quote it: the Room can't scroll back that far yet, so the
+          // notification's own text is the way to read it from here.
+          description: roomJump?.preview
+            ? `“${roomJump.preview}” The space opened at its latest messages.`
+            : 'The space opened at its latest messages. Older ones aren\'t shown here yet.',
+          duration: 8000,
         })
       }
       setup={

@@ -408,6 +408,13 @@ describe('withNotifications', () => {
     expect(deriveSpaceStatusLine(undefined, shown, 0)).toBe('Hugo replied to you · 2 more for you');
   });
 
+  it('says how many more, without a cap at nine', () => {
+    const shown = withNotifications(idle, undefined, { level: 'all', directUnread: 12 }, { phrase: 'Hugo mentioned you' });
+    expect(deriveSpaceStatusLine(undefined, shown, 0)).toBe('Hugo mentioned you · 11 more for you');
+    const lots = withNotifications(idle, undefined, { level: 'all', directUnread: 400 }, { phrase: 'Hugo mentioned you' });
+    expect(deriveSpaceStatusLine(undefined, lots, 0)).toBe('Hugo mentioned you · 99+ more for you');
+  });
+
   it('never outranks a live or failed run', () => {
     const live = { kind: 'live', state: 'thinking' } as const;
     expect(withNotifications(live, undefined, { level: 'all', directUnread: 2 }, { phrase: 'x' })).toBe(live);

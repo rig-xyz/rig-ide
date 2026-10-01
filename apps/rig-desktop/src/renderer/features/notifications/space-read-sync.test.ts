@@ -57,11 +57,18 @@ describe('reportSpaceRead', () => {
     expect(markSpaceRead).toHaveBeenLastCalledWith({ bindingId: 'bnd_d', seq: 5 });
   });
 
-  it('gives up after a few failures', async () => {
-    markSpaceRead.mockResolvedValue({ success: false, error: { message: 'seq_out_of_range' } } as never);
+  it('keeps retrying through an outage, and drops a cursor the relay refuses', async () => {
+    markSpaceRead.mockResolvedValue({ success: false, error: { message: 'unreachable' } } as never);
     reportSpaceRead('bnd_e', { seq: 1 }, true);
     await vi.advanceTimersByTimeAsync(10 * 60_000);
-    expect(markSpaceRead).toHaveBeenCalledTimes(6);
+    expect(markSpaceRead.mock.calls.length).toBeGreaterThan(10);
+    markSpaceRead.mockReset().mockResolvedValue({ success: false, error: { message: 'seq_out_of_range', status: 400 } } as never);
+    reportSpaceRead('bnd_f', { seq: 999 }, true);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    const forF = (markSpaceRead.mock.calls as unknown as Array<[{ bindingId: string }]>).filter(
+      ([input]) => input.bindingId === 'bnd_f'
+    );
+    expect(forF).toHaveLength(1);
     markSpaceRead.mockReset().mockResolvedValue({ success: true, data: undefined });
   });
 });

@@ -54,8 +54,15 @@ export type RigNotification = {
   readAt: string | null;
 };
 
+/** Enough of a row to say it in a few words (`directPhrase`). */
+export type DirectGist = Pick<RigNotification, 'type' | 'actor'> & { title?: string };
+
 export type RigNotificationSpaceSummary = {
   bindingId: string;
+  /** The space's name, for lists that have only the summary ("Set differently"). */
+  name: string | null;
+  /** The newest unread row about you here, if any: what Home's row names. */
+  latestDirect: DirectGist | null;
   level: NotificationLevel;
   lastReadSeq: number;
   /** Room messages past the read cursor, not yours, capped at 100. */
@@ -79,55 +86,55 @@ export const EMPTY_NOTIFICATION_SUMMARY: RigNotificationSummary = {
   directUnreadTotal: 0,
 };
 
-/** The per-type switches in Settings › Notifications. Reactions aren't offered in v1. */
-export type NotificationToggle =
-  | 'mention'
-  | 'reply'
-  | 'agent_finished'
-  | 'agent_waiting'
-  | 'agent_request'
-  | 'message'
-  | 'comment'
-  | 'invite';
+/**
+ * Which rows may become a banner, Settings › Notifications' one choice
+ * (Dylan, 2026-10-01: one choice instead of a switch per type). The same
+ * three words as a space's level: `aboutMe` is the direct tier (mentions,
+ * replies, your agents, requests to them, invites).
+ */
+export type BannerScope = 'everything' | 'aboutMe' | 'nothing';
+export const BANNER_SCOPES: readonly BannerScope[] = ['everything', 'aboutMe', 'nothing'];
 
-export const NOTIFICATION_TOGGLES: readonly NotificationToggle[] = [
-  'mention',
-  'reply',
-  'agent_finished',
-  'agent_waiting',
-  'agent_request',
-  'message',
-  'comment',
-  'invite',
-];
+/** One vocabulary for the global choice and a space's level. */
+export const SCOPE_LABEL: Record<BannerScope, string> = {
+  everything: 'Everything',
+  aboutMe: 'About me',
+  nothing: 'Nothing',
+};
+
+/** A space's level in the same words (`mentions` is "About me"). */
+export function levelLabel(level: NotificationLevel): string {
+  return SCOPE_LABEL[level === 'all' ? 'everything' : level === 'mentions' ? 'aboutMe' : 'nothing'];
+}
 
 /** This computer's delivery preferences (rig settings; the space level lives on the relay). */
 export type NotificationPrefs = {
-  /** Master switch for desktop banners. */
-  enabled: boolean;
+  banners: BannerScope;
   /** No banners while a rig window is focused. */
   onlyWhenAway: boolean;
   sound: boolean;
   dockBadge: boolean;
-  types: Record<NotificationToggle, boolean>;
 };
 
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
-  enabled: true,
+  banners: 'everything',
   onlyWhenAway: true,
   sound: true,
   dockBadge: true,
-  types: {
-    mention: true,
-    reply: true,
-    agent_finished: true,
-    agent_waiting: true,
-    agent_request: true,
-    message: true,
-    comment: true,
-    invite: true,
-  },
 };
+
+/**
+ * macOS's answer for this app (System Settings › Notifications › Rig):
+ * 'notDetermined' means it was never asked, and banners may not show until
+ * it is. 'unsupported' off macOS.
+ */
+export type MacNotificationPermission =
+  | 'authorized'
+  | 'denied'
+  | 'notDetermined'
+  | 'provisional'
+  | 'unknown'
+  | 'unsupported';
 
 /** A row this old when it first reaches this computer is "missed": counted, never bannered. */
 export const STALE_BANNER_MS = 10 * 60 * 1000;
@@ -136,17 +143,20 @@ export const BUNDLE_WINDOW_MS = 30 * 1000;
 
 export function normalizeNotificationPrefs(raw: unknown): NotificationPrefs {
   const r = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
-  const types = typeof r.types === 'object' && r.types !== null ? (r.types as Record<string, unknown>) : {};
   const bool = (value: unknown, fallback: boolean) => (typeof value === 'boolean' ? value : fallback);
-  const out: NotificationPrefs = {
-    enabled: bool(r.enabled, DEFAULT_NOTIFICATION_PREFS.enabled),
+  return {
+    banners: BANNER_SCOPES.includes(r.banners as BannerScope) ? (r.banners as BannerScope) : legacyScope(r),
     onlyWhenAway: bool(r.onlyWhenAway, DEFAULT_NOTIFICATION_PREFS.onlyWhenAway),
     sound: bool(r.sound, DEFAULT_NOTIFICATION_PREFS.sound),
     dockBadge: bool(r.dockBadge, DEFAULT_NOTIFICATION_PREFS.dockBadge),
-    types: { ...DEFAULT_NOTIFICATION_PREFS.types },
   };
-  for (const key of NOTIFICATION_TOGGLES) out.types[key] = bool(types[key], DEFAULT_NOTIFICATION_PREFS.types[key]);
-  return out;
+}
+
+/** Prefs saved before the one choice: a master switch and a switch per type. */
+function legacyScope(r: Record<string, unknown>): BannerScope {
+  if (r.enabled === false) return 'nothing';
+  const types = typeof r.types === 'object' && r.types !== null ? (r.types as Record<string, unknown>) : {};
+  return types.message === false && types.comment === false ? 'aboutMe' : 'everything';
 }
 
 /**
@@ -180,9 +190,9 @@ export type BannerDecision =
 
 /** Whether a newly received row becomes a banner (spec §5, presenter). */
 export function decideBanner(n: RigNotification, ctx: BannerContext): BannerDecision {
-  if (!ctx.prefs.enabled) return { show: false, reason: 'disabled' };
-  const toggle = n.type === 'reaction' ? null : (n.type as NotificationToggle);
-  if (!toggle || !ctx.prefs.types[toggle]) return { show: false, reason: 'type' };
+  if (ctx.prefs.banners === 'nothing') return { show: false, reason: 'disabled' };
+  if (n.type === 'reaction') return { show: false, reason: 'type' };
+  if (ctx.prefs.banners === 'aboutMe' && n.tier !== 'direct') return { show: false, reason: 'type' };
   if (n.readAt) return { show: false, reason: 'read' };
   if (ctx.now - Date.parse(n.createdAt) > STALE_BANNER_MS) return { show: false, reason: 'stale' };
   if (n.bindingId && ctx.level === 'nothing') return { show: false, reason: 'muted' };
@@ -205,6 +215,8 @@ export type OpenSpaceAt = {
   messageId?: string | null;
   /** The message's seq, so the Room can tell "too far back to show" from "not loaded yet". */
   messageSeq?: number | null;
+  /** The message itself, quoted when the Room can't scroll back to it yet. */
+  preview?: string | null;
   runId?: string | null;
   path?: string | null;
 };
@@ -216,6 +228,7 @@ export function openTargetOf(n: RigNotification): OpenSpaceAt | null {
     spaceName: n.spaceName,
     messageId: n.messageId,
     messageSeq: n.messageSeq,
+    preview: n.body || null,
     runId: n.runId,
     path: n.path,
   };
@@ -228,7 +241,7 @@ const AGENT_LABEL = { claude: 'Claude', codex: 'Codex' } as const;
  * ("Hugo mentioned you"): the space is already named by the row, so this is
  * the relay's title without its "in <space>".
  */
-export function directPhrase(n: RigNotification): string {
+export function directPhrase(n: DirectGist): string {
   // First name: the line is short, and the row already says which space.
   const who = n.actor.name?.trim().split(/\s+/)[0] || (n.actor.kind === 'guest' ? 'A guest' : 'Someone');
   const agent = n.actor.agent ? AGENT_LABEL[n.actor.agent] : 'Your agent';
@@ -246,7 +259,7 @@ export function directPhrase(n: RigNotification): string {
     case 'agent_finished':
       return `${agent} finished`;
     default:
-      return n.title;
+      return n.title ?? `${who} needs you`;
   }
 }
 

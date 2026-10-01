@@ -77,8 +77,23 @@ export function toSummary(value: unknown): RigNotificationSummary {
   for (const raw of Array.isArray(r.spaces) ? r.spaces : []) {
     const s = asRecord(raw);
     if (!s || typeof s.bindingId !== 'string') continue;
+    const latest = asRecord(s.latestDirect);
+    const latestActor = asRecord(latest?.actor) ?? {};
     spaces.push({
       bindingId: s.bindingId,
+      name: str(s.name),
+      latestDirect:
+        latest && typeof latest.type === 'string' && TYPES.has(latest.type as NotificationType)
+          ? {
+              type: latest.type as NotificationType,
+              actor: {
+                kind: latestActor.kind === 'agent' || latestActor.kind === 'guest' ? latestActor.kind : 'user',
+                userId: null,
+                name: str(latestActor.name),
+                agent: latestActor.agent === 'claude' || latestActor.agent === 'codex' ? latestActor.agent : null,
+              },
+            }
+          : null,
       level: typeof s.level === 'string' && LEVELS.has(s.level as NotificationLevel) ? (s.level as NotificationLevel) : 'all',
       lastReadSeq: num(s.lastReadSeq),
       spaceUnread: num(s.spaceUnread),

@@ -12,7 +12,6 @@ import { rpc } from '@renderer/lib/ipc';
  */
 
 const DEBOUNCE_MS = 2_000;
-const MAX_ATTEMPTS = 6;
 
 type Pending = {
   seq: number | null;
@@ -62,22 +61,28 @@ function flush(bindingId: string): void {
       ...(sent.seen ? { seen: true } : {}),
     })
     .then((result) => {
-      if (!result.success) retry();
+      if (result.success) return;
+      // The relay refused this cursor (a 4xx, e.g. past its newest
+      // message): sending it again won't change the answer. Anything else
+      // (unreachable, 5xx) is an outage, and the read waits it out.
+      const status = result.error.status;
+      if (status !== undefined && status >= 400 && status < 500) return;
+      retry();
     })
     .catch(retry);
 }
 
 /**
  * A send that didn't land goes back in the queue, merged with anything
- * newer, and tries again later: otherwise this computer would say "read"
- * while the relay and other devices never hear it. Gives up after a few
- * tries (a cursor the relay keeps refusing); the next read sends again.
+ * newer, and tries again later, for as long as the app runs (backoff caps
+ * at a minute): otherwise this computer would say "read" while the relay
+ * and other devices never hear it.
  */
 function requeue(bindingId: string, sent: { seq: number | null; seen: boolean }, attempts: number): void {
   // Only the cursor is retried: the relay stamps `seen` with its own clock,
   // so a late retry would clear run rows that arrived after the person
   // looked. The next time the window comes back to the Room sends it anew.
-  if (attempts >= MAX_ATTEMPTS || sent.seq === null) return;
+  if (sent.seq === null) return;
   const entry = pending.get(bindingId) ?? { seq: null, seen: false, timer: null, attempts: 0 };
   entry.seq = Math.max(entry.seq ?? 0, sent.seq);
   entry.attempts = Math.max(entry.attempts, attempts);

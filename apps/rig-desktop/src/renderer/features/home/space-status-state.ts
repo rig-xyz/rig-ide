@@ -231,7 +231,8 @@ export function deriveSpaceStatusLine(
     case 'finished':
       return `${agentPhrase(attention.agent, attention.owner)} finished · ${relativeTime(attention.endedAt, now)}`;
     case 'forYou': {
-      const more = attention.count > 1 ? ` · ${attention.count - 1} more for you` : '';
+      const others = attention.count - 1;
+      const more = others > 0 ? ` · ${others >= MAX_EXACT_MESSAGES ? `${MAX_EXACT_MESSAGES}+` : others} more for you` : '';
       const news =
         attention.count === 1 && attention.messages > 1 ? ` · ${newMessages(attention.messages, attention.exact)}` : '';
       return `${attention.line}${more}${news}`;
@@ -436,7 +437,8 @@ export function withNotifications(
   if (notifications.directUnread > 0 && latestDirect) {
     return {
       kind: 'forYou',
-      count: Math.min(notifications.directUnread, MAX_NEW_MESSAGES),
+      // Exact up to 100 for the line; the dice caps itself at nine.
+      count: Math.min(notifications.directUnread, MAX_EXACT_MESSAGES + 1),
       line: latestDirect.phrase,
       messages: base.kind === 'messages' ? base.count : 0,
       exact: base.kind === 'messages' && base.exact === true,

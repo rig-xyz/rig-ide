@@ -5,7 +5,7 @@ import { rpc } from '@renderer/lib/ipc';
 import { Popover } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
-import { NOTIFICATION_LEVELS, type NotificationLevel } from '@shared/rig/notifications';
+import { levelLabel, NOTIFICATION_LEVELS, type NotificationLevel } from '@shared/rig/notifications';
 import { NOTIFICATION_SUMMARY_KEY, useSpaceNotifications } from './use-notifications';
 
 /**
@@ -18,15 +18,16 @@ import { NOTIFICATION_SUMMARY_KEY, useSpaceNotifications } from './use-notificat
  * rows get written, and Slack or email will need it later too.
  */
 
+// The same words as Settings › Notifications' "Show banners for" (`levelLabel`).
 const LEVEL_LABEL: Record<NotificationLevel, string> = {
-  all: 'All new messages',
-  mentions: 'Mentions and replies',
-  nothing: 'Nothing',
+  all: levelLabel('all'),
+  mentions: levelLabel('mentions'),
+  nothing: levelLabel('nothing'),
 };
 
 const LEVEL_DESCRIPTION: Record<NotificationLevel, string> = {
   all: 'Every message and comment in this space',
-  mentions: 'Only when someone mentions you, replies to you, or your agent needs you',
+  mentions: 'Mentions, replies, your agents and invites',
   nothing: 'No banners. Mentions still show in Activity',
 };
 

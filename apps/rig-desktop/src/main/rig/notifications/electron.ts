@@ -10,12 +10,14 @@ import {
   rigNotificationsChangedChannel,
   rigOpenInvitesChannel,
   rigOpenSpaceAtChannel,
+  type MacNotificationPermission,
   type NotificationLevel,
   type OpenSpaceAt,
   type RigNotification,
   type RigNotificationSummary,
 } from '@shared/rig/notifications';
 import { resolveSelfUserId } from '../account';
+import { notificationPermission, openNotificationSettings, requestNotificationPermission } from './permission';
 import { DeepLinkInbox } from '../deep-link-inbox';
 import { rigSettingsStore } from '../settings-instance';
 import { BannerPresenter, type BannerFactory } from './presenter';
@@ -158,10 +160,13 @@ export function startNotifications(): void {
   notificationService.start();
 }
 
-type RelayFailure = { message: string };
+/** `status` is the relay's HTTP status when it answered (absent when unreachable). */
+type RelayFailure = { message: string; status?: number };
 
-function fail<T>(res: Result<T, { message: string }>): Result<T, RelayFailure> {
-  return res.success ? res : err({ message: res.error.message });
+function fail<T>(res: Result<T, { message: string; status?: number }>): Result<T, RelayFailure> {
+  if (res.success) return res;
+  const status = 'status' in res.error ? res.error.status : undefined;
+  return err({ message: res.error.message, ...(typeof status === 'number' ? { status } : {}) });
 }
 
 export const rigNotificationsController = createRPCController({
@@ -198,9 +203,16 @@ export const rigNotificationsController = createRPCController({
   },
   /** The space on screen in a focused window (`null`: none), for focus suppression. */
   setViewing: (input: { bindingId: string | null }): void => notificationService.setViewing(input.bindingId),
-  /** Settings' "Send a test notification"; also what triggers macOS's permission prompt the first time. */
+  /** macOS's permission for rig: never asked, allowed, or turned off. */
+  permission: (): MacNotificationPermission => notificationPermission(),
+  /** Shows macOS's prompt (only the first time; it remembers the answer). */
+  requestPermission: (): void => requestNotificationPermission(),
+  /** Rig's page in System Settings › Notifications. */
+  openSystemSettings: async (): Promise<void> => openNotificationSettings(),
+  /** Settings' "Send a test". Asks for permission first if macOS never has. */
   test: (): Result<void, RelayFailure> => {
     if (!Notification.isSupported()) return err({ message: 'This system has no notifications.' });
+    if (notificationPermission() === 'notDetermined') requestNotificationPermission();
     electronBanner({
       title: 'Notifications are on',
       body: 'This is what rig will show when someone needs you.',

@@ -452,6 +452,9 @@ importers:
       '@parcel/watcher':
         specifier: ^2.5.6
         version: 2.5.6
+      '@rigxyz/mac-notifications':
+        specifier: workspace:*
+        version: link:../../packages/mac-notifications
       '@team-plain/graphql':
         specifier: ^1.0.1
         version: 1.2.0
@@ -963,6 +966,12 @@ importers:
       vitest:
         specifier: ^4.1.0
         version: 4.1.8(@types/node@20.19.42)(@vitest/browser-playwright@4.1.8)(@vitest/browser-preview@4.1.8)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@7.1.11(@types/node@20.19.42)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0))
+
+  packages/mac-notifications:
+    dependencies:
+      node-addon-api:
+        specifier: ^8.0.0
+        version: 8.9.2
 
   packages/plugins:
     dependencies:
@@ -8128,6 +8137,10 @@ packages:
 
   node-addon-api@7.1.1:
     resolution: {integrity: sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ==}
+
+  node-addon-api@8.9.2:
+    resolution: {integrity: sha512-VijLXbi3UACN69I0JVXJsX4tjACjNoQDgv2gTF6sx2wWEi8tkSg2eX8p5gSIFi8z2+DL3oHmY6OyKce38SDolg==}
+    engines: {node: ^18 || ^20 || >= 21}
 
   node-api-version@0.2.1:
     resolution: {integrity: sha512-2xP/IGGMmmSQpI1+O/k72jF/ykvZ89JeuKX3TLJAYPDVLUalrshrLHkeVcCCZqG/eEa635cr8IBYzgnDvM2O8Q==}
@@ -17350,6 +17363,8 @@ snapshots:
       semver: 7.8.4
 
   node-addon-api@7.1.1: {}
+
+  node-addon-api@8.9.2: {}
 
   node-api-version@0.2.1:
     dependencies:

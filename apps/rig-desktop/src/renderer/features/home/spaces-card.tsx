@@ -8,7 +8,7 @@ import {
   writeLastSeen,
   writeOpenedAt,
 } from '@renderer/features/spaces/room-read-marker';
-import { useLatestDirect, useSpaceNotifications } from '@renderer/features/notifications/use-notifications';
+import { useSpaceNotifications } from '@renderer/features/notifications/use-notifications';
 import { directPhrase } from '@shared/rig/notifications';
 import { NeedsConnection } from '@renderer/features/shell/needs-connection';
 import { rpc } from '@renderer/lib/ipc';
@@ -335,12 +335,11 @@ function SpaceRow({
   // Notifications fold into the row's own dice and line ("Hugo mentioned
   // you"), not a badge of their own; a muted space reads quiet and dimmed.
   const notifications = useSpaceNotifications(row.bindingId);
-  const latestDirect = useLatestDirect(row.bindingId);
   const shown = withNotifications(
     baseAttention,
     status,
     notifications,
-    latestDirect ? { phrase: directPhrase(latestDirect) } : null
+    notifications.latestDirect ? { phrase: directPhrase(notifications.latestDirect) } : null
   );
   const statusLine = deriveSpaceStatusLine(status, shown, Date.now());
   const dimmed = notifications.level === 'nothing';

@@ -54,14 +54,23 @@ export function readLastSeen(bindingId: string): number | null {
   return readNumber(LAST_SEEN_PREFIX + bindingId);
 }
 
+/** This computer's marker only (Home's "seen up to now" baseline uses this). */
 export function writeLastSeen(bindingId: string, seq: number): void {
-  if (readLastSeen(bindingId) === seq) return;
   writeNumber(LAST_SEEN_PREFIX + bindingId, seq);
-  // And on to the relay, so other devices and the unread counts agree, but
-  // only while someone is looking: a Room pinned to the bottom in a window
-  // in the background keeps its local marker moving, and must not mark
-  // those messages read everywhere. RoomView sends the marker on when the
-  // window comes back to it.
+}
+
+/**
+ * The Room read this far: the local marker, and on to the relay so other
+ * devices and the unread counts agree. Only the Room calls this, and only
+ * while someone is looking does it reach the relay: a Room pinned to the
+ * bottom in a background window keeps its local marker moving, and must
+ * not mark those messages read everywhere (RoomView sends the marker on
+ * when the window comes back). Home's baseline must never call this: it
+ * would mark a space read on a computer where it was never opened.
+ */
+export function markReadThrough(bindingId: string, seq: number): void {
+  if (readLastSeen(bindingId) === seq) return;
+  writeLastSeen(bindingId, seq);
   if (windowIsLooking()) reportSpaceRead(bindingId, { seq, seen: true });
 }
 

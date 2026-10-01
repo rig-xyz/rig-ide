@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ExternalLink, Monitor, Moon, Sun, TriangleAlert } from 'lucide-react';
+import { AtSign, Bell, BellOff, ExternalLink, Monitor, Moon, Sun, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AgentAuthTrailing } from '@renderer/features/agents/agent-auth-trailing';
 import { AgentSignInDialog } from '@renderer/features/agents/agent-sign-in-dialog';
@@ -23,10 +23,16 @@ import type { AgentPayload, DependencyStatus } from '@shared/core/agents/agent-p
 import { PRODUCT_NAME } from '@shared/app-identity';
 import {
   DEFAULT_NOTIFICATION_PREFS,
-  NOTIFICATION_TOGGLES,
+  levelLabel,
+  SCOPE_LABEL,
+  type BannerScope,
   type NotificationPrefs,
-  type NotificationToggle,
 } from '@shared/rig/notifications';
+import {
+  useNotificationPermission,
+  useNotificationSummary,
+  useRequestNotificationPermission,
+} from '@renderer/features/notifications/use-notifications';
 import { RIG_WEBSITE_URL } from '@shared/urls';
 
 type ThemePreference = 'dark' | 'light' | 'system';
@@ -499,23 +505,26 @@ function AutoApproveAgentActionsRow() {
   );
 }
 
-const NOTIFICATION_TOGGLE_LABEL: Record<NotificationToggle, string> = {
-  mention: 'Mentions',
-  reply: 'Replies',
-  agent_finished: 'Agents finishing',
-  agent_waiting: 'Agents needing approval',
-  agent_request: 'Requests to your agents',
-  message: 'New messages',
-  comment: 'New comments',
-  invite: 'Invites',
+const SCOPE_OPTIONS: { id: BannerScope; icon: typeof Bell }[] = [
+  { id: 'everything', icon: Bell },
+  { id: 'aboutMe', icon: AtSign },
+  { id: 'nothing', icon: BellOff },
+];
+
+const SCOPE_HINT: Record<BannerScope, string> = {
+  everything: 'Every message and comment, in spaces set to Everything.',
+  aboutMe: 'Mentions, replies, your agents and invites.',
+  nothing: 'No banners. Activity and the counts still keep track.',
 };
 
 /**
- * Settings › Notifications (`rig/docs/notifications-spec.md` §5). Prefs are
- * local to this computer, stored in rig settings as `notifications:
- * NotificationPrefs` — read/written whole, same `rpc.rig.settings.get`/
- * `.set` + invalidate pattern as `SpacesDiskCacheRow` above. The space level
- * itself lives on the relay instead (`space-notify-level.tsx`).
+ * Settings › Notifications (`rig/docs/notifications-spec.md` §5). One choice
+ * instead of a switch per type (Dylan, 2026-10-01), using the Appearance
+ * picker's own shape, then three plain switches. The top line is macOS's
+ * side of it: whether banners can show at all, with the fix one click
+ * away, and the test. Spaces whose own level differs are listed last, so
+ * the whole picture fits on one screen. Prefs are local to this computer
+ * (`rig settings`); a space's level lives on the relay.
  */
 function NotificationsSection() {
   const queryClient = useQueryClient();
@@ -524,9 +533,11 @@ function NotificationsSection() {
     queryFn: () => rpc.rig.settings.get(),
   });
   const prefs = data?.notifications ?? DEFAULT_NOTIFICATION_PREFS;
+  const summary = useNotificationSummary();
+  const differ = summary.spaces.filter((space) => space.level !== 'all');
 
   const setPrefs = (next: NotificationPrefs) => {
-    // Optimistic, so a second quick toggle builds on the first rather than
+    // Optimistic, so a second quick change builds on the first rather than
     // on the last fetched prefs (which would undo it).
     queryClient.setQueryData(['rig', 'settings', 'notifications'], (old: typeof data) =>
       old ? { ...old, notifications: next } : old
@@ -536,68 +547,130 @@ function NotificationsSection() {
     });
   };
 
+  return (
+    <div className="flex flex-col gap-3">
+      <PermissionLine />
+      <div className="flex flex-col gap-1.5">
+        <p className="text-text-primary text-xs font-medium" id="banner-scope-label">
+          Show banners for
+        </p>
+        <div className="flex gap-1.5" role="radiogroup" aria-labelledby="banner-scope-label">
+          {SCOPE_OPTIONS.map(({ id, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={prefs.banners === id}
+              onClick={() => setPrefs({ ...prefs, banners: id })}
+              className={cn(
+                'border-border-hairline rounded-control flex flex-1 flex-col items-center gap-1.5 border px-2 py-2.5 text-xs transition-colors',
+                prefs.banners === id
+                  ? 'bg-bg-2 text-text-primary'
+                  : 'text-text-muted hover:bg-bg-2 hover:text-text-primary'
+              )}
+            >
+              <Icon className="size-4" strokeWidth={1.5} />
+              {SCOPE_LABEL[id]}
+            </button>
+          ))}
+        </div>
+        <p className="text-text-muted text-xs">{SCOPE_HINT[prefs.banners]}</p>
+      </div>
+      <NotificationSwitchRow
+        id="notifications-only-away"
+        label="Quiet while I'm using rig"
+        checked={prefs.onlyWhenAway}
+        disabled={prefs.banners === 'nothing'}
+        onToggle={() => setPrefs({ ...prefs, onlyWhenAway: !prefs.onlyWhenAway })}
+      />
+      <NotificationSwitchRow
+        id="notifications-sound"
+        label="Play a sound"
+        checked={prefs.sound}
+        disabled={prefs.banners === 'nothing'}
+        onToggle={() => setPrefs({ ...prefs, sound: !prefs.sound })}
+      />
+      <NotificationSwitchRow
+        id="notifications-dock-badge"
+        label="Unread count on the Dock"
+        checked={prefs.dockBadge}
+        onToggle={() => setPrefs({ ...prefs, dockBadge: !prefs.dockBadge })}
+      />
+      {differ.length > 0 && (
+        <p className="text-text-muted text-xs" data-testid="notifications-set-differently">
+          Set differently:{' '}
+          {differ.map((space, i) => (
+            <span key={space.bindingId}>
+              {i > 0 && ' · '}
+              <span className="text-text-secondary">#{space.name ?? 'space'}</span> {levelLabel(space.level)}
+            </span>
+          ))}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * macOS's side: banners only appear once macOS allows them for rig, and
+ * Electron doesn't ask on its own. Off: the fix is one click (rig's own page
+ * in System Settings). Never asked: one click asks. On: a test to see one.
+ */
+function PermissionLine() {
+  const permission = useNotificationPermission();
+  const request = useRequestNotificationPermission();
   const [testError, setTestError] = useState<string | null>(null);
   const sendTest = async () => {
     setTestError(null);
     const result = await rpc.rig.notifications.test();
     if (!result.success) setTestError(result.error.message);
   };
+  if (permission === null) return null;
+
+  const status =
+    permission === 'denied'
+      ? { dot: 'bg-warning', text: 'Banners are off for rig in macOS.' }
+      : permission === 'notDetermined'
+        ? { dot: 'bg-text-muted', text: "macOS hasn't been asked about banners yet." }
+        : permission === 'authorized' || permission === 'provisional'
+          ? { dot: 'bg-success', text: 'Banners are on in macOS.' }
+          : null;
 
   return (
-    <div className="flex flex-col gap-3">
-      <NotificationSwitchRow
-        id="notifications-enabled"
-        label="Desktop notifications"
-        checked={prefs.enabled}
-        onToggle={() => setPrefs({ ...prefs, enabled: !prefs.enabled })}
-      />
-      <NotificationSwitchRow
-        id="notifications-only-away"
-        label="Only when I'm away"
-        hint="No banners while a rig window is in front."
-        checked={prefs.onlyWhenAway}
-        disabled={!prefs.enabled}
-        onToggle={() => setPrefs({ ...prefs, onlyWhenAway: !prefs.onlyWhenAway })}
-      />
-      <div className="flex flex-col gap-2">
-        <p className="text-text-muted text-xs">Notify me about</p>
-        <div className="flex flex-col gap-2">
-          {NOTIFICATION_TOGGLES.map((type) => (
-            <NotificationSwitchRow
-              key={type}
-              id={`notifications-type-${type}`}
-              label={NOTIFICATION_TOGGLE_LABEL[type]}
-              checked={prefs.types[type]}
-              disabled={!prefs.enabled}
-              onToggle={() => setPrefs({ ...prefs, types: { ...prefs.types, [type]: !prefs.types[type] } })}
-            />
-          ))}
-        </div>
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        {status && (
+          <>
+            <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', status.dot)} />
+            <span className="text-text-primary min-w-0 flex-1 text-xs" data-testid="notification-permission">
+              {status.text}
+            </span>
+          </>
+        )}
+        {permission === 'denied' ? (
+          <Button variant="outline" size="xs" onClick={() => void rpc.rig.notifications.openSystemSettings()}>
+            Open System Settings
+          </Button>
+        ) : permission === 'notDetermined' ? (
+          <Button size="xs" onClick={request}>
+            Turn on
+          </Button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void sendTest()}
+            className="text-accent ml-auto shrink-0 text-xs transition-opacity hover:opacity-80"
+          >
+            Send a test
+          </button>
+        )}
       </div>
-      <NotificationSwitchRow
-        id="notifications-sound"
-        label="Play a sound"
-        checked={prefs.sound}
-        onToggle={() => setPrefs({ ...prefs, sound: !prefs.sound })}
-      />
-      <NotificationSwitchRow
-        id="notifications-dock-badge"
-        label="Show unread count on the Dock icon"
-        checked={prefs.dockBadge}
-        onToggle={() => setPrefs({ ...prefs, dockBadge: !prefs.dockBadge })}
-      />
-      <div className="border-border-hairline mt-1 flex flex-col gap-1.5 border-t pt-3">
-        <Button variant="outline" size="sm" className="self-start" onClick={() => void sendTest()}>
-          Send a test notification
-        </Button>
-        {testError && <p className="text-danger text-xs">{testError}</p>}
-        <p className="text-text-muted text-xs">If nothing appears, check System Settings › Notifications › Rig.</p>
-      </div>
+      {testError && <p className="text-danger text-xs">{testError}</p>}
     </div>
   );
 }
 
-/** One switch row, same shape as `TelemetryRow`/`SpacesDiskCacheRow` below — local here since the Notifications section needs a dozen of them. */
+/** One switch row, same shape as `TelemetryRow`/`SpacesDiskCacheRow` below. */
 function NotificationSwitchRow({
   id,
   label,
