@@ -297,6 +297,8 @@ function mapEntriesFor(units: TranscriptUnit[], snapshot: RoomSnapshot, ownId: s
   return entries;
 }
 
+export type RoomJumpRequest = { messageId?: string | null; runId?: string | null; nonce: number };
+
 export function RoomTranscript({
   snapshot,
   ownId,
@@ -310,6 +312,7 @@ export function RoomTranscript({
   globalSetup,
   onHideDetails,
   onLoadRunLog,
+  jump = null,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
@@ -331,6 +334,11 @@ export function RoomTranscript({
   onHideDetails?: (runId: string) => Promise<boolean>;
   /** A run shown from the disk cache (a summary only): fetch its log, when its card is expanded. */
   onLoadRunLog?: (runId: string) => void;
+  /**
+   * Notifications: scroll to a message (or a run's card) once it's here, as
+   * a banner or Activity click asks. A new `nonce` asks again.
+   */
+  jump?: RoomJumpRequest | null;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -376,6 +384,26 @@ export function RoomTranscript({
       { duration: 1600, easing: 'ease-out' }
     );
   };
+
+  // A jump waits for its message: the Room may still be loading when the
+  // click lands. Done once per request; gives up quietly if the message
+  // never shows (deleted, or older than what the Room loads).
+  const jumpDoneRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!jump || jumpDoneRef.current === jump.nonce) return;
+    const messageId =
+      jump.messageId ??
+      (jump.runId
+        ? snapshot.messages.find((m) => m.meta.kind === 'session' && m.meta.runId === jump.runId)?.id
+        : undefined);
+    if (!messageId || !snapshot.messages.some((m) => m.id === messageId)) return;
+    jumpDoneRef.current = jump.nonce;
+    pinnedRef.current = false;
+    setPinned(false);
+    requestAnimationFrame(() => jumpTo(messageId));
+    // `jumpTo` only reads refs; re-running on its identity would add nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jump, snapshot.messages]);
 
   useEffect(() => {
     const el = scrollRef.current;

@@ -16,6 +16,8 @@
  * in the same commit Home first renders in, after Home has already read.
  */
 
+import { reportSpaceRead, windowIsLooking } from '@renderer/features/notifications/space-read-sync';
+
 const LAST_SEEN_PREFIX = 'rig-room-last-seen:';
 const OPENED_AT_PREFIX = 'rig-room-opened-at:';
 
@@ -53,6 +55,20 @@ export function readLastSeen(bindingId: string): number | null {
 }
 
 export function writeLastSeen(bindingId: string, seq: number): void {
+  if (readLastSeen(bindingId) === seq) return;
+  writeNumber(LAST_SEEN_PREFIX + bindingId, seq);
+  // And on to the relay, so other devices and the unread counts agree.
+  reportSpaceRead(bindingId, { seq, seen: windowIsLooking() });
+}
+
+/**
+ * The relay's read cursor is ahead of this computer's (you read the space
+ * elsewhere): catch the local marker up without sending it back. Never
+ * moves the marker backwards.
+ */
+export function syncLastSeenFromServer(bindingId: string, seq: number): void {
+  const local = readLastSeen(bindingId);
+  if (local !== null && local >= seq) return;
   writeNumber(LAST_SEEN_PREFIX + bindingId, seq);
 }
 

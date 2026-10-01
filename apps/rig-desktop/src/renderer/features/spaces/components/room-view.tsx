@@ -18,6 +18,7 @@ import { FixtureRoomSource, type RoomSource } from '../room-source';
 import { roomSourceCache, type RoomConnectionInfo, type RoomLease } from '../room-source-cache';
 import type { CachedRoomBlob } from '@shared/spaces/room-cache';
 import { writeOpenedAt } from '../room-read-marker';
+import { reportSpaceRead, windowIsLooking } from '@renderer/features/notifications/space-read-sync';
 import { useRefreshMemberReadsOnRosterChange } from '../roster-refresh';
 import { resolveSpaceLink } from '../space-link';
 import { effectiveRunStatus, runCard } from '../projection';
@@ -28,7 +29,7 @@ import { useComposerAttachments } from '../use-composer-attachments';
 import { AttachmentSpaceContext, type AttachmentSpace } from './attachment-cards';
 import { Composer, keepUnsentAsDraft, type ComposerSendContext, type ComposerSuggestion } from './composer';
 import { ownTurnSuggestion } from '../own-turn-suggestion';
-import { RoomTranscript } from './room-transcript';
+import { RoomTranscript, type RoomJumpRequest } from './room-transcript';
 import { OpenPageContext } from './transcript-items';
 import { ReactionsContext, type ReactionsApi } from './reactions';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
@@ -336,6 +337,7 @@ export function RoomView({
   collapsed = false,
   onExpand: onExpandCollapsed,
   setup = null,
+  jump = null,
 }: {
   /** Empty while `setup` is still making the space (it has no binding yet). */
   bindingId: string;
@@ -369,6 +371,8 @@ export function RoomView({
    * same Room becomes the live one — no remount, the waiting message sends.
    */
   setup?: RoomSetup | null;
+  /** Notifications: scroll to this message or run once it's loaded (a banner or Activity click). */
+  jump?: RoomJumpRequest | null;
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -486,6 +490,28 @@ export function RoomView({
   // The scripted-demo switch is a dev tool for the Room preview on plain
   // rigs; a real space (#name) never shows it.
   const showDemoToggle = !spaceName.startsWith('#');
+
+  // Notifications: main stays quiet about the space on screen, and the relay
+  // hears it's been seen (clears its run and request rows) on entering and
+  // whenever the window comes back to it. Folded to the doc-focus rail, the
+  // Room isn't on screen.
+  useEffect(() => {
+    if (!live || collapsed || !bindingId) return;
+    const look = () => {
+      if (!windowIsLooking()) return;
+      void rpc.rig.notifications.setViewing({ bindingId }).catch(() => {});
+      reportSpaceRead(bindingId, { seen: true }, true);
+    };
+    const away = () => void rpc.rig.notifications.setViewing({ bindingId: null }).catch(() => {});
+    look();
+    window.addEventListener('focus', look);
+    document.addEventListener('visibilitychange', look);
+    return () => {
+      window.removeEventListener('focus', look);
+      document.removeEventListener('visibilitychange', look);
+      away();
+    };
+  }, [live, collapsed, bindingId]);
 
   // "Last opened" for Home's what-you-missed tiles (`room-read-marker.ts`):
   // stamped on entering the space and again on leaving it (or quitting from
@@ -1134,6 +1160,7 @@ export function RoomView({
             globalSetup={globalSetup}
             onHideDetails={handleHideDetails}
             onLoadRunLog={handleLoadRunLog}
+            jump={jump}
           />
           </ReactionsContext.Provider>
           </AttachmentSpaceContext.Provider>
@@ -1232,7 +1259,7 @@ export function RoomView({
             }
           ) ?? null)
         ) : (
-          <SpaceCard snapshot={room} />
+          <SpaceCard snapshot={room} bindingId={live ? bindingId : undefined} />
         )}
         {gallery.open && source instanceof RelayRoomSource && (
           <ConnectorGallery

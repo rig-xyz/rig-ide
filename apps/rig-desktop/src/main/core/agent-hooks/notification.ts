@@ -2,7 +2,6 @@ import { eq } from 'drizzle-orm';
 import { app, BrowserWindow, Notification, powerMonitor } from 'electron';
 import { getMainWindow } from '@main/app/window';
 import { getPluginMetadata } from '@main/core/agents/plugin-registry';
-import { rigSettingsStore } from '@main/rig/settings-instance';
 import { db } from '@main/db/client';
 import { tasks } from '@main/db/schema';
 import { events } from '@main/lib/events';
@@ -68,6 +67,9 @@ function getProviderName(providerId: string): string {
  */
 export async function maybeShowNotification(event: AgentEvent, appFocused: boolean): Promise<void> {
   try {
+    // Loaded here, not at module load: the store resolves Electron's
+    // userData path on import, which tests of this module's importers lack.
+    const { rigSettingsStore } = await import('@main/rig/settings-instance');
     const prefs = rigSettingsStore.get().notifications;
     if (!prefs.enabled || !Notification.isSupported()) return;
     if (appFocused && powerMonitor.getSystemIdleTime() < AWAY_IDLE_SECONDS) return;

@@ -1,31 +1,19 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, FolderDown } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { FolderDown } from 'lucide-react';
+import { useState } from 'react';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { Button } from '@renderer/lib/ui/button';
-import { Popover } from '@renderer/lib/ui/popover';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
-import type { RigMyInvite } from '@shared/rig/rig-share';
-import {
-  deriveBellState,
-  emptyInvitesMessage,
-  MY_INVITES_KEY_PREFIX,
-  myInvitesQueryKey,
-  shapeMyInvites,
-  type MyInviteRow,
-} from './invites-inbox';
+import { MY_INVITES_KEY_PREFIX, type MyInviteRow } from './invites-inbox';
 
 /**
- * The topbar invites bell — invites addressed to ME (`rig.share.listMyInvites`,
- * the relay's invitee plane, shipped 2026-08). Renders nothing signed out;
- * signed in, a bell with an accent count dot only when invites exist (the
- * accent budget's live-indicator carve-out — never a badge-zero).
- *
- * Polling is polite: refetch on window focus plus a slow 5-minute interval —
- * an invite arriving within minutes is fine for a bell, and the relay isn't
- * hammered from every open desktop.
+ * One invite addressed to ME (`rig.share.listMyInvites`, the relay's
+ * invitee plane, shipped 2026-08), as the topbar bell lists it. The bell
+ * itself is now the Activity bell
+ * (`features/notifications/activity-bell.tsx`), which lists these first,
+ * then notifications; the polling and the account-scoped key described
+ * below live there.
  *
  * Accept is SERVER-SIDE membership first, by design: the invitee plane never
  * exposes the invite secret. Round: rig attach — a joined row no longer just
@@ -47,130 +35,7 @@ import {
  * search actually ran against (`emptyInvitesMessage`), via the same
  * `rpc.rig.account.me()` read the topbar identity pill already makes.
  */
-
-const POLL_INTERVAL_MS = 5 * 60_000;
-
-export function InvitesBell({ onOpenPath }: { onOpenPath: (path: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-
-  const authQuery = useQuery({
-    queryKey: ['rig', 'auth', 'status'],
-    queryFn: () => rpc.rig.auth.status(),
-  });
-  const signedIn = authQuery.data?.signedIn ?? false;
-
-  const meQuery = useQuery({
-    queryKey: ['rig', 'account', 'me'],
-    queryFn: () => rpc.rig.account.me(),
-    enabled: signedIn,
-  });
-  const me = meQuery.data?.success ? meQuery.data.data : null;
-  const accountId = me?.id ?? null;
-
-  const invitesQuery = useQuery({
-    queryKey: myInvitesQueryKey(accountId),
-    queryFn: () => rpc.rig.share.listMyInvites(),
-    enabled: signedIn,
-    refetchInterval: POLL_INTERVAL_MS,
-    refetchOnWindowFocus: true,
-    staleTime: 30_000,
-  });
-  const invites = invitesQuery.data?.success ? invitesQuery.data.data.invites : null;
-
-  const bell = deriveBellState(signedIn, invites ? invites.length : null);
-  if (!bell.visible) return null;
-
-  return (
-    <>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              ref={triggerRef}
-              type="button"
-              onClick={() => setOpen((v) => !v)}
-              aria-label={bell.count > 0 ? `Invites (${bell.count})` : 'Invites'}
-              aria-haspopup="true"
-              aria-expanded={open}
-              className="text-text-secondary hover:bg-bg-2 hover:text-text-primary rounded-control relative flex size-7 items-center justify-center transition-colors"
-            >
-              <Bell size={15} strokeWidth={1.5} />
-              {bell.count > 0 && (
-                <span className="bg-accent text-accent-ink absolute top-0.5 right-0.5 flex min-w-3.5 items-center justify-center rounded-full px-0.5 text-2xs leading-3.5 font-medium">
-                  {bell.count}
-                </span>
-              )}
-            </button>
-          }
-        />
-        <TooltipContent side="bottom">Invites</TooltipContent>
-      </Tooltip>
-
-      <Popover
-        anchor={triggerRef}
-        open={open}
-        onClose={() => setOpen(false)}
-        role="dialog"
-        align="right"
-        gap={6}
-        estimatedWidth={320}
-        minWidth={320}
-        ariaLabel="Invites"
-      >
-        <InvitesPopoverContent
-          invites={invites}
-          // B1 fix: `!invitesQuery.data?.success` was `true` while
-          // STILL LOADING too (data undefined before the first fetch
-          // resolves), so the popover showed "Could not load your
-          // invites" instead of "Loading…" every time it was opened.
-          // `data?.success === false` only trips once a fetch has
-          // actually resolved unsuccessfully; `isError` covers a
-          // transport-level failure (the query function itself threw).
-          error={invitesQuery.isError || invitesQuery.data?.success === false}
-          email={me?.email ?? null}
-          onOpenPath={onOpenPath}
-          onClose={() => setOpen(false)}
-        />
-      </Popover>
-    </>
-  );
-}
-
-function InvitesPopoverContent({
-  invites,
-  error,
-  email,
-  onOpenPath,
-  onClose,
-}: {
-  invites: RigMyInvite[] | null;
-  error: boolean;
-  email: string | null;
-  onOpenPath: (path: string) => void;
-  onClose: () => void;
-}) {
-  if (invites === null) {
-    return (
-      <p className="text-text-muted p-3 text-xs">
-        {error ? 'Could not load your invites.' : 'Loading…'}
-      </p>
-    );
-  }
-  const rows = shapeMyInvites(invites);
-  if (rows.length === 0) {
-    return <p className="text-text-muted p-3 text-xs">{emptyInvitesMessage(email)}</p>;
-  }
-  return (
-    <div className="flex flex-col gap-1 p-2">
-      {rows.map((row) => (
-        <InviteRow key={row.id} row={row} onOpenPath={onOpenPath} onClose={onClose} />
-      ))}
-    </div>
-  );
-}
-
-function InviteRow({
+export function InviteRow({
   row,
   onOpenPath,
   onClose,

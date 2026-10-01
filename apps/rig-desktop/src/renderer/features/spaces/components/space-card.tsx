@@ -1,5 +1,6 @@
 import { FileText, Plug, Sparkles, Users } from 'lucide-react';
 import { useMemo } from 'react';
+import { SpaceNotifyLevelRow } from '@renderer/features/notifications/space-notify-level';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import { ConnectorMark } from '../logos';
@@ -17,7 +18,14 @@ const MAX_ACTIVITY_ROWS = 5;
  * Connectors (logos), Skills, and Activity (files any session in this room
  * has touched, most recent first).
  */
-export function SpaceCard({ snapshot }: { snapshot: RoomSnapshot }) {
+export function SpaceCard({
+  snapshot,
+  bindingId,
+}: {
+  snapshot: RoomSnapshot;
+  /** Not yet part of `RoomSnapshot` (`../types.ts`) — passed down from wherever the caller already has it, so the Notifications row can read and set this space's level. Omitted, the row doesn't render. */
+  bindingId?: string;
+}) {
   const activity = useMemo(() => {
     const rows: Array<{ path: string; owner: string; startedAt: string }> = [];
     const seen = new Set<string>();
@@ -63,6 +71,8 @@ export function SpaceCard({ snapshot }: { snapshot: RoomSnapshot }) {
           ))}
         </span>
       </div>
+
+      {bindingId && <SpaceNotifyLevelRow bindingId={bindingId} />}
 
       {snapshot.agents.map((agent) => (
         <div key={`${agent.agent}-${agent.owner}`} className="flex h-7 items-center gap-2 rounded-control px-2">

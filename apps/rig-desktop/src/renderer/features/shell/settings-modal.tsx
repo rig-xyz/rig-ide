@@ -21,6 +21,12 @@ import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import type { AgentPayload, DependencyStatus } from '@shared/core/agents/agent-payload';
 import { PRODUCT_NAME } from '@shared/app-identity';
+import {
+  DEFAULT_NOTIFICATION_PREFS,
+  NOTIFICATION_TOGGLES,
+  type NotificationPrefs,
+  type NotificationToggle,
+} from '@shared/rig/notifications';
 import { RIG_WEBSITE_URL } from '@shared/urls';
 
 type ThemePreference = 'dark' | 'light' | 'system';
@@ -87,6 +93,9 @@ export function SettingsModal({
           <Section label="Agents">
             <AgentsSection />
             <AutoApproveAgentActionsRow />
+          </Section>
+          <Section label="Notifications">
+            <NotificationsSection />
           </Section>
           <Section label="Rig folder">
             <RigHomeRow />
@@ -483,6 +492,152 @@ function AutoApproveAgentActionsRow() {
           className={cn(
             'bg-bg-1 absolute top-0.5 left-0.5 size-3 rounded-full transition-transform',
             enabled && 'translate-x-3'
+          )}
+        />
+      </button>
+    </div>
+  );
+}
+
+const NOTIFICATION_TOGGLE_LABEL: Record<NotificationToggle, string> = {
+  mention: 'Mentions',
+  reply: 'Replies',
+  agent_finished: 'Agents finishing',
+  agent_waiting: 'Agents needing approval',
+  agent_request: 'Requests to your agents',
+  message: 'New messages',
+  comment: 'New comments',
+  invite: 'Invites',
+};
+
+/**
+ * Settings › Notifications (`rig/docs/notifications-spec.md` §5). Prefs are
+ * local to this computer, stored in rig settings as `notifications:
+ * NotificationPrefs` — read/written whole, same `rpc.rig.settings.get`/
+ * `.set` + invalidate pattern as `SpacesDiskCacheRow` above. The space level
+ * itself lives on the relay instead (`space-notify-level.tsx`).
+ */
+function NotificationsSection() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['rig', 'settings', 'notifications'],
+    queryFn: () => rpc.rig.settings.get(),
+  });
+  const prefs = data?.notifications ?? DEFAULT_NOTIFICATION_PREFS;
+
+  const setPrefs = (next: NotificationPrefs) => {
+    // Optimistic, so a second quick toggle builds on the first rather than
+    // on the last fetched prefs (which would undo it).
+    queryClient.setQueryData(['rig', 'settings', 'notifications'], (old: typeof data) =>
+      old ? { ...old, notifications: next } : old
+    );
+    void rpc.rig.settings.set({ notifications: next }).then(() => {
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'settings', 'notifications'] });
+    });
+  };
+
+  const [testError, setTestError] = useState<string | null>(null);
+  const sendTest = async () => {
+    setTestError(null);
+    const result = await rpc.rig.notifications.test();
+    if (!result.success) setTestError(result.error.message);
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <NotificationSwitchRow
+        id="notifications-enabled"
+        label="Desktop notifications"
+        checked={prefs.enabled}
+        onToggle={() => setPrefs({ ...prefs, enabled: !prefs.enabled })}
+      />
+      <NotificationSwitchRow
+        id="notifications-only-away"
+        label="Only when I'm away"
+        hint="No banners while you're using rig. Away means rig isn't in front or you've been idle for 3 minutes."
+        checked={prefs.onlyWhenAway}
+        disabled={!prefs.enabled}
+        onToggle={() => setPrefs({ ...prefs, onlyWhenAway: !prefs.onlyWhenAway })}
+      />
+      <div className="flex flex-col gap-2">
+        <p className="text-text-muted text-xs">Notify me about</p>
+        <div className="flex flex-col gap-2">
+          {NOTIFICATION_TOGGLES.map((type) => (
+            <NotificationSwitchRow
+              key={type}
+              id={`notifications-type-${type}`}
+              label={NOTIFICATION_TOGGLE_LABEL[type]}
+              checked={prefs.types[type]}
+              disabled={!prefs.enabled}
+              onToggle={() => setPrefs({ ...prefs, types: { ...prefs.types, [type]: !prefs.types[type] } })}
+            />
+          ))}
+        </div>
+      </div>
+      <NotificationSwitchRow
+        id="notifications-sound"
+        label="Play a sound"
+        checked={prefs.sound}
+        onToggle={() => setPrefs({ ...prefs, sound: !prefs.sound })}
+      />
+      <NotificationSwitchRow
+        id="notifications-dock-badge"
+        label="Show unread count on the Dock icon"
+        checked={prefs.dockBadge}
+        onToggle={() => setPrefs({ ...prefs, dockBadge: !prefs.dockBadge })}
+      />
+      <div className="border-border-hairline mt-1 flex flex-col gap-1.5 border-t pt-3">
+        <Button variant="outline" size="sm" className="self-start" onClick={() => void sendTest()}>
+          Send a test notification
+        </Button>
+        {testError && <p className="text-danger text-xs">{testError}</p>}
+        <p className="text-text-muted text-xs">If nothing appears, check System Settings › Notifications › Rig.</p>
+      </div>
+    </div>
+  );
+}
+
+/** One switch row, same shape as `TelemetryRow`/`SpacesDiskCacheRow` below — local here since the Notifications section needs a dozen of them. */
+function NotificationSwitchRow({
+  id,
+  label,
+  hint,
+  checked,
+  disabled = false,
+  onToggle,
+}: {
+  id: string;
+  label: string;
+  hint?: string;
+  checked: boolean;
+  disabled?: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className={cn('flex items-start justify-between gap-3', disabled && 'opacity-50')}>
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <label htmlFor={id} className="text-text-primary text-xs font-medium">
+          {label}
+        </label>
+        {hint && <p className="text-text-muted text-xs">{hint}</p>}
+      </div>
+      <button
+        id={id}
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+        disabled={disabled}
+        onClick={onToggle}
+        className={cn(
+          'relative mt-0.5 h-4 w-7 shrink-0 rounded-full transition-colors disabled:pointer-events-none',
+          checked ? 'bg-border-strong' : 'bg-bg-2 border-border-hairline border'
+        )}
+      >
+        <span
+          className={cn(
+            'bg-bg-1 absolute top-0.5 left-0.5 size-3 rounded-full transition-transform',
+            checked && 'translate-x-3'
           )}
         />
       </button>

@@ -13,6 +13,8 @@ vi.mock('@renderer/lib/ipc', () => ({
   rpc: {
     app: { openExternal: async () => {} },
     rig: {
+      // Notifications: the Room says which space is on screen and how far it's read.
+      notifications: { setViewing: async () => undefined, markSpaceRead: async () => ({ success: true, data: undefined }) },
       spacesConnection: { getConnectionInfo: async () => ({ success: false, error: { message: 'offline' } }) },
       attachments: { prepare: async () => ({ space: { status: 'ok' }, files: [] }) },
       recent: { resolveLocalPaths: async () => ({}) },

@@ -34,6 +34,8 @@ vi.mock('@renderer/lib/ipc', () => ({
     app: { openExternal: async () => {} },
     // No live relay here: the Room offers the scripted demo instead.
     rig: {
+      // Notifications: the Room says which space is on screen and how far it's read.
+      notifications: { setViewing: async () => undefined, markSpaceRead: async () => ({ success: true, data: undefined }) },
       spacesConnection: { getConnectionInfo: async () => ({ success: false, error: { message: 'offline' } }) },
       // A live Room asks once whether files can be attached here.
       attachments: { prepare: async () => ({ space: { status: 'ok' }, files: [] }) },

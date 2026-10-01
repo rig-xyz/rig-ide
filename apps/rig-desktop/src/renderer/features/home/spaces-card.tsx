@@ -8,6 +8,8 @@ import {
   writeLastSeen,
   writeOpenedAt,
 } from '@renderer/features/spaces/room-read-marker';
+import { formatUnreadCount, spaceUnreadMarker } from '@renderer/features/notifications/space-unread-marker';
+import { useSpaceNotifications } from '@renderer/features/notifications/use-notifications';
 import { NeedsConnection } from '@renderer/features/shell/needs-connection';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
@@ -330,6 +332,10 @@ function SpaceRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const statusLine = deriveSpaceStatusLine(status, attention, Date.now());
+  // Every row here is a space (`SpacesCard` only), so no `row.isSpace` gate
+  // is needed the way the rail's own rows need one.
+  const unreadMarker = spaceUnreadMarker(useSpaceNotifications(row.bindingId));
+  const dimmed = unreadMarker.kind === 'none' && unreadMarker.dimmed;
   const path = row.kind === 'local' ? row.path : null;
   const relayStatus = row.kind === 'relayOnly' ? deriveRelayOnlyRowStatus(row) : null;
   const openablePath = path ?? (relayStatus?.kind === 'localPath' ? relayStatus.path : null);
@@ -414,7 +420,17 @@ function SpaceRow({
       >
         <span className="flex min-w-0 items-center gap-1">
           <span className="text-text-muted font-mono text-sm">#</span>
-          <span className="text-text-primary truncate text-sm">{row.name}</span>
+          <span className={cn('truncate text-sm', dimmed ? 'text-text-muted' : 'text-text-primary')}>
+            {row.name}
+          </span>
+          {unreadMarker.kind === 'count' && (
+            <span className="bg-accent text-accent-ink flex shrink-0 items-center justify-center rounded-full px-1.5 text-2xs leading-4 font-medium">
+              {formatUnreadCount(unreadMarker.n)}
+            </span>
+          )}
+          {unreadMarker.kind === 'dot' && (
+            <span aria-hidden="true" className="bg-text-muted size-1.5 shrink-0 rounded-full" />
+          )}
           {pinned && <Star className="text-text-muted size-3 shrink-0 fill-current" strokeWidth={1.5} />}
           {relayStatus?.kind === 'notSetUp' && (
             <Tooltip>
