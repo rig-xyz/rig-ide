@@ -76,7 +76,7 @@ export function ActivityBell({
 
   const activityQuery = useQuery({
     queryKey: NOTIFICATION_ACTIVITY_KEY,
-    queryFn: () => rpc.rig.notifications.activity({ limit: 50 }),
+    queryFn: () => rpc.rig.notifications.activity({ limit: ACTIVITY_PAGE }),
     enabled: signedIn,
     // Main pushes a change event (`rigNotificationsChangedChannel`) that
     // invalidates this key app-wide (`use-notifications.ts`), so there's
@@ -161,6 +161,9 @@ export function ActivityBell({
   );
 }
 
+/** Activity rows per page: the bell's first page and each "Show older". */
+const ACTIVITY_PAGE = 50;
+
 const SECTION_LABEL_TEXT = 'font-mono text-xs tracking-wide text-text-muted uppercase';
 
 // ── Invites (unchanged behaviour, see this file's own header comment) ──────
@@ -212,6 +215,26 @@ function ActivitySection({
   onOpenTarget: (target: OpenSpaceAt) => void;
 }) {
   const queryClient = useQueryClient();
+  // The latest page comes from the shared query; "Show older" pages back
+  // with the relay's `before` cursor. Older pages are kept only while the
+  // popover is open (this section unmounts with it).
+  const [older, setOlder] = useState<RigNotification[]>([]);
+  const [olderState, setOlderState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const rows = activity ? [...activity, ...older.filter((o) => !activity.some((a) => a.id === o.id))] : null;
+  const canPage = activity !== null && activity.length >= ACTIVITY_PAGE && olderState !== 'done';
+
+  const loadOlder = async () => {
+    const last = rows?.[rows.length - 1];
+    if (!last) return;
+    setOlderState('loading');
+    const result = await rpc.rig.notifications.activity({ before: last.id, limit: ACTIVITY_PAGE }).catch(() => null);
+    if (!result?.success) {
+      setOlderState('error');
+      return;
+    }
+    setOlder((current) => [...current, ...result.data]);
+    setOlderState(result.data.length < ACTIVITY_PAGE ? 'done' : 'idle');
+  };
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: NOTIFICATION_ACTIVITY_KEY });
@@ -245,14 +268,24 @@ function ActivitySection({
           Mark all as read
         </button>
       </div>
-      {activity === null ? (
+      {rows === null ? (
         <p className="text-text-muted px-1.5 py-2 text-xs">{error ? 'Could not load activity.' : 'Loading…'}</p>
-      ) : activity.length === 0 ? (
+      ) : rows.length === 0 ? (
         <p className="text-text-muted px-1.5 py-2 text-xs">
           Nothing new. Mentions, replies and your agents' news show up here.
         </p>
       ) : (
-        activity.map((row) => <ActivityRow key={row.id} row={row} onOpen={() => void openRow(row)} />)
+        rows.map((row) => <ActivityRow key={row.id} row={row} onOpen={() => void openRow(row)} />)
+      )}
+      {canPage && (
+        <button
+          type="button"
+          onClick={() => void loadOlder()}
+          disabled={olderState === 'loading'}
+          className="text-text-muted hover:text-text-primary self-start px-1.5 py-1 text-xs transition-colors disabled:opacity-50"
+        >
+          {olderState === 'loading' ? 'Loading…' : olderState === 'error' ? "Couldn't load. Try again" : 'Show older'}
+        </button>
       )}
     </div>
   );

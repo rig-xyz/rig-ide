@@ -150,17 +150,14 @@ export function normalizeNotificationPrefs(raw: unknown): NotificationPrefs {
 }
 
 /**
- * The Dock badge (spec §4, Unread model): per space by level, plus unread
- * invites. In an All space a mention is already counted as a message, so
- * only its message-less direct rows (runs, requests) are added on top.
+ * The Dock badge: unread rows about you (mentions, replies, your agent,
+ * requests to it, invites), the same number the Activity bell shows, in
+ * every space whatever its level. Plain new messages show on each space's
+ * row on Home, not here: a count of every message in a busy space never
+ * goes down. Dylan, 2026-10-01: "It needs to be consistent."
  */
 export function dockCount(summary: RigNotificationSummary): number {
-  let n = summary.invitesUnread;
-  for (const s of summary.spaces) {
-    if (s.level === 'all') n += s.spaceUnread + s.directUnreadNoMessage;
-    else if (s.level === 'mentions') n += s.directUnread;
-  }
-  return n;
+  return summary.directUnreadTotal;
 }
 
 export type BannerContext = {

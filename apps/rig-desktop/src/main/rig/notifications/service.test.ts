@@ -116,8 +116,8 @@ describe('NotificationService', () => {
     current = t;
     t.service.start();
     await t.connected();
-    // all-level space: 3 unread messages + 1 run/request row
-    expect(t.badges.at(-1)).toBe(4);
+    // the bell's number: unread rows about you
+    expect(t.badges.at(-1)).toBe(1);
     t.setPrefs({ ...DEFAULT_NOTIFICATION_PREFS, dockBadge: false });
     t.service.prefsChanged();
     expect(t.badges.at(-1)).toBe(0);
@@ -178,13 +178,13 @@ describe('NotificationService', () => {
     current = t;
     t.service.start();
     await t.connected();
-    expect(t.badges.at(-1)).toBe(4);
+    expect(t.badges.at(-1)).toBe(1);
     const connects = t.queries.length;
     t.service.restart();
     expect(t.badges.at(-1)).toBe(0);
     expect(t.closeAll).toHaveBeenCalled();
     expect(t.service.summary().spaces).toEqual([]);
-    await vi.waitFor(() => expect(t.badges.at(-1)).toBe(4));
+    await vi.waitFor(() => expect(t.badges.at(-1)).toBe(1));
     expect(t.queries.length).toBeGreaterThan(connects);
   });
 

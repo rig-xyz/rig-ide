@@ -398,7 +398,7 @@ describe('withNotifications', () => {
     const shown = withNotifications({ kind: 'messages', count: 3 }, undefined, { level: 'all', directUnread: 1 }, {
       phrase: 'Hugo mentioned you',
     });
-    expect(shown).toEqual({ kind: 'forYou', count: 1, line: 'Hugo mentioned you', messages: 3 });
+    expect(shown).toEqual({ kind: 'forYou', count: 1, line: 'Hugo mentioned you', messages: 3, exact: false });
     expect(deriveSpaceStatusLine(undefined, shown, 0)).toBe('Hugo mentioned you · 3 new messages');
     expect(spaceStatusLineTone(shown)).toBe('secondary');
   });
@@ -418,6 +418,22 @@ describe('withNotifications', () => {
       phrase: 'Hugo mentioned you',
     });
     expect(shown.kind).toBe('idle');
+  });
+
+  it("once the relay's summary is in, its unread count is the row's", () => {
+    const local = { kind: 'messages', count: 9 } as const;
+    const relay = withNotifications(local, undefined, { level: 'all', directUnread: 0, spaceUnread: 12, known: true }, null);
+    expect(relay).toEqual({ kind: 'messages', count: 12, exact: true });
+    // Exact from the relay; only this computer's own count tops out at "9+".
+    expect(deriveSpaceStatusLine(undefined, relay, 0)).toBe('12 new messages');
+    expect(deriveSpaceStatusLine(undefined, local, 0)).toBe('9+ new messages');
+    const many = withNotifications(local, undefined, { level: 'all', directUnread: 0, spaceUnread: 100, known: true }, null);
+    expect(deriveSpaceStatusLine(undefined, many, 0)).toBe('99+ new messages');
+    expect(
+      withNotifications(local, undefined, { level: 'all', directUnread: 0, spaceUnread: 0, known: true }, null).kind
+    ).toBe('idle');
+    // Not known yet: this computer's own count stands.
+    expect(withNotifications(local, undefined, { level: 'all', directUnread: 0 }, null)).toBe(local);
   });
 
   it('without unread rows about you, nothing changes', () => {

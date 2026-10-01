@@ -68,23 +68,17 @@ describe('decideBanner', () => {
 });
 
 describe('dockCount', () => {
-  const space = (level: 'all' | 'mentions' | 'nothing', spaceUnread: number, directUnread: number, noMessage: number) => ({
-    bindingId: `bnd_${level}`,
-    level,
-    lastReadSeq: 0,
-    spaceUnread,
-    directUnread,
-    directUnreadNoMessage: noMessage,
-  });
-
-  it('counts each space by its level, plus invites, without counting a mention twice', () => {
+  it('is the bell: unread rows about you, invites included, whatever each space level', () => {
     expect(
       dockCount({
-        spaces: [space('all', 4, 2, 1), space('mentions', 9, 3, 0), space('nothing', 7, 5, 2)],
+        spaces: [
+          { bindingId: 'a', level: 'all', lastReadSeq: 0, spaceUnread: 40, directUnread: 2, directUnreadNoMessage: 1 },
+          { bindingId: 'b', level: 'nothing', lastReadSeq: 0, spaceUnread: 7, directUnread: 1, directUnreadNoMessage: 0 },
+        ],
         invitesUnread: 1,
-        directUnreadTotal: 10,
+        directUnreadTotal: 4,
       })
-    ).toBe(4 + 1 + 3 + 0 + 1);
+    ).toBe(4);
   });
 });
 
