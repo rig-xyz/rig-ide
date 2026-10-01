@@ -1,5 +1,6 @@
 import { Check, Copy, File as FileIcon, FileText, FolderOpen, Image as ImageIcon, MoreHorizontal } from 'lucide-react';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { toast } from '@renderer/lib/hooks/use-toast';
 import { Popover, PopoverMenuItem } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/lib/utils';
 import {
@@ -291,7 +292,13 @@ function AttachmentItem({
   const present = !!fileStatus?.exists;
   const thumb = useThumbnail(space, attachment, present);
   const openable = present && !!attachment.path && !!space?.onOpenFile;
-  const open = openable ? () => space!.onOpenFile!(attachment.path!) : null;
+  // Still on its way here: a click says so (and when it will open) instead of doing nothing.
+  const arriving = !present && !!fileStatus && !!status?.pending;
+  const open = openable
+    ? () => space!.onOpenFile!(attachment.path!)
+    : arriving
+      ? () => toast({ title: status!.label, description: 'It will open once it syncs.' })
+      : null;
   // No thumbnail yet (still arriving, or not an image we can preview): the compact card, never an empty square.
   // A PDF keeps its card (name, size, pages), its first page in place of the badge.
   return thumb && attachment.mime !== 'application/pdf' ? (
@@ -343,29 +350,45 @@ export function MessageAttachments({
 // ── +file tags in messages ──
 
 const TAG_CHECK_TTL_MS = 30_000;
+/** A tagged file that isn't here yet is asked about again this often, so its chip wakes up when it lands. */
+const TAG_RECHECK_MS = 4000;
 const tagChecks = new Map<string, { at: number; exists: Promise<boolean> }>();
 
-/** Whether a tagged file is in the space on this computer (asked once per path for a little while). */
+function checkTag(space: AttachmentSpace, path: string, fresh: boolean): Promise<boolean> {
+  const key = `${space.bindingId}:${path}`;
+  let hit = tagChecks.get(key);
+  if (!hit || Date.now() - hit.at > (fresh ? TAG_RECHECK_MS / 2 : TAG_CHECK_TTL_MS)) {
+    hit = {
+      at: Date.now(),
+      exists: space
+        .status([{ path }], false)
+        .then((result) => !!result?.[0]?.exists)
+        .catch(() => false),
+    };
+    tagChecks.set(key, hit);
+  }
+  return hit.exists;
+}
+
+/** Whether a tagged file is in the space on this computer — re-asked while it isn't, for a while. */
 function useTagExists(space: AttachmentSpace | null, path: string): boolean | null {
   const [exists, setExists] = useState<boolean | null>(null);
   useEffect(() => {
     if (!space) return;
-    const key = `${space.bindingId}:${path}`;
-    let hit = tagChecks.get(key);
-    if (!hit || Date.now() - hit.at > TAG_CHECK_TTL_MS) {
-      hit = {
-        at: Date.now(),
-        exists: space
-          .status([{ path }], false)
-          .then((result) => !!result?.[0]?.exists)
-          .catch(() => false),
-      };
-      tagChecks.set(key, hit);
-    }
     let alive = true;
-    void hit.exists.then((value) => alive && setExists(value));
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const started = Date.now();
+    const check = (fresh: boolean) => {
+      void checkTag(space, path, fresh).then((value) => {
+        if (!alive) return;
+        setExists(value);
+        if (!value && Date.now() - started < POLL_WINDOW_MS) timer = setTimeout(() => check(true), TAG_RECHECK_MS);
+      });
+    };
+    check(false);
     return () => {
       alive = false;
+      if (timer) clearTimeout(timer);
     };
   }, [space, path]);
   return exists;
@@ -379,8 +402,9 @@ function tagIcon(path: string) {
 
 /**
  * A `+path` tag in a message: a small chip (type icon + file name, the path
- * on hover) that opens the file beside the chat. Muted, and not a link, when
- * the file isn't in the space on this computer.
+ * on hover) that opens the file beside the chat. Muted and dashed while the
+ * file isn't in the space on this computer (a click says it will open once
+ * it syncs), and a plain chip again once it lands.
  */
 export function FileTagChip({ path }: { path: string }) {
   const space = useContext(AttachmentSpaceContext);
@@ -388,15 +412,18 @@ export function FileTagChip({ path }: { path: string }) {
   const Icon = tagIcon(path);
   const name = path.split('/').pop() ?? path;
   const openable = !!space?.onOpenFile && exists === true;
+  const missing = exists === false;
   return (
     <button
       type="button"
-      disabled={!openable}
+      disabled={!openable && !missing}
       onClick={(e) => {
         e.stopPropagation();
         if (openable) space!.onOpenFile!(path);
+        // Not here yet: say so, rather than open nothing (or an error).
+        else if (missing) toast({ title: 'Not on this computer yet', description: 'It will open once it syncs.' });
       }}
-      title={exists === false ? `${path} · Not on this computer` : path}
+      title={missing ? `${path} · Not on this computer yet — it will open once it syncs` : path}
       className={cn(
         'bg-bg-2 border-border-hairline mx-0.5 inline-flex max-w-[16rem] items-center gap-1 rounded-control border px-1.5 align-baseline text-xs leading-5',
         openable ? 'hover:border-border-strong cursor-pointer text-text-primary' : 'cursor-default text-text-muted',

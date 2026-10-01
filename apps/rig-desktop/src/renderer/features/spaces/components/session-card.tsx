@@ -56,6 +56,8 @@ import type {
 } from '../types';
 import { AGENT_NAME, AgentAvatar } from './identity';
 import { SessionTrace } from './session-trace';
+import { SpaceFileLink, toastNotHereYet } from './space-file-link';
+import { notHereYetText, useSpaceFile } from '../space-file-presence';
 import { excerptOf, ROW_GRID, RowActions, RowTime } from './transcript-items';
 import { QuickReactions, ReactionChips } from './reactions';
 
@@ -460,51 +462,81 @@ export function sourcesOf(card: SessionCardData): string[] {
   return sources;
 }
 
-function SourcesRow({ sources, onOpen }: { sources: string[]; onOpen?: (path: string) => void }) {
+function SourcesRow({
+  sources,
+  onOpen,
+  from,
+}: {
+  sources: string[];
+  onOpen?: (path: string) => void;
+  /** Whose computer a missing file is coming from. */
+  from?: string | null;
+}) {
   if (sources.length === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-1.5" data-testid="session-sources">
       <span className="mr-0.5 text-2xs text-text-muted">Sources</span>
-      {sources.map((path) => {
-        const name = path.split('/').pop() || path;
-        return (
-          <button
-            key={path}
-            type="button"
-            onClick={onOpen ? () => onOpen(path) : undefined}
-            disabled={!onOpen}
-            title={path}
-            className="border-border-hairline bg-bg-1 enabled:hover:border-border-strong enabled:hover:text-text-primary flex h-6 items-center gap-1.5 rounded-chip border px-2 text-xs text-text-secondary transition-colors"
-          >
-            <FileText className="size-3 shrink-0" strokeWidth={1.5} />
-            <span className="max-w-48 truncate">{name}</span>
-          </button>
-        );
-      })}
+      {sources.map((path) => (
+        <SourceChip key={path} path={path} onOpen={onOpen} from={from} />
+      ))}
     </div>
   );
 }
 
-/** A file the agent changed, as something you can open. */
-function FileCard({ output, onOpen }: { output: SessionOutput; onOpen?: () => void }) {
-  const name = output.path.split('/').pop() ?? output.path;
-  // Agents report absolute paths; the machine-specific prefix says nothing
-  // useful here. A relative path's folder does.
-  const dir = output.path.startsWith('/') ? '' : output.path.slice(0, Math.max(0, output.path.length - name.length - 1));
+function SourceChip({ path, onOpen, from }: { path: string; onOpen?: (path: string) => void; from?: string | null }) {
+  const file = useSpaceFile(path);
+  const missing = file.relPath !== null && file.present === false;
+  const name = path.split('/').pop() || path;
   return (
     <button
       type="button"
-      onClick={onOpen}
+      onClick={onOpen ? () => (missing ? toastNotHereYet(from) : onOpen(path)) : undefined}
       disabled={!onOpen}
-      className="border-border-hairline bg-bg-1 enabled:hover:border-border-strong flex w-full max-w-[420px] items-center gap-2.5 rounded-card border px-2.5 py-2 text-left transition-colors"
+      title={missing ? `${file.relPath} · ${notHereYetText(from)}` : (file.relPath ?? path)}
+      data-missing={missing ? 'true' : undefined}
+      className={cn(
+        'border-border-hairline bg-bg-1 enabled:hover:border-border-strong enabled:hover:text-text-primary flex h-6 items-center gap-1.5 rounded-chip border px-2 text-xs text-text-secondary transition-colors',
+        missing && 'text-text-muted border-dashed'
+      )}
+    >
+      <FileText className="size-3 shrink-0" strokeWidth={1.5} />
+      <span className="max-w-48 truncate">{name}</span>
+    </button>
+  );
+}
+
+/** A file the agent changed, as something you can open. */
+function FileCard({ output, onOpen, from }: { output: SessionOutput; onOpen?: () => void; from?: string | null }) {
+  const file = useSpaceFile(output.path);
+  const missing = file.relPath !== null && file.present === false;
+  const shown = file.relPath ?? output.path;
+  const name = shown.split('/').pop() ?? shown;
+  // Agents report absolute paths; the machine-specific prefix says nothing
+  // useful here. Its folder inside the space does.
+  const dir = shown.startsWith('/') ? '' : shown.slice(0, Math.max(0, shown.length - name.length - 1));
+  return (
+    <button
+      type="button"
+      onClick={onOpen ? () => (missing ? toastNotHereYet(from) : onOpen()) : undefined}
+      disabled={!onOpen}
+      title={missing ? notHereYetText(from) : undefined}
+      className={cn(
+        'border-border-hairline bg-bg-1 enabled:hover:border-border-strong flex w-full max-w-[420px] items-center gap-2.5 rounded-card border px-2.5 py-2 text-left transition-colors',
+        missing && 'border-dashed'
+      )}
       data-testid="session-output"
+      data-missing={missing ? 'true' : undefined}
     >
       <span className="bg-bg-2 flex size-7 shrink-0 items-center justify-center rounded-control text-text-muted">
         <FileText className="size-3.5" strokeWidth={1.5} />
       </span>
       <span className="flex min-w-0 flex-col">
         <span className="truncate text-sm text-text-primary">{name}</span>
-        {dir && <span className="truncate text-2xs text-text-muted">{dir}</span>}
+        {missing ? (
+          <span className="truncate text-2xs text-text-muted">{notHereYetText(from)}</span>
+        ) : (
+          dir && <span className="truncate text-2xs text-text-muted">{dir}</span>
+        )}
       </span>
       <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-xs">
         <span className="text-success">+{output.adds}</span>
@@ -960,7 +992,12 @@ export function SessionCard({
 
         {card.finalAnswer && status !== 'failed' && (
           <div data-highlight-target className="rounded-card">
-            <SafeMarkdown content={card.finalAnswer} className="text-sm leading-relaxed text-text-prose" onOpenPath={onOpenFile} />
+            <SafeMarkdown
+              content={card.finalAnswer}
+              className="text-sm leading-relaxed text-text-prose"
+              onOpenPath={onOpenFile}
+              renderFileLink={(parts) => <SpaceFileLink {...parts} onOpen={onOpenFile} from={mine ? null : (owner?.name ?? null)} />}
+            />
           </div>
         )}
         {card.finalAnswer && status === 'failed' && (
@@ -971,7 +1008,7 @@ export function SessionCard({
             </pre>
           </details>
         )}
-        {!running && card.finalAnswer && <SourcesRow sources={sourcesOf(card)} onOpen={onOpenFile} />}
+        {!running && card.finalAnswer && <SourcesRow sources={sourcesOf(card)} onOpen={onOpenFile} from={mine ? null : (owner?.name ?? null)} />}
         {mine && onConnectorConnect && liveGaps.length > 0 && (
           <div className="flex flex-wrap gap-1.5" data-testid="session-connector-gaps">
             {liveGaps.map((gap) => {
@@ -1004,6 +1041,7 @@ export function SessionCard({
                 key={output.path}
                 output={output}
                 onOpen={onOpenFile ? () => onOpenFile(output.path) : undefined}
+                from={mine ? null : (owner?.name ?? null)}
               />
             ))}
           </div>

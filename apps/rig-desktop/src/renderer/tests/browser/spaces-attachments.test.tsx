@@ -537,7 +537,10 @@ describe('+file tags', () => {
     await act(async () => click(chips[0]!));
     expect(open).toHaveBeenCalledWith('docs/roadmap.md');
     expect(chips[2]!.dataset.missing).toBe('true');
-    expect(chips[2]!.disabled).toBe(true);
-    expect(chips[2]!.title).toBe('old/gone.md · Not on this computer');
+    // Not here yet: still clickable, to say it will open once it syncs (it never opens).
+    expect(chips[2]!.disabled).toBe(false);
+    expect(chips[2]!.title).toBe('old/gone.md · Not on this computer yet — it will open once it syncs');
+    await act(async () => click(chips[2]!));
+    expect(open).toHaveBeenCalledTimes(1);
   });
 });

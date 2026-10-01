@@ -32,6 +32,7 @@ import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 import { FileTagChip, MessageAttachments } from './attachment-cards';
 import { FILE_TAG_SOURCE, tagPathOf } from '@shared/rig/file-tags';
 import { ConnectPill } from './connectors-panel';
+import { SpaceFileLink } from './space-file-link';
 import { QuickReactions, ReactionChips } from './reactions';
 
 /**
@@ -220,7 +221,7 @@ export function richText(
   // the very start of the message (a path like "/etc/hosts" stays plain).
   // The mention group is just the "@"; `mentionAt` decides how far it runs.
   const pattern = new RegExp(
-    `(${URL_PATTERN.source})|((?<![\\w.@/:-])@)|(^\\/[a-z-]+(?![\\w/.]))|(${FILE_TAG_SOURCE})|(reviews\\/[\\w.-]+\\.md)`,
+    `(${URL_PATTERN.source})|((?<![\\w.@/:-])@)|(^\\/[a-z-]+(?![\\w/.]))|(${FILE_TAG_SOURCE})|(reviews\\/[\\w.-]+\\.md)|(?<abspath>(?<![\\w/.:~-])(?:file:\\/\\/)?\\/(?:Users|home|Volumes)\\/[^\\s'"\x60<>()\\[\\]{}|]+)`,
     'g'
   );
   const nodes: ReactNode[] = [];
@@ -238,7 +239,23 @@ export function richText(
     }
     if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
     let token = match[0];
-    if (match[1]) {
+    const absPath = match.groups?.abspath ? match.groups.abspath.replace(/[.,;:!?]+$/, '') : null;
+    if (absPath) {
+      // Someone's absolute path (their own computer's): shown by its path in
+      // the space, opening this computer's copy — see `SpaceFileLink`.
+      token = absPath;
+      nodes.push(
+        <SpaceFileLink
+          key={key++}
+          href={absPath}
+          text={absPath}
+          code={false}
+          className="text-accent cursor-pointer font-mono underline decoration-dotted underline-offset-2"
+        >
+          {absPath}
+        </SpaceFileLink>
+      );
+    } else if (match[1]) {
       // The sentence's own punctuation after a link stays text.
       token = trimUrl(token);
       nodes.push(<MessageLink key={key++} url={token} />);

@@ -1,10 +1,11 @@
 import { Image as ImageIcon } from 'lucide-react';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
 import { rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
+import { remarkBarePaths } from './bare-paths';
 import { markMentions } from './mark-mentions';
 
 /**
@@ -98,6 +99,17 @@ function fileLinkUrlTransform(value: string): string {
   return /^file:/i.test(value) ? value : urlTransform(value);
 }
 
+/** A file link, as handed to `renderFileLink`: the href as written, the link's own text, and whether that text was `code`. */
+export type FileLinkParts = { href: string; text: string; code: boolean; children: ReactNode };
+
+type HastNode = { type: string; value?: string; tagName?: string; children?: HastNode[] };
+
+function hastText(node: HastNode | undefined): string {
+  if (!node) return '';
+  if (node.type === 'text') return node.value ?? '';
+  return (node.children ?? []).map(hastText).join('');
+}
+
 /** A link the browser side can open: http(s) or mail. Everything else in an agent's answer is a file path. */
 function isWebLink(href: string): boolean {
   return /^(https?|mailto):/i.test(href);
@@ -183,6 +195,7 @@ export function SafeMarkdown({
   className,
   onOpenRigFile,
   onOpenPath,
+  renderFileLink,
 }: {
   content: string;
   className?: string;
@@ -190,11 +203,18 @@ export function SafeMarkdown({
   onOpenRigFile?: (bindingId: string, relPath: string) => void;
   /** Handles a link to a file (relative, absolute or `file://`), as written — see `FILE_LINK_SANITIZE_SCHEMA`. */
   onOpenPath?: (href: string) => void;
+  /**
+   * Draws a file link itself (with `onOpenPath`): the Room shows a path
+   * inside the space by that path, and says when the file isn't on this
+   * computer yet. Also turns bare absolute paths in the text into file
+   * links (`bare-paths.ts`), so they get the same treatment.
+   */
+  renderFileLink?: (parts: FileLinkParts) => ReactNode;
 }) {
   return (
     <div className={cn(MARKDOWN_BODY_CLASS, className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={onOpenPath && renderFileLink ? [remarkGfm, remarkBarePaths] : [remarkGfm]}
         rehypePlugins={[[rehypeSanitize, onOpenPath ? FILE_LINK_SANITIZE_SCHEMA : SANITIZE_SCHEMA]]}
         urlTransform={onOpenPath ? fileLinkUrlTransform : urlTransform}
         components={{
@@ -204,8 +224,13 @@ export function SafeMarkdown({
               <table className={TABLE_CLASS}>{children}</table>
             </div>
           ),
-          a: ({ href, children }) => {
+          a: ({ href, children, node }) => {
             const rigFile = href ? parseRigFileHref(href) : null;
+            if (href && !rigFile && onOpenPath && renderFileLink && !isWebLink(href) && !href.startsWith('#')) {
+              const kids = (node as HastNode | undefined)?.children ?? [];
+              const code = kids.length === 1 && kids[0]!.type === 'element' && kids[0]!.tagName === 'code';
+              return renderFileLink({ href, text: hastText(node as HastNode | undefined), code, children });
+            }
             return (
               <a
                 href={href}
