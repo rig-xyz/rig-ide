@@ -69,6 +69,9 @@ const disableNativeDb = process.env.EMDASH_DISABLE_NATIVE_DB === '1';
 const nativeModules: string[] = [];
 if (!disableNativeDb) nativeModules.push('better-sqlite3');
 if (!disablePty) nativeModules.push('node-pty');
+// macOS notification permission (Settings › Notifications, Activity's ask).
+// Without the Electron build it loads as 'unsupported' and that UI hides.
+if (process.platform === 'darwin') nativeModules.push('@rigxyz/mac-notifications');
 
 if (nativeModules.length === 0) {
   process.exit(0);
