@@ -248,6 +248,10 @@ void app.whenReady().then(async () => {
   setupApplicationMenu();
   createMainWindow();
 
+  // A restart ends every sync daemon and nothing else brings them back:
+  // start each signed-in rig that should be syncing (see `sync-health.ts`).
+  void import('./rig/sync-health').then((m) => m.resumeSyncOnLaunch());
+
   try {
     await updateService.initialize();
   } catch (error) {

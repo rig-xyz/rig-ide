@@ -38,6 +38,7 @@ import { ConnectorGallery } from './connector-gallery';
 import { ConnectorsSection } from './connectors-panel';
 import { SpaceCard } from './space-card';
 import { SpaceSetupState, type RoomSetup } from './space-setup-state';
+import { SyncHealthNotice } from './sync-health-notice';
 import { setupDraftKey } from '../space-setup-store';
 import { moveComposerDraft } from './composer';
 import { SPACE_SETUP_PENDING_REASON } from '@shared/rig/space-setup';
@@ -661,14 +662,28 @@ export function RoomView({
       // Folder not known (yet): hand it over as before.
       if (!spaceRoot) return open(link);
       const resolved = resolveSpaceLink(link, spaceRoot);
-      if (resolved.kind === 'inside') return open(resolved.relPath);
+      if (resolved.kind === 'inside') {
+        // Made on someone else's computer and not synced here yet: say so,
+        // instead of opening an editor that can only fail.
+        void Promise.resolve()
+          .then(() => rpc.rig.attachments.status({ bindingId, files: [{ path: resolved.relPath }], withRelay: false }))
+          .catch(() => null)
+          .then((result) => {
+            if (result && result[0] && !result[0].exists) {
+              toast({ title: 'Not on this computer yet', description: 'It will open once it syncs.' });
+              return;
+            }
+            open(resolved.relPath);
+          });
+        return;
+      }
       if (resolved.kind === 'external') return void rpc.app.openExternal(link).catch(() => {});
       toast({
         title: 'That file isn’t in this space',
         description: `${resolved.path} is outside ${spaceName}’s folder, so it can’t open here.`,
       });
     },
-    [spaceRoot, spaceName]
+    [spaceRoot, spaceName, bindingId]
   );
   const handleOpenFile = onOpenFile ? openLink : undefined;
   // The composer's `+` file suggestions: the space's files as the Files navigator shows them.
@@ -1100,6 +1115,8 @@ export function RoomView({
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
             {/* No live socket: the source polls instead, so nothing is
                 broken, just a few seconds behind. A quiet note, not an alarm. */}
+            {/* Files here go stale without a word when sync isn't running on this computer: say so. */}
+            {live && <SyncHealthNotice path={spaceRoot} className="mb-1.5" />}
             {roomConnection && (
               <ConnectionBanner
                 connection={roomConnection}

@@ -55,6 +55,7 @@ import { rigPulseController } from './rig/pulse';
 import { rigSpaceStatusController } from './rig/space-status';
 import { rigRecentController } from './rig/recent-rigs';
 import { rigControlController } from './rig/rig-controls';
+import { rigSyncHealthController } from './rig/sync-health';
 import { rigShareController } from './rig/rig-share';
 import { rigSeenStateController } from './rig/seen-state';
 import { rigSessionsController } from './rig/sessions';
@@ -234,6 +235,8 @@ export const rpcRouter = createRPCRouter({
     // `join`/`create` above: one-shot actions driving the bundled CLI, not
     // a data surface. See `rig-controls.ts`'s own header comment.
     control: rigControlController,
+    // Is each rig/space syncing on this computer, and the button that starts it again.
+    syncHealth: rigSyncHealthController,
     // Delete/leave a rig — the rigs-rail row menu's "Delete rig…"/"Leave
     // rig…" (`delete-rig-dialog.tsx`). Its own key rather than folded into
     // `control` above: a destructive, multi-step orchestration (stop sync,

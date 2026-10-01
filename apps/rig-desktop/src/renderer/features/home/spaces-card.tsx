@@ -9,6 +9,7 @@ import {
   writeOpenedAt,
 } from '@renderer/features/spaces/room-read-marker';
 import { NeedsConnection } from '@renderer/features/shell/needs-connection';
+import { SyncHealthNotice } from '@renderer/features/spaces/components/sync-health-notice';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
@@ -445,6 +446,8 @@ function SpaceRow({
           </span>
         )}
       </button>
+      {/* Not syncing on this computer (paused, stopped, failing): said on the row, with the fix. */}
+      {row.kind === 'local' && <SyncHealthNotice path={row.path} variant="chip" />}
       <Faces bindingId={row.bindingId} />
       <SpaceRowMenu
         row={row}

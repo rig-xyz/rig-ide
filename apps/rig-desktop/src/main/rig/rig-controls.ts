@@ -81,7 +81,7 @@ export async function moveRig(
 }
 
 /** `rig pause`/`rig resume` in `path` (spawn `cwd`, not `--dir` — `rig pause` accepts no `--dir` at all, only reads `process.cwd()`). Returns the verified paused state afterward, read straight off `.rig/sync-paused.json`. */
-async function toggleSync(
+export async function toggleSync(
   verb: 'pause' | 'resume',
   path: string
 ): Promise<Result<{ paused: boolean }, { message: string }>> {

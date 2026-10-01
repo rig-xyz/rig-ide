@@ -14,6 +14,7 @@ import { usePulseBriefing } from '@renderer/features/home/use-pulse-briefing';
 import { NewMenu } from '@renderer/features/rig-import/add-menu';
 import { ImportDocDialog } from '@renderer/features/rig-import/import-doc-dialog';
 import { RigSharePopoverContent } from '@renderer/features/rig-share/rig-share-button';
+import { useSyncHealth } from '@renderer/features/spaces/use-sync-health';
 import { events, rpc } from '@renderer/lib/ipc';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
@@ -28,6 +29,7 @@ import {
 import { rigFileChangeChannel, type RigFileNode } from '@shared/rig/files';
 import { computeUnseenSummary, type SeenMap } from '@shared/rig/seen-state';
 import { rigSettingsChangedChannel } from '@shared/rig/settings';
+import { describeSyncHealth } from '@shared/rig/sync-health';
 import { iconFor, rigFilesQueryKey } from './file-tree';
 import { useEverWrittenPaths, useRecentWrites } from './write-activity';
 
@@ -316,6 +318,9 @@ export function PinnedCard({
     if (startCollapsed) setCollapsed(true);
   }, [startCollapsed]);
   const [importOpen, setImportOpen] = useState(false);
+  // Is it actually syncing on this computer? "Backed up" only when it is.
+  const sync = useSyncHealth(root);
+  const syncNotice = describeSyncHealth(sync.health);
   const toggleCollapsed = () => {
     setCollapsed((current) => {
       try {
@@ -663,8 +668,9 @@ export function PinnedCard({
 
       {/* Spaces aren't backed up as a rig is — the relay binding IS the
           space's storage — so this row only means something for a plain
-          rig (`isSpace` false). */}
-      {!isSpace && (
+          rig (`isSpace` false)… unless sync isn't running on this
+          computer, which a space needs saying just as much. */}
+      {(!isSpace || syncNotice) && (
         <Tooltip>
           <TooltipTrigger
             render={
@@ -677,6 +683,22 @@ export function PinnedCard({
                       <Loader2 className="size-3 animate-spin text-text-muted" strokeWidth={1.5} />
                       <span className="text-2xs text-text-muted">Downloading…</span>
                     </>
+                  ) : syncNotice ? (
+                    <span className="flex items-center gap-1.5" data-testid="pinned-sync-notice">
+                      <span className={cn('size-1.5 rounded-full', syncNotice.tone === 'bad' ? 'bg-danger' : 'bg-warning')} />
+                      <span className={cn('text-2xs', syncNotice.tone === 'bad' ? 'text-danger' : 'text-warning')}>
+                        {syncNotice.short}
+                      </span>
+                      {syncNotice.action && (
+                        <button
+                          type="button"
+                          onClick={() => void sync.start()}
+                          className="text-accent text-2xs font-medium hover:opacity-80"
+                        >
+                          {syncNotice.action}
+                        </button>
+                      )}
+                    </span>
                   ) : (
                     <>
                       <span className="size-1.5 rounded-full bg-success" />
@@ -688,7 +710,7 @@ export function PinnedCard({
             }
           />
           <TooltipContent side="left">
-            {syncing ? 'Downloading this rig’s files' : 'Backed up to Rig’s cloud'}
+            {syncing ? 'Downloading this rig’s files' : syncNotice ? syncNotice.text : 'Backed up to Rig’s cloud'}
           </TooltipContent>
         </Tooltip>
       )}
