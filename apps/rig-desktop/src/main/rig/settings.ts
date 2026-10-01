@@ -13,6 +13,7 @@ import {
   type RigsRailView,
 } from '@shared/rig/settings';
 import { normalizePageSignIns } from '@shared/pages/sign-in-sites';
+import { normalizeNotificationPrefs } from '@shared/rig/notifications';
 import { isRoomSees, type RoomSees } from '@shared/spaces/room-sees';
 
 /**
@@ -77,6 +78,14 @@ export class RigSettingsStore {
         : {}),
       ...(patch.pinnedPathsByRig
         ? { pinnedPathsByRig: { ...this.settings.pinnedPathsByRig, ...patch.pinnedPathsByRig } }
+        : {}),
+      ...(patch.notificationCursorByAccount
+        ? {
+            notificationCursorByAccount: {
+              ...this.settings.notificationCursorByAccount,
+              ...patch.notificationCursorByAccount,
+            },
+          }
         : {}),
       ...(patch.fileTreeViewByRig
         ? { fileTreeViewByRig: { ...this.settings.fileTreeViewByRig, ...patch.fileTreeViewByRig } }
@@ -185,6 +194,8 @@ function normalizeSettings(parsed: unknown): RigSettings {
     spacesRoomSees: normalizeRoomSees(raw.spacesRoomSees),
     spacesRoomDiskCache: raw.spacesRoomDiskCache === true,
     pageSignIns: normalizePageSignIns(raw.pageSignIns),
+    notifications: normalizeNotificationPrefs(raw.notifications),
+    notificationCursorByAccount: isStringRecord(raw.notificationCursorByAccount) ? raw.notificationCursorByAccount : {},
   };
 }
 

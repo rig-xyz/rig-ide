@@ -55,6 +55,7 @@ import {
 } from './rig/bundled-cli';
 import { registerRigBridge } from './rig/intent-bridge';
 import { rigSettingsStore } from './rig/settings-instance';
+import { startNotifications } from './rig/notifications/electron';
 import { spacesDispatchController } from './rig/spaces/dispatch-controller-instance';
 import { bufferOpenFilePath } from './rig/workspace';
 import { rpcRouter } from './rpc';
@@ -181,6 +182,7 @@ void app.whenReady().then(async () => {
   rigSettingsStore.subscribe((settings) => {
     events.emit(rigSettingsChangedChannel, settings);
   });
+  startNotifications();
 
   projectSettingsService.initialize();
   prSyncScheduler.initialize();

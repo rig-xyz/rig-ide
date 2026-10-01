@@ -1,14 +1,15 @@
 import { eq } from 'drizzle-orm';
-import { app, BrowserWindow, Notification } from 'electron';
+import { app, BrowserWindow, Notification, powerMonitor } from 'electron';
 import { getMainWindow } from '@main/app/window';
 import { getPluginMetadata } from '@main/core/agents/plugin-registry';
-import { appSettingsService } from '@main/core/settings/settings-service';
+import { rigSettingsStore } from '@main/rig/settings-instance';
 import { db } from '@main/db/client';
 import { tasks } from '@main/db/schema';
 import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
 import { isAttentionNotification, type AgentEvent } from '@shared/core/agents/agentEvents';
 import { notificationFocusTaskChannel } from '@shared/events/appEvents';
+import { AWAY_IDLE_SECONDS } from '@shared/rig/notifications';
 
 const activeNotifications = new Set<Notification>();
 
@@ -59,19 +60,27 @@ function getProviderName(providerId: string): string {
   }
 }
 
+/**
+ * Task agents' own banners follow Settings › Notifications (rig
+ * `shared/rig/notifications.ts`), like space notifications: the master
+ * switch, the "Agents finishing" / "Agents needing approval" toggles, and
+ * the sound. They never show while you're at rig (focused and active).
+ */
 export async function maybeShowNotification(event: AgentEvent, appFocused: boolean): Promise<void> {
   try {
-    const { enabled, osNotifications } = await appSettingsService.get('notifications');
-    if (!enabled || !osNotifications || appFocused || !Notification.isSupported()) return;
+    const prefs = rigSettingsStore.get().notifications;
+    if (!prefs.enabled || !Notification.isSupported()) return;
+    if (appFocused && powerMonitor.getSystemIdleTime() < AWAY_IDLE_SECONDS) return;
 
     const body = getNotificationBody(event);
     if (!body) return;
+    if (!prefs.types[event.type === 'stop' ? 'agent_finished' : 'agent_waiting']) return;
 
     const providerName = event.providerId ? getProviderName(event.providerId) : 'Agent';
     const taskName = await getTaskName(event.taskId);
-    const title = taskName ? `${providerName} — ${taskName}` : providerName;
+    const title = taskName ? `${providerName} in ${taskName}` : providerName;
 
-    const notification = new Notification({ title, body, silent: true });
+    const notification = new Notification({ title, body, silent: !prefs.sound });
     activeNotifications.add(notification);
 
     const releaseNotification = () => activeNotifications.delete(notification);

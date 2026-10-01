@@ -53,6 +53,7 @@ import { rigImportController } from './rig/import-doc';
 import { rigJoinController } from './rig/join';
 import { rigPulseController } from './rig/pulse';
 import { rigSpaceStatusController } from './rig/space-status';
+import { rigNotificationsController } from './rig/notifications/electron';
 import { rigRecentController } from './rig/recent-rigs';
 import { rigControlController } from './rig/rig-controls';
 import { rigShareController } from './rig/rig-share';
@@ -221,6 +222,10 @@ export const rpcRouter = createRPCRouter({
     // resource with its own (short) timeout — see `space-status.ts`'s own
     // header comment.
     spaceStatus: rigSpaceStatusController,
+    // Notifications (rig docs/notifications-spec.md): unread summary,
+    // Activity, read marks, the per-space level, and where a banner click
+    // goes. See `notifications/electron.ts`.
+    notifications: rigNotificationsController,
     // Settings → About's rig/tapd version rows — package.json reads only,
     // see `bundled-cli.ts`'s own header comment for why this never spawns
     // either binary.

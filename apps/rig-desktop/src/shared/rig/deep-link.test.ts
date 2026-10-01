@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findRigUrlInArgv, parseRigDeepLink, RIG_URL_SCHEME, toJoinRequest } from './deep-link';
+import { findRigUrlInArgv, parseRigDeepLink, RIG_URL_SCHEME, rigSpaceLink, toJoinRequest } from './deep-link';
 
 // The relay's real shape: `tap_inv_` + 32 base64url chars.
 const SECRET = 'tap_inv_Ab3-_x9QwErTyUiOpAsDfGhJkLzXcVbN';
@@ -16,7 +16,7 @@ describe('parseRigDeepLink', () => {
   });
 
   it('keeps the secret case-sensitive', () => {
-    expect(parseRigDeepLink(`rig://join/${SECRET}`)?.secret).not.toBe(SECRET.toLowerCase());
+    expect(parseRigDeepLink(`rig://join/${SECRET}`)).toEqual({ kind: 'join', secret: SECRET });
   });
 
   it('rejects other schemes', () => {
@@ -72,7 +72,7 @@ describe('per-channel scheme', () => {
       kind: 'join',
       secret: SECRET,
     });
-    expect(parseRigDeepLink(`RIG-CANARY://join/${SECRET}/`, 'rig-canary')?.secret).toBe(SECRET);
+    expect(parseRigDeepLink(`RIG-CANARY://join/${SECRET}/`, 'rig-canary')).toEqual({ kind: 'join', secret: SECRET });
     // Canary leaves the website's rig:// links to stable, and stable ignores canary's.
     expect(parseRigDeepLink(`rig://join/${SECRET}`, 'rig-canary')).toBeNull();
     expect(parseRigDeepLink(`rig-canary://join/${SECRET}`)).toBeNull();
@@ -112,6 +112,40 @@ describe('toJoinRequest', () => {
   it('re-expresses the secret as the canonical https join link', () => {
     expect(toJoinRequest({ kind: 'join', secret: SECRET })).toEqual({
       link: `https://userig.xyz/join/${SECRET}`,
+    });
+  });
+});
+
+describe('space links', () => {
+  it('parses a space, optionally at a message', () => {
+    expect(parseRigDeepLink('rig://space/bnd_abc123')).toEqual({ kind: 'space', bindingId: 'bnd_abc123', messageId: null });
+    expect(parseRigDeepLink('RIG://SPACE/bnd_abc/m/msg_9f/')).toEqual({
+      kind: 'space',
+      bindingId: 'bnd_abc',
+      messageId: 'msg_9f',
+    });
+  });
+
+  it('rejects anything extra or oddly shaped', () => {
+    for (const bad of [
+      'rig://space/',
+      'rig://space/bnd_abc?x=1',
+      'rig://space/bnd_abc#m',
+      'rig://space/bnd_abc/m/',
+      'rig://space/bnd_abc/x/msg_1',
+      'rig://space/bnd%2Fabc',
+      `rig://space/${'a'.repeat(65)}`,
+    ]) {
+      expect(parseRigDeepLink(bad)).toBeNull();
+    }
+  });
+
+  it('builds the link a notification opens', () => {
+    expect(rigSpaceLink('bnd_abc', 'msg_1', 'rig')).toBe('rig://space/bnd_abc/m/msg_1');
+    expect(parseRigDeepLink(rigSpaceLink('bnd_abc', null, 'rig'), 'rig')).toEqual({
+      kind: 'space',
+      bindingId: 'bnd_abc',
+      messageId: null,
     });
   });
 });
