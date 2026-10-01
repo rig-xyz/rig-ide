@@ -16,12 +16,12 @@ import { ATTACHMENTS_DIR } from '@shared/rig/attachments';
  * not-yet-synced attachments.
  */
 
-export type ManifestSize = { path: string; size: number | null };
+export type ManifestSize = { path: string; size: number | null; deleted?: true };
 
 export type SpaceUsage = { usedBytes: number; source: 'relay' | 'local' };
 
 export type UsageDeps = {
-  /** Every current (non-deleted) manifest entry, or null when the relay can't be reached. */
+  /** Every manifest entry, deleted ones marked `deleted`, or null when the relay can't be reached. */
   fetchManifest: (bindingId: string) => Promise<ManifestSize[] | null>;
 };
 
@@ -108,7 +108,8 @@ async function localAttachments(root: string): Promise<Array<{ path: string; siz
 /** Current usage, or null when neither the relay nor local sync state can tell. */
 export async function spaceUsage(deps: UsageDeps, bindingId: string, root: string): Promise<SpaceUsage | null> {
   const pending = await localAttachments(root);
-  const manifest = await deps.fetchManifest(bindingId).catch(() => null);
+  const listed = await deps.fetchManifest(bindingId).catch(() => null);
+  const manifest = listed?.filter((entry) => !entry.deleted);
   if (manifest) {
     const known = new Set(manifest.map((entry) => entry.path));
     const used = manifest.reduce((sum, entry) => sum + (entry.size ?? 0), 0);

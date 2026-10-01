@@ -30,7 +30,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const MANIFEST_PAGE = 5000;
 const ROLE_TTL_MS = 60_000;
 
-/** The space's current files on the relay (`GET /v1/me/bindings/:id/manifest`, member-readable), or null when unreachable. */
+/** The space's files on the relay, deleted ones marked (`GET /v1/me/bindings/:id/manifest`, member-readable), or null when unreachable. */
 async function fetchManifest(bindingId: string): Promise<ManifestSize[] | null> {
   const ctx = await resolveContext();
   if (isError(ctx)) return null;
@@ -48,7 +48,13 @@ async function fetchManifest(bindingId: string): Promise<ManifestSize[] | null> 
       const body = (await response.json()) as { entries?: unknown; nextCursor?: unknown };
       if (!Array.isArray(body.entries)) return null;
       for (const raw of body.entries as Array<Record<string, unknown>>) {
-        if (typeof raw?.path !== 'string' || raw.deleted === true) continue;
+        if (typeof raw?.path !== 'string') continue;
+        // Deleted entries are kept, marked: they tell "someone removed it"
+        // apart from "it never reached the relay" on message cards.
+        if (raw.deleted === true) {
+          out.push({ path: raw.path, size: null, deleted: true });
+          continue;
+        }
         out.push({ path: raw.path, size: typeof raw.size === 'number' ? raw.size : Number(raw.size) || null });
       }
       if (typeof body.nextCursor !== 'string' || !body.nextCursor) return out;

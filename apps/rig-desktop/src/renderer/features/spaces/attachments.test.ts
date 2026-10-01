@@ -89,16 +89,20 @@ describe('cardStatus', () => {
     expect(cardStatus({ ...base, attachment: file, mine: true, status: status({}), sending: true })).toBeNull();
   });
 
-  it("says others' files are arriving until they're here, then removed only once they're off the relay", () => {
+  it("says others' files are arriving until they're here, removed only once deleted on the relay", () => {
     expect(cardStatus({ ...base, attachment: file, mine: false, status: status({ exists: false, onRelay: true }) })?.label).toBe(
       'Arriving from Dylan…'
     );
     expect(cardStatus({ ...base, attachment: file, mine: false, status: status({ exists: false, onRelay: false }) })?.label).toBe(
       'Arriving from Dylan…'
     );
+    // Never reached the relay: the sender's sync is behind, nobody removed it; keep checking.
+    const late = cardStatus({ ...base, messageAgeMs: 60 * 60 * 1000, attachment: file, mine: false, status: status({ exists: false, onRelay: false }) });
+    expect(late?.label).toBe('Dylan’s computer hasn’t shared it yet');
+    expect(cardSettled(late, file, false)).toBe(false);
+    // Deleted on the relay: removed, whatever its age.
     expect(
-      cardStatus({ ...base, messageAgeMs: 60 * 60 * 1000, attachment: file, mine: false, status: status({ exists: false, onRelay: false }) })
-        ?.label
+      cardStatus({ ...base, attachment: file, mine: false, status: status({ exists: false, onRelay: false, deletedOnRelay: true }) })?.label
     ).toBe('Removed from the space');
     expect(cardStatus({ ...base, attachment: file, mine: false, status: status({ exists: true }) })).toBeNull();
   });

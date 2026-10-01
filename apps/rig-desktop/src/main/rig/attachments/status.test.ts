@@ -13,7 +13,7 @@ function state(paths: Record<string, { lastSeenHash: string; localDirty: boolean
   writeFileSync(join(space, '.rig', 'tap', 'state.local.db'), JSON.stringify({ version: 1, meta, paths }));
 }
 
-const deps = (manifest: Array<{ path: string; size: number }> | null = []) => ({
+const deps = (manifest: Array<{ path: string; size: number | null; deleted?: true }> | null = []) => ({
   resolveSpaceRoot: async (id: string) => (id === 'bnd' ? space : null),
   fetchManifest: async () => manifest,
 });
@@ -87,6 +87,19 @@ describe('attachmentStatus', () => {
     expect(result!.map((s) => [s.exists, s.onRelay, s.synced])).toEqual([
       [false, true, null],
       [false, false, null],
+    ]);
+  });
+
+  it('tells a file someone deleted apart from one that never reached the relay', async () => {
+    const result = await attachmentStatus(
+      deps([{ path: 'attachments/deleted.png', size: null, deleted: true }]),
+      'bnd',
+      [{ path: 'attachments/deleted.png' }, { path: 'attachments/never.png' }],
+      { withRelay: true }
+    );
+    expect(result!.map((s) => [s.onRelay, s.deletedOnRelay ?? false])).toEqual([
+      [false, true],
+      [false, false],
     ]);
   });
 

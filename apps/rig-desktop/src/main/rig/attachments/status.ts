@@ -8,8 +8,9 @@ import type { ManifestSize } from './usage';
  * Where each attached file is, for the message cards: here on this computer
  * or not, synced by the sync daemon or not (its state file's hash for the
  * path equals the attachment's, with no local change pending), held back by
- * the daemon (over the space's quota), and on the relay's file list or not
- * (to tell "arriving" from "removed" when it isn't here).
+ * the daemon (over the space's quota), and on the relay's file list, deleted
+ * from it, or never on it (to tell "arriving", "removed" and "not shared
+ * yet" apart when it isn't here).
  *
  * Paths come from messages other people wrote, so each must be a plain
  * relative path inside the space; anything else is answered as missing.
@@ -55,7 +56,8 @@ export async function attachmentStatus(
   if (!root) return null;
   const state = await readSyncState(root);
   const manifest = opts.withRelay ? await deps.fetchManifest(bindingId).catch(() => null) : null;
-  const onRelay = manifest ? new Set(manifest.map((entry) => entry.path)) : null;
+  const onRelay = manifest ? new Set(manifest.filter((entry) => !entry.deleted).map((entry) => entry.path)) : null;
+  const deletedOnRelay = new Set(manifest?.filter((entry) => entry.deleted).map((entry) => entry.path) ?? []);
   const out: AttachmentFileStatus[] = [];
   for (const query of files) {
     const safe = safeRelativePath(query.path);
@@ -78,6 +80,7 @@ export async function attachmentStatus(
       : null;
     const held = state?.notSynced.get(safe);
     const status: AttachmentFileStatus = { path: query.path, exists, synced, onRelay: onRelay ? onRelay.has(safe) : null };
+    if (deletedOnRelay.has(safe)) status.deletedOnRelay = true;
     if (held && (!query.hash || !held.hash || held.hash === query.hash)) {
       status.notSynced = held.reason === 'file_too_large' ? 'tooLarge' : 'overQuota';
     }

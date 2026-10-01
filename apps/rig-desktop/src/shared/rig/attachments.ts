@@ -194,6 +194,8 @@ export type AttachmentFileStatus = {
   synced: boolean | null;
   /** On the relay's file list (null: not asked, or unreachable). */
   onRelay: boolean | null;
+  /** Someone deleted it from the space (the relay lists it as deleted). */
+  deletedOnRelay?: boolean;
   /** The sync daemon held it back. */
   notSynced?: 'overQuota' | 'tooLarge';
 };

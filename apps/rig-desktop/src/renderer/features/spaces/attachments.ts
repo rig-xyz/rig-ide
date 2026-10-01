@@ -100,7 +100,12 @@ export function cardStatus(args: {
       : { label: 'Syncing…', short: 'syncing', tone: 'muted', pending: true };
   }
   if (status.exists) return null;
-  if (status.onRelay === false && args.messageAgeMs > ARRIVING_GRACE_MS) return removed;
+  if (status.deletedOnRelay) return removed;
+  // Never on the relay: the sender's computer hasn't shared it (its sync may
+  // be off). Not "removed": nobody deleted anything, and it can still arrive.
+  if (status.onRelay === false && args.messageAgeMs > ARRIVING_GRACE_MS) {
+    return { label: `${senderName}’s computer hasn’t shared it yet`, short: 'not shared yet', tone: 'warn', pending: true };
+  }
   return { label: `Arriving from ${senderName}…`, short: 'arriving', tone: 'muted', pending: true };
 }
 
