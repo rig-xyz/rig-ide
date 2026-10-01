@@ -1658,3 +1658,93 @@ async function flush(times = 8): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 }
+
+describe('RelayRoomSource scrollback (loadOlder)', () => {
+  /** A space with `count` messages; `?latest=` and `?before=` behave like the relay. */
+  function longSpace(count: number) {
+    const fake = makeFakeRelay();
+    fake.setMembers([member()]);
+    const log: RoomMessageRow[] = Array.from({ length: count }, (_, i) =>
+      message({ id: `m${i + 1}`, seq: i + 1, body: `message ${i + 1}` })
+    );
+    const queries: Array<{ latest?: number; after?: string; before?: string }> = [];
+    let fail = false;
+    fake.relay.listMessages = async (_bindingId, query) => {
+      queries.push(query);
+      if (fail && query.before) return err<RelayApiError>({ kind: 'relay', message: 'down' });
+      let rows = log;
+      if (query.after) rows = rows.filter((m) => m.seq > Number(query.after));
+      if (query.before) rows = rows.filter((m) => m.seq < Number(query.before));
+      if (query.latest) rows = rows.slice(-query.latest);
+      return ok(rows);
+    };
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      bootstrapMessageCount: 50,
+      createProvider: () => new FakeProvider(),
+    });
+    return { source, queries, setFail: (value: boolean) => (fail = value) };
+  }
+
+  it('pages back 50 at a time, in seq order, until the start of the space', async () => {
+    const { source, queries } = longSpace(120);
+    source.play();
+    await flush();
+    const seqs = () => source.getSnapshot().messages.map((m) => m.seq);
+    expect(seqs()).toEqual(Array.from({ length: 50 }, (_, i) => 71 + i));
+    expect(source.getSnapshot().olderMessages).toBe('more');
+
+    await source.loadOlder();
+    expect(queries.at(-1)).toEqual({ before: '71', latest: 50 });
+    expect(seqs()).toEqual(Array.from({ length: 100 }, (_, i) => 21 + i));
+    expect(source.getSnapshot().olderMessages).toBe('more');
+
+    await source.loadOlder();
+    expect(seqs()).toEqual(Array.from({ length: 120 }, (_, i) => 1 + i));
+    expect(source.getSnapshot().olderMessages).toBe('none');
+
+    const calls = queries.length;
+    await source.loadOlder();
+    expect(queries.length).toBe(calls); // nothing above the first message
+    source.dispose();
+  });
+
+  it('a short space has nothing above its first page', async () => {
+    const { source } = longSpace(12);
+    source.play();
+    await flush();
+    expect(source.getSnapshot().olderMessages).toBe('none');
+    source.dispose();
+  });
+
+  it('a failed page leaves it ready to try again, and one page at a time', async () => {
+    const { source, queries, setFail } = longSpace(80);
+    source.play();
+    await flush();
+    setFail(true);
+    await source.loadOlder();
+    expect(source.getSnapshot().olderMessages).toBe('more');
+    expect(source.getSnapshot().messages).toHaveLength(50);
+    setFail(false);
+    const before = queries.length;
+    await Promise.all([source.loadOlder(), source.loadOlder()]);
+    expect(queries.length).toBe(before + 1);
+    expect(source.getSnapshot().messages).toHaveLength(80);
+    source.dispose();
+  });
+
+  it('an older page is not announced as new messages', async () => {
+    const { source } = longSpace(60);
+    source.play();
+    await flush();
+    const seen: string[] = [];
+    source.subscribe((event) => seen.push(event.type));
+    await source.loadOlder();
+    expect(seen).toEqual(['older_messages_loading', 'older_messages_loaded']);
+    source.dispose();
+  });
+});

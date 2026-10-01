@@ -216,7 +216,7 @@ export interface SpacesRelayApi {
   removeConnector?(bindingId: string, connectorId: string): Promise<Result<void, RelayApiError>>;
   listMessages(
     bindingId: string,
-    query: { latest?: number; after?: string; path?: string; limit?: number }
+    query: { latest?: number; after?: string; before?: string; path?: string; limit?: number }
   ): Promise<Result<RoomMessageRow[], RelayApiError>>;
   postMessage(
     bindingId: string,
@@ -715,6 +715,7 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
       const params = new URLSearchParams();
       if (query.latest !== undefined) params.set('latest', String(query.latest));
       if (query.after !== undefined) params.set('after', query.after);
+      if (query.before !== undefined) params.set('before', query.before);
       if (query.path !== undefined) params.set('path', query.path);
       if (query.limit !== undefined) params.set('limit', String(query.limit));
       const qs = params.toString();

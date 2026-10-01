@@ -962,6 +962,11 @@ export function RoomView({
     [bindingId]
   );
   const handleHideDetails = source instanceof RelayRoomSource ? hideDetails : undefined;
+  // Scrollback: the relay source pages back; the scripted demo has none.
+  const loadOlder = useCallback(() => {
+    if (source instanceof RelayRoomSource) void source.loadOlder();
+  }, [source]);
+  const handleLoadOlder = source instanceof RelayRoomSource ? loadOlder : undefined;
 
   // A run shown from disk (its summary only): expanding its card fetches the log.
   const loadRunLog = useCallback(
@@ -1168,6 +1173,7 @@ export function RoomView({
             onLoadRunLog={handleLoadRunLog}
             jump={jump}
             onJumpMissed={onJumpMissed}
+            onLoadOlder={handleLoadOlder}
           />
           </ReactionsContext.Provider>
           </AttachmentSpaceContext.Provider>

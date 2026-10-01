@@ -32,6 +32,10 @@ import {
  */
 
 const FOLLOW_THRESHOLD_PX = 60;
+/** Scrolled within this of the top, the next older page loads. */
+const LOAD_OLDER_THRESHOLD_PX = 240;
+/** A jump pages back at most this far (50 messages a page) before saying the message is too far back. */
+const JUMP_MAX_PAGES = 20;
 
 /** A follow-up from the same person within this long drops its name and avatar, Slack-style. */
 const CONTINUE_WITHIN_MS = 5 * 60_000;
@@ -320,6 +324,7 @@ export function RoomTranscript({
   onLoadRunLog,
   jump = null,
   onJumpMissed,
+  onLoadOlder,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
@@ -346,9 +351,17 @@ export function RoomTranscript({
    * a banner or Activity click asks. A new `nonce` asks again.
    */
   jump?: RoomJumpRequest | null;
-  /** The jump's message is older than what the Room has loaded (it has no scrollback yet). */
+  /** The jump's message couldn't be reached (before the start, or past the paging cap). */
   onJumpMissed?: () => void;
+  /** Scrollback: load the page before the oldest message (`RoomSource.loadOlder`). */
+  onLoadOlder?: () => void;
 }) {
+  // Callbacks read through refs: a parent's fresh arrow each render must
+  // not re-run the scroll listener or the jump.
+  const onLoadOlderRef = useRef(onLoadOlder);
+  onLoadOlderRef.current = onLoadOlder;
+  const onJumpMissedRef = useRef(onJumpMissed);
+  onJumpMissedRef.current = onJumpMissed;
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   // Pinned = the reader is at the bottom, so new content keeps them there.
@@ -398,6 +411,7 @@ export function RoomTranscript({
   // click lands. Done once per request; gives up quietly if the message
   // never shows (deleted, or older than what the Room loads).
   const jumpDoneRef = useRef<number | null>(null);
+  const jumpPagesRef = useRef<{ nonce: number; pages: number }>({ nonce: -1, pages: 0 });
   useEffect(() => {
     if (!jump || jumpDoneRef.current === jump.nonce) return;
     const messageId =
@@ -406,28 +420,35 @@ export function RoomTranscript({
         ? snapshot.messages.find((m) => m.meta.kind === 'session' && m.meta.runId === jump.runId)?.id
         : undefined);
     if (!messageId || !snapshot.messages.some((m) => m.id === messageId)) {
-      // Loaded, and the message is from before the oldest one here: it
-      // won't arrive by waiting. Say so once rather than open silently.
+      // Loaded, and the message is from before the oldest one here: page
+      // back toward it (scrollback), a bounded number of pages. Past the
+      // start of the space, or the cap, say so rather than open silently.
       const oldest = snapshot.messages.length > 0 ? Math.min(...snapshot.messages.map((m) => m.seq)) : null;
-      if (!snapshot.stale && jump.messageSeq != null && oldest !== null && jump.messageSeq < oldest) {
-        jumpDoneRef.current = jump.nonce;
-        onJumpMissed?.();
+      if (snapshot.stale || jump.messageSeq == null || oldest === null || jump.messageSeq >= oldest) return;
+      if (jumpPagesRef.current.nonce !== jump.nonce) jumpPagesRef.current = { nonce: jump.nonce, pages: 0 };
+      if (snapshot.olderMessages === 'loading') return;
+      if (snapshot.olderMessages === 'more' && onLoadOlderRef.current && jumpPagesRef.current.pages < JUMP_MAX_PAGES) {
+        jumpPagesRef.current.pages += 1;
+        onLoadOlderRef.current();
+        return;
       }
+      jumpDoneRef.current = jump.nonce;
+      onJumpMissedRef.current?.();
       return;
     }
     jumpDoneRef.current = jump.nonce;
     pinnedRef.current = false;
     setPinned(false);
     requestAnimationFrame(() => jumpTo(messageId));
-    // `jumpTo` only reads refs and `onJumpMissed` is a fresh callback each
-    // render; re-running on either's identity would add nothing.
+    // `jumpTo` only reads refs; the callbacks are read through refs too.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jump, snapshot.messages, snapshot.stale]);
+  }, [jump, snapshot.messages, snapshot.stale, snapshot.olderMessages]);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
+      if (el.scrollTop < LOAD_OLDER_THRESHOLD_PX) onLoadOlderRef.current?.();
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_THRESHOLD_PX;
       if (atBottom === pinnedRef.current) return;
       pinnedRef.current = atBottom;
@@ -462,12 +483,40 @@ export function RoomTranscript({
     if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
   }, [snapshot]);
 
+  // Scrollback: a page landing above must not move what the reader is
+  // looking at. The height is read during render (the DOM still shows the
+  // previous page then) and the difference is added back before paint.
+  const firstId = snapshot.messages[0]?.id ?? null;
+  const prevFirstIdRef = useRef(firstId);
+  const heightBeforeRef = useRef(0);
+  if (firstId !== prevFirstIdRef.current && scrollRef.current) {
+    heightBeforeRef.current = scrollRef.current.scrollHeight;
+  }
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const prevFirst = prevFirstIdRef.current;
+    prevFirstIdRef.current = firstId;
+    if (!el || pinnedRef.current || prevFirst === null || firstId === prevFirst) return;
+    // Only a prepend: the old first message is still here, further down.
+    if (!snapshot.messages.some((m) => m.id === prevFirst)) return;
+    el.scrollTop += el.scrollHeight - heightBeforeRef.current;
+  }, [firstId, snapshot.messages]);
+
+  // Too few messages to scroll, yet more above: ask for them without a scroll.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && snapshot.olderMessages === 'more' && el.scrollHeight <= el.clientHeight) onLoadOlder?.();
+  }, [snapshot.olderMessages, snapshot.messages.length, onLoadOlder]);
+
   // New messages while scrolled up are counted for the jump-back pill; one
   // you sent yourself always brings you back down.
-  const lastCountRef = useRef(snapshot.messages.length);
+  // Counted after the previous last message, not by length: an older page
+  // prepended by scrollback isn't new.
+  const lastIdRef = useRef(snapshot.messages[snapshot.messages.length - 1]?.id ?? null);
   useEffect(() => {
-    const added = snapshot.messages.slice(lastCountRef.current);
-    lastCountRef.current = snapshot.messages.length;
+    const lastAt = lastIdRef.current === null ? -1 : snapshot.messages.findIndex((m) => m.id === lastIdRef.current);
+    const added = snapshot.messages.slice(lastAt + 1);
+    lastIdRef.current = snapshot.messages[snapshot.messages.length - 1]?.id ?? null;
     if (added.length === 0) return;
     if (added.some((m) => m.authorId === ownId && m.meta.kind === 'text')) {
       pinToBottom();
@@ -530,6 +579,16 @@ export function RoomTranscript({
           messages" pill below has room to float without covering the last
           row — it's positioned relative to this same scroll viewport. */}
       <div ref={contentRef} className="relative mx-auto flex max-w-[44rem] flex-col gap-4 px-3 pt-6 pb-12">
+        {snapshot.olderMessages === 'loading' && (
+          <p className="text-text-muted text-center text-xs" data-testid="room-older-loading">
+            Loading earlier messages…
+          </p>
+        )}
+        {snapshot.olderMessages === 'none' && snapshot.messages.length > 0 && (
+          <p className="text-text-muted text-center text-xs" data-testid="room-start">
+            Start of the space
+          </p>
+        )}
         <AnimatePresence initial={false}>
           {(() => {
             const nodes: ReactNode[] = [];

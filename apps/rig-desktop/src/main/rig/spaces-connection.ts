@@ -177,7 +177,8 @@ export const rigSpacesConnectionController = createRPCController({
 
   listMessages: async (input: {
     bindingId: string;
-    query: { latest?: number; after?: string };
+    /** `before` + `latest`: the scrollback page above the oldest loaded message. */
+    query: { latest?: number; after?: string; before?: string };
   }): Promise<Result<RoomMessageRow[], RelayApiError>> =>
     forgetIfGone(input.bindingId, await api.listMessages(input.bindingId, input.query)),
 

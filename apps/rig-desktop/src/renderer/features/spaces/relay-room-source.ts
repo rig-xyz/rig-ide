@@ -51,7 +51,16 @@ import { connectorById, type ConnectionStatus } from '@shared/spaces/connectors'
 import { ROOM_CACHE_FORMAT_VERSION, ROOM_CACHE_MAX_BYTES, type CachedRoomBlob } from '@shared/spaces/room-cache';
 import type { LocalRunEvent } from '@shared/spaces/room-sees';
 import { canonicalEmoji, withReaction, type MessageReaction } from '@shared/spaces/reactions';
-import type { AgentKind, MessageKind, RoomConnector, RoomEvent, RoomReplyRef, RoomSnapshot, SessionRunMeta } from './types';
+import type {
+  AgentKind,
+  MessageKind,
+  RoomConnector,
+  RoomEvent,
+  RoomMessage,
+  RoomReplyRef,
+  RoomSnapshot,
+  SessionRunMeta,
+} from './types';
 import { parseMessageAttachments } from './attachments';
 import { reduceRoom } from './fixtures/room-feed';
 import { effectiveRunStatus, runCard, summarizeCard } from './projection';
@@ -134,7 +143,7 @@ export interface RelayRoomClient {
   listInvites?(bindingId: string): Promise<Result<RoomInviteRow[], RelayApiError>>;
   listMessages(
     bindingId: string,
-    query: { latest?: number; after?: string }
+    query: { latest?: number; after?: string; before?: string }
   ): Promise<Result<RoomMessageRow[], RelayApiError>>;
   getSessionEvents(
     bindingId: string,
@@ -283,6 +292,9 @@ const RUN_NOTIFY_MS = 32;
 
 /** The disk cache (rig/docs/room-disk-cache-spec.md): saved this long after the Room last changed. */
 const DISK_SAVE_SETTLE_MS = 3_000;
+/** Scrollback page size: messages per `loadOlder`. */
+const OLDER_PAGE = 50;
+
 /** The saved window: what the Room opens with (`bootstrapMessageCount`'s default). */
 const DISK_MESSAGE_WINDOW = 50;
 /** A saved Room older than this opens cold (message deletions are never signalled). */
@@ -398,6 +410,8 @@ export class RelayRoomSource implements RoomSource {
   private readonly liveAtDisconnect = new Set<string>();
   /** Runs the opening messages name whose log is still loading (the open's second phase), with the owner to fall back on. */
   private readonly runsLoading = new Map<string, string>();
+  /** A scrollback page is on its way (`loadOlder`): one at a time. */
+  private loadingOlder = false;
   /**
    * Loading runs that may have moved on since their fetch went out: a
    * notification named one ('notified'), or the socket came up while it was
@@ -851,6 +865,11 @@ export class RelayRoomSource implements RoomSource {
         if (this.disposed) return;
         await this.ingestWireMessage(row, apply, { bootstrap: true });
       }
+      // A full opening page may have more above it (scrollback, `loadOlder`).
+      this.snapshot = {
+        ...this.snapshot,
+        olderMessages: messages.data.length >= this.opts.bootstrapMessageCount ? 'more' : 'none',
+      };
       if (this.runsLoading.size > 0) {
         this.snapshot = { ...this.snapshot, runsLoading: Object.fromEntries([...this.runsLoading.keys()].map((id) => [id, true])) };
       }
@@ -943,7 +962,9 @@ export class RelayRoomSource implements RoomSource {
         await this.ingestWireMessage(row, apply, { bootstrap: true });
       }
       caughtUp = rows.length;
-      this.snapshot = { ...this.snapshot, runsLoading: this.loadingRecord() };
+      // Shown from disk: whether anything precedes the saved window is
+      // unknown until a look back finds out (`loadOlder`).
+      this.snapshot = { ...this.snapshot, runsLoading: this.loadingRecord(), olderMessages: 'more' };
       // Reactions to messages kept on disk may have changed meanwhile.
       if (!gap) {
         const reactions = await this.reactionsSince();
@@ -1269,10 +1290,27 @@ export class RelayRoomSource implements RoomSource {
     apply: (event: RoomEvent) => void = (event) => this.applyLocal(event),
     { bootstrap = false }: { bootstrap?: boolean } = {}
   ): Promise<void> {
+    const built = await this.toRoomMessage(row, apply, { bootstrap });
+    if (!built) return;
+    apply({ type: 'message_created', id: row.id, seq: row.seq, kind: built.kind, message: built.message });
+  }
+
+  /**
+   * One wire row as a Room message, with its side effects (a run it names
+   * starts loading, a roster or connector refresh). `null` when it's
+   * already here or the source went away. `older` (scrollback) leaves the
+   * catch-up cursor alone and looks up thread parents in `peers` too, the
+   * page being built.
+   */
+  private async toRoomMessage(
+    row: RoomMessageRow,
+    apply: (event: RoomEvent) => void,
+    { bootstrap = false, older = false, peers = [] }: { bootstrap?: boolean; older?: boolean; peers?: RoomMessage[] } = {}
+  ): Promise<{ kind: MessageKind; message: RoomMessage } | null> {
     if (row.seq <= this.lastMessageSeq && this.snapshot.messages.some((m) => m.id === row.id)) {
-      return; // already applied (bootstrap + catch-up overlap window)
+      return null; // already applied (bootstrap + catch-up overlap window)
     }
-    this.lastMessageSeq = Math.max(this.lastMessageSeq, row.seq);
+    if (!older) this.lastMessageSeq = Math.max(this.lastMessageSeq, row.seq);
 
     // Someone new accepted an invite: re-read the roster BEFORE resolving
     // the author below, so "Sam joined" maps to Sam (not a raw Clerk id)
@@ -1305,21 +1343,20 @@ export class RelayRoomSource implements RoomSource {
     if (!bootstrap && row.kind === 'system' && (meta.event === 'connectors_added' || meta.event === 'connectors_removed')) {
       await this.refreshConnectors(apply);
     }
-    if (this.disposed) return;
+    if (this.disposed) return null;
 
     // Doc comments share the message table (they carry a `path`). Keep them
     // in the room, rendered as comment lines tied to their file and passage.
     // A reply in a doc comment thread carries no path of its own; it takes
     // its thread's.
-    const parent = row.parentId ? this.snapshot.messages.find((m) => m.id === row.parentId) : undefined;
+    const parent = row.parentId
+      ? (this.snapshot.messages.find((m) => m.id === row.parentId) ?? peers.find((m) => m.id === row.parentId))
+      : undefined;
     const threadPath = row.path ?? (parent?.meta.kind === 'comment_mirror' ? parent.meta.path : null);
     const comment = threadPath ? this.commentMeta({ ...row, path: threadPath }) : null;
     const kind = (comment ? 'comment_mirror' : row.kind) as MessageKind;
 
-    apply({
-      type: 'message_created',
-      id: row.id,
-      seq: row.seq,
+    return {
       kind,
       message: {
         id: row.id,
@@ -1336,7 +1373,47 @@ export class RelayRoomSource implements RoomSource {
             ? { threadId: meta.threadId }
             : {}),
       },
-    });
+    };
+  }
+
+  /**
+   * Scrollback: the page before the oldest message here
+   * (`?before=<seq>&latest=<n>`), prepended in one step. Runs those
+   * messages name load in the background, like on open. One page at a time;
+   * a failure leaves `olderMessages` at 'more' so scrolling up tries again.
+   */
+  async loadOlder(): Promise<void> {
+    if (this.disposed || this.loadingOlder || this.snapshot.olderMessages !== 'more') return;
+    const seqs = this.snapshot.messages.map((m) => m.seq);
+    if (seqs.length === 0) return;
+    this.loadingOlder = true;
+    this.applyLocal({ type: 'older_messages_loading' });
+    try {
+      const page = await this.opts.relay.listMessages(this.opts.bindingId, {
+        before: String(Math.min(...seqs)),
+        latest: OLDER_PAGE,
+      });
+      if (this.disposed) return;
+      if (!page.success) {
+        this.log('Rig spaces: could not load earlier messages', { error: page.error.message });
+        this.applyLocal({ type: 'older_messages_loaded', messages: [], more: true });
+        return;
+      }
+      const loadingBefore = new Set(this.runsLoading.keys());
+      const built: RoomMessage[] = [];
+      for (const row of page.data) {
+        const message = await this.toRoomMessage(row, () => {}, { bootstrap: true, older: true, peers: built });
+        if (this.disposed) return;
+        if (message) built.push(message.message);
+      }
+      const newRuns = [...this.runsLoading.keys()].filter((id) => !loadingBefore.has(id));
+      if (newRuns.length > 0) this.snapshot = { ...this.snapshot, runsLoading: this.loadingRecord() };
+      this.applyLocal({ type: 'older_messages_loaded', messages: built, more: page.data.length >= OLDER_PAGE });
+      // Newest first, like the open: the cards nearest where the reader is.
+      if (newRuns.length > 0) void this.loadRuns(newRuns.reverse(), Date.now());
+    } finally {
+      this.loadingOlder = false;
+    }
   }
 
   /** Lands a run's header and full backlog in one step (`session_log_loaded`), once — the first time a room message references it. Uses `prefetched` (the open's `loadRuns`) when given, else fetches it itself (the realtime path). */

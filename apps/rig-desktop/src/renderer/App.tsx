@@ -1019,12 +1019,12 @@ export function App() {
       jump={roomJump?.bindingId === target.bindingId ? roomJump.request : null}
       onJumpMissed={() =>
         toast({
-          title: 'That message is further back',
-          // Quote it: the Room can't scroll back that far yet, so the
-          // notification's own text is the way to read it from here.
+          title: "Couldn't find that message",
+          // The Room paged back as far as it goes (or the message was
+          // deleted): quote it, so the notification is still readable.
           description: roomJump?.preview
-            ? `“${roomJump.preview}” The space opened at its latest messages.`
-            : 'The space opened at its latest messages. Older ones aren\'t shown here yet.',
+            ? `“${roomJump.preview}” It may have been deleted, or it's very far back.`
+            : "It may have been deleted, or it's very far back.",
           duration: 8000,
         })
       }

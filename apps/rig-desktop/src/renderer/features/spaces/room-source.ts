@@ -25,6 +25,11 @@ export interface RoomSource {
   replayAll(): void;
   /** Stops any pending timers. Call on unmount. */
   dispose(): void;
+  /**
+   * Scrollback: loads the page before the oldest message (see
+   * `RoomSnapshot.olderMessages`). Absent for a source with none.
+   */
+  loadOlder?(): Promise<void>;
 }
 
 export interface RoomFeedBeat {

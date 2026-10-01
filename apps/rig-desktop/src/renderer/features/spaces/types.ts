@@ -266,6 +266,9 @@ export type RoomEvent =
    * notifying, so the Room UI never has to know the difference).
    */
   | { type: 'message_created'; id: string; seq: number; kind: MessageKind; message: RoomMessage }
+  /** Scrollback: a page before the oldest message is on its way, or landed (prepended in seq order). */
+  | { type: 'older_messages_loading' }
+  | { type: 'older_messages_loaded'; messages: RoomMessage[]; more: boolean }
   | { type: 'session_event_appended'; runId: string; seq: number; event: SessionEvent }
   | { type: 'agent_request_created'; id: string; targetOwner: PersonId; agent: AgentKind }
   /** Adds the member (status 'invited') and creates its `RoomInvite` in one step — `who` must be a known room member (see the fixture's `PEOPLE` map). */
@@ -321,6 +324,12 @@ export interface RoomSnapshot {
   loaded?: boolean;
   /** Runs a message names whose log is still loading: their cards show as placeholders until it lands. */
   runsLoading?: Record<string, true>;
+  /**
+   * Scrollback: whether there are messages before the oldest one here.
+   * 'more' (scrolling up loads a page), 'loading', or 'none' (the start of
+   * the space). Absent for a source with no scrollback (the scripted demo).
+   */
+  olderMessages?: 'more' | 'loading' | 'none';
   /**
    * Finished runs shown from the disk cache: only what survives "Hide
    * details" (answer, status, step count…), until their log is fetched

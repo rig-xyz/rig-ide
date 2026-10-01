@@ -77,6 +77,21 @@ export function reduceRoom(snapshot: RoomSnapshot, event: RoomEvent): RoomSnapsh
     case 'message_created':
       return { ...snapshot, messages: [...snapshot.messages, event.message] };
 
+    case 'older_messages_loading':
+      return { ...snapshot, olderMessages: 'loading' };
+
+    case 'older_messages_loaded': {
+      // Older pages go in front, in seq order, minus anything already here
+      // (a page can overlap what a catch-up just brought in).
+      const have = new Set(snapshot.messages.map((m) => m.id));
+      const older = event.messages.filter((m) => !have.has(m.id)).sort((a, b) => a.seq - b.seq);
+      return {
+        ...snapshot,
+        messages: older.length > 0 ? [...older, ...snapshot.messages] : snapshot.messages,
+        olderMessages: event.more ? 'more' : 'none',
+      };
+    }
+
     case 'reactions_changed': {
       let changed = false;
       const messages = snapshot.messages.map((m) => {
