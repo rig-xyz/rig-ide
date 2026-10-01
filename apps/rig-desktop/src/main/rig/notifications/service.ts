@@ -44,7 +44,6 @@ export type NotificationServiceDeps = {
   prefs: () => NotificationPrefs;
   cursor: { get: (account: string) => string | null; set: (account: string, id: string) => void };
   appFocused: () => boolean;
-  idleSeconds: () => number;
   now: () => number;
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   log: { warn: (msg: string, meta?: Record<string, unknown>) => void };
@@ -225,7 +224,6 @@ export class NotificationService {
       level,
       appFocused: this.deps.appFocused(),
       viewingBindingId: this.viewing,
-      idleSeconds: this.deps.idleSeconds(),
       now: this.deps.now(),
     });
     if (decision.show) this.deps.presenter.present(row);

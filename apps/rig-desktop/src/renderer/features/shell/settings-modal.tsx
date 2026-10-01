@@ -554,7 +554,7 @@ function NotificationsSection() {
       <NotificationSwitchRow
         id="notifications-only-away"
         label="Only when I'm away"
-        hint="No banners while you're using rig. Away means rig isn't in front or you've been idle for 3 minutes."
+        hint="No banners while a rig window is in front."
         checked={prefs.onlyWhenAway}
         disabled={!prefs.enabled}
         onToggle={() => setPrefs({ ...prefs, onlyWhenAway: !prefs.onlyWhenAway })}

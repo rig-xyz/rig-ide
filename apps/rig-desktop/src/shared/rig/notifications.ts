@@ -105,7 +105,7 @@ export const NOTIFICATION_TOGGLES: readonly NotificationToggle[] = [
 export type NotificationPrefs = {
   /** Master switch for desktop banners. */
   enabled: boolean;
-  /** No banners while rig is in front and you've been active in the last few minutes. */
+  /** No banners while a rig window is focused. */
   onlyWhenAway: boolean;
   sound: boolean;
   dockBadge: boolean;
@@ -129,8 +129,6 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   },
 };
 
-/** Away means rig isn't focused, or the system has been idle this long. */
-export const AWAY_IDLE_SECONDS = 3 * 60;
 /** A row this old when it first reaches this computer is "missed": counted, never bannered. */
 export const STALE_BANNER_MS = 10 * 60 * 1000;
 /** A new ambient row within this window of the last banner for its space replaces that banner. */
@@ -173,8 +171,6 @@ export type BannerContext = {
   appFocused: boolean;
   /** The space currently on screen in a focused window, if any. */
   viewingBindingId: string | null;
-  /** `powerMonitor.getSystemIdleTime()`. */
-  idleSeconds: number;
   now: number;
 };
 
@@ -196,7 +192,9 @@ export function decideBanner(n: RigNotification, ctx: BannerContext): BannerDeci
   if (n.bindingId && ctx.appFocused && ctx.viewingBindingId === n.bindingId) {
     return { show: false, reason: 'viewing' };
   }
-  if (ctx.prefs.onlyWhenAway && ctx.appFocused && ctx.idleSeconds < AWAY_IDLE_SECONDS) {
+  // Away means no rig window is focused (Dylan, 2026-10-01: focus only, no
+  // idle timer; simpler to predict).
+  if (ctx.prefs.onlyWhenAway && ctx.appFocused) {
     return { show: false, reason: 'present' };
   }
   return { show: true };

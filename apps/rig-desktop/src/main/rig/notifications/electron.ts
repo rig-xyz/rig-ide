@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Notification, powerMonitor } from 'electron';
+import { app, BrowserWindow, Notification } from 'electron';
 import { err, ok, type Result } from '@emdash/shared';
 import { createMainWindow, getMainWindow } from '@main/app/window';
 import { events } from '@main/lib/events';
@@ -25,7 +25,7 @@ import { readSse } from './sse';
 
 /**
  * Boot wiring for notifications: the real banners (Electron `Notification`),
- * the Dock badge, idle time (`powerMonitor`), and where a click goes. The
+ * the Dock badge, window focus, and where a click goes. The
  * logic lives in `service.ts` and `presenter.ts`, which import no Electron.
  */
 
@@ -129,7 +129,6 @@ export const notificationService = new NotificationService({
     },
   },
   appFocused: () => BrowserWindow.getAllWindows().some((w) => !w.isDestroyed() && w.isFocused()),
-  idleSeconds: () => powerMonitor.getSystemIdleTime(),
   now: () => Date.now(),
   sleep: (ms, signal) =>
     new Promise<void>((resolve) => {

@@ -59,7 +59,6 @@ function setup(opts: { rows?: RigNotification[]; cursor?: string | null; summary
     prefs: () => prefs,
     cursor: { get: (a) => cursors.get(a) ?? null, set: (a, id) => cursors.set(a, id) },
     appFocused: () => false,
-    idleSeconds: () => 0,
     now: () => Date.now(),
     sleep: () => new Promise((r) => setTimeout(r, 0)),
     log: { warn: () => {} },

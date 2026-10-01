@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AWAY_IDLE_SECONDS,
   decideBanner,
   DEFAULT_NOTIFICATION_PREFS,
   dockCount,
@@ -17,7 +16,6 @@ const ctx = (overrides: Partial<BannerContext> = {}): BannerContext => ({
   level: 'all',
   appFocused: false,
   viewingBindingId: null,
-  idleSeconds: 0,
   now: NOW,
   ...overrides,
 });
@@ -54,18 +52,18 @@ describe('decideBanner', () => {
   });
 
   it('stays quiet about the space you are looking at', () => {
-    expect(decideBanner(row(), ctx({ appFocused: true, viewingBindingId: 'bnd_a', idleSeconds: 999 }))).toMatchObject({
+    expect(decideBanner(row(), ctx({ appFocused: true, viewingBindingId: 'bnd_a', prefs: { ...DEFAULT_NOTIFICATION_PREFS, onlyWhenAway: false } }))).toMatchObject({
       reason: 'viewing',
     });
     // Not focused: you aren't looking at it, whatever is on screen.
     expect(decideBanner(row(), ctx({ appFocused: false, viewingBindingId: 'bnd_a' }))).toEqual({ show: true });
   });
 
-  it('only when away: focused and active is quiet; idle or unfocused shows', () => {
-    expect(decideBanner(row(), ctx({ appFocused: true, idleSeconds: 10 }))).toMatchObject({ reason: 'present' });
-    expect(decideBanner(row(), ctx({ appFocused: true, idleSeconds: AWAY_IDLE_SECONDS }))).toEqual({ show: true });
+  it('only when away: any focused rig window is quiet; unfocused shows', () => {
+    expect(decideBanner(row(), ctx({ appFocused: true }))).toMatchObject({ reason: 'present' });
+    expect(decideBanner(row(), ctx({ appFocused: false }))).toEqual({ show: true });
     const always = { ...DEFAULT_NOTIFICATION_PREFS, onlyWhenAway: false };
-    expect(decideBanner(row(), ctx({ prefs: always, appFocused: true, idleSeconds: 10 }))).toEqual({ show: true });
+    expect(decideBanner(row(), ctx({ prefs: always, appFocused: true }))).toEqual({ show: true });
   });
 });
 
