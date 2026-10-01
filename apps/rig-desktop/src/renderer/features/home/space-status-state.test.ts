@@ -15,6 +15,7 @@ import {
   spaceIsActive,
   spaceNeedsApproval,
   spaceStatusLineTone,
+  withNotifications,
   type SpaceAttention,
   type SpaceSeenMarker,
 } from './space-status-state';
@@ -386,5 +387,41 @@ describe('sortSpaceRowsByActivity', () => {
     ]);
     const attention = new Map(rows.map((r) => [r.bindingId, deriveSpaceAttention(statusByBinding.get(r.bindingId), null, 'me')]));
     expect(sortSpaceRowsByActivity(rows, statusByBinding, attention, 'me', NOW).map((r) => r.bindingId)).toEqual(['chatty', 'old']);
+  });
+});
+
+describe('withNotifications', () => {
+  const idle = { kind: 'idle', lastActivityAt: null } as const;
+  const all = { level: 'all' as const, directUnread: 0 };
+
+  it('puts what is about you in the line, ahead of new messages, with the count on the dice', () => {
+    const shown = withNotifications({ kind: 'messages', count: 3 }, undefined, { level: 'all', directUnread: 1 }, {
+      phrase: 'Hugo mentioned you',
+    });
+    expect(shown).toEqual({ kind: 'forYou', count: 1, line: 'Hugo mentioned you', messages: 3 });
+    expect(deriveSpaceStatusLine(undefined, shown, 0)).toBe('Hugo mentioned you · 3 new messages');
+    expect(spaceStatusLineTone(shown)).toBe('secondary');
+  });
+
+  it('counts more than one', () => {
+    const shown = withNotifications(idle, undefined, { level: 'mentions', directUnread: 3 }, { phrase: 'Hugo replied to you' });
+    expect(deriveSpaceStatusLine(undefined, shown, 0)).toBe('Hugo replied to you · 2 more for you');
+  });
+
+  it('never outranks a live or failed run', () => {
+    const live = { kind: 'live', state: 'thinking' } as const;
+    expect(withNotifications(live, undefined, { level: 'all', directUnread: 2 }, { phrase: 'x' })).toBe(live);
+  });
+
+  it('a muted space stays quiet: no for you, no new messages', () => {
+    const shown = withNotifications({ kind: 'messages', count: 4 }, undefined, { level: 'nothing', directUnread: 2 }, {
+      phrase: 'Hugo mentioned you',
+    });
+    expect(shown.kind).toBe('idle');
+  });
+
+  it('without unread rows about you, nothing changes', () => {
+    const messages = { kind: 'messages', count: 2 } as const;
+    expect(withNotifications(messages, undefined, all, null)).toBe(messages);
   });
 });

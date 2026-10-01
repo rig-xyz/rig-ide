@@ -116,6 +116,12 @@ export type SpaceAttention =
   | { kind: 'live'; state: DotMatrixActivity; owner?: string }
   | { kind: 'failed'; agent: RigSpaceAgent; endedAt: number; owner?: string }
   | { kind: 'finished'; agent: RigSpaceAgent; endedAt: number; owner?: string }
+  /**
+   * Notifications about you (mentions, replies, your agent, requests to it):
+   * `line` names the newest ("Hugo mentioned you"), `count` is how many are
+   * unread (1–9; 9 means "9+"), shown on the dice like new messages are.
+   */
+  | { kind: 'forYou'; count: number; line: string; messages: number }
   /** 1–9; 9 means "9+". */
   | { kind: 'messages'; count: number }
   /** Nothing for you. `lastActivityAt` is null when nothing ever happened in the space. */
@@ -221,6 +227,11 @@ export function deriveSpaceStatusLine(
       return `${agentPhrase(attention.agent, attention.owner)} failed · ${relativeTime(attention.endedAt, now)}`;
     case 'finished':
       return `${agentPhrase(attention.agent, attention.owner)} finished · ${relativeTime(attention.endedAt, now)}`;
+    case 'forYou': {
+      const more = attention.count > 1 ? ` · ${attention.count - 1} more for you` : '';
+      const news = attention.count === 1 && attention.messages > 1 ? ` · ${newMessages(attention.messages)}` : '';
+      return `${attention.line}${more}${news}`;
+    }
     case 'messages':
       if (attention.count === 1) return '1 new message';
       return attention.count >= MAX_NEW_MESSAGES ? `${MAX_NEW_MESSAGES}+ new messages` : `${attention.count} new messages`;
@@ -232,7 +243,7 @@ export function deriveSpaceStatusLine(
 /** The line's tone: a failure in the muted-error tone, anything else unseen a step brighter than the idle/live muted text. */
 export function spaceStatusLineTone(attention: SpaceAttention): 'danger' | 'secondary' | 'muted' {
   if (attention.kind === 'failed') return 'danger';
-  if (attention.kind === 'finished' || attention.kind === 'messages') return 'secondary';
+  if (attention.kind === 'finished' || attention.kind === 'messages' || attention.kind === 'forYou') return 'secondary';
   return 'muted';
 }
 
@@ -379,4 +390,37 @@ export function writePinnedSpaceIds(ids: ReadonlySet<string>): void {
   } catch {
     // localStorage unavailable — just won't persist.
   }
+}
+
+function newMessages(count: number): string {
+  if (count === 1) return '1 new message';
+  return count >= MAX_NEW_MESSAGES ? `${MAX_NEW_MESSAGES}+ new messages` : `${count} new messages`;
+}
+
+/**
+ * Folds notifications into a row's attention (rig docs/notifications-spec.md
+ * §5): unread rows about you outrank plain new messages and a finished run,
+ * never a live or failed one. A muted space ('nothing') stays quiet: no
+ * "for you", no "new messages", just when something last happened. Those
+ * mentions wait in Activity.
+ */
+export function withNotifications(
+  attention: SpaceAttention,
+  status: RigSpaceStatus | undefined,
+  notifications: { level: 'all' | 'mentions' | 'nothing'; directUnread: number },
+  latestDirect: { phrase: string } | null
+): SpaceAttention {
+  if (attention.kind === 'live' || attention.kind === 'failed') return attention;
+  if (notifications.level === 'nothing') {
+    return attention.kind === 'messages' ? { kind: 'idle', lastActivityAt: lastActivityAt(status) } : attention;
+  }
+  if (notifications.directUnread > 0 && latestDirect) {
+    return {
+      kind: 'forYou',
+      count: Math.min(notifications.directUnread, MAX_NEW_MESSAGES),
+      line: latestDirect.phrase,
+      messages: attention.kind === 'messages' ? attention.count : 0,
+    };
+  }
+  return attention;
 }

@@ -5,6 +5,7 @@ import {
   EMPTY_NOTIFICATION_SUMMARY,
   rigNotificationsChangedChannel,
   type NotificationLevel,
+  type RigNotification,
   type RigNotificationSpaceSummary,
   type RigNotificationSummary,
 } from '@shared/rig/notifications';
@@ -39,6 +40,23 @@ export function useNotificationSummary(): RigNotificationSummary {
     staleTime: Infinity,
   });
   return data ?? EMPTY_NOTIFICATION_SUMMARY;
+}
+
+/** Activity: unread and read rows about you, newest first (shared by the bell and Home's rows). */
+export function useActivity(enabled = true): RigNotification[] | null {
+  const { data } = useQuery({
+    queryKey: NOTIFICATION_ACTIVITY_KEY,
+    queryFn: () => rpc.rig.notifications.activity({ limit: 50 }),
+    enabled,
+    staleTime: Infinity,
+  });
+  return data?.success ? data.data : null;
+}
+
+/** The newest unread row about you in one space, if any. */
+export function useLatestDirect(bindingId: string): RigNotification | null {
+  const activity = useActivity();
+  return activity?.find((n) => n.bindingId === bindingId && n.readAt === null) ?? null;
 }
 
 /** One space's counts and level; zeros and 'all' until known. */

@@ -36,7 +36,7 @@ export function SpaceStatusTile({
         <DotMatrix state="failed" size={size} />
       ) : attention.kind === 'finished' ? (
         <DotMatrix state="done" size={size} />
-      ) : attention.kind === 'messages' ? (
+      ) : attention.kind === 'messages' || attention.kind === 'forYou' ? (
         <StillDots
           size={size}
           lit={DICE_FACES[Math.min(attention.count, MAX_NEW_MESSAGES)]!}

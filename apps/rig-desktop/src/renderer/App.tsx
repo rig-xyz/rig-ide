@@ -66,7 +66,7 @@ import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
 import { PinnedCard } from '@renderer/features/workspace/pinned-card';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
-import { consumeJustAttachedSyncing } from '@renderer/lib/just-attached';
+import { consumeJustAttachedSyncing, markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { LatestRequestGate } from '@renderer/lib/latest-request-gate';
 import { Button } from '@renderer/lib/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
@@ -931,10 +931,24 @@ export function App() {
   const openSpaceAt = useCallback(
     async (target: OpenSpaceAt) => {
       const paths = await rpc.rig.recent.resolveLocalPaths({ bindingIds: [target.bindingId] }).catch(() => ({}));
-      const root = (paths as Record<string, string>)[target.bindingId];
+      let root: string | undefined = (paths as Record<string, string>)[target.bindingId];
       if (!root) {
-        goHome();
-        return;
+        // Not on this computer yet: set it up the way Home's row does
+        // ("Download"), then open it, rather than a click that does nothing.
+        const name = target.spaceName ? `#${target.spaceName}` : 'the space';
+        toast({ title: `Setting up ${name} on this computer…` });
+        const attached = await rpc.rig.join
+          .attach({ bindingId: target.bindingId, ...(target.spaceName ? { name: target.spaceName } : {}) })
+          .catch((err: unknown) => ({
+            success: false as const,
+            error: { message: err instanceof Error ? err.message : 'Could not set it up.' },
+          }));
+        if (!attached.success) {
+          toast({ title: `Couldn't open ${name}`, description: attached.error.message, variant: 'destructive' });
+          return;
+        }
+        markJustAttachedSyncing(attached.data.localPath, attached.data.syncing);
+        root = attached.data.localPath;
       }
       const file = target.path && !/^[a-z]+:\/\//i.test(target.path) ? `${root.replace(/\/+$/, '')}/${target.path}` : null;
       if (bound?.bindingId === target.bindingId) {

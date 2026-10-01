@@ -8,8 +8,8 @@ import {
   writeLastSeen,
   writeOpenedAt,
 } from '@renderer/features/spaces/room-read-marker';
-import { formatUnreadCount, spaceUnreadMarker } from '@renderer/features/notifications/space-unread-marker';
-import { useSpaceNotifications } from '@renderer/features/notifications/use-notifications';
+import { useLatestDirect, useSpaceNotifications } from '@renderer/features/notifications/use-notifications';
+import { directPhrase } from '@shared/rig/notifications';
 import { NeedsConnection } from '@renderer/features/shell/needs-connection';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
@@ -35,6 +35,7 @@ import {
   baselineMarker,
   countNeedsApproval,
   deriveSpaceAttention,
+  withNotifications,
   deriveSpaceStatusLine,
   filterSpaceRows,
   readPinnedSpaceIds,
@@ -313,7 +314,7 @@ function Faces({ bindingId }: { bindingId: string }) {
 function SpaceRow({
   row,
   status,
-  attention,
+  attention: baseAttention,
   onOpenPath,
   pinned,
   onTogglePinned,
@@ -331,11 +332,18 @@ function SpaceRow({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const statusLine = deriveSpaceStatusLine(status, attention, Date.now());
-  // Every row here is a space (`SpacesCard` only), so no `row.isSpace` gate
-  // is needed the way the rail's own rows need one.
-  const unreadMarker = spaceUnreadMarker(useSpaceNotifications(row.bindingId));
-  const dimmed = unreadMarker.kind === 'none' && unreadMarker.dimmed;
+  // Notifications fold into the row's own dice and line ("Hugo mentioned
+  // you"), not a badge of their own; a muted space reads quiet and dimmed.
+  const notifications = useSpaceNotifications(row.bindingId);
+  const latestDirect = useLatestDirect(row.bindingId);
+  const shown = withNotifications(
+    baseAttention,
+    status,
+    notifications,
+    latestDirect ? { phrase: directPhrase(latestDirect) } : null
+  );
+  const statusLine = deriveSpaceStatusLine(status, shown, Date.now());
+  const dimmed = notifications.level === 'nothing';
   const path = row.kind === 'local' ? row.path : null;
   const relayStatus = row.kind === 'relayOnly' ? deriveRelayOnlyRowStatus(row) : null;
   const openablePath = path ?? (relayStatus?.kind === 'localPath' ? relayStatus.path : null);
@@ -407,7 +415,7 @@ function SpaceRow({
       data-offline={offline || undefined}
     >
       <SpaceStatusTile
-        attention={attention}
+        attention={shown}
         seed={row.bindingId}
         className={cn(offline && 'opacity-50')}
       />
@@ -423,14 +431,6 @@ function SpaceRow({
           <span className={cn('truncate text-sm', dimmed ? 'text-text-muted' : 'text-text-primary')}>
             {row.name}
           </span>
-          {unreadMarker.kind === 'count' && (
-            <span className="bg-accent text-accent-ink flex shrink-0 items-center justify-center rounded-full px-1.5 text-2xs leading-4 font-medium">
-              {formatUnreadCount(unreadMarker.n)}
-            </span>
-          )}
-          {unreadMarker.kind === 'dot' && (
-            <span aria-hidden="true" className="bg-text-muted size-1.5 shrink-0 rounded-full" />
-          )}
           {pinned && <Star className="text-text-muted size-3 shrink-0 fill-current" strokeWidth={1.5} />}
           {relayStatus?.kind === 'notSetUp' && (
             <Tooltip>
@@ -446,14 +446,17 @@ function SpaceRow({
           )}
         </span>
         {error ? (
-          <span className="text-danger truncate text-xs" title={error}>
+          <span className="text-danger max-w-full truncate text-xs" title={error}>
             {error}
           </span>
         ) : (
           <span
             className={cn(
-              'truncate text-xs',
-              subtext === statusLine ? LINE_TONE[spaceStatusLineTone(attention)] : 'text-text-muted'
+              // `max-w-full`: the column is `items-start`, so without it a long
+              // line ("Hugo mentioned you · 4 new messages") outgrows the row
+              // instead of truncating.
+              'max-w-full truncate text-xs',
+              subtext === statusLine ? LINE_TONE[spaceStatusLineTone(shown)] : 'text-text-muted'
             )}
             data-testid="space-status-line"
           >

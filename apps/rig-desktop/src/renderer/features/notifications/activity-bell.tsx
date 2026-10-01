@@ -30,9 +30,9 @@ import { NOTIFICATION_ACTIVITY_KEY, NOTIFICATION_SUMMARY_KEY, useNotificationSum
  * the same helpers the old invites bell polled with (`invites-inbox.ts`):
  * focus refetch plus a slow 5-minute interval, under an account-scoped key.
  *
- * The bell's count is pending invites plus `summary.directUnreadTotal` —
- * the same count the Dock badge and the rail's red numbers use
- * (`space-unread-marker.ts`), so every surface agrees.
+ * The bell's count is pending invites plus `summary.directUnreadTotal`:
+ * the same rows Home's space rows fold into their status line ("Hugo
+ * mentioned you"), so every surface agrees.
  */
 
 const POLL_INTERVAL_MS = 5 * 60_000;

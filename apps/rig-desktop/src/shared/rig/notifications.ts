@@ -205,6 +205,8 @@ export function decideBanner(n: RigNotification, ctx: BannerContext): BannerDeci
 /** Where a banner or Activity click takes you. */
 export type OpenSpaceAt = {
   bindingId: string;
+  /** For what the app says while it sets a space up that isn't on this computer yet. */
+  spaceName?: string | null;
   messageId?: string | null;
   /** The message's seq, so the Room can tell "too far back to show" from "not loaded yet". */
   messageSeq?: number | null;
@@ -214,7 +216,43 @@ export type OpenSpaceAt = {
 
 export function openTargetOf(n: RigNotification): OpenSpaceAt | null {
   if (!n.bindingId) return null;
-  return { bindingId: n.bindingId, messageId: n.messageId, messageSeq: n.messageSeq, runId: n.runId, path: n.path };
+  return {
+    bindingId: n.bindingId,
+    spaceName: n.spaceName,
+    messageId: n.messageId,
+    messageSeq: n.messageSeq,
+    runId: n.runId,
+    path: n.path,
+  };
+}
+
+const AGENT_LABEL = { claude: 'Claude', codex: 'Codex' } as const;
+
+/**
+ * A direct row in a few words, for a space row's status line on Home
+ * ("Hugo mentioned you"): the space is already named by the row, so this is
+ * the relay's title without its "in <space>".
+ */
+export function directPhrase(n: RigNotification): string {
+  // First name: the line is short, and the row already says which space.
+  const who = n.actor.name?.trim().split(/\s+/)[0] || (n.actor.kind === 'guest' ? 'A guest' : 'Someone');
+  const agent = n.actor.agent ? AGENT_LABEL[n.actor.agent] : 'Your agent';
+  switch (n.type) {
+    case 'mention':
+      return `${who} mentioned you`;
+    case 'reply':
+      return `${who} replied to you`;
+    case 'comment':
+      return `${who} commented on your link`;
+    case 'agent_request':
+      return `${who} asked your ${agent}`;
+    case 'agent_waiting':
+      return `${agent} needs your approval`;
+    case 'agent_finished':
+      return `${agent} finished`;
+    default:
+      return n.title;
+  }
 }
 
 /** Main → renderer: the summary or the rows changed; refetch. */

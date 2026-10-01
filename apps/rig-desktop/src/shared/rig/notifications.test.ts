@@ -5,6 +5,7 @@ import {
   DEFAULT_NOTIFICATION_PREFS,
   dockCount,
   normalizeNotificationPrefs,
+  directPhrase,
   openTargetOf,
   type BannerContext,
 } from './notifications';
@@ -101,11 +102,28 @@ describe('prefs and targets', () => {
   it('opens a space at the row, never for an invite', () => {
     expect(openTargetOf(row({ path: 'docs/a.md' }))).toEqual({
       bindingId: 'bnd_a',
+      spaceName: 'Launch',
       messageId: 'msg_1',
       messageSeq: 10,
       runId: null,
       path: 'docs/a.md',
     });
     expect(openTargetOf(row({ type: 'invite', bindingId: null }))).toBeNull();
+  });
+});
+
+describe('directPhrase', () => {
+  it('says who did what, without the space', () => {
+    expect(directPhrase(row({ type: 'mention', tier: 'direct' }))).toBe('Hugo mentioned you');
+    expect(directPhrase(row({ type: 'reply', tier: 'direct' }))).toBe('Hugo replied to you');
+    expect(
+      directPhrase(row({ type: 'agent_request', tier: 'direct', actor: { kind: 'user', userId: 'u', name: 'Maya', agent: 'codex' } }))
+    ).toBe('Maya asked your Codex');
+    expect(
+      directPhrase(row({ type: 'agent_waiting', tier: 'direct', actor: { kind: 'agent', userId: 'u', name: 'Me', agent: 'claude' } }))
+    ).toBe('Claude needs your approval');
+    expect(directPhrase(row({ type: 'comment', tier: 'direct', actor: { kind: 'guest', userId: null, name: null, agent: null } }))).toBe(
+      'A guest commented on your link'
+    );
   });
 });
