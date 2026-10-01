@@ -18,11 +18,14 @@ type Toast = {
   closeButton?: boolean;
   /** ms, or `Infinity` to never auto-dismiss — for a toast worth leaving up until the user acts (or explicitly closes it), not sonner's default ~4s. */
   duration?: number;
+  /** Replaces the toast already showing under this id (a "working…" toast becoming its result) instead of stacking a second one. */
+  id?: string | number;
 };
 
-function toast({ title, description, variant, action, icon, closeButton, duration }: Toast) {
+function toast({ title, description, variant, action, icon, closeButton, duration, id }: Toast) {
   const options = {
     description,
+    ...(id !== undefined && { id }),
     icon,
     ...(action && { action: { label: action.label, onClick: action.onClick } }),
     ...(closeButton !== undefined && { closeButton }),

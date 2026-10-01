@@ -936,7 +936,8 @@ export function App() {
         // Not on this computer yet: set it up the way Home's row does
         // ("Download"), then open it, rather than a click that does nothing.
         const name = target.spaceName ? `#${target.spaceName}` : 'the space';
-        toast({ title: `Setting up ${name} on this computer…` });
+        // One toast that becomes the outcome, not two stacked.
+        const progress = toast({ title: `Setting up ${name} on this computer…`, duration: Infinity });
         const attached = await rpc.rig.join
           .attach({ bindingId: target.bindingId, ...(target.spaceName ? { name: target.spaceName } : {}) })
           .catch((err: unknown) => ({
@@ -944,9 +945,10 @@ export function App() {
             error: { message: err instanceof Error ? err.message : 'Could not set it up.' },
           }));
         if (!attached.success) {
-          toast({ title: `Couldn't open ${name}`, description: attached.error.message, variant: 'destructive' });
+          toast({ id: progress, title: `Couldn't open ${name}`, description: attached.error.message, variant: 'destructive', duration: 6000 });
           return;
         }
+        toast({ id: progress, title: `${name} is set up`, duration: 2000 });
         markJustAttachedSyncing(attached.data.localPath, attached.data.syncing);
         root = attached.data.localPath;
       }
@@ -968,7 +970,7 @@ export function App() {
         });
       }
     },
-    [bound?.bindingId, goHome, openFile, openPath]
+    [bound?.bindingId, openFile, openPath]
   );
   const openSpaceAtRef = useRef(openSpaceAt);
   openSpaceAtRef.current = openSpaceAt;
