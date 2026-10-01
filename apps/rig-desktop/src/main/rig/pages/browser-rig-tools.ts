@@ -4,6 +4,7 @@ import type { RigTool } from '../spaces/rig-tools';
 import type { SpacesRelayApi } from '../spaces/relay-api';
 import { agentPage } from './agent-pages';
 import { BROWSER_TOOLS } from './browser-tools';
+import { googleFullText } from './google-export';
 import { pinsFromRows } from './page-pins';
 import { pageSignIns } from './page-sign-ins-instance';
 import { pageIsSignInWall } from './sign-in-check';
@@ -40,6 +41,9 @@ export function browserRigTools(api: Pick<SpacesRelayApi, 'listMessages'>): RigT
               if (site) pageSignIns.markWall(site.id);
               return notSignedInForAgent(page, site ? pageSignIns.recordFor(site.id) : null);
             },
+            // The link as given (a sheet's #gid survives), exported in the
+            // agent's own tab's session, after the sign-in check above.
+            fullText: async (page) => googleFullText(typeof input.url === 'string' ? input.url : page, await agentPage(page)),
           }
         );
         const text = result.content

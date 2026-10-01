@@ -1,6 +1,7 @@
 import type { NativeImage } from 'electron';
 import { z } from 'zod';
 import { agentPage, renderSnapshot } from './agent-pages';
+import { EXPORT_MAX_BYTES, type GoogleExportResult } from './google-export';
 import { frameBoards, frameBoardSnapshot, frameCall, type BoardInfo, type BoardSnapshot, type PageAnchor } from './page-frame-scripts';
 import { contentFrameOf, locateOnPage } from './page-frames';
 
@@ -30,6 +31,12 @@ export interface BrowserToolsDeps {
    * is read as it is.
    */
   signInWall?(url: string): Promise<string | null>;
+  /**
+   * Google Docs, Sheets and Slides draw on a canvas, so `browser_read` asks
+   * for the file's own text export instead (`google-export.ts`). Null for
+   * any other page; absent, every page is read as rendered.
+   */
+  fullText?(url: string): Promise<GoogleExportResult | null>;
 }
 
 export type BrowserToolContent =
@@ -121,7 +128,7 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
     name: 'browser_read',
     title: 'Browser · read',
     description:
-      "Read a page as your owner sees it. Without board: its title, a list of its boards (canvases and decks keep each board in its own frame), and the text of boards with pins or on screen. With board (words from a board's title, or its number): that board in full. Charts and images have no text: use browser_screenshot.",
+      "Read a page as your owner sees it. Without board: its title, a list of its boards (canvases and decks keep each board in its own frame), and the text of boards with pins or on screen. With board (words from a board's title, or its number): that board in full. A Google Doc, Sheet or Slides deck comes back as the whole file's text (a sheet as CSV of one tab: the link's #gid, else the first). Charts and images have no text: use browser_screenshot.",
     inputSchema: { url: URL_FIELD, board: z.union([z.string(), z.number()]).optional() },
     async run(input, deps) {
       const url = webUrl(input.url);
@@ -129,10 +136,16 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
       const wall = await deps.signInWall?.(url);
       if (wall) return say(wall, true);
       const page = await agentPage(url);
+      const full = input.board === undefined ? await deps.fullText?.(url) : null;
+      if (full?.ok) {
+        const cut = full.truncated ? ` It was cut at ${EXPORT_MAX_BYTES / 1_000_000} MB: the rest of the file isn't here.` : '';
+        return say(`${page.getTitle()} (${page.getURL()})\n\n[Full document text via ${full.label} export, not just what's on screen.${cut}]\n\n${full.text}`);
+      }
+      const why = full ? `[No full document text via ${full.label} export: ${full.why}. This is only what the page renders, which may be just the part on screen.]\n\n` : '';
       const all = await boardsOf(url, true);
       if (all.length === 0) {
         const text = String(await contentFrameOf(page).frame.executeJavaScript('document.body ? document.body.innerText : ""'));
-        return say(`${page.getTitle()} (${page.getURL()})\n\n${text.slice(0, 15000)}`);
+        return say(`${page.getTitle()} (${page.getURL()})\n\n${why}${text.slice(0, 15000)}`);
       }
       const board = input.board;
       if (board !== undefined) {
@@ -140,7 +153,7 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
         return b ? say(`Board ${b.i}: ${b.title}\n\n${b.text!.slice(0, 15000)}`) : say('No board matches that.', true);
       }
       const pinned = new Set((await deps.pinsFor(url)).map((p) => p.anchor.hops[0]?.index));
-      const lines = [`${page.getTitle()} (${page.getURL()})`, '', `Boards (${all.length}):`];
+      const lines = [`${page.getTitle()} (${page.getURL()})`, '', ...(why ? [why.trimEnd(), ''] : []), `Boards (${all.length}):`];
       for (const b of all) lines.push(`- ${b.i}: ${b.title}${pinned.has(b.i) ? ' · has pins' : ''}${b.onScreen ? '' : ' · off screen'}`);
       let budget = 16_000;
       for (const b of [...all.filter((x) => pinned.has(x.i)), ...all.filter((x) => !pinned.has(x.i) && x.onScreen)]) {
