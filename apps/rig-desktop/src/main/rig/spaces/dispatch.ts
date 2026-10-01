@@ -312,6 +312,8 @@ export function spacesHiddenContext(
     roomSees === 'everything'
       ? 'Keep the reply short and direct; members can expand the card to see your full trace.'
       : 'Keep the reply short and direct.',
+    // Members open files on their own computers: an absolute path is this machine's alone.
+    "Link files by their path relative to the space's folder (e.g. `notes/plan.md`), never an absolute path.",
     'When asked why something changed, use the rig change history (`rig history <path>`) rather than guessing.',
     "When asked to invite someone, run `rig share <email>` in the space's folder: the request is the go-ahead, and the command's approval prompt is the confirmation.",
     // Skills are discovered by name and a truncated description, which agents

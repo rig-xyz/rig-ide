@@ -1276,6 +1276,12 @@ describe('room context for the agent', () => {
     expect(context).toContain('claude.ai/artifact/');
     expect(context).toContain('open it with them (never WebFetch)');
   });
+
+  it('tells the agent to link files relative to the space, since an absolute path is only its own machine’s', () => {
+    const context = spacesHiddenContext(makeRequest());
+    expect(context).toContain("Link files by their path relative to the space's folder");
+    expect(context).toContain('never an absolute path');
+  });
 });
 
 describe('memory across restarts', () => {
