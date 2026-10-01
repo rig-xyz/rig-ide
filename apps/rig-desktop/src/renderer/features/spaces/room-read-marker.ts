@@ -57,8 +57,12 @@ export function readLastSeen(bindingId: string): number | null {
 export function writeLastSeen(bindingId: string, seq: number): void {
   if (readLastSeen(bindingId) === seq) return;
   writeNumber(LAST_SEEN_PREFIX + bindingId, seq);
-  // And on to the relay, so other devices and the unread counts agree.
-  reportSpaceRead(bindingId, { seq, seen: windowIsLooking() });
+  // And on to the relay, so other devices and the unread counts agree, but
+  // only while someone is looking: a Room pinned to the bottom in a window
+  // in the background keeps its local marker moving, and must not mark
+  // those messages read everywhere. RoomView sends the marker on when the
+  // window comes back to it.
+  if (windowIsLooking()) reportSpaceRead(bindingId, { seq, seen: true });
 }
 
 /**

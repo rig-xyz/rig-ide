@@ -102,6 +102,7 @@ describe('prefs and targets', () => {
     expect(openTargetOf(row({ path: 'docs/a.md' }))).toEqual({
       bindingId: 'bnd_a',
       messageId: 'msg_1',
+      messageSeq: 10,
       runId: null,
       path: 'docs/a.md',
     });

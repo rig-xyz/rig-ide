@@ -17,7 +17,7 @@ import { emptySnapshot, RelayRoomSource, type LocalRunsClient, type RelayRoomCli
 import { FixtureRoomSource, type RoomSource } from '../room-source';
 import { roomSourceCache, type RoomConnectionInfo, type RoomLease } from '../room-source-cache';
 import type { CachedRoomBlob } from '@shared/spaces/room-cache';
-import { writeOpenedAt } from '../room-read-marker';
+import { readLastSeen, writeOpenedAt } from '../room-read-marker';
 import { reportSpaceRead, windowIsLooking } from '@renderer/features/notifications/space-read-sync';
 import { useRefreshMemberReadsOnRosterChange } from '../roster-refresh';
 import { resolveSpaceLink } from '../space-link';
@@ -338,6 +338,7 @@ export function RoomView({
   onExpand: onExpandCollapsed,
   setup = null,
   jump = null,
+  onJumpMissed,
 }: {
   /** Empty while `setup` is still making the space (it has no binding yet). */
   bindingId: string;
@@ -373,6 +374,8 @@ export function RoomView({
   setup?: RoomSetup | null;
   /** Notifications: scroll to this message or run once it's loaded (a banner or Activity click). */
   jump?: RoomJumpRequest | null;
+  /** That message is further back than the Room loads. */
+  onJumpMissed?: () => void;
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -500,7 +503,10 @@ export function RoomView({
     const look = () => {
       if (!windowIsLooking()) return;
       void rpc.rig.notifications.setViewing({ bindingId }).catch(() => {});
-      reportSpaceRead(bindingId, { seen: true }, true);
+      // What the transcript marked while the window was in the background
+      // (`writeLastSeen` holds it back from the relay until now).
+      const seq = readLastSeen(bindingId);
+      reportSpaceRead(bindingId, { ...(seq !== null ? { seq } : {}), seen: true }, true);
     };
     const away = () => void rpc.rig.notifications.setViewing({ bindingId: null }).catch(() => {});
     look();
@@ -1161,6 +1167,7 @@ export function RoomView({
             onHideDetails={handleHideDetails}
             onLoadRunLog={handleLoadRunLog}
             jump={jump}
+            onJumpMissed={onJumpMissed}
           />
           </ReactionsContext.Provider>
           </AttachmentSpaceContext.Provider>

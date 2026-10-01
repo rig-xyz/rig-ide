@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const markSpaceRead = vi.fn(async () => ({ success: true, data: undefined }));
 vi.mock('@renderer/lib/ipc', () => ({ rpc: { rig: { notifications: { markSpaceRead } } } }));
 
-const { reportSpaceRead } = await import('./space-read-sync');
+const { readRetryDelayMs, reportSpaceRead } = await import('./space-read-sync');
 
 describe('reportSpaceRead', () => {
   beforeEach(() => {
@@ -34,5 +34,34 @@ describe('reportSpaceRead', () => {
   it('ignores an empty binding id', () => {
     reportSpaceRead('', { seq: 1 }, true);
     expect(markSpaceRead).not.toHaveBeenCalled();
+  });
+
+  it('retries a cursor the relay did not take, with backoff, and drops seen on retry', async () => {
+    markSpaceRead.mockResolvedValueOnce({ success: false, error: { message: 'relay down' } } as never);
+    reportSpaceRead('bnd_c', { seq: 9, seen: true }, true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(markSpaceRead).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(readRetryDelayMs(1) - 1);
+    expect(markSpaceRead).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(markSpaceRead).toHaveBeenCalledTimes(2);
+    expect(markSpaceRead).toHaveBeenLastCalledWith({ bindingId: 'bnd_c', seq: 9 });
+  });
+
+  it('retries a request that threw, merged with a newer cursor', async () => {
+    markSpaceRead.mockRejectedValueOnce(new Error('ipc closed'));
+    reportSpaceRead('bnd_d', { seq: 3 }, true);
+    await vi.advanceTimersByTimeAsync(0);
+    reportSpaceRead('bnd_d', { seq: 5 });
+    await vi.advanceTimersByTimeAsync(readRetryDelayMs(1));
+    expect(markSpaceRead).toHaveBeenLastCalledWith({ bindingId: 'bnd_d', seq: 5 });
+  });
+
+  it('gives up after a few failures', async () => {
+    markSpaceRead.mockResolvedValue({ success: false, error: { message: 'seq_out_of_range' } } as never);
+    reportSpaceRead('bnd_e', { seq: 1 }, true);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(markSpaceRead).toHaveBeenCalledTimes(6);
+    markSpaceRead.mockReset().mockResolvedValue({ success: true, data: undefined });
   });
 });

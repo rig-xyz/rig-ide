@@ -297,7 +297,13 @@ function mapEntriesFor(units: TranscriptUnit[], snapshot: RoomSnapshot, ownId: s
   return entries;
 }
 
-export type RoomJumpRequest = { messageId?: string | null; runId?: string | null; nonce: number };
+export type RoomJumpRequest = {
+  messageId?: string | null;
+  /** Lets a jump to a message older than the loaded window give up at once, and say so. */
+  messageSeq?: number | null;
+  runId?: string | null;
+  nonce: number;
+};
 
 export function RoomTranscript({
   snapshot,
@@ -313,6 +319,7 @@ export function RoomTranscript({
   onHideDetails,
   onLoadRunLog,
   jump = null,
+  onJumpMissed,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
@@ -339,6 +346,8 @@ export function RoomTranscript({
    * a banner or Activity click asks. A new `nonce` asks again.
    */
   jump?: RoomJumpRequest | null;
+  /** The jump's message is older than what the Room has loaded (it has no scrollback yet). */
+  onJumpMissed?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -396,14 +405,24 @@ export function RoomTranscript({
       (jump.runId
         ? snapshot.messages.find((m) => m.meta.kind === 'session' && m.meta.runId === jump.runId)?.id
         : undefined);
-    if (!messageId || !snapshot.messages.some((m) => m.id === messageId)) return;
+    if (!messageId || !snapshot.messages.some((m) => m.id === messageId)) {
+      // Loaded, and the message is from before the oldest one here: it
+      // won't arrive by waiting. Say so once rather than open silently.
+      const oldest = snapshot.messages.length > 0 ? Math.min(...snapshot.messages.map((m) => m.seq)) : null;
+      if (!snapshot.stale && jump.messageSeq != null && oldest !== null && jump.messageSeq < oldest) {
+        jumpDoneRef.current = jump.nonce;
+        onJumpMissed?.();
+      }
+      return;
+    }
     jumpDoneRef.current = jump.nonce;
     pinnedRef.current = false;
     setPinned(false);
     requestAnimationFrame(() => jumpTo(messageId));
-    // `jumpTo` only reads refs; re-running on its identity would add nothing.
+    // `jumpTo` only reads refs and `onJumpMissed` is a fresh callback each
+    // render; re-running on either's identity would add nothing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jump, snapshot.messages]);
+  }, [jump, snapshot.messages, snapshot.stale]);
 
   useEffect(() => {
     const el = scrollRef.current;

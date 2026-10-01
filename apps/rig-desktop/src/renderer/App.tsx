@@ -945,7 +945,12 @@ export function App() {
       if (target.messageId || target.runId) {
         setRoomJump({
           bindingId: target.bindingId,
-          request: { messageId: target.messageId ?? null, runId: target.runId ?? null, nonce: Date.now() },
+          request: {
+            messageId: target.messageId ?? null,
+            messageSeq: target.messageSeq ?? null,
+            runId: target.runId ?? null,
+            nonce: Date.now(),
+          },
         });
       }
     },
@@ -991,6 +996,12 @@ export function App() {
     <RoomView
       bindingId={target.bindingId}
       jump={roomJump?.bindingId === target.bindingId ? roomJump.request : null}
+      onJumpMissed={() =>
+        toast({
+          title: 'That message is further back',
+          description: 'The space opened at its latest messages. Older ones aren\'t shown here yet.',
+        })
+      }
       setup={
         setupTarget && setup && target === setupTarget
           ? {

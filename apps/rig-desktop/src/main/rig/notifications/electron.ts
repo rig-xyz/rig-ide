@@ -143,6 +143,11 @@ export const notificationService = new NotificationService({
   log,
 });
 
+/** The signed-in account changed (`../auth.ts`): start over for whoever is signed in now. */
+export function restartNotifications(): void {
+  notificationService.restart();
+}
+
 /** Called once at boot, after rig settings are loaded. */
 export function startNotifications(): void {
   let lastPrefs = rigSettingsStore.get().notifications;

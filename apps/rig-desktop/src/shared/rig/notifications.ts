@@ -206,13 +206,15 @@ export function decideBanner(n: RigNotification, ctx: BannerContext): BannerDeci
 export type OpenSpaceAt = {
   bindingId: string;
   messageId?: string | null;
+  /** The message's seq, so the Room can tell "too far back to show" from "not loaded yet". */
+  messageSeq?: number | null;
   runId?: string | null;
   path?: string | null;
 };
 
 export function openTargetOf(n: RigNotification): OpenSpaceAt | null {
   if (!n.bindingId) return null;
-  return { bindingId: n.bindingId, messageId: n.messageId, runId: n.runId, path: n.path };
+  return { bindingId: n.bindingId, messageId: n.messageId, messageSeq: n.messageSeq, runId: n.runId, path: n.path };
 }
 
 /** Main → renderer: the summary or the rows changed; refetch. */

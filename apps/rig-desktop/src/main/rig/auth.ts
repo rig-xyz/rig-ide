@@ -162,6 +162,8 @@ function startLogin(): LoginSession {
  */
 async function resumeSignedInAccountRigs(): Promise<void> {
   forgetSelfUserId();
+  // Lazy: the notifications module pulls in Electron and the settings store.
+  void import('./notifications/electron').then((m) => m.restartNotifications()).catch(() => undefined);
   const current = await getCurrentAccountId();
   if (current.status !== 'known') return;
   // Another account signed in: the previous one's cached Rooms and comment
@@ -275,6 +277,7 @@ export const rigAuthController = createRPCController({
     const current = await getCurrentAccountId();
     const result = await runLogout();
     forgetSelfUserId();
+    void import('./notifications/electron').then((m) => m.restartNotifications()).catch(() => undefined);
     // Signed out: no cached Room or comment thread of anyone's stays on disk.
     if (result.success) await (await import('./local-cache-account')).purgeLocalCaches().catch(() => undefined);
     if (result.success && current.status === 'known') {

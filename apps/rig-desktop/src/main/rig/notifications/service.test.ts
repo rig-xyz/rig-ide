@@ -174,6 +174,21 @@ describe('NotificationService', () => {
     expect(t.closeAll).toHaveBeenCalled();
   });
 
+  it('restart (another account signed in) clears the old state and connects again', async () => {
+    const t = setup({ cursor: '0' });
+    current = t;
+    t.service.start();
+    await t.connected();
+    expect(t.badges.at(-1)).toBe(4);
+    const connects = t.queries.length;
+    t.service.restart();
+    expect(t.badges.at(-1)).toBe(0);
+    expect(t.closeAll).toHaveBeenCalled();
+    expect(t.service.summary().spaces).toEqual([]);
+    await vi.waitFor(() => expect(t.badges.at(-1)).toBe(4));
+    expect(t.queries.length).toBeGreaterThan(connects);
+  });
+
   it('backs off reconnects up to a minute', () => {
     expect([0, 1, 2, 5, 10].map(reconnectDelayMs)).toEqual([1000, 2000, 4000, 32000, 60000]);
   });

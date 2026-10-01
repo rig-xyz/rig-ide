@@ -63,7 +63,7 @@ function getProviderName(providerId: string): string {
  * Task agents' own banners follow Settings › Notifications (rig
  * `shared/rig/notifications.ts`), like space notifications: the master
  * switch, the "Agents finishing" / "Agents needing approval" toggles, and
- * the sound. They never show while you're at rig (focused and active).
+ * the sound, and "Only when I'm away" (focused and active is quiet).
  */
 export async function maybeShowNotification(event: AgentEvent, appFocused: boolean): Promise<void> {
   try {
@@ -72,7 +72,7 @@ export async function maybeShowNotification(event: AgentEvent, appFocused: boole
     const { rigSettingsStore } = await import('@main/rig/settings-instance');
     const prefs = rigSettingsStore.get().notifications;
     if (!prefs.enabled || !Notification.isSupported()) return;
-    if (appFocused && powerMonitor.getSystemIdleTime() < AWAY_IDLE_SECONDS) return;
+    if (prefs.onlyWhenAway && appFocused && powerMonitor.getSystemIdleTime() < AWAY_IDLE_SECONDS) return;
 
     const body = getNotificationBody(event);
     if (!body) return;

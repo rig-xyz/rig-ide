@@ -93,7 +93,12 @@ export function ActivityBell({
   // Reuses `deriveBellState` for the signed-out carve-out only — its count
   // here is pending invites plus direct unread, not invites alone, so the
   // real total isn't hidden behind the invites fetch still being in flight.
-  const bell = deriveBellState(signedIn, (invites?.length ?? 0) + summary.directUnreadTotal);
+  // `directUnreadTotal` already counts unread invite rows; pending invites
+  // are counted from the invite list instead, so take those rows back out.
+  const bell = deriveBellState(
+    signedIn,
+    (invites?.length ?? 0) + summary.directUnreadTotal - summary.invitesUnread
+  );
   if (!bell.visible) return null;
 
   return (
@@ -269,10 +274,11 @@ function ActivityRow({ row, onOpen }: { row: RigNotification; onOpen: () => void
         className="mt-0.5 shrink-0"
       />
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5">
+        <span className="flex items-start gap-1.5">
           <span
             className={cn(
-              'min-w-0 flex-1 truncate text-xs',
+              // Two lines: the title says who, what and where, and "where" comes last.
+              'min-w-0 flex-1 line-clamp-2 text-xs',
               unread ? 'text-text-primary font-medium' : 'text-text-secondary'
             )}
           >

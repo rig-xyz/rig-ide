@@ -83,6 +83,17 @@ export class NotificationService {
     this.pollTimer.unref?.();
   }
 
+  /**
+   * Signed in, out, or as someone else: drop everything about the previous
+   * account (banners, badge, summary, its open stream) and start over with
+   * whoever is signed in now. The stream would otherwise keep the old
+   * token's connection until it happened to drop.
+   */
+  restart(): void {
+    this.stop();
+    this.start();
+  }
+
   stop(): void {
     this.abort?.abort();
     this.abort = null;
@@ -117,12 +128,16 @@ export class NotificationService {
     let attempt = 0;
     while (!signal.aborted) {
       const ctx = await this.deps.context();
+      // A restart (another account) may land during any await: a stale
+      // loop never touches the service's state again.
+      if (signal.aborted) return;
       if (!ctx.success) {
         if (ctx.error.kind === 'notSignedIn') this.signedOut();
         await this.deps.sleep(ctx.error.kind === 'notSignedIn' ? SIGNED_OUT_RETRY_MS : reconnectDelayMs(attempt++), signal);
         continue;
       }
       const account = await this.deps.selfUserId();
+      if (signal.aborted) return;
       if (!account) {
         await this.deps.sleep(reconnectDelayMs(attempt++), signal);
         continue;
@@ -132,6 +147,7 @@ export class NotificationService {
       // Summary first: the banner decision needs each space's level.
       await this.refreshSummary();
       await this.catchUp();
+      if (signal.aborted) return;
       this.deps.emitChanged('connected');
       try {
         await this.deps.stream(
@@ -225,9 +241,10 @@ export class NotificationService {
   }
 
   async refreshSummary(): Promise<void> {
-    if (!this.account) return;
+    const account = this.account;
+    if (!account) return;
     const res = await this.deps.summary();
-    if (!res.success) return;
+    if (!res.success || this.account !== account) return;
     this.summaryCache = res.data;
     this.applyBadge();
     this.deps.emitChanged('notification');
@@ -242,5 +259,7 @@ export class NotificationService {
     this.summaryCache = EMPTY_NOTIFICATION_SUMMARY;
     this.deps.presenter.closeAll();
     this.deps.setBadge(0);
+    // The renderer drops its counts and Activity too.
+    this.deps.emitChanged('read');
   }
 }
