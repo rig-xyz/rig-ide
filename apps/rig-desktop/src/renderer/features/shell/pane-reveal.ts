@@ -5,7 +5,7 @@ import { cn } from '@renderer/lib/utils';
  * beside the Room/session (any layout flip away from 'chat' in `App.tsx`)
  * gets a short reveal instead of a jump. Transform + opacity only, never
  * `width` — so it can't fight the split resize handle's own perf fix
- * (`App.tsx`'s `onChatResizeStart`, which still only ever commits a plain
+ * (`App.tsx`'s `ChatDivider`, which still only ever commits a plain
  * flex width, never a measured/animated one). ~200ms ease-out;
  * `motion-reduce:` drops it to instant.
  *

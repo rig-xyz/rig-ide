@@ -21,6 +21,7 @@ import { Button } from '@renderer/lib/ui/button';
 import { Textarea } from '@renderer/lib/ui/textarea';
 import { cn } from '@renderer/lib/utils';
 import { pagePinsMovedChannel } from '@shared/pages/pin-events';
+import { pageZoomKeyChannel, pageZoomSite } from '@shared/pages/page-zoom';
 import { isSignInWall, KNOWN_SIGN_IN_SITES, signInSiteForUrl } from '@shared/pages/sign-in-sites';
 import { canonicalPageUrl, RIG_PAGES_PARTITION } from '@shared/spaces/links';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
@@ -28,6 +29,7 @@ import { AccountChip, SignInBanner } from './account-chip';
 import { clearAutoSignIn, getAutoState, registerPanelPage, runAutoSignIn } from './auto-sign-in';
 import { ConnectSheet } from './connect-sheet';
 import { NotSharedNotice } from './not-shared-notice';
+import { PageZoomControl, usePageZoom } from './page-zoom';
 import { startRelocator, type Relocator } from './pin-relocator';
 import { SignInSheet } from './sign-in-sheet';
 import { recordFor, useSignIns } from './use-sign-ins';
@@ -95,6 +97,21 @@ export function PageView({
     return () => observer.disconnect();
   }, []);
   const [webContentsId, setWebContentsId] = useState<number | null>(null);
+  // The page's zoom: fitted to the panel until you choose one for the site.
+  const zoom = usePageZoom(useMemo(() => pageZoomSite(url), [url]), stageWidth);
+  const applyZoomRef = useRef<() => void>(() => {});
+  applyZoomRef.current = () => {
+    if (webContentsId !== null) void rpc.rig.pages.setZoom({ webContentsId, factor: zoom.factor });
+  };
+  // Again when the app's own zoom changes (the webview follows it otherwise).
+  const appZoom = window.devicePixelRatio;
+  useEffect(() => applyZoomRef.current(), [webContentsId, zoom.factor, appZoom]);
+  const pressZoomRef = useRef(zoom.press);
+  pressZoomRef.current = zoom.press;
+  useEffect(() => {
+    if (webContentsId === null) return;
+    return events.on(pageZoomKeyChannel, (d) => d.webContentsId === webContentsId && pressZoomRef.current(d.key));
+  }, [webContentsId]);
   const { agents: runnable } = useRunnableAgents();
   const agents = useMemo(() => runnable.filter((a) => ROOM_AGENTS.includes(a.id)), [runnable]);
   const commentMode = useCommentMode(agents);
@@ -177,6 +194,8 @@ export function PageView({
             .catch(() => {});
         }, WALL_CHECK_DELAY_MS);
       };
+      // Another site in the same tab would take that host's own remembered zoom.
+      view.addEventListener('did-navigate', () => applyZoomRef.current());
       view.addEventListener('did-stop-loading', lookForWall);
       view.addEventListener('did-navigate-in-page', lookForWall);
       hostRef.current.appendChild(view);
@@ -346,13 +365,17 @@ export function PageView({
             }
             testId="page-comment-mode"
           />
+          <PageZoomControl factor={zoom.factor} fitted={zoom.fitted} onPress={zoom.press} />
           <button
             type="button"
             onClick={() => void rpc.app.openExternal(url)}
             className="hover:bg-bg-2 flex h-7 items-center gap-1.5 rounded-control px-2 text-xs text-text-secondary transition-colors"
+            aria-label="Open in browser"
+            title="Open in browser"
           >
             <ExternalLink className="size-3.5" strokeWidth={1.5} />
-            Open in browser
+            {/* A narrow panel keeps the icon: room for the zoom. */}
+            {stageWidth >= 640 && 'Open in browser'}
           </button>
         </span>
       </div>

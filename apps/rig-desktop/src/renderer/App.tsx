@@ -36,6 +36,7 @@ import { RigShareButton } from '@renderer/features/rig-share/rig-share-button';
 import { InvitesBell } from '@renderer/features/shell/invites-bell';
 import { LayoutSwitcher, type RigLayout } from '@renderer/features/shell/layout-switcher';
 import { paneRevealClassName } from '@renderer/features/shell/pane-reveal';
+import { ChatDivider } from '@renderer/features/shell/chat-divider';
 import {
   deriveNativeCloseTarget,
   type FocusedRigPane,
@@ -194,6 +195,8 @@ const CHAT_WIDTH_MAX = 900;
  * constant tuned to one window size couldn't do both.
  */
 const CHAT_WIDTH_DEFAULT_RATIO = 0.57;
+/** The panel beside the chat (a file, a page) never gets narrower than this in split view. */
+const SIDE_PANEL_MIN = 400;
 const CHAT_WIDTH_STORAGE_KEY = 'rig-chat-width';
 const CHAT_COLLAPSED_STORAGE_KEY = 'rig-chat-collapsed';
 
@@ -216,12 +219,12 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function defaultChatWidth(): number {
+  return clamp(window.innerWidth * CHAT_WIDTH_DEFAULT_RATIO, CHAT_WIDTH_MIN, CHAT_WIDTH_MAX);
+}
+
 function readStoredChatWidth(): number {
-  const fallback = clamp(
-    window.innerWidth * CHAT_WIDTH_DEFAULT_RATIO,
-    CHAT_WIDTH_MIN,
-    CHAT_WIDTH_MAX
-  );
+  const fallback = defaultChatWidth();
   try {
     const raw = Number(localStorage.getItem(CHAT_WIDTH_STORAGE_KEY));
     return Number.isFinite(raw) && raw > 0 ? clamp(raw, CHAT_WIDTH_MIN, CHAT_WIDTH_MAX) : fallback;
@@ -1044,52 +1047,32 @@ export function App() {
   }, [artefact.tabs.length, rigLayout]);
 
   // Split-resize perf round: `pointermove` can fire far more often than the
-  // screen repaints (especially with a high-poll-rate mouse/trackpad), and
-  // every one of these used to call `setChatWidth` directly — a React
-  // commit (this width flows into `RoomView`'s own ResizeObserver too, see
-  // its header comment) per raw input event instead of per painted frame.
-  // Committing at most once per `requestAnimationFrame` instead caps it to
-  // the display's own rate; `latestWidth` (a plain closure var, not the
-  // ref) always holds the true up-to-the-pixel value so a fast flick
-  // followed immediately by pointerup still persists the real end width,
-  // not whatever the last COMMITTED frame happened to be.
-  const onChatResizeStart = useCallback((event: React.PointerEvent) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = chatWidthRef.current;
-    const sign = CHAT_PANEL_ORDER === 1 ? 1 : -1;
-    let latestWidth = startWidth;
-    let frame = 0;
-    // A page beside the chat is a <webview>: once the pointer crosses into
-    // it, the webview takes the moves and the drag stops. Let the pointer
-    // pass through every webview until the drag ends.
-    const views = Array.from(document.querySelectorAll<HTMLElement>('webview'));
-    for (const view of views) view.style.pointerEvents = 'none';
-
-    const commit = () => {
-      frame = 0;
-      setChatWidth(latestWidth);
+  // screen repaints, so `ChatDivider` commits at most once per animation
+  // frame (a React commit per frame, not per raw input event) and hands the
+  // true end width to `persistChatWidth`.
+  const chatPaneRef = useRef<HTMLDivElement>(null);
+  const measureChat = useCallback(() => {
+    const pane = chatPaneRef.current;
+    const row = pane?.parentElement?.getBoundingClientRect().width ?? window.innerWidth;
+    return {
+      width: pane?.getBoundingClientRect().width ?? chatWidthRef.current,
+      min: CHAT_WIDTH_MIN,
+      max: Math.min(CHAT_WIDTH_MAX, row - SIDE_PANEL_MIN),
     };
-    const onMove = (moveEvent: PointerEvent) => {
-      latestWidth = clamp(startWidth + sign * (moveEvent.clientX - startX), CHAT_WIDTH_MIN, CHAT_WIDTH_MAX);
-      if (!frame) frame = requestAnimationFrame(commit);
-    };
-    const onUp = () => {
-      if (frame) cancelAnimationFrame(frame);
-      for (const view of views) view.style.pointerEvents = '';
-      setChatWidth(latestWidth);
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      try {
-        localStorage.setItem(CHAT_WIDTH_STORAGE_KEY, String(latestWidth));
-      } catch {
-        // localStorage unavailable — width just won't persist.
-      }
-      void rpc.rig.settings.set({ chatPanelWidth: latestWidth });
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
   }, []);
+  const persistChatWidth = useCallback((width: number) => {
+    try {
+      localStorage.setItem(CHAT_WIDTH_STORAGE_KEY, String(width));
+    } catch {
+      // localStorage unavailable — width just won't persist.
+    }
+    void rpc.rig.settings.set({ chatPanelWidth: width });
+  }, []);
+  const resetChatWidth = useCallback(() => {
+    const width = defaultChatWidth();
+    setChatWidth(width);
+    persistChatWidth(width);
+  }, [persistChatWidth]);
 
   const onOnboardingComplete = useCallback(() => {
     setHasSeenOnboarding(true);
@@ -1315,8 +1298,9 @@ export function App() {
             style={{
               order: CHAT_PANEL_ORDER,
               // Capped so a narrow window always leaves room for the file.
-              width: layout === 'split' ? `min(${chatWidth}px, 60%)` : undefined,
+              width: layout === 'split' ? `min(${chatWidth}px, calc(100% - ${SIDE_PANEL_MIN}px))` : undefined,
             }}
+            ref={chatPaneRef}
             onPointerDownCapture={() => setFocusedRigPane('chat')}
             onFocusCapture={() => setFocusedRigPane('chat')}
             className={cn(
@@ -1370,19 +1354,16 @@ export function App() {
 
           {layout === 'split' && (
             // The handle IS the panel divider (no separate border-r on the
-            // chat wrapper above) — a wide, easy-to-grab hit area with a
-            // thin centered line so it reads as a hairline at rest and only
-            // widens visually on hover/drag.
-            <div
+            // chat wrapper above): a hairline at rest, a wide grab area, and
+            // double-click for the default split.
+            <ChatDivider
               style={{ order: CHAT_RESIZE_HANDLE_ORDER }}
-              onPointerDown={onChatResizeStart}
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize chat panel"
-              className="group relative w-2.5 shrink-0 cursor-col-resize"
-            >
-              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border-hairline transition-colors group-hover:bg-accent/50 group-active:bg-accent/70" />
-            </div>
+              direction={CHAT_PANEL_ORDER === 1 ? 1 : -1}
+              measure={measureChat}
+              onResize={setChatWidth}
+              onResizeEnd={persistChatWidth}
+              onReset={resetChatWidth}
+            />
           )}
 
           {layout !== 'chat' &&
@@ -1411,7 +1392,7 @@ export function App() {
                   // gets a short opacity+scale reveal instead of a jump
                   // (`paneEntered`, set above). Transform + opacity only —
                   // never `width` — so this can't fight the split handle's
-                  // own resize-drag perf fix (`onChatResizeStart` above):
+                  // own resize-drag perf fix (`ChatDivider` above):
                   // that one still only ever commits a plain flex width,
                   // never a measured/animated one. `motion-reduce:` drops
                   // the transition to instant, per OS preference.

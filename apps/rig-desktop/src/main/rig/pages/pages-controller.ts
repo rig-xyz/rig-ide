@@ -14,9 +14,12 @@ import type { AutoSignInOutcome } from './page-sign-ins';
 import { pageSignIns, startPageSignInsKeepInStep } from './page-sign-ins-instance';
 import { isPanelPage } from './panel-page';
 import { watchPins } from './pin-watch';
+import { applyPageZoom, watchZoomKeys } from './page-zoom';
 import { pageAccess } from './sign-in-check';
 import { events } from '@main/lib/events';
 import { pagePinsMovedChannel } from '@shared/pages/pin-events';
+import { pageZoomKeyChannel } from '@shared/pages/page-zoom';
+import { normalizeBrowserZoomFactor } from '@shared/browser';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { hitPage, locateOnPage } from './page-frames';
 import { threadsFromRows } from './page-pins';
@@ -171,6 +174,20 @@ export const rigPagesController = createRPCController({
     const wc = allWebContents.fromId(webContentsId);
     if (!wc || !isPanelPage(wc, pagesSession())) return false;
     watchPins(wc, () => events.emit(pagePinsMovedChannel, { webContentsId }));
+    return true;
+  },
+
+  /**
+   * A panel page's zoom (`@shared/pages/page-zoom`): `factor` is relative to
+   * the app's own zoom. The first call also routes the page's ⌘+/⌘−/⌘0 and
+   * Ctrl-scroll to the panel (`pageZoomKeyChannel`) instead of the menu.
+   * Panel pages only.
+   */
+  setZoom: ({ webContentsId, factor }: { webContentsId: number; factor: number }): boolean => {
+    const wc = allWebContents.fromId(webContentsId);
+    if (!wc || !isPanelPage(wc, pagesSession())) return false;
+    watchZoomKeys(wc, (key) => events.emit(pageZoomKeyChannel, { webContentsId, key }));
+    applyPageZoom(wc, normalizeBrowserZoomFactor(factor));
     return true;
   },
 
