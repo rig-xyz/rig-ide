@@ -54,6 +54,48 @@ export function useActivity(enabled = true): RigNotification[] | null {
   return data?.success ? data.data : null;
 }
 
+/** How many direct rows one Space's page asks for. */
+export const SPACE_ACTIVITY_LIMIT = 100;
+/** Under `NOTIFICATION_ACTIVITY_KEY`, so the same invalidation that refreshes the bell refreshes this too. */
+export const spaceActivityKey = (bindingId: string) => [
+  ...NOTIFICATION_ACTIVITY_KEY,
+  'space',
+  bindingId,
+];
+
+/**
+ * One Space's direct rows, newest first: the page the relay filters by
+ * `bindingId`. A relay from before that param rejects it (or ignores it); then
+ * this falls back to the cross-Space page (the bell's own) and keeps this
+ * Space's rows. Null when the inbox can't be read at all.
+ */
+export async function fetchSpaceActivity(bindingId: string): Promise<RigNotification[] | null> {
+  const ofSpace = (rows: RigNotification[]) => rows.filter((row) => row.bindingId === bindingId);
+  try {
+    const page = await rpc.rig.notifications.activity({ limit: SPACE_ACTIVITY_LIMIT, bindingId });
+    if (page.success) return ofSpace(page.data);
+  } catch {
+    // fall through to the cross-Space page
+  }
+  try {
+    const page = await rpc.rig.notifications.activity({ limit: 50 });
+    return page.success ? ofSpace(page.data) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The Room's inbox: this Space's rows only (see `fetchSpaceActivity`), refetched on the same channel as the bell. Null until read. */
+export function useSpaceActivity(bindingId: string, enabled = true): RigNotification[] | null {
+  const { data } = useQuery({
+    queryKey: spaceActivityKey(bindingId),
+    queryFn: () => fetchSpaceActivity(bindingId),
+    enabled,
+    staleTime: Infinity,
+  });
+  return data ?? null;
+}
+
 export const NOTIFICATION_PERMISSION_KEY = ['rig', 'notifications', 'permission'];
 
 /**

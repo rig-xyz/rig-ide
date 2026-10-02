@@ -172,9 +172,16 @@ function fail<T>(res: Result<T, { message: string; status?: number }>): Result<T
 export const rigNotificationsController = createRPCController({
   /** The last unread summary main holds (rail and Home badges). */
   summary: (): RigNotificationSummary => notificationService.summary(),
-  /** Activity: direct rows, newest first, paged with `before`. */
-  activity: async (input: { before?: string; limit?: number }): Promise<Result<RigNotification[], RelayFailure>> =>
-    fail(await relay.listNotifications({ tier: 'direct', limit: input.limit ?? 50, before: input.before })),
+  /** Activity: direct rows, newest first, paged with `before`. `bindingId`: only that Space's rows (the Room's For you). */
+  activity: async (input: { before?: string; limit?: number; bindingId?: string }): Promise<Result<RigNotification[], RelayFailure>> =>
+    fail(
+      await relay.listNotifications({
+        tier: 'direct',
+        limit: input.limit ?? 50,
+        before: input.before,
+        ...(input.bindingId ? { bindingId: input.bindingId } : {}),
+      })
+    ),
   markRead: async (input: { ids: string[] } | { all: true }): Promise<Result<void, RelayFailure>> => {
     const res = fail(await relay.markRead(input));
     notificationService.refresh();

@@ -154,7 +154,15 @@ async function call(
   }
 }
 
-export type ListQuery = { after?: string; before?: string; limit?: number; tier?: NotificationTier; unreadOnly?: boolean };
+export type ListQuery = {
+  after?: string;
+  before?: string;
+  limit?: number;
+  tier?: NotificationTier;
+  unreadOnly?: boolean;
+  /** Only this Space's rows (a relay from before the param ignores it, or rejects it with a 400). */
+  bindingId?: string;
+};
 
 export async function listNotifications(q: ListQuery): Promise<Result<RigNotification[], NotificationsRelayError>> {
   const params = new URLSearchParams();
@@ -163,6 +171,7 @@ export async function listNotifications(q: ListQuery): Promise<Result<RigNotific
   if (q.limit) params.set('limit', String(q.limit));
   if (q.tier) params.set('tier', q.tier);
   if (q.unreadOnly) params.set('unreadOnly', '1');
+  if (q.bindingId) params.set('bindingId', q.bindingId);
   const res = await call('GET', `/v1/me/notifications?${params.toString()}`, 'load notifications');
   if (!res.success) return res;
   const rows = asRecord(res.data)?.notifications;
