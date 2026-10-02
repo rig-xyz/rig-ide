@@ -165,4 +165,49 @@ describe('Topbar', () => {
       expect(shareButtons).toHaveLength(1);
     });
   });
+
+  describe('the Home variant', () => {
+    const homeContext = { kind: 'none' as const };
+    const header = () => host.querySelector<HTMLElement>('header')!;
+    const settle = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+    it('is bare on Home: no fill and no hairline, the bell and the gear float at the top right over a drag region', async () => {
+      const opened: boolean[] = [];
+      await render({
+        context: homeContext,
+        variant: 'home',
+        onOpenSettings: (focusAbout) => opened.push(Boolean(focusAbout)),
+      });
+      await settle();
+      const bar = header();
+      expect(bar.dataset.variant).toBe('home');
+      expect(bar.className).not.toMatch(/\bborder-b\b|border-border-hairline|\bbg-bg-1\b/);
+      expect(bar.querySelector('hr, [role="separator"]')).toBeNull();
+      // The strip is still the window's drag region; its buttons are not.
+      expect(bar.className).toContain('[-webkit-app-region:drag]');
+      expect(bar.querySelector('[aria-label="Activity"]')).not.toBeNull();
+      const gear = bar.querySelector<HTMLButtonElement>('[aria-label="Settings"]')!;
+      expect(gear).not.toBeNull();
+      expect(gear.parentElement?.className).toContain('[-webkit-app-region:no-drag]');
+      await act(async () => click(gear));
+      expect(opened).toEqual([false]);
+      // No breadcrumb on Home.
+      expect(bar.querySelector('[aria-label="Home"]')).toBeNull();
+    });
+
+    it('stays without a hairline once Home has scrolled beneath it', async () => {
+      await render({ context: homeContext, variant: 'home', scrolled: true });
+      expect(header().className).not.toMatch(/\bborder-b\b|border-border-hairline/);
+    });
+
+    it('keeps its fill and hairline on every other screen', async () => {
+      await render({ variant: 'rig' });
+      expect(header().dataset.variant).toBe('rig');
+      expect(header().className).toContain('border-b');
+      expect(header().className).toContain('bg-bg-1');
+    });
+  });
 });

@@ -542,9 +542,9 @@ export function Home({
     // The fix is content proximity, not bar decoration: `pt-3` only (12px,
     // still a real scale step, not zero) instead of the uniform `p-6`,
     // right/bottom/left unchanged.
-    // Glow v4: anchored to this panel's own top edge (under the topbar
-    // hairline), where a wash starting at full intensity reads as chrome —
-    // floating mid-content it read as a cut-off box. Ellipse radii sized so
+    // Glow v4: anchored to the window's own top edge (`.hero-glow` reaches
+    // up under the bare Home top bar), where a wash starting at full
+    // intensity reads as chrome; floating mid-content it read as a cut-off box. Ellipse radii sized so
     // alpha hits zero before either horizontal edge. Padding widened per
     // Dylan: the column was crowding the rail.
     <div className="hero-glow flex min-h-full w-full flex-col gap-4 px-10 pt-4 pb-8">
@@ -572,19 +572,29 @@ export function Home({
        * the rails and the center column — a bit more separation now that
        * the rails carry their own surface too (`RigsRail`'s own `bg-1`
        * panel below), so the seam reads as two distinct
-       * regions rather than one continuous strip. `lg:px-4` on the
-       * center column is new too — it had NONE of its own before,
-       * relying entirely on the row's `gap` for breathing room.
+       * regions rather than one continuous strip. The center column adds
+       * `lg:pl-2` of its own so the seam is the board's 48px.
        */}
       <div className="flex min-h-0 flex-1 flex-col gap-8 lg:flex-row lg:items-start lg:gap-10">
         {showPulse && (
-          <div className="min-w-0 flex-1 lg:order-2 lg:px-4" data-testid="home-center">
-            {/* Capped so a topic or a person's sentence never runs too long on a wide window. */}
-            <div className="mx-auto flex w-full max-w-[44rem] flex-col gap-8">
+          <div className="min-w-0 flex-1 lg:order-2 lg:pl-2" data-testid="home-center">
+            {/*
+             * The board's center column: 48px from the Spaces card (the row's
+             * 40px gap plus `lg:pl-2`), left aligned beside it and capped near
+             * the board's width so lines stay readable on a wide window. Ask
+             * and its chips, then Needs you, the topics and People, 20px apart.
+             */}
+            <div className="flex w-full max-w-[60rem] flex-col gap-5">
               <BriefingSpine
                 localRigs={localRigs}
                 onOpenPath={onOpenPath}
                 onHighlightRig={setHighlightBindingId}
+              />
+              <NeedsYouSection
+                spaceRows={spaceRows}
+                statusByBinding={statusByBinding}
+                selfUserId={selfUserId}
+                onOpenPath={onOpenPath}
               />
               {spacesEnabled && (
                 <AcrossYourSpacesToday
@@ -594,12 +604,6 @@ export function Home({
                 />
               )}
               <PeopleRail lastActivity={lastActivity} />
-              <NeedsYouSection
-                spaceRows={spaceRows}
-                statusByBinding={statusByBinding}
-                selfUserId={selfUserId}
-                onOpenPath={onOpenPath}
-              />
             </div>
           </div>
         )}

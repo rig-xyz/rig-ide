@@ -1,4 +1,4 @@
-import { ChevronRight } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { useState } from 'react';
 import { themeColor } from '@renderer/features/spaces/dock-model';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
@@ -19,9 +19,10 @@ const FACES_SHOWN_CAP = 3;
 
 /**
  * "Across your spaces today": a flat feed of the Room themes with activity
- * in the last 24h, one line each, newest first, five then "N more topics".
- * Built only from the themes the relay's worker already made
- * (`use-recent-themes.ts`). A line opens in place to its description; from
+ * in the last 24h, one line each with its description as a one line summary
+ * under it, newest first, five then "N more topics". Built only from the
+ * themes the relay's worker already made (`use-recent-themes.ts`). A line
+ * opens in place to its whole description and its activity; from
  * there, or from its space name, it opens its space's Room, on that theme
  * when Room themes is on (`home.tsx`). One line is open at a time.
  */
@@ -54,36 +55,38 @@ export function AcrossYourSpacesToday({
   );
 
   return (
-    <section className="flex flex-col gap-1" data-testid="across-spaces-today">
-      <HomeFeedLabel aside={view.kind === 'themes' ? view.themes.length : undefined}>
-        Across your spaces today
-      </HomeFeedLabel>
+    <section className="flex flex-col gap-1.5" data-testid="across-spaces-today">
+      <div className="pb-1">
+        <HomeFeedLabel
+          aside={view.kind === 'themes' ? topicsCountLabel(view.themes.length) : undefined}
+        >
+          Across your spaces today
+        </HomeFeedLabel>
+      </div>
       {view.kind === 'loading' ? (
-        <p className="px-2 py-1.5 text-sm text-text-muted">Loading today&rsquo;s topics…</p>
+        <p className="py-1.5 text-xs text-text-muted">Loading today&rsquo;s topics…</p>
       ) : view.kind === 'offline' ? (
-        <p className="px-2 py-1.5 text-sm text-text-muted">
-          Topics show here once rig is reachable.
-        </p>
+        <p className="py-1.5 text-xs text-text-muted">Topics show here once rig is reachable.</p>
       ) : view.kind === 'empty' ? (
-        <p className="px-2 py-1.5 text-sm text-text-muted" data-testid="across-spaces-empty">
+        <p className="py-1.5 text-xs text-text-muted" data-testid="across-spaces-empty">
           Quiet day across your spaces
         </p>
       ) : (
-        <ul className="flex flex-col">
+        <ul className="flex flex-col gap-1.5">
           {shown.map(line)}
           {showMore && more.map(line)}
           {more.length > 0 && (
-            <li>
+            <li className="pt-1">
               <button
                 type="button"
                 onClick={() => setShowMore((o) => !o)}
                 aria-expanded={showMore}
-                className="flex items-center gap-1 px-2 py-1.5 text-xs text-text-muted transition-colors hover:text-text-primary"
+                className="flex items-center gap-1 font-mono text-2xs text-text-muted transition-colors hover:text-text-primary"
                 data-testid="across-spaces-more"
               >
                 {moreTopicsLabel(more.length)}
-                <ChevronRight
-                  className={cn('size-3 transition-transform', showMore && 'rotate-90')}
+                <ChevronDown
+                  className={cn('size-3 transition-transform', showMore && 'rotate-180')}
                   strokeWidth={1.5}
                 />
               </button>
@@ -95,6 +98,18 @@ export function AcrossYourSpacesToday({
   );
 }
 
+/** The count on the right of the label, "6 topics". */
+function topicsCountLabel(count: number): string {
+  return count === 1 ? '1 topic' : `${count} topics`;
+}
+
+/**
+ * One topic: the dot, the name, # space, faces and age on the first line,
+ * and its description as a muted second line, cut to one line until it's
+ * opened. Open, the description wraps in full and the activity line with
+ * "Open the Room on this topic" follows. The whole line toggles; its name
+ * is the keyboard's way in, its space name opens the Room.
+ */
 function ThemeLine({
   theme,
   now,
@@ -113,13 +128,16 @@ function ThemeLine({
   const faces = themeFaces(theme.people);
   return (
     <li
-      className={cn('rounded-control transition-colors', open ? 'bg-bg-2/40' : 'hover:bg-bg-2/50')}
+      className={cn(
+        '-mx-3 flex cursor-pointer flex-col gap-1 rounded-[12px] px-3 py-2.5 leading-normal transition-colors duration-[160ms] ease-out',
+        open ? 'bg-text-primary/5' : 'hover:bg-text-primary/5'
+      )}
+      onClick={onToggle}
       data-testid="theme-line"
       data-theme-id={theme.themeId}
       data-open={open ? 'true' : undefined}
     >
-      {/* The whole line toggles; its name is the keyboard's way in, its space name opens the Room. */}
-      <div className="flex h-9 min-w-0 cursor-pointer items-center gap-2.5 px-2" onClick={onToggle}>
+      <div className="flex min-w-0 items-center gap-2.5">
         <ThemeDot color={themeColor(theme.themeId)} />
         <button
           type="button"
@@ -140,17 +158,17 @@ function ThemeLine({
               event.stopPropagation();
               onOpen();
             }}
-            className="min-w-0 shrink-[2] truncate text-sm text-text-muted transition-colors hover:text-text-primary"
+            className="min-w-0 shrink-[2] truncate text-xs text-text-muted transition-colors hover:text-text-primary"
             data-testid="theme-line-space"
           >
             # {theme.spaceName}
           </button>
         )}
-        <span className="ml-auto flex shrink-0 items-center gap-3 pl-2">
+        <span className="ml-auto flex shrink-0 items-center gap-2.5 pl-2">
           {faces.length > 0 && (
             <span className="flex items-center" data-testid="theme-line-faces">
               {faces.slice(0, FACES_SHOWN_CAP).map((name, i) => (
-                <span key={name} title={name} className={cn('flex', i > 0 && '-ml-1')}>
+                <span key={name} title={name} className={cn('flex', i > 0 && '-ml-[7px]')}>
                   <IdentityAvatar
                     name={name}
                     avatarUrl={avatarOf?.(name) ?? null}
@@ -163,46 +181,55 @@ function ThemeLine({
             </span>
           )}
           <span
-            className="w-7 text-right font-mono text-2xs text-text-muted tabular-nums"
+            className="w-11 text-right font-mono text-2xs text-text-muted tabular-nums"
             data-testid="theme-line-age"
           >
             {shortAge(theme.lastActivityAt, now)}
           </span>
         </span>
       </div>
+      {theme.description && (
+        <p
+          className={cn(
+            'pl-[19px] text-xs leading-normal text-text-secondary',
+            !open && 'truncate'
+          )}
+          data-testid="theme-line-desc"
+        >
+          {theme.description}
+        </p>
+      )}
       {open && (
-        <div
-          className="popover-in flex flex-col gap-1 pr-2 pb-2.5 pl-[26px]"
+        <p
+          className="popover-in pl-[19px] font-mono text-2xs text-text-muted"
           data-testid="theme-line-detail"
         >
-          {theme.description && (
-            <p className="text-sm leading-snug text-text-secondary">{theme.description}</p>
-          )}
-          <p className="text-xs text-text-muted">
-            {themeActivityLine(theme)} ·{' '}
-            <button
-              type="button"
-              onClick={onOpen}
-              className="transition-colors hover:text-text-primary"
-              data-testid="theme-line-open"
-            >
-              Open the Room on this topic ›
-            </button>
-          </p>
-        </div>
+          {themeActivityLine(theme)} ·{' '}
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpen();
+            }}
+            className="transition-colors hover:text-text-primary"
+            data-testid="theme-line-open"
+          >
+            Open the Room on this topic ›
+          </button>
+        </p>
       )}
     </li>
   );
 }
 
-/** The theme's color, the same as its dot in the Room, with a soft halo around it. */
+/** The theme's color, the same as its dot in the Room, with a soft halo ring around it. */
 function ThemeDot({ color }: { color: string }) {
   return (
     <span
-      className="size-2 shrink-0 rounded-full"
+      className="size-[9px] shrink-0 rounded-full"
       style={{
         background: color,
-        boxShadow: `0 0 0 3px color-mix(in srgb, ${color} 22%, transparent)`,
+        boxShadow: `0 0 0 4px color-mix(in oklab, ${color} 22%, transparent)`,
       }}
       aria-hidden
     />

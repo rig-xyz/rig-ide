@@ -51,7 +51,7 @@ export function NeedsYouSection({
   if (cards.length === 0) return null;
 
   return (
-    <section className="flex flex-col gap-2">
+    <section className="flex flex-col gap-2" data-testid="needs-you">
       <h2 className="text-text-primary text-sm font-medium">
         Needs you <span className="text-text-muted font-normal">· {cards.length}</span>
       </h2>

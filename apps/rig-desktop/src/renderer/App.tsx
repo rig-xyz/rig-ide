@@ -1579,10 +1579,10 @@ export function Topbar({
   docBreadcrumb = null,
 }: {
   context: TopbarContext;
-  /** Which bottom-edge treatment the bar wears (Dylan's seam call, this
-   * round): `'home'` keeps the scroll-aware one (no line at rest, hairline +
-   * blur only once content beneath has scrolled — the bar genuinely
-   * overlays Home); `'rig'` wears a STATIC hairline — the bound-rig view's
+  /** Which chrome the bar wears: `'home'` is bare, no fill and no
+   * hairline, the board's open surface (a soft blur in the page color only
+   * once content beneath has scrolled, since the bar overlays Home);
+   * `'rig'` wears a fill and a STATIC hairline — the bound-rig view's
    * panels never flow beneath the bar, so a permanent quiet delineation is
    * honest, and without it the panel divider hitting the bar read
    * ambiguous. One bar, two edge treatments — not a fork. */
@@ -1664,20 +1664,22 @@ export function Topbar({
     // logo/wordmark (Dylan's earlier call still stands). The right cluster
     // is icon-only by design: the account avatar and the Settings gear.
     //
-    // Bottom edge, per `variant` (see the prop's own doc comment): `'rig'`
-    // wears a static hairline; `'home'` keeps the scroll-aware treatment —
-    // continuous at rest, translucent blur + hairline together over a quiet
-    // 150ms once the content beneath has actually scrolled, never as bar
-    // decoration. Absolutely positioned either way, so Home's content flows
-    // underneath it.
+    // Chrome, per `variant` (see the prop's own doc comment): `'rig'` wears
+    // a fill and a static hairline; `'home'` wears none, so Home reads as
+    // one open surface with only the lights, the bell and the gear floating
+    // over it. The strip stays the drag region either way. Once Home's
+    // content has scrolled under it, a soft blur in the page's own color
+    // keeps text from running into the icons; still no hairline. Absolutely
+    // positioned either way, so Home's content flows underneath it.
     <header
+      data-variant={variant}
       className={cn(
-        'absolute inset-x-0 top-0 z-30 flex h-10 shrink-0 items-center justify-between gap-2 pr-4 pl-[78px] transition-[background-color,border-color,backdrop-filter] duration-150 [-webkit-app-region:drag]',
+        'absolute inset-x-0 top-0 z-30 flex h-10 shrink-0 items-center justify-between gap-2 pr-4 pl-[78px] transition-[background-color,backdrop-filter] duration-150 [-webkit-app-region:drag]',
         variant === 'rig'
           ? 'bg-bg-1 border-border-hairline border-b'
           : scrolled
-            ? 'bg-bg-1/75 border-border-hairline border-b backdrop-blur-sm'
-            : 'bg-bg-1 border-b border-transparent'
+            ? 'bg-bg-0/75 backdrop-blur-sm'
+            : 'bg-transparent'
       )}
     >
       <div className="flex min-w-0 items-center gap-1.5 text-xs text-text-muted">

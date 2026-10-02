@@ -35,8 +35,10 @@ export function PeopleRail({ lastActivity }: { lastActivity?: ReadonlyMap<string
   const now = Date.now();
 
   return (
-    <section className="flex flex-col gap-1" data-testid="home-people">
-      <HomeFeedLabel aside="today">People</HomeFeedLabel>
+    <section className="flex flex-col gap-0.5" data-testid="home-people">
+      <div className="pb-1.5">
+        <HomeFeedLabel aside="today">People</HomeFeedLabel>
+      </div>
       <ul className="flex flex-col">
         {people.map((person) => {
           const key = firstNameKey(person.name);
@@ -44,18 +46,18 @@ export function PeopleRail({ lastActivity }: { lastActivity?: ReadonlyMap<string
           return (
             <li
               key={person.userId}
-              className="flex items-start gap-2.5 px-2 py-2"
+              className="flex items-start gap-3 py-[9px] leading-normal"
               data-testid="home-person"
             >
               <IdentityAvatar
                 name={person.name}
                 avatarUrl={person.avatarUrl}
-                sizeClassName="size-6"
+                sizeClassName="size-7"
                 textClassName="text-2xs"
                 className="mt-px"
               />
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <p className="flex min-w-0 items-baseline gap-2">
+                <p className="flex min-w-0 items-center justify-between gap-2">
                   <span
                     className="min-w-0 truncate text-sm font-medium text-text-primary"
                     data-testid="home-person-name"
@@ -64,14 +66,14 @@ export function PeopleRail({ lastActivity }: { lastActivity?: ReadonlyMap<string
                   </span>
                   {at && (
                     <span
-                      className="ml-auto shrink-0 font-mono text-2xs text-text-muted tabular-nums"
+                      className="shrink-0 font-mono text-2xs text-text-muted tabular-nums"
                       data-testid="home-person-age"
                     >
                       {shortAge(at, now)}
                     </span>
                   )}
                 </p>
-                <p className="text-sm leading-snug text-text-secondary">{person.line}</p>
+                <p className="text-xs leading-[1.55] text-text-secondary">{person.line}</p>
               </div>
             </li>
           );

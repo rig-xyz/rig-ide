@@ -51,6 +51,7 @@ const mocks = vi.hoisted(() => ({
   getCalls: 0,
   requests: [] as Array<[string, string]>,
   pulse: null as unknown,
+  expiredConnector: false,
 }));
 
 const fail = { success: false, error: { kind: 'relay', message: 'nope' } };
@@ -125,9 +126,14 @@ vi.mock('@renderer/lib/ipc', () => ({
       spaceStatus: { get: async () => ({ success: true, data: [] }) },
       spacesConnection: {
         listMembers: async () => ({ success: true, data: [] }),
-        listConnectors: async () => ({ success: true, data: [] }),
+        listConnectors: async () => ({
+          success: true,
+          data: mocks.expiredConnector ? [{ connectorId: 'linear' }] : [],
+        }),
       },
-      connectors: { list: async () => [] },
+      connectors: {
+        list: async () => (mocks.expiredConnector ? [{ id: 'linear', state: 'expired' }] : []),
+      },
       pulse: { get: async () => mocks.pulse ?? fail },
       syncHealth: {
         get: async ({ paths }: { paths: string[] }) =>
@@ -220,6 +226,7 @@ describe('Home: Across your spaces today', () => {
     mocks.getCalls = 0;
     mocks.requests = [];
     mocks.pulse = null;
+    mocks.expiredConnector = false;
     opened = [];
     host = document.createElement('div');
     document.body.appendChild(host);
@@ -238,8 +245,9 @@ describe('Home: Across your spaces today', () => {
     await mount();
 
     const label = section()?.querySelector('h2');
-    expect(label?.textContent).toBe('Across your spaces today7');
+    expect(label?.textContent).toBe('Across your spaces today7 topics');
     expect(label?.className).toContain('uppercase');
+    expect(label?.className).toContain('font-mono');
     expect(lineIds()).toEqual(['thm_0', 'thm_1', 'thm_2', 'thm_3', 'thm_4']);
     const more = host.querySelector<HTMLButtonElement>('[data-testid="across-spaces-more"]')!;
     expect(more.textContent).toBe('2 more topics');
@@ -279,9 +287,24 @@ describe('Home: Across your spaces today', () => {
     const faces = line.querySelector('[data-testid="theme-line-faces"]')!;
     expect([...faces.children].map((f) => f.getAttribute('title'))).toEqual(['Hugo', 'Ana']);
     expect(line.querySelector('[data-testid="theme-line-age"]')?.textContent).toBe('4m');
-    // One line: the description and the activity wait until it's opened.
+    // Its description is always there as a one line summary under it; the activity waits until it's opened.
+    const desc = line.querySelector<HTMLElement>('[data-testid="theme-line-desc"]')!;
+    expect(desc.textContent).toBe('Things to fix before launch');
+    expect(desc.className).toContain('truncate');
+    expect(desc.className).toContain('text-text-secondary');
     expect(line.querySelector('[data-testid="theme-line-detail"]')).toBeNull();
-    expect(line.textContent).not.toContain('Things to fix before launch');
+  });
+
+  it('every line carries its summary, and a line without a description has none', async () => {
+    mocks.live = {
+      kind: 'live',
+      savedAt: NOW,
+      themes: [theme(1), theme(2), theme(3, { description: '' })],
+    };
+    await mount();
+    expect(
+      lines().map((l) => l.querySelector('[data-testid="theme-line-desc"]')?.textContent ?? null)
+    ).toEqual(['What topic 1 is about', 'What topic 2 is about', null]);
   });
 
   it('a line opens in place to its description, one line open at a time', async () => {
@@ -301,10 +324,18 @@ describe('Home: Across your spaces today', () => {
     await act(async () => toggle(lines()[0]!).click());
     expect(openIds()).toEqual(['thm_1']);
     expect(toggle(lines()[0]!).getAttribute('aria-expanded')).toBe('true');
+    // Open, the summary wraps in full, and the activity line follows it.
+    const desc = lines()[0]!.querySelector<HTMLElement>('[data-testid="theme-line-desc"]')!;
+    expect(desc.textContent).toBe('Things to fix');
+    expect(desc.className).not.toContain('truncate');
     const detail = lines()[0]!.querySelector('[data-testid="theme-line-detail"]')!;
-    expect(detail.textContent).toContain('Things to fix');
-    expect(detail.textContent).toContain(
+    expect(detail.textContent).toBe(
       "5 new messages · Hugo, Hugo's Claude · Open the Room on this topic ›"
+    );
+    expect(desc.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The other line keeps its summary cut to one line.
+    expect(lines()[1]!.querySelector('[data-testid="theme-line-desc"]')!.className).toContain(
+      'truncate'
     );
     // Opening it opens nothing yet.
     expect(opened).toEqual([]);
@@ -448,6 +479,37 @@ describe('Home: Across your spaces today', () => {
       'Quiet day across your spaces'
     );
     expect(lines()).toHaveLength(0);
+  });
+
+  it('Needs you sits right under the Ask box and its chips, above the topics and People', async () => {
+    mocks.expiredConnector = true;
+    mocks.live = { kind: 'live', savedAt: NOW, themes: [theme(1)] };
+    mocks.pulse = {
+      success: true,
+      data: {
+        cached: false,
+        briefing: {
+          greeting: '',
+          summary: '',
+          pickBackUp: [],
+          perRig: [],
+          perPerson: [{ userId: 'u1', name: 'Dylan', avatarUrl: null, line: 'You.', isSelf: true }],
+          generatedAt: new Date(NOW).toISOString(),
+          degraded: false,
+        },
+      },
+    };
+    await mount();
+    const center = host.querySelector<HTMLElement>('[data-testid="home-center"]')!;
+    const ask = center.querySelector('input[placeholder="Ask across your spaces…"]')!;
+    const needsYou = center.querySelector('[data-testid="needs-you"]')!;
+    expect(needsYou.textContent).toContain('Your Linear login expired');
+    const people = center.querySelector('[data-testid="home-people"]')!;
+    const follows = (a: Node, b: Node) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(follows(ask, needsYou)).toBe(true);
+    expect(follows(needsYou, section()!)).toBe(true);
+    expect(follows(section()!, people)).toBe(true);
   });
 
   it("shows this account's last topics from this computer when the relay can't answer", async () => {
