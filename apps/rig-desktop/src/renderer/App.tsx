@@ -46,7 +46,6 @@ import { SettingsModal } from '@renderer/features/shell/settings-modal';
 import { RoomView } from '@renderer/features/spaces/components/room-view';
 import type { RoomJumpRequest } from '@renderer/features/spaces/components/room-transcript';
 import { useNotificationSummary, useNotificationsInvalidation } from '@renderer/features/notifications/use-notifications';
-import { SpaceNotifyLevelButton } from '@renderer/features/notifications/space-notify-level';
 import { syncLastSeenFromServer } from '@renderer/features/spaces/room-read-marker';
 import { roomSourceCache } from '@renderer/features/spaces/room-source-cache';
 import {
@@ -289,9 +288,10 @@ export function App() {
       duration: Infinity,
     });
   }, [updateStatus]);
-  // Polish round: scroll-aware topbar — see `Topbar`'s own comment for why
-  // only `<main>` (Home/`FolderResult`) ever sets this away from false.
+  // Polish round: scroll-aware topbar — see `Topbar`'s own comment. `<main>`
+  // (Home/`FolderResult`) sets the first, a space's Room transcript the second.
   const [mainScrolled, setMainScrolled] = useState(false);
+  const [roomScrolled, setRoomScrolled] = useState(false);
   const [folder, setFolder] = useState<FolderState>({ status: 'empty' });
   const folderRef = useRef(folder);
   folderRef.current = folder;
@@ -1058,6 +1058,9 @@ export function App() {
       // `RoomView`'s own `collapsed` doc comment.
       collapsed={inSpace && layout === 'files'}
       onExpand={() => setRigLayout('split')}
+      // A space's Room sits under the bare top bar: its transcript scrolls
+      // up beneath it, and the bar blurs once it has.
+      topBar={inSpace ? { onScrolled: setRoomScrolled } : undefined}
       onOpenFile={(path) => {
         if (!inSpace) setRoomPreviewOpen(false);
         // Agents report the files they changed by absolute path; doc comments by relative.
@@ -1250,14 +1253,16 @@ export function App() {
     return <Onboarding steps={onboardingSteps} onComplete={onOnboardingComplete} />;
   }
 
+  const chrome = topbarChrome(rigView ? { isSpace: rigViewIsSpace, layout } : null);
+
   return (
     <div className="relative flex h-full flex-col">
       <Topbar
         context={deriveTopbarContext(
           rigView ? { name: rigView.name, bindingId: rigView.bindingId, path: rigView.root } : null
         )}
-        variant={rigView ? 'rig' : 'home'}
-        scrolled={!rigView && mainScrolled}
+        variant={chrome.variant}
+        scrolled={rigView ? chrome.panesUnderBar && roomScrolled : mainScrolled}
         onGoHome={goHome}
         onOpenSettings={openSettings}
         onOpenPath={openPath}
@@ -1291,17 +1296,13 @@ export function App() {
         shareSlot={bound && !boundIsSpace ? <RigShareButton root={bound.root} name={bound.name} /> : undefined}
         sharePillSlot={
           rigView && rigViewIsSpace ? (
-            <div className="flex items-center gap-1.5">
-              {/* A space being set up has no relay binding to set a level on yet. */}
-              {!setupTarget && rigView.bindingId && <SpaceNotifyLevelButton bindingId={rigView.bindingId} />}
-              <RigShareButton
-                root={rigView.root}
-                name={rigView.name}
-                variant="pill"
-                // A space still being set up can't invite anyone yet.
-                pendingReason={setupTarget ? SPACE_SETUP_PENDING_REASON : undefined}
-              />
-            </div>
+            <RigShareButton
+              root={rigView.root}
+              name={rigView.name}
+              variant="pill"
+              // A space still being set up can't invite anyone yet.
+              pendingReason={setupTarget ? SPACE_SETUP_PENDING_REASON : undefined}
+            />
           ) : undefined
         }
         layoutSwitcher={
@@ -1379,15 +1380,14 @@ export function App() {
           />
         </div>
       ) : rigView ? (
-        // The bar sits above ChatPanel/FileBrowser/ArtifactView here, but
-        // none of them scroll directly beneath it — each owns its own
-        // header chrome (FileBrowser/ArtifactView's own breadcrumb bar,
-        // ChatPanel's composer) immediately below the topbar's 40px, so
-        // there's nothing for the topbar to react to; `pt-10` alone
-        // reproduces the old normal-flow clearance now that the bar is an
-        // absolute overlay instead of a flow sibling. `scrolled` above is
-        // hardcoded false for this branch — its `variant: 'rig'` bar wears
-        // a static hairline instead (see `Topbar`'s own comment).
+        // A plain rig: the bar sits above ChatPanel/FileBrowser/ArtifactView,
+        // none of which scroll beneath it (each owns its own header chrome
+        // right under the bar's 40px), so `pt-10` on the row clears it and
+        // its `'rig'` bar wears a static hairline. A space's Room instead
+        // runs its panes up under the bare bar (`chrome.panesUnderBar`):
+        // each pane clears the 40px itself, so the divider between the Room
+        // and a page beside it reaches the window's top, and the transcript
+        // scrolls up beneath the bar (`roomScrolled`). See `topbarChrome`.
         // Layout-switcher round: `rigLayout` replaces the old
         // `artefactCollapsed`/`chatCollapsed` pair (which could disagree)
         // with one enum, driven by the topbar's `LayoutSwitcher`. 'chat' is
@@ -1397,7 +1397,7 @@ export function App() {
         // `ChatPanel`'s own session rail and gives the artefact pane
         // everything else. The chat wrapper is the same element across all
         // three layouts, so `ChatPanel` never remounts when it changes.
-        <div className="flex min-h-0 flex-1 pt-10">
+        <div className={cn('flex min-h-0 flex-1', !chrome.panesUnderBar && 'pt-10')}>
           <div
             style={{
               order: CHAT_PANEL_ORDER,
@@ -1409,6 +1409,8 @@ export function App() {
             onFocusCapture={() => setFocusedRigPane('chat')}
             className={cn(
               'relative flex shrink-0 flex-col overflow-hidden bg-bg-1',
+              // The Room's own page color up under the bar.
+              chrome.panesUnderBar && 'bg-bg-0 pt-10',
               layout === 'chat' && 'min-w-0 flex-1',
               layout === 'files' &&
                 // Doc-focus round: a space's own rail (`SpaceRail`) carries
@@ -1500,7 +1502,11 @@ export function App() {
                   // that one still only ever commits a plain flex width,
                   // never a measured/animated one. `motion-reduce:` drops
                   // the transition to instant, per OS preference.
-                  className={cn('flex min-h-0 min-w-0 flex-1 flex-col', paneRevealClassName(paneEntered))}
+                  className={cn(
+                    'flex min-h-0 min-w-0 flex-1 flex-col',
+                    chrome.panesUnderBar && 'pt-10',
+                    paneRevealClassName(paneEntered)
+                  )}
                 >
                   {pane}
                 </div>
@@ -1524,10 +1530,10 @@ export function App() {
         // for), so it renders directly in `main`, not inside the centered
         // narrow-card wrapper `FolderResult` still needs.
         //
-        // Polish round: this is the one surface the topbar genuinely
-        // overlays (see `Topbar`'s own comment) — `ref`/`onScroll` feed
-        // `mainScrolled` above, and `pt-10` replaces the clearance the old
-        // normal-flow topbar used to give it for free.
+        // Polish round: the topbar overlays this surface (see `Topbar`'s
+        // own comment) — `ref`/`onScroll` feed `mainScrolled` above, and
+        // `pt-10` replaces the clearance the old normal-flow topbar used to
+        // give it for free.
         <main
           onScroll={(event) => setMainScrolled(event.currentTarget.scrollTop > 4)}
           className="min-h-0 flex-1 overflow-y-auto pt-10"
@@ -1555,12 +1561,36 @@ export function App() {
   );
 }
 
+/** The bare bar's scrolled blur: solid through the bar, dissolving over the 20px below it. */
+const TOPBAR_BLUR_MASK = 'linear-gradient(to bottom, #000 55%, transparent)';
+
+/**
+ * Which bar a screen wears, and whether its panes run up under it. Home and
+ * a space's Room wear the bare bar: no fill, no hairline, a soft blur in the
+ * page color only once content has scrolled beneath it. The Room's panes
+ * start at the window's top and each clears the bar's 40px itself, so the
+ * divider between the Room and a page beside it reaches the top edge. Folded
+ * to its rail beside a doc, a space starts its panes below the bar, since a
+ * rail edge running up would cut through the traffic lights. A plain rig
+ * keeps the filled bar with its static hairline: its panes never scroll
+ * beneath it. Settings is a modal and onboarding has no bar, so neither
+ * comes through here. Exported for `topbar.test.tsx`.
+ */
+export function topbarChrome(view: { isSpace: boolean; layout: RigLayout } | null): {
+  variant: 'bare' | 'rig';
+  panesUnderBar: boolean;
+} {
+  if (!view) return { variant: 'bare', panesUnderBar: false };
+  if (!view.isSpace) return { variant: 'rig', panesUnderBar: false };
+  return { variant: 'bare', panesUnderBar: view.layout !== 'files' };
+}
+
 // Exported for direct testing (`topbar.test.tsx`) — the layout-switcher
 // gate, the doc breadcrumb and the People/Share split are Topbar's own
 // decisions now (see each prop's doc comment below), not App's.
 export function Topbar({
   context,
-  variant,
+  variant = 'bare',
   scrolled,
   onGoHome,
   onOpenSettings,
@@ -1579,17 +1609,16 @@ export function Topbar({
   docBreadcrumb = null,
 }: {
   context: TopbarContext;
-  /** Which chrome the bar wears: `'home'` is bare, no fill and no
-   * hairline, the board's open surface (a soft blur in the page color only
-   * once content beneath has scrolled, since the bar overlays Home);
-   * `'rig'` wears a fill and a STATIC hairline — the bound-rig view's
-   * panels never flow beneath the bar, so a permanent quiet delineation is
-   * honest, and without it the panel divider hitting the bar read
-   * ambiguous. One bar, two edge treatments — not a fork. */
-  variant: 'home' | 'rig';
+  /** Which chrome the bar wears (`topbarChrome` picks it): `'bare'`, the
+   * default for Home and a space's Room, has no fill and no hairline, an
+   * open surface with a soft blur in the page color only once content
+   * beneath has scrolled; `'rig'` wears a fill and a STATIC hairline, for a
+   * plain rig whose panels never flow beneath the bar, so a permanent quiet
+   * delineation is honest. One bar, two edge treatments, not a fork. */
+  variant?: 'bare' | 'rig';
   /** Whether the content directly beneath the bar has scrolled away from
-   * its top — only meaningful for `variant: 'home'` (the one surface the
-   * bar overlays; the bound-rig branch hardcodes it false). */
+   * its top: Home's page, or a space's Room transcript. Only meaningful for
+   * `variant: 'bare'`. */
   scrolled: boolean;
   /** The mini-breadcrumb's house button (rig view only) — up-navigation
    * lives HERE now, not in the panel headers below the bar. */
@@ -1665,23 +1694,33 @@ export function Topbar({
     // is icon-only by design: the account avatar and the Settings gear.
     //
     // Chrome, per `variant` (see the prop's own doc comment): `'rig'` wears
-    // a fill and a static hairline; `'home'` wears none, so Home reads as
-    // one open surface with only the lights, the bell and the gear floating
-    // over it. The strip stays the drag region either way. Once Home's
-    // content has scrolled under it, a soft blur in the page's own color
-    // keeps text from running into the icons; still no hairline. Absolutely
-    // positioned either way, so Home's content flows underneath it.
+    // a fill and a static hairline; `'bare'` wears none, so Home and a
+    // space's Room read as one open surface with only the lights and the
+    // controls floating over it. The strip stays the drag region either way.
+    // Once content has scrolled under it, a soft blur in the page's own
+    // color keeps text from running into the icons; still no hairline. The
+    // blur is its own layer reaching 20px below the bar and masked to fade
+    // out there, so it dissolves into the content instead of ending on an
+    // edge. Absolutely positioned either way, so content can flow beneath.
     <header
       data-variant={variant}
       className={cn(
-        'absolute inset-x-0 top-0 z-30 flex h-10 shrink-0 items-center justify-between gap-2 pr-4 pl-[78px] transition-[background-color,backdrop-filter] duration-150 [-webkit-app-region:drag]',
-        variant === 'rig'
-          ? 'bg-bg-1 border-border-hairline border-b'
-          : scrolled
-            ? 'bg-bg-0/75 backdrop-blur-sm'
-            : 'bg-transparent'
+        'absolute inset-x-0 top-0 z-30 flex h-10 shrink-0 items-center justify-between gap-2 pr-4 pl-[78px] [-webkit-app-region:drag]',
+        variant === 'rig' ? 'bg-bg-1 border-border-hairline border-b' : 'bg-transparent'
       )}
     >
+      {variant === 'bare' && (
+        <div
+          aria-hidden
+          data-testid="topbar-blur"
+          data-scrolled={scrolled}
+          style={{ maskImage: TOPBAR_BLUR_MASK, WebkitMaskImage: TOPBAR_BLUR_MASK }}
+          className={cn(
+            'bg-bg-0/75 pointer-events-none absolute inset-x-0 top-0 -z-10 h-[60px] backdrop-blur-sm transition-opacity duration-150 [-webkit-app-region:none]',
+            scrolled ? 'opacity-100' : 'opacity-0'
+          )}
+        />
+      )}
       <div className="flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
         {context.kind === 'rig' && (
           <>

@@ -17,6 +17,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const mocks = vi.hoisted(() => ({
   shareMembers: vi.fn(),
+  summary: vi.fn(),
 }));
 
 vi.mock('@renderer/lib/ipc', () => ({
@@ -31,12 +32,17 @@ vi.mock('@renderer/lib/ipc', () => ({
         collaborators: async () => ({ success: true, data: [] }),
       },
       pulse: { get: async () => ({ success: false, error: { kind: 'relay', message: 'offline' } }) },
+      notifications: {
+        summary: () => mocks.summary(),
+        activity: async () => ({ success: true, data: [] }),
+      },
     },
   },
   events: { on: vi.fn(() => () => {}) },
 }));
 
-import { Topbar } from '@renderer/App';
+import { Topbar, topbarChrome } from '@renderer/App';
+import { ChatDivider } from '@renderer/features/shell/chat-divider';
 import type { RigLayout } from '@renderer/features/shell/layout-switcher';
 import { RigShareButton } from '@renderer/features/rig-share/rig-share-button';
 
@@ -59,6 +65,7 @@ describe('Topbar', () => {
     root = createRoot(host);
     queryClient = new QueryClient();
     mocks.shareMembers.mockReset().mockResolvedValue({ success: true, data: { members: [], selfRole: 'owner' } });
+    mocks.summary.mockReset().mockResolvedValue({ spaces: [], invitesUnread: 0, directUnreadTotal: 0 });
   });
 
   afterEach(async () => {
@@ -166,25 +173,28 @@ describe('Topbar', () => {
     });
   });
 
+  const header = () => host.querySelector<HTMLElement>('header')!;
+  const blur = () => header().querySelector<HTMLElement>('[data-testid="topbar-blur"]');
+  const settle = () =>
+    act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  const HAIRLINE_OR_FILL = /\bborder-b\b|border-border-hairline|\bbg-bg-1\b/;
+
   describe('the Home variant', () => {
     const homeContext = { kind: 'none' as const };
-    const header = () => host.querySelector<HTMLElement>('header')!;
-    const settle = () =>
-      act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      });
 
     it('is bare on Home: no fill and no hairline, the bell and the gear float at the top right over a drag region', async () => {
       const opened: boolean[] = [];
       await render({
         context: homeContext,
-        variant: 'home',
+        variant: 'bare',
         onOpenSettings: (focusAbout) => opened.push(Boolean(focusAbout)),
       });
       await settle();
       const bar = header();
-      expect(bar.dataset.variant).toBe('home');
-      expect(bar.className).not.toMatch(/\bborder-b\b|border-border-hairline|\bbg-bg-1\b/);
+      expect(bar.dataset.variant).toBe('bare');
+      expect(bar.className).not.toMatch(HAIRLINE_OR_FILL);
       expect(bar.querySelector('hr, [role="separator"]')).toBeNull();
       // The strip is still the window's drag region; its buttons are not.
       expect(bar.className).toContain('[-webkit-app-region:drag]');
@@ -198,16 +208,114 @@ describe('Topbar', () => {
       expect(bar.querySelector('[aria-label="Home"]')).toBeNull();
     });
 
-    it('stays without a hairline once Home has scrolled beneath it', async () => {
-      await render({ context: homeContext, variant: 'home', scrolled: true });
-      expect(header().className).not.toMatch(/\bborder-b\b|border-border-hairline/);
+    it('is the default chrome', async () => {
+      await render({ context: homeContext, variant: undefined });
+      expect(header().dataset.variant).toBe('bare');
+      expect(topbarChrome(null)).toEqual({ variant: 'bare', panesUnderBar: false });
     });
 
-    it('keeps its fill and hairline on every other screen', async () => {
+    it('blurs once Home has scrolled beneath it, fading out below the bar, still with no hairline', async () => {
+      await render({ context: homeContext, variant: 'bare', scrolled: false });
+      expect(blur()!.className).toContain('opacity-0');
+
+      await render({ context: homeContext, variant: 'bare', scrolled: true });
+      expect(header().className).not.toMatch(HAIRLINE_OR_FILL);
+      const layer = blur()!;
+      expect(layer.className).toContain('opacity-100');
+      expect(layer.className).toContain('backdrop-blur-sm');
+      expect(layer.className).toContain('bg-bg-0/75');
+      // Reaches past the 40px bar and dissolves there instead of ending on an edge.
+      expect(layer.className).toContain('h-[60px]');
+      expect(layer.style.maskImage || layer.style.getPropertyValue('-webkit-mask-image')).toContain('transparent');
+      expect(layer.className).toContain('pointer-events-none');
+    });
+
+    it('keeps its fill and hairline for a plain rig', async () => {
       await render({ variant: 'rig' });
       expect(header().dataset.variant).toBe('rig');
       expect(header().className).toContain('border-b');
       expect(header().className).toContain('bg-bg-1');
+      expect(blur()).toBeNull();
+      expect(topbarChrome({ isSpace: false, layout: 'split' })).toEqual({ variant: 'rig', panesUnderBar: false });
+    });
+  });
+
+  describe('the Room variant', () => {
+    const roomProps = (overrides: Partial<React.ComponentProps<typeof Topbar>> = {}) => ({
+      variant: topbarChrome({ isSpace: true, layout: 'split' }).variant,
+      isSpace: true,
+      hasOpenDoc: true,
+      layoutSwitcher: switcher('split'),
+      docBreadcrumb: { name: 'metrics.md', onClose: () => {} },
+      sharePillSlot: <RigShareButton root="/rigs/growth" name="growth" variant="pill" />,
+      ...overrides,
+    });
+
+    it('is bare in a space\'s Room, with every control still there over a drag region', async () => {
+      const homes: boolean[] = [];
+      const settings: boolean[] = [];
+      await render(
+        roomProps({ onGoHome: () => homes.push(true), onOpenSettings: (about) => settings.push(Boolean(about)) })
+      );
+      await settle();
+      const bar = header();
+      expect(bar.dataset.variant).toBe('bare');
+      expect(bar.className).not.toMatch(HAIRLINE_OR_FILL);
+      expect(bar.className).toContain('[-webkit-app-region:drag]');
+      // Breadcrumb: home, the space's ▾ switcher, the open doc and its close.
+      const crumbHome = bar.querySelector<HTMLButtonElement>('[aria-label="Home"]')!;
+      expect(crumbHome.className).toContain('[-webkit-app-region:no-drag]');
+      await act(async () => click(crumbHome));
+      expect(homes).toEqual([true]);
+      expect(bar.querySelector('[aria-haspopup="menu"]')?.textContent).toContain('growth');
+      expect(bar.querySelector('[aria-label="Close doc"]')).not.toBeNull();
+      // The panel toggle, people and Invite, Activity and the gear.
+      expect(bar.querySelector('[role="radiogroup"]')).not.toBeNull();
+      expect(bar.querySelector('[aria-label="People and invites"]')).not.toBeNull();
+      expect(bar.querySelector('[aria-label="Activity"]')).not.toBeNull();
+      const gear = bar.querySelector<HTMLButtonElement>('[aria-label="Settings"]')!;
+      await act(async () => click(gear));
+      expect(settings).toEqual([false]);
+    });
+
+    it('shows one bell only: Activity, no separate notification level bell', async () => {
+      await render(roomProps());
+      await settle();
+      const bells = [...header().querySelectorAll('button')].filter((b) =>
+        /^(Activity|Notifications)/.test(b.getAttribute('aria-label') ?? '')
+      );
+      expect(bells.map((b) => b.getAttribute('aria-label'))).toEqual(['Activity']);
+    });
+
+    it('blurs once the transcript has scrolled under it, with no hairline', async () => {
+      await render(roomProps({ scrolled: true }));
+      expect(header().className).not.toMatch(HAIRLINE_OR_FILL);
+      expect(blur()!.className).toContain('opacity-100');
+      expect(blur()!.className).toContain('backdrop-blur-sm');
+    });
+
+    it('runs the Room\'s panes up under the bar, so the divider beside a page reaches the top', async () => {
+      // Alone or beside a page, the Room's panes start at the window's top;
+      // folded to its rail beside a doc they start below the bar, clear of
+      // the traffic lights.
+      expect(topbarChrome({ isSpace: true, layout: 'chat' })).toEqual({ variant: 'bare', panesUnderBar: true });
+      expect(topbarChrome({ isSpace: true, layout: 'split' })).toEqual({ variant: 'bare', panesUnderBar: true });
+      expect(topbarChrome({ isSpace: true, layout: 'files' })).toEqual({ variant: 'bare', panesUnderBar: false });
+
+      // The divider's line is drawn over the bar (z 30) so its blur never
+      // fades it; the grab area stays under the bar's drag strip.
+      await act(async () => {
+        root.render(
+          <ChatDivider measure={() => ({ width: 400, min: 300, max: 600 })} onResize={() => {}} onResizeEnd={() => {}} onReset={() => {}} />
+        );
+      });
+      const line = host.querySelector<HTMLElement>('[data-testid="chat-divider-line"]')!;
+      expect(line.className).toContain('inset-y-0');
+      expect(line.className).toContain('z-[31]');
+      expect(line.className).toContain('pointer-events-none');
+      const grab = host.querySelector<HTMLElement>('[data-testid="chat-divider-grab"]')!;
+      expect(Number(grab.style.zIndex)).toBeLessThan(30);
+      expect(host.querySelector<HTMLElement>('[data-testid="chat-divider"]')!.style.zIndex).toBe('');
     });
   });
 });

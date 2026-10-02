@@ -34,6 +34,8 @@ import {
 const FOLLOW_THRESHOLD_PX = 60;
 /** Scrolled within this of the top, the next older page loads. */
 const LOAD_OLDER_THRESHOLD_PX = 240;
+/** Scrolled past this, rows sit under the top bar (`topBar`): the same 4px Home's page uses. */
+const SCROLLED_UNDER_BAR_PX = 4;
 /** A jump pages back at most this far (50 messages a page) before saying the message is too far back. */
 const JUMP_MAX_PAGES = 20;
 
@@ -522,6 +524,7 @@ export function RoomTranscript({
   onLoadOlder,
   focus,
   previewIds,
+  topBar,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
@@ -560,11 +563,20 @@ export function RoomTranscript({
    * without the transcript moving. Absent: nothing is dimmed.
    */
   previewIds?: ReadonlySet<string> | null;
+  /**
+   * The app's bare top bar overlays the 40px above this transcript: the
+   * scroll view reaches up beneath it (its first row still starts clear of
+   * it), and `onScrolled` says whether anything has scrolled under it, so
+   * the bar can blur. Absent: no bar overlays the transcript.
+   */
+  topBar?: { onScrolled: (scrolled: boolean) => void };
 }) {
   // Callbacks read through refs: a parent's fresh arrow each render must
   // not re-run the scroll listener or the jump.
   const onLoadOlderRef = useRef(onLoadOlder);
   onLoadOlderRef.current = onLoadOlder;
+  const onScrolledRef = useRef(topBar?.onScrolled);
+  onScrolledRef.current = topBar?.onScrolled;
   const onJumpMissedRef = useRef(onJumpMissed);
   onJumpMissedRef.current = onJumpMissed;
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -700,6 +712,7 @@ export function RoomTranscript({
     const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
+      onScrolledRef.current?.(el.scrollTop > SCROLLED_UNDER_BAR_PX);
       if (el.scrollTop < LOAD_OLDER_THRESHOLD_PX) onLoadOlderRef.current?.();
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_THRESHOLD_PX;
       if (atBottom === pinnedRef.current) return;
@@ -708,7 +721,12 @@ export function RoomTranscript({
       if (atBottom) setUnseen(0);
     };
     el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
+    onScrolledRef.current?.(el.scrollTop > SCROLLED_UNDER_BAR_PX);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      // Nothing of this transcript is under the bar once it's gone.
+      onScrolledRef.current?.(false);
+    };
   }, []);
 
   // Anything that grows the transcript (a new row, a streaming answer, a
@@ -832,7 +850,8 @@ export function RoomTranscript({
     <div className="relative flex min-h-0 flex-1 flex-col">
     <motion.div
       ref={scrollRef}
-      className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
+      // Under the bare top bar, the scroll view reaches up 40px beneath it.
+      className={cn('min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]', topBar && '-mt-10')}
       data-testid="room-transcript"
       // Calm Room open: the whole, already-scrolled-to-bottom transcript
       // fades in once on mount (masking the non-smooth scroll-to-bottom
@@ -844,7 +863,10 @@ export function RoomTranscript({
       {/* Extra bottom clearance (vs. the top/side padding) so the "N new
           messages" pill below has room to float without covering the last
           row — it's positioned relative to this same scroll viewport. */}
-      <div ref={contentRef} className="relative mx-auto flex max-w-[44rem] flex-col gap-4 px-3 pt-6 pb-12">
+      <div
+        ref={contentRef}
+        className={cn('relative mx-auto flex max-w-[44rem] flex-col gap-4 px-3 pb-12', topBar ? 'pt-16' : 'pt-6')}
+      >
         {snapshot.olderMessages === 'loading' && (
           <p className="text-text-muted text-center text-xs" data-testid="room-older-loading">
             Loading earlier messages…

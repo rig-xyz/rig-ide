@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   createSpace: vi.fn(),
   releaseRoot: vi.fn(),
   rename: vi.fn(),
+  summary: vi.fn(),
+  setLevel: vi.fn(),
 }));
 
 vi.mock('@renderer/lib/ipc', () => ({
@@ -29,6 +31,10 @@ vi.mock('@renderer/lib/ipc', () => ({
       spaceSetup: { start: (...args: unknown[]) => mocks.createSpace(...args), list: async () => [] },
       files: { releaseRoot: (...args: unknown[]) => mocks.releaseRoot(...args) },
       control: { rename: (...args: unknown[]) => mocks.rename(...args) },
+      notifications: {
+        summary: (...args: unknown[]) => mocks.summary(...args),
+        setLevel: (...args: unknown[]) => mocks.setLevel(...args),
+      },
     },
   },
   events: { on: vi.fn(() => () => {}) },
@@ -36,6 +42,26 @@ vi.mock('@renderer/lib/ipc', () => ({
 
 import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
 import { onOpenSetupRequest } from '@renderer/features/spaces/space-setup-store';
+import { levelLabel } from '@shared/rig/notifications';
+
+function summaryWith(level: 'all' | 'mentions' | 'nothing') {
+  return {
+    spaces: [
+      {
+        bindingId: 'space-1',
+        name: 'growth',
+        latestDirect: null,
+        level,
+        lastReadSeq: 0,
+        spaceUnread: 0,
+        directUnread: 0,
+        directUnreadNoMessage: 0,
+      },
+    ],
+    invitesUnread: 0,
+    directUnreadTotal: 0,
+  };
+}
 
 function click(el: Element): void {
   el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -71,6 +97,8 @@ describe('RigSwitcher', () => {
     });
     mocks.createSpace.mockReset();
     mocks.releaseRoot.mockReset().mockResolvedValue(undefined);
+    mocks.summary.mockReset().mockResolvedValue(summaryWith('all'));
+    mocks.setLevel.mockReset().mockResolvedValue({ success: true, data: null });
   });
 
   afterEach(async () => {
@@ -202,5 +230,62 @@ describe('RigSwitcher', () => {
     expect(buttons).toContain('Open folder…');
     expect(buttons.some((t) => t === 'New space')).toBe(false);
     expect(buttons.some((t) => t === 'All spaces')).toBe(false);
+  });
+
+  describe('the space\'s notification level', () => {
+    const menuButton = (label: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === label);
+    const levelRows = () => [...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')];
+
+    it('lives in the space\'s menu as "Notifications ›", the three levels in a submenu with the current one checked', async () => {
+      mocks.summary.mockResolvedValue(summaryWith('mentions'));
+      await openMenu({ isSpace: true });
+      const item = menuButton('Notifications')!;
+      expect(item).toBeTruthy();
+      expect(item.getAttribute('aria-haspopup')).toBe('menu');
+      await act(async () => click(item));
+
+      const rows = levelRows();
+      // The same words as Settings › Notifications and the space card's row.
+      expect(rows.map((r) => r.textContent?.trim())).toEqual(['all', 'mentions', 'nothing'].map((l) => levelLabel(l as 'all')));
+      expect(rows.map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'true', 'false']);
+    });
+
+    it('sets the same per-space level the card row does, then closes the menu', async () => {
+      await openMenu({ isSpace: true });
+      await act(async () => click(menuButton('Notifications')!));
+      const nothing = levelRows().find((r) => r.textContent?.trim() === 'Nothing')!;
+      await act(async () => click(nothing));
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mocks.setLevel).toHaveBeenCalledWith({ bindingId: 'space-1', level: 'nothing' });
+      expect(levelRows()).toHaveLength(0);
+      expect(menuButton('Rename…')).toBeUndefined();
+    });
+
+    it('shows a small muted bell beside the space\'s name only while the level isn\'t All', async () => {
+      await openMenu({ isSpace: true });
+      expect(host.querySelector('[data-testid="space-notify-level-indicator"]')).toBeNull();
+
+      mocks.summary.mockResolvedValue(summaryWith('nothing'));
+      await act(async () => {
+        await queryClient.invalidateQueries();
+      });
+      const indicator = host.querySelector<HTMLElement>('[data-testid="space-notify-level-indicator"]')!;
+      expect(indicator).not.toBeNull();
+      expect(indicator.getAttribute('aria-label')).toBe(`Notifications: ${levelLabel('nothing')}`);
+      expect(indicator.className).toContain('text-text-muted');
+      // Beside the name, inside the breadcrumb's own trigger.
+      expect(indicator.closest('button')?.textContent).toContain('growth');
+    });
+
+    it('is not offered for a plain rig', async () => {
+      mocks.summary.mockResolvedValue(summaryWith('nothing'));
+      await openMenu({ isSpace: false, bindingId: 'space-1' });
+      expect(menuButton('Notifications')).toBeUndefined();
+      expect(host.querySelector('[data-testid="space-notify-level-indicator"]')).toBeNull();
+    });
   });
 });

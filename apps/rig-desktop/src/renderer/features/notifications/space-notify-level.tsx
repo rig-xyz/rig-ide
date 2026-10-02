@@ -1,18 +1,20 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Bell, BellDot, BellOff, Check } from 'lucide-react';
 import { useRef, useState } from 'react';
+import { MenuCheckRow, SubmenuItem } from '@renderer/features/home/spaces-card-sections';
 import { rpc } from '@renderer/lib/ipc';
 import { Popover } from '@renderer/lib/ui/popover';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import { levelLabel, NOTIFICATION_LEVELS, type NotificationLevel } from '@shared/rig/notifications';
 import { NOTIFICATION_SUMMARY_KEY, useSpaceNotifications } from './use-notifications';
 
 /**
  * The per-space notification level control (`rig/docs/notifications-spec.md`
- * §5): Slack-style All/Mentions/Nothing, settable from the space header's
- * bell (`SpaceNotifyLevelButton`) and the space card's Details row
- * (`SpaceNotifyLevelRow`). Both read `useSpaceNotifications` — main holds
+ * §5): Slack-style All/Mentions/Nothing, settable from the space's ▾ menu
+ * in the breadcrumb (`SpaceNotifyLevelSubmenu`, with
+ * `SpaceNotifyLevelIndicator` beside the name when it isn't All) and the
+ * space card's Details row (`SpaceNotifyLevelRow`). All read
+ * `useSpaceNotifications` — main holds
  * the relay's summary — and write through `rpc.rig.notifications.setLevel`,
  * which lives on the relay rather than local settings: it decides which
  * rows get written, and Slack or email will need it later too.
@@ -37,7 +39,7 @@ function LevelIcon({ level, className }: { level: NotificationLevel; className?:
   return <Bell className={className} strokeWidth={1.5} />;
 }
 
-/** Shared level read + write, so the header bell and the card row stay in lockstep. */
+/** Shared level read + write, so the breadcrumb menu and the card row stay in lockstep. */
 function useLevelControl(bindingId: string) {
   const queryClient = useQueryClient();
   const { level } = useSpaceNotifications(bindingId);
@@ -105,40 +107,59 @@ function LevelMenu({
   );
 }
 
-/** The space header's bell — same 28px icon-button shape as the topbar's other controls (`invites-bell.tsx`). */
-export function SpaceNotifyLevelButton({ bindingId }: { bindingId: string }) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
+/**
+ * "Notifications ›" in the space's ▾ menu (`RigSwitcher`): the three levels
+ * in a submenu, the current one checked. Picking one sets it and closes the
+ * whole menu (`onPicked`). The parent menu passes `keepOpenOn={insideSubmenu}`.
+ */
+export function SpaceNotifyLevelSubmenu({
+  bindingId,
+  open,
+  onOpenChange,
+  onPicked,
+}: {
+  bindingId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onPicked: () => void;
+}) {
   const { level, setLevel } = useLevelControl(bindingId);
-
   return (
-    <>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              ref={triggerRef}
-              type="button"
-              onClick={() => setOpen((v) => !v)}
-              aria-label={`Notifications: ${LEVEL_LABEL[level]}`}
-              aria-haspopup="true"
-              aria-expanded={open}
-              className="text-text-muted hover:bg-bg-2 rounded-control flex size-7 items-center justify-center transition-colors [-webkit-app-region:no-drag]"
-            >
-              <LevelIcon level={level} className="size-3.5" />
-            </button>
-          }
+    <SubmenuItem
+      label="Notifications"
+      open={open}
+      onOpenChange={onOpenChange}
+      icon={<LevelIcon level={level} className="size-3.5 shrink-0" />}
+    >
+      {NOTIFICATION_LEVELS.map((candidate) => (
+        <MenuCheckRow
+          key={candidate}
+          label={LEVEL_LABEL[candidate]}
+          checked={candidate === level}
+          onSelect={() => {
+            void setLevel(candidate);
+            onPicked();
+          }}
         />
-        <TooltipContent side="bottom">Notifications: {LEVEL_LABEL[level]}</TooltipContent>
-      </Tooltip>
-      <LevelMenu
-        anchor={triggerRef}
-        open={open}
-        onClose={() => setOpen(false)}
-        level={level}
-        onSelect={(next) => void setLevel(next)}
-      />
-    </>
+      ))}
+    </SubmenuItem>
+  );
+}
+
+/** A small muted bell beside the space's name in the breadcrumb, only while the level isn't All, so a quieted space still says so. */
+export function SpaceNotifyLevelIndicator({ bindingId }: { bindingId: string }) {
+  const { level } = useSpaceNotifications(bindingId);
+  if (level === 'all') return null;
+  return (
+    <span
+      role="img"
+      aria-label={`Notifications: ${LEVEL_LABEL[level]}`}
+      title={`Notifications: ${LEVEL_LABEL[level]}`}
+      data-testid="space-notify-level-indicator"
+      className="flex shrink-0 text-text-muted"
+    >
+      <LevelIcon level={level} className="size-3" />
+    </span>
   );
 }
 

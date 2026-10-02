@@ -315,6 +315,7 @@ export function RoomView({
   setup = null,
   jump = null,
   onJumpMissed,
+  topBar,
 }: {
   /** Empty while `setup` is still making the space (it has no binding yet). */
   bindingId: string;
@@ -362,6 +363,8 @@ export function RoomView({
   jump?: RoomJumpRequest | null;
   /** That message is further back than the Room loads. */
   onJumpMissed?: () => void;
+  /** The app's bare top bar overlays the 40px above the Room: the transcript scrolls up beneath it and says when it has (see `RoomTranscript`'s own `topBar`). */
+  topBar?: { onScrolled: (scrolled: boolean) => void };
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
   /** The scripted demo's inbox rows (it has no inbox); set with its source. */
@@ -1227,6 +1230,7 @@ export function RoomView({
             onLoadOlder={handleLoadOlder}
             focus={dockFocus.transcriptFocus}
             previewIds={dockPreview}
+            topBar={topBar}
           />
           </ReactionsContext.Provider>
           </AttachmentSpaceContext.Provider>

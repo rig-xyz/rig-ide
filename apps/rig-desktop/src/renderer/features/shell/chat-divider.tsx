@@ -10,6 +10,11 @@ import { useCallback, type CSSProperties } from 'react';
  * area reaches a few px past the hairline on both sides, over the page too:
  * a page is a `<webview>`, which would otherwise take the pointer at its
  * edge, and while dragging every webview lets the pointer through.
+ *
+ * In a space the divider runs up under the bare top bar to the window's top
+ * edge (`topbarChrome` in App.tsx). The hairline is drawn just above the bar
+ * (z 31 over its z 30), so the bar's blur never fades it; the grab area
+ * stays below the bar, which keeps its strip as the window's drag region.
  */
 
 /** The handle's own width, and its hit area beyond that, each side. Inline (not classes) so they hold wherever the styles do. */
@@ -87,17 +92,20 @@ export function ChatDivider({
       aria-orientation="vertical"
       aria-label="Resize chat panel"
       title="Drag to resize · double-click to reset"
-      className="group z-20 shrink-0 cursor-col-resize"
+      className="group shrink-0 cursor-col-resize"
       data-testid="chat-divider"
     >
       <div
         // The grab area: wider than the hairline, over both neighbours.
-        style={{ position: 'absolute', top: 0, bottom: 0, left: -REACH_PX, right: -REACH_PX, cursor: 'col-resize' }}
+        style={{ position: 'absolute', top: 0, bottom: 0, left: -REACH_PX, right: -REACH_PX, cursor: 'col-resize', zIndex: 20 }}
         onPointerDown={onPointerDown}
         onDoubleClick={onReset}
         data-testid="chat-divider-grab"
       />
-      <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border-hairline transition-[width,background-color] duration-100 group-hover:w-[3px] group-hover:rounded-full group-hover:bg-accent/60 group-active:w-[3px] group-active:bg-accent" />
+      <div
+        data-testid="chat-divider-line"
+        className="pointer-events-none absolute inset-y-0 left-1/2 z-[31] w-px -translate-x-1/2 bg-border-hairline transition-[width,background-color] duration-100 group-hover:w-[3px] group-hover:rounded-full group-hover:bg-accent/60 group-active:w-[3px] group-active:bg-accent"
+      />
     </div>
   );
 }

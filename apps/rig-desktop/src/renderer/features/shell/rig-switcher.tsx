@@ -1,8 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
 import { Check, ChevronDown, FolderOpen, Hash, Home as HomeIcon, Loader2, Pencil, Plus } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { generateSpaceName } from '@renderer/features/home/space-create';
+import { insideSubmenu } from '@renderer/features/home/spaces-card-sections';
+import {
+  SpaceNotifyLevelIndicator,
+  SpaceNotifyLevelSubmenu,
+} from '@renderer/features/notifications/space-notify-level';
 import { startSpaceSetup } from '@renderer/features/spaces/space-setup-store';
 import { rpc } from '@renderer/lib/ipc';
 import { Popover } from '@renderer/lib/ui/popover';
@@ -37,6 +42,11 @@ import { InlineRigNameInput } from './inline-rig-name';
  * back to Home). "Open folder…" is dropped for a space — a space has no
  * "browse to a folder I already have" case the way a plain rig does. A
  * plain rig keeps today's unfiltered menu and "Open folder…" unchanged.
+ *
+ * A space's notification level lives here too, beside Rename: "Notifications
+ * ›" opens the three levels with the current one checked. While it isn't
+ * All, a small muted bell sits beside the name on the trigger. A space still
+ * being set up has no binding yet, so it shows neither.
  */
 export function RigSwitcher({
   bindingId,
@@ -71,6 +81,7 @@ export function RigSwitcher({
   const [displayName, setDisplayName] = useState(name);
   const [creatingSpace, setCreatingSpace] = useState(false);
   const [createSpaceError, setCreateSpaceError] = useState<string | null>(null);
+  const [notifyOpen, setNotifyOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const consumedAutoEdit = useRef(false);
   const prefersReducedMotion = useReducedMotion();
@@ -139,6 +150,13 @@ export function RigSwitcher({
     setOpen(false);
   };
 
+  // One function, so the popover's own dismissal setup doesn't re-run each render.
+  const closeMenu = useCallback(() => setOpen(false), []);
+  // However the menu closes, its submenu closes with it.
+  useEffect(() => {
+    if (!open) setNotifyOpen(false);
+  }, [open]);
+
   if (editing) {
     const row = (
       <>
@@ -200,16 +218,18 @@ export function RigSwitcher({
           <FolderOpen className="size-3 shrink-0" strokeWidth={1.5} />
         )}
         <span className="max-w-64 truncate">{displayName}</span>
+        {isSpace && bindingId && <SpaceNotifyLevelIndicator bindingId={bindingId} />}
         <ChevronDown className="size-3 shrink-0" strokeWidth={1.5} />
       </button>
       <Popover
         anchor={triggerRef}
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={closeMenu}
         role="menu"
         gap={4}
         estimatedWidth={260}
         minWidth={260}
+        keepOpenOn={insideSubmenu}
       >
         {displayRows.map((row) => (
           <button
@@ -247,6 +267,14 @@ export function RigSwitcher({
             <Pencil className="size-3.5 shrink-0" strokeWidth={1.5} />
             Rename…
           </button>
+          {isSpace && bindingId && (
+            <SpaceNotifyLevelSubmenu
+              bindingId={bindingId}
+              open={notifyOpen}
+              onOpenChange={setNotifyOpen}
+              onPicked={closeMenu}
+            />
+          )}
           {isSpace ? (
             <>
               <button
