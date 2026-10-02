@@ -576,16 +576,14 @@ export function Home({
        * regions rather than one continuous strip. The center column adds
        * `lg:pl-2` of its own so the seam is the board's 48px.
        */}
-      {/* Spaced across: 64px from the window's left edge to the Spaces card, 96px to the main section, 96px to the right edge.
+      {/* Spaced across: 64px from the window's left edge to the Spaces card, 80px to the main section, 96px to the right edge.
           From 1400px (in rem, so it sorts after `lg`), People is a column on the right: 96px from the main section, 64px
           from the edge, mirroring the left. */}
-      <div className="flex min-h-0 flex-1 flex-col gap-8 lg:flex-row lg:items-start lg:gap-22">
+      <div className="flex min-h-0 flex-1 flex-col gap-8 lg:flex-row lg:items-start lg:gap-20">
         {showPulse && (
-          <div className="min-w-0 flex-1 lg:order-2 lg:pl-2" data-testid="home-center">
+          <div className="min-w-0 flex-1 lg:order-2" data-testid="home-center">
             {/*
-             * The board's center column: 48px from the Spaces card (the row's
-             * 40px gap plus `lg:pl-2`); it fills the rest of the centered,
-             * capped row, which keeps lines at a reading width. Ask and its
+             * The center column, 80px from the Spaces card: Ask and its
              * chips, then Needs you, the topics and People, 20px apart.
              */}
             <div className="flex w-full flex-col gap-5">
@@ -614,7 +612,7 @@ export function Home({
         {showPulse && (
           <PeopleRail
             lastActivity={lastActivity}
-            className="hidden w-[280px] shrink-0 min-[87.5rem]:order-3 min-[87.5rem]:ml-2 min-[87.5rem]:flex"
+            className="hidden w-[280px] shrink-0 min-[87.5rem]:order-3 min-[87.5rem]:ml-4 min-[87.5rem]:flex"
           />
         )}
         <div

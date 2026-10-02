@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bot, ChevronRight, Circle, FileText, FolderOpen, MessageSquare, Send, X } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { SafeMarkdown } from '@renderer/lib/ui/comment-markdown';
 import { Button } from '@renderer/lib/ui/button';
@@ -9,14 +9,17 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/toolti
 import { cn } from '@renderer/lib/utils';
 import type { RigAskAnswer, RigAskSource, RigPulseError } from '@shared/rig/pulse';
 import { composeGreeting, firstNameOf } from './greeting';
+import { resolveRigNameClick } from './home-sections';
 import {
   askErrorMessage,
   deriveAskSourceItems,
   derivePulseSectionState,
+  isPulseStale,
   resolveAskSourceClick,
   summarizeAskSources,
   type AskSourceListItem,
 } from './pulse-state';
+import { rigLinks, summarySegments } from './summary-segments';
 
 export const PULSE_QUERY_KEY = ['rig', 'pulse', 'get'];
 
@@ -46,11 +49,11 @@ const PULSE_REFETCH_INTERVAL_MS = 20 * 60 * 1000;
  * own cached, server-timezone `greeting` string) from the viewer's clock
  * and the account profile's name.
  *
- * "Many spaces on Home" v2: pulse's summary sentence ("across your rigs"),
- * its "updated Xh ago" line and the forced regeneration behind it are gone.
- * `across-your-spaces-today.tsx` says what happened instead, from the
- * relay's Room themes. The briefing is still read (plain, cache-respecting)
- * for `PeopleRail` and to name an Ask source's rig.
+ * Pulse's one summary sentence sits under the greeting; "Across your
+ * spaces today" below the Ask box adds the topics. When a fetch hands back
+ * a briefing older than the relay's ~3h TTL (`isPulseStale`), one real
+ * regeneration is forced. The briefing also feeds `PeopleRail` and names an
+ * Ask source's rig.
  *
  * Self-contained (owns its own fetch) — `PeopleRail` reads the SAME query
  * key independently; React Query dedupes the cache entry, so this is one
@@ -81,6 +84,7 @@ export function BriefingSpine({
   /** Scrolls to/flashes the matching row in `RigsRail` (`home.tsx`'s own state) — the relay-only half of an Ask source's link. */
   onHighlightRig: (bindingId: string) => void;
 }) {
+  const queryClient = useQueryClient();
   const pulseQuery = useQuery({
     queryKey: PULSE_QUERY_KEY,
     queryFn: () => rpc.rig.pulse.get({}),
@@ -102,6 +106,32 @@ export function BriefingSpine({
   const firstName = meQuery.data?.success ? firstNameOf(meQuery.data.data.name) : null;
   const hour = useCurrentHour();
   const state = derivePulseSectionState({ isLoading: pulseQuery.isLoading, data: pulseQuery.data });
+
+  // Self-heal: a fetch that resolves with a briefing older than the relay's
+  // TTL forces one real regeneration. The forced result reads as fresh, so
+  // this stops on its own; the ref guards re-entry.
+  const forcingRef = useRef(false);
+  useEffect(() => {
+    if (!pulseQuery.data?.success) return;
+    if (!isPulseStale(pulseQuery.data.data.briefing.generatedAt, Date.now())) return;
+    if (forcingRef.current) return;
+    forcingRef.current = true;
+    void rpc.rig.pulse
+      .get({ refresh: true })
+      .then((result) => queryClient.setQueryData(PULSE_QUERY_KEY, result))
+      .finally(() => {
+        forcingRef.current = false;
+      });
+  }, [pulseQuery.data, queryClient]);
+
+  const onClickRig = useCallback(
+    (bindingId: string) => {
+      const action = resolveRigNameClick(bindingId, localRigs);
+      if (action.kind === 'open') onOpenPath(action.path);
+      else onHighlightRig(action.bindingId);
+    },
+    [localRigs, onOpenPath, onHighlightRig]
+  );
 
   // An Ask source opens where it came from: its file (a change), else its rig or space.
   const onClickSource = useCallback(
@@ -137,24 +167,68 @@ export function BriefingSpine({
     <div className="flex w-full flex-col gap-6 text-left">
       {/*
        * The greeting waits on the account so the name never pops in after
-       * it. Pulse's "across your rigs" summary sentence and its "updated"
-       * line are gone: "Across your spaces today" below the Ask box
-       * (`across-your-spaces-today.tsx`) says what happened, from the
-       * relay's Room themes, with no model call of its own.
+       * it. The summary follows once pulse answers; it is left out while
+       * loading or on an error.
        */}
-      {meQuery.isLoading ? <HeaderSkeleton /> : <Header hour={hour} firstName={firstName} />}
+      {meQuery.isLoading ? (
+        <HeaderSkeleton />
+      ) : (
+        <Header
+          hour={hour}
+          firstName={firstName}
+          summary={state.kind === 'data' ? state.briefing.summary : ''}
+          rigs={state.kind === 'data' ? state.briefing.perRig : []}
+          onClickRig={onClickRig}
+        />
+      )}
 
       <PulseAsk onClickSource={onClickSource} rigNameOf={rigNameOf} />
     </div>
   );
 }
 
-/** Mono uppercase date kicker + a LOCALLY composed display greeting (see this file's own header comment). */
-function Header({ hour, firstName }: { hour: number; firstName: string | null }) {
+/**
+ * Mono uppercase date kicker + a LOCALLY composed display greeting (see
+ * this file's own header comment) + pulse's one summary sentence, rendered
+ * through `summarySegments`: internal identifiers stripped, rig names
+ * turned into links into the rig.
+ */
+function Header({
+  hour,
+  firstName,
+  summary,
+  rigs,
+  onClickRig,
+}: {
+  hour: number;
+  firstName: string | null;
+  summary: string;
+  rigs: readonly { bindingId: string; rigName: string }[];
+  onClickRig: (bindingId: string) => void;
+}) {
+  const segments = summarySegments(summary, rigLinks(rigs));
   return (
     <div className="flex flex-col gap-1">
       <p className="text-text-muted font-mono text-xs tracking-wide uppercase">{dateKicker()}</p>
       <h1 className="font-display text-text-primary text-2xl leading-snug">{composeGreeting(hour, firstName)}</h1>
+      {segments.length > 0 && (
+        <p className="text-text-muted text-sm leading-relaxed" data-testid="pulse-summary">
+          {segments.map((segment, index) =>
+            segment.kind === 'link' && segment.target.kind === 'rig' ? (
+              <button
+                key={`${segment.target.bindingId}-${index}`}
+                type="button"
+                onClick={() => onClickRig((segment.target as { kind: 'rig'; bindingId: string }).bindingId)}
+                className="text-text-primary hover:decoration-text-primary underline decoration-current/30 underline-offset-2 transition-colors"
+              >
+                {segment.text}
+              </button>
+            ) : (
+              <span key={index}>{segment.text}</span>
+            )
+          )}
+        </p>
+      )}
     </div>
   );
 }

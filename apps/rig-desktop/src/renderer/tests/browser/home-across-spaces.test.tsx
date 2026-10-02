@@ -523,9 +523,29 @@ describe('Home: Across your spaces today', () => {
     expect(lineIds()).toEqual(['thm_2']);
   });
 
-  it('drops the pulse summary: no "updated" line, the Ask box and its chips stay', async () => {
+  it('shows the pulse summary under the greeting, with no "updated" line; the Ask box and its chips stay', async () => {
     mocks.live = { kind: 'live', savedAt: NOW, themes: [] };
+    mocks.pulse = {
+      success: true,
+      data: {
+        cached: true,
+        briefing: {
+          greeting: '',
+          summary: 'Launch prep moved along and pricing shipped.',
+          pickBackUp: [],
+          perRig: [],
+          perPerson: [
+            { userId: 'u1', name: 'Dylan', avatarUrl: null, line: 'You prepped the launch.', isSelf: true },
+          ],
+          generatedAt: new Date(NOW).toISOString(),
+          degraded: false,
+        },
+      },
+    };
     await mount();
+    expect(host.querySelector('[data-testid="pulse-summary"]')?.textContent).toBe(
+      'Launch prep moved along and pricing shipped.'
+    );
     expect(host.textContent).not.toMatch(/updated .* ago/);
     expect(host.querySelector('input[placeholder="Ask across your spaces…"]')).not.toBeNull();
     expect(host.textContent).toContain("What's blocked?");
