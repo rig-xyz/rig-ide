@@ -16,6 +16,8 @@ export type DockFocusState = {
   focus: DockFocus | null;
   /** Focus this, or clear it when it is already the focus. */
   toggle: (target: DockFocus) => void;
+  /** Focus this, whatever is focused now (Home opening the Room on a theme). */
+  focusOn: (target: DockFocus) => void;
   clear: () => void;
   transcriptFocus: TranscriptFocus | undefined;
 };
@@ -57,6 +59,7 @@ export function useDockFocus({
   const toggle = useCallback((target: DockFocus) => {
     setChosen((current) => (sameFocus(current, target) ? null : target));
   }, []);
+  const focusOn = useCallback((target: DockFocus) => setChosen(target), []);
   const clear = useCallback(() => setChosen(null), []);
 
   // Esc clears it, unless something else (an open panel, a field) took the key.
@@ -99,5 +102,5 @@ export function useDockFocus({
     return undefined;
   }, [themeId, themeOf, forYouFocus, forYou, dismiss]);
 
-  return { focus, toggle, clear, transcriptFocus };
+  return { focus, toggle, focusOn, clear, transcriptFocus };
 }

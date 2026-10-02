@@ -34,6 +34,8 @@ type RememberedWorkspaces = {
 const memory = new KV<{ account: Remembered; workspaces: RememberedWorkspaces }>('rig-local-cache');
 /** Home's layout cache (`home-layout.ts`); its namespace, repeated here so purging never imports the sync. */
 const homeLayoutMemory = new KV<{ state: { account: string } }>('rig-home-layout');
+/** Home's recent themes cache (`recent-themes.ts`), likewise. */
+const recentThemesMemory = new KV<{ state: { account: string } }>('rig-recent-themes');
 
 /** The account these caches belong to right now, or null (signed out, or not known yet for this token). */
 export async function localCacheAccountId(): Promise<string | null> {
@@ -110,12 +112,15 @@ export async function purgeLocalCaches(options: { keepAccountId?: string } = {})
       if (workspaces && workspaces.accountId !== keep) await memory.del('workspaces');
       const layout = await homeLayoutMemory.get('state');
       if (layout && !layout.account.startsWith(`${keep}@`)) await homeLayoutMemory.del('state');
+      const themes = await recentThemesMemory.get('state');
+      if (themes && !themes.account.startsWith(`${keep}@`)) await recentThemesMemory.del('state');
     } else {
       await db.delete(rigRoomCache);
       await db.delete(rigCommentsCache);
       await memory.del('account');
       await memory.del('workspaces');
       await homeLayoutMemory.del('state');
+      await recentThemesMemory.del('state');
     }
   } catch (error) {
     log.warn('Rig local caches: could not purge', { error: String(error) });

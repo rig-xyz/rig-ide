@@ -28,6 +28,7 @@ import type { MessageAttachment } from '@shared/rig/attachments';
 import { fallbackBody, toMessageAttachments, type ComposerAttachment } from '../attachments';
 import { useComposerAttachments } from '../use-composer-attachments';
 import { useDockFocus } from '../use-dock-focus';
+import { useRoomThemeRequest } from '../room-theme-request';
 import type { ForYouState } from '../use-for-you';
 import { useRoomThemesEnabled } from '../use-room-themes-enabled';
 import { ForYouFeeder } from './for-you-feeder';
@@ -951,6 +952,8 @@ export function RoomView({
   // Another Space: nothing stays focused (the dock itself is keyed by the Space, so its open panel and list close).
   const clearDockFocus = dockFocus.clear;
   useEffect(() => clearDockFocus(), [bindingId, clearDockFocus]);
+  // Opened from Home on a theme: its pill is focused once the themes are in.
+  useRoomThemeRequest({ bindingId, enabled: dockOn, themes: snapshot?.themes, focusOn: dockFocus.focusOn });
   // The messages the hovered pill holds: the transcript dims the rest.
   const [dockPreview, setDockPreview] = useState<ReadonlySet<string> | null>(null);
   // How far the dock's pills reach from the right edge, which the transcript keeps clear of.

@@ -12,6 +12,7 @@ import { useNotificationSummary, useSpaceNotifications } from '@renderer/feature
 import { directPhrase, type RigNotificationSpaceSummary } from '@shared/rig/notifications';
 import { newGroupId, type HomeGroup } from '@shared/rig/home-layout';
 import { NeedsConnection } from '@renderer/features/shell/needs-connection';
+import { requestRoomTheme } from '@renderer/features/spaces/room-theme-request';
 import { useSyncHealth } from '@renderer/features/spaces/use-sync-health';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
@@ -20,6 +21,7 @@ import { Popover } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
+import type { RigRecentTheme } from '@shared/rig/recent-themes';
 import type { SpaceSetup } from '@shared/rig/space-setup';
 import { deriveDeleteRigMode, deriveRigMenuLabel } from '@shared/rig/delete-rig';
 import { describeSyncHealth } from '@shared/rig/sync-health';
@@ -33,6 +35,7 @@ import {
   SPACE_NOT_SET_UP_TOOLTIP,
   type HomeRigRow,
 } from './home-sections';
+import { withTopic } from './recent-themes-state';
 import { RenameRigDialog } from './rename-rig-dialog';
 import {
   baselineMarker,
@@ -93,6 +96,8 @@ export function SpacesCard({
   onOpenSetup,
   statusByBinding,
   selfUserId,
+  topicByBinding,
+  openOnTopic = false,
   onOpenPath,
   highlightBindingId,
   offline = false,
@@ -106,6 +111,10 @@ export function SpacesCard({
   onOpenSetup?: (id: string) => void;
   statusByBinding: ReadonlyMap<string, RigSpaceStatus>;
   selfUserId: string | null;
+  /** Each space's most active Room theme of the last 24h; its name leads the row's status line. */
+  topicByBinding?: ReadonlyMap<string, RigRecentTheme>;
+  /** Room themes is on: opening a row with a topic opens its Room on that theme. */
+  openOnTopic?: boolean;
   onOpenPath: (path: string) => void;
   highlightBindingId?: string | null;
   /**
@@ -209,6 +218,8 @@ export function SpacesCard({
         row={row}
         status={statusByBinding.get(row.bindingId)}
         attention={attentionByBinding.get(row.bindingId) ?? { kind: 'idle', lastActivityAt: null }}
+        topic={offline ? undefined : topicByBinding?.get(row.bindingId)}
+        openOnTopic={openOnTopic}
         onOpenPath={onOpenPath}
         pinned={pinned.has(row.bindingId)}
         onTogglePinned={() => togglePinned(row.bindingId)}
@@ -509,6 +520,8 @@ function SpaceRow({
   row,
   status,
   attention: baseAttention,
+  topic,
+  openOnTopic,
   onOpenPath,
   pinned,
   onTogglePinned,
@@ -519,6 +532,8 @@ function SpaceRow({
   row: HomeRigRow;
   status: RigSpaceStatus | undefined;
   attention: SpaceAttention;
+  topic?: RigRecentTheme;
+  openOnTopic: boolean;
   onOpenPath: (path: string) => void;
   pinned: boolean;
   onTogglePinned: () => void;
@@ -538,7 +553,8 @@ function SpaceRow({
     notifications,
     notifications.latestDirect ? { phrase: directPhrase(notifications.latestDirect) } : null
   );
-  const statusLine = deriveSpaceStatusLine(status, shown, Date.now());
+  // Led by the space's most active theme today; the sync state below still takes the whole line.
+  const statusLine = withTopic(topic?.name, deriveSpaceStatusLine(status, shown, Date.now()));
   const dimmed = notifications.level === 'nothing';
   const path = row.kind === 'local' ? row.path : null;
   const relayStatus = row.kind === 'relayOnly' ? deriveRelayOnlyRowStatus(row) : null;
@@ -660,7 +676,12 @@ function SpaceRow({
       <div className="relative flex min-w-0 flex-1 flex-col items-start">
         <button
           type="button"
-          onClick={() => (openablePath ? onOpenPath(openablePath) : downloadable ? void download() : undefined)}
+          onClick={() => {
+            if (!openablePath && !downloadable) return;
+            if (topic && openOnTopic) requestRoomTheme(row.bindingId, topic.themeId);
+            if (openablePath) onOpenPath(openablePath);
+            else void download();
+          }}
           disabled={busy || (!openablePath && !downloadable)}
           aria-busy={busy || undefined}
           className="flex max-w-full min-w-0 items-center gap-1 text-left before:absolute before:inset-0 before:content-[''] disabled:cursor-default"

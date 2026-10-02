@@ -120,6 +120,19 @@ describe('purgeLocalCaches', () => {
     await purgeLocalCaches();
     expect(await layout.get('state')).toBeNull();
   });
+
+  it('Home\'s recent themes go on sign-out and when another account signs in, not for its own account', async () => {
+    const { KV } = await import('@main/db/kv');
+    const themes = new KV<{ state: { account: string } }>('rig-recent-themes');
+    await themes.set('state', { account: 'u1@tap-relay.fly.dev' });
+    await purgeLocalCaches({ keepAccountId: 'u1' });
+    expect(await themes.get('state')).toEqual({ account: 'u1@tap-relay.fly.dev' });
+    await purgeLocalCaches({ keepAccountId: 'u2' });
+    expect(await themes.get('state')).toBeNull();
+    await themes.set('state', { account: 'u1@tap-relay.fly.dev' });
+    await purgeLocalCaches();
+    expect(await themes.get('state')).toBeNull();
+  });
 });
 
 describe('remembered workspaces (Home offline)', () => {

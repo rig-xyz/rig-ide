@@ -59,6 +59,7 @@ import { SpacesCard } from '@renderer/features/home/spaces-card';
 import { SPACE_NOT_SET_UP_TOOLTIP, type HomeRigRow } from '@renderer/features/home/home-sections';
 import { DICE_FACES, idlePattern } from '@renderer/features/home/space-status-state';
 import { writeLastSeen, writeOpenedAt } from '@renderer/features/spaces/room-read-marker';
+import type { RigRecentTheme } from '@shared/rig/recent-themes';
 import type { RigSpaceStatus } from '@shared/rig/space-status';
 import type { SyncHealth } from '@shared/rig/sync-health';
 
@@ -469,5 +470,131 @@ describe('SpacesCard — sync state in the status line', () => {
     await render([steadyGrove]);
     expect(mocks.getHealth).toHaveBeenCalledWith(['/Users/me/Rig/steady-grove']);
     expect(lineOf('steady-grove').textContent).toBe('Not syncing on this computer·Start syncing');
+  });
+});
+
+describe("SpacesCard — the row's topic of the day", () => {
+  const NOW = Date.now();
+  const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
+  const launch: HomeRigRow = {
+    kind: 'local',
+    bindingId: 'b-launch',
+    isSpace: true,
+    name: 'launch',
+    path: '/Users/me/Rig/launch',
+    lastOpenedAt: 0,
+    sessions: [],
+    paused: false,
+    outsideHome: false,
+    notARigAnymore: false,
+    role: 'owner',
+  };
+  const quiet: HomeRigRow = { ...launch, bindingId: 'b-quiet', name: 'quiet', path: '/Users/me/Rig/quiet' };
+  const topic = (bindingId: string, name: string): RigRecentTheme => ({
+    themeId: `thm_${name}`,
+    bindingId,
+    spaceName: 'launch',
+    name,
+    description: '',
+    messageCount: 3,
+    people: ['Hugo'],
+    lastActivityAt: iso(60_000),
+    lastSeq: 9,
+  });
+  const done: RigSpaceStatus = {
+    bindingId: 'b-launch',
+    running: [],
+    lastRun: { status: 'done', endedAt: iso(20 * 60_000), agent: 'claude', ownerUserId: 'hugo', ownerName: 'Hugo Ross' },
+  };
+
+  let host: HTMLDivElement;
+  let root: Root;
+  let opened: string[];
+
+  async function render(rows: HomeRigRow[], openOnTopic = false): Promise<void> {
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={new QueryClient()}>
+          <SpacesCard
+            rows={rows}
+            statusByBinding={new Map([[done.bindingId, done]])}
+            selfUserId="me"
+            topicByBinding={new Map([['b-launch', topic('b-launch', 'Bugs & Wishlist')]])}
+            openOnTopic={openOnTopic}
+            onOpenPath={(path) => opened.push(path)}
+          />
+        </QueryClientProvider>
+      );
+    });
+    await flush();
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    // Hugo's run finished after the space was last opened here.
+    writeOpenedAt('b-launch', NOW - 2 * 3_600_000);
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    opened = [];
+    mocks.health = {};
+    mocks.listeners = [];
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+    localStorage.clear();
+  });
+
+  const lineOf = (bindingId: string) =>
+    host
+      .querySelector(`[data-testid="space-row"][data-binding-id="${bindingId}"]`)!
+      .querySelector<HTMLElement>('[data-testid="space-status-line"]')!;
+
+  it('leads with the topic, then the usual status', async () => {
+    await render([launch, quiet]);
+    expect(lineOf('b-launch').textContent).toBe("Bugs & Wishlist · Hugo's Claude finished · 20m ago");
+    // No topic today: the status alone.
+    expect(lineOf('b-quiet').textContent).toBe('No activity yet');
+  });
+
+  it('the sync state still takes the whole line', async () => {
+    mocks.health[launch.path] = { state: 'stopped' };
+    await render([launch]);
+    expect(lineOf('b-launch').textContent).toBe('Not syncing on this computer·Start syncing');
+    expect(lineOf('b-launch').textContent).not.toContain('Bugs');
+  });
+
+  it('opens the Room on the topic when Room themes is on, and plainly when off', async () => {
+    const { useRoomThemeRequest } = await import('@renderer/features/spaces/room-theme-request');
+    const nameButton = () =>
+      host.querySelector<HTMLButtonElement>('[data-binding-id="b-launch"] [data-testid="space-row-name"]')!;
+    // The Room reads the request; a probe stands in for it here.
+    const seen: string[] = [];
+    function Probe() {
+      useRoomThemeRequest({
+        bindingId: 'b-launch',
+        enabled: true,
+        themes: { list: [{ id: 'thm_Bugs & Wishlist' }] } as never,
+        focusOn: (target) => seen.push(target.kind === 'theme' ? target.themeId : target.kind),
+      });
+      return null;
+    }
+    const probeRoot = createRoot(document.createElement('div'));
+    await act(async () => probeRoot.render(<Probe />));
+
+    await render([launch], true);
+    await act(async () => nameButton().click());
+    await flush();
+    expect(opened).toEqual(['/Users/me/Rig/launch']);
+    expect(seen).toEqual(['thm_Bugs & Wishlist']);
+
+    await render([launch], false);
+    await act(async () => nameButton().click());
+    await flush();
+    expect(opened).toEqual(['/Users/me/Rig/launch', '/Users/me/Rig/launch']);
+    expect(seen).toEqual(['thm_Bugs & Wishlist']);
+    await act(async () => probeRoot.unmount());
   });
 });

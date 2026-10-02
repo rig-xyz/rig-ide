@@ -15,6 +15,7 @@ import {
   type RoomThemes,
 } from '@renderer/features/spaces/themes';
 import type { RoomMessage, RoomSnapshot, SessionEvent } from '@renderer/features/spaces/types';
+import { requestRoomTheme } from '@renderer/features/spaces/room-theme-request';
 import { useDockFocus } from '@renderer/features/spaces/use-dock-focus';
 import { DOCK_TIMING } from '@renderer/features/spaces/use-dock-signals';
 import { useForYou } from '@renderer/features/spaces/use-for-you';
@@ -1964,6 +1965,20 @@ describe('Room dock', () => {
       expect(q('dock-approvals-panel')).toBeNull();
       expect(all('transcript-fold')).toHaveLength(0);
       expect(q('dock-pill-for-you')).not.toBeNull();
+    });
+
+    it('opens on the theme Home asked for, once its themes are in', async () => {
+      const { switchTo } = await openDemo(true);
+      const pill = all('dock-pill').at(-1)!;
+      const themeId = pill.dataset.themeId!;
+      const pillName = pill.textContent!.replace(/\d.*$/, '').trim();
+      expect(q('dock-focus-card')).toBeNull();
+
+      requestRoomTheme('b2', themeId);
+      await switchTo('b2');
+      await until(() => expect(q('dock-focus-card')).not.toBeNull());
+      expect(q('dock-focus-card')!.textContent).toContain(pillName);
+      expect(all('transcript-fold').length).toBeGreaterThan(0);
     });
 
     it('answers the demo approvals in its fixture: the request leaves, the real call is never made', async () => {

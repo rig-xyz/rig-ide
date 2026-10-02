@@ -1,7 +1,6 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Bot, ChevronRight, Circle, FileText, FolderOpen, MessageSquare, Send, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { relativeTime } from '@renderer/features/chat/session-history';
+import { useCallback, useEffect, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { SafeMarkdown } from '@renderer/lib/ui/comment-markdown';
 import { Button } from '@renderer/lib/ui/button';
@@ -9,14 +8,11 @@ import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import type { RigAskAnswer, RigAskSource, RigPulseError } from '@shared/rig/pulse';
-import { resolveRigNameClick } from './home-sections';
 import { composeGreeting, firstNameOf } from './greeting';
-import { rigLinks, summarySegments } from './summary-segments';
 import {
   askErrorMessage,
   deriveAskSourceItems,
   derivePulseSectionState,
-  isPulseStale,
   resolveAskSourceClick,
   summarizeAskSources,
   type AskSourceListItem,
@@ -34,8 +30,8 @@ const PULSE_REFETCH_INTERVAL_MS = 20 * 60 * 1000;
  * hub home's structural reference (`hub/web`'s `PulseBriefing`/`AskBox`),
  * restyled to this app's tokens, not copied: a mono date kicker, a
  * display-font greeting (`font-display` is legitimate here — the web does
- * the same), the ONE summary sentence, the ask box with its own suggestion
- * chips (grounded — they prefill AND submit, not decorative).
+ * the same), the ask box with its own suggestion chips (grounded — they
+ * prefill AND submit, not decorative).
  *
  * Polish round, lane C ("spaces first"): WHAT'S NEW (pick-back-up items)
  * and the old quiet-line ACROSS YOUR RIGS moved OUT of this component —
@@ -48,19 +44,13 @@ const PULSE_REFETCH_INTERVAL_MS = 20 * 60 * 1000;
  * The greeting/salutation is composed LOCALLY (`greeting.ts`'s own header
  * comment has the full story — "Good morning, Dylan." at 3PM was pulse's
  * own cached, server-timezone `greeting` string) from the viewer's clock
- * and the account profile's name; the summary sentence is still pulse's.
+ * and the account profile's name.
  *
- * Auto-refresh round (Dylan — kill the awkward Refresh button): no manual
- * trigger needed for the common case. `refetchOnWindowFocus` + a slow
- * `refetchInterval` quietly refetch a PLAIN (cache-respecting) copy in the
- * background; `forceRefresh` below additionally self-heals by forcing ONE
- * real regeneration (`refresh: true`) the moment a fetch resolves with a
- * `generatedAt` older than the relay's own ~3h TTL (`isPulseStale`) — a
- * plain refetch can still hand back a briefing the relay hasn't
- * regenerated in a while if nobody's been active. The old button is now a
- * quiet mono "updated Xh ago" line in its place — automatic by default,
- * `forceRefresh` still reachable by clicking it, whisper-quiet rather than
- * shouted with button chrome.
+ * "Many spaces on Home" v2: pulse's summary sentence ("across your rigs"),
+ * its "updated Xh ago" line and the forced regeneration behind it are gone.
+ * `across-your-spaces-today.tsx` says what happened instead, from the
+ * relay's Room themes. The briefing is still read (plain, cache-respecting)
+ * for `PeopleRail` and to name an Ask source's rig.
  *
  * Self-contained (owns its own fetch) — `PeopleRail` reads the SAME query
  * key independently; React Query dedupes the cache entry, so this is one
@@ -73,9 +63,8 @@ export function BriefingSpine({
   onHighlightRig,
 }: {
   /**
-   * Bindings this device already has, for resolving a rig-name LINK
-   * (`resolveRigNameClick`, the summary sentence's own rig-name links and
-   * Ask sources both use it) AND — round 2 — for resolving a rig NAME for
+   * Bindings this device already has, for resolving an Ask source's link
+   * AND — round 2 — for resolving a rig NAME for
    * an Ask source (`rigNameOf` below): `RigAskSource` itself carries no
    * rig name, only a `bindingId` (confirmed against the wire shape, not
    * assumed).
@@ -89,10 +78,9 @@ export function BriefingSpine({
    * component being honest about the shape it actually calls.
    */
   onOpenPath: (path: string, opts?: { openFilePath?: string }) => void;
-  /** Scrolls to/flashes the matching row in `RigsRail` (`home.tsx`'s own state) — the relay-only half of a rig-name link. */
+  /** Scrolls to/flashes the matching row in `RigsRail` (`home.tsx`'s own state) — the relay-only half of an Ask source's link. */
   onHighlightRig: (bindingId: string) => void;
 }) {
-  const queryClient = useQueryClient();
   const pulseQuery = useQuery({
     queryKey: PULSE_QUERY_KEY,
     queryFn: () => rpc.rig.pulse.get({}),
@@ -113,46 +101,7 @@ export function BriefingSpine({
   const meQuery = useQuery({ queryKey: ['rig', 'account', 'me'], queryFn: () => rpc.rig.account.me() });
   const firstName = meQuery.data?.success ? firstNameOf(meQuery.data.data.name) : null;
   const hour = useCurrentHour();
-  const [refreshing, setRefreshing] = useState(false);
-  // Guards re-entrancy for the auto-force effect below without needing to
-  // be a `useEffect` dependency (a ref, unlike `refreshing` state, is
-  // exempt from exhaustive-deps — reading/writing it never goes stale).
-  const forcingRef = useRef(false);
-
   const state = derivePulseSectionState({ isLoading: pulseQuery.isLoading, data: pulseQuery.data });
-
-  const forceRefresh = useCallback(async () => {
-    if (forcingRef.current) return;
-    forcingRef.current = true;
-    setRefreshing(true);
-    try {
-      const result = await rpc.rig.pulse.get({ refresh: true });
-      queryClient.setQueryData(PULSE_QUERY_KEY, result);
-    } finally {
-      forcingRef.current = false;
-      setRefreshing(false);
-    }
-  }, [queryClient]);
-
-  // Self-heal: the moment a fetch (first load, window-focus refetch, the
-  // slow interval) resolves with a briefing older than the relay's own
-  // TTL, force one real regeneration rather than silently keep showing it.
-  // A freshly-forced result's OWN `generatedAt` reads as not-stale on the
-  // next run, so this naturally stops re-firing once it has.
-  useEffect(() => {
-    if (!pulseQuery.data?.success) return;
-    if (!isPulseStale(pulseQuery.data.data.briefing.generatedAt, Date.now())) return;
-    void forceRefresh();
-  }, [pulseQuery.data, forceRefresh]);
-
-  const onClickRig = useCallback(
-    (bindingId: string) => {
-      const action = resolveRigNameClick(bindingId, localRigs);
-      if (action.kind === 'open') onOpenPath(action.path);
-      else onHighlightRig(action.bindingId);
-    },
-    [localRigs, onOpenPath, onHighlightRig]
-  );
 
   // An Ask source opens where it came from: its file (a change), else its rig or space.
   const onClickSource = useCallback(
@@ -186,97 +135,26 @@ export function BriefingSpine({
 
   return (
     <div className="flex w-full flex-col gap-6 text-left">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          {/*
-           * E fix: the greeting used to render as soon as `state` resolved,
-           * independent of `meQuery` (a genuinely separate query) —
-           * `firstName` would then pop in a moment later once `meQuery`
-           * ALSO resolved, if it happened to be slower. Waiting on BOTH
-           * here means the first time `Header` renders at all, `firstName`
-           * is already its final value; rendering salutation-only (no
-           * name) during THIS combined loading window is fine — it just
-           * never changes to a name afterward.
-           */}
-          {state.kind === 'loading' || meQuery.isLoading ? (
-            <HeaderSkeleton />
-          ) : state.kind === 'error' ? (
-            <p className="text-text-muted font-mono text-xs">{state.message}</p>
-          ) : (
-            <Header
-              hour={hour}
-              firstName={firstName}
-              summary={state.kind === 'data' ? state.briefing.summary : ''}
-              rigs={state.kind === 'data' ? state.briefing.perRig : []}
-              onClickRig={onClickRig}
-            />
-          )}
-        </div>
-        {state.kind === 'data' && (
-          // Auto-refresh round: the line IS the status ("updated Xh ago"),
-          // always there, quiet mono — clicking it forces a real refresh.
-          // No button chrome; same quiet-text-button convention WHAT'S
-          // NEW's own "+ N older" expander already uses (`hover:text-
-          // text-primary`, no border/background of its own).
-          <button
-            type="button"
-            onClick={() => void forceRefresh()}
-            disabled={refreshing}
-            aria-label="Refresh pulse"
-            className="text-text-muted hover:text-text-primary shrink-0 font-mono text-xs transition-colors disabled:opacity-50"
-          >
-            {refreshing ? 'updating…' : `updated ${relativeTime(Date.parse(state.briefing.generatedAt), Date.now())}`}
-          </button>
-        )}
-      </div>
+      {/*
+       * The greeting waits on the account so the name never pops in after
+       * it. Pulse's "across your rigs" summary sentence and its "updated"
+       * line are gone: "Across your spaces today" below the Ask box
+       * (`across-your-spaces-today.tsx`) says what happened, from the
+       * relay's Room themes, with no model call of its own.
+       */}
+      {meQuery.isLoading ? <HeaderSkeleton /> : <Header hour={hour} firstName={firstName} />}
 
       <PulseAsk onClickSource={onClickSource} rigNameOf={rigNameOf} />
     </div>
   );
 }
 
-/**
- * Mono uppercase date kicker + a LOCALLY composed display greeting (see
- * this file's own header comment) + the one summary sentence (still
- * pulse's, but rendered through `summarySegments`: internal identifiers
- * stripped, rig names turned into real links into the rig).
- */
-function Header({
-  hour,
-  firstName,
-  summary,
-  rigs,
-  onClickRig,
-}: {
-  hour: number;
-  firstName: string | null;
-  summary: string;
-  rigs: readonly { bindingId: string; rigName: string }[];
-  onClickRig: (bindingId: string) => void;
-}) {
-  const segments = summarySegments(summary, rigLinks(rigs));
+/** Mono uppercase date kicker + a LOCALLY composed display greeting (see this file's own header comment). */
+function Header({ hour, firstName }: { hour: number; firstName: string | null }) {
   return (
     <div className="flex flex-col gap-1">
       <p className="text-text-muted font-mono text-xs tracking-wide uppercase">{dateKicker()}</p>
       <h1 className="font-display text-text-primary text-2xl leading-snug">{composeGreeting(hour, firstName)}</h1>
-      {segments.length > 0 && (
-        <p className="text-text-muted text-sm leading-relaxed">
-          {segments.map((segment, index) =>
-            segment.kind === 'link' && segment.target.kind === 'rig' ? (
-              <button
-                key={`${segment.target.bindingId}-${index}`}
-                type="button"
-                onClick={() => onClickRig((segment.target as { kind: 'rig'; bindingId: string }).bindingId)}
-                className="text-text-primary hover:decoration-text-primary underline decoration-current/30 underline-offset-2 transition-colors"
-              >
-                {segment.text}
-              </button>
-            ) : (
-              <span key={index}>{segment.text}</span>
-            )
-          )}
-        </p>
-      )}
     </div>
   );
 }

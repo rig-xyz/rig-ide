@@ -13,11 +13,14 @@ import {
 } from '@renderer/features/shell/invites-inbox';
 import { NeedsConnection } from '@renderer/features/shell/needs-connection';
 import { useAutoReconnect, useNavigatorOnline, useWaitedLong } from '@renderer/features/shell/use-connection';
+import { requestRoomTheme } from '@renderer/features/spaces/room-theme-request';
 import { requestOpenSetup, startSpaceSetup, useSpaceSetups } from '@renderer/features/spaces/space-setup-store';
+import { useRoomThemesEnabled } from '@renderer/features/spaces/use-room-themes-enabled';
 import { useSpacesEnabled } from '@renderer/features/spaces/use-spaces-enabled';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { cn } from '@renderer/lib/utils';
+import { AcrossYourSpacesToday } from './across-your-spaces-today';
 import { BriefingSpine } from './briefing-spine';
 import { FloatingCard } from './floating-card';
 import {
@@ -42,9 +45,11 @@ import { NeedsYouSection } from './needs-you-section';
 import { NewSpaceCta } from './new-space-cta';
 import { PeopleRail } from './people-rail';
 import { shouldShowPulseSection } from './pulse-state';
+import { deriveAcrossSpacesView, topicBySpace } from './recent-themes-state';
 import { RigsRail } from './rigs-rail';
 import { indexSpaceStatuses } from './space-status-state';
 import { SpacesCard } from './spaces-card';
+import { useRecentThemes, RECENT_THEMES_QUERY_KEY } from './use-recent-themes';
 import { useSpaceStatus } from './use-space-status';
 import { deriveWelcomePhase, type WelcomePhase } from './welcome-state';
 
@@ -278,6 +283,7 @@ export function Home({
     autoRetry: connection === 'unreachable',
     retry: () => {
       void queryClient.invalidateQueries({ queryKey: ['rig', 'spaceStatus'] });
+      void queryClient.invalidateQueries({ queryKey: RECENT_THEMES_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: ['rig', 'pulse'] });
       void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY_PREFIX });
       return Promise.all([
@@ -438,6 +444,26 @@ export function Home({
   );
   const selfUserId = currentAccountId ?? null;
 
+  // "Many spaces on Home" v2: one read of the relay's Room themes of the last
+  // 24h feeds both "Across your spaces today" and each Spaces row's topic.
+  const recentThemes = useRecentThemes(spacesEnabled && signedIn, currentAccountId);
+  const acrossView = deriveAcrossSpacesView({ ...recentThemes, offline: connectionDown });
+  // Offline, like the rows' live status, no row claims a topic.
+  const topicByBinding = topicBySpace(acrossView.kind === 'themes' && !connectionDown ? acrossView.themes : []);
+  const roomThemesOn = useRoomThemesEnabled();
+  // A theme card opens its space's Room, on that theme when Room themes is
+  // on. A space with no folder here yet is flashed in the Spaces card.
+  const openSpaceOnTheme = (bindingId: string, themeId: string) => {
+    const row = spaceRows.find((r) => r.bindingId === bindingId);
+    const path = row?.kind === 'local' ? row.path : (row?.localPath ?? null);
+    if (!path) {
+      setHighlightBindingId(bindingId);
+      return;
+    }
+    if (roomThemesOn) requestRoomTheme(bindingId, themeId);
+    onOpenPath(path, { kind: 'space' });
+  };
+
   // Feedback round, Part A: signing out (or never having signed in on this
   // launch) must not leave any rig visible on Home — a single generic gate
   // replaces the whole screen the moment auth confidently resolves to
@@ -536,6 +562,12 @@ export function Home({
                 onOpenPath={onOpenPath}
                 onHighlightRig={setHighlightBindingId}
               />
+              {spacesEnabled && (
+                <AcrossYourSpacesToday
+                  view={acrossView}
+                  onOpenTheme={(theme) => openSpaceOnTheme(theme.bindingId, theme.themeId)}
+                />
+              )}
               <NeedsYouSection
                 spaceRows={spaceRows}
                 statusByBinding={statusByBinding}
@@ -570,6 +602,8 @@ export function Home({
                 onOpenSetup={requestOpenSetup}
                 statusByBinding={statusByBinding}
                 selfUserId={selfUserId}
+                topicByBinding={topicByBinding}
+                openOnTopic={roomThemesOn}
                 // Opened as a space even while the relay can't confirm its kind.
                 onOpenPath={(path) => onOpenPath(path, { kind: 'space' })}
                 highlightBindingId={highlightBindingId}

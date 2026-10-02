@@ -53,6 +53,7 @@ import { rigHomeLayoutController } from './rig/home-layout';
 import { rigImportController } from './rig/import-doc';
 import { rigJoinController } from './rig/join';
 import { rigPulseController } from './rig/pulse';
+import { rigRecentThemesController } from './rig/recent-themes';
 import { rigSpaceStatusController } from './rig/space-status';
 import { rigNotificationsController } from './rig/notifications/electron';
 import { rigRecentController } from './rig/recent-rigs';
@@ -231,6 +232,10 @@ export const rpcRouter = createRPCRouter({
     // Home's Spaces card layout (groups, group by, sort, show quiet), kept on
     // the account (`GET/PUT /v1/me/home-layout`). See `home-layout.ts`.
     homeLayout: rigHomeLayoutController,
+    // Home's Room themes of the last 24h across the account's spaces
+    // (`GET /v1/me/themes/recent`), kept per account for offline. See
+    // `recent-themes.ts`.
+    recentThemes: rigRecentThemesController,
     // Settings → About's rig/tapd version rows — package.json reads only,
     // see `bundled-cli.ts`'s own header comment for why this never spawns
     // either binary.
