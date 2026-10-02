@@ -32,6 +32,8 @@ export interface ClaudeMcpEntry {
   /** Remote servers only (no query or credentials); null for local (stdio) ones. */
   url: string | null;
   state: ClaudeMcpState;
+  /** Claude's diagnostics say this name is defined in several scopes with different endpoints (the list shows one of them). */
+  scopeConflict?: true;
 }
 
 function claudeState(status: string): ClaudeMcpState {
@@ -53,6 +55,9 @@ export function parseClaudeMcpStatuses(text: string): ClaudeMcpEntry[] {
     const [, name, target, status] = match;
     const url = /^https?:\/\//.test(target!) ? safeUrl(target!) : null;
     entries.push({ name: name!, url, state: claudeState(status!) });
+  }
+  for (const match of text.matchAll(/Server "(.+?)" is defined in multiple scopes/g)) {
+    for (const entry of entries) if (entry.name === match[1]) entry.scopeConflict = true;
   }
   return entries;
 }

@@ -88,6 +88,19 @@ describe('planProjectServers', () => {
     expect(plan.disabled).toEqual(['customerio']);
   });
 
+  it("holds back the space's copy when Claude reports your server of the same name at another endpoint", () => {
+    const project = parseProjectMcpJson('{"mcpServers":{"customerio":{"url":"https://mcp.customer.io/mcp/"}}}');
+    const claude = parseClaudeMcpStatuses(`customerio: https://mcp.customer.io/mcp (HTTP) - ✔ Connected
+
+MCP config diagnostics ⚠
+[Conflicting scopes]
+├ Server "customerio" is defined in multiple scopes with different endpoints: user (https://mcp.customer.io/mcp), project (https://mcp.customer.io/mcp/).
+`);
+    const plan = planProjectServers(project, claude, NO_APPROVALS);
+    expect(plan.duplicates).toEqual([{ name: 'customerio', duplicateOf: 'customerio' }]);
+    expect(plan.disabled).toEqual(['customerio']);
+  });
+
   it("approves nothing when Claude's own list can't be read", () => {
     const project = parseProjectMcpJson('{"mcpServers":{"approved":{"url":"https://approved.example.com/mcp"}}}');
     expect(planProjectServers(project, null, NO_APPROVALS).pending.map((p) => p.name)).toEqual(['approved']);

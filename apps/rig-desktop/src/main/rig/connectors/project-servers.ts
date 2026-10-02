@@ -122,9 +122,15 @@ export function planProjectServers(
     // Already turned off for this folder: Claude skips it itself.
     if (approvals.disabled.includes(server.name)) continue;
     const mine = server.url ? own.find((e) => sameMcpServer(e.url!, server.url!)) : undefined;
-    if (mine) {
+    // Your own server by the same name at another endpoint (unless you allowed the space's): headless
+    // Claude would take the space's copy, which has no login of its own.
+    const allowedHere = approvals.all || approvals.enabled.includes(server.name);
+    const shadowed = allowedHere
+      ? undefined
+      : claude?.find((e) => e.name === server.name && e.scopeConflict && e.state === 'connected');
+    if (mine || shadowed) {
       plan.disabled.push(server.name);
-      plan.duplicates.push({ name: server.name, duplicateOf: mine.name });
+      plan.duplicates.push({ name: server.name, duplicateOf: (mine ?? shadowed)!.name });
       continue;
     }
     const listed = claude?.find((e) => e.name === server.name && isDeclared(e));
