@@ -575,8 +575,8 @@ export function Home({
        * regions rather than one continuous strip. The center column adds
        * `lg:pl-2` of its own so the seam is the board's 48px.
        */}
-      {/* Spaced across: 64px from the window's left edge to the Spaces card, 64px to the main section, 96px to the right edge. */}
-      <div className="flex min-h-0 flex-1 flex-col gap-8 lg:flex-row lg:items-start lg:gap-14">
+      {/* Spaced across: 64px from the window's left edge to the Spaces card, 80px to the main section, 96px to the right edge. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-8 lg:flex-row lg:items-start lg:gap-18">
         {showPulse && (
           <div className="min-w-0 flex-1 lg:order-2 lg:pl-2" data-testid="home-center">
             {/*
