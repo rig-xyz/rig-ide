@@ -580,11 +580,11 @@ export function Home({
           <div className="min-w-0 flex-1 lg:order-2 lg:pl-2" data-testid="home-center">
             {/*
              * The board's center column: 48px from the Spaces card (the row's
-             * 40px gap plus `lg:pl-2`), left aligned beside it and capped near
-             * the board's width so lines stay readable on a wide window. Ask
-             * and its chips, then Needs you, the topics and People, 20px apart.
+             * 40px gap plus `lg:pl-2`), left aligned beside it and capped at a
+             * reading width so lines stay short and the Spaces card can grow.
+             * Ask and its chips, then Needs you, the topics and People, 20px apart.
              */}
-            <div className="flex w-full max-w-[60rem] flex-col gap-5">
+            <div className="flex w-full max-w-[44rem] flex-col gap-5 lg:pr-6">
               <BriefingSpine
                 localRigs={localRigs}
                 onOpenPath={onOpenPath}
@@ -610,11 +610,11 @@ export function Home({
         <div
           className={cn(
             'flex w-full flex-col gap-4 lg:order-1',
-            // Solo/signed-out: no pulse regions beside it — a fixed 290px
+            // Solo/signed-out: no pulse regions beside it — a fixed-width
             // rail would leave a wide window mostly empty, so the left
             // column becomes its own wider, centered column instead of a
             // cramped sidebar with nothing next to it.
-            showPulse ? 'lg:w-[290px] lg:shrink-0' : 'mx-auto lg:max-w-2xl'
+            showPulse ? 'lg:w-[340px] lg:shrink-0 xl:w-[360px]' : 'mx-auto lg:max-w-2xl'
           )}
         >
           {spacesEnabled && signedIn && (
