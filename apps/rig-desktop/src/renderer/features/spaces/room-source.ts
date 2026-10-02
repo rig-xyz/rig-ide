@@ -7,6 +7,7 @@
  * script; see `NOTES.md` for the contract this assumes from the relay.
  */
 
+import type { RigNotification } from '@shared/rig/notifications';
 import type { RoomEvent, RoomSnapshot } from './types';
 
 export interface RoomSource {
@@ -43,6 +44,8 @@ export interface RoomFeedScript {
   beats: RoomFeedBeat[];
   /** Pure reducer: applies one event to a snapshot, returning the next snapshot. Lives with the script because only the script author knows what each event means for its own initial state's shape. */
   reduce: (snapshot: RoomSnapshot, event: RoomEvent) => RoomSnapshot;
+  /** The inbox rows the scripted demo's For you is built from, for this Space (the demo has no inbox). */
+  notifications?: (bindingId: string) => RigNotification[];
 }
 
 type Listener = (event: RoomEvent, snapshot: RoomSnapshot) => void;
@@ -131,10 +134,50 @@ export class FixtureRoomSource implements RoomSource {
     }, delay);
   }
 
+  /**
+   * Answers a pending permission request of a scripted run in place, as the
+   * relay would once the owner's computer took the answer: the run's log gets
+   * its `permission_decided`. False when that run has no such request (or it
+   * was already answered).
+   */
+  async resolvePermission(runId: string, requestId: string, optionId: string): Promise<boolean> {
+    const events = this.snapshot.sessionEventsByRun[runId] ?? [];
+    const asked = events.find(
+      (e) => e.kind === 'permission_requested' && e.payload.requestId === requestId
+    );
+    if (!asked) return false;
+    if (events.some((e) => e.kind === 'permission_decided' && e.payload.requestId === requestId))
+      return false;
+    const options = Array.isArray(asked.payload.options)
+      ? (asked.payload.options as { optionId?: string; kind?: string }[])
+      : [];
+    const kind = options.find((o) => o.optionId === optionId)?.kind ?? '';
+    const toolCall = asked.payload.toolCall as { toolCallId?: string } | undefined;
+    const seq = events.reduce((max, e) => Math.max(max, e.seq), 0) + 1;
+    this.apply({
+      type: 'session_event_appended',
+      runId,
+      seq,
+      event: {
+        seq,
+        kind: 'permission_decided',
+        payload: {
+          requestId,
+          toolCallId: toolCall?.toolCallId ?? '',
+          optionId,
+          outcome: kind.startsWith('reject') ? 'declined' : 'allowed',
+        },
+      },
+    });
+    return true;
+  }
+
   private applyBeat(beat: RoomFeedBeat): void {
-    for (const event of beat.events) {
-      this.snapshot = this.reduce(this.snapshot, event);
-      for (const listener of this.listeners) listener(event, this.snapshot);
-    }
+    for (const event of beat.events) this.apply(event);
+  }
+
+  private apply(event: RoomEvent): void {
+    this.snapshot = this.reduce(this.snapshot, event);
+    for (const listener of this.listeners) listener(event, this.snapshot);
   }
 }

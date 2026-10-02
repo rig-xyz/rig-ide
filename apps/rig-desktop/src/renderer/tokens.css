@@ -44,6 +44,17 @@
   --accent-subtle: rgba(98, 164, 245, 0.16);
   --accent-ink: #0a1522;
   --pill-fill: #232831;
+  /* Room themes: the shadow of the dock's one goo layer (`dock-glass.tsx`), applied after the filter. */
+  --dock-shadow: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3)) drop-shadow(0 6px 16px rgba(0, 0, 0, 0.45));
+  /* Room themes: the dots of the dock's theme pills, one per slot (`theme-colors.ts` picks a slot per theme). */
+  --theme-1: #4cc28a;
+  --theme-2: #a98bf0;
+  --theme-3: #e0a14a;
+  --theme-4: #8a95a3;
+  --theme-5: #3fb3c4;
+  --theme-6: #d47aa8;
+  --theme-7: #7b86f2;
+  --theme-8: #e08470;
   --text-prose: #e7e5e0;
   /** The specular band in `.active-shimmer` — brighter than the text it crosses. */
   --shimmer-highlight: #ffffff;
@@ -85,9 +96,20 @@
     --accent: #2f6fc0;
     --accent-subtle: rgba(47, 111, 192, 0.12);
     --accent-ink: #ffffff;
-  --pill-fill: #e9ecf0;
-  --text-prose: #2b2a27;
-  --shimmer-highlight: #b6bcc6;
+    --pill-fill: #e9ecf0;
+    /* Room themes: the shadow of the dock's one goo layer (`dock-glass.tsx`), applied after the filter. */
+    --dock-shadow: drop-shadow(0 1px 1px rgba(24, 24, 27, 0.07)) drop-shadow(0 6px 14px rgba(24, 24, 27, 0.11));
+    /* Kept in sync with the dark set above, a step deeper to read on the light glass. */
+    --theme-1: #1f9d62;
+    --theme-2: #8a67e0;
+    --theme-3: #c47f1f;
+    --theme-4: #6b7686;
+    --theme-5: #1a93a6;
+    --theme-6: #c05088;
+    --theme-7: #5a62d8;
+    --theme-8: #cc5f48;
+    --text-prose: #2b2a27;
+    --shimmer-highlight: #b6bcc6;
     --success: #166534;
     --warning: #9c6a34;
     --danger: #b8483d;
@@ -119,6 +141,17 @@
   --accent-subtle: rgba(98, 164, 245, 0.16);
   --accent-ink: #0a1522;
   --pill-fill: #232831;
+  /* Room themes: the shadow of the dock's one goo layer (`dock-glass.tsx`), applied after the filter. */
+  --dock-shadow: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3)) drop-shadow(0 6px 16px rgba(0, 0, 0, 0.45));
+  /* Room themes: the dots of the dock's theme pills, one per slot (`theme-colors.ts` picks a slot per theme). */
+  --theme-1: #4cc28a;
+  --theme-2: #a98bf0;
+  --theme-3: #e0a14a;
+  --theme-4: #8a95a3;
+  --theme-5: #3fb3c4;
+  --theme-6: #d47aa8;
+  --theme-7: #7b86f2;
+  --theme-8: #e08470;
   --text-prose: #e7e5e0;
   /** The specular band in `.active-shimmer` — brighter than the text it crosses. */
   --shimmer-highlight: #ffffff;
@@ -154,6 +187,17 @@
   --accent-subtle: rgba(47, 111, 192, 0.12);
   --accent-ink: #ffffff;
   --pill-fill: #e9ecf0;
+  /* Room themes: the shadow of the dock's one goo layer (`dock-glass.tsx`), applied after the filter. */
+  --dock-shadow: drop-shadow(0 1px 1px rgba(24, 24, 27, 0.07)) drop-shadow(0 6px 14px rgba(24, 24, 27, 0.11));
+  /* Kept in sync with the dark set above, a step deeper to read on the light glass. */
+  --theme-1: #1f9d62;
+  --theme-2: #8a67e0;
+  --theme-3: #c47f1f;
+  --theme-4: #6b7686;
+  --theme-5: #1a93a6;
+  --theme-6: #c05088;
+  --theme-7: #5a62d8;
+  --theme-8: #cc5f48;
   --text-prose: #2b2a27;
   --shimmer-highlight: #b6bcc6;
   --success: #166534;
@@ -445,6 +489,52 @@
 @media (prefers-reduced-motion: no-preference) {
   .pane-in {
     animation: pane-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+/*
+ * Room themes: the halo on a rail avatar that is about to post (a member
+ * typing, an agent working; `dock-rail.tsx`). A soft accent ring that breathes
+ * slowly, one cycle about 2s, never a fast pulse. Reduced motion keeps the ring
+ * and drops the movement (`data-motion="off"` is set from the same hook the
+ * rest of the dock reads, so it is testable; the media query is the backstop).
+ * Exits are instant, like every floating thing in this file.
+ */
+@keyframes dock-halo-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes dock-halo-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+.dock-halo-ring {
+  border-radius: 9999px;
+  opacity: 0.85;
+  box-shadow:
+    0 0 0 1.5px color-mix(in oklab, var(--accent) 70%, transparent),
+    0 0 9px 1px color-mix(in oklab, var(--accent) 45%, transparent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .dock-halo[data-motion='on'] {
+    animation: dock-halo-in 240ms ease-out;
+  }
+  .dock-halo[data-motion='on'] .dock-halo-ring {
+    animation: dock-halo-breathe 2s ease-in-out infinite;
   }
 }
 

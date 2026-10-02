@@ -2,6 +2,13 @@ import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
 import type { RigAccountError } from '@shared/rig/account';
 import { parseReactions, type MessageReaction, type ReactionAgent } from '@shared/spaces/reactions';
+import {
+  parseThemeEventsPage,
+  parseThemesSnapshot,
+  type ThemeEventsPage,
+  type ThemesFetch,
+  type ThemesSnapshotWire,
+} from '@shared/spaces/themes';
 import { isError, resolveContext, type Resolved } from '../account';
 
 /**
@@ -248,6 +255,21 @@ export interface SpacesRelayApi {
   getReactions?(bindingId: string, messageId: string): Promise<Result<MessageReaction[], RelayApiError>>;
   /** Every message after `afterSeq` that has reactions, by message id (a catch-up after the live connection dropped). */
   listReactionsAfter?(bindingId: string, afterSeq: number): Promise<Result<Record<string, MessageReaction[]>, RelayApiError>>;
+
+  /**
+   * Room themes (rig/docs/room-themes-spec.md §6). A relay without the routes
+   * answers 404, which all three map to `{ supported: false }` rather than an
+   * error. The snapshot: `GET .../themes`.
+   */
+  getThemes?(bindingId: string): Promise<Result<ThemesFetch<ThemesSnapshotWire>, RelayApiError>>;
+  /**
+   * `GET .../themes/events?after=`: ONE page (at most 500 events, oldest
+   * first) and the relay's `nextCursor`, set while more wait. The caller
+   * loops; this never follows pages itself, so each call stays one request.
+   */
+  getThemeEvents?(bindingId: string, after: string): Promise<Result<ThemesFetch<ThemeEventsPage>, RelayApiError>>;
+  /** `PATCH .../themes {enabled}`: the per-Space switch (editors and owners; 403 otherwise). */
+  setThemesEnabled?(bindingId: string, enabled: boolean): Promise<Result<ThemesFetch<{ enabled: boolean }>, RelayApiError>>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -258,6 +280,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function anchorQuote(anchor: unknown): string | null {
   const exact = asRecord(anchor)?.exact;
   return typeof exact === 'string' ? exact : null;
+}
+
+/** A relay without the themes routes answers 404 (`not_found`, or no JSON at all): "unsupported", not a failure. */
+function themesUnsupported(error: RelayApiError): boolean {
+  return error.kind === 'relay' && error.status === 404;
 }
 
 function transportError(action: string, error: unknown): RelayApiError {
@@ -812,6 +839,61 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         if (r && typeof r.messageId === 'string') byMessage[r.messageId] = parseReactions(r.reactions);
       }
       return ok(byMessage);
+    },
+
+    async getThemes(bindingId) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(
+        ctxResult.data,
+        'GET',
+        `/v1/me/bindings/${bindingId}/themes`,
+        'load room themes'
+      );
+      if (!result.success)
+        return themesUnsupported(result.error) ? ok({ supported: false }) : err(result.error);
+      const snapshot = parseThemesSnapshot(result.data);
+      return snapshot
+        ? ok({ supported: true, data: snapshot })
+        : err<RelayApiError>({ kind: 'relay', message: 'Could not load room themes.' });
+    },
+
+    async getThemeEvents(bindingId, after) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      // Cursors are event ids, digits only (the relay answers 400 to anything else).
+      const cursor = /^\d{1,19}$/.test(after) ? after : '0';
+      const result = await request(
+        ctxResult.data,
+        'GET',
+        `/v1/me/bindings/${bindingId}/themes/events?after=${cursor}`,
+        'load room theme changes'
+      );
+      if (!result.success)
+        return themesUnsupported(result.error) ? ok({ supported: false }) : err(result.error);
+      const page = parseThemeEventsPage(result.data);
+      return page
+        ? ok({ supported: true, data: page })
+        : err<RelayApiError>({ kind: 'relay', message: 'Could not load room theme changes.' });
+    },
+
+    async setThemesEnabled(bindingId, enabled) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(
+        ctxResult.data,
+        'PATCH',
+        `/v1/me/bindings/${bindingId}/themes`,
+        enabled ? 'turn room themes on' : 'turn room themes off',
+        { enabled }
+      );
+      if (!result.success)
+        return themesUnsupported(result.error) ? ok({ supported: false }) : err(result.error);
+      const answered = asRecord(result.data)?.enabled;
+      return ok({
+        supported: true,
+        data: { enabled: typeof answered === 'boolean' ? answered : enabled },
+      });
     },
 
     async postMessage(bindingId, input) {

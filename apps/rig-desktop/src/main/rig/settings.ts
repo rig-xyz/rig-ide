@@ -193,6 +193,7 @@ function normalizeSettings(parsed: unknown): RigSettings {
     spacesDefaultOnApplied: true,
     spacesRoomSees: normalizeRoomSees(raw.spacesRoomSees),
     spacesRoomDiskCache: raw.spacesRoomDiskCache === true,
+    roomThemesEnabled: raw.roomThemesEnabled === true,
     pageSignIns: normalizePageSignIns(raw.pageSignIns),
     notifications: normalizeNotificationPrefs(raw.notifications),
     notificationCursorByAccount: isStringRecord(raw.notificationCursorByAccount) ? raw.notificationCursorByAccount : {},

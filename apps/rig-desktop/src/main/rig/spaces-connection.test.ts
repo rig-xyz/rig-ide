@@ -26,6 +26,9 @@ const listMessages = vi.fn();
 const getSessionEvents = vi.fn();
 const postMessage = vi.fn();
 const createAgentRequest = vi.fn();
+const getThemes = vi.fn();
+const getThemeEvents = vi.fn();
+const setThemesEnabled = vi.fn();
 vi.mock('./spaces/relay-api', () => ({
   createHttpSpacesRelayApi: () => ({
     whoami: (...args: unknown[]) => whoami(...args),
@@ -35,6 +38,9 @@ vi.mock('./spaces/relay-api', () => ({
     getSessionEvents: (...args: unknown[]) => getSessionEvents(...args),
     postMessage: (...args: unknown[]) => postMessage(...args),
     createAgentRequest: (...args: unknown[]) => createAgentRequest(...args),
+    getThemes: (...args: unknown[]) => getThemes(...args),
+    getThemeEvents: (...args: unknown[]) => getThemeEvents(...args),
+    setThemesEnabled: (...args: unknown[]) => setThemesEnabled(...args),
   }),
 }));
 
@@ -96,6 +102,25 @@ describe('rigSpacesConnectionController', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('the themes calls delegate to the relay client, an unsupported answer passing through as data', async () => {
+    getThemes.mockResolvedValue(ok({ supported: false }));
+    getThemeEvents.mockResolvedValue(
+      ok({ supported: true, data: { events: [], nextCursor: null, lastId: null } })
+    );
+    setThemesEnabled.mockResolvedValue(ok({ supported: true, data: { enabled: true } }));
+
+    const { rigSpacesConnectionController } = await import('./spaces-connection');
+    expect(await rigSpacesConnectionController.getThemes({ bindingId: 'b1' })).toEqual({
+      success: true,
+      data: { supported: false },
+    });
+    await rigSpacesConnectionController.getThemeEvents({ bindingId: 'b1', after: '7' });
+    await rigSpacesConnectionController.setThemesEnabled({ bindingId: 'b1', enabled: true });
+    expect(getThemes).toHaveBeenCalledWith('b1');
+    expect(getThemeEvents).toHaveBeenCalledWith('b1', '7');
+    expect(setThemesEnabled).toHaveBeenCalledWith('b1', true);
   });
 
   it('mintRealtimeTicket delegates to the relay client for the given binding', async () => {

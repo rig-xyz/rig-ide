@@ -14,6 +14,8 @@ import type { ConnectionState, ConnectorGap, RigToolArgs } from '@shared/spaces/
 import type { RunSummary } from '@shared/spaces/room-cache';
 import type { RoomSees } from '@shared/spaces/room-sees';
 import type { MessageReaction } from '@shared/spaces/reactions';
+import type { ThemeEvent, ThemesSnapshotWire } from '@shared/spaces/themes';
+import type { RoomThemes } from './themes';
 
 export type PersonId = string;
 export type AgentKind = 'claude' | 'codex';
@@ -302,7 +304,13 @@ export type RoomEvent =
   /** The relay's last answer failed, or answered again (see `RoomSnapshot.relayUnreachable`). */
   | { type: 'relay_reachability_changed'; unreachable: boolean }
   /** These messages' reactions, whole (an empty list clears them); messages not named keep theirs. */
-  | { type: 'reactions_changed'; reactions: Record<string, MessageReaction[]> };
+  | { type: 'reactions_changed'; reactions: Record<string, MessageReaction[]> }
+  /** Room themes: the relay's snapshot, whole (`RoomSnapshot.themes` becomes it). */
+  | { type: 'themes_synced'; snapshot: ThemesSnapshotWire }
+  /** Room themes: a batch of the relay's events after `themes.cursor`; `upTo` is the batch's last event id as sent. Ignored while there are no themes. */
+  | { type: 'themes_applied'; events: ThemeEvent[]; upTo: string | null }
+  /** Room themes: the relay has none for this Room (unsupported, or the flag went off). */
+  | { type: 'themes_cleared' };
 
 /** Full materialized state of a room — what components render from. */
 export interface RoomSnapshot {
@@ -344,6 +352,12 @@ export interface RoomSnapshot {
    * polling may still be getting through. Cleared by the next answer.
    */
   relayUnreachable?: boolean;
+  /**
+   * Room themes (themes.ts): absent or null while unknown, unsupported by the
+   * relay, or the `roomThemesEnabled` flag is off; else the relay's themes
+   * for this Room. Not kept on the disk cache: always fetched fresh.
+   */
+  themes?: RoomThemes | null;
 }
 
 /** Whether the Room is hearing the relay live: first connecting, connected, or without the socket (it retries on its own, and polls meanwhile). */

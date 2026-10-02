@@ -144,6 +144,25 @@ describe('SettingsModal', () => {
     settingsMock.current = {};
   });
 
+  it('"Room themes" is off by default and the toggle saves roomThemesEnabled', async () => {
+    settingsMock.current = {};
+    settingsMock.set.mockClear();
+    await renderSettings();
+    const toggle = () => document.querySelector<HTMLButtonElement>('#room-themes-enabled')!;
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
+    await act(async () => toggle().click());
+    expect(settingsMock.set).toHaveBeenCalledWith({ roomThemesEnabled: true });
+
+    settingsMock.current = { roomThemesEnabled: true };
+    await act(async () => {
+      await queryClient.invalidateQueries();
+    });
+    await vi.waitFor(() => expect(toggle().getAttribute('aria-checked')).toBe('true'));
+    await act(async () => toggle().click());
+    expect(settingsMock.set).toHaveBeenLastCalledWith({ roomThemesEnabled: false });
+    settingsMock.current = {};
+  });
+
   it('renders section headers in the regular font, sentence case, not mono/uppercase', async () => {
     await renderSettings();
     const labels = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="settings-section-label"]'));

@@ -1072,7 +1072,7 @@ export function App() {
       renderPanel={
         (inSpace && layout !== 'chat') || !target.rootId
           ? undefined
-          : (extraRows, onlineUserIds, { startCollapsed, chipSummary }) => (
+          : (extraRows, onlineUserIds, { startCollapsed, chipSummary, collapsedDock }) => (
               <PinnedCard
                 root={target.root}
                 rootId={target.rootId}
@@ -1091,6 +1091,7 @@ export function App() {
                 onlineUserIds={onlineUserIds}
                 startCollapsed={startCollapsed}
                 chipSummary={chipSummary}
+                collapsedDock={collapsedDock}
                 isSpace={inSpace}
               />
             )

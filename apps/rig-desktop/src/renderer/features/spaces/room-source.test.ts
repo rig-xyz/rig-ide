@@ -93,4 +93,28 @@ describe('FixtureRoomSource + the scripted Bob/Alice/Carol room feed', () => {
     expect(notifications).toBeGreaterThan(0);
     source.dispose();
   });
+
+  it("answers a scripted run's pending request in place, once", async () => {
+    const source = new FixtureRoomSource(buildRoomFeed({ dock: true }));
+    source.replayAll();
+    const runId = 'run-demo-approval';
+    const pending = () =>
+      projectSessionCard(source.getSnapshot().sessionEventsByRun[runId]!).permissions.pending.map(
+        (p) => p.requestId
+      );
+    expect(pending()).toEqual(['demo-req-1', 'demo-req-2']);
+    const heard: string[] = [];
+    source.subscribe((event) => heard.push(event.type));
+    expect(await source.resolvePermission(runId, 'demo-req-2', 'demo-req-2-no')).toBe(true);
+    expect(heard).toEqual(['session_event_appended']);
+    expect(pending()).toEqual(['demo-req-1']);
+    const decided = projectSessionCard(source.getSnapshot().sessionEventsByRun[runId]!).permissions
+      .decided;
+    expect(decided.map((d) => [d.requestId, d.outcome])).toEqual([['demo-req-2', 'declined']]);
+    // Answered already, never asked, or a run that is not there: nothing changes.
+    expect(await source.resolvePermission(runId, 'demo-req-2', 'demo-req-2-yes')).toBe(false);
+    expect(await source.resolvePermission(runId, 'nope', 'x')).toBe(false);
+    expect(await source.resolvePermission('gone', 'demo-req-1', 'x')).toBe(false);
+    expect(heard).toHaveLength(1);
+  });
 });

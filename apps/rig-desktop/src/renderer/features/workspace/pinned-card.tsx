@@ -14,6 +14,7 @@ import { usePulseBriefing } from '@renderer/features/home/use-pulse-briefing';
 import { NewMenu } from '@renderer/features/rig-import/add-menu';
 import { ImportDocDialog } from '@renderer/features/rig-import/import-doc-dialog';
 import { RigSharePopoverContent } from '@renderer/features/rig-share/rig-share-button';
+import { CARD_RADIUS, CORNER_INSET, CORNER_SIZE } from '@renderer/features/spaces/dock-layout';
 import { events, rpc } from '@renderer/lib/ipc';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
@@ -288,6 +289,7 @@ export function PinnedCard({
   onlineUserIds,
   startCollapsed,
   chipSummary,
+  collapsedDock,
   isSpace = false,
 }: {
   root: string;
@@ -307,6 +309,23 @@ export function PinnedCard({
   startCollapsed?: boolean;
   /** What the collapsed chip says instead of the rig's name (the Room shows who's here and what's working). */
   chipSummary?: ChipSummary;
+  /**
+   * The Room's dock (room themes): drawn in place of the chip while this is
+   * collapsed, and stays while it is open, because the card is then the dock's
+   * own shape grown out of its rail. This gives the dock the content to sit on
+   * that shape and the actions to open (at a section if it names one) and
+   * fold it. Its presence also drops the card's border and "Collapse" dash
+   * (the dock's chevron folds it) and titles it "Space settings".
+   */
+  collapsedDock?: (ctx: {
+    /** Opens the panel, at a section if one is named. */
+    onExpand: (section?: 'people') => void;
+    /** Folds it back. */
+    onFold: () => void;
+    open: boolean;
+    /** The panel's content, while open: the dock draws the shape it sits on. */
+    card: ReactNode;
+  }) => ReactNode;
   /** This binding is a space, not a plain rig: no Cloud row (spaces aren't backed up the same way), and People renders the compact share surface. */
   isSpace?: boolean;
 }) {
@@ -325,6 +344,25 @@ export function PinnedCard({
       }
       return !current;
     });
+  };
+  const goo = collapsedDock !== undefined;
+  const setCollapsedTo = (value: boolean) => {
+    setCollapsed(value);
+    try {
+      localStorage.setItem(COLLAPSED_KEY, String(value));
+    } catch {
+      // localStorage unavailable — just won't persist.
+    }
+  };
+  // The dock opens the card, at a section when it names one (the rail's "+N" people).
+  const peopleRowRef = useRef<HTMLButtonElement>(null);
+  const [scrollToPeople, setScrollToPeople] = useState(false);
+  const expandFromDock = (section?: 'people') => {
+    if (section === 'people') {
+      setExpanded('people');
+      setScrollToPeople(true);
+    }
+    setCollapsedTo(false);
   };
 
   // The accordion: exactly one section open. Only the Changes preference
@@ -477,7 +515,15 @@ export function PinnedCard({
     [rigLine, contentFiles]
   );
 
-  if (collapsed) {
+  // The rail's "+N" people: bring People into view once it has rendered.
+  const peopleReady = membersQuery.data?.success === true;
+  useEffect(() => {
+    if (collapsed || !scrollToPeople || !peopleReady) return;
+    peopleRowRef.current?.scrollIntoView({ block: 'start' });
+    setScrollToPeople(false);
+  }, [collapsed, scrollToPeople, peopleReady]);
+
+  if (collapsed && !collapsedDock) {
     return (
       <CollapsedChip
         chipSummary={chipSummary}
@@ -489,34 +535,42 @@ export function PinnedCard({
     );
   }
 
-  return (
-    <div className="card-pop-in border-border-hairline bg-bg-1 shadow-float absolute top-[52px] right-4 z-20 flex max-h-[calc(100vh-140px)] w-[304px] origin-top-right flex-col overflow-y-auto rounded-card border p-2">
-      <div className="flex h-6 shrink-0 items-center px-2">
+  const inner = (
+    <>
+      <div
+        className="flex h-6 shrink-0 items-center px-2"
+        // The dock's chevron sits over the card's top-right corner: keep clear of it.
+        style={goo ? { paddingRight: CORNER_INSET + CORNER_SIZE } : undefined}
+      >
         {/* Room chrome round: the single top bar (`RoomView`'s own header)
             already names the space — repeating it here read as a second,
             redundant title. A space's panel just says what it is. */}
         {isSpace ? (
-          <p className="min-w-0 truncate text-xs font-medium text-text-muted">Details</p>
+          <p className="min-w-0 truncate text-xs font-medium text-text-muted">
+            {goo ? 'Space settings' : 'Details'}
+          </p>
         ) : (
           <p className="min-w-0 truncate text-xs font-medium text-text-primary">
             {name ? name.replace(/^#/, '') : 'Rig'}
           </p>
         )}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                onClick={toggleCollapsed}
-                aria-label="Collapse"
-                className="hover:bg-bg-2 hover:text-text-primary ml-auto flex size-5 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors"
-              >
-                <Minus className="size-3.5" strokeWidth={1.5} />
-              </button>
-            }
-          />
-          <TooltipContent side="bottom">Collapse</TooltipContent>
-        </Tooltip>
+        {!goo && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={toggleCollapsed}
+                  aria-label="Collapse"
+                  className="hover:bg-bg-2 hover:text-text-primary ml-auto flex size-5 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors"
+                >
+                  <Minus className="size-3.5" strokeWidth={1.5} />
+                </button>
+              }
+            />
+            <TooltipContent side="bottom">Collapse</TooltipContent>
+          </Tooltip>
+        )}
       </div>
       <ImportDocDialog
         root={root}
@@ -741,6 +795,7 @@ export function PinnedCard({
       {membersQuery.data?.success && (
         <>
           <button
+            ref={peopleRowRef}
             type="button"
             onClick={() => toggleSection('people')}
             aria-expanded={expanded === 'people'}
@@ -851,6 +906,35 @@ export function PinnedCard({
           </button>
         </>
       )}
-    </div>
+    </>
+  );
+
+  if (!collapsedDock) {
+    return (
+      <div className="card-pop-in border-border-hairline bg-bg-1 shadow-float absolute top-[52px] right-4 z-20 flex max-h-[calc(100vh-140px)] w-[304px] origin-top-right flex-col overflow-y-auto rounded-card border p-2">
+        {inner}
+      </div>
+    );
+  }
+
+  // The dock's own texture: no fill, border or shadow of its own. The dock
+  // draws them (its rail's goo shape grown to this card's bounds) behind this.
+  return (
+    <>
+      {collapsedDock({
+        onExpand: expandFromDock,
+        onFold: () => setCollapsedTo(true),
+        open: !collapsed,
+        card: collapsed ? null : (
+          <div
+            className="flex max-h-[calc(100vh-140px)] w-[304px] flex-col overflow-y-auto p-2"
+            style={{ borderRadius: CARD_RADIUS }}
+            data-testid="pinned-card-goo"
+          >
+            {inner}
+          </div>
+        ),
+      })}
+    </>
   );
 }

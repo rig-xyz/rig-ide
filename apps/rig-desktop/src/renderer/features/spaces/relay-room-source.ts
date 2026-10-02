@@ -51,6 +51,7 @@ import { connectorById, type ConnectionStatus } from '@shared/spaces/connectors'
 import { ROOM_CACHE_FORMAT_VERSION, ROOM_CACHE_MAX_BYTES, type CachedRoomBlob } from '@shared/spaces/room-cache';
 import type { LocalRunEvent } from '@shared/spaces/room-sees';
 import { canonicalEmoji, withReaction, type MessageReaction } from '@shared/spaces/reactions';
+import { compareEventIds, type ThemeEventsPage, type ThemesFetch, type ThemesSnapshotWire } from '@shared/spaces/themes';
 import type {
   AgentKind,
   MessageKind,
@@ -185,6 +186,18 @@ export interface RelayRoomClient {
   getReactions?(bindingId: string, messageId: string): Promise<Result<MessageReaction[], RelayApiError>>;
   /** Every message after `afterSeq` that has reactions (a message in the window that's missing has none). */
   listReactionsAfter?(bindingId: string, afterSeq: number): Promise<Result<Record<string, MessageReaction[]>, RelayApiError>>;
+  /** Room themes (rig/docs/room-themes-spec.md §6): the snapshot. `{ supported: false }` is a relay that has no themes (404). */
+  getThemes?(bindingId: string): Promise<Result<ThemesFetch<ThemesSnapshotWire>, RelayApiError>>;
+  /** One page of theme events after the cursor (at most 500, oldest first); `nextCursor` is set while more wait. */
+  getThemeEvents?(
+    bindingId: string,
+    after: string
+  ): Promise<Result<ThemesFetch<ThemeEventsPage>, RelayApiError>>;
+  /** The per-Space switch (editors and owners). */
+  setThemesEnabled?(
+    bindingId: string,
+    enabled: boolean
+  ): Promise<Result<ThemesFetch<{ enabled: boolean }>, RelayApiError>>;
 }
 
 /** This device's own connection states — `connectorsApi.list()`, injected so this file never imports `@renderer/lib/ipc`. */
@@ -249,9 +262,17 @@ export type RelayRoomSourceOptions = {
   diskCache?: { put(blob: CachedRoomBlob): Promise<unknown> | void };
   /** The relay says the space is gone (410) or no longer yours (404): the view shows it and stops keeping this Room. */
   onGone?: () => void;
+  /**
+   * Whether to fetch the relay's themes (the `roomThemesEnabled` setting).
+   * Off, or omitted, the Room never asks. Switched later with `setThemesEnabled`.
+   */
+  themesEnabled?: boolean;
 };
 
 type Listener = (event: RoomEvent, snapshot: RoomSnapshot) => void;
+
+/** Event pages (500 each) one theme sync follows before it yields; a longer gap carries on in the next pass. */
+const THEME_EVENT_PAGES_PER_SYNC = 10;
 
 /** Re-mint once the cached ticket is within this margin of `expiresAt` (~10 minute TTL). */
 const TICKET_REFRESH_MARGIN_MS = 60_000;
@@ -359,7 +380,7 @@ export class RelayRoomSource implements RoomSource {
   private readonly opts: Required<
     Omit<
       RelayRoomSourceOptions,
-      'createProvider' | 'log' | 'connections' | 'localRuns' | 'pollIntervalMs' | 'connectGraceMs' | 'runEndRefreshMs' | 'initial' | 'diskCache' | 'onGone'
+      'createProvider' | 'log' | 'connections' | 'localRuns' | 'pollIntervalMs' | 'connectGraceMs' | 'runEndRefreshMs' | 'initial' | 'diskCache' | 'onGone' | 'themesEnabled'
     >
   >;
   private readonly diskCache: RelayRoomSourceOptions['diskCache'];
@@ -405,6 +426,7 @@ export class RelayRoomSource implements RoomSource {
   /** What the next catch-up pass still has to fetch: new messages, and/or these runs' new events — see `catchUp`. */
   private pendingMessages = false;
   private pendingReactions = false;
+  private pendingThemes = false;
   private readonly pendingRuns = new Set<string>();
   /** Runs still going when the socket dropped: the reconnect catch-up re-reads them. */
   private readonly liveAtDisconnect = new Set<string>();
@@ -436,6 +458,12 @@ export class RelayRoomSource implements RoomSource {
   /** On screen — see `setShown`. */
   private shown = true;
 
+  /** Room themes: the flag, whether the relay turned out not to have them (stop asking this session), and the coalescing of overlapping syncs. */
+  private themesOn: boolean;
+  private themesUnsupported = false;
+  private themesBusy = false;
+  private themesAgain = false;
+
   private ticket: { value: string; expiresAtMs: number } | null = null;
   private ticketMint: Promise<string> | null = null;
 
@@ -459,6 +487,7 @@ export class RelayRoomSource implements RoomSource {
     this.log = options.log ?? (() => {});
     this.diskCache = options.diskCache;
     this.onGone = options.onGone;
+    this.themesOn = options.themesEnabled === true;
     this.snapshot = emptySnapshot(options.spaceName, options.selfUserId);
     const initial = options.initial;
     if (initial) {
@@ -641,6 +670,8 @@ export class RelayRoomSource implements RoomSource {
     // Shown from disk already: only catch up. Else the two-phase cold open.
     await (this.restoredFrom ? this.resume(this.restoredFrom.savedAt) : this.bootstrap());
     if (this.disposed) return;
+    // Themes never hold up the open: asked once the messages are in, and never awaited.
+    void this.refreshThemes();
     let provider: RealtimeProvider;
     try {
       provider = await this.makeProvider({
@@ -1143,6 +1174,20 @@ export class RelayRoomSource implements RoomSource {
       if (messageId) await this.refreshReactions(messageId);
       return;
     }
+    if (notification.type === 'themes_changed') {
+      // `upTo` is the newest event id the relay has: nothing to fetch when we already hold it.
+      const upTo = typeof notification.upTo === 'string' ? notification.upTo : null;
+      const have = this.snapshot.themes?.cursor;
+      if (
+        upTo !== null &&
+        have !== undefined &&
+        /^\d{1,19}$/.test(upTo) &&
+        compareEventIds(upTo, have) <= 0
+      )
+        return;
+      if (this.themesActive()) await this.catchUp({ themes: true });
+      return;
+    }
     if (notification.type === 'session_event_appended') {
       // Just the run that moved (hide-details says so the same way). A
       // notification naming no run falls back to every live one.
@@ -1173,26 +1218,32 @@ export class RelayRoomSource implements RoomSource {
    * for mid-pass is queued and picked up by the pass already running, never
    * a second concurrent one.
    */
-  private async catchUp(work: { messages?: boolean; runs?: Iterable<string>; reactions?: boolean }): Promise<void> {
+  private async catchUp(work: { messages?: boolean; runs?: Iterable<string>; reactions?: boolean; themes?: boolean }): Promise<void> {
     if (this.disposed) return;
     if (work.messages) this.pendingMessages = true;
     if (work.reactions) this.pendingReactions = true;
+    if (work.themes) this.pendingThemes = true;
     for (const runId of work.runs ?? []) this.pendingRuns.add(runId);
     if (this.catchingUp) return;
     this.catchingUp = true;
     try {
-      while (!this.disposed && (this.pendingMessages || this.pendingRuns.size > 0 || this.pendingReactions)) {
+      while (!this.disposed && (this.pendingMessages || this.pendingRuns.size > 0 || this.pendingReactions || this.pendingThemes)) {
         const startedMs = Date.now();
         const callsBefore = this.requests;
         const messages = this.pendingMessages;
         const reactions = this.pendingReactions;
+        const themes = this.pendingThemes;
         const runs = [...this.pendingRuns];
         this.pendingMessages = false;
         this.pendingReactions = false;
+        this.pendingThemes = false;
         this.pendingRuns.clear();
         if (messages) await this.catchUpMessages();
         if (reactions) await this.catchUpReactions();
         await this.catchUpRuns(runs);
+        // At the end of every catch-up that looks at messages (connect, poll, shown again), and on a themes notice.
+        // A pass about one run's steps alone leaves themes be.
+        if (themes || messages) await this.refreshThemes();
         this.log(
           'Rig spaces: room catch-up',
           {
@@ -1619,6 +1670,92 @@ export class RelayRoomSource implements RoomSource {
       if (JSON.stringify(next) !== JSON.stringify(message.reactions ?? [])) changed[message.id] = next;
     }
     return Object.keys(changed).length > 0 ? changed : null;
+  }
+
+  // ── room themes ─────────────────────────────────────────────────────────
+
+  /** Switches theme fetching live (the setting changed, or a Room was shown with it on). On: asks the relay now if the Room is open; off: the themes go. */
+  setThemesEnabled(enabled: boolean): void {
+    if (this.disposed || enabled === this.themesOn) return;
+    this.themesOn = enabled;
+    if (!enabled) {
+      if (this.snapshot.themes) this.applyLocal({ type: 'themes_cleared' });
+      return;
+    }
+    // A new choice: a relay that had no themes may have gained them since.
+    this.themesUnsupported = false;
+    if (this.started) void this.refreshThemes();
+  }
+
+  private themesActive(): boolean {
+    return (
+      this.themesOn &&
+      !this.themesUnsupported &&
+      !this.disposed &&
+      !!this.opts.relay.getThemes &&
+      !!this.opts.relay.getThemeEvents
+    );
+  }
+
+  /** Brings the Room's themes up to date: the snapshot the first time, then the events after its cursor. Never throws; overlapping calls coalesce into one more pass. */
+  private async refreshThemes(): Promise<void> {
+    if (!this.themesActive()) return;
+    if (this.themesBusy) {
+      this.themesAgain = true;
+      return;
+    }
+    this.themesBusy = true;
+    try {
+      do {
+        this.themesAgain = false;
+        await this.syncThemes();
+      } while (this.themesAgain && this.themesActive());
+    } catch (error) {
+      // Themes are an extra: whatever went wrong, messages, runs and reactions carry on.
+      this.log('Rig spaces: could not sync room themes', { error: String(error) });
+    } finally {
+      this.themesBusy = false;
+    }
+  }
+
+  private async syncThemes(): Promise<void> {
+    const { bindingId, relay } = this.opts;
+    if (!this.snapshot.themes) {
+      const result = await relay.getThemes!(bindingId);
+      if (!this.themesActive()) return;
+      if (!result.success) {
+        this.log('Rig spaces: could not load room themes', { error: result.error.message });
+        return;
+      }
+      if (!result.data.supported) return this.themesNotSupported();
+      this.applyLocal({ type: 'themes_synced', snapshot: result.data.data });
+      return;
+    }
+    // One page per request (500 events); a long gap takes a few, then yields and goes on in the pass after.
+    for (let page = 0; page < THEME_EVENT_PAGES_PER_SYNC; page += 1) {
+      const cursor = this.snapshot.themes?.cursor;
+      if (cursor === undefined) return;
+      const result = await relay.getThemeEvents!(bindingId, cursor);
+      if (!this.themesActive() || !this.snapshot.themes) return;
+      if (!result.success) {
+        this.log('Rig spaces: could not load room theme changes', { error: result.error.message });
+        return;
+      }
+      if (!result.data.supported) return this.themesNotSupported();
+      const { events, lastId, nextCursor } = result.data.data;
+      if (events.length > 0 || lastId !== null)
+        this.applyLocal({ type: 'themes_applied', events, upTo: lastId });
+      // Done, or no progress (a relay that keeps saying "more" without moving on must not hold this loop).
+      if (nextCursor === null || lastId === null || compareEventIds(lastId, cursor) <= 0) return;
+    }
+    this.themesAgain = true;
+  }
+
+  /** The relay has no themes: the Room shows none and stops asking this session. */
+  private themesNotSupported(): void {
+    this.themesUnsupported = true;
+    if (this.snapshot.themes !== undefined && this.snapshot.themes !== null)
+      this.applyLocal({ type: 'themes_cleared' });
   }
 
   private async catchUpReactions(): Promise<void> {

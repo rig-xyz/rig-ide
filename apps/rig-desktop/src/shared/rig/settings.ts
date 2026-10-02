@@ -232,6 +232,12 @@ export type RigSettings = {
    */
   spacesRoomDiskCache: boolean;
   /**
+   * Room themes (rig/docs/room-themes-spec.md): the Room fetches the relay's
+   * themes only while this is on. Off by default; read live, so toggling it
+   * takes effect in open Rooms without a reload.
+   */
+  roomThemesEnabled: boolean;
+  /**
    * Pages signed in from a browser (board 18): per site, which browser
    * profile it came from and its hosts (never cookie values), "Keep in step",
    * and what rig last saw of macOS's permissions. Main writes it alone.
@@ -273,6 +279,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   spacesDefaultOnApplied: true,
   spacesRoomSees: {},
   spacesRoomDiskCache: false,
+  roomThemesEnabled: false,
   pageSignIns: DEFAULT_PAGE_SIGN_INS,
   notifications: DEFAULT_NOTIFICATION_PREFS,
   notificationCursorByAccount: {},

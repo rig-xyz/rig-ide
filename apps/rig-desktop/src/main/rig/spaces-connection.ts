@@ -6,6 +6,7 @@ import { createRPCController } from '@shared/lib/ipc/rpc';
 import type { RigAccountError } from '@shared/rig/account';
 import { log } from '@main/lib/logger';
 import type { MessageReaction } from '@shared/spaces/reactions';
+import type { ThemeEventsPage, ThemesFetch, ThemesSnapshotWire } from '@shared/spaces/themes';
 import { isError, resolveContext, resolveSelfUserId } from './account';
 import {
   createHttpSpacesRelayApi,
@@ -206,6 +207,26 @@ export const rigSpacesConnectionController = createRPCController({
     afterSeq: number;
   }): Promise<Result<Record<string, MessageReaction[]>, RelayApiError>> =>
     api.listReactionsAfter ? api.listReactionsAfter(input.bindingId, input.afterSeq) : ok({}),
+
+  // Room themes (rig/docs/room-themes-spec.md §6). 404 reads as `{ supported: false }`.
+  getThemes: async (input: {
+    bindingId: string;
+  }): Promise<Result<ThemesFetch<ThemesSnapshotWire>, RelayApiError>> =>
+    api.getThemes ? api.getThemes(input.bindingId) : ok({ supported: false }),
+  getThemeEvents: async (input: {
+    bindingId: string;
+    after: string;
+  }): Promise<Result<ThemesFetch<ThemeEventsPage>, RelayApiError>> =>
+    api.getThemeEvents
+      ? api.getThemeEvents(input.bindingId, input.after)
+      : ok({ supported: false }),
+  setThemesEnabled: async (input: {
+    bindingId: string;
+    enabled: boolean;
+  }): Promise<Result<ThemesFetch<{ enabled: boolean }>, RelayApiError>> =>
+    api.setThemesEnabled
+      ? api.setThemesEnabled(input.bindingId, input.enabled)
+      : ok({ supported: false }),
 
   postMessage: async (input: {
     bindingId: string;

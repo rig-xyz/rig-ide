@@ -115,6 +115,7 @@ export function SettingsModal({
           <Section label="Experimental">
             <SpacesRow />
             <SpacesDiskCacheRow />
+            <RoomThemesRow />
           </Section>
           <Section label="About" containerRef={aboutRef}>
             <AboutSection />
@@ -820,6 +821,57 @@ function SpacesDiskCacheRow() {
         role="switch"
         aria-checked={enabled}
         aria-label="Open spaces instantly"
+        onClick={toggle}
+        className={cn(
+          'relative mt-0.5 h-4 w-7 shrink-0 rounded-full transition-colors',
+          enabled ? 'bg-border-strong' : 'bg-bg-2 border-border-hairline border'
+        )}
+      >
+        <span
+          className={cn(
+            'bg-bg-1 absolute top-0.5 left-0.5 size-3 rounded-full transition-transform',
+            enabled && 'translate-x-3'
+          )}
+        />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * `roomThemesEnabled`: the Room asks the relay for its themes only while this
+ * is on. Read live by open Rooms (`useRoomThemesEnabled`), so no reload needed.
+ */
+function RoomThemesRow() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['rig', 'settings', 'roomThemesEnabled'],
+    queryFn: () => rpc.rig.settings.get(),
+  });
+  const enabled = data?.roomThemesEnabled ?? false;
+
+  const toggle = () => {
+    void rpc.rig.settings.set({ roomThemesEnabled: !enabled }).then(() => {
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'settings', 'roomThemesEnabled'] });
+    });
+  };
+
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <label htmlFor="room-themes-enabled" className="text-xs font-medium text-text-primary">
+          Room themes
+        </label>
+        <p className="text-xs text-text-muted">
+          Sort a busy room into the topics people are talking about.
+        </p>
+      </div>
+      <button
+        id="room-themes-enabled"
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        aria-label="Room themes"
         onClick={toggle}
         className={cn(
           'relative mt-0.5 h-4 w-7 shrink-0 rounded-full transition-colors',
