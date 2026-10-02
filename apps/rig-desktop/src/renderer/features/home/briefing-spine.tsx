@@ -61,10 +61,7 @@ export function BriefingSpine({
   localRigs,
   onOpenPath,
   onHighlightRig,
-  showGreeting = true,
 }: {
-  /** Home renders the greeting itself, spanning both columns (`HomeGreeting`); other callers keep it here. */
-  showGreeting?: boolean;
   /**
    * Bindings this device already has, for resolving an Ask source's link
    * AND — round 2 — for resolving a rig NAME for
@@ -145,19 +142,11 @@ export function BriefingSpine({
        * (`across-your-spaces-today.tsx`) says what happened, from the
        * relay's Room themes, with no model call of its own.
        */}
-      {showGreeting && (meQuery.isLoading ? <HeaderSkeleton /> : <Header hour={hour} firstName={firstName} />)}
+      {meQuery.isLoading ? <HeaderSkeleton /> : <Header hour={hour} firstName={firstName} />}
 
       <PulseAsk onClickSource={onClickSource} rigNameOf={rigNameOf} />
     </div>
   );
-}
-
-/** The date and greeting on their own, for Home to place across both columns. */
-export function HomeGreeting() {
-  const meQuery = useQuery({ queryKey: ['rig', 'account', 'me'], queryFn: () => rpc.rig.account.me() });
-  const firstName = meQuery.data?.success ? firstNameOf(meQuery.data.data.name) : null;
-  const hour = useCurrentHour();
-  return meQuery.isLoading ? <HeaderSkeleton /> : <Header hour={hour} firstName={firstName} />;
 }
 
 /** Mono uppercase date kicker + a LOCALLY composed display greeting (see this file's own header comment). */
