@@ -35,13 +35,12 @@ import {
   SPACE_NOT_SET_UP_TOOLTIP,
   type HomeRigRow,
 } from './home-sections';
-import { withTopic } from './recent-themes-state';
 import { RenameRigDialog } from './rename-rig-dialog';
 import {
   baselineMarker,
   deriveSpaceAttention,
   withNotifications,
-  deriveSpaceStatusLine,
+  deriveSpaceRowLine,
   filterSpaceRows,
   lastActivityAt,
   readPinnedSpaceIds,
@@ -49,7 +48,6 @@ import {
   sortSpaceRowsByActivity,
   spaceIsActive,
   spaceNeedsApproval,
-  spaceStatusLineTone,
   writePinnedSpaceIds,
   type SpaceAttention,
   type SpaceRowFilter,
@@ -553,8 +551,10 @@ function SpaceRow({
     notifications,
     notifications.latestDirect ? { phrase: directPhrase(notifications.latestDirect) } : null
   );
-  // Led by the space's most active theme today; the sync state below still takes the whole line.
-  const statusLine = withTopic(topic?.name, deriveSpaceStatusLine(status, shown, Date.now()));
+  // One line, the highest rung of the ladder wins (`deriveSpaceRowLine`); the
+  // topic leads only new or today's activity. Rung 1, sync, is `syncLine` below.
+  const line = deriveSpaceRowLine({ status, attention: shown, topic: topic?.name, now: Date.now() });
+  const statusLine = line.text;
   const dimmed = notifications.level === 'nothing';
   const path = row.kind === 'local' ? row.path : null;
   const relayStatus = row.kind === 'relayOnly' ? deriveRelayOnlyRowStatus(row) : null;
@@ -621,8 +621,8 @@ function SpaceRow({
     : relayStatus?.kind === 'checking'
       ? 'checking…'
       : statusLine;
-  // The sync state takes the line over the row's activity; a download or
-  // the "checking…" beat still come first.
+  // Rung 1: the sync state takes the line over the row's activity; a
+  // download or the "checking…" beat still come first.
   const syncLine = subtext === statusLine ? syncNotice : null;
 
   return (
@@ -751,7 +751,7 @@ function SpaceRow({
               // line ("Hugo mentioned you · 4 new messages") outgrows the row
               // instead of truncating.
               'max-w-full truncate text-xs',
-              subtext === statusLine ? LINE_TONE[spaceStatusLineTone(shown)] : 'text-text-muted'
+              subtext === statusLine ? LINE_TONE[line.tone] : 'text-text-muted'
             )}
             data-testid="space-status-line"
           >

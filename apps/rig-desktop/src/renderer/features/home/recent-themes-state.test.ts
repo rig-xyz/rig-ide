@@ -11,7 +11,6 @@ import {
   themeActivityLine,
   themeFaces,
   topicBySpace,
-  withTopic,
 } from './recent-themes-state';
 
 function theme(id: string, over: Partial<RigRecentTheme> = {}): RigRecentTheme {
@@ -88,16 +87,6 @@ describe('topicBySpace', () => {
     expect(topics.get('b1')?.themeId).toBe('big');
     expect(topics.get('b2')?.themeId).toBe('tie-new');
     expect(topics.has('b3')).toBe(false);
-  });
-});
-
-describe('withTopic', () => {
-  it('leads the status line with the topic', () => {
-    expect(withTopic('Bugs & Wishlist', "Hugo's Claude finished · 20m ago")).toBe(
-      "Bugs & Wishlist · Hugo's Claude finished · 20m ago"
-    );
-    expect(withTopic(null, '2h ago')).toBe('2h ago');
-    expect(withTopic('Bugs', 'No activity yet')).toBe('Bugs');
   });
 });
 

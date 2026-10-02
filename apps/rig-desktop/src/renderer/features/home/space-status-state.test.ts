@@ -4,6 +4,7 @@ import {
   baselineMarker,
   countNewMessages,
   deriveSpaceAttention,
+  deriveSpaceRowLine,
   deriveSpaceStatusLine,
   DICE_FACES,
   filterSpaceRows,
@@ -13,7 +14,6 @@ import {
   sortSpaceRowsByActivity,
   spaceIsActive,
   spaceNeedsApproval,
-  spaceStatusLineTone,
   withNotifications,
   type SpaceAttention,
   type SpaceSeenMarker,
@@ -60,15 +60,26 @@ function lastRun(
 const MARKER: SpaceSeenMarker = { lastSeenSeq: 10, openedAt: NOW - 30 * 60_000 };
 
 describe('deriveSpaceAttention — priority', () => {
-  it('a running item wins over everything, defaulting a missing activity to thinking', () => {
+  it('a running item wins over a finish and messages, defaulting a missing activity to thinking', () => {
     const status: RigSpaceStatus = {
       bindingId: 'x',
       running: [running({ activity: null })],
-      lastRun: lastRun('failed', 60_000),
+      lastRun: lastRun('done', 60_000),
       recentMessages: [msg(11), msg(12)],
     };
     expect(deriveSpaceAttention(status, MARKER, SELF)).toEqual({ kind: 'live', state: 'thinking' });
     expect(deriveSpaceAttention({ ...status, running: [running()] }, MARKER, SELF)).toEqual({ kind: 'live', state: 'editing' });
+  });
+
+  it('an unseen failure beats a running item, unless that run is yours and waiting on you', () => {
+    const sam = { ownerUserId: 'sam', ownerName: 'Sam Lee' };
+    const status: RigSpaceStatus = { bindingId: 'x', running: [running(sam)], lastRun: lastRun('failed', 60_000, 'codex') };
+    expect(deriveSpaceAttention(status, MARKER, SELF)).toEqual({ kind: 'failed', agent: 'codex', endedAt: NOW - 60_000 });
+    const yoursWaiting = { ...status, running: [running({ activity: 'waiting' })] };
+    expect(deriveSpaceAttention(yoursWaiting, MARKER, SELF)).toEqual({ kind: 'live', state: 'waiting' });
+    // Sam's run waiting on Sam is only live: the failure still wins.
+    const samWaiting = { ...status, running: [running({ ...sam, activity: 'waiting' })] };
+    expect(deriveSpaceAttention(samWaiting, MARKER, SELF).kind).toBe('failed');
   });
 
   it('an unseen failure beats new messages', () => {
@@ -202,13 +213,83 @@ describe('deriveSpaceStatusLine', () => {
     expect(line(undefined, null)).toBe('No activity yet');
   });
 
-  it('tones: failed in the error tone, other unseen a step brighter, the rest muted', () => {
-    const tone = (a: SpaceAttention) => spaceStatusLineTone(a);
-    expect(tone({ kind: 'failed', agent: 'claude', endedAt: NOW })).toBe('danger');
-    expect(tone({ kind: 'finished', agent: 'claude', endedAt: NOW })).toBe('secondary');
-    expect(tone({ kind: 'messages', count: 2 })).toBe('secondary');
-    expect(tone({ kind: 'idle', lastActivityAt: null })).toBe('muted');
-    expect(tone({ kind: 'live', state: 'editing' })).toBe('muted');
+});
+
+describe('deriveSpaceRowLine — the ladder', () => {
+  const TOPIC = 'Bugs & Wishlist';
+  const sam = { ownerUserId: 'sam', ownerName: 'Sam Lee' };
+  const row = (status: RigSpaceStatus | undefined, attention: SpaceAttention, topic: string | null = TOPIC) =>
+    deriveSpaceRowLine({ status, attention, topic, now: NOW });
+  const forYou: SpaceAttention = { kind: 'forYou', count: 3, line: 'Hugo mentioned you', messages: 0 };
+
+  it('rung 2, needs you: a mention, no topic, bright', () => {
+    expect(row(undefined, forYou)).toEqual({ text: 'Hugo mentioned you · 2 more for you', tone: 'secondary', rung: 2 });
+  });
+
+  it('rung 2, needs you: your run waiting on you, no topic, bright', () => {
+    const status: RigSpaceStatus = { bindingId: 'x', running: [running({ activity: 'waiting' })] };
+    expect(row(status, deriveSpaceAttention(status, MARKER, SELF))).toEqual({
+      text: 'Claude is waiting on you',
+      tone: 'secondary',
+      rung: 2,
+    });
+  });
+
+  it('rung 3, failed: no topic, in the error tone', () => {
+    const status: RigSpaceStatus = { bindingId: 'x', running: [], lastRun: lastRun('failed', 20 * 60_000, 'claude', sam) };
+    expect(row(status, deriveSpaceAttention(status, MARKER, SELF))).toEqual({
+      text: "Sam's Claude failed · 20m ago",
+      tone: 'danger',
+      rung: 3,
+    });
+  });
+
+  it("rung 4, live: no topic, muted; a teammate's run waiting on them is live too", () => {
+    const editing: RigSpaceStatus = { bindingId: 'x', running: [running({ ...sam, title: 'Pricing.md' })] };
+    expect(row(editing, deriveSpaceAttention(editing, MARKER, SELF))).toEqual({
+      text: "Sam's Claude editing Pricing.md",
+      tone: 'muted',
+      rung: 4,
+    });
+    const waiting: RigSpaceStatus = { bindingId: 'x', running: [running({ ...sam, activity: 'waiting' })] };
+    expect(row(waiting, deriveSpaceAttention(waiting, MARKER, SELF))).toMatchObject({
+      text: "Sam's Claude is waiting on Sam",
+      rung: 4,
+    });
+  });
+
+  it('rung 5, new since you looked: led by the topic when there is one, bright', () => {
+    expect(row(undefined, { kind: 'messages', count: 3 })).toEqual({
+      text: 'Bugs & Wishlist · 3 new messages',
+      tone: 'secondary',
+      rung: 5,
+    });
+    const done: RigSpaceStatus = { bindingId: 'x', running: [], lastRun: lastRun('done', 20 * 60_000, 'codex') };
+    expect(row(done, deriveSpaceAttention(done, MARKER, SELF)).text).toBe('Bugs & Wishlist · Codex finished · 20m ago');
+    expect(row(undefined, { kind: 'messages', count: 3 }, null)).toEqual({ text: '3 new messages', tone: 'secondary', rung: 5 });
+  });
+
+  it("rung 6, seen and active today: the topic and when, muted", () => {
+    expect(row(undefined, { kind: 'idle', lastActivityAt: NOW - 3 * 3_600_000 })).toEqual({
+      text: 'Bugs & Wishlist · 3h ago',
+      tone: 'muted',
+      rung: 6,
+    });
+    // A topic but no status yet to say when: the topic alone.
+    expect(row(undefined, { kind: 'idle', lastActivityAt: null }).text).toBe('Bugs & Wishlist');
+  });
+
+  it('rung 7, nothing new: just when, or "No activity yet", muted', () => {
+    expect(row(undefined, { kind: 'idle', lastActivityAt: NOW - 4 * 24 * 3_600_000 }, null)).toEqual({
+      text: '4d ago',
+      tone: 'muted',
+      rung: 7,
+    });
+    expect(row(undefined, { kind: 'idle', lastActivityAt: null }, null)).toEqual({
+      text: 'No activity yet',
+      tone: 'muted',
+      rung: 7,
+    });
   });
 });
 
@@ -354,6 +435,23 @@ describe('sortSpaceRowsByActivity', () => {
     expect(sorted.map((r) => r.bindingId)).toEqual(['waiting', 'live', 'missed', 'quiet']);
   });
 
+  it('a running space whose line leads with an unseen failure still sorts with the live ones', () => {
+    const rows = [
+      { bindingId: 'missed', name: 'a-missed' },
+      { bindingId: 'retry', name: 'b-retry' },
+    ];
+    const failedRun = { status: 'failed' as const, endedAt: new Date(NOW - 60_000).toISOString(), agent: 'claude' as const, ownerUserId: 'u' };
+    const statusByBinding = new Map<string, RigSpaceStatus>([
+      ['missed', { bindingId: 'missed', running: [], lastRun: failedRun }],
+      ['retry', { bindingId: 'retry', running: [running({ ownerUserId: 'u', startedAt: new Date(NOW - 3_600_000).toISOString() })], lastRun: failedRun }],
+    ]);
+    const attention = new Map(
+      rows.map((r) => [r.bindingId, deriveSpaceAttention(statusByBinding.get(r.bindingId), { lastSeenSeq: 0, openedAt: NOW - 3_600_000 }, 'me')])
+    );
+    expect(attention.get('retry')?.kind).toBe('failed');
+    expect(sortSpaceRowsByActivity(rows, statusByBinding, attention, 'me', NOW).map((r) => r.bindingId)).toEqual(['retry', 'missed']);
+  });
+
   it('orders by local activity before the live statuses arrive, so nothing reshuffles when they do', () => {
     const rows = [
       { bindingId: 'alpha', name: 'a-alpha' },
@@ -402,7 +500,6 @@ describe('withNotifications', () => {
     });
     expect(shown).toEqual({ kind: 'forYou', count: 1, line: 'Hugo mentioned you', messages: 3, exact: false });
     expect(deriveSpaceStatusLine(undefined, shown, 0)).toBe('Hugo mentioned you · 3 new messages');
-    expect(spaceStatusLineTone(shown)).toBe('secondary');
   });
 
   it('counts more than one', () => {
@@ -417,9 +514,19 @@ describe('withNotifications', () => {
     expect(deriveSpaceStatusLine(undefined, lots, 0)).toBe('Hugo mentioned you · 99+ more for you');
   });
 
-  it('never outranks a live or failed run', () => {
+  it('outranks a live or failed run, never a run of yours waiting on you', () => {
+    const direct = { level: 'all' as const, directUnread: 2 };
     const live = { kind: 'live', state: 'thinking' } as const;
-    expect(withNotifications(live, undefined, { level: 'all', directUnread: 2 }, { phrase: 'x' })).toBe(live);
+    expect(withNotifications(live, undefined, direct, { phrase: 'x' }).kind).toBe('forYou');
+    const failed = { kind: 'failed', agent: 'claude', endedAt: 0 } as const;
+    expect(withNotifications(failed, undefined, direct, { phrase: 'x' }).kind).toBe('forYou');
+    const theirsWaiting = { kind: 'live', state: 'waiting', owner: 'Sam' } as const;
+    expect(withNotifications(theirsWaiting, undefined, direct, { phrase: 'x' }).kind).toBe('forYou');
+    const yoursWaiting = { kind: 'live', state: 'waiting' } as const;
+    expect(withNotifications(yoursWaiting, undefined, direct, { phrase: 'x' })).toBe(yoursWaiting);
+    // With nothing for you, a live or failed run stays as it is.
+    expect(withNotifications(live, undefined, all, null)).toBe(live);
+    expect(withNotifications(failed, undefined, { ...all, known: true, spaceUnread: 4 }, null)).toBe(failed);
   });
 
   it('a muted space stays quiet: no for you, no new messages', () => {

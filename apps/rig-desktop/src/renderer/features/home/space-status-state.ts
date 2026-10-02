@@ -166,14 +166,21 @@ export function countNewMessages(
   return Math.min(count, MAX_NEW_MESSAGES);
 }
 
+/** A live run waiting on you: your own, sitting on an approval. Someone else's waits on them. */
+export function isWaitingOnYou(attention: SpaceAttention): boolean {
+  return attention.kind === 'live' && attention.state === 'waiting' && !attention.owner;
+}
+
 /**
- * The row's tile and line, in priority order: a running item always wins
- * (an absent `activity` still gets a live tile — `'thinking'`, the same
- * honest fallback `session-card.tsx`'s `OTHER_STEP` uses); then the last
- * run's outcome if it ended after you last opened the space (only failed
- * and done — a stopped run was someone's own choice, nothing to flag);
- * then new messages; else idle. With no "opened" marker nothing reads as
- * unseen — `baselineMarker` sets one the first time Home sees a space.
+ * The row's tile and line, in the order of `deriveSpaceRowLine`'s ladder: a
+ * run of yours waiting on you; then the last run failing after you last
+ * opened the space; then any other running item (an absent `activity` still
+ * gets a live tile — `'thinking'`, the same honest fallback
+ * `session-card.tsx`'s `OTHER_STEP` uses); then the last run finishing
+ * after you last opened it (a stopped run was someone's own choice, nothing
+ * to flag); then new messages; else idle. With no "opened" marker nothing
+ * reads as unseen — `baselineMarker` sets one the first time Home sees a
+ * space. Mentions and other notifications fold in after (`withNotifications`).
  */
 export function deriveSpaceAttention(
   status: RigSpaceStatus | undefined,
@@ -182,16 +189,21 @@ export function deriveSpaceAttention(
 ): SpaceAttention {
   const running = status?.running ?? [];
   const withOwner = (owner: string | undefined) => (owner ? { owner } : {});
-  if (running.length > 0) {
-    return { kind: 'live', state: running[0]!.activity ?? 'thinking', ...withOwner(ownerOf(running[0], selfUserId)) };
-  }
+  const live: SpaceAttention | null =
+    running.length > 0
+      ? { kind: 'live', state: running[0]!.activity ?? 'thinking', ...withOwner(ownerOf(running[0], selfUserId)) }
+      : null;
+  if (live && isWaitingOnYou(live)) return live;
   const last = status?.lastRun;
   const endedAt = parseTime(last?.endedAt);
   const openedAt = marker?.openedAt ?? null;
-  if (last && endedAt !== null && openedAt !== null && endedAt > openedAt) {
-    const owner = withOwner(ownerOf(last, selfUserId));
-    if (last.status === 'failed') return { kind: 'failed', agent: last.agent, endedAt, ...owner };
-    if (last.status === 'done') return { kind: 'finished', agent: last.agent, endedAt, ...owner };
+  const unseen = last && endedAt !== null && openedAt !== null && endedAt > openedAt ? last : null;
+  if (unseen?.status === 'failed') {
+    return { kind: 'failed', agent: unseen.agent, endedAt: endedAt!, ...withOwner(ownerOf(unseen, selfUserId)) };
+  }
+  if (live) return live;
+  if (unseen?.status === 'done') {
+    return { kind: 'finished', agent: unseen.agent, endedAt: endedAt!, ...withOwner(ownerOf(unseen, selfUserId)) };
   }
   const count = countNewMessages(status, marker?.lastSeenSeq ?? null, selfUserId);
   if (count > 0) return { kind: 'messages', count };
@@ -244,11 +256,64 @@ export function deriveSpaceStatusLine(
   }
 }
 
-/** The line's tone: a failure in the muted-error tone, anything else unseen a step brighter than the idle/live muted text. */
-export function spaceStatusLineTone(attention: SpaceAttention): 'danger' | 'secondary' | 'muted' {
-  if (attention.kind === 'failed') return 'danger';
-  if (attention.kind === 'finished' || attention.kind === 'messages' || attention.kind === 'forYou') return 'secondary';
-  return 'muted';
+/** The rungs of `deriveSpaceRowLine`'s ladder this module decides; rung 1 is the row's sync notice. */
+export type SpaceLineRung = 2 | 3 | 4 | 5 | 6 | 7;
+
+export type SpaceLineTone = 'danger' | 'secondary' | 'muted';
+
+const RUNG_TONE: Record<SpaceLineRung, SpaceLineTone> = {
+  2: 'secondary',
+  3: 'danger',
+  4: 'muted',
+  5: 'secondary',
+  6: 'muted',
+  7: 'muted',
+};
+
+/**
+ * A Spaces row's one line. The highest rung that applies owns it:
+ *
+ * | # | Rung                 | Attention                    | Line                                  | Tone      |
+ * |---|----------------------|------------------------------|---------------------------------------|-----------|
+ * | 1 | Sync broken          | the row's sync notice        | "Sync paused · Resume"                | its own   |
+ * | 2 | Needs you            | forYou, live waiting on you  | "Hugo mentioned you · 2 more for you" | secondary |
+ * | 3 | Failed               | failed                       | "Hugo's Claude failed · 20m ago"      | danger    |
+ * | 4 | Live                 | live                         | "Hugo's Claude editing Pricing.md"    | muted     |
+ * | 5 | New since you looked | finished, messages           | "Topic · 3 new messages"              | secondary |
+ * | 6 | Seen, active today   | idle, with a topic today     | "Topic · 3h ago"                      | muted     |
+ * | 7 | Nothing new          | idle                         | "4d ago", "No activity yet"           | muted     |
+ *
+ * Rung 1 is rendered by the row itself (its notice carries an action) and
+ * takes the line whenever sync is broken; this decides rungs 2–7, whose
+ * order `deriveSpaceAttention` and `withNotifications` already keep. The
+ * topic, the space's busiest Room theme today, leads only rungs 5 and 6:
+ * above them, who or what needs you owns the line.
+ */
+export function deriveSpaceRowLine(input: {
+  status: RigSpaceStatus | undefined;
+  attention: SpaceAttention;
+  topic: string | null | undefined;
+  now: number;
+}): { text: string; tone: SpaceLineTone; rung: SpaceLineRung } {
+  const { status, attention, topic, now } = input;
+  const rung: SpaceLineRung =
+    attention.kind === 'forYou' || isWaitingOnYou(attention)
+      ? 2
+      : attention.kind === 'failed'
+        ? 3
+        : attention.kind === 'live'
+          ? 4
+          : attention.kind !== 'idle'
+            ? 5
+            : topic
+              ? 6
+              : 7;
+  const line = deriveSpaceStatusLine(status, attention, now);
+  let text = line;
+  if (topic && (rung === 5 || rung === 6)) {
+    text = attention.kind === 'idle' && attention.lastActivityAt === null ? topic : `${topic} · ${line}`;
+  }
+  return { text, tone: RUNG_TONE[rung], rung };
 }
 
 /**
@@ -332,7 +397,8 @@ function spaceActivityRank(
   selfUserId: string | null
 ): number {
   if (spaceNeedsApproval(status, selfUserId)) return 0;
-  if (attention.kind === 'live') return 1;
+  // Running, even when the row leads with an unseen failure instead.
+  if (attention.kind === 'live' || spaceIsActive(status)) return 1;
   return attention.kind === 'idle' ? 3 : 2;
 }
 
@@ -411,10 +477,11 @@ function newMessages(count: number, exact = false): string {
  * §5). Once the relay's summary is in (`known`), its count of unread
  * messages replaces this computer's own marker diff, so the row, the
  * Activity bell and the Dock all read one read position that every device
- * shares. Unread rows about you outrank plain new messages and a finished
- * run, never a live or failed one. A muted space ('nothing') stays quiet:
- * no "for you", no "new messages", just when something last happened; its
- * mentions wait in Activity.
+ * shares. Unread rows about you sit on the ladder's "Needs you" rung
+ * (`deriveSpaceRowLine`): they outrank a failed or live run, a finished one
+ * and new messages; only a run of yours waiting on you stays. A muted space
+ * ('nothing') stays quiet: no "for you", no "new messages", just when
+ * something last happened; its mentions wait in Activity.
  */
 export function withNotifications(
   attention: SpaceAttention,
@@ -427,7 +494,7 @@ export function withNotifications(
   },
   latestDirect: { phrase: string } | null
 ): SpaceAttention {
-  if (attention.kind === 'live' || attention.kind === 'failed') return attention;
+  if (isWaitingOnYou(attention)) return attention;
   const idle: SpaceAttention = { kind: 'idle', lastActivityAt: lastActivityAt(status) };
   let base = attention;
   if (notifications.known && (attention.kind === 'messages' || attention.kind === 'idle')) {

@@ -511,13 +511,13 @@ describe("SpacesCard — the row's topic of the day", () => {
   let root: Root;
   let opened: string[];
 
-  async function render(rows: HomeRigRow[], openOnTopic = false): Promise<void> {
+  async function render(rows: HomeRigRow[], openOnTopic = false, status: RigSpaceStatus = done): Promise<void> {
     await act(async () => {
       root.render(
         <QueryClientProvider client={new QueryClient()}>
           <SpacesCard
             rows={rows}
-            statusByBinding={new Map([[done.bindingId, done]])}
+            statusByBinding={new Map([[status.bindingId, status]])}
             selfUserId="me"
             topicByBinding={new Map([['b-launch', topic('b-launch', 'Bugs & Wishlist')]])}
             openOnTopic={openOnTopic}
@@ -552,11 +552,27 @@ describe("SpacesCard — the row's topic of the day", () => {
       .querySelector(`[data-testid="space-row"][data-binding-id="${bindingId}"]`)!
       .querySelector<HTMLElement>('[data-testid="space-status-line"]')!;
 
-  it('leads with the topic, then the usual status', async () => {
+  it('leads what is new since you looked with the topic', async () => {
     await render([launch, quiet]);
     expect(lineOf('b-launch').textContent).toBe("Bugs & Wishlist · Hugo's Claude finished · 20m ago");
     // No topic today: the status alone.
     expect(lineOf('b-quiet').textContent).toBe('No activity yet');
+  });
+
+  it('leaves the topic off a live run: who is working owns the line', async () => {
+    await render([launch], false, {
+      bindingId: 'b-launch',
+      running: [
+        { runId: 'r1', agent: 'claude', ownerUserId: 'hugo', ownerName: 'Hugo Ross', startedAt: iso(60_000), activity: 'editing', title: 'Pricing.md' },
+      ],
+    });
+    expect(lineOf('b-launch').textContent).toBe("Hugo's Claude editing Pricing.md");
+  });
+
+  it('seen, active today: the topic and when', async () => {
+    writeOpenedAt('b-launch', NOW);
+    await render([launch]);
+    expect(lineOf('b-launch').textContent).toBe('Bugs & Wishlist · 20m ago');
   });
 
   it('the sync state still takes the whole line', async () => {

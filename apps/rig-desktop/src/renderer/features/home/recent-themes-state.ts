@@ -109,13 +109,6 @@ export function topicBySpace(themes: readonly RigRecentTheme[]): Map<string, Rig
   return out;
 }
 
-/** A row's status line led by its topic: "Bugs & Wishlist · Hugo's Claude finished · 20m ago". */
-export function withTopic(topic: string | null | undefined, statusLine: string): string {
-  if (!topic) return statusLine;
-  if (!statusLine || statusLine === 'No activity yet') return topic;
-  return `${topic} · ${statusLine}`;
-}
-
 export type AcrossSpacesView =
   | { kind: 'loading' }
   | { kind: 'offline' }
