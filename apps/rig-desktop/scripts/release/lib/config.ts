@@ -8,7 +8,10 @@ export {
 } from '../../../src/shared/app-identity.ts';
 
 export const RELEASE_DIR = 'release';
-export const NATIVE_MODULES = ['better-sqlite3', 'node-pty', '@parcel/watcher'];
+// Every native addon the app requires at runtime. A module missing here ships
+// uncompiled: @rigxyz/mac-notifications did on the first 0.4.7 build and fell
+// back to "unsupported" silently.
+export const NATIVE_MODULES = ['better-sqlite3', 'node-pty', '@parcel/watcher', '@rigxyz/mac-notifications'];
 export const GITHUB_OWNER = 'rig-xyz';
 export const GITHUB_REPO = 'rig-ide';
 
