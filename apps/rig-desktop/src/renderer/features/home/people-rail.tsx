@@ -1,14 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
 import { rpc } from '@renderer/lib/ipc';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
+import { cn } from '@renderer/lib/utils';
 import { PULSE_QUERY_KEY } from './briefing-spine';
 import { HomeFeedLabel } from './home-feed-label';
 import { derivePulseSectionState } from './pulse-state';
 import { firstNameKey, shortAge } from './recent-themes-state';
 
 /**
- * Home's PEOPLE, under "Across your spaces today" in the center column: a
- * flat list, one person each, avatar, name, when they last wrote in a Room
+ * Home's PEOPLE: a box on the right on wide windows, under "Across your
+ * spaces today" otherwise (`home.tsx` places it). A flat list, one person each, avatar, name, when they last wrote in a Room
  * today, and their one Pulse sentence below. "You" first. The web hub
  * home's Team panel analog (`hub/web`'s `TeamList`), in this app's tokens.
  *
@@ -21,7 +22,13 @@ import { firstNameKey, shortAge } from './recent-themes-state';
  * the day, keyed by `firstNameKey`) gives one when it can, and the time is
  * left out when it can't.
  */
-export function PeopleRail({ lastActivity }: { lastActivity?: ReadonlyMap<string, string> }) {
+export function PeopleRail({
+  lastActivity,
+  className,
+}: {
+  lastActivity?: ReadonlyMap<string, string>;
+  className?: string;
+}) {
   const pulseQuery = useQuery({
     queryKey: PULSE_QUERY_KEY,
     queryFn: () => rpc.rig.pulse.get({}),
@@ -35,7 +42,7 @@ export function PeopleRail({ lastActivity }: { lastActivity?: ReadonlyMap<string
   const now = Date.now();
 
   return (
-    <section className="flex flex-col gap-0.5" data-testid="home-people">
+    <section className={cn('flex flex-col gap-0.5', className)} data-testid="home-people">
       <div className="pb-1.5">
         <HomeFeedLabel aside="today">People</HomeFeedLabel>
       </div>

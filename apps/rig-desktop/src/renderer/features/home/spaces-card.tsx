@@ -628,8 +628,8 @@ function SpaceRow({
   return (
     <div
       className={cn(
-        'group flex items-center gap-2.5 rounded-control px-2 py-2 transition-colors',
-        isHighlighted ? 'bg-accent-subtle' : 'hover:bg-bg-2',
+        'group flex items-center gap-2.5 rounded-control px-2 py-2',
+        isHighlighted ? 'bg-accent-subtle transition-colors' : 'glass-hover',
         grouping?.dragging && 'opacity-50'
       )}
       data-testid="space-row"

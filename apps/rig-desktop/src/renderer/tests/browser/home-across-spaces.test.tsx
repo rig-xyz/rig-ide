@@ -406,7 +406,7 @@ describe('Home: Across your spaces today', () => {
     expect(mocks.requests).toEqual([]);
   });
 
-  it('People sits under the topics in the center column: You first, a time, the Pulse sentence, no right column', async () => {
+  it('People: You first, a time, the Pulse sentence; under the topics, and a box on the right on wide windows', async () => {
     mocks.live = {
       kind: 'live',
       savedAt: NOW,
@@ -466,10 +466,16 @@ describe('Home: Across your spaces today', () => {
     expect(people.querySelector('.rounded-card, .rounded-chip')).toBeNull();
     // Her face on the topic line is her Pulse picture.
     expect(lines()[0]!.querySelector('[data-testid="theme-line-faces"] img')).not.toBeNull();
-    // Two columns: the Spaces card's and the center; nothing to the right.
+    // Under the topics only below 1400px; from there it's the box on the right.
+    expect(people.className).toContain('min-[1400px]:hidden');
     const columns = [...center.parentElement!.children];
-    expect(columns).toHaveLength(2);
-    expect(host.querySelector('[class*="xl:w-[300px]"]')).toBeNull();
+    expect(columns).toHaveLength(3);
+    const box = columns.find((c) => c !== center && c.matches('[data-testid="home-people"]'))!;
+    expect(box).toBeDefined();
+    expect(box.className).toContain('min-[1400px]:flex');
+    expect(box.className).toContain('rounded-card');
+    // A box with no outline.
+    expect(box.className).not.toMatch(/\bborder\b/);
   });
 
   it('says "Quiet day across your spaces" when nothing happened', async () => {

@@ -128,10 +128,7 @@ function ThemeLine({
   const faces = themeFaces(theme.people);
   return (
     <li
-      className={cn(
-        '-mx-3 flex cursor-pointer flex-col gap-1 rounded-[12px] px-3 py-2.5 leading-normal transition-colors duration-[160ms] ease-out',
-        open ? 'bg-text-primary/5' : 'hover:bg-text-primary/5'
-      )}
+      className="glass-hover -mx-3 flex cursor-pointer flex-col gap-1 rounded-[12px] px-3 py-2.5 leading-normal"
       onClick={onToggle}
       data-testid="theme-line"
       data-theme-id={theme.themeId}
