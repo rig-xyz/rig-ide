@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { RigSpaceStatus } from '@shared/rig/space-status';
 import {
   baselineMarker,
-  countNeedsApproval,
   countNewMessages,
   deriveSpaceAttention,
   deriveSpaceStatusLine,
@@ -303,7 +302,7 @@ describe('spaceNeedsApproval / spaceIsActive', () => {
   });
 });
 
-describe('filterSpaceRows / countNeedsApproval', () => {
+describe('filterSpaceRows', () => {
   const rows = [
     { bindingId: 'a', name: 'growth' },
     { bindingId: 'b', name: 'launch' },
@@ -327,8 +326,11 @@ describe('filterSpaceRows / countNeedsApproval', () => {
   it('pinned — only pinned bindingIds', () => {
     expect(filterSpaceRows(rows, 'pinned', ctx).map((r) => r.bindingId)).toEqual(['c']);
   });
-  it('countNeedsApproval matches the needsYou filter', () => {
-    expect(countNeedsApproval(rows, statusByBinding, 'me')).toBe(1);
+  it('needsYou — the card own needs-you set when given, mentions included', () => {
+    expect(filterSpaceRows(rows, 'needsYou', { ...ctx, needsYouIds: new Set(['a', 'c']) }).map((r) => r.bindingId)).toEqual([
+      'a',
+      'c',
+    ]);
   });
 });
 

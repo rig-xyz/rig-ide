@@ -107,6 +107,19 @@ describe('purgeLocalCaches', () => {
     mocks.self = null;
     await expect(localCacheAccountId()).resolves.toBeNull(); // no offline fallback left either
   });
+
+  it('Home\'s layout cache goes on sign-out and when another account signs in, not for its own account', async () => {
+    const { KV } = await import('@main/db/kv');
+    const layout = new KV<{ state: { account: string } }>('rig-home-layout');
+    await layout.set('state', { account: 'u1@tap-relay.fly.dev' });
+    await purgeLocalCaches({ keepAccountId: 'u1' });
+    expect(await layout.get('state')).toEqual({ account: 'u1@tap-relay.fly.dev' });
+    await purgeLocalCaches({ keepAccountId: 'u2' });
+    expect(await layout.get('state')).toBeNull();
+    await layout.set('state', { account: 'u1@tap-relay.fly.dev' });
+    await purgeLocalCaches();
+    expect(await layout.get('state')).toBeNull();
+  });
 });
 
 describe('remembered workspaces (Home offline)', () => {

@@ -49,6 +49,7 @@ import { rigDeleteController } from './rig/delete-rig';
 import { rigFileMentionsController } from './rig/file-mentions';
 import { rigFilesController } from './rig/files';
 import { rigHomeController } from './rig/home';
+import { rigHomeLayoutController } from './rig/home-layout';
 import { rigImportController } from './rig/import-doc';
 import { rigJoinController } from './rig/join';
 import { rigPulseController } from './rig/pulse';
@@ -227,6 +228,9 @@ export const rpcRouter = createRPCRouter({
     // Activity, read marks, the per-space level, and where a banner click
     // goes. See `notifications/electron.ts`.
     notifications: rigNotificationsController,
+    // Home's Spaces card layout (groups, group by, sort, show quiet), kept on
+    // the account (`GET/PUT /v1/me/home-layout`). See `home-layout.ts`.
+    homeLayout: rigHomeLayoutController,
     // Settings → About's rig/tapd version rows — package.json reads only,
     // see `bundled-cli.ts`'s own header comment for why this never spawns
     // either binary.

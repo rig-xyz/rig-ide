@@ -296,6 +296,12 @@ export type SpaceFilterContext = {
   statusByBinding: ReadonlyMap<string, RigSpaceStatus>;
   pinnedIds: ReadonlySet<string>;
   selfUserId: string | null;
+  /**
+   * Spaces that need you, mentions and requests included (the Spaces card's
+   * own signals, `space-sections.ts`). Without it, "Needs you" is only a
+   * run of yours waiting on approval.
+   */
+  needsYouIds?: ReadonlySet<string>;
 };
 
 export function filterSpaceRows<T extends { bindingId: string }>(
@@ -311,17 +317,12 @@ export function filterSpaceRows<T extends { bindingId: string }>(
     case 'active':
       return rows.filter((r) => spaceIsActive(ctx.statusByBinding.get(r.bindingId)));
     case 'needsYou':
-      return rows.filter((r) => spaceNeedsApproval(ctx.statusByBinding.get(r.bindingId), ctx.selfUserId));
+      return rows.filter((r) =>
+        ctx.needsYouIds
+          ? ctx.needsYouIds.has(r.bindingId)
+          : spaceNeedsApproval(ctx.statusByBinding.get(r.bindingId), ctx.selfUserId)
+      );
   }
-}
-
-/** How many spaces the "Needs you" pill's own count badge should show. */
-export function countNeedsApproval<T extends { bindingId: string }>(
-  rows: readonly T[],
-  statusByBinding: ReadonlyMap<string, RigSpaceStatus>,
-  selfUserId: string | null
-): number {
-  return rows.filter((r) => spaceNeedsApproval(statusByBinding.get(r.bindingId), selfUserId)).length;
 }
 
 /** 0 (loudest) → 3 (quietest): waiting on you, then live, then something you missed, then idle. */

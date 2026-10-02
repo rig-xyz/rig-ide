@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, FolderSearch, LogOut, MoreHorizontal, Pencil, Star, Trash2 } from 'lucide-react';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { Download, FolderInput, FolderSearch, LogOut, MoreHorizontal, Pencil, Plus, Star, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   getReadMarkersVersion,
   readSpaceMarker,
@@ -8,8 +8,9 @@ import {
   writeLastSeen,
   writeOpenedAt,
 } from '@renderer/features/spaces/room-read-marker';
-import { useSpaceNotifications } from '@renderer/features/notifications/use-notifications';
-import { directPhrase } from '@shared/rig/notifications';
+import { useNotificationSummary, useSpaceNotifications } from '@renderer/features/notifications/use-notifications';
+import { directPhrase, type RigNotificationSpaceSummary } from '@shared/rig/notifications';
+import { newGroupId, type HomeGroup } from '@shared/rig/home-layout';
 import { NeedsConnection } from '@renderer/features/shell/needs-connection';
 import { useSyncHealth } from '@renderer/features/spaces/use-sync-health';
 import { rpc } from '@renderer/lib/ipc';
@@ -35,14 +36,16 @@ import {
 import { RenameRigDialog } from './rename-rig-dialog';
 import {
   baselineMarker,
-  countNeedsApproval,
   deriveSpaceAttention,
   withNotifications,
   deriveSpaceStatusLine,
   filterSpaceRows,
+  lastActivityAt,
   readPinnedSpaceIds,
   SPACE_FILTER_LABELS,
   sortSpaceRowsByActivity,
+  spaceIsActive,
+  spaceNeedsApproval,
   spaceStatusLineTone,
   writePinnedSpaceIds,
   type SpaceAttention,
@@ -50,13 +53,33 @@ import {
 } from './space-status-state';
 import { SpaceStatusTile } from './space-status-tile';
 import { FloatingCard } from './floating-card';
+import {
+  buildSpaceSections,
+  groupOfSpace,
+  nextGroupName,
+  type SpaceSection,
+  type SpaceSignals,
+} from './space-sections';
+import {
+  GroupBothOffer,
+  insideSubmenu,
+  MenuCheckRow,
+  NewGroupButton,
+  QuietFold,
+  SectionHeader,
+  SpacesViewMenu,
+  SubmenuItem,
+} from './spaces-card-sections';
+import { useHomeLayout } from './use-home-layout';
 
-const SHOWN_CAP = 6;
 const FACES_MAX = 3;
 
 /**
  * The Spaces floating card (design doc "9a" — "spaces first"): a
- * filter/pin-aware list of every space this account is a member of, each
+ * filter/pin-aware list of every space this account is a member of, in
+ * sections ("Many spaces on Home" v1: the person's own groups, or by state,
+ * or one list; `space-sections.ts`), arranged from the header's ⋯ and kept
+ * on their account (`use-home-layout.ts`). Each
  * row leading with its own live `SpaceStatusTile`, `# name`, the muted
  * status line in words, and member faces on the right. Sourced from the
  * SAME `HomeRigRow[]` Home already builds (`buildHomeRigRows`, filtered to
@@ -96,10 +119,18 @@ export function SpacesCard({
   emptyHint?: string;
 }) {
   const [filter, setFilter] = useState<SpaceRowFilter>('all');
-  const [showAll, setShowAll] = useState(false);
+  const [quietOpen, setQuietOpen] = useState(false);
+  // Groups made here since Home opened stay on screen while still empty, so they can be filled.
+  const [madeHere, setMadeHere] = useState<ReadonlySet<string>>(new Set());
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [drag, setDrag] = useState<DragItem | null>(null);
+  const [dropKey, setDropKey] = useState<string | null>(null);
+  const [offer, setOffer] = useState<[string, string] | null>(null);
   // No "+ New" of its own: Home's "New space" pill floats right above this
   // card (`new-space-cta.tsx`) and is the one create/join entry point.
   const { pinned, toggle: togglePinned } = useSpacePins();
+  const { layout, dispatch } = useHomeLayout();
+  const summary = useNotificationSummary();
   const liveAttention = useSpaceAttention(rows, statusByBinding, selfUserId);
   // Offline: no live status at all — each row is idle as of its last local activity.
   const attentionByBinding: Map<string, SpaceAttention> = offline
@@ -107,30 +138,111 @@ export function SpacesCard({
     : liveAttention;
 
   const now = Date.now();
-  const filtered = filterSpaceRows(rows, filter, {
+  // `sortSpaceRowsByActivity` needs a non-null `name` for its final
+  // alphabetical tiebreak — a space almost always has one (required at
+  // creation), so "Untitled space" only ever shows for an old/odd row.
+  const named = rows.map((r) => ({ ...r, name: r.name ?? 'Untitled space' }));
+  const signals = spaceSignalsOf(named, {
     statusByBinding,
-    pinnedIds: pinned,
     selfUserId,
+    summarySpaces: summary.spaces,
+    localActivity: offlineActivity,
+    offline,
   });
-  const sorted = sortSpaceRowsByActivity(
-    // `sortSpaceRowsByActivity` needs a non-null `name` for its final
-    // alphabetical tiebreak — a space almost always has one (required at
-    // creation), so "Untitled space" only ever shows for an old/odd row.
-    filtered.map((r) => ({ ...r, name: r.name ?? 'Untitled space' })),
-    statusByBinding,
-    attentionByBinding,
-    selfUserId,
-    now,
-    offlineActivity
+  const needsYouIds = new Set([...signals].filter(([, s]) => s.needsYou).map(([id]) => id));
+  const filterCtx = { statusByBinding, pinnedIds: pinned, selfUserId, needsYouIds };
+  const filtered = filterSpaceRows(named, filter, filterCtx);
+  const recentOrder = new Map(
+    sortSpaceRowsByActivity(filtered, statusByBinding, attentionByBinding, selfUserId, now, offlineActivity).map(
+      (r, i) => [r.bindingId, i]
+    )
   );
-  const visible = showAll ? sorted : sorted.slice(0, SHOWN_CAP);
-  const needsYouCount = countNeedsApproval(rows, statusByBinding, selfUserId);
+  const view = buildSpaceSections({ rows: filtered, layout, signals, pinned, recentOrder, now, keepVisible: madeHere });
+  const needsYouCount = filterSpaceRows(named, 'needsYou', filterCtx).length;
+  const nameOf = new Map(named.map((r) => [r.bindingId, r.name]));
+  const customGroups = layout.groupBy === 'custom';
+  const highlightFolded = view.folded.some((r) => r.bindingId === highlightBindingId);
+  const anyShown = view.sections.some((s) => s.visible && s.rows.length > 0) || view.folded.length > 0;
+
+  const makeGroup = (spaces: string[] = []) => {
+    const id = newGroupId();
+    dispatch({ type: 'createGroup', id, name: nextGroupName(layout), spaces });
+    setMadeHere((prev) => new Set(prev).add(id));
+    setRenamingId(id);
+  };
+  const moveTo = (bindingId: string, groupId: string | null) => dispatch({ type: 'moveSpace', bindingId, groupId });
+  const endDrag = () => {
+    setDrag(null);
+    setDropKey(null);
+  };
+
+  /** Drop targets: a group or Ungrouped takes a dragged space; a group's header takes a dragged group. */
+  const dropProps = (section: SpaceSection<HomeRigRow & { name: string }>) => {
+    if (!customGroups || section.kind === 'state' || section.kind === 'all') return {};
+    const accepts = (d: DragItem | null) =>
+      d?.kind === 'space' ? d.groupId !== (section.groupId ?? null) : d?.kind === 'group' && section.kind === 'group' && d.id !== section.groupId;
+    return {
+      onDragOver: (e: React.DragEvent) => {
+        if (!accepts(drag)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (dropKey !== section.key) setDropKey(section.key);
+      },
+      onDragLeave: (e: React.DragEvent) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null) && dropKey === section.key) setDropKey(null);
+      },
+      onDrop: (e: React.DragEvent) => {
+        if (!drag || !accepts(drag)) return;
+        e.preventDefault();
+        if (drag.kind === 'space') moveTo(drag.bindingId, section.groupId ?? null);
+        else dispatch({ type: 'reorderGroup', id: drag.id, toIndex: layout.groups.findIndex((g) => g.id === section.groupId) });
+        endDrag();
+      },
+    };
+  };
+
+  const renderRow = (row: HomeRigRow & { name: string }) => {
+    const groupId = groupOfSpace(layout, row.bindingId);
+    return (
+      <SpaceRow
+        key={row.bindingId}
+        row={row}
+        status={statusByBinding.get(row.bindingId)}
+        attention={attentionByBinding.get(row.bindingId) ?? { kind: 'idle', lastActivityAt: null }}
+        onOpenPath={onOpenPath}
+        pinned={pinned.has(row.bindingId)}
+        onTogglePinned={() => togglePinned(row.bindingId)}
+        isHighlighted={row.bindingId === highlightBindingId}
+        offline={offline}
+        grouping={
+          customGroups
+            ? {
+                groups: layout.groups,
+                groupId,
+                onMove: (to) => moveTo(row.bindingId, to),
+                onNewGroup: () => makeGroup([row.bindingId]),
+                dragging: drag?.kind === 'space' && drag.bindingId === row.bindingId,
+                onDragStart: () => setDrag({ kind: 'space', bindingId: row.bindingId, groupId }),
+                onDragEnd: endDrag,
+                // One ungrouped space dropped on another: offer to group the two.
+                acceptsPair: drag?.kind === 'space' && drag.groupId === null && groupId === null && drag.bindingId !== row.bindingId,
+                onPairDrop: () => {
+                  if (drag?.kind === 'space') setOffer([drag.bindingId, row.bindingId]);
+                  endDrag();
+                },
+              }
+            : undefined
+        }
+      />
+    );
+  };
 
   return (
     <FloatingCard
       storageKey="rig-home-spaces-collapsed"
       title="Spaces"
       count={rows.length + settingUp.length}
+      headerAction={rows.length > 0 ? <SpacesViewMenu layout={layout} dispatch={dispatch} /> : undefined}
     >
       {settingUp.length > 0 && (
         <div className="flex flex-col gap-1">
@@ -159,42 +271,122 @@ export function SpacesCard({
           ))}
         </div>
       )}
+      {offer && nameOf.has(offer[0]) && nameOf.has(offer[1]) && (
+        <GroupBothOffer
+          names={[nameOf.get(offer[0])!, nameOf.get(offer[1])!]}
+          onAccept={() => {
+            makeGroup(offer);
+            setOffer(null);
+          }}
+          onDismiss={() => setOffer(null)}
+        />
+      )}
       {rows.length === 0 ? (
         settingUp.length === 0 && (
           <p className="text-text-muted px-1 text-xs">{emptyHint ?? 'A space for your team and your agents.'}</p>
         )
-      ) : visible.length === 0 ? (
+      ) : !anyShown && !view.sections.some((s) => s.visible && s.kind === 'group') ? (
         <p className="text-text-muted px-1 text-xs">No spaces match this filter.</p>
       ) : (
         <div className="flex flex-col gap-1">
-          {visible.map((row) => (
-            <SpaceRow
-              key={row.bindingId}
-              row={row}
-              status={statusByBinding.get(row.bindingId)}
-              attention={attentionByBinding.get(row.bindingId) ?? { kind: 'idle', lastActivityAt: null }}
-              onOpenPath={onOpenPath}
-              pinned={pinned.has(row.bindingId)}
-              onTogglePinned={() => togglePinned(row.bindingId)}
-              isHighlighted={row.bindingId === highlightBindingId}
-              offline={offline}
-            />
-          ))}
+          {view.sections.map((section) => {
+            // While a grouped space is dragged, Ungrouped shows even when empty, as a place to drop it.
+            const dropHere = section.kind === 'ungrouped' && drag?.kind === 'space' && drag.groupId !== null;
+            if (!section.visible && !dropHere) return null;
+            const hasHighlight = section.rows.some((r) => r.bindingId === highlightBindingId);
+            const collapsed = section.collapsed && !hasHighlight;
+            const group = section.kind === 'group' ? section.groupId! : null;
+            return (
+              <div
+                key={section.key}
+                className={cn('flex flex-col gap-1 rounded-control', dropKey === section.key && 'bg-accent-subtle')}
+                data-testid="space-section"
+                data-section={section.key}
+                data-kind={section.kind}
+                {...dropProps(section)}
+              >
+                {section.title !== null && (
+                  <SectionHeader
+                    title={section.title}
+                    count={section.rows.length}
+                    collapsed={collapsed}
+                    onToggle={() =>
+                      group
+                        ? dispatch({ type: 'setGroupCollapsed', id: group, collapsed: !section.collapsed })
+                        : dispatch({ type: 'setSectionCollapsed', key: section.key, collapsed: !section.collapsed })
+                    }
+                    group={
+                      group
+                        ? {
+                            renaming: renamingId === group,
+                            onRenameStart: () => setRenamingId(group),
+                            onRenameDone: (name) => {
+                              setRenamingId(null);
+                              if (name !== null) dispatch({ type: 'renameGroup', id: group, name });
+                            },
+                            onDelete: () => dispatch({ type: 'deleteGroup', id: group }),
+                            onDragStart: () => setDrag({ kind: 'group', id: group }),
+                            onDragEnd: endDrag,
+                          }
+                        : undefined
+                    }
+                  />
+                )}
+                {!collapsed && section.rows.map(renderRow)}
+              </div>
+            );
+          })}
+          {view.folded.length > 0 && (
+            <>
+              <QuietFold
+                count={view.folded.length}
+                open={quietOpen || highlightFolded}
+                onToggle={() => setQuietOpen((o) => !o)}
+              />
+              {(quietOpen || highlightFolded) && view.folded.map(renderRow)}
+            </>
+          )}
         </div>
       )}
-      {!showAll && sorted.length > SHOWN_CAP && (
-        <div className="flex items-center justify-between px-1">
-          <button
-            type="button"
-            onClick={() => setShowAll(true)}
-            className="text-text-muted hover:text-text-primary text-xs transition-colors"
-          >
-            Show all {sorted.length}
-          </button>
-          <span className="text-text-muted text-xs">Sorted by activity</span>
-        </div>
-      )}
+      {rows.length > 0 && customGroups && <NewGroupButton onClick={() => makeGroup()} />}
     </FloatingCard>
+  );
+}
+
+type DragItem = { kind: 'space'; bindingId: string; groupId: string | null } | { kind: 'group'; id: string };
+
+/** Each space's needs-you / live / last-activity signals, for grouping by state and folding quiet spaces. */
+function spaceSignalsOf(
+  rows: readonly HomeRigRow[],
+  ctx: {
+    statusByBinding: ReadonlyMap<string, RigSpaceStatus>;
+    selfUserId: string | null;
+    summarySpaces: readonly RigNotificationSpaceSummary[];
+    localActivity?: ReadonlyMap<string, number | null>;
+    offline: boolean;
+  }
+): Map<string, SpaceSignals> {
+  const notifications = new Map(ctx.summarySpaces.map((s) => [s.bindingId, s]));
+  // The relay sends status for a capped number of spaces: once any has
+  // loaded, a space without one goes by this computer's activity alone.
+  const statusLoaded = ctx.offline || ctx.statusByBinding.size > 0;
+  return new Map(
+    rows.map((row) => {
+      const status = ctx.statusByBinding.get(row.bindingId);
+      const n = notifications.get(row.bindingId);
+      const relayAt = lastActivityAt(status);
+      const localAt = ctx.localActivity?.get(row.bindingId) ?? null;
+      return [
+        row.bindingId,
+        {
+          needsYou:
+            spaceNeedsApproval(status, ctx.selfUserId) || (n !== undefined && n.level !== 'nothing' && n.directUnread > 0),
+          live: spaceIsActive(status),
+          lastActivityAt: relayAt === null && localAt === null ? null : Math.max(relayAt ?? 0, localAt ?? 0),
+          known: statusLoaded,
+        },
+      ];
+    })
   );
 }
 
@@ -322,6 +514,7 @@ function SpaceRow({
   onTogglePinned,
   isHighlighted,
   offline,
+  grouping,
 }: {
   row: HomeRigRow;
   status: RigSpaceStatus | undefined;
@@ -331,6 +524,8 @@ function SpaceRow({
   onTogglePinned: () => void;
   isHighlighted: boolean;
   offline: boolean;
+  /** Custom groups only: drag the row to a group, or move it from its menu. */
+  grouping?: RowGrouping;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -418,10 +613,41 @@ function SpaceRow({
     <div
       className={cn(
         'group flex items-center gap-2.5 rounded-control px-2 py-2 transition-colors',
-        isHighlighted ? 'bg-accent-subtle' : 'hover:bg-bg-2'
+        isHighlighted ? 'bg-accent-subtle' : 'hover:bg-bg-2',
+        grouping?.dragging && 'opacity-50'
       )}
       data-testid="space-row"
+      data-binding-id={row.bindingId}
       data-offline={offline || undefined}
+      draggable={grouping ? true : undefined}
+      onDragStart={
+        grouping
+          ? (e) => {
+              e.dataTransfer.effectAllowed = 'move';
+              e.dataTransfer.setData('text/plain', row.name ?? row.bindingId);
+              grouping.onDragStart();
+            }
+          : undefined
+      }
+      onDragEnd={grouping?.onDragEnd}
+      onDragOver={
+        grouping?.acceptsPair
+          ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = 'move';
+            }
+          : undefined
+      }
+      onDrop={
+        grouping?.acceptsPair
+          ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              grouping.onPairDrop();
+            }
+          : undefined
+      }
     >
       <SpaceStatusTile
         attention={shown}
@@ -521,10 +747,26 @@ function SpaceRow({
         onDownload={() => void download()}
         onLocate={() => void locate()}
         offline={offline}
+        grouping={grouping}
       />
     </div>
   );
 }
+
+type RowGrouping = {
+  groups: readonly HomeGroup[];
+  /** The row's group, or null when ungrouped. */
+  groupId: string | null;
+  onMove: (groupId: string | null) => void;
+  /** A new group holding just this space. */
+  onNewGroup: () => void;
+  dragging: boolean;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  /** Another ungrouped space is being dragged over this ungrouped one. */
+  acceptsPair: boolean;
+  onPairDrop: () => void;
+};
 
 function SpaceRowMenu({
   row,
@@ -534,6 +776,7 @@ function SpaceRowMenu({
   onDownload,
   onLocate,
   offline,
+  grouping,
 }: {
   row: HomeRigRow;
   pinned: boolean;
@@ -542,9 +785,15 @@ function SpaceRowMenu({
   onDownload: () => void;
   onLocate: () => void;
   offline: boolean;
+  grouping?: RowGrouping;
 }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const closeMenu = useCallback(() => {
+    setOpen(false);
+    setMoveOpen(false);
+  }, []);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -599,7 +848,16 @@ function SpaceRowMenu({
       >
         <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
       </button>
-      <Popover anchor={triggerRef} open={open} onClose={() => setOpen(false)} role="menu" gap={4} estimatedWidth={170} minWidth={170}>
+      <Popover
+        anchor={triggerRef}
+        open={open}
+        onClose={closeMenu}
+        role="menu"
+        gap={4}
+        estimatedWidth={170}
+        minWidth={170}
+        keepOpenOn={insideSubmenu}
+      >
         {row.kind === 'relayOnly' && canAutoJoin(row.role) && (
           <NeedsConnection blocked={offline} className="block w-full cursor-not-allowed">
             <button
@@ -661,6 +919,48 @@ function SpaceRowMenu({
           <Star className={cn('size-3.5 shrink-0', pinned && 'fill-current')} strokeWidth={1.5} />
           {pinned ? 'Unpin' : 'Pin'}
         </button>
+        {grouping && (
+          <SubmenuItem
+            label="Move to group…"
+            open={moveOpen}
+            onOpenChange={setMoveOpen}
+            icon={<FolderInput className="size-3.5 shrink-0" strokeWidth={1.5} />}
+          >
+            <MenuCheckRow
+              label="No group"
+              checked={grouping.groupId === null}
+              onSelect={() => {
+                closeMenu();
+                grouping.onMove(null);
+              }}
+            />
+            {grouping.groups.map((g) => (
+              <MenuCheckRow
+                key={g.id}
+                label={g.name}
+                checked={grouping.groupId === g.id}
+                onSelect={() => {
+                  closeMenu();
+                  grouping.onMove(g.id);
+                }}
+              />
+            ))}
+            <div className="border-border-hairline my-1 border-t" />
+            <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              onClick={() => {
+                closeMenu();
+                grouping.onNewGroup();
+              }}
+              className="hover:bg-bg-2 flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary"
+            >
+              <Plus className="size-3.5 shrink-0" strokeWidth={1.5} />
+              New group
+            </button>
+          </SubmenuItem>
+        )}
         <div className="border-border-hairline my-1 border-t" />
         <NeedsConnection blocked={offline} className="block w-full cursor-not-allowed">
           <button

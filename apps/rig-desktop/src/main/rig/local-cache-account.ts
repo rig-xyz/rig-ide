@@ -32,6 +32,8 @@ type RememberedWorkspaces = {
   bindings: RigWorkspaceBinding[];
 };
 const memory = new KV<{ account: Remembered; workspaces: RememberedWorkspaces }>('rig-local-cache');
+/** Home's layout cache (`home-layout.ts`); its namespace, repeated here so purging never imports the sync. */
+const homeLayoutMemory = new KV<{ state: { account: string } }>('rig-home-layout');
 
 /** The account these caches belong to right now, or null (signed out, or not known yet for this token). */
 export async function localCacheAccountId(): Promise<string | null> {
@@ -106,11 +108,14 @@ export async function purgeLocalCaches(options: { keepAccountId?: string } = {})
         .where(or(isNull(rigCommentsCache.accountId), ne(rigCommentsCache.accountId, keep)));
       const workspaces = await memory.get('workspaces');
       if (workspaces && workspaces.accountId !== keep) await memory.del('workspaces');
+      const layout = await homeLayoutMemory.get('state');
+      if (layout && !layout.account.startsWith(`${keep}@`)) await homeLayoutMemory.del('state');
     } else {
       await db.delete(rigRoomCache);
       await db.delete(rigCommentsCache);
       await memory.del('account');
       await memory.del('workspaces');
+      await homeLayoutMemory.del('state');
     }
   } catch (error) {
     log.warn('Rig local caches: could not purge', { error: String(error) });

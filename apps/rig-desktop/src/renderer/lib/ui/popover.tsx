@@ -56,6 +56,7 @@ export function Popover({
   minWidth = 190,
   className,
   ariaLabel,
+  keepOpenOn,
 }: {
   anchor: PopoverAnchor;
   open: boolean;
@@ -69,6 +70,8 @@ export function Popover({
   minWidth?: number;
   className?: string;
   ariaLabel?: string;
+  /** A press outside this popover that still shouldn't close it: inside its own submenu (a popover of its own). */
+  keepOpenOn?: (target: Element) => boolean;
 }) {
   const popRef = useRef<HTMLDivElement>(null);
   /**
@@ -106,6 +109,7 @@ export function Popover({
       const target = event.target as Node;
       if (popRef.current?.contains(target)) return;
       if (returnTo?.contains(target)) return; // the trigger's own click toggles; don't double-fire
+      if (target instanceof Element && keepOpenOn?.(target)) return;
       onClose();
     };
     const onKeyDown = (event: KeyboardEvent) => {
@@ -121,7 +125,7 @@ export function Popover({
       document.removeEventListener('mousedown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [open, onClose, anchor]);
+  }, [open, onClose, anchor, keepOpenOn]);
 
   // Roving focus for menus: items are focusable-but-not-tabbable buttons;
   // arrows move focus, Enter/Space activate the focused one natively.
