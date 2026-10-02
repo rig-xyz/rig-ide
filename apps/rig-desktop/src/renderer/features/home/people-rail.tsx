@@ -2,30 +2,26 @@ import { useQuery } from '@tanstack/react-query';
 import { rpc } from '@renderer/lib/ipc';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { PULSE_QUERY_KEY } from './briefing-spine';
+import { HomeFeedLabel } from './home-feed-label';
 import { derivePulseSectionState } from './pulse-state';
+import { firstNameKey, shortAge } from './recent-themes-state';
 
 /**
- * Round: HOME RESTRUCTURE — the right region, PEOPLE. The web hub home's
- * Team panel analog (`hub/web`'s `TeamList`), restyled to this app's
- * tokens: avatar/initial (`IdentityAvatar`, reused as-is — no fake
- * presence dots, only what the pulse briefing actually returns), name,
- * their one narrated line. "You" first.
+ * Home's PEOPLE, under "Across your spaces today" in the center column: a
+ * flat list, one person each, avatar, name, when they last wrote in a Room
+ * today, and their one Pulse sentence below. "You" first. The web hub
+ * home's Team panel analog (`hub/web`'s `TeamList`), in this app's tokens.
  *
- * Reads the SAME query key `BriefingSpine` owns (`PULSE_QUERY_KEY`) —
- * React Query dedupes the cache entry, so this is not a second fetch, just
- * a second reader of the one already in flight/cached. Renders nothing at
- * all when there's no one to show (loading, error, or a briefing with an
- * empty `perPerson`) — no empty-state chrome, matching `PulseSection`'s
- * own established "absent, not a teaser" precedent.
+ * Reads the SAME query key `BriefingSpine` owns (`PULSE_QUERY_KEY`), so it
+ * is a second reader of the one fetch, not a second fetch. Renders nothing
+ * at all when there's no one to show (loading, error, or a briefing with an
+ * empty `perPerson`), matching `PulseSection`'s "absent, not a teaser".
  *
- * Polish round, lane C ("spaces first"): re-skinned onto the SAME floating
- * glass card look every other Home card now shares (design doc — "only
- * re-skinned... Don't redesign its content"), unconditionally rather than
- * only above the `xl` breakpoint, and the header dropped its mono
- * uppercase styling for the plain sentence-case label the rest of Home's
- * headers use now.
+ * Pulse carries no time per person; `lastActivity` (from the Room themes of
+ * the day, keyed by `firstNameKey`) gives one when it can, and the time is
+ * left out when it can't.
  */
-export function PeopleRail() {
+export function PeopleRail({ lastActivity }: { lastActivity?: ReadonlyMap<string, string> }) {
   const pulseQuery = useQuery({
     queryKey: PULSE_QUERY_KEY,
     queryFn: () => rpc.rig.pulse.get({}),
@@ -36,29 +32,51 @@ export function PeopleRail() {
   if (state.kind !== 'data' || state.briefing.perPerson.length === 0) return null;
 
   const people = [...state.briefing.perPerson].sort((a, b) => Number(b.isSelf) - Number(a.isSelf));
+  const now = Date.now();
 
   return (
-    <div className="border-border-hairline bg-bg-1 shadow-float flex w-full flex-col gap-2 rounded-card border p-3 text-left">
-      <p className="text-text-primary text-sm font-medium">People</p>
-      <div className="flex flex-col gap-3">
-        {people.map((person) => (
-          <div key={person.userId} className="flex items-start gap-2.5">
-            <IdentityAvatar
-              name={person.name}
-              avatarUrl={person.avatarUrl}
-              sizeClassName="size-6"
-              textClassName="text-xs"
-              className="mt-0.5"
-            />
-            <div className="min-w-0 flex-1">
-              <p className="text-text-primary text-xs font-medium">
-                {person.isSelf ? 'You' : (person.name ?? 'Teammate')}
-              </p>
-              <p className="text-text-muted mt-0.5 text-xs leading-relaxed">{person.line}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+    <section className="flex flex-col gap-1" data-testid="home-people">
+      <HomeFeedLabel aside="today">People</HomeFeedLabel>
+      <ul className="flex flex-col">
+        {people.map((person) => {
+          const key = firstNameKey(person.name);
+          const at = key ? lastActivity?.get(key) : undefined;
+          return (
+            <li
+              key={person.userId}
+              className="flex items-start gap-2.5 px-2 py-2"
+              data-testid="home-person"
+            >
+              <IdentityAvatar
+                name={person.name}
+                avatarUrl={person.avatarUrl}
+                sizeClassName="size-6"
+                textClassName="text-2xs"
+                className="mt-px"
+              />
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <p className="flex min-w-0 items-baseline gap-2">
+                  <span
+                    className="min-w-0 truncate text-sm font-medium text-text-primary"
+                    data-testid="home-person-name"
+                  >
+                    {person.isSelf ? 'You' : (person.name ?? 'Teammate')}
+                  </span>
+                  {at && (
+                    <span
+                      className="ml-auto shrink-0 font-mono text-2xs text-text-muted tabular-nums"
+                      data-testid="home-person-age"
+                    >
+                      {shortAge(at, now)}
+                    </span>
+                  )}
+                </p>
+                <p className="text-sm leading-snug text-text-secondary">{person.line}</p>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }

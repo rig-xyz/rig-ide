@@ -3,9 +3,13 @@ import type { RigRecentTheme } from '@shared/rig/recent-themes';
 import { parseRecentThemes } from '@shared/rig/recent-themes';
 import {
   deriveAcrossSpacesView,
+  firstNameKey,
+  lastActivityByPerson,
   moreTopicsLabel,
+  shortAge,
   splitRecentThemes,
   themeActivityLine,
+  themeFaces,
   topicBySpace,
   withTopic,
 } from './recent-themes-state';
@@ -171,5 +175,60 @@ describe('parseRecentThemes', () => {
       },
     ]);
     expect(parseRecentThemes({ nope: true })).toBeNull();
+  });
+});
+
+describe('shortAge', () => {
+  const now = Date.parse('2026-10-02T12:00:00.000Z');
+  const ago = (ms: number) => new Date(now - ms).toISOString();
+
+  it('says "now" under a minute, then minutes, hours and days, with no "ago"', () => {
+    expect(shortAge(ago(20_000), now)).toBe('now');
+    expect(shortAge(ago(4 * 60_000), now)).toBe('4m');
+    expect(shortAge(ago(59 * 60_000 + 59_000), now)).toBe('59m');
+    expect(shortAge(ago(60 * 60_000), now)).toBe('1h');
+    expect(shortAge(ago(23 * 3_600_000 + 59 * 60_000), now)).toBe('23h');
+    expect(shortAge(ago(49 * 3_600_000), now)).toBe('2d');
+  });
+
+  it('a time ahead of the clock is "now", and an unreadable one is empty', () => {
+    expect(shortAge(new Date(now + 60_000).toISOString(), now)).toBe('now');
+    expect(shortAge('not a date', now)).toBe('');
+  });
+});
+
+describe('themeFaces', () => {
+  it('shows an agent as its owner, each person once, in order', () => {
+    expect(themeFaces(["Hugo's Claude", 'Ana', 'Hugo', "Ana's Codex", "Lea's An agent"])).toEqual([
+      'Hugo',
+      'Ana',
+      'Lea',
+    ]);
+  });
+
+  it('keeps a guest or a plain name as it is', () => {
+    expect(themeFaces(['A guest', 'Sam'])).toEqual(['A guest', 'Sam']);
+  });
+});
+
+describe('firstNameKey', () => {
+  it("is a name's first word, lowercased, or null without one", () => {
+    expect(firstNameKey('Hugo Martin')).toBe('hugo');
+    expect(firstNameKey('  hugo ')).toBe('hugo');
+    expect(firstNameKey('')).toBeNull();
+    expect(firstNameKey(null)).toBeNull();
+  });
+});
+
+describe('lastActivityByPerson', () => {
+  it("each person's newest theme, their agents included", () => {
+    const at = lastActivityByPerson([
+      theme('a', { people: ['Hugo'], lastActivityAt: '2026-10-02T09:00:00.000Z' }),
+      theme('b', { people: ["Hugo's Claude", 'Ana'], lastActivityAt: '2026-10-02T11:00:00.000Z' }),
+      theme('c', { people: ['Ana'], lastActivityAt: '2026-10-02T10:00:00.000Z' }),
+    ]);
+    expect(at.get('hugo')).toBe('2026-10-02T11:00:00.000Z');
+    expect(at.get('ana')).toBe('2026-10-02T11:00:00.000Z');
+    expect(at.has('lea')).toBe(false);
   });
 });

@@ -21,7 +21,7 @@ import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { cn } from '@renderer/lib/utils';
 import { AcrossYourSpacesToday } from './across-your-spaces-today';
-import { BriefingSpine } from './briefing-spine';
+import { BriefingSpine, PULSE_QUERY_KEY } from './briefing-spine';
 import { FloatingCard } from './floating-card';
 import {
   deriveHomeConnection,
@@ -45,7 +45,12 @@ import { NeedsYouSection } from './needs-you-section';
 import { NewSpaceCta } from './new-space-cta';
 import { PeopleRail } from './people-rail';
 import { shouldShowPulseSection } from './pulse-state';
-import { deriveAcrossSpacesView, topicBySpace } from './recent-themes-state';
+import {
+  deriveAcrossSpacesView,
+  firstNameKey,
+  lastActivityByPerson,
+  topicBySpace,
+} from './recent-themes-state';
 import { RigsRail } from './rigs-rail';
 import { indexSpaceStatuses } from './space-status-state';
 import { SpacesCard } from './spaces-card';
@@ -56,7 +61,7 @@ import { deriveWelcomePhase, type WelcomePhase } from './welcome-state';
 /**
  * Round: HOME RESTRUCTURE — Dylan-approved IA, structurally referencing
  * the web hub home (`hub/web`'s `app/home/page.tsx`: sidebar/center/rail),
- * restyled to this app's own tokens rather than copied. Three regions:
+ * restyled to this app's own tokens rather than copied. Two regions:
  *
  *   LEFT   — `RigsRail`, the action zone: ONE rig-centric list (kills the
  *            old separate CONTINUE + RIGS sections and the mid-page "Open
@@ -64,11 +69,12 @@ import { deriveWelcomePhase, type WelcomePhase } from './welcome-state';
  *            `Welcome` screen instead, see onboarding-flow-spec.md).
  *   CENTER — `BriefingSpine`, the pulse briefing (kicker, greeting,
  *            summary, ask, WHAT'S NEW).
- *   RIGHT  — `PeopleRail`, per-person pulse lines. Absent (no chrome) when
- *            there's no one to show.
+ *            Then "Across your spaces today" and `PeopleRail`, per-person
+ *            pulse lines (absent when there's no one to show), as flat
+ *            feeds in the same column. No right column.
  *
  * `showPulse` (`shouldShowPulseSection`, UNCHANGED semantics) gates the
- * center/right regions together — signed-out and "solo" (no relay
+ * center region — signed-out and "solo" (no relay
  * bindings) render the rigs rail alone, which works standalone by design.
  * The true empty state (no rigs anywhere) pre-empts everything else: the
  * first-run `Welcome` screen, one line and one button
@@ -451,7 +457,24 @@ export function Home({
   // Offline, like the rows' live status, no row claims a topic.
   const topicByBinding = topicBySpace(acrossView.kind === 'themes' && !connectionDown ? acrossView.themes : []);
   const roomThemesOn = useRoomThemesEnabled();
-  // A theme card opens its space's Room, on that theme when Room themes is
+  // The topic lines' faces and People's times both come from what Home
+  // already reads: Pulse's people (their pictures) and the day's themes.
+  const pulseQuery = useQuery({
+    queryKey: PULSE_QUERY_KEY,
+    queryFn: () => rpc.rig.pulse.get({}),
+    staleTime: 60_000,
+    enabled: showPulse,
+  });
+  const avatarByName = new Map<string, string>();
+  if (pulseQuery.data?.success) {
+    for (const person of pulseQuery.data.data.briefing.perPerson) {
+      const key = firstNameKey(person.name);
+      if (key && person.avatarUrl && !avatarByName.has(key)) avatarByName.set(key, person.avatarUrl);
+    }
+  }
+  const avatarOf = (name: string) => avatarByName.get(firstNameKey(name) ?? '') ?? null;
+  const lastActivity = lastActivityByPerson(acrossView.kind === 'themes' ? acrossView.themes : []);
+  // A theme line opens its space's Room, on that theme when Room themes is
   // on. A space with no folder here yet is flashed in the Spaces card.
   const openSpaceOnTheme = (bindingId: string, themeId: string) => {
     const row = spaceRows.find((r) => r.bindingId === bindingId);
@@ -539,24 +562,25 @@ export function Home({
        * BriefingSpine second in the DOM with `order-1` (visually first,
        * narrow) — so Tab jumped to the rig list before the briefing even
        * though the briefing rendered above it. Inverted here: DOM order
-       * now IS the narrow-viewport visual order (briefing, then rigs, then
-       * people) with no override needed for it, and `lg:order-*` ONLY
+       * now IS the narrow-viewport visual order (briefing and people, then
+       * rigs) with no override needed for it, and `lg:order-*` ONLY
        * shifts rigs to the visual left at wide viewports — keyboard order
        * matches what's on screen at every width.
        */}
       {/*
        * Layout-air round (Dylan's screenshot): `gap-8` → `gap-10` between
        * the rails and the center column — a bit more separation now that
-       * the rails carry their own surface too (`RigsRail`/`PeopleRail`'s
-       * own `bg-1` panels below), so the seam reads as two distinct
+       * the rails carry their own surface too (`RigsRail`'s own `bg-1`
+       * panel below), so the seam reads as two distinct
        * regions rather than one continuous strip. `lg:px-4` on the
        * center column is new too — it had NONE of its own before,
        * relying entirely on the row's `gap` for breathing room.
        */}
       <div className="flex min-h-0 flex-1 flex-col gap-8 lg:flex-row lg:items-start lg:gap-10">
         {showPulse && (
-          <div className="min-w-0 flex-1 lg:order-2 lg:px-4">
-            <div className="flex flex-col gap-6">
+          <div className="min-w-0 flex-1 lg:order-2 lg:px-4" data-testid="home-center">
+            {/* Capped so a topic or a person's sentence never runs too long on a wide window. */}
+            <div className="mx-auto flex w-full max-w-[44rem] flex-col gap-8">
               <BriefingSpine
                 localRigs={localRigs}
                 onOpenPath={onOpenPath}
@@ -566,8 +590,10 @@ export function Home({
                 <AcrossYourSpacesToday
                   view={acrossView}
                   onOpenTheme={(theme) => openSpaceOnTheme(theme.bindingId, theme.themeId)}
+                  avatarOf={avatarOf}
                 />
               )}
+              <PeopleRail lastActivity={lastActivity} />
               <NeedsYouSection
                 spaceRows={spaceRows}
                 statusByBinding={statusByBinding}
@@ -647,11 +673,6 @@ export function Home({
             />
           </FloatingCard>
         </div>
-        {showPulse && (
-          <div className="hidden xl:order-3 xl:block xl:w-[300px] xl:shrink-0">
-            <PeopleRail />
-          </div>
-        )}
       </div>
     </div>
   );

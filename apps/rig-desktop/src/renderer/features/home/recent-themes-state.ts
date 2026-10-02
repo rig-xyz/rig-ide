@@ -2,13 +2,13 @@ import type { RigRecentTheme, RigRecentThemes } from '@shared/rig/recent-themes'
 
 /**
  * Home's read of the relay's Room themes of the last 24h
- * (`@shared/rig/recent-themes`): the "Across your spaces today" cards and
+ * (`@shared/rig/recent-themes`): the "Across your spaces today" lines and
  * each Spaces row's topic. Pure, so the choices are tested on their own.
  */
 
-/** Cards shown before "N more topics". */
+/** Lines shown before "N more topics". */
 export const ACROSS_SHOWN_CAP = 5;
-/** Names in a card's activity line before "and N more". */
+/** Names in a line's activity before "and N more". */
 const PEOPLE_SHOWN_CAP = 3;
 
 function newestFirst(a: RigRecentTheme, b: RigRecentTheme): number {
@@ -16,7 +16,7 @@ function newestFirst(a: RigRecentTheme, b: RigRecentTheme): number {
   return b.lastSeq - a.lastSeq;
 }
 
-/** Newest first: the first `cap` cards, and the rest behind "N more topics". */
+/** Newest first: the first `cap` lines, and the rest behind "N more topics". */
 export function splitRecentThemes(
   themes: readonly RigRecentTheme[],
   cap = ACROSS_SHOWN_CAP
@@ -36,6 +36,58 @@ export function themeActivityLine(theme: RigRecentTheme): string {
   const named = theme.people.slice(0, PEOPLE_SHOWN_CAP).join(', ');
   const rest = theme.people.length - PEOPLE_SHOWN_CAP;
   return `${count} · ${rest > 0 ? `${named} and ${rest} more` : named}`;
+}
+
+/** A line's age, short: "now", "4m", "1h", "3d". Empty when `at` can't be read. */
+export function shortAge(at: string, now: number): string {
+  const time = Date.parse(at);
+  if (Number.isNaN(time)) return '';
+  const minutes = Math.floor(Math.max(0, now - time) / 60_000);
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+/** The relay's agent labels (`actorLabel` in tap's `notify/copy.ts`): "Hugo's Claude". */
+const AGENT_LABEL = /^(.+)'s (?:Claude|Codex|An agent)$/;
+
+/**
+ * The faces on a line: who wrote in the theme, an agent shown as its owner,
+ * each person once, most recent first. "Hugo's Claude" and "Hugo" are one face.
+ */
+export function themeFaces(people: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const label of people) {
+    const name = AGENT_LABEL.exec(label)?.[1] ?? label;
+    if (!out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
+/** How a full name is matched to the relay's first-name labels: its first word, any case. */
+export function firstNameKey(name: string | null | undefined): string | null {
+  const first = name?.trim().split(/\s+/)[0];
+  return first ? first.toLowerCase() : null;
+}
+
+/**
+ * When each person last wrote in a Room today, by `firstNameKey`, their
+ * agents included: the newest theme they're a face on. People are named by
+ * first name only on the wire, so two teammates sharing one share a time.
+ */
+export function lastActivityByPerson(themes: readonly RigRecentTheme[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const theme of themes) {
+    for (const face of themeFaces(theme.people)) {
+      const key = firstNameKey(face);
+      if (!key) continue;
+      const current = out.get(key);
+      if (!current || theme.lastActivityAt > current) out.set(key, theme.lastActivityAt);
+    }
+  }
+  return out;
 }
 
 /**

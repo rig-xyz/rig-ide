@@ -7,10 +7,13 @@ import type { RigRecentTheme, RigRecentThemes } from '@shared/rig/recent-themes'
 
 /**
  * "Many spaces on Home" v2: "Across your spaces today" under the Ask box,
- * built from the relay's Room themes of the last 24h. One card per theme,
- * newest first, five then "N more topics"; a card opens its space's Room,
- * on that theme when Room themes is on; a quiet day says so. The same read
- * leads each Spaces row's status line with the space's busiest theme.
+ * built from the relay's Room themes of the last 24h. A flat feed, one line
+ * per theme, newest first, five then "N more topics"; a line opens in place
+ * to its description, one at a time, and from there (or its space name)
+ * opens its space's Room, on that theme when Room themes is on; a quiet day
+ * says so. People sits under it in the same center column, with no right
+ * column. The same read leads each Spaces row's status line with the
+ * space's busiest theme.
  */
 
 const NOW = Date.now();
@@ -47,6 +50,7 @@ const mocks = vi.hoisted(() => ({
   roomThemesEnabled: true,
   getCalls: 0,
   requests: [] as Array<[string, string]>,
+  pulse: null as unknown,
 }));
 
 const fail = { success: false, error: { kind: 'relay', message: 'nope' } };
@@ -124,7 +128,7 @@ vi.mock('@renderer/lib/ipc', () => ({
         listConnectors: async () => ({ success: true, data: [] }),
       },
       connectors: { list: async () => [] },
-      pulse: { get: async () => fail },
+      pulse: { get: async () => mocks.pulse ?? fail },
       syncHealth: {
         get: async ({ paths }: { paths: string[] }) =>
           Object.fromEntries(paths.map((p) => [p, { state: 'running' }])),
@@ -177,8 +181,14 @@ describe('Home: Across your spaces today', () => {
   let opened: Array<{ path: string; kind?: string }>;
 
   const section = () => host.querySelector<HTMLElement>('[data-testid="across-spaces-today"]');
-  const cards = () => [...host.querySelectorAll<HTMLElement>('[data-testid="theme-card"]')];
-  const cardIds = () => cards().map((c) => c.dataset.themeId);
+  const lines = () => [...host.querySelectorAll<HTMLElement>('[data-testid="theme-line"]')];
+  const lineIds = () => lines().map((c) => c.dataset.themeId);
+  const openIds = () =>
+    lines()
+      .filter((l) => l.dataset.open === 'true')
+      .map((l) => l.dataset.themeId);
+  const toggle = (line: HTMLElement) =>
+    line.querySelector<HTMLButtonElement>('[data-testid="theme-line-name"]')!;
   const rowLine = (bindingId: string) =>
     host
       .querySelector(`[data-testid="space-row"][data-binding-id="${bindingId}"]`)
@@ -209,6 +219,7 @@ describe('Home: Across your spaces today', () => {
     mocks.roomThemesEnabled = true;
     mocks.getCalls = 0;
     mocks.requests = [];
+    mocks.pulse = null;
     opened = [];
     host = document.createElement('div');
     document.body.appendChild(host);
@@ -221,22 +232,24 @@ describe('Home: Across your spaces today', () => {
     localStorage.clear();
   });
 
-  it('shows one card per theme, newest first, five then "N more topics"', async () => {
+  it('shows one line per theme, newest first, five then "N more topics"', async () => {
     const themes = [3, 0, 6, 1, 5, 2, 4].map((i) => theme(i));
     mocks.live = { kind: 'live', themes, savedAt: NOW };
     await mount();
 
-    expect(section()?.querySelector('h2')?.textContent).toBe('Across your spaces today');
-    expect(cardIds()).toEqual(['thm_0', 'thm_1', 'thm_2', 'thm_3', 'thm_4']);
+    const label = section()?.querySelector('h2');
+    expect(label?.textContent).toBe('Across your spaces today7');
+    expect(label?.className).toContain('uppercase');
+    expect(lineIds()).toEqual(['thm_0', 'thm_1', 'thm_2', 'thm_3', 'thm_4']);
     const more = host.querySelector<HTMLButtonElement>('[data-testid="across-spaces-more"]')!;
     expect(more.textContent).toBe('2 more topics');
     await act(async () => more.click());
-    expect(cardIds()).toEqual(['thm_0', 'thm_1', 'thm_2', 'thm_3', 'thm_4', 'thm_5', 'thm_6']);
+    expect(lineIds()).toEqual(['thm_0', 'thm_1', 'thm_2', 'thm_3', 'thm_4', 'thm_5', 'thm_6']);
     // One read for the whole Home, not one per row.
     expect(mocks.getCalls).toBe(1);
   });
 
-  it('a card: the theme in bold, its space, its line, and who wrote what', async () => {
+  it('a line: color dot, the theme in bold, its space, faces with agents as their owner, and its age', async () => {
     mocks.live = {
       kind: 'live',
       savedAt: NOW,
@@ -245,38 +258,104 @@ describe('Home: Across your spaces today', () => {
           name: 'Bugs & Wishlist',
           description: 'Things to fix before launch',
           messageCount: 5,
-          people: ['Hugo', "Hugo's Claude"],
+          people: ["Hugo's Claude", 'Hugo', 'Ana'],
+          lastActivityAt: iso(4),
         }),
       ],
     };
     await mount();
-    const card = cards()[0]!;
-    const name = [...card.querySelectorAll('span')].find(
-      (s) => s.textContent === 'Bugs & Wishlist'
-    )!;
-    expect(name.className).toContain('font-medium');
-    expect(card.querySelector('[data-testid="theme-card-space"]')?.textContent).toBe('# launch');
-    expect(card.textContent).toContain('Things to fix before launch');
-    expect(card.textContent).toContain("5 new messages · Hugo, Hugo's Claude");
+    const line = lines()[0]!;
+    // No card around it.
+    expect(line.className).not.toMatch(/\bborder\b|shadow/);
+    expect(section()?.querySelector('.rounded-card')).toBeNull();
+    const name = line.querySelector<HTMLElement>('[data-testid="theme-line-name"]')!;
+    expect(name.textContent).toBe('Bugs & Wishlist');
+    expect(name.className).toContain('font-semibold');
+    expect(name.className).toContain('truncate');
+    expect(line.querySelector('[data-testid="theme-line-space"]')?.textContent).toBe('# launch');
+    const dot = line.querySelector<HTMLElement>('span[aria-hidden]')!;
+    expect(dot.style.background).toMatch(/^var\(--theme-[1-8]\)$/);
+    expect(dot.style.boxShadow).toContain('color-mix');
+    const faces = line.querySelector('[data-testid="theme-line-faces"]')!;
+    expect([...faces.children].map((f) => f.getAttribute('title'))).toEqual(['Hugo', 'Ana']);
+    expect(line.querySelector('[data-testid="theme-line-age"]')?.textContent).toBe('4m');
+    // One line: the description and the activity wait until it's opened.
+    expect(line.querySelector('[data-testid="theme-line-detail"]')).toBeNull();
+    expect(line.textContent).not.toContain('Things to fix before launch');
   });
 
-  it('clicking a card opens its Room on that theme when Room themes is on', async () => {
+  it('a line opens in place to its description, one line open at a time', async () => {
+    mocks.live = {
+      kind: 'live',
+      savedAt: NOW,
+      themes: [
+        theme(1, {
+          description: 'Things to fix',
+          messageCount: 5,
+          people: ['Hugo', "Hugo's Claude"],
+        }),
+        theme(2),
+      ],
+    };
+    await mount();
+    await act(async () => toggle(lines()[0]!).click());
+    expect(openIds()).toEqual(['thm_1']);
+    expect(toggle(lines()[0]!).getAttribute('aria-expanded')).toBe('true');
+    const detail = lines()[0]!.querySelector('[data-testid="theme-line-detail"]')!;
+    expect(detail.textContent).toContain('Things to fix');
+    expect(detail.textContent).toContain(
+      "5 new messages · Hugo, Hugo's Claude · Open the Room on this topic ›"
+    );
+    // Opening it opens nothing yet.
+    expect(opened).toEqual([]);
+
+    // Clicking anywhere on another line opens it and closes the first.
+    await act(async () =>
+      lines()[1]!.querySelector<HTMLElement>('[data-testid="theme-line-age"]')!.click()
+    );
+    expect(openIds()).toEqual(['thm_2']);
+    await act(async () => toggle(lines()[1]!).click());
+    expect(openIds()).toEqual([]);
+    expect(opened).toEqual([]);
+  });
+
+  it('"Open the Room on this topic" opens its Room on that theme when Room themes is on', async () => {
     mocks.live = {
       kind: 'live',
       savedAt: NOW,
       themes: [theme(1, { bindingId: 's-pricing', spaceName: 'pricing' })],
     };
     await mount();
-    await act(async () => cards()[0]!.click());
+    await act(async () => toggle(lines()[0]!).click());
+    await act(async () =>
+      lines()[0]!.querySelector<HTMLButtonElement>('[data-testid="theme-line-open"]')!.click()
+    );
     expect(opened).toEqual([{ path: '/Users/me/Rig/pricing', kind: 'space' }]);
     expect(mocks.requests).toEqual([['s-pricing', 'thm_1']]);
   });
 
-  it('with Room themes off, a card just opens the Room', async () => {
+  it('the space name opens its Room on that theme too, without opening the line', async () => {
+    mocks.live = {
+      kind: 'live',
+      savedAt: NOW,
+      themes: [theme(1, { bindingId: 's-pricing', spaceName: 'pricing' })],
+    };
+    await mount();
+    await act(async () =>
+      lines()[0]!.querySelector<HTMLButtonElement>('[data-testid="theme-line-space"]')!.click()
+    );
+    expect(opened).toEqual([{ path: '/Users/me/Rig/pricing', kind: 'space' }]);
+    expect(mocks.requests).toEqual([['s-pricing', 'thm_1']]);
+    expect(openIds()).toEqual([]);
+  });
+
+  it('with Room themes off, it just opens the Room', async () => {
     mocks.roomThemesEnabled = false;
     mocks.live = { kind: 'live', savedAt: NOW, themes: [theme(1)] };
     await mount();
-    await act(async () => cards()[0]!.click());
+    await act(async () =>
+      lines()[0]!.querySelector<HTMLButtonElement>('[data-testid="theme-line-space"]')!.click()
+    );
     expect(opened).toEqual([{ path: '/Users/me/Rig/launch', kind: 'space' }]);
     expect(mocks.requests).toEqual([]);
   });
@@ -288,9 +367,78 @@ describe('Home: Across your spaces today', () => {
       themes: [theme(1, { bindingId: 's-remote', spaceName: 'remote' })],
     };
     await mount();
-    await act(async () => cards()[0]!.click());
+    await act(async () => toggle(lines()[0]!).click());
+    await act(async () =>
+      lines()[0]!.querySelector<HTMLButtonElement>('[data-testid="theme-line-open"]')!.click()
+    );
     expect(opened).toEqual([]);
     expect(mocks.requests).toEqual([]);
+  });
+
+  it('People sits under the topics in the center column: You first, a time, the Pulse sentence, no right column', async () => {
+    mocks.live = {
+      kind: 'live',
+      savedAt: NOW,
+      themes: [
+        theme(1, { people: ["Ana's Claude"], lastActivityAt: iso(12) }),
+        theme(2, { people: ['Ana'], lastActivityAt: iso(90) }),
+      ],
+    };
+    mocks.pulse = {
+      success: true,
+      data: {
+        cached: false,
+        briefing: {
+          greeting: '',
+          summary: '',
+          pickBackUp: [],
+          perRig: [],
+          perPerson: [
+            {
+              userId: 'u2',
+              name: 'Ana Silva',
+              avatarUrl: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=',
+              line: 'Ana shipped the pricing page.',
+              isSelf: false,
+            },
+            {
+              userId: 'u1',
+              name: 'Dylan',
+              avatarUrl: null,
+              line: 'You reviewed the launch plan.',
+              isSelf: true,
+            },
+          ],
+          generatedAt: new Date(NOW).toISOString(),
+          degraded: false,
+        },
+      },
+    };
+    await mount();
+    const center = host.querySelector<HTMLElement>('[data-testid="home-center"]')!;
+    const people = center.querySelector<HTMLElement>('[data-testid="home-people"]')!;
+    expect(people).not.toBeNull();
+    expect(people.querySelector('h2')?.textContent).toBe('Peopletoday');
+    // Below the topics.
+    expect(
+      section()!.compareDocumentPosition(people) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    const rows = [...people.querySelectorAll<HTMLElement>('[data-testid="home-person"]')];
+    expect(
+      rows.map((r) => r.querySelector('[data-testid="home-person-name"]')?.textContent)
+    ).toEqual(['You', 'Ana Silva']);
+    expect(rows[1]!.textContent).toContain('Ana shipped the pricing page.');
+    // Ana's last word today, her agent's included; no time for someone the themes don't name.
+    expect(rows[1]!.querySelector('[data-testid="home-person-age"]')?.textContent).toBe('12m');
+    expect(rows[0]!.querySelector('[data-testid="home-person-age"]')).toBeNull();
+    // No pills, no card.
+    expect(people.querySelector('.rounded-card, .rounded-chip')).toBeNull();
+    // Her face on the topic line is her Pulse picture.
+    expect(lines()[0]!.querySelector('[data-testid="theme-line-faces"] img')).not.toBeNull();
+    // Two columns: the Spaces card's and the center; nothing to the right.
+    const columns = [...center.parentElement!.children];
+    expect(columns).toHaveLength(2);
+    expect(host.querySelector('[class*="xl:w-[300px]"]')).toBeNull();
   });
 
   it('says "Quiet day across your spaces" when nothing happened', async () => {
@@ -299,13 +447,13 @@ describe('Home: Across your spaces today', () => {
     expect(host.querySelector('[data-testid="across-spaces-empty"]')?.textContent).toBe(
       'Quiet day across your spaces'
     );
-    expect(cards()).toHaveLength(0);
+    expect(lines()).toHaveLength(0);
   });
 
   it("shows this account's last topics from this computer when the relay can't answer", async () => {
     mocks.live = { kind: 'cached', savedAt: NOW - 3_600_000, themes: [theme(2)] };
     await mount();
-    expect(cardIds()).toEqual(['thm_2']);
+    expect(lineIds()).toEqual(['thm_2']);
   });
 
   it('drops the pulse summary: no "updated" line, the Ask box and its chips stay', async () => {
