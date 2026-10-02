@@ -21,7 +21,7 @@ import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { cn } from '@renderer/lib/utils';
 import { AcrossYourSpacesToday } from './across-your-spaces-today';
-import { BriefingSpine, PULSE_QUERY_KEY } from './briefing-spine';
+import { BriefingSpine, HomeGreeting, PULSE_QUERY_KEY } from './briefing-spine';
 import { FloatingCard } from './floating-card';
 import {
   deriveHomeConnection,
@@ -575,7 +575,18 @@ export function Home({
        * regions rather than one continuous strip. The center column adds
        * `lg:pl-2` of its own so the seam is the board's 48px.
        */}
-      {/* Balanced, not left-heavy: the Spaces card and the center column are one composition, capped and centered, so spare width splits evenly on both sides. */}
+      {/*
+       * One grid for the whole page, capped and centered: the greeting spans
+       * both columns, then New space and the Ask box start on the same line
+       * (the same height, a matched pair). Spacing scale: 8px inside a group,
+       * 12px between the left column's blocks, 24px under the greeting, 32px
+       * between sections in the center.
+       */}
+      {showPulse && (
+        <div className="mb-2 w-full lg:mx-auto lg:max-w-[72rem]">
+          <HomeGreeting />
+        </div>
+      )}
       <div className="flex min-h-0 flex-1 flex-col gap-8 lg:mx-auto lg:w-full lg:max-w-[72rem] lg:flex-row lg:items-start lg:gap-10">
         {showPulse && (
           <div className="min-w-0 flex-1 lg:order-2 lg:pl-2" data-testid="home-center">
@@ -585,8 +596,9 @@ export function Home({
              * capped row, which keeps lines at a reading width. Ask and its
              * chips, then Needs you, the topics and People, 20px apart.
              */}
-            <div className="flex w-full flex-col gap-5">
+            <div className="flex w-full flex-col gap-8">
               <BriefingSpine
+                showGreeting={false}
                 localRigs={localRigs}
                 onOpenPath={onOpenPath}
                 onHighlightRig={setHighlightBindingId}
@@ -610,7 +622,7 @@ export function Home({
         )}
         <div
           className={cn(
-            'flex w-full flex-col gap-4 lg:order-1',
+            'flex w-full flex-col gap-3 lg:order-1',
             // Solo/signed-out: no pulse regions beside it — a fixed-width
             // rail would leave a wide window mostly empty, so the left
             // column becomes its own wider, centered column instead of a
