@@ -8,7 +8,7 @@ import { derivePulseSectionState } from './pulse-state';
 import { firstNameKey, shortAge } from './recent-themes-state';
 
 /**
- * Home's PEOPLE: a box on the right on wide windows, under "Across your
+ * Home's PEOPLE: a column on the right on wide windows, under "Across your
  * spaces today" otherwise (`home.tsx` places it). A flat list, one person each, avatar, name, when they last wrote in a Room
  * today, and their one Pulse sentence below. "You" first. The web hub
  * home's Team panel analog (`hub/web`'s `TeamList`), in this app's tokens.

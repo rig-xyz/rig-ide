@@ -70,7 +70,7 @@ import { deriveWelcomePhase, type WelcomePhase } from './welcome-state';
  *   CENTER — `BriefingSpine`, the pulse briefing (kicker, greeting,
  *            summary, ask, WHAT'S NEW).
  *            Then "Across your spaces today", a flat feed.
- *   RIGHT  — `PeopleRail`, per-person pulse lines in a box with no outline
+ *   RIGHT  — `PeopleRail`, per-person pulse lines, a plain column
  *            (absent when there's no one to show). Below 1400px there's no
  *            room for it, so it sits under the topics instead.
  *
@@ -548,7 +548,7 @@ export function Home({
     // intensity reads as chrome; floating mid-content it read as a cut-off box. Ellipse radii sized so
     // alpha hits zero before either horizontal edge. Padding widened per
     // Dylan: the column was crowding the rail.
-    <div className="hero-glow flex min-h-full w-full flex-col gap-4 px-10 pt-4 pb-8 lg:pr-24 lg:pl-16 min-[1400px]:pr-16">
+    <div className="hero-glow flex min-h-full w-full flex-col gap-4 px-10 pt-4 pb-8 lg:pr-24 lg:pl-16 min-[87.5rem]:pr-16">
       {connection !== 'online' && (
         <ConnectionBanner connection={connection} retrying={retrying} onTryAgain={tryAgain} />
       )}
@@ -577,7 +577,8 @@ export function Home({
        * `lg:pl-2` of its own so the seam is the board's 48px.
        */}
       {/* Spaced across: 64px from the window's left edge to the Spaces card, 96px to the main section, 96px to the right edge.
-          From 1400px, People is a box on the right: 96px from the main section, 64px from the edge, mirroring the left. */}
+          From 1400px (in rem, so it sorts after `lg`), People is a column on the right: 96px from the main section, 64px
+          from the edge, mirroring the left. */}
       <div className="flex min-h-0 flex-1 flex-col gap-8 lg:flex-row lg:items-start lg:gap-22">
         {showPulse && (
           <div className="min-w-0 flex-1 lg:order-2 lg:pl-2" data-testid="home-center">
@@ -606,14 +607,14 @@ export function Home({
                   avatarOf={avatarOf}
                 />
               )}
-              <PeopleRail lastActivity={lastActivity} className="min-[1400px]:hidden" />
+              <PeopleRail lastActivity={lastActivity} className="min-[87.5rem]:hidden" />
             </div>
           </div>
         )}
         {showPulse && (
           <PeopleRail
             lastActivity={lastActivity}
-            className="bg-bg-1 hidden w-[300px] shrink-0 rounded-card p-4 min-[1400px]:order-3 min-[1400px]:ml-2 min-[1400px]:flex"
+            className="hidden w-[300px] shrink-0 min-[87.5rem]:order-3 min-[87.5rem]:ml-2 min-[87.5rem]:flex"
           />
         )}
         <div
