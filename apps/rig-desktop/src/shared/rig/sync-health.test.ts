@@ -10,10 +10,15 @@ describe('describeSyncHealth', () => {
 
   it('says plainly that files may be out of date, with the fix', () => {
     expect(describeSyncHealth({ state: 'paused', pausedAt: null, reason: null })).toMatchObject({
-      text: 'Sync is paused on this computer — your files may be out of date.',
+      text: 'Sync is paused on this computer. Your files may be out of date.',
       action: 'Resume',
     });
-    expect(describeSyncHealth({ state: 'stopped' })).toMatchObject({ short: 'Not syncing', action: 'Start syncing' });
+    expect(describeSyncHealth({ state: 'stopped' })).toMatchObject({
+      short: 'Not syncing',
+      line: 'Not syncing on this computer',
+      action: 'Start syncing',
+    });
+    expect(describeSyncHealth({ state: 'starting' })).toMatchObject({ line: 'Starting sync…', action: null });
     expect(describeSyncHealth({ state: 'error', message: 'Bad CPU type in executable' })).toMatchObject({
       tone: 'bad',
       detail: 'Bad CPU type in executable',

@@ -3,15 +3,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openFixture } from '@tooling/utils/db';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as RigHome from './home';
 import type { AppDb } from '@main/db/client';
 import { rigRigs } from '@main/db/schema';
 
-const mocks = vi.hoisted(() => ({ db: undefined as AppDb | undefined }));
+const mocks = vi.hoisted(() => ({ db: undefined as AppDb | undefined, rigHome: '' }));
 vi.mock('@main/db/client', () => ({
   get db() {
     if (!mocks.db) throw new Error('Test database not initialized');
     return mocks.db;
   },
+}));
+vi.mock('./home', async (importOriginal) => ({
+  ...(await importOriginal<typeof RigHome>()),
+  readRigHomeDir: async () => mocks.rigHome,
 }));
 
 const {
@@ -32,6 +37,7 @@ beforeEach(async () => {
   fixture = await openFixture('empty');
   mocks.db = fixture.db;
   home = mkdtempSync(join(tmpdir(), 'rig-recent-home-'));
+  mocks.rigHome = join(home, 'Rig');
 });
 
 afterEach(() => {
@@ -79,6 +85,14 @@ describe('resolveLocalPathsImpl', () => {
     const result = await resolveLocalPathsImpl(['bnd_nowhere']);
     expect(result).toEqual({});
     expect('bnd_nowhere' in result).toBe(false);
+  });
+
+  it('falls back to a bound folder in the Rig home for a binding rig_rigs has never seen', async () => {
+    const steadyGrove = join(mocks.rigHome, 'steady-grove');
+    mkdirSync(join(steadyGrove, '.rig'), { recursive: true });
+    writeFileSync(join(steadyGrove, '.rig', 'tap-binding.local.json'), '{"bindingId":"bnd_g7hvvv"}');
+
+    expect(await resolveLocalPathsImpl(['bnd_g7hvvv', 'bnd_nowhere'])).toEqual({ bnd_g7hvvv: steadyGrove });
   });
 
   it('only resolves the bindingIds actually asked for, even when other rigs are known locally', async () => {

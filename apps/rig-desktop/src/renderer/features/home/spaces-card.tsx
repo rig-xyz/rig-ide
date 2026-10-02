@@ -11,7 +11,7 @@ import {
 import { useSpaceNotifications } from '@renderer/features/notifications/use-notifications';
 import { directPhrase } from '@shared/rig/notifications';
 import { NeedsConnection } from '@renderer/features/shell/needs-connection';
-import { SyncHealthNotice } from '@renderer/features/spaces/components/sync-health-notice';
+import { useSyncHealth } from '@renderer/features/spaces/use-sync-health';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
@@ -21,6 +21,7 @@ import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import type { SpaceSetup } from '@shared/rig/space-setup';
 import { deriveDeleteRigMode, deriveRigMenuLabel } from '@shared/rig/delete-rig';
+import { describeSyncHealth } from '@shared/rig/sync-health';
 import type { RigSpaceStatus } from '@shared/rig/space-status';
 import { DeleteRigDialog } from './delete-rig-dialog';
 import { NEEDS_CONNECTION_TOOLTIP } from './home-connection';
@@ -347,6 +348,11 @@ function SpaceRow({
   const path = row.kind === 'local' ? row.path : null;
   const relayStatus = row.kind === 'relayOnly' ? deriveRelayOnlyRowStatus(row) : null;
   const openablePath = path ?? (relayStatus?.kind === 'localPath' ? relayStatus.path : null);
+  // Not syncing on this computer (starting, paused, stopped, failing): the
+  // status line says so, with the fix. Any row with a folder here, whether
+  // opened through the app or only found for its binding.
+  const sync = useSyncHealth(openablePath);
+  const syncNotice = describeSyncHealth(sync.health);
   // Lane J: a joined-but-not-downloaded space is no dead end — clicking the
   // row downloads it (the menu's "Download") and opens it. An unrecognized
   // role can't auto-join, so that row still only offers ⋯ → Locate.
@@ -404,6 +410,9 @@ function SpaceRow({
     : relayStatus?.kind === 'checking'
       ? 'checking…'
       : statusLine;
+  // The sync state takes the line over the row's activity; a download or
+  // the "checking…" beat still come first.
+  const syncLine = subtext === statusLine ? syncNotice : null;
 
   return (
     <div
@@ -419,14 +428,18 @@ function SpaceRow({
         seed={row.bindingId}
         className={cn(offline && 'opacity-50')}
       />
-      <button
-        type="button"
-        onClick={() => (openablePath ? onOpenPath(openablePath) : downloadable ? void download() : undefined)}
-        disabled={busy || (!openablePath && !downloadable)}
-        aria-busy={busy || undefined}
-        className="flex min-w-0 flex-1 flex-col items-start text-left disabled:cursor-default"
-      >
-        <span className="flex min-w-0 items-center gap-1">
+      {/* The name button stretches over the whole column (its `before:`
+          layer), so clicking the status line opens the row too; only the
+          line's own action sits above it. */}
+      <div className="relative flex min-w-0 flex-1 flex-col items-start">
+        <button
+          type="button"
+          onClick={() => (openablePath ? onOpenPath(openablePath) : downloadable ? void download() : undefined)}
+          disabled={busy || (!openablePath && !downloadable)}
+          aria-busy={busy || undefined}
+          className="flex max-w-full min-w-0 items-center gap-1 text-left before:absolute before:inset-0 before:content-[''] disabled:cursor-default"
+          data-testid="space-row-name"
+        >
           <span className="text-text-muted font-mono text-sm">#</span>
           <span className={cn('truncate text-sm', dimmed ? 'text-text-muted' : 'text-text-primary')}>
             {row.name}
@@ -436,7 +449,7 @@ function SpaceRow({
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span aria-label={notSetUpTooltip} tabIndex={0} className="text-text-muted inline-flex">
+                  <span aria-label={notSetUpTooltip} tabIndex={0} className="text-text-muted relative inline-flex">
                     <FolderSearch className="size-3 shrink-0" strokeWidth={1.5} />
                   </span>
                 }
@@ -444,10 +457,45 @@ function SpaceRow({
               <TooltipContent side="top">{notSetUpTooltip}</TooltipContent>
             </Tooltip>
           )}
-        </span>
+        </button>
         {error ? (
           <span className="text-danger max-w-full truncate text-xs" title={error}>
             {error}
+          </span>
+        ) : syncLine ? (
+          <span
+            role="status"
+            title={syncLine.detail ? `${syncLine.text}\n${syncLine.detail}` : syncLine.text}
+            className={cn(
+              'flex max-w-full min-w-0 items-center gap-1 text-xs',
+              sync.health?.state === 'starting'
+                ? 'text-text-muted'
+                : syncLine.tone === 'bad'
+                  ? 'text-danger'
+                  : 'text-warning'
+            )}
+            data-testid="space-status-line"
+            data-sync-state={sync.health?.state}
+          >
+            <span className="min-w-0 truncate">{syncLine.line}</span>
+            {syncLine.action && (
+              <>
+                <span aria-hidden className="shrink-0">
+                  ·
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void sync.start();
+                  }}
+                  className="focus-visible:outline-accent relative shrink-0 rounded-control font-medium underline-offset-2 outline-none hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+                  data-testid="sync-health-action"
+                >
+                  {syncLine.action}
+                </button>
+              </>
+            )}
           </span>
         ) : (
           <span
@@ -463,9 +511,7 @@ function SpaceRow({
             {subtext}
           </span>
         )}
-      </button>
-      {/* Not syncing on this computer (paused, stopped, failing): said on the row, with the fix. */}
-      {row.kind === 'local' && <SyncHealthNotice path={row.path} variant="chip" />}
+      </div>
       <Faces bindingId={row.bindingId} />
       <SpaceRowMenu
         row={row}

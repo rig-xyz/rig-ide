@@ -176,7 +176,7 @@ describe('SyncHealthNotice', () => {
     await act(async () => root.render(<SyncHealthNotice path="/Users/me/Rig/clear-harbor" />));
     await settle();
     const notice = host.querySelector('[data-testid="sync-health-notice"]') as HTMLElement;
-    expect(notice.textContent).toContain('Sync isn’t running on this computer — your files may be out of date.');
+    expect(notice.textContent).toContain('Sync isn’t running on this computer. Your files may be out of date.');
     await act(async () => (host.querySelector('[data-testid="sync-health-action"]') as HTMLElement).click());
     await settle();
     expect(mocks.start).toHaveBeenCalledWith('/Users/me/Rig/clear-harbor');
@@ -185,14 +185,11 @@ describe('SyncHealthNotice', () => {
 
   it('says a pause plainly, and nothing while syncing', async () => {
     mocks.health = { state: 'paused', pausedAt: null, reason: null };
-    await act(async () => root.render(<SyncHealthNotice path="/r" variant="chip" />));
+    await act(async () => root.render(<SyncHealthNotice path="/r" />));
     await settle();
-    expect(host.textContent).toBe('Sync pausedResume');
-    expect((host.querySelector('[data-testid="sync-health-notice"]') as HTMLElement).title).toBe(
-      'Sync is paused on this computer — your files may be out of date.'
-    );
+    expect(host.textContent).toBe('Sync is paused on this computer. Your files may be out of date.Resume');
     mocks.health = { state: 'running' };
-    await act(async () => root.render(<SyncHealthNotice path="/other" variant="chip" />));
+    await act(async () => root.render(<SyncHealthNotice path="/other" />));
     await settle();
     expect(host.textContent).toBe('');
   });

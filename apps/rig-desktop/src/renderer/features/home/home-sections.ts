@@ -237,8 +237,8 @@ export type HomeRigRow =
       role: string;
       /**
        * A real, already-synced local directory for this binding, found by
-       * `rpc.rig.recent.resolveLocalPaths` (`rig_rigs`, existence-verified —
-       * no filesystem scan) — null when genuinely not known to be anywhere
+       * `rpc.rig.recent.resolveLocalPaths` (`rig_rigs` or the managed Rig
+       * home, existence-verified; no filesystem scan) — null when genuinely not known to be anywhere
        * on this machine. A null value is never shown as a path; it only
        * means "Download"/"Locate…" are offered instead of "Open".
        */

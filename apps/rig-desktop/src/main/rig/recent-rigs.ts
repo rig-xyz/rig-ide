@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { db } from '@main/db/client';
@@ -92,6 +92,81 @@ export async function getRigPathsForAccount(accountId: string): Promise<string[]
   return selectRigPathsForAccount(rows, accountId);
 }
 
+/** A bound folder directly inside the managed Rig home, and the binding its own `.rig/tap-binding.local.json` names. */
+export type HomeFolderBinding = { path: string; bindingId: string };
+
+async function readBindingId(dir: string): Promise<string | null> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(join(dir, '.rig', 'tap-binding.local.json'), 'utf8'));
+    const bindingId = (parsed as { bindingId?: unknown } | null)?.bindingId;
+    return typeof bindingId === 'string' && bindingId ? bindingId : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The bound folders directly inside the managed Rig home (`~/Rig`). The
+ * app's own folder, one level deep, each child read for its own binding
+ * file: not the filesystem scan the comment below rules out. A space the
+ * CLI attached there (or one opened only before `rig_rigs` existed) never
+ * went through the app's open, so `rig_rigs` alone doesn't know it's here.
+ */
+export async function listHomeFolderBindings(home?: string): Promise<HomeFolderBinding[]> {
+  const dir = home ?? (await readRigHomeDir());
+  let entries: { name: string; isDirectory: () => boolean }[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const folders = await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+      .map(async (entry) => {
+        const path = join(dir, entry.name);
+        const bindingId = await readBindingId(path);
+        return bindingId ? { path, bindingId } : null;
+      })
+  );
+  return folders.filter((folder): folder is HomeFolderBinding => folder !== null);
+}
+
+/**
+ * Every folder linked on this computer for `accountId`: its own `rig_rigs`
+ * rows, plus each bound folder in the Rig home whose binding is one of the
+ * account's (`accountBindingIds`, from the relay or its remembered list).
+ * A home folder whose binding `rig_rigs` already has stamped to an account
+ * is left to that row: this account's is already in the list (at its
+ * recorded path), and another account's is not ours to start. Null
+ * `accountBindingIds` (the account's list can't be had) adds no home
+ * folders at all rather than guessing.
+ */
+export function selectLinkedPathsForAccount(
+  rows: readonly { accountId: string | null; path: string; bindingId: string }[],
+  homeFolders: readonly HomeFolderBinding[],
+  accountId: string,
+  accountBindingIds: ReadonlySet<string> | null
+): string[] {
+  const stamped = new Set(rows.filter((r) => r.accountId !== null).map((r) => r.bindingId));
+  const fromHome = accountBindingIds
+    ? homeFolders.filter((f) => accountBindingIds.has(f.bindingId) && !stamped.has(f.bindingId)).map((f) => f.path)
+    : [];
+  return [...new Set([...selectRigPathsForAccount(rows, accountId), ...fromHome])];
+}
+
+/** `selectLinkedPathsForAccount` over `rig_rigs` and the Rig home on disk: the launch sync sweep's list. */
+export async function getLinkedPathsForAccount(
+  accountId: string,
+  accountBindingIds: ReadonlySet<string> | null
+): Promise<string[]> {
+  const rows = await db
+    .select({ accountId: rigRigs.accountId, path: rigRigs.path, bindingId: rigRigs.bindingId })
+    .from(rigRigs);
+  const homeFolders = accountBindingIds ? await listHomeFolderBindings() : [];
+  return selectLinkedPathsForAccount(rows, homeFolders, accountId, accountBindingIds);
+}
+
 /**
  * Updates ONLY the path for an existing `rig_rigs` row — the row menu's
  * "Move to Rig folder" (`rig-controls.ts`'s `moveRig`) after a successful
@@ -122,8 +197,9 @@ export async function updateRigName(bindingId: string, newName: string): Promise
 // of "bounded" or "just one level deep" makes that the right call. Deleted
 // entirely, not tuned down.
 //
-// Known-local is now `rig_rigs` ONLY — existence-verified (a recorded path
-// can still have been deleted or moved since). Everything else genuinely
+// Known-local is now `rig_rigs`, existence-verified (a recorded path
+// can still have been deleted or moved since), plus the app's own managed
+// Rig home, one level deep (`listHomeFolderBindings`). Everything else genuinely
 // unknown-to-this-device goes through explicit, user-consented paths
 // instead: "Download" (mint + `rig join` into a folder the user picks via
 // a real dialog) or "Locate…" (the user points at a folder they already
@@ -142,8 +218,10 @@ export async function existsAsDirectory(path: string): Promise<boolean> {
 /**
  * For each of `bindingIds`, the local directory `rig_rigs` already has on
  * record for it — existence-verified, so a folder that's since been
- * deleted or moved doesn't get offered as "Open." Bindings with no local
- * row at all are simply absent from the result (never a null entry — the
+ * deleted or moved doesn't get offered as "Open." A binding `rig_rigs`
+ * can't place falls back to a bound folder in the managed Rig home that
+ * names it (`listHomeFolderBindings`). Bindings found nowhere are simply
+ * absent from the result (never a null entry — the
  * Home screen's `deriveRelayOnlyAction` already treats "not present" as
  * "no local copy").
  */
@@ -155,6 +233,11 @@ export async function resolveLocalPathsImpl(bindingIds: readonly string[]): Prom
   for (const row of rows) {
     if (!wanted.has(row.bindingId)) continue;
     if (await existsAsDirectory(row.path)) verified[row.bindingId] = row.path;
+  }
+  if ([...wanted].some((id) => !(id in verified))) {
+    for (const folder of await listHomeFolderBindings()) {
+      if (wanted.has(folder.bindingId) && !(folder.bindingId in verified)) verified[folder.bindingId] = folder.path;
+    }
   }
   return verified;
 }

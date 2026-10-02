@@ -14,6 +14,12 @@ const mocks = vi.hoisted(() => ({
   attach: vi.fn(),
   locate: vi.fn(),
   pickDir: vi.fn(),
+  /** Each folder's sync state, by path; anything not listed is syncing fine. */
+  health: {} as Record<string, SyncHealth>,
+  getHealth: vi.fn(),
+  startSync: vi.fn(),
+  /** Main's "sync state changed" listeners. */
+  listeners: [] as ((data: { path: string | null }) => void)[],
 }));
 
 vi.mock('@renderer/lib/ipc', () => ({
@@ -26,9 +32,27 @@ vi.mock('@renderer/lib/ipc', () => ({
         attach: (...args: unknown[]) => mocks.attach(...args),
         locate: (...args: unknown[]) => mocks.locate(...args),
       },
+      syncHealth: {
+        get: async ({ paths }: { paths: string[] }) => {
+          mocks.getHealth(paths);
+          return Object.fromEntries(paths.map((p) => [p, mocks.health[p] ?? { state: 'running' }]));
+        },
+        start: async ({ path }: { path: string }) => {
+          mocks.startSync(path);
+          mocks.health[path] = { state: 'running' };
+          return { success: true, data: { state: 'running' } };
+        },
+      },
     },
   },
-  events: { on: vi.fn(() => () => {}) },
+  events: {
+    on: vi.fn((_channel: unknown, cb: (data: { path: string | null }) => void) => {
+      mocks.listeners.push(cb);
+      return () => {
+        mocks.listeners = mocks.listeners.filter((l) => l !== cb);
+      };
+    }),
+  },
 }));
 
 import { SpacesCard } from '@renderer/features/home/spaces-card';
@@ -36,6 +60,7 @@ import { SPACE_NOT_SET_UP_TOOLTIP, type HomeRigRow } from '@renderer/features/ho
 import { DICE_FACES, idlePattern } from '@renderer/features/home/space-status-state';
 import { writeLastSeen, writeOpenedAt } from '@renderer/features/spaces/room-read-marker';
 import type { RigSpaceStatus } from '@shared/rig/space-status';
+import type { SyncHealth } from '@shared/rig/sync-health';
 
 function click(el: Element): void {
   el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -309,5 +334,140 @@ describe('SpacesCard — what you missed', () => {
     expect(tileOf('gentle-island').dataset.tile).toBe('idle');
     expect(lineOf('gentle-island').textContent).toBe('1m ago');
     expect(tileOf('launch').dataset.tile).toBe('idle');
+  });
+});
+
+/**
+ * 0.4.7: the "Not syncing · Start syncing" chip sat on top of the space
+ * names. The sync state now lives in the row's own status line, under the
+ * name, replacing the activity; it reads "Starting sync…" while main is
+ * starting it; and it covers a space whose folder is only known by its
+ * binding (steady-grove, never opened through the app).
+ */
+describe('SpacesCard — sync state in the status line', () => {
+  const marketing: HomeRigRow = {
+    kind: 'local',
+    bindingId: 'bnd_5jpw95',
+    isSpace: true,
+    // Renamed: the folder keeps its original name.
+    name: 'rig-marketing',
+    path: '/Users/me/Rig/gentle-canyon',
+    lastOpenedAt: 0,
+    sessions: [],
+    paused: false,
+    outsideHome: false,
+    notARigAnymore: false,
+    role: 'owner',
+  };
+  const warmIsland: HomeRigRow = { ...marketing, bindingId: 'bnd_jak0s9', name: 'warm-island', path: '/Users/me/Rig/warm-island' };
+  const steadyGrove: HomeRigRow = {
+    kind: 'relayOnly',
+    bindingId: 'bnd_g7hvvv',
+    isSpace: true,
+    name: 'steady-grove',
+    disambiguator: null,
+    canAutoJoin: true,
+    role: 'owner',
+    localPath: '/Users/me/Rig/steady-grove',
+    localPathPending: false,
+    sessions: [],
+  };
+
+  let host: HTMLDivElement;
+  let root: Root;
+
+  async function render(rows: HomeRigRow[]): Promise<void> {
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={new QueryClient()}>
+          <SpacesCard rows={rows} statusByBinding={new Map()} selfUserId={null} onOpenPath={() => {}} />
+        </QueryClientProvider>
+      );
+    });
+    await flush();
+  }
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    mocks.health = {};
+    mocks.listeners = [];
+    mocks.getHealth.mockReset();
+    mocks.startSync.mockReset();
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  function rowOf(name: string): HTMLElement {
+    const nameEl = [...host.querySelectorAll('span')].find((el) => el.textContent === name)!;
+    return nameEl.closest('[data-testid="space-row"]') as HTMLElement;
+  }
+  const lineOf = (name: string) => rowOf(name).querySelector<HTMLElement>('[data-testid="space-status-line"]')!;
+  const nameOf = (name: string) => rowOf(name).querySelector<HTMLElement>('[data-testid="space-row-name"]')!;
+
+  it('says it in the status line under the name, with a link to fix it; the name line holds only the name', async () => {
+    mocks.health[marketing.path] = { state: 'stopped' };
+    await render([marketing]);
+
+    const line = lineOf('rig-marketing');
+    expect(line.textContent).toBe('Not syncing on this computer·Start syncing');
+    expect(line.dataset.syncState).toBe('stopped');
+    expect(line.className).toContain('text-warning');
+    expect(line.title).toBe('Sync isn’t running on this computer. Your files may be out of date.');
+    // The words truncate inside the row; the link keeps its place.
+    expect(line.firstElementChild!.className).toContain('truncate');
+    expect(line.querySelector('[data-testid="sync-health-action"]')!.className).toContain('shrink-0');
+    // Name and status line share one column; nothing about sync sits beside them.
+    expect(nameOf('rig-marketing').textContent).toBe('#rig-marketing');
+    expect(nameOf('rig-marketing').parentElement).toBe(line.parentElement);
+    expect(rowOf('rig-marketing').querySelectorAll('[data-testid="sync-health-notice"]')).toHaveLength(0);
+    // The action is no longer inside the row's open button.
+    expect(nameOf('rig-marketing').contains(line)).toBe(false);
+    // Asked by folder, not by the space's display name.
+    expect(mocks.getHealth).toHaveBeenCalledWith(['/Users/me/Rig/gentle-canyon']);
+  });
+
+  it('starts it from the line, and the line goes back to the activity at once', async () => {
+    mocks.health[marketing.path] = { state: 'stopped' };
+    await render([marketing]);
+    await act(async () => click(lineOf('rig-marketing').querySelector('[data-testid="sync-health-action"]')!));
+    await flush();
+    expect(mocks.startSync).toHaveBeenCalledWith('/Users/me/Rig/gentle-canyon');
+    expect(lineOf('rig-marketing').dataset.syncState).toBeUndefined();
+    expect(lineOf('rig-marketing').textContent).toBe('No activity yet');
+  });
+
+  it('reads "Starting sync…" while main is starting it, quietly and with nothing to press', async () => {
+    mocks.health[marketing.path] = { state: 'starting' };
+    mocks.health[warmIsland.path] = { state: 'starting' };
+    await render([marketing, warmIsland]);
+    for (const name of ['rig-marketing', 'warm-island']) {
+      expect(lineOf(name).textContent).toBe('Starting sync…');
+      expect(lineOf(name).dataset.syncState).toBe('starting');
+      expect(lineOf(name).className).toContain('text-text-muted');
+      expect(lineOf(name).querySelector('[data-testid="sync-health-action"]')).toBeNull();
+    }
+  });
+
+  it('re-reads the moment main says a folder changed, not at the next poll', async () => {
+    mocks.health[marketing.path] = { state: 'starting' };
+    await render([marketing]);
+    mocks.health[marketing.path] = { state: 'running' };
+    await act(async () => {
+      for (const listener of mocks.listeners) listener({ path: '/Users/me/Rig/gentle-canyon' });
+    });
+    await flush();
+    expect(lineOf('rig-marketing').textContent).toBe('No activity yet');
+  });
+
+  it('covers a space whose folder is only known by its binding', async () => {
+    mocks.health['/Users/me/Rig/steady-grove'] = { state: 'stopped' };
+    await render([steadyGrove]);
+    expect(mocks.getHealth).toHaveBeenCalledWith(['/Users/me/Rig/steady-grove']);
+    expect(lineOf('steady-grove').textContent).toBe('Not syncing on this computer·Start syncing');
   });
 });

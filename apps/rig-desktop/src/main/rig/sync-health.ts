@@ -1,12 +1,14 @@
 import { execFile } from 'node:child_process';
 import { readFile, realpath, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
+import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
-import type { SyncHealth } from '@shared/rig/sync-health';
-import { getCurrentAccountId } from './account';
-import { existsAsDirectory, getRigPathsForAccount } from './recent-rigs';
+import { rigSyncHealthChangedChannel, type SyncHealth } from '@shared/rig/sync-health';
+import { fetchWorkspaceBindings, getCurrentAccountId } from './account';
+import { readRememberedWorkspaces } from './local-cache-account';
+import { existsAsDirectory, getLinkedPathsForAccount } from './recent-rigs';
 import { toggleSync } from './rig-controls';
 
 /**
@@ -26,7 +28,15 @@ import { toggleSync } from './rig-controls';
  *   - `resumeSyncOnLaunch`: at launch, every rig the signed-in account has
  *     on this computer that should be syncing (bound, not paused) and isn't
  *     gets `rig resume`. A paused rig stays paused: that was someone's
- *     choice, and the app says so instead.
+ *     choice, and the app says so instead. "On this computer" is the
+ *     account's `rig_rigs` rows plus the bound folders in the Rig home whose
+ *     binding is the account's (`getLinkedPathsForAccount`): a space the CLI
+ *     attached there never went through the app's open.
+ *
+ * Until the sweep has worked out which folders it will start, and while it
+ * gets to each one, a stopped folder reads as `starting` to the renderer
+ * (`readShownSyncHealth`): at launch every daemon is down for the same few
+ * seconds the sweep takes to start it, and that isn't news.
  *
  * A pidfile outlives a reboot, and pids get reused: the old number can
  * belong to some other process by now. `rig resume` only checks the pid is
@@ -67,6 +77,28 @@ const defaultDeps: SyncHealthDeps = { isAlive, commandOf };
 /** Starts the app is running (or ran and failed) — what `readSyncHealth` reports over what's on disk. */
 const starting = new Set<string>();
 const startErrors = new Map<string, string>();
+
+/** The launch sweep: whether it has decided what to start yet, and the folders it has yet to get to. */
+const sweep = { planned: false, pending: new Set<string>() };
+
+/** Tests only: back to a fresh launch. */
+export function resetLaunchSweepForTests(): void {
+  sweep.planned = false;
+  sweep.pending.clear();
+}
+
+function keyOf(root: string): string {
+  return resolve(root);
+}
+
+/** Tells every window to read `path`'s sync state again (null: every folder's). */
+function announce(path: string | null): void {
+  try {
+    events.emit(rigSyncHealthChangedChannel, { path });
+  } catch (error) {
+    log.warn('rig: could not announce a sync state change', { error: String(error) });
+  }
+}
 
 async function fileExists(path: string): Promise<boolean> {
   try {
@@ -135,13 +167,25 @@ export async function readSyncHealth(root: string, deps: SyncHealthDeps = defaul
   if (!(await existsAsDirectory(root)) || !(await isBound(root))) return { state: 'notSynced' };
   const paused = await readPaused(root);
   if (paused) return { state: 'paused', ...paused };
-  if (starting.has(root)) return { state: 'starting' };
+  const key = keyOf(root);
+  if (starting.has(key)) return { state: 'starting' };
   if ((await probeDaemon(root, deps)) === 'running') {
-    startErrors.delete(root);
+    startErrors.delete(key);
     return { state: 'running' };
   }
-  const failed = startErrors.get(root);
+  const failed = startErrors.get(key);
   return failed ? { state: 'error', message: failed } : { state: 'stopped' };
+}
+
+/**
+ * What the Room and Home show: `readSyncHealth`, except a stopped folder
+ * reads as `starting` while the launch sweep hasn't planned yet or has it
+ * still to start. Keyed by the folder's path, never its display name.
+ */
+export async function readShownSyncHealth(root: string, deps: SyncHealthDeps = defaultDeps): Promise<SyncHealth> {
+  const health = await readSyncHealth(root, deps);
+  if (health.state === 'stopped' && (!sweep.planned || sweep.pending.has(keyOf(root)))) return { state: 'starting' };
+  return health;
 }
 
 /**
@@ -150,32 +194,35 @@ export async function readSyncHealth(root: string, deps: SyncHealthDeps = defaul
  * failure is remembered so the Room and Home can say what went wrong.
  */
 export async function startSync(root: string, deps: SyncHealthDeps = defaultDeps): Promise<Result<SyncHealth, { message: string }>> {
-  if (starting.has(root)) return ok({ state: 'starting' });
-  starting.add(root);
+  const key = keyOf(root);
+  if (starting.has(key)) return ok({ state: 'starting' });
+  starting.add(key);
+  announce(root);
   try {
     if ((await probeDaemon(root, deps)) === 'stale') {
       await rm(pidfileOf(root), { force: true }).catch(() => undefined);
     }
     const result = await toggleSync('resume', root);
-    starting.delete(root);
+    starting.delete(key);
     if (!result.success) {
-      startErrors.set(root, result.error.message);
+      startErrors.set(key, result.error.message);
       return err(result.error);
     }
     const health = await readSyncHealth(root, deps);
     if (health.state === 'stopped') {
       const message = 'The sync process exited right after starting.';
-      startErrors.set(root, message);
+      startErrors.set(key, message);
       return err({ message });
     }
-    startErrors.delete(root);
+    startErrors.delete(key);
     return ok(health);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    startErrors.set(root, message);
+    startErrors.set(key, message);
     return err({ message });
   } finally {
-    starting.delete(root);
+    starting.delete(key);
+    announce(root);
   }
 }
 
@@ -187,11 +234,22 @@ export async function shouldStartAtLaunch(root: string, deps: SyncHealthDeps = d
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** The account's binding ids: the relay's list, else the one remembered on this computer for it, else null. */
+async function accountBindingIds(accountId: string): Promise<Set<string> | null> {
+  const live = await fetchWorkspaceBindings();
+  if (live.success) return new Set(live.data.map((b) => b.id));
+  const remembered = await readRememberedWorkspaces();
+  if (remembered.accountId !== accountId || !remembered.workspaces) return null;
+  return new Set(remembered.workspaces.bindings.map((b) => b.id));
+}
+
 /**
  * Launch: bring back sync for every rig the signed-in account has on this
  * computer. Best-effort throughout and never throws. An account that can't
  * be told yet (the relay unreachable right after a reboot) is asked again a
  * few times; signed out, nothing starts (sign-out paused them on purpose).
+ * Every folder it will start is marked pending before any is started, and
+ * the windows are told when the plan is made and as each start ends.
  */
 export async function resumeSyncOnLaunch(
   opts: { deps?: SyncHealthDeps; delays?: readonly number[]; sleep?: (ms: number) => Promise<unknown> } = {}
@@ -210,22 +268,39 @@ export async function resumeSyncOnLaunch(
       log.info('rig: launch sync sweep skipped', { account: account.status });
       return;
     }
-    const paths = await getRigPathsForAccount(account.id);
+    const paths = await getLinkedPathsForAccount(account.id, await accountBindingIds(account.id));
+    const toStart: string[] = [];
     for (const path of paths) {
-      if (!(await shouldStartAtLaunch(path, deps))) continue;
-      const result = await startSync(path, deps);
-      if (result.success) log.info('rig: started sync at launch', { path });
-      else log.warn('rig: could not start sync at launch', { path, error: result.error.message });
+      if (await shouldStartAtLaunch(path, deps)) toStart.push(path);
+    }
+    for (const path of toStart) sweep.pending.add(keyOf(path));
+    sweep.planned = true;
+    announce(null);
+    for (const path of toStart) {
+      try {
+        const result = await startSync(path, deps);
+        if (result.success) log.info('rig: started sync at launch', { path });
+        else log.warn('rig: could not start sync at launch', { path, error: result.error.message });
+      } finally {
+        sweep.pending.delete(keyOf(path));
+        announce(path);
+      }
     }
   } catch (error) {
     log.warn('rig: launch sync sweep failed', { error: String(error) });
+  } finally {
+    // Skipped, or cut short by an error: whatever's left is no longer the sweep's.
+    const leftover = !sweep.planned || sweep.pending.size > 0;
+    sweep.planned = true;
+    sweep.pending.clear();
+    if (leftover) announce(null);
   }
 }
 
 export const rigSyncHealthController = createRPCController({
   /** Each folder's sync state on this computer, keyed by the path asked for. */
   get: async ({ paths }: { paths: string[] }): Promise<Record<string, SyncHealth>> => {
-    const entries = await Promise.all(paths.map(async (path) => [path, await readSyncHealth(path)] as const));
+    const entries = await Promise.all(paths.map(async (path) => [path, await readShownSyncHealth(path)] as const));
     return Object.fromEntries(entries);
   },
   /** The Room/Home "Resume" / "Start syncing" / "Try again" button. */

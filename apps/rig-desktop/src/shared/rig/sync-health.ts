@@ -1,3 +1,5 @@
+import { defineEvent } from '../lib/ipc/events';
+
 /**
  * Whether a rig or space is syncing on THIS computer — read by the main
  * process off the rig's own `.rig/` folder (`main/rig/sync-health.ts`) and
@@ -25,8 +27,10 @@ export type SyncHealth =
 export type SyncNotice = {
   /** `warn` for "out of date until you act", `bad` for "we tried and it failed". */
   tone: 'warn' | 'bad';
-  /** A few words for a chip or a row's status line. */
+  /** A few words for a chip. */
   short: string;
+  /** A Home row's status line: what's wrong, said on its own. */
+  line: string;
   /** The full sentence, for a banner or a tooltip. */
   text: string;
   /** Extra detail (an error's own message), when there is some. */
@@ -43,36 +47,54 @@ export function describeSyncHealth(health: SyncHealth | null | undefined): SyncN
     case 'notSynced':
       return null;
     case 'starting':
-      return { tone: 'warn', short: 'Starting sync…', text: 'Starting sync on this computer…', action: null };
+      return {
+        tone: 'warn',
+        short: 'Starting sync…',
+        line: 'Starting sync…',
+        text: 'Starting sync on this computer…',
+        action: null,
+      };
     case 'paused':
       if (health.reason === 'deleted') {
         return {
           tone: 'warn',
           short: 'Sync stopped',
-          text: 'Sync is stopped on this computer — this space was deleted or left.',
+          line: 'Sync stopped on this computer',
+          text: 'Sync is stopped on this computer. This space was deleted or left.',
           action: null,
         };
       }
       return {
         tone: 'warn',
         short: 'Sync paused',
-        text: 'Sync is paused on this computer — your files may be out of date.',
+        line: 'Sync paused on this computer',
+        text: 'Sync is paused on this computer. Your files may be out of date.',
         action: 'Resume',
       };
     case 'stopped':
       return {
         tone: 'warn',
         short: 'Not syncing',
-        text: 'Sync isn’t running on this computer — your files may be out of date.',
+        line: 'Not syncing on this computer',
+        text: 'Sync isn’t running on this computer. Your files may be out of date.',
         action: 'Start syncing',
       };
     case 'error':
       return {
         tone: 'bad',
         short: 'Sync failed',
-        text: 'Sync couldn’t start on this computer — your files may be out of date.',
+        line: 'Sync failed on this computer',
+        text: 'Sync couldn’t start on this computer. Your files may be out of date.',
         detail: health.message,
         action: 'Try again',
       };
   }
 }
+
+/**
+ * Main says a folder's sync state may have changed (the launch sweep
+ * planned or finished a start, or someone pressed Start syncing): every
+ * `useSyncHealth` showing `path` reads it again right away. A null `path`
+ * means every folder.
+ */
+export const rigSyncHealthChangedChannel = defineEvent<{ path: string | null }>('rig:sync-health-changed');

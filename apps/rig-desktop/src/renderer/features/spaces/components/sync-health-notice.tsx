@@ -9,18 +9,16 @@ import { useSyncHealth } from '../use-sync-health';
  * silent: files that stopped syncing look exactly like files that are up
  * to date, so this is the only way anyone finds out.
  *
- * `banner` sits above the Room's composer (same family as the connection
- * banner); `chip` is a compact one-line form for a Home row or a panel row.
+ * Sits above the Room's composer (same family as the connection banner).
+ * A Home row says the same in its own status line (`spaces-card.tsx`).
  * Renders nothing while syncing is fine.
  */
 export function SyncHealthNotice({
   path,
-  variant = 'banner',
   className,
 }: {
   /** The folder on this computer; null while it isn't known. */
   path: string | null;
-  variant?: 'banner' | 'chip';
   className?: string;
 }) {
   const { health, start } = useSyncHealth(path);
@@ -42,26 +40,6 @@ export function SyncHealthNotice({
     </button>
   );
   const Icon = starting ? Loader2 : CloudOff;
-
-  if (variant === 'chip') {
-    return (
-      <span
-        role="status"
-        title={title}
-        data-testid="sync-health-notice"
-        data-state={health?.state}
-        className={cn(
-          'flex shrink-0 items-center gap-1.5 text-2xs whitespace-nowrap',
-          notice.tone === 'bad' ? 'text-danger' : 'text-warning',
-          className
-        )}
-      >
-        <Icon className={cn('size-3 shrink-0', starting && 'animate-spin')} strokeWidth={1.5} aria-hidden />
-        <span>{notice.short}</span>
-        {action}
-      </span>
-    );
-  }
 
   return (
     <div
