@@ -449,7 +449,7 @@ describe('Home: Across your spaces today', () => {
     const center = host.querySelector<HTMLElement>('[data-testid="home-center"]')!;
     const people = center.querySelector<HTMLElement>('[data-testid="home-people"]')!;
     expect(people).not.toBeNull();
-    expect(people.querySelector('h2')?.textContent).toBe('Peopletoday');
+    expect(people.querySelector('h2')?.textContent).toBe('People');
     // Below the topics.
     expect(
       section()!.compareDocumentPosition(people) & Node.DOCUMENT_POSITION_FOLLOWING

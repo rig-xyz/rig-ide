@@ -614,7 +614,7 @@ export function Home({
         {showPulse && (
           <PeopleRail
             lastActivity={lastActivity}
-            className="hidden w-[300px] shrink-0 min-[87.5rem]:order-3 min-[87.5rem]:ml-2 min-[87.5rem]:flex"
+            className="hidden w-[280px] shrink-0 min-[87.5rem]:order-3 min-[87.5rem]:ml-2 min-[87.5rem]:flex"
           />
         )}
         <div
@@ -624,7 +624,8 @@ export function Home({
             // rail would leave a wide window mostly empty, so the left
             // column becomes its own wider, centered column instead of a
             // cramped sidebar with nothing next to it.
-            showPulse ? 'lg:w-[340px] lg:shrink-0 xl:w-[360px]' : 'mx-auto lg:max-w-2xl'
+            // Narrower beside the People column, so the center keeps its share.
+            showPulse ? 'lg:w-[340px] lg:shrink-0 xl:w-[360px] min-[87.5rem]:w-[300px]' : 'mx-auto lg:max-w-2xl'
           )}
         >
           {spacesEnabled && signedIn && (

@@ -44,7 +44,7 @@ export function PeopleRail({
   return (
     <section className={cn('flex flex-col gap-0.5', className)} data-testid="home-people">
       <div className="pb-1.5">
-        <HomeFeedLabel aside="today">People</HomeFeedLabel>
+        <HomeFeedLabel>People</HomeFeedLabel>
       </div>
       <ul className="flex flex-col">
         {people.map((person) => {
