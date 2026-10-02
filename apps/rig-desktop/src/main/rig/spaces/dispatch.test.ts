@@ -18,6 +18,7 @@ import {
   type StoredSpaceSession,
 } from './dispatch';
 import { ownerApprovals } from './rig-tools';
+import type { SessionConnectors } from '../connectors/connections';
 import type {
   AgentRequest,
   RelayApiError,
@@ -1552,6 +1553,13 @@ describe('connectors', () => {
     expect(JSON.stringify(postedEvents)).not.toContain('Bearer');
   });
 
+  it('tells the agent that only the owner changes agent instructions, and to check rig doctor for a missing MCP tool', () => {
+    const text = spacesHiddenContext({ bindingId: 'b1' });
+    expect(text).toContain("Only the space's owner can change its agent instructions");
+    expect(text).toContain("isn't shared: say so instead of retrying");
+    expect(text).toContain('run `rig doctor`');
+  });
+
   it('adds nothing when the space has no connectors', async () => {
     const { api, postedEvents } = makeFakeApi();
     const fake = makeFakeAcp();
@@ -1606,6 +1614,40 @@ describe('connectors', () => {
     fake.emitTurnEnd(resumedId, 'turn-2', 'end_turn');
     await dispatch(makeRequest({ id: 'req3' }));
     expect(fake.stopped).toHaveLength(1);
+  });
+
+  it(".mcp.json servers held back by the plan stay out of the session, the agent hears which wait for Allow, and allowing one reloads it", async () => {
+    const fake = makeFakeAcp();
+    const resumedHeld: unknown[] = [];
+    const resume = fake.acp.resumeSession.bind(fake.acp);
+    fake.acp.resumeSession = async (input) => {
+      resumedHeld.push(input.disabledProjectServers);
+      return resume(input);
+    };
+    let current: SessionConnectors = { servers: [], gaps: [], project: { disabled: ['customerio', 'analytics'], pending: ['analytics'] } };
+    const { dispatch } = createSpacesDispatcher({
+      api: makeFakeApi().api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      store: memoryStore(),
+      connectors: async () => current,
+    });
+
+    await dispatch(makeRequest());
+    expect(fake.started[0]).toMatchObject({ disabledProjectServers: ['customerio', 'analytics'] });
+    const hidden = fake.queued[0]!.hiddenContext!;
+    expect(hidden).toContain("This space's .mcp.json also declares analytics, which your owner hasn't allowed on this device");
+    expect(hidden).not.toContain('customerio');
+    const conversationId = fake.started[0]!.conversationId;
+    fake.emitTurnStart(conversationId, 'turn-1');
+    fake.emitTurnEnd(conversationId, 'turn-1', 'end_turn');
+
+    // You click Allow on analytics: the next turn's session loads it (only the duplicate stays out).
+    current = { servers: [], gaps: [], project: { disabled: ['customerio'], pending: [] } };
+    await dispatch(makeRequest({ id: 'req2' }));
+    expect(fake.stopped).toEqual([conversationId]);
+    expect(resumedHeld).toEqual([['customerio']]);
+    expect(fake.queued[1]!.hiddenContext).not.toContain('.mcp.json');
   });
 
   it('re-applies the model, effort and mode a reloaded session had', async () => {

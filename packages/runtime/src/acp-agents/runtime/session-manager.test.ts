@@ -242,6 +242,23 @@ describe('AcpRuntime session manager', () => {
     expect(h.agent.loadSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-old', mcpServers: [server] }));
   });
 
+  it("keeps a Claude session's held-back .mcp.json servers out through its flag settings, on new and load", async () => {
+    const h = makeAcpHarness();
+    const rt = new AcpRuntime(h.deps);
+    const meta = { claudeCode: { options: { settings: { disabledMcpjsonServers: ['customerio'] } } } };
+    await rt.startSession({ ...makeStartInput({ conversationId: 'conv-held' }), disabledProjectMcpServers: ['customerio'] });
+    expect(h.agent.newSession).toHaveBeenLastCalledWith(expect.objectContaining({ _meta: meta }));
+
+    h.agent.loadSession = vi.fn(async () => ({}));
+    await rt.resumeSession({ ...makeStartInput({ conversationId: 'conv-held-load' }), sessionId: 'session-old', disabledProjectMcpServers: ['customerio'] });
+    expect(h.agent.loadSession).toHaveBeenCalledWith(expect.objectContaining({ _meta: meta }));
+
+    await rt.startSession(makeStartInput({ conversationId: 'conv-none' }));
+    expect(h.agent.newSession).toHaveBeenLastCalledWith(expect.not.objectContaining({ _meta: expect.anything() }));
+    await rt.startSession({ ...makeStartInput({ conversationId: 'conv-codex', providerId: 'codex' }), disabledProjectMcpServers: ['x'] });
+    expect(h.agent.newSession).toHaveBeenLastCalledWith(expect.not.objectContaining({ _meta: expect.anything() }));
+  });
+
   it('waits for a closing session to finish closing before loading it again', async () => {
     const h = makeAcpHarness();
     const rt = new AcpRuntime(h.deps);

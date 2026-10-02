@@ -2,11 +2,13 @@ import { execFile } from 'node:child_process';
 import { shell } from 'electron';
 import { resolveLocalAcpSpawnContext } from '@main/core/acp/transport/local-acp-process-host';
 import { encryptedAppSecretsStore } from '@main/core/secrets/encrypted-app-secrets-store';
+import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
-import { isConnectorId, type ConnectResult, type GlobalServer } from '@shared/spaces/connectors';
+import { isConnectorId, type ConnectResult, type GlobalServer, type ProjectServerNotice } from '@shared/spaces/connectors';
 import { getCurrentAccountId } from '../account';
 import { createConnections } from './connections';
 import { createGlobalSetup } from './global-setup';
+import { allowProjectServer, readProjectServersPlan, type ProjectServersPlan } from './project-servers';
 
 /**
  * Boot-only wiring for your connector logins: the real encrypted secret
@@ -52,6 +54,22 @@ export async function globalSetupFor(bindingId: string | undefined): Promise<Glo
   return globalSetup.list(await spaceFolder(bindingId));
 }
 
+/**
+ * Which of the space folder's own `.mcp.json` servers your Claude session
+ * there gets (see project-servers.ts). Null when the space isn't open on
+ * this device or the folder can't be read.
+ */
+export async function projectServersFor(bindingId: string | undefined): Promise<ProjectServersPlan | null> {
+  const cwd = await spaceFolder(bindingId);
+  if (!cwd) return null;
+  try {
+    return await readProjectServersPlan(cwd, () => globalSetup.claudeEntries(cwd));
+  } catch (error) {
+    log.warn('Rig connectors: could not read the space’s own MCP servers', { bindingId, error: String(error) });
+    return null;
+  }
+}
+
 /** The renderer's view: states only, never a token. */
 export const rigConnectorsController = createRPCController({
   list: () => connections.list(),
@@ -65,4 +83,20 @@ export const rigConnectorsController = createRPCController({
   },
   /** What your agents bring from their own setup (names and URLs only; no credentials are ever read). */
   globalSetup: ({ bindingId }: { bindingId?: string }): Promise<GlobalServer[]> => globalSetupFor(bindingId),
+  /** The space's own `.mcp.json` servers you haven't allowed on this device (names and URLs only). */
+  projectServers: async ({ bindingId }: { bindingId: string }): Promise<ProjectServerNotice[]> =>
+    ((await projectServersFor(bindingId))?.pending ?? []).map((p) => ({ name: p.name, url: p.url })),
+  /** You clicked Allow: recorded in the folder's `.claude/settings.local.json`, read by your next run there. */
+  allowProjectServer: async ({ bindingId, name }: { bindingId: string; name: string }): Promise<boolean> => {
+    const cwd = await spaceFolder(bindingId);
+    if (!cwd) return false;
+    try {
+      const allowed = await allowProjectServer(cwd, name);
+      if (allowed) globalSetup.invalidate();
+      return allowed;
+    } catch (error) {
+      log.warn('Rig connectors: could not allow a space’s MCP server', { bindingId, error: String(error) });
+      return false;
+    }
+  },
 });

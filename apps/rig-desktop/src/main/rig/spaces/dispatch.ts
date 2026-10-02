@@ -77,6 +77,8 @@ export interface SpacesAcpSessions {
     cwd: string;
     /** Remote MCP servers (your connectors) for this session only. */
     mcpServers?: AcpMcpServerWire[];
+    /** Claude only: servers from the folder's own `.mcp.json` to keep out of this session. */
+    disabledProjectServers?: string[];
   }): Promise<Result<{ sessionId: string }, string>>;
   /** Reopens an earlier ACP session by its agent session id (ACP `session/load`), with its context intact. */
   resumeSession(input: {
@@ -85,6 +87,7 @@ export interface SpacesAcpSessions {
     cwd: string;
     sessionId: string;
     mcpServers?: AcpMcpServerWire[];
+    disabledProjectServers?: string[];
   }): Promise<Result<{ sessionId: string }, string>>;
   /** Closes the live session (it can be resumed later by its agent session id). */
   stopSession?(conversationId: string): Promise<void>;
@@ -234,9 +237,10 @@ function pickedConfig(config: AgentConfig): AgentConfigChange {
   };
 }
 
-/** Identifies a set of connector servers, tokens included, without keeping the tokens. */
-export function connectorsFingerprint(servers: readonly AcpMcpServerWire[]): string {
-  return createHash('sha256').update(JSON.stringify(servers)).digest('hex');
+/** Identifies a set of connector servers, tokens included, without keeping the tokens (and the held-back `.mcp.json` servers, when any). */
+export function connectorsFingerprint(servers: readonly AcpMcpServerWire[], disabledProjectServers: readonly string[] = []): string {
+  const what = disabledProjectServers.length > 0 ? { servers, disabledProjectServers } : servers;
+  return createHash('sha256').update(JSON.stringify(what)).digest('hex');
 }
 
 /**
@@ -248,9 +252,11 @@ export function connectorsHiddenContext(
   connected: readonly string[],
   gaps: readonly ConnectorGap[],
   global: readonly string[] = [],
-  roomSees: RoomSees = 'everything'
+  roomSees: RoomSees = 'everything',
+  /** The space's own `.mcp.json` servers your owner hasn't allowed on this device. */
+  pendingProject: readonly string[] = []
 ): string | null {
-  if (connected.length === 0 && gaps.length === 0 && global.length === 0) return null;
+  if (connected.length === 0 && gaps.length === 0 && global.length === 0 && pendingProject.length === 0) return null;
   const name = (id: string) => connectorById(id)?.name ?? id;
   const lines = ['<rig_connectors>'];
   if (connected.length > 0) {
@@ -276,6 +282,11 @@ export function connectorsHiddenContext(
   if (expired.length > 0) {
     lines.push(
       `Your owner's login to ${expired.join(', ')} has expired. If the request needs it, say so in one line and tell them to click Reconnect in the space panel.`
+    );
+  }
+  if (pendingProject.length > 0) {
+    lines.push(
+      `This space's .mcp.json also declares ${pendingProject.join(', ')}, which your owner hasn't allowed on this device, so you don't have its tools. If the request needs it, say so in one line and tell them to click Allow on the notice above the composer in the room; don't guess its contents.`
     );
   }
   lines.push('</rig_connectors>');
@@ -316,6 +327,9 @@ export function spacesHiddenContext(
     "Link files by their path relative to the space's folder (e.g. `notes/plan.md`), never an absolute path.",
     'When asked why something changed, use the rig change history (`rig history <path>`) rather than guessing.',
     "When asked to invite someone, run `rig share <email>` in the space's folder: the request is the go-ahead, and the command's approval prompt is the confirmation.",
+    // tapd keeps these owner-only: a member's edit never leaves their computer.
+    "Only the space's owner can change its agent instructions (CLAUDE.md, AGENTS.md, .claude/skills, .claude/commands, .claude/agents, .agents/skills). Anyone else's edit there stays on their computer and isn't shared: say so instead of retrying.",
+    "If a tool from an MCP server this space declares is missing, run `rig doctor` and tell your owner what to approve or connect, rather than assuming it's unavailable.",
     // Skills are discovered by name and a truncated description, which agents
     // don't reliably act on (Codex's listing cuts the rig skill's triggers
     // off), so point at the file itself. The packaged app writes this copy
@@ -828,10 +842,11 @@ export function createSpacesDispatcher(deps: {
     const existing = sessions.get(key);
     const scope: RigToolScope = { bindingId, ownerUserId, agent: providerId, cwd };
     const wanted = connectors ? await withRigTools(scope, connectors.servers) : null;
+    const held = connectors?.project?.disabled ?? [];
     /** The settings a reloaded session had, re-applied after the reload (some agents reset them on load). */
     let carried: AgentConfigChange | undefined;
     if (existing) {
-      const unchanged = !wanted || connectorsFingerprint(wanted) === existing.connectorsFingerprint;
+      const unchanged = !wanted || connectorsFingerprint(wanted, held) === existing.connectorsFingerprint;
       const busy = existing.current !== null || existing.pending.length > 0;
       if (unchanged || busy || !deps.acp.stopSession) return ok(existing);
       log.info('Rig spaces dispatch: connectors changed, reloading the space session', {
@@ -843,7 +858,11 @@ export function createSpacesDispatcher(deps: {
       for (const unsubscribe of existing.unsubscribes) unsubscribe();
       await deps.acp.stopSession(existing.conversationId);
     }
-    const servers = wanted ?? (await withRigTools(scope, (await loadConnectors(bindingId, providerId)).servers));
+    // Started without the run's connectors (e.g. to read its settings): load them, so
+    // the `.mcp.json` servers it must not load are held back from the start too.
+    const resolved = connectors ?? (await loadConnectors(bindingId, providerId));
+    const servers = wanted ?? (await withRigTools(scope, resolved.servers));
+    const disabledProjectServers = resolved.project?.disabled ?? [];
 
     // Memory across restarts: reuse the stored conversation and resume the
     // agent's own session (same cwd) rather than starting from nothing.
@@ -857,7 +876,7 @@ export function createSpacesDispatcher(deps: {
       pending: [],
       current: null,
       heldPermissions: new Map(),
-      connectorsFingerprint: connectorsFingerprint(servers),
+      connectorsFingerprint: connectorsFingerprint(servers, disabledProjectServers),
       rigTools: servers.some((server) => server.name === RIG_TOOLS_SERVER),
       unsubscribes: [],
     };
@@ -873,6 +892,7 @@ export function createSpacesDispatcher(deps: {
         cwd,
         sessionId: resumable.acpSessionId,
         mcpServers: servers,
+        ...(disabledProjectServers.length > 0 ? { disabledProjectServers } : {}),
       });
       if (!started.success) {
         log.warn('Rig spaces dispatch: could not resume the space session, starting fresh', {
@@ -892,7 +912,13 @@ export function createSpacesDispatcher(deps: {
       }
     }
     const fresh = started === null;
-    started ??= await deps.acp.startSession({ conversationId, providerId, cwd, mcpServers: servers });
+    started ??= await deps.acp.startSession({
+      conversationId,
+      providerId,
+      cwd,
+      mcpServers: servers,
+      ...(disabledProjectServers.length > 0 ? { disabledProjectServers } : {}),
+    });
     if (!started.success) return err(started.error);
     // A brand-new session starts from your usual settings for this agent. A
     // reload carries the settings it had, and a resume after a restart gets
@@ -1069,7 +1095,8 @@ export function createSpacesDispatcher(deps: {
       connectors.servers.map((server) => server.name),
       connectors.gaps,
       connectors.global,
-      roomSees
+      roomSees,
+      connectors.project?.pending
     );
     const { images, spacePaths } = await promptImages(
       imageCandidates(attachments, located, spec.agent),
@@ -1389,7 +1416,7 @@ const SESSION_READY_TIMEOUT_MS = 60_000;
 
 export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClient>): SpacesAcpSessions {
   return {
-    async startSession({ conversationId, providerId, cwd, mcpServers }) {
+    async startSession({ conversationId, providerId, cwd, mcpServers, disabledProjectServers }) {
       const client = await getClient();
       const result = await client.startSession({
         input: {
@@ -1402,12 +1429,13 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
           sessionId: null,
           model: null,
           ...(mcpServers?.length ? { mcpServers } : {}),
+          ...(disabledProjectServers?.length ? { disabledProjectMcpServers: disabledProjectServers } : {}),
         },
       });
       return result.success ? ok({ sessionId: result.data.sessionId }) : err(describeStartError(providerId, result.error));
     },
 
-    async resumeSession({ conversationId, providerId, cwd, sessionId, mcpServers }) {
+    async resumeSession({ conversationId, providerId, cwd, sessionId, mcpServers, disabledProjectServers }) {
       const client = await getClient();
       const result = await client.resumeSession({
         input: {
@@ -1420,6 +1448,7 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
           sessionId,
           model: null,
           ...(mcpServers?.length ? { mcpServers } : {}),
+          ...(disabledProjectServers?.length ? { disabledProjectMcpServers: disabledProjectServers } : {}),
         },
       });
       return result.success ? ok({ sessionId: result.data.sessionId }) : err(describeStartError(providerId, result.error));

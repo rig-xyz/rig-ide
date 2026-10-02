@@ -1,5 +1,5 @@
 import { rpc } from '@renderer/lib/ipc';
-import type { ConnectionStatus, ConnectorId, ConnectResult, GlobalServer } from '@shared/spaces/connectors';
+import type { ConnectionStatus, ConnectorId, ConnectResult, GlobalServer, ProjectServerNotice } from '@shared/spaces/connectors';
 
 /**
  * The main-process connectors RPC (`rpc.rig.connectors`, see connectors-
@@ -26,6 +26,10 @@ export interface ConnectorsApi {
    * cheap to call again on panel expand or gallery open.
    */
   globalSetup(bindingId?: string): Promise<GlobalServer[]>;
+  /** The space's own `.mcp.json` servers you haven't allowed on this device; your Claude there doesn't get them until you do. */
+  projectServers(bindingId: string): Promise<ProjectServerNotice[]>;
+  /** Allows one of them for this space's folder on this device (its `.claude/settings.local.json`). */
+  allowProjectServer(bindingId: string, name: string): Promise<boolean>;
 }
 
 export const connectorsApi: ConnectorsApi = {
@@ -34,4 +38,6 @@ export const connectorsApi: ConnectorsApi = {
   cancel: (id) => rpc.rig.connectors.cancel({ id }),
   disconnect: (id) => rpc.rig.connectors.disconnect({ id }),
   globalSetup: (bindingId) => rpc.rig.connectors.globalSetup({ bindingId }),
+  projectServers: (bindingId) => rpc.rig.connectors.projectServers({ bindingId }),
+  allowProjectServer: (bindingId, name) => rpc.rig.connectors.allowProjectServer({ bindingId, name }),
 };

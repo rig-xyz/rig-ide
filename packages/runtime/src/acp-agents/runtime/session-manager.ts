@@ -812,12 +812,24 @@ export class SessionManager implements InboundRouter {
   }
 
   private buildNewSessionRequest(input: AcpStartInput): NewSessionRequest {
-    return { cwd: input.cwd, mcpServers: input.mcpServers ?? [] };
+    return { cwd: input.cwd, mcpServers: input.mcpServers ?? [], ...sessionMeta(input) };
   }
 
   private buildLoadSessionRequest(input: AcpStartInput, sessionId: string): LoadSessionRequest {
-    return { cwd: input.cwd, sessionId, mcpServers: input.mcpServers ?? [] };
+    return { cwd: input.cwd, sessionId, mcpServers: input.mcpServers ?? [], ...sessionMeta(input) };
   }
+}
+
+/**
+ * The Claude adapter's `_meta.claudeCode.options.settings` (Claude Code's
+ * flag-settings tier): the folder's `.mcp.json` servers to keep out of the
+ * session. Headless Claude loads every unrejected `.mcp.json` server without
+ * asking, so this is the only way to hold one back.
+ */
+function sessionMeta(input: AcpStartInput): { _meta?: Record<string, unknown> } {
+  const disabled = input.disabledProjectMcpServers ?? [];
+  if (input.providerId !== 'claude' || disabled.length === 0) return {};
+  return { _meta: { claudeCode: { options: { settings: { disabledMcpjsonServers: disabled } } } } };
 }
 
 /**

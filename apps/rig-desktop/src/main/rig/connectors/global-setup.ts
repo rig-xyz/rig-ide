@@ -23,18 +23,49 @@ function safeUrl(raw: string): string | null {
 
 export type RunCli = (agent: 'claude' | 'codex', args: string[], cwd: string | undefined) => Promise<string>;
 
-/** `claude mcp list` (text): "<name>: <url or command> [(HTTP)] - ✔ Connected". Connected remote and local servers. */
-export function parseClaudeMcpList(text: string): GlobalServer[] {
-  const servers: GlobalServer[] = [];
+/** Where Claude says one of its servers stands, from the status `claude mcp list` prints. */
+export type ClaudeMcpState = 'connected' | 'pending' | 'needs_auth' | 'failed' | 'disabled' | 'rejected' | 'other';
+
+/** One line of `claude mcp list`, as seen from a folder. */
+export interface ClaudeMcpEntry {
+  name: string;
+  /** Remote servers only (no query or credentials); null for local (stdio) ones. */
+  url: string | null;
+  state: ClaudeMcpState;
+}
+
+function claudeState(status: string): ClaudeMcpState {
+  if (status.includes('Pending approval')) return 'pending';
+  if (status.includes('Needs authentication')) return 'needs_auth';
+  if (status.includes('Rejected')) return 'rejected';
+  if (status.includes('Disabled')) return 'disabled';
+  if (/fail|error/i.test(status)) return 'failed';
+  if (status.includes('✔') && status.includes('Connected')) return 'connected';
+  return 'other';
+}
+
+/** `claude mcp list` (text): "<name>: <url or command> [(HTTP)] - <status>", every server with its state. */
+export function parseClaudeMcpStatuses(text: string): ClaudeMcpEntry[] {
+  const entries: ClaudeMcpEntry[] = [];
   for (const line of text.split('\n')) {
     const match = /^(.+?): (\S+)(?: \([A-Z]+\))?.* - (.+)$/.exec(line.trim());
     if (!match) continue;
     const [, name, target, status] = match;
-    if (!status!.includes('✔')) continue;
     const url = /^https?:\/\//.test(target!) ? safeUrl(target!) : null;
-    servers.push({ agent: 'claude', name: name!, url, connectorId: url ? connectorIdForUrl(url) : null });
+    entries.push({ name: name!, url, state: claudeState(status!) });
   }
-  return servers;
+  return entries;
+}
+
+/** `claude mcp list` (text): its connected remote and local servers. */
+export function parseClaudeMcpList(text: string): GlobalServer[] {
+  return connectedClaudeServers(parseClaudeMcpStatuses(text));
+}
+
+function connectedClaudeServers(entries: readonly ClaudeMcpEntry[]): GlobalServer[] {
+  return entries
+    .filter((e) => e.state === 'connected')
+    .map((e) => ({ agent: 'claude', name: e.name, url: e.url, connectorId: e.url ? connectorIdForUrl(e.url) : null }));
 }
 
 /** `codex mcp list --json`: enabled servers, with the URL of remote ones. */
@@ -59,38 +90,58 @@ export function parseCodexMcpList(json: string): GlobalServer[] {
 export interface GlobalSetup {
   /** Your agents' global servers, as seen from a space's folder (project-scoped ones count). Cached. */
   list(cwd: string | undefined): Promise<GlobalServer[]>;
+  /** Every server Claude lists from this folder with its state (from the same cached read); null when Claude's CLI couldn't be read. */
+  claudeEntries(cwd: string | undefined): Promise<ClaudeMcpEntry[] | null>;
   /** Drops the cache (e.g. after you connect something in an agent's own app). */
   invalidate(): void;
 }
 
 const TTL_MS = 10 * 60_000;
 
+type Read = { claude: ClaudeMcpEntry[] | null; codex: GlobalServer[] };
+
 export function createGlobalSetup(deps: { run: RunCli; now?: () => number; ttlMs?: number }): GlobalSetup {
   const now = deps.now ?? Date.now;
   const ttl = deps.ttlMs ?? TTL_MS;
-  const cache = new Map<string, { at: number; servers: Promise<GlobalServer[]> }>();
+  const cache = new Map<string, { at: number; read: Promise<Read> }>();
 
-  async function read(agent: 'claude' | 'codex', cwd: string | undefined): Promise<GlobalServer[]> {
+  async function attempt<T>(agent: 'claude' | 'codex', fn: () => Promise<T>): Promise<T | null> {
     try {
-      return agent === 'claude'
-        ? parseClaudeMcpList(await deps.run('claude', ['mcp', 'list'], cwd))
-        : parseCodexMcpList(await deps.run('codex', ['mcp', 'list', '--json'], cwd));
+      return await fn();
     } catch (error) {
       // An agent that isn't installed (or signed in) just brings nothing.
       log.info('Rig connectors: could not read an agent’s own MCP setup', { agent, error: String(error) });
-      return [];
+      return null;
     }
   }
 
+  function read(cwd: string | undefined): Promise<Read> {
+    const key = cwd ?? '';
+    const hit = cache.get(key);
+    if (hit && now() - hit.at < ttl) return hit.read;
+    // One read in flight per folder; both agents in parallel.
+    const next = Promise.all([
+      attempt('claude', async () => parseClaudeMcpStatuses(await deps.run('claude', ['mcp', 'list'], cwd))),
+      attempt('codex', async () => parseCodexMcpList(await deps.run('codex', ['mcp', 'list', '--json'], cwd))),
+    ]).then(([claude, codex]) => ({ claude, codex: codex ?? [] }));
+    cache.set(key, { at: now(), read: next });
+    return next;
+  }
+
+  const lists = new WeakMap<Promise<Read>, Promise<GlobalServer[]>>();
+
   return {
     list(cwd) {
-      const key = cwd ?? '';
-      const hit = cache.get(key);
-      if (hit && now() - hit.at < ttl) return hit.servers;
-      // One read in flight per folder; both agents in parallel.
-      const servers = Promise.all([read('claude', cwd), read('codex', cwd)]).then(([a, b]) => [...a, ...b]);
-      cache.set(key, { at: now(), servers });
+      const pending = read(cwd);
+      let servers = lists.get(pending);
+      if (!servers) {
+        servers = pending.then((r) => [...connectedClaudeServers(r.claude ?? []), ...r.codex]);
+        lists.set(pending, servers);
+      }
       return servers;
+    },
+    claudeEntries(cwd) {
+      return read(cwd).then((r) => r.claude);
     },
     invalidate() {
       cache.clear();

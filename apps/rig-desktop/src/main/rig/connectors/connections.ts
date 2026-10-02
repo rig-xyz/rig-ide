@@ -117,7 +117,13 @@ export interface ConnectionsDeps {
  * it can't reach, and (optionally) the space's connectors it already has from
  * its own global setup, which are never gaps.
  */
-export type SessionConnectors = { servers: AcpMcpServerWire[]; gaps: ConnectorGap[]; global?: ConnectorId[] };
+export type SessionConnectors = {
+  servers: AcpMcpServerWire[];
+  gaps: ConnectorGap[];
+  global?: ConnectorId[];
+  /** Claude only: the folder's own `.mcp.json` servers held back from this session, and the ones of those waiting for your Allow (see project-servers.ts). */
+  project?: { disabled: string[]; pending: string[] };
+};
 
 export interface Connections {
   list(): Promise<ConnectionStatus[]>;

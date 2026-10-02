@@ -39,6 +39,7 @@ import { ConnectorsSection } from './connectors-panel';
 import { SpaceCard } from './space-card';
 import { SpaceSetupState, type RoomSetup } from './space-setup-state';
 import { SyncHealthNotice } from './sync-health-notice';
+import { ProjectServersNotice } from './project-servers-notice';
 import { setupDraftKey } from '../space-setup-store';
 import { moveComposerDraft } from './composer';
 import { SPACE_SETUP_PENDING_REASON } from '@shared/rig/space-setup';
@@ -1117,6 +1118,8 @@ export function RoomView({
                 broken, just a few seconds behind. A quiet note, not an alarm. */}
             {/* Files here go stale without a word when sync isn't running on this computer: say so. */}
             {live && <SyncHealthNotice path={spaceRoot} className="mb-1.5" />}
+            {/* The space's own .mcp.json servers your agent here can't use until you allow them. */}
+            {live && <ProjectServersNotice bindingId={bindingId} className="mb-1.5" />}
             {roomConnection && (
               <ConnectionBanner
                 connection={roomConnection}

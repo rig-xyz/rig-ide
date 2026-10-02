@@ -28,6 +28,8 @@ vi.mock('@renderer/features/spaces/connectors-api', () => ({
     cancel: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn().mockResolvedValue(undefined),
     globalSetup: vi.fn().mockResolvedValue([]),
+    projectServers: vi.fn().mockResolvedValue([]),
+    allowProjectServer: vi.fn().mockResolvedValue(true),
   },
 }));
 

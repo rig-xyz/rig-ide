@@ -7,7 +7,7 @@ import { createRPCController } from '@shared/lib/ipc/rpc';
 import { isError, resolveContext, rigAccountController } from '../account';
 import { resolveLocalPathsImpl } from '../recent-rigs';
 import { rigSettingsStore } from '../settings-instance';
-import { connections, globalSetupFor } from '../connectors/connections-instance';
+import { connections, globalSetupFor, projectServersFor } from '../connectors/connections-instance';
 import { sessionConnectorsFor } from '../connectors/global-setup';
 import { isConnectorId } from '@shared/spaces/connectors';
 import {
@@ -66,18 +66,28 @@ function realDeps(): SpacesDispatchControllerDeps {
           (await resolveLocalPathsImpl([bindingId]))[bindingId] ?? null,
         store: createFileSpaceSessionStore(join(app.getPath('userData'), 'spaces-sessions.json')),
         connectors: async (bindingId, agent) => {
-          const listed = await api.listConnectors?.(bindingId);
-          if (!listed?.success) {
-            // An older relay without the route, or a hiccup: the session runs without connectors.
-            if (listed) log.warn('Rig spaces: could not load the space connectors', { bindingId, error: listed.error.message });
-            return { servers: [], gaps: [] };
-          }
-          const ids = listed.data.map((c) => c.connectorId).filter(isConnectorId);
-          // A tool this agent already has from its own setup is used that way: never a gap, never injected twice.
-          return sessionConnectorsFor(ids, agent, {
-            forSession: (rest) => connections.forSession(rest),
-            globalSetup: () => globalSetupFor(bindingId),
-          });
+          const spaceConnectors = async () => {
+            const listed = await api.listConnectors?.(bindingId);
+            if (!listed?.success) {
+              // An older relay without the route, or a hiccup: the session runs without connectors.
+              if (listed) log.warn('Rig spaces: could not load the space connectors', { bindingId, error: listed.error.message });
+              return { servers: [], gaps: [] };
+            }
+            const ids = listed.data.map((c) => c.connectorId).filter(isConnectorId);
+            // A tool this agent already has from its own setup is used that way: never a gap, never injected twice.
+            return sessionConnectorsFor(ids, agent, {
+              forSession: (rest) => connections.forSession(rest),
+              globalSetup: () => globalSetupFor(bindingId),
+            });
+          };
+          // Claude also loads the folder's own .mcp.json: hold back the copies of
+          // servers it already has, and the ones you haven't allowed. Codex doesn't read it.
+          const [rigSide, project] = await Promise.all([
+            spaceConnectors(),
+            agent === 'claude' ? projectServersFor(bindingId) : Promise.resolve(null),
+          ]);
+          if (!project || project.disabled.length === 0) return rigSide;
+          return { ...rigSide, project: { disabled: project.disabled, pending: project.pending.map((p) => p.name) } };
         },
         rigTools: (scope) => rigToolsServer.serverFor(scope),
         roomSees: (bindingId) => roomSeesFor(rigSettingsStore.get().spacesRoomSees, bindingId),

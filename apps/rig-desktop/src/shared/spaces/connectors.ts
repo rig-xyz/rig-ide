@@ -174,6 +174,13 @@ export interface GlobalServer {
   connectorId: ConnectorId | null;
 }
 
+/** A server the space's own `.mcp.json` declares that you haven't allowed on this device. */
+export interface ProjectServerNotice {
+  name: string;
+  /** Remote servers only; null for local (stdio) ones. */
+  url: string | null;
+}
+
 /** The catalog tool served at this URL (same host as its MCP endpoint), or null. */
 export function connectorIdForUrl(url: string): ConnectorId | null {
   let host: string;

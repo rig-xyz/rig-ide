@@ -32,6 +32,13 @@ export const acpStartInputSchema = z.object({
   initialQueue: z.array(promptInputSchema).optional(),
   env: z.record(z.string(), z.string()).optional(),
   mcpServers: z.array(acpMcpServerSchema).optional(),
+  /**
+   * Claude only: servers from the folder's own `.mcp.json` to keep out of
+   * this session (its `disabledMcpjsonServers`). Names only, on purpose: a
+   * free-form settings passthrough would let a renderer-started session set
+   * hooks that run commands.
+   */
+  disabledProjectMcpServers: z.array(z.string()).optional(),
 });
 export type AcpStartInputWire = z.infer<typeof acpStartInputSchema>;
 

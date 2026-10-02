@@ -53,6 +53,8 @@ vi.mock('@renderer/features/spaces/connectors-api', () => ({
     cancel: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn().mockResolvedValue(undefined),
     globalSetup: vi.fn().mockResolvedValue([]),
+    projectServers: vi.fn().mockResolvedValue([]),
+    allowProjectServer: vi.fn().mockResolvedValue(true),
   },
 }));
 
@@ -2926,3 +2928,36 @@ describe('Connectors — Room copy and turn footer', () => {
   });
 });
 
+
+describe("Room notice: the space's own .mcp.json servers you haven't allowed", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  it('says which server waits for you, and Allow records it and clears the notice', async () => {
+    const { ProjectServersNotice } = await import('@renderer/features/spaces/components/project-servers-notice');
+    vi.mocked(connectorsApi.projectServers).mockResolvedValueOnce([{ name: 'analytics', url: 'https://mcp.example.com/mcp' }]);
+    vi.mocked(connectorsApi.allowProjectServer).mockResolvedValueOnce(true);
+    await act(async () => root.render(<ProjectServersNotice bindingId="b1" />));
+    expect(host.querySelector('[data-testid="project-servers-notice"]')?.textContent).toContain('This space uses analytics');
+
+    await act(async () => click(host.querySelector('[data-testid="project-server-allow"]')!));
+    expect(connectorsApi.allowProjectServer).toHaveBeenCalledWith('b1', 'analytics');
+    expect(host.querySelector('[data-testid="project-servers-notice"]')).toBeNull();
+  });
+
+  it('renders nothing when every declared server is allowed', async () => {
+    const { ProjectServersNotice } = await import('@renderer/features/spaces/components/project-servers-notice');
+    vi.mocked(connectorsApi.projectServers).mockResolvedValueOnce([]);
+    await act(async () => root.render(<ProjectServersNotice bindingId="b1" />));
+    expect(host.querySelector('[data-testid="project-servers-notice"]')).toBeNull();
+  });
+});
