@@ -25,10 +25,24 @@ import { isInviteSecretShape } from './invite-link';
  */
 export const RIG_URL_SCHEME = URL_SCHEME;
 
-export type RigDeepLink = {
-  kind: 'join';
-  secret: string;
-};
+export type RigDeepLink =
+  | {
+      kind: 'join';
+      secret: string;
+    }
+  | {
+      /**
+       * `<scheme>://space/<bindingId>[/m/<messageId>]`: open a space,
+       * optionally at a message. What a notification (or, later, a Slack or
+       * email copy of one) links to. It carries no capability: opening it
+       * only navigates to a space this app already has, never joins one.
+       */
+      kind: 'space';
+      bindingId: string;
+      messageId: string | null;
+    };
+
+const ID_SHAPE = /^[A-Za-z0-9_-]{1,64}$/;
 
 // `<scheme>://join/<secret>`, an optional trailing slash (Windows' shell
 // appends one to some protocol activations), nothing else: no query, no
@@ -39,16 +53,38 @@ function joinLinkPattern(scheme: string): RegExp {
   return new RegExp(`^${escaped}:\\/\\/join\\/([^/?#]+)\\/?$`, 'i');
 }
 
-/** `null` for anything that isn't a well-formed `<scheme>://join/<secret>` for this build's scheme. */
+// `<scheme>://space/<bindingId>` or `.../space/<bindingId>/m/<messageId>`,
+// same strictness as join links: no query, no fragment, nothing extra.
+function spaceLinkPattern(scheme: string): RegExp {
+  const escaped = scheme.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+  return new RegExp(`^${escaped}:\\/\\/space\\/([^/?#]+)(?:\\/m\\/([^/?#]+))?\\/?$`, 'i');
+}
+
+/** `null` for anything that isn't a well-formed join or space link for this build's scheme. */
 export function parseRigDeepLink(
   input: string,
   scheme: string = RIG_URL_SCHEME
 ): RigDeepLink | null {
-  const match = joinLinkPattern(scheme).exec(input.trim());
-  if (!match) return null;
-  const secret = match[1]!;
-  if (!isInviteSecretShape(secret)) return null;
-  return { kind: 'join', secret };
+  const trimmed = input.trim();
+  const join = joinLinkPattern(scheme).exec(trimmed);
+  if (join) {
+    const secret = join[1]!;
+    if (!isInviteSecretShape(secret)) return null;
+    return { kind: 'join', secret };
+  }
+  const space = spaceLinkPattern(scheme).exec(trimmed);
+  if (space) {
+    const bindingId = space[1]!;
+    const messageId = space[2] ?? null;
+    if (!ID_SHAPE.test(bindingId) || (messageId !== null && !ID_SHAPE.test(messageId))) return null;
+    return { kind: 'space', bindingId, messageId };
+  }
+  return null;
+}
+
+/** The link a notification opens (`rig://space/<id>[/m/<messageId>]`). */
+export function rigSpaceLink(bindingId: string, messageId?: string | null, scheme: string = RIG_URL_SCHEME): string {
+  return `${scheme}://space/${bindingId}${messageId ? `/m/${messageId}` : ''}`;
 }
 
 /**
@@ -74,7 +110,7 @@ export function findRigUrlInArgv(
  */
 export type RigDeepLinkJoin = { link: string };
 
-export function toJoinRequest(link: RigDeepLink): RigDeepLinkJoin {
+export function toJoinRequest(link: Extract<RigDeepLink, { kind: 'join' }>): RigDeepLinkJoin {
   return { link: rigJoinPageUrl(link.secret) };
 }
 

@@ -116,8 +116,17 @@ export type SpaceAttention =
   | { kind: 'live'; state: DotMatrixActivity; owner?: string }
   | { kind: 'failed'; agent: RigSpaceAgent; endedAt: number; owner?: string }
   | { kind: 'finished'; agent: RigSpaceAgent; endedAt: number; owner?: string }
-  /** 1–9; 9 means "9+". */
-  | { kind: 'messages'; count: number }
+  /**
+   * Notifications about you (mentions, replies, your agent, requests to it):
+   * `line` names the newest ("Hugo mentioned you"), `count` is how many are
+   * unread (1–9; 9 means "9+"), shown on the dice like new messages are.
+   */
+  | { kind: 'forYou'; count: number; line: string; messages: number; exact?: boolean }
+  /**
+   * 1–9 from this computer's own marker, where 9 means "9+" (it only sees
+   * the newest 9). `exact` when the count is the relay's (up to 99).
+   */
+  | { kind: 'messages'; count: number; exact?: boolean }
   /** Nothing for you. `lastActivityAt` is null when nothing ever happened in the space. */
   | { kind: 'idle'; lastActivityAt: number | null };
 
@@ -221,9 +230,15 @@ export function deriveSpaceStatusLine(
       return `${agentPhrase(attention.agent, attention.owner)} failed · ${relativeTime(attention.endedAt, now)}`;
     case 'finished':
       return `${agentPhrase(attention.agent, attention.owner)} finished · ${relativeTime(attention.endedAt, now)}`;
+    case 'forYou': {
+      const others = attention.count - 1;
+      const more = others > 0 ? ` · ${others >= MAX_EXACT_MESSAGES ? `${MAX_EXACT_MESSAGES}+` : others} more for you` : '';
+      const news =
+        attention.count === 1 && attention.messages > 1 ? ` · ${newMessages(attention.messages, attention.exact)}` : '';
+      return `${attention.line}${more}${news}`;
+    }
     case 'messages':
-      if (attention.count === 1) return '1 new message';
-      return attention.count >= MAX_NEW_MESSAGES ? `${MAX_NEW_MESSAGES}+ new messages` : `${attention.count} new messages`;
+      return newMessages(attention.count, attention.exact);
     case 'idle':
       return attention.lastActivityAt === null ? 'No activity yet' : relativeTime(attention.lastActivityAt, now);
   }
@@ -232,7 +247,7 @@ export function deriveSpaceStatusLine(
 /** The line's tone: a failure in the muted-error tone, anything else unseen a step brighter than the idle/live muted text. */
 export function spaceStatusLineTone(attention: SpaceAttention): 'danger' | 'secondary' | 'muted' {
   if (attention.kind === 'failed') return 'danger';
-  if (attention.kind === 'finished' || attention.kind === 'messages') return 'secondary';
+  if (attention.kind === 'finished' || attention.kind === 'messages' || attention.kind === 'forYou') return 'secondary';
   return 'muted';
 }
 
@@ -379,4 +394,55 @@ export function writePinnedSpaceIds(ids: ReadonlySet<string>): void {
   } catch {
     // localStorage unavailable — just won't persist.
   }
+}
+
+/** The relay counts up to 100 unread; this computer's own marker sees only the newest 9. */
+const MAX_EXACT_MESSAGES = 99;
+
+function newMessages(count: number, exact = false): string {
+  if (count === 1) return '1 new message';
+  const cap = exact ? MAX_EXACT_MESSAGES : MAX_NEW_MESSAGES;
+  return count >= cap && !(exact && count === cap) ? `${cap}+ new messages` : `${count} new messages`;
+}
+
+/**
+ * Folds notifications into a row's attention (rig docs/notifications-spec.md
+ * §5). Once the relay's summary is in (`known`), its count of unread
+ * messages replaces this computer's own marker diff, so the row, the
+ * Activity bell and the Dock all read one read position that every device
+ * shares. Unread rows about you outrank plain new messages and a finished
+ * run, never a live or failed one. A muted space ('nothing') stays quiet:
+ * no "for you", no "new messages", just when something last happened; its
+ * mentions wait in Activity.
+ */
+export function withNotifications(
+  attention: SpaceAttention,
+  status: RigSpaceStatus | undefined,
+  notifications: {
+    level: 'all' | 'mentions' | 'nothing';
+    directUnread: number;
+    spaceUnread?: number;
+    known?: boolean;
+  },
+  latestDirect: { phrase: string } | null
+): SpaceAttention {
+  if (attention.kind === 'live' || attention.kind === 'failed') return attention;
+  const idle: SpaceAttention = { kind: 'idle', lastActivityAt: lastActivityAt(status) };
+  let base = attention;
+  if (notifications.known && (attention.kind === 'messages' || attention.kind === 'idle')) {
+    const unread = notifications.spaceUnread ?? 0;
+    base = unread > 0 ? { kind: 'messages', count: Math.min(unread, MAX_EXACT_MESSAGES + 1), exact: true } : idle;
+  }
+  if (notifications.level === 'nothing') return base.kind === 'messages' ? idle : base;
+  if (notifications.directUnread > 0 && latestDirect) {
+    return {
+      kind: 'forYou',
+      // Exact up to 100 for the line; the dice caps itself at nine.
+      count: Math.min(notifications.directUnread, MAX_EXACT_MESSAGES + 1),
+      line: latestDirect.phrase,
+      messages: base.kind === 'messages' ? base.count : 0,
+      exact: base.kind === 'messages' && base.exact === true,
+    };
+  }
+  return base;
 }

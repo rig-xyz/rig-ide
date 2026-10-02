@@ -34,6 +34,8 @@ vi.mock('@renderer/lib/ipc', () => ({
     app: { openExternal: async () => {} },
     // No live relay here: the Room offers the scripted demo instead.
     rig: {
+      // Notifications: the Room says which space is on screen and how far it's read.
+      notifications: { setViewing: async () => undefined, markSpaceRead: async () => ({ success: true, data: undefined }) },
       spacesConnection: { getConnectionInfo: async () => ({ success: false, error: { message: 'offline' } }) },
       // A live Room asks once whether files can be attached here.
       attachments: { prepare: async () => ({ space: { status: 'ok' }, files: [] }) },
@@ -595,6 +597,171 @@ describe('Room view — renders through loading into content', () => {
       expect(host.textContent).toContain('kept while you were away');
       await act(async () => {});
       expect(host.textContent).not.toContain('Could not connect'); // offline, the kept Room carries on
+    } finally {
+      roomSourceCache.clear();
+      delete rig.recent;
+    }
+  });
+
+  // Scrollback: a notification about an old message pages the Room back
+  // until that message is there, then scrolls to it; scrolling to the top
+  // loads the page above.
+  it('pages back to reach an old message a notification points at, and on scrolling to the top', async () => {
+    const { ok } = await import('@emdash/shared');
+    const { rpc } = await import('@renderer/lib/ipc');
+    const { RelayRoomSource } = await import('@renderer/features/spaces/relay-room-source');
+    const { roomSourceCache } = await import('@renderer/features/spaces/room-source-cache');
+    const rig = rpc.rig as unknown as Record<string, unknown>;
+    rig.recent = { resolveLocalPaths: async () => ({}) };
+    const log = Array.from({ length: 160 }, (_, i) => ({
+      id: `old-${i + 1}`,
+      seq: i + 1,
+      author: { userId: 'u1', name: 'Alice', avatarUrl: null, kind: 'user' as const },
+      kind: 'text',
+      body: `note number ${i + 1}`,
+      meta: null,
+      createdAt: '2026-09-28T09:00:00Z',
+    }));
+    const queries: Array<{ latest?: number; after?: string; before?: string }> = [];
+    const relay = {
+      mintRealtimeTicket: async () => ok({ ticket: 't', expiresAt: new Date(Date.now() + 600_000).toISOString() }),
+      listMembers: async () => ok([{ userId: 'u1', clerkUserId: null, name: 'Alice', email: null, role: 'owner', avatarUrl: null }]),
+      listMessages: async (_b: string, query: { latest?: number; after?: string; before?: string }) => {
+        queries.push(query);
+        let rows = log;
+        if (query.after) rows = rows.filter((m) => m.seq > Number(query.after));
+        if (query.before) rows = rows.filter((m) => m.seq < Number(query.before));
+        if (query.latest) rows = rows.slice(-query.latest);
+        return ok(rows);
+      },
+      getSessionEvents: async () => ok({ run: null as never, events: [] }),
+      postMessage: async () => ok(log[0]!),
+      requestOwnAgent: async () => ok({} as never),
+    };
+    const quietProvider = {
+      connect: () => {},
+      disconnect: () => {},
+      destroy: () => {},
+      sendStateless: () => {},
+      on: () => {},
+      off: () => {},
+      awareness: null,
+    };
+    let missed = 0;
+    try {
+      roomSourceCache.rememberConnection({ selfUserId: 'u1', wsUrl: 'wss://relay.test/v1/realtime' });
+      const lease = roomSourceCache.acquire('u1', 'b-old', () =>
+        new RelayRoomSource({
+          bindingId: 'b-old',
+          spaceName: '#old',
+          wsUrl: 'wss://relay.test/v1/realtime',
+          selfUserId: 'u1',
+          relay,
+          connectGraceMs: 60_000,
+          createProvider: () => quietProvider,
+        })
+      );
+      await vi.waitFor(() => expect(lease.source.getSnapshot().messages).toHaveLength(50));
+      lease.release();
+
+      await act(async () =>
+        root.render(
+          <RoomView
+            bindingId="b-old"
+            spaceName="#old"
+            jump={{ messageId: 'old-5', messageSeq: 5, nonce: 1 }}
+            onJumpMissed={() => (missed += 1)}
+          />
+        )
+      );
+      // 160 messages, 50 on open: three pages back reach message 5.
+      await vi.waitFor(() => expect(host.querySelector('[data-message-id="old-5"]')).not.toBeNull(), { timeout: 5000 });
+      expect(queries.filter((q) => q.before)).toHaveLength(3);
+      expect(missed).toBe(0);
+      expect(host.querySelector('[data-testid="room-start"]')).not.toBeNull();
+      expect(host.textContent).toContain('Start of the space');
+    } finally {
+      roomSourceCache.clear();
+      delete rig.recent;
+    }
+  });
+
+  it('scrolling to the top loads the page above without moving what you are reading', async () => {
+    const { ok } = await import('@emdash/shared');
+    const { rpc } = await import('@renderer/lib/ipc');
+    const { RelayRoomSource } = await import('@renderer/features/spaces/relay-room-source');
+    const { roomSourceCache } = await import('@renderer/features/spaces/room-source-cache');
+    const rig = rpc.rig as unknown as Record<string, unknown>;
+    rig.recent = { resolveLocalPaths: async () => ({}) };
+    const log = Array.from({ length: 120 }, (_, i) => ({
+      id: `top-${i + 1}`,
+      seq: i + 1,
+      author: { userId: 'u1', name: 'Alice', avatarUrl: null, kind: 'user' as const },
+      kind: 'text',
+      body: `line ${i + 1}`,
+      meta: null,
+      createdAt: '2026-09-28T09:00:00Z',
+    }));
+    const relay = {
+      mintRealtimeTicket: async () => ok({ ticket: 't', expiresAt: new Date(Date.now() + 600_000).toISOString() }),
+      listMembers: async () => ok([{ userId: 'u1', clerkUserId: null, name: 'Alice', email: null, role: 'owner', avatarUrl: null }]),
+      listMessages: async (_b: string, query: { latest?: number; after?: string; before?: string }) => {
+        let rows = log;
+        if (query.after) rows = rows.filter((m) => m.seq > Number(query.after));
+        if (query.before) rows = rows.filter((m) => m.seq < Number(query.before));
+        if (query.latest) rows = rows.slice(-query.latest);
+        // Hold the page above until the test has measured where things are.
+        if (query.before) await pageGate;
+        return ok(rows);
+      },
+      getSessionEvents: async () => ok({ run: null as never, events: [] }),
+      postMessage: async () => ok(log[0]!),
+      requestOwnAgent: async () => ok({} as never),
+    };
+    let releasePage!: () => void;
+    const pageGate = new Promise<void>((resolve) => (releasePage = resolve));
+    const quietProvider = {
+      connect: () => {},
+      disconnect: () => {},
+      destroy: () => {},
+      sendStateless: () => {},
+      on: () => {},
+      off: () => {},
+      awareness: null,
+    };
+    try {
+      roomSourceCache.rememberConnection({ selfUserId: 'u1', wsUrl: 'wss://relay.test/v1/realtime' });
+      const lease = roomSourceCache.acquire('u1', 'b-top', () =>
+        new RelayRoomSource({
+          bindingId: 'b-top',
+          spaceName: '#top',
+          wsUrl: 'wss://relay.test/v1/realtime',
+          selfUserId: 'u1',
+          relay,
+          connectGraceMs: 60_000,
+          createProvider: () => quietProvider,
+        })
+      );
+      await vi.waitFor(() => expect(lease.source.getSnapshot().messages).toHaveLength(50));
+      lease.release();
+      await act(async () => root.render(<RoomView bindingId="b-top" spaceName="#top" />));
+      const first = () => host.querySelector<HTMLElement>('[data-message-id="top-71"]')!;
+      await vi.waitFor(() => expect(first()).not.toBeNull());
+      // The test page loads no Tailwind, so give the transcript the window
+      // height and scrolling its classes give it in the app.
+      const scroller = host.querySelector<HTMLElement>('[data-testid="room-transcript"]')!;
+      scroller.style.height = '600px';
+      scroller.style.overflowY = 'auto';
+      await act(async () => {
+        scroller.scrollTop = 0;
+        scroller.dispatchEvent(new Event('scroll'));
+      });
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="room-older-loading"]')).not.toBeNull());
+      const topBefore = first().getBoundingClientRect().top;
+      await act(async () => releasePage());
+      await vi.waitFor(() => expect(host.querySelector('[data-message-id="top-21"]')).not.toBeNull());
+      // The page landed above; the message that was at the top stays put.
+      expect(Math.abs(first().getBoundingClientRect().top - topBefore)).toBeLessThan(4);
     } finally {
       roomSourceCache.clear();
       delete rig.recent;

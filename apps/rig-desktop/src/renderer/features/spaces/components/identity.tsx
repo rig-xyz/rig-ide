@@ -95,3 +95,50 @@ export function AgentAvatar({
     </span>
   );
 }
+
+const PERSON_AGENT_CHIP: Record<Size, { box: string; logo: number }> = {
+  md: { box: 'size-3.5 rounded-[5px]', logo: 9 },
+  sm: { box: 'size-3 rounded-[4px]', logo: 7 },
+};
+
+/**
+ * An agent drawn person first: its owner's circle with a small model chip
+ * (the agent's brand mark) on the bottom-right corner. The Room's rail and
+ * the listener's notices draw agents this way, where the person is who
+ * you look for and the model is the detail.
+ */
+export function PersonAgentAvatar({
+  agent,
+  owner,
+  size = 'md',
+  className,
+  ringClassName = 'ring-bg-1',
+  title,
+}: {
+  agent: AgentKind;
+  /** `undefined` = an owner we can't resolve (their initials are unknown). */
+  owner: RoomMember | undefined;
+  size?: Size;
+  className?: string;
+  /** The ring that cuts the chip out of whatever it sits on. */
+  ringClassName?: string;
+  title?: string;
+}) {
+  const chip = PERSON_AGENT_CHIP[size];
+  return (
+    <span className={cn('relative inline-flex shrink-0', className)} title={title}>
+      <PersonAvatar member={owner} size={size} />
+      <span
+        className={cn(
+          'border-border-hairline bg-bg-2 absolute -right-1 -bottom-1 flex items-center justify-center border ring-2',
+          chip.box,
+          ringClassName
+        )}
+        data-testid="person-agent-chip"
+        data-agent={agent}
+      >
+        <BrandLogo id={agentLogoId(agent)} size={chip.logo} />
+      </span>
+    </span>
+  );
+}

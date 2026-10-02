@@ -33,7 +33,7 @@ import { RecoverySurface } from '@renderer/features/recovery/recovery-surface';
 import { reportRendererFailure } from '@renderer/features/recovery/renderer-error-reporting';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { RigShareButton } from '@renderer/features/rig-share/rig-share-button';
-import { InvitesBell } from '@renderer/features/shell/invites-bell';
+import { ActivityBell } from '@renderer/features/notifications/activity-bell';
 import { LayoutSwitcher, type RigLayout } from '@renderer/features/shell/layout-switcher';
 import { paneRevealClassName } from '@renderer/features/shell/pane-reveal';
 import { ChatDivider } from '@renderer/features/shell/chat-divider';
@@ -44,6 +44,10 @@ import {
 import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
 import { SettingsModal } from '@renderer/features/shell/settings-modal';
 import { RoomView } from '@renderer/features/spaces/components/room-view';
+import type { RoomJumpRequest } from '@renderer/features/spaces/components/room-transcript';
+import { useNotificationSummary, useNotificationsInvalidation } from '@renderer/features/notifications/use-notifications';
+import { SpaceNotifyLevelButton } from '@renderer/features/notifications/space-notify-level';
+import { syncLastSeenFromServer } from '@renderer/features/spaces/room-read-marker';
 import { roomSourceCache } from '@renderer/features/spaces/room-source-cache';
 import {
   onOpenSetupRequest,
@@ -63,12 +67,13 @@ import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
 import { PinnedCard } from '@renderer/features/workspace/pinned-card';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
-import { consumeJustAttachedSyncing } from '@renderer/lib/just-attached';
+import { consumeJustAttachedSyncing, markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { LatestRequestGate } from '@renderer/lib/latest-request-gate';
 import { Button } from '@renderer/lib/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import { relPathFromRoot } from '@shared/rig/file-navigator-categories';
+import { rigOpenSpaceAtChannel, type OpenSpaceAt } from '@shared/rig/notifications';
 import { rigFileChangeChannel } from '@shared/rig/files';
 import { SPACE_SETUP_PENDING_REASON } from '@shared/rig/space-setup';
 import {
@@ -241,6 +246,15 @@ type FolderState =
 
 export function App() {
   const [, themePreference, setThemePreference, applyThemeFromSettings] = useTheme();
+  // Notifications: refetch counts when main says they changed, and catch
+  // this computer's read markers up to the relay's (read elsewhere = read).
+  useNotificationsInvalidation();
+  const notificationSummary = useNotificationSummary();
+  useEffect(() => {
+    for (const space of notificationSummary.spaces) {
+      if (space.lastReadSeq > 0) syncLastSeenFromServer(space.bindingId, space.lastReadSeq);
+    }
+  }, [notificationSummary]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Make-updates-visible round: the gear's dot opens Settings with About
   // already scrolled into view — reset to false on every open so a later
@@ -911,6 +925,78 @@ export function App() {
     setPendingOpenAbsPath(null);
   }, [boundRoot, pendingOpenAbsPath, openFile]);
 
+  // Notifications: a banner click, an Activity row or a `rig://space/...`
+  // link opens the space it's about, at the message (or run card, or the
+  // commented file) when there is one. Main holds a click that lands before
+  // this listener is up (`consumePendingOpen`). A space not set up on this
+  // computer has nowhere to open: Home lists it to set up.
+  const [roomJump, setRoomJump] = useState<{
+    bindingId: string;
+    request: RoomJumpRequest;
+    preview: string | null;
+  } | null>(null);
+  const openSpaceAt = useCallback(
+    async (target: OpenSpaceAt) => {
+      const paths = await rpc.rig.recent.resolveLocalPaths({ bindingIds: [target.bindingId] }).catch(() => ({}));
+      let root: string | undefined = (paths as Record<string, string>)[target.bindingId];
+      if (!root) {
+        // Not on this computer yet: set it up the way Home's row does
+        // ("Download"), then open it, rather than a click that does nothing.
+        const name = target.spaceName ? `#${target.spaceName}` : 'the space';
+        // One toast that becomes the outcome, not two stacked.
+        const progress = toast({ title: `Setting up ${name} on this computer…`, duration: Infinity });
+        const attached = await rpc.rig.join
+          .attach({ bindingId: target.bindingId, ...(target.spaceName ? { name: target.spaceName } : {}) })
+          .catch((err: unknown) => ({
+            success: false as const,
+            error: { message: err instanceof Error ? err.message : 'Could not set it up.' },
+          }));
+        if (!attached.success) {
+          toast({ id: progress, title: `Couldn't open ${name}`, description: attached.error.message, variant: 'destructive', duration: 6000 });
+          return;
+        }
+        toast({ id: progress, title: `${name} is set up`, duration: 2000 });
+        markJustAttachedSyncing(attached.data.localPath, attached.data.syncing);
+        root = attached.data.localPath;
+      }
+      const file = target.path && !/^[a-z]+:\/\//i.test(target.path) ? `${root.replace(/\/+$/, '')}/${target.path}` : null;
+      if (bound?.bindingId === target.bindingId) {
+        if (file) openFile(file);
+      } else {
+        await openPath(root, { kind: 'space', ...(file ? { openFilePath: file } : {}) });
+      }
+      if (target.messageId || target.runId) {
+        setRoomJump({
+          bindingId: target.bindingId,
+          preview: target.preview ?? null,
+          request: {
+            messageId: target.messageId ?? null,
+            messageSeq: target.messageSeq ?? null,
+            runId: target.runId ?? null,
+            nonce: Date.now(),
+          },
+        });
+      }
+    },
+    [bound?.bindingId, openFile, openPath]
+  );
+  const openSpaceAtRef = useRef(openSpaceAt);
+  openSpaceAtRef.current = openSpaceAt;
+  useEffect(() => {
+    const open = (target: OpenSpaceAt) => void openSpaceAtRef.current(target);
+    const off = events.on(rigOpenSpaceAtChannel, open);
+    void rpc.rig.notifications
+      .consumePendingOpen()
+      .then((pending) => {
+        if (pending) open(pending);
+      })
+      .catch(() => {});
+    return () => {
+      off();
+      void rpc.rig.notifications.releaseOpen().catch(() => {});
+    };
+  }, []);
+
   const openFocus = useCallback(() => {
     setRigLayout((current) => (current === 'chat' ? 'split' : current));
     setFocusedRigPane('artifact');
@@ -933,6 +1019,18 @@ export function App() {
   const renderRoom = (target: NonNullable<typeof bound>, { inSpace }: { inSpace: boolean }) => (
     <RoomView
       bindingId={target.bindingId}
+      jump={roomJump?.bindingId === target.bindingId ? roomJump.request : null}
+      onJumpMissed={() =>
+        toast({
+          title: "Couldn't find that message",
+          // The Room paged back as far as it goes (or the message was
+          // deleted): quote it, so the notification is still readable.
+          description: roomJump?.preview
+            ? `“${roomJump.preview}” It may have been deleted, or it's very far back.`
+            : "It may have been deleted, or it's very far back.",
+          duration: 8000,
+        })
+      }
       setup={
         setupTarget && setup && target === setupTarget
           ? {
@@ -977,7 +1075,7 @@ export function App() {
       renderPanel={
         (inSpace && layout !== 'chat') || !target.rootId
           ? undefined
-          : (extraRows, onlineUserIds, { startCollapsed, chipSummary }) => (
+          : (extraRows, onlineUserIds, { startCollapsed, chipSummary, collapsedDock }) => (
               <PinnedCard
                 root={target.root}
                 rootId={target.rootId}
@@ -996,6 +1094,7 @@ export function App() {
                 onlineUserIds={onlineUserIds}
                 startCollapsed={startCollapsed}
                 chipSummary={chipSummary}
+                collapsedDock={collapsedDock}
                 isSpace={inSpace}
               />
             )
@@ -1162,6 +1261,7 @@ export function App() {
         onGoHome={goHome}
         onOpenSettings={openSettings}
         onOpenPath={openPath}
+        onOpenSpaceAt={(target) => void openSpaceAt(target)}
         onOpenFolder={openFolder}
         updateReady={isUpdateReady(updateStatus.state)}
         autoEditRigName={justCreatedRig}
@@ -1191,13 +1291,17 @@ export function App() {
         shareSlot={bound && !boundIsSpace ? <RigShareButton root={bound.root} name={bound.name} /> : undefined}
         sharePillSlot={
           rigView && rigViewIsSpace ? (
-            <RigShareButton
-              root={rigView.root}
-              name={rigView.name}
-              variant="pill"
-              // A space still being set up can't invite anyone yet.
-              pendingReason={setupTarget ? SPACE_SETUP_PENDING_REASON : undefined}
-            />
+            <div className="flex items-center gap-1.5">
+              {/* A space being set up has no relay binding to set a level on yet. */}
+              {!setupTarget && rigView.bindingId && <SpaceNotifyLevelButton bindingId={rigView.bindingId} />}
+              <RigShareButton
+                root={rigView.root}
+                name={rigView.name}
+                variant="pill"
+                // A space still being set up can't invite anyone yet.
+                pendingReason={setupTarget ? SPACE_SETUP_PENDING_REASON : undefined}
+              />
+            </div>
           ) : undefined
         }
         layoutSwitcher={
@@ -1461,6 +1565,7 @@ export function Topbar({
   onGoHome,
   onOpenSettings,
   onOpenPath,
+  onOpenSpaceAt,
   onOpenFolder,
   updateReady,
   shareSlot,
@@ -1491,8 +1596,10 @@ export function Topbar({
   onGoHome: () => void;
   /** `true` scrolls Settings straight to About — the gear's own click passes this along as `updateReady` (see below), never called with `true` from anywhere else. */
   onOpenSettings: (focusAbout?: boolean) => void;
-  /** Threaded down to `InvitesBell` — its post-accept "Set up locally" opens the result the same way every other "open a rig" entry point does. Also `RigSwitcher`'s own row clicks. */
+  /** Threaded down to `ActivityBell` — an invite's post-accept "Set up locally" opens the result the same way every other "open a rig" entry point does. Also `RigSwitcher`'s own row clicks. */
   onOpenPath: (path: string, opts?: { kind?: 'space' }) => void;
+  /** An Activity row's click: open the space it's about, at the message (App's `openSpaceAt`). */
+  onOpenSpaceAt?: (target: OpenSpaceAt) => void;
   /** `RigSwitcher`'s "Open folder…" escape hatch — the native picker, same `openFolder` flow every other entry point uses. */
   onOpenFolder: () => void;
   /**
@@ -1648,10 +1755,10 @@ export function Topbar({
         )}
         {layoutSlot}
         {sharePillSlot}
-        {/* Invites addressed to me — renders nothing signed out; accent
-            count dot only when invites exist (a live indicator, within the
-            accent budget). Sits between the avatar and the gear. */}
-        <InvitesBell onOpenPath={onOpenPath} />
+        {/* Invites addressed to me, then Activity (mentions, replies, your
+            agents' news). Renders nothing signed out; accent count dot only
+            when something is waiting. Sits between the avatar and the gear. */}
+        <ActivityBell onOpenPath={onOpenPath} onOpenTarget={(target) => onOpenSpaceAt?.(target)} />
         <Tooltip>
           <TooltipTrigger
             render={
@@ -1663,7 +1770,7 @@ export function Topbar({
               >
                 <SettingsIcon size={15} strokeWidth={1.5} />
                 {/* Make-updates-visible round: same quiet accent-dot
-                    convention `InvitesBell`'s own count badge documents
+                    convention `ActivityBell`'s own count badge documents
                     above — here just presence, no count, since "an update
                     is ready" isn't a quantity. */}
                 {updateReady && (

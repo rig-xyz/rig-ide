@@ -2,7 +2,6 @@ import { eq } from 'drizzle-orm';
 import { app, BrowserWindow, Notification } from 'electron';
 import { getMainWindow } from '@main/app/window';
 import { getPluginMetadata } from '@main/core/agents/plugin-registry';
-import { appSettingsService } from '@main/core/settings/settings-service';
 import { db } from '@main/db/client';
 import { tasks } from '@main/db/schema';
 import { events } from '@main/lib/events';
@@ -59,19 +58,29 @@ function getProviderName(providerId: string): string {
   }
 }
 
+/**
+ * Task agents' own banners follow Settings › Notifications (rig
+ * `shared/rig/notifications.ts`), like space notifications: "Show banners
+ * for", the sound, and "Only when I'm away" (a focused rig window is quiet).
+ */
 export async function maybeShowNotification(event: AgentEvent, appFocused: boolean): Promise<void> {
   try {
-    const { enabled, osNotifications } = await appSettingsService.get('notifications');
-    if (!enabled || !osNotifications || appFocused || !Notification.isSupported()) return;
+    // Loaded here, not at module load: the store resolves Electron's
+    // userData path on import, which tests of this module's importers lack.
+    const { rigSettingsStore } = await import('@main/rig/settings-instance');
+    const prefs = rigSettingsStore.get().notifications;
+    // A task agent's news is about you, so 'About me' keeps it; only 'Nothing' stops it.
+    if (prefs.banners === 'nothing' || !Notification.isSupported()) return;
+    if (prefs.onlyWhenAway && appFocused) return;
 
     const body = getNotificationBody(event);
     if (!body) return;
 
     const providerName = event.providerId ? getProviderName(event.providerId) : 'Agent';
     const taskName = await getTaskName(event.taskId);
-    const title = taskName ? `${providerName} — ${taskName}` : providerName;
+    const title = taskName ? `${providerName} in ${taskName}` : providerName;
 
-    const notification = new Notification({ title, body, silent: true });
+    const notification = new Notification({ title, body, silent: !prefs.sound });
     activeNotifications.add(notification);
 
     const releaseNotification = () => activeNotifications.delete(notification);

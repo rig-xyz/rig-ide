@@ -22,7 +22,9 @@
  * `reduce` function `FixtureRoomSource` folds them with.
  */
 
+import type { RigNotification } from '@shared/rig/notifications';
 import type { RoomFeedBeat, RoomFeedScript } from '../room-source';
+import { applyThemeEvents, themesFromSnapshot, type ThemeEvent } from '../themes';
 import type {
   AgentKind,
   MessageMeta,
@@ -77,6 +79,21 @@ export function reduceRoom(snapshot: RoomSnapshot, event: RoomEvent): RoomSnapsh
     case 'message_created':
       return { ...snapshot, messages: [...snapshot.messages, event.message] };
 
+    case 'older_messages_loading':
+      return { ...snapshot, olderMessages: 'loading' };
+
+    case 'older_messages_loaded': {
+      // Older pages go in front, in seq order, minus anything already here
+      // (a page can overlap what a catch-up just brought in).
+      const have = new Set(snapshot.messages.map((m) => m.id));
+      const older = event.messages.filter((m) => !have.has(m.id)).sort((a, b) => a.seq - b.seq);
+      return {
+        ...snapshot,
+        messages: older.length > 0 ? [...older, ...snapshot.messages] : snapshot.messages,
+        olderMessages: event.more ? 'more' : 'none',
+      };
+    }
+
     case 'reactions_changed': {
       let changed = false;
       const messages = snapshot.messages.map((m) => {
@@ -88,6 +105,22 @@ export function reduceRoom(snapshot: RoomSnapshot, event: RoomEvent): RoomSnapsh
       });
       return changed ? { ...snapshot, messages } : snapshot;
     }
+
+    case 'themes_synced':
+      return { ...snapshot, themes: themesFromSnapshot(event.snapshot) };
+
+    case 'themes_applied': {
+      if (!snapshot.themes) return snapshot;
+      let seqs: Map<string, number> | null = null;
+      const next = applyThemeEvents(snapshot.themes, event.events, event.upTo, (messageId) => {
+        seqs ??= new Map(snapshot.messages.map((m) => [m.id, m.seq]));
+        return seqs.get(messageId);
+      });
+      return next === snapshot.themes ? snapshot : { ...snapshot, themes: next };
+    }
+
+    case 'themes_cleared':
+      return snapshot.themes == null ? snapshot : { ...snapshot, themes: null };
 
     case 'session_event_appended': {
       const existing = snapshot.sessionEventsByRun[event.runId] ?? [];
@@ -424,7 +457,7 @@ function typingThenSay(authorId: PersonId, body: string, time: string): RoomFeed
   ];
 }
 
-export function buildRoomFeed(): RoomFeedScript {
+export function buildRoomFeed(options: { dock?: boolean } = {}): RoomFeedScript {
   seqCounter = 0;
   msgCounter = 0;
 
@@ -736,8 +769,231 @@ export function buildRoomFeed(): RoomFeedScript {
     })
   );
   push(
-    say('carol', '@bob added the relaunch date to the review. Paid should recover by Friday.', '09:38')
+    ...typingThenSay(
+      'carol',
+      '@bob added the relaunch date to the review. Paid should recover by Friday.',
+      '09:38'
+    )
   );
 
+  if (options.dock) return withDockDemo({ initialSnapshot, beats, reduce: reduceRoom });
   return { initialSnapshot, beats, reduce: reduceRoom };
+}
+
+// ────────── the dock demo ──────────
+
+const DEMO_THEMES = {
+  setup: {
+    name: 'Space setup',
+    description: 'Inviting people, connecting the tools, the launch-review skill.',
+  },
+  launch: {
+    name: 'Launch numbers',
+    description: 'Signups and activation for the launch, from Metabase and Mixpanel.',
+  },
+  activation: {
+    name: 'Activation count',
+    description: 'Why activation read 41% and what the real number is.',
+  },
+  paid: { name: 'Paid signups', description: 'The Friday to Monday drop and what caused it.' },
+} as const;
+type DemoThemeId = keyof typeof DEMO_THEMES;
+
+const DEMO_RUN_ID = 'run-demo-approval';
+
+/** The theme each run's card belongs to, by run id. */
+const RUN_THEME = new Map<string, DemoThemeId>([
+  [fixtureRun('run-b-codex').id, 'setup'],
+  [fixtureRun('run-c2-claude-bigoutput').id, 'launch'],
+  [fixtureRun('run-b2-codex-planned').id, 'activation'],
+  [fixtureRun('run-c-claude-bigoutput').id, 'launch'],
+  [fixtureRun('run-a-claude').id, 'activation'],
+  [fixtureRun('run-c-codex-bigoutput').id, 'paid'],
+  [DEMO_RUN_ID, 'paid'],
+]);
+
+/** Which demo theme a message belongs to, or none. */
+function demoThemeOf(message: RoomMessage): DemoThemeId | null {
+  const { meta } = message;
+  const body = message.body ?? '';
+  if (meta.kind === 'session') return RUN_THEME.get(meta.runId) ?? 'launch';
+  if (meta.kind === 'comment_mirror') return 'paid';
+  if (meta.kind === 'invite') return meta.inviteId === 'inv-carol' ? 'paid' : 'setup';
+  if (meta.kind === 'system') return meta.event === 'day_divider' ? null : 'setup';
+  if (/invite carol|Friday paid|paid drop is us|relaunch date/.test(body)) return 'paid';
+  if (/41% includes us|Internal accounts|why is it 34/.test(body)) return 'activation';
+  if (/invite alice|wired up|launch-review skill|all set/.test(body)) return 'setup';
+  return 'launch';
+}
+
+function demoPermission(seq: number, requestId: string, title: string): SessionEvent[] {
+  return [
+    {
+      seq,
+      kind: 'tool_call',
+      payload: { toolCallId: `t-${requestId}`, title, kind: 'execute', status: 'pending' },
+    },
+    {
+      seq: seq + 1,
+      kind: 'permission_requested',
+      payload: {
+        requestId,
+        toolCall: { toolCallId: `t-${requestId}`, title },
+        options: [
+          { optionId: `${requestId}-no`, name: 'No', kind: 'reject_once' },
+          { optionId: `${requestId}-always`, name: 'Always allow', kind: 'allow_always' },
+          { optionId: `${requestId}-yes`, name: 'Yes', kind: 'allow_once' },
+        ],
+      },
+    },
+  ];
+}
+
+/**
+ * The scripted demo with the dock filled in, for looking at it without a
+ * relay: four themes sorted as the messages arrive, a run of Bob's waiting on
+ * two approvals, and two asks of Bob. The asks and the request come as inbox
+ * rows (`notifications`), as they would from the relay.
+ */
+function withDockDemo(script: RoomFeedScript): RoomFeedScript {
+  const beats = [...script.beats];
+
+  // Bob asks his agent for something that needs approval.
+  const ask = say('bob', '@claude compare Friday paid signups with the relaunch numbers', '09:41');
+  const meta: SessionRunMeta = {
+    id: DEMO_RUN_ID,
+    agent: 'claude',
+    owner: 'bob',
+    model: 'opus-5',
+    title: 'Compare Friday paid signups',
+    status: 'running',
+    startedAt: '2026-09-23T16:40:00-04:00',
+    endedAt: null,
+  };
+  beats.push(
+    ask,
+    {
+      delayMs: 400,
+      events: [
+        { type: 'session_started', runId: DEMO_RUN_ID, meta },
+        { type: 'agent_busy_changed', agent: 'claude', owner: 'bob', busy: true },
+        {
+          type: 'message_created',
+          id: `msg-ses-${DEMO_RUN_ID}`,
+          seq: nextSeq(),
+          kind: 'session',
+          message: sessionMessage('bob', DEMO_RUN_ID, '09:41'),
+        },
+      ],
+    },
+    {
+      delayMs: 700,
+      events: [
+        ...demoPermission(1, 'demo-req-1', 'Query Google Ads spend for last week'),
+        ...demoPermission(3, 'demo-req-2', 'Write reviews/paid-recovery.md'),
+      ].map((event) => ({
+        type: 'session_event_appended' as const,
+        runId: DEMO_RUN_ID,
+        seq: event.seq,
+        event,
+      })),
+    }
+  );
+
+  // Themes: a `born` the first time one is used, then an `assign` per message.
+  let eventId = 0;
+  const born = new Set<DemoThemeId>();
+  const withThemes: RoomFeedBeat[] = beats.map((beat) => {
+    const events: RoomEvent[] = [];
+    for (const event of beat.events) {
+      events.push(event);
+      if (event.type !== 'message_created') continue;
+      const themeId = demoThemeOf(event.message);
+      if (!themeId) continue;
+      const themeEvents: ThemeEvent[] = [];
+      if (!born.has(themeId)) {
+        born.add(themeId);
+        themeEvents.push({
+          id: String(++eventId),
+          atSeq: event.message.seq,
+          type: 'born',
+          themeId,
+          ...DEMO_THEMES[themeId],
+          bornSeq: event.message.seq,
+        });
+      }
+      themeEvents.push({
+        id: String(++eventId),
+        atSeq: event.message.seq,
+        type: 'assign',
+        messageId: event.message.id,
+        themeId,
+        via: 'jev',
+      });
+      events.push({ type: 'themes_applied', events: themeEvents, upTo: themeEvents.at(-1)!.id });
+    }
+    return { ...beat, events };
+  });
+
+  const messageIdOf = (needle: string): string => {
+    for (const beat of withThemes) {
+      for (const event of beat.events) {
+        if (event.type === 'message_created' && event.message.body?.includes(needle))
+          return event.message.id;
+      }
+    }
+    throw new Error(`demo message not found: ${needle}`);
+  };
+  const carol = { kind: 'user' as const, userId: 'carol', name: 'Carol', agent: null };
+  const alice = { kind: 'user' as const, userId: 'alice', name: 'Alice', agent: null };
+  const row = (
+    id: string,
+    bindingId: string,
+    type: RigNotification['type'],
+    actor: RigNotification['actor'],
+    extra: Partial<RigNotification>
+  ): RigNotification => ({
+    id,
+    type,
+    tier: 'direct',
+    bindingId,
+    spaceName: '#launch-numbers',
+    actor,
+    messageId: null,
+    messageSeq: null,
+    runId: null,
+    requestId: null,
+    inviteId: null,
+    path: null,
+    title: '',
+    body: '',
+    createdAt: '2026-09-23T13:40:00.000Z',
+    readAt: null,
+    ...extra,
+  });
+
+  return {
+    ...script,
+    initialSnapshot: {
+      ...script.initialSnapshot,
+      themes: { enabled: true, list: [], themeOf: {}, cursor: '0' },
+    },
+    beats: withThemes,
+    notifications: (bindingId) => [
+      row('demo-ask-carol', bindingId, 'mention', carol, {
+        messageId: messageIdOf('added the relaunch date'),
+        body: '@bob added the relaunch date',
+      }),
+      row('demo-ask-alice', bindingId, 'mention', alice, {
+        messageId: messageIdOf('Internal accounts were inflating'),
+        body: '@bob fixed',
+        createdAt: '2026-09-23T13:41:00.000Z',
+      }),
+      row('demo-request', bindingId, 'agent_request', carol, {
+        runId: DEMO_RUN_ID,
+        body: 'compare Friday paid signups',
+        createdAt: '2026-09-23T13:42:00.000Z',
+      }),
+    ],
+  };
 }

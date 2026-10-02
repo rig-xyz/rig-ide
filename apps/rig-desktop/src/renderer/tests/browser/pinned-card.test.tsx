@@ -155,6 +155,94 @@ describe('PinnedCard', () => {
       expect(host.querySelector('[aria-label="Collapse"]')).toBeTruthy();
     });
 
+    describe("in the Room's dock mode (the dock is given)", () => {
+      // What the Room's dock does with it: stays on screen, draws the card's shape, and puts the card's content on it.
+      const dock = ({
+        onExpand,
+        onFold,
+        open,
+        card,
+      }: {
+        onExpand: (section?: 'people') => void;
+        onFold: () => void;
+        open: boolean;
+        card: React.ReactNode;
+      }) => (
+        <div data-testid="dock-stub" data-open={open ? 'true' : 'false'}>
+          <button type="button" data-testid="dock-stub-open" onClick={() => onExpand()}>
+            open
+          </button>
+          <button type="button" data-testid="dock-stub-people" onClick={() => onExpand('people')}>
+            more
+          </button>
+          <button type="button" data-testid="dock-stub-fold" onClick={onFold}>
+            fold
+          </button>
+          {card}
+        </div>
+      );
+      const stub = () => host.querySelector<HTMLElement>('[data-testid="dock-stub"]')!;
+      const card = () => host.querySelector<HTMLElement>('[data-testid="pinned-card-goo"]');
+
+      it('draws the dock instead of the chip, and the dock opens and folds the panel the way the chip does', async () => {
+        await render({ startCollapsed: true, collapsedDock: dock });
+        expect(host.querySelector('[data-testid="pinned-chip"]')).toBeNull();
+        expect(stub().dataset.open).toBe('false');
+        expect(card()).toBeNull();
+        await act(async () => {
+          click(host.querySelector('[data-testid="dock-stub-open"]')!);
+        });
+        await flush();
+        // The dock stays (the card is its own shape grown out of the rail), with the card's content in it.
+        expect(stub().dataset.open).toBe('true');
+        expect(card()).toBeTruthy();
+        // The same remembered state as the chip's.
+        expect(localStorage.getItem('rig-pinned-card-collapsed')).toBe('false');
+        await act(async () => {
+          click(host.querySelector('[data-testid="dock-stub-fold"]')!);
+        });
+        await flush();
+        expect(stub().dataset.open).toBe('false');
+        expect(card()).toBeNull();
+        expect(localStorage.getItem('rig-pinned-card-collapsed')).toBe('true');
+      });
+
+      it("gives the open card the dock's texture: no border, fill or shadow of its own, the dock's radius, no dash, the settings title", async () => {
+        await render({ collapsedDock: dock, isSpace: true });
+        const body = card()!;
+        expect(body).toBeTruthy();
+        // The dock draws the fill and the shadow behind it; the card brings none of its own.
+        expect(body.className).not.toMatch(/\bborder\b|border-border|bg-bg-1|shadow-float/);
+        expect(body.style.borderRadius).toBe('16px');
+        expect(host.querySelector('.card-pop-in')).toBeNull();
+        // The dock's chevron folds it, so no dash; it leaves room for the chevron over its corner.
+        expect(host.querySelector('[aria-label="Collapse"]')).toBeNull();
+        expect(body.textContent).toContain('Space settings');
+        expect(body.textContent).not.toContain('Details');
+        expect(body.querySelector<HTMLElement>('div')!.style.paddingRight).toBe('34px');
+      });
+
+      it('opens at People when the dock asks for it', async () => {
+        await render({ collapsedDock: dock, startCollapsed: true, isSpace: true });
+        await act(async () => {
+          click(host.querySelector('[data-testid="dock-stub-people"]')!);
+        });
+        await flush();
+        expect(card()).toBeTruthy();
+        const people = [...host.querySelectorAll('button')].find((b) => b.textContent?.startsWith('People'))!;
+        expect(people.getAttribute('aria-expanded')).toBe('true');
+      });
+
+      it('leaves the plain card as it was without a dock', async () => {
+        await render({ isSpace: true });
+        expect(card()).toBeNull();
+        expect(host.querySelector('.card-pop-in')!.className).toContain('border-border-hairline');
+        expect(host.querySelector('[aria-label="Collapse"]')).toBeTruthy();
+        expect(host.textContent).toContain('Details');
+        expect(host.textContent).not.toContain('Space settings');
+      });
+    });
+
     it('still shows what it always did: the name (or chip summary), syncing, and the new count', async () => {
       await render({ startCollapsed: true, syncing: true });
       const chip = host.querySelector('[data-testid="pinned-chip"]')!;

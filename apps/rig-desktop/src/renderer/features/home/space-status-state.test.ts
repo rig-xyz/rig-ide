@@ -15,6 +15,7 @@ import {
   spaceIsActive,
   spaceNeedsApproval,
   spaceStatusLineTone,
+  withNotifications,
   type SpaceAttention,
   type SpaceSeenMarker,
 } from './space-status-state';
@@ -386,5 +387,64 @@ describe('sortSpaceRowsByActivity', () => {
     ]);
     const attention = new Map(rows.map((r) => [r.bindingId, deriveSpaceAttention(statusByBinding.get(r.bindingId), null, 'me')]));
     expect(sortSpaceRowsByActivity(rows, statusByBinding, attention, 'me', NOW).map((r) => r.bindingId)).toEqual(['chatty', 'old']);
+  });
+});
+
+describe('withNotifications', () => {
+  const idle = { kind: 'idle', lastActivityAt: null } as const;
+  const all = { level: 'all' as const, directUnread: 0 };
+
+  it('puts what is about you in the line, ahead of new messages, with the count on the dice', () => {
+    const shown = withNotifications({ kind: 'messages', count: 3 }, undefined, { level: 'all', directUnread: 1 }, {
+      phrase: 'Hugo mentioned you',
+    });
+    expect(shown).toEqual({ kind: 'forYou', count: 1, line: 'Hugo mentioned you', messages: 3, exact: false });
+    expect(deriveSpaceStatusLine(undefined, shown, 0)).toBe('Hugo mentioned you · 3 new messages');
+    expect(spaceStatusLineTone(shown)).toBe('secondary');
+  });
+
+  it('counts more than one', () => {
+    const shown = withNotifications(idle, undefined, { level: 'mentions', directUnread: 3 }, { phrase: 'Hugo replied to you' });
+    expect(deriveSpaceStatusLine(undefined, shown, 0)).toBe('Hugo replied to you · 2 more for you');
+  });
+
+  it('says how many more, without a cap at nine', () => {
+    const shown = withNotifications(idle, undefined, { level: 'all', directUnread: 12 }, { phrase: 'Hugo mentioned you' });
+    expect(deriveSpaceStatusLine(undefined, shown, 0)).toBe('Hugo mentioned you · 11 more for you');
+    const lots = withNotifications(idle, undefined, { level: 'all', directUnread: 400 }, { phrase: 'Hugo mentioned you' });
+    expect(deriveSpaceStatusLine(undefined, lots, 0)).toBe('Hugo mentioned you · 99+ more for you');
+  });
+
+  it('never outranks a live or failed run', () => {
+    const live = { kind: 'live', state: 'thinking' } as const;
+    expect(withNotifications(live, undefined, { level: 'all', directUnread: 2 }, { phrase: 'x' })).toBe(live);
+  });
+
+  it('a muted space stays quiet: no for you, no new messages', () => {
+    const shown = withNotifications({ kind: 'messages', count: 4 }, undefined, { level: 'nothing', directUnread: 2 }, {
+      phrase: 'Hugo mentioned you',
+    });
+    expect(shown.kind).toBe('idle');
+  });
+
+  it("once the relay's summary is in, its unread count is the row's", () => {
+    const local = { kind: 'messages', count: 9 } as const;
+    const relay = withNotifications(local, undefined, { level: 'all', directUnread: 0, spaceUnread: 12, known: true }, null);
+    expect(relay).toEqual({ kind: 'messages', count: 12, exact: true });
+    // Exact from the relay; only this computer's own count tops out at "9+".
+    expect(deriveSpaceStatusLine(undefined, relay, 0)).toBe('12 new messages');
+    expect(deriveSpaceStatusLine(undefined, local, 0)).toBe('9+ new messages');
+    const many = withNotifications(local, undefined, { level: 'all', directUnread: 0, spaceUnread: 100, known: true }, null);
+    expect(deriveSpaceStatusLine(undefined, many, 0)).toBe('99+ new messages');
+    expect(
+      withNotifications(local, undefined, { level: 'all', directUnread: 0, spaceUnread: 0, known: true }, null).kind
+    ).toBe('idle');
+    // Not known yet: this computer's own count stands.
+    expect(withNotifications(local, undefined, { level: 'all', directUnread: 0 }, null)).toBe(local);
+  });
+
+  it('without unread rows about you, nothing changes', () => {
+    const messages = { kind: 'messages', count: 2 } as const;
+    expect(withNotifications(messages, undefined, all, null)).toBe(messages);
   });
 });

@@ -39,12 +39,17 @@ vi.mock('@renderer/lib/ipc', () => ({
         declineMyInvite: async () => ({ success: true, data: null }),
       },
       join: { attach: (...args: unknown[]) => mocks.attach(...args) },
+      notifications: {
+        summary: async () => ({ spaces: [], invitesUnread: 0, directUnreadTotal: 0 }),
+        activity: async () => ({ success: true, data: [] }),
+        markRead: async () => ({ success: true, data: undefined }),
+      },
     },
   },
   events: { on: vi.fn(() => () => {}) },
 }));
 
-import { InvitesBell } from '@renderer/features/shell/invites-bell';
+import { ActivityBell } from '@renderer/features/notifications/activity-bell';
 
 function click(el: Element): void {
   el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -64,7 +69,7 @@ beforeAll(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
-describe('InvitesBell — Accept', () => {
+describe('ActivityBell — invite Accept', () => {
   let host: HTMLDivElement;
   let root: Root;
   let opened: string[];
@@ -82,13 +87,13 @@ describe('InvitesBell — Accept', () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={new QueryClient()}>
-          <InvitesBell onOpenPath={(path) => opened.push(path)} />
+          <ActivityBell onOpenPath={(path) => opened.push(path)} onOpenTarget={() => {}} />
         </QueryClientProvider>
       );
     });
     await flush();
     await flush();
-    await act(async () => click(host.querySelector('[aria-label^="Invites"]')!));
+    await act(async () => click(host.querySelector('[aria-label^="Activity"]')!));
   });
 
   afterEach(async () => {
@@ -104,7 +109,7 @@ describe('InvitesBell — Accept', () => {
     expect(mocks.accept).toHaveBeenCalledWith({ id: 'inv1' });
     expect(mocks.attach).toHaveBeenCalledWith({ bindingId: 'b-gentle' });
     expect(opened).toEqual(['/Rig/gentle-island']);
-    expect(document.body.querySelector('[role="dialog"][aria-label="Invites"]')).toBeNull();
+    expect(document.body.querySelector('[role="dialog"][aria-label="Activity"]')).toBeNull();
     expect(buttonNamed('Set up locally')).toBeUndefined();
   });
 

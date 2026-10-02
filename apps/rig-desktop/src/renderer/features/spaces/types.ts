@@ -14,6 +14,8 @@ import type { ConnectionState, ConnectorGap, RigToolArgs } from '@shared/spaces/
 import type { RunSummary } from '@shared/spaces/room-cache';
 import type { RoomSees } from '@shared/spaces/room-sees';
 import type { MessageReaction } from '@shared/spaces/reactions';
+import type { ThemeEvent, ThemesSnapshotWire } from '@shared/spaces/themes';
+import type { RoomThemes } from './themes';
 
 export type PersonId = string;
 export type AgentKind = 'claude' | 'codex';
@@ -268,6 +270,9 @@ export type RoomEvent =
    * notifying, so the Room UI never has to know the difference).
    */
   | { type: 'message_created'; id: string; seq: number; kind: MessageKind; message: RoomMessage }
+  /** Scrollback: a page before the oldest message is on its way, or landed (prepended in seq order). */
+  | { type: 'older_messages_loading' }
+  | { type: 'older_messages_loaded'; messages: RoomMessage[]; more: boolean }
   | { type: 'session_event_appended'; runId: string; seq: number; event: SessionEvent }
   | { type: 'agent_request_created'; id: string; targetOwner: PersonId; agent: AgentKind }
   /** Adds the member (status 'invited') and creates its `RoomInvite` in one step — `who` must be a known room member (see the fixture's `PEOPLE` map). */
@@ -301,7 +306,13 @@ export type RoomEvent =
   /** The relay's last answer failed, or answered again (see `RoomSnapshot.relayUnreachable`). */
   | { type: 'relay_reachability_changed'; unreachable: boolean }
   /** These messages' reactions, whole (an empty list clears them); messages not named keep theirs. */
-  | { type: 'reactions_changed'; reactions: Record<string, MessageReaction[]> };
+  | { type: 'reactions_changed'; reactions: Record<string, MessageReaction[]> }
+  /** Room themes: the relay's snapshot, whole (`RoomSnapshot.themes` becomes it). */
+  | { type: 'themes_synced'; snapshot: ThemesSnapshotWire }
+  /** Room themes: a batch of the relay's events after `themes.cursor`; `upTo` is the batch's last event id as sent. Ignored while there are no themes. */
+  | { type: 'themes_applied'; events: ThemeEvent[]; upTo: string | null }
+  /** Room themes: the relay has none for this Room (unsupported, or the flag went off). */
+  | { type: 'themes_cleared' };
 
 /** Full materialized state of a room — what components render from. */
 export interface RoomSnapshot {
@@ -324,6 +335,12 @@ export interface RoomSnapshot {
   /** Runs a message names whose log is still loading: their cards show as placeholders until it lands. */
   runsLoading?: Record<string, true>;
   /**
+   * Scrollback: whether there are messages before the oldest one here.
+   * 'more' (scrolling up loads a page), 'loading', or 'none' (the start of
+   * the space). Absent for a source with no scrollback (the scripted demo).
+   */
+  olderMessages?: 'more' | 'loading' | 'none';
+  /**
    * Finished runs shown from the disk cache: only what survives "Hide
    * details" (answer, status, step count…), until their log is fetched
    * (the card expanded). See `runCard` in `projection.ts`.
@@ -337,6 +354,12 @@ export interface RoomSnapshot {
    * polling may still be getting through. Cleared by the next answer.
    */
   relayUnreachable?: boolean;
+  /**
+   * Room themes (themes.ts): absent or null while unknown, unsupported by the
+   * relay, or the `roomThemesEnabled` flag is off; else the relay's themes
+   * for this Room. Not kept on the disk cache: always fetched fresh.
+   */
+  themes?: RoomThemes | null;
 }
 
 /** Whether the Room is hearing the relay live: first connecting, connected, or without the socket (it retries on its own, and polls meanwhile). */

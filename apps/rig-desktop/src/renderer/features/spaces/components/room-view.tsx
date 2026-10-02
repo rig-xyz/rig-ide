@@ -1,4 +1,5 @@
 import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucide-react';
+import { motion, useReducedMotion } from 'motion/react';
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { deriveRoomConnection } from '@renderer/features/home/home-connection';
 import { ConnectionBanner } from '@renderer/features/shell/connection-banner';
@@ -7,6 +8,7 @@ import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
 import type { ConnectorId, GlobalServer } from '@shared/spaces/connectors';
+import type { RigNotification } from '@shared/rig/notifications';
 import { rigSettingsChangedChannel } from '@shared/rig/settings';
 import { spacesAgentConfigChangedChannel } from '@shared/spaces/agent-settings';
 import { roomSeesFor, spacesLocalRunEventChannel } from '@shared/spaces/room-sees';
@@ -16,7 +18,8 @@ import { emptySnapshot, RelayRoomSource, type LocalRunsClient, type RelayRoomCli
 import { FixtureRoomSource, type RoomSource } from '../room-source';
 import { roomSourceCache, type RoomConnectionInfo, type RoomLease } from '../room-source-cache';
 import type { CachedRoomBlob } from '@shared/spaces/room-cache';
-import { writeOpenedAt } from '../room-read-marker';
+import { readLastSeen, writeOpenedAt } from '../room-read-marker';
+import { reportSpaceRead, windowIsLooking } from '@renderer/features/notifications/space-read-sync';
 import { useRefreshMemberReadsOnRosterChange } from '../roster-refresh';
 import { resolveSpaceLink } from '../space-link';
 import { effectiveRunStatus, runCard } from '../projection';
@@ -24,11 +27,16 @@ import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
 import type { MessageAttachment } from '@shared/rig/attachments';
 import { fallbackBody, toMessageAttachments, type ComposerAttachment } from '../attachments';
 import { useComposerAttachments } from '../use-composer-attachments';
+import { useDockFocus } from '../use-dock-focus';
+import type { ForYouState } from '../use-for-you';
+import { useRoomThemesEnabled } from '../use-room-themes-enabled';
+import { ForYouFeeder } from './for-you-feeder';
+import { ThemeDock } from './theme-dock';
 import { AttachmentSpaceContext, type AttachmentSpace } from './attachment-cards';
 import { Composer, keepUnsentAsDraft, type ComposerSendContext, type ComposerSuggestion } from './composer';
 import { ownTurnSuggestion } from '../own-turn-suggestion';
 import { settlePendingSends, withPendingSends, type PendingSend } from '../pending-sends';
-import { RoomTranscript } from './room-transcript';
+import { RoomTranscript, type RoomJumpRequest } from './room-transcript';
 import { OpenPageContext } from './transcript-items';
 import { ReactionsContext, type ReactionsApi } from './reactions';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
@@ -68,6 +76,9 @@ function createRelayRoomClient(): RelayRoomClient {
     setReaction: (bindingId, input) => client.setReaction({ bindingId, ...input }),
     getReactions: (bindingId, messageId) => client.getReactions({ bindingId, messageId }),
     listReactionsAfter: (bindingId, afterSeq) => client.listReactionsAfter({ bindingId, afterSeq }),
+    getThemes: (bindingId) => client.getThemes({ bindingId }),
+    getThemeEvents: (bindingId, after) => client.getThemeEvents({ bindingId, after }),
+    setThemesEnabled: (bindingId, enabled) => client.setThemesEnabled({ bindingId, enabled }),
   };
 }
 
@@ -130,6 +141,7 @@ const PANEL_LANE_PX = 320;
 /** How long a Room shown from disk may take to catch up before it says so. */
 const CATCHING_UP_AFTER_MS = 600;
 
+const NO_DEMO_ROWS: RigNotification[] = [];
 const FALLBACK_OWN_ID = 'bob'; // fixture-only identity; the relay source uses the signed-in user's real id
 
 /**
@@ -300,6 +312,8 @@ export function RoomView({
   collapsed = false,
   onExpand: onExpandCollapsed,
   setup = null,
+  jump = null,
+  onJumpMissed,
 }: {
   /** Empty while `setup` is still making the space (it has no binding yet). */
   bindingId: string;
@@ -314,7 +328,17 @@ export function RoomView({
   renderPanel?: (
     extraRows: ReactNode,
     onlineUserIds: ReadonlySet<string>,
-    options: { startCollapsed: boolean; chipSummary: (ctx: { unseenCount: number }) => ReactNode }
+    options: {
+      startCollapsed: boolean;
+      chipSummary: (ctx: { unseenCount: number }) => ReactNode;
+      /** Room themes: the dock, drawn in place of the chip, and under the panel (its shape grows into it). Absent with themes off. */
+      collapsedDock?: (ctx: {
+        onExpand: (section?: 'people') => void;
+        onFold: () => void;
+        open: boolean;
+        card: ReactNode;
+      }) => ReactNode;
+    }
   ) => ReactNode;
   /**
    * Room chrome round: the doc-focus layout (the doc at full width) folds
@@ -333,8 +357,14 @@ export function RoomView({
    * same Room becomes the live one — no remount, the waiting message sends.
    */
   setup?: RoomSetup | null;
+  /** Notifications: scroll to this message or run once it's loaded (a banner or Activity click). */
+  jump?: RoomJumpRequest | null;
+  /** That message is further back than the Room loads. */
+  onJumpMissed?: () => void;
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
+  /** The scripted demo's inbox rows (it has no inbox); set with its source. */
+  const [demoNotifications, setDemoNotifications] = useState<RigNotification[] | undefined>(undefined);
   const [connectError, setConnectError] = useState<string | null>(null);
   /** The relay says this space is gone or no longer yours (its Room is forgotten, memory and disk). */
   const [gone, setGone] = useState(false);
@@ -451,6 +481,31 @@ export function RoomView({
   // rigs; a real space (#name) never shows it.
   const showDemoToggle = !spaceName.startsWith('#');
 
+  // Notifications: main stays quiet about the space on screen, and the relay
+  // hears it's been seen (clears its run and request rows) on entering and
+  // whenever the window comes back to it. Folded to the doc-focus rail, the
+  // Room isn't on screen.
+  useEffect(() => {
+    if (!live || collapsed || !bindingId) return;
+    const look = () => {
+      if (!windowIsLooking()) return;
+      void rpc.rig.notifications.setViewing({ bindingId }).catch(() => {});
+      // What the transcript marked while the window was in the background
+      // (`markReadThrough` holds it back from the relay until now).
+      const seq = readLastSeen(bindingId);
+      reportSpaceRead(bindingId, { ...(seq !== null ? { seq } : {}), seen: true }, true);
+    };
+    const away = () => void rpc.rig.notifications.setViewing({ bindingId: null }).catch(() => {});
+    look();
+    window.addEventListener('focus', look);
+    document.addEventListener('visibilitychange', look);
+    return () => {
+      window.removeEventListener('focus', look);
+      document.removeEventListener('visibilitychange', look);
+      away();
+    };
+  }, [live, collapsed, bindingId]);
+
   // "Last opened" for Home's what-you-missed tiles (`room-read-marker.ts`):
   // stamped on entering the space and again on leaving it (or quitting from
   // inside it), so a run that ended while you were here reads as seen.
@@ -502,6 +557,10 @@ export function RoomView({
 
   const spaceNameRef = useRef(spaceName);
   spaceNameRef.current = spaceName;
+  // Room themes: fetched only while the setting is on, switched live on the open Room.
+  const themesEnabled = useRoomThemesEnabled();
+  const themesEnabledRef = useRef(themesEnabled);
+  themesEnabledRef.current = themesEnabled;
   // A send still out when you leave finishes in the background (its message
   // shows when you're back — the Room is kept alive); a failure is kept as a draft.
   const mountedRef = useRef(true);
@@ -517,7 +576,9 @@ export function RoomView({
     setGone(false);
 
     if (useFixtures) {
-      const fixtureSource = new FixtureRoomSource(buildRoomFeed());
+      const script = buildRoomFeed({ dock: themesEnabledRef.current });
+      const fixtureSource = new FixtureRoomSource(script);
+      setDemoNotifications(script.notifications?.(bindingId));
       setSource(fixtureSource);
       setSelfUserId(FALLBACK_OWN_ID);
       return () => fixtureSource.dispose();
@@ -541,6 +602,7 @@ export function RoomView({
           wsUrl: info.wsUrl,
           selfUserId: info.selfUserId,
           relay: createRelayRoomClient(),
+          themesEnabled: themesEnabledRef.current,
           connections: connectorsApi,
           localRuns: createLocalRunsClient(),
           log: roomLog,
@@ -593,6 +655,10 @@ export function RoomView({
   useEffect(() => {
     if (source instanceof RelayRoomSource) source.rename(spaceName);
   }, [source, spaceName]);
+
+  useEffect(() => {
+    if (source instanceof RelayRoomSource) source.setThemesEnabled(themesEnabled);
+  }, [source, themesEnabled]);
 
   useEffect(() => {
     if (!source) return;
@@ -871,6 +937,42 @@ export function RoomView({
     [snapshot, pendingSends, selfUserId]
   );
 
+  // Room themes: the dock, For you, and what the transcript is focused on.
+  // The per-Space switch (`themes.enabled`) turns the dock off for the Room.
+  const dockOn = themesEnabled && snapshot?.themes?.enabled !== false;
+  const [forYouState, setForYouState] = useState<ForYouState | null>(null);
+  const dockForYou = dockOn ? forYouState : null;
+  const dockFocus = useDockFocus({
+    enabled: dockOn,
+    themes: snapshot?.themes,
+    forYou: dockForYou?.forYou ?? null,
+    dismiss: dockForYou?.dismiss ?? null,
+  });
+  // Another Space: nothing stays focused (the dock itself is keyed by the Space, so its open panel and list close).
+  const clearDockFocus = dockFocus.clear;
+  useEffect(() => clearDockFocus(), [bindingId, clearDockFocus]);
+  // The messages the hovered pill holds: the transcript dims the rest.
+  const [dockPreview, setDockPreview] = useState<ReadonlySet<string> | null>(null);
+  // How far the dock's pills reach from the right edge, which the transcript keeps clear of.
+  const [dockGutter, setDockGutter] = useState(0);
+  const [gutterMoving, setGutterMoving] = useState(false);
+  const onDockGutter = useCallback((px: number) => {
+    setGutterMoving(true);
+    setDockGutter(px);
+  }, []);
+  useEffect(() => {
+    if (!gutterMoving) return;
+    const timer = setTimeout(() => setGutterMoving(false), 600);
+    return () => clearTimeout(timer);
+  }, [gutterMoving, dockGutter]);
+  const reducedMotion = useReducedMotion();
+  // With the dock's pills out, the transcript keeps clear of them: all of their
+  // width in a narrow Room, only as much as it takes in a wide one.
+  const transcriptClearance =
+    dockGutter > 0
+      ? Math.min(dockGutter, Math.max(0, TRANSCRIPT_COLUMN_PX + 2 * dockGutter - bodyWidth))
+      : panelClearance;
+
   // Split-resize perf round: `RoomTranscript` memoizes its own node list
   // against its props (its own `mapEntries`/render loop), which only pays
   // off when those props are referentially stable. These three used to be
@@ -904,6 +1006,11 @@ export function RoomView({
     [bindingId]
   );
   const handleHideDetails = source instanceof RelayRoomSource ? hideDetails : undefined;
+  // Scrollback: the relay source pages back; the scripted demo has none.
+  const loadOlder = useCallback(() => {
+    if (source instanceof RelayRoomSource) void source.loadOlder();
+  }, [source]);
+  const handleLoadOlder = source instanceof RelayRoomSource ? loadOlder : undefined;
 
   // A run shown from disk (its summary only): expanding its card fetches the log.
   const loadRunLog = useCallback(
@@ -1030,9 +1137,13 @@ export function RoomView({
       <div ref={bodyRef} className="relative flex min-h-0 flex-1">
         {/* Wide: keep the transcript clear of the floating panel. Narrow:
             the panel starts as its chip instead of covering the messages. */}
-        <div
+        <motion.div
           className="relative flex min-h-0 flex-1 flex-col"
-          style={{ paddingRight: panelClearance }}
+          // The transcript's own room: clear of the panel, and of the dock's
+          // pills once there are some (it slides over only when the dock changes).
+          initial={false}
+          animate={{ paddingRight: transcriptClearance }}
+          transition={reducedMotion || !gutterMoving ? { duration: 0 } : { type: 'spring', stiffness: 320, damping: 34 }}
           onDragEnter={(e) => {
             if (!hasDraggedFiles(e.dataTransfer)) return;
             e.preventDefault();
@@ -1108,6 +1219,11 @@ export function RoomView({
             globalSetup={globalSetup}
             onHideDetails={handleHideDetails}
             onLoadRunLog={handleLoadRunLog}
+            jump={jump}
+            onJumpMissed={onJumpMissed}
+            onLoadOlder={handleLoadOlder}
+            focus={dockFocus.transcriptFocus}
+            previewIds={dockPreview}
           />
           </ReactionsContext.Provider>
           </AttachmentSpaceContext.Provider>
@@ -1174,7 +1290,22 @@ export function RoomView({
               }
             />
           </div>
-        </div>
+        </motion.div>
+        {dockOn && shownSnapshot && (
+          <ForYouFeeder
+            bindingId={bindingId}
+            snapshot={shownSnapshot}
+            selfUserId={selfUserId}
+            notifications={source instanceof FixtureRoomSource ? (demoNotifications ?? NO_DEMO_ROWS) : undefined}
+            // The scripted demo answers in its own fixture: the request leaves, nothing real is called.
+            resolvePermission={
+              source instanceof FixtureRoomSource
+                ? (runId, requestId, optionId) => source.resolvePermission(runId, requestId, optionId)
+                : undefined
+            }
+            onState={setForYouState}
+          />
+        )}
         {awaitingLive && !(source instanceof RelayRoomSource) ? null : source instanceof RelayRoomSource ? (
           (renderPanel?.(
             <>
@@ -1207,10 +1338,40 @@ export function RoomView({
               chipSummary: ({ unseenCount }) => (
                 <SpaceChipSummary snapshot={room} selfUserId={selfUserId} unseenCount={unseenCount} />
               ),
+              collapsedDock: dockOn
+                ? ({ onExpand, onFold, open, card }) => (
+                    <ThemeDock
+                      key={bindingId}
+                      snapshot={shownSnapshot ?? room}
+                      selfUserId={selfUserId}
+                      forYouState={dockForYou}
+                      focus={dockFocus}
+                      narrow={narrow}
+                      onExpand={onExpand}
+                      card={{ open, content: card, onFold }}
+                      onGutterChange={onDockGutter}
+                      onPreviewChange={setDockPreview}
+                      className="absolute top-[52px] right-4"
+                    />
+                  )
+                : undefined,
             }
           ) ?? null)
+        ) : dockOn ? (
+          // The scripted demo has no pinned panel to open: the dock stands alone.
+          <ThemeDock
+            key={bindingId}
+            snapshot={shownSnapshot ?? room}
+            selfUserId={selfUserId}
+            forYouState={dockForYou}
+            focus={dockFocus}
+            narrow={narrow}
+            onGutterChange={onDockGutter}
+            onPreviewChange={setDockPreview}
+            className="absolute top-3 right-4"
+          />
         ) : (
-          <SpaceCard snapshot={room} />
+          <SpaceCard snapshot={room} bindingId={live ? bindingId : undefined} />
         )}
         {gallery.open && source instanceof RelayRoomSource && (
           <ConnectorGallery

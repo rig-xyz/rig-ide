@@ -16,6 +16,8 @@
  * in the same commit Home first renders in, after Home has already read.
  */
 
+import { reportSpaceRead, windowIsLooking } from '@renderer/features/notifications/space-read-sync';
+
 const LAST_SEEN_PREFIX = 'rig-room-last-seen:';
 const OPENED_AT_PREFIX = 'rig-room-opened-at:';
 
@@ -52,7 +54,34 @@ export function readLastSeen(bindingId: string): number | null {
   return readNumber(LAST_SEEN_PREFIX + bindingId);
 }
 
+/** This computer's marker only (Home's "seen up to now" baseline uses this). */
 export function writeLastSeen(bindingId: string, seq: number): void {
+  writeNumber(LAST_SEEN_PREFIX + bindingId, seq);
+}
+
+/**
+ * The Room read this far: the local marker, and on to the relay so other
+ * devices and the unread counts agree. Only the Room calls this, and only
+ * while someone is looking does it reach the relay: a Room pinned to the
+ * bottom in a background window keeps its local marker moving, and must
+ * not mark those messages read everywhere (RoomView sends the marker on
+ * when the window comes back). Home's baseline must never call this: it
+ * would mark a space read on a computer where it was never opened.
+ */
+export function markReadThrough(bindingId: string, seq: number): void {
+  if (readLastSeen(bindingId) === seq) return;
+  writeLastSeen(bindingId, seq);
+  if (windowIsLooking()) reportSpaceRead(bindingId, { seq, seen: true });
+}
+
+/**
+ * The relay's read cursor is ahead of this computer's (you read the space
+ * elsewhere): catch the local marker up without sending it back. Never
+ * moves the marker backwards.
+ */
+export function syncLastSeenFromServer(bindingId: string, seq: number): void {
+  const local = readLastSeen(bindingId);
+  if (local !== null && local >= seq) return;
   writeNumber(LAST_SEEN_PREFIX + bindingId, seq);
 }
 

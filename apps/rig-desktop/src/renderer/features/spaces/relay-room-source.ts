@@ -51,7 +51,17 @@ import { connectorById, type ConnectionStatus } from '@shared/spaces/connectors'
 import { ROOM_CACHE_FORMAT_VERSION, ROOM_CACHE_MAX_BYTES, type CachedRoomBlob } from '@shared/spaces/room-cache';
 import type { LocalRunEvent } from '@shared/spaces/room-sees';
 import { canonicalEmoji, withReaction, type MessageReaction } from '@shared/spaces/reactions';
-import type { AgentKind, MessageKind, RoomConnector, RoomEvent, RoomReplyRef, RoomSnapshot, SessionRunMeta } from './types';
+import { compareEventIds, type ThemeEventsPage, type ThemesFetch, type ThemesSnapshotWire } from '@shared/spaces/themes';
+import type {
+  AgentKind,
+  MessageKind,
+  RoomConnector,
+  RoomEvent,
+  RoomMessage,
+  RoomReplyRef,
+  RoomSnapshot,
+  SessionRunMeta,
+} from './types';
 import { parseMessageAttachments } from './attachments';
 import { reduceRoom } from './fixtures/room-feed';
 import { effectiveRunStatus, runCard, summarizeCard } from './projection';
@@ -134,7 +144,7 @@ export interface RelayRoomClient {
   listInvites?(bindingId: string): Promise<Result<RoomInviteRow[], RelayApiError>>;
   listMessages(
     bindingId: string,
-    query: { latest?: number; after?: string }
+    query: { latest?: number; after?: string; before?: string }
   ): Promise<Result<RoomMessageRow[], RelayApiError>>;
   getSessionEvents(
     bindingId: string,
@@ -176,6 +186,18 @@ export interface RelayRoomClient {
   getReactions?(bindingId: string, messageId: string): Promise<Result<MessageReaction[], RelayApiError>>;
   /** Every message after `afterSeq` that has reactions (a message in the window that's missing has none). */
   listReactionsAfter?(bindingId: string, afterSeq: number): Promise<Result<Record<string, MessageReaction[]>, RelayApiError>>;
+  /** Room themes (rig/docs/room-themes-spec.md §6): the snapshot. `{ supported: false }` is a relay that has no themes (404). */
+  getThemes?(bindingId: string): Promise<Result<ThemesFetch<ThemesSnapshotWire>, RelayApiError>>;
+  /** One page of theme events after the cursor (at most 500, oldest first); `nextCursor` is set while more wait. */
+  getThemeEvents?(
+    bindingId: string,
+    after: string
+  ): Promise<Result<ThemesFetch<ThemeEventsPage>, RelayApiError>>;
+  /** The per-Space switch (editors and owners). */
+  setThemesEnabled?(
+    bindingId: string,
+    enabled: boolean
+  ): Promise<Result<ThemesFetch<{ enabled: boolean }>, RelayApiError>>;
 }
 
 /** This device's own connection states — `connectorsApi.list()`, injected so this file never imports `@renderer/lib/ipc`. */
@@ -240,9 +262,17 @@ export type RelayRoomSourceOptions = {
   diskCache?: { put(blob: CachedRoomBlob): Promise<unknown> | void };
   /** The relay says the space is gone (410) or no longer yours (404): the view shows it and stops keeping this Room. */
   onGone?: () => void;
+  /**
+   * Whether to fetch the relay's themes (the `roomThemesEnabled` setting).
+   * Off, or omitted, the Room never asks. Switched later with `setThemesEnabled`.
+   */
+  themesEnabled?: boolean;
 };
 
 type Listener = (event: RoomEvent, snapshot: RoomSnapshot) => void;
+
+/** Event pages (500 each) one theme sync follows before it yields; a longer gap carries on in the next pass. */
+const THEME_EVENT_PAGES_PER_SYNC = 10;
 
 /** Re-mint once the cached ticket is within this margin of `expiresAt` (~10 minute TTL). */
 const TICKET_REFRESH_MARGIN_MS = 60_000;
@@ -283,6 +313,9 @@ const RUN_NOTIFY_MS = 32;
 
 /** The disk cache (rig/docs/room-disk-cache-spec.md): saved this long after the Room last changed. */
 const DISK_SAVE_SETTLE_MS = 3_000;
+/** Scrollback page size: messages per `loadOlder`. */
+const OLDER_PAGE = 50;
+
 /** The saved window: what the Room opens with (`bootstrapMessageCount`'s default). */
 const DISK_MESSAGE_WINDOW = 50;
 /** A saved Room older than this opens cold (message deletions are never signalled). */
@@ -347,7 +380,7 @@ export class RelayRoomSource implements RoomSource {
   private readonly opts: Required<
     Omit<
       RelayRoomSourceOptions,
-      'createProvider' | 'log' | 'connections' | 'localRuns' | 'pollIntervalMs' | 'connectGraceMs' | 'runEndRefreshMs' | 'initial' | 'diskCache' | 'onGone'
+      'createProvider' | 'log' | 'connections' | 'localRuns' | 'pollIntervalMs' | 'connectGraceMs' | 'runEndRefreshMs' | 'initial' | 'diskCache' | 'onGone' | 'themesEnabled'
     >
   >;
   private readonly diskCache: RelayRoomSourceOptions['diskCache'];
@@ -393,11 +426,14 @@ export class RelayRoomSource implements RoomSource {
   /** What the next catch-up pass still has to fetch: new messages, and/or these runs' new events — see `catchUp`. */
   private pendingMessages = false;
   private pendingReactions = false;
+  private pendingThemes = false;
   private readonly pendingRuns = new Set<string>();
   /** Runs still going when the socket dropped: the reconnect catch-up re-reads them. */
   private readonly liveAtDisconnect = new Set<string>();
   /** Runs the opening messages name whose log is still loading (the open's second phase), with the owner to fall back on. */
   private readonly runsLoading = new Map<string, string>();
+  /** A scrollback page is on its way (`loadOlder`): one at a time. */
+  private loadingOlder = false;
   /**
    * Loading runs that may have moved on since their fetch went out: a
    * notification named one ('notified'), or the socket came up while it was
@@ -422,6 +458,12 @@ export class RelayRoomSource implements RoomSource {
   /** On screen — see `setShown`. */
   private shown = true;
 
+  /** Room themes: the flag, whether the relay turned out not to have them (stop asking this session), and the coalescing of overlapping syncs. */
+  private themesOn: boolean;
+  private themesUnsupported = false;
+  private themesBusy = false;
+  private themesAgain = false;
+
   private ticket: { value: string; expiresAtMs: number } | null = null;
   private ticketMint: Promise<string> | null = null;
 
@@ -445,6 +487,7 @@ export class RelayRoomSource implements RoomSource {
     this.log = options.log ?? (() => {});
     this.diskCache = options.diskCache;
     this.onGone = options.onGone;
+    this.themesOn = options.themesEnabled === true;
     this.snapshot = emptySnapshot(options.spaceName, options.selfUserId);
     const initial = options.initial;
     if (initial) {
@@ -627,6 +670,8 @@ export class RelayRoomSource implements RoomSource {
     // Shown from disk already: only catch up. Else the two-phase cold open.
     await (this.restoredFrom ? this.resume(this.restoredFrom.savedAt) : this.bootstrap());
     if (this.disposed) return;
+    // Themes never hold up the open: asked once the messages are in, and never awaited.
+    void this.refreshThemes();
     let provider: RealtimeProvider;
     try {
       provider = await this.makeProvider({
@@ -851,6 +896,11 @@ export class RelayRoomSource implements RoomSource {
         if (this.disposed) return;
         await this.ingestWireMessage(row, apply, { bootstrap: true });
       }
+      // A full opening page may have more above it (scrollback, `loadOlder`).
+      this.snapshot = {
+        ...this.snapshot,
+        olderMessages: messages.data.length >= this.opts.bootstrapMessageCount ? 'more' : 'none',
+      };
       if (this.runsLoading.size > 0) {
         this.snapshot = { ...this.snapshot, runsLoading: Object.fromEntries([...this.runsLoading.keys()].map((id) => [id, true])) };
       }
@@ -943,7 +993,9 @@ export class RelayRoomSource implements RoomSource {
         await this.ingestWireMessage(row, apply, { bootstrap: true });
       }
       caughtUp = rows.length;
-      this.snapshot = { ...this.snapshot, runsLoading: this.loadingRecord() };
+      // Shown from disk: whether anything precedes the saved window is
+      // unknown until a look back finds out (`loadOlder`).
+      this.snapshot = { ...this.snapshot, runsLoading: this.loadingRecord(), olderMessages: 'more' };
       // Reactions to messages kept on disk may have changed meanwhile.
       if (!gap) {
         const reactions = await this.reactionsSince();
@@ -1122,6 +1174,20 @@ export class RelayRoomSource implements RoomSource {
       if (messageId) await this.refreshReactions(messageId);
       return;
     }
+    if (notification.type === 'themes_changed') {
+      // `upTo` is the newest event id the relay has: nothing to fetch when we already hold it.
+      const upTo = typeof notification.upTo === 'string' ? notification.upTo : null;
+      const have = this.snapshot.themes?.cursor;
+      if (
+        upTo !== null &&
+        have !== undefined &&
+        /^\d{1,19}$/.test(upTo) &&
+        compareEventIds(upTo, have) <= 0
+      )
+        return;
+      if (this.themesActive()) await this.catchUp({ themes: true });
+      return;
+    }
     if (notification.type === 'session_event_appended') {
       // Just the run that moved (hide-details says so the same way). A
       // notification naming no run falls back to every live one.
@@ -1152,26 +1218,32 @@ export class RelayRoomSource implements RoomSource {
    * for mid-pass is queued and picked up by the pass already running, never
    * a second concurrent one.
    */
-  private async catchUp(work: { messages?: boolean; runs?: Iterable<string>; reactions?: boolean }): Promise<void> {
+  private async catchUp(work: { messages?: boolean; runs?: Iterable<string>; reactions?: boolean; themes?: boolean }): Promise<void> {
     if (this.disposed) return;
     if (work.messages) this.pendingMessages = true;
     if (work.reactions) this.pendingReactions = true;
+    if (work.themes) this.pendingThemes = true;
     for (const runId of work.runs ?? []) this.pendingRuns.add(runId);
     if (this.catchingUp) return;
     this.catchingUp = true;
     try {
-      while (!this.disposed && (this.pendingMessages || this.pendingRuns.size > 0 || this.pendingReactions)) {
+      while (!this.disposed && (this.pendingMessages || this.pendingRuns.size > 0 || this.pendingReactions || this.pendingThemes)) {
         const startedMs = Date.now();
         const callsBefore = this.requests;
         const messages = this.pendingMessages;
         const reactions = this.pendingReactions;
+        const themes = this.pendingThemes;
         const runs = [...this.pendingRuns];
         this.pendingMessages = false;
         this.pendingReactions = false;
+        this.pendingThemes = false;
         this.pendingRuns.clear();
         if (messages) await this.catchUpMessages();
         if (reactions) await this.catchUpReactions();
         await this.catchUpRuns(runs);
+        // At the end of every catch-up that looks at messages (connect, poll, shown again), and on a themes notice.
+        // A pass about one run's steps alone leaves themes be.
+        if (themes || messages) await this.refreshThemes();
         this.log(
           'Rig spaces: room catch-up',
           {
@@ -1269,10 +1341,27 @@ export class RelayRoomSource implements RoomSource {
     apply: (event: RoomEvent) => void = (event) => this.applyLocal(event),
     { bootstrap = false }: { bootstrap?: boolean } = {}
   ): Promise<void> {
+    const built = await this.toRoomMessage(row, apply, { bootstrap });
+    if (!built) return;
+    apply({ type: 'message_created', id: row.id, seq: row.seq, kind: built.kind, message: built.message });
+  }
+
+  /**
+   * One wire row as a Room message, with its side effects (a run it names
+   * starts loading, a roster or connector refresh). `null` when it's
+   * already here or the source went away. `older` (scrollback) leaves the
+   * catch-up cursor alone and looks up thread parents in `peers` too, the
+   * page being built.
+   */
+  private async toRoomMessage(
+    row: RoomMessageRow,
+    apply: (event: RoomEvent) => void,
+    { bootstrap = false, older = false, peers = [] }: { bootstrap?: boolean; older?: boolean; peers?: RoomMessage[] } = {}
+  ): Promise<{ kind: MessageKind; message: RoomMessage } | null> {
     if (row.seq <= this.lastMessageSeq && this.snapshot.messages.some((m) => m.id === row.id)) {
-      return; // already applied (bootstrap + catch-up overlap window)
+      return null; // already applied (bootstrap + catch-up overlap window)
     }
-    this.lastMessageSeq = Math.max(this.lastMessageSeq, row.seq);
+    if (!older) this.lastMessageSeq = Math.max(this.lastMessageSeq, row.seq);
 
     // Someone new accepted an invite: re-read the roster BEFORE resolving
     // the author below, so "Sam joined" maps to Sam (not a raw Clerk id)
@@ -1305,21 +1394,20 @@ export class RelayRoomSource implements RoomSource {
     if (!bootstrap && row.kind === 'system' && (meta.event === 'connectors_added' || meta.event === 'connectors_removed')) {
       await this.refreshConnectors(apply);
     }
-    if (this.disposed) return;
+    if (this.disposed) return null;
 
     // Doc comments share the message table (they carry a `path`). Keep them
     // in the room, rendered as comment lines tied to their file and passage.
     // A reply in a doc comment thread carries no path of its own; it takes
     // its thread's.
-    const parent = row.parentId ? this.snapshot.messages.find((m) => m.id === row.parentId) : undefined;
+    const parent = row.parentId
+      ? (this.snapshot.messages.find((m) => m.id === row.parentId) ?? peers.find((m) => m.id === row.parentId))
+      : undefined;
     const threadPath = row.path ?? (parent?.meta.kind === 'comment_mirror' ? parent.meta.path : null);
     const comment = threadPath ? this.commentMeta({ ...row, path: threadPath }) : null;
     const kind = (comment ? 'comment_mirror' : row.kind) as MessageKind;
 
-    apply({
-      type: 'message_created',
-      id: row.id,
-      seq: row.seq,
+    return {
       kind,
       message: {
         id: row.id,
@@ -1337,7 +1425,47 @@ export class RelayRoomSource implements RoomSource {
             ? { threadId: meta.threadId }
             : {}),
       },
-    });
+    };
+  }
+
+  /**
+   * Scrollback: the page before the oldest message here
+   * (`?before=<seq>&latest=<n>`), prepended in one step. Runs those
+   * messages name load in the background, like on open. One page at a time;
+   * a failure leaves `olderMessages` at 'more' so scrolling up tries again.
+   */
+  async loadOlder(): Promise<void> {
+    if (this.disposed || this.loadingOlder || this.snapshot.olderMessages !== 'more') return;
+    const seqs = this.snapshot.messages.map((m) => m.seq);
+    if (seqs.length === 0) return;
+    this.loadingOlder = true;
+    this.applyLocal({ type: 'older_messages_loading' });
+    try {
+      const page = await this.opts.relay.listMessages(this.opts.bindingId, {
+        before: String(Math.min(...seqs)),
+        latest: OLDER_PAGE,
+      });
+      if (this.disposed) return;
+      if (!page.success) {
+        this.log('Rig spaces: could not load earlier messages', { error: page.error.message });
+        this.applyLocal({ type: 'older_messages_loaded', messages: [], more: true });
+        return;
+      }
+      const loadingBefore = new Set(this.runsLoading.keys());
+      const built: RoomMessage[] = [];
+      for (const row of page.data) {
+        const message = await this.toRoomMessage(row, () => {}, { bootstrap: true, older: true, peers: built });
+        if (this.disposed) return;
+        if (message) built.push(message.message);
+      }
+      const newRuns = [...this.runsLoading.keys()].filter((id) => !loadingBefore.has(id));
+      if (newRuns.length > 0) this.snapshot = { ...this.snapshot, runsLoading: this.loadingRecord() };
+      this.applyLocal({ type: 'older_messages_loaded', messages: built, more: page.data.length >= OLDER_PAGE });
+      // Newest first, like the open: the cards nearest where the reader is.
+      if (newRuns.length > 0) void this.loadRuns(newRuns.reverse(), Date.now());
+    } finally {
+      this.loadingOlder = false;
+    }
   }
 
   /** Lands a run's header and full backlog in one step (`session_log_loaded`), once — the first time a room message references it. Uses `prefetched` (the open's `loadRuns`) when given, else fetches it itself (the realtime path). */
@@ -1546,6 +1674,92 @@ export class RelayRoomSource implements RoomSource {
       if (JSON.stringify(next) !== JSON.stringify(message.reactions ?? [])) changed[message.id] = next;
     }
     return Object.keys(changed).length > 0 ? changed : null;
+  }
+
+  // ── room themes ─────────────────────────────────────────────────────────
+
+  /** Switches theme fetching live (the setting changed, or a Room was shown with it on). On: asks the relay now if the Room is open; off: the themes go. */
+  setThemesEnabled(enabled: boolean): void {
+    if (this.disposed || enabled === this.themesOn) return;
+    this.themesOn = enabled;
+    if (!enabled) {
+      if (this.snapshot.themes) this.applyLocal({ type: 'themes_cleared' });
+      return;
+    }
+    // A new choice: a relay that had no themes may have gained them since.
+    this.themesUnsupported = false;
+    if (this.started) void this.refreshThemes();
+  }
+
+  private themesActive(): boolean {
+    return (
+      this.themesOn &&
+      !this.themesUnsupported &&
+      !this.disposed &&
+      !!this.opts.relay.getThemes &&
+      !!this.opts.relay.getThemeEvents
+    );
+  }
+
+  /** Brings the Room's themes up to date: the snapshot the first time, then the events after its cursor. Never throws; overlapping calls coalesce into one more pass. */
+  private async refreshThemes(): Promise<void> {
+    if (!this.themesActive()) return;
+    if (this.themesBusy) {
+      this.themesAgain = true;
+      return;
+    }
+    this.themesBusy = true;
+    try {
+      do {
+        this.themesAgain = false;
+        await this.syncThemes();
+      } while (this.themesAgain && this.themesActive());
+    } catch (error) {
+      // Themes are an extra: whatever went wrong, messages, runs and reactions carry on.
+      this.log('Rig spaces: could not sync room themes', { error: String(error) });
+    } finally {
+      this.themesBusy = false;
+    }
+  }
+
+  private async syncThemes(): Promise<void> {
+    const { bindingId, relay } = this.opts;
+    if (!this.snapshot.themes) {
+      const result = await relay.getThemes!(bindingId);
+      if (!this.themesActive()) return;
+      if (!result.success) {
+        this.log('Rig spaces: could not load room themes', { error: result.error.message });
+        return;
+      }
+      if (!result.data.supported) return this.themesNotSupported();
+      this.applyLocal({ type: 'themes_synced', snapshot: result.data.data });
+      return;
+    }
+    // One page per request (500 events); a long gap takes a few, then yields and goes on in the pass after.
+    for (let page = 0; page < THEME_EVENT_PAGES_PER_SYNC; page += 1) {
+      const cursor = this.snapshot.themes?.cursor;
+      if (cursor === undefined) return;
+      const result = await relay.getThemeEvents!(bindingId, cursor);
+      if (!this.themesActive() || !this.snapshot.themes) return;
+      if (!result.success) {
+        this.log('Rig spaces: could not load room theme changes', { error: result.error.message });
+        return;
+      }
+      if (!result.data.supported) return this.themesNotSupported();
+      const { events, lastId, nextCursor } = result.data.data;
+      if (events.length > 0 || lastId !== null)
+        this.applyLocal({ type: 'themes_applied', events, upTo: lastId });
+      // Done, or no progress (a relay that keeps saying "more" without moving on must not hold this loop).
+      if (nextCursor === null || lastId === null || compareEventIds(lastId, cursor) <= 0) return;
+    }
+    this.themesAgain = true;
+  }
+
+  /** The relay has no themes: the Room shows none and stops asking this session. */
+  private themesNotSupported(): void {
+    this.themesUnsupported = true;
+    if (this.snapshot.themes !== undefined && this.snapshot.themes !== null)
+      this.applyLocal({ type: 'themes_cleared' });
   }
 
   private async catchUpReactions(): Promise<void> {

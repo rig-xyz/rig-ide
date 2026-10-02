@@ -1,12 +1,12 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { ArrowDown } from 'lucide-react';
+import { ArrowDown, ChevronDown, ChevronUp } from 'lucide-react';
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
 import type { ConnectResult, GlobalServer } from '@shared/spaces/connectors';
 import { effectiveRunStatus, runCard } from '../projection';
-import { readLastSeen, writeLastSeen } from '../room-read-marker';
+import { markReadThrough, readLastSeen } from '../room-read-marker';
 import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
 import { type MapEntry, ConversationMap } from './conversation-map';
 import { AGENT_NAME } from './identity';
@@ -32,6 +32,12 @@ import {
  */
 
 const FOLLOW_THRESHOLD_PX = 60;
+/** Scrolled within this of the top, the next older page loads. */
+const LOAD_OLDER_THRESHOLD_PX = 240;
+/** A jump pages back at most this far (50 messages a page) before saying the message is too far back. */
+const JUMP_MAX_PAGES = 20;
+
+const EMPTY_KEYS: ReadonlySet<string> = new Set();
 
 /** A follow-up from the same person within this long drops its name and avatar, Slack-style. */
 const CONTINUE_WITHIN_MS = 5 * 60_000;
@@ -205,8 +211,202 @@ export function groupThreads(messages: readonly RoomMessage[]): TranscriptUnit[]
   return units;
 }
 
+function unitKey(unit: TranscriptUnit): string {
+  return unit.kind === 'message' ? unit.message.id : `thread-${unit.threadId}`;
+}
+
+function unitMessages(unit: TranscriptUnit): RoomMessage[] {
+  return unit.kind === 'message' ? [unit.message] : unit.messages;
+}
+
+/**
+ * A filter on the transcript: the units holding a focused message stay, and
+ * the rest fold into one row each ("N messages in other themes"), which
+ * opens in place. Without one the transcript is the whole conversation.
+ */
+export type TranscriptFocus = {
+  /** A unit is kept when any message in it is here (a doc thread: its comment or any reply). */
+  messageIds: ReadonlySet<string>;
+  /**
+   * 'chronological' (the default) keeps the conversation's own order and folds
+   * each run of other units where it was. 'asks-first' pulls what is waiting
+   * on you to the top: units holding an `askIds` message, then the other
+   * kept ones, each in order, then one fold row for everything else.
+   */
+  order?: 'chronological' | 'asks-first';
+  /** For 'asks-first': the kept messages that are asks of you. */
+  askIds?: ReadonlySet<string>;
+  /** The fold row's words for a run of `n` messages. */
+  foldLabel: (n: number) => string;
+  /** Drawn under a kept unit that holds an `askIds` message (given that message's id): the For you "Done". */
+  askAccessory?: (messageId: string) => ReactNode;
+  /**
+   * Which focus this is (a theme's id, "for-you"). When it changes, opened
+   * folds close and the view goes to the newest kept unit; without it the
+   * `messageIds` set's identity stands in, so a caller that builds a new set
+   * on every render must give a key.
+   */
+  key?: string;
+};
+
+type LayoutEntry =
+  | {
+      type: 'unit';
+      unit: TranscriptUnit;
+      /** Position in the conversation, to tell neighbours. */ index: number;
+      dimmed: boolean;
+      segment: number;
+    }
+  | { type: 'fold'; key: string; count: number; expanded: boolean };
+
+/**
+ * The rows of the transcript. No focus: every unit, as it is. With one: the
+ * kept units, with each run of the others folded into one entry (or, once
+ * opened, that entry followed by its units, dimmed). `segment` marks where
+ * the day dividers start over (a reordered view isn't one timeline).
+ */
+export function layoutUnits(
+  units: readonly TranscriptUnit[],
+  focus: TranscriptFocus | undefined,
+  opened: ReadonlySet<string>,
+  snapshot: Pick<RoomSnapshot, 'sessionMetaByRun' | 'runsLoading'>
+): { entries: LayoutEntry[]; foldOf: Map<string, string> } {
+  const foldOf = new Map<string, string>();
+  if (!focus) {
+    return {
+      entries: units.map((unit, index) => ({
+        type: 'unit',
+        unit,
+        index,
+        dimmed: false,
+        segment: 0,
+      })),
+      foldOf,
+    };
+  }
+  type Item = { unit: TranscriptUnit; index: number };
+  const entries: LayoutEntry[] = [];
+  const kept = (unit: TranscriptUnit) => unitMessages(unit).some((m) => focus.messageIds.has(m.id));
+  const isAsk = (unit: TranscriptUnit) =>
+    !!focus.askIds && unitMessages(unit).some((m) => focus.askIds!.has(m.id));
+  const keep = (items: Item[], segment: number) => {
+    for (const { unit, index } of items)
+      entries.push({ type: 'unit', unit, index, dimmed: false, segment });
+  };
+  const fold = (run: Item[], segment: number) => {
+    if (run.length === 0) return;
+    // The count is what the transcript would show for these units, so a run that draws nothing has no row.
+    const count = run.reduce((n, { unit }) => n + drawnCount(unit, snapshot), 0);
+    if (count === 0) return;
+    const key = `fold:${unitKey(run[0]!.unit)}`;
+    const expanded = opened.has(key);
+    entries.push({ type: 'fold', key, count, expanded });
+    if (expanded) {
+      for (const { unit, index } of run)
+        entries.push({ type: 'unit', unit, index, dimmed: true, segment });
+    } else {
+      for (const { unit } of run) for (const m of unitMessages(unit)) foldOf.set(m.id, key);
+    }
+  };
+
+  if (focus.order === 'asks-first') {
+    const asks: Item[] = [];
+    const rest: Item[] = [];
+    const others: Item[] = [];
+    units.forEach((unit, index) =>
+      (isAsk(unit) ? asks : kept(unit) ? others : rest).push({ unit, index })
+    );
+    keep(asks, 0);
+    keep(others, 1);
+    fold(rest, 2);
+  } else {
+    let run: Item[] = [];
+    units.forEach((unit, index) => {
+      if (kept(unit)) {
+        fold(run, 0);
+        run = [];
+        keep([{ unit, index }], 0);
+      } else {
+        run.push({ unit, index });
+      }
+    });
+    fold(run, 0);
+  }
+  return { entries, foldOf };
+}
+
+/** The row a run of folded units shows as: the day divider's look, and a button. */
+function FoldRow({
+  label,
+  expanded,
+  onToggle,
+}: {
+  label: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const Icon = expanded ? ChevronUp : ChevronDown;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      className="flex w-full items-center gap-3 px-2 py-1.5 text-text-muted transition-colors hover:text-text-primary"
+      data-testid={expanded ? 'transcript-fold-back' : 'transcript-fold'}
+    >
+      <span className="h-px flex-1 bg-border-hairline" />
+      <span className="flex items-center gap-1 text-2xs">
+        {expanded ? `Hide ${label}` : label}
+        <Icon className="size-3" strokeWidth={1.5} />
+      </span>
+      <span className="h-px flex-1 bg-border-hairline" />
+    </button>
+  );
+}
+
 /** Replies shown before "Show N earlier replies"; the thread's first comment always shows. */
 const THREAD_VISIBLE_REPLIES = 3;
+
+/**
+ * What a doc thread draws: its first comment, and the replies under it. When
+ * the agent's run is in the thread, that row is its reply, so the mirrored copy
+ * of the same answer is not drawn (it would only repeat it).
+ */
+function threadParts(
+  threadId: string,
+  messages: readonly RoomMessage[]
+): { root: RoomMessage | undefined; rest: RoomMessage[] } {
+  const root = messages.find((m) => m.id === threadId);
+  const hasRun = messages.some((m) => m.meta.kind === 'session');
+  const rest = messages.filter(
+    (m) => m !== root && !(hasRun && m.meta.kind === 'comment_mirror' && m.meta.replyFromAgent)
+  );
+  return { root, rest };
+}
+
+/**
+ * How many messages a unit shows, for a fold's count: a thread's drawn rows
+ * (not the mirror lines it leaves out), and a lone message unless it draws
+ * nothing (a day divider, a run whose log is not here).
+ */
+export function drawnCount(
+  unit: TranscriptUnit,
+  snapshot: Pick<RoomSnapshot, 'sessionMetaByRun' | 'runsLoading'>
+): number {
+  if (unit.kind === 'thread') {
+    const { root, rest } = threadParts(unit.threadId, unit.messages);
+    return (root ? 1 : 0) + rest.length;
+  }
+  const { meta } = unit.message;
+  if (meta.kind === 'system' && meta.event === 'day_divider') return 0;
+  if (
+    meta.kind === 'session' &&
+    !snapshot.sessionMetaByRun[meta.runId] &&
+    !snapshot.runsLoading?.[meta.runId]
+  )
+    return 0;
+  return 1;
+}
 
 /**
  * A doc comment thread as one block: the comment and its quoted passage on
@@ -225,13 +425,7 @@ function ThreadBlock({
   renderReply: (message: RoomMessage) => ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const root = messages.find((m) => m.id === threadId);
-  // When the agent's run is in the thread, that row is its reply: the
-  // mirrored copy of the same answer would only repeat it.
-  const hasRun = messages.some((m) => m.meta.kind === 'session');
-  const rest = messages.filter(
-    (m) => m !== root && !(hasRun && m.meta.kind === 'comment_mirror' && m.meta.replyFromAgent)
-  );
+  const { root, rest } = threadParts(threadId, messages);
   const hidden = expanded ? 0 : Math.max(0, rest.length - THREAD_VISIBLE_REPLIES);
   const shown = rest.slice(hidden);
   return (
@@ -302,6 +496,14 @@ function mapEntriesFor(units: TranscriptUnit[], snapshot: RoomSnapshot, ownId: s
   return entries;
 }
 
+export type RoomJumpRequest = {
+  messageId?: string | null;
+  /** Lets a jump to a message older than the loaded window give up at once, and say so. */
+  messageSeq?: number | null;
+  runId?: string | null;
+  nonce: number;
+};
+
 export function RoomTranscript({
   snapshot,
   ownId,
@@ -315,6 +517,11 @@ export function RoomTranscript({
   globalSetup,
   onHideDetails,
   onLoadRunLog,
+  jump = null,
+  onJumpMissed,
+  onLoadOlder,
+  focus,
+  previewIds,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
@@ -336,7 +543,30 @@ export function RoomTranscript({
   onHideDetails?: (runId: string) => Promise<boolean>;
   /** A run shown from the disk cache (a summary only): fetch its log, when its card is expanded. */
   onLoadRunLog?: (runId: string) => void;
+  /**
+   * Notifications: scroll to a message (or a run's card) once it's here, as
+   * a banner or Activity click asks. A new `nonce` asks again.
+   */
+  jump?: RoomJumpRequest | null;
+  /** The jump's message couldn't be reached (before the start, or past the paging cap). */
+  onJumpMissed?: () => void;
+  /** Scrollback: load the page before the oldest message (`RoomSource.loadOlder`). */
+  onLoadOlder?: () => void;
+  /** Show only what matters: a theme's messages, or what is waiting on you. Absent: everything. */
+  focus?: TranscriptFocus;
+  /**
+   * A dock pill is hovered: these messages stay as they are and every other
+   * row dims (`data-preview-dimmed`), so the reader sees what the pill holds
+   * without the transcript moving. Absent: nothing is dimmed.
+   */
+  previewIds?: ReadonlySet<string> | null;
 }) {
+  // Callbacks read through refs: a parent's fresh arrow each render must
+  // not re-run the scroll listener or the jump.
+  const onLoadOlderRef = useRef(onLoadOlder);
+  onLoadOlderRef.current = onLoadOlder;
+  const onJumpMissedRef = useRef(onJumpMissed);
+  onJumpMissedRef.current = onJumpMissed;
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   // Pinned = the reader is at the bottom, so new content keeps them there.
@@ -358,6 +588,9 @@ export function RoomTranscript({
     for (const m of snapshot.messages) seenIds.add(rowKey(m));
   }, [snapshot.messages, seenIds]);
 
+  const focusRef = useRef(focus);
+  focusRef.current = focus;
+
   const pinToBottom = (behavior: ScrollBehavior = 'auto') => {
     const el = scrollRef.current;
     if (!el) return;
@@ -367,9 +600,34 @@ export function RoomTranscript({
     el.scrollTo({ top: el.scrollHeight, behavior });
   };
 
+  // Folds the reader opened, for the focus they opened them under: another focus closes them.
+  const focusId: unknown = focus ? (focus.key ?? focus.messageIds) : null;
+  const [openState, setOpenState] = useState<{ focusId: unknown; keys: ReadonlySet<string> }>({
+    focusId,
+    keys: new Set(),
+  });
+  const opened = openState.focusId === focusId ? openState.keys : EMPTY_KEYS;
+  const setFold = (key: string, open: boolean) =>
+    setOpenState((prev) => {
+      const keys = new Set(prev.focusId === focusId ? prev.keys : []);
+      if (open) keys.add(key);
+      else keys.delete(key);
+      return { focusId, keys };
+    });
+  // Which fold hides which message, from the latest render: a jump into one opens it first.
+  const foldOfRef = useRef<Map<string, string>>(new Map());
+  const pendingJumpRef = useRef<string | null>(null);
+
   const jumpTo = (messageId: string) => {
     const target = scrollRef.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
-    if (!target) return;
+    if (!target) {
+      const foldKey = foldOfRef.current.get(messageId);
+      if (foldKey && !opened.has(foldKey)) {
+        pendingJumpRef.current = messageId;
+        setFold(foldKey, true);
+      }
+      return;
+    }
     target.scrollIntoView({ block: 'center', behavior: 'smooth' });
     // Ring just the message itself (a person's bubble, an agent's answer), not the whole row.
     const focus = target.querySelector<HTMLElement>('[data-highlight-target]') ?? target;
@@ -382,10 +640,67 @@ export function RoomTranscript({
     );
   };
 
+  // A jump waits for its message: the Room may still be loading when the
+  // click lands. Done once per request; gives up quietly if the message
+  // never shows (deleted, or older than what the Room loads).
+  const jumpDoneRef = useRef<number | null>(null);
+  const jumpPagesRef = useRef<{ nonce: number; pages: number }>({ nonce: -1, pages: 0 });
+  useEffect(() => {
+    if (!jump || jumpDoneRef.current === jump.nonce) return;
+    const messageId =
+      jump.messageId ??
+      (jump.runId
+        ? snapshot.messages.find((m) => m.meta.kind === 'session' && m.meta.runId === jump.runId)?.id
+        : undefined);
+    if (!messageId || !snapshot.messages.some((m) => m.id === messageId)) {
+      // Loaded, and the message is from before the oldest one here: page
+      // back toward it (scrollback), a bounded number of pages. Past the
+      // start of the space, or the cap, say so rather than open silently.
+      const oldest = snapshot.messages.length > 0 ? Math.min(...snapshot.messages.map((m) => m.seq)) : null;
+      if (snapshot.stale || jump.messageSeq == null || oldest === null || jump.messageSeq >= oldest) return;
+      if (jumpPagesRef.current.nonce !== jump.nonce) jumpPagesRef.current = { nonce: jump.nonce, pages: 0 };
+      if (snapshot.olderMessages === 'loading') return;
+      if (snapshot.olderMessages === 'more' && onLoadOlderRef.current && jumpPagesRef.current.pages < JUMP_MAX_PAGES) {
+        jumpPagesRef.current.pages += 1;
+        onLoadOlderRef.current();
+        return;
+      }
+      jumpDoneRef.current = jump.nonce;
+      onJumpMissedRef.current?.();
+      return;
+    }
+    jumpDoneRef.current = jump.nonce;
+    pinnedRef.current = false;
+    setPinned(false);
+    requestAnimationFrame(() => jumpTo(messageId));
+    // `jumpTo` only reads refs; the callbacks are read through refs too.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jump, snapshot.messages, snapshot.stale, snapshot.olderMessages]);
+
+  // A jump that had to open a fold waits for the unit to render, then goes.
+  useLayoutEffect(() => {
+    const messageId = pendingJumpRef.current;
+    if (!messageId) return;
+    pendingJumpRef.current = null;
+    requestAnimationFrame(() => jumpTo(messageId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened]);
+
+  // Another focus (or none): back to the newest unit it keeps, which is
+  // where the end of the view is (a fold row at most beneath it).
+  const prevFocusIdRef = useRef(focusId);
+  useLayoutEffect(() => {
+    if (prevFocusIdRef.current === focusId) return;
+    prevFocusIdRef.current = focusId;
+    pinToBottom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId]);
+
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
+      if (el.scrollTop < LOAD_OLDER_THRESHOLD_PX) onLoadOlderRef.current?.();
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_THRESHOLD_PX;
       if (atBottom === pinnedRef.current) return;
       pinnedRef.current = atBottom;
@@ -420,18 +735,49 @@ export function RoomTranscript({
     if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
   }, [snapshot]);
 
+  // Scrollback: a page landing above must not move what the reader is
+  // looking at. The height is read during render (the DOM still shows the
+  // previous page then) and the difference is added back before paint.
+  const firstId = snapshot.messages[0]?.id ?? null;
+  const prevFirstIdRef = useRef(firstId);
+  const heightBeforeRef = useRef(0);
+  if (firstId !== prevFirstIdRef.current && scrollRef.current) {
+    heightBeforeRef.current = scrollRef.current.scrollHeight;
+  }
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const prevFirst = prevFirstIdRef.current;
+    prevFirstIdRef.current = firstId;
+    if (!el || pinnedRef.current || prevFirst === null || firstId === prevFirst) return;
+    // Only a prepend: the old first message is still here, further down.
+    if (!snapshot.messages.some((m) => m.id === prevFirst)) return;
+    el.scrollTop += el.scrollHeight - heightBeforeRef.current;
+  }, [firstId, snapshot.messages]);
+
+  // Too few messages to scroll, yet more above: ask for them without a scroll.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && snapshot.olderMessages === 'more' && el.scrollHeight <= el.clientHeight) onLoadOlder?.();
+  }, [snapshot.olderMessages, snapshot.messages.length, onLoadOlder]);
+
   // New messages while scrolled up are counted for the jump-back pill; one
   // you sent yourself always brings you back down.
-  const lastCountRef = useRef(snapshot.messages.length);
+  // Counted after the previous last message, not by length: an older page
+  // prepended by scrollback isn't new.
+  const lastIdRef = useRef(snapshot.messages[snapshot.messages.length - 1]?.id ?? null);
   useEffect(() => {
-    const added = snapshot.messages.slice(lastCountRef.current);
-    lastCountRef.current = snapshot.messages.length;
+    const lastAt = lastIdRef.current === null ? -1 : snapshot.messages.findIndex((m) => m.id === lastIdRef.current);
+    const added = snapshot.messages.slice(lastAt + 1);
+    lastIdRef.current = snapshot.messages[snapshot.messages.length - 1]?.id ?? null;
     if (added.length === 0) return;
     if (added.some((m) => m.authorId === ownId && m.meta.kind === 'text')) {
       pinToBottom();
       return;
     }
-    if (!pinnedRef.current) setUnseen((n) => n + added.length);
+    // Under a focus, what lands in the folded rest isn't something to jump down to.
+    const f = focusRef.current;
+    const shown = f ? added.filter((m) => f.messageIds.has(m.id)) : added;
+    if (!pinnedRef.current && shown.length > 0) setUnseen((n) => n + shown.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot.messages]);
 
@@ -451,9 +797,10 @@ export function RoomTranscript({
   }, [readKey, snapshot.messages, ownId, stale]);
   useEffect(() => {
     // Nor is anything marked read before then: the marker would skip what's new.
-    if (!readKey || !pinned || stale || snapshot.messages.length === 0) return;
-    writeLastSeen(readKey, Math.max(...snapshot.messages.map((m) => m.seq)));
-  }, [readKey, pinned, snapshot.messages, stale]);
+    // Under a focus the rest is folded away, not read.
+    if (!readKey || !pinned || stale || focusId !== null || snapshot.messages.length === 0) return;
+    markReadThrough(readKey, Math.max(...snapshot.messages.map((m) => m.seq)));
+  }, [readKey, pinned, snapshot.messages, stale, focusId]);
 
   // Split-resize perf round: `groupThreads` used to run twice a render —
   // once here, once again inline below to build the actual rows — so any
@@ -462,6 +809,16 @@ export function RoomTranscript({
   // say) grouped the same messages over again for no reason. One pass,
   // shared by both.
   const units = useMemo(() => groupThreads(snapshot.messages), [snapshot.messages]);
+  const { sessionMetaByRun, runsLoading } = snapshot;
+  const layout = useMemo(
+    () => layoutUnits(units, focus, opened, { sessionMetaByRun, runsLoading }),
+    [units, focus, opened, sessionMetaByRun, runsLoading]
+  );
+  foldOfRef.current = layout.foldOf;
+  const newIndex = useMemo(
+    () => (newFromId ? units.findIndex((u) => unitMessages(u).some((m) => m.id === newFromId)) : -1),
+    [units, newFromId]
+  );
   const mapEntries = useMemo(() => mapEntriesFor(units, snapshot, ownId), [units, snapshot, ownId]);
 
   const agentWorking = Object.values(snapshot.sessionMetaByRun).some(
@@ -488,14 +845,48 @@ export function RoomTranscript({
           messages" pill below has room to float without covering the last
           row — it's positioned relative to this same scroll viewport. */}
       <div ref={contentRef} className="relative mx-auto flex max-w-[44rem] flex-col gap-4 px-3 pt-6 pb-12">
+        {snapshot.olderMessages === 'loading' && (
+          <p className="text-text-muted text-center text-xs" data-testid="room-older-loading">
+            Loading earlier messages…
+          </p>
+        )}
+        {snapshot.olderMessages === 'none' && snapshot.messages.length > 0 && (
+          <p className="text-text-muted text-center text-xs" data-testid="room-start">
+            Start of the space
+          </p>
+        )}
         <AnimatePresence initial={false}>
           {(() => {
             const nodes: ReactNode[] = [];
             let lastDay = Number.NEGATIVE_INFINITY;
+            let lastSegment = -1;
             let prevMessage: RoomMessage | undefined;
-            for (const unit of units) {
-              const unitIds = unit.kind === 'message' ? [unit.message.id] : unit.messages.map((m) => m.id);
-              if (newFromId && unitIds.includes(newFromId)) {
+            let prevIndex = -2;
+            let newShown = false;
+            for (const entry of layout.entries) {
+              if (entry.type === 'fold') {
+                nodes.push(
+                  <div key={entry.key}>
+                    <FoldRow
+                      label={focus!.foldLabel(entry.count)}
+                      expanded={entry.expanded}
+                      onToggle={() => setFold(entry.key, !entry.expanded)}
+                    />
+                  </div>
+                );
+                prevMessage = undefined;
+                continue;
+              }
+              const { unit, index, dimmed, segment } = entry;
+              // A reordered view isn't one timeline: its day dividers start over in each part.
+              if (segment !== lastSegment) {
+                lastSegment = segment;
+                lastDay = Number.NEGATIVE_INFINITY;
+              }
+              // "New" goes above the first row shown from the first new one on: a hidden
+              // first-new unit passes it to the next shown one, never a fold. A reordered view has no "new".
+              if (newFromId && !newShown && newIndex >= 0 && index >= newIndex && focus?.order !== 'asks-first') {
+                newShown = true;
                 nodes.push(
                   <div key="new-divider" className="flex items-center gap-3 px-2 py-1.5" data-testid="new-divider">
                     <span className="bg-accent/50 h-px flex-1" />
@@ -510,7 +901,7 @@ export function RoomTranscript({
               if (placed && day > lastDay) {
                 lastDay = day;
                 nodes.push(
-                  <motion.div key={`day-${day}`}>
+                  <motion.div key={`day-${segment}-${day}`}>
                     <DayDivider label={formatDayLabel(placed.createdAt)} />
                   </motion.div>
                 );
@@ -532,7 +923,9 @@ export function RoomTranscript({
                   onHideDetails,
                   onLoadRunLog
                 );
-              const continuedUnit = unit.kind === 'message' && isContinuation(prevMessage, unit.message, snapshot);
+              // Only a follow-up when it truly follows: a fold or a reorder in between breaks the run.
+              const continuedUnit =
+                unit.kind === 'message' && index === prevIndex + 1 && isContinuation(prevMessage, unit.message, snapshot);
               const node =
                 unit.kind === 'message' ? (
                   render(unit.message, continuedUnit)
@@ -547,6 +940,7 @@ export function RoomTranscript({
                   />
                 );
               prevMessage = unit.kind === 'message' ? unit.message : undefined;
+              prevIndex = index;
               if (!node) continue;
               // Calm Room open: a row whose message was already in the
               // snapshot the moment this transcript mounted never animates
@@ -555,19 +949,27 @@ export function RoomTranscript({
               // every id from that first mount (see above), so the whole
               // initial batch reads as "already seen."
               const isNewRow = !!placed && !seenIds.has(rowKey(placed));
+              const previewDimmed =
+                !!previewIds && !unitMessages(unit).some((m) => previewIds.has(m.id));
+              const askMessageId = focus?.askIds
+                ? unitMessages(unit).find((m) => focus.askIds!.has(m.id))?.id
+                : undefined;
               nodes.push(
                 <motion.div
                   // Your sending copy and the relay's share a key: the one bubble turns solid in place.
-                  key={unit.kind === 'message' ? rowKey(unit.message) : `thread-${unit.threadId}`}
+                  key={unit.kind === 'message' ? rowKey(unit.message) : unitKey(unit)}
                   data-message-id={unit.kind === 'message' ? unit.message.id : unit.threadId}
                   data-row-entered={isNewRow ? 'true' : undefined}
+                  data-dimmed={dimmed ? 'true' : undefined}
+                  data-preview-dimmed={previewDimmed ? 'true' : undefined}
                   // Room between speakers; a follow-up from the same one sits close.
                   className={cn('rounded-card', continuedUnit && '-mt-3')}
                   initial={isNewRow ? { opacity: 0, y: 4 } : false}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: reducedMotion ? 0 : 0.16, ease: [0.16, 1, 0.3, 1] }}
+                  animate={{ opacity: previewDimmed ? 0.28 : dimmed ? 0.55 : 1, y: 0 }}
+                  transition={{ duration: reducedMotion ? 0 : previewIds ? 0.25 : 0.16, ease: [0.16, 1, 0.3, 1] }}
                 >
                   {node}
+                  {askMessageId !== undefined && focus?.askAccessory?.(askMessageId)}
                 </motion.div>
               );
             }

@@ -1,0 +1,15 @@
+{
+  "name": "@rigxyz/mac-notifications",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reads and requests this app's macOS notification permission (UNUserNotificationCenter). A no-op off macOS.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "gypfile": true,
+  "scripts": {
+    "install": "node-gyp rebuild"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.0.0"
+  }
+}

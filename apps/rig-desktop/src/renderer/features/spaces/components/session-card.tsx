@@ -35,6 +35,7 @@ import {
   type RigToolArgs,
 } from '@shared/spaces/connectors';
 import { ConnectPill } from './connectors-panel';
+import { permissionOptionRank, sortPermissionOptions } from '../approval-options';
 import { globalAgentsFor } from '../global-setup';
 import { ConnectorLogo } from '../logos';
 import { cardFromSummary, effectiveRunStatus, projectSessionCard } from '../projection';
@@ -383,8 +384,7 @@ function ApprovalCard({
   const serverTool = prettyAgentTool(request.title, step?.args);
   const shownTitle = serverTool ? `${serverTool.label} · ${serverTool.action}` : request.title;
   // Deny quietest, "Always" in between, the one-off allow is the primary.
-  const order = (k: string) => (k.startsWith('reject') ? 0 : k === 'allow_always' ? 1 : 2);
-  const options = [...request.options].sort((a, b) => order(a.kind) - order(b.kind));
+  const options = sortPermissionOptions(request.options);
   return (
     <div
       className="border-border-hairline bg-bg-2 flex flex-col gap-3 rounded-card border p-3"
@@ -415,7 +415,7 @@ function ApprovalCard({
       )}
       <div className="flex flex-wrap justify-end gap-1.5">
         {options.map((option) => {
-          const rank = order(option.kind);
+          const rank = permissionOptionRank(option.kind);
           const resolving = resolvingOptionId === option.optionId;
           return (
             <Button

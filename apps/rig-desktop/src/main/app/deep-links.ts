@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import { log } from '@main/lib/logger';
 import { deepLinkInbox } from '@main/rig/deep-link';
+import { openSpaceInbox } from '@main/rig/notifications/electron';
 import {
   findRigUrlInArgv,
   parseRigDeepLink,
@@ -80,6 +81,12 @@ function receiveDeepLink(url: string): void {
   if (!link) {
     // Never the URL itself: a near-miss can still carry an invite secret.
     log.info('ignored deep link');
+    return;
+  }
+  if (link.kind === 'space') {
+    const outcome = openSpaceInbox.push({ bindingId: link.bindingId, messageId: link.messageId });
+    log.info('deep link: open space received', { outcome });
+    focusMainWindow();
     return;
   }
   const outcome = deepLinkInbox.push(toJoinRequest(link));
