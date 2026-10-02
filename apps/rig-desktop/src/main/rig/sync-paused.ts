@@ -24,6 +24,18 @@ export async function isRigSyncPaused(rigPath: string): Promise<boolean> {
   }
 }
 
+/** The pause reason the app stamped (`'deleted'`, `'signedOut'`), or null: not paused, or paused by hand (`rig pause` writes none). */
+export async function readSyncPausedReason(rigPath: string): Promise<string | null> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(joinPath(rigPath, '.rig', 'sync-paused.json'), 'utf8'));
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const record = parsed as Record<string, unknown>;
+    return record.paused === true && typeof record.reason === 'string' ? record.reason : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Delete-a-rig round: stamps a `reason` onto `.rig/sync-paused.json` right
  * after `rig pause` has already written its own `{paused: true, pausedAt}`

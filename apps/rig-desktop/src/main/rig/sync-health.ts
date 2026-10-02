@@ -234,13 +234,22 @@ export async function shouldStartAtLaunch(root: string, deps: SyncHealthDeps = d
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** The account's binding ids: the relay's list, else the one remembered on this computer for it, else null. */
-async function accountBindingIds(accountId: string): Promise<Set<string> | null> {
-  const live = await fetchWorkspaceBindings();
-  if (live.success) return new Set(live.data.map((b) => b.id));
-  const remembered = await readRememberedWorkspaces();
-  if (remembered.accountId !== accountId || !remembered.workspaces) return null;
-  return new Set(remembered.workspaces.bindings.map((b) => b.id));
+/**
+ * The account's binding ids: the relay's list, else the one remembered on
+ * this computer for it, else null. What decides which Rig-home folders are
+ * the account's (`getLinkedPathsForAccount`); never throws.
+ */
+export async function getAccountBindingIds(accountId: string): Promise<Set<string> | null> {
+  try {
+    const live = await fetchWorkspaceBindings();
+    if (live.success) return new Set(live.data.map((b) => b.id));
+    const remembered = await readRememberedWorkspaces();
+    if (remembered.accountId !== accountId || !remembered.workspaces) return null;
+    return new Set(remembered.workspaces.bindings.map((b) => b.id));
+  } catch (error) {
+    log.warn('rig: could not list the account’s spaces', { error: String(error) });
+    return null;
+  }
 }
 
 /**
@@ -268,7 +277,7 @@ export async function resumeSyncOnLaunch(
       log.info('rig: launch sync sweep skipped', { account: account.status });
       return;
     }
-    const paths = await getLinkedPathsForAccount(account.id, await accountBindingIds(account.id));
+    const paths = await getLinkedPathsForAccount(account.id, await getAccountBindingIds(account.id));
     const toStart: string[] = [];
     for (const path of paths) {
       if (await shouldStartAtLaunch(path, deps)) toStart.push(path);

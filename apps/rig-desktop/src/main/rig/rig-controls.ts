@@ -8,11 +8,14 @@ import { rigRenamedChannel } from '@shared/rig/workspace';
 import { commandFailureMessage } from './auth-output';
 import { runRig, type SpawnOutcome } from './create';
 import { extractJsonObjects, parseJsonErrorEnvelope } from './join';
-import { existsAsDirectory, getRigPathsForAccount, updateRigName, updateRigPath } from './recent-rigs';
+import { existsAsDirectory, getLinkedPathsForAccount, updateRigName, updateRigPath } from './recent-rigs';
 import { relayNameSync } from './relay-name-sync-instance';
 import { setTomlRigName } from './rig-toml';
 import { SPACE_NAME_MAX } from './spaces/rig-tools';
-import { isRigSyncPaused, writeSyncPausedReason } from './sync-paused';
+import { isRigSyncPaused, readSyncPausedReason, writeSyncPausedReason } from './sync-paused';
+
+/** The pause reason sign-out stamps: sign-in resumes only these, never a pause someone chose. */
+export const SIGNED_OUT_PAUSE_REASON = 'signedOut';
 
 /**
  * Drives `rig move` and `rig pause`/`rig resume` — the rigs-rail row
@@ -118,9 +121,14 @@ export async function stopSyncForDeletion(path: string): Promise<Result<{ paused
 
 /**
  * Accounts & rigs round (onboarding-flow-spec.md, "Accounts & rigs") —
- * `auth.ts`'s logout (pause) and login (resume) hooks: every local rig
- * `getRigPathsForAccount` has on record for `accountId`, toggled the same
- * way the row menu's own pause/resume does. Idempotent (pausing an
+ * `auth.ts`'s logout (pause) and login (resume) hooks: every folder linked
+ * on this computer for `accountId` (`getLinkedPathsForAccount`, the launch
+ * sync sweep's same list: its `rig_rigs` rows plus its bound folders in the
+ * Rig home), toggled the same way the row menu's own pause/resume does.
+ * Sign-out leaves an already-paused folder alone and stamps the ones it
+ * pauses `signedOut`; sign-in resumes a paused folder only when sign-out
+ * paused it, so a pause someone chose (or a deleted space's) survives a
+ * sign-out and back in. Idempotent (pausing an
  * already-paused rig, or resuming an already-running one, is just what
  * `rig pause`/`rig resume` already do) and best-effort throughout — a rig
  * folder that's since been deleted or moved is skipped and logged, and
@@ -128,10 +136,14 @@ export async function stopSyncForDeletion(path: string): Promise<Result<{ paused
  * and logged rather than thrown, so it can never fail the logout/login
  * this rides along with.
  */
-async function togglePathsForAccount(verb: 'pause' | 'resume', accountId: string): Promise<void> {
+async function togglePathsForAccount(
+  verb: 'pause' | 'resume',
+  accountId: string,
+  accountBindingIds: ReadonlySet<string> | null
+): Promise<void> {
   let paths: string[];
   try {
-    paths = await getRigPathsForAccount(accountId);
+    paths = await getLinkedPathsForAccount(accountId, accountBindingIds);
   } catch (error) {
     log.warn(`rig: failed to look up rigs to ${verb} for the signed-out/in account`, {
       error: String(error),
@@ -144,9 +156,16 @@ async function togglePathsForAccount(verb: 'pause' | 'resume', accountId: string
         log.info(`rig: skipping ${verb} — rig folder no longer exists`, { path });
         continue;
       }
+      if (await isRigSyncPaused(path)) {
+        // Already paused at sign-out: someone's choice, left as it is. At
+        // sign-in: only a pause sign-out made comes off.
+        if (verb === 'pause' || (await readSyncPausedReason(path)) !== SIGNED_OUT_PAUSE_REASON) continue;
+      }
       const result = await toggleSync(verb, path);
       if (!result.success) {
         log.warn(`rig: failed to ${verb} rig`, { path, error: result.error.message });
+      } else if (verb === 'pause') {
+        await writeSyncPausedReason(path, SIGNED_OUT_PAUSE_REASON);
       }
     } catch (error) {
       log.warn(`rig: failed to ${verb} rig`, { path, error: String(error) });
@@ -154,14 +173,18 @@ async function togglePathsForAccount(verb: 'pause' | 'resume', accountId: string
   }
 }
 
-/** `auth.ts`'s logout hook: pause every local rig recorded for `accountId`. */
-export function pauseRigsForAccount(accountId: string): Promise<void> {
-  return togglePathsForAccount('pause', accountId);
+/**
+ * `auth.ts`'s logout hook: pause every folder linked for `accountId`.
+ * `accountBindingIds` must be read before the sign-out clears the token
+ * (`getAccountBindingIds`); null pauses only the `rig_rigs` rows.
+ */
+export function pauseRigsForAccount(accountId: string, accountBindingIds: ReadonlySet<string> | null): Promise<void> {
+  return togglePathsForAccount('pause', accountId, accountBindingIds);
 }
 
-/** `auth.ts`'s login hook: resume every local rig recorded for `accountId`. */
-export function resumeRigsForAccount(accountId: string): Promise<void> {
-  return togglePathsForAccount('resume', accountId);
+/** `auth.ts`'s login hook: resume every folder linked for `accountId` that sign-out paused (or that isn't paused). */
+export function resumeRigsForAccount(accountId: string, accountBindingIds: ReadonlySet<string> | null): Promise<void> {
+  return togglePathsForAccount('resume', accountId, accountBindingIds);
 }
 
 /**

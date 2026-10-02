@@ -169,7 +169,8 @@ async function resumeSignedInAccountRigs(): Promise<void> {
   // Another account signed in: the previous one's cached Rooms and comment
   // threads go (`localCacheAccountId` purges on a switch). Lazy: it opens the app DB.
   await (await import('./local-cache-account')).localCacheAccountId().catch(() => null);
-  await resumeRigsForAccount(current.id);
+  const { getAccountBindingIds } = await import('./sync-health');
+  await resumeRigsForAccount(current.id, await getAccountBindingIds(current.id));
 }
 
 /** Stops an in-flight login — used both by the explicit `cancel` RPC and by `logout`. */
@@ -275,13 +276,16 @@ export const rigAuthController = createRPCController({
   logout: async (): Promise<Result<void, RigAuthError>> => {
     cancelInFlightLogin();
     const current = await getCurrentAccountId();
+    // Which Rig-home folders are this account's has to be asked while still signed in.
+    const bindingIds =
+      current.status === 'known' ? await (await import('./sync-health')).getAccountBindingIds(current.id) : null;
     const result = await runLogout();
     forgetSelfUserId();
     void import('./notifications/electron').then((m) => m.restartNotifications()).catch(() => undefined);
     // Signed out: no cached Room or comment thread of anyone's stays on disk.
     if (result.success) await (await import('./local-cache-account')).purgeLocalCaches().catch(() => undefined);
     if (result.success && current.status === 'known') {
-      await pauseRigsForAccount(current.id);
+      await pauseRigsForAccount(current.id, bindingIds);
     }
     return result;
   },
