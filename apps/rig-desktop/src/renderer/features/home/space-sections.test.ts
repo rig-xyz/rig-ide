@@ -61,14 +61,14 @@ describe('buildSpaceSections — custom groups', () => {
     ],
   };
 
-  it("puts Ungrouped first, then each group in order; a space you left just isn't there", () => {
+  it("puts each group in order, then Ungrouped last; a space you left just isn't there", () => {
     const view = buildSpaceSections(
       input({ rows: [row('a'), row('b'), row('c'), row('d')], layout })
     );
     expect(shape(view)).toEqual([
-      ['Ungrouped', ['a', 'd']],
       ['Launch', ['b']],
       ['Ops', ['c']],
+      ['Ungrouped', ['a', 'd']],
     ]);
     expect(view.sections.find((s) => s.key === 'g2')!.collapsed).toBe(true);
   });
@@ -100,7 +100,7 @@ describe('buildSpaceSections — custom groups', () => {
     const view = buildSpaceSections(
       input({ rows: [row('a')], layout: { ...layout, collapsed: ['ungrouped'] } })
     );
-    expect(view.sections[0]).toMatchObject({ key: 'ungrouped', collapsed: true });
+    expect(view.sections.find((s) => s.key === 'ungrouped')).toMatchObject({ collapsed: true });
   });
 });
 

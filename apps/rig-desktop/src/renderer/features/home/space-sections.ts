@@ -153,16 +153,18 @@ export function buildSpaceSections<T extends { bindingId: string; name: string }
     if (groupId) byGroup.set(groupId, [...(byGroup.get(groupId) ?? []), row]);
     else ungrouped.push(row);
   }
+  // Your groups first; spaces in none sit below them, untitled while you
+  // have no groups at all (then it's just the list).
+  const ungroupedSection: SpaceSection<T> = {
+    key: HOME_SECTION_KEYS.ungrouped,
+    kind: 'ungrouped',
+    title: layout.groups.length > 0 ? 'Ungrouped' : null,
+    rows: sort(ungrouped),
+    collapsed: layout.groups.length > 0 && collapsed(HOME_SECTION_KEYS.ungrouped),
+    visible: ungrouped.length > 0,
+  };
   return {
     sections: [
-      {
-        key: HOME_SECTION_KEYS.ungrouped,
-        kind: 'ungrouped',
-        title: 'Ungrouped',
-        rows: sort(ungrouped),
-        collapsed: collapsed(HOME_SECTION_KEYS.ungrouped),
-        visible: ungrouped.length > 0,
-      },
       ...layout.groups.map((group): SpaceSection<T> => {
         const list = sort(byGroup.get(group.id) ?? []);
         return {
@@ -178,6 +180,7 @@ export function buildSpaceSections<T extends { bindingId: string; name: string }
             (input.keepVisible?.has(group.id) ?? false),
         };
       }),
+      ungroupedSection,
     ],
     folded,
   };

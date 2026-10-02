@@ -207,12 +207,12 @@ describe('SpacesCard — arranging many spaces', () => {
     expect(menuItem('Group by')).toBeUndefined();
   });
 
-  it('custom groups: Ungrouped first, then each group with its count', async () => {
+  it('custom groups: each group with its count, then Ungrouped last', async () => {
     await render(launch());
     expect(sections()).toEqual([
-      ['Ungrouped2', ['alpha', 'delta']],
       ['Launch1', ['beta']],
       ['Ops1', ['gamma']],
+      ['Ungrouped2', ['alpha', 'delta']],
     ]);
   });
 
@@ -227,7 +227,7 @@ describe('SpacesCard — arranging many spaces', () => {
     await act(async () => click(host.querySelector('[aria-label="Collapse Launch"]')!));
     await flush();
     expect(mocks.applied).toEqual([{ type: 'setGroupCollapsed', id: 'g-launch', collapsed: true }]);
-    expect(sections()[1]).toEqual(['Launch1', []]);
+    expect(sections()[0]).toEqual(['Launch1', []]);
     expect(host.querySelector('[aria-label="Expand Launch"]')).not.toBeNull();
   });
 
@@ -247,7 +247,8 @@ describe('SpacesCard — arranging many spaces', () => {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     );
     await flush();
-    expect(sections().at(-1)).toEqual(['Research0', []]);
+    // New groups go after the others; Ungrouped stays last.
+    expect(sections().at(-2)).toEqual(['Research0', []]);
     expect(mocks.applied.map((a) => (a as { type: string }).type)).toEqual([
       'createGroup',
       'renameGroup',
@@ -270,8 +271,8 @@ describe('SpacesCard — arranging many spaces', () => {
     await act(async () => click(menuItem('Delete group')!));
     await flush();
     expect(sections()).toEqual([
-      ['Ungrouped3', ['alpha', 'beta', 'delta']],
       ['Ops1', ['gamma']],
+      ['Ungrouped3', ['alpha', 'beta', 'delta']],
     ]);
   });
 
@@ -290,7 +291,7 @@ describe('SpacesCard — arranging many spaces', () => {
     await act(async () => drag('dragover', section('ungrouped'), dt2));
     await act(async () => drag('drop', section('ungrouped'), dt2));
     await flush();
-    expect(sections()[0]).toEqual(['Ungrouped2', ['beta', 'delta']]);
+    expect(sections().at(-1)).toEqual(['Ungrouped2', ['beta', 'delta']]);
   });
 
   it('reorders groups by dragging a header', async () => {
@@ -302,7 +303,7 @@ describe('SpacesCard — arranging many spaces', () => {
     await act(async () => drag('drop', section('g-launch'), dt));
     await flush();
     expect(mocks.applied).toEqual([{ type: 'reorderGroup', id: 'g-ops', toIndex: 0 }]);
-    expect(sections().map(([h]) => h)).toEqual(['Ungrouped2', 'Ops1', 'Launch1']);
+    expect(sections().map(([h]) => h)).toEqual(['Ops1', 'Launch1', 'Ungrouped2']);
   });
 
   it('dropping one ungrouped space on another offers to group the two', async () => {
@@ -324,8 +325,8 @@ describe('SpacesCard — arranging many spaces', () => {
       'New group'
     );
     expect(sections().map(([, ids]) => ids)).toEqual([
-      ['beta', 'gamma'],
       ['alpha', 'delta'],
+      ['beta', 'gamma'],
     ]);
     expect(host.querySelector('[data-testid="group-both-offer"]')).toBeNull();
   });
@@ -338,7 +339,7 @@ describe('SpacesCard — arranging many spaces', () => {
     await act(async () => click(menuItem('Launch')!));
     await flush();
     expect(mocks.applied).toEqual([{ type: 'moveSpace', bindingId: 'alpha', groupId: 'g-launch' }]);
-    expect(sections()[1]).toEqual(['Launch2', ['alpha', 'beta']]);
+    expect(sections()[0]).toEqual(['Launch2', ['alpha', 'beta']]);
   });
 
   it('group by state: Needs you, Active, Quiet', async () => {
@@ -380,9 +381,9 @@ describe('SpacesCard — arranging many spaces', () => {
   it('"Show quiet spaces" off folds them into one line at the bottom', async () => {
     await render(launch({ showQuiet: false }));
     expect(sections()).toEqual([
-      ['Ungrouped1', ['alpha']],
       ['Launch1', ['beta']],
       ['Ops1', ['gamma']],
+      ['Ungrouped1', ['alpha']],
     ]);
     const fold = host.querySelector('[data-testid="quiet-fold"]')!;
     expect(fold.textContent).toBe('1 quiet space');
