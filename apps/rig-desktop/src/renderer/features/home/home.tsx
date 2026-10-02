@@ -547,7 +547,7 @@ export function Home({
     // intensity reads as chrome; floating mid-content it read as a cut-off box. Ellipse radii sized so
     // alpha hits zero before either horizontal edge. Padding widened per
     // Dylan: the column was crowding the rail.
-    <div className="hero-glow flex min-h-full w-full flex-col gap-4 px-10 pt-4 pb-8 lg:px-16">
+    <div className="hero-glow flex min-h-full w-full flex-col gap-4 px-10 pt-4 pb-8 lg:pr-24 lg:pl-16">
       {connection !== 'online' && (
         <ConnectionBanner connection={connection} retrying={retrying} onTryAgain={tryAgain} />
       )}
@@ -575,7 +575,7 @@ export function Home({
        * regions rather than one continuous strip. The center column adds
        * `lg:pl-2` of its own so the seam is the board's 48px.
        */}
-      {/* Evenly spaced across: 64px from the window's left edge to the Spaces card, 64px to the main section, 64px to the right edge. */}
+      {/* Spaced across: 64px from the window's left edge to the Spaces card, 64px to the main section, 96px to the right edge. */}
       <div className="flex min-h-0 flex-1 flex-col gap-8 lg:flex-row lg:items-start lg:gap-14">
         {showPulse && (
           <div className="min-w-0 flex-1 lg:order-2 lg:pl-2" data-testid="home-center">
