@@ -642,7 +642,6 @@ export function Home({
                 statusByBinding={statusByBinding}
                 selfUserId={selfUserId}
                 topicByBinding={topicByBinding}
-                openOnTopic={roomThemesOn}
                 // Opened as a space even while the relay can't confirm its kind.
                 onOpenPath={(path) => onOpenPath(path, { kind: 'space' })}
                 highlightBindingId={highlightBindingId}

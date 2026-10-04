@@ -551,7 +551,7 @@ describe('Home: Across your spaces today', () => {
     expect(host.textContent).toContain("What's blocked?");
   });
 
-  it("leads each row's status line with its busiest theme of the day, and clicking the row opens on it", async () => {
+  it("leads each row's status line with its busiest theme of the day; clicking the row opens the Room plainly", async () => {
     mocks.live = {
       kind: 'live',
       savedAt: NOW,
@@ -568,6 +568,6 @@ describe('Home: Across your spaces today', () => {
     )!;
     await act(async () => name.click());
     expect(opened).toEqual([{ path: '/Users/me/Rig/launch', kind: 'space' }]);
-    expect(mocks.requests).toEqual([['s-launch', 'thm_2']]);
+    expect(mocks.requests).toEqual([]);
   });
 });

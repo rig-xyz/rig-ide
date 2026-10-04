@@ -511,7 +511,7 @@ describe("SpacesCard — the row's topic of the day", () => {
   let root: Root;
   let opened: string[];
 
-  async function render(rows: HomeRigRow[], openOnTopic = false, status: RigSpaceStatus = done): Promise<void> {
+  async function render(rows: HomeRigRow[], status: RigSpaceStatus = done): Promise<void> {
     await act(async () => {
       root.render(
         <QueryClientProvider client={new QueryClient()}>
@@ -520,7 +520,6 @@ describe("SpacesCard — the row's topic of the day", () => {
             statusByBinding={new Map([[status.bindingId, status]])}
             selfUserId="me"
             topicByBinding={new Map([['b-launch', topic('b-launch', 'Bugs & Wishlist')]])}
-            openOnTopic={openOnTopic}
             onOpenPath={(path) => opened.push(path)}
           />
         </QueryClientProvider>
@@ -560,7 +559,7 @@ describe("SpacesCard — the row's topic of the day", () => {
   });
 
   it('leaves the topic off a live run: who is working owns the line', async () => {
-    await render([launch], false, {
+    await render([launch], {
       bindingId: 'b-launch',
       running: [
         { runId: 'r1', agent: 'claude', ownerUserId: 'hugo', ownerName: 'Hugo Ross', startedAt: iso(60_000), activity: 'editing', title: 'Pricing.md' },
@@ -582,7 +581,7 @@ describe("SpacesCard — the row's topic of the day", () => {
     expect(lineOf('b-launch').textContent).not.toContain('Bugs');
   });
 
-  it('opens the Room on the topic when Room themes is on, and plainly when off', async () => {
+  it('opens the Room plainly, never on the topic its line shows', async () => {
     const { useRoomThemeRequest } = await import('@renderer/features/spaces/room-theme-request');
     const nameButton = () =>
       host.querySelector<HTMLButtonElement>('[data-binding-id="b-launch"] [data-testid="space-row-name"]')!;
@@ -600,17 +599,11 @@ describe("SpacesCard — the row's topic of the day", () => {
     const probeRoot = createRoot(document.createElement('div'));
     await act(async () => probeRoot.render(<Probe />));
 
-    await render([launch], true);
+    await render([launch]);
     await act(async () => nameButton().click());
     await flush();
     expect(opened).toEqual(['/Users/me/Rig/launch']);
-    expect(seen).toEqual(['thm_Bugs & Wishlist']);
-
-    await render([launch], false);
-    await act(async () => nameButton().click());
-    await flush();
-    expect(opened).toEqual(['/Users/me/Rig/launch', '/Users/me/Rig/launch']);
-    expect(seen).toEqual(['thm_Bugs & Wishlist']);
+    expect(seen).toEqual([]);
     await act(async () => probeRoot.unmount());
   });
 });

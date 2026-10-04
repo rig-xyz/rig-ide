@@ -12,7 +12,6 @@ import { useNotificationSummary, useSpaceNotifications } from '@renderer/feature
 import { directPhrase, type RigNotificationSpaceSummary } from '@shared/rig/notifications';
 import { newGroupId, type HomeGroup } from '@shared/rig/home-layout';
 import { NeedsConnection } from '@renderer/features/shell/needs-connection';
-import { requestRoomTheme } from '@renderer/features/spaces/room-theme-request';
 import { useSyncHealth } from '@renderer/features/spaces/use-sync-health';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
@@ -95,7 +94,6 @@ export function SpacesCard({
   statusByBinding,
   selfUserId,
   topicByBinding,
-  openOnTopic = false,
   onOpenPath,
   highlightBindingId,
   offline = false,
@@ -111,8 +109,6 @@ export function SpacesCard({
   selfUserId: string | null;
   /** Each space's most active Room theme of the last 24h; its name leads the row's status line. */
   topicByBinding?: ReadonlyMap<string, RigRecentTheme>;
-  /** Room themes is on: opening a row with a topic opens its Room on that theme. */
-  openOnTopic?: boolean;
   onOpenPath: (path: string) => void;
   highlightBindingId?: string | null;
   /**
@@ -217,7 +213,6 @@ export function SpacesCard({
         status={statusByBinding.get(row.bindingId)}
         attention={attentionByBinding.get(row.bindingId) ?? { kind: 'idle', lastActivityAt: null }}
         topic={offline ? undefined : topicByBinding?.get(row.bindingId)}
-        openOnTopic={openOnTopic}
         onOpenPath={onOpenPath}
         pinned={pinned.has(row.bindingId)}
         onTogglePinned={() => togglePinned(row.bindingId)}
@@ -519,7 +514,6 @@ function SpaceRow({
   status,
   attention: baseAttention,
   topic,
-  openOnTopic,
   onOpenPath,
   pinned,
   onTogglePinned,
@@ -531,7 +525,6 @@ function SpaceRow({
   status: RigSpaceStatus | undefined;
   attention: SpaceAttention;
   topic?: RigRecentTheme;
-  openOnTopic: boolean;
   onOpenPath: (path: string) => void;
   pinned: boolean;
   onTogglePinned: () => void;
@@ -678,7 +671,6 @@ function SpaceRow({
           type="button"
           onClick={() => {
             if (!openablePath && !downloadable) return;
-            if (topic && openOnTopic) requestRoomTheme(row.bindingId, topic.themeId);
             if (openablePath) onOpenPath(openablePath);
             else void download();
           }}
