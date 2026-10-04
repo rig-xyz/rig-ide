@@ -14,7 +14,7 @@ import {
 } from '@shared/rig/settings';
 import { normalizePageSignIns } from '@shared/pages/sign-in-sites';
 import { normalizeNotificationPrefs } from '@shared/rig/notifications';
-import { isRoomSees, type RoomSees } from '@shared/spaces/room-sees';
+import { DEFAULT_ROOM_SEES, isRoomSees, type RoomSees } from '@shared/spaces/room-sees';
 
 /**
  * The main-owned preferences store (`persistence-design.md`'s "Preferences"
@@ -188,10 +188,11 @@ function normalizeSettings(parsed: unknown): RigSettings {
     fileTreeViewByRig: normalizeFileTreeViewRecord(raw.fileTreeViewByRig),
     autoApproveAgentActions: raw.autoApproveAgentActions === true,
     paintbrushAgent: typeof raw.paintbrushAgent === 'string' ? raw.paintbrushAgent : null,
-    // On by default since 0.4.3; a file from before then gets it switched on once.
-    spacesEnabled: raw.spacesDefaultOnApplied === true ? raw.spacesEnabled === true : true,
+    // On for everyone since 0.4.3 and no longer switchable: whatever an older file saved.
+    spacesEnabled: true,
     spacesDefaultOnApplied: true,
     spacesRoomSees: normalizeRoomSees(raw.spacesRoomSees),
+    spacesRoomSeesDefault: isRoomSees(raw.spacesRoomSeesDefault) ? raw.spacesRoomSeesDefault : DEFAULT_ROOM_SEES,
     // On by default since 0.4.9; a file from before then gets both switched on once.
     spacesRoomDiskCache: raw.cacheAndThemesDefaultOnApplied === true ? raw.spacesRoomDiskCache === true : true,
     roomThemesEnabled: raw.cacheAndThemesDefaultOnApplied === true ? raw.roomThemesEnabled === true : true,

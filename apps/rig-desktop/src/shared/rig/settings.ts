@@ -1,6 +1,6 @@
 import { defineEvent } from '../lib/ipc/events';
 import { DEFAULT_PAGE_SIGN_INS, type PageSignInsState } from '../pages/sign-in-sites';
-import type { RoomSees } from '../spaces/room-sees';
+import { DEFAULT_ROOM_SEES, type RoomSees } from '../spaces/room-sees';
 import { DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from './notifications';
 
 /**
@@ -211,10 +211,8 @@ export type RigSettings = {
    */
   paintbrushAgent: string | null;
   /**
-   * Spaces: still switchable in Settings → Experimental, but on by default
-   * since 0.4.3. Earlier builds saved `false` for everyone who never touched
-   * it, so `normalizeSettings` turns it on once for a file without
-   * `spacesDefaultOnApplied`; after that the saved value is respected.
+   * Spaces: on for everyone since 0.4.3, no longer switchable. Kept so older
+   * settings files load; `normalizeSettings` always reads it as `true`.
    */
   spacesEnabled: boolean;
   /** Set once the 0.4.3 "Spaces on by default" switch has been applied to this settings file. */
@@ -225,6 +223,8 @@ export type RigSettings = {
    * (`shared/spaces/room-sees.ts`). Only ever read on this computer.
    */
   spacesRoomSees: Record<string, RoomSees>;
+  /** "Room sees" for a space with no pick of its own in `spacesRoomSees` (Settings › Spaces). */
+  spacesRoomSeesDefault: RoomSees;
   /**
    * Spaces: keep each space's last Room on disk (`rig_room_cache`, see
    * rig/docs/room-disk-cache-spec.md), so the first open after launch shows
@@ -285,6 +285,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   spacesEnabled: true,
   spacesDefaultOnApplied: true,
   spacesRoomSees: {},
+  spacesRoomSeesDefault: DEFAULT_ROOM_SEES,
   spacesRoomDiskCache: true,
   roomThemesEnabled: true,
   cacheAndThemesDefaultOnApplied: true,

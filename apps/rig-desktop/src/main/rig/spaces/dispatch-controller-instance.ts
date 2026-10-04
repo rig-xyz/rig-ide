@@ -90,7 +90,7 @@ function realDeps(): SpacesDispatchControllerDeps {
           return { ...rigSide, project: { disabled: project.disabled, pending: project.pending.map((p) => p.name) } };
         },
         rigTools: (scope) => rigToolsServer.serverFor(scope),
-        roomSees: (bindingId) => roomSeesFor(rigSettingsStore.get().spacesRoomSees, bindingId),
+        roomSees: (bindingId) => roomSeesFor(rigSettingsStore.get().spacesRoomSees, bindingId, rigSettingsStore.get().spacesRoomSeesDefault),
         recordLocal: (bindingId, runId, event) => localRuns.append(bindingId, runId, event),
         // Attached images go in as image content, shrunk to fit when they must.
         prepareImage: createImagePreparer(join(app.getPath('temp'), 'rig-agent-images')),

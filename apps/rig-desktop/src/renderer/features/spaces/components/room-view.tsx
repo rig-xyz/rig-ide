@@ -833,14 +833,19 @@ export function RoomView({
               }),
             // "Room sees" is this space's, on this computer: every agent of yours here shares it.
             roomSees: {
-              load: async () => roomSeesFor((await rpc.rig.settings.get()).spacesRoomSees, bindingId),
+              load: async () => {
+                const settings = await rpc.rig.settings.get();
+                return roomSeesFor(settings.spacesRoomSees, bindingId, settings.spacesRoomSeesDefault);
+              },
               change: async (level) =>
                 rpc.rig.settings
                   .set({ spacesRoomSees: { [bindingId]: level } })
                   .then(() => true)
                   .catch(() => false),
               watch: (onChange) =>
-                events.on(rigSettingsChangedChannel, (settings) => onChange(roomSeesFor(settings.spacesRoomSees, bindingId))),
+                events.on(rigSettingsChangedChannel, (settings) =>
+                  onChange(roomSeesFor(settings.spacesRoomSees, bindingId, settings.spacesRoomSeesDefault))
+                ),
             },
           }
         : null,

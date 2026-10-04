@@ -28,10 +28,15 @@ export function isRoomSees(value: unknown): value is RoomSees {
   return value === 'answer' || value === 'steps' || value === 'everything';
 }
 
-/** A space's level from the saved map, or the default for a space never set. */
-export function roomSeesFor(saved: Readonly<Record<string, RoomSees>> | undefined, bindingId: string): RoomSees {
+/** A space's level from the saved map, or `fallback` (the person's own default, `spacesRoomSeesDefault`) for a space never set. */
+export function roomSeesFor(
+  saved: Readonly<Record<string, RoomSees>> | undefined,
+  bindingId: string,
+  fallback?: RoomSees
+): RoomSees {
   const level = saved?.[bindingId];
-  return isRoomSees(level) ? level : DEFAULT_ROOM_SEES;
+  if (isRoomSees(level)) return level;
+  return isRoomSees(fallback) ? fallback : DEFAULT_ROOM_SEES;
 }
 
 /** Recorded first in every run: the level it ran at, so other members' cards know why details are missing. */

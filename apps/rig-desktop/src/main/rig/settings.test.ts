@@ -130,6 +130,22 @@ describe('RigSettingsStore', () => {
     expect(reloaded.get().spacesRoomSees).toEqual({ bnd_a: 'steps' });
   });
 
+  it('keeps a default "Room sees" for spaces never set: steps until picked, saved, and a bad value falls back to steps', () => {
+    const store = new RigSettingsStore(settingsPath);
+    store.initialize();
+    expect(store.get().spacesRoomSeesDefault).toBe('steps');
+    store.set({ spacesRoomSeesDefault: 'answer' });
+
+    const reloaded = new RigSettingsStore(settingsPath);
+    reloaded.initialize();
+    expect(reloaded.get().spacesRoomSeesDefault).toBe('answer');
+
+    writeFileSync(settingsPath, JSON.stringify({ ...reloaded.get(), spacesRoomSeesDefault: 'nothing' }));
+    const bad = new RigSettingsStore(settingsPath);
+    bad.initialize();
+    expect(bad.get().spacesRoomSeesDefault).toBe('steps');
+  });
+
   it('merges lastOpenTabsByRig at the key level — one rig writing its tabs never clobbers another', () => {
     const store = new RigSettingsStore(settingsPath);
     store.initialize();
@@ -616,7 +632,7 @@ describe('RigSettingsStore', () => {
     });
   });
 
-  describe('spacesEnabled (on by default since 0.4.3)', () => {
+  describe('spacesEnabled (on for everyone since 0.4.3, no longer switchable)', () => {
 
     it('defaults to true before anything is ever set', () => {
       const store = new RigSettingsStore(settingsPath);
@@ -624,28 +640,18 @@ describe('RigSettingsStore', () => {
       expect(store.get().spacesEnabled).toBe(true);
     });
 
-    it('turning it off persists and round-trips through a second store instance', () => {
-      const first = new RigSettingsStore(settingsPath);
-      first.initialize();
-      first.set({ spacesEnabled: false });
-
-      const second = new RigSettingsStore(settingsPath);
-      second.initialize();
-      expect(second.get().spacesEnabled).toBe(false);
-    });
-
-    it('a 0.4.2 settings.json that saved false is switched on once, then an opt-out sticks', () => {
+    it('a file that saved false loads as true, before and after the 0.4.3 switch', () => {
       mkdirSync(join(dir, 'nested'), { recursive: true });
       const { spacesDefaultOnApplied: _, ...older } = DEFAULT_RIG_SETTINGS;
       writeFileSync(settingsPath, JSON.stringify({ ...older, spacesEnabled: false }));
       const first = new RigSettingsStore(settingsPath);
       first.initialize();
       expect(first.get().spacesEnabled).toBe(true);
-      first.set({ spacesEnabled: false });
 
+      writeFileSync(settingsPath, JSON.stringify({ ...DEFAULT_RIG_SETTINGS, spacesEnabled: false }));
       const second = new RigSettingsStore(settingsPath);
       second.initialize();
-      expect(second.get().spacesEnabled).toBe(false);
+      expect(second.get().spacesEnabled).toBe(true);
     });
 
     it('0.4.9: a settings.json that saved the disk cache and Room themes off gets both on once, then an opt-out sticks', () => {
@@ -678,7 +684,7 @@ describe('RigSettingsStore', () => {
       expect(store.get().spacesEnabled).toBe(true);
     });
 
-    it('a malformed value (wrong type) after the switch degrades to false rather than passing through', () => {
+    it('a malformed value (wrong type) still loads as true', () => {
       mkdirSync(join(dir, 'nested'), { recursive: true });
       writeFileSync(
         settingsPath,
@@ -686,7 +692,7 @@ describe('RigSettingsStore', () => {
       );
       const store = new RigSettingsStore(settingsPath);
       store.initialize();
-      expect(store.get().spacesEnabled).toBe(false);
+      expect(store.get().spacesEnabled).toBe(true);
     });
   });
 

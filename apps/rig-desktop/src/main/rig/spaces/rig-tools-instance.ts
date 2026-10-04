@@ -110,7 +110,7 @@ const backend: RigToolsBackend = {
     return config;
   },
   // The pill's save path: settings-changed reaches its windows, and each turn's trace filter reads it.
-  roomSees: (bindingId) => roomSeesFor(rigSettingsStore.get().spacesRoomSees, bindingId),
+  roomSees: (bindingId) => roomSeesFor(rigSettingsStore.get().spacesRoomSees, bindingId, rigSettingsStore.get().spacesRoomSeesDefault),
   setRoomSees: (bindingId, level) => {
     rigSettingsStore.set({ spacesRoomSees: { [bindingId]: level } });
   },
