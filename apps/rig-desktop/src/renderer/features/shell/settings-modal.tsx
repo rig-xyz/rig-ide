@@ -621,10 +621,14 @@ function PermissionLine() {
   const permission = useNotificationPermission();
   const request = useRequestNotificationPermission();
   const [testError, setTestError] = useState<string | null>(null);
+  const [testHint, setTestHint] = useState<string | null>(null);
   const sendTest = async () => {
     setTestError(null);
+    setTestHint(null);
     const result = await rpc.rig.notifications.test();
     if (!result.success) setTestError(result.error.message);
+    // macOS hides banners from the app in front, so the test waits for you to switch away.
+    else if (result.data.waitingForAway) setTestHint('Switch to another app and the test banner will show there.');
   };
   if (permission === null) return null;
 
@@ -667,6 +671,11 @@ function PermissionLine() {
         )}
       </div>
       {testError && <p className="text-danger text-xs">{testError}</p>}
+      {testHint && (
+        <p className="text-text-muted text-xs" data-testid="notification-test-hint">
+          {testHint}
+        </p>
+      )}
     </div>
   );
 }

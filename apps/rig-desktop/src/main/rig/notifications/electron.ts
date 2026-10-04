@@ -66,6 +66,49 @@ const electronBanner: BannerFactory = (spec) => {
   };
 };
 
+/**
+ * macOS hides a banner from the app in front, and Settings' "Send a test"
+ * is always pressed with Rig in front. So the test waits until Rig isn't
+ * focused, the same moment a real banner would show, and gives up after a
+ * minute. One at a time: a second press replaces the first.
+ */
+const TEST_WAIT_MS = 60_000;
+let cancelPendingTest: (() => void) | null = null;
+
+function showTestBanner(): void {
+  electronBanner({
+    title: 'Notifications are on',
+    body: 'This is what Rig will show when someone needs you.',
+    silent: !rigSettingsStore.get().notifications.sound,
+    onClick: focusWindow,
+    onClose: () => {},
+  });
+}
+
+function showTestWhenAway(): boolean {
+  cancelPendingTest?.();
+  if (!BrowserWindow.getFocusedWindow()) {
+    showTestBanner();
+    return false;
+  }
+  // A blur can be one window handing focus to another; look again a beat later.
+  const onBlur = () => {
+    setTimeout(() => {
+      if (BrowserWindow.getFocusedWindow()) return;
+      cancelPendingTest?.();
+      showTestBanner();
+    }, 50);
+  };
+  const timer = setTimeout(() => cancelPendingTest?.(), TEST_WAIT_MS);
+  app.on('browser-window-blur', onBlur);
+  cancelPendingTest = () => {
+    clearTimeout(timer);
+    app.off('browser-window-blur', onBlur);
+    cancelPendingTest = null;
+  };
+  return true;
+}
+
 function focusWindow(): void {
   const win = getMainWindow() ?? BrowserWindow.getAllWindows()[0];
   if (!win) {
@@ -216,18 +259,14 @@ export const rigNotificationsController = createRPCController({
   requestPermission: (): void => requestNotificationPermission(),
   /** Rig's page in System Settings › Notifications. */
   openSystemSettings: async (): Promise<void> => openNotificationSettings(),
-  /** Settings' "Send a test". Asks for permission first if macOS never has. */
-  test: (): Result<void, RelayFailure> => {
+  /**
+   * Settings' "Send a test". Asks for permission first if macOS never has.
+   * `waitingForAway`: Rig is in front, so the banner shows once you switch away.
+   */
+  test: (): Result<{ waitingForAway: boolean }, RelayFailure> => {
     if (!Notification.isSupported()) return err({ message: 'This system has no notifications.' });
     if (notificationPermission() === 'notDetermined') requestNotificationPermission();
-    electronBanner({
-      title: 'Notifications are on',
-      body: 'This is what rig will show when someone needs you.',
-      silent: !rigSettingsStore.get().notifications.sound,
-      onClick: focusWindow,
-      onClose: () => {},
-    });
-    return ok(undefined);
+    return ok({ waitingForAway: showTestWhenAway() });
   },
   /** The renderer is listening for opens: hands over one that arrived first. */
   consumePendingOpen: (): OpenSpaceAt | null => openSpaceInbox.drain(),
