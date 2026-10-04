@@ -42,7 +42,8 @@ import {
   type FocusedRigPane,
 } from '@renderer/features/shell/native-close-target';
 import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
-import { SettingsModal } from '@renderer/features/shell/settings-modal';
+import { SettingsSheet } from '@renderer/features/settings/settings-sheet';
+import type { SettingsPageId } from '@renderer/features/settings/settings-pages';
 import { RoomView } from '@renderer/features/spaces/components/room-view';
 import type { RoomJumpRequest } from '@renderer/features/spaces/components/room-transcript';
 import { useNotificationSummary, useNotificationsInvalidation } from '@renderer/features/notifications/use-notifications';
@@ -255,13 +256,12 @@ export function App() {
     }
   }, [notificationSummary]);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // Make-updates-visible round: the gear's dot opens Settings with About
-  // already scrolled into view — reset to false on every open so a later
-  // plain gear click (once the update's been seen) doesn't keep forcing a
-  // scroll nobody asked for this time.
-  const [focusAboutOnOpen, setFocusAboutOnOpen] = useState(false);
-  const openSettings = useCallback((focusAbout = false) => {
-    setFocusAboutOnOpen(focusAbout);
+  // The page Settings opens on: a caller can send people straight to one
+  // (the gear's update dot opens General, where Updates lives). Reset on
+  // every open, so a plain open goes back to the page last viewed.
+  const [settingsPage, setSettingsPage] = useState<SettingsPageId | null>(null);
+  const openSettings = useCallback((page?: SettingsPageId) => {
+    setSettingsPage(page ?? null);
     setSettingsOpen(true);
   }, []);
   const updateStatus = useUpdateStatus();
@@ -383,7 +383,7 @@ export function App() {
     return () => cancelAnimationFrame(frame);
   }, [paneOpen]);
   // Spaces (lane 2): the Room UI, built against a recorded feed — a dev
-  // entry point only, gated by `spacesEnabled` (Settings → Experimental).
+  // entry point only, gated by `spacesEnabled` (always on since 0.4.3).
   // Per-window, deliberately not persisted; closes back to whatever layout
   // was already showing rather than replacing it.
   const spacesEnabled = useSpacesEnabled();
@@ -1209,7 +1209,7 @@ export function App() {
         return;
     }
   }, [nativeCloseTarget]);
-  const openNativeSettings = useCallback(() => openSettings(false), [openSettings]);
+  const openNativeSettings = useCallback(() => openSettings(), [openSettings]);
   const nativeUpdateAction = deriveNativeUpdateMenuAction(
     updateSupportedQuery.data,
     updateStatus.state.status
@@ -1219,7 +1219,7 @@ export function App() {
       updateStatus.restart();
       return;
     }
-    openSettings(true);
+    openSettings('general');
     updateStatus.check();
   }, [nativeUpdateAction, openSettings, updateStatus]);
 
@@ -1353,12 +1353,12 @@ export function App() {
           {renderRoom(bound, { inSpace: false })}
         </div>
       )}
-      <SettingsModal
+      <SettingsSheet
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         themePreference={themePreference}
         onSetThemePreference={setThemePreference}
-        focusAbout={focusAboutOnOpen}
+        initialPage={settingsPage}
       />
       {/* `rig://join/<secret>` from the website's invite page: confirm, then join and open. */}
       <DeepLinkJoinDialog onOpenPath={(path) => void openPath(path, { source: 'deeplink', kind: 'space' })} />
@@ -1623,8 +1623,8 @@ export function Topbar({
   /** The mini-breadcrumb's house button (rig view only) — up-navigation
    * lives HERE now, not in the panel headers below the bar. */
   onGoHome: () => void;
-  /** `true` scrolls Settings straight to About — the gear's own click passes this along as `updateReady` (see below), never called with `true` from anywhere else. */
-  onOpenSettings: (focusAbout?: boolean) => void;
+  /** Opens Settings, on `page` when given. The gear's own click opens General (where Updates lives) while an update is ready (see below). */
+  onOpenSettings: (page?: SettingsPageId) => void;
   /** Threaded down to `ActivityBell` — an invite's post-accept "Set up locally" opens the result the same way every other "open a rig" entry point does. Also `RigSwitcher`'s own row clicks. */
   onOpenPath: (path: string, opts?: { kind?: 'space' }) => void;
   /** An Activity row's click: open the space it's about, at the message (App's `openSpaceAt`). */
@@ -1805,7 +1805,7 @@ export function Topbar({
             render={
               <button
                 type="button"
-                onClick={() => onOpenSettings(updateReady)}
+                onClick={() => onOpenSettings(updateReady ? 'general' : undefined)}
                 aria-label="Settings"
                 className="relative flex size-7 items-center justify-center rounded-control text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
               >

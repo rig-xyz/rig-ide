@@ -6,7 +6,7 @@ import { useAgentAuthProbe } from './use-agent-auth-probe';
 
 /**
  * The trailing (right-aligned) content for one INSTALLED agent's row —
- * shared by `agents-step.tsx`'s ready-agent list and `settings-modal.tsx`'s
+ * shared by `agents-step.tsx`'s ready-agent list and `settings/pages/agents-page.tsx`'s
  * `AgentsSection`, the two places an installed row already renders. Callers
  * keep their own outer row markup (icon + name) untouched; this only
  * replaces the static "installed" label with the honest three-state auth

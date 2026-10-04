@@ -15,7 +15,7 @@ import { Dialog, DialogClose, DialogContent, DialogTitle } from '@renderer/lib/u
  * emdash-desktop's `AgentSignInModal.tsx` (read-only reference), rebuilt on
  * this app's own smaller `dialog.tsx` (no `DialogHeader`/`DialogFooter`/
  * `DialogContentArea` here, so the header/content/footer rows are
- * hand-composed inside `DialogContent`, matching `settings-modal.tsx`'s own
+ * hand-composed inside `DialogContent`, matching `settings/settings-sheet.tsx`'s own
  * pattern) and driven by local `open`/`onOpenChange` state instead of
  * emdash's global modal registry (this app has none — see `dialog.tsx`'s
  * own header comment).

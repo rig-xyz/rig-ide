@@ -115,7 +115,7 @@ function createLocalRunsClient(): LocalRunsClient {
 
 /**
  * Spaces: the Room view, mounted only when `spacesEnabled` is on (see
- * `shell/settings-modal.tsx`'s Experimental section and the topbar's "Room
+ * `normalizeSettings`, always on since 0.4.3, and the topbar's "Room
  * (preview)" entry point). Owns exactly one `RoomSource` for its lifetime
  * — `RelayRoomSource` against the real relay by default, or
  * `FixtureRoomSource` replaying the scripted Bob/Alice/Carol feed via the

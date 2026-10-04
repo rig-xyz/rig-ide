@@ -3,7 +3,7 @@ import { events, rpc } from '@renderer/lib/ipc';
 import { rigSettingsChangedChannel } from '@shared/rig/settings';
 
 /**
- * Room themes flag (`roomThemesEnabled`, Settings → Experimental) — a live
+ * Room themes flag (`roomThemesEnabled`, Settings › Advanced) — a live
  * read, like `useSpacesEnabled`: the saved value, then every change. It
  * sits inside the Room, so a settings read that fails leaves it off rather
  * than taking the Room down with it.

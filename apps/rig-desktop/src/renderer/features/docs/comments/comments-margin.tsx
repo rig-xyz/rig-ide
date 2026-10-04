@@ -460,7 +460,7 @@ function MentionTextarea({
  * session-scoped and silently gone the moment this headless turn's session
  * ends) is never rendered and never invoked: the relay it actually promises
  * — skipping the ask on future turns too — only exists through the app-wide
- * "Auto-approve agent actions" setting (`settings-modal.tsx`,
+ * "Auto-approve agent actions" setting (`settings/pages/agents-page.tsx`, shown inverted as "Ask before acting on comments";
  * `main/rig/comment-agent-auto-approve.ts`'s `partitionGloballyApprovable`).
  * A request offering that option instead shows one quiet text link that
  * turns the real setting on and grants THIS request through its own

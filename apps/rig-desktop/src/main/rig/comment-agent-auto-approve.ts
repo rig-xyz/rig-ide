@@ -24,7 +24,7 @@ import type {
  *    string.
  *
  * 2. `partitionGloballyApprovable` — gated on the "Auto-approve agent
- *    actions" app setting (off by default, `settings-modal.tsx`'s Agents
+ *    actions" app setting (off by default, `settings/pages/agents-page.tsx`'s Agents
  *    section), applied to everything the first path left visible. When the
  *    reader has turned it on, no permission card is ever shown for a
  *    comment-thread agent — every request grants immediately.

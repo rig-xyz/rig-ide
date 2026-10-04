@@ -4,6 +4,8 @@
 export const RIG_RELEASES_URL = 'https://github.com/rig-xyz/rig-ide/releases';
 export const RIG_REPO_URL = 'https://github.com/rig-xyz/rig-ide';
 export const RIG_WEBSITE_URL = 'https://userig.xyz';
+export const RIG_PRIVACY_URL = 'https://userig.xyz/privacy';
+export const RIG_TERMS_URL = 'https://userig.xyz/terms';
 export const RIG_ISSUES_URL = 'https://github.com/rig-xyz/rig-ide/issues';
 export const RIG_ISSUES_NEW_URL = 'https://github.com/rig-xyz/rig-ide/issues/new';
 
