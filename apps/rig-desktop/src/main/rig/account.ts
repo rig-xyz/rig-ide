@@ -118,7 +118,7 @@ async function relayGet(ctx: Resolved, path: string): Promise<Response> {
 
 function transportError(action: string, error: unknown): RigAccountError {
   log.warn('Rig account relay request failed', { action, error: String(error) });
-  return { kind: 'relay', message: `Could not ${action} — the relay is unreachable.` };
+  return { kind: 'relay', message: `Could not ${action}. Rig can't reach the server right now.` };
 }
 
 async function relayError(response: Response, action: string): Promise<RigAccountError> {

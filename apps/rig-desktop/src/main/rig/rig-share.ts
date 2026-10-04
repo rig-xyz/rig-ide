@@ -256,7 +256,7 @@ async function relayFetch(
 
 function transportError(action: string, error: unknown): RigShareError {
   log.warn('Rig share relay request failed', { action, error: String(error) });
-  return { kind: 'relay', message: `Could not ${action} — the relay is unreachable.` };
+  return { kind: 'relay', message: `Could not ${action}. Rig can't reach the server right now.` };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -376,7 +376,7 @@ function inviteLinkInvalid(reason: unknown): RigInviteLinkError {
 function inviteLinkTransportError(action: string, error: unknown, secret: string): RigInviteLinkError {
   const scrubbed = String(error).split(secret).join('…').split(encodeURIComponent(secret)).join('…');
   log.warn('Rig share: invite link request failed', { action, error: scrubbed });
-  return { kind: 'network', message: `Could not ${action} — the relay is unreachable.` };
+  return { kind: 'network', message: `Could not ${action}. Rig can't reach the server right now.` };
 }
 
 const EMPTY_INVITE_PREVIEW: RigInvitePreview = { spaceName: null, inviterName: null };

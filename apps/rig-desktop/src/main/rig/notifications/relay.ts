@@ -132,7 +132,7 @@ async function call(
     });
   } catch (error) {
     log.warn('notifications: relay request failed', { action, error: String(error) });
-    return err({ kind: 'relay', message: `Could not ${action}: the relay is unreachable.` });
+    return err({ kind: 'relay', message: `Could not ${action}. Rig can't reach the server right now.` });
   }
   if (!response.ok) {
     let code: string | null = null;

@@ -289,7 +289,7 @@ function themesUnsupported(error: RelayApiError): boolean {
 
 function transportError(action: string, error: unknown): RelayApiError {
   log.warn('Rig spaces relay request failed', { action, error: String(error) });
-  return { kind: 'relay', message: `Could not ${action} — the relay is unreachable.` };
+  return { kind: 'relay', message: `Could not ${action}. Rig can't reach the server right now.` };
 }
 
 async function relayError(response: Response, action: string): Promise<RelayApiError> {

@@ -143,7 +143,7 @@ async function relayFetch(
 
 function transportError(action: string, error: unknown): RigShareLinkError {
   log.warn('Rig share links relay request failed', { action, error: String(error) });
-  return { kind: 'relay', message: `Could not ${action} — the relay is unreachable.` };
+  return { kind: 'relay', message: `Could not ${action}. Rig can't reach the server right now.` };
 }
 
 // ── payload coercion ─────────────────────────────────────────────────────────

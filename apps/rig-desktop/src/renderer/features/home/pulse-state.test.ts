@@ -364,8 +364,8 @@ describe('askErrorMessage', () => {
       askErrorMessage({ kind: 'relay', status: 500, message: 'Could not ask about your rigs (relay 500).' })
     ).toBe('Could not ask about your rigs (relay 500).');
     expect(
-      askErrorMessage({ kind: 'relay', message: 'Could not ask about your rigs — the relay is unreachable.' })
-    ).toBe('Could not ask about your rigs — the relay is unreachable.');
+      askErrorMessage({ kind: 'relay', message: "Could not ask about your rigs. Rig can't reach the server right now." })
+    ).toBe("Could not ask about your rigs. Rig can't reach the server right now.");
   });
 
   it('non-relay error kinds keep their own specific message untouched', () => {
