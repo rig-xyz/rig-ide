@@ -310,8 +310,8 @@ export function KeepInStepToggle({ browser, many = false }: { browser: string; m
         <span className="text-xs font-medium text-text-primary">Keep in step with {browser}</span>
         <span className="text-xs text-text-muted">
           {many
-            ? `When you come back to rig, pick up newer sign-ins for these sites. Never adds a site you didn't pick.`
-            : `When you come back to rig, pick up a newer sign-in from ${browser}`}
+            ? `When you come back to Rig, it picks up newer sign-ins for these sites and never adds one you didn't pick.`
+            : `When you come back to Rig, it picks up a newer sign-in from ${browser}.`}
         </span>
       </div>
       <button

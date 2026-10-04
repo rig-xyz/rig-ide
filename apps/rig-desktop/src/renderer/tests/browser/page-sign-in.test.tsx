@@ -726,7 +726,7 @@ describe('Settings › Sign-ins', () => {
     state.browsers = [{ id: 'chrome', name: 'Chrome', folder: 'denied', keychain: 'unknown' }];
     await renderSettings();
     const warning = document.querySelector<HTMLElement>('[data-testid="sign-in-access-denied"]')!;
-    expect(warning.textContent).toContain("Rig can't read Chrome's data — turn on Google Chrome under Privacy & Security › Files & Folders › Rig");
+    expect(warning.textContent).toContain("To use Chrome's sign-ins, turn on Google Chrome under Privacy & Security › Files & Folders › Rig");
     await click(button('Open System Settings'));
     expect(pages.openPrivacySettings).toHaveBeenCalledOnce();
   });
@@ -739,7 +739,7 @@ describe('Settings › Sign-ins', () => {
     await renderSettings();
     const warnings = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="sign-in-access-denied"]'));
     expect(warnings.map((w) => w.dataset.browser)).toEqual(['arc']);
-    expect(warnings[0]!.textContent).toContain("Rig can't read Arc's data — turn on Arc under");
+    expect(warnings[0]!.textContent).toContain("To use Arc's sign-ins, turn on Arc under");
   });
 
   it('says plainly when there is no Chrome', async () => {

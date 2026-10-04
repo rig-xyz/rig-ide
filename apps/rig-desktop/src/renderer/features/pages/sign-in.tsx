@@ -31,7 +31,7 @@ function AccessWarning({ browser }: { browser: Browsers[number] }) {
   return (
     <div className="border-warning/40 bg-warning/5 flex items-center gap-3 rounded-control border px-2.5 py-2" data-testid="sign-in-access-denied" data-browser={browser.id}>
       <p className="min-w-0 flex-1 text-xs text-text-primary">
-        Rig can't read {browser.name}'s data — turn on {macFolderName(browser.name)} under Privacy & Security › Files & Folders › Rig.
+        To use {browser.name}'s sign-ins, turn on {macFolderName(browser.name)} under Privacy & Security › Files & Folders › Rig.
       </p>
       <Button size="xs" variant="outline" onClick={() => void rpc.rig.pages.openPrivacySettings()}>
         Open System Settings
@@ -126,14 +126,13 @@ export function SignInRows() {
       ) : (
         <div className="flex flex-col gap-2">
           <div className="flex flex-col gap-0.5">
-            <span className="text-xs font-medium text-text-primary">Use your {browser} sign-ins</span>
+            <span className="text-[14px] font-medium text-text-primary">Use your {browser} sign-ins</span>
             {noBrowser ? (
-              <p className="text-xs text-text-muted" data-testid="sign-in-no-browser">
-                No Chrome on this Mac. Pages can still be signed in by typing into them: open a page beside a chat and sign in on the
-                page itself (Sign in here), and it stays signed in.
+              <p className="text-[12.5px] text-text-muted" data-testid="sign-in-no-browser">
+                No Chrome on this Mac, so sign in on the page itself with Sign in here and it stays signed in.
               </p>
             ) : (
-              <p className="text-xs text-text-muted">
+              <p className="text-[12.5px] text-text-muted">
                 Pages you open beside a chat open signed in as you. Rig copies only the site you open, when you open it.
               </p>
             )}
