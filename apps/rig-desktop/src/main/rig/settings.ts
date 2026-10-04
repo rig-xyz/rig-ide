@@ -192,8 +192,10 @@ function normalizeSettings(parsed: unknown): RigSettings {
     spacesEnabled: raw.spacesDefaultOnApplied === true ? raw.spacesEnabled === true : true,
     spacesDefaultOnApplied: true,
     spacesRoomSees: normalizeRoomSees(raw.spacesRoomSees),
-    spacesRoomDiskCache: raw.spacesRoomDiskCache === true,
-    roomThemesEnabled: raw.roomThemesEnabled === true,
+    // On by default since 0.4.9; a file from before then gets both switched on once.
+    spacesRoomDiskCache: raw.cacheAndThemesDefaultOnApplied === true ? raw.spacesRoomDiskCache === true : true,
+    roomThemesEnabled: raw.cacheAndThemesDefaultOnApplied === true ? raw.roomThemesEnabled === true : true,
+    cacheAndThemesDefaultOnApplied: true,
     pageSignIns: normalizePageSignIns(raw.pageSignIns),
     notifications: normalizeNotificationPrefs(raw.notifications),
     notificationCursorByAccount: isStringRecord(raw.notificationCursorByAccount) ? raw.notificationCursorByAccount : {},

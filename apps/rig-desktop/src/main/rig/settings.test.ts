@@ -561,16 +561,16 @@ describe('RigSettingsStore', () => {
     });
   });
 
-  describe('spacesRoomDiskCache (off until it has shown its win)', () => {
-    it('is off by default, and for a file from before it existed', () => {
+  describe('spacesRoomDiskCache (on by default since 0.4.9)', () => {
+    it('is on by default, and for a file from before it existed', () => {
       const store = new RigSettingsStore(settingsPath);
       store.initialize();
-      expect(store.get().spacesRoomDiskCache).toBe(false);
+      expect(store.get().spacesRoomDiskCache).toBe(true);
       mkdirSync(join(dir, 'nested'), { recursive: true });
       writeFileSync(settingsPath, JSON.stringify({ version: 1, theme: null }));
       const older = new RigSettingsStore(settingsPath);
       older.initialize();
-      expect(older.get().spacesRoomDiskCache).toBe(false);
+      expect(older.get().spacesRoomDiskCache).toBe(true);
     });
 
     it('turned on, it stays on; anything but true reads as off', () => {
@@ -587,16 +587,16 @@ describe('RigSettingsStore', () => {
     });
   });
 
-  describe('roomThemesEnabled (off by default)', () => {
-    it('is off by default, and for a file from before it existed', () => {
+  describe('roomThemesEnabled (on by default since 0.4.9)', () => {
+    it('is on by default, and for a file from before it existed', () => {
       const store = new RigSettingsStore(settingsPath);
       store.initialize();
-      expect(store.get().roomThemesEnabled).toBe(false);
+      expect(store.get().roomThemesEnabled).toBe(true);
       mkdirSync(join(dir, 'nested'), { recursive: true });
       writeFileSync(settingsPath, JSON.stringify({ version: 1, theme: null }));
       const older = new RigSettingsStore(settingsPath);
       older.initialize();
-      expect(older.get().roomThemesEnabled).toBe(false);
+      expect(older.get().roomThemesEnabled).toBe(true);
     });
 
     it('turned on, it stays on; anything but true reads as off', () => {
@@ -646,6 +646,25 @@ describe('RigSettingsStore', () => {
       const second = new RigSettingsStore(settingsPath);
       second.initialize();
       expect(second.get().spacesEnabled).toBe(false);
+    });
+
+    it('0.4.9: a settings.json that saved the disk cache and Room themes off gets both on once, then an opt-out sticks', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      const { cacheAndThemesDefaultOnApplied: _, ...older } = DEFAULT_RIG_SETTINGS;
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({ ...older, spacesRoomDiskCache: false, roomThemesEnabled: false })
+      );
+      const first = new RigSettingsStore(settingsPath);
+      first.initialize();
+      expect(first.get().spacesRoomDiskCache).toBe(true);
+      expect(first.get().roomThemesEnabled).toBe(true);
+      first.set({ roomThemesEnabled: false });
+
+      const second = new RigSettingsStore(settingsPath);
+      second.initialize();
+      expect(second.get().roomThemesEnabled).toBe(false);
+      expect(second.get().spacesRoomDiskCache).toBe(true);
     });
 
     it('an existing settings.json that predates this field loads as true, not a throw', () => {

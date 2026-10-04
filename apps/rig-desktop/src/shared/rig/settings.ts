@@ -228,15 +228,22 @@ export type RigSettings = {
   /**
    * Spaces: keep each space's last Room on disk (`rig_room_cache`, see
    * rig/docs/room-disk-cache-spec.md), so the first open after launch shows
-   * it at once and only catches up. Off until the log lines show the win.
+   * it at once and only catches up. On by default since 0.4.9.
    */
   spacesRoomDiskCache: boolean;
   /**
    * Room themes (rig/docs/room-themes-spec.md): the Room fetches the relay's
-   * themes only while this is on. Off by default; read live, so toggling it
-   * takes effect in open Rooms without a reload.
+   * themes only while this is on. On by default since 0.4.9; read live, so
+   * toggling it takes effect in open Rooms without a reload.
    */
   roomThemesEnabled: boolean;
+  /**
+   * Set once the 0.4.9 "disk cache and Room themes on by default" switch has
+   * been applied to this settings file. Earlier builds saved `false` for both
+   * for everyone who never touched them, so `normalizeSettings` turns both on
+   * once for a file without this; after that the saved values are respected.
+   */
+  cacheAndThemesDefaultOnApplied: boolean;
   /**
    * Pages signed in from a browser (board 18): per site, which browser
    * profile it came from and its hosts (never cookie values), "Keep in step",
@@ -278,8 +285,9 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   spacesEnabled: true,
   spacesDefaultOnApplied: true,
   spacesRoomSees: {},
-  spacesRoomDiskCache: false,
-  roomThemesEnabled: false,
+  spacesRoomDiskCache: true,
+  roomThemesEnabled: true,
+  cacheAndThemesDefaultOnApplied: true,
   pageSignIns: DEFAULT_PAGE_SIGN_INS,
   notifications: DEFAULT_NOTIFICATION_PREFS,
   notificationCursorByAccount: {},
