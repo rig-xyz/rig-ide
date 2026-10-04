@@ -1118,7 +1118,7 @@ export function RoomView({
           <button
             type="button"
             onClick={() => setUseFixtures((v) => !v)}
-            title={useFixtures ? 'Switch to the live room' : 'Switch to the scripted demo (dev)'}
+            title={useFixtures ? 'Switch to the live space' : 'Switch to the scripted demo (dev)'}
             className="hover:bg-bg-2 ml-auto flex size-6 items-center justify-center rounded-control text-text-muted transition-colors"
           >
             <RadioTower className="size-3.5" strokeWidth={1.5} />

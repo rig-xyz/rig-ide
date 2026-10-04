@@ -860,10 +860,10 @@ function RoomThemesRow() {
     <div className="flex items-start justify-between gap-3">
       <div className="flex min-w-0 flex-col gap-0.5">
         <label htmlFor="room-themes-enabled" className="text-xs font-medium text-text-primary">
-          Room themes
+          Topics
         </label>
         <p className="text-xs text-text-muted">
-          Sort a busy room into the topics people are talking about.
+          Sort a busy space's chat into the topics people are talking about.
         </p>
       </div>
       <button
@@ -871,7 +871,7 @@ function RoomThemesRow() {
         type="button"
         role="switch"
         aria-checked={enabled}
-        aria-label="Room themes"
+        aria-label="Topics"
         onClick={toggle}
         className={cn(
           'relative mt-0.5 h-4 w-7 shrink-0 rounded-full transition-colors',
@@ -910,7 +910,7 @@ function SpacesRow() {
           Spaces
         </label>
         <p className="text-text-muted text-xs">
-          Open a rig as a shared room with people and their agents.
+          Open a rig as a shared space with people and their agents.
         </p>
       </div>
       <button

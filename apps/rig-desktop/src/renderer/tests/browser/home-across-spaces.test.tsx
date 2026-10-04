@@ -330,7 +330,7 @@ describe('Home: Across your spaces today', () => {
     expect(desc.className).not.toContain('truncate');
     const detail = lines()[0]!.querySelector('[data-testid="theme-line-detail"]')!;
     expect(detail.textContent).toBe(
-      "5 new messages · Hugo, Hugo's Claude · Open the Room on this topic ›"
+      "5 new messages · Hugo, Hugo's Claude · Open the space on this topic ›"
     );
     expect(desc.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // The other line keeps its summary cut to one line.
@@ -350,7 +350,7 @@ describe('Home: Across your spaces today', () => {
     expect(opened).toEqual([]);
   });
 
-  it('"Open the Room on this topic" opens its Room on that theme when Room themes is on', async () => {
+  it('"Open the space on this topic" opens its Room on that theme when Room themes is on', async () => {
     mocks.live = {
       kind: 'live',
       savedAt: NOW,

@@ -144,7 +144,7 @@ describe('SettingsModal', () => {
     settingsMock.current = {};
   });
 
-  it('"Room themes" is off by default and the toggle saves roomThemesEnabled', async () => {
+  it('"Topics" is off by default and the toggle saves roomThemesEnabled', async () => {
     settingsMock.current = {};
     settingsMock.set.mockClear();
     await renderSettings();

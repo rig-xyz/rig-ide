@@ -1970,7 +1970,7 @@ describe('Room sees', () => {
     expect(JSON.stringify(local)).toContain('GRANOLA_OUT');
 
     // The agent is told what the room sees.
-    expect(hiddenContext).toContain("The room sees your steps' labels, not what your tools return");
+    expect(hiddenContext).toContain("Other members see your steps' labels, not what your tools return");
     expect(hiddenContext).not.toContain('is visible to every member of the space, as a session card');
   });
 
@@ -1989,11 +1989,11 @@ describe('Room sees', () => {
     const at = (level: 'answer' | 'steps' | 'everything') => spacesHiddenContext({ bindingId: 'b' }, [], false, level);
     expect(at('everything')).toContain('Everything you do in this turn');
     expect(at('everything')).toContain('members can expand the card to see your full trace');
-    expect(at('steps')).toContain("The room sees your steps' labels, not what your tools return");
+    expect(at('steps')).toContain("Other members see your steps' labels, not what your tools return");
     expect(at('steps')).not.toContain('full trace');
-    expect(at('answer')).toContain('The room sees only your final message and the files you change, not your steps.');
-    expect(connectorsHiddenContext(['linear'], [], [], 'steps')).toContain("The room doesn't see what they return");
-    expect(connectorsHiddenContext(['linear'], [], [], 'everything')).toContain('shows up in the room');
+    expect(at('answer')).toContain('Other members see only your final message and the files you change, not your steps.');
+    expect(connectorsHiddenContext(['linear'], [], [], 'steps')).toContain("Other members don't see what they return");
+    expect(connectorsHiddenContext(['linear'], [], [], 'everything')).toContain('shows up in the space');
   });
 });
 

@@ -211,7 +211,7 @@ function ThemeLine({
             className="transition-colors hover:text-text-primary"
             data-testid="theme-line-open"
           >
-            Open the Room on this topic ›
+            Open the space on this topic ›
           </button>
         </p>
       )}

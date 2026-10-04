@@ -1425,7 +1425,7 @@ export function App() {
               // floating chip instead) — its connection and live state stay
               // up rather than tearing down and reconnecting on every
               // layout flip.
-              <RecoveryBoundary scope="Room">{renderRoom(rigView, { inSpace: true })}</RecoveryBoundary>
+              <RecoveryBoundary scope="Space">{renderRoom(rigView, { inSpace: true })}</RecoveryBoundary>
             ) : (
             <RecoveryBoundary scope="Chat panel">
               <ChatPanel

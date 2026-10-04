@@ -593,7 +593,7 @@ export const rigCommentAgentController = createRPCController({
           onPermissionsChanged: publishRoomPermissions,
         });
         if (room) {
-          if (!room.success) return err(agentError(`The room agent could not start: ${room.error}`));
+          if (!room.success) return err(agentError(`Your agent in this space could not start: ${room.error}`));
           roomTurnRuns.set(parentId, room.data.runId);
           const { status, answer } = await room.data.done;
           publishRoomPermissions([]);

@@ -96,7 +96,7 @@ function around(snap: BoardSnapshot): { x: number; y: number; width: number; hei
   };
 }
 
-const URL_FIELD = z.string().describe('The page link, as posted in the room.');
+const URL_FIELD = z.string().describe('The page link, as posted in the space.');
 
 export const BROWSER_TOOLS: readonly BrowserTool[] = [
   {

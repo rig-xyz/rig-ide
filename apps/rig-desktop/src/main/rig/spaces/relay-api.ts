@@ -681,7 +681,7 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         ctxResult.data,
         'GET',
         `/v1/me/bindings/${bindingId}/members`,
-        'load room members'
+        'load space members'
       );
       if (!result.success) return err(result.error);
       const raw = asRecord(result.data)?.members;
@@ -750,7 +750,7 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         ctxResult.data,
         'GET',
         `/v1/me/bindings/${bindingId}/messages${qs ? `?${qs}` : ''}`,
-        'load room messages'
+        'load messages'
       );
       if (!result.success) return err(result.error);
       const raw = asRecord(result.data)?.messages;
@@ -848,14 +848,14 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         ctxResult.data,
         'GET',
         `/v1/me/bindings/${bindingId}/themes`,
-        'load room themes'
+        'load topics'
       );
       if (!result.success)
         return themesUnsupported(result.error) ? ok({ supported: false }) : err(result.error);
       const snapshot = parseThemesSnapshot(result.data);
       return snapshot
         ? ok({ supported: true, data: snapshot })
-        : err<RelayApiError>({ kind: 'relay', message: 'Could not load room themes.' });
+        : err<RelayApiError>({ kind: 'relay', message: 'Could not load topics.' });
     },
 
     async getThemeEvents(bindingId, after) {
@@ -867,14 +867,14 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         ctxResult.data,
         'GET',
         `/v1/me/bindings/${bindingId}/themes/events?after=${cursor}`,
-        'load room theme changes'
+        'load topic changes'
       );
       if (!result.success)
         return themesUnsupported(result.error) ? ok({ supported: false }) : err(result.error);
       const page = parseThemeEventsPage(result.data);
       return page
         ? ok({ supported: true, data: page })
-        : err<RelayApiError>({ kind: 'relay', message: 'Could not load room theme changes.' });
+        : err<RelayApiError>({ kind: 'relay', message: 'Could not load topic changes.' });
     },
 
     async setThemesEnabled(bindingId, enabled) {
@@ -884,7 +884,7 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         ctxResult.data,
         'PATCH',
         `/v1/me/bindings/${bindingId}/themes`,
-        enabled ? 'turn room themes on' : 'turn room themes off',
+        enabled ? 'turn topics on' : 'turn topics off',
         { enabled }
       );
       if (!result.success)
