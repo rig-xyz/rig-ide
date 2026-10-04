@@ -8,6 +8,7 @@ import { Button } from '@renderer/lib/ui/button';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { settingsRow } from '../settings-pages';
 import { SettingsRow, SettingsRows } from '../settings-row';
+import { DELETION_QUERY_KEY, DeleteAccountRow } from './delete-account';
 
 /**
  * Settings › Account: who you are signed in as, and Sign out. The same
@@ -18,7 +19,8 @@ import { SettingsRow, SettingsRows } from '../settings-row';
  * which clears the token the Rig command line also reads
  * (`~/.config/rig/config.json`), so the app signing out IS the command line
  * signing out. It also pauses sync for this account's rigs and spaces on
- * this computer (`main/rig/auth.ts`'s `logout`).
+ * this computer (`main/rig/auth.ts`'s `logout`). Delete account
+ * (`delete-account.tsx`) ends with the same sign-out.
  */
 export function AccountPage() {
   const queryClient = useQueryClient();
@@ -34,6 +36,14 @@ export function AccountPage() {
     queryKey: ['rig', 'account', 'me'],
     queryFn: () => rpc.rig.account.me(),
     enabled: signedIn,
+  });
+
+  // Set by Delete account for the rest of the session; never fetched.
+  const { data: deletionRequestedAt } = useQuery<string | null>({
+    queryKey: DELETION_QUERY_KEY,
+    queryFn: () => null,
+    enabled: false,
+    staleTime: Infinity,
   });
 
   const { phase, signIn } = useRigSignIn();
@@ -56,6 +66,7 @@ export function AccountPage() {
             </Button>
           }
         />
+        {deletionRequestedAt && <DeleteAccountRow email={null} scheduledAt={deletionRequestedAt} />}
       </SettingsRows>
     );
   }
@@ -107,6 +118,10 @@ export function AccountPage() {
             </Button>
           )
         }
+      />
+      <DeleteAccountRow
+        email={user?.email ?? null}
+        scheduledAt={user?.deletionScheduledAt ?? deletionRequestedAt ?? null}
       />
     </SettingsRows>
   );

@@ -1,7 +1,12 @@
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
-import type { RigAccountError, RigUser, RigWorkspaceBinding } from '@shared/rig/account';
+import type {
+  RigAccountDeletion,
+  RigAccountError,
+  RigUser,
+  RigWorkspaceBinding,
+} from '@shared/rig/account';
 import { readRelayToken } from './config';
 import { checkRelayTrust } from './relay-trust';
 
@@ -164,6 +169,9 @@ export function toUser(value: unknown): RigUser | null {
     name: typeof raw.name === 'string' ? raw.name : null,
     avatarUrl: typeof raw.avatarUrl === 'string' ? raw.avatarUrl : null,
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : '',
+    ...(typeof raw.deletionScheduledAt === 'string'
+      ? { deletionScheduledAt: raw.deletionScheduledAt }
+      : {}),
   };
 }
 
@@ -358,5 +366,48 @@ export async function fetchWorkspaceBindings(): Promise<Result<RigWorkspaceBindi
     return ok(bindings);
   } catch (error) {
     return err(transportError('load your workspaces', error));
+  }
+}
+
+/** The body the relay requires on `POST /v1/me/delete`, so nothing deletes an account by accident. */
+const DELETE_CONFIRMATION = 'delete';
+
+/**
+ * `POST /v1/me/delete`: asks the relay to delete the signed-in account in 7
+ * days. The relay hands off or deletes their spaces and revokes every token
+ * at once, this one included, so the caller signs out locally right after
+ * (`deleteAccount` in `auth.ts`). Asking again while it is scheduled changes
+ * nothing and answers the same date.
+ */
+export async function requestAccountDeletion(): Promise<
+  Result<Omit<RigAccountDeletion, 'signedOut'>, RigAccountError>
+> {
+  const ctx = await resolveContext();
+  if (isError(ctx)) return err(ctx);
+  let response: Response;
+  try {
+    response = await fetch(`${ctx.url.replace(/\/+$/, '')}/v1/me/delete`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${ctx.token}`,
+        accept: 'application/json',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ confirm: DELETE_CONFIRMATION }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    return err(transportError('delete your account', error));
+  }
+  if (!response.ok) return err(await relayError(response, 'delete your account'));
+  try {
+    const data = asRecord(await response.json());
+    const at = data?.deletionScheduledAt;
+    if (typeof at !== 'string') {
+      return err<RigAccountError>({ kind: 'relay', message: 'Could not delete your account.' });
+    }
+    return ok({ deletionScheduledAt: at, alreadyScheduled: data?.alreadyScheduled === true });
+  } catch (error) {
+    return err(transportError('delete your account', error));
   }
 }

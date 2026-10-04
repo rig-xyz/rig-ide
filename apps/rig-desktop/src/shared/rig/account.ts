@@ -21,6 +21,17 @@ export type RigUser = {
   /** Same story as `name`: possibly absent on older relays, degrades to null. */
   avatarUrl: string | null;
   createdAt: string;
+  /** When the relay will delete this account, while a requested deletion waits out its 7 days. Absent otherwise. */
+  deletionScheduledAt?: string;
+};
+
+/** What deleting the account did: when the relay deletes it, and whether this computer signed out. */
+export type RigAccountDeletion = {
+  deletionScheduledAt: string;
+  /** It was already scheduled; nothing changed on the relay. */
+  alreadyScheduled: boolean;
+  /** The local sign-out after the request worked. False leaves the dead token on disk. */
+  signedOut: boolean;
 };
 
 /** One row of `GET /v1/me/bindings` — a rig the signed-in user is a member of. */

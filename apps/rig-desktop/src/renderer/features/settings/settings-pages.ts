@@ -90,6 +90,12 @@ export const SETTINGS_ROWS: readonly SettingsRowEntry[] = [
     label: 'Sign out',
     description: 'Sync pauses for your spaces on this computer until you sign back in, and the Rig command line signs out too.',
   },
+  {
+    id: 'delete-account',
+    page: 'account',
+    label: 'Delete account',
+    description: 'Deletes your account after 7 days. Signing back in before then cancels it.',
+  },
   { id: 'agents-list', page: 'agents', label: 'Agents', description: 'Claude, Codex and the other agents Rig can run.' },
   {
     id: 'ask-before-acting',

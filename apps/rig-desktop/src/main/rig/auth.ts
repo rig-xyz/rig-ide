@@ -2,8 +2,14 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
+import type { RigAccountDeletion, RigAccountError } from '@shared/rig/account';
 import type { RigAuthError, RigAuthStatus, RigLoginStarted } from '@shared/rig/auth';
-import { forgetSelfUserId, getCurrentAccountId } from './account';
+import {
+  forgetSelfUserId,
+  getCurrentAccountId,
+  requestAccountDeletion,
+  type CurrentAccountId,
+} from './account';
 import { extractRigAuthUrl, loginFailureMessage, logoutFailureMessage } from './auth-output';
 import { resolveCliBin } from './bundled-cli';
 import { readRelayToken } from './config';
@@ -275,18 +281,59 @@ export const rigAuthController = createRPCController({
    */
   logout: async (): Promise<Result<void, RigAuthError>> => {
     cancelInFlightLogin();
-    const current = await getCurrentAccountId();
-    // Which Rig-home folders are this account's has to be asked while still signed in.
-    const bindingIds =
-      current.status === 'known' ? await (await import('./sync-health')).getAccountBindingIds(current.id) : null;
-    const result = await runLogout();
-    forgetSelfUserId();
-    void import('./notifications/electron').then((m) => m.restartNotifications()).catch(() => undefined);
-    // Signed out: no cached Room or comment thread of anyone's stays on disk.
-    if (result.success) await (await import('./local-cache-account')).purgeLocalCaches().catch(() => undefined);
-    if (result.success && current.status === 'known') {
-      await pauseRigsForAccount(current.id, bindingIds);
-    }
-    return result;
+    const account = await accountBeforeSignOut();
+    return signOutHere(account);
+  },
+
+  /**
+   * Deletes the signed-in account (`POST /v1/me/delete`), then signs this
+   * computer out exactly as `logout` does. The account is read first, while
+   * the token still works: the relay revokes it as part of the request.
+   * The relay's answer wins over the local sign-out: a failed sign-out
+   * still reports the scheduled date, with `signedOut: false`.
+   */
+  deleteAccount: async (): Promise<Result<RigAccountDeletion, RigAccountError>> => {
+    cancelInFlightLogin();
+    const account = await accountBeforeSignOut();
+    const requested = await requestAccountDeletion();
+    if (!requested.success) return requested;
+    log.info('Rig account: deletion requested', {
+      deletionScheduledAt: requested.data.deletionScheduledAt,
+    });
+    const signedOut = await signOutHere(account);
+    if (!signedOut.success)
+      log.warn('Rig account: sign-out after deletion failed', { error: signedOut.error.message });
+    return ok({ ...requested.data, signedOut: signedOut.success });
   },
 });
+
+type AccountBeforeSignOut = { current: CurrentAccountId; bindingIds: Set<string> | null };
+
+/** Which account is signing out, and which Rig-home folders are its: asked while still signed in. */
+async function accountBeforeSignOut(): Promise<AccountBeforeSignOut> {
+  const current = await getCurrentAccountId();
+  const bindingIds =
+    current.status === 'known'
+      ? await (await import('./sync-health')).getAccountBindingIds(current.id)
+      : null;
+  return { current, bindingIds };
+}
+
+/** `rig logout`, then this computer forgets the account: caches purged, its rigs paused. */
+async function signOutHere({
+  current,
+  bindingIds,
+}: AccountBeforeSignOut): Promise<Result<void, RigAuthError>> {
+  const result = await runLogout();
+  forgetSelfUserId();
+  void import('./notifications/electron')
+    .then((m) => m.restartNotifications())
+    .catch(() => undefined);
+  // Signed out: no cached Room or comment thread of anyone's stays on disk.
+  if (result.success)
+    await (await import('./local-cache-account')).purgeLocalCaches().catch(() => undefined);
+  if (result.success && current.status === 'known') {
+    await pauseRigsForAccount(current.id, bindingIds);
+  }
+  return result;
+}
