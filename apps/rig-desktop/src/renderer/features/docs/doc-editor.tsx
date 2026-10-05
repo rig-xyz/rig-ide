@@ -36,6 +36,8 @@ import {
   docTypography,
 } from './doc-editor-theme';
 import { docEditorExtensions, type DocExtensionFactory } from './doc-extensions';
+import { markdownFormatKeymap } from './markdown-format';
+import { codeIndentKeymap, markdownListIndentKeymap } from './markdown-list-indent';
 
 /**
  * Round (beyond-markdown): the language extension, parameterized instead
@@ -307,7 +309,11 @@ export const DocEditor = forwardRef<DocEditorHandle, DocEditorProps>(function Do
       ...languageExtension(language),
       EditorView.lineWrapping,
       history(),
-      keymap.of([...defaultKeymap, ...historyKeymap]),
+      keymap.of([
+        ...(language === 'markdown' ? [...markdownFormatKeymap, ...markdownListIndentKeymap] : codeIndentKeymap),
+        ...defaultKeymap,
+        ...historyKeymap,
+      ]),
       // Ahead of the default keymap, and preventDefault so the browser's own
       // save never fires.
       Prec.high(
