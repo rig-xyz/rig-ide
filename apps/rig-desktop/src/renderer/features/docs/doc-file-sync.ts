@@ -67,6 +67,19 @@ function describeError(error: { message?: string; kind?: string }): string {
 
 type DiskRead = { content: string } | { error: string };
 
+/** Every resource still open, so a rename or archive can save what's unsaved before the file moves. */
+const openResources = new Set<DocTabResource>();
+
+/** Writes pending edits of any open document at `absPath` or inside it (a folder) — call before moving it. */
+export async function flushOpenDocs(absPath: string): Promise<void> {
+  const under = `${absPath}/`;
+  await Promise.all(
+    [...openResources]
+      .filter((resource) => resource.path === absPath || resource.path.startsWith(under))
+      .map((resource) => resource.flush())
+  );
+}
+
 export class DocTabResource {
   readonly path: string;
   readonly root: string;
@@ -126,6 +139,7 @@ export class DocTabResource {
       void this._syncFromDisk();
     });
 
+    openResources.add(this);
     void this._loadInitial();
   }
 
@@ -135,6 +149,7 @@ export class DocTabResource {
 
   dispose(): void {
     this._isClosed = true;
+    openResources.delete(this);
     this._unwatch();
     void rpc.rig.files.unwatch({ rootId: this.rootId });
     this._selectionListeners.clear();

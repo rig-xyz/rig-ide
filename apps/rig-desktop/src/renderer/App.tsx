@@ -12,7 +12,8 @@ import {
   openFileTab,
   openPageTab,
   renamePageTab,
-  retargetFileTab,
+  moveFileTabs,
+  closeFileTabs,
   openFocusTab,
   type ArtefactTabsState,
 } from '@renderer/features/artifact/artefact-tabs';
@@ -65,6 +66,7 @@ import {
   useNativeMenuEvents,
 } from '@renderer/features/shell/use-native-menu-events';
 import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
+import { onFileMove } from '@renderer/features/workspace/file-moves';
 import { PinnedCard } from '@renderer/features/workspace/pinned-card';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
@@ -333,6 +335,14 @@ export function App() {
   // doesn't exist — the session owns the window and the pinned card floats
   // over it (state A). See `features/artifact/artefact-tabs.ts`.
   const [artefact, setArtefact] = useState<ArtefactTabsState>(NO_TABS);
+  // A rename or archive from any file menu: open tabs follow the file, or close once it's archived.
+  useEffect(
+    () =>
+      onFileMove(({ from, to }) =>
+        setArtefact((current) => (to ? moveFileTabs(current, from, to) : closeFileTabs(current, from)))
+      ),
+    []
+  );
   // Layout-switcher round: replaces the old `artefactCollapsed`/
   // `chatCollapsed` booleans (which could disagree) with one enum, driven
   // by the topbar's `LayoutSwitcher`. Per-session, deliberately not
@@ -1489,7 +1499,6 @@ export function App() {
                   onOpenFile={(absPath) => openFile(absPath)}
                   onOpenFocus={openFocus}
                   onPageTitle={(url, title) => setArtefact((current) => renamePageTab(current, url, title))}
-                  onRetargetFile={(from, to) => setArtefact((current) => retargetFileTab(current, from, to))}
                 />
               );
               return (

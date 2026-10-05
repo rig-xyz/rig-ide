@@ -40,12 +40,32 @@ export function openFileTab(state: ArtefactTabsState, path: string): ArtefactTab
   return { tabs: [...state.tabs, { kind: 'file', path }], active: state.tabs.length };
 }
 
-/** The file at `from` moved to `to` (a rename): its tab follows in place. */
-export function retargetFileTab(state: ArtefactTabsState, from: string, to: string): ArtefactTabsState {
-  const index = state.tabs.findIndex((tab) => tab.kind === 'file' && tab.path === from);
-  if (index === -1 || from === to) return state;
-  const tabs = state.tabs.map((tab, i) => (i === index ? { kind: 'file' as const, path: to } : tab));
+/** True for `path` itself and anything inside it, when `path` is a folder. */
+function isAtOrUnder(tabPath: string, path: string): boolean {
+  return tabPath === path || tabPath.startsWith(`${path}/`);
+}
+
+/** A file or folder at `from` was renamed to `to`: every tab at or under it follows, in place. */
+export function moveFileTabs(state: ArtefactTabsState, from: string, to: string): ArtefactTabsState {
+  if (from === to || !state.tabs.some((tab) => tab.kind === 'file' && isAtOrUnder(tab.path, from))) {
+    return state;
+  }
+  const tabs = state.tabs.map((tab) =>
+    tab.kind === 'file' && isAtOrUnder(tab.path, from)
+      ? { kind: 'file' as const, path: to + tab.path.slice(from.length) }
+      : tab
+  );
   return { tabs, active: state.active };
+}
+
+/** A file or folder at `path` was archived: its tabs close, by the usual close rule. */
+export function closeFileTabs(state: ArtefactTabsState, path: string): ArtefactTabsState {
+  let next = state;
+  for (let i = next.tabs.length - 1; i >= 0; i--) {
+    const tab = next.tabs[i];
+    if (tab.kind === 'file' && isAtOrUnder(tab.path, path)) next = closeTab(next, i);
+  }
+  return next;
 }
 
 /** Open (or re-activate) the tab for a page's link. */

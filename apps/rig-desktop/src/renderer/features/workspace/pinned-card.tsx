@@ -703,6 +703,7 @@ export function PinnedCard({
             root={root}
             rootId={rootId}
             onOpenFile={(_absPath, relPath) => openFile(relPath)}
+            fileMenu={{ bindingId }}
             trailing={
               <NewMenu
                 root={root}

@@ -18,17 +18,26 @@ const mocks = vi.hoisted(() => ({
   seenState: vi.fn(),
   settingsGet: vi.fn(),
   pulseGet: vi.fn(),
+  filesRename: vi.fn(),
+  settingsSet: vi.fn(),
 }));
 
 vi.mock('@renderer/lib/ipc', () => ({
   rpc: {
     rig: {
-      files: { list: (...args: unknown[]) => mocks.filesList(...args) },
+      files: {
+        list: (...args: unknown[]) => mocks.filesList(...args),
+        rename: (...args: unknown[]) => mocks.filesRename(...args),
+      },
       share: { members: (...args: unknown[]) => mocks.shareMembers(...args) },
       seenState: { getState: (...args: unknown[]) => mocks.seenState(...args) },
-      settings: { get: (...args: unknown[]) => mocks.settingsGet(...args) },
+      settings: {
+        get: (...args: unknown[]) => mocks.settingsGet(...args),
+        set: (...args: unknown[]) => mocks.settingsSet(...args),
+      },
       pulse: { get: (...args: unknown[]) => mocks.pulseGet(...args) },
     },
+    app: { clipboardWriteText: vi.fn(), showItemInFolder: vi.fn() },
   },
   events: { on: vi.fn(() => () => {}) },
 }));
@@ -36,6 +45,13 @@ vi.mock('@renderer/lib/ipc', () => ({
 import { ConnectorsSection } from '@renderer/features/spaces/components/connectors-panel';
 import type { RoomSnapshot } from '@renderer/features/spaces/types';
 import { PinnedCard } from '@renderer/features/workspace/pinned-card';
+import {
+  closeFileTabs,
+  moveFileTabs,
+  NO_TABS,
+  openFileTab,
+} from '@renderer/features/artifact/artefact-tabs';
+import { onFileMove } from '@renderer/features/workspace/file-moves';
 
 function click(el: Element): void {
   el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -343,6 +359,83 @@ describe('PinnedCard', () => {
       expect(menu.textContent).toContain('New file');
       expect(menu.textContent).toContain('Import from Docs…');
       expect(newButton.getAttribute('aria-expanded')).toBe('true');
+    });
+
+    async function openFiles() {
+      mocks.filesList.mockResolvedValue({
+        success: true,
+        data: [{ kind: 'file', name: 'notes.md', relPath: 'notes.md', mtimeMs: Date.now() }],
+      });
+      mocks.filesRename.mockReset().mockResolvedValue({ success: true, data: { relativePath: 'plan.md' } });
+      await render();
+      const filesRow = Array.from(host.querySelectorAll('button')).find((b) =>
+        b.textContent?.startsWith('Files')
+      )!;
+      await act(async () => click(filesRow));
+      await flush();
+      return Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(
+        (b) => b.textContent === 'notes.md'
+      )!;
+    }
+    const menuLabels = () =>
+      Array.from(document.querySelectorAll('[role="menu"] [role="menuitem"]')).map((el) => el.textContent);
+
+    it("right-click on a file opens its actions, in the title bar menu's order", async () => {
+      const row = await openFiles();
+      await act(async () => {
+        row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }));
+      });
+      await flush();
+      expect(menuLabels()).toEqual(['Pin to top', 'Copy path', 'Reveal in Finder', 'Rename', 'Archive']);
+    });
+
+    it('Shift+F10 on a focused file row opens the same menu', async () => {
+      const row = await openFiles();
+      row.focus();
+      await act(async () => {
+        row.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true }));
+      });
+      await flush();
+      expect(menuLabels()).toEqual(['Pin to top', 'Copy path', 'Reveal in Finder', 'Rename', 'Archive']);
+    });
+
+    it('Rename from the list moves an open tab to the new name', async () => {
+      // The same reducer App.tsx runs on every announced move.
+      let tabs = openFileTab(NO_TABS, '/rigs/growth/notes.md');
+      const stop = onFileMove(({ from, to }) => {
+        tabs = to ? moveFileTabs(tabs, from, to) : closeFileTabs(tabs, from);
+      });
+      try {
+        const row = await openFiles();
+        await act(async () => {
+          row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }));
+        });
+        await flush();
+        const rename = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+          (el) => el.textContent === 'Rename'
+        )!;
+        await act(async () => click(rename));
+        await flush();
+        const input = document.querySelector<HTMLInputElement>('#rig-file-rename')!;
+        expect(input.value).toBe('notes.md');
+        const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+        await act(async () => {
+          setValue.call(input, 'plan.md');
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        const save = Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Save')!;
+        await act(async () => click(save));
+        await flush();
+
+        expect(mocks.filesRename).toHaveBeenCalledWith({
+          rootId: 'rig_growth',
+          relativePath: 'notes.md',
+          newName: 'plan.md',
+        });
+        expect(tabs.tabs).toEqual([{ kind: 'file', path: '/rigs/growth/plan.md' }]);
+      } finally {
+        stop();
+      }
     });
   });
 

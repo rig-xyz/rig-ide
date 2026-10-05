@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { flushOpenDocs } from '@renderer/features/docs/doc-file-sync';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '@renderer/lib/ui/dialog';
 import { relPathFromRoot } from '@shared/rig/file-navigator-categories';
+import { announceFileMove } from './file-moves';
 
 /**
  * Navigator v2 (`docs/file-navigator-design.md` §3.3): the tree row context
@@ -12,7 +14,8 @@ import { relPathFromRoot } from '@shared/rig/file-navigator-categories';
  * (`main/rig/files.ts`, new this round — a plain `fs.rename` scoped to the
  * entry's own parent directory, no overwrite). The tree's own live
  * `fs.watch` subscription (`file-tree.tsx`) picks up the rename and
- * refetches on its own — nothing to invalidate here.
+ * refetches on its own — nothing to invalidate here. Open tabs follow via
+ * `announceFileMove`, and main moves pins and seen markers with the entry.
  */
 export function RenameFileDialog({
   open,
@@ -82,6 +85,8 @@ function RenameFileForm({
     setBusy(true);
     setError(null);
     try {
+      // Unsaved edits land at the old path before it stops existing.
+      await flushOpenDocs(absPath);
       const result = await rpc.rig.files.rename({
         rootId,
         relativePath: relPathFromRoot(root, absPath),
@@ -91,6 +96,7 @@ function RenameFileForm({
         setError(result.error.message);
         return;
       }
+      announceFileMove({ from: absPath, to: `${root}/${result.data.relativePath}` });
       onRenamed(result.data.relativePath);
       onClose();
     } catch {

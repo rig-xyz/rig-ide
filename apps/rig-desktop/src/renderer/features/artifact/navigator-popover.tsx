@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { ChevronRight, Link, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { FileActionsMenu } from '@renderer/features/workspace/file-actions';
 import { iconFor, rigFilesQueryKey } from '@renderer/features/workspace/file-tree';
+import { useRowContextMenu, type ContextMenuPoint } from '@renderer/features/workspace/row-context-menu';
 import { ImportDocDialog } from '@renderer/features/rig-import/import-doc-dialog';
 import { rpc } from '@renderer/lib/ipc';
 import { Popover, type PopoverAnchor } from '@renderer/lib/ui/popover';
@@ -120,6 +122,7 @@ export function NavigatorContent({
   onOpenFile,
   revealDir = null,
   trailing,
+  fileMenu,
 }: {
   root: string;
   rootId: string;
@@ -127,6 +130,8 @@ export function NavigatorContent({
   revealDir?: string | null;
   /** Sits to the right of the filter field on its row, at the field's height (the pinned card's New menu). */
   trailing?: React.ReactNode;
+  /** Right-click (or the menu key, Shift+F10) on a file opens its actions (`FileActionsMenu`); the pinned card turns this on. */
+  fileMenu?: { bindingId: string | null };
 }) {
   const { data, isPending, isError, refetch } = useQuery({
     queryKey: rigFilesQueryKey(root, rootId),
@@ -172,6 +177,12 @@ export function NavigatorContent({
   const openFile = (node: RigFileNode) => {
     onOpenFile(`${root}/${node.relPath}`, node.relPath);
   };
+
+  // One menu for every row, opened for whichever file was right-clicked.
+  const menu = useRowContextMenu<string>();
+  const onFileMenu = fileMenu
+    ? (node: RigFileNode, point: ContextMenuPoint) => menu.openAt(point, `${root}/${node.relPath}`)
+    : undefined;
 
   return (
     <>
@@ -226,6 +237,7 @@ export function NavigatorContent({
                 // Enter opens the FIRST match — show which row that is.
                 highlighted={index === 0}
                 onOpen={() => openFile(node)}
+                onMenu={onFileMenu && ((point) => onFileMenu(node, point))}
               />
             ))
         )
@@ -247,6 +259,17 @@ export function NavigatorContent({
             })
           }
           onOpenFile={openFile}
+          onFileMenu={onFileMenu}
+        />
+      )}
+      {fileMenu && (
+        <FileActionsMenu
+          root={root}
+          rootId={rootId}
+          bindingId={fileMenu.bindingId}
+          absPath={menu.state?.target ?? null}
+          anchor={menu.state?.point ?? null}
+          onClose={menu.close}
         />
       )}
     </>
@@ -259,12 +282,14 @@ function TreeLevel({
   expanded,
   onToggleDir,
   onOpenFile,
+  onFileMenu,
 }: {
   nodes: readonly RigFileNode[];
   depth: number;
   expanded: Set<string>;
   onToggleDir: (relPath: string) => void;
   onOpenFile: (node: RigFileNode) => void;
+  onFileMenu?: (node: RigFileNode, point: ContextMenuPoint) => void;
 }) {
   return (
     <>
@@ -293,11 +318,18 @@ function TreeLevel({
                 expanded={expanded}
                 onToggleDir={onToggleDir}
                 onOpenFile={onOpenFile}
+                onFileMenu={onFileMenu}
               />
             )}
           </div>
         ) : (
-          <FileRow key={node.relPath} node={node} depth={depth} onOpen={() => onOpenFile(node)} />
+          <FileRow
+            key={node.relPath}
+            node={node}
+            depth={depth}
+            onOpen={() => onOpenFile(node)}
+            onMenu={onFileMenu && ((point) => onFileMenu(node, point))}
+          />
         )
       )}
     </>
@@ -310,6 +342,7 @@ function FileRow({
   withPath = false,
   highlighted = false,
   onOpen,
+  onMenu,
 }: {
   node: RigFileNode;
   depth?: number;
@@ -318,8 +351,14 @@ function FileRow({
   /** The row Enter would open (the first filter match). */
   highlighted?: boolean;
   onOpen: () => void;
+  /** Opens this file's actions at a point: the pointer, or the row's corner from the keyboard. */
+  onMenu?: (point: ContextMenuPoint) => void;
 }) {
   const Icon = iconFor(node.name);
+  const openMenuAtRow = (row: HTMLElement) => {
+    const rect = row.getBoundingClientRect();
+    onMenu?.({ x: rect.left + 8, y: rect.bottom + 2 });
+  };
   const folder = node.relPath.includes('/')
     ? node.relPath.slice(0, node.relPath.lastIndexOf('/'))
     : null;
@@ -327,6 +366,23 @@ function FileRow({
     <button
       type="button"
       onClick={onOpen}
+      onContextMenu={
+        onMenu &&
+        ((event) => {
+          event.preventDefault();
+          // A keyboard-raised contextmenu has no pointer position: use the row.
+          if (event.clientX === 0 && event.clientY === 0) openMenuAtRow(event.currentTarget);
+          else onMenu({ x: event.clientX, y: event.clientY });
+        })
+      }
+      onKeyDown={
+        onMenu &&
+        ((event) => {
+          if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+          event.preventDefault();
+          openMenuAtRow(event.currentTarget);
+        })
+      }
       className={cn(
         'hover:bg-bg-2 flex h-7 w-full items-center gap-1.5 rounded-control px-2 text-left text-xs transition-colors',
         highlighted && 'bg-bg-2'

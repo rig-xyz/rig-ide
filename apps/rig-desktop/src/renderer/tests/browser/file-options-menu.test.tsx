@@ -1,13 +1,16 @@
+import { EditorView } from '@codemirror/view';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactView } from '@renderer/features/artifact/artifact-view';
+import { onFileMove, type FileMove } from '@renderer/features/workspace/file-moves';
 
 /**
  * The `⋯` beside a file's name in its title bar (`file-options-menu.tsx`):
- * it opens the tree's own file actions for the open file, and Rename and
- * Archive tell the host where the file went so the view can follow.
+ * it opens the shared file actions for the open file, and Rename and
+ * Archive save unsaved edits first, then announce the move so `App.tsx`
+ * moves or closes the tab.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -76,8 +79,8 @@ function click(el: Element): void {
 describe('File options menu in the title bar', () => {
   let host: HTMLDivElement;
   let root: Root;
-  const onRenamed = vi.fn<(path: string) => void>();
-  const onArchived = vi.fn<() => void>();
+  let moves: FileMove[] = [];
+  let stopListening: () => void = () => {};
 
   beforeEach(() => {
     host = document.createElement('div');
@@ -99,27 +102,26 @@ describe('File options menu in the title bar', () => {
     mocks.clipboardWriteText.mockReset().mockResolvedValue({ success: true, data: undefined });
     mocks.showItemInFolder.mockReset().mockResolvedValue({ success: true, data: undefined });
     mocks.settingsSet.mockReset().mockResolvedValue({ success: true, data: undefined });
-    onRenamed.mockReset();
-    onArchived.mockReset();
+    moves = [];
+    stopListening = onFileMove((move) => moves.push(move));
   });
 
   afterEach(async () => {
+    stopListening();
     await act(async () => root.unmount());
     host.remove();
   });
 
-  async function render(path: string, withHost = true) {
+  async function render(path: string, root_ = '/repo') {
     await act(async () => {
       root.render(
         <QueryClientProvider client={new QueryClient()}>
           <ArtifactView
-            root="/repo"
+            root={root_}
             rootId="repo-1"
             bindingId="binding-1"
             path={path}
             onNavigateFolder={() => {}}
-            onRenamed={withHost ? onRenamed : undefined}
-            onArchived={withHost ? onArchived : undefined}
           />
         </QueryClientProvider>
       );
@@ -168,7 +170,7 @@ describe('File options menu in the title bar', () => {
     expect(mocks.showItemInFolder).toHaveBeenCalledWith('/repo/notes/config.toml');
   });
 
-  it('Rename opens the rename dialog, and saving hands the host the new path', async () => {
+  it('Rename opens the rename dialog, and saving announces the new path for the tab to follow', async () => {
     await render('/repo/notes/config.toml');
     await openMenu();
     await act(async () => click(item('Rename')));
@@ -186,25 +188,50 @@ describe('File options menu in the title bar', () => {
       (b) => b.textContent === 'Save'
     )!;
     await act(async () => click(save));
-    await waitFor(() => onRenamed.mock.calls.length > 0);
+    await waitFor(() => moves.length > 0);
 
     expect(mocks.rename).toHaveBeenCalledWith({
       rootId: 'repo-1',
       relativePath: 'notes/config.toml',
       newName: 'renamed.toml',
     });
-    expect(onRenamed).toHaveBeenCalledWith('/repo/notes/renamed.toml');
+    expect(moves).toEqual([{ from: '/repo/notes/config.toml', to: '/repo/notes/renamed.toml' }]);
   });
 
-  it('Archive moves the file and tells the host it is gone', async () => {
+  it('Archive moves the file and announces it is gone', async () => {
     await render('/repo/notes/config.toml');
     await openMenu();
     await act(async () => click(item('Archive')));
-    await waitFor(() => onArchived.mock.calls.length > 0);
+    await waitFor(() => moves.length > 0);
     expect(mocks.archive).toHaveBeenCalledWith({
       rootId: 'repo-1',
       relativePath: 'notes/config.toml',
     });
+    expect(moves).toEqual([{ from: '/repo/notes/config.toml', to: null }]);
+  });
+
+  it('saves an unsaved edit at the old path before archiving', async () => {
+    await render('/repo/notes/config.toml');
+    await waitFor(
+      () => host.querySelector('.cm-editor') !== null && !host.textContent?.includes('Loading…')
+    );
+    const view = EditorView.findFromDOM(host.querySelector<HTMLElement>('.cm-editor')!)!;
+    await act(async () => {
+      view.dispatch({ changes: { from: 0, insert: 'edited = 2\n' } });
+    });
+    await openMenu();
+    await act(async () => click(item('Archive')));
+    await waitFor(() => moves.length > 0);
+
+    expect(mocks.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        relativePath: 'notes/config.toml',
+        content: 'edited = 2\nkey = 1\n',
+      })
+    );
+    expect(mocks.write.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.archive.mock.invocationCallOrder[0]
+    );
   });
 
   it('Pin to top pins the file for this rig', async () => {
@@ -222,8 +249,8 @@ describe('File options menu in the title bar', () => {
     expect(host.querySelector('button[aria-label="Share file"]')).toBeNull();
   });
 
-  it('stays hidden when the host cannot follow a rename or archive', async () => {
-    await render('/repo/notes/config.toml', false);
+  it('stays hidden for a file outside the rig', async () => {
+    await render('/repo/notes/config.toml', '/elsewhere');
     await waitFor(() => host.querySelector('.cm-content') !== null);
     expect(trigger()).toBeNull();
   });

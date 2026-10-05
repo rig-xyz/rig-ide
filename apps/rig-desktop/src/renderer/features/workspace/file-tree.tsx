@@ -568,7 +568,7 @@ export function FileTree({
                     isPinned={menuTargetIsPinned}
                     onTogglePin={target.kind === 'file' ? () => togglePin(target.relPath) : undefined}
                     onRename={() => setRenameTarget(target)}
-                    onArchive={() => void archiveEntry(rootId, target.relPath)}
+                    onArchive={() => void archiveEntry(root, rootId, target.relPath)}
                     onDone={menu.close}
                   />
                   <ContextMenuSeparator />

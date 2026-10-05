@@ -10,7 +10,8 @@ import {
   openFocusTab,
   openPageTab,
   renamePageTab,
-  retargetFileTab,
+  moveFileTabs,
+  closeFileTabs,
   type ArtefactTabsState,
 } from './artefact-tabs';
 
@@ -141,16 +142,39 @@ describe('renamePageTab', () => {
   });
 });
 
-describe('retargetFileTab', () => {
-  it('moves a renamed file\'s tab to its new path in place, keeping the active tab', () => {
+describe('moveFileTabs', () => {
+  it("moves a renamed file's tab to its new path in place, keeping the active tab", () => {
     const state = activateTab(open('/rig/a.md', '/rig/b.md', '/rig/c.md'), 1);
-    const moved = retargetFileTab(state, '/rig/b.md', '/rig/renamed.md');
+    const moved = moveFileTabs(state, '/rig/b.md', '/rig/renamed.md');
     expect(moved.tabs.map((tab) => (tab.kind === 'file' ? tab.path : tab.kind))).toEqual([
       '/rig/a.md',
       '/rig/renamed.md',
       '/rig/c.md',
     ]);
     expect(moved.active).toBe(1);
-    expect(retargetFileTab(moved, '/rig/missing.md', '/rig/x.md')).toBe(moved);
+    expect(moveFileTabs(moved, '/rig/missing.md', '/rig/x.md')).toBe(moved);
+  });
+
+  it('moves every tab inside a renamed folder, and not a sibling that only shares the prefix', () => {
+    const state = open('/rig/notes/a.md', '/rig/notes-old/b.md', '/rig/notes/deep/c.md');
+    const moved = moveFileTabs(state, '/rig/notes', '/rig/journal');
+    expect(moved.tabs.map((tab) => (tab.kind === 'file' ? tab.path : tab.kind))).toEqual([
+      '/rig/journal/a.md',
+      '/rig/notes-old/b.md',
+      '/rig/journal/deep/c.md',
+    ]);
+  });
+});
+
+describe('closeFileTabs', () => {
+  it('closes the tabs at or under an archived path and leaves the rest', () => {
+    const state = activateTab(open('/rig/a.md', '/rig/notes/b.md', '/rig/c.md'), 1);
+    const closed = closeFileTabs(state, '/rig/notes');
+    expect(closed.tabs).toEqual([
+      { kind: 'file', path: '/rig/a.md' },
+      { kind: 'file', path: '/rig/c.md' },
+    ]);
+    expect(closed.active).toBe(1);
+    expect(closeFileTabs(closed, '/rig/missing.md')).toBe(closed);
   });
 });
