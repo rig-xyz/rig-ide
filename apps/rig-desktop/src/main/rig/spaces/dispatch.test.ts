@@ -308,6 +308,43 @@ describe('createSpacesDispatcher', () => {
     expect(fake.queued[0].text).toBe(makeRequest().prompt);
   });
 
+  it('names the asking message on the session card, so Threads view files the run under its thread', async () => {
+    const { api, postedMessages } = makeFakeApi({ listMessages: async () => ok([]) });
+    const fake = makeFakeAcp();
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+
+    const result = await dispatch(makeRequest({ sourceMessageId: 'msg-ask' }));
+    if ('failed' in result) throw new Error('expected success');
+
+    expect(postedMessages.filter((m) => m.kind === 'session')).toEqual([
+      expect.objectContaining({ meta: { runId: result.runId, sourceMessageId: 'msg-ask' } }),
+    ]);
+  });
+
+  it('posts the card again without the asking message when the relay does not know that key yet', async () => {
+    const attempts: unknown[] = [];
+    const { api } = makeFakeApi({
+      listMessages: async () => ok([]),
+      async postMessage(_bindingId, input) {
+        attempts.push(input.meta);
+        if (input.meta && 'sourceMessageId' in input.meta) {
+          return err({ kind: 'relay', status: 400, code: 'unknown_meta_key', message: 'Could not send the message.' });
+        }
+        return ok({ id: 'msg-card' } as never);
+      },
+    });
+    const fake = makeFakeAcp();
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+
+    const result = await dispatch(makeRequest({ sourceMessageId: 'msg-ask' }));
+    if ('failed' in result) throw new Error('expected success');
+
+    expect(attempts).toEqual([
+      { runId: result.runId, sourceMessageId: 'msg-ask' },
+      { runId: result.runId },
+    ]);
+  });
+
   it('fails the request when the runtime rejects the prompt before any turn starts', async () => {
     const { api, patchedRequests } = makeFakeApi();
     const fake = makeFakeAcp();

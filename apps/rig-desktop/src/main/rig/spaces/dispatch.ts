@@ -991,11 +991,24 @@ export function createSpacesDispatcher(deps: {
     // The session card only appears in the Room when a `kind:'session'`
     // message points at the run, so announce it. Not fatal if it fails:
     // the run still executes and its log is still published.
-    const announced = await deps.api.postMessage(spec.bindingId, {
-      body: spec.prompt.slice(0, 8000) || 'Agent session',
-      kind: 'session',
-      meta: spec.threadId ? { runId: created.data.id, threadId: spec.threadId } : { runId: created.data.id },
+    // `sourceMessageId` files the run under the asking message's thread in
+    // Threads view. A relay from before it knew the key refuses it, so the
+    // card is posted again without it rather than not at all.
+    const sessionMeta = (withSource: boolean) => ({
+      runId: created.data.id,
+      ...(spec.threadId ? { threadId: spec.threadId } : {}),
+      ...(withSource && spec.sourceMessageId ? { sourceMessageId: spec.sourceMessageId } : {}),
     });
+    const postCard = (withSource: boolean) =>
+      deps.api.postMessage(spec.bindingId, {
+        body: spec.prompt.slice(0, 8000) || 'Agent session',
+        kind: 'session',
+        meta: sessionMeta(withSource),
+      });
+    let announced = await postCard(true);
+    if (!announced.success && spec.sourceMessageId && announced.error.code === 'unknown_meta_key') {
+      announced = await postCard(false);
+    }
     if (!announced.success) {
       log.warn('Rig spaces dispatch: could not post the session message for a run', {
         bindingId: spec.bindingId,
