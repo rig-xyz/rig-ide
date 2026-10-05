@@ -7,10 +7,12 @@ import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
 import type { ConnectResult, GlobalServer } from '@shared/spaces/connectors';
 import { effectiveRunStatus, runCard } from '../projection';
 import { markReadThrough, readLastSeen } from '../room-read-marker';
+import type { ThreadSummary } from '../threads';
 import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
 import { type MapEntry, ConversationMap } from './conversation-map';
 import { AGENT_NAME } from './identity';
 import { SessionCard, SessionCardPlaceholder } from './session-card';
+import { ThreadReplyRow } from './thread-panel';
 import {
   CommentMirrorLine,
   DayDivider,
@@ -59,7 +61,7 @@ function speakerOf(message: RoomMessage, snapshot: RoomSnapshot): string | null 
   return null;
 }
 
-function isContinuation(prev: RoomMessage | undefined, message: RoomMessage, snapshot: RoomSnapshot): boolean {
+export function isContinuation(prev: RoomMessage | undefined, message: RoomMessage, snapshot: RoomSnapshot): boolean {
   if (!prev || prev.threadId || message.threadId) return false;
   const speaker = speakerOf(message, snapshot);
   if (!speaker || speaker !== speakerOf(prev, snapshot)) return false;
@@ -86,7 +88,8 @@ function isQueued(meta: SessionRunMeta, snapshot: RoomSnapshot): boolean {
   );
 }
 
-function renderItem(
+/** One message as the transcript draws it (the thread panel draws its messages the same way). */
+export function renderItem(
   message: RoomMessage,
   snapshot: RoomSnapshot,
   ownId: string,
@@ -498,6 +501,13 @@ function mapEntriesFor(units: TranscriptUnit[], snapshot: RoomSnapshot, ownId: s
   return entries;
 }
 
+/** Threads view: the reply row under each root that has replies, and which thread is open. */
+export type TranscriptThreads = {
+  summaries: ReadonlyMap<string, ThreadSummary>;
+  openRootId: string | null;
+  onOpen: (rootId: string) => void;
+};
+
 export type RoomJumpRequest = {
   messageId?: string | null;
   /** Lets a jump to a message older than the loaded window give up at once, and say so. */
@@ -525,6 +535,8 @@ export function RoomTranscript({
   focus,
   previewIds,
   topBar,
+  threads,
+  readThroughSeq,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
@@ -570,6 +582,14 @@ export function RoomTranscript({
    * the bar can blur. Absent: no bar overlays the transcript.
    */
   topBar?: { onScrolled: (scrolled: boolean) => void };
+  /** Threads view: `snapshot` holds the main column only, and each root with replies gets its reply row. */
+  threads?: TranscriptThreads;
+  /**
+   * How far reading to the bottom marks the space read, when the snapshot
+   * isn't the whole conversation (Threads view: replies folded into threads
+   * count as read with the main column, as a channel's thread replies do).
+   */
+  readThroughSeq?: number;
 }) {
   // Callbacks read through refs: a parent's fresh arrow each render must
   // not re-run the scroll listener or the jump.
@@ -817,8 +837,8 @@ export function RoomTranscript({
     // Nor is anything marked read before then: the marker would skip what's new.
     // Under a focus the rest is folded away, not read.
     if (!readKey || !pinned || stale || focusId !== null || snapshot.messages.length === 0) return;
-    markReadThrough(readKey, Math.max(...snapshot.messages.map((m) => m.seq)));
-  }, [readKey, pinned, snapshot.messages, stale, focusId]);
+    markReadThrough(readKey, readThroughSeq ?? Math.max(...snapshot.messages.map((m) => m.seq)));
+  }, [readKey, pinned, snapshot.messages, stale, focusId, readThroughSeq]);
 
   // Split-resize perf round: `groupThreads` used to run twice a render —
   // once here, once again inline below to build the actual rows — so any
@@ -991,6 +1011,20 @@ export function RoomTranscript({
                   transition={{ duration: reducedMotion ? 0 : previewIds ? 0.25 : 0.16, ease: [0.16, 1, 0.3, 1] }}
                 >
                   {node}
+                  {threads &&
+                    unitMessages(unit).map((m) => {
+                      const summary = threads.summaries.get(m.id);
+                      return summary ? (
+                        <ThreadReplyRow
+                          key={`thread-${m.id}`}
+                          summary={summary}
+                          members={snapshot.members}
+                          mine={m.authorId === ownId && m.meta.kind === 'text'}
+                          open={threads.openRootId === m.id}
+                          onOpen={() => threads.onOpen(m.id)}
+                        />
+                      ) : null;
+                    })}
                   {askMessageId !== undefined && focus?.askAccessory?.(askMessageId)}
                 </motion.div>
               );

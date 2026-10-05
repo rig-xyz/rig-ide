@@ -101,6 +101,8 @@ export type ComposerSendContext = {
   attach: string | null;
   /** Files attached on chips (copied into the space when the message is sent). */
   files?: ComposerAttachment[];
+  /** A thread reply that also goes to the main column (the thread panel's "Also send to #space"; the composer itself never sets it). */
+  alsoInChannel?: boolean;
 };
 
 type MenuItem = {
@@ -163,6 +165,9 @@ export function Composer({
   waitForConnection = false,
   waitingNote = WILL_SEND_WHEN_ONLINE,
   listFiles,
+  placeholder,
+  footer,
+  autoFocus = false,
 }: {
   spaceName: string;
   /** Where this composer keeps its unsent draft (the space's id); no draft kept without one. */
@@ -196,6 +201,12 @@ export function Composer({
   waitForConnection?: boolean;
   /** What a message waiting on `waitForConnection` says (a new space: once it's ready). */
   waitingNote?: string;
+  /** The empty box's words when not replying to anyone (the thread panel's "Reply in thread"); "Message #space" without it. */
+  placeholder?: string;
+  /** Under the box (the thread panel's "Also send to #space"). */
+  footer?: ReactNode;
+  /** Focus the box when it appears (a thread just opened). */
+  autoFocus?: boolean;
 }) {
   const [value, setValue] = useState(() => readDraft(draftKey));
   const [focused, setFocused] = useState(false);
@@ -715,7 +726,8 @@ export function Composer({
               send();
             }
           }}
-          placeholder={replyTo ? `Reply to ${replyTo.label}` : `Message ${spaceName}`}
+          placeholder={replyTo ? `Reply to ${replyTo.label}` : (placeholder ?? `Message ${spaceName}`)}
+          autoFocus={autoFocus}
           rows={1}
           // Grows with what you type (field-sizing: content), up to 40% of the window, then scrolls.
           className="placeholder:text-text-muted min-h-[40px] max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent px-3.5 py-2.5 text-sm text-text-primary outline-none [field-sizing:content]"
@@ -801,6 +813,7 @@ export function Composer({
           </button>
         </div>
       </div>
+      {footer}
     </div>
   );
 }

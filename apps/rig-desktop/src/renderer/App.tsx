@@ -1057,6 +1057,8 @@ export function App() {
       // the Room to a floating chip instead of unmounting it — see
       // `RoomView`'s own `collapsed` doc comment.
       collapsed={inSpace && layout === 'files'}
+      // A doc beside the Room: an open thread takes the chat column's place.
+      split={inSpace && layout === 'split'}
       onExpand={() => setRigLayout('split')}
       // A space's Room sits under the bare top bar: its transcript scrolls
       // up beneath it, and the bar blurs once it has.

@@ -23,7 +23,7 @@ import { reportSpaceRead, windowIsLooking } from '@renderer/features/notificatio
 import { useRefreshMemberReadsOnRosterChange } from '../roster-refresh';
 import { resolveSpaceLink } from '../space-link';
 import { effectiveRunStatus, runCard } from '../projection';
-import type { AgentKind, RoomReplyRef, RoomSnapshot } from '../types';
+import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import type { MessageAttachment } from '@shared/rig/attachments';
 import { fallbackBody, toMessageAttachments, type ComposerAttachment } from '../attachments';
 import { useComposerAttachments } from '../use-composer-attachments';
@@ -37,8 +37,12 @@ import { AttachmentSpaceContext, type AttachmentSpace } from './attachment-cards
 import { Composer, keepUnsentAsDraft, type ComposerSendContext, type ComposerSuggestion } from './composer';
 import { ownTurnSuggestion } from '../own-turn-suggestion';
 import { settlePendingSends, withPendingSends, type PendingSend } from '../pending-sends';
-import { RoomTranscript, type RoomJumpRequest } from './room-transcript';
+import { isContinuation, renderItem, RoomTranscript, type RoomJumpRequest, type TranscriptThreads } from './room-transcript';
 import { OpenPageContext } from './transcript-items';
+import { replyRefFor, THREAD_PANEL_PX, ThreadPanel } from './thread-panel';
+import { buildThreads, focusForThreads, newestSeq, summarizeThread, threadRootFor, type ThreadSummary } from '../threads';
+import { readThreadSeen, writeThreadSeen } from '../thread-seen';
+import { useSpacesChatView } from '../use-chat-view';
 import { ReactionsContext, type ReactionsApi } from './reactions';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
 import { SpaceRail } from './space-rail';
@@ -139,10 +143,14 @@ const TRANSCRIPT_COLUMN_PX = 728;
 /** The floating panel's lane at the right edge: its 304px plus a margin. */
 const PANEL_LANE_PX = 320;
 
+/** Narrower than this, an open thread takes the chat column's place instead of sitting beside it. */
+const THREAD_BESIDE_MIN_PX = THREAD_PANEL_PX + 400;
+
 /** How long a Room shown from disk may take to catch up before it says so. */
 const CATCHING_UP_AFTER_MS = 600;
 
 const NO_DEMO_ROWS: RigNotification[] = [];
+const NO_MESSAGES: RoomMessage[] = [];
 const FALLBACK_OWN_ID = 'bob'; // fixture-only identity; the relay source uses the signed-in user's real id
 
 /**
@@ -264,7 +272,7 @@ export async function sendFromComposer(
   source: Pick<RelayRoomSource, 'send' | 'requestOwnAgent'>,
   ownAgents: readonly AgentKind[],
   text: string,
-  { replyTo, agent, attach }: ComposerSendContext,
+  { replyTo, agent, attach, alsoInChannel }: ComposerSendContext,
   wake: () => void,
   attachments: readonly MessageAttachment[] = [],
   clientId?: string
@@ -275,6 +283,7 @@ export async function sendFromComposer(
   const extra = {
     ...(attachments.length > 0 ? { attachments: [...attachments], autoBody: !text } : {}),
     ...(clientId ? { clientId } : {}),
+    ...(alsoInChannel ? { alsoInChannel: true } : {}),
   };
   const sourceMessageId =
     Object.keys(extra).length > 0
@@ -316,6 +325,7 @@ export function RoomView({
   jump = null,
   onJumpMissed,
   topBar,
+  split = false,
 }: {
   /** Empty while `setup` is still making the space (it has no binding yet). */
   bindingId: string;
@@ -365,6 +375,8 @@ export function RoomView({
   onJumpMissed?: () => void;
   /** The app's bare top bar overlays the 40px above the Room: the transcript scrolls up beneath it and says when it has (see `RoomTranscript`'s own `topBar`). */
   topBar?: { onScrolled: (scrolled: boolean) => void };
+  /** A doc or page is open beside the Room (the split layout): an open thread takes the chat column's place. */
+  split?: boolean;
 }) {
   const [useFixtures, setUseFixtures] = useState(false);
   /** The scripted demo's inbox rows (it has no inbox); set with its source. */
@@ -877,9 +889,13 @@ export function RoomView({
     }
   };
 
-  const handleSend = (text: string, context: ComposerSendContext) => {
+  /** `restore`: where an unsent message goes back to (the main box, or the open thread's). */
+  const handleSend = (
+    text: string,
+    context: ComposerSendContext,
+    restore: (text: string) => void = (unsent) => setPrefill({ text: unsent, nonce: Date.now() })
+  ) => {
     if (!(source instanceof RelayRoomSource) || !snapshot) return;
-    setReplyTo(null);
     const ownAgents = snapshot.agents.filter((a) => a.owner === selfUserId).map((a) => a.agent);
     const localId = `sending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const files = context.files ?? [];
@@ -889,6 +905,7 @@ export function RoomView({
         localId,
         text,
         ...(context.replyTo ? { replyTo: context.replyTo } : {}),
+        ...(context.alsoInChannel ? { alsoInChannel: true } : {}),
         createdAt: new Date().toISOString(),
         id: null,
         ...(files.length > 0 ? { attachments: pendingCards(files) } : {}),
@@ -899,7 +916,7 @@ export function RoomView({
       // You'd left the space meanwhile: the text waits in that space's message box instead.
       if (!mountedRef.current) keepUnsentAsDraft(bindingId, text);
       setPendingSends((current) => current.filter((send) => send.localId !== localId));
-      if (text) setPrefill({ text, nonce: Date.now() });
+      if (text) restore(text);
       if (files.length > 0 && mountedRef.current && shownBindingRef.current === bindingId) {
         attachmentsRef.current.restore(files, reason);
       }
@@ -976,13 +993,148 @@ export function RoomView({
     const timer = setTimeout(() => setGutterMoving(false), 600);
     return () => clearTimeout(timer);
   }, [gutterMoving, dockGutter]);
+  // Threads view (Settings › Spaces › Chat view): the main column shows the
+  // roots, and one thread at a time opens beside it, or in its place beside
+  // a doc. Flow leaves everything as it was.
+  const chatView = useSpacesChatView();
+  const threadsOn = chatView === 'threads';
+  const shownMessages = shownSnapshot?.messages;
+  const threadsLayout = useMemo(
+    () => (threadsOn && shownMessages ? buildThreads(shownMessages) : null),
+    [threadsOn, shownMessages]
+  );
+  const [openThread, setOpenThread] = useState<{
+    rootId: string;
+    /** A reply to scroll to and ring once (a notification's jump). */
+    focus: { messageId: string; nonce: number } | null;
+  } | null>(null);
+  const [threadReplyTo, setThreadReplyTo] = useState<RoomReplyRef | null>(null);
+  const [alsoInChannel, setAlsoInChannel] = useState(false);
+  const [threadPrefill, setThreadPrefill] = useState<{ text: string; nonce: number } | null>(null);
+  const openRootIdRef = useRef<string | null>(null);
+  openRootIdRef.current = openThread?.rootId ?? null;
+  const openThreadOn = useCallback(
+    (rootId: string, options: { focusId?: string; replyTo?: RoomReplyRef | null } = {}) => {
+      if (openRootIdRef.current !== rootId) {
+        setAlsoInChannel(false);
+        setThreadPrefill(null);
+      }
+      setOpenThread({ rootId, focus: options.focusId ? { messageId: options.focusId, nonce: Date.now() } : null });
+      setThreadReplyTo(options.replyTo ?? null);
+    },
+    []
+  );
+  const closeThread = useCallback(() => {
+    setOpenThread(null);
+    setThreadReplyTo(null);
+    setAlsoInChannel(false);
+    setThreadPrefill(null);
+  }, []);
+  // Another space, or back to Flow: no thread stays open.
+  useEffect(() => closeThread(), [bindingId, closeThread]);
+  useEffect(() => {
+    if (!threadsOn) closeThread();
+  }, [threadsOn, closeThread]);
+  const openRoot = openThread && shownMessages ? shownMessages.find((m) => m.id === openThread.rootId) : undefined;
+  const openReplies = (openThread && threadsLayout?.threads.get(openThread.rootId)?.replies) || NO_MESSAGES;
+  useEffect(() => {
+    if (openThread && shownMessages && !openRoot) closeThread();
+  }, [openThread, shownMessages, openRoot, closeThread]);
+
+  // Unread replies: a thread you open is seen up to its newest reply; one you
+  // never opened here counts from where you'd read the space when you came in.
+  const seenBaselineRef = useRef<{ bindingId: string; seq: number | null } | null>(null);
+  if (seenBaselineRef.current?.bindingId !== bindingId) {
+    seenBaselineRef.current = { bindingId, seq: readLastSeen(bindingId) };
+  }
+  const [seenVersion, setSeenVersion] = useState(0);
+  const openNewest = openRoot ? newestSeq({ root: openRoot, replies: openReplies }) : null;
+  useEffect(() => {
+    if (!openRoot || openNewest === null || !bindingId) return;
+    if (writeThreadSeen(bindingId, openRoot.id, openNewest)) setSeenVersion((v) => v + 1);
+  }, [bindingId, openRoot, openNewest]);
+  const threadSummaries = useMemo(() => {
+    void seenVersion; // a thread just marked seen re-reads its marker
+    if (!threadsLayout || !shownSnapshot) return null;
+    const baseline = seenBaselineRef.current?.seq ?? null;
+    const running = (runId: string) => {
+      const meta = shownSnapshot.sessionMetaByRun[runId];
+      return !!meta && effectiveRunStatus(meta.status, runCard(shownSnapshot, runId)) === 'running';
+    };
+    const summaries = new Map<string, ThreadSummary>();
+    for (const [rootId, thread] of threadsLayout.threads) {
+      const seen = readThreadSeen(bindingId, rootId) ?? baseline;
+      summaries.set(rootId, summarizeThread(thread, shownSnapshot, selfUserId, seen, running));
+    }
+    return summaries;
+  }, [threadsLayout, shownSnapshot, selfUserId, bindingId, seenVersion]);
+  const openRootId = openThread?.rootId ?? null;
+  const transcriptThreads = useMemo<TranscriptThreads | undefined>(
+    () =>
+      threadSummaries
+        ? { summaries: threadSummaries, openRootId, onOpen: (rootId) => openThreadOn(rootId) }
+        : undefined,
+    [threadSummaries, openRootId, openThreadOn]
+  );
+  // The main column's own messages; reading it to the bottom still reads the replies folded away.
+  const transcriptSnapshot = useMemo(
+    () => (shownSnapshot && threadsLayout ? { ...shownSnapshot, messages: threadsLayout.main } : shownSnapshot),
+    [shownSnapshot, threadsLayout]
+  );
+  const readThroughSeq = useMemo(
+    () => (threadsLayout && shownMessages?.length ? Math.max(...shownMessages.map((m) => m.seq)) : undefined),
+    [threadsLayout, shownMessages]
+  );
+  const transcriptFocus = useMemo(
+    () => (threadsLayout ? focusForThreads(dockFocus.transcriptFocus, threadsLayout) : dockFocus.transcriptFocus),
+    [threadsLayout, dockFocus.transcriptFocus]
+  );
+  // A notification pointing at a reply: the main column goes to its root, and its thread opens on it.
+  const jumpTargetId = useMemo(() => {
+    if (!jump || !threadsLayout || !shownMessages) return null;
+    if (jump.messageId) return jump.messageId;
+    if (!jump.runId) return null;
+    return shownMessages.find((m) => m.meta.kind === 'session' && m.meta.runId === jump.runId)?.id ?? null;
+  }, [jump, threadsLayout, shownMessages]);
+  const jumpRootId = jumpTargetId ? (threadsLayout?.rootOf.get(jumpTargetId) ?? null) : null;
+  const transcriptJump = useMemo(
+    () => (jump && jumpRootId ? { ...jump, messageId: jumpRootId, runId: null } : jump),
+    [jump, jumpRootId]
+  );
+  const threadJumpDoneRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!jump || !jumpRootId || !jumpTargetId || threadJumpDoneRef.current === jump.nonce) return;
+    threadJumpDoneRef.current = jump.nonce;
+    openThreadOn(jumpRootId, { focusId: jumpTargetId });
+  }, [jump, jumpRootId, jumpTargetId, openThreadOn]);
+  // Reply, in Threads view, opens the message's thread (a reply to a reply
+  // answers it there). A reply whose root isn't loaded quotes it as in Flow.
+  const handleReply = useCallback(
+    (ref: RoomReplyRef) => {
+      const rootId = threadsLayout ? threadRootFor(threadsLayout, ref.id) : null;
+      if (!rootId) {
+        setReplyTo(ref);
+        return;
+      }
+      openThreadOn(rootId, { replyTo: ref.id === rootId ? null : ref });
+    },
+    [threadsLayout, openThreadOn]
+  );
+  const threadShown = !!openRoot && !collapsed;
+  // Beside a doc (or in a narrow Room) a thread takes the chat column's place: never a third column.
+  const threadMode: 'beside' | 'replace' =
+    split || (bodyWidth > 0 && bodyWidth < THREAD_BESIDE_MIN_PX) ? 'replace' : 'beside';
+
   const reducedMotion = useReducedMotion();
   // With the dock's pills out, the transcript keeps clear of them: all of their
-  // width in a narrow Room, only as much as it takes in a wide one.
+  // width in a narrow Room, only as much as it takes in a wide one. A thread
+  // beside the chat covers the panel and the dock, so then there's nothing to clear.
   const transcriptClearance =
-    dockGutter > 0
-      ? Math.min(dockGutter, Math.max(0, TRANSCRIPT_COLUMN_PX + 2 * dockGutter - bodyWidth))
-      : panelClearance;
+    threadShown && threadMode === 'beside'
+      ? 0
+      : dockGutter > 0
+        ? Math.min(dockGutter, Math.max(0, TRANSCRIPT_COLUMN_PX + 2 * dockGutter - bodyWidth))
+        : panelClearance;
 
   // Split-resize perf round: `RoomTranscript` memoizes its own node list
   // against its props (its own `mapEntries`/render loop), which only pays
@@ -1109,6 +1261,99 @@ export function RoomView({
     return <SpaceRail snapshot={room} selfUserId={selfUserId} onExpand={onExpandCollapsed} />;
   }
 
+  // What a message in the Room needs to draw (links beside the chat, file cards, reactions).
+  const withRoomContexts = (node: ReactNode) => (
+    <OpenPageContext.Provider value={onOpenPage ?? null}>
+      <AttachmentSpaceContext.Provider value={attachmentSpace}>
+        <ReactionsContext.Provider value={reactionsApi}>{node}</ReactionsContext.Provider>
+      </AttachmentSpaceContext.Provider>
+    </OpenPageContext.Provider>
+  );
+  const threadSnapshot = shownSnapshot ?? room;
+  const threadPanel =
+    threadShown && openRoot && openThread
+      ? withRoomContexts(
+          <ThreadPanel
+            key={openRoot.id}
+            root={openRoot}
+            replies={openReplies}
+            spaceName={room.name}
+            mode={threadMode}
+            onClose={closeThread}
+            focus={openThread.focus}
+            isContinuation={(prev, message) => isContinuation(prev, message, threadSnapshot)}
+            renderMessage={(message, continued, onJumpTo) =>
+              renderItem(
+                message,
+                threadSnapshot,
+                selfUserId,
+                handleStopSession,
+                handleResolvePermission,
+                handleOpenFile,
+                continued,
+                // Reply on the root is the thread's default; on a reply, it answers that one.
+                live ? (ref) => setThreadReplyTo(ref.id === openRoot.id ? null : ref) : undefined,
+                onJumpTo,
+                handleRerun,
+                handleConnectorConnect,
+                globalSetup,
+                handleHideDetails,
+                handleLoadRunLog
+              )
+            }
+            composer={
+              <Composer
+                prefill={threadPrefill}
+                spaceName={room.name}
+                draftKey={draftKey ? `${draftKey}:thread:${openRoot.id}` : undefined}
+                placeholder="Reply in thread"
+                autoFocus
+                replyTo={threadReplyTo}
+                onCancelReply={() => setThreadReplyTo(null)}
+                busyAgents={busyOwnAgents(room, selfUserId)}
+                openDoc={live ? openDoc : null}
+                agentModels={lastModels(room, selfUserId)}
+                members={room.members}
+                agents={room.agents.filter((a) => a.owner === selfUserId)}
+                skills={room.skills}
+                onSend={(text, context) => {
+                  setThreadReplyTo(null);
+                  setAlsoInChannel(false);
+                  handleSend(
+                    text,
+                    {
+                      ...context,
+                      replyTo: context.replyTo ?? replyRefFor(openRoot, threadSnapshot, selfUserId),
+                      ...(alsoInChannel ? { alsoInChannel: true } : {}),
+                    },
+                    (unsent) => setThreadPrefill({ text: unsent, nonce: Date.now() })
+                  );
+                }}
+                waitForConnection={roomConnection !== null || awaitingLive}
+                listFiles={live ? listSpaceFiles : undefined}
+                onTypingChange={
+                  source instanceof RelayRoomSource ? (typing) => source.setTyping(typing) : undefined
+                }
+                footer={
+                  <label
+                    className="mt-2 flex w-fit cursor-pointer items-center gap-2 px-1 text-xs text-text-secondary select-none"
+                    data-testid="thread-also-send"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={alsoInChannel}
+                      onChange={(e) => setAlsoInChannel(e.target.checked)}
+                      className="size-3.5 accent-[var(--accent)]"
+                    />
+                    Also send to {room.name}
+                  </label>
+                }
+              />
+            }
+          />
+        )
+      : null;
+
   return (
     <AgentSettingsContext.Provider value={agentSettingsApi}>
     <div className="bg-bg-0 relative flex h-full min-h-0 flex-col" data-testid="room-view">
@@ -1149,7 +1394,7 @@ export function RoomView({
         {/* Wide: keep the transcript clear of the floating panel. Narrow:
             the panel starts as its chip instead of covering the messages. */}
         <motion.div
-          className="relative flex min-h-0 flex-1 flex-col"
+          className={cn('relative flex min-h-0 flex-1 flex-col', threadPanel && threadMode === 'replace' && 'hidden')}
           // The transcript's own room: clear of the panel, and of the dock's
           // pills once there are some (it slides over only when the dock changes).
           initial={false}
@@ -1214,32 +1459,30 @@ export function RoomView({
               onPrefill={(text) => setPrefill({ text, nonce: Date.now() })}
             />
           ) : (
-          <OpenPageContext.Provider value={onOpenPage ?? null}>
-          <AttachmentSpaceContext.Provider value={attachmentSpace}>
-          <ReactionsContext.Provider value={reactionsApi}>
+          withRoomContexts(
           <RoomTranscript
-            snapshot={shownSnapshot ?? room}
+            snapshot={transcriptSnapshot ?? room}
             ownId={selfUserId}
             onStopSession={handleStopSession}
             onResolvePermission={handleResolvePermission}
             onOpenFile={handleOpenFile}
-            onReply={source instanceof RelayRoomSource ? setReplyTo : undefined}
+            onReply={source instanceof RelayRoomSource ? handleReply : undefined}
             readKey={source instanceof RelayRoomSource ? bindingId : undefined}
             onRerun={handleRerun}
             onConnectorConnect={handleConnectorConnect}
             globalSetup={globalSetup}
             onHideDetails={handleHideDetails}
             onLoadRunLog={handleLoadRunLog}
-            jump={jump}
+            jump={transcriptJump}
             onJumpMissed={onJumpMissed}
             onLoadOlder={handleLoadOlder}
-            focus={dockFocus.transcriptFocus}
+            focus={transcriptFocus}
             previewIds={dockPreview}
             topBar={topBar}
+            threads={transcriptThreads}
+            readThroughSeq={readThroughSeq}
           />
-          </ReactionsContext.Provider>
-          </AttachmentSpaceContext.Provider>
-          </OpenPageContext.Provider>
+          )
           )}
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">
             {/* No live socket: the source polls instead, so nothing is
@@ -1291,7 +1534,12 @@ export function RoomView({
               // own agent (no cross-person delegation in the MVP).
               agents={room.agents.filter((a) => a.owner === selfUserId)}
               skills={room.skills}
-              onSend={handleSend}
+              onSend={(text, context) => {
+                setReplyTo(null);
+                // Threads view: what you send from the main column shows there,
+                // even when it answers something (your agent's turn, a reply whose root isn't loaded).
+                handleSend(text, threadsOn && context.replyTo ? { ...context, alsoInChannel: true } : context);
+              }}
               waitForConnection={roomConnection !== null || awaitingLive}
               waitingNote={awaitingLive ? 'Sends once the space is ready.' : undefined}
               attachments={composerAttachments}
@@ -1303,6 +1551,7 @@ export function RoomView({
             />
           </div>
         </motion.div>
+        {threadPanel}
         {dockOn && shownSnapshot && (
           <ForYouFeeder
             bindingId={bindingId}
