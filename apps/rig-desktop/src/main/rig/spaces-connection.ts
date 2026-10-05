@@ -67,18 +67,52 @@ export type SpaceSkill = { cmd: string; name: string; desc: string };
  * whether the message being typed answers one of your own agent's recent
  * turns (`answersTo`, a room message id), and how sure Jev is. Anything
  * short of a clear answer is "none".
+ *
+ * A newer relay also says who the draft is for (`recipient`) and what the
+ * router would do with it (`action`): `ask` your own agent right away,
+ * `suggest` asking it after the send, or `none`. An older relay sends
+ * neither, and the composer behaves as it always did.
  */
-export type DraftPreview = { answersTo: string | null; agent: SessionAgent | null; confidence: number };
+export type DraftRecipient =
+  | { kind: 'agent'; agentId: string; agent: SessionAgent; ownerUserId: string }
+  | { kind: 'person'; userId: string }
+  | { kind: 'none' };
+export type DraftAction = 'ask' | 'suggest' | 'none';
+export type DraftPreview = {
+  answersTo: string | null;
+  agent: SessionAgent | null;
+  confidence: number;
+  recipient?: DraftRecipient;
+  action?: DraftAction;
+};
 
 const NO_DRAFT_PREVIEW: DraftPreview = { answersTo: null, agent: null, confidence: 0 };
 /** The relay gives Jev 2s; past this the composer has moved on anyway. */
 const DRAFT_PREVIEW_TIMEOUT_MS = 3000;
 
+function isSessionAgent(value: unknown): value is SessionAgent {
+  return value === 'claude' || value === 'codex';
+}
+
+function parseRecipient(raw: unknown): DraftRecipient | undefined {
+  const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null;
+  if (r?.kind === 'agent' && typeof r.agentId === 'string' && isSessionAgent(r.agent) && typeof r.ownerUserId === 'string')
+    return { kind: 'agent', agentId: r.agentId, agent: r.agent, ownerUserId: r.ownerUserId };
+  if (r?.kind === 'person' && typeof r.userId === 'string') return { kind: 'person', userId: r.userId };
+  if (r?.kind === 'none') return { kind: 'none' };
+  return undefined;
+}
+
 export function parseDraftPreview(raw: unknown): DraftPreview {
   const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null;
-  if (!r || typeof r.answersTo !== 'string' || (r.agent !== 'claude' && r.agent !== 'codex')) return NO_DRAFT_PREVIEW;
+  if (!r) return NO_DRAFT_PREVIEW;
+  const recipient = parseRecipient(r.recipient);
+  const action: DraftAction | undefined =
+    r.action === 'ask' || r.action === 'suggest' || r.action === 'none' ? r.action : undefined;
+  const routing = { ...(recipient ? { recipient } : {}), ...(action ? { action } : {}) };
+  if (typeof r.answersTo !== 'string' || !isSessionAgent(r.agent)) return { ...NO_DRAFT_PREVIEW, ...routing };
   const confidence = typeof r.confidence === 'number' && Number.isFinite(r.confidence) ? r.confidence : 0;
-  return { answersTo: r.answersTo, agent: r.agent, confidence };
+  return { answersTo: r.answersTo, agent: r.agent, confidence, ...routing };
 }
 
 /**

@@ -104,6 +104,31 @@ describe('rigSpacesConnectionController', () => {
     }
   });
 
+  it('parseDraftPreview reads who the draft is for and what the router would do, when the relay says', async () => {
+    const { parseDraftPreview } = await import('./spaces-connection');
+    const recipient = { kind: 'agent', agentId: 'ag1', agent: 'codex', ownerUserId: 'u1' };
+    expect(parseDraftPreview({ answersTo: null, agent: null, confidence: 0.9, recipient, action: 'ask' })).toEqual({
+      answersTo: null,
+      agent: null,
+      confidence: 0,
+      recipient,
+      action: 'ask',
+    });
+    expect(parseDraftPreview({ answersTo: 'm9', agent: 'claude', confidence: 0.8, recipient: { kind: 'person', userId: 'u2' }, action: 'none' })).toEqual({
+      answersTo: 'm9',
+      agent: 'claude',
+      confidence: 0.8,
+      recipient: { kind: 'person', userId: 'u2' },
+      action: 'none',
+    });
+    // Anything malformed is left out, so the composer behaves as with an older relay.
+    expect(parseDraftPreview({ answersTo: null, recipient: { kind: 'agent', agent: 'gemini' }, action: 'shout' })).toEqual({
+      answersTo: null,
+      agent: null,
+      confidence: 0,
+    });
+  });
+
   it('the themes calls delegate to the relay client, an unsupported answer passing through as data', async () => {
     getThemes.mockResolvedValue(ok({ supported: false }));
     getThemeEvents.mockResolvedValue(

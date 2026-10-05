@@ -56,7 +56,7 @@ import {
 import { registerRigBridge } from './rig/intent-bridge';
 import { rigSettingsStore } from './rig/settings-instance';
 import { startNotifications } from './rig/notifications/electron';
-import { spacesDispatchController } from './rig/spaces/dispatch-controller-instance';
+import { spacesDispatchController, wireAgentsReporter } from './rig/spaces/dispatch-controller-instance';
 import { bufferOpenFilePath } from './rig/workspace';
 import { rpcRouter } from './rpc';
 import { resolveUserEnv } from './utils/userEnv';
@@ -203,6 +203,7 @@ void app.whenReady().then(async () => {
   acpAgentStatusBridge.initialize();
   registerRigBridge();
   spacesDispatchController.initialize();
+  wireAgentsReporter();
 
   registerRPCRouter(rpcRouter, app.isPackaged ? ipcMain : withRpcLogging(ipcMain));
 

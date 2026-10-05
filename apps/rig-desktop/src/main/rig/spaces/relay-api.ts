@@ -270,6 +270,13 @@ export interface SpacesRelayApi {
   getThemeEvents?(bindingId: string, after: string): Promise<Result<ThemesFetch<ThemeEventsPage>, RelayApiError>>;
   /** `PATCH .../themes {enabled}`: the per-Space switch (editors and owners; 403 otherwise). */
   setThemesEnabled?(bindingId: string, enabled: boolean): Promise<Result<ThemesFetch<{ enabled: boolean }>, RelayApiError>>;
+
+  /**
+   * `PUT /v1/me/agents {agents}`: the agents this person can run, so the
+   * relay's router knows them in spaces where they never ran. A relay
+   * without the route answers 404, read as `{ supported: false }`.
+   */
+  setMyAgents?(agents: SessionAgent[]): Promise<Result<{ supported: boolean }, RelayApiError>>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -325,7 +332,7 @@ function parseRetryAfterMs(header: string | null): number | null {
 
 async function request(
   ctx: Resolved,
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   action: string,
   body?: unknown
@@ -894,6 +901,17 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         supported: true,
         data: { enabled: typeof answered === 'boolean' ? answered : enabled },
       });
+    },
+
+    async setMyAgents(agents) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(ctxResult.data, 'PUT', '/v1/me/agents', 'tell Rig which agents you have', { agents });
+      if (!result.success) {
+        const missing = result.error.kind === 'relay' && result.error.status === 404;
+        return missing ? ok({ supported: false }) : err(result.error);
+      }
+      return ok({ supported: true });
     },
 
     async postMessage(bindingId, input) {

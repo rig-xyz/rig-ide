@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { app } from 'electron';
 import { getAcpRuntimeClient } from '@main/core/acp/controller';
@@ -26,6 +27,7 @@ import {
 } from './dispatch';
 import { SpacesDispatchController, type SpacesDispatchControllerDeps } from './dispatch-controller';
 import { createImagePreparer } from './agent-images';
+import { createAgentsReporter } from './agents-reporter';
 import { LocalRunStore } from './local-runs';
 import { createHttpSpacesRelayApi } from './relay-api';
 import { RequestClaimPoller } from './request-claim';
@@ -119,6 +121,32 @@ function realDeps(): SpacesDispatchControllerDeps {
 const relayApi = createHttpSpacesRelayApi();
 
 export const spacesDispatchController = new SpacesDispatchController(realDeps());
+
+/** How often a sign-in or account switch is noticed for the agents report (there's no event for it). */
+const AGENTS_REPORT_RECHECK_MS = 60_000;
+
+/**
+ * Keeps the relay told which agents you can run (`agents-reporter.ts`):
+ * once at launch, again whenever settings change (the runnable set is
+ * persisted there each time a probe changes it) and on a slow interval.
+ */
+export function wireAgentsReporter(): void {
+  const reporter = createAgentsReporter({
+    isEnabled: () => rigSettingsStore.get().spacesEnabled,
+    account: async () => {
+      const ctx = await resolveContext();
+      // A hash, so the token itself is never kept around for this.
+      return isError(ctx) ? null : createHash('sha256').update(`${ctx.url}\n${ctx.token}`).digest('hex');
+    },
+    runnable: () => rigSettingsStore.get().lastKnownRunnableAgents,
+    put: (agents) => relayApi.setMyAgents!(agents),
+    setTimeout: (cb, ms) => setTimeout(cb, ms),
+    clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
+  });
+  rigSettingsStore.subscribe(() => reporter.nudge());
+  setInterval(() => reporter.nudge(), AGENTS_REPORT_RECHECK_MS);
+  reporter.nudge();
+}
 
 /**
  * Doc comments in a space go to your room agent: the same persistent session
