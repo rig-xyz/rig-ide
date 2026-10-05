@@ -21,7 +21,7 @@ vi.mock('@main/lib/telemetry', () => ({
 }));
 
 import { rigFileRootRegistry } from './file-root-registry';
-import { rigFilesController } from './files';
+import { onRigEntryMoved, rigFilesController } from './files';
 
 const dirs: string[] = [];
 const rootIds: string[] = [];
@@ -100,6 +100,24 @@ describe('rigFilesController', () => {
     expect(archived.success).toBe(true);
     if (archived.success) expect(archived.data.relativePath).toBe('_archive/final.md');
     expect(readFileSync(join(dir, '_archive/final.md'), 'utf8')).toBe('draft');
+  });
+
+  it('tells rename listeners what moved, so pins and seen markers can follow', async () => {
+    const { dir, rootId } = await root();
+    mkdirSync(join(dir, 'notes'));
+    writeFileSync(join(dir, 'notes/draft.md'), 'draft');
+    const moves: unknown[] = [];
+    const off = onRigEntryMoved((move) => {
+      moves.push(move);
+    });
+    try {
+      await rigFilesController.rename({ rootId, relativePath: 'notes', newName: 'journal' });
+    } finally {
+      off();
+    }
+    expect(moves).toEqual([
+      { rootId, canonicalRoot: rigFileRootRegistry.get(rootId), from: 'notes', to: 'journal' },
+    ]);
   });
 
   it('rejects rename and archive of a symlink entry instead of moving its target', async () => {

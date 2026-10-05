@@ -205,6 +205,30 @@ function errorDetails(error: unknown): { code?: string } {
   return { code: typed?.code };
 }
 
+/** A renamed entry, rig-relative paths with forward slashes: what follows it is wired at boot (`path-refs.ts`). */
+export type RigEntryMove = { rootId: string; canonicalRoot: string; from: string; to: string };
+const entryMoveListeners = new Set<(move: RigEntryMove) => Promise<void> | void>();
+
+export function onRigEntryMoved(listener: (move: RigEntryMove) => Promise<void> | void): () => void {
+  entryMoveListeners.add(listener);
+  return () => {
+    entryMoveListeners.delete(listener);
+  };
+}
+
+async function announceEntryMoved(rootId: string, relativePath: string, targetRelative: string) {
+  const canonicalRoot = rigFileRootRegistry.get(rootId);
+  const from = rigFileRootRegistry.normalizeRelative(relativePath);
+  if (!canonicalRoot || !from.success) return;
+  for (const listener of entryMoveListeners) {
+    try {
+      await listener({ rootId, canonicalRoot, from: from.data, to: targetRelative });
+    } catch (error) {
+      log.warn('Rig files: a rename listener threw', errorDetails(error));
+    }
+  }
+}
+
 /** `document_saved` is debounced to at most once per file per minute — a typing session autosaves far more often than that. */
 const DOCUMENT_SAVED_DEBOUNCE_MS = 60_000;
 const lastDocumentSavedCapture = new Map<string, number>();
@@ -361,6 +385,7 @@ export const rigFilesController = createRPCController({
       });
     try {
       await fsRename(source.data, target.data);
+      await announceEntryMoved(rootId, relativePath, targetRelative);
       return ok({ relativePath: targetRelative });
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code === 'ENOENT')

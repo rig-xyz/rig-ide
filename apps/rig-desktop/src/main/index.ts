@@ -54,6 +54,8 @@ import {
   logRigVersionSkew,
 } from './rig/bundled-cli';
 import { registerRigBridge } from './rig/intent-bridge';
+import { onRigEntryMoved } from './rig/files';
+import { createEntryMoveFollower } from './rig/path-refs';
 import { rigSettingsStore } from './rig/settings-instance';
 import { startNotifications } from './rig/notifications/electron';
 import { spacesDispatchController, wireAgentsReporter } from './rig/spaces/dispatch-controller-instance';
@@ -182,6 +184,8 @@ void app.whenReady().then(async () => {
   rigSettingsStore.subscribe((settings) => {
     events.emit(rigSettingsChangedChannel, settings);
   });
+  // Pins and seen markers follow a renamed file or folder.
+  onRigEntryMoved(createEntryMoveFollower(rigSettingsStore));
   startNotifications();
 
   projectSettingsService.initialize();
