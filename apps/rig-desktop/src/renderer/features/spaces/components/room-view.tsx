@@ -14,7 +14,13 @@ import { spacesAgentConfigChangedChannel } from '@shared/spaces/agent-settings';
 import { roomSeesFor, spacesLocalRunEventChannel } from '@shared/spaces/room-sees';
 import { connectorsApi } from '../connectors-api';
 import { buildRoomFeed } from '../fixtures/room-feed';
-import { emptySnapshot, RelayRoomSource, type LocalRunsClient, type RelayRoomClient } from '../relay-room-source';
+import {
+  emptySnapshot,
+  RelayRoomSource,
+  type DispatchSuggestion,
+  type LocalRunsClient,
+  type RelayRoomClient,
+} from '../relay-room-source';
 import { FixtureRoomSource, type RoomSource } from '../room-source';
 import { roomSourceCache, type RoomConnectionInfo, type RoomLease } from '../room-source-cache';
 import type { CachedRoomBlob } from '@shared/spaces/room-cache';
@@ -40,7 +46,8 @@ import { routeFromPreview } from '../send-decision';
 import { useAvailableAgents } from '../use-available-agents';
 import { settlePendingSends, withPendingSends, type PendingSend } from '../pending-sends';
 import { isContinuation, renderItem, RoomTranscript, type RoomJumpRequest, type TranscriptThreads } from './room-transcript';
-import { OpenPageContext } from './transcript-items';
+import { AskSuggestionContext, OpenPageContext, type AskSuggestion } from './transcript-items';
+import { AGENT_NAME } from './identity';
 import { replyRefFor, THREAD_PANEL_PX, ThreadPanel } from './thread-panel';
 import { buildThreads, focusForThreads, newestSeq, summarizeThread, threadRootFor, type ThreadSummary } from '../threads';
 import { readThreadSeen, writeThreadSeen } from '../thread-seen';
@@ -150,6 +157,8 @@ const THREAD_BESIDE_MIN_PX = THREAD_PANEL_PX + 400;
 
 /** How long a Room shown from disk may take to catch up before it says so. */
 const CATCHING_UP_AFTER_MS = 600;
+/** How long the router's "Ask Claude?" stays under your message. */
+const ASK_SUGGESTION_MS = 5 * 60_000;
 
 const NO_DEMO_ROWS: RigNotification[] = [];
 const NO_MESSAGES: RoomMessage[] = [];
@@ -887,6 +896,42 @@ export function RoomView({
   );
   const availableAgents = useAvailableAgents();
 
+  // The router's private "was this for your agent?" about one of your
+  // messages: one quiet button under it, until you use it, send something
+  // else, or a few minutes pass.
+  const [dispatchSuggestion, setDispatchSuggestion] = useState<DispatchSuggestion | null>(null);
+  useEffect(() => {
+    setDispatchSuggestion(null);
+    if (!(source instanceof RelayRoomSource)) return;
+    return source.onDispatchSuggestion(setDispatchSuggestion);
+  }, [source]);
+  useEffect(() => {
+    if (!dispatchSuggestion) return;
+    const timer = setTimeout(() => setDispatchSuggestion(null), ASK_SUGGESTION_MS);
+    return () => clearTimeout(timer);
+  }, [dispatchSuggestion]);
+  const askSuggestion = useMemo((): AskSuggestion | null => {
+    if (!dispatchSuggestion || !(source instanceof RelayRoomSource)) return null;
+    const { messageId, agent } = dispatchSuggestion;
+    return {
+      messageId,
+      agent,
+      // The same ask an @mention files, with this message as its source.
+      ask: () => {
+        setDispatchSuggestion(null);
+        const message = snapshotRef.current?.messages.find((m) => m.id === messageId);
+        if (!message?.body) return;
+        void source
+          .requestOwnAgent(agent, message.body, messageId)
+          .catch(() => false)
+          .then((filed) => {
+            if (filed) void rpc.rig.spacesDispatch.checkNow();
+            else toast({ title: `Rig couldn’t ask ${AGENT_NAME[agent]}`, description: 'Try again in a moment.' });
+          });
+      },
+    };
+  }, [dispatchSuggestion, source]);
+
   const togglePlay = () => {
     if (!source || source.isDone()) return;
     if (source.isPlaying()) {
@@ -905,6 +950,7 @@ export function RoomView({
     restore: (text: string) => void = (unsent) => setPrefill({ text: unsent, nonce: Date.now() })
   ) => {
     if (!(source instanceof RelayRoomSource) || !snapshot) return;
+    setDispatchSuggestion(null);
     const ownAgents = snapshot.agents.filter((a) => a.owner === selfUserId).map((a) => a.agent);
     const localId = `sending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const files = context.files ?? [];
@@ -1274,7 +1320,9 @@ export function RoomView({
   const withRoomContexts = (node: ReactNode) => (
     <OpenPageContext.Provider value={onOpenPage ?? null}>
       <AttachmentSpaceContext.Provider value={attachmentSpace}>
-        <ReactionsContext.Provider value={reactionsApi}>{node}</ReactionsContext.Provider>
+        <ReactionsContext.Provider value={reactionsApi}>
+          <AskSuggestionContext.Provider value={askSuggestion}>{node}</AskSuggestionContext.Provider>
+        </ReactionsContext.Provider>
       </AttachmentSpaceContext.Provider>
     </OpenPageContext.Provider>
   );

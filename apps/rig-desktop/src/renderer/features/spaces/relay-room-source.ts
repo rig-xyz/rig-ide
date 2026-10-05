@@ -226,6 +226,25 @@ type RoomNotification =
   | { type: 'reactions_changed'; messageId: string; seq: number }
   | { type: string; [key: string]: unknown };
 
+/**
+ * The relay's router thinks one of your messages was probably for your own
+ * agent but isn't sure (`dispatch_suggestion`, meant for the sender only).
+ */
+export type DispatchSuggestion = { messageId: string; agent: AgentKind; agentId: string; confidence: number };
+
+/** A `dispatch_suggestion` notification meant for `selfUserId`, or null (malformed, or someone else's). */
+export function parseDispatchSuggestion(raw: Record<string, unknown>, selfUserId: string): DispatchSuggestion | null {
+  if (raw.type !== 'dispatch_suggestion') return null;
+  if (raw.forUserId !== undefined && raw.forUserId !== selfUserId) return null;
+  if (typeof raw.messageId !== 'string' || (raw.agent !== 'claude' && raw.agent !== 'codex')) return null;
+  return {
+    messageId: raw.messageId,
+    agent: raw.agent,
+    agentId: typeof raw.agentId === 'string' ? raw.agentId : '',
+    confidence: typeof raw.confidence === 'number' && Number.isFinite(raw.confidence) ? raw.confidence : 0,
+  };
+}
+
 export type RelayRoomSourceOptions = {
   bindingId: string;
   spaceName: string;
@@ -406,6 +425,7 @@ export class RelayRoomSource implements RoomSource {
 
   private snapshot: RoomSnapshot;
   private readonly listeners = new Set<Listener>();
+  private readonly suggestionListeners = new Set<(suggestion: DispatchSuggestion) => void>();
   private provider: RealtimeProvider | null = null;
   private connected = false;
   private disposed = false;
@@ -559,6 +579,12 @@ export class RelayRoomSource implements RoomSource {
     return () => this.listeners.delete(listener);
   }
 
+  /** The router's private "was this for your agent?" about one of your messages (`DispatchSuggestion`). Not part of the snapshot: it's only ever for this viewer, and only for now. */
+  onDispatchSuggestion(listener: (suggestion: DispatchSuggestion) => void): () => void {
+    this.suggestionListeners.add(listener);
+    return () => this.suggestionListeners.delete(listener);
+  }
+
   isPlaying(): boolean {
     return this.connected;
   }
@@ -652,6 +678,7 @@ export class RelayRoomSource implements RoomSource {
     this.provider?.destroy();
     this.provider = null;
     this.listeners.clear();
+    this.suggestionListeners.clear();
   }
 
   // ── connecting ──────────────────────────────────────────────────────────
@@ -1193,6 +1220,11 @@ export class RelayRoomSource implements RoomSource {
       // notification naming no run falls back to every live one.
       const runId = typeof notification.runId === 'string' ? notification.runId : null;
       await this.catchUp({ runs: runId ? [runId] : this.liveRunIds() });
+      return;
+    }
+    if (notification.type === 'dispatch_suggestion') {
+      const suggestion = parseDispatchSuggestion(notification, this.opts.selfUserId);
+      if (suggestion) for (const listener of this.suggestionListeners) listener(suggestion);
       return;
     }
     if (notification.type === 'agent_request_created') {

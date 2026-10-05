@@ -26,8 +26,8 @@ import {
   webLinkLabel,
   type LinkKind,
 } from '@shared/spaces/links';
-import { BrandLogo, ConnectorMark } from '../logos';
-import type { RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
+import { agentLogoId, BrandLogo, ConnectorMark } from '../logos';
+import type { AgentKind, RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 import { FileTagChip, MessageAttachments } from './attachment-cards';
 import { FILE_TAG_SOURCE, tagPathOf } from '@shared/rig/file-tags';
@@ -65,6 +65,28 @@ const LINK_ICON: Partial<Record<LinkKind, ReactNode>> = {
  * go to the browser, as does a ⌘/ctrl- or middle-click on any link.
  */
 export const OpenPageContext = createContext<((url: string, title: string) => void) | null>(null);
+
+/**
+ * The relay's router wasn't sure one of your messages was for your agent:
+ * a quiet "Ask Claude?" under that message, for you only. The Room decides
+ * when it shows and what asking does.
+ */
+export type AskSuggestion = { messageId: string; agent: AgentKind; ask: () => void };
+export const AskSuggestionContext = createContext<AskSuggestion | null>(null);
+
+function AskSuggestionButton({ suggestion }: { suggestion: AskSuggestion }) {
+  return (
+    <button
+      type="button"
+      onClick={suggestion.ask}
+      data-testid="ask-suggestion"
+      className="card-pop-in border-border-hairline hover:bg-bg-2 flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs text-text-secondary transition-colors hover:text-text-primary"
+    >
+      <BrandLogo id={agentLogoId(suggestion.agent)} size={12} />
+      Ask {AGENT_NAME[suggestion.agent]}?
+    </button>
+  );
+}
 
 /** `inPanel`: open the page beside the Room whatever it is (a page with pins on it). */
 function useOpenLink(
@@ -456,6 +478,7 @@ export function MessageRow({
   const replyTo = message.meta.kind === 'text' ? message.meta.replyTo : undefined;
   // The emoji picker open from the hover bar keeps the bar showing.
   const [picking, setPicking] = useState(false);
+  const askSuggestion = useContext(AskSuggestionContext);
   const chips = (
     <ReactionChips
       messageId={message.id}
@@ -518,6 +541,7 @@ export function MessageRow({
             </p>
           )}
           {chips}
+          {askSuggestion?.messageId === message.id && !message.sending && <AskSuggestionButton suggestion={askSuggestion} />}
         </div>
         {/* Nothing to reply to or copy a link to until the relay has it. */}
         {!message.sending && actions}
