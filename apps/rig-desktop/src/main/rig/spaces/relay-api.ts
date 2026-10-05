@@ -130,6 +130,22 @@ export type RoomMessageRow = {
   reactions?: MessageReaction[];
 };
 
+/** One match of a search in a space's chat (`GET /v1/me/bindings/:id/messages/search`), newest first. */
+export type RoomSearchHit = {
+  messageId: string;
+  seq: number;
+  /** A person's message or doc comment, or an agent's turn found by its final answer. */
+  kind: 'message' | 'answer';
+  runId: string | null;
+  createdAt: string;
+  /** The matched text around the first match; `highlights` are offsets into `text`. */
+  snippet: { text: string; highlights: Array<{ start: number; end: number }> };
+  /** The message itself, as `listMessages` shapes it. */
+  message: RoomMessageRow;
+};
+
+export type RoomSearchPage = { results: RoomSearchHit[]; nextBefore: number | null };
+
 /** One connector a space uses, as the relay lists it. */
 export type SpaceConnectorRow = { connectorId: string; addedBy: string; addedAt: string };
 
@@ -137,6 +153,33 @@ function shapeConnector(raw: unknown): SpaceConnectorRow | null {
   const r = asRecord(raw);
   if (!r || typeof r.connectorId !== 'string') return null;
   return { connectorId: r.connectorId, addedBy: String(r.addedBy ?? ''), addedAt: String(r.addedAt ?? '') };
+}
+
+/** One message as the relay shapes it (the list route, and each search result's `message`); null when it isn't one. */
+function parseMessageRow(m: unknown): RoomMessageRow | null {
+  const row = asRecord(m);
+  if (!row || typeof row.id !== 'string') return null;
+  const author = asRecord(row.author);
+  return {
+    id: row.id,
+    seq: Number(row.seq ?? 0),
+    author: {
+      userId: typeof author?.userId === 'string' ? author.userId : null,
+      name: typeof author?.name === 'string' ? author.name : null,
+      avatarUrl: typeof author?.avatarUrl === 'string' ? author.avatarUrl : null,
+      kind: typeof author?.kind === 'string' ? author.kind : 'user',
+    },
+    kind: typeof row.kind === 'string' ? row.kind : 'text',
+    body: typeof row.body === 'string' ? row.body : '',
+    meta: asRecord(row.meta),
+    createdAt: String(row.createdAt ?? ''),
+    path: typeof row.path === 'string' ? row.path : null,
+    parentId: typeof row.parentId === 'string' ? row.parentId : null,
+    quote: anchorQuote(row.anchor),
+    anchor: asRecord(row.anchor),
+    resolvedAt: typeof row.resolvedAt === 'string' ? row.resolvedAt : null,
+    reactions: parseReactions(row.reactions),
+  };
 }
 
 export interface SpacesRelayApi {
@@ -225,6 +268,11 @@ export interface SpacesRelayApi {
     bindingId: string,
     query: { latest?: number; after?: string; before?: string; path?: string; limit?: number }
   ): Promise<Result<RoomMessageRow[], RelayApiError>>;
+  /** Search the space's chat, newest first; `before` (a seq, the last page's `nextBefore`) for the next page. */
+  searchMessages?(
+    bindingId: string,
+    query: { q: string; before?: number; limit?: number }
+  ): Promise<Result<RoomSearchPage, RelayApiError>>;
   postMessage(
     bindingId: string,
     input: {
@@ -763,34 +811,53 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
       const raw = asRecord(result.data)?.messages;
       const messages = Array.isArray(raw)
         ? raw
-            .map((m): RoomMessageRow | null => {
-              const row = asRecord(m);
-              if (!row || typeof row.id !== 'string') return null;
-              const author = asRecord(row.author);
-              return {
-                id: row.id,
-                seq: Number(row.seq ?? 0),
-                author: {
-                  userId: typeof author?.userId === 'string' ? author.userId : null,
-                  name: typeof author?.name === 'string' ? author.name : null,
-                  avatarUrl: typeof author?.avatarUrl === 'string' ? author.avatarUrl : null,
-                  kind: typeof author?.kind === 'string' ? author.kind : 'user',
-                },
-                kind: typeof row.kind === 'string' ? row.kind : 'text',
-                body: typeof row.body === 'string' ? row.body : '',
-                meta: asRecord(row.meta),
-                createdAt: String(row.createdAt ?? ''),
-                path: typeof row.path === 'string' ? row.path : null,
-                parentId: typeof row.parentId === 'string' ? row.parentId : null,
-                quote: anchorQuote(row.anchor),
-                anchor: asRecord(row.anchor),
-                resolvedAt: typeof row.resolvedAt === 'string' ? row.resolvedAt : null,
-                reactions: parseReactions(row.reactions),
-              };
-            })
+            .map(parseMessageRow)
             .filter((m): m is RoomMessageRow => m !== null)
         : [];
       return ok(messages);
+    },
+
+    async searchMessages(bindingId, query) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const params = new URLSearchParams({ q: query.q });
+      if (query.before !== undefined) params.set('before', String(query.before));
+      if (query.limit !== undefined) params.set('limit', String(query.limit));
+      const result = await request(
+        ctxResult.data,
+        'GET',
+        `/v1/me/bindings/${bindingId}/messages/search?${params.toString()}`,
+        'search the chat'
+      );
+      if (!result.success) return err(result.error);
+      const data = asRecord(result.data);
+      const raw = Array.isArray(data?.results) ? data.results : [];
+      const results: RoomSearchHit[] = [];
+      for (const item of raw) {
+        const hit = asRecord(item);
+        const message = parseMessageRow(hit?.message);
+        if (!hit || !message || typeof hit.messageId !== 'string') continue;
+        const snippet = asRecord(hit.snippet);
+        results.push({
+          messageId: hit.messageId,
+          seq: Number(hit.seq ?? message.seq),
+          kind: hit.kind === 'answer' ? 'answer' : 'message',
+          runId: typeof hit.runId === 'string' ? hit.runId : null,
+          createdAt: String(hit.createdAt ?? message.createdAt),
+          snippet: {
+            text: typeof snippet?.text === 'string' ? snippet.text : '',
+            highlights: Array.isArray(snippet?.highlights)
+              ? snippet.highlights
+                  .map((h) => asRecord(h))
+                  .filter((h): h is Record<string, unknown> => !!h && typeof h.start === 'number' && typeof h.end === 'number')
+                  .map((h) => ({ start: h.start as number, end: h.end as number }))
+              : [],
+          },
+          message,
+        });
+      }
+      const nextBefore = typeof data?.nextBefore === 'number' ? data.nextBefore : null;
+      return ok({ results, nextBefore });
     },
 
     async resolveThread(bindingId, messageId, resolved) {

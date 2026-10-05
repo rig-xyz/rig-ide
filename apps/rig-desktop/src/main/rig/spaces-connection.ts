@@ -15,6 +15,7 @@ import {
   type RoomInviteRow,
   type RoomMemberRow,
   type RoomMessageRow,
+  type RoomSearchPage,
   type SessionAgent,
   type SessionEventRow,
   type SessionRun,
@@ -216,6 +217,15 @@ export const rigSpacesConnectionController = createRPCController({
     query: { latest?: number; after?: string; before?: string };
   }): Promise<Result<RoomMessageRow[], RelayApiError>> =>
     forgetIfGone(input.bindingId, await api.listMessages(input.bindingId, input.query)),
+
+  /** Search the space's chat on the relay (older matches than the Room has loaded). */
+  searchMessages: async (input: {
+    bindingId: string;
+    query: { q: string; before?: number; limit?: number };
+  }): Promise<Result<RoomSearchPage, RelayApiError>> =>
+    api.searchMessages
+      ? forgetIfGone(input.bindingId, await api.searchMessages(input.bindingId, input.query))
+      : err<RelayApiError>({ kind: 'relay', message: 'Search is not available.' }),
 
   getSessionEvents: async (input: {
     bindingId: string;
