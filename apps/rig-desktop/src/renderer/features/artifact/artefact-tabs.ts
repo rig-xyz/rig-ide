@@ -40,6 +40,14 @@ export function openFileTab(state: ArtefactTabsState, path: string): ArtefactTab
   return { tabs: [...state.tabs, { kind: 'file', path }], active: state.tabs.length };
 }
 
+/** The file at `from` moved to `to` (a rename): its tab follows in place. */
+export function retargetFileTab(state: ArtefactTabsState, from: string, to: string): ArtefactTabsState {
+  const index = state.tabs.findIndex((tab) => tab.kind === 'file' && tab.path === from);
+  if (index === -1 || from === to) return state;
+  const tabs = state.tabs.map((tab, i) => (i === index ? { kind: 'file' as const, path: to } : tab));
+  return { tabs, active: state.active };
+}
+
 /** Open (or re-activate) the tab for a page's link. */
 export function openPageTab(state: ArtefactTabsState, url: string, title: string): ArtefactTabsState {
   const existing = state.tabs.findIndex((tab) => tab.kind === 'page' && tab.url === url);

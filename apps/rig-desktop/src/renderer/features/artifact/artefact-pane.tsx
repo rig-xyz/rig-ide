@@ -38,6 +38,7 @@ export function ArtefactPane({
   onOpenFile,
   onOpenFocus,
   onPageTitle,
+  onRetargetFile,
 }: {
   root: string;
   rootId: string;
@@ -51,6 +52,8 @@ export function ArtefactPane({
   onOpenFocus: () => void;
   /** A page tab's page loaded with this title. */
   onPageTitle?: (url: string, title: string) => void;
+  /** An open file was renamed from its title bar: its tab follows to the new path. */
+  onRetargetFile?: (from: string, to: string) => void;
 }) {
   const plusRef = useRef<HTMLButtonElement>(null);
   const filesRef = useRef<HTMLButtonElement>(null);
@@ -247,7 +250,10 @@ export function ArtefactPane({
             root={root}
             rootId={rootId}
             path={active.path}
+            bindingId={bindingId}
             onNavigateFolder={(relPath) => openNavigator('files', relPath)}
+            onRenamed={onRetargetFile ? (to) => onRetargetFile(active.path, to) : undefined}
+            onArchived={() => onCloseTab(state.active)}
           />
         )}
       </div>

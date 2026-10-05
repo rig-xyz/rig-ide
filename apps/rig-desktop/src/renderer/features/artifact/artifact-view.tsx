@@ -37,6 +37,7 @@ import { ImageArtifact } from './image-artifact';
 import { PdfArtifact } from './pdf-artifact';
 import { getPreviewMode, setPreviewMode, type PreviewMode } from './preview-mode-memory';
 import { PreviewPane, type PreviewHandle } from './preview-pane';
+import { FileOptionsButton } from './file-options-menu';
 import { ShareButton } from './share-popover';
 import { UnsupportedArtifact } from './unsupported-artifact';
 import { useFileType } from './use-file-type';
@@ -66,17 +67,40 @@ export const ArtifactView = observer(function ArtifactView({
   root,
   rootId,
   path,
+  bindingId,
   onNavigateFolder,
+  onRenamed,
+  onArchived,
 }: {
   /** The bound rig's workspace root — scopes the file watcher. */
   root: string;
   rootId: string;
   /** Absolute path of the file being viewed. */
   path: string;
+  /** The rig's binding, for the title bar menu's Pin to top. */
+  bindingId?: string | null;
   /** Open the navigator revealing this folder — folder breadcrumb segments. (Feedback round 5: the Files button itself lives on the tab strip now, one level up; closing is the tab's ×.) */
   onNavigateFolder: (relPath: string) => void;
+  /** The title bar menu renamed this file: open it at its new path. With `onArchived`, turns that menu on. */
+  onRenamed?: (newAbsPath: string) => void;
+  /** The title bar menu archived this file: it is gone from here. */
+  onArchived?: () => void;
 }) {
   const fileInfo = useFileType(root, rootId, path);
+  // The `⋯` menu moves files, so it only shows for a file inside the rig and
+  // when the host can follow a rename or an archive.
+  const renderFileOptions = (beforeMove?: () => Promise<void>) =>
+    onRenamed && onArchived && path.startsWith(`${root}/`) ? (
+      <FileOptionsButton
+        root={root}
+        rootId={rootId}
+        bindingId={bindingId}
+        absPath={path}
+        beforeMove={beforeMove}
+        onRenamed={onRenamed}
+        onArchived={onArchived}
+      />
+    ) : null;
   const crumbs = useMemo(() => breadcrumbSegments(root, path), [root, path]);
   const type = fileInfo?.type ?? null;
   // File-navigator redesign: a skill file (`.claude/skills`, `.agents/skills`,
@@ -105,13 +129,19 @@ export const ArtifactView = observer(function ArtifactView({
         showShare={type.category === 'markdown'}
         isSkill={isSkill}
         onNavigateFolder={onNavigateFolder}
+        renderFileOptions={renderFileOptions}
       />
     );
   }
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
-      <ArtifactHeaderBar path={path} crumbs={crumbs} onNavigateFolder={onNavigateFolder} />
+      <ArtifactHeaderBar
+        path={path}
+        crumbs={crumbs}
+        onNavigateFolder={onNavigateFolder}
+        titleAction={renderFileOptions()}
+      />
       <div className="relative min-h-0 flex-1 overflow-y-auto">
         {type === null ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-text-muted">
@@ -155,7 +185,7 @@ function ArtifactHeaderBar({
   crumbs: readonly BreadcrumbSegment[];
   onNavigateFolder: (relPath: string) => void;
   trailing?: React.ReactNode;
-  /** Beside the file's name: its Share button. */
+  /** Beside the file's name: its Share button and options menu. */
   titleAction?: React.ReactNode;
   /** The transient save-status indicator, sitting right beside the file name. */
   status?: React.ReactNode;
@@ -340,6 +370,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   showShare,
   isSkill,
   onNavigateFolder,
+  renderFileOptions,
 }: {
   root: string;
   rootId: string;
@@ -351,6 +382,8 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   /** File-navigator redesign: shows the "Skill · teaches your agents" banner below the header. */
   isSkill: boolean;
   onNavigateFolder: (relPath: string) => void;
+  /** The title bar's `⋯` menu, told how to settle this pane's unsaved edits before the file moves. */
+  renderFileOptions: (beforeMove: () => Promise<void>) => React.ReactNode;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<PreviewHandle | null>(null);
@@ -574,7 +607,12 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
         crumbs={crumbs}
         onNavigateFolder={onNavigateFolder}
         status={<SaveStatus resource={resource} />}
-        titleAction={showShare ? <ShareButton absPath={path} /> : undefined}
+        titleAction={
+          <>
+            {showShare && <ShareButton absPath={path} />}
+            {renderFileOptions(() => resource.flush())}
+          </>
+        }
         trailing={
           <>
             {resource.hasDiskUpdate && (

@@ -29,7 +29,8 @@ export function RenameFileDialog({
   root: string;
   rootId: string;
   currentName: string;
-  onRenamed: () => void;
+  /** The entry's new rig-relative path, so whatever has it open can follow. */
+  onRenamed: (relativePath: string) => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -68,7 +69,7 @@ function RenameFileForm({
   rootId: string;
   currentName: string;
   onClose: () => void;
-  onRenamed: () => void;
+  onRenamed: (relativePath: string) => void;
 }) {
   const [name, setName] = useState(currentName);
   const [busy, setBusy] = useState(false);
@@ -90,7 +91,7 @@ function RenameFileForm({
         setError(result.error.message);
         return;
       }
-      onRenamed();
+      onRenamed(result.data.relativePath);
       onClose();
     } catch {
       setError("Couldn't rename this item. Try again.");

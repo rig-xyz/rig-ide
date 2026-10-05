@@ -10,6 +10,7 @@ import {
   openFocusTab,
   openPageTab,
   renamePageTab,
+  retargetFileTab,
   type ArtefactTabsState,
 } from './artefact-tabs';
 
@@ -137,5 +138,19 @@ describe('renamePageTab', () => {
     expect(renamed.active).toBe(state.active);
     expect(renamePageTab(renamed, 'https://claude.ai/artifact/abc', '')).toBe(renamed);
     expect(renamePageTab(renamed, 'https://other.example', 'x')).toBe(renamed);
+  });
+});
+
+describe('retargetFileTab', () => {
+  it('moves a renamed file\'s tab to its new path in place, keeping the active tab', () => {
+    const state = activateTab(open('/rig/a.md', '/rig/b.md', '/rig/c.md'), 1);
+    const moved = retargetFileTab(state, '/rig/b.md', '/rig/renamed.md');
+    expect(moved.tabs.map((tab) => (tab.kind === 'file' ? tab.path : tab.kind))).toEqual([
+      '/rig/a.md',
+      '/rig/renamed.md',
+      '/rig/c.md',
+    ]);
+    expect(moved.active).toBe(1);
+    expect(retargetFileTab(moved, '/rig/missing.md', '/rig/x.md')).toBe(moved);
   });
 });

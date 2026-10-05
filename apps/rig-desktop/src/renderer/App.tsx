@@ -12,6 +12,7 @@ import {
   openFileTab,
   openPageTab,
   renamePageTab,
+  retargetFileTab,
   openFocusTab,
   type ArtefactTabsState,
 } from '@renderer/features/artifact/artefact-tabs';
@@ -1488,6 +1489,7 @@ export function App() {
                   onOpenFile={(absPath) => openFile(absPath)}
                   onOpenFocus={openFocus}
                   onPageTitle={(url, title) => setArtefact((current) => renamePageTab(current, url, title))}
+                  onRetargetFile={(from, to) => setArtefact((current) => retargetFileTab(current, from, to))}
                 />
               );
               return (

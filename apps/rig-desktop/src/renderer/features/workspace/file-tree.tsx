@@ -1,6 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Archive,
   ArrowDownAZ,
   EyeOff,
   ArrowUpDown,
@@ -8,7 +7,6 @@ import {
   CheckCheck,
   Clock,
   ChevronRight,
-  Copy,
   ExternalLink,
   File,
   FileText,
@@ -17,13 +15,11 @@ import {
   FolderOpen,
   Loader2,
   MoreHorizontal,
-  Pencil,
   Pin,
   Table,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { relativeTime } from '@renderer/features/chat/session-history';
-import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
 import { classifyEntryCategory, filterToContentOnly } from '@shared/rig/file-navigator-categories';
@@ -37,11 +33,11 @@ import {
 } from '@shared/rig/seen-state';
 import {
   DEFAULT_FILE_TREE_VIEW,
-  rigSettingsChangedChannel,
   type FileTreeFilter,
   type FileTreeSort,
 } from '@shared/rig/settings';
 import { filterTree, searchTree, sortTree, type TreeViewContext } from '@shared/rig/tree-view';
+import { archiveEntry, FileActionItems, usePinnedPaths } from './file-actions';
 import { RenameFileDialog } from './rename-file-dialog';
 import {
   ContextMenuItem,
@@ -417,38 +413,9 @@ export function FileTree({
   // Card rail round (§3), still true in v2: pin state, now consumed only by
   // the row context menu's "Pin to top"/"Unpin" and each row's static pin
   // glyph (no more per-row hover toggle button — see this file's own header
-  // comment). Same fetch/subscribe shape as seen-state above; `suggested-files.tsx`
-  // keeps its own independent copy of the same settings slice rather than
-  // this being threaded down as a prop — small, duplicated effects over a
-  // shared one is this app's own convention (see `useRevealHighlight`'s
-  // header comment).
-  const [pinned, setPinned] = useState<string[]>([]);
-  useEffect(() => {
-    if (!bindingId) {
-      setPinned([]);
-      return;
-    }
-    let alive = true;
-    void rpc.rig.settings.get().then((settings) => {
-      if (alive) setPinned(settings.pinnedPathsByRig[bindingId] ?? []);
-    });
-    const off = events.on(rigSettingsChangedChannel, (settings) => {
-      setPinned(settings.pinnedPathsByRig[bindingId] ?? []);
-    });
-    return () => {
-      alive = false;
-      off();
-    };
-  }, [bindingId]);
-
-  const togglePin = (relPath: string) => {
-    if (!bindingId) return;
-    const next = pinned.includes(relPath)
-      ? pinned.filter((p) => p !== relPath)
-      : [...pinned, relPath];
-    setPinned(next);
-    void rpc.rig.settings.set({ pinnedPathsByRig: { [bindingId]: next } });
-  };
+  // comment). The fetch/subscribe lives in `usePinnedPaths`, shared with a
+  // file's title bar menu (`file-actions.tsx`).
+  const { pinned, togglePin } = usePinnedPaths(bindingId);
 
   // v2 round (§3.3): the ONE row context menu, shared by every row and the
   // tree's own root (`target: null`) — right-clicking anywhere replaces the
@@ -476,25 +443,6 @@ export function FileTree({
     },
     [menu]
   );
-
-  const archive = async (node: RigFileNode) => {
-    try {
-      const result = await rpc.rig.files.archive({ rootId, relativePath: node.relPath });
-      if (!result.success) {
-        toast({
-          title: "Couldn't archive this item",
-          description: result.error.message,
-          variant: 'destructive',
-        });
-      }
-    } catch {
-      toast({
-        title: "Couldn't archive this item",
-        description: 'Try again.',
-        variant: 'destructive',
-      });
-    }
-  };
 
   /**
    * v3: the explorer's tab strip stays put through every state — a panel
@@ -615,53 +563,13 @@ export function FileTree({
                       }}
                     />
                   )}
-                  {target.kind === 'file' && (
-                    <ContextMenuItem
-                      label={menuTargetIsPinned ? 'Unpin' : 'Pin to top'}
-                      icon={Pin}
-                      onSelect={() => {
-                        togglePin(target.relPath);
-                        menu.close();
-                      }}
-                    />
-                  )}
-                  <ContextMenuItem
-                    label="Copy path"
-                    icon={Copy}
-                    onSelect={() => {
-                      void rpc.app.clipboardWriteText(absPath as string);
-                      menu.close();
-                    }}
-                  />
-                  <ContextMenuItem
-                    label="Reveal in Finder"
-                    icon={FolderOpen}
-                    onSelect={() => {
-                      void rpc.app.showItemInFolder(absPath as string);
-                      menu.close();
-                    }}
-                  />
-                  <ContextMenuItem
-                    label="Rename"
-                    icon={Pencil}
-                    onSelect={() => {
-                      setRenameTarget(target);
-                      menu.close();
-                    }}
-                  />
-                  {/*
-                    Archive moves the entry into `_archive/` at the rig
-                    root — a real move everyone sharing the rig can see,
-                    not a private flag that would make a file vanish for
-                    one person and stay put for everyone else.
-                  */}
-                  <ContextMenuItem
-                    label="Archive"
-                    icon={Archive}
-                    onSelect={() => {
-                      void archive(target);
-                      menu.close();
-                    }}
+                  <FileActionItems
+                    absPath={absPath as string}
+                    isPinned={menuTargetIsPinned}
+                    onTogglePin={target.kind === 'file' ? () => togglePin(target.relPath) : undefined}
+                    onRename={() => setRenameTarget(target)}
+                    onArchive={() => void archiveEntry(rootId, target.relPath)}
+                    onDone={menu.close}
                   />
                   <ContextMenuSeparator />
                   {target.kind === 'file' ? (
