@@ -36,6 +36,7 @@ import {
   docTypography,
 } from './doc-editor-theme';
 import { docEditorExtensions, type DocExtensionFactory } from './doc-extensions';
+import { docFind } from './doc-find';
 import { markdownFormatKeymap } from './markdown-format';
 import { codeIndentKeymap, markdownListIndentKeymap } from './markdown-list-indent';
 
@@ -309,6 +310,8 @@ export const DocEditor = forwardRef<DocEditorHandle, DocEditorProps>(function Do
       ...languageExtension(language),
       EditorView.lineWrapping,
       history(),
+      // Cmd-F find and replace, ahead of the default keymap.
+      docFind,
       keymap.of([
         ...(language === 'markdown' ? [...markdownFormatKeymap, ...markdownListIndentKeymap] : codeIndentKeymap),
         ...defaultKeymap,
