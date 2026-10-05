@@ -44,6 +44,8 @@ export type NotificationServiceDeps = {
   prefs: () => NotificationPrefs;
   cursor: { get: (account: string) => string | null; set: (account: string, id: string) => void };
   appFocused: () => boolean;
+  /** Marks rows read on the relay (the bell's own call). */
+  markRead: (ids: string[]) => Promise<unknown>;
   now: () => number;
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   log: { warn: (msg: string, meta?: Record<string, unknown>) => void };
@@ -203,16 +205,34 @@ export class NotificationService {
       this.deps.cursor.set(account, newest.data[0]?.id ?? '0');
       return;
     }
-    for (;;) {
-      const page = await this.deps.list({ after: cursor, limit: PAGE });
-      if (!page.success || this.account !== account) return;
-      for (const row of page.data) {
-        cursor = row.id;
-        this.deps.cursor.set(account, row.id);
-        this.consider(row);
+    // Rows about the space on screen, seen as they arrive: read at once, so
+    // the bell and the Dock don't count what you just watched happen. A run
+    // finishing posts no new message, so the Room's read marker never moves
+    // for it; this covers that and any other row without one.
+    const seen: string[] = [];
+    try {
+      for (;;) {
+        const page = await this.deps.list({ after: cursor, limit: PAGE });
+        if (!page.success || this.account !== account) return;
+        for (const row of page.data) {
+          cursor = row.id;
+          this.deps.cursor.set(account, row.id);
+          if (this.seenOnScreen(row)) seen.push(row.id);
+          else this.consider(row);
+        }
+        if (page.data.length < PAGE) return;
       }
-      if (page.data.length < PAGE) return;
+    } finally {
+      if (seen.length > 0 && this.account === account) {
+        await this.deps.markRead(seen);
+        void this.refreshSummary();
+      }
     }
+  }
+
+  /** Unread, about the space in a focused window, and arrived while it was there. */
+  private seenOnScreen(row: RigNotification): boolean {
+    return !row.readAt && !!row.bindingId && row.bindingId === this.viewing && this.deps.appFocused();
   }
 
   private consider(row: RigNotification): void {

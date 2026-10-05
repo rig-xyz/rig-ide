@@ -20,6 +20,8 @@ function setup(opts: { rows?: RigNotification[]; cursor?: string | null; summary
   const presented: string[] = [];
   const badges: number[] = [];
   const queries: ListQuery[] = [];
+  const markedRead: string[][] = [];
+  let focused = false;
   let pushEvent: ((e: SseEvent) => void) | null = null;
   let endStream: (() => void) | null = null;
   const summary: RigNotificationSummary = opts.summary ?? {
@@ -58,7 +60,10 @@ function setup(opts: { rows?: RigNotification[]; cursor?: string | null; summary
     emitChanged: () => {},
     prefs: () => prefs,
     cursor: { get: (a) => cursors.get(a) ?? null, set: (a, id) => cursors.set(a, id) },
-    appFocused: () => false,
+    appFocused: () => focused,
+    markRead: async (ids) => {
+      markedRead.push(ids);
+    },
     now: () => Date.now(),
     sleep: () => new Promise((r) => setTimeout(r, 0)),
     log: { warn: () => {} },
@@ -73,6 +78,8 @@ function setup(opts: { rows?: RigNotification[]; cursor?: string | null; summary
     present,
     closeAll,
     closeIds,
+    markedRead,
+    setFocused: (f: boolean) => (focused = f),
     setRows: (next: RigNotification[]) => (rows = next),
     push: (e: SseEvent) => pushEvent!(e),
     endStream: () => endStream?.(),
@@ -109,6 +116,36 @@ describe('NotificationService', () => {
     await t.service.catchUp();
     expect(t.presented).toEqual(['2', '3', '4']);
     expect(t.cursors.get('u_me')).toBe('4');
+  });
+
+  it('marks rows about the space on screen read as they arrive, and only those', async () => {
+    const t = setup({ cursor: '1' });
+    current = t;
+    t.setFocused(true);
+    t.service.start();
+    await t.connected();
+    t.service.setViewing('bnd_a');
+    t.setRows([
+      row({ id: '2', bindingId: 'bnd_a', createdAt: fresh() }),
+      row({ id: '3', bindingId: 'bnd_b', createdAt: fresh() }),
+    ]);
+    t.push({ event: 'notification', data: '{"id":"3"}' });
+    await t.service.catchUp();
+    // Another space's row stays unread for the bell.
+    expect(t.markedRead).toEqual([['2']]);
+    expect(t.presented).toEqual([]);
+  });
+
+  it('leaves them unread when the window is not focused', async () => {
+    const t = setup({ cursor: '1' });
+    current = t;
+    t.service.start();
+    await t.connected();
+    t.service.setViewing('bnd_a');
+    t.setRows([row({ id: '2', bindingId: 'bnd_a', createdAt: fresh() })]);
+    t.push({ event: 'notification', data: '{"id":"2"}' });
+    await t.service.catchUp();
+    expect(t.markedRead).toEqual([]);
   });
 
   it('applies the summary to the badge, and drops it when the badge setting is off', async () => {

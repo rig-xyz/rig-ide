@@ -174,6 +174,7 @@ export const notificationService = new NotificationService({
     },
   },
   appFocused: () => BrowserWindow.getAllWindows().some((w) => !w.isDestroyed() && w.isFocused()),
+  markRead: (ids) => relay.markRead({ ids }),
   now: () => Date.now(),
   sleep: (ms, signal) =>
     new Promise<void>((resolve) => {
