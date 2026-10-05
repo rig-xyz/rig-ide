@@ -695,28 +695,29 @@ export function PinnedCard({
       </button>
       {expanded === 'files' && (
         <div className="popover-in shrink-0 px-1 pt-1 pb-1.5">
+          {/* Creation lives WITH the files it creates (feedback round 2:
+              the header + was placeless), beside the filter. The menu
+              itself stays a popover — that's a true transient menu's
+              grammar. */}
           <NavigatorContent
             root={root}
             rootId={rootId}
             onOpenFile={(_absPath, relPath) => openFile(relPath)}
+            trailing={
+              <NewMenu
+                root={root}
+                rootId={rootId}
+                onOpenFile={(absPath) => {
+                  const relPath = absPath.startsWith(`${root}/`)
+                    ? absPath.slice(root.length + 1)
+                    : null;
+                  if (relPath) openFile(relPath);
+                  else onOpenFile(absPath, '');
+                }}
+                onOpenImportDialog={() => setImportOpen(true)}
+              />
+            }
           />
-          {/* Creation lives WITH the files it creates (feedback round 2:
-              the header + was placeless). The menu itself stays a popover
-              — that's a true transient menu's grammar. */}
-          <div className="mt-1.5 flex items-center px-1">
-            <NewMenu
-              root={root}
-              rootId={rootId}
-              onOpenFile={(absPath) => {
-                const relPath = absPath.startsWith(`${root}/`)
-                  ? absPath.slice(root.length + 1)
-                  : null;
-                if (relPath) openFile(relPath);
-                else onOpenFile(absPath, '');
-              }}
-              onOpenImportDialog={() => setImportOpen(true)}
-            />
-          </div>
         </div>
       )}
 

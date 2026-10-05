@@ -119,11 +119,14 @@ export function NavigatorContent({
   rootId,
   onOpenFile,
   revealDir = null,
+  trailing,
 }: {
   root: string;
   rootId: string;
   onOpenFile: (absPath: string, relPath: string) => void;
   revealDir?: string | null;
+  /** Sits to the right of the filter field on its row, at the field's height (the pinned card's New menu). */
+  trailing?: React.ReactNode;
 }) {
   const { data, isPending, isError, refetch } = useQuery({
     queryKey: rigFilesQueryKey(root, rootId),
@@ -172,18 +175,21 @@ export function NavigatorContent({
 
   return (
     <>
-      <div className="border-border-hairline focus-within:border-border-strong mb-1.5 flex items-center gap-1.5 rounded-control border px-2 py-1.5">
-        <Search className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
-        <input
-          ref={inputRef}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && matches && matches.length > 0) openFile(matches[0]);
-          }}
-          placeholder="Filter files"
-          className="w-full bg-transparent text-xs text-text-primary outline-none placeholder:text-text-muted"
-        />
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <div className="border-border-hairline focus-within:border-border-strong flex h-7.5 min-w-0 flex-1 items-center gap-1.5 rounded-control border px-2 py-1.5">
+          <Search className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && matches && matches.length > 0) openFile(matches[0]);
+            }}
+            placeholder="Filter files"
+            className="w-full bg-transparent text-xs text-text-primary outline-none placeholder:text-text-muted"
+          />
+        </div>
+        {trailing}
       </div>
       {/* Loading, error, and empty are THREE states (impeccable P3) — a
           founder reading "No files" over a failed read believes their

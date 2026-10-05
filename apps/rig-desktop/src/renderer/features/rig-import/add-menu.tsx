@@ -1,8 +1,10 @@
-import { FilePlus, FolderPlus, Link, Plus, RefreshCw, Upload } from 'lucide-react';
+import { FilePlus, FolderPlus, Link, Loader2, Plus, RefreshCw, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
 import { Popover, PopoverMenuItem, PopoverSeparator } from '@renderer/lib/ui/popover';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
+import { cn } from '@renderer/lib/utils';
 import { nextUntitledFileName } from './add-menu-logic';
 
 /**
@@ -163,19 +165,33 @@ export function NewMenu({
 
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        disabled={busy}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title="Add something to this rig"
-        className="flex shrink-0 items-center gap-1 rounded-control border border-border-hairline bg-bg-1 px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary disabled:opacity-60"
-      >
-        <Plus className="size-3.5" strokeWidth={1.5} />
-        {busy ? 'Adding…' : 'New'}
-      </button>
+      {/* A quiet square at the Files filter's own height, beside it. */}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              ref={triggerRef}
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              disabled={busy}
+              aria-haspopup="menu"
+              aria-expanded={open}
+              aria-label="New"
+              className={cn(
+                'border-border-hairline text-text-muted hover:bg-bg-2 hover:text-text-primary flex size-7.5 shrink-0 items-center justify-center rounded-control border transition-colors disabled:opacity-60',
+                open && 'bg-bg-2 text-text-primary'
+              )}
+            >
+              {busy ? (
+                <Loader2 className="size-3.5 animate-spin" strokeWidth={1.5} />
+              ) : (
+                <Plus className="size-3.5" strokeWidth={1.5} />
+              )}
+            </button>
+          }
+        />
+        <TooltipContent side="bottom">New file or import</TooltipContent>
+      </Tooltip>
       <Popover
         anchor={triggerRef}
         open={open}

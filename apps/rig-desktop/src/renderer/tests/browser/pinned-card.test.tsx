@@ -309,6 +309,43 @@ describe('PinnedCard', () => {
     });
   });
 
+  describe('Files section', () => {
+    it('puts a quiet New icon button beside the filter, on its row, and it still opens the New menu', async () => {
+      mocks.filesList.mockResolvedValue({
+        success: true,
+        data: [{ kind: 'file', name: 'notes.md', relPath: 'notes.md', mtimeMs: Date.now() }],
+      });
+      await render();
+      const filesRow = Array.from(host.querySelectorAll('button')).find(
+        (b) => b.textContent?.startsWith('Files')
+      )!;
+      await act(async () => click(filesRow));
+      await flush();
+
+      const filter = host.querySelector<HTMLInputElement>('input[placeholder="Filter files"]')!;
+      const newButton = host.querySelector<HTMLButtonElement>('button[aria-label="New"]')!;
+      expect(filter).toBeTruthy();
+      expect(newButton).toBeTruthy();
+      // Same row: the filter field's box and the New button are siblings, New last.
+      const filterField = filter.parentElement!;
+      expect(filterField.parentElement).toBe(newButton.parentElement);
+      expect(filterField.parentElement!.lastElementChild).toBe(newButton);
+      // An icon, not a labelled white button, and no old row under the list.
+      expect(newButton.textContent).toBe('');
+      expect(newButton.className).not.toContain('bg-bg-1');
+      expect(newButton.className).toContain('border-border-hairline');
+      expect(Array.from(host.querySelectorAll('button')).some((b) => b.textContent === 'New')).toBe(false);
+
+      await act(async () => click(newButton));
+      await flush();
+      const menu = document.querySelector('[role="menu"]')!;
+      expect(menu).toBeTruthy();
+      expect(menu.textContent).toContain('New file');
+      expect(menu.textContent).toContain('Import from Docs…');
+      expect(newButton.getAttribute('aria-expanded')).toBe('true');
+    });
+  });
+
   describe('Cloud row', () => {
     it('shows Cloud for a plain rig', async () => {
       await render({ isSpace: false });
