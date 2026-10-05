@@ -17,6 +17,8 @@ export type PendingSend = {
   id: string | null;
   /** Shown as cards while the files are copied and the message posted. */
   attachments?: MessageAttachment[];
+  /** A thread reply also sent to the main column ("Also send to #space"). */
+  alsoInChannel?: boolean;
 };
 
 /** Whether the relay's copy of `send` is already among `messages`. */
@@ -58,6 +60,7 @@ export function withPendingSends(snapshot: RoomSnapshot, pending: readonly Pendi
           kind: 'text' as const,
           ...(send.replyTo ? { replyTo: send.replyTo } : {}),
           ...(send.attachments?.length ? { attachments: send.attachments, autoBody: !send.text } : {}),
+          ...(send.alsoInChannel ? { alsoInChannel: true } : {}),
         },
         sending: true as const,
       })),

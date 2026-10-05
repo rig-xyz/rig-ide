@@ -196,8 +196,15 @@ export type MessageMeta =
       attachments?: MessageAttachment[];
       /** The body was written for older apps because only files were sent; cards say it already. */
       autoBody?: boolean;
+      /** A thread reply sent with "Also send to #space": Threads view shows it in the main column too. */
+      alsoInChannel?: boolean;
     }
-  | { kind: 'session'; runId: string }
+  | {
+      kind: 'session';
+      runId: string;
+      /** The message that asked for this run, when the session message says (Threads view puts the run in that message's thread). */
+      sourceMessageId?: string;
+    }
   | { kind: 'invite'; inviteId: string }
   | {
       kind: 'comment_mirror';

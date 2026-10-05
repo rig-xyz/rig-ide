@@ -199,6 +199,28 @@ describe('your message while it sends — one bubble, turning solid in place', (
     room.source.dispose();
   });
 
+  it('a thread reply sent to the main column too carries alsoInChannel on its grey copy, the post and the relay copy', async () => {
+    const room = openRoom();
+    await room.open();
+    const replyTo = { id: 'm1', authorId: 'u2', label: 'Sam', excerpt: 'morning' };
+    let pending: PendingSend[] = [
+      { localId: 'local-1', text: 'on it', replyTo, alsoInChannel: true, createdAt: new Date().toISOString(), id: null },
+    ];
+    expect(withPendingSends(room.source.getSnapshot(), pending, ME).messages.at(-1)!.meta).toEqual({
+      kind: 'text',
+      replyTo,
+      alsoInChannel: true,
+    });
+    void room.source.send('on it', replyTo, undefined, { clientId: 'local-1', alsoInChannel: true });
+    await flush();
+    expect(room.stored.at(-1)!.meta).toEqual({ replyTo, clientId: 'local-1', alsoInChannel: true });
+    await room.echo('m2', 2);
+    expect(room.source.getSnapshot().messages.at(-1)!.meta).toEqual({ kind: 'text', replyTo, alsoInChannel: true });
+    pending = settlePendingSends(pending, room.source.getSnapshot());
+    expect(pending).toEqual([]);
+    room.source.dispose();
+  });
+
   it('a message from before client ids (no meta.clientId) still settles by its id once the post answers', () => {
     const snapshot = { messages: [{ id: 'm9', seq: 9 }] } as never;
     const pending: PendingSend[] = [{ localId: 'local-1', text: 'x', createdAt: '', id: 'm9' }];

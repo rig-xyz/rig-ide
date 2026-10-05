@@ -1576,7 +1576,7 @@ export class RelayRoomSource implements RoomSource {
     text: string,
     replyTo?: RoomReplyRef,
     asks?: AgentKind,
-    extra?: { attachments?: MessageAttachment[]; autoBody?: boolean; clientId?: string }
+    extra?: { attachments?: MessageAttachment[]; autoBody?: boolean; clientId?: string; alsoInChannel?: boolean }
   ): Promise<string | null> {
     const meta = {
       ...(replyTo ? { replyTo } : {}),
@@ -1585,6 +1585,8 @@ export class RelayRoomSource implements RoomSource {
         ? { attachments: extra.attachments, ...(extra.autoBody ? { autoBody: true } : {}) }
         : {}),
       ...(extra?.clientId ? { clientId: extra.clientId } : {}),
+      // A thread reply that also shows in the main column (Threads view); text meta is free-form on the relay.
+      ...(extra?.alsoInChannel ? { alsoInChannel: true } : {}),
     };
     const result = await this.opts.relay.postMessage(this.opts.bindingId, {
       body: text,
@@ -2148,7 +2150,11 @@ function toMessageMeta(
 ): import('./types').MessageMeta {
   switch (kind) {
     case 'session':
-      return { kind: 'session', runId: String(meta.runId ?? '') };
+      return {
+        kind: 'session',
+        runId: String(meta.runId ?? ''),
+        ...(typeof meta.sourceMessageId === 'string' && meta.sourceMessageId ? { sourceMessageId: meta.sourceMessageId } : {}),
+      };
     case 'invite':
       return { kind: 'invite', inviteId: String(meta.inviteId ?? '') };
     case 'comment_mirror':
@@ -2187,6 +2193,7 @@ function toMessageMeta(
             }
           : {}),
         ...(attachments ? { attachments, ...(meta.autoBody === true ? { autoBody: true } : {}) } : {}),
+        ...(meta.alsoInChannel === true ? { alsoInChannel: true } : {}),
       };
     }
   }
