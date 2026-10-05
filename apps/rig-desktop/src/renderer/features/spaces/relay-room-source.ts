@@ -1576,7 +1576,14 @@ export class RelayRoomSource implements RoomSource {
     text: string,
     replyTo?: RoomReplyRef,
     asks?: AgentKind,
-    extra?: { attachments?: MessageAttachment[]; autoBody?: boolean; clientId?: string; alsoInChannel?: boolean }
+    extra?: {
+      attachments?: MessageAttachment[];
+      autoBody?: boolean;
+      clientId?: string;
+      alsoInChannel?: boolean;
+      /** You chose to just send it: the relay's router leaves it alone. */
+      route?: 'none';
+    }
   ): Promise<string | null> {
     const meta = {
       ...(replyTo ? { replyTo } : {}),
@@ -1587,6 +1594,7 @@ export class RelayRoomSource implements RoomSource {
       ...(extra?.clientId ? { clientId: extra.clientId } : {}),
       // A thread reply that also shows in the main column (Threads view); text meta is free-form on the relay.
       ...(extra?.alsoInChannel ? { alsoInChannel: true } : {}),
+      ...(extra?.route ? { route: extra.route } : {}),
     };
     const result = await this.opts.relay.postMessage(this.opts.bindingId, {
       body: text,

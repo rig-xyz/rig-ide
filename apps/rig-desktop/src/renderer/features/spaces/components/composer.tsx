@@ -1,4 +1,4 @@
-import { AtSign, CornerDownLeft, CornerUpLeft, FileText, Paperclip, Smile, Sparkles } from 'lucide-react';
+import { AtSign, Check, ChevronDown, CornerDownLeft, CornerUpLeft, FileText, Paperclip, Smile, Sparkles } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { WILL_SEND_WHEN_ONLINE } from '@renderer/features/home/home-connection';
 import { cn } from '@renderer/lib/utils';
@@ -6,6 +6,7 @@ import { formatFileTag, rankTaggableFiles, type TaggableFile } from '@shared/rig
 import { isLargeBatch, type ComposerAttachment } from '../attachments';
 import { loadEmojiIndex, matchShortcodes, recordEmojiUse, type EmojiIndex } from '../emoji-data';
 import { agentLogoId, BrandLogo } from '../logos';
+import { decideSend, type ComposerRoute, type SendOverride } from '../send-decision';
 import type { ComposerAttachments } from '../use-composer-attachments';
 import { AttachmentChips } from './attachment-chips';
 import type { AgentKind, RoomAgent, RoomMember, RoomReplyRef, RoomSkill } from '../types';
@@ -49,11 +50,19 @@ export const SUGGEST_MIN_CONFIDENCE = 0.5;
  * without a turn. No settings on it: the turn continues with whatever your
  * agent last ran with. × (or Esc) drops it for the rest of the draft and
  * the message goes to the room as plain chat.
+ *
+ * The same pause also brings the relay's routing: when it says the draft is
+ * for your agent, the button reads "Ask Claude" and Enter asks it, with no
+ * pill. The button's chevron flips that for the draft (ask one of your
+ * agents, or just send); see `send-decision.ts`. Without routing (offline,
+ * an older relay) the button works as it always did.
  */
 
 /** What the composer understood about a message, sent along with its text. */
 /** The composer's guess that a plain draft answers your own agent's turn. */
 export type ComposerSuggestion = { agent: AgentKind; replyTo: RoomReplyRef; confidence: number };
+/** What a typing pause learned about the draft: the turn it answers, and the relay's routing (null from a relay that doesn't route). */
+export type ComposerPreview = { reply: ComposerSuggestion | null; route: ComposerRoute | null };
 
 /** Any @mention, of an agent or a person (an email's `x@y.com` isn't one). */
 function hasMention(text: string): boolean {
@@ -103,6 +112,8 @@ export type ComposerSendContext = {
   files?: ComposerAttachment[];
   /** A thread reply that also goes to the main column (the thread panel's "Also send to #space"; the composer itself never sets it). */
   alsoInChannel?: boolean;
+  /** You chose to just send what the relay would have taken to your agent: the router leaves it alone. */
+  route?: 'none';
 };
 
 type MenuItem = {
@@ -161,6 +172,7 @@ export function Composer({
   openDoc = null,
   agentModels,
   suggestReply,
+  availableAgents,
   attachments,
   waitForConnection = false,
   waitingNote = WILL_SEND_WHEN_ONLINE,
@@ -188,8 +200,10 @@ export function Composer({
   openDoc?: string | null;
   /** The model each of your agents last ran here, shown in its pill until its own list loads. */
   agentModels?: Partial<Record<AgentKind, string | null>>;
-  /** Whether a plain draft answers one of your own agent's turns; null when not (or unsure). */
-  suggestReply?: (draft: string) => Promise<ComposerSuggestion | null>;
+  /** Whether a plain draft answers one of your own agent's turns, and the relay's routing for it; null when it can't tell. */
+  suggestReply?: (draft: string) => Promise<ComposerPreview | null>;
+  /** Your agents that can run on this computer, offered in the send button's menu; all of `agents` without it. */
+  availableAgents?: readonly AgentKind[];
   /** The files waiting to go with the message; no paperclip without it. */
   attachments?: ComposerAttachments;
   /** The space's files, for `+` tags; no file suggestions without it. */
@@ -215,15 +229,21 @@ export function Composer({
   // Pills you dropped for this message; a fresh message starts clean.
   const [droppedAgent, setDroppedAgent] = useState(false);
   const [droppedDoc, setDroppedDoc] = useState(false);
-  // The guess that this draft answers your agent, and whether you dropped it
-  // (which also drops a name-address: one × for "not to my agent").
-  const [suggestion, setSuggestion] = useState<{ draft: string; value: ComposerSuggestion } | null>(null);
-  const [droppedSuggestion, setDroppedSuggestion] = useState(false);
+  // What the last typing pause learned about this draft: the turn it may
+  // answer, and the relay's routing. Kept while a newer answer is on its
+  // way, so the button doesn't flicker as you type.
+  const [preview, setPreview] = useState<{ draft: string; reply: ComposerSuggestion | null; route: ComposerRoute | null } | null>(null);
+  // Your choice in the send button's menu, for this draft. Dropping the
+  // no-@ pill is the same as choosing Send (one × for "not to my agent").
+  const [override, setOverride] = useState<SendOverride | null>(null);
+  const droppedSuggestion = override?.kind === 'send';
+  const [sendMenuOpen, setSendMenuOpen] = useState(false);
   useEffect(() => {
     if (value.trim()) return;
     setDroppedAgent(false);
     setDroppedDoc(false);
-    setDroppedSuggestion(false);
+    setOverride(null);
+    setSendMenuOpen(false);
   }, [value]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -239,26 +259,29 @@ export function Composer({
   }, [prefill]);
 
   // Ask on a typing pause; a newer keystroke drops the answer to an older one.
+  // Once you've chosen in the menu (or dropped the pill) nothing more is
+  // asked, and the last answer stays: a Send can still tell the router.
   useEffect(() => {
     const draft = value.trim();
-    if (!suggestReply || replyTo || droppedSuggestion || !draft || draft.startsWith('/') || hasMention(draft)) {
-      setSuggestion(null);
+    if (override && draft) return;
+    if (!suggestReply || replyTo || !draft || draft.startsWith('/') || hasMention(draft)) {
+      setPreview(null);
       return;
     }
     let stale = false;
     const timer = setTimeout(() => {
       void suggestReply(draft)
         .catch(() => null)
-        .then((guess) => {
+        .then((answer) => {
           if (stale) return;
-          setSuggestion(guess && guess.confidence >= SUGGEST_MIN_CONFIDENCE ? { draft, value: guess } : null);
+          setPreview(answer ? { draft, reply: answer.reply, route: answer.route } : null);
         });
     }, SUGGEST_DEBOUNCE_MS);
     return () => {
       stale = true;
       clearTimeout(timer);
     };
-  }, [value, suggestReply, replyTo, droppedSuggestion]);
+  }, [value, suggestReply, replyTo, override]);
 
   const skillQuery = /^\/(\S*)$/.exec(value)?.[1] ?? null;
   const mentionQuery = useMemo(() => /(?:^|\s)@([a-z]*)$/i.exec(value)?.[1] ?? null, [value]);
@@ -437,15 +460,24 @@ export function Composer({
   // Your agent is tagged once its @name is written out, and a tag always
   // beats the no-@ pill; dropping the pill sends the message as plain chat.
   const tagged = taggedAgent(value, agents);
+  // A relay that routes says when the reply goes to your agent (`ask`); an
+  // older one only says how sure it is.
+  const reply = preview?.reply ?? null;
+  const replyConfident =
+    !!reply &&
+    (preview?.route
+      ? preview.route.action === 'ask' && preview.route.agent === reply.agent
+      : reply.confidence >= SUGGEST_MIN_CONFIDENCE);
   // Only a guess about your own agent, and only while it's still this draft.
   const suggested =
-    suggestion &&
+    reply &&
+    replyConfident &&
     !droppedSuggestion &&
     !replyTo &&
     !hasMention(value) &&
-    agents.some((a) => a.agent === suggestion.value.agent) &&
-    sameDraft(suggestion.draft, value.trim())
-      ? suggestion.value
+    agents.some((a) => a.agent === reply.agent) &&
+    sameDraft(preview!.draft, value.trim())
+      ? reply
       : null;
   // Called by name at the start, no @ and no Reply chosen.
   const addressed =
@@ -468,9 +500,27 @@ export function Composer({
   const agentPill = tagged && !droppedAgent ? tagged : null;
   const replyPill = replyTo ?? null;
   const docPill = agentPill && openDoc && !droppedDoc ? openDoc : null;
-  const sendsTo = agentPill ?? ownPill?.agent ?? null;
+  // The pill stays only while it's still where the message goes (another agent chosen in the menu drops it).
+  const shownOwnPill = ownPill && (override?.kind !== 'agent' || override.agent === ownPill.agent) ? ownPill : null;
+  const decision = decideSend({
+    text: value,
+    ownAgents: agents.map((a) => a.agent),
+    tagged: agentPill,
+    pill: shownOwnPill?.agent ?? null,
+    route: preview?.route ?? null,
+    override,
+    replying: !!replyPill,
+  });
+  const sendsTo = decision.agent;
   const dropSuggestion = () => {
-    setDroppedSuggestion(true);
+    setOverride({ kind: 'send' });
+    textareaRef.current?.focus();
+  };
+  // The send button's menu: your agents that can run here, then Send.
+  const menuAgents = (availableAgents ?? agents.map((a) => a.agent)).filter((agent) => agents.some((a) => a.agent === agent));
+  const choose = (choice: SendOverride) => {
+    setOverride(choice);
+    setSendMenuOpen(false);
     textareaRef.current?.focus();
   };
 
@@ -505,13 +555,14 @@ export function Composer({
     }
     const files = hasFiles ? attachments!.clear() : undefined;
     onSend(trimmed, {
-      replyTo: replyPill ?? ownPill?.replyTo ?? undefined,
+      replyTo: replyPill ?? shownOwnPill?.replyTo ?? undefined,
       agent: trimmed ? sendsTo : null,
       attach: docPill,
+      ...(trimmed && decision.meta.route ? { route: decision.meta.route } : {}),
       ...(files ? { files } : {}),
     });
     setValue('');
-    setSuggestion(null);
+    setPreview(null);
     setTyping(false);
     setConfirmingBatch(false);
   };
@@ -611,23 +662,23 @@ export function Composer({
         </div>
       )}
 
-      {!menuOpen && (ownPill || replyPill || agentPill || docPill) && (
+      {!menuOpen && (shownOwnPill || replyPill || agentPill || docPill) && (
         // In the flow, above the input: the Room makes room for it rather than being covered.
         <div className="popover-in mb-2 flex flex-wrap items-center gap-2 px-1" data-testid="composer-pills">
-          {ownPill && (
+          {shownOwnPill && (
             // Your agent without an @: one pill, no pickers (it runs as it last ran).
             <ContextPill
-              reason={ownPill.reason}
+              reason={shownOwnPill.reason}
               onDismiss={dropSuggestion}
               dismissLabel="Send to the chat"
               testId="composer-own-agent-pill"
             >
-              {ownPill.replyTo && <CornerUpLeft className="size-3.5 shrink-0" strokeWidth={1.5} />}
+              {shownOwnPill.replyTo && <CornerUpLeft className="size-3.5 shrink-0" strokeWidth={1.5} />}
               <span className="card-pop-in flex">
-                <BrandLogo id={agentLogoId(ownPill.agent)} size={14} />
+                <BrandLogo id={agentLogoId(shownOwnPill.agent)} size={14} />
               </span>
-              <b className="font-medium text-text-primary">{AGENT_NAME[ownPill.agent]}</b>
-              {ownPill.replyTo && <span className="max-w-56 truncate">{ownPill.replyTo.excerpt}</span>}
+              <b className="font-medium text-text-primary">{AGENT_NAME[shownOwnPill.agent]}</b>
+              {shownOwnPill.replyTo && <span className="max-w-56 truncate">{shownOwnPill.replyTo.excerpt}</span>}
             </ContextPill>
           )}
           {replyPill && (
@@ -716,7 +767,12 @@ export function Composer({
               onCancelReply?.();
               return;
             }
-            if (e.key === 'Escape' && ownPill) {
+            if (e.key === 'Escape' && sendMenuOpen) {
+              e.preventDefault();
+              setSendMenuOpen(false);
+              return;
+            }
+            if (e.key === 'Escape' && shownOwnPill) {
               e.preventDefault();
               dropSuggestion();
               return;
@@ -791,29 +847,145 @@ export function Composer({
               Your {AGENT_NAME[mentionedBusy]} is working; this goes after its current turn.
             </span>
           )}
-          <button
-            type="button"
-            onClick={send}
+          <SendButton
+            label={confirmingBatch ? `Send ${chips.length} files?` : decision.label}
+            onSend={send}
             disabled={!canSend || waitingToSend || waitingForConnection}
-            aria-busy={waitingToSend || waitingForConnection || undefined}
+            busy={waitingToSend || waitingForConnection}
+            active={canSend}
             title={held ? (attachments?.holdReason ?? undefined) : undefined}
-            className={cn(
-              'ml-auto flex h-6.5 items-center gap-1.5 rounded-control px-2.5 text-xs transition-colors disabled:opacity-60',
-              canSend ? 'bg-accent text-accent-ink' : 'bg-bg-2 text-text-secondary'
-            )}
-          >
-            {confirmingBatch
-              ? `Send ${chips.length} files?`
-              : sendsTo && value.trim()
-                ? `Ask ${AGENT_NAME[sendsTo]}`
-                : replyPill
-                  ? 'Reply'
-                  : 'Send'}
-            <CornerDownLeft className="size-3" strokeWidth={1.5} />
-          </button>
+            // A tag already says where it goes; the menu is for everything else.
+            choices={!!value.trim() && !agentPill && !confirmingBatch && !waitingForConnection ? menuAgents : null}
+            chosen={decision.mode === 'ask' ? decision.agent : 'send'}
+            open={sendMenuOpen}
+            onOpenChange={setSendMenuOpen}
+            onChoose={choose}
+          />
         </div>
       </div>
       {footer}
+    </div>
+  );
+}
+
+/**
+ * The composer's send button, split when there's a choice to make: the
+ * chevron opens a small menu above it (ask one of your agents, or just
+ * send), and the choice sticks for the draft.
+ */
+function SendButton({
+  label,
+  onSend,
+  disabled,
+  busy,
+  active,
+  title,
+  choices,
+  chosen,
+  open,
+  onOpenChange,
+  onChoose,
+}: {
+  label: string;
+  onSend: () => void;
+  disabled: boolean;
+  busy: boolean;
+  active: boolean;
+  title?: string;
+  /** Your agents to offer; null for no menu. */
+  choices: readonly AgentKind[] | null;
+  chosen: AgentKind | 'send' | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChoose: (choice: SendOverride) => void;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const split = !!choices && choices.length > 0;
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) onOpenChange(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open, onOpenChange]);
+  useEffect(() => {
+    if (!split && open) onOpenChange(false);
+  }, [split, open, onOpenChange]);
+  const tone = active ? 'bg-accent text-accent-ink' : 'bg-bg-2 text-text-secondary';
+  const option = (key: string, selected: boolean, onClick: () => void, children: ReactNode) => (
+    <button
+      key={key}
+      type="button"
+      role="menuitemradio"
+      aria-checked={selected}
+      data-testid={`composer-send-option-${key}`}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick}
+      className="hover:bg-bg-2 flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-sm text-text-primary transition-colors"
+    >
+      {children}
+      {selected && <Check className="ml-auto size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />}
+    </button>
+  );
+  return (
+    <div ref={wrapRef} className="relative ml-auto flex">
+      {split && open && (
+        <div
+          role="menu"
+          data-testid="composer-send-menu"
+          className="popover-in border-border-hairline bg-bg-1 shadow-float absolute right-0 bottom-full z-10 mb-1.5 flex min-w-40 flex-col rounded-card border p-1"
+        >
+          {choices.map((agent) =>
+            option(agent, chosen === agent, () => onChoose({ kind: 'agent', agent }), (
+              <>
+                <BrandLogo id={agentLogoId(agent)} size={14} />
+                <span>Ask {AGENT_NAME[agent]}</span>
+              </>
+            ))
+          )}
+          {option('send', chosen === 'send', () => onChoose({ kind: 'send' }), (
+            <>
+              <CornerDownLeft className="size-3.5 text-text-muted" strokeWidth={1.5} />
+              <span>Send</span>
+            </>
+          ))}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onSend}
+        disabled={disabled}
+        aria-busy={busy || undefined}
+        title={title}
+        data-testid="composer-send"
+        className={cn(
+          'flex h-6.5 items-center gap-1.5 rounded-control px-2.5 text-xs transition-colors disabled:opacity-60',
+          split && 'rounded-r-none',
+          tone
+        )}
+      >
+        {label}
+        <CornerDownLeft className="size-3" strokeWidth={1.5} />
+      </button>
+      {split && (
+        <button
+          type="button"
+          aria-label="Choose where this goes"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          title="Choose where this goes"
+          data-testid="composer-send-menu-toggle"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => onOpenChange(!open)}
+          className={cn(
+            'flex h-6.5 items-center rounded-control rounded-l-none border-l border-current/20 px-1 transition-colors',
+            tone
+          )}
+        >
+          <ChevronDown className="size-3" strokeWidth={1.5} />
+        </button>
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ConnectorId, ConnectResult, GlobalServer } from '@shared/spaces/connectors';
-import { Composer, type ComposerSuggestion } from '@renderer/features/spaces/components/composer';
+import { Composer, type ComposerPreview } from '@renderer/features/spaces/components/composer';
 import { ConversationMap } from '@renderer/features/spaces/components/conversation-map';
 import {
   AgentConfigRow,
@@ -1087,11 +1087,12 @@ describe('Room composer — a plain reply to your own agent', () => {
 
   /** Answers like the relay would: sure about "ok not this one", unsure about anything else. */
   function suggester() {
-    return vi.fn(async (draft: string): Promise<ComposerSuggestion | null> =>
-      /^(hey claude, )?ok not this one/.test(draft)
+    return vi.fn(async (draft: string): Promise<ComposerPreview | null> => ({
+      reply: /^(hey claude, )?ok not this one/.test(draft)
         ? { agent: 'claude', replyTo: turn, confidence: 0.8 }
-        : { agent: 'claude', replyTo: turn, confidence: 0.3 }
-    );
+        : { agent: 'claude', replyTo: turn, confidence: 0.3 },
+      route: null,
+    }));
   }
 
   /** The Room's settings api, so any pickers a pill has would show (and load). */
@@ -1249,20 +1250,20 @@ describe('Room composer — a plain reply to your own agent', () => {
   });
 
   it('still shows the pill when the relay answers seconds later, as long as it is the same draft', async () => {
-    let answer: (s: ComposerSuggestion) => void = () => {};
-    const suggestReply = vi.fn(() => new Promise<ComposerSuggestion | null>((resolve) => (answer = resolve)));
+    let answer: (s: ComposerPreview) => void = () => {};
+    const suggestReply = vi.fn(() => new Promise<ComposerPreview | null>((resolve) => (answer = resolve)));
     const textarea = await renderComposer(suggestReply as unknown as ReturnType<typeof suggester>);
     await setTextareaValue(textarea, 'ok not this one');
     await vi.waitFor(() => expect(suggestReply).toHaveBeenCalled());
     await new Promise((r) => setTimeout(r, 300));
     expect(ownPill()).toBeNull();
-    await act(async () => answer({ agent: 'claude', replyTo: turn, confidence: 0.98 }));
+    await act(async () => answer({ reply: { agent: 'claude', replyTo: turn, confidence: 0.98 }, route: null }));
     expect(ownPill()?.textContent).toContain('Claude');
     expect(ownPill()?.textContent).toContain('Linear it is');
   });
 
   describe('calling your agent by name', () => {
-    const neverSure = () => vi.fn(async (): Promise<ComposerSuggestion | null> => null);
+    const neverSure = () => vi.fn(async (): Promise<ComposerPreview | null> => null);
     const withCodex = () => {
       const own = replayedSnapshot().agents.filter((a) => a.owner === 'bob');
       return [...own, { ...own[0]!, agent: 'codex' as const }];

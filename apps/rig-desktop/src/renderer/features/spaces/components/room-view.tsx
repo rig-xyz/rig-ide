@@ -34,8 +34,10 @@ import { useRoomThemesEnabled } from '../use-room-themes-enabled';
 import { ForYouFeeder } from './for-you-feeder';
 import { ThemeDock } from './theme-dock';
 import { AttachmentSpaceContext, type AttachmentSpace } from './attachment-cards';
-import { Composer, keepUnsentAsDraft, type ComposerSendContext, type ComposerSuggestion } from './composer';
+import { Composer, keepUnsentAsDraft, type ComposerPreview, type ComposerSendContext } from './composer';
 import { ownTurnSuggestion } from '../own-turn-suggestion';
+import { routeFromPreview } from '../send-decision';
+import { useAvailableAgents } from '../use-available-agents';
 import { settlePendingSends, withPendingSends, type PendingSend } from '../pending-sends';
 import { isContinuation, renderItem, RoomTranscript, type RoomJumpRequest, type TranscriptThreads } from './room-transcript';
 import { OpenPageContext } from './transcript-items';
@@ -266,13 +268,15 @@ export { withPendingSends };
  * its own question. The request carries no settings: the turn runs in your
  * agent's persistent session for this space, as its last turn did (only
  * the @-pill's pickers change them, and they do it on the session itself).
+ * The send button's menu and the relay's routing ask the same way; a plain
+ * send you chose over the routing carries `meta.route: 'none'`.
  * Resolves to the message's id, or null when it wasn't sent.
  */
 export async function sendFromComposer(
   source: Pick<RelayRoomSource, 'send' | 'requestOwnAgent'>,
   ownAgents: readonly AgentKind[],
   text: string,
-  { replyTo, agent, attach, alsoInChannel }: ComposerSendContext,
+  { replyTo, agent, attach, alsoInChannel, route }: ComposerSendContext,
   wake: () => void,
   attachments: readonly MessageAttachment[] = [],
   clientId?: string
@@ -284,6 +288,7 @@ export async function sendFromComposer(
     ...(attachments.length > 0 ? { attachments: [...attachments], autoBody: !text } : {}),
     ...(clientId ? { clientId } : {}),
     ...(alsoInChannel ? { alsoInChannel: true } : {}),
+    ...(route ? { route } : {}),
   };
   const sourceMessageId =
     Object.keys(extra).length > 0
@@ -870,13 +875,17 @@ export function RoomView({
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   const suggestReply = useCallback(
-    async (draft: string): Promise<ComposerSuggestion | null> => {
+    async (draft: string): Promise<ComposerPreview | null> => {
       if (!(source instanceof RelayRoomSource)) return null;
       const preview = await source.previewDraft(draft);
-      return ownTurnSuggestion(snapshotRef.current, selfUserId, preview);
+      return {
+        reply: ownTurnSuggestion(snapshotRef.current, selfUserId, preview),
+        route: routeFromPreview(preview, selfUserId),
+      };
     },
     [source, selfUserId]
   );
+  const availableAgents = useAvailableAgents();
 
   const togglePlay = () => {
     if (!source || source.isDone()) return;
@@ -1315,6 +1324,7 @@ export function RoomView({
                 agentModels={lastModels(room, selfUserId)}
                 members={room.members}
                 agents={room.agents.filter((a) => a.owner === selfUserId)}
+                availableAgents={availableAgents}
                 skills={room.skills}
                 onSend={(text, context) => {
                   setThreadReplyTo(null);
@@ -1545,6 +1555,7 @@ export function RoomView({
               attachments={composerAttachments}
               listFiles={live ? listSpaceFiles : undefined}
               suggestReply={live ? suggestReply : undefined}
+              availableAgents={availableAgents}
               onTypingChange={
                 source instanceof RelayRoomSource ? (typing) => source.setTyping(typing) : undefined
               }
