@@ -7,6 +7,8 @@ import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
 import type { ConnectResult, GlobalServer } from '@shared/spaces/connectors';
 import { effectiveRunStatus, runCard } from '../projection';
 import { markReadThrough, readLastSeen } from '../room-read-marker';
+import type { SearchPlan } from '../chat-search';
+import { clearSearchMatches, paintSearchMatches } from '../search-highlight';
 import type { ThreadSummary } from '../threads';
 import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
 import { type MapEntry, ConversationMap } from './conversation-map';
@@ -340,6 +342,24 @@ export function layoutUnits(
   return { entries, foldOf };
 }
 
+/** Under a search match: where it sits, and the way back to it in the whole chat. */
+function SearchRowFooter({ message, search }: { message: RoomMessage; search: TranscriptSearch }) {
+  const label = search.contextLabel?.(message) ?? null;
+  return (
+    <div className="flex items-center justify-end gap-2 px-2 pt-1 text-2xs text-text-muted" data-search-skip>
+      {label && <span data-testid="search-context-label">{label}</span>}
+      <button
+        type="button"
+        onClick={() => search.onShowInChat(message)}
+        className="rounded-control px-1.5 py-0.5 transition-colors hover:bg-bg-2 hover:text-text-primary"
+        data-testid="search-show-in-chat"
+      >
+        Show in chat
+      </button>
+    </div>
+  );
+}
+
 /** The row a run of folded units shows as: the day divider's look, and a button. */
 function FoldRow({
   label,
@@ -508,6 +528,20 @@ export type TranscriptThreads = {
   onOpen: (rootId: string) => void;
 };
 
+/**
+ * The transcript as a chat search's results (`RoomView` draws a second one
+ * over the chat while a query is in): `snapshot.messages` holds only the
+ * matches, each with the match highlighted and a "Show in chat" under it.
+ * No "New" line, no conversation map, nothing marked read.
+ */
+export type TranscriptSearch = {
+  plan: SearchPlan;
+  /** Back to the whole chat, at this message. */
+  onShowInChat: (message: RoomMessage) => void;
+  /** Where a match sits, said beside its "Show in chat" (Threads view: a reply is "In a thread"). */
+  contextLabel?: (message: RoomMessage) => string | null;
+};
+
 export type RoomJumpRequest = {
   messageId?: string | null;
   /** Lets a jump to a message older than the loaded window give up at once, and say so. */
@@ -537,6 +571,7 @@ export function RoomTranscript({
   topBar,
   threads,
   readThroughSeq,
+  search,
 }: {
   snapshot: RoomSnapshot;
   ownId: string;
@@ -590,6 +625,8 @@ export function RoomTranscript({
    * count as read with the main column, as a channel's thread replies do).
    */
   readThroughSeq?: number;
+  /** Draw the search results instead of the chat (see `TranscriptSearch`). */
+  search?: TranscriptSearch;
 }) {
   // Callbacks read through refs: a parent's fresh arrow each render must
   // not re-run the scroll listener or the jump.
@@ -840,6 +877,29 @@ export function RoomTranscript({
     markReadThrough(readKey, readThroughSeq ?? Math.max(...snapshot.messages.map((m) => m.seq)));
   }, [readKey, pinned, snapshot.messages, stale, focusId, readThroughSeq]);
 
+  // Search: the matches are highlighted wherever they render, again as rows
+  // change (a card's log landing, a page of older matches coming in).
+  const searchPlan = search?.plan ?? null;
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content || !searchPlan) return;
+    let frame = 0;
+    const paint = () => {
+      frame = 0;
+      paintSearchMatches(content, searchPlan);
+    };
+    paint();
+    const observer = new MutationObserver(() => {
+      if (!frame) frame = requestAnimationFrame(paint);
+    });
+    observer.observe(content, { childList: true, subtree: true, characterData: true });
+    return () => {
+      observer.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+      clearSearchMatches();
+    };
+  }, [searchPlan]);
+
   // Split-resize perf round: `groupThreads` used to run twice a render —
   // once here, once again inline below to build the actual rows — so any
   // re-render this component takes for a reason that has nothing to do
@@ -885,14 +945,15 @@ export function RoomTranscript({
           row — it's positioned relative to this same scroll viewport. */}
       <div
         ref={contentRef}
-        className={cn('relative mx-auto flex max-w-[44rem] flex-col gap-4 px-3 pb-12', topBar ? 'pt-16' : 'pt-6')}
+        // Search results start clear of the search field above them.
+        className={cn('relative mx-auto flex max-w-[44rem] flex-col gap-4 px-3 pb-12', topBar || search ? 'pt-16' : 'pt-6')}
       >
         {snapshot.olderMessages === 'loading' && (
           <p className="text-text-muted text-center text-xs" data-testid="room-older-loading">
-            Loading earlier messages…
+            {search ? 'Loading older matches…' : 'Loading earlier messages…'}
           </p>
         )}
-        {snapshot.olderMessages === 'none' && snapshot.messages.length > 0 && (
+        {snapshot.olderMessages === 'none' && snapshot.messages.length > 0 && !search && (
           <p className="text-text-muted text-center text-xs" data-testid="room-start">
             Start of the space
           </p>
@@ -1026,6 +1087,7 @@ export function RoomTranscript({
                       ) : null;
                     })}
                   {askMessageId !== undefined && focus?.askAccessory?.(askMessageId)}
+                  {search && placed && <SearchRowFooter message={placed} search={search} />}
                 </motion.div>
               );
             }
@@ -1045,7 +1107,7 @@ export function RoomTranscript({
         </AnimatePresence>
       </div>
     </motion.div>
-      <ConversationMap scrollRef={scrollRef} contentRef={contentRef} entries={mapEntries} onJump={jumpTo} />
+      {!search && <ConversationMap scrollRef={scrollRef} contentRef={contentRef} entries={mapEntries} onJump={jumpTo} />}
       {/* Whenever you've scrolled up (Dylan, 2026-09-26): a round down arrow
           when nothing's new, the labelled pill when something is. */}
       {!pinned && (

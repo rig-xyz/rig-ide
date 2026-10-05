@@ -34,6 +34,8 @@ import type { MessageAttachment } from '@shared/rig/attachments';
 import { fallbackBody, toMessageAttachments, type ComposerAttachment } from '../attachments';
 import { useComposerAttachments } from '../use-composer-attachments';
 import { useDockFocus } from '../use-dock-focus';
+import { useChatSearch } from '../use-chat-search';
+import { ChatSearchBar } from './chat-search-bar';
 import { useRoomThemeRequest } from '../room-theme-request';
 import type { ForYouState } from '../use-for-you';
 import { useRoomThemesEnabled } from '../use-room-themes-enabled';
@@ -45,7 +47,14 @@ import { ownTurnSuggestion } from '../own-turn-suggestion';
 import { routeFromPreview } from '../send-decision';
 import { useAvailableAgents } from '../use-available-agents';
 import { settlePendingSends, withPendingSends, type PendingSend } from '../pending-sends';
-import { isContinuation, renderItem, RoomTranscript, type RoomJumpRequest, type TranscriptThreads } from './room-transcript';
+import {
+  isContinuation,
+  renderItem,
+  RoomTranscript,
+  type RoomJumpRequest,
+  type TranscriptSearch,
+  type TranscriptThreads,
+} from './room-transcript';
 import { AskSuggestionContext, OpenPageContext, type AskSuggestion } from './transcript-items';
 import { AGENT_NAME } from './identity';
 import { replyRefFor, THREAD_PANEL_PX, ThreadPanel } from './thread-panel';
@@ -80,6 +89,7 @@ function createRelayRoomClient(): RelayRoomClient {
     listSkills: (bindingId) => client.listSkills({ bindingId }),
     listInvites: (bindingId) => client.listInvites({ bindingId }),
     listMessages: (bindingId, query) => client.listMessages({ bindingId, query }),
+    searchMessages: (bindingId, query) => client.searchMessages({ bindingId, query }),
     getSessionEvents: (bindingId, runId, after) => client.getSessionEvents({ bindingId, runId, after }),
     postMessage: (bindingId, input) => client.postMessage({ bindingId, ...input }),
     requestOwnAgent: (bindingId, input) => client.requestOwnAgent({ bindingId, ...input }),
@@ -1144,24 +1154,105 @@ export function RoomView({
     () => (threadsLayout ? focusForThreads(dockFocus.transcriptFocus, threadsLayout) : dockFocus.transcriptFocus),
     [threadsLayout, dockFocus.transcriptFocus]
   );
+
+  // Search (Cmd-F): while a query is in, the matches are drawn over the chat,
+  // which stays where it was underneath, so closing the search puts the
+  // reader back at the same place. Search wins over a focused theme while
+  // it's on (the theme's view is what comes back). In Threads view the
+  // matches are flat, a reply saying it's in a thread.
+  const chatSearch = useChatSearch({ bindingId, source, snapshot: shownSnapshot });
+  const searchActive = chatSearch.open && chatSearch.plan !== null;
+  // "Show in chat": a jump of the Room's own, the same way a notification's goes (paging back if it must).
+  const [localJump, setLocalJump] = useState<RoomJumpRequest | null>(null);
+  useEffect(() => setLocalJump(null), [bindingId]);
+  const activeJump = useMemo(
+    () => (!localJump ? jump : !jump || localJump.nonce > jump.nonce ? localJump : jump),
+    [jump, localJump]
+  );
+  const closeSearch = chatSearch.close;
+  const showInChat = useCallback(
+    (message: RoomMessage) => {
+      closeSearch();
+      setLocalJump({ messageId: message.id, messageSeq: message.seq, runId: null, nonce: Date.now() });
+    },
+    [closeSearch]
+  );
+  const searchView = useMemo<TranscriptSearch | undefined>(() => {
+    if (!chatSearch.plan) return undefined;
+    return {
+      plan: chatSearch.plan,
+      onShowInChat: showInChat,
+      ...(threadsLayout
+        ? { contextLabel: (m: RoomMessage) => (threadsLayout.rootOf.has(m.id) ? 'In a thread' : null) }
+        : {}),
+    };
+  }, [chatSearch.plan, showInChat, threadsLayout]);
+  const { matches: searchMatches, remote: searchRemote } = chatSearch;
+  const searchSnapshot = useMemo<RoomSnapshot | null>(() => {
+    if (!shownSnapshot || !searchActive) return null;
+    return {
+      ...shownSnapshot,
+      messages: searchMatches,
+      typingUserIds: [],
+      // Scrolling up the matches asks the relay for older ones.
+      olderMessages: searchRemote.loadingMore ? 'loading' : searchRemote.more ? 'more' : undefined,
+    };
+  }, [shownSnapshot, searchActive, searchMatches, searchRemote]);
+
+  // Cmd-F in the Room opens the search, or selects what's in it. Not from a
+  // doc's editor (it has its own find) nor from anywhere outside the Room.
+  const roomRootRef = useRef<HTMLDivElement>(null);
+  const openChatSearch = chatSearch.openSearch;
+  const searchOpen = chatSearch.open;
+  useEffect(() => {
+    if (collapsed) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey)) return;
+      if (event.key.toLowerCase() !== 'f') return;
+      const target = event.target instanceof Node ? event.target : null;
+      const root = roomRootRef.current;
+      if (!root) return;
+      const inRoom = !target || target === document.body || target === document.documentElement || root.contains(target);
+      if (!inRoom) return;
+      if (target instanceof Element && target.closest('.cm-editor')) return;
+      event.preventDefault();
+      openChatSearch();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [collapsed, openChatSearch]);
+  // Esc closes it from anywhere in the Room (in the field, the field says so first), before a focused theme hears it.
+  useEffect(() => {
+    if (!searchOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      event.preventDefault();
+      closeSearch();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [searchOpen, closeSearch]);
+
   // A notification pointing at a reply: the main column goes to its root, and its thread opens on it.
   const jumpTargetId = useMemo(() => {
-    if (!jump || !threadsLayout || !shownMessages) return null;
-    if (jump.messageId) return jump.messageId;
-    if (!jump.runId) return null;
-    return shownMessages.find((m) => m.meta.kind === 'session' && m.meta.runId === jump.runId)?.id ?? null;
-  }, [jump, threadsLayout, shownMessages]);
+    if (!activeJump || !threadsLayout || !shownMessages) return null;
+    if (activeJump.messageId) return activeJump.messageId;
+    if (!activeJump.runId) return null;
+    return shownMessages.find((m) => m.meta.kind === 'session' && m.meta.runId === activeJump.runId)?.id ?? null;
+  }, [activeJump, threadsLayout, shownMessages]);
   const jumpRootId = jumpTargetId ? (threadsLayout?.rootOf.get(jumpTargetId) ?? null) : null;
   const transcriptJump = useMemo(
-    () => (jump && jumpRootId ? { ...jump, messageId: jumpRootId, runId: null } : jump),
-    [jump, jumpRootId]
+    () => (activeJump && jumpRootId ? { ...activeJump, messageId: jumpRootId, runId: null } : activeJump),
+    [activeJump, jumpRootId]
   );
   const threadJumpDoneRef = useRef<number | null>(null);
   useEffect(() => {
-    if (!jump || !jumpRootId || !jumpTargetId || threadJumpDoneRef.current === jump.nonce) return;
-    threadJumpDoneRef.current = jump.nonce;
+    if (!activeJump || !jumpRootId || !jumpTargetId || threadJumpDoneRef.current === activeJump.nonce) return;
+    threadJumpDoneRef.current = activeJump.nonce;
     openThreadOn(jumpRootId, { focusId: jumpTargetId });
-  }, [jump, jumpRootId, jumpTargetId, openThreadOn]);
+  }, [activeJump, jumpRootId, jumpTargetId, openThreadOn]);
   // Reply, in Threads view, opens the message's thread (a reply to a reply
   // answers it there). A reply whose root isn't loaded quotes it as in Flow.
   const handleReply = useCallback(
@@ -1414,7 +1505,7 @@ export function RoomView({
 
   return (
     <AgentSettingsContext.Provider value={agentSettingsApi}>
-    <div className="bg-bg-0 relative flex h-full min-h-0 flex-col" data-testid="room-view">
+    <div ref={roomRootRef} className="bg-bg-0 relative flex h-full min-h-0 flex-col" data-testid="room-view">
       {/* Room chrome round: a real space (#name) is already named in the
           app's single top bar — this row used to repeat it. It survives
           only for the Room-preview overlay on a plain rig (`showDemoToggle`,
@@ -1518,6 +1609,13 @@ export function RoomView({
             />
           ) : (
           withRoomContexts(
+          <div className="relative flex min-h-0 flex-1 flex-col">
+          {/* Under the search's results the chat stays as it was (scroll and all), only hidden. */}
+          <div
+            className={cn('flex min-h-0 flex-1 flex-col', searchActive && 'invisible')}
+            aria-hidden={searchActive || undefined}
+            inert={searchActive || undefined}
+          >
           <RoomTranscript
             snapshot={transcriptSnapshot ?? room}
             ownId={selfUserId}
@@ -1540,6 +1638,29 @@ export function RoomView({
             threads={transcriptThreads}
             readThroughSeq={readThroughSeq}
           />
+          </div>
+          {searchSnapshot && searchView && (
+            <div className="bg-bg-0 absolute inset-0 flex min-h-0 flex-col" data-testid="chat-search-results">
+              <RoomTranscript
+                // Each query starts at its newest match, at the bottom.
+                key={chatSearch.searched}
+                snapshot={searchSnapshot}
+                ownId={selfUserId}
+                onStopSession={handleStopSession}
+                onResolvePermission={handleResolvePermission}
+                onOpenFile={handleOpenFile}
+                onRerun={handleRerun}
+                onConnectorConnect={handleConnectorConnect}
+                globalSetup={globalSetup}
+                onHideDetails={handleHideDetails}
+                onLoadRunLog={handleLoadRunLog}
+                onLoadOlder={chatSearch.loadMore}
+                search={searchView}
+              />
+            </div>
+          )}
+          <ChatSearchBar search={chatSearch} />
+          </div>
           )
           )}
           <div className="mx-auto w-full max-w-[44rem] shrink-0 px-5 pb-4">

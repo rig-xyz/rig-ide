@@ -44,6 +44,7 @@ import type {
   SessionAgent,
   SessionEventRow,
   SessionRun,
+  RoomSearchPage,
 } from '@main/rig/spaces/relay-api';
 import type { DraftPreview } from '@main/rig/spaces-connection';
 import type { MessageAttachment } from '@shared/rig/attachments';
@@ -65,7 +66,7 @@ import type {
 import { parseMessageAttachments } from './attachments';
 import { reduceRoom } from './fixtures/room-feed';
 import { effectiveRunStatus, runCard, summarizeCard } from './projection';
-import type { RoomSource } from './room-source';
+import type { ChatSearchPage, RoomSource } from './room-source';
 import { formatClock } from '@renderer/lib/time-format';
 
 // ────────── the minimal realtime transport this class needs ──────────
@@ -146,6 +147,11 @@ export interface RelayRoomClient {
     bindingId: string,
     query: { latest?: number; after?: string; before?: string }
   ): Promise<Result<RoomMessageRow[], RelayApiError>>;
+  /** Search the space's chat, newest first (`GET /v1/me/bindings/:id/messages/search`); absent on a client without it. */
+  searchMessages?(
+    bindingId: string,
+    query: { q: string; before?: number; limit?: number }
+  ): Promise<Result<RoomSearchPage, RelayApiError>>;
   getSessionEvents(
     bindingId: string,
     runId: string,
@@ -332,6 +338,8 @@ const RUN_NOTIFY_MS = 32;
 
 /** The disk cache (rig/docs/room-disk-cache-spec.md): saved this long after the Room last changed. */
 const DISK_SAVE_SETTLE_MS = 3_000;
+/** Search page size: matches per `search` call. */
+const SEARCH_PAGE = 30;
 /** Scrollback page size: messages per `loadOlder`. */
 const OLDER_PAGE = 50;
 
@@ -1498,6 +1506,49 @@ export class RelayRoomSource implements RoomSource {
     } finally {
       this.loadingOlder = false;
     }
+  }
+
+  /**
+   * Search (`RoomSource.search`): one page of the relay's matches. A match
+   * already here is this Room's own copy; an older one is built the way a
+   * scrollback page's messages are (`toRoomMessage`), but kept out of the
+   * transcript, and a run it names loads in the background like theirs, so
+   * an agent's answer found far back shows as its card.
+   */
+  async search(query: string, before?: number): Promise<ChatSearchPage> {
+    const relay = this.opts.relay;
+    if (this.disposed || !relay.searchMessages) return { ok: false };
+    const page = await relay.searchMessages(this.opts.bindingId, {
+      q: query,
+      limit: SEARCH_PAGE,
+      ...(before !== undefined ? { before } : {}),
+    });
+    if (this.disposed) return { ok: false };
+    if (!page.success) {
+      this.log('Rig spaces: could not search the chat', { error: page.error.message });
+      return { ok: false };
+    }
+    const loadingBefore = new Set(this.runsLoading.keys());
+    const built: RoomMessage[] = [];
+    const messages: RoomMessage[] = [];
+    for (const hit of page.data.results) {
+      const here = this.snapshot.messages.find((m) => m.id === hit.messageId);
+      if (here) {
+        messages.push(here);
+        continue;
+      }
+      const message = await this.toRoomMessage(hit.message, () => {}, { bootstrap: true, older: true, peers: built });
+      if (this.disposed) return { ok: false };
+      if (!message) continue;
+      built.push(message.message);
+      messages.push(message.message);
+    }
+    const newRuns = [...this.runsLoading.keys()].filter((id) => !loadingBefore.has(id));
+    if (newRuns.length > 0) {
+      this.snapshot = { ...this.snapshot, runsLoading: this.loadingRecord() };
+      void this.loadRuns(newRuns, Date.now());
+    }
+    return { ok: true, messages, nextBefore: page.data.nextBefore };
   }
 
   /** Lands a run's header and full backlog in one step (`session_log_loaded`), once — the first time a room message references it. Uses `prefetched` (the open's `loadRuns`) when given, else fetches it itself (the realtime path). */

@@ -8,7 +8,7 @@
  */
 
 import type { RigNotification } from '@shared/rig/notifications';
-import type { RoomEvent, RoomSnapshot } from './types';
+import type { RoomEvent, RoomMessage, RoomSnapshot } from './types';
 
 export interface RoomSource {
   /** The current materialized state — always safe to call, even before anything has played. */
@@ -31,7 +31,23 @@ export interface RoomSource {
    * `RoomSnapshot.olderMessages`). Absent for a source with none.
    */
   loadOlder?(): Promise<void>;
+  /**
+   * Search in the space's chat, on the relay: one page of matches, newest
+   * first, older than `before` (the last page's `nextBefore`). Never added
+   * to the transcript. Absent for a source with no relay.
+   */
+  search?(query: string, before?: number): Promise<ChatSearchPage>;
 }
+
+/**
+ * One page of a chat search, as Room messages, newest first (the relay's
+ * order). A match already in the Room is the Room's own copy; an older one
+ * is built like a scrollback page's message, its run's log loading in the
+ * background. `ok: false`: the relay couldn't be reached.
+ */
+export type ChatSearchPage =
+  | { ok: true; messages: RoomMessage[]; nextBefore: number | null }
+  | { ok: false };
 
 export interface RoomFeedBeat {
   /** Delay before this beat's events are applied, relative to the previous beat (ms, at 1x speed). */
