@@ -193,6 +193,7 @@ function normalizeSettings(parsed: unknown): RigSettings {
     spacesDefaultOnApplied: true,
     spacesRoomSees: normalizeRoomSees(raw.spacesRoomSees),
     spacesRoomSeesDefault: isRoomSees(raw.spacesRoomSeesDefault) ? raw.spacesRoomSeesDefault : DEFAULT_ROOM_SEES,
+    spacesChatView: raw.spacesChatView === 'threads' ? 'threads' : 'flow',
     // On by default since 0.4.9; a file from before then gets both switched on once.
     spacesRoomDiskCache: raw.cacheAndThemesDefaultOnApplied === true ? raw.spacesRoomDiskCache === true : true,
     roomThemesEnabled: raw.cacheAndThemesDefaultOnApplied === true ? raw.roomThemesEnabled === true : true,

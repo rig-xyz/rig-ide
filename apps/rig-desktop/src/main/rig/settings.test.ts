@@ -146,6 +146,22 @@ describe('RigSettingsStore', () => {
     expect(bad.get().spacesRoomSeesDefault).toBe('steps');
   });
 
+  it('keeps the chat view: flow until picked, saved, and a bad value falls back to flow', () => {
+    const store = new RigSettingsStore(settingsPath);
+    store.initialize();
+    expect(store.get().spacesChatView).toBe('flow');
+    store.set({ spacesChatView: 'threads' });
+
+    const reloaded = new RigSettingsStore(settingsPath);
+    reloaded.initialize();
+    expect(reloaded.get().spacesChatView).toBe('threads');
+
+    writeFileSync(settingsPath, JSON.stringify({ ...reloaded.get(), spacesChatView: 'nested' }));
+    const bad = new RigSettingsStore(settingsPath);
+    bad.initialize();
+    expect(bad.get().spacesChatView).toBe('flow');
+  });
+
   it('merges lastOpenTabsByRig at the key level — one rig writing its tabs never clobbers another', () => {
     const store = new RigSettingsStore(settingsPath);
     store.initialize();

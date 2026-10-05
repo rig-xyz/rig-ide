@@ -253,6 +253,20 @@ describe('SettingsSheet', () => {
     await vi.waitFor(() => expect(checked()).toBe('Answer'));
   });
 
+  it('chat view defaults to Flow and saves spacesChatView', async () => {
+    await renderSettings({ initialPage: 'spaces' });
+    const row = () => document.querySelector<HTMLElement>('[data-settings-row="chat-view"]')!;
+    const radios = () => Array.from(row().querySelectorAll<HTMLButtonElement>('[role="radio"]'));
+    const checked = () => radios().find((r) => r.getAttribute('aria-checked') === 'true')?.textContent;
+    expect(row().textContent).toContain('Threads folds every reply under the message it answers. Flow keeps one timeline.');
+    expect(radios().map((r) => r.textContent)).toEqual(['Flow', 'Threads']);
+    expect(checked()).toBe('Flow');
+    settingsMock.current = { spacesChatView: 'threads' };
+    await act(async () => radios()[1]!.click());
+    expect(settingsMock.set).toHaveBeenCalledWith({ spacesChatView: 'threads' });
+    await vi.waitFor(() => expect(checked()).toBe('Threads'));
+  });
+
   it('"Open spaces instantly" turns the disk cache on, and turning it off deletes what was kept', async () => {
     await renderSettings({ initialPage: 'advanced' });
     const toggle = () => document.querySelector<HTMLButtonElement>('#spaces-disk-cache')!;

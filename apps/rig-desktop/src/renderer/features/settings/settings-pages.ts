@@ -40,7 +40,12 @@ export const SETTINGS_PAGES: readonly SettingsPageMeta[] = [
     lede: 'The agents on this computer and how much they can do without asking.',
     icon: Bot,
   },
-  { id: 'spaces', title: 'Spaces', lede: "How much of your agent's work others see.", icon: UsersRound },
+  {
+    id: 'spaces',
+    title: 'Spaces',
+    lede: "How a space's chat looks to you and how much of your agent's work others see.",
+    icon: UsersRound,
+  },
   {
     id: 'notifications',
     title: 'Notifications',
@@ -103,6 +108,12 @@ export const SETTINGS_ROWS: readonly SettingsRowEntry[] = [
     label: 'Ask before acting on comments',
     description:
       "When someone mentions an agent in a comment, it asks you before it changes anything. Keep this on in spaces with people you don't know well.",
+  },
+  {
+    id: 'chat-view',
+    page: 'spaces',
+    label: 'Chat view',
+    description: 'Threads folds every reply under the message it answers. Flow keeps one timeline.',
   },
   {
     id: 'room-sees-default',

@@ -226,6 +226,11 @@ export type RigSettings = {
   /** "Room sees" for a space with no pick of its own in `spacesRoomSees` (Settings › Spaces). */
   spacesRoomSeesDefault: RoomSees;
   /**
+   * Settings › Spaces › Chat view: 'flow' keeps one timeline; 'threads' folds
+   * every reply under the message it answers. Only changes what you see.
+   */
+  spacesChatView: SpacesChatView;
+  /**
    * Spaces: keep each space's last Room on disk (`rig_room_cache`, see
    * rig/docs/room-disk-cache-spec.md), so the first open after launch shows
    * it at once and only catches up. On by default since 0.4.9.
@@ -286,6 +291,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   spacesDefaultOnApplied: true,
   spacesRoomSees: {},
   spacesRoomSeesDefault: DEFAULT_ROOM_SEES,
+  spacesChatView: 'flow',
   spacesRoomDiskCache: true,
   roomThemesEnabled: true,
   cacheAndThemesDefaultOnApplied: true,
@@ -302,6 +308,9 @@ export type RigSettingsLegacyImport = Partial<{
 }>;
 
 /** What the renderer may actually change. `version` is main's to own. */
+/** How a space's chat lays out replies (Settings › Spaces › Chat view). */
+export type SpacesChatView = 'flow' | 'threads';
+
 export type RigSettingsPatch = Partial<Omit<RigSettings, 'version'>>;
 
 /** Broadcast on every successful `set`/`importLegacy`, carrying the new full settings. */
