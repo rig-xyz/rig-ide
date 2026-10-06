@@ -58,6 +58,7 @@ import { onRigEntryMoved } from './rig/files';
 import { createEntryMoveFollower } from './rig/path-refs';
 import { rigSettingsStore } from './rig/settings-instance';
 import { startNotifications } from './rig/notifications/electron';
+import { wireActiveMac } from './rig/active-mac-instance';
 import { spacesDispatchController, wireAgentsReporter } from './rig/spaces/dispatch-controller-instance';
 import { bufferOpenFilePath } from './rig/workspace';
 import { rpcRouter } from './rpc';
@@ -208,6 +209,7 @@ void app.whenReady().then(async () => {
   registerRigBridge();
   spacesDispatchController.initialize();
   wireAgentsReporter();
+  wireActiveMac();
 
   registerRPCRouter(rpcRouter, app.isPackaged ? ipcMain : withRpcLogging(ipcMain));
 

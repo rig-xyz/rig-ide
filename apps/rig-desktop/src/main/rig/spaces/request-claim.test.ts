@@ -1,5 +1,5 @@
 import { err, ok } from '@emdash/shared';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   claimAndDispatchQueued,
   claimOne,
@@ -251,6 +251,14 @@ describe('claimOne / claimAndDispatchQueued', () => {
     expect(store.get('no-folder')?.status).toBe('queued');
     expect(store.get('no-codex')?.status).toBe('queued');
     expect(store.patches.filter((p) => p.status === 'failed')).toEqual([]);
+  });
+
+  it("sends this Mac's id with each claim", async () => {
+    const store = makeSharedStore([makeRequest({ id: 'q1', status: 'queued' })]);
+    const api = store.apiFor();
+    const claim = vi.spyOn(api, 'claimAgentRequest');
+    await claimAndDispatchQueued({ api, deviceId: 'device-a', computer: 'mac-a', dispatch: async () => ({ runId: 'r1' }) });
+    expect(claim).toHaveBeenCalledWith('b1', 'q1', 'device-a', 'mac-a');
   });
 
   it('skips a request (without throwing) when the device id resolver rejects', async () => {

@@ -178,6 +178,8 @@ export type BannerContext = {
   appFocused: boolean;
   /** The space currently on screen in a focused window, if any. */
   viewingBindingId: string | null;
+  /** You're at another of your Macs right now, so the banner shows there instead. */
+  usingAnotherMac?: boolean;
   now: number;
 };
 
@@ -185,7 +187,7 @@ export type BannerDecision =
   | { show: true }
   | {
       show: false;
-      reason: 'disabled' | 'type' | 'read' | 'stale' | 'muted' | 'viewing' | 'present';
+      reason: 'disabled' | 'type' | 'read' | 'stale' | 'muted' | 'viewing' | 'elsewhere' | 'present';
     };
 
 /** Whether a newly received row becomes a banner (spec §5, presenter). */
@@ -199,6 +201,7 @@ export function decideBanner(n: RigNotification, ctx: BannerContext): BannerDeci
   if (n.bindingId && ctx.appFocused && ctx.viewingBindingId === n.bindingId) {
     return { show: false, reason: 'viewing' };
   }
+  if (ctx.usingAnotherMac) return { show: false, reason: 'elsewhere' };
   // Away means no rig window is focused (Dylan, 2026-10-01: focus only, no
   // idle timer; simpler to predict).
   if (ctx.prefs.onlyWhenAway && ctx.appFocused) {

@@ -65,6 +65,13 @@ describe('decideBanner', () => {
     const always = { ...DEFAULT_NOTIFICATION_PREFS, onlyWhenAway: false };
     expect(decideBanner(row(), ctx({ prefs: always, appFocused: true }))).toEqual({ show: true });
   });
+
+  it("while you're at another of your Macs, the banner shows there, not here", () => {
+    expect(decideBanner(row(), ctx({ usingAnotherMac: true }))).toMatchObject({ reason: 'elsewhere' });
+    const always = { ...DEFAULT_NOTIFICATION_PREFS, onlyWhenAway: false };
+    expect(decideBanner(row(), ctx({ prefs: always, usingAnotherMac: true }))).toMatchObject({ reason: 'elsewhere' });
+    expect(decideBanner(row(), ctx({ usingAnotherMac: false }))).toEqual({ show: true });
+  });
 });
 
 describe('dockCount', () => {

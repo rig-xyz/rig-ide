@@ -17,6 +17,7 @@ import {
   type RigNotificationSummary,
 } from '@shared/rig/notifications';
 import { resolveSelfUserId } from '../account';
+import { activeMac } from '../active-mac-instance';
 import { notificationPermission, openNotificationSettings, requestNotificationPermission } from './permission';
 import { DeepLinkInbox } from '../deep-link-inbox';
 import { rigSettingsStore } from '../settings-instance';
@@ -174,6 +175,7 @@ export const notificationService = new NotificationService({
     },
   },
   appFocused: () => BrowserWindow.getAllWindows().some((w) => !w.isDestroyed() && w.isFocused()),
+  usingAnotherMac: () => activeMac.usingAnotherMac(),
   markRead: (ids) => relay.markRead({ ids }),
   now: () => Date.now(),
   sleep: (ms, signal) =>

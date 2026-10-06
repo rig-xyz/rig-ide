@@ -122,6 +122,8 @@ function realDeps(): SpacesDispatchControllerDeps {
         canRun: async (request) =>
           rigSettingsStore.get().lastKnownRunnableAgents.includes(request.targetAgent) &&
           (await folderOf(request.bindingId)) !== null,
+        // The Mac you're at gets the first go (the relay holds the others back for a moment).
+        computer: thisMacId(),
       });
       poller.start();
       void dispatcher.settleInterrupted();

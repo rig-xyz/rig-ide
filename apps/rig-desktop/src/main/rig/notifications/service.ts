@@ -44,6 +44,8 @@ export type NotificationServiceDeps = {
   prefs: () => NotificationPrefs;
   cursor: { get: (account: string) => string | null; set: (account: string, id: string) => void };
   appFocused: () => boolean;
+  /** You're at another of your Macs (`active-mac.ts`); absent: never. */
+  usingAnotherMac?: () => boolean;
   /** Marks rows read on the relay (the bell's own call). */
   markRead: (ids: string[]) => Promise<unknown>;
   now: () => number;
@@ -244,6 +246,7 @@ export class NotificationService {
       level,
       appFocused: this.deps.appFocused(),
       viewingBindingId: this.viewing,
+      usingAnotherMac: this.deps.usingAnotherMac?.() ?? false,
       now: this.deps.now(),
     });
     if (decision.show) this.deps.presenter.present(row);

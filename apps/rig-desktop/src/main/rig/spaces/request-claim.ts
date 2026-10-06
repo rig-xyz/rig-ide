@@ -51,6 +51,8 @@ export type ClaimAndDispatchOptions = {
    * every request is claimed.
    */
   canRun?: (request: AgentRequest) => Promise<boolean>;
+  /** This Mac's id among the account's computers, sent with each claim (see `claimAgentRequest`). */
+  computer?: string;
 };
 
 function isConflict(error: { kind: string; status?: number }): boolean {
@@ -64,7 +66,7 @@ function isConflict(error: { kind: string; status?: number }): boolean {
  * a multi-device account, not an error.
  */
 export async function claimAndDispatchQueued(options: ClaimAndDispatchOptions): Promise<void> {
-  const { api, deviceId, dispatch, canRun } = options;
+  const { api, deviceId, dispatch, canRun, computer } = options;
   const queued = await api.listAgentRequests('queued');
   if (!queued.success) {
     log.warn('Rig spaces: could not list queued agent requests', {
@@ -86,7 +88,7 @@ export async function claimAndDispatchQueued(options: ClaimAndDispatchOptions): 
     // very first dispatch still lands within the same microtask budget
     // existing callers (and their tests) already assume.
     if (typeof deviceId === 'string') {
-      await claimOne(api, deviceId, dispatch, request);
+      await claimOne(api, deviceId, dispatch, request, computer);
       continue;
     }
     let resolvedDeviceId: string;
@@ -100,7 +102,7 @@ export async function claimAndDispatchQueued(options: ClaimAndDispatchOptions): 
       });
       continue;
     }
-    await claimOne(api, resolvedDeviceId, dispatch, request);
+    await claimOne(api, resolvedDeviceId, dispatch, request, computer);
   }
 }
 
@@ -116,9 +118,10 @@ export async function claimOne(
   api: SpacesRelayApi,
   deviceId: string,
   dispatch: ClaimAndDispatchOptions['dispatch'],
-  request: AgentRequest
+  request: AgentRequest,
+  computer?: string
 ): Promise<void> {
-  const claimed = await api.claimAgentRequest(request.bindingId, request.id, deviceId);
+  const claimed = await api.claimAgentRequest(request.bindingId, request.id, deviceId, computer);
   if (!claimed.success) {
     if (isConflict(claimed.error)) {
       log.debug('Rig spaces: lost the claim race for an agent request — another device won', {

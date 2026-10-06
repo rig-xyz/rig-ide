@@ -220,10 +220,16 @@ export interface SpacesRelayApi {
   /** Cross-binding "my inbox" — `GET /v1/me/agent-requests?status=`. */
   listAgentRequests(status?: AgentRequestStatus): Promise<Result<AgentRequest[], RelayApiError>>;
   /** Atomic claim; a 409 (someone else already claimed it) surfaces as `{kind:'relay', status:409}`. */
+  /**
+   * `computer`: this Mac's id (`this-mac.ts`). For a request's first 30 s
+   * the relay lets only the Mac you used last claim it, answering any other
+   * with a 409 like a lost race.
+   */
   claimAgentRequest(
     bindingId: string,
     id: string,
-    deviceId: string
+    deviceId: string,
+    computer?: string
   ): Promise<Result<AgentRequest, RelayApiError>>;
   patchAgentRequest(
     bindingId: string,
@@ -326,6 +332,14 @@ export interface SpacesRelayApi {
    * route answers 404, read as `{ supported: false }`.
    */
   setMyAgents?(agents: SessionAgent[], device?: string): Promise<Result<{ supported: boolean }, RelayApiError>>;
+
+  /**
+   * `PUT /v1/me/computers/active {device}` marks this Mac in use now (with
+   * no `device`, `GET` only asks). Either answers with the computer you used
+   * most recently (`null` before any reported, or from a relay without the
+   * route).
+   */
+  activeComputer?(markActive?: string): Promise<Result<{ device: string | null }, RelayApiError>>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -632,7 +646,7 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
       return ok(requests);
     },
 
-    async claimAgentRequest(bindingId, id, deviceId) {
+    async claimAgentRequest(bindingId, id, deviceId, computer) {
       const ctxResult = await ctxOrError();
       if (!ctxResult.success) return err(ctxResult.error);
       const result = await request(
@@ -640,7 +654,7 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         'POST',
         `/v1/me/bindings/${bindingId}/agent-requests/${id}/claim`,
         'claim the agent request',
-        { deviceId }
+        { deviceId, ...(computer ? { computer } : {}) }
       );
       if (!result.success) return err(result.error);
       const req = shapeRequest(asRecord(result.data)?.request);
@@ -983,6 +997,22 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         return missing ? ok({ supported: false }) : err(result.error);
       }
       return ok({ supported: true });
+    },
+
+    async activeComputer(markActive) {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = markActive
+        ? await request(ctxResult.data, 'PUT', '/v1/me/computers/active', 'say which Mac you are at', {
+            device: markActive,
+          })
+        : await request(ctxResult.data, 'GET', '/v1/me/computers/active', 'check which Mac you are at');
+      if (!result.success) {
+        const missing = result.error.kind === 'relay' && result.error.status === 404;
+        return missing ? ok({ device: null }) : err(result.error);
+      }
+      const device = asRecord(result.data)?.device;
+      return ok({ device: typeof device === 'string' ? device : null });
     },
 
     async postMessage(bindingId, input) {
