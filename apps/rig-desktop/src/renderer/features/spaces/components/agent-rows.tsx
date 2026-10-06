@@ -100,7 +100,7 @@ export function AgentRows({
                     // instance of it.
                     owner={null}
                     size="sm"
-                    className={cn('ring-bg-1 ring-2', i > 0 && '-ml-1.5')}
+                    className={cn(i > 0 && '-ml-1')}
                   />
                 </span>
               ))}
