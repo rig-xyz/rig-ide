@@ -198,6 +198,8 @@ export type MessageMeta =
       autoBody?: boolean;
       /** A thread reply sent with "Also send to #space": Threads view shows it in the main column too. */
       alsoInChannel?: boolean;
+      /** The people tagged by picking them in the composer, in order: their id and the name as written (`meta.mentions` + `meta.mentionNames`). */
+      mentions?: MessageMention[];
     }
   | {
       kind: 'session';
@@ -221,6 +223,12 @@ export type MessageMeta =
       pin?: number;
     }
   | { kind: 'system'; event: string; /** Set on `connectors_added`/`connectors_removed` — see connectors-spec.md. */ connectorIds?: string[] };
+
+/** A person tagged in a message: who (their member id) and the name the text carries after its "@". */
+export interface MessageMention {
+  id: PersonId;
+  name: string;
+}
 
 /** What a quote-reply points at. The author is a member id; for an agent's answer, its owner. */
 export interface RoomReplyRef {
@@ -251,6 +259,9 @@ export interface RoomMessage {
   clientId?: string;
   /** Emoji reactions, as chips under it; reactor ids are member ids. Absent or empty when none. */
   reactions?: MessageReaction[];
+  /** The relay's own name and photo for the author, so someone no longer in the roster still has a name. */
+  authorName?: string | null;
+  authorAvatarUrl?: string | null;
 }
 
 export interface RoomInvite {
@@ -262,6 +273,10 @@ export interface RoomInvite {
   /** Live invites only: the invited email (null for an open link) and role. */
   email?: string | null;
   role?: string;
+  /** An invite aimed at one person: their user id, name and photo (the composer offers them as "Invited"). */
+  target?: { userId: string; name: string | null; avatarUrl: string | null };
+  /** Revoked by the owner: kept for its card, never offered as someone to tag. */
+  revoked?: true;
 }
 
 // ────────── room events (the append-only feed a RoomSource replays) ──────────

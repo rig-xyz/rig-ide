@@ -30,7 +30,9 @@ import { reportSpaceRead, windowIsLooking } from '@renderer/features/notificatio
 import { useRefreshMemberReadsOnRosterChange } from '../roster-refresh';
 import { resolveSpaceLink } from '../space-link';
 import { effectiveRunStatus, runCard } from '../projection';
-import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
+import type { AgentKind, MessageMention, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
+import { mentionPeople } from '../mentions';
+import type { RigPerson } from '@shared/rig/rig-share';
 import type { MessageAttachment } from '@shared/rig/attachments';
 import { fallbackBody, toMessageAttachments, type ComposerAttachment } from '../attachments';
 import { useComposerAttachments } from '../use-composer-attachments';
@@ -296,7 +298,7 @@ export async function sendFromComposer(
   source: Pick<RelayRoomSource, 'send' | 'requestOwnAgent'>,
   ownAgents: readonly AgentKind[],
   text: string,
-  { replyTo, agent, attach, alsoInChannel, route }: ComposerSendContext,
+  { replyTo, agent, attach, alsoInChannel, route, mentions }: ComposerSendContext,
   wake: () => void,
   attachments: readonly MessageAttachment[] = [],
   clientId?: string
@@ -309,6 +311,7 @@ export async function sendFromComposer(
     ...(clientId ? { clientId } : {}),
     ...(alsoInChannel ? { alsoInChannel: true } : {}),
     ...(route ? { route } : {}),
+    ...(mentions && mentions.length > 0 ? { mentions } : {}),
   };
   const sourceMessageId =
     Object.keys(extra).length > 0
@@ -502,6 +505,47 @@ export function RoomView({
   // below. The source keeps polling on its own; "Try again" (and the
   // network coming back) just does it now.
   const navigatorOnline = useNavigatorOnline();
+  // Who `@` can tag besides the members: people invited here, and your people (rig/docs/people-management-scope.md).
+  // Read on opening a space (main keeps it a minute); no list on an older relay or offline.
+  const [yourPeople, setYourPeople] = useState<RigPerson[]>([]);
+  useEffect(() => {
+    if (!live) return;
+    let alive = true;
+    void Promise.resolve()
+      .then(() => rpc.rig.share.people())
+      .then(
+        (result) => alive && result.success && setYourPeople(result.data.people),
+        () => undefined
+      );
+    return () => {
+      alive = false;
+    };
+  }, [live, bindingId]);
+  const members = snapshot?.members;
+  const invites = snapshot?.invitesById;
+  const mentionable = useMemo(
+    () =>
+      members && invites
+        ? mentionPeople(Object.values(invites), new Set(members.map((m) => m.id)), yourPeople)
+        : [],
+    [members, invites, yourPeople]
+  );
+  // "Invite and send": an invite aimed at that person, Can edit; the bell tells them.
+  const invitePerson = useCallback(
+    async (person: MessageMention): Promise<boolean> => {
+      if (!live || !bindingId) return false;
+      const result = await rpc.rig.share
+        .inviteToSpace({ bindingId, targetUserId: person.id, role: 'editor' })
+        .catch(() => null);
+      if (result?.success) return true;
+      toast({
+        title: `Rig couldn’t invite ${person.name}`,
+        description: result?.error.message ?? 'Try again in a moment.',
+      });
+      return false;
+    },
+    [live, bindingId]
+  );
   const roomConnection = live
     ? deriveRoomConnection({
         navigatorOnline,
@@ -1477,6 +1521,8 @@ export function RoomView({
                 openDoc={live ? openDoc : null}
                 agentModels={lastModels(room, selfUserId)}
                 members={room.members}
+                people={mentionable}
+                onInvitePerson={live ? invitePerson : undefined}
                 agents={room.agents.filter((a) => a.owner === selfUserId)}
                 availableAgents={availableAgents}
                 skills={room.skills}
@@ -1724,6 +1770,8 @@ export function RoomView({
               openDoc={live ? openDoc : null}
               agentModels={lastModels(room, selfUserId)}
               members={room.members}
+              people={mentionable}
+              onInvitePerson={live ? invitePerson : undefined}
               // Own agents only: @claude/@codex always means the sender's
               // own agent (no cross-person delegation in the MVP).
               agents={room.agents.filter((a) => a.owner === selfUserId)}

@@ -9,8 +9,12 @@ import { loadEmojiIndex, matchShortcodes, recordEmojiUse, type EmojiIndex } from
 import { agentLogoId, BrandLogo } from '../logos';
 import { decideSend, type ComposerRoute, type SendOverride } from '../send-decision';
 import type { ComposerAttachments } from '../use-composer-attachments';
+import { Button } from '@renderer/lib/ui/button';
+import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { AttachmentChips } from './attachment-chips';
-import type { AgentKind, RoomAgent, RoomMember, RoomReplyRef, RoomSkill } from '../types';
+import { applyMentionText, foldName, mentionQueryOf, nameMatches, presentMentions, type MentionPerson } from '../mentions';
+import { SOMEONE } from '../person-identity';
+import type { AgentKind, MessageMention, RoomAgent, RoomMember, RoomReplyRef, RoomSkill } from '../types';
 import { AgentSettings } from './agent-settings';
 import { ContextPill } from './context-pill';
 import { EmojiPickerPopover } from './reactions';
@@ -67,7 +71,7 @@ export type ComposerPreview = { reply: ComposerSuggestion | null; route: Compose
 
 /** Any @mention, of an agent or a person (an email's `x@y.com` isn't one). */
 function hasMention(text: string): boolean {
-  return /(^|\s)@[a-z0-9_-]+/i.test(text);
+  return /(^|\s)@[\p{L}\p{N}_-]+/u.test(text);
 }
 
 /**
@@ -115,7 +119,22 @@ export type ComposerSendContext = {
   alsoInChannel?: boolean;
   /** You chose to just send what the relay would have taken to your agent: the router leaves it alone. */
   route?: 'none';
+  /** The people you tagged by picking them, still in the text (`meta.mentions`). */
+  mentions?: MessageMention[];
 };
+
+/** A person you picked in the `@` menu: who, and whether they're in the space. */
+type MentionPick = MessageMention & { group: 'member' | MentionPerson['group'] };
+
+/** "#launch-plan", whether or not the name came with its "#". */
+function hashName(spaceName: string): string {
+  return spaceName.startsWith('#') ? spaceName : `#${spaceName}`;
+}
+
+/** "Jérémie", "Jérémie and Sam", "Jérémie, Sam and Ana". */
+function joinNames(names: readonly string[]): string {
+  return names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
 
 type MenuItem = {
   key: string;
@@ -123,8 +142,14 @@ type MenuItem = {
   icon: ReactNode;
   label: string;
   detail: string;
+  /** Always shown beside the label ("Invited"). */
+  tag?: string;
   apply: () => void;
 };
+
+/** The `@` row's people groups, labelled in the row; agents need no label (their logo says it). */
+const IN_SPACE = 'In this space';
+const OUTSIDE = 'Your people, not in this space';
 
 function readDraft(key: string | undefined): string {
   if (!key) return '';
@@ -181,6 +206,8 @@ export function Composer({
   placeholder,
   footer,
   autoFocus = false,
+  people = [],
+  onInvitePerson,
 }: {
   spaceName: string;
   /** Where this composer keeps its unsent draft (the space's id); no draft kept without one. */
@@ -222,6 +249,10 @@ export function Composer({
   footer?: ReactNode;
   /** Focus the box when it appears (a thread just opened). */
   autoFocus?: boolean;
+  /** Who else `@` offers: people invited to the space, and your people who aren't in it. */
+  people?: readonly MentionPerson[];
+  /** Invites someone tagged from outside the space ("Invite and send"); resolves to whether it worked. No offer without it. */
+  onInvitePerson?: (person: MessageMention) => Promise<boolean>;
 }) {
   const [value, setValue] = useState(() => readDraft(draftKey));
   const [focused, setFocused] = useState(false);
@@ -248,7 +279,10 @@ export function Composer({
   }, [value]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => setValue(readDraft(draftKey)), [draftKey]);
+  useEffect(() => {
+    setValue(readDraft(draftKey));
+    setPicks([]);
+  }, [draftKey]);
   useEffect(() => writeDraft(draftKey, value), [draftKey, value]);
   useEffect(() => {
     if (replyTo) textareaRef.current?.focus();
@@ -285,7 +319,22 @@ export function Composer({
   }, [value, suggestReply, replyTo, override]);
 
   const skillQuery = /^\/(\S*)$/.exec(value)?.[1] ?? null;
-  const mentionQuery = useMemo(() => /(?:^|\s)@([a-z]*)$/i.exec(value)?.[1] ?? null, [value]);
+  // Everyone `@` can name: a whole name followed by a space is a finished tag.
+  const mentionNames = useMemo(
+    () => [...agents.map((a) => a.agent), ...members.map((m) => m.name), ...people.map((p) => p.name)],
+    [agents, members, people]
+  );
+  const mentionQuery = useMemo(() => mentionQueryOf(value, mentionNames), [value, mentionNames]);
+  // The people you've picked for this draft; the ones still written go with it (`presentMentions`).
+  const [picks, setPicks] = useState<MentionPick[]>([]);
+  // Tagged from outside the space and you chose "Send only" (or invited them): no more offer for them.
+  const [settled, setSettled] = useState<ReadonlySet<string>>(new Set());
+  const [inviting, setInviting] = useState(false);
+  useEffect(() => {
+    if (value.trim()) return;
+    setPicks([]);
+    setSettled(new Set());
+  }, [value]);
   // `+` at the start or after a space: tag a file in the space (`shared/rig/file-tags.ts`); `+"` starts a quoted name.
   const fileQuery = useMemo(() => {
     if (!listFiles) return null;
@@ -374,8 +423,9 @@ export function Composer({
     el.setSelectionRange(edit.selStart, edit.selEnd);
   };
 
-  const applyMention = (label: string) => {
-    setValue((current) => current.replace(/(?:^|\s)@([a-z]*)$/i, (m) => `${m[0] === ' ' ? ' ' : ''}@${label} `));
+  const applyMention = (label: string, pick?: MentionPick) => {
+    setValue((current) => applyMentionText(current, label));
+    if (pick) setPicks((current) => [...current.filter((p) => p.id !== pick.id), pick]);
     textareaRef.current?.focus();
   };
   const applySkill = (skill: RoomSkill) => {
@@ -425,7 +475,7 @@ export function Composer({
         });
     }
     if (mentionQuery !== null) {
-      const q = mentionQuery.toLowerCase();
+      const q = foldName(mentionQuery);
       const agentItems: MenuItem[] = agents
         .filter((a) => a.agent.startsWith(q))
         .map((a) => ({
@@ -436,21 +486,37 @@ export function Composer({
           detail: busyAgents.includes(a.agent) ? `your ${AGENT_NAME[a.agent]} · working` : `your ${AGENT_NAME[a.agent]}`,
           apply: () => applyMention(a.agent),
         }));
-      const peopleItems: MenuItem[] = members
-        .filter((m) => m.status === 'here' && m.name.toLowerCase().startsWith(q))
+      const memberIds = new Set(members.map((m) => m.id));
+      const memberItems: MenuItem[] = members
+        .filter((m) => m.status === 'here' && m.name !== SOMEONE && nameMatches(m.name, mentionQuery))
         .map((m) => ({
           key: `person-${m.id}`,
-          section: 'People',
+          section: IN_SPACE,
           icon: <PersonAvatar member={m} size="sm" />,
           label: m.name,
           detail: m.online === false ? 'away' : m.online ? 'here now' : '',
-          apply: () => applyMention(m.name),
+          apply: () => applyMention(m.name, { id: m.id, name: m.name, group: 'member' }),
         }));
-      return [...agentItems, ...peopleItems];
+      const personItem = (p: MentionPerson): MenuItem => ({
+        key: `${p.group}-${p.id}`,
+        section: p.group === 'invited' ? IN_SPACE : OUTSIDE,
+        icon: <IdentityAvatar name={p.name} avatarUrl={p.avatarUrl} sizeClassName="size-5" />,
+        label: p.name,
+        detail: p.detail ?? '',
+        ...(p.group === 'invited' ? { tag: 'Invited' } : {}),
+        apply: () => applyMention(p.name, { id: p.id, name: p.name, group: p.group }),
+      });
+      const others = people.filter((p) => !memberIds.has(p.id) && p.name.trim() && nameMatches(p.name, mentionQuery));
+      return [
+        ...agentItems,
+        ...memberItems,
+        ...others.filter((p) => p.group === 'invited').map(personItem),
+        ...others.filter((p) => p.group === 'outside').map(personItem),
+      ];
     }
     return [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skillQuery, mentionQuery, fileQuery, emojiQuery, emojiIndex, spaceFiles, skills, members, agents, busyAgents]);
+  }, [skillQuery, mentionQuery, fileQuery, emojiQuery, emojiIndex, spaceFiles, skills, members, agents, busyAgents, people]);
 
   const menuOpen = items.length > 0 && dismissedFor !== value;
   // Skills, files and emoji open the list above the input; people and agents the pill row.
@@ -573,12 +639,14 @@ export function Composer({
       return;
     }
     const files = hasFiles ? attachments!.clear() : undefined;
+    const mentions = presentMentions(trimmed, picks);
     onSend(trimmed, {
       replyTo: replyPill ?? shownOwnPill?.replyTo ?? undefined,
       agent: trimmed ? sendsTo : null,
       attach: docPill,
       ...(trimmed && decision.meta.route ? { route: decision.meta.route } : {}),
       ...(files ? { files } : {}),
+      ...(mentions.length > 0 ? { mentions } : {}),
     });
     setValue('');
     setPreview(null);
@@ -603,6 +671,30 @@ export function Composer({
   }, [waitingForConnection, waitForConnection, hasDraft]);
 
   const mentionedBusy = busyAgents.find((agent) => new RegExp(`@${agent}\\b`, 'i').test(value));
+
+  // Tagged from your people but not in the space: they won't see it. One
+  // offer above the box, until you invite them or choose to send anyway
+  // (Enter sends without inviting, the same as "Send only").
+  const outsiders = onInvitePerson
+    ? presentMentions(
+        value,
+        picks.filter((p) => p.group === 'outside' && !settled.has(p.id) && !members.some((m) => m.id === p.id))
+      )
+    : [];
+  const settle = (ids: readonly string[]) => setSettled((current) => new Set([...current, ...ids]));
+  const inviteAndSend = async () => {
+    if (!onInvitePerson || inviting || outsiders.length === 0) return;
+    setInviting(true);
+    const invited = await Promise.all(outsiders.map((p) => onInvitePerson(p).catch(() => false)));
+    setInviting(false);
+    settle(outsiders.filter((_, i) => invited[i]).map((p) => p.id));
+    // Sent only once everyone tagged is invited; otherwise the draft waits (the room says what failed).
+    if (invited.every(Boolean)) sendRef.current();
+  };
+  const sendOnly = () => {
+    settle(outsiders.map((p) => p.id));
+    send();
+  };
 
   return (
     <div className="relative">
@@ -653,7 +745,12 @@ export function Composer({
           role="listbox"
           data-testid="mention-palette"
         >
-          {items.map((item, i) => (
+          {items.map((item, i) => [
+            item.section && item.section !== 'Agents' && item.section !== items[i - 1]?.section && (
+              <span key={`label-${item.section}`} className="shrink-0 pl-1 text-2xs whitespace-nowrap text-text-muted" aria-hidden>
+                {item.section}
+              </span>
+            ),
             <button
               key={item.key}
               type="button"
@@ -672,12 +769,54 @@ export function Composer({
             >
               <span className="flex size-5 items-center justify-center">{item.icon}</span>
               <span>@{item.label}</span>
+              {item.tag && (
+                <span className="border-border-hairline rounded-full border px-1.5 text-2xs leading-4 text-text-muted">{item.tag}</span>
+              )}
               {i === active && item.detail && <span className="text-text-muted">{item.detail}</span>}
               {i === active && (
                 <kbd className="border-border-strong ml-0.5 rounded border px-1 font-mono text-2xs leading-4 text-text-muted">Tab</kbd>
               )}
-            </button>
-          ))}
+            </button>,
+          ])}
+        </div>
+      )}
+
+      {!menuOpen && outsiders.length > 0 && (
+        <div
+          className="popover-in border-border-hairline bg-bg-1 shadow-float mb-2 flex items-center gap-2.5 rounded-card border px-3 py-2"
+          role="status"
+          data-testid="composer-outsider-notice"
+        >
+          <IdentityAvatar
+            name={outsiders[0]!.name}
+            avatarUrl={people.find((p) => p.id === outsiders[0]!.id)?.avatarUrl ?? null}
+            sizeClassName="size-5"
+          />
+          <span className="min-w-0 flex-1 text-xs text-text-secondary">
+            {outsiders.length === 1
+              ? `${outsiders[0]!.name} isn’t in ${hashName(spaceName)} and won’t see this. Invite ${outsiders[0]!.name}?`
+              : `${joinNames(outsiders.map((p) => p.name))} aren’t in ${hashName(spaceName)} and won’t see this. Invite them?`}
+          </span>
+          <Button
+            size="xs"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void inviteAndSend()}
+            disabled={inviting}
+            aria-busy={inviting || undefined}
+            data-testid="composer-invite-and-send"
+          >
+            Invite and send
+          </Button>
+          <Button
+            size="xs"
+            variant="outline"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={sendOnly}
+            disabled={inviting}
+            data-testid="composer-send-only"
+          >
+            Send only
+          </Button>
         </div>
       )}
 

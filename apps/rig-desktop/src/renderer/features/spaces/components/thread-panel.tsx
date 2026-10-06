@@ -4,6 +4,7 @@ import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { runCard } from '../projection';
 import type { ThreadFace, ThreadSummary } from '../threads';
+import { personOf, resolvePerson } from '../person-identity';
 import type { RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 import { excerptOf } from './transcript-items';
@@ -30,10 +31,11 @@ function Face({ face, members }: { face: ThreadFace; members: readonly RoomMembe
       />
     );
   }
+  const person = resolvePerson(face.id, { members });
   return (
     <PersonAvatar
-      member={members.find((m) => m.id === face.id)}
-      name={face.id}
+      member={person.member}
+      person={person}
       size="sm"
       className="ring-bg-0 rounded-full ring-2"
     />
@@ -101,10 +103,10 @@ export function ThreadReplyRow({
 /** What a reply in a thread points at, as Reply on that row would: who it's from and a short excerpt. */
 export function replyRefFor(
   message: RoomMessage,
-  snapshot: Pick<RoomSnapshot, 'members' | 'sessionMetaByRun' | 'sessionEventsByRun' | 'sessionSummaryByRun'>,
+  snapshot: Pick<RoomSnapshot, 'members' | 'messages' | 'sessionMetaByRun' | 'sessionEventsByRun' | 'sessionSummaryByRun'>,
   ownId: string
 ): RoomReplyRef {
-  const nameOf = (id: string) => snapshot.members.find((m) => m.id === id)?.name ?? id;
+  const nameOf = (id: string) => personOf(snapshot, id).name;
   if (message.meta.kind === 'session') {
     const run = snapshot.sessionMetaByRun[message.meta.runId];
     if (run) {

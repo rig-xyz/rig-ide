@@ -55,6 +55,24 @@ describe('InviteRow status (live invite)', () => {
     expect(host.textContent).not.toContain('sent by email');
   });
 
+  it('names a person invited by name, and never shows an id for an inviter who left', async () => {
+    await render(
+      snapshotWith({
+        id: 'inv1',
+        by: 'u-dylan',
+        who: '',
+        email: null,
+        role: 'editor',
+        status: 'sent',
+        target: { userId: 'usr_jer', name: 'Jérémie Rappaz', avatarUrl: null },
+      })
+    );
+    expect(host.textContent).toContain('Invited Jérémie Rappaz');
+    expect(host.textContent).not.toContain('Anyone with the link');
+    expect(host.textContent).not.toContain('u-dylan');
+    expect(host.textContent).toContain('Someone invited someone');
+  });
+
   it('says "Invite link created" for an open link', async () => {
     await render(snapshotWith({ id: 'inv1', by: 'u-dylan', who: '', email: null, role: 'editor', status: 'sent' }));
     expect(host.textContent).toContain('Invite link created');

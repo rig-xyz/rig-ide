@@ -1,6 +1,7 @@
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import { agentLogoId, BrandLogo } from '../logos';
+import type { PersonIdentity } from '../person-identity';
 import type { AgentKind, RoomMember } from '../types';
 
 /**
@@ -19,19 +20,22 @@ const PERSON_SIZE: Record<Size, string> = { md: 'size-7', sm: 'size-5' };
 export function PersonAvatar({
   member,
   name,
+  person,
   size = 'md',
   className,
 }: {
   member: RoomMember | undefined;
   /** Shown (as initials) when the member isn't known. */
   name?: string;
+  /** Who they are, from `person-identity.ts`: wins over `member` and `name` ("Someone" and "Former member" get the plain person glyph, not initials). */
+  person?: PersonIdentity;
   size?: Size;
   className?: string;
 }) {
   return (
     <IdentityAvatar
-      name={member?.name ?? name ?? null}
-      avatarUrl={member?.avatarUrl ?? null}
+      name={person ? (person.named ? person.name : null) : (member?.name ?? name ?? null)}
+      avatarUrl={person ? person.avatarUrl : (member?.avatarUrl ?? null)}
       sizeClassName={PERSON_SIZE[size]}
       textClassName="text-2xs"
       className={className}

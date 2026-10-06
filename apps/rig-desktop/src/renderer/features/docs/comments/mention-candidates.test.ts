@@ -5,6 +5,7 @@ import {
   mentionCandidateLabel,
   mentionCandidateMatches,
   mentionInsertText,
+  mentionablePeople,
   type MentionCandidate,
 } from './mention-candidates';
 
@@ -41,7 +42,7 @@ describe('mentionCandidateLabel / mentionCandidateKey', () => {
     expect(mentionCandidateKey(named)).toBe('usr_1');
 
     const unnamed = personCandidate('usr_2', null);
-    expect(mentionCandidateLabel(unnamed)).toBe('Unknown');
+    expect(mentionCandidateLabel(unnamed)).toBe('Someone');
   });
 });
 
@@ -58,6 +59,27 @@ describe('mentionCandidateMatches', () => {
     expect(mentionCandidateMatches(dylan, 'dyl')).toBe(true);
     expect(mentionCandidateMatches(dylan, 'bourg')).toBe(true);
     expect(mentionCandidateMatches(dylan, 'zzz')).toBe(false);
+  });
+});
+
+describe('mentionablePeople', () => {
+  it('names people by their name, or their email when that is all there is, and leaves out anyone unnamed', () => {
+    const people = mentionablePeople([
+      { userId: 'usr_1', name: 'Jérémie Rappaz', email: null, avatarUrl: null },
+      { userId: 'usr_2', name: 'sam@northwind.io', email: null, avatarUrl: null },
+      { userId: 'usr_me', name: null, email: 'me@play.local', avatarUrl: null },
+      { userId: 'usr_3', name: null, email: null, avatarUrl: null },
+    ]);
+    expect(people.map((p) => [p.userId, p.name])).toEqual([
+      ['usr_1', 'Jérémie Rappaz'],
+      ['usr_2', 'sam@northwind.io'],
+      ['usr_me', 'me@play.local'],
+    ]);
+    expect(people.map((p) => mentionInsertText({ kind: 'person', person: p }))).not.toContain('@Unknown ');
+  });
+
+  it('never inserts a placeholder for a person with no name', () => {
+    expect(mentionInsertText(personCandidate('usr_3', null))).toBe('');
   });
 });
 

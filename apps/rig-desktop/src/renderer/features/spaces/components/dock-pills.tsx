@@ -23,6 +23,7 @@ import {
 import type { Phase } from '../dock-layout';
 import { themesWithForYou, type ForYou } from '../for-you';
 import type { RoomTheme, RoomThemes } from '../themes';
+import { personOf } from '../person-identity';
 import type { RoomSnapshot } from '../types';
 import { DOCK_TIMING, FOR_YOU_ID, type DockSwell } from '../use-dock-signals';
 import { useDismissOutside } from './dock-approvals';
@@ -86,11 +87,11 @@ function swellOf(
   const { arrival } = swell;
   if (arrival.kind === 'ask') {
     const { actor } = arrival.ask;
-    const member = snapshot.members.find((m) => m.id === actor.userId);
-    const name = actor.name ?? member?.name ?? 'Someone';
+    const person = personOf(snapshot, actor.userId, { name: actor.name });
+    const name = person.name;
     return {
       kind: arrival.ask.type,
-      face: <PersonAvatar member={member} name={name} size="sm" />,
+      face: <PersonAvatar member={person.member} person={person} size="sm" />,
       text: (
         <>
           <b className="font-semibold text-text-primary">{name}</b> {ASK_VERB[arrival.ask.type]}

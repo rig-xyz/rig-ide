@@ -10,6 +10,7 @@ import { markReadThrough, readLastSeen } from '../room-read-marker';
 import type { SearchPlan } from '../chat-search';
 import { clearSearchMatches, paintSearchMatches } from '../search-highlight';
 import type { ThreadSummary } from '../threads';
+import { personOf } from '../person-identity';
 import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
 import { type MapEntry, ConversationMap } from './conversation-map';
 import { AGENT_NAME } from './identity';
@@ -484,7 +485,7 @@ function ThreadBlock({
 
 /** The conversation's rows as outline entries: people's messages, agent turns, doc threads. */
 function mapEntriesFor(units: TranscriptUnit[], snapshot: RoomSnapshot, ownId: string): MapEntry[] {
-  const nameOf = (id: string) => snapshot.members.find((m) => m.id === id)?.name ?? id;
+  const nameOf = (id: string) => personOf(snapshot, id).name;
   const entries: MapEntry[] = [];
   for (const unit of units) {
     if (unit.kind === 'thread') {

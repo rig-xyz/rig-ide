@@ -108,3 +108,53 @@ describe('remarkRoomTokens', () => {
     expect(render('> quoted')).toBe('<blockquote>\n<p>quoted</p>\n</blockquote>');
   });
 });
+
+describe('mentions by id (meta.mentions)', () => {
+  const alexes = [
+    { id: 'u_alex_a', name: 'Alex Martin' },
+    { id: 'u_alex_b', name: 'Alex Martin' },
+    { id: 'u_jer', name: 'Jérémie Rappaz' },
+  ];
+
+  /** Each mention's text and whose it is. */
+  function whose(text: string, mentions: Array<{ id: string; name: string }>, people = alexes): Array<[string, string]> {
+    const html = renderToStaticMarkup(
+      createElement(Markdown, { remarkPlugins: [[remarkRoomTokens, { members: people, mentions }]] }, text)
+    );
+    return [...html.matchAll(/data-room-token="mention" data-value="([^"]*)" data-member="([^"]*)"/g)].map((m) => [
+      m[1]!,
+      m[2]!,
+    ]);
+  }
+
+  it('gives each of two people with the same name their own mention, in order', () => {
+    expect(
+      whose('@Alex Martin and @Alex Martin', [
+        { id: 'u_alex_b', name: 'Alex Martin' },
+        { id: 'u_alex_a', name: 'Alex Martin' },
+      ])
+    ).toEqual([
+      ['@Alex Martin', 'u_alex_b'],
+      ['@Alex Martin', 'u_alex_a'],
+    ]);
+  });
+
+  it('prefers the tagged id over the roster when names tie', () => {
+    expect(whose('ping @Alex Martin', [{ id: 'u_alex_b', name: 'Alex Martin' }])).toEqual([['@Alex Martin', 'u_alex_b']]);
+  });
+
+  it('still finds a person who has since been renamed', () => {
+    const renamed = [{ id: 'u_jer', name: 'Jérémie R.' }];
+    expect(whose('@Jérémie Rappaz can you look?', [{ id: 'u_jer', name: 'Jérémie Rappaz' }], renamed)).toEqual([
+      ['@Jérémie Rappaz', 'u_jer'],
+    ]);
+  });
+
+  it('finds someone outside the space by the name written', () => {
+    expect(whose('@Sam Outside hello', [{ id: 'u_sam', name: 'Sam Outside' }])).toEqual([['@Sam Outside', 'u_sam']]);
+  });
+
+  it('falls back to names without meta.mentions', () => {
+    expect(whose('@Jérémie Rappaz hi', [])).toEqual([['@Jérémie Rappaz', 'u_jer']]);
+  });
+});

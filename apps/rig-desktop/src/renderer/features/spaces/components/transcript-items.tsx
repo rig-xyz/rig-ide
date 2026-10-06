@@ -23,7 +23,8 @@ import type { ConnectResult } from '@shared/spaces/connectors';
 import { canonicalPageUrl, classifyLink, opensBesideChat, webLinkLabel, type LinkKind } from '@shared/spaces/links';
 import { agentLogoId, BrandLogo, ConnectorMark } from '../logos';
 import { remarkRoomTokens, type RoomTokenKind } from '../message-tokens';
-import type { AgentKind, RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
+import { personOf } from '../person-identity';
+import type { AgentKind, MessageMention, RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 import { FileTagChip, MessageAttachments } from './attachment-cards';
 import { ConnectPill } from './connectors-panel';
@@ -265,11 +266,13 @@ export function richText(
   text: string,
   ownId: string,
   /** The room's people, so a display-name mention ("@Hugo Renaudin", what the composer's Tab inserts) reads as one. */
-  members: readonly Pick<RoomMember, 'id' | 'name'>[] = []
+  members: readonly Pick<RoomMember, 'id' | 'name'>[] = [],
+  /** Who the message says it tagged (`meta.mentions`): matched first, by id. */
+  mentions: readonly MessageMention[] = []
 ): ReactNode {
   return (
     <ReactMarkdown
-      remarkPlugins={[[remarkGfm, { singleTilde: false }], [remarkRoomTokens, { members }]]}
+      remarkPlugins={[[remarkGfm, { singleTilde: false }], [remarkRoomTokens, { members, mentions }]]}
       components={{
         span: ({ node, children }) => (
           <RoomToken node={node as HastElement | undefined} ownId={ownId}>
@@ -453,14 +456,15 @@ export function MessageRow({
   /** Scrolls to a quoted message. */
   onJumpTo?: (messageId: string) => void;
 }) {
-  const author = memberOf(snapshot, message.authorId);
+  const who = personOf(snapshot, message.authorId);
   const mine = message.authorId === ownId;
   const files = message.meta.kind === 'text' ? message.meta.attachments : undefined;
+  const mentions = message.meta.kind === 'text' ? message.meta.mentions : undefined;
   // Only files were sent: the body was written for older apps; the cards say it.
   const hideBody = !!files?.length && message.meta.kind === 'text' && message.meta.autoBody;
   const body = useMemo(
-    () => (message.body && !hideBody ? richText(message.body, ownId, snapshot.members) : null),
-    [message.body, hideBody, ownId, snapshot.members]
+    () => (message.body && !hideBody ? richText(message.body, ownId, snapshot.members, mentions) : null),
+    [message.body, hideBody, ownId, snapshot.members, mentions]
   );
   const replyTo = message.meta.kind === 'text' ? message.meta.replyTo : undefined;
   // The emoji picker open from the hover bar keeps the bar showing.
@@ -481,7 +485,7 @@ export function MessageRow({
       mine={mine}
       sending={!!message.sending}
       createdAt={message.createdAt}
-      senderName={author?.name ?? 'them'}
+      senderName={who.named ? who.name : 'them'}
     />
   ) : null;
   const actions = (
@@ -492,7 +496,7 @@ export function MessageRow({
               onReply({
                 id: message.id,
                 authorId: message.authorId,
-                label: author?.name ?? message.authorId,
+                label: who.name,
                 excerpt: excerptOf(message.body ?? ''),
               })
           : undefined
@@ -546,12 +550,12 @@ export function MessageRow({
       {continued ? (
         <RowTime message={message} short className="self-center justify-self-center" />
       ) : (
-        <PersonAvatar member={author} name={message.authorId} className="mt-0.5" />
+        <PersonAvatar member={who.member} person={who} className="mt-0.5" />
       )}
       <div className="flex min-w-0 flex-col gap-1">
         {!continued && (
           <div className="flex items-baseline gap-2">
-            <b className="text-sm font-medium text-text-primary">{author?.name ?? message.authorId}</b>
+            <b className="text-sm font-medium text-text-primary">{who.name}</b>
             <RowTime message={message} />
           </div>
         )}
@@ -577,7 +581,7 @@ function typingLabel(names: string[]): string {
 
 /** Who's typing, as one quiet line under the last message. People only: agents show their own live status. */
 export function TypingRow({ personIds, snapshot }: { personIds: string[]; snapshot: RoomSnapshot }) {
-  const names = personIds.map((id) => memberOf(snapshot, id)?.name ?? id);
+  const names = personIds.map((id) => personOf(snapshot, id).name);
   return (
     <div className={cn(ROW_GRID, 'items-center py-1')} data-testid="typing-row">
       <span className="flex items-center justify-center gap-0.5" aria-hidden>
@@ -596,13 +600,13 @@ export function TypingRow({ personIds, snapshot }: { personIds: string[]; snapsh
 
 /** Join row — a person arrived in the space. */
 export function JoinRow({ message, snapshot }: { message: RoomMessage; snapshot: RoomSnapshot }) {
-  const who = memberOf(snapshot, message.authorId);
+  const who = personOf(snapshot, message.authorId);
   return (
     <div className={cn(ROW_GRID, 'group items-center py-1 text-xs text-text-secondary')} data-testid="join-row">
-      <PersonAvatar member={who} name={message.authorId} size="sm" className="justify-self-center" />
+      <PersonAvatar member={who.member} person={who} size="sm" className="justify-self-center" />
       <span className="flex items-baseline gap-2">
         <span>
-          <b className="font-medium text-text-primary">{who?.name ?? message.authorId}</b> joined the space
+          <b className="font-medium text-text-primary">{who.name}</b> joined the space
         </span>
         <RowTime message={message} />
       </span>
@@ -625,19 +629,22 @@ export function DayDivider({ label }: { label: string }) {
 export function InviteRow({ message, snapshot }: { message: RoomMessage; snapshot: RoomSnapshot }) {
   if (message.meta.kind !== 'invite') return null;
   const invite = snapshot.invitesById[message.meta.inviteId];
-  const by = memberOf(snapshot, message.authorId);
+  const by = personOf(snapshot, message.authorId);
   // Scripted demo: `who` is a member id. Live: the invitee's email ('' for an
   // open link); once they join, the member with that email.
   const email = invite?.email ?? null;
   const who = invite
     ? (memberOf(snapshot, invite.who) ??
+      (invite.target ? memberOf(snapshot, invite.target.userId) : undefined) ??
       (email ? snapshot.members.find((m) => m.email.toLowerCase() === email.toLowerCase()) : undefined))
     : undefined;
+  // An invite aimed at one person: their name, from the roster once they're in.
+  const target = invite?.target ? personOf(snapshot, invite.target.userId, invite.target) : null;
   const isLive = invite?.role !== undefined;
   const joined = invite?.status === 'joined';
   // An open link isn't a person — its card shows a link glyph, not initials.
-  const openLink = Boolean(invite) && !who && !email;
-  const label = who?.name ?? email ?? (invite ? 'Anyone with the link' : message.body);
+  const openLink = Boolean(invite) && !who && !email && !target;
+  const label = who?.name ?? target?.name ?? email ?? (invite ? 'Anyone with the link' : message.body);
   const role = invite?.role === 'viewer' ? 'can view' : 'can edit';
   // Lane J: a live invite never says "sent by email" — the relay's invite
   // row and Room message don't carry whether the email actually went out
@@ -649,14 +656,16 @@ export function InviteRow({ message, snapshot }: { message: RoomMessage; snapsho
       ? 'Invite sent by email'
       : email
         ? `Invited ${email}`
-        : 'Invite link created';
+        : target
+          ? `Invited ${target.name}`
+          : 'Invite link created';
   return (
     <div className={cn(ROW_GRID, 'group py-1')}>
-      <PersonAvatar member={by} name={message.authorId} className="mt-0.5" />
+      <PersonAvatar member={by.member} person={by} className="mt-0.5" />
       <div className="flex min-w-0 flex-col gap-1.5">
       <div className="flex items-baseline gap-2">
         <span className="text-sm text-text-secondary">
-          <b className="font-medium text-text-primary">{by?.name ?? message.authorId}</b> invited someone
+          <b className="font-medium text-text-primary">{by.name}</b> invited someone
         </span>
         <RowTime message={message} />
       </div>
@@ -675,7 +684,7 @@ export function InviteRow({ message, snapshot }: { message: RoomMessage; snapsho
         ) : (
           <IdentityAvatar
             name={label ?? '?'}
-            avatarUrl={who?.avatarUrl ?? null}
+            avatarUrl={who?.avatarUrl ?? target?.avatarUrl ?? null}
             sizeClassName={cn('size-8', !joined && 'opacity-45')}
             textClassName="text-xs"
           />
@@ -714,22 +723,25 @@ const CONNECTOR_NOTE = "Each person's agent uses their own login. What an agent 
 export function ConnectorCard({
   message,
   addedBy,
+  addedByName,
   connectors,
   onConnect,
 }: {
   message: RoomMessage;
   addedBy: RoomMember | undefined;
+  /** Who added them when they're not in the roster (left since): see `person-identity.ts`. */
+  addedByName?: string;
   connectors: RoomConnector[];
   /** Runs the connect flow for a not-yet-connected/expired connector's pill. */
   onConnect?: (id: string) => Promise<ConnectResult>;
 }) {
   return (
     <div className={cn(ROW_GRID, 'group py-1')}>
-      <PersonAvatar member={addedBy} name={message.authorId} className="mt-0.5" />
+      <PersonAvatar member={addedBy} name={addedByName} className="mt-0.5" />
       <div className="flex min-w-0 flex-col gap-1.5">
       <div className="flex items-baseline gap-2">
         <span className="text-sm text-text-secondary">
-          <b className="font-medium text-text-primary">{addedBy?.name ?? message.authorId}</b> added{' '}
+          <b className="font-medium text-text-primary">{addedBy?.name ?? addedByName ?? 'Someone'}</b> added{' '}
           {connectors.map((c) => c.name).join(', ') || 'tools'} to the space
         </span>
         <RowTime message={message} />
@@ -787,14 +799,15 @@ export function CommentMirrorLine({
 }) {
   if (message.meta.kind !== 'comment_mirror') return null;
   const { path, quote, replyFromAgent, isReply, pin } = message.meta;
-  const author = memberOf(snapshot, message.authorId);
-  const who = author?.name ?? message.authorId;
+  const person = personOf(snapshot, message.authorId);
+  const author = person.member;
+  const who = person.name;
   const name = replyFromAgent ? `${who}'s ${AGENT_NAME[replyFromAgent]}` : who;
   const avatar = (size: 'md' | 'sm', className?: string) =>
     replyFromAgent ? (
       <AgentAvatar agent={replyFromAgent} owner={author} size={size} className={className} />
     ) : (
-      <PersonAvatar member={author} name={message.authorId} size={size} className={className} />
+      <PersonAvatar member={author} person={person} size={size} className={className} />
     );
   if (inThread && isReply) {
     return (
@@ -872,7 +885,16 @@ export function SystemRow({
   if (message.meta.event === 'connectors_added') {
     const ids = message.meta.connectorIds ?? snapshot.connectors.map((c) => c.id);
     const connectors = snapshot.connectors.filter((c) => ids.includes(c.id));
-    return <ConnectorCard message={message} addedBy={memberOf(snapshot, message.authorId)} connectors={connectors} onConnect={onConnectorConnect} />;
+    const addedBy = personOf(snapshot, message.authorId);
+    return (
+      <ConnectorCard
+        message={message}
+        addedBy={addedBy.member}
+        addedByName={addedBy.name}
+        connectors={connectors}
+        onConnect={onConnectorConnect}
+      />
+    );
   }
   const Icon =
     message.meta.event === 'agent_failed' ? CircleAlert : message.meta.event === 'connectors_removed' ? Plug : UserPlus;

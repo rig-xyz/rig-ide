@@ -284,7 +284,7 @@ describe('RelayRoomSource', () => {
     await flush();
 
     expect(source.getSnapshot().messages[0].authorId).toBe('usr_1');
-    expect(source.getSnapshot().members[0]).toMatchObject({ id: 'usr_1', name: 'dylan', initial: 'D' });
+    expect(source.getSnapshot().members[0]).toMatchObject({ id: 'usr_1', name: 'dylan@play.local', initial: 'D' });
   });
 
   it('keeps doc comments in the room as comment lines tied to their file and passage', async () => {
@@ -681,6 +681,46 @@ describe('RelayRoomSource', () => {
     await source.send('ok not this one', replyTo, 'claude');
     await source.send('just chat');
     expect(metas).toEqual([{ replyTo, asks: 'claude' }, undefined]);
+  });
+
+  it('send() puts tagged people in meta.mentions (ids) and meta.mentionNames, and reads them back', async () => {
+    const metas: unknown[] = [];
+    const fake = makeFakeRelay({
+      async postMessage(_bindingId, input) {
+        metas.push(input.meta);
+        return ok(message({ id: 'posted-3', seq: 1000, body: input.body }));
+      },
+    });
+    fake.queueMessages([
+      message({
+        id: 'm-tag',
+        body: '@Alex Martin and @Jérémie Rappaz',
+        author: { userId: 'former_usr_x', name: 'Former member', avatarUrl: null, kind: 'user' },
+        meta: { mentions: ['usr_a', 'usr_j'], mentionNames: ['Alex Martin', 'Jérémie Rappaz'] },
+      }),
+    ]);
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: () => new FakeProvider(),
+    });
+    source.play();
+    await flush();
+    await source.send('@Alex Martin hi', undefined, undefined, { mentions: [{ id: 'usr_a', name: 'Alex Martin' }] });
+    expect(metas).toEqual([{ mentions: ['usr_a'], mentionNames: ['Alex Martin'] }]);
+    const received = source.getSnapshot().messages.find((m) => m.id === 'm-tag');
+    expect(received?.meta).toMatchObject({
+      kind: 'text',
+      mentions: [
+        { id: 'usr_a', name: 'Alex Martin' },
+        { id: 'usr_j', name: 'Jérémie Rappaz' },
+      ],
+    });
+    // The relay's own name for an author who's gone: never their id.
+    expect(received).toMatchObject({ authorId: 'former_usr_x', authorName: 'Former member' });
   });
 
   it('previewDraft() asks the relay, and reads a failure or no client as "none"', async () => {

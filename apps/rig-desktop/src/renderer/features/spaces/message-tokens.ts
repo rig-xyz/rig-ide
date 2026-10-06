@@ -1,6 +1,6 @@
 import { FILE_TAG_SOURCE, tagPathOf } from '@shared/rig/file-tags';
 import { trimUrl, URL_PATTERN } from '@shared/spaces/links';
-import type { RoomMember } from './types';
+import type { MessageMention, RoomMember } from './types';
 
 /**
  * The Room's own bits inside a person's message, picked out of the
@@ -30,30 +30,51 @@ type MdNode = {
 
 export type RoomTokenKind = 'link' | 'mention' | 'command' | 'file-tag' | 'review' | 'path';
 
-/**
- * The @mention whose "@" is at `at`, if any. A member's display name wins,
- * longest first, so "@Hugo Renaudin" beats a member called "Hugo" and never
- * swallows the word after it; the name must end at a word boundary ("@Hugonaut"
- * isn't "@Hugo"). Otherwise a lowercase handle, the agent shape (`@claude`).
- */
-export function mentionAt(
-  text: string,
-  at: number,
-  members: readonly Pick<RoomMember, 'id' | 'name'>[]
-): { token: string; memberId?: string } | null {
-  const rest = text.slice(at + 1);
+type Named = Pick<RoomMember, 'id' | 'name'>;
+
+/** The longest of `people`'s names written right after the "@" (ending at a word boundary), with whose it is. */
+function longestName(rest: string, people: readonly Named[]): { token: string; memberId: string } | null {
   let best: { token: string; memberId: string } | null = null;
-  for (const member of members) {
-    const name = member.name.trim();
-    if (!name || (best && name.length < best.token.length)) continue;
+  for (const person of people) {
+    const name = person.name.trim();
+    if (!name || (best && name.length <= best.token.length - 1)) continue;
     const candidate = rest.slice(0, name.length);
     if (
       candidate.toLowerCase() !== name.toLowerCase() ||
       /[\p{L}\p{N}_]/u.test(rest.charAt(name.length))
     )
       continue;
-    best = { token: `@${candidate}`, memberId: member.id };
+    best = { token: `@${candidate}`, memberId: person.id };
   }
+  return best;
+}
+
+/**
+ * The @mention whose "@" is at `at`, if any. The people the message says it
+ * tagged (`mentions`: id and the name as written) come first, under the name
+ * written or their name now, so two members with the same name each get
+ * their own and a renamed person still resolves. Then a member's display
+ * name, longest first, so "@Hugo Renaudin" beats a member called "Hugo" and
+ * never swallows the word after it; the name must end at a word boundary
+ * ("@Hugonaut" isn't "@Hugo"). Otherwise a lowercase handle, the agent
+ * shape (`@claude`).
+ */
+export function mentionAt(
+  text: string,
+  at: number,
+  members: readonly Named[],
+  mentions: readonly MessageMention[] = []
+): { token: string; memberId?: string } | null {
+  const rest = text.slice(at + 1);
+  if (mentions.length > 0) {
+    const tagged: Named[] = mentions.flatMap((m) => {
+      const now = members.find((member) => member.id === m.id)?.name;
+      return now && now !== m.name ? [m, { id: m.id, name: now }] : [m];
+    });
+    const hit = longestName(rest, tagged);
+    if (hit) return hit;
+  }
+  const best = longestName(rest, members);
   if (best) return best;
   const handle = /^[a-z]+/.exec(rest)?.[0];
   return handle ? { token: `@${handle}` } : null;
@@ -95,14 +116,22 @@ function pushText(out: MdNode[], value: string): void {
 export function splitTokens(
   text: string,
   atStart: boolean,
-  members: readonly Pick<RoomMember, 'id' | 'name'>[]
+  members: readonly Named[],
+  /**
+   * The message's tagged people: `all` of them, and those not matched yet
+   * (`pending`, used up in order by the "@"s they match, so two tags of the
+   * same name go to two people).
+   */
+  tags: { all: readonly MessageMention[]; pending: MessageMention[] } = { all: [], pending: [] }
 ): MdNode[] {
   const pattern = tokenPattern(atStart);
   const out: MdNode[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text))) {
-    const mention = match[2] ? mentionAt(text, match.index, members) : null;
+    const mention = match[2] ? mentionAt(text, match.index, members, [...tags.pending, ...tags.all]) : null;
+    const used = mention?.memberId ? tags.pending.findIndex((m) => m.id === mention.memberId) : -1;
+    if (used !== -1) tags.pending.splice(used, 1);
     // A file tag (`+path` or `+"path"`, see `shared/rig/file-tags.ts`); one that would leave the space stays text.
     const tagged = match[4] ? tagPathOf(match, 5, 6) : null;
     if ((match[2] && !mention) || (match[4] && !tagged)) {
@@ -152,7 +181,9 @@ function isAutolink(node: MdNode): boolean {
 /** Never looked into: code, raw HTML, and a written link's own text. */
 const SKIP = new Set(['code', 'inlineCode', 'html', 'link', 'linkReference', 'definition']);
 
-function walk(node: MdNode, members: readonly Pick<RoomMember, 'id' | 'name'>[]): void {
+type People = { members: readonly Named[]; tags: { all: readonly MessageMention[]; pending: MessageMention[] } };
+
+function walk(node: MdNode, people: People): void {
   if (!node.children) return;
   // First, back to plain text: bare links (the Room has its own rules for
   // them) and hard line breaks; an image becomes a link to it.
@@ -178,10 +209,10 @@ function walk(node: MdNode, members: readonly Pick<RoomMember, 'id' | 'name'>[])
   const out: MdNode[] = [];
   for (const child of flat) {
     if (child.type === 'text') {
-      out.push(...splitTokens(child.value ?? '', child.position?.start.offset === 0, members));
+      out.push(...splitTokens(child.value ?? '', child.position?.start.offset === 0, people.members, people.tags));
       continue;
     }
-    if (!SKIP.has(child.type)) walk(child, members);
+    if (!SKIP.has(child.type)) walk(child, people);
     out.push(child);
   }
   node.children = out;
@@ -193,13 +224,14 @@ type Processor = { data(): object };
 /** remark plugin: see the header comment. */
 export function remarkRoomTokens(
   this: Processor,
-  options: { members?: readonly Pick<RoomMember, 'id' | 'name'>[] } = {}
+  options: { members?: readonly Named[]; mentions?: readonly MessageMention[] } = {}
 ) {
   const data = this.data() as { micromarkExtensions?: unknown[] };
   // Four leading spaces are someone's indent, not a code block.
   (data.micromarkExtensions ??= []).push({ disable: { null: ['codeIndented'] } });
   const members = options.members ?? [];
   return (tree: MdNode) => {
-    walk(tree, members);
+    const all = options.mentions ?? [];
+    walk(tree, { members, tags: { all, pending: [...all] } });
   };
 }

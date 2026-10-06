@@ -12,6 +12,7 @@ import {
   type RailMember,
 } from '../dock-model';
 import type { ForYou } from '../for-you';
+import { personOf } from '../person-identity';
 import type { AgentKind, RoomSnapshot } from '../types';
 import { FOCUS_RING } from './dock-glass';
 import { PersonAgentAvatar, PersonAvatar } from './identity';
@@ -215,7 +216,7 @@ function AgentTile({
   onToggle: () => void;
 }) {
   const owner = snapshot.members.find((m) => m.id === railAgent.owner);
-  const ownerName = railAgent.own ? null : (owner?.name ?? 'Someone');
+  const ownerName = railAgent.own ? null : personOf(snapshot, railAgent.owner).name;
   const name = agentDisplayName(railAgent.agent, ownerName);
   const runs = Object.values(snapshot.sessionMetaByRun).filter(
     (m) => m.owner === railAgent.owner && m.agent === railAgent.agent

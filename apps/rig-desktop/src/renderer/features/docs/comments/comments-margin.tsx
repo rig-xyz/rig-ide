@@ -71,6 +71,7 @@ import {
   mentionCandidateLabel,
   mentionCandidateMatches,
   mentionInsertText,
+  mentionablePeople,
   type MentionCandidate,
   type PersonMention,
 } from './mention-candidates';
@@ -195,7 +196,7 @@ function useMemberNames(path: string): ReadonlyMap<string, string> {
     const names = new Map<string, string>();
     if (!data?.success) return names;
     for (const member of data.data.members) {
-      const name = member.name ?? member.email?.split('@')[0];
+      const name = member.name?.trim() || member.email?.trim();
       if (!name) continue;
       names.set(member.userId, name);
       if (member.clerkUserId) names.set(member.clerkUserId, name);
@@ -210,17 +211,7 @@ function usePeopleMentions(path: string): PersonMention[] {
     queryFn: () => rpc.rig.comments.listMembers({ absPath: path }),
     staleTime: 30_000,
   });
-  return useMemo(
-    () =>
-      data?.success
-        ? data.data.members.map((member) => ({
-            userId: member.userId,
-            name: member.name,
-            avatarUrl: member.avatarUrl,
-          }))
-        : [],
-    [data]
-  );
+  return useMemo(() => (data?.success ? mentionablePeople(data.data.members) : []), [data]);
 }
 
 function useThreadAgent(store: DocCommentsStore, thread: CommentThread): AgentMention | null {

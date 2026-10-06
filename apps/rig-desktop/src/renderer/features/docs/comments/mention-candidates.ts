@@ -1,3 +1,4 @@
+import { SOMEONE } from '@renderer/features/spaces/person-identity';
 import type { AgentMention } from './comments-store';
 
 /**
@@ -21,11 +22,23 @@ export type MentionCandidate =
   | { kind: 'agent'; agent: AgentMention }
   | { kind: 'person'; person: PersonMention };
 
-const UNKNOWN_PERSON_LABEL = 'Unknown';
+/**
+ * The binding's people as the menu offers them: each by their name (the
+ * relay puts the email there when no name is set; only your own email is
+ * ever sent), and nobody it can't name, so no mention is ever "@Unknown".
+ */
+export function mentionablePeople(
+  members: ReadonlyArray<{ userId: string; name: string | null; email?: string | null; avatarUrl: string | null }>
+): PersonMention[] {
+  return members.flatMap((member) => {
+    const name = member.name?.trim() || member.email?.trim();
+    return name ? [{ userId: member.userId, name, avatarUrl: member.avatarUrl }] : [];
+  });
+}
 
 /** Display label for the menu row, and what the typed query matches against. */
 export function mentionCandidateLabel(candidate: MentionCandidate): string {
-  return candidate.kind === 'agent' ? candidate.agent.name : (candidate.person.name ?? UNKNOWN_PERSON_LABEL);
+  return candidate.kind === 'agent' ? candidate.agent.name : (candidate.person.name ?? SOMEONE);
 }
 
 /** Stable id — agent provider id, or relay user id. Also matched against the query, not shown. */
@@ -64,7 +77,8 @@ export function mentionCandidateMatches(candidate: MentionCandidate, query: stri
  */
 export function mentionInsertText(candidate: MentionCandidate): string {
   if (candidate.kind === 'agent') return `@${candidate.agent.providerId} `;
-  return `@${candidate.person.name ?? UNKNOWN_PERSON_LABEL} `;
+  // Never a placeholder: someone with no name isn't offered (`mentionablePeople`).
+  return candidate.person.name ? `@${candidate.person.name} ` : '';
 }
 
 // ── in-progress `@` query, and the dispatch decision ────────────────────────

@@ -56,6 +56,7 @@ import { compareEventIds, type ThemeEventsPage, type ThemesFetch, type ThemesSna
 import type {
   AgentKind,
   MessageKind,
+  MessageMention,
   RoomConnector,
   RoomEvent,
   RoomMessage,
@@ -64,6 +65,8 @@ import type {
   SessionRunMeta,
 } from './types';
 import { parseMessageAttachments } from './attachments';
+import { parseMessageMentions } from './mentions';
+import { SOMEONE } from './person-identity';
 import { reduceRoom } from './fixtures/room-feed';
 import { effectiveRunStatus, runCard, summarizeCard } from './projection';
 import type { ChatSearchPage, RoomSource } from './room-source';
@@ -1172,8 +1175,8 @@ export class RelayRoomSource implements RoomSource {
       if (row.clerkUserId) this.userIdByClerkId.set(row.clerkUserId, row.userId);
     }
     const seeded = rows.map((row) => {
-      // No profile name yet: the email's local part reads better than an id.
-      const name = row.name ?? row.email?.split('@')[0] ?? row.userId;
+      // No name set: the relay puts their email in `name`; an older relay sends only your own email. Never an id.
+      const name = row.name?.trim() || row.email?.trim() || SOMEONE;
       return {
         id: row.userId,
         name,
@@ -1458,6 +1461,8 @@ export class RelayRoomSource implements RoomSource {
         body: row.body || undefined,
         meta: comment ?? toMessageMeta(row.kind, meta),
         ...(row.reactions?.length ? { reactions: this.memberReactions(row.reactions) } : {}),
+        ...(row.author.name ? { authorName: row.author.name } : {}),
+        ...(row.author.avatarUrl ? { authorAvatarUrl: row.author.avatarUrl } : {}),
         ...(typeof meta.clientId === 'string' && meta.clientId ? { clientId: meta.clientId } : {}),
         ...(comment
           ? { threadId: row.parentId ?? row.id }
@@ -1666,6 +1671,8 @@ export class RelayRoomSource implements RoomSource {
       alsoInChannel?: boolean;
       /** You chose to just send it: the relay's router leaves it alone. */
       route?: 'none';
+      /** People tagged by picking them: their ids go in `meta.mentions` (the relay notifies by them), their names as written in `meta.mentionNames`. */
+      mentions?: readonly MessageMention[];
     }
   ): Promise<string | null> {
     const meta = {
@@ -1678,6 +1685,9 @@ export class RelayRoomSource implements RoomSource {
       // A thread reply that also shows in the main column (Threads view); text meta is free-form on the relay.
       ...(extra?.alsoInChannel ? { alsoInChannel: true } : {}),
       ...(extra?.route ? { route: extra.route } : {}),
+      ...(extra?.mentions && extra.mentions.length > 0
+        ? { mentions: extra.mentions.map((m) => m.id), mentionNames: extra.mentions.map((m) => m.name) }
+        : {}),
     };
     const result = await this.opts.relay.postMessage(this.opts.bindingId, {
       body: text,
@@ -1882,15 +1892,29 @@ export class RelayRoomSource implements RoomSource {
 
   private applyInvites(rows: readonly RoomInviteRow[]): void {
     const memberEmails = new Set(this.snapshot.members.map((m) => m.email.toLowerCase()).filter(Boolean));
+    const memberIds = new Set(this.snapshot.members.map((m) => m.id));
     const invitesById: RoomSnapshot['invitesById'] = { ...this.snapshot.invitesById };
     for (const invite of rows) {
+      const joined =
+        (!!invite.email && memberEmails.has(invite.email.toLowerCase())) ||
+        (!!invite.targetUserId && memberIds.has(invite.targetUserId));
       invitesById[invite.id] = {
         id: invite.id,
         by: invite.inviterUserId ?? '',
         who: invite.email ?? '',
         email: invite.email,
         role: invite.role,
-        status: invite.email && memberEmails.has(invite.email.toLowerCase()) ? 'joined' : 'sent',
+        status: joined ? 'joined' : 'sent',
+        ...(invite.targetUserId
+          ? {
+              target: {
+                userId: invite.targetUserId,
+                name: invite.targetName ?? null,
+                avatarUrl: invite.targetImageUrl ?? null,
+              },
+            }
+          : {}),
+        ...(invite.revoked ? { revoked: true } : {}),
       };
     }
     this.snapshot = { ...this.snapshot, invitesById };
@@ -2267,6 +2291,7 @@ function toMessageMeta(
     default: {
       const reply = meta.replyTo as Record<string, unknown> | undefined;
       const attachments = parseMessageAttachments(meta.attachments);
+      const mentions = parseMessageMentions(meta.mentions, meta.mentionNames);
       return {
         kind: 'text',
         ...(reply &&
@@ -2285,6 +2310,7 @@ function toMessageMeta(
           : {}),
         ...(attachments ? { attachments, ...(meta.autoBody === true ? { autoBody: true } : {}) } : {}),
         ...(meta.alsoInChannel === true ? { alsoInChannel: true } : {}),
+        ...(mentions.length > 0 ? { mentions } : {}),
       };
     }
   }

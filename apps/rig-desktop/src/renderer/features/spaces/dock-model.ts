@@ -7,6 +7,7 @@
 import type { ForYou } from './for-you';
 import { effectiveRunStatus, projectSessionCard } from './projection';
 import type { RoomTheme, RoomThemes } from './themes';
+import { personOf } from './person-identity';
 import type { AgentKind, RoomMember, RoomSnapshot } from './types';
 
 /** What the transcript is focused on, if anything. */
@@ -211,8 +212,7 @@ export function themeLastActivity(
   for (let i = snapshot.messages.length - 1; i >= 0; i--) {
     const message = snapshot.messages[i]!;
     if (themes.themeOf[message.id]?.themeId !== themeId) continue;
-    const owner = snapshot.members.find((m) => m.id === message.authorId);
-    const ownerName = message.authorId === selfUserId ? null : (owner?.name ?? 'Someone');
+    const ownerName = message.authorId === selfUserId ? null : personOf(snapshot, message.authorId).name;
     const run =
       message.meta.kind === 'session' ? snapshot.sessionMetaByRun[message.meta.runId] : undefined;
     const who = run ? agentDisplayName(run.agent, ownerName) : (ownerName ?? 'you');

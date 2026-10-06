@@ -107,6 +107,10 @@ export type RoomInviteRow = {
   email: string | null;
   role: string;
   revoked: boolean;
+  /** An invite aimed at one person (no email needed): their user id, name and photo. Absent from an older relay. */
+  targetUserId?: string | null;
+  targetName?: string | null;
+  targetImageUrl?: string | null;
 };
 
 export type BindingDevice = { id: string; bindingId: string };
@@ -737,6 +741,13 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
                 email: typeof row.emailConstraint === 'string' ? row.emailConstraint : null,
                 role: typeof row.role === 'string' ? row.role : 'editor',
                 revoked: typeof row.revokedAt === 'string',
+                ...(typeof row.targetUserId === 'string'
+                  ? {
+                      targetUserId: row.targetUserId,
+                      targetName: typeof row.targetName === 'string' ? row.targetName : null,
+                      targetImageUrl: typeof row.targetImageUrl === 'string' ? row.targetImageUrl : null,
+                    }
+                  : {}),
               };
             })
             .filter((i): i is RoomInviteRow => i !== null)
