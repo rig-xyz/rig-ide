@@ -7,7 +7,8 @@ import type { RigAccountError } from '@shared/rig/account';
 import { log } from '@main/lib/logger';
 import type { MessageReaction } from '@shared/spaces/reactions';
 import type { ThemeEventsPage, ThemesFetch, ThemesSnapshotWire } from '@shared/spaces/themes';
-import { isError, resolveContext, resolveSelfUserId } from './account';
+import { fetchWorkspaceBindings, isError, resolveContext, resolveSelfUserId } from './account';
+import { createSkillsMirror } from './spaces/skills-mirror';
 import {
   createHttpSpacesRelayApi,
   type AgentRequest,
@@ -117,30 +118,44 @@ export function parseDraftPreview(raw: unknown): DraftPreview {
 }
 
 /**
- * The skills the space itself ships (`.claude/skills/<name>/SKILL.md` in its
- * folder on this device): shared with every member because they're files in
- * the space, and what the room agent runs with. Reads only that folder.
+ * The skills the space itself ships (`<name>/SKILL.md` under `.claude/skills`
+ * for Claude and `.agents/skills` for Codex, in its folder on this device):
+ * shared with every member because they're files in the space, and what the
+ * room agent runs with. One per folder name across both, Claude's copy read
+ * first. Reads only those folders.
  */
 export async function listSpaceSkillsIn(root: string): Promise<SpaceSkill[]> {
-  const dir = join(root, '.claude', 'skills');
-  let entries: string[];
-  try {
-    entries = await readdir(dir);
-  } catch {
-    return [];
-  }
-  const skills: SpaceSkill[] = [];
-  for (const entry of entries.sort()) {
+  const seen = new Set<string>();
+  const found: Array<{ entry: string; skill: SpaceSkill }> = [];
+  for (const dir of [join(root, '.claude', 'skills'), join(root, '.agents', 'skills')]) {
+    let entries: string[];
     try {
-      const { frontmatter } = parseFrontmatter(await readFile(join(dir, entry, 'SKILL.md'), 'utf8'));
-      const name = frontmatter.name?.trim() || entry;
-      skills.push({ cmd: `/${name}`, name, desc: frontmatter.description?.trim() ?? '' });
+      entries = await readdir(dir);
     } catch {
-      // Not a skill folder (no SKILL.md): skip.
+      continue;
+    }
+    for (const entry of entries) {
+      if (seen.has(entry)) continue;
+      try {
+        const { frontmatter } = parseFrontmatter(await readFile(join(dir, entry, 'SKILL.md'), 'utf8'));
+        const name = frontmatter.name?.trim() || entry;
+        seen.add(entry);
+        found.push({ entry, skill: { cmd: `/${name}`, name, desc: frontmatter.description?.trim() ?? '' } });
+      } catch {
+        // Not a skill folder (no SKILL.md): skip.
+      }
     }
   }
-  return skills;
+  return found.sort((a, b) => (a.entry < b.entry ? -1 : a.entry > b.entry ? 1 : 0)).map((f) => f.skill);
 }
+
+/** Keeps `.claude/skills` and `.agents/skills` in step in the spaces you own (`spaces/skills-mirror.ts`). */
+const skillsMirror = createSkillsMirror({
+  isOwner: async (bindingId) => {
+    const bindings = await fetchWorkspaceBindings();
+    return bindings.success && bindings.data.some((b) => b.id === bindingId && b.kind === 'space' && b.role === 'owner');
+  },
+});
 
 /**
  * A space the relay says is gone (410) or no longer yours (404 on its
@@ -193,7 +208,10 @@ export const rigSpacesConnectionController = createRPCController({
     // module's other callers (and its tests) don't need.
     const { resolveLocalPathsImpl } = await import('./recent-rigs');
     const root = (await resolveLocalPathsImpl([input.bindingId]))[input.bindingId];
-    return root ? listSpaceSkillsIn(root) : [];
+    if (!root) return [];
+    // Asked on open and on every catch-up: a good time to bring both skills folders in step.
+    void skillsMirror.open(input.bindingId, root).catch(() => undefined);
+    return listSpaceSkillsIn(root);
   },
   listMembers: async (input: { bindingId: string }): Promise<Result<RoomMemberRow[], RelayApiError>> =>
     forgetIfGone(input.bindingId, await api.listMembers(input.bindingId)),

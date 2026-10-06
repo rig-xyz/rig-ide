@@ -46,6 +46,26 @@ export function classifyEntryCategory(relPath: string): FileNavigatorCategory {
   return 'content';
 }
 
+/**
+ * The space's skills for the space panel: one per skill, by folder name,
+ * across `.claude/skills/<name>/SKILL.md` (Claude's) and
+ * `.agents/skills/<name>/SKILL.md` (Codex's), so a skill kept in both counts
+ * once. Each is its `SKILL.md`, Claude's copy when both exist. Instructions
+ * files (AGENTS.md, CLAUDE.md) and a skill's other files aren't skills.
+ */
+export function distinctSkillFiles<T extends { relPath: string }>(files: readonly T[]): T[] {
+  const byName = new Map<string, T>();
+  for (const dir of ['.claude/skills/', '.agents/skills/']) {
+    for (const file of files) {
+      if (!file.relPath.startsWith(dir)) continue;
+      const [name, base, ...rest] = file.relPath.slice(dir.length).split('/');
+      if (!name || rest.length > 0 || !base || !/^skill\.md$/i.test(base)) continue;
+      if (!byName.has(name)) byName.set(name, file);
+    }
+  }
+  return [...byName.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, file]) => file);
+}
+
 /** Separator-aware absolute-to-relative conversion without a `node:path` dependency (renderer-safe). */
 export function relPathFromRoot(root: string, absPath: string): string {
   const trimmedRoot = root.length > 1 ? root.replace(/[\\/]+$/, '') : root;

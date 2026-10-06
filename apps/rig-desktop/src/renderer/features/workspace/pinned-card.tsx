@@ -24,7 +24,7 @@ import { formatRelative } from '@renderer/lib/time-format';
 import { cn } from '@renderer/lib/utils';
 import { selectCards, toContentOnlyPinned, toContentOnlyWrites } from '@shared/rig/card-rail';
 import {
-  classifyEntryCategory,
+  distinctSkillFiles,
   filterToContentOnly,
 } from '@shared/rig/file-navigator-categories';
 import { rigFileChangeChannel, type RigFileNode } from '@shared/rig/files';
@@ -457,11 +457,7 @@ export function PinnedCard({
 
   const contentTree = useMemo(() => filterToContentOnly(data ?? []), [data]);
   const contentFiles = useMemo(() => flattenFiles(contentTree), [contentTree]);
-  const skillFiles = useMemo(
-    () =>
-      flattenFiles(data ?? []).filter((node) => classifyEntryCategory(node.relPath) === 'skills'),
-    [data]
-  );
+  const skillFiles = useMemo(() => distinctSkillFiles(flattenFiles(data ?? [])), [data]);
 
   const unseenFiles = useMemo(
     () =>

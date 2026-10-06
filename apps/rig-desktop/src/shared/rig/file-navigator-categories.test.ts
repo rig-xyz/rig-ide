@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifyEntryCategory,
+  distinctSkillFiles,
   filterToContentOnly,
   relPathFromRoot,
 } from './file-navigator-categories';
@@ -111,5 +112,35 @@ describe('filterToContentOnly', () => {
       file('gone.conflict-from.mac.chg_2.md'),
       dir('docs', [file('docs/plan.md')]),
     ]);
+  });
+});
+
+describe('distinctSkillFiles', () => {
+  const files = (paths: string[]) => paths.map((relPath) => ({ relPath }));
+
+  it('counts a skill kept in both folders once, Claude’s copy first', () => {
+    const out = distinctSkillFiles(
+      files([
+        'AGENTS.md',
+        'CLAUDE.md',
+        '.agents/skills/report/SKILL.md',
+        '.claude/skills/report/SKILL.md',
+        '.claude/skills/report/scripts/run.sh',
+        '.agents/skills/triage/SKILL.md',
+        '.claude/skills/alpha/skill.md',
+        '.claude/commands/ship.md',
+        '.claude/skills/loose.md',
+        'docs/.claude/skills/nested/SKILL.md',
+      ])
+    );
+    expect(out.map((f) => f.relPath)).toEqual([
+      '.claude/skills/alpha/skill.md',
+      '.claude/skills/report/SKILL.md',
+      '.agents/skills/triage/SKILL.md',
+    ]);
+  });
+
+  it('is empty without skill folders', () => {
+    expect(distinctSkillFiles(files(['AGENTS.md', 'notes.md']))).toEqual([]);
   });
 });

@@ -209,5 +209,27 @@ describe('listSpaceSkillsIn — the space folder\'s own skills for the / palette
     ]);
     expect(await listSpaceSkillsIn(join(root, 'missing'))).toEqual([]);
   });
+
+  it('reads Codex\'s .agents/skills too, one per folder name, Claude\'s copy first', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const root = mkdtempSync(join(tmpdir(), 'space-'));
+    const skill = (dir: string, name: string, desc: string) => {
+      mkdirSync(join(root, dir, name), { recursive: true });
+      writeFileSync(join(root, dir, name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${desc}\n---\nBody`);
+    };
+    skill('.claude/skills', 'report', 'Claude copy');
+    skill('.agents/skills', 'report', 'Codex copy');
+    skill('.agents/skills', 'triage', 'Only Codex');
+    skill('.claude/skills', 'alpha', 'Only Claude');
+
+    const { listSpaceSkillsIn } = await import('./spaces-connection');
+    expect(await listSpaceSkillsIn(root)).toEqual([
+      { cmd: '/alpha', name: 'alpha', desc: 'Only Claude' },
+      { cmd: '/report', name: 'report', desc: 'Claude copy' },
+      { cmd: '/triage', name: 'triage', desc: 'Only Codex' },
+    ]);
+  });
 });
 
