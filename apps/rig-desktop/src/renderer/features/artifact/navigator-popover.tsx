@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ChevronRight, Link, Search } from 'lucide-react';
+import { ChevronRight, GitMerge, Link, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileActionsMenu } from '@renderer/features/workspace/file-actions';
 import { iconFor, rigFilesQueryKey } from '@renderer/features/workspace/file-tree';
@@ -7,7 +7,9 @@ import { useRowContextMenu, type ContextMenuPoint } from '@renderer/features/wor
 import { ImportDocDialog } from '@renderer/features/rig-import/import-doc-dialog';
 import { rpc } from '@renderer/lib/ipc';
 import { Popover, type PopoverAnchor } from '@renderer/lib/ui/popover';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
+import { conflictCopiesLabel, groupConflictCopies } from '@shared/rig/conflict-copies';
 import { filterToContentOnly } from '@shared/rig/file-navigator-categories';
 import type { RigFileNode } from '@shared/rig/files';
 
@@ -158,6 +160,20 @@ export function NavigatorContent({
   }, [revealDir]);
 
   const tree = useMemo(() => filterToContentOnly(data ?? []), [data]);
+  // A file's conflict copies are left out of the list (`filterToContentOnly`);
+  // its row says how many there are instead.
+  const copiesOf = useMemo(() => {
+    const paths: string[] = [];
+    const walk = (nodes: readonly RigFileNode[]) => {
+      for (const node of nodes) {
+        if (node.kind === 'dir') walk(node.children ?? []);
+        else paths.push(node.relPath);
+      }
+    };
+    walk(data ?? []);
+    const { copiesByOriginal } = groupConflictCopies(paths);
+    return (relPath: string) => copiesByOriginal.get(relPath)?.length ?? 0;
+  }, [data]);
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (q.length === 0) return null;
@@ -236,6 +252,7 @@ export function NavigatorContent({
                 withPath
                 // Enter opens the FIRST match — show which row that is.
                 highlighted={index === 0}
+                copies={copiesOf(node.relPath)}
                 onOpen={() => openFile(node)}
                 onMenu={onFileMenu && ((point) => onFileMenu(node, point))}
               />
@@ -260,6 +277,7 @@ export function NavigatorContent({
           }
           onOpenFile={openFile}
           onFileMenu={onFileMenu}
+          copiesOf={copiesOf}
         />
       )}
       {fileMenu && (
@@ -283,6 +301,7 @@ function TreeLevel({
   onToggleDir,
   onOpenFile,
   onFileMenu,
+  copiesOf,
 }: {
   nodes: readonly RigFileNode[];
   depth: number;
@@ -290,6 +309,8 @@ function TreeLevel({
   onToggleDir: (relPath: string) => void;
   onOpenFile: (node: RigFileNode) => void;
   onFileMenu?: (node: RigFileNode, point: ContextMenuPoint) => void;
+  /** How many conflict copies a file has. */
+  copiesOf: (relPath: string) => number;
 }) {
   return (
     <>
@@ -319,6 +340,7 @@ function TreeLevel({
                 onToggleDir={onToggleDir}
                 onOpenFile={onOpenFile}
                 onFileMenu={onFileMenu}
+                copiesOf={copiesOf}
               />
             )}
           </div>
@@ -327,6 +349,7 @@ function TreeLevel({
             key={node.relPath}
             node={node}
             depth={depth}
+            copies={copiesOf(node.relPath)}
             onOpen={() => onOpenFile(node)}
             onMenu={onFileMenu && ((point) => onFileMenu(node, point))}
           />
@@ -341,6 +364,7 @@ function FileRow({
   depth = 0,
   withPath = false,
   highlighted = false,
+  copies = 0,
   onOpen,
   onMenu,
 }: {
@@ -350,6 +374,8 @@ function FileRow({
   withPath?: boolean;
   /** The row Enter would open (the first filter match). */
   highlighted?: boolean;
+  /** This file's conflict copies, kept out of the list: a quiet marker says how many. */
+  copies?: number;
   onOpen: () => void;
   /** Opens this file's actions at a point: the pointer, or the row's corner from the keyboard. */
   onMenu?: (point: ContextMenuPoint) => void;
@@ -391,6 +417,22 @@ function FileRow({
     >
       <Icon className="size-3.5 shrink-0 text-text-secondary" strokeWidth={1.5} />
       <span className="min-w-0 truncate text-text-primary">{node.name}</span>
+      {copies > 0 && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                aria-label={conflictCopiesLabel(copies)}
+                data-testid="conflict-copies-marker"
+                className="flex shrink-0 items-center text-warning"
+              >
+                <GitMerge className="size-3" strokeWidth={1.75} />
+              </span>
+            }
+          />
+          <TooltipContent side="right">{conflictCopiesLabel(copies)}</TooltipContent>
+        </Tooltip>
+      )}
       {withPath && folder && (
         <span className="ml-auto min-w-0 shrink-0 truncate font-mono text-2xs text-text-muted">
           {folder}

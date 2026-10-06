@@ -1,14 +1,19 @@
-import { Archive, Copy, FolderOpen, Pencil, Pin } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Archive, Copy, FolderOpen, GitMerge, Pencil, Pin } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { flushOpenDocs } from '@renderer/features/docs/doc-file-sync';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
 import { Popover, type PopoverAnchor } from '@renderer/lib/ui/popover';
+import { groupConflictCopies } from '@shared/rig/conflict-copies';
 import { relPathFromRoot } from '@shared/rig/file-navigator-categories';
+import type { RigFileNode } from '@shared/rig/files';
 import { rigSettingsChangedChannel } from '@shared/rig/settings';
 import { announceFileMove } from './file-moves';
+import { rigFilesQueryKey } from './file-tree';
+import { requestOpenFile } from './open-file-request';
 import { RenameFileDialog } from './rename-file-dialog';
-import { ContextMenuItem } from './row-context-menu';
+import { ContextMenuItem, ContextMenuSeparator } from './row-context-menu';
 
 /**
  * The file actions both the tree's row menu (`file-tree.tsx`) and a file's
@@ -88,6 +93,52 @@ export async function archiveEntry(
     });
   }
   return false;
+}
+
+/** One of a file's conflict copies (`shared/rig/conflict-copies.ts`), with when it was written. */
+export type ConflictCopy = { relPath: string; mtimeMs: number | null };
+
+/**
+ * The conflict copies kept beside `relPath`, newest first, from the same
+ * cached listing the Files list reads. Empty for a file with none.
+ */
+export function useConflictCopies(root: string, rootId: string, relPath: string | null): ConflictCopy[] {
+  const { data } = useQuery({
+    queryKey: rigFilesQueryKey(root, rootId),
+    queryFn: async () => {
+      const result = await rpc.rig.files.list({ rootId });
+      if (!result.success) throw new Error(result.error.message);
+      return result.data;
+    },
+    enabled: relPath !== null,
+  });
+  return useMemo(() => {
+    if (!relPath || !data) return [];
+    const mtimes = new Map<string, number | null>();
+    const walk = (nodes: readonly RigFileNode[]) => {
+      for (const node of nodes) {
+        if (node.kind === 'dir') walk(node.children ?? []);
+        else mtimes.set(node.relPath, node.mtimeMs ?? null);
+      }
+    };
+    walk(data);
+    const copies = groupConflictCopies([...mtimes.keys()]).copiesByOriginal.get(relPath) ?? [];
+    return copies
+      .map((copy) => ({ relPath: copy, mtimeMs: mtimes.get(copy) ?? null }))
+      .sort((a, b) => (b.mtimeMs ?? 0) - (a.mtimeMs ?? 0));
+  }, [data, relPath]);
+}
+
+/** "Version from Oct 2, 4:12 PM", after when the copy was written. */
+export function conflictCopyLabel(mtimeMs: number | null): string {
+  if (mtimeMs === null) return 'An earlier version';
+  const when = new Date(mtimeMs).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  return `Version from ${when}`;
 }
 
 /**
@@ -187,6 +238,8 @@ export function FileActionsMenu({
   const [renamePath, setRenamePath] = useState<string | null>(null);
   const { pinned, togglePin } = usePinnedPaths(bindingId);
   const relPath = absPath ? relPathFromRoot(root, absPath) : '';
+  // A clash this computer lost leaves its edit beside the file: each copy opens in a tab.
+  const copies = useConflictCopies(root, rootId, absPath ? relPath : null);
 
   return (
     <>
@@ -209,6 +262,23 @@ export function FileActionsMenu({
             onArchive={() => void archiveEntry(root, rootId, relPath)}
             onDone={onClose}
           />
+          {copies.length > 0 && (
+            <>
+              <ContextMenuSeparator />
+              <div className="px-2.5 pt-1 pb-0.5 text-2xs text-text-muted">Your other versions</div>
+              {copies.map((copy) => (
+                <ContextMenuItem
+                  key={copy.relPath}
+                  label={conflictCopyLabel(copy.mtimeMs)}
+                  icon={GitMerge}
+                  onSelect={() => {
+                    requestOpenFile(`${root}/${copy.relPath}`);
+                    onClose();
+                  }}
+                />
+              ))}
+            </>
+          )}
         </Popover>
       )}
       <RenameFileDialog

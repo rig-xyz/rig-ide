@@ -67,6 +67,7 @@ import {
 } from '@renderer/features/shell/use-native-menu-events';
 import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
 import { onFileMove } from '@renderer/features/workspace/file-moves';
+import { onOpenFileRequest } from '@renderer/features/workspace/open-file-request';
 import { PinnedCard } from '@renderer/features/workspace/pinned-card';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
@@ -910,6 +911,8 @@ export function App() {
     },
     [boundRoot, boundBindingId]
   );
+  // The file actions menu and a doc's own banner ask for a file by path.
+  useEffect(() => onOpenFileRequest(openFile), [openFile]);
 
   /** A web page (a Claude artifact, a Google Doc) as a tab beside the Room. */
   const openPage = useCallback((url: string, title: string) => {

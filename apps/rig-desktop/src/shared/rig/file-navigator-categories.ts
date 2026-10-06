@@ -14,6 +14,7 @@
  * which are Skills above").
  */
 
+import { groupConflictCopies } from './conflict-copies';
 import type { RigFileNode } from './files';
 
 export type FileNavigatorCategory = 'content' | 'skills' | 'system';
@@ -64,11 +65,17 @@ export function relPathFromRoot(root: string, absPath: string): string {
  * the toggle), this always drops both `skills` and `system` entries — the
  * round-1 bug (`daemon.log`/`state.local.db` surfacing as a suggestion) must
  * be structurally impossible at this boundary, not a render-time guard.
+ *
+ * A conflict copy (`conflict-copies.ts`) is dropped too while the file it
+ * came from sits beside it: that file's row speaks for it.
  */
 export function filterToContentOnly(nodes: readonly RigFileNode[]): RigFileNode[] {
   const out: RigFileNode[] = [];
+  const { visible } = groupConflictCopies(nodes.map((node) => node.relPath));
+  const shown = new Set(visible);
   for (const node of nodes) {
     if (classifyEntryCategory(node.relPath) !== 'content') continue;
+    if (!shown.has(node.relPath)) continue;
     if (node.kind === 'dir') {
       out.push({ ...node, children: filterToContentOnly(node.children ?? []) });
     } else {

@@ -98,4 +98,18 @@ describe('filterToContentOnly', () => {
     const tree = [dir('.rig', [file('.rig/notes.md')])];
     expect(filterToContentOnly(tree)).toEqual([]);
   });
+
+  it('drops a conflict copy beside its file, at any depth, and keeps one whose file is gone', () => {
+    const tree = [
+      file('notes.md'),
+      file('notes.conflict-from.mac.chg_1.md'),
+      file('gone.conflict-from.mac.chg_2.md'),
+      dir('docs', [file('docs/plan.md'), file('docs/plan.conflict-from.mac.chg_3.md')]),
+    ];
+    expect(filterToContentOnly(tree)).toEqual([
+      file('notes.md'),
+      file('gone.conflict-from.mac.chg_2.md'),
+      dir('docs', [file('docs/plan.md')]),
+    ]);
+  });
 });

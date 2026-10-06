@@ -52,6 +52,7 @@ import {
   openFileTab,
 } from '@renderer/features/artifact/artefact-tabs';
 import { onFileMove } from '@renderer/features/workspace/file-moves';
+import { onOpenFileRequest } from '@renderer/features/workspace/open-file-request';
 
 function click(el: Element): void {
   el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -436,6 +437,86 @@ describe('PinnedCard', () => {
       } finally {
         stop();
       }
+    });
+  });
+
+  describe('conflict copies', () => {
+    const OCT_2 = new Date(2026, 9, 2, 16, 12).getTime();
+    const OCT_3 = new Date(2026, 9, 3, 9, 5).getTime();
+    async function openFilesWithCopies() {
+      mocks.filesList.mockResolvedValue({
+        success: true,
+        data: [
+          { kind: 'file', name: 'notes.md', relPath: 'notes.md', mtimeMs: OCT_3 },
+          { kind: 'file', name: 'notes.conflict-from.mac.chg_1.md', relPath: 'notes.conflict-from.mac.chg_1.md', mtimeMs: OCT_2 },
+          { kind: 'file', name: 'notes.conflict-from.mac.chg_2.md', relPath: 'notes.conflict-from.mac.chg_2.md', mtimeMs: OCT_3 },
+          { kind: 'file', name: 'gone.conflict-from.mac.chg_3.md', relPath: 'gone.conflict-from.mac.chg_3.md', mtimeMs: OCT_2 },
+          { kind: 'file', name: 'plan.md', relPath: 'plan.md', mtimeMs: OCT_2 },
+        ],
+      });
+      await render();
+      const filesRow = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.startsWith('Files'))!;
+      await act(async () => click(filesRow));
+      await flush();
+      return filesRow;
+    }
+    const menuLabels = () =>
+      Array.from(document.querySelectorAll('[role="menu"] [role="menuitem"]')).map((el) => el.textContent);
+    const rowNames = () =>
+      Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+        .map((b) => b.querySelector('span.truncate')?.textContent)
+        .filter((name): name is string => !!name && /\.md$/.test(name));
+
+    it('hides copies beside their file from the list and its count, and marks the file', async () => {
+      const filesRow = await openFilesWithCopies();
+      // The list and Activity alike. A copy whose file is gone stays: it's the only copy of that work.
+      expect(new Set(rowNames())).toEqual(new Set(['notes.md', 'gone.conflict-from.mac.chg_3.md', 'plan.md']));
+      expect(host.textContent).not.toContain('notes.conflict-from');
+      expect(filesRow.textContent).toContain('3');
+      expect(filesRow.textContent).not.toContain('5');
+
+      const notes = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === 'notes.md')!;
+      const marker = notes.querySelector('[data-testid="conflict-copies-marker"]');
+      expect(marker?.getAttribute('aria-label')).toBe('2 of your versions to review');
+      // Only on the list's own row.
+      expect(host.querySelectorAll('[data-testid="conflict-copies-marker"]')).toHaveLength(1);
+    });
+
+    it("lists the file's other versions in its menu, newest first, and opens one in a tab", async () => {
+      await openFilesWithCopies();
+      const opened: string[] = [];
+      const stop = onOpenFileRequest((path) => opened.push(path));
+      try {
+        const notes = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === 'notes.md')!;
+        await act(async () => {
+          notes.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }));
+        });
+        await flush();
+        const menu = document.querySelector('[role="menu"]')!;
+        expect(menu.textContent).toContain('Your other versions');
+        const versions = menuLabels().filter((label) => label?.startsWith('Version from'));
+        expect(versions).toEqual(['Version from Oct 3, 9:05 AM', 'Version from Oct 2, 4:12 PM']);
+
+        const older = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+          (el) => el.textContent === 'Version from Oct 2, 4:12 PM'
+        )!;
+        await act(async () => click(older));
+        await flush();
+        expect(opened).toEqual(['/rigs/growth/notes.conflict-from.mac.chg_1.md']);
+        expect(document.querySelector('[role="menu"]')).toBeNull();
+      } finally {
+        stop();
+      }
+    });
+
+    it('leaves the menu as it was for a file with no copies', async () => {
+      await openFilesWithCopies();
+      const plan = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === 'plan.md')!;
+      await act(async () => {
+        plan.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }));
+      });
+      await flush();
+      expect(document.querySelector('[role="menu"]')!.textContent).not.toContain('Your other versions');
     });
   });
 

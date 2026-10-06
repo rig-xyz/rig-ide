@@ -2,6 +2,7 @@ import {
   ChevronRight,
   Code as CodeIcon,
   Eye,
+  GitMerge,
   Loader2,
   MessageSquare,
   Sparkles,
@@ -28,8 +29,11 @@ import { usePaintbrushMode } from '@renderer/features/docs/paintbrush/use-paintb
 import { PaintbrushPreviewSweep } from '@renderer/features/docs/paintbrush/paintbrush-preview-sweep';
 import { PreviewCommentSelectionButton } from '@renderer/features/docs/preview/preview-comment-selection';
 import { usePreviewComments } from '@renderer/features/docs/preview/use-preview-comments';
+import { archiveEntry } from '@renderer/features/workspace/file-actions';
+import { requestOpenFile } from '@renderer/features/workspace/open-file-request';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
+import { conflictCopyOriginal } from '@shared/rig/conflict-copies';
 import { classifyEntryCategory, relPathFromRoot } from '@shared/rig/file-navigator-categories';
 import { breadcrumbSegments, type BreadcrumbSegment } from './breadcrumb';
 import type { EditorLanguage } from './file-type';
@@ -95,6 +99,7 @@ export const ArtifactView = observer(function ArtifactView({
     () => classifyEntryCategory(relPathFromRoot(root, path)) === 'skills',
     [root, path]
   );
+  const conflictBanner = <ConflictCopyBanner root={root} rootId={rootId} path={path} />;
 
   if (type !== null && (type.category === 'markdown' || type.category === 'text')) {
     return (
@@ -114,6 +119,7 @@ export const ArtifactView = observer(function ArtifactView({
         isSkill={isSkill}
         onNavigateFolder={onNavigateFolder}
         fileOptions={fileOptions}
+        banner={conflictBanner}
       />
     );
   }
@@ -126,6 +132,7 @@ export const ArtifactView = observer(function ArtifactView({
         onNavigateFolder={onNavigateFolder}
         titleAction={fileOptions}
       />
+      {conflictBanner}
       <div className="relative min-h-0 flex-1 overflow-y-auto">
         {type === null ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-text-muted">
@@ -148,6 +155,38 @@ export const ArtifactView = observer(function ArtifactView({
     </div>
   );
 });
+
+/**
+ * A conflict copy (`shared/rig/conflict-copies.ts`) opened from its file's
+ * menu: a quiet line under the title bar says what it is and what to do
+ * with it, with the file it came from one click away. Nothing for any
+ * other file.
+ */
+function ConflictCopyBanner({ root, rootId, path }: { root: string; rootId: string; path: string }) {
+  const relPath = relPathFromRoot(root, path);
+  const original = relPath === path ? null : conflictCopyOriginal(relPath);
+  if (!original) return null;
+  const name = original.split('/').pop() ?? original;
+  const chip =
+    'border-border-hairline bg-bg-0 hover:text-text-primary shrink-0 rounded-chip border px-2 py-0.5 text-xs text-text-secondary transition-colors';
+  return (
+    <div
+      className="border-border-hairline bg-bg-2 flex shrink-0 items-center gap-2 border-b px-4 py-1.5 text-xs text-text-secondary"
+      data-testid="conflict-copy-banner"
+    >
+      <GitMerge className="size-3 shrink-0 text-warning" strokeWidth={1.75} />
+      <span className="min-w-0 flex-1">
+        This is a version of yours that didn’t make it into {name}. Copy what you need into it, then archive this one.
+      </span>
+      <button type="button" className={chip} onClick={() => requestOpenFile(`${root}/${original}`)}>
+        Open {name}
+      </button>
+      <button type="button" className={chip} onClick={() => void archiveEntry(root, rootId, relPath)}>
+        Archive this version
+      </button>
+    </div>
+  );
+}
 
 /**
  * Back + breadcrumb — the one piece of chrome every file type shares,
@@ -355,6 +394,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   isSkill,
   onNavigateFolder,
   fileOptions,
+  banner,
 }: {
   root: string;
   rootId: string;
@@ -368,6 +408,8 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   onNavigateFolder: (relPath: string) => void;
   /** The title bar's `⋯` file menu, after Share. */
   fileOptions: React.ReactNode;
+  /** A line under the title bar (a conflict copy's). */
+  banner?: React.ReactNode;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<PreviewHandle | null>(null);
@@ -665,6 +707,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
           <span>Skill · teaches your agents</span>
         </div>
       )}
+      {banner}
 
       <div
         ref={containerRef}

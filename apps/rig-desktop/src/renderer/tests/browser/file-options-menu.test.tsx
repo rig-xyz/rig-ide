@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactView } from '@renderer/features/artifact/artifact-view';
 import { onFileMove, type FileMove } from '@renderer/features/workspace/file-moves';
+import { onOpenFileRequest } from '@renderer/features/workspace/open-file-request';
 
 /**
  * The `⋯` beside a file's name in its title bar (`file-options-menu.tsx`):
@@ -253,5 +254,45 @@ describe('File options menu in the title bar', () => {
     await render('/repo/notes/config.toml', '/elsewhere');
     await waitFor(() => host.querySelector('.cm-content') !== null);
     expect(trigger()).toBeNull();
+  });
+
+  describe('a version of yours that lost a clash', () => {
+    const banner = () => host.querySelector<HTMLElement>('[data-testid="conflict-copy-banner"]');
+    const bannerButton = (label: string) =>
+      Array.from(banner()?.querySelectorAll('button') ?? []).find((b) => b.textContent === label)!;
+
+    it('says what it is above the doc, and opens the file it came from', async () => {
+      const opened: string[] = [];
+      const stop = onOpenFileRequest((path) => opened.push(path));
+      try {
+        await render('/repo/notes/config.conflict-from.mac.chg_4.toml');
+        await waitFor(() => banner() !== null);
+        expect(banner()!.textContent).toContain(
+          'This is a version of yours that didn’t make it into config.toml. Copy what you need into it, then archive this one.'
+        );
+        await act(async () => click(bannerButton('Open config.toml')));
+        expect(opened).toEqual(['/repo/notes/config.toml']);
+      } finally {
+        stop();
+      }
+    });
+
+    it('archives itself', async () => {
+      await render('/repo/notes/config.conflict-from.mac.chg_4.toml');
+      await waitFor(() => banner() !== null);
+      await act(async () => click(bannerButton('Archive this version')));
+      await waitFor(() => moves.length > 0);
+      expect(mocks.archive).toHaveBeenCalledWith({
+        rootId: 'repo-1',
+        relativePath: 'notes/config.conflict-from.mac.chg_4.toml',
+      });
+      expect(moves).toEqual([{ from: '/repo/notes/config.conflict-from.mac.chg_4.toml', to: null }]);
+    });
+
+    it('is not there for any other file', async () => {
+      await render('/repo/notes/config.toml');
+      await waitFor(() => host.querySelector('.cm-content') !== null);
+      expect(banner()).toBeNull();
+    });
   });
 });
