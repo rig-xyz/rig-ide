@@ -49,8 +49,10 @@ export function SettingsRow({
       data-settings-row={id}
       data-highlighted={isHighlighted || undefined}
       className={cn(
-        '-mx-3 flex items-center gap-4 rounded-control px-3 py-3.5 transition-colors duration-500',
-        isHighlighted && 'bg-accent-subtle duration-150',
+        // Rounded only while highlighted: the divider is this row's top border,
+        // and rounded corners would bend it up at both ends.
+        '-mx-3 flex items-center gap-4 px-3 py-3.5 transition-colors duration-500',
+        isHighlighted && 'bg-accent-subtle rounded-control duration-150',
         disabled && 'opacity-50'
       )}
     >
@@ -83,8 +85,8 @@ export function SettingsBlock({ id, children }: { id: string; children: ReactNod
       data-settings-row={id}
       data-highlighted={highlighted || undefined}
       className={cn(
-        '-mx-3 rounded-control px-3 py-2 transition-colors duration-500',
-        highlighted && 'bg-accent-subtle duration-150'
+        '-mx-3 px-3 py-2 transition-colors duration-500',
+        highlighted && 'bg-accent-subtle rounded-control duration-150'
       )}
     >
       {children}
