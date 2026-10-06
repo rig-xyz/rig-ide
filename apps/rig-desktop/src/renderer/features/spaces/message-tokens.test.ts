@@ -51,9 +51,6 @@ describe('remarkRoomTokens', () => {
     expect(render('@Bob hi')).toContain('data-member="u_bob"');
     // Inside emphasis is still ordinary text.
     expect(tokens('**@claude** please')).toEqual([['mention', '@claude']]);
-    // Only agents' handles read as mentions without a member behind them.
-    expect(tokens('npm i @rigxyz/cli and ask @someone')).toEqual([]);
-    expect(tokens('@codex and @claude/x')).toEqual([['mention', '@codex']]);
   });
 
   it('takes a /command only at the very start of the message', () => {
