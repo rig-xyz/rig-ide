@@ -6,7 +6,6 @@ import {
   mintedInviteMatchesRole,
   type PendingInvite,
   shapePendingInvites,
-  suggestCollaborators,
 } from './invite-state';
 
 const NOW = Date.parse('2026-08-15T12:00:00Z');
@@ -22,6 +21,9 @@ function invite(overrides: Partial<RigInvite> = {}): RigInvite {
     revokedAt: null,
     label: null,
     createdAt: '2026-08-14T12:00:00Z',
+    targetUserId: null,
+    targetName: null,
+    targetAvatarUrl: null,
     ...overrides,
   };
 }
@@ -60,8 +62,8 @@ describe('shapePendingInvites', () => {
       NOW
     );
     expect(rows).toEqual([
-      { id: 'a', email: 'ada@example.com', roleLabel: 'viewer', createdAt: '2026-08-14T12:00:00Z' },
-      { id: 'c', email: null, roleLabel: 'editor', createdAt: '2026-08-14T12:00:00Z' },
+      { id: 'a', email: 'ada@example.com', roleLabel: 'viewer', createdAt: '2026-08-14T12:00:00Z', role: 'viewer', targetUserId: null, targetName: null, targetAvatarUrl: null },
+      { id: 'c', email: null, roleLabel: 'editor', createdAt: '2026-08-14T12:00:00Z', role: 'editor', targetUserId: null, targetName: null, targetAvatarUrl: null },
     ]);
   });
 
@@ -106,8 +108,23 @@ describe('excludeInvitesToMembers', () => {
   }
 
   function pending(email: string | null, overrides: Partial<PendingInvite> = {}): PendingInvite {
-    return { id: 'inv_1', email, roleLabel: 'editor', createdAt: '2026-08-14T12:00:00Z', ...overrides };
+    return {
+      id: 'inv_1',
+      email,
+      roleLabel: 'editor',
+      createdAt: '2026-08-14T12:00:00Z',
+      role: 'editor',
+      targetUserId: null, targetName: null, targetAvatarUrl: null,
+      ...overrides,
+    };
   }
+
+  it('drops a person invite whose target is already a member, by user id', () => {
+    const jeremie = member({ userId: 'usr_j', email: null });
+    const forJeremie = pending(null, { targetUserId: 'usr_j', targetName: 'Jérémie' });
+    const forNat = pending(null, { id: 'inv_2', targetUserId: 'usr_n', targetName: 'Nat' });
+    expect(excludeInvitesToMembers([forJeremie, forNat], [jeremie])).toEqual([forNat]);
+  });
 
   it('drops a pending invite whose email belongs to a current member — Sam joined another way', () => {
     const sam = member({ email: 'sam@example.com' });
@@ -135,55 +152,5 @@ describe('excludeInvitesToMembers', () => {
     const noEmail = member({ email: null });
     const forBob = pending('bob@example.com');
     expect(excludeInvitesToMembers([forBob], [noEmail])).toEqual([forBob]);
-  });
-});
-
-describe('suggestCollaborators', () => {
-  function member(overrides: Partial<RigMember> = {}): RigMember {
-    return {
-      userId: 'u_1',
-      name: 'Ada Lovelace',
-      email: 'ada@example.com',
-      avatarUrl: null,
-      role: 'editor',
-      ...overrides,
-    };
-  }
-
-  it('returns collaborators as-is with an empty query', () => {
-    const ada = member();
-    const bob = member({ userId: 'u_2', name: 'Bob', email: 'bob@example.com' });
-    expect(suggestCollaborators([ada, bob], new Set(), '')).toEqual([ada, bob]);
-  });
-
-  it('excludes anyone already a member of the current rig', () => {
-    const ada = member();
-    const bob = member({ userId: 'u_2', name: 'Bob', email: 'bob@example.com' });
-    expect(suggestCollaborators([ada, bob], new Set(['u_1']), '')).toEqual([bob]);
-  });
-
-  it('drops collaborators with no email — nothing for a click to fill the field with', () => {
-    const noEmail = member({ userId: 'u_3', email: null });
-    expect(suggestCollaborators([noEmail], new Set(), '')).toEqual([]);
-  });
-
-  it('filters case-insensitively against name or email', () => {
-    const ada = member();
-    const bob = member({ userId: 'u_2', name: 'Bob', email: 'bob@example.com' });
-    expect(suggestCollaborators([ada, bob], new Set(), 'ADA')).toEqual([ada]);
-    expect(suggestCollaborators([ada, bob], new Set(), 'example.com')).toEqual([ada, bob]);
-    expect(suggestCollaborators([ada, bob], new Set(), 'nobody')).toEqual([]);
-  });
-
-  it('matches a null name against the query by falling back to nothing (not throwing) and still matching on email', () => {
-    const noName = member({ userId: 'u_4', name: null, email: 'noname@example.com' });
-    expect(suggestCollaborators([noName], new Set(), 'noname')).toEqual([noName]);
-  });
-
-  it('caps results at the limit', () => {
-    const many = Array.from({ length: 10 }, (_, i) =>
-      member({ userId: `u_${i}`, name: `Person ${i}`, email: `p${i}@example.com` })
-    );
-    expect(suggestCollaborators(many, new Set(), '', 6)).toHaveLength(6);
   });
 });

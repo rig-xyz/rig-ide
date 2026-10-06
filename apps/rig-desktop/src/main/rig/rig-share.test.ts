@@ -82,7 +82,16 @@ describe('toInvite', () => {
       revokedAt: null,
       label: null,
       createdAt: '2026-08-14T12:00:00Z',
+      targetUserId: null,
+      targetName: null,
+      targetAvatarUrl: null,
     });
+  });
+
+  it('carries a person invite’s target', () => {
+    expect(
+      toInvite({ id: 'inv_3', targetUserId: 'usr_j', targetName: 'Jérémie', targetImageUrl: 'https://img/j.png' })
+    ).toMatchObject({ targetUserId: 'usr_j', targetName: 'Jérémie', targetAvatarUrl: 'https://img/j.png' });
   });
 
   it('rejects rows without a string id, defaults the rest', () => {
@@ -99,6 +108,9 @@ describe('toInvite', () => {
       revokedAt: null,
       label: null,
       createdAt: '',
+      targetUserId: null,
+      targetName: null,
+      targetAvatarUrl: null,
     });
   });
 });

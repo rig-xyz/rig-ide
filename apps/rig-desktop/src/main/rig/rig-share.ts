@@ -16,6 +16,8 @@ import type {
   RigMyInvite,
   RigMyInviteAccepted,
   RigMyInviteList,
+  RigPeopleList,
+  RigPerson,
   RigShareError,
 } from '@shared/rig/rig-share';
 import { extractInviteSecret } from '@shared/rig/invite-link';
@@ -139,7 +141,7 @@ export type { AccountResolved };
 export function accountFetch(
   ctx: AccountResolved,
   suffix: string,
-  init: { method: 'GET' | 'POST' | 'DELETE'; body?: unknown }
+  init: { method: 'GET' | 'POST' | 'DELETE' | 'PATCH'; body?: unknown }
 ): Promise<Response> {
   return fetch(`${ctx.url.replace(/\/+$/, '')}/v1/me${suffix}`, {
     method: init.method,
@@ -218,6 +220,9 @@ async function relayError(response: Response, action: string, target?: Target): 
     }
   }
   const code = typeof asRecord(body)?.error === 'string' ? (asRecord(body)?.error as string) : null;
+  if (response.status === 403 && code === 'not_your_person') {
+    return { kind: 'forbidden', status: 403, message: 'You can only invite people you share a space with by name. Use their email instead.' };
+  }
   if (response.status === 403) {
     return { kind: 'forbidden', message: `You don't have permission to ${action} on this rig.` };
   }
@@ -240,7 +245,7 @@ async function relayError(response: Response, action: string, target?: Target): 
 async function relayFetch(
   ctx: Resolved,
   url: string,
-  init: { method: 'GET' | 'POST' | 'DELETE'; body?: unknown }
+  init: { method: 'GET' | 'POST' | 'DELETE' | 'PATCH'; body?: unknown }
 ): Promise<Response> {
   return fetch(url, {
     method: init.method,
@@ -307,7 +312,153 @@ export function toInvite(value: unknown): RigInvite | null {
     revokedAt: typeof raw.revokedAt === 'string' ? raw.revokedAt : null,
     label: typeof raw.label === 'string' ? raw.label : null,
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : '',
+    targetUserId: typeof raw.targetUserId === 'string' ? raw.targetUserId : null,
+    targetName: typeof raw.targetName === 'string' ? raw.targetName : null,
+    targetAvatarUrl: typeof raw.targetImageUrl === 'string' ? raw.targetImageUrl : null,
   };
+}
+
+/** Coerces one entry of `GET /v1/me/people`'s `people[]`. Exported for direct unit testing. */
+export function toPerson(value: unknown): RigPerson | null {
+  const raw = asRecord(value);
+  if (!raw || typeof raw.userId !== 'string') return null;
+  const spaces = Array.isArray(raw.sharedSpaces) ? raw.sharedSpaces : [];
+  return {
+    userId: raw.userId,
+    clerkUserId: typeof raw.clerkUserId === 'string' ? raw.clerkUserId : null,
+    name: typeof raw.name === 'string' && raw.name ? raw.name : null,
+    avatarUrl: typeof raw.imageUrl === 'string' ? raw.imageUrl : null,
+    sharedSpaces: spaces.flatMap((entry) => {
+      const space = asRecord(entry);
+      if (!space || typeof space.bindingId !== 'string') return [];
+      return [{ bindingId: space.bindingId, name: typeof space.name === 'string' ? space.name : null }];
+    }),
+    lastSharedAt: typeof raw.lastSharedAt === 'string' ? raw.lastSharedAt : null,
+    viaOrg: raw.viaOrg === true,
+  };
+}
+
+/** The caller's own member row's tap `userId`, by the same Clerk-id match as `deriveSelfRole`. */
+export function deriveSelfUserId(rawMembers: unknown[], selfClerkUserId: string | null): string | null {
+  if (!selfClerkUserId) return null;
+  for (const value of rawMembers) {
+    const raw = asRecord(value);
+    if (raw && (raw.clerkUserId === selfClerkUserId || raw.userId === selfClerkUserId)) {
+      return typeof raw.userId === 'string' ? raw.userId : null;
+    }
+  }
+  return null;
+}
+
+// ── Your people cache ────────────────────────────────────────────────────────
+
+/**
+ * `GET /v1/me/people` changes only when you invite, accept or remove
+ * someone, and every invite field open reads it: a short cache here, keyed
+ * by the sign-in token so a different account never sees the last one's
+ * list. Cleared after every call that can change it.
+ */
+const PEOPLE_TTL_MS = 60_000;
+let peopleCache: { token: string; at: number; value: RigPeopleList } | null = null;
+
+export function forgetPeopleCache(): void {
+  peopleCache = null;
+}
+
+/** The relay's own JSON `error` code, when the body has one. */
+async function errorCode(response: Response): Promise<string | null> {
+  try {
+    const body = asRecord(await response.clone().json());
+    return typeof body?.error === 'string' ? body.error : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Mints one invite on `url` (a binding's `/invites`) for a person, an email,
+ * or anyone with the link. A person invite that comes back without its
+ * target means a relay too old to know `targetUserId`: it minted an open
+ * link instead, so that link is revoked at once and the call fails.
+ */
+async function mintInvite(
+  send: (path: string, init: { method: 'POST' | 'DELETE'; body?: unknown }) => Promise<Response>,
+  args: { email: string | null; targetUserId: string | null; role: RigInviteRole },
+  action: string,
+  target?: Target
+): Promise<Result<RigInviteMinted, RigShareError>> {
+  const email = args.email?.trim() ?? '';
+  let response: Response;
+  try {
+    response = await send('/invites', {
+      method: 'POST',
+      body: {
+        ops: ['read', 'write', 'subscribe'],
+        role: args.role,
+        ...(args.targetUserId ? { targetUserId: args.targetUserId } : email ? { emailConstraint: email } : {}),
+      },
+    });
+  } catch (error) {
+    return err(transportError(action, error));
+  }
+  if (!response.ok) return err(await relayError(response, action, target));
+
+  try {
+    const data = asRecord(await response.json());
+    const invite = toInvite(data?.invite);
+    // The CANONICAL link is the hub's friendly /join page built from the
+    // response's `secret` — the same URL the relay's own invite email
+    // links — never the relay's raw accept URL (which only survives as a
+    // fallback for a relay old enough to not return `secret`).
+    const secret = typeof data?.secret === 'string' ? data.secret : null;
+    const rawUrl = typeof data?.url === 'string' ? data.url : null;
+    const url = secret ? rigJoinPageUrl(secret) : rawUrl;
+    if (!invite || !url) {
+      return err<RigShareError>({ kind: 'relay', message: `Could not ${action}.` });
+    }
+    if (args.targetUserId && invite.targetUserId !== args.targetUserId) {
+      await send(`/invites/${encodeURIComponent(invite.id)}`, { method: 'DELETE' }).catch(() => undefined);
+      return err<RigShareError>({
+        kind: 'relay',
+        message: "This Rig server can't invite people by name yet. Use their email instead.",
+      });
+    }
+    forgetPeopleCache();
+    telemetryService.capture('invite_sent', {});
+    return ok({ invite, url, email: toEmailOutcome(data?.email) });
+  } catch (error) {
+    return err(transportError(action, error));
+  }
+}
+
+/** One owner-only member call (role, remove, hand over), its errors in plain words. */
+async function memberCall(
+  root: string,
+  suffix: string,
+  init: { method: 'PATCH' | 'DELETE' | 'POST'; body?: unknown },
+  action: string
+): Promise<Result<{ done: true }, RigShareError>> {
+  const ctx = await resolveContext(root);
+  if (isError(ctx)) return err(ctx);
+  let response: Response;
+  try {
+    response = await relayFetch(ctx, bindingUrl(ctx, suffix), init);
+  } catch (error) {
+    return err(transportError(action, error));
+  }
+  if (response.ok) {
+    forgetPeopleCache();
+    return ok({ done: true });
+  }
+  const code = await errorCode(response);
+  // An unknown route on an older relay answers a plain, non-JSON 404.
+  if (response.status === 404 && code === null) {
+    return err<RigShareError>({ kind: 'relay', status: 404, message: `This Rig server can't ${action} yet.` });
+  }
+  if (code === 'not_a_member') {
+    return err<RigShareError>({ kind: 'relay', status: 404, message: "They're no longer in this space." });
+  }
+  return err(await relayError(response, action, ctx.target));
 }
 
 /** `email` on the mint response — absent (older relay) coerces to an honest "not sent". */
@@ -446,7 +597,8 @@ export const rigShareController = createRPCController({
       const members = raw.map(toMember).filter((m): m is RigMember => m !== null);
       const selfClerkUserId = await readSelfUserId({ ...ctx.target, relPath: '' });
       const selfRole = deriveSelfRole(raw, selfClerkUserId);
-      return ok({ members, selfRole });
+      const selfUserId = deriveSelfUserId(raw, selfClerkUserId);
+      return ok({ members, selfRole, selfUserId });
     } catch (error) {
       return err(transportError(action, error));
     }
@@ -547,50 +699,111 @@ export const rigShareController = createRPCController({
     root,
     email,
     role,
+    targetUserId = null,
   }: {
     root: string;
+    /** Locks the invite to this email; ignored when `targetUserId` is set. Neither: an open link. */
     email: string | null;
     role: RigInviteRole;
+    /** One of Your people (tap user id): the invite reaches their bell, no email needed. */
+    targetUserId?: string | null;
   }): Promise<Result<RigInviteMinted, RigShareError>> => {
     const ctx = await resolveContext(root);
     if (isError(ctx)) return err(ctx);
-    const action = 'create the invite';
-    const trimmed = email?.trim() ?? '';
+    return mintInvite(
+      (suffix, init) => relayFetch(ctx, bindingUrl(ctx, suffix), init),
+      { email, targetUserId, role },
+      'create the invite',
+      ctx.target
+    );
+  },
 
+  /**
+   * The person card's "Invite to a space": a person invite into one of
+   * your spaces by binding id (from `/v1/me/bindings`, so already on the
+   * trusted account relay), with no workspace root involved.
+   */
+  inviteToSpace: async ({
+    bindingId,
+    targetUserId,
+    role,
+  }: {
+    bindingId: string;
+    targetUserId: string;
+    role: RigInviteRole;
+  }): Promise<Result<RigInviteMinted, RigShareError>> => {
+    const ctx = await resolveAccountContext();
+    if (isAccountError(ctx)) return err(ctx);
+    return mintInvite(
+      (suffix, init) => accountFetch(ctx, `/bindings/${encodeURIComponent(bindingId)}${suffix}`, init),
+      { email: null, targetUserId, role },
+      'create the invite'
+    );
+  },
+
+  /**
+   * Your people (`GET /v1/me/people`), cached for a minute (see
+   * `peopleCache`). An older relay answers 404: `supported: false`, and
+   * the renderer falls back to `collaborators`.
+   */
+  people: async (): Promise<Result<RigPeopleList, RigShareError>> => {
+    const ctx = await resolveAccountContext();
+    if (isAccountError(ctx)) return err(ctx);
+    if (peopleCache && peopleCache.token === ctx.token && Date.now() - peopleCache.at < PEOPLE_TTL_MS) {
+      return ok(peopleCache.value);
+    }
+    const action = 'load your people';
     let response: Response;
     try {
-      response = await relayFetch(ctx, bindingUrl(ctx, '/invites'), {
-        method: 'POST',
-        body: {
-          ops: ['read', 'write', 'subscribe'],
-          role,
-          ...(trimmed ? { emailConstraint: trimmed } : {}),
-        },
-      });
+      response = await accountFetch(ctx, '/people', { method: 'GET' });
     } catch (error) {
       return err(transportError(action, error));
     }
-    if (!response.ok) return err(await relayError(response, action, ctx.target));
-
-    try {
-      const data = asRecord(await response.json());
-      const invite = toInvite(data?.invite);
-      // The CANONICAL link is the hub's friendly /join page built from the
-      // response's `secret` — the same URL the relay's own invite email
-      // links — never the relay's raw accept URL (which only survives as a
-      // fallback for a relay old enough to not return `secret`).
-      const secret = typeof data?.secret === 'string' ? data.secret : null;
-      const rawUrl = typeof data?.url === 'string' ? data.url : null;
-      const url = secret ? rigJoinPageUrl(secret) : rawUrl;
-      if (!invite || !url) {
-        return err<RigShareError>({ kind: 'relay', message: `Could not ${action}.` });
+    let value: RigPeopleList;
+    if (response.status === 404) {
+      value = { supported: false, people: [] };
+    } else if (!response.ok) {
+      return err(await relayError(response, action));
+    } else {
+      try {
+        const data = asRecord(await response.json());
+        const raw = Array.isArray(data?.people) ? data.people : [];
+        value = { supported: true, people: raw.map(toPerson).filter((p): p is RigPerson => p !== null) };
+      } catch (error) {
+        return err(transportError(action, error));
       }
-      telemetryService.capture('invite_sent', {});
-      return ok({ invite, url, email: toEmailOutcome(data?.email) });
+    }
+    peopleCache = { token: ctx.token, at: Date.now(), value };
+    return ok(value);
+  },
+
+  /** "Remove from your people": `DELETE /v1/me/people/:userId`, a hide on your own list only. */
+  forgetPerson: async ({ userId }: { userId: string }): Promise<Result<{ removed: true }, RigShareError>> => {
+    const ctx = await resolveAccountContext();
+    if (isAccountError(ctx)) return err(ctx);
+    const action = 'remove them from your people';
+    let response: Response;
+    try {
+      response = await accountFetch(ctx, `/people/${encodeURIComponent(userId)}`, { method: 'DELETE' });
     } catch (error) {
       return err(transportError(action, error));
     }
+    forgetPeopleCache();
+    if (!response.ok) return err(await relayError(response, action));
+    return ok({ removed: true });
   },
+
+  /** Owner only: `PATCH /v1/me/bindings/:id/members/:userId {role}`. */
+  setMemberRole: ({ root, userId, role }: { root: string; userId: string; role: RigInviteRole }) =>
+    memberCall(root, `/members/${encodeURIComponent(userId)}`, { method: 'PATCH', body: { role } }, 'change their role'),
+
+  /** Owner only: `DELETE /v1/me/bindings/:id/members/:userId` (the relay revokes their tokens too). */
+  removeMember: ({ root, userId }: { root: string; userId: string }) =>
+    memberCall(root, `/members/${encodeURIComponent(userId)}`, { method: 'DELETE' }, 'remove them'),
+
+  /** Owner only: `POST /v1/me/bindings/:id/owner {userId}`; the previous owner becomes an editor. */
+  makeOwner: ({ root, userId }: { root: string; userId: string }) =>
+    memberCall(root, '/owner', { method: 'POST', body: { userId } }, 'hand over ownership'),
 
   /**
    * Revokes an outgoing invite — `DELETE /v1/me/bindings/:bindingId/invites/:inviteId`
@@ -715,6 +928,7 @@ export const rigShareController = createRPCController({
       if (!bindingId) {
         return err<RigShareError>({ kind: 'relay', message: `Could not ${action}.` });
       }
+      forgetPeopleCache();
       telemetryService.capture('invite_accepted', {});
       return ok({ bindingId, becameMember: asRecord(data?.member) !== null });
     } catch (error) {
@@ -846,6 +1060,7 @@ export const rigShareController = createRPCController({
       const data = asRecord(await response.json());
       const bindingId = typeof data?.bindingId === 'string' ? data.bindingId : null;
       if (!bindingId) return err<RigInviteLinkError>({ kind: 'relay', message: `Could not ${action}.` });
+      forgetPeopleCache();
       telemetryService.capture('invite_accepted', {});
       return ok({ bindingId, spaceName, becameMember: asRecord(data?.member) !== null });
     } catch (error) {

@@ -1,23 +1,17 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Share2, UserPlus, Users, X } from 'lucide-react';
-import { type ReactNode, useRef, useState } from 'react';
-import { relativeTime } from '@renderer/features/chat/session-history';
-import { isOfflineError } from '@renderer/features/docs/comments/comments-cache';
+import { Share2, UserPlus } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { insidePeopleLayer } from '@renderer/features/people/person-card';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
-import { useClipboard } from '@renderer/lib/hooks/use-clipboard';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { Popover } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/lib/utils';
-import type { RigInviteMinted, RigInviteRole, RigMember, RigMemberList } from '@shared/rig/rig-share';
+import type { RigMemberList } from '@shared/rig/rig-share';
 import { deriveAvatarStack } from './avatar-stack';
-import {
-  excludeInvitesToMembers,
-  mintedInviteMatchesRole,
-  shapePendingInvites,
-  suggestCollaborators,
-} from './invite-state';
+import { InviteByName } from './invite-field';
+import { MemberList } from './people-section';
 import { deriveSharePopoverPhase } from './share-sync-state';
 
 /**
@@ -147,6 +141,7 @@ export function RigShareButton({
           estimatedWidth={320}
           minWidth={320}
           ariaLabel="People and invites"
+          keepOpenOn={insidePeopleLayer}
         >
           <RigSharePopoverContent root={root} name={name} />
         </Popover>
@@ -198,6 +193,7 @@ export function RigShareButton({
         estimatedWidth={320}
         minWidth={320}
         ariaLabel="Share"
+        keepOpenOn={insidePeopleLayer}
       >
         <RigSharePopoverContent root={root} name={name} />
       </Popover>
@@ -209,7 +205,7 @@ export function RigShareButton({
  * Exported for the pinned card's People row — same surface, second anchor.
  *
  * `variant`: `'full'` (default, the top-bar popover's own shape) renders the
- * "People on <name>" header, the member list, and — for an owner — the
+ * "People in <name>" header, the member list, and — for an owner — the
  * always-visible invite form plus pending invites. `'compact'` (the space
  * panel's People row) shows only the member list; invite management collapses
  * into a single "Invite people" pill that expands the same invite form in
@@ -314,75 +310,47 @@ export function RigSharePopoverContent({
   const showInvites = memberList.selfRole === 'owner' || memberList.selfRole === null;
 
   if (variant === 'compact') {
-    return <CompactSharePanel root={root} memberList={memberList} showInvites={showInvites} />;
+    return <CompactSharePanel root={root} name={name} memberList={memberList} showInvites={showInvites} />;
   }
 
   return (
     <div className="flex flex-col gap-3 p-3">
       <div className="flex flex-col gap-1.5">
-        <p className="text-text-muted px-1 text-xs">{name ? `People on ${name}` : 'People'}</p>
-        {memberList.members.map((member) => (
-          <MemberRow key={member.userId} member={member} />
-        ))}
+        <p className="text-text-muted px-1 text-xs">{name ? `People in ${name}` : 'People'}</p>
+        <MemberList root={root} spaceName={name} memberList={memberList} canManage={showInvites} />
       </div>
-      {/* Invite management is owner-only ON THE RELAY (list/mint/revoke all
-          answer 403 `forbidden` for an editor) — hidden only when the caller
-          is POSITIVELY known to be a non-owner; see `showInvites` above. */}
-      {showInvites && <InviteSection root={root} currentMembers={memberList.members} />}
+      {/* Invite and member management are owner-only ON THE RELAY (403
+          `forbidden` for an editor), hidden only when the caller is
+          POSITIVELY known to be a non-owner; see `showInvites` above. */}
+      {showInvites && <InviteByName root={root} spaceName={name} currentMembers={memberList.members} />}
     </div>
   );
 }
 
 /**
- * One member, the panel's own row grammar (same standard as Agents/
- * Connectors/Skills): h-7, a 16px avatar aligned under the People header's
- * label, plain text-xs name, right-aligned text-2xs muted role — not the
- * looser `MemberRow` the top-bar popover uses, whose bigger avatar and
- * `py-1.5` spacing is what read as "too far apart" in the panel.
- */
-function CompactMemberRow({ member }: { member: RigMember }) {
-  const display = member.name ?? member.email ?? member.userId;
-  return (
-    <div className="flex h-7 items-center gap-2 pr-2 pl-8">
-      <IdentityAvatar
-        name={member.name ?? member.email}
-        avatarUrl={member.avatarUrl}
-        sizeClassName="size-4"
-        textClassName="text-2xs"
-      />
-      <span className="text-text-primary min-w-0 flex-1 truncate text-xs">{display}</span>
-      <span className="text-text-muted shrink-0 text-2xs">{member.role}</span>
-    </div>
-  );
-}
-
-/**
- * `variant: 'compact'`'s own shape: just the people, plus one pill that
- * expands the full invite form in place — no invite form shown by default,
- * no navigation to a different surface for either. No header (the space
- * panel's own row already says who this is).
+ * `variant: 'compact'`'s own shape: just the people (the panel's h-7 row
+ * grammar), plus one pill that expands the full invite form in place. No
+ * header (the space panel's own row already says who this is).
  */
 function CompactSharePanel({
   root,
+  name,
   memberList,
   showInvites,
 }: {
   root: string;
+  name: string | null;
   memberList: RigMemberList;
   showInvites: boolean;
 }) {
   const [inviting, setInviting] = useState(false);
   return (
     <div className="flex flex-col">
-      <div className="flex flex-col">
-        {memberList.members.map((member) => (
-          <CompactMemberRow key={member.userId} member={member} />
-        ))}
-      </div>
+      <MemberList root={root} spaceName={name} memberList={memberList} canManage={showInvites} compact />
       {showInvites &&
         (inviting ? (
           <div className="px-2 pt-1">
-            <InviteSection root={root} currentMembers={memberList.members} />
+            <InviteByName root={root} spaceName={name} currentMembers={memberList.members} />
           </div>
         ) : (
           <button
@@ -394,307 +362,6 @@ function CompactSharePanel({
             Invite people
           </button>
         ))}
-    </div>
-  );
-}
-
-/** Quieter than a member's name — regular UI font, muted, on a subtle fill; used for both a member's role and a pending invite's granted role. */
-function RolePill({ children }: { children: ReactNode }) {
-  return (
-    <span className="bg-bg-2 text-text-muted rounded-chip shrink-0 px-1.5 py-0.5 text-2xs">
-      {children}
-    </span>
-  );
-}
-
-function MemberRow({ member }: { member: RigMember }) {
-  const display = member.name ?? member.email ?? member.userId;
-  return (
-    <div className="flex items-center gap-2 px-1 py-1.5">
-      <IdentityAvatar
-        name={member.name ?? member.email}
-        avatarUrl={member.avatarUrl}
-        sizeClassName="size-5"
-        textClassName="text-2xs"
-      />
-      <span className="text-text-primary min-w-0 flex-1 truncate text-xs">{display}</span>
-      <RolePill>{member.role}</RolePill>
-    </div>
-  );
-}
-
-function InviteSection({ root, currentMembers }: { root: string; currentMembers: RigMember[] }) {
-  const queryClient = useQueryClient();
-  const [email, setEmail] = useState('');
-  const [emailFocused, setEmailFocused] = useState(false);
-  const [role, setRole] = useState<RigInviteRole>('editor');
-  const [creating, setCreating] = useState(false);
-  const [inviteError, setInviteError] = useState<string | null>(null);
-  const [minted, setMinted] = useState<RigInviteMinted | null>(null);
-  const [revokingId, setRevokingId] = useState<string | null>(null);
-
-  const invitesKey = ['rig', 'share', 'invites', root] as const;
-  const invitesQuery = useQuery({
-    queryKey: invitesKey,
-    queryFn: () => rpc.rig.share.listInvites({ root }),
-  });
-
-  // People suggestions (Dylan's "a quick way to invite people he's already
-  // worked with"): every rig the caller has, gathered once when the popover
-  // opens — `workspaces` is the same account-plane read Home's rigs rail
-  // already does, so this is usually a cache hit, not a fresh request.
-  const workspacesQuery = useQuery({
-    queryKey: ['rig', 'account', 'workspaces'],
-    queryFn: () => rpc.rig.account.workspaces(),
-  });
-  const bindingIds = workspacesQuery.data?.success
-    ? workspacesQuery.data.data.map((binding) => binding.id)
-    : [];
-  const collaboratorsQuery = useQuery({
-    queryKey: ['rig', 'share', 'collaborators', ...bindingIds],
-    queryFn: () => rpc.rig.share.collaborators({ bindingIds }),
-    enabled: bindingIds.length > 0,
-    staleTime: 60_000,
-  });
-  const collaborators = collaboratorsQuery.data?.success ? collaboratorsQuery.data.data : [];
-  const currentMemberIds = new Set(currentMembers.map((member) => member.userId));
-  const suggestions = suggestCollaborators(collaborators, currentMemberIds, email);
-  // Once the typed email IS the one remaining suggestion there's nothing
-  // left to pick — hide the list rather than echo the field back.
-  const onlySuggestionMatches =
-    suggestions.length === 1 &&
-    (suggestions[0].email ?? '').toLowerCase() === email.trim().toLowerCase();
-  const showSuggestions = emailFocused && suggestions.length > 0 && !onlySuggestionMatches;
-
-  const createInvite = async () => {
-    setCreating(true);
-    setInviteError(null);
-    const result = await rpc.rig.share.createInvite({
-      root,
-      email: email.trim() ? email.trim() : null,
-      role,
-    });
-    setCreating(false);
-    if (!result.success) {
-      setInviteError(result.error.message);
-      return;
-    }
-    setMinted(result.data);
-    setEmail('');
-    void queryClient.invalidateQueries({ queryKey: invitesKey });
-  };
-
-  const revoke = async (id: string) => {
-    setRevokingId(id);
-    const result = await rpc.rig.share.revokeInvite({ root, id });
-    setRevokingId(null);
-    if (!result.success) {
-      setInviteError(result.error.message);
-      return;
-    }
-    void queryClient.invalidateQueries({ queryKey: invitesKey });
-  };
-
-  // `excludeInvitesToMembers` drops invites addressed to someone who's
-  // already a member (their invite went unused because they joined some
-  // other way) — see its own doc comment.
-  const pending = invitesQuery.data?.success
-    ? excludeInvitesToMembers(
-        shapePendingInvites(invitesQuery.data.data.invites, Date.now()),
-        currentMembers
-      )
-    : [];
-  // The relay's own verdict on whether this caller may manage invites —
-  // rendered as-is (a non-owner on the honest-degradation path sees the
-  // 403's message here instead of a silently missing section).
-  const listError =
-    invitesQuery.data && !invitesQuery.data.success ? invitesQuery.data.error : null;
-
-  // A minted link's role is fixed at mint time — the moment the toggle below
-  // no longer matches what THIS link grants, stop showing it rather than let
-  // a stale, now-wrong link sit on screen (`mintedInviteMatchesRole`'s own
-  // doc comment has the reasoning for why this clears instead of re-minting).
-  const displayedMinted = minted && mintedInviteMatchesRole(minted.invite.role, role) ? minted : null;
-
-  return (
-    <div className="border-border-hairline flex flex-col gap-2.5 border-t pt-3">
-      <p className="text-text-muted px-1 text-xs">Invite someone</p>
-      {/* One helper line, honest about both modes: with an email the invite
-          is emailed AND locked to that account; without one it's an open
-          link anyone can use. */}
-      <p className="text-text-muted px-1 text-xs">
-        Invite by email, and they get a link only their account can use. Leave it empty for an open
-        link.
-      </p>
-
-      <div className="relative">
-        <input
-          type="email"
-          value={email}
-          onChange={(event) => {
-            setEmail(event.target.value);
-            // Typing resumes the suggestion list even right after picking
-            // one (which hides it) — the field keeps focus across that
-            // click (see the suggestion button's `onMouseDown` below), so
-            // a plain `onFocus` re-check alone would never fire again.
-            setEmailFocused(true);
-          }}
-          onFocus={() => setEmailFocused(true)}
-          onBlur={() => setEmailFocused(false)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !creating) {
-              event.preventDefault();
-              void createInvite();
-            }
-          }}
-          placeholder="email (optional)"
-          className="border-border-hairline bg-bg-1 text-text-primary w-full placeholder:text-text-muted rounded-control border px-2.5 py-1.5 text-xs outline-none"
-        />
-        {/* An overlay, not in-flow content: blurring the field (e.g. by
-            pressing "Send invite") hides the list, and an in-flow list would
-            shift the button up out from under that very click. */}
-        {showSuggestions && (
-          <div
-            data-testid="invite-suggestions"
-            className="border-border-hairline bg-bg-1 rounded-control shadow-soft absolute inset-x-0 top-full z-10 mt-1 flex flex-col gap-0.5 border p-1"
-          >
-            {suggestions.map((person) => (
-              <button
-                key={person.userId}
-                type="button"
-                onMouseDown={(event) => {
-                  // Same trick the other pickers use — keeps the input
-                  // focused so this click doesn't blur-and-hide the list
-                  // before the click itself is handled.
-                  event.preventDefault();
-                  setEmail(person.email ?? '');
-                  setEmailFocused(false);
-                }}
-                className="hover:bg-bg-2 rounded-control flex items-center gap-2 px-1.5 py-1 text-left transition-colors"
-              >
-                <IdentityAvatar
-                  name={person.name ?? person.email}
-                  avatarUrl={person.avatarUrl}
-                  sizeClassName="size-5"
-                  textClassName="text-2xs"
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="text-text-primary block truncate text-xs">
-                    {person.name ?? person.email}
-                  </span>
-                  {person.name && (
-                    <span className="text-text-muted block truncate text-xs">{person.email}</span>
-                  )}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      <div className="rounded-control border-border-hairline grid grid-cols-2 gap-1 border p-1">
-        {(
-          [
-            ['editor', 'Can edit'],
-            ['viewer', 'Can view'],
-          ] as const
-        ).map(([option, label]) => (
-          <button
-            key={option}
-            type="button"
-            onClick={() => setRole(option)}
-            className={cn(
-              'rounded-control px-2.5 py-1.5 text-xs transition-colors',
-              role === option
-                ? 'bg-bg-2 text-text-primary'
-                : 'text-text-secondary hover:text-text-primary'
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {listError && (
-        <p className={cn('text-text-muted text-xs', isOfflineError(listError) && 'font-mono')}>
-          {isOfflineError(listError) ? 'offline · invites unavailable' : listError.message}
-        </p>
-      )}
-      {inviteError && <p className="text-danger text-xs">{inviteError}</p>}
-
-      <Button size="sm" onClick={() => void createInvite()} disabled={creating}>
-        {creating ? (email.trim() ? 'Sending…' : 'Creating…') : email.trim() ? 'Send invite' : 'Create link'}
-      </Button>
-
-      {displayedMinted && <MintedInvite minted={displayedMinted} />}
-
-      {pending.length > 0 && (
-        <div className="flex flex-col gap-1 pt-1">
-          <p className="text-text-muted px-1 text-xs">Pending invites</p>
-          {pending.map((invite) => (
-            <div key={invite.id} className="flex items-center gap-2 px-1 py-1.5">
-              <span className="text-text-secondary min-w-0 flex-1 truncate text-xs">
-                {invite.email ?? 'Anyone with the link'}
-              </span>
-              <RolePill>{invite.roleLabel}</RolePill>
-              <span className="text-text-muted shrink-0 text-2xs">
-                {relativeTime(Date.parse(invite.createdAt), Date.now())}
-              </span>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => void revoke(invite.id)}
-                disabled={revokingId === invite.id}
-                aria-label={revokingId === invite.id ? 'Revoking…' : 'Revoke'}
-                title={revokingId === invite.id ? 'Revoking…' : 'Revoke'}
-                className="shrink-0"
-              >
-                <X className="size-3" />
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * The post-mint state — the one moment the secret-bearing link exists
- * client-side (the invites list never carries it again). `minted.url` is the
- * CANONICAL hub join page (`userig.xyz/join/<secret>`, the same URL the
- * relay's own invite email links — see `main/rig/rig-share.ts`). Leads with
- * what actually happened: the relay's `email.sent` verdict when an email
- * went out, an honest fallback line when it didn't.
- */
-function MintedInvite({ minted }: { minted: RigInviteMinted }) {
-  const clipboard = useClipboard();
-  const constrainedTo = minted.invite.emailConstraint;
-  return (
-    <div className="flex flex-col gap-1">
-      {minted.email.sent && minted.email.to && (
-        <p className="text-text-secondary text-xs">Invite emailed to {minted.email.to}.</p>
-      )}
-      <div className="border-border-hairline bg-bg-2 flex items-center gap-2 rounded-control border px-2 py-1.5">
-        <span className="text-text-secondary min-w-0 flex-1 truncate font-mono text-xs">
-          {minted.url}
-        </span>
-        <button
-          type="button"
-          onClick={() => clipboard.copy(minted.url)}
-          aria-label={clipboard.copied ? 'Copied' : 'Copy link'}
-          className="text-text-muted hover:text-text-primary flex shrink-0 items-center gap-1 text-xs transition-colors"
-        >
-          {clipboard.copied ? <Check className="size-3" /> : <Copy className="size-3" />}
-          {clipboard.copied ? 'Copied' : 'Copy'}
-        </button>
-      </div>
-      {!minted.email.sent && (
-        <p className="text-text-muted text-xs">
-          {constrainedTo
-            ? `Email couldn’t be sent. Copy the link and send it to ${constrainedTo} yourself; only they can use it.`
-            : 'Anyone with this link can join, so send it to whoever you’re inviting.'}
-        </p>
-      )}
     </div>
   );
 }

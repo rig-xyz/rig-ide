@@ -16,6 +16,12 @@ export type PendingInvite = {
   /** Mono role chip: the granted role, or `link` for a pure-capability invite. */
   roleLabel: string;
   createdAt: string;
+  /** The granted role as the relay has it (null for a pure-capability link); a resend mints the same. */
+  role: string | null;
+  /** A person invite's target (tap user id), with their name and photo. */
+  targetUserId: string | null;
+  targetName: string | null;
+  targetAvatarUrl: string | null;
 };
 
 export function isPendingInvite(invite: RigInvite, nowMs: number): boolean {
@@ -33,6 +39,10 @@ export function shapePendingInvites(invites: RigInvite[], nowMs: number): Pendin
       email: invite.emailConstraint,
       roleLabel: invite.role ?? 'link',
       createdAt: invite.createdAt,
+      role: invite.role,
+      targetUserId: invite.targetUserId ?? null,
+      targetName: invite.targetName ?? null,
+      targetAvatarUrl: invite.targetAvatarUrl ?? null,
     }));
 }
 
@@ -70,7 +80,8 @@ export function mintedInviteMatchesRole(
  * member"), so it shouldn't sit in "Pending invites" looking actionable.
  * Matches case-insensitively, since email addresses are compared that way in
  * practice. Open-link invites (`email: null`) have nothing to match against
- * and always stay listed.
+ * and always stay listed. A person invite matches on its target's user id
+ * (members carry no email for anyone but you).
  */
 export function excludeInvitesToMembers(
   invites: PendingInvite[],
@@ -82,36 +93,9 @@ export function excludeInvitesToMembers(
       .filter((email): email is string => email !== null)
       .map((email) => email.toLowerCase())
   );
-  return invites.filter(
-    (invite) => invite.email === null || !memberEmails.has(invite.email.toLowerCase())
-  );
-}
-
-/**
- * People suggestions for the invite form (Dylan's "a quick way to invite
- * people he's already worked with"): distinct collaborators gathered once,
- * on popover open, across every rig the caller has (`rig.share.collaborators`
- * — main-process side does the N-bindings fan-out) minus whoever's already
- * on THIS rig and anyone with no email on file (nothing to fill the field
- * with). Filtered locally against `query` — no relay round trip per
- * keystroke, since `collaborators` is already sitting in memory by the time
- * someone starts typing.
- */
-export function suggestCollaborators(
-  collaborators: RigMember[],
-  currentMemberIds: ReadonlySet<string>,
-  query: string,
-  limit = 6
-): RigMember[] {
-  const q = query.trim().toLowerCase();
-  return collaborators
-    .filter((member) => member.email !== null)
-    .filter((member) => !currentMemberIds.has(member.userId))
-    .filter((member) => {
-      if (q.length === 0) return true;
-      const name = (member.name ?? '').toLowerCase();
-      const email = (member.email ?? '').toLowerCase();
-      return name.includes(q) || email.includes(q);
-    })
-    .slice(0, limit);
+  const memberIds = new Set(members.map((member) => member.userId));
+  return invites.filter((invite) => {
+    if (invite.targetUserId !== null && memberIds.has(invite.targetUserId)) return false;
+    return invite.email === null || !memberEmails.has(invite.email.toLowerCase());
+  });
 }

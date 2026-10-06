@@ -29,6 +29,7 @@ vi.mock('@renderer/lib/ipc', () => ({
       share: {
         members: (...args: unknown[]) => mocks.members(...args),
         listInvites: (...args: unknown[]) => mocks.listInvites(...args),
+        people: async () => ({ success: true, data: { supported: true, people: [] } }),
       },
       account: {
         workspaces: (...args: unknown[]) => mocks.workspaces(...args),
@@ -99,12 +100,12 @@ describe('RigSharePopoverContent — variant="compact"', () => {
     await render();
 
     expect(host.textContent).toContain('Ada Lovelace');
-    expect(host.textContent).not.toContain('People on growth');
-    expect(host.textContent).not.toContain('Invite someone');
+    expect(host.textContent).not.toContain('People in growth');
+    expect(host.textContent).not.toContain('Invite to growth');
     const buttons = Array.from(host.querySelectorAll('button')).map((b) => b.textContent?.trim());
     expect(buttons).toContain('Invite people');
     // The full invite form's own controls aren't in the DOM yet.
-    expect(host.querySelector('input[type="email"]')).toBeNull();
+    expect(host.querySelector('[data-testid="invite-field"]')).toBeNull();
   });
 
   it('renders member rows tight — h-7, no extra vertical gap between them — instead of the old loose py-1.5 spacing', async () => {
@@ -116,7 +117,7 @@ describe('RigSharePopoverContent — variant="compact"', () => {
 
     // The list around the rows adds no gap of its own — rows sit flush,
     // stacked purely by their own fixed height.
-    const list = row.parentElement!;
+    const list = host.querySelector('[data-testid="member-list"]')!;
     expect(list.className).not.toMatch(/\bgap-/);
   });
 
@@ -133,8 +134,8 @@ describe('RigSharePopoverContent — variant="compact"', () => {
     });
     await flush();
 
-    expect(host.querySelector('input[type="email"]')).toBeTruthy();
-    expect(host.textContent).toContain('Invite someone');
+    expect(host.querySelector('[data-testid="invite-field"]')).toBeTruthy();
+    expect(host.textContent).toContain('Invite to growth');
     expect(host.textContent).toContain('Can edit');
     expect(host.textContent).toContain('Can view');
     // The member list from before is still right there, in the same tree.

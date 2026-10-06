@@ -26,6 +26,7 @@ import { stripRigPrefix } from '@renderer/features/home/summary-segments';
 import { usePulseBriefing } from '@renderer/features/home/use-pulse-briefing';
 import { Onboarding } from '@renderer/features/onboarding/onboarding';
 import { deriveOnboardingSteps } from '@renderer/features/onboarding/onboarding-state';
+import { onOpenSpaceRequest } from '@renderer/features/people/open-space-request';
 import {
   deriveRendererBootState,
   type BootDependencyState,
@@ -1007,6 +1008,7 @@ export function App() {
   useEffect(() => {
     const open = (target: OpenSpaceAt) => void openSpaceAtRef.current(target);
     const off = events.on(rigOpenSpaceAtChannel, open);
+    const offPersonCard = onOpenSpaceRequest(open);
     void rpc.rig.notifications
       .consumePendingOpen()
       .then((pending) => {
@@ -1015,6 +1017,7 @@ export function App() {
       .catch(() => {});
     return () => {
       off();
+      offPersonCard();
       void rpc.rig.notifications.releaseOpen().catch(() => {});
     };
   }, []);

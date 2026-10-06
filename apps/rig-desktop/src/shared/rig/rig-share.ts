@@ -40,6 +40,34 @@ export type RigMemberList = {
   members: RigMember[];
   /** The caller's own role on this binding, when the relay reports it — gates invite UI. */
   selfRole: string | null;
+  /** The caller's own member `userId` (tap id), when it could be matched; hides actions on your own row. */
+  selfUserId?: string | null;
+};
+
+/**
+ * One of Your people (`GET /v1/me/people`): someone you share or shared a
+ * space with, best first. Never carries an email; an invite reaches them by
+ * `userId` (`targetUserId`). `viaOrg` is someone known only through your
+ * organization.
+ */
+export type RigPerson = {
+  userId: string;
+  clerkUserId: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+  sharedSpaces: { bindingId: string; name: string | null }[];
+  lastSharedAt: string | null;
+  viaOrg: boolean;
+};
+
+/**
+ * `supported: false` when the relay is older than `/v1/me/people` (it
+ * answered 404): the invite field falls back to the members fan-out
+ * (`collaborators`) and invites by email only.
+ */
+export type RigPeopleList = {
+  supported: boolean;
+  people: RigPerson[];
 };
 
 /**
@@ -67,6 +95,10 @@ export type RigInvite = {
   revokedAt: string | null;
   label: string | null;
   createdAt: string;
+  /** A person invite: who it's aimed at (tap user id), with their name and photo. Null for email and link invites. */
+  targetUserId?: string | null;
+  targetName?: string | null;
+  targetAvatarUrl?: string | null;
 };
 
 export type RigInviteList = {

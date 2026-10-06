@@ -1,7 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
+import { useRef, useState } from 'react';
+import { PersonCardPopover } from '@renderer/features/people/person-card';
 import { rpc } from '@renderer/lib/ipc';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
+import type { RigPulsePerPerson } from '@shared/rig/pulse';
 import { PULSE_QUERY_KEY } from './briefing-spine';
 import { HomeFeedLabel } from './home-feed-label';
 import { derivePulseSectionState } from './pulse-state';
@@ -51,41 +54,70 @@ export function PeopleRail({
           const key = firstNameKey(person.name);
           const at = key ? lastActivity?.get(key) : undefined;
           return (
-            <li
-              key={person.userId}
-              className="flex items-start gap-3 py-[9px] leading-normal"
-              data-testid="home-person"
-            >
-              <IdentityAvatar
-                name={person.name}
-                avatarUrl={person.avatarUrl}
-                sizeClassName="size-7"
-                textClassName="text-2xs"
-                className="mt-px"
-              />
-              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <p className="flex min-w-0 items-center justify-between gap-2">
-                  <span
-                    className="min-w-0 truncate text-sm font-medium text-text-primary"
-                    data-testid="home-person-name"
-                  >
-                    {person.isSelf ? 'You' : (person.name ?? 'Teammate')}
-                  </span>
-                  {at && (
-                    <span
-                      className="shrink-0 font-mono text-2xs text-text-muted tabular-nums"
-                      data-testid="home-person-age"
-                    >
-                      {shortAge(at, now)}
-                    </span>
-                  )}
-                </p>
-                <p className="text-xs leading-[1.55] text-text-secondary">{person.line}</p>
-              </div>
-            </li>
+            <PersonRow key={person.userId} person={person} at={at} now={now} />
           );
         })}
       </ul>
     </section>
+  );
+}
+
+/** One person; their face or name opens their person card (not your own row). */
+function PersonRow({ person, at, now }: { person: RigPulsePerPerson; at: string | undefined; now: number }) {
+  const anchor = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const name = person.isSelf ? 'You' : (person.name ?? 'Someone');
+  const avatar = (
+    <IdentityAvatar
+      name={person.name}
+      avatarUrl={person.avatarUrl}
+      sizeClassName="size-7"
+      textClassName="text-2xs"
+      className="mt-px"
+    />
+  );
+  return (
+    <li className="flex items-start gap-3 py-[9px] leading-normal" data-testid="home-person">
+      {person.isSelf ? (
+        avatar
+      ) : (
+        <button type="button" onClick={() => setOpen((v) => !v)} aria-label={`About ${name}`} tabIndex={-1}>
+          {avatar}
+        </button>
+      )}
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <p className="flex min-w-0 items-center justify-between gap-2">
+          {person.isSelf ? (
+            <span className="min-w-0 truncate text-sm font-medium text-text-primary" data-testid="home-person-name">
+              {name}
+            </span>
+          ) : (
+            <button
+              ref={anchor}
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="min-w-0 truncate text-left text-sm font-medium text-text-primary hover:underline"
+              data-testid="home-person-name"
+            >
+              {name}
+            </button>
+          )}
+          {at && (
+            <span className="shrink-0 font-mono text-2xs text-text-muted tabular-nums" data-testid="home-person-age">
+              {shortAge(at, now)}
+            </span>
+          )}
+        </p>
+        <p className="text-xs leading-[1.55] text-text-secondary">{person.line}</p>
+      </div>
+      {!person.isSelf && (
+        <PersonCardPopover
+          person={{ userId: person.userId, name: person.name, avatarUrl: person.avatarUrl }}
+          anchor={anchor}
+          open={open}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </li>
   );
 }
