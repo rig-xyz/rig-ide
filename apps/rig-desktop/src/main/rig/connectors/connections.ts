@@ -121,7 +121,7 @@ export type SessionConnectors = {
   servers: AcpMcpServerWire[];
   gaps: ConnectorGap[];
   global?: ConnectorId[];
-  /** Claude only: the folder's own `.mcp.json` servers held back from this session, and the ones of those waiting for your Allow (see project-servers.ts). */
+  /** The folder's own `.mcp.json` servers held back from this session (Claude only: Codex's get handed over in `servers`), and the ones waiting for your Allow (see project-servers.ts). */
   project?: { disabled: string[]; pending: string[] };
 };
 

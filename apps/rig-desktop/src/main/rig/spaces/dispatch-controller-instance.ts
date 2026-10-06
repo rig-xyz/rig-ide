@@ -11,9 +11,10 @@ import { findBindingConfig } from '../binding';
 import { resolveLocalPathsImpl } from '../recent-rigs';
 import { rigSettingsStore } from '../settings-instance';
 import { thisMacId, thisMacName } from '../this-mac';
-import { connections, globalSetupFor, projectServersFor } from '../connectors/connections-instance';
+import { codexProjectServersFor, connections, globalSetupFor, projectServersFor } from '../connectors/connections-instance';
 import { sessionConnectorsFor } from '../connectors/global-setup';
-import { isConnectorId } from '@shared/spaces/connectors';
+import { withCodexProjectServers } from '../connectors/project-servers';
+import { isConnectorId, RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
 import {
   DETAILS_HIDDEN_EVENT,
   roomSeesFor,
@@ -85,11 +86,21 @@ function realDeps(): SpacesDispatchControllerDeps {
               globalSetup: () => globalSetupFor(bindingId),
             });
           };
+          if (agent === 'codex') {
+            // Codex doesn't read the folder's .mcp.json: the remote servers you allowed
+            // there go in its session beside rig's, unless it already has them.
+            const rigSide = await spaceConnectors();
+            const codex = await codexProjectServersFor(bindingId, [
+              ...rigSide.servers.map((s) => ({ name: s.name, url: s.url })),
+              { name: RIG_TOOLS_SERVER, url: null },
+            ]);
+            return withCodexProjectServers(rigSide, codex);
+          }
           // Claude also loads the folder's own .mcp.json: hold back the copies of
-          // servers it already has, and the ones you haven't allowed. Codex doesn't read it.
+          // servers it already has, and the ones you haven't allowed.
           const [rigSide, project] = await Promise.all([
             spaceConnectors(),
-            agent === 'claude' ? projectServersFor(bindingId) : Promise.resolve(null),
+            projectServersFor(bindingId),
           ]);
           if (!project || project.disabled.length === 0) return rigSide;
           return { ...rigSide, project: { disabled: project.disabled, pending: project.pending.map((p) => p.name) } };

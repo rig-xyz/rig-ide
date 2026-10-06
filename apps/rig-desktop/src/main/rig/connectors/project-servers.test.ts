@@ -5,11 +5,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseClaudeMcpStatuses } from './global-setup';
 import {
   allowProjectServer,
+  expandEnvVars,
   parseLocalApprovals,
   parseProjectMcpJson,
+  planCodexProjectServers,
   planProjectServers,
+  readCodexProjectServers,
   readProjectServersPlan,
   sameMcpServer,
+  toSessionServer,
+  withCodexProjectServers,
 } from './project-servers';
 
 // What `claude mcp list` printed for the reported space: your claude.ai
@@ -153,5 +158,149 @@ describe('reading and allowing in a folder', () => {
   it("refuses to allow a name the folder's .mcp.json doesn't declare", async () => {
     await writeFile(join(dir, '.mcp.json'), '{"mcpServers":{}}');
     expect(await allowProjectServer(dir, 'anything')).toBe(false);
+  });
+});
+
+describe('Codex and the space’s .mcp.json', () => {
+  const MCP_JSON = JSON.stringify({
+    mcpServers: {
+      remote: { type: 'http', url: 'https://remote.example/mcp', headers: { Authorization: 'Bearer ${REMOTE_TOKEN}' } },
+      local: { command: 'npx', args: ['-y', 'some-server', '--root', '${ROOT:-.}'], env: { KEY: '${LOCAL_KEY}' } },
+      streaming: { type: 'sse', url: 'https://sse.example/sse' },
+      waiting: { type: 'http', url: 'https://waiting.example/mcp' },
+      off: { type: 'http', url: 'https://off.example/mcp' },
+      linear: { type: 'http', url: 'https://mcp.linear.app/mcp' },
+      mine: { type: 'http', url: 'https://mine.example/mcp' },
+    },
+  });
+  const ENV = { REMOTE_TOKEN: 't0k', LOCAL_KEY: 'k3y' };
+  const approvals = parseLocalApprovals(
+    JSON.stringify({
+      enabledMcpjsonServers: ['remote', 'local', 'streaming', 'linear', 'mine'],
+      disabledMcpjsonServers: ['off'],
+    })
+  );
+
+  it('expands variables the way Claude does', () => {
+    expect(expandEnvVars('a ${X} b ${Y:-why}', { X: 'x' })).toBe('a x b why');
+    expect(expandEnvVars('${MISSING}', {})).toBeNull();
+    expect(expandEnvVars('plain', {})).toBe('plain');
+  });
+
+  it('translates remote and local entries into the session shape, and refuses SSE', () => {
+    expect(toSessionServer('r', { type: 'http', url: 'https://r.example/mcp', headers: { A: '${T}' } }, { T: 'v' })).toEqual({
+      type: 'http',
+      name: 'r',
+      url: 'https://r.example/mcp',
+      headers: [{ name: 'A', value: 'v' }],
+    });
+    expect(toSessionServer('l', { command: 'node', args: ['s.js'], env: { K: 'v' } }, {})).toEqual({
+      name: 'l',
+      command: 'node',
+      args: ['s.js'],
+      env: [{ name: 'K', value: 'v' }],
+    });
+    expect(toSessionServer('l', { type: 'stdio', command: 'node' }, {})).toEqual({ name: 'l', command: 'node', args: [], env: [] });
+    expect(toSessionServer('s', { type: 'sse', url: 'https://s.example/sse' }, {})).toBeNull();
+    expect(toSessionServer('bad', { type: 'http', url: 'not a url' }, {})).toBeNull();
+    expect(toSessionServer('unset', { command: 'node', env: { K: '${NOPE}' } }, {})).toBeNull();
+    expect(toSessionServer('args', { command: 'node', args: [1] }, {})).toBeNull();
+  });
+
+  it('gives Codex the allowed remote ones, holds back the rest, and keeps local ones ready', () => {
+    const plan = planCodexProjectServers(
+      MCP_JSON,
+      null,
+      approvals,
+      [
+        // rig's Linear connector for this session, and a server Codex has in its own setup.
+        { name: 'linear-rig', url: 'https://mcp.linear.app/mcp' },
+        { name: 'mine', url: null },
+      ],
+      ENV
+    );
+    expect(plan.servers).toEqual([
+      { type: 'http', name: 'remote', url: 'https://remote.example/mcp', headers: [{ name: 'Authorization', value: 'Bearer t0k' }] },
+    ]);
+    expect(plan.local).toEqual([
+      { name: 'local', command: 'npx', args: ['-y', 'some-server', '--root', '.'], env: [{ name: 'KEY', value: 'k3y' }] },
+    ]);
+    expect(plan.pending.map((p) => p.name)).toEqual(['waiting']);
+    expect(plan.unusable).toEqual(['streaming']);
+  });
+
+  it('nothing is allowed until you allow it, unless Claude itself approved it', () => {
+    const claude = parseClaudeMcpStatuses('remote: https://remote.example/mcp (HTTP) - ✔ Connected\nwaiting: https://waiting.example/mcp (HTTP) - ⏸ Pending approval');
+    const plan = planCodexProjectServers(MCP_JSON, claude, NO_APPROVALS, [], ENV);
+    expect(plan.servers.map((s) => s.name)).toEqual(['remote']);
+    expect(plan.local).toEqual([]);
+    expect(plan.pending.map((p) => p.name)).toEqual(['local', 'streaming', 'waiting', 'off', 'linear', 'mine']);
+  });
+
+  it('allow-all lets every usable one through', () => {
+    const all = parseLocalApprovals(JSON.stringify({ enableAllProjectMcpServers: true }));
+    const plan = planCodexProjectServers(MCP_JSON, null, all, [], ENV);
+    expect(plan.servers.map((s) => s.name)).toEqual(['remote', 'waiting', 'off', 'linear', 'mine']);
+    expect(plan.pending).toEqual([]);
+  });
+
+  it('reads the folder: its .mcp.json and Claude’s local approvals', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'codex-project-'));
+    try {
+      await writeFile(join(dir, '.mcp.json'), MCP_JSON);
+      await mkdir(join(dir, '.claude'), { recursive: true });
+      await writeFile(join(dir, '.claude', 'settings.local.json'), JSON.stringify({ enabledMcpjsonServers: ['remote'] }));
+      const plan = await readCodexProjectServers(dir, {
+        claudeEntries: async () => null,
+        own: async () => [],
+        env: async () => ENV,
+      });
+      expect(plan.servers.map((s) => s.name)).toEqual(['remote']);
+      expect(plan.pending.map((p) => p.name)).toContain('local');
+      const empty = await mkdtemp(join(tmpdir(), 'codex-project-'));
+      expect(await readCodexProjectServers(empty, { claudeEntries: async () => null, own: async () => [], env: async () => ({}) })).toEqual({
+        servers: [],
+        local: [],
+        pending: [],
+        unusable: [],
+      });
+      await rm(empty, { recursive: true, force: true });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('withCodexProjectServers', () => {
+  const rigSide = {
+    servers: [{ type: 'http' as const, name: 'linear', url: 'https://mcp.linear.app/mcp', headers: [] }],
+    gaps: [],
+    global: [],
+  };
+
+  it('adds the allowed ones beside rig’s and names the waiting ones for the context', async () => {
+    const merged = withCodexProjectServers(rigSide, {
+      servers: [{ type: 'http', name: 'remote', url: 'https://remote.example/mcp', headers: [] }],
+      local: [],
+      pending: [{ name: 'waiting', url: 'https://waiting.example/mcp' }],
+      unusable: [],
+    });
+    expect(merged.servers.map((s) => s.name)).toEqual(['linear', 'remote']);
+    expect(merged.project).toEqual({ disabled: [], pending: ['waiting'] });
+    const { connectorsHiddenContext } = await import('../spaces/dispatch');
+    const context = connectorsHiddenContext(
+      merged.servers.map((s) => s.name),
+      merged.gaps,
+      merged.global,
+      'everything',
+      merged.project?.pending
+    );
+    expect(context).toContain('remote');
+    expect(context).toContain("This space's .mcp.json also declares waiting");
+  });
+
+  it('leaves rig’s side alone when the folder brings nothing', () => {
+    expect(withCodexProjectServers(rigSide, null)).toBe(rigSide);
+    expect(withCodexProjectServers(rigSide, { servers: [], local: [], pending: [], unusable: ['s'] })).toBe(rigSide);
   });
 });

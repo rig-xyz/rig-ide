@@ -8,7 +8,13 @@ import { isConnectorId, type ConnectResult, type GlobalServer, type ProjectServe
 import { getCurrentAccountId } from '../account';
 import { createConnections } from './connections';
 import { createGlobalSetup } from './global-setup';
-import { allowProjectServer, readProjectServersPlan, type ProjectServersPlan } from './project-servers';
+import {
+  allowProjectServer,
+  readCodexProjectServers,
+  readProjectServersPlan,
+  type CodexProjectServers,
+  type ProjectServersPlan,
+} from './project-servers';
 
 /**
  * Boot-only wiring for your connector logins: the real encrypted secret
@@ -66,6 +72,39 @@ export async function projectServersFor(bindingId: string | undefined): Promise<
     return await readProjectServersPlan(cwd, () => globalSetup.claudeEntries(cwd));
   } catch (error) {
     log.warn('Rig connectors: could not read the space’s own MCP servers', { bindingId, error: String(error) });
+    return null;
+  }
+}
+
+/**
+ * The space folder's own `.mcp.json` servers your Codex session there gets,
+ * through the same Allow as Claude's (see project-servers.ts). `own` is what
+ * rig already hands that session; Codex's own global servers are added here.
+ * Null when the space isn't open on this device or the folder can't be read.
+ */
+export async function codexProjectServersFor(
+  bindingId: string,
+  own: ReadonlyArray<{ name: string; url: string | null }>
+): Promise<CodexProjectServers | null> {
+  const cwd = await spaceFolder(bindingId);
+  if (!cwd) return null;
+  try {
+    const plan = await readCodexProjectServers(cwd, {
+      claudeEntries: () => globalSetup.claudeEntries(cwd),
+      own: async () => [...own, ...(await globalSetup.list(cwd)).filter((s) => s.agent === 'codex')],
+      // Variables expand from the environment Codex itself runs with.
+      env: async () => ({ ...process.env, ...(await resolveLocalAcpSpawnContext('codex')).agentEnv }),
+    });
+    if (plan.unusable.length > 0 || plan.local.length > 0) {
+      log.info('Rig connectors: a space’s MCP servers Codex doesn’t get', {
+        bindingId,
+        unusable: plan.unusable,
+        local: plan.local.map((s) => s.name),
+      });
+    }
+    return plan;
+  } catch (error) {
+    log.warn('Rig connectors: could not read the space’s own MCP servers for Codex', { bindingId, error: String(error) });
     return null;
   }
 }

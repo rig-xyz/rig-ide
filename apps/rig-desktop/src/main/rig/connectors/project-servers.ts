@@ -1,6 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { AcpMcpServerWire } from '@emdash/core/acp';
 import { connectorIdForUrl } from '@shared/spaces/connectors';
+import type { SessionConnectors } from './connections';
 import type { ClaudeMcpEntry } from './global-setup';
 
 /**
@@ -22,8 +24,11 @@ import type { ClaudeMcpEntry } from './global-setup';
  * where Claude itself reads approvals for that folder
  * (`.claude/settings.local.json`, never synced). Never approved silently.
  *
- * Claude only: Codex doesn't read `.mcp.json` at all (its servers live in
- * `~/.codex/config.toml`), so a space's `.mcp.json` means nothing to it.
+ * Codex doesn't read `.mcp.json` at all (its servers live in
+ * `~/.codex/config.toml`), so rig hands it the declared remote servers
+ * itself, in its session's `mcpServers` (`planCodexProjectServers`), through
+ * the same Allow: what you allowed for Claude in the folder is what Codex
+ * gets there. Local (stdio) ones are translated but not handed over yet.
  */
 
 export interface ProjectServer {
@@ -32,17 +37,22 @@ export interface ProjectServer {
   url: string | null;
 }
 
-/** `.mcp.json`'s servers; nothing from a file that isn't one. */
-export function parseProjectMcpJson(text: string): ProjectServer[] {
+/** `.mcp.json`'s server entries as written, by name; none from a file that isn't one. */
+function projectMcpEntries(text: string): Record<string, unknown> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return [];
+    return {};
   }
   const servers = (parsed as { mcpServers?: unknown } | null)?.mcpServers;
-  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return [];
-  return Object.entries(servers as Record<string, unknown>).map(([name, config]) => {
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return {};
+  return servers as Record<string, unknown>;
+}
+
+/** `.mcp.json`'s servers; nothing from a file that isn't one. */
+export function parseProjectMcpJson(text: string): ProjectServer[] {
+  return Object.entries(projectMcpEntries(text)).map(([name, config]) => {
     const url = (config as { url?: unknown } | null)?.url;
     return { name, url: typeof url === 'string' ? url : null };
   });
@@ -133,12 +143,151 @@ export function planProjectServers(
       plan.duplicates.push({ name: server.name, duplicateOf: (mine ?? shadowed)!.name });
       continue;
     }
-    const listed = claude?.find((e) => e.name === server.name && isDeclared(e));
-    const approved =
-      approvals.all || approvals.enabled.includes(server.name) || (listed !== undefined && listed.state !== 'pending');
-    if (approved) continue;
+    if (isAllowed(server, claude, approvals)) continue;
     plan.disabled.push(server.name);
     plan.pending.push(server);
+  }
+  return plan;
+}
+
+/**
+ * The Allow gate Claude and Codex share: allowed in the folder's
+ * `.claude/settings.local.json`, or approved in Claude itself (it lists the
+ * declared server, same name and endpoint, as anything but pending).
+ */
+function isAllowed(server: ProjectServer, claude: readonly ClaudeMcpEntry[] | null, approvals: ProjectApprovals): boolean {
+  if (approvals.all || approvals.enabled.includes(server.name)) return true;
+  const listed = claude?.find(
+    (e) =>
+      e.name === server.name &&
+      (server.url === null || e.url === null ? server.url === e.url : sameMcpServer(server.url, e.url))
+  );
+  return listed !== undefined && listed.state !== 'pending';
+}
+
+type Env = Readonly<Record<string, string | undefined>>;
+
+/** `${VAR}` and `${VAR:-default}`, expanded the way Claude expands them in `.mcp.json`; null when a variable with no default isn't set. */
+export function expandEnvVars(value: string, env: Env): string | null {
+  let missing = false;
+  const expanded = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_match, name: string, fallback?: string) => {
+    const set = env[name];
+    if (set !== undefined) return set;
+    if (fallback !== undefined) return fallback;
+    missing = true;
+    return '';
+  });
+  return missing ? null : expanded;
+}
+
+function isHttpUrl(raw: string): boolean {
+  try {
+    const { protocol } = new URL(raw);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function stringRecord(value: unknown): Record<string, string> | null {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const entries = Object.entries(value as Record<string, unknown>);
+  return entries.every(([, v]) => typeof v === 'string') ? (Object.fromEntries(entries) as Record<string, string>) : null;
+}
+
+/** A local (stdio) server in ACP's shape: name, command, args, env. */
+export interface LocalSessionServer {
+  name: string;
+  command: string;
+  args: string[];
+  env: Array<{ name: string; value: string }>;
+}
+
+/**
+ * One declared server in the shape a Codex session takes it: a remote one
+ * (`type: "http"`, url and headers) or a local one (command, args, env),
+ * variables expanded. Null for what Codex can't run: SSE, which codex-acp
+ * refuses outright (failing the whole session), and broken entries.
+ */
+export function toSessionServer(name: string, config: unknown, env: Env): AcpMcpServerWire | LocalSessionServer | null {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
+  const c = config as Record<string, unknown>;
+  const expand = (v: string) => expandEnvVars(v, env);
+  const pairs = (record: Record<string, string> | null) => {
+    if (!record) return null;
+    const out: Array<{ name: string; value: string }> = [];
+    for (const [key, raw] of Object.entries(record)) {
+      const value = expand(raw);
+      if (value === null) return null;
+      out.push({ name: key, value });
+    }
+    return out;
+  };
+  if (typeof c.url === 'string' && (c.type === undefined || c.type === 'http')) {
+    const url = expand(c.url);
+    const headers = pairs(stringRecord(c.headers));
+    if (url === null || !isHttpUrl(url) || !headers) return null;
+    return { type: 'http', name, url, headers };
+  }
+  if (typeof c.command === 'string' && (c.type === undefined || c.type === 'stdio')) {
+    const command = expand(c.command);
+    const rawArgs = c.args === undefined ? [] : c.args;
+    if (!Array.isArray(rawArgs) || !rawArgs.every((a): a is string => typeof a === 'string')) return null;
+    const args = rawArgs.map(expand);
+    const envVars = pairs(stringRecord(c.env));
+    if (!command || args.some((a) => a === null) || !envVars) return null;
+    return { name, command, args: args as string[], env: envVars };
+  }
+  return null;
+}
+
+export interface CodexProjectServers {
+  /** Remote ones, for the Codex session's `mcpServers`. Can carry keys: never log or keep them. */
+  servers: AcpMcpServerWire[];
+  /**
+   * Local (stdio) ones, translated but not handed over yet: rig's session
+   * wire takes remote servers only (`acpMcpServerSchema`, so a renderer
+   * can't start a session that runs a command). Can carry keys too.
+   */
+  local: LocalSessionServer[];
+  /** Declared servers you haven't allowed on this computer yet. */
+  pending: ProjectServer[];
+  /** Allowed, but nothing Codex can run (SSE, a broken entry, an unset variable). Names only. */
+  unusable: string[];
+}
+
+/**
+ * Which of a folder's `.mcp.json` servers a Codex session there gets, by
+ * the same rules as Claude's: one turned off for the folder or not allowed
+ * is held back (the latter shown as pending), and one the session already
+ * has is left out, yours winning. `own` is what the session already has:
+ * rig's connectors and tools for it and Codex's own global servers. The
+ * same name counts too, since the space's would replace yours in Codex.
+ */
+export function planCodexProjectServers(
+  mcpJson: string,
+  claude: readonly ClaudeMcpEntry[] | null,
+  approvals: ProjectApprovals,
+  own: ReadonlyArray<{ name: string; url: string | null }>,
+  env: Env
+): CodexProjectServers {
+  const plan: CodexProjectServers = { servers: [], local: [], pending: [], unusable: [] };
+  const entries = projectMcpEntries(mcpJson);
+  for (const server of parseProjectMcpJson(mcpJson)) {
+    if (approvals.disabled.includes(server.name)) continue;
+    const duplicate = own.some(
+      (o) => o.name === server.name || (o.url !== null && server.url !== null && sameMcpServer(o.url, server.url))
+    );
+    if (duplicate) continue;
+    if (!isAllowed(server, claude, approvals)) {
+      plan.pending.push(server);
+      continue;
+    }
+    const wire = toSessionServer(server.name, entries[server.name], env);
+    if (!wire) plan.unusable.push(server.name);
+    else if ('type' in wire) plan.servers.push(wire);
+    else plan.local.push(wire);
   }
   return plan;
 }
@@ -162,6 +311,36 @@ export async function readProjectServersPlan(
   if (project.length === 0) return { disabled: [], duplicates: [], pending: [] };
   const approvals = parseLocalApprovals(await readText(localSettingsPath(cwd)));
   return planProjectServers(project, await claudeEntries(), approvals);
+}
+
+/**
+ * A Codex session's connectors with the folder's own servers added: the
+ * allowed remote ones beside rig's, and the ones waiting for your Allow
+ * named, so its context says so the way Claude's does.
+ */
+export function withCodexProjectServers(rigSide: SessionConnectors, codex: CodexProjectServers | null): SessionConnectors {
+  if (!codex || (codex.servers.length === 0 && codex.pending.length === 0)) return rigSide;
+  return {
+    ...rigSide,
+    servers: [...rigSide.servers, ...codex.servers],
+    ...(codex.pending.length > 0 ? { project: { disabled: [], pending: codex.pending.map((p) => p.name) } } : {}),
+  };
+}
+
+/** The servers a Codex session in this folder gets from its `.mcp.json` (see `planCodexProjectServers`). */
+export async function readCodexProjectServers(
+  cwd: string,
+  deps: {
+    claudeEntries: () => Promise<ClaudeMcpEntry[] | null>;
+    own: () => Promise<ReadonlyArray<{ name: string; url: string | null }>>;
+    env: () => Promise<Env>;
+  }
+): Promise<CodexProjectServers> {
+  const text = (await readText(join(cwd, '.mcp.json'))) ?? '';
+  if (parseProjectMcpJson(text).length === 0) return { servers: [], local: [], pending: [], unusable: [] };
+  const approvals = parseLocalApprovals(await readText(localSettingsPath(cwd)));
+  const [claude, own, env] = await Promise.all([deps.claudeEntries(), deps.own(), deps.env()]);
+  return planCodexProjectServers(text, claude, approvals, own, env);
 }
 
 /**
