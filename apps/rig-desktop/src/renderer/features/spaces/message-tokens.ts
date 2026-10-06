@@ -56,8 +56,9 @@ function longestName(rest: string, people: readonly Named[]): { token: string; m
  * their own and a renamed person still resolves. Then a member's display
  * name, longest first, so "@Hugo Renaudin" beats a member called "Hugo" and
  * never swallows the word after it; the name must end at a word boundary
- * ("@Hugonaut" isn't "@Hugo"). Otherwise a lowercase handle, the agent
- * shape (`@claude`).
+ * ("@Hugonaut" isn't "@Hugo"). Otherwise an agent's handle, `@claude` or
+ * `@codex`, and nothing else: "@rigxyz/cli" or "@someone" who isn't here
+ * stays plain text.
  */
 export function mentionAt(
   text: string,
@@ -76,7 +77,7 @@ export function mentionAt(
   }
   const best = longestName(rest, members);
   if (best) return best;
-  const handle = /^[a-z]+/.exec(rest)?.[0];
+  const handle = /^(?:claude|codex)(?![\w/.@-])/i.exec(rest)?.[0];
   return handle ? { token: `@${handle}` } : null;
 }
 
