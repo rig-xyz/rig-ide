@@ -897,7 +897,11 @@ export function SystemRow({
     );
   }
   const Icon =
-    message.meta.event === 'agent_failed' ? CircleAlert : message.meta.event === 'connectors_removed' ? Plug : UserPlus;
+    message.meta.event === 'agent_failed' || message.meta.event === 'ops_alert'
+      ? CircleAlert
+      : message.meta.event === 'connectors_removed'
+        ? Plug
+        : UserPlus;
   return (
     <div className={cn(ROW_GRID, 'group items-center py-1 text-xs text-text-secondary')}>
       <Icon className="size-3.5 justify-self-center text-text-muted" strokeWidth={1.5} />
