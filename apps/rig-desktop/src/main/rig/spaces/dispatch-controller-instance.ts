@@ -87,11 +87,11 @@ function realDeps(): SpacesDispatchControllerDeps {
             });
           };
           if (agent === 'codex') {
-            // Codex doesn't read the folder's .mcp.json: the remote servers you allowed
-            // there go in its session beside rig's, unless it already has them.
+            // Codex doesn't read the folder's .mcp.json: the servers you allowed there
+            // (remote and local) go in its session beside rig's, unless it already has them.
             const rigSide = await spaceConnectors();
             const codex = await codexProjectServersFor(bindingId, [
-              ...rigSide.servers.map((s) => ({ name: s.name, url: s.url })),
+              ...rigSide.servers.map((s) => ({ name: s.name, url: 'url' in s ? s.url : null })),
               { name: RIG_TOOLS_SERVER, url: null },
             ]);
             return withCodexProjectServers(rigSide, codex);

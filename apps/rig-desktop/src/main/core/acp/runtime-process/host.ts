@@ -1,11 +1,6 @@
 import { join } from 'node:path';
 import { acpApiContract, type AcpApiContract, type AcpStartInputWire } from '@emdash/core/acp';
-import {
-  exposeWireToWindows,
-  forwardController,
-  withValidation,
-  type ContractClient,
-} from '@emdash/wire/api';
+import { exposeWireToWindows, type ContractClient } from '@emdash/wire/api';
 import { lazyWorker, type WorkerHandle } from '@emdash/wire/worker';
 import { app, ipcMain, MessageChannelMain } from 'electron';
 import { appScope } from '@main/app/app-scope';
@@ -16,6 +11,7 @@ import { resolveCliAccountEnv } from '@main/rig/account';
 import { resolveCliBin } from '@main/rig/bundled-cli';
 import { noteAcpSessionStart } from '@main/rig/session-registry';
 import { desktopWorkerPath } from '@main/worker-manifest';
+import { createRendererAcpController } from './renderer-controller';
 
 const ACP_WIRE_CHANNEL = 'acp-wire';
 
@@ -155,11 +151,8 @@ async function persistReturnedSessionId(conversationId: string, sessionId: strin
 
 function installRendererWire(client: AcpRuntimeClient): void {
   rendererWireDispose?.();
-  const controller = withValidation(
-    acpApiContract,
-    forwardController(acpApiContract, client),
-    runtimeWireValidationPolicy()
-  );
+  // Drops any local (stdio) MCP server from a renderer's session start: only main may hand one over.
+  const controller = createRendererAcpController(client, runtimeWireValidationPolicy());
   rendererWireDispose = exposeWireToWindows(
     {
       ipcMain,

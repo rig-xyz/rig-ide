@@ -1830,6 +1830,26 @@ describe('rig tools', () => {
     expect(JSON.stringify(postedEvents)).not.toContain('rig-token');
   });
 
+  it("starts a Codex session with a space's local server beside the remote ones, keys kept out of its context", async () => {
+    const { api, postedEvents } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const NOTES = { name: 'notes', command: 'node', args: ['notes-server.js'], env: [{ name: 'NOTES_KEY', value: 'n0tes' }] };
+    const { dispatch } = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      connectors: async () => ({ servers: [LINEAR, NOTES], gaps: [] }),
+    });
+
+    await dispatch(makeRequest({ targetAgent: 'codex' }));
+
+    expect(fake.started[0]).toMatchObject({ providerId: 'codex', cwd: '/rigs/one', mcpServers: [LINEAR, NOTES] });
+    const hidden = fake.queued[0]!.hiddenContext!;
+    expect(hidden).toContain("Connected tools you can use, through your owner's own login: Linear, notes.");
+    expect(hidden).not.toContain('n0tes');
+    expect(JSON.stringify(postedEvents)).not.toContain('n0tes');
+  });
+
   it('says nothing about rig tools when the session has none', async () => {
     const fake = makeFakeAcp();
     const { dispatch } = createSpacesDispatcher({

@@ -9,16 +9,42 @@ const acpNameValueSchema = z.object({ name: z.string(), value: z.string() });
  * A remote MCP server handed to the agent for this one session (ACP
  * `mcpServers` on `session/new` / `session/load`). Headers may carry a bearer
  * token: this input lives in memory only and must never be logged or
- * persisted. Remote (http) only, on purpose: session starts can come from
- * the renderer, and a stdio server would let that caller spawn any command.
+ * persisted.
  */
-export const acpMcpServerSchema = z.object({
+export const acpHttpMcpServerSchema = z.object({
   type: z.literal('http'),
   name: z.string(),
   url: z.string().url(),
   headers: z.array(acpNameValueSchema),
 });
+export type AcpHttpMcpServerWire = z.infer<typeof acpHttpMcpServerSchema>;
+
+/**
+ * A local MCP server the agent runs itself, in ACP's stdio shape (no `type`,
+ * as ACP and codex-acp take it). Its env may carry keys, like the http
+ * variant's headers.
+ *
+ * Main process only. A session started from the renderer must never be able
+ * to make the runtime spawn a command: the desktop's renderer wire drops
+ * every non-http server before forwarding a start or resume (see the ACP
+ * runtime host's renderer controller). Only main-process callers can hand
+ * one over.
+ */
+export const acpStdioMcpServerSchema = z.object({
+  name: z.string(),
+  command: z.string().min(1),
+  args: z.array(z.string()),
+  env: z.array(acpNameValueSchema),
+});
+export type AcpStdioMcpServerWire = z.infer<typeof acpStdioMcpServerSchema>;
+
+export const acpMcpServerSchema = z.union([acpHttpMcpServerSchema, acpStdioMcpServerSchema]);
 export type AcpMcpServerWire = z.infer<typeof acpMcpServerSchema>;
+
+/** A remote (http) server: the only kind a renderer-started session may carry. */
+export function isHttpMcpServer(server: AcpMcpServerWire): server is AcpHttpMcpServerWire {
+  return 'type' in server && server.type === 'http';
+}
 
 export const acpStartInputSchema = z.object({
   conversationId: z.string(),

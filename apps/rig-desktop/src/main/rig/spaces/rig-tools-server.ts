@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { AcpMcpServerWire } from '@emdash/core/acp';
+import type { AcpHttpMcpServerWire } from '@emdash/core/acp';
 import { log } from '@main/lib/logger';
 import { z } from 'zod';
 import { RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
@@ -40,7 +40,7 @@ export interface RigToolsServer {
    * The `rig` server entry for one member's session in one space, with its
    * bearer token. Starts the server on first use.
    */
-  serverFor(scope: RigToolScope): Promise<AcpMcpServerWire>;
+  serverFor(scope: RigToolScope): Promise<AcpHttpMcpServerWire>;
   close(): Promise<void>;
 }
 

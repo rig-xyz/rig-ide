@@ -95,12 +95,8 @@ export async function codexProjectServersFor(
       // Variables expand from the environment Codex itself runs with.
       env: async () => ({ ...process.env, ...(await resolveLocalAcpSpawnContext('codex')).agentEnv }),
     });
-    if (plan.unusable.length > 0 || plan.local.length > 0) {
-      log.info('Rig connectors: a space’s MCP servers Codex doesn’t get', {
-        bindingId,
-        unusable: plan.unusable,
-        local: plan.local.map((s) => s.name),
-      });
+    if (plan.unusable.length > 0) {
+      log.info('Rig connectors: a space’s MCP servers Codex doesn’t get', { bindingId, unusable: plan.unusable });
     }
     return plan;
   } catch (error) {

@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { AcpMcpServerWire } from '@emdash/core/acp';
+import type { AcpHttpMcpServerWire, AcpStdioMcpServerWire } from '@emdash/core/acp';
 import { connectorIdForUrl } from '@shared/spaces/connectors';
 import type { SessionConnectors } from './connections';
 import type { ClaudeMcpEntry } from './global-setup';
@@ -25,10 +25,14 @@ import type { ClaudeMcpEntry } from './global-setup';
  * (`.claude/settings.local.json`, never synced). Never approved silently.
  *
  * Codex doesn't read `.mcp.json` at all (its servers live in
- * `~/.codex/config.toml`), so rig hands it the declared remote servers
- * itself, in its session's `mcpServers` (`planCodexProjectServers`), through
- * the same Allow: what you allowed for Claude in the folder is what Codex
- * gets there. Local (stdio) ones are translated but not handed over yet.
+ * `~/.codex/config.toml`), so rig hands it the declared servers itself, in
+ * its session's `mcpServers` (`planCodexProjectServers`), through the same
+ * Allow: what you allowed for Claude in the folder is what Codex gets there.
+ * Remote ones and local (stdio) ones both; a local one is a command Codex
+ * runs, which only the main process may ever put in a session (the renderer
+ * wire drops it, see the ACP runtime host). Codex starts it in the space
+ * folder: codex-acp sets no `cwd` for it, so it inherits Codex's own, and
+ * a space's Codex process is spawned there (its pool key is the folder).
  */
 
 export interface ProjectServer {
@@ -196,21 +200,17 @@ function stringRecord(value: unknown): Record<string, string> | null {
   return entries.every(([, v]) => typeof v === 'string') ? (Object.fromEntries(entries) as Record<string, string>) : null;
 }
 
-/** A local (stdio) server in ACP's shape: name, command, args, env. */
-export interface LocalSessionServer {
-  name: string;
-  command: string;
-  args: string[];
-  env: Array<{ name: string; value: string }>;
-}
-
 /**
  * One declared server in the shape a Codex session takes it: a remote one
  * (`type: "http"`, url and headers) or a local one (command, args, env),
  * variables expanded. Null for what Codex can't run: SSE, which codex-acp
  * refuses outright (failing the whole session), and broken entries.
  */
-export function toSessionServer(name: string, config: unknown, env: Env): AcpMcpServerWire | LocalSessionServer | null {
+export function toSessionServer(
+  name: string,
+  config: unknown,
+  env: Env
+): AcpHttpMcpServerWire | AcpStdioMcpServerWire | null {
   if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
   const c = config as Record<string, unknown>;
   const expand = (v: string) => expandEnvVars(v, env);
@@ -244,13 +244,13 @@ export function toSessionServer(name: string, config: unknown, env: Env): AcpMcp
 
 export interface CodexProjectServers {
   /** Remote ones, for the Codex session's `mcpServers`. Can carry keys: never log or keep them. */
-  servers: AcpMcpServerWire[];
+  servers: AcpHttpMcpServerWire[];
   /**
-   * Local (stdio) ones, translated but not handed over yet: rig's session
-   * wire takes remote servers only (`acpMcpServerSchema`, so a renderer
-   * can't start a session that runs a command). Can carry keys too.
+   * Local (stdio) ones, for the same `mcpServers`: commands Codex runs in the
+   * space folder. Main process only (the renderer wire drops them). Can carry
+   * keys too.
    */
-  local: LocalSessionServer[];
+  local: AcpStdioMcpServerWire[];
   /** Declared servers you haven't allowed on this computer yet. */
   pending: ProjectServer[];
   /** Allowed, but nothing Codex can run (SSE, a broken entry, an unset variable). Names only. */
@@ -315,14 +315,14 @@ export async function readProjectServersPlan(
 
 /**
  * A Codex session's connectors with the folder's own servers added: the
- * allowed remote ones beside rig's, and the ones waiting for your Allow
- * named, so its context says so the way Claude's does.
+ * allowed remote and local ones beside rig's, and the ones waiting for your
+ * Allow named, so its context says so the way Claude's does.
  */
 export function withCodexProjectServers(rigSide: SessionConnectors, codex: CodexProjectServers | null): SessionConnectors {
-  if (!codex || (codex.servers.length === 0 && codex.pending.length === 0)) return rigSide;
+  if (!codex || (codex.servers.length === 0 && codex.local.length === 0 && codex.pending.length === 0)) return rigSide;
   return {
     ...rigSide,
-    servers: [...rigSide.servers, ...codex.servers],
+    servers: [...rigSide.servers, ...codex.servers, ...codex.local],
     ...(codex.pending.length > 0 ? { project: { disabled: [], pending: codex.pending.map((p) => p.name) } } : {}),
   };
 }

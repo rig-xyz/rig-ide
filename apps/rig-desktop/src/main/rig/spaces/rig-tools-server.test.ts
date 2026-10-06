@@ -2,7 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { ok } from '@emdash/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AcpMcpServerWire } from '@emdash/core/acp';
+import type { AcpHttpMcpServerWire } from '@emdash/core/acp';
 import type { RigToolScope, RigToolsBackend } from './rig-tools';
 import { createRigToolsServer, type RigToolsServer } from './rig-tools-server';
 
@@ -46,11 +46,11 @@ afterEach(async () => {
   server = null;
 });
 
-function tokenOf(wire: AcpMcpServerWire): string {
+function tokenOf(wire: AcpHttpMcpServerWire): string {
   return wire.headers.find((h) => h.name === 'Authorization')!.value.replace(/^Bearer /, '');
 }
 
-async function connect(wire: AcpMcpServerWire, token = tokenOf(wire)): Promise<Client> {
+async function connect(wire: AcpHttpMcpServerWire, token = tokenOf(wire)): Promise<Client> {
   const client = new Client({ name: 'test', version: '1' });
   await client.connect(
     new StreamableHTTPClientTransport(new URL(wire.url), {

@@ -207,7 +207,7 @@ describe('Codex and the space’s .mcp.json', () => {
     expect(toSessionServer('args', { command: 'node', args: [1] }, {})).toBeNull();
   });
 
-  it('gives Codex the allowed remote ones, holds back the rest, and keeps local ones ready', () => {
+  it('gives Codex the allowed remote and local ones, and holds back the rest', () => {
     const plan = planCodexProjectServers(
       MCP_JSON,
       null,
@@ -297,6 +297,56 @@ describe('withCodexProjectServers', () => {
     );
     expect(context).toContain('remote');
     expect(context).toContain("This space's .mcp.json also declares waiting");
+  });
+
+  it('hands Codex an allowed local server from the folder, and not one still waiting for your Allow', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'codex-local-'));
+    try {
+      await writeFile(
+        join(dir, '.mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            notes: { command: 'node', args: ['notes-server.js', '--key', '${NOTES_KEY}'] },
+            unvetted: { command: 'sh', args: ['-c', 'echo hi'] },
+          },
+        })
+      );
+      await mkdir(join(dir, '.claude'), { recursive: true });
+      await writeFile(join(dir, '.claude', 'settings.local.json'), JSON.stringify({ enabledMcpjsonServers: ['notes'] }));
+      const codex = await readCodexProjectServers(dir, {
+        claudeEntries: async () => null,
+        own: async () => [],
+        env: async () => ({ NOTES_KEY: 'n0tes' }),
+      });
+      const merged = withCodexProjectServers(rigSide, codex);
+      expect(merged.servers).toEqual([
+        ...rigSide.servers,
+        { name: 'notes', command: 'node', args: ['notes-server.js', '--key', 'n0tes'], env: [] },
+      ]);
+      expect(merged.servers.map((s) => s.name)).not.toContain('unvetted');
+      expect(merged.project).toEqual({ disabled: [], pending: ['unvetted'] });
+      // Its context names the local one like the remote ones, and the waiting one as waiting.
+      const { connectorsHiddenContext } = await import('../spaces/dispatch');
+      const context = connectorsHiddenContext(
+        merged.servers.map((s) => s.name),
+        merged.gaps,
+        merged.global,
+        'everything',
+        merged.project?.pending
+      )!;
+      expect(context).toContain('Connected tools you can use, through your owner\'s own login: Linear, notes.');
+      expect(context).toContain("This space's .mcp.json also declares unvetted");
+      expect(context).not.toContain('n0tes');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('adds an allowed local server even when nothing remote or pending comes with it', () => {
+    const local = { name: 'notes', command: 'node', args: [], env: [] };
+    const merged = withCodexProjectServers(rigSide, { servers: [], local: [local], pending: [], unusable: [] });
+    expect(merged.servers).toEqual([...rigSide.servers, local]);
+    expect(merged.project).toBeUndefined();
   });
 
   it('leaves rig’s side alone when the folder brings nothing', () => {

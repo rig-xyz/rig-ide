@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { AcpHttpMcpServerWire } from '@emdash/core/acp';
 import type { AuthorizationServerMetadata } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { createConnections, loginFromIdToken, pickLogin, type CallbackListener, type ConnectionsDeps, type OAuthSteps } from './connections';
 
@@ -148,7 +149,7 @@ describe('connections', () => {
       h.advance(3600_000 - 60_000);
       const { servers } = await h.connections.forSession(['linear']);
       expect(h.oauth.refresh).toHaveBeenCalledWith('https://as.example', METADATA, expect.anything(), 'refresh-1', 'https://mcp.linear.app/mcp');
-      expect(servers[0]?.headers[0]?.value).toBe('Bearer access-2');
+      expect((servers[0] as AcpHttpMcpServerWire | undefined)?.headers[0]?.value).toBe('Bearer access-2');
       // The refresh token survives a refresh response that doesn't rotate it.
       const stored = JSON.parse(h.secrets.get('connectors:user-1:linear')!);
       expect(stored.tokens.refreshToken).toBe('refresh-1');
@@ -169,7 +170,7 @@ describe('connections', () => {
       vi.mocked(h.oauth.refresh).mockRejectedValueOnce(new Error('network'));
       h.advance(3600_000 - 60_000);
       const { servers } = await h.connections.forSession(['linear']);
-      expect(servers[0]?.headers[0]?.value).toBe('Bearer access-1');
+      expect((servers[0] as AcpHttpMcpServerWire | undefined)?.headers[0]?.value).toBe('Bearer access-1');
     });
   });
 
