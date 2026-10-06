@@ -335,11 +335,11 @@ export interface SpacesRelayApi {
 
   /**
    * `PUT /v1/me/computers/active {device}` marks this Mac in use now (with
-   * no `device`, `GET` only asks). Either answers with the computer you used
-   * most recently (`null` before any reported, or from a relay without the
-   * route).
+   * no `device`, `GET` only asks). Either answers with the computer you last
+   * used Rig on (`null` before any reported, or from a relay without the
+   * route) and how many computers you use Rig on.
    */
-  activeComputer?(markActive?: string): Promise<Result<{ device: string | null }, RelayApiError>>;
+  activeComputer?(markActive?: string): Promise<Result<{ device: string | null; computers: number }, RelayApiError>>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -1009,10 +1009,13 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         : await request(ctxResult.data, 'GET', '/v1/me/computers/active', 'check which Mac you are at');
       if (!result.success) {
         const missing = result.error.kind === 'relay' && result.error.status === 404;
-        return missing ? ok({ device: null }) : err(result.error);
+        return missing ? ok({ device: null, computers: 0 }) : err(result.error);
       }
-      const device = asRecord(result.data)?.device;
-      return ok({ device: typeof device === 'string' ? device : null });
+      const { device, computers } = asRecord(result.data) ?? {};
+      return ok({
+        device: typeof device === 'string' ? device : null,
+        computers: typeof computers === 'number' ? computers : 0,
+      });
     },
 
     async postMessage(bindingId, input) {
