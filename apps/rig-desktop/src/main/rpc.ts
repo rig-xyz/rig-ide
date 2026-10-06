@@ -59,6 +59,7 @@ import { rigNotificationsController } from './rig/notifications/electron';
 import { rigRecentController } from './rig/recent-rigs';
 import { rigControlController } from './rig/rig-controls';
 import { rigSyncHealthController } from './rig/sync-health';
+import { rigProblemReportController } from './rig/problem-report-instance';
 import { rigShareController } from './rig/rig-share';
 import { rigSeenStateController } from './rig/seen-state';
 import { rigSessionsController } from './rig/sessions';
@@ -251,6 +252,8 @@ export const rpcRouter = createRPCRouter({
     control: rigControlController,
     // Is each rig/space syncing on this computer, and the button that starts it again.
     syncHealth: rigSyncHealthController,
+    // Help › Report a Problem: send the bundle to the relay, or save it to a file.
+    problemReport: rigProblemReportController,
     // Delete/leave a rig — the rigs-rail row menu's "Delete rig…"/"Leave
     // rig…" (`delete-rig-dialog.tsx`). Its own key rather than folded into
     // `control` above: a destructive, multi-step orchestration (stop sync,

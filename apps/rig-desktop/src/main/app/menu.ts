@@ -9,11 +9,12 @@ import {
   menuGiveFeedbackChannel,
   menuOpenSettingsChannel,
   menuRedoChannel,
+  menuReportProblemChannel,
   menuUndoChannel,
   nativeMenuCommandStateChannel,
   type NativeMenuCommandState,
 } from '@shared/events/appEvents';
-import { RIG_ISSUES_NEW_URL, RIG_RELEASES_URL, RIG_WEBSITE_URL } from '@shared/urls';
+import { RIG_RELEASES_URL, RIG_WEBSITE_URL } from '@shared/urls';
 import {
   deriveNativeMenuItemChanges,
   DISABLED_NATIVE_MENU_STATE,
@@ -244,16 +245,14 @@ export function setupApplicationMenu(): void {
           label: 'Troubleshooting',
           submenu: [
             {
-              label: 'Report Issue\u2026',
-              click: () => {
-                void shell.openExternal(RIG_ISSUES_NEW_URL);
-              },
-            },
-            {
               label: 'Copy Installation ID',
               click: copyInstallationId,
             },
           ],
+        },
+        {
+          label: 'Report a Problem\u2026',
+          click: () => events.emit(menuReportProblemChannel, undefined),
         },
         {
           id: NATIVE_MENU_ITEM_IDS.feedback,

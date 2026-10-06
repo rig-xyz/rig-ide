@@ -20,6 +20,7 @@ import {
 import { ChatPanel } from '@renderer/features/chat/chat-panel';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { DeepLinkJoinDialog } from '@renderer/features/deep-link/deep-link-join-dialog';
+import { ReportProblemDialogHost } from '@renderer/features/shell/report-problem-dialog';
 import { markBindingDeleted } from '@renderer/features/home/deleted-rig-store';
 import { Home } from '@renderer/features/home/home';
 import { stripRigPrefix } from '@renderer/features/home/summary-segments';
@@ -1390,6 +1391,8 @@ export function App() {
       />
       {/* `rig://join/<secret>` from the website's invite page: confirm, then join and open. */}
       <DeepLinkJoinDialog onOpenPath={(path) => void openPath(path, { source: 'deeplink', kind: 'space' })} />
+      {/* Help › Report a Problem. */}
+      <ReportProblemDialogHost />
       {bound && bindingDeleted ? (
         // Delete-a-rig round: the owner (or another member) deleted this
         // binding out from under us while it was open — replaces the

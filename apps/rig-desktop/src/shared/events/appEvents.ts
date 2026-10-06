@@ -21,6 +21,8 @@ export const menuUndoChannel = defineEvent<void>('menu:undo');
 export const menuRedoChannel = defineEvent<void>('menu:redo');
 export const menuCloseTabChannel = defineEvent<void>('menu:close-tab');
 export const menuGiveFeedbackChannel = defineEvent<void>('menu:give-feedback');
+/** Help › Report a Problem: the renderer opens the report dialog. */
+export const menuReportProblemChannel = defineEvent<void>('menu:report-problem');
 
 export type NativeMenuUpdateAction = 'unavailable' | 'check' | 'busy' | 'restart';
 

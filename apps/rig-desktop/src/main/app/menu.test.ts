@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { menuCloseTabChannel, nativeMenuCommandStateChannel } from '@shared/events/appEvents';
+import {
+  menuCloseTabChannel,
+  menuReportProblemChannel,
+  nativeMenuCommandStateChannel,
+} from '@shared/events/appEvents';
 import { NATIVE_MENU_ITEM_IDS } from './native-menu-state';
 
 const mocks = vi.hoisted(() => {
@@ -103,6 +107,12 @@ describe('native application menu', () => {
     if (process.platform !== 'darwin') return;
     mocks.items.get(NATIVE_MENU_ITEM_IDS.closeTab)?.click?.({} as never, {} as never, {} as never);
     expect(mocks.emit).toHaveBeenCalledWith(menuCloseTabChannel, undefined);
+  });
+
+  it('Help › Report a Problem opens the report dialog in the app, not a web page', () => {
+    expect(findItem('Report Issue\u2026')).toBeUndefined();
+    findItem('Report a Problem\u2026')?.click?.({} as never, {} as never, {} as never);
+    expect(mocks.emit).toHaveBeenCalledWith(menuReportProblemChannel, undefined);
   });
 
   it('applies renderer availability and update labels', () => {
