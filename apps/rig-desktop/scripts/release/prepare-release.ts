@@ -1,8 +1,10 @@
 import { appendFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { Octokit } from '@octokit/rest';
+import { adapterStatuses, isNewer } from './lib/agent-adapters.ts';
 import { GITHUB_OWNER, GITHUB_REPO } from './lib/config.ts';
-import { fail, info, step } from './lib/log.ts';
+import { fail, info, step, warn } from './lib/log.ts';
 import { resolveReleaseVersion } from './lib/version.ts';
 import type { ReleaseChannel } from './lib/version.ts';
 
@@ -20,6 +22,14 @@ if (!['stable', 'canary'].includes(channel)) {
 
 const token = process.env.GH_TOKEN;
 if (!token) fail('GH_TOKEN env var is required');
+
+// Agent adapters with a newer release: listed, never blocking (see lib/agent-adapters.ts).
+step('Checking the Claude and Codex agent adapters');
+for (const { name, pinned, latest } of await adapterStatuses(fileURLToPath(new URL('../../../../', import.meta.url)))) {
+  if (latest === null) info(`${name} ${pinned} (npm not reachable, not checked)`);
+  else if (isNewer(latest, pinned)) warn(`${name} ${pinned} ships, ${latest} is out. Bump it in its own change, not mid-release.`);
+  else info(`${name} ${pinned} is the latest`);
+}
 
 const { tag, isCanary } = resolveReleaseVersion(channel);
 const octokit = new Octokit({ auth: token });
