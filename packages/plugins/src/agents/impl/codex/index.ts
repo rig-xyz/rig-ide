@@ -111,8 +111,12 @@ export const plugin = definePlugin(
       // never sees. It's frequently newer than a stale global npm/homebrew install and
       // is the only one that knows about ChatGPT-account-only models (e.g. gpt-6-sol)
       // — so it's worth discovering as a candidate even though emdash didn't install it.
+      // Since ChatGPT 26.928 (2026-10) it lives under `codex-cli/bin/`; the old path
+      // stays for older app versions.
       extraLocations: {
         macos: [
+          '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex',
+          '~/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex',
           '/Applications/ChatGPT.app/Contents/Resources/codex',
           '~/Applications/ChatGPT.app/Contents/Resources/codex',
         ],

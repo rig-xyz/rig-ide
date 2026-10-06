@@ -15,6 +15,8 @@ describe('codex plugin hostDependency', () => {
   it('declares the ChatGPT desktop app as a macOS extraLocation candidate', () => {
     expect(hostDependency.extraLocations?.macos).toEqual(
       expect.arrayContaining([
+        '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex',
+        '~/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex',
         '/Applications/ChatGPT.app/Contents/Resources/codex',
         '~/Applications/ChatGPT.app/Contents/Resources/codex',
       ])
