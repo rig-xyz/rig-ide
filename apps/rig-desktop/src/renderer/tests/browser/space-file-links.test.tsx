@@ -158,7 +158,7 @@ describe('paths in a Room message', () => {
     await act(async () =>
       root.render(
         <AttachmentSpaceContext.Provider value={space()}>
-          <p>{richText('Put it in /Users/hugo/Rig/clear-harbor/notes/plan.md, thanks', 'usr_me')}</p>
+          <div>{richText('Put it in /Users/hugo/Rig/clear-harbor/notes/plan.md, thanks', 'usr_me')}</div>
         </AttachmentSpaceContext.Provider>
       )
     );

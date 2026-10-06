@@ -12,25 +12,20 @@ import {
   Sheet,
   UserPlus,
 } from 'lucide-react';
-import { Children, createContext, type MouseEvent, type ReactNode, useContext, useEffect, useState } from 'react';
+import { Children, createContext, type MouseEvent, type ReactNode, useContext, useEffect, useMemo, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { MARKDOWN_ELEMENTS_CLASS, TABLE_CLASS, TABLE_WRAPPER_CLASS } from '@renderer/lib/ui/markdown-classes';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import { formatClock, formatClockShort, formatFull } from '@renderer/lib/time-format';
 import type { ConnectResult } from '@shared/spaces/connectors';
-import {
-  canonicalPageUrl,
-  classifyLink,
-  opensBesideChat,
-  trimUrl,
-  URL_PATTERN,
-  webLinkLabel,
-  type LinkKind,
-} from '@shared/spaces/links';
+import { canonicalPageUrl, classifyLink, opensBesideChat, webLinkLabel, type LinkKind } from '@shared/spaces/links';
 import { agentLogoId, BrandLogo, ConnectorMark } from '../logos';
+import { remarkRoomTokens, type RoomTokenKind } from '../message-tokens';
 import type { AgentKind, RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
 import { FileTagChip, MessageAttachments } from './attachment-cards';
-import { FILE_TAG_SOURCE, tagPathOf } from '@shared/rig/file-tags';
 import { ConnectPill } from './connectors-panel';
 import { SpaceFileLink } from './space-file-link';
 import { QuickReactions, ReactionChips } from './reactions';
@@ -205,116 +200,100 @@ function PageChip({ url, title }: { url: string; title?: string }) {
   );
 }
 
-/**
- * The @mention whose "@" is at `at`, if any. A member's display name wins,
- * longest first, so "@Hugo Renaudin" beats a member called "Hugo" and never
- * swallows the word after it; the name must end at a word boundary ("@Hugonaut"
- * isn't "@Hugo"). Otherwise a lowercase handle, the agent shape (`@claude`).
- */
-function mentionAt(
-  text: string,
-  at: number,
-  members: readonly Pick<RoomMember, 'id' | 'name'>[]
-): { token: string; memberId?: string } | null {
-  const rest = text.slice(at + 1);
-  let best: { token: string; memberId: string } | null = null;
-  for (const member of members) {
-    const name = member.name.trim();
-    if (!name || (best && name.length < best.token.length)) continue;
-    const candidate = rest.slice(0, name.length);
-    if (candidate.toLowerCase() !== name.toLowerCase() || /[\p{L}\p{N}_]/u.test(rest.charAt(name.length))) continue;
-    best = { token: `@${candidate}`, memberId: member.id };
-  }
-  if (best) return best;
-  const handle = /^[a-z]+/.exec(rest)?.[0];
-  return handle ? { token: `@${handle}` } : null;
+/** A link written as markdown (`[the plan](https://…)`): its own words, opened like a link chip. */
+function MessageTextLink({ href, children }: { href: string; children: ReactNode }) {
+  const open = useOpenLink(href, webLinkLabel(href));
+  return (
+    <a href={href} {...open} title={href} className="text-accent underline underline-offset-2">
+      {children}
+    </a>
+  );
 }
 
-/** Inline emphasis for links, @mentions, /commands and +file tags — same markup rules as the reference demo's `rich()`, done as React nodes instead of HTML string concatenation. */
+type HastElement = { properties?: Record<string, unknown> };
+
+/** The Room's own bits in a person's message, as `message-tokens.ts` marked them. */
+function RoomToken({ node, ownId, children }: { node?: HastElement; ownId: string; children?: ReactNode }) {
+  const props = node?.properties ?? {};
+  const kind = props.dataRoomToken as RoomTokenKind | undefined;
+  const value = String(props.dataValue ?? '');
+  switch (kind) {
+    case 'path':
+      // Someone's absolute path (their own computer's): shown by its path in
+      // the space, opening this computer's copy — see `SpaceFileLink`.
+      return (
+        <SpaceFileLink
+          href={value}
+          text={value}
+          code={false}
+          className="text-accent cursor-pointer font-mono underline decoration-dotted underline-offset-2"
+        >
+          {value}
+        </SpaceFileLink>
+      );
+    case 'link':
+      return <MessageLink url={value} />;
+    case 'mention': {
+      const mentioned = props.dataMember === ownId || value.slice(1) === ownId;
+      return <span className={cn('text-accent font-medium', mentioned && 'bg-accent-subtle rounded-control px-0.5')}>{value}</span>;
+    }
+    case 'file-tag':
+      return <FileTagChip path={value} />;
+    case 'command':
+      return <span className="text-accent font-mono font-medium">{value}</span>;
+    case 'review':
+      return <span className="bg-bg-2 rounded-control px-1 font-mono text-text-primary">{value}</span>;
+    default:
+      return <span>{children}</span>;
+  }
+}
+
+/** A heading in chat is a bold line, not a title. */
+function ChatHeading({ children }: { children?: ReactNode }) {
+  return <p className="font-semibold">{children}</p>;
+}
+
+/**
+ * A person's message: light markdown (code, bold, italics, strikethrough,
+ * lists, quotes, links), a single newline kept as a line break, and the
+ * Room's links, @mentions, /command, +file tags and paths in its ordinary
+ * text (never inside code: `message-tokens.ts`). No raw HTML: it shows as
+ * typed. No images: one is a link to it. The bubble carries the styles
+ * (`bubbleClass`).
+ */
 export function richText(
   text: string,
   ownId: string,
   /** The room's people, so a display-name mention ("@Hugo Renaudin", what the composer's Tab inserts) reads as one. */
   members: readonly Pick<RoomMember, 'id' | 'name'>[] = []
-): ReactNode[] {
-  // Links first, so nothing inside a URL reads as a mention or a file. @
-  // only starts a mention after whitespace, the start, or opening
-  // punctuation (an email's "@gmail" stays plain), and a /command only at
-  // the very start of the message (a path like "/etc/hosts" stays plain).
-  // The mention group is just the "@"; `mentionAt` decides how far it runs.
-  const pattern = new RegExp(
-    `(${URL_PATTERN.source})|((?<![\\w.@/:-])@)|(^\\/[a-z-]+(?![\\w/.]))|(${FILE_TAG_SOURCE})|(reviews\\/[\\w.-]+\\.md)|(?<abspath>(?<![\\w/.:~-])(?:file:\\/\\/)?\\/(?:Users|home|Volumes)\\/[^\\s'"\x60<>()\\[\\]{}|]+)`,
-    'g'
+): ReactNode {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[[remarkGfm, { singleTilde: false }], [remarkRoomTokens, { members }]]}
+      components={{
+        span: ({ node, children }) => (
+          <RoomToken node={node as HastElement | undefined} ownId={ownId}>
+            {children}
+          </RoomToken>
+        ),
+        a: ({ href, children }) =>
+          href && /^(https?|mailto):/i.test(href) ? <MessageTextLink href={href}>{children}</MessageTextLink> : <>{children}</>,
+        h1: ChatHeading,
+        h2: ChatHeading,
+        h3: ChatHeading,
+        h4: ChatHeading,
+        h5: ChatHeading,
+        h6: ChatHeading,
+        table: ({ children }) => (
+          <div className={TABLE_WRAPPER_CLASS}>
+            <table className={TABLE_CLASS}>{children}</table>
+          </div>
+        ),
+      }}
+    >
+      {text}
+    </ReactMarkdown>
   );
-  const nodes: ReactNode[] = [];
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  let key = 0;
-  while ((match = pattern.exec(text))) {
-    const mention = match[2] ? mentionAt(text, match.index, members) : null;
-    // A file tag (`+path` or `+"path"`, see `shared/rig/file-tags.ts`); one that would leave the space stays text.
-    const tagged = match[4] ? tagPathOf(match, 5, 6) : null;
-    if ((match[2] && !mention) || (match[4] && !tagged)) {
-      // A lone "@" (or "@Someone" who isn't here): stays in the surrounding text.
-      pattern.lastIndex = match.index + 1;
-      continue;
-    }
-    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
-    let token = match[0];
-    const absPath = match.groups?.abspath ? match.groups.abspath.replace(/[.,;:!?]+$/, '') : null;
-    if (absPath) {
-      // Someone's absolute path (their own computer's): shown by its path in
-      // the space, opening this computer's copy — see `SpaceFileLink`.
-      token = absPath;
-      nodes.push(
-        <SpaceFileLink
-          key={key++}
-          href={absPath}
-          text={absPath}
-          code={false}
-          className="text-accent cursor-pointer font-mono underline decoration-dotted underline-offset-2"
-        >
-          {absPath}
-        </SpaceFileLink>
-      );
-    } else if (match[1]) {
-      // The sentence's own punctuation after a link stays text.
-      token = trimUrl(token);
-      nodes.push(<MessageLink key={key++} url={token} />);
-    } else if (mention) {
-      token = mention.token;
-      const mentioned = mention.memberId === ownId || token.slice(1) === ownId;
-      nodes.push(
-        <span
-          key={key++}
-          className={cn(
-            'text-accent font-medium',
-            mentioned && 'bg-accent-subtle rounded-control px-0.5'
-          )}
-        >
-          {token}
-        </span>
-      );
-    } else if (tagged) {
-      nodes.push(<FileTagChip key={key++} path={tagged} />);
-    } else if (token.startsWith('/')) {
-      nodes.push(
-        <span key={key++} className="text-accent font-mono font-medium">
-          {token}
-        </span>
-      );
-    } else {
-      nodes.push(
-        <span key={key++} className="bg-bg-2 rounded-control px-1 font-mono text-text-primary">
-          {token}
-        </span>
-      );
-    }
-    lastIndex = match.index + token.length;
-    pattern.lastIndex = lastIndex;
-  }
-  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
-  return nodes;
 }
 
 /**
@@ -349,11 +328,16 @@ export function RowTime({
   );
 }
 
-/** A person's words sit in a bubble; agents' answers don't. Yours are tinted and sit on the right. */
+/**
+ * A person's words sit in a bubble; agents' answers don't. Yours are tinted
+ * and sit on the right. The bubble styles its markdown (`richText`): code
+ * on someone else's grey bubble is lighter, so it still reads as code.
+ */
 export function bubbleClass(mine: boolean): string {
   return cn(
-    'w-fit max-w-full rounded-2xl px-3 py-1.5 text-sm leading-relaxed break-words whitespace-pre-wrap text-text-primary',
-    mine ? 'bg-accent-subtle rounded-tr-md' : 'bg-bg-2 rounded-tl-md'
+    'w-fit max-w-full rounded-2xl px-3 py-1.5 text-sm leading-relaxed break-words text-text-primary',
+    MARKDOWN_ELEMENTS_CLASS,
+    mine ? 'bg-accent-subtle rounded-tr-md' : 'bg-bg-2 rounded-tl-md [&_code]:bg-bg-1 [&_pre]:bg-bg-1'
   );
 }
 
@@ -474,7 +458,10 @@ export function MessageRow({
   const files = message.meta.kind === 'text' ? message.meta.attachments : undefined;
   // Only files were sent: the body was written for older apps; the cards say it.
   const hideBody = !!files?.length && message.meta.kind === 'text' && message.meta.autoBody;
-  const body = message.body && !hideBody ? richText(message.body, ownId, snapshot.members) : null;
+  const body = useMemo(
+    () => (message.body && !hideBody ? richText(message.body, ownId, snapshot.members) : null),
+    [message.body, hideBody, ownId, snapshot.members]
+  );
   const replyTo = message.meta.kind === 'text' ? message.meta.replyTo : undefined;
   // The emoji picker open from the hover bar keeps the bar showing.
   const [picking, setPicking] = useState(false);
@@ -536,9 +523,9 @@ export function MessageRow({
           {replyTo && <ReplyQuote replyTo={replyTo} mine onJumpTo={onJumpTo} />}
           {cards}
           {body && (
-            <p className={cn(bubbleClass(true), message.sending && 'opacity-60')} data-highlight-target>
+            <div className={cn(bubbleClass(true), message.sending && 'opacity-60')} data-highlight-target>
               {body}
-            </p>
+            </div>
           )}
           {chips}
           {askSuggestion?.messageId === message.id && !message.sending && <AskSuggestionButton suggestion={askSuggestion} />}
@@ -571,9 +558,9 @@ export function MessageRow({
         {replyTo && <ReplyQuote replyTo={replyTo} mine={false} onJumpTo={onJumpTo} />}
         {cards}
         {body && (
-          <p className={bubbleClass(false)} data-highlight-target>
+          <div className={bubbleClass(false)} data-highlight-target>
             {body}
-          </p>
+          </div>
         )}
         {chips}
       </div>

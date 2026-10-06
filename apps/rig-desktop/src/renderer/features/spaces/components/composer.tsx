@@ -4,6 +4,7 @@ import { WILL_SEND_WHEN_ONLINE } from '@renderer/features/home/home-connection';
 import { cn } from '@renderer/lib/utils';
 import { formatFileTag, rankTaggableFiles, type TaggableFile } from '@shared/rig/file-tags';
 import { isLargeBatch, type ComposerAttachment } from '../attachments';
+import { formatMarkerFor, toggleMarker } from '../composer-format';
 import { loadEmojiIndex, matchShortcodes, recordEmojiUse, type EmojiIndex } from '../emoji-data';
 import { agentLogoId, BrandLogo } from '../logos';
 import { decideSend, type ComposerRoute, type SendOverride } from '../send-decision';
@@ -353,6 +354,24 @@ export function Composer({
       el.focus();
       el.setSelectionRange(caret, caret);
     });
+  };
+
+  // ⌘B / ⌘I / ⌘E: markdown markers around the selection, kept in the field's own undo history.
+  const formatSelection = (marker: string) => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const edit = toggleMarker(el.value, el.selectionStart, el.selectionEnd, marker);
+    el.setSelectionRange(edit.from, edit.to);
+    const done = edit.insert
+      ? document.execCommand('insertText', false, edit.insert)
+      : edit.from === edit.to || document.execCommand('delete');
+    if (!done) {
+      const next = el.value.slice(0, edit.from) + edit.insert + el.value.slice(edit.to);
+      setValue(next);
+      requestAnimationFrame(() => textareaRef.current?.setSelectionRange(edit.selStart, edit.selEnd));
+      return;
+    }
+    el.setSelectionRange(edit.selStart, edit.selEnd);
   };
 
   const applyMention = (label: string) => {
@@ -744,6 +763,12 @@ export function Composer({
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           onKeyDown={(e) => {
+            const marker = formatMarkerFor(e, /Mac/i.test(navigator.platform));
+            if (marker) {
+              e.preventDefault();
+              formatSelection(marker);
+              return;
+            }
             if (menuOpen) {
               if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                 e.preventDefault();
