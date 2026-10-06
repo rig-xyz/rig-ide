@@ -1380,14 +1380,22 @@ export function createSpacesDispatcher(deps: {
 }
 
 /**
- * Mints (and memoizes, per binding, for this process's lifetime) this
- * device's id on a binding — the real `deviceId` resolver
- * `RequestClaimPoller` needs (see `request-claim.ts`'s `DeviceIdResolver`
- * doc comment: a cross-binding poller needs a DIFFERENT device id per
- * request's own `bindingId`, not one fixed id). Concurrent calls for the
+ * This device's id on a binding, memoized per binding for this process's
+ * lifetime — the real `deviceId` resolver `RequestClaimPoller` needs (see
+ * `request-claim.ts`'s `DeviceIdResolver` doc comment: a cross-binding
+ * poller needs a DIFFERENT device id per request's own `bindingId`, not one
+ * fixed id). The space's own sync device (`localDeviceId`, the id in its
+ * folder's tap binding) comes first, so claiming adds no device; only a
+ * space without one mints a device, named `label`. Concurrent calls for the
  * SAME unminted binding share one in-flight mint rather than minting twice.
  */
-export function createDeviceIdResolver(api: SpacesRelayApi): (bindingId: string) => Promise<string> {
+export function createDeviceIdResolver(
+  api: SpacesRelayApi,
+  options: {
+    localDeviceId?: (bindingId: string) => Promise<string | null>;
+    label?: () => Promise<string>;
+  } = {}
+): (bindingId: string) => Promise<string> {
   const minted = new Map<string, string>();
   const inFlight = new Map<string, Promise<string>>();
 
@@ -1398,7 +1406,13 @@ export function createDeviceIdResolver(api: SpacesRelayApi): (bindingId: string)
     if (pending) return pending;
 
     const mint = (async () => {
-      const result = await api.mintDevice(bindingId);
+      const local = options.localDeviceId ? await options.localDeviceId(bindingId).catch(() => null) : null;
+      if (local) {
+        minted.set(bindingId, local);
+        return local;
+      }
+      const label = options.label ? await options.label().catch(() => undefined) : undefined;
+      const result = await api.mintDevice(bindingId, label);
       if (!result.success) throw new Error(result.error.message);
       minted.set(bindingId, result.data.id);
       return result.data.id;

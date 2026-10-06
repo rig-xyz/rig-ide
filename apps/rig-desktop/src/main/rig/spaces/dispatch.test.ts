@@ -1203,6 +1203,20 @@ describe('createDeviceIdResolver', () => {
     expect(await p2).toBe('device-1');
   });
 
+  it("claims with the space's own sync device and mints, named after this Mac, only without one", async () => {
+    const mintDevice = vi.fn(async (bindingId: string, _label?: string) => ok({ id: `minted-for-${bindingId}`, bindingId }));
+    const { api } = makeFakeApi({ mintDevice });
+    const resolveDevice = createDeviceIdResolver(api, {
+      localDeviceId: async (bindingId) => (bindingId === 'binding-here' ? 'dev_tapd' : null),
+      label: async () => "Dylan's MacBook Pro",
+    });
+
+    expect(await resolveDevice('binding-here')).toBe('dev_tapd');
+    expect(mintDevice).not.toHaveBeenCalled();
+    expect(await resolveDevice('binding-other')).toBe('minted-for-binding-other');
+    expect(mintDevice).toHaveBeenCalledWith('binding-other', "Dylan's MacBook Pro");
+  });
+
   it('propagates a mint failure without caching it', async () => {
     let shouldFail = true;
     const { api } = makeFakeApi({

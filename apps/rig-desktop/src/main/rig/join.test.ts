@@ -168,6 +168,16 @@ describe('buildAttachArgs', () => {
       '--json',
     ]);
   });
+
+  it("the Mac's name as the new device's label", () => {
+    expect(buildAttachArgs('bnd_1', null, "Dylan's MacBook Pro")).toEqual([
+      'attach',
+      'bnd_1',
+      '--label',
+      "Dylan's MacBook Pro",
+      '--json',
+    ]);
+  });
 });
 
 describe('existingCopyAt — Download notices the copy already at its destination', () => {

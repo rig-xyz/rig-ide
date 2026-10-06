@@ -226,6 +226,33 @@ describe('claimOne / claimAndDispatchQueued', () => {
     expect(store.get('q2')?.claimedByDeviceId).toBe('device-for-binding-b');
   });
 
+  it("leaves a request this computer can't run queued for another one, before resolving a device", async () => {
+    const store = makeSharedStore([
+      makeRequest({ id: 'no-folder', bindingId: 'binding-elsewhere', status: 'queued' }),
+      makeRequest({ id: 'no-codex', targetAgent: 'codex', status: 'queued' }),
+      makeRequest({ id: 'mine', status: 'queued' }),
+    ]);
+    const resolvedFor: string[] = [];
+    const dispatched: string[] = [];
+    await claimAndDispatchQueued({
+      api: store.apiFor(),
+      deviceId: async (bindingId) => {
+        resolvedFor.push(bindingId);
+        return `device-for-${bindingId}`;
+      },
+      canRun: async (request) => request.bindingId !== 'binding-elsewhere' && request.targetAgent === 'claude',
+      dispatch: async (request) => {
+        dispatched.push(request.id);
+        return { runId: `run-${request.id}` };
+      },
+    });
+    expect(dispatched).toEqual(['mine']);
+    expect(resolvedFor).not.toContain('binding-elsewhere');
+    expect(store.get('no-folder')?.status).toBe('queued');
+    expect(store.get('no-codex')?.status).toBe('queued');
+    expect(store.patches.filter((p) => p.status === 'failed')).toEqual([]);
+  });
+
   it('skips a request (without throwing) when the device id resolver rejects', async () => {
     const store = makeSharedStore([
       makeRequest({ id: 'q1', bindingId: 'binding-bad', status: 'queued' }),

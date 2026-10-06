@@ -320,11 +320,12 @@ export interface SpacesRelayApi {
   setThemesEnabled?(bindingId: string, enabled: boolean): Promise<Result<ThemesFetch<{ enabled: boolean }>, RelayApiError>>;
 
   /**
-   * `PUT /v1/me/agents {agents}`: the agents this person can run, so the
-   * relay's router knows them in spaces where they never ran. A relay
-   * without the route answers 404, read as `{ supported: false }`.
+   * `PUT /v1/me/agents {agents, device}`: the agents this Mac can run, so
+   * the relay's router knows them in spaces where they never ran. `device`
+   * keeps each of the person's computers' sets apart. A relay without the
+   * route answers 404, read as `{ supported: false }`.
    */
-  setMyAgents?(agents: SessionAgent[]): Promise<Result<{ supported: boolean }, RelayApiError>>;
+  setMyAgents?(agents: SessionAgent[], device?: string): Promise<Result<{ supported: boolean }, RelayApiError>>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -970,10 +971,13 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
       });
     },
 
-    async setMyAgents(agents) {
+    async setMyAgents(agents, device) {
       const ctxResult = await ctxOrError();
       if (!ctxResult.success) return err(ctxResult.error);
-      const result = await request(ctxResult.data, 'PUT', '/v1/me/agents', 'tell Rig which agents you have', { agents });
+      const result = await request(ctxResult.data, 'PUT', '/v1/me/agents', 'tell Rig which agents you have', {
+        agents,
+        ...(device ? { device } : {}),
+      });
       if (!result.success) {
         const missing = result.error.kind === 'relay' && result.error.status === 404;
         return missing ? ok({ supported: false }) : err(result.error);

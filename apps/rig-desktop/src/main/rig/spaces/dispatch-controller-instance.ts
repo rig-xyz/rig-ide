@@ -6,8 +6,10 @@ import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { isError, resolveContext, rigAccountController } from '../account';
+import { findBindingConfig } from '../binding';
 import { resolveLocalPathsImpl } from '../recent-rigs';
 import { rigSettingsStore } from '../settings-instance';
+import { thisMacId, thisMacName } from '../this-mac';
 import { connections, globalSetupFor, projectServersFor } from '../connectors/connections-instance';
 import { sessionConnectorsFor } from '../connectors/global-setup';
 import { isConnectorId } from '@shared/spaces/connectors';
@@ -104,10 +106,22 @@ function realDeps(): SpacesDispatchControllerDeps {
           return { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(mode ? { mode } : {}) };
         },
       });
+      const folderOf = async (bindingId: string) => (await resolveLocalPathsImpl([bindingId]))[bindingId] ?? null;
       const poller = new RequestClaimPoller({
         api,
-        deviceId: createDeviceIdResolver(api),
+        deviceId: createDeviceIdResolver(api, {
+          localDeviceId: async (bindingId) => {
+            const folder = await folderOf(bindingId);
+            const binding = folder ? findBindingConfig(folder) : null;
+            return binding?.config.bindingId === bindingId ? binding.config.deviceId : null;
+          },
+          label: thisMacName,
+        }),
         dispatch: dispatcher.dispatch,
+        // Leave a request for your other Mac when this one lacks the space or the agent.
+        canRun: async (request) =>
+          rigSettingsStore.get().lastKnownRunnableAgents.includes(request.targetAgent) &&
+          (await folderOf(request.bindingId)) !== null,
       });
       poller.start();
       void dispatcher.settleInterrupted();
@@ -139,7 +153,8 @@ export function wireAgentsReporter(): void {
       return isError(ctx) ? null : createHash('sha256').update(`${ctx.url}\n${ctx.token}`).digest('hex');
     },
     runnable: () => rigSettingsStore.get().lastKnownRunnableAgents,
-    put: (agents) => relayApi.setMyAgents!(agents),
+    device: thisMacId,
+    put: (agents, device) => relayApi.setMyAgents!(agents, device),
     setTimeout: (cb, ms) => setTimeout(cb, ms),
     clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
   });

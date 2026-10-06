@@ -12,6 +12,7 @@ import { commandFailureMessage } from './auth-output';
 import { findBindingConfig } from './binding';
 import { resolveCliBin } from './bundled-cli';
 import { readRigHomeDir } from './home';
+import { thisMacName } from './this-mac';
 
 /**
  * Self-service local setup for a relay-only binding the signed-in user is a
@@ -196,8 +197,8 @@ export function parseAttachSuccess(stdout: string, fallbackDir: string | null): 
  * an explicit escape-hatch request) is a tested fact rather than something
  * only exercised by actually spawning a process.
  */
-export function buildAttachArgs(bindingId: string, targetDir: string | null): string[] {
-  return ['attach', bindingId, ...(targetDir ? ['--dir', targetDir] : []), '--json'];
+export function buildAttachArgs(bindingId: string, targetDir: string | null, label?: string): string[] {
+  return ['attach', bindingId, ...(targetDir ? ['--dir', targetDir] : []), ...(label ? ['--label', label] : []), '--json'];
 }
 
 /**
@@ -218,6 +219,8 @@ async function spawnAttach(
   // read fresh right before this spawn, so `rig attach` never joins under a
   // stale account inherited from the shell.
   const env = { ...process.env, ...(await resolveCliAccountEnv()) };
+  // The new device is named after this Mac, so the space's list of devices says which computer it is.
+  const macName = await thisMacName();
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
@@ -230,7 +233,7 @@ async function spawnAttach(
       resolve(value);
     };
 
-    const child = spawn(bin, buildAttachArgs(bindingId, targetDir), {
+    const child = spawn(bin, buildAttachArgs(bindingId, targetDir, macName), {
       stdio: ['ignore', 'pipe', 'pipe'],
       env,
     });

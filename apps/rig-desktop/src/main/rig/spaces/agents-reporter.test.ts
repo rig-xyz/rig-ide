@@ -8,6 +8,7 @@ describe('agents reporter', () => {
   let runnable: string[];
   let account: string | null;
   let enabled: boolean;
+  let today: string;
   let put: ReturnType<typeof vi.fn<AgentsReporterDeps['put']>>;
 
   beforeEach(() => {
@@ -15,6 +16,7 @@ describe('agents reporter', () => {
     runnable = ['claude', 'codex', 'gemini'];
     account = 'acct-1';
     enabled = true;
+    today = '2026-10-06';
     put = vi.fn<AgentsReporterDeps['put']>(async () => ok({ supported: true }));
   });
   afterEach(() => vi.useRealTimers());
@@ -25,7 +27,9 @@ describe('agents reporter', () => {
         isEnabled: () => enabled,
         account: async () => account,
         runnable: () => runnable,
+        device: () => 'mac-1',
         put,
+        today: () => today,
         setTimeout: (cb, ms) => setTimeout(cb, ms),
         clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
       },
@@ -46,7 +50,7 @@ describe('agents reporter', () => {
     expect(put).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(put).toHaveBeenCalledTimes(1);
-    expect(put).toHaveBeenCalledWith(['claude', 'codex']);
+    expect(put).toHaveBeenCalledWith(['claude', 'codex'], 'mac-1');
 
     reporter.nudge();
     await vi.advanceTimersByTimeAsync(1000);
@@ -55,13 +59,19 @@ describe('agents reporter', () => {
     runnable = ['codex'];
     reporter.nudge();
     await vi.advanceTimersByTimeAsync(1000);
-    expect(put).toHaveBeenLastCalledWith(['codex']);
+    expect(put).toHaveBeenLastCalledWith(['codex'], 'mac-1');
 
     // Another account on this device: told again, even with the same set.
     account = 'acct-2';
     reporter.nudge();
     await vi.advanceTimersByTimeAsync(1000);
     expect(put).toHaveBeenCalledTimes(3);
+
+    // A new day: told again, so the relay keeps counting this Mac.
+    today = '2026-10-07';
+    reporter.nudge();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(put).toHaveBeenCalledTimes(4);
   });
 
   it('says nothing while signed out or with Spaces off', async () => {
@@ -111,11 +121,11 @@ describe('setMyAgents over HTTP', () => {
     const { createHttpSpacesRelayApi } = await import('./relay-api');
     const api = createHttpSpacesRelayApi();
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ agents: ['claude'] }), { status: 200 }));
-    expect(await api.setMyAgents!(['claude'])).toEqual(ok({ supported: true }));
+    expect(await api.setMyAgents!(['claude'], 'mac-1')).toEqual(ok({ supported: true }));
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://relay.test/v1/me/agents');
     expect(init.method).toBe('PUT');
-    expect(JSON.parse(String(init.body))).toEqual({ agents: ['claude'] });
+    expect(JSON.parse(String(init.body))).toEqual({ agents: ['claude'], device: 'mac-1' });
 
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }));
     expect(await api.setMyAgents!(['claude'])).toEqual(ok({ supported: false }));

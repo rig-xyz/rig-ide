@@ -44,6 +44,13 @@ export type ClaimAndDispatchOptions = {
    * distinct from a claim conflict, which never reaches this callback.
    */
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
+  /**
+   * Whether this computer can run `request` at all: the space's folder is
+   * here and the asked agent is set up. A request this Mac can't run is
+   * left queued for your other Mac rather than claimed and failed. Absent:
+   * every request is claimed.
+   */
+  canRun?: (request: AgentRequest) => Promise<boolean>;
 };
 
 function isConflict(error: { kind: string; status?: number }): boolean {
@@ -57,7 +64,7 @@ function isConflict(error: { kind: string; status?: number }): boolean {
  * a multi-device account, not an error.
  */
 export async function claimAndDispatchQueued(options: ClaimAndDispatchOptions): Promise<void> {
-  const { api, deviceId, dispatch } = options;
+  const { api, deviceId, dispatch, canRun } = options;
   const queued = await api.listAgentRequests('queued');
   if (!queued.success) {
     log.warn('Rig spaces: could not list queued agent requests', {
@@ -67,6 +74,13 @@ export async function claimAndDispatchQueued(options: ClaimAndDispatchOptions): 
   }
 
   for (const request of queued.data) {
+    if (canRun && !(await canRun(request).catch(() => false))) {
+      log.debug('Rig spaces: left a queued agent request for another computer', {
+        requestId: request.id,
+        bindingId: request.bindingId,
+      });
+      continue;
+    }
     // No `await` at all on the common (plain-string) path — kept exactly as
     // synchronous as before this option grew a resolver form, so a poll's
     // very first dispatch still lands within the same microtask budget
