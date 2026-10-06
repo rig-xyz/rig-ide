@@ -13,7 +13,11 @@ import semver from 'semver';
 import { events } from '@main/lib/events';
 import { agentInstallationStatusUpdatedChannel } from '@shared/events/appEvents';
 import { toAgentInstallationStatus } from '../agents/agent-payload-builder';
-import { LatestVersionService } from './latest-version-service';
+import {
+  LatestVersionService,
+  type LatestVersionStore,
+  type PersistedLatestVersion,
+} from './latest-version-service';
 import { getDependencyDescriptor } from './registry';
 
 function isNewerVersion(installed: string, latest: string): boolean {
@@ -54,8 +58,11 @@ export class AgentUpdateService {
   /** Last raw event per (connectionId ?? 'local', depId) for re-emitting after async fetch. */
   private storedEvents = new Map<string, StoredEvent>();
 
-  constructor(options?: { logger?: Logger }) {
-    this.latestVersionService = new LatestVersionService({ logger: options?.logger });
+  constructor(options?: { logger?: Logger; latestVersionStore?: LatestVersionStore }) {
+    this.latestVersionService = new LatestVersionService({
+      logger: options?.logger,
+      store: options?.latestVersionStore,
+    });
     this.logger = options?.logger;
   }
 
@@ -206,4 +213,20 @@ export class AgentUpdateService {
   }
 }
 
-export const agentUpdateService = new AgentUpdateService();
+/**
+ * Latest versions kept in the app's KV table, so the registry is asked at most
+ * once a day across restarts. Imported lazily: loading the module must not open
+ * the database (tests construct `AgentUpdateService` without one).
+ */
+const kvLatestVersionStore: LatestVersionStore = {
+  async get(key) {
+    const { KV } = await import('@main/db/kv');
+    return new KV<Record<string, PersistedLatestVersion>>('latest-version').get(key);
+  },
+  async set(key, value) {
+    const { KV } = await import('@main/db/kv');
+    await new KV<Record<string, PersistedLatestVersion>>('latest-version').set(key, value);
+  },
+};
+
+export const agentUpdateService = new AgentUpdateService({ latestVersionStore: kvLatestVersionStore });

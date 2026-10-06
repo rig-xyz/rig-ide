@@ -116,9 +116,10 @@ export const plugin = definePlugin(
       },
       updates: {
         kind: 'supported',
+        // Every release is published to npm; this avoids GitHub's anonymous API quota.
         releaseSource: {
-          kind: 'github',
-          repo: 'anthropics/claude-code',
+          kind: 'npm',
+          package: '@anthropic-ai/claude-code',
         },
         update: {
           kind: 'cli',

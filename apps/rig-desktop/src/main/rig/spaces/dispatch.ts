@@ -505,9 +505,9 @@ function claimTurn(session: PersistentSession, turnId: string): QueuedTurn | nul
 const LEAKED_ERROR_PREFIX = 'The agent reported an error instead of answering: ';
 
 /** The reason to show when an answer is really a provider error, or null for a genuine answer. */
-export function leakedProviderError(answer: string): string | null {
+export function leakedProviderError(answer: string, codexVersion?: string | null): string | null {
   if (!answer.trim()) return null;
-  const classified = classifyProviderAnswer(answer);
+  const classified = classifyProviderAnswer(answer, { codexVersion });
   if (classified.kind !== 'failure') return null;
   return classified.message.startsWith(LEAKED_ERROR_PREFIX)
     ? classified.message.slice(LEAKED_ERROR_PREFIX.length)
@@ -551,6 +551,8 @@ export function createSpacesDispatcher(deps: {
   prepareImage?: PrepareImage;
   /** How long a turn waits for attached files still arriving through sync (tests shorten it). */
   attachmentWait?: Parameters<typeof waitForAttachments>[2];
+  /** The version of the Codex CLI this computer runs, named when a turn fails because it's too old. */
+  codexVersion?: () => string | null;
 }): {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
@@ -632,7 +634,7 @@ export function createSpacesDispatcher(deps: {
         // Some adapters (Codex) report a provider error as the answer text
         // itself: a turn that "finished" with one is a failure, with the
         // error's own words as the reason instead of raw JSON as the answer.
-        const leaked = ended === 'done' ? leakedProviderError(turn.answer.text) : null;
+        const leaked = ended === 'done' ? leakedProviderError(turn.answer.text, deps.codexVersion?.()) : null;
         if (leaked) {
           void finalizeTurn(turn, 'failed', leaked);
           return;

@@ -49,9 +49,22 @@ describe('classifyProviderAnswer', () => {
     expect(result.kind).toBe('failure');
     if (result.kind !== 'failure') throw new Error('unreachable');
     expect(result.reason).toBe('model-unsupported');
-    expect(result.message).toContain('gpt-6-astra');
-    expect(result.message).toContain('0.153.4');
-    expect(result.message).toContain('~/.codex/config.toml');
+    expect(result.message).toBe(
+      'Codex on this Mac is too old for gpt-6-astra. Update it in Settings › Agents, then try again.'
+    );
+  });
+
+  it("reads the ChatGPT backend's account wording as a Codex too old for the model, naming the version", () => {
+    const answer =
+      'Warning: Model metadata for `gpt-6.1-sol` not found.\n\n{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6.1-sol\' model is not supported when using Codex with a ChatGPT account."}}';
+    const result = classifyProviderAnswer(answer, { codexVersion: '0.147.0' });
+    expect(result).toEqual({
+      kind: 'failure',
+      reason: 'model-unsupported',
+      message:
+        'Codex on this Mac is too old for gpt-6.1-sol. You have Codex 0.147.0. Update it in Settings › Agents, then try again.',
+      strippedWarnings: ['Warning: Model metadata for `gpt-6.1-sol` not found.'],
+    });
   });
 
   it('classifies the real-world shape: warnings, then a raw JSON error, as one failure', () => {
@@ -106,7 +119,7 @@ describe('classifyProviderAnswer', () => {
     expect(result.kind).toBe('failure');
     if (result.kind !== 'failure') throw new Error('unreachable');
     expect(result.reason).toBe('model-unsupported');
-    expect(result.message).toContain('selects a model that');
+    expect(result.message).toContain('too old for this model.');
   });
 });
 
@@ -127,7 +140,6 @@ describe('classifyProviderAnswer — the real Codex 0.142.4 / gpt-6-astra transc
     if (result.kind !== 'failure') return;
     expect(result.reason).toBe('model-unsupported');
     expect(result.message).toContain('gpt-6-astra');
-    expect(result.message).toContain('0.153.4');
     expect(result.strippedWarnings).toHaveLength(2);
   });
 });

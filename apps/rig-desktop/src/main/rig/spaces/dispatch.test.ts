@@ -1557,10 +1557,18 @@ describe('runLocal approvals mirrored to the caller (doc margin)', () => {
 
 describe('leakedProviderError', () => {
   it('turns a provider error printed as the answer into its own words', () => {
+    const answer = '{"type":"error","status":500,"error":{"type":"server_error","message":"The server had an error."}}';
+    expect(leakedProviderError(answer)).toBe('The server had an error.');
+  });
+
+  it('explains a Codex too old for the model plainly, with the installed version when known', () => {
     const answer =
       'Warning: Model metadata for `gpt-6-sol` not found.\n\n{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6-sol\' model is not supported when using Codex with a ChatGPT account."}}';
+    expect(leakedProviderError(answer, '0.147.0')).toBe(
+      'Codex on this Mac is too old for gpt-6-sol. You have Codex 0.147.0. Update it in Settings › Agents, then try again.'
+    );
     expect(leakedProviderError(answer)).toBe(
-      "The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account."
+      'Codex on this Mac is too old for gpt-6-sol. Update it in Settings › Agents, then try again.'
     );
   });
 

@@ -53,6 +53,8 @@ const codex = agentPayload('codex', 'Codex', 'missing');
 // agents" disclosure, which only appears once something is collapsed behind it.
 const gemini = agentPayload('gemini', 'Gemini', 'missing');
 
+const agentsUpdateMock = vi.hoisted(() => vi.fn(async (_id: string) => ({ success: true })));
+
 const settingsMock = vi.hoisted(() => ({
   current: {} as Record<string, unknown>,
   set: vi.fn(async (_patch: Record<string, unknown>) => ({})),
@@ -77,6 +79,7 @@ vi.mock('@renderer/lib/ipc', () => ({
     agents: {
       list: async () => [claude, codex, gemini],
       listMetadata: async () => [claude, codex, gemini],
+      update: agentsUpdateMock,
     },
     telemetry: { isUserEnabled: async () => true, setEnabled: async () => {} },
     app: { getAppVersion: async () => '0.0.0-test' },
@@ -320,6 +323,33 @@ describe('SettingsSheet', () => {
       expect(pill.textContent).not.toEqual(pill.textContent?.toUpperCase());
     }
     expect(Array.from(document.querySelectorAll('button')).some((b) => b.textContent === 'More agents')).toBe(true);
+  });
+
+  it('shows Update available under an outdated Codex, and Update runs the agent update', async () => {
+    const npmCodex = {
+      id: '/usr/local/lib/node_modules/@openai/codex/bin/codex.js',
+      realpath: '/usr/local/lib/node_modules/@openai/codex/bin/codex.js',
+      pathEntry: '/usr/local/bin/codex',
+      isActive: true,
+      manageable: true,
+      provenance: { kind: 'npm', confidence: 'confirmed' },
+      status: 'available',
+      version: '0.147.0',
+      latestVersion: '0.160.1',
+      updateAvailable: true,
+    };
+    const before = { ...codex };
+    Object.assign(codex, { status: 'available', installations: [npmCodex], used: { kind: 'auto' }, latestVersion: '0.160.1' });
+    try {
+      await renderSettings({ initialPage: 'agents' });
+      const line = () => document.querySelector<HTMLElement>('[data-testid="agent-update-line"][data-agent-id="codex"]');
+      await vi.waitFor(() => expect(line()?.textContent).toContain('Update available: 0.160.1. You have 0.147.0.'));
+      const button = Array.from(line()!.querySelectorAll('button')).find((b) => b.textContent === 'Update');
+      await act(async () => button!.click());
+      expect(agentsUpdateMock).toHaveBeenCalledWith('codex');
+    } finally {
+      Object.assign(codex, before);
+    }
   });
 
   it('says a development build does not update itself', async () => {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LatestVersionService } from './latest-version-service';
+import { LatestVersionService, type PersistedLatestVersion } from './latest-version-service';
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -91,5 +91,53 @@ describe('LatestVersionService', () => {
     await service.fetchLatestVersion({ kind: 'npm', package: '@openai/codex' });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  describe('with a store', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const CODEX = { kind: 'npm', package: '@openai/codex' } as const;
+
+    function memoryStore(initial: Record<string, PersistedLatestVersion> = {}) {
+      const entries = { ...initial };
+      return {
+        entries,
+        get: vi.fn(async (key: string) => entries[key] ?? null),
+        set: vi.fn(async (key: string, value: PersistedLatestVersion) => {
+          entries[key] = value;
+        }),
+      };
+    }
+
+    it('uses a version fetched less than a day ago without asking the registry', async () => {
+      const store = memoryStore({ 'npm:@openai/codex': { version: '0.160.1', fetchedAt: Date.now() - DAY / 2 } });
+      const version = await new LatestVersionService({ store }).fetchLatestVersion(CODEX);
+      expect(version).toBe('0.160.1');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('asks again once the stored version is a day old, and stores the answer', async () => {
+      const store = memoryStore({ 'npm:@openai/codex': { version: '0.150.0', fetchedAt: Date.now() - DAY - 1 } });
+      mockFetch(JSON.stringify({ version: '0.160.1' }));
+      const version = await new LatestVersionService({ store }).fetchLatestVersion(CODEX);
+      expect(version).toBe('0.160.1');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(store.entries['npm:@openai/codex']?.version).toBe('0.160.1');
+    });
+
+    it('falls back to the stored version quietly when offline', async () => {
+      const store = memoryStore({ 'npm:@openai/codex': { version: '0.150.0', fetchedAt: Date.now() - 2 * DAY } });
+      mockFetchError('ENOTFOUND');
+      const version = await new LatestVersionService({ store }).fetchLatestVersion(CODEX);
+      expect(version).toBe('0.150.0');
+    });
+
+    it('goes to the registry after invalidate even when the store is fresh', async () => {
+      const store = memoryStore({ 'npm:@openai/codex': { version: '0.150.0', fetchedAt: Date.now() } });
+      mockFetch(JSON.stringify({ version: '0.160.1' }));
+      const service = new LatestVersionService({ store });
+      service.invalidate(CODEX);
+      expect(await service.fetchLatestVersion(CODEX)).toBe('0.160.1');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

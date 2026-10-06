@@ -3,31 +3,20 @@
  * genuine reply or a provider failure that leaked through AS assistant
  * text and would otherwise be posted to the thread verbatim.
  *
- * Root cause (verified against the paintbrush v1 punch list): this app
- * bundles `@agentclientprotocol/codex-acp` (pnpm-patched — see
- * `patches/@agentclientprotocol__codex-acp@1.10.0.patch`), which pins its
- * own `@openai/codex` (`BUNDLED_CODEX_VERSION`), independent of whatever `codex` the user
- * has on `PATH`. That bundled binary still reads the user's global
- * `~/.codex/config.toml` — including its `model` entry — so a config
- * pointing at a model only a NEWER Codex understands (the report's
- * repro: `gpt-6-astra`, fine on the user's PATH codex 0.147.0) gets
- * rejected by the provider with a 400 whose body says "requires a newer
- * version of Codex". The codex ACP adapter has no separate error channel
- * for this: it prints `Warning: ...` diagnostic lines and then the raw
- * JSON error body as plain assistant TEXT, so `readAnswer`
- * (`comment-agent.ts`) posts the whole blob as the reply, warnings and
- * all. The original repro ran on codex-acp 1.0.2 / codex 0.142.4; the pin
- * has since been bumped to codex-acp 1.10.0 (codex 0.153.4), which fixed
- * that particular model at the source, but the same failure shape recurs
- * whenever the user's config outruns the bundled Codex again, so this
- * module keeps degrading the SYMPTOM gracefully.
+ * Root cause: the codex ACP adapter has no separate error channel for a
+ * provider's hard failure. It prints `Warning: ...` diagnostic lines and
+ * then the raw JSON error body as plain assistant TEXT, so `readAnswer`
+ * (`comment-agent.ts`) would post the whole blob as the reply, warnings
+ * and all. The most common such failure is a Codex CLI too old for the
+ * model it was asked to run: the provider answers with a 400 saying the
+ * model "requires a newer version of Codex", or, from the ChatGPT backend,
+ * that it "is not supported when using Codex with a ChatGPT account". The
+ * adapter runs the host's own codex (`CODEX_PATH`, see the Codex plugin),
+ * so updating that CLI is the fix.
  *
  * Pure string work — no ACP, no I/O — the same "no I/O, just text" shape
  * `comment-agent-proposal.ts` already is, and unit-testable the same way.
  */
-
-/** The Codex version this app currently bundles via the pinned, patched `codex-acp`. */
-const BUNDLED_CODEX_VERSION = '0.153.4';
 
 const WARNING_LINE = /^warning:/i;
 
@@ -91,13 +80,30 @@ function extractErrorPayload(text: string): { message: string } | null {
 }
 
 const REQUIRES_NEWER_CODEX = /requires a newer version of codex/i;
+/**
+ * What the ChatGPT backend says when an old Codex CLI asks for a current
+ * model (seen with codex 0.147.0 and gpt-6.1-sol, latest was 0.160.1): the
+ * wording blames the account, but updating Codex is the fix.
+ */
+const NOT_SUPPORTED_WITH_CHATGPT = /model is not supported when using codex with a chatgpt account/i;
+
+function isTooOldForModel(text: string): boolean {
+  return REQUIRES_NEWER_CODEX.test(text) || NOT_SUPPORTED_WITH_CHATGPT.test(text);
+}
+
+/** The plain explanation for a Codex too old for the model it was asked to run. */
+function codexTooOldMessage(modelName: string | null, installedVersion: string | null | undefined): string {
+  const version = installedVersion ? ` You have Codex ${installedVersion}.` : '';
+  return `Codex on this Mac is too old for ${modelName ?? 'this model'}.${version} Update it in Settings › Agents, then try again.`;
+}
 
 /**
  * Best-effort pull of the offending model id out of the surrounding
  * prose/JSON message — cosmetic only; a miss just falls back to generic
  * phrasing. Prefers an explicit `"model": "..."` JSON field; otherwise
  * takes the quoted/backticked token CLOSEST to (i.e. immediately before)
- * the "requires a newer version of Codex" phrase itself, rather than the
+ * the "requires a newer version of Codex" (or "is not supported when using
+ * Codex with a ChatGPT account") phrase itself, rather than the
  * first quoted token anywhere in the text — a raw JSON error payload has
  * several earlier quoted keys (`"type"`, `"error"`, `"message"`) that
  * would otherwise win a naive first-match search.
@@ -105,7 +111,7 @@ const REQUIRES_NEWER_CODEX = /requires a newer version of codex/i;
 function extractModelName(text: string): string | null {
   const modelField = /"model"\s*:\s*"([^"]+)"/i.exec(text);
   if (modelField) return modelField[1]!;
-  const phrase = REQUIRES_NEWER_CODEX.exec(text);
+  const phrase = REQUIRES_NEWER_CODEX.exec(text) ?? NOT_SUPPORTED_WITH_CHATGPT.exec(text);
   if (!phrase) return null;
   const before = text.slice(0, phrase.index);
   const quoted = [...before.matchAll(/[`"']([a-zA-Z0-9_.\-/]+)[`"']/g)];
@@ -130,7 +136,11 @@ export type ProviderAnswerClassification =
  * text (minus any leading warnings), the same "never reject, just fail
  * to find something" posture `extractProposal` takes.
  */
-export function classifyProviderAnswer(raw: string): ProviderAnswerClassification {
+export function classifyProviderAnswer(
+  raw: string,
+  /** The resolved Codex CLI's version, named in the too-old explanation when known. */
+  opts: { codexVersion?: string | null } = {}
+): ProviderAnswerClassification {
   const { rest, warnings } = stripLeadingWarnings(raw);
   const trimmed = rest.trim();
 
@@ -147,19 +157,14 @@ export function classifyProviderAnswer(raw: string): ProviderAnswerClassificatio
 
   const errorPayload = extractErrorPayload(trimmed);
   const modelUnsupported =
-    REQUIRES_NEWER_CODEX.test(trimmed) ||
-    (errorPayload !== null && REQUIRES_NEWER_CODEX.test(errorPayload.message));
+    isTooOldForModel(trimmed) || (errorPayload !== null && isTooOldForModel(errorPayload.message));
 
   if (modelUnsupported) {
     const modelName = extractModelName(trimmed) ?? (errorPayload ? extractModelName(errorPayload.message) : null);
-    const modelClause = modelName ? `selects \`${modelName}\`, which` : 'selects a model that';
     return {
       kind: 'failure',
       reason: 'model-unsupported',
-      message:
-        `Codex couldn't run this stroke: your Codex config ${modelClause} the Codex bundled with rig ` +
-        `(${BUNDLED_CODEX_VERSION}) doesn't support yet. Pick a supported model in ~/.codex/config.toml, ` +
-        'or use a different agent for this stroke.',
+      message: codexTooOldMessage(modelName, opts.codexVersion),
       strippedWarnings: warnings,
     };
   }

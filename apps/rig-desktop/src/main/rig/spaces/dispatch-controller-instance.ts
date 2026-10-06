@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { app } from 'electron';
 import { getAcpRuntimeClient } from '@main/core/acp/controller';
+import { localDependencyManager } from '@main/core/dependencies/dependency-managers';
 import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
@@ -98,6 +99,7 @@ function realDeps(): SpacesDispatchControllerDeps {
         recordLocal: (bindingId, runId, event) => localRuns.append(bindingId, runId, event),
         // Attached images go in as image content, shrunk to fit when they must.
         prepareImage: createImagePreparer(join(app.getPath('temp'), 'rig-agent-images')),
+        codexVersion: () => localDependencyManager.get('codex')?.version ?? null,
         defaultConfig: (agent) => {
           const settings = rigSettingsStore.get();
           const model = settings.lastModelByHarness[agent];

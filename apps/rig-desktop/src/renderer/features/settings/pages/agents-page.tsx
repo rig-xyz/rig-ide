@@ -1,13 +1,16 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { AgentAuthTrailing } from '@renderer/features/agents/agent-auth-trailing';
 import { AgentSignInDialog } from '@renderer/features/agents/agent-sign-in-dialog';
 import { useAgentAuthProbe } from '@renderer/features/agents/use-agent-auth-probe';
 import { useAgentIdentities, type AgentIdentity } from '@renderer/features/chat/use-runnable-agents';
-import { rpc } from '@renderer/lib/ipc';
+import { events, rpc } from '@renderer/lib/ipc';
 import { AgentIcon } from '@renderer/lib/ui/agent-icon';
+import { Button } from '@renderer/lib/ui/button';
 import { cn } from '@renderer/lib/utils';
 import type { AgentPayload, DependencyStatus } from '@shared/core/agents/agent-payload';
+import { agentUpdateNotice } from '@shared/core/agents/agent-update-notice';
+import { agentInstallationStatusUpdatedChannel } from '@shared/events/appEvents';
 import { settingsRow } from '../settings-pages';
 import { SettingsBlock, SettingsRow, SettingsRows, SettingsSwitch } from '../settings-row';
 
@@ -165,13 +168,51 @@ function PrimaryAgentStatus({ agent }: { agent: AgentPayload }) {
 /** Rig's own two harnesses — always shown, installed or not, so this reads as "here's what Rig runs" rather than a probe result. */
 function PrimaryAgentRow({ row }: { row: AgentListRow }) {
   return (
-    <div className="flex min-h-9 items-center gap-2 px-1 py-1.5" data-testid="primary-agent-row" data-agent-id={row.id}>
-      <AgentIcon icon={row.icon} size={16} />
-      <span className="text-text-primary min-w-0 flex-1 truncate text-sm">{row.name}</span>
-      {row.agent?.status === 'available' ? (
-        <PrimaryAgentStatus agent={row.agent} />
-      ) : (
-        <Pill tone={row.agent?.status === 'error' ? 'warning' : 'muted'}>{notAvailableLabel(row.agent?.status)}</Pill>
+    <>
+      <div className="flex min-h-9 items-center gap-2 px-1 py-1.5" data-testid="primary-agent-row" data-agent-id={row.id}>
+        <AgentIcon icon={row.icon} size={16} />
+        <span className="text-text-primary min-w-0 flex-1 truncate text-sm">{row.name}</span>
+        {row.agent?.status === 'available' ? (
+          <PrimaryAgentStatus agent={row.agent} />
+        ) : (
+          <Pill tone={row.agent?.status === 'error' ? 'warning' : 'muted'}>{notAvailableLabel(row.agent?.status)}</Pill>
+        )}
+      </div>
+      {row.agent?.status === 'available' && <AgentUpdateLine agent={row.agent} />}
+    </>
+  );
+}
+
+/**
+ * "Update available" under an agent whose CLI is behind the latest release
+ * (an old Codex makes the ChatGPT backend refuse current models). The Update
+ * button runs the existing `agents.update` path, and only shows when that
+ * path manages the copy in use; otherwise the line says where to update it.
+ */
+function AgentUpdateLine({ agent }: { agent: AgentPayload }) {
+  const queryClient = useQueryClient();
+  const [state, setState] = useState<'idle' | 'busy' | 'failed'>('idle');
+  const notice = agentUpdateNotice(agent.name, agent);
+  if (notice.kind === 'none') return null;
+
+  const update = async () => {
+    setState('busy');
+    const result = await rpc.agents.update(agent.id).catch(() => null);
+    setState(result?.success ? 'idle' : 'failed');
+    void queryClient.invalidateQueries({ queryKey: ['rig', 'agents', 'list'] });
+  };
+
+  return (
+    <div className="flex items-center gap-2 pr-1 pb-1.5 pl-7" data-testid="agent-update-line" data-agent-id={agent.id}>
+      <span className="text-text-secondary min-w-0 flex-1 text-xs">
+        Update available: {notice.latest}. You have {notice.installed}.
+        {notice.kind === 'elsewhere' && ` ${notice.hint}`}
+        {state === 'failed' && " The update didn't finish. Try again."}
+      </span>
+      {notice.kind === 'update' && (
+        <Button size="xs" variant="outline" disabled={state === 'busy'} onClick={() => void update()}>
+          {state === 'busy' ? 'Updating…' : 'Update'}
+        </Button>
       )}
     </div>
   );
@@ -201,6 +242,18 @@ function AgentsSection() {
     staleTime: 60_000,
   });
   const [expanded, setExpanded] = useState(false);
+  // The latest released version lands after the first snapshot (it's fetched
+  // once the probe reports in), and an update changes the installed one.
+  const queryClient = useQueryClient();
+  useEffect(
+    () =>
+      events.on(agentInstallationStatusUpdatedChannel, (status) => {
+        if ((PRIMARY_AGENT_IDS as readonly string[]).includes(status.id)) {
+          void queryClient.invalidateQueries({ queryKey: ['rig', 'agents', 'list'] });
+        }
+      }),
+    [queryClient]
+  );
   // Full payloads (not just status) so an installed row can also read
   // `capabilities.auth` for the sign-in trailing content below.
   const agentById = new Map((data ?? []).map((agent) => [agent.id, agent]));
