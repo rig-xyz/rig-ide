@@ -34,7 +34,9 @@ export type AgentUpdateNotice =
  * and which update applies to it. The latest version comes from npm, but the
  * copy in use may belong to another app (the ChatGPT app bundles its own
  * codex) or to Homebrew, whose release can lag npm's; running the npm update
- * would leave that copy as it is.
+ * would leave that copy as it is. A copy inside another app says nothing:
+ * that app updates it, and usually ships a release or two behind npm, so the
+ * line would stay up even with the app current.
  */
 export function agentUpdateNotice(
   agentName: string,
@@ -45,10 +47,7 @@ export function agentUpdateNotice(
   const latest = active?.latestVersion ?? status.latestVersion;
   if (!active || !installed || !latest || !isOlderVersion(installed, latest)) return { kind: 'none' };
 
-  const appName = /\/([^/]+)\.app\/Contents\//.exec(active.realpath)?.[1];
-  if (appName) {
-    return { kind: 'elsewhere', installed, latest, hint: `Update the ${appName} app to get a newer ${agentName}.` };
-  }
+  if (/\.app\/Contents\//.test(active.realpath)) return { kind: 'none' };
   if (active.provenance.kind === 'homebrew') {
     const ref = active.provenance.managerRef;
     return {

@@ -66,7 +66,7 @@ describe('agentUpdateNotice', () => {
     ).toEqual({ kind: 'none' });
   });
 
-  it("points at the ChatGPT app when its bundled codex is the one in use", () => {
+  it("says nothing when the ChatGPT app's bundled codex is the one in use: the app updates it", () => {
     const bundled = install({
       id: '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex',
       realpath: '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex',
@@ -74,12 +74,7 @@ describe('agentUpdateNotice', () => {
       manageable: false,
       provenance: { kind: 'unknown', confidence: 'inferred' },
     });
-    expect(notice([install({ isActive: false }), { ...bundled, isActive: true }])).toEqual({
-      kind: 'elsewhere',
-      installed: '0.147.0',
-      latest: '0.160.1',
-      hint: 'Update the ChatGPT app to get a newer Codex.',
-    });
+    expect(notice([install({ isActive: false }), { ...bundled, isActive: true }])).toEqual({ kind: 'none' });
   });
 
   it('points at Homebrew for a Homebrew install, even one Rig could upgrade', () => {
