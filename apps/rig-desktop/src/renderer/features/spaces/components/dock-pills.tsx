@@ -29,7 +29,7 @@ import { DOCK_TIMING, FOR_YOU_ID, type DockSwell } from '../use-dock-signals';
 import { useDismissOutside } from './dock-approvals';
 import { FOCUS_RING } from './dock-glass';
 import type { StageEntry, StageFloat } from './dock-stage';
-import { PersonAgentAvatar, PersonAvatar } from './identity';
+import { AgentAvatar, PersonAvatar } from './identity';
 
 /**
  * The pill column under the rail, as the stage's entries (`dock-stage.tsx`
@@ -104,12 +104,7 @@ function swellOf(
   return {
     kind: 'approval',
     face: (
-      <PersonAgentAvatar
-        agent={agent}
-        owner={owner}
-        size="sm"
-        ringClassName="ring-[var(--pill-fill)]"
-      />
+      <AgentAvatar agent={agent} owner={owner} size="sm" title={null} badgeRingClassName="ring-[var(--pill-fill)]" />
     ),
     text: (
       <>

@@ -426,7 +426,7 @@ describe('Room dock', () => {
       .map((row) => row.dataset.messageId);
 
   describe('the rail', () => {
-    it('shows who is in the Space, agents person first with the model on the corner, and one chevron that opens the panel', async () => {
+    it('shows who is in the Space, agents as square tiles with the owner on the corner, and one chevron that opens the panel', async () => {
       const onExpand = vi.fn();
       await show(room(), onExpand);
       // Everyone but the invited one: you and the online members, then the member away.
@@ -434,10 +434,10 @@ describe('Room dock', () => {
       const agents = all('dock-agent');
       expect(agents).toHaveLength(1);
       expect(agents[0]!.dataset.own).toBe('true');
-      // Person first: the owner's initials are the face, the model is the chip on it.
+      // Agent first, as everywhere else: the agent's mark is the tile, its owner the badge on it.
       expect(agents[0]!.textContent).toContain('D');
       expect(
-        agents[0]!.querySelector('[data-testid="person-agent-chip"]')?.getAttribute('data-agent')
+        agents[0]!.querySelector('[data-testid="agent-avatar"]')?.getAttribute('data-agent')
       ).toBe('claude');
       const toggle = q('dock-toggle')!;
       expect(toggle.getAttribute('aria-label')).toBe('Open Space details');

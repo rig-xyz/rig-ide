@@ -44,13 +44,22 @@ export function PersonAvatar({
 }
 
 /** The owner's badge on an agent: their photo, else their first initial, small enough to sit on the corner. */
-function OwnerBadge({ owner, className }: { owner: RoomMember | undefined; className?: string }) {
+function OwnerBadge({
+  owner,
+  className,
+  ringClassName = 'ring-bg-1',
+}: {
+  owner: RoomMember | undefined;
+  className?: string;
+  /** The ring takes the colour behind the avatar, so it reads as a cut-out. */
+  ringClassName?: string;
+}) {
   if (owner?.avatarUrl) {
-    return <img src={owner.avatarUrl} alt="" className={cn('rounded-full ring-2 ring-bg-1', className)} />;
+    return <img src={owner.avatarUrl} alt="" className={cn('rounded-full ring-2', ringClassName, className)} />;
   }
   const initial = (owner?.name ?? '?').trim().slice(0, 1).toUpperCase() || '?';
   return (
-    <svg viewBox="0 0 16 16" className={cn('rounded-full ring-2 ring-bg-1', className)} aria-hidden>
+    <svg viewBox="0 0 16 16" className={cn('rounded-full ring-2', ringClassName, className)} aria-hidden>
       <circle cx="8" cy="8" r="8" className="fill-bg-3" />
       <text
         x="8"
@@ -76,6 +85,7 @@ export function AgentAvatar({
   size = 'md',
   className,
   title,
+  badgeRingClassName,
 }: {
   agent: AgentKind;
   /** `null` = the agent kind itself, with no owner badge; `undefined` = an owner we can't resolve ("?"). */
@@ -84,9 +94,13 @@ export function AgentAvatar({
   className?: string;
   /** Overrides the native hover title; `null` drops it, for callers that wrap the avatar in their own tooltip. */
   title?: string | null;
+  /** The owner badge's ring colour, for surfaces other than the page background (the dock). */
+  badgeRingClassName?: string;
 }) {
   return (
     <span
+      data-testid="agent-avatar"
+      data-agent={agent}
       className={cn(
         'border-border-hairline bg-bg-2 relative inline-flex shrink-0 items-center justify-center border',
         AGENT_BOX[size],
@@ -95,54 +109,9 @@ export function AgentAvatar({
       title={title === undefined ? (owner ? `${owner.name}'s ${AGENT_NAME[agent]}` : AGENT_NAME[agent]) : (title ?? undefined)}
     >
       <BrandLogo id={agentLogoId(agent)} size={AGENT_LOGO[size]} />
-      {owner !== null && <OwnerBadge owner={owner} className={cn('absolute', BADGE[size])} />}
-    </span>
-  );
-}
-
-const PERSON_AGENT_CHIP: Record<Size, { box: string; logo: number }> = {
-  md: { box: 'size-3.5 rounded-[5px]', logo: 9 },
-  sm: { box: 'size-3 rounded-[4px]', logo: 7 },
-};
-
-/**
- * An agent drawn person first: its owner's circle with a small model chip
- * (the agent's brand mark) on the bottom-right corner. The Room's rail and
- * the listener's notices draw agents this way, where the person is who
- * you look for and the model is the detail.
- */
-export function PersonAgentAvatar({
-  agent,
-  owner,
-  size = 'md',
-  className,
-  ringClassName = 'ring-bg-1',
-  title,
-}: {
-  agent: AgentKind;
-  /** `undefined` = an owner we can't resolve (their initials are unknown). */
-  owner: RoomMember | undefined;
-  size?: Size;
-  className?: string;
-  /** The ring that cuts the chip out of whatever it sits on. */
-  ringClassName?: string;
-  title?: string;
-}) {
-  const chip = PERSON_AGENT_CHIP[size];
-  return (
-    <span className={cn('relative inline-flex shrink-0', className)} title={title}>
-      <PersonAvatar member={owner} size={size} />
-      <span
-        className={cn(
-          'border-border-hairline bg-bg-2 absolute -right-1 -bottom-1 flex items-center justify-center border ring-2',
-          chip.box,
-          ringClassName
-        )}
-        data-testid="person-agent-chip"
-        data-agent={agent}
-      >
-        <BrandLogo id={agentLogoId(agent)} size={chip.logo} />
-      </span>
+      {owner !== null && (
+        <OwnerBadge owner={owner} className={cn('absolute', BADGE[size])} ringClassName={badgeRingClassName} />
+      )}
     </span>
   );
 }

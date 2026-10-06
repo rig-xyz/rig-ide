@@ -15,13 +15,13 @@ import type { ForYou } from '../for-you';
 import { personOf } from '../person-identity';
 import type { AgentKind, RoomSnapshot } from '../types';
 import { FOCUS_RING } from './dock-glass';
-import { PersonAgentAvatar, PersonAvatar } from './identity';
+import { AgentAvatar, PersonAvatar } from './identity';
 import { deriveAgentTileState, describeAgentTileState } from './space-rail-status';
 
 /**
  * The rail's content: the Room's pinned-card chip, rebuilt for the dock. Left to
- * right: the listener (a dot matrix), who is here, then agents drawn person first (their
- * owner's face, the model on the corner), and at the end a slot for the dock's
+ * right: the listener (a dot matrix), who is here, then agents drawn as everywhere
+ * else (the agent's mark on a square tile, its owner's face on the corner), and at the end a slot for the dock's
  * one toggle (`theme-dock.tsx`), the chevron that opens the pinned panel. The
  * rail hugs what it holds. Your own agents carry a badge with the approvals waiting on
  * you, and open the approvals panel (`dock-approvals.tsx`).
@@ -67,7 +67,7 @@ function ListenerMatrix({ state, hearing }: { state: ListenerState; hearing: boo
  * avatar, so it changes neither its size nor the rail's layout. Purely
  * decorative: the avatar's accessible name carries the state, no live region.
  */
-function Halo() {
+function Halo({ square = false }: { square?: boolean }) {
   const reduced = useReducedMotion() ?? false;
   return (
     <span
@@ -76,7 +76,11 @@ function Halo() {
       data-motion={reduced ? 'off' : 'on'}
       aria-hidden
     >
-      <span className="dock-halo-ring absolute inset-0" />
+      {/* An agent's square tile gets a square halo: the card radius plus the 3px it sits out. */}
+      <span
+        className="dock-halo-ring absolute inset-0"
+        style={square ? { borderRadius: 'calc(var(--radius-card) + 3px)' } : undefined}
+      />
     </span>
   );
 }
@@ -228,14 +232,15 @@ function AgentTile({
   const avatar = (
     <span
       className={cn(
-        'inline-flex rounded-full transition-[opacity,filter]',
+        'inline-flex rounded-card transition-[opacity,filter]',
         !railAgent.active && GREYED
       )}
     >
-      <PersonAgentAvatar
+      <AgentAvatar
         agent={railAgent.agent}
         owner={owner}
-        ringClassName="ring-[var(--pill-fill)]"
+        title={null}
+        badgeRingClassName="ring-[var(--pill-fill)]"
       />
     </span>
   );
@@ -257,12 +262,12 @@ function AgentTile({
       data-agent={railAgent.agent}
       data-state={railAgent.active ? 'active' : 'idle'}
       className={cn(
-        'relative inline-flex rounded-full transition-transform hover:-translate-y-0.5',
+        'relative inline-flex rounded-card transition-transform hover:-translate-y-0.5',
         FOCUS_RING
       )}
     >
       {avatar}
-      {working && <Halo />}
+      {working && <Halo square />}
       <ApprovalsBadge count={pending} />
     </button>
   ) : (
@@ -274,10 +279,10 @@ function AgentTile({
       data-own="false"
       data-agent={railAgent.agent}
       data-state={railAgent.active ? 'active' : 'idle'}
-      className="relative inline-flex rounded-full transition-transform hover:-translate-y-0.5"
+      className="relative inline-flex rounded-card transition-transform hover:-translate-y-0.5"
     >
       {avatar}
-      {working && <Halo />}
+      {working && <Halo square />}
     </span>
   );
   return (
