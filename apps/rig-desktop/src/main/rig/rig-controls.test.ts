@@ -25,18 +25,19 @@ vi.mock('@main/lib/events', () => ({ events: { emit: vi.fn() } }));
 vi.mock('@main/db/client', () => ({ db: {} }));
 vi.mock('./create', () => ({ runRig: mocks.runRig }));
 vi.mock('./join', () => ({ extractJsonObjects: () => [], parseJsonErrorEnvelope: () => null }));
-vi.mock('./relay-name-sync-instance', () => ({ relayNameSync: {} }));
+vi.mock('./relay-name-sync-instance', () => ({ relayNameSync: { pushRename: async () => undefined } }));
 vi.mock('./spaces/rig-tools', () => ({ SPACE_NAME_MAX: 80 }));
 vi.mock('./recent-rigs', async (importOriginal) => {
   const actual = await importOriginal<typeof RecentRigs>();
   return {
     ...actual,
+    updateRigName: async () => undefined,
     getLinkedPathsForAccount: async (accountId: string, ids: ReadonlySet<string> | null) =>
       actual.selectLinkedPathsForAccount(mocks.rows, await actual.listHomeFolderBindings(mocks.home), accountId, ids),
   };
 });
 
-const { pauseRigsForAccount, resumeRigsForAccount } = await import('./rig-controls');
+const { pauseRigsForAccount, renameRig, resumeRigsForAccount } = await import('./rig-controls');
 
 let root: string;
 
@@ -120,5 +121,20 @@ describe('sign-out and sign-in', () => {
 
     await pauseRigsForAccount('usr_a', null);
     expect(mocks.runRig.mock.calls.map(([, cwd]) => cwd)).toEqual([recorded]);
+  });
+});
+
+describe('rename', () => {
+  it('rewrites rig.toml and asks the CLI to retitle the agent brief, best effort', async () => {
+    const dir = join(root, 'quick-trail');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'rig.toml'), '[rig]\nname = "quick-trail"\n');
+    mocks.runRig.mockReset().mockResolvedValue({ kind: 'ran', exitCode: 1, stdout: '', stderr: 'Unknown command "rename"' });
+
+    const result = await renameRig('bnd_1', dir, 'rig-jay');
+
+    expect(result).toEqual({ success: true, data: { name: 'rig-jay' } });
+    expect(await readFile(join(dir, 'rig.toml'), 'utf8')).toContain('name = "rig-jay"');
+    expect(mocks.runRig).toHaveBeenCalledWith(['rename', 'rig-jay', '--json'], dir, expect.any(Number));
   });
 });

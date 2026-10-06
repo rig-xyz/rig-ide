@@ -204,6 +204,8 @@ export function resumeRigsForAccount(accountId: string, accountBindingIds: Reado
  * `relayWarning` for the caller to show quietly. Then every window is told
  * (`rigRenamedChannel`) so Home's lists and pulse refetch.
  */
+const RENAME_BRIEF_TIMEOUT_MS = 15_000;
+
 export async function renameRig(
   bindingId: string,
   path: string,
@@ -233,6 +235,16 @@ export async function renameRig(
   } catch (error) {
     return err({ message: `Could not save rig.toml: ${error instanceof Error ? error.message : String(error)}` });
   }
+
+  // The agent brief's title (AGENTS.md, inside rig's markers) follows the name.
+  // `rig rename` with the name already in rig.toml only rewrites that block.
+  // Best effort: a CLI from before `rig rename` (0.14.4 and older) answers with
+  // an unknown command, and the rename itself has already happened.
+  void runRig(['rename', trimmed, '--json'], path, RENAME_BRIEF_TIMEOUT_MS).then((outcome) => {
+    if (outcome.kind !== 'ran' || outcome.exitCode !== 0) {
+      log.info('Rig: the agent brief keeps its old title', { kind: outcome.kind });
+    }
+  });
 
   await updateRigName(bindingId, trimmed);
   const relayWarning = await relayNameSync.pushRename(bindingId, trimmed);
