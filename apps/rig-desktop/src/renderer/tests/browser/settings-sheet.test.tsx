@@ -352,8 +352,8 @@ describe('SettingsSheet', () => {
     }
   });
 
-  it('says a development build does not update itself', async () => {
-    await renderSettings({ initialPage: 'general' });
+  it('says a development build does not update itself, in About beside the version', async () => {
+    await renderSettings({ initialPage: 'about' });
     await vi.waitFor(() =>
       expect(document.querySelector('[data-testid="updates-dev-build"]')?.textContent).toBe(
         "This development build doesn't update itself."

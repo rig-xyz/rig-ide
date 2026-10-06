@@ -1,11 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Monitor, Moon, Sun, TriangleAlert } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { deriveUpdateAction, deriveUpdateStatusLine } from '@renderer/features/shell/update-status';
-import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
+import { useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
-import { cn } from '@renderer/lib/utils';
 import { settingsRow } from '../settings-pages';
 import { SettingsRow, SettingsRows, SettingsSegmented, type SegmentOption } from '../settings-row';
 
@@ -17,7 +14,7 @@ const THEME_OPTIONS: readonly SegmentOption<ThemePreference>[] = [
   { id: 'dark', label: 'Dark', icon: Moon },
 ];
 
-/** Settings › General: Theme, the Rig folder, Updates. */
+/** Settings › General: Theme and the Rig folder. Updates live in About, beside the version. */
 export function GeneralPage({
   themePreference,
   onSetThemePreference,
@@ -37,7 +34,6 @@ export function GeneralPage({
         }
       />
       <RigHomeRow />
-      <AppUpdateRow />
     </SettingsRows>
   );
 }
@@ -106,69 +102,6 @@ function RigHomeRow() {
       control={
         <Button variant="outline" size="xs" onClick={() => void change()} disabled={changing}>
           {changing ? 'Choosing…' : 'Change…'}
-        </Button>
-      }
-    />
-  );
-}
-
-/**
- * Updates: one live status line (`deriveUpdateStatusLine`) and one action
- * (`deriveUpdateAction`) that swaps from "Check for updates" to "Restart to
- * update" only once a download is genuinely ready. `useUpdateStatus` is the
- * shared hook; the topbar gear's dot and the "ready" toast (`App.tsx`) each
- * mount their own instance, all driven by the same main-process broadcast.
- */
-function AppUpdateRow() {
-  const row = settingsRow('updates')!;
-  const { state, check, restart } = useUpdateStatus();
-  const [now, setNow] = useState(() => Date.now());
-  // "checked Xh ago" goes stale just sitting open; a light tick keeps it honest.
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(id);
-  }, []);
-
-  const { data: supported } = useQuery({
-    queryKey: ['rig', 'updates', 'supported'],
-    queryFn: () => rpc.update.isSupported(),
-    staleTime: Infinity,
-  });
-
-  // Development builds can't self-update (electron-updater needs a packed app).
-  if (supported === false) {
-    return (
-      <SettingsRow
-        id={row.id}
-        label={row.label}
-        description="This development build doesn't update itself."
-        descriptionTestId="updates-dev-build"
-      />
-    );
-  }
-
-  const action = deriveUpdateAction(state.status);
-  return (
-    <SettingsRow
-      id={row.id}
-      label={row.label}
-      description={row.description}
-      detail={
-        <p
-          className={cn('mt-1 text-xs', state.status === 'error' ? 'text-danger' : 'text-text-secondary')}
-          data-testid="update-status-line"
-        >
-          {deriveUpdateStatusLine(state, now)}
-        </p>
-      }
-      control={
-        <Button
-          variant="outline"
-          size="xs"
-          onClick={action.kind === 'restart' ? restart : check}
-          disabled={action.kind === 'check' && action.disabled}
-        >
-          {action.label}
         </Button>
       }
     />

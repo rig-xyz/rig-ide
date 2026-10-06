@@ -1,6 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { deriveCliVersionRow } from '@renderer/features/shell/cli-versions';
+import { deriveUpdateAction, deriveUpdateStatusLine } from '@renderer/features/shell/update-status';
+import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
 import { rpc } from '@renderer/lib/ipc';
 import { confirmOpenExternalLink } from '@renderer/lib/open-external-link';
 import { Button } from '@renderer/lib/ui/button';
@@ -11,7 +14,7 @@ import { settingsRow } from '../settings-pages';
 import { SettingsRow, SettingsRows } from '../settings-row';
 
 /**
- * Settings › About: the app's version, then one comparison row each for the
+ * Settings › About: the app's version and its updates, then one comparison row each for the
  * Rig command line and sync (tapd): bundled vs the user's own PATH install
  * (`rpc.rig.bundledCli.getVersionReport`, a manifest read plus a cached
  * `--version` probe; see `main/rig/bundled-cli.ts`). The rows answer "do my
@@ -41,6 +44,7 @@ export function AboutPage() {
         description={app.description}
         control={<p className="text-text-secondary font-mono text-xs">{appVersion ?? '…'}</p>}
       />
+      <AppUpdateRow />
       <SettingsRow id={cli.id} label={cli.label} description={cli.description} control={<CliVersion sources={report?.rig} />} />
       <SettingsRow id={sync.id} label={sync.label} description={sync.description} control={<CliVersion sources={report?.tapd} />} />
       <SettingsRow
@@ -97,5 +101,68 @@ function CliVersion({
         <p className="text-text-muted max-w-full min-w-0 truncate text-right text-xs">{row.multipleInstallsNote}</p>
       )}
     </div>
+  );
+}
+
+/**
+ * Updates: one live status line (`deriveUpdateStatusLine`) and one action
+ * (`deriveUpdateAction`) that swaps from "Check for updates" to "Restart to
+ * update" only once a download is genuinely ready. `useUpdateStatus` is the
+ * shared hook; the topbar gear's dot and the "ready" toast (`App.tsx`) each
+ * mount their own instance, all driven by the same main-process broadcast.
+ */
+function AppUpdateRow() {
+  const row = settingsRow('updates')!;
+  const { state, check, restart } = useUpdateStatus();
+  const [now, setNow] = useState(() => Date.now());
+  // "checked Xh ago" goes stale just sitting open; a light tick keeps it honest.
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const { data: supported } = useQuery({
+    queryKey: ['rig', 'updates', 'supported'],
+    queryFn: () => rpc.update.isSupported(),
+    staleTime: Infinity,
+  });
+
+  // Development builds can't self-update (electron-updater needs a packed app).
+  if (supported === false) {
+    return (
+      <SettingsRow
+        id={row.id}
+        label={row.label}
+        description="This development build doesn't update itself."
+        descriptionTestId="updates-dev-build"
+      />
+    );
+  }
+
+  const action = deriveUpdateAction(state.status);
+  return (
+    <SettingsRow
+      id={row.id}
+      label={row.label}
+      description={row.description}
+      detail={
+        <p
+          className={cn('mt-1 text-xs', state.status === 'error' ? 'text-danger' : 'text-text-secondary')}
+          data-testid="update-status-line"
+        >
+          {deriveUpdateStatusLine(state, now)}
+        </p>
+      }
+      control={
+        <Button
+          variant="outline"
+          size="xs"
+          onClick={action.kind === 'restart' ? restart : check}
+          disabled={action.kind === 'check' && action.disabled}
+        >
+          {action.label}
+        </Button>
+      }
+    />
   );
 }

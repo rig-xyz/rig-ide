@@ -82,12 +82,6 @@ export const SETTINGS_ROWS: readonly SettingsRowEntry[] = [
     label: 'Rig folder',
     description: 'New rigs are created here. Rigs you already have stay where they are.',
   },
-  {
-    id: 'updates',
-    page: 'general',
-    label: 'Updates',
-    description: 'Rig updates itself in the background and asks before restarting.',
-  },
   { id: 'signed-in', page: 'account', label: 'Signed in', description: 'The account Rig uses on this computer.' },
   {
     id: 'sign-out',
@@ -158,6 +152,12 @@ export const SETTINGS_ROWS: readonly SettingsRowEntry[] = [
     description: "Keep each space's recent messages on this computer, so it opens at once and catches up.",
   },
   { id: 'app-version', page: 'about', label: 'Rig', description: 'The version of this app.' },
+  {
+    id: 'updates',
+    page: 'about',
+    label: 'Updates',
+    description: 'Rig updates itself in the background and asks before restarting.',
+  },
   { id: 'cli-version', page: 'about', label: 'Rig command line', description: 'The rig command your agents and terminal use.' },
   { id: 'sync-version', page: 'about', label: 'Sync', description: 'What keeps your rigs in step with everyone else.' },
   { id: 'website', page: 'about', label: 'Website', description: 'News, help and downloads.' },
