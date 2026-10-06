@@ -1,7 +1,10 @@
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { AcpPermissionRequest } from '@emdash/core/acp';
+import { parseFrontmatter } from '@emdash/core/skills';
 import { err, ok, type Result } from '@emdash/shared';
+import * as toml from 'smol-toml';
 import { z } from 'zod';
+import { secretReason, syncIgnoreMatcher } from '../attachments/rules';
 import { CONNECTORS, connectorById, isConnectorId, RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
 import { ROOM_SEES_LEVELS, type RoomSees } from '@shared/spaces/room-sees';
 import { canonicalEmoji, MAX_REACTIONS_PER_RUN, reactionCounts, type MessageReaction } from '@shared/spaces/reactions';
@@ -41,6 +44,8 @@ export type RigToolScope = {
   agent: SessionAgent;
   /** The space's folder on this device. */
   cwd: string;
+  /** The connectors this session was started with (ids), and the ones from its owner's own setup. Absent: not known. */
+  reachable?: { connectors: readonly string[]; global: readonly string[] };
 };
 
 /**
@@ -51,6 +56,7 @@ export type RigToolScope = {
  * space, so they still ask.
  */
 export const PRE_APPROVED_RIG_TOOLS: ReadonlySet<string> = new Set([
+  'rig_space_describe',
   'rig_people',
   'rig_recent_changes',
   'rig_file_comments',
@@ -433,10 +439,220 @@ async function messageIdFor(backend: RigToolsBackend, bindingId: string, value: 
   return err(`"${raw}" isn't a message: give its #seq (from rig_chat_history) or its id.`);
 }
 
-export function createRigTools(backend: RigToolsBackend, now: () => number = Date.now): RigTool[] {
+/** `[rig].name` and `[rig].description` from a space's `rig.toml` text; null for each one missing or empty. */
+export function parseSpaceManifest(raw: string | null): { name: string | null; description: string | null } {
+  if (!raw) return { name: null, description: null };
+  try {
+    const rig = toml.parse(raw).rig as Record<string, unknown> | undefined;
+    const text = (value: unknown) => (typeof value === 'string' && value.trim() ? oneLine(value) : null);
+    return { name: text(rig?.name), description: text(rig?.description) };
+  } catch {
+    return { name: null, description: null };
+  }
+}
+
+/** A space name as members see it: `#launch-plan`. */
+export function spaceLabel(name: string): string {
+  return name.startsWith('#') ? name : `#${name}`;
+}
+
+/** How many files, skills and characters rig_space_describe shows at most. */
+export const DESCRIBE_FILES_MAX = 60;
+export const DESCRIBE_SKILLS_MAX = 30;
+const DESCRIBE_PEOPLE_MAX = 40;
+const DESCRIBE_SKILL_CHARS = 160;
+const DESCRIBE_TOOL_CHARS = 160;
+export const DESCRIBE_MAX_CHARS = 8_000;
+
+const SKILL_FILE = /^(\.claude|\.agents)\/skills\/([^/]+)\/SKILL\.md$/;
+
+export type SpaceSkill = { name: string; description: string; dirs: string[] };
+
+/** The skills under `.claude/skills` and `.agents/skills`, one per skill folder name, sorted by name. */
+export function dedupeSkills(found: ReadonlyArray<{ dir: string; folder: string; skillMd: string | null }>): SpaceSkill[] {
+  const byFolder = new Map<string, SpaceSkill>();
+  for (const { dir, folder, skillMd } of found) {
+    const entry = byFolder.get(folder) ?? { name: folder, description: '', dirs: [] };
+    if (!entry.dirs.includes(dir)) entry.dirs.push(dir);
+    if (!entry.description && skillMd) entry.description = oneLine(parseFrontmatter(skillMd).frontmatter.description ?? '');
+    byFolder.set(folder, entry);
+  }
+  return [...byFolder.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Files every member gets: none under a dot folder (`.rig`, `.claude`, `.git`), none sync skips, none named like a secret. */
+export function sharedFiles(nodes: readonly RigFileNode[], isSyncIgnored: (relPath: string) => boolean): RigFileNode[] {
+  return flattenFiles(nodes).filter(
+    (f) => !f.relPath.split('/').some((part) => part.startsWith('.')) && !isSyncIgnored(f.relPath) && !secretReason(f.name, null)
+  );
+}
+
+/** A tool description's first sentence, for a one-line listing. */
+function firstSentence(text: string): string {
+  const flat = oneLine(text);
+  const match = /^(.+?[.!?])(?:\s|$)/.exec(flat);
+  const sentence = match ? match[1]! : flat;
+  return sentence.length > DESCRIBE_TOOL_CHARS ? `${sentence.slice(0, DESCRIBE_TOOL_CHARS - 1)}…` : sentence;
+}
+
+export type SpaceOverview = {
+  name: string | null;
+  description: string | null;
+  /** Members by name and role; `you` marks the session's owner. Never emails. */
+  people: Array<{ name: string | null; role: string; you: boolean }> | { error: string };
+  /** Shared files (see `sharedFiles`), any order. */
+  files: ReadonlyArray<{ relPath: string; mtimeMs?: number }> | { error: string };
+  skills: SpaceSkill[];
+  /** Connector ids on in the space; `reachable` as the session's scope has it, when known. */
+  connectors: { on: readonly string[]; reachable?: RigToolScope['reachable'] } | { error: string };
+  /** Servers the space's own `.mcp.json` declares. */
+  projectServers: readonly string[];
+  tools: ReadonlyArray<{ name: string; description: string }>;
+};
+
+/** rig_space_describe's text: a few KB at most, whatever the space holds. */
+export function formatSpaceOverview(o: SpaceOverview, now: number): string {
+  const lines: string[] = [o.name ? `Space: ${spaceLabel(o.name)}` : 'Space: (no name yet)'];
+  if (o.description) lines.push(`About: ${o.description}`);
+
+  if ('error' in o.people) {
+    lines.push('', `People: couldn't load them (${o.people.error}).`);
+  } else {
+    const nameOf = (p: { name: string | null }) => p.name ?? 'a member with no name set';
+    const owner = o.people.find((p) => p.role === 'owner');
+    if (owner) lines.push(`Owner: ${nameOf(owner)}${owner.you ? ' (your owner)' : ''}`);
+    lines.push('', `People (${o.people.length}):`);
+    for (const p of o.people.slice(0, DESCRIBE_PEOPLE_MAX)) lines.push(`- ${nameOf(p)}: ${p.role}${p.you ? ' (your owner)' : ''}`);
+    if (o.people.length > DESCRIBE_PEOPLE_MAX) lines.push(`- …and ${o.people.length - DESCRIBE_PEOPLE_MAX} more`);
+    lines.push('rig_people also lists pending invites.');
+  }
+
+  lines.push('');
+  if ('error' in o.files) {
+    lines.push(`Files: couldn't read them (${o.files.error}).`);
+  } else if (o.files.length === 0) {
+    lines.push('Files: none yet.');
+  } else {
+    const sorted = [...o.files].sort((a, b) => (b.mtimeMs ?? 0) - (a.mtimeMs ?? 0));
+    const shown = sorted.slice(0, DESCRIBE_FILES_MAX);
+    lines.push(`Files (${sorted.length}, most recently changed first, paths relative to the space's folder):`);
+    for (const f of shown) lines.push(`- ${f.relPath}${f.mtimeMs ? ` (${ago(f.mtimeMs, now)})` : ''}`);
+    if (sorted.length > shown.length) lines.push(`- …and ${sorted.length - shown.length} more`);
+  }
+
+  lines.push('');
+  if (o.skills.length === 0) {
+    lines.push('Skills: none in .claude/skills or .agents/skills.');
+  } else {
+    lines.push(`Skills (${o.skills.length}):`);
+    for (const s of o.skills.slice(0, DESCRIBE_SKILLS_MAX)) {
+      const about = s.description.length > DESCRIBE_SKILL_CHARS ? `${s.description.slice(0, DESCRIBE_SKILL_CHARS - 1)}…` : s.description;
+      lines.push(`- ${s.name} (${s.dirs.join(', ')}): ${about || 'no description'}`);
+    }
+    if (o.skills.length > DESCRIBE_SKILLS_MAX) lines.push(`- …and ${o.skills.length - DESCRIBE_SKILLS_MAX} more`);
+  }
+
+  lines.push('');
+  const name = (id: string) => connectorById(id)?.name ?? id;
+  if ('error' in o.connectors) {
+    lines.push(`Connectors: couldn't read them (${o.connectors.error}).`);
+  } else {
+    const { on, reachable } = o.connectors;
+    if (on.length === 0) {
+      lines.push('Connectors on in this space: none.');
+    } else {
+      const label = (id: string) =>
+        !reachable ? name(id) : `${name(id)} (${reachable.connectors.includes(id) ? 'you have it' : "you don't have it this session"})`;
+      lines.push(`Connectors on in this space: ${on.map(label).join(', ')}. Each member uses their own login.`);
+    }
+    const global = reachable?.global.filter((id) => !on.includes(id)) ?? [];
+    if (global.length > 0) lines.push(`Your owner's own setup also gives you: ${global.map(name).join(', ')}.`);
+  }
+  if (o.projectServers.length > 0) lines.push(`MCP servers this space's .mcp.json declares: ${o.projectServers.join(', ')}.`);
+
+  // Always whole, at the end: anything cut to fit comes out of the sections above.
+  const toolLines = ['', "Rig's own tools (use them instead of the rig CLI):", ...o.tools.map((t) => `- ${t.name}: ${firstSentence(t.description)}`)];
+  const tools = toolLines.join('\n');
+  const rest = lines.join('\n');
+  const room = DESCRIBE_MAX_CHARS - tools.length;
+  if (rest.length <= room) return `${rest}\n${tools}`;
+  const cut = rest.slice(0, Math.max(0, room)).replace(/\n[^\n]*$/, '');
+  return `${cut}\n…(cut to keep this short)\n${tools}`;
+}
+
+/** The server names in a `.mcp.json` text, or none when it's missing or isn't JSON. */
+function mcpJsonServers(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const servers = (JSON.parse(raw) as { mcpServers?: unknown }).mcpServers;
+    return servers && typeof servers === 'object' ? Object.keys(servers) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * rig_space_describe's inputs, read as the session's owner: the manifest,
+ * members, the folder listing (sync rules from `.tapignore`), each skill's
+ * SKILL.md and the space's connectors.
+ */
+async function spaceOverview(
+  backend: RigToolsBackend,
+  scope: RigToolScope,
+  tools: readonly RigTool[]
+): Promise<SpaceOverview> {
+  const [manifest, tapignore, mcpJson, members, files, connectors] = await Promise.all([
+    backend.readText(scope.cwd, 'rig.toml').catch(() => null),
+    backend.readText(scope.cwd, '.tapignore').catch(() => null),
+    backend.readText(scope.cwd, '.mcp.json').catch(() => null),
+    backend.listMembers(scope.bindingId),
+    backend.listFiles(scope.cwd),
+    backend.listSpaceConnectors(scope.bindingId),
+  ]);
+  const found: Array<{ dir: string; folder: string; relPath: string }> = [];
+  if (files.success) {
+    for (const f of flattenFiles(files.data)) {
+      const match = SKILL_FILE.exec(f.relPath);
+      if (match) found.push({ dir: `${match[1]}/skills`, folder: match[2]!, relPath: f.relPath });
+    }
+  }
+  const skillMds = await Promise.all(found.map((s) => backend.readText(scope.cwd, s.relPath).catch(() => null)));
+  return {
+    ...parseSpaceManifest(manifest),
+    people: members.success
+      ? members.data.map((m) => ({ name: m.name, role: m.role, you: m.userId === scope.ownerUserId }))
+      : { error: members.error.message },
+    files: files.success ? sharedFiles(files.data, syncIgnoreMatcher(tapignore)) : { error: files.error.message },
+    skills: dedupeSkills(found.map((s, i) => ({ dir: s.dir, folder: s.folder, skillMd: skillMds[i] ?? null }))),
+    connectors: connectors.success
+      ? { on: connectors.data.filter(isConnectorId), ...(scope.reachable ? { reachable: scope.reachable } : {}) }
+      : { error: connectors.error.message },
+    projectServers: mcpJsonServers(mcpJson),
+    tools: tools.map((t) => ({ name: t.name, description: t.description })),
+  };
+}
+
+/**
+ * `allTools`: every tool the session's `rig` server offers (these and the
+ * browser tools), for rig_space_describe's list; omitted, just these.
+ */
+export function createRigTools(
+  backend: RigToolsBackend,
+  now: () => number = Date.now,
+  allTools?: () => readonly RigTool[]
+): RigTool[] {
   /** Reactions each session has added on its current run (`MAX_REACTIONS_PER_RUN`). */
   const reactionsByScope = new Map<string, { runId: string | null; count: number }>();
-  return [
+  const tools: RigTool[] = [
+    {
+      name: 'rig_space_describe',
+      description:
+        "Describe this rig space: its name, owner and people, its files (newest first), its skills, its connectors and rig's own tools. " +
+        "Use it when asked what's here, what this space is for or what you can do in it, and before looking around the folder by hand.",
+      inputSchema: {},
+      annotations: { title: "What's in this space", readOnlyHint: true },
+      run: async (scope) => ({ text: formatSpaceOverview(await spaceOverview(backend, scope, (allTools ?? (() => tools))()), now()) }),
+    },
     {
       name: 'rig_invite',
       description:
@@ -956,6 +1172,7 @@ export function createRigTools(backend: RigToolsBackend, now: () => number = Dat
       },
     },
   ];
+  return tools;
 }
 
 /**

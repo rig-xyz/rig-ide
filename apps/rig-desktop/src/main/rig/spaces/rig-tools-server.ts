@@ -79,7 +79,8 @@ function reply(res: ServerResponse, status: number, body?: Record<string, unknow
 }
 
 export function createRigToolsServer(deps: { backend: RigToolsBackend; now?: () => number; extraTools?: RigTool[] }): RigToolsServer {
-  const tools = [...createRigTools(deps.backend, deps.now), ...(deps.extraTools ?? [])];
+  // rig_space_describe lists them all, the browser tools included.
+  const tools: RigTool[] = [...createRigTools(deps.backend, deps.now, () => tools), ...(deps.extraTools ?? [])];
   /** Session key → its token, so the same session always gets the same one. */
   const tokenByKey = new Map<string, string>();
   /** Token hash → who and where it acts for. */

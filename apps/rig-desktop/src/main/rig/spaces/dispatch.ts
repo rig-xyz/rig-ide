@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { readFile, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   describeAgentStartError,
   sessionStateSchema,
@@ -14,7 +16,15 @@ import { connectorById, RIG_TOOLS_SERVER, RUN_CONNECTORS_EVENT, type ConnectorGa
 import { reactionCounts } from '@shared/spaces/reactions';
 import { RUN_PRIVACY_EVENT, type LocalRunEvent, type RoomSees } from '@shared/spaces/room-sees';
 import type { SessionConnectors } from '../connectors/connections';
-import { ALWAYS_ASK_RIG_TOOLS, ownerApprovals, preApprovedRigToolOption, rigToolOf, type RigToolScope } from './rig-tools';
+import {
+  ALWAYS_ASK_RIG_TOOLS,
+  ownerApprovals,
+  parseSpaceManifest,
+  preApprovedRigToolOption,
+  rigToolOf,
+  spaceLabel,
+  type RigToolScope,
+} from './rig-tools';
 import type { AgentRequest, SessionAgent, SessionStatus, SpacesRelayApi } from './relay-api';
 import { markRequestSettled, type ClaimDispatchResult } from './request-claim';
 import { SessionEventPublisher } from './session-publisher';
@@ -79,6 +89,8 @@ export interface SpacesAcpSessions {
     mcpServers?: AcpMcpServerWire[];
     /** Claude only: servers from the folder's own `.mcp.json` to keep out of this session. */
     disabledProjectServers?: string[];
+    /** Claude only: added after Claude Code's own system prompt (the space's AGENTS.md). */
+    systemPromptAppend?: string;
   }): Promise<Result<{ sessionId: string }, string>>;
   /** Reopens an earlier ACP session by its agent session id (ACP `session/load`), with its context intact. */
   resumeSession(input: {
@@ -88,6 +100,7 @@ export interface SpacesAcpSessions {
     sessionId: string;
     mcpServers?: AcpMcpServerWire[];
     disabledProjectServers?: string[];
+    systemPromptAppend?: string;
   }): Promise<Result<{ sessionId: string }, string>>;
   /** Closes the live session (it can be resumed later by its agent session id). */
   stopSession?(conversationId: string): Promise<void>;
@@ -224,6 +237,10 @@ type PersistentSession = {
   connectorsFingerprint: string;
   /** Whether the session has rig's own tools (the `rig` server), so its context can point at them. */
   rigTools: boolean;
+  /** The space name the session was last told (`spaceIntroContext`); undefined until its first turn. */
+  introducedName?: string | null;
+  /** Codex only: a hash of the CLAUDE.md text the session was last given (`claudeMdForCodex`). */
+  claudeMdSent?: string;
   /** Undoes the raw-event and permission subscriptions, for a reload. */
   unsubscribes: Array<() => void>;
 };
@@ -237,10 +254,102 @@ function pickedConfig(config: AgentConfig): AgentConfigChange {
   };
 }
 
-/** Identifies a set of connector servers, tokens included, without keeping the tokens (and the held-back `.mcp.json` servers, when any). */
-export function connectorsFingerprint(servers: readonly AcpMcpServerWire[], disabledProjectServers: readonly string[] = []): string {
-  const what = disabledProjectServers.length > 0 ? { servers, disabledProjectServers } : servers;
+/**
+ * Identifies a set of connector servers, tokens included, without keeping the
+ * tokens (and the held-back `.mcp.json` servers and Claude's system prompt
+ * addition, when any: a change to either reloads the session too).
+ */
+export function connectorsFingerprint(
+  servers: readonly AcpMcpServerWire[],
+  disabledProjectServers: readonly string[] = [],
+  systemPromptAppend: string | null = null
+): string {
+  const what =
+    disabledProjectServers.length > 0 || systemPromptAppend
+      ? { servers, disabledProjectServers, ...(systemPromptAppend ? { systemPromptAppend } : {}) }
+      : servers;
   return createHash('sha256').update(JSON.stringify(what)).digest('hex');
+}
+
+/** The most of a space's AGENTS.md or CLAUDE.md one agent is given (Codex's own default cap, 32 KiB). */
+export const INSTRUCTIONS_MAX_CHARS = 32_000;
+
+/** The instruction files at a space's root, as read for its session (null: not there). */
+export type SpaceInstructionFiles = {
+  agentsMd: string | null;
+  claudeMd: string | null;
+  /** `.claude/CLAUDE.md`, which Claude also reads. */
+  dotClaudeMd: string | null;
+};
+
+const IMPORTS_AGENTS_MD = /(^|\s)@(\.\.?\/)?AGENTS\.md\b/m;
+const AGENTS_MD_IMPORT_LINE = /^\s*@(\.\/)?AGENTS\.md\s*$/gm;
+
+function capInstructions(text: string): string {
+  return text.length > INSTRUCTIONS_MAX_CHARS ? `${text.slice(0, INSTRUCTIONS_MAX_CHARS)}\n…(cut: the file is longer)` : text;
+}
+
+/**
+ * What Claude gets after its own system prompt in a space: the space's
+ * AGENTS.md, in a folder that also has a CLAUDE.md. Claude Code reads
+ * AGENTS.md itself only when there's no CLAUDE.md (its default
+ * `claude-md-or-agents-md`), as Codex reads CLAUDE.md only without an
+ * AGENTS.md. Null when there's no AGENTS.md, no CLAUDE.md (Claude reads it
+ * then), or a CLAUDE.md already imports it (`@AGENTS.md`) or is the same text
+ * (a link).
+ */
+export function agentsMdForClaude(files: SpaceInstructionFiles): string | null {
+  const agents = files.agentsMd?.trim();
+  if (!agents) return null;
+  if (!files.claudeMd?.trim() && !files.dotClaudeMd?.trim()) return null;
+  for (const claude of [files.claudeMd, files.dotClaudeMd]) {
+    if (claude && (IMPORTS_AGENTS_MD.test(claude) || claude.trim() === agents)) return null;
+  }
+  return `This space's AGENTS.md (instructions for every agent working in it):\n\n${capInstructions(agents)}`;
+}
+
+/**
+ * The CLAUDE.md text Codex gets in a space that also has an AGENTS.md: Codex
+ * reads CLAUDE.md only when there's no AGENTS.md (its fallback filename). The
+ * `@AGENTS.md` import lines are dropped: Codex already has that file. Null
+ * when nothing is left, or CLAUDE.md is AGENTS.md's own text (a link).
+ */
+export function claudeMdForCodex(files: SpaceInstructionFiles): string | null {
+  const agents = files.agentsMd?.trim();
+  const claude = files.claudeMd?.trim();
+  if (!agents || !claude || claude === agents) return null;
+  const rest = claude.replace(AGENTS_MD_IMPORT_LINE, '').trim();
+  if (!rest) return null;
+  return [
+    '<space_claude_md>',
+    "This space's CLAUDE.md has more instructions for agents working in it. Follow them too:",
+    '',
+    capInstructions(rest),
+    '</space_claude_md>',
+  ].join('\n');
+}
+
+/**
+ * The one line a session gets about where it is: on its first turn, and again
+ * after the space is renamed. Its files, skills, connectors and people are a
+ * rig_space_describe call away, never listed here.
+ */
+export function spaceIntroContext(name: string | null, rigTools: boolean): string {
+  const where = name ? `You're working in the Rig space ${spaceLabel(name)}.` : "You're working in a Rig space.";
+  const look = rigTools ? ' To see what is in it (files, skills, connectors, people), call rig_space_describe.' : '';
+  return `<rig_space>${where}${look}</rig_space>`;
+}
+
+/** A file at the space's root as text, or null (missing, not a file, or over 256 KB). */
+async function readSpaceText(cwd: string, relPath: string): Promise<string | null> {
+  const path = join(cwd, relPath);
+  try {
+    const info = await stat(path);
+    if (!info.isFile() || info.size > 256 * 1024) return null;
+    return await readFile(path, 'utf8');
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -553,6 +662,8 @@ export function createSpacesDispatcher(deps: {
   attachmentWait?: Parameters<typeof waitForAttachments>[2];
   /** The version of the Codex CLI this computer runs, named when a turn fails because it's too old. */
   codexVersion?: () => string | null;
+  /** Reads a file in the space's folder as text (rig.toml, AGENTS.md, CLAUDE.md), null when it isn't there. Omitted: from disk. */
+  readSpaceFile?: (cwd: string, relPath: string) => Promise<string | null>;
 }): {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
@@ -773,6 +884,15 @@ export function createSpacesDispatcher(deps: {
     return false;
   }
 
+  const readSpaceFile = deps.readSpaceFile ?? readSpaceText;
+
+  async function readInstructions(cwd: string): Promise<SpaceInstructionFiles> {
+    const [agentsMd, claudeMd, dotClaudeMd] = await Promise.all(
+      ['AGENTS.md', 'CLAUDE.md', join('.claude', 'CLAUDE.md')].map((path) => readSpaceFile(cwd, path).catch(() => null))
+    );
+    return { agentsMd: agentsMd ?? null, claudeMd: claudeMd ?? null, dotClaudeMd: dotClaudeMd ?? null };
+  }
+
   async function loadConnectors(bindingId: string, agent: SessionAgent): Promise<SessionConnectors> {
     if (!deps.connectors) return { servers: [], gaps: [] };
     try {
@@ -842,13 +962,23 @@ export function createSpacesDispatcher(deps: {
     connectors?: SessionConnectors
   ): Promise<Result<PersistentSession, string>> {
     const existing = sessions.get(key);
-    const scope: RigToolScope = { bindingId, ownerUserId, agent: providerId, cwd };
-    const wanted = connectors ? await withRigTools(scope, connectors.servers) : null;
+    // What rig_space_describe says this session can reach.
+    const scopeWith = (c: SessionConnectors): RigToolScope => ({
+      bindingId,
+      ownerUserId,
+      agent: providerId,
+      cwd,
+      reachable: { connectors: c.servers.map((server) => server.name), global: c.global ?? [] },
+    });
+    const wanted = connectors ? await withRigTools(scopeWith(connectors), connectors.servers) : null;
     const held = connectors?.project?.disabled ?? [];
+    // Claude Code skips AGENTS.md beside a CLAUDE.md: the space's AGENTS.md then goes
+    // after its system prompt. A change to it reloads an idle session, like a connector change.
+    const append = providerId === 'claude' ? agentsMdForClaude(await readInstructions(cwd)) : null;
     /** The settings a reloaded session had, re-applied after the reload (some agents reset them on load). */
     let carried: AgentConfigChange | undefined;
     if (existing) {
-      const unchanged = !wanted || connectorsFingerprint(wanted, held) === existing.connectorsFingerprint;
+      const unchanged = !wanted || connectorsFingerprint(wanted, held, append) === existing.connectorsFingerprint;
       const busy = existing.current !== null || existing.pending.length > 0;
       if (unchanged || busy || !deps.acp.stopSession) return ok(existing);
       log.info('Rig spaces dispatch: connectors changed, reloading the space session', {
@@ -863,7 +993,7 @@ export function createSpacesDispatcher(deps: {
     // Started without the run's connectors (e.g. to read its settings): load them, so
     // the `.mcp.json` servers it must not load are held back from the start too.
     const resolved = connectors ?? (await loadConnectors(bindingId, providerId));
-    const servers = wanted ?? (await withRigTools(scope, resolved.servers));
+    const servers = wanted ?? (await withRigTools(scopeWith(resolved), resolved.servers));
     const disabledProjectServers = resolved.project?.disabled ?? [];
 
     // Memory across restarts: reuse the stored conversation and resume the
@@ -878,7 +1008,7 @@ export function createSpacesDispatcher(deps: {
       pending: [],
       current: null,
       heldPermissions: new Map(),
-      connectorsFingerprint: connectorsFingerprint(servers, disabledProjectServers),
+      connectorsFingerprint: connectorsFingerprint(servers, disabledProjectServers, append),
       rigTools: servers.some((server) => server.name === RIG_TOOLS_SERVER),
       unsubscribes: [],
     };
@@ -895,6 +1025,7 @@ export function createSpacesDispatcher(deps: {
         sessionId: resumable.acpSessionId,
         mcpServers: servers,
         ...(disabledProjectServers.length > 0 ? { disabledProjectServers } : {}),
+        ...(append ? { systemPromptAppend: append } : {}),
       });
       if (!started.success) {
         log.warn('Rig spaces dispatch: could not resume the space session, starting fresh', {
@@ -920,6 +1051,7 @@ export function createSpacesDispatcher(deps: {
       cwd,
       mcpServers: servers,
       ...(disabledProjectServers.length > 0 ? { disabledProjectServers } : {}),
+      ...(append ? { systemPromptAppend: append } : {}),
     });
     if (!started.success) return err(started.error);
     // A brand-new session starts from your usual settings for this agent. A
@@ -1122,7 +1254,32 @@ export function createSpacesDispatcher(deps: {
       asImages: spacePaths,
       mentioned,
     });
-    const hiddenContext = [spaceContext, connectorsContext, filesContext, spec.extraHiddenContext]
+    // Once per session, not every turn: which space this is (again after a
+    // rename), and for Codex the CLAUDE.md it doesn't read (again when it changes).
+    const introBefore = { name: session.introducedName, claudeMd: session.claudeMdSent };
+    const spaceName = parseSpaceManifest(await readSpaceFile(cwd, 'rig.toml').catch(() => null)).name;
+    let introContext: string | null = null;
+    if (session.introducedName === undefined || session.introducedName !== spaceName) {
+      introContext = spaceIntroContext(spaceName, session.rigTools);
+      session.introducedName = spaceName;
+    }
+    let claudeMdContext: string | null = null;
+    if (spec.agent === 'codex') {
+      const text = claudeMdForCodex(await readInstructions(cwd));
+      const hash = text ? createHash('sha256').update(text).digest('hex') : '';
+      if (hash !== (session.claudeMdSent ?? '')) {
+        claudeMdContext = text;
+        session.claudeMdSent = hash;
+      }
+    }
+    // A prompt that never reached the agent didn't tell it either: the next turn does.
+    const introAfter = { name: session.introducedName, claudeMd: session.claudeMdSent };
+    const forgetIntro = () => {
+      // Unless a later turn has told it since.
+      if (session.introducedName === introAfter.name) session.introducedName = introBefore.name;
+      if (session.claudeMdSent === introAfter.claudeMd) session.claudeMdSent = introBefore.claudeMd;
+    };
+    const hiddenContext = [introContext, spaceContext, claudeMdContext, connectorsContext, filesContext, spec.extraHiddenContext]
       .filter(Boolean)
       .join('\n\n');
     // Only pass images when there are some (keeps the call as it always was otherwise).
@@ -1138,6 +1295,7 @@ export function createSpacesDispatcher(deps: {
       if (idx === -1) return; // already started (its turn_end settles it), or stopped
       session.pending.splice(idx, 1);
       if (turn.finalized) return; // stopped while queued: nothing left to run
+      forgetIntro();
       log.warn('Rig spaces dispatch: the runtime rejected a prompt', { runId: turn.runId, reason });
       void finalizeTurn(turn, 'failed', `the agent refused the prompt (${reason})`);
     };
@@ -1160,10 +1318,14 @@ export function createSpacesDispatcher(deps: {
       })();
     };
     // Stopped while its context was gathered (`stopLocal` took it off the queue): don't send it.
-    if (session.pending.indexOf(turn) === -1) return ok({ runId: created.data.id });
+    if (session.pending.indexOf(turn) === -1) {
+      forgetIntro();
+      return ok({ runId: created.data.id });
+    }
     turn.promptSent = true;
     const queued = await queue(onRejected);
     if (!queued.success) {
+      forgetIntro();
       const idx = session.pending.indexOf(turn);
       if (idx !== -1) session.pending.splice(idx, 1);
       void finalizeTurn(turn, 'failed', queued.error);
@@ -1445,7 +1607,7 @@ const SESSION_READY_TIMEOUT_MS = 60_000;
 
 export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClient>): SpacesAcpSessions {
   return {
-    async startSession({ conversationId, providerId, cwd, mcpServers, disabledProjectServers }) {
+    async startSession({ conversationId, providerId, cwd, mcpServers, disabledProjectServers, systemPromptAppend }) {
       const client = await getClient();
       const result = await client.startSession({
         input: {
@@ -1459,12 +1621,13 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
           model: null,
           ...(mcpServers?.length ? { mcpServers } : {}),
           ...(disabledProjectServers?.length ? { disabledProjectMcpServers: disabledProjectServers } : {}),
+          ...(systemPromptAppend ? { systemPromptAppend } : {}),
         },
       });
       return result.success ? ok({ sessionId: result.data.sessionId }) : err(describeStartError(providerId, result.error));
     },
 
-    async resumeSession({ conversationId, providerId, cwd, sessionId, mcpServers, disabledProjectServers }) {
+    async resumeSession({ conversationId, providerId, cwd, sessionId, mcpServers, disabledProjectServers, systemPromptAppend }) {
       const client = await getClient();
       const result = await client.resumeSession({
         input: {
@@ -1478,6 +1641,7 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
           model: null,
           ...(mcpServers?.length ? { mcpServers } : {}),
           ...(disabledProjectServers?.length ? { disabledProjectMcpServers: disabledProjectServers } : {}),
+          ...(systemPromptAppend ? { systemPromptAppend } : {}),
         },
       });
       return result.success ? ok({ sessionId: result.data.sessionId }) : err(describeStartError(providerId, result.error));

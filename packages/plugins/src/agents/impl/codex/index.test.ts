@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { plugin } from './index';
+import { codexConfigWithClaudeMd, plugin, provider } from './index';
 
 /**
  * The ChatGPT desktop app fix: rig was launching whichever `codex` happened to
@@ -46,5 +46,34 @@ describe('codex plugin static model catalog', () => {
     if (plugin.capabilities.models.kind === 'selectable') {
       expect(plugin.capabilities.models.modelOptions['gpt-6-sol']).toBeUndefined();
     }
+  });
+});
+
+describe('codex plugin CODEX_CONFIG', () => {
+  it('adds CLAUDE.md as a fallback project doc, so Codex reads it where there is no AGENTS.md', () => {
+    expect(JSON.parse(codexConfigWithClaudeMd(undefined))).toEqual({ project_doc_fallback_filenames: ['CLAUDE.md'] });
+  });
+
+  it('keeps a config already there, and its own fallbacks, without listing CLAUDE.md twice', () => {
+    const existing = JSON.stringify({ model_provider: 'gateway', project_doc_fallback_filenames: ['README.md'] });
+    expect(JSON.parse(codexConfigWithClaudeMd(existing))).toEqual({
+      model_provider: 'gateway',
+      project_doc_fallback_filenames: ['README.md', 'CLAUDE.md'],
+    });
+    const already = JSON.stringify({ project_doc_fallback_filenames: ['CLAUDE.md'] });
+    expect(JSON.parse(codexConfigWithClaudeMd(already))).toEqual({ project_doc_fallback_filenames: ['CLAUDE.md'] });
+    expect(JSON.parse(codexConfigWithClaudeMd('not json'))).toEqual({ project_doc_fallback_filenames: ['CLAUDE.md'] });
+  });
+
+  it('hands it to codex-acp at spawn, merged with the agent env', () => {
+    const spawn = provider.behavior.acp!.buildSpawn({
+      cwd: '/tmp/space',
+      cli: '/usr/local/bin/codex',
+      env: { CODEX_CONFIG: JSON.stringify({ model_reasoning_effort: 'high' }) },
+    });
+    expect(JSON.parse(spawn.env!.CODEX_CONFIG!)).toEqual({
+      model_reasoning_effort: 'high',
+      project_doc_fallback_filenames: ['CLAUDE.md'],
+    });
   });
 });

@@ -144,6 +144,7 @@ describe('rig tools server', () => {
 
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).toEqual([
+      'rig_space_describe',
       'rig_invite',
       'rig_people',
       'rig_recent_changes',

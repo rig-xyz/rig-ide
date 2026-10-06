@@ -1,6 +1,7 @@
 import { err, ok } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { RigCommentMessage } from '@shared/rig/comments';
+import type { RigFileNode } from '@shared/rig/files';
 import type { AcpPermissionRequest } from '@emdash/core/acp';
 import type { AgentConfig } from './dispatch';
 import type { RoomMessageRow } from './relay-api';
@@ -10,6 +11,12 @@ import {
   CHAT_HISTORY_MAX_CHARS,
   createOwnerApprovals,
   createRigTools,
+  dedupeSkills,
+  DESCRIBE_FILES_MAX,
+  DESCRIBE_MAX_CHARS,
+  DESCRIBE_SKILLS_MAX,
+  formatSpaceOverview,
+  parseSpaceManifest,
   preApprovedRigToolOption,
   PRE_APPROVED_RIG_TOOLS,
   runRigTool,
@@ -186,9 +193,10 @@ async function call(backend: RigToolsBackend, name: string, input: Record<string
 }
 
 describe('rig tools', () => {
-  it('are the ten tools, each saying when to use it', () => {
+  it('are the eleven tools, each saying when to use it', () => {
     const tools = createRigTools(fakeBackend());
     expect(tools.map((t) => t.name)).toEqual([
+      'rig_space_describe',
       'rig_invite',
       'rig_people',
       'rig_recent_changes',
@@ -202,6 +210,7 @@ describe('rig tools', () => {
     ]);
     for (const t of tools) expect(t.description).toMatch(/Use it when|Use it whenever/);
     expect(tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name)).toEqual([
+      'rig_space_describe',
       'rig_people',
       'rig_recent_changes',
       'rig_chat_history',
@@ -213,7 +222,7 @@ describe('rig tools', () => {
   it('each say what they do up front, so a truncated listing still tells them apart', () => {
     const openings = createRigTools(fakeBackend()).map((t) => t.description.slice(0, 60));
     expect(new Set(openings).size).toBe(openings.length);
-    for (const opening of openings) expect(opening).toMatch(/^(Invite|List|Read|Add|React|Rename|Change) /);
+    for (const opening of openings) expect(opening).toMatch(/^(Describe|Invite|List|Read|Add|React|Rename|Change) /);
   });
 
   it('pre-approve only tools that are read-only, and rig_react (an emoji, a few per turn)', () => {
@@ -861,5 +870,165 @@ describe('anchorFor', () => {
     expect(anchorFor(text, 'QUOTE')).toEqual({ exact: 'QUOTE', prefix: 'a'.repeat(32), suffix: 'b'.repeat(32) });
     expect(anchorFor(text, 'missing')).toBeNull();
     expect(anchorFor(text, '')).toBeNull();
+  });
+});
+
+describe('rig_space_describe', () => {
+  const file = (relPath: string, ageMin: number) => ({
+    name: relPath.split('/').pop()!,
+    relPath,
+    kind: 'file' as const,
+    mtimeMs: NOW - ageMin * 60_000,
+  });
+  const dir = (relPath: string, children: RigFileNode[]): RigFileNode => ({ name: relPath.split('/').pop()!, relPath, kind: 'dir', children });
+  const TEXTS: Record<string, string> = {
+    'rig.toml': '[rig]\nname = "rig-feedback"\ndescription = "Feedback from the first users, and what we do about it."\n',
+    '.tapignore': 'drafts/private/\n',
+    '.mcp.json': JSON.stringify({ mcpServers: { posthog: { command: 'npx' } } }),
+    '.claude/skills/triage/SKILL.md': '---\nname: triage\ndescription: Sort new feedback into themes and file the bugs.\n---\n# Triage\n',
+    '.agents/skills/triage/SKILL.md': '---\nname: triage\ndescription: A mirrored copy.\n---\n',
+    '.agents/skills/weekly-digest/SKILL.md': '---\ndescription: |\n  Write the Friday digest\n  from this week\'s notes.\n---\n',
+  };
+  const backend = () =>
+    fakeBackend({
+      readText: vi.fn(async (_root: string, relPath: string) => TEXTS[relPath] ?? null),
+      listFiles: vi.fn(async () =>
+        ok([
+          dir('.rig', [file('.rig/tap-binding.local.json', 1)]),
+          dir('.claude', [dir('.claude/skills', [dir('.claude/skills/triage', [file('.claude/skills/triage/SKILL.md', 600)])])]),
+          dir('.agents', [
+            dir('.agents/skills', [
+              dir('.agents/skills/triage', [file('.agents/skills/triage/SKILL.md', 600)]),
+              dir('.agents/skills/weekly-digest', [file('.agents/skills/weekly-digest/SKILL.md', 900)]),
+            ]),
+          ]),
+          file('.env', 1),
+          file('AGENTS.md', 3000),
+          file('CLAUDE.md', 3000),
+          file('rig.toml', 3000),
+          file('settings.local.json', 2),
+          dir('drafts', [dir('drafts/private', [file('drafts/private/salaries.md', 3)])]),
+          dir('feedback', [file('feedback/2026-10-06-maya.md', 20), file('feedback/2026-10-05-sam.md', 26 * 60)]),
+          dir('notes', [file('notes/themes.md', 90), file('notes/id_rsa', 5)]),
+          dir('attachments', [file('attachments/call.m4a', 300)]),
+        ])
+      ),
+      listSpaceConnectors: vi.fn(async () => ok(['linear', 'notion'])),
+    });
+
+  it('describes the space: name, people without emails, shared files newest first, skills once each, connectors and tools', async () => {
+    const all = createRigTools(backend(), () => NOW);
+    const result = await runRigTool(backend(), all[0]!, { ...SCOPE, reachable: { connectors: ['linear', 'rig'], global: ['sentry'] } }, {});
+    expect(result.isError).toBeUndefined();
+    const text = result.text;
+    expect(text).toContain('Space: #rig-feedback');
+    expect(text).toContain('About: Feedback from the first users, and what we do about it.');
+    expect(text).toContain('Owner: Dylan (your owner)');
+    expect(text).toContain('- Sam: editor');
+    expect(text).not.toContain('@rig.xyz');
+    // Shared files only: no .rig, .env, *.local.*, secrets, or .tapignore'd folders.
+    for (const hidden of ['.rig/', '.env', 'settings.local.json', 'id_rsa', 'salaries.md', 'SKILL.md']) expect(text).not.toContain(hidden);
+    expect(text).toContain('Files (7, most recently changed first');
+    const order = ['feedback/2026-10-06-maya.md', 'notes/themes.md', 'attachments/call.m4a', 'feedback/2026-10-05-sam.md', 'AGENTS.md'];
+    const at = order.map((p) => text.indexOf(`- ${p}`));
+    expect(at.every((i) => i > 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(text).toContain('Skills (2):');
+    expect(text).toContain('- triage (.claude/skills, .agents/skills): Sort new feedback into themes and file the bugs.');
+    expect(text).toContain("- weekly-digest (.agents/skills): Write the Friday digest from this week's notes.");
+    expect(text).toContain("Linear (you have it), Notion (you don't have it this session)");
+    expect(text).toContain("Your owner's own setup also gives you: Sentry.");
+    expect(text).toContain("MCP servers this space's .mcp.json declares: posthog.");
+    for (const t of all) expect(text).toContain(`- ${t.name}: `);
+    expect(text).toContain('- rig_invite: Invite a person to this rig space by email.');
+    expect(text.length).toBeLessThan(4_000);
+  });
+
+  it('lists every tool the server offers when given them, and is pre-approved', async () => {
+    const extra: RigTool = {
+      name: 'browser_read',
+      description: 'Read a page as your owner sees it. More detail here.',
+      inputSchema: {},
+      annotations: { title: 'Read a page', readOnlyHint: true },
+      run: async () => ({ text: '' }),
+    };
+    const tools: RigTool[] = [...createRigTools(backend(), () => NOW, () => tools), extra];
+    const result = await runRigTool(backend(), tools[0]!, SCOPE, {});
+    expect(result.text).toContain('- browser_read: Read a page as your owner sees it.');
+    expect(result.text).not.toContain('More detail here');
+    expect(PRE_APPROVED_RIG_TOOLS.has('rig_space_describe')).toBe(true);
+  });
+
+  it('caps files, skills and the whole text', () => {
+    const many = Array.from({ length: 150 }, (_, i) => ({ relPath: `notes/n${i}.md`, mtimeMs: NOW - i * 60_000 }));
+    const skills = Array.from({ length: 50 }, (_, i) => ({ name: `s${i}`, description: 'x'.repeat(500), dirs: ['.agents/skills'] }));
+    const text = formatSpaceOverview(
+      { name: 'big', description: null, people: [], files: many, skills, connectors: { on: [] }, projectServers: [], tools: [] },
+      NOW
+    );
+    expect(text).toContain('Files (150,');
+    expect(text).toContain('- notes/n0.md');
+    expect(text).toContain(`- notes/n${DESCRIBE_FILES_MAX - 1}.md`);
+    expect(text).not.toContain(`- notes/n${DESCRIBE_FILES_MAX}.md`);
+    expect(text).toContain(`- …and ${150 - DESCRIBE_FILES_MAX} more`);
+    expect(text).toContain(`- …and ${50 - DESCRIBE_SKILLS_MAX} more`);
+    expect(text).not.toContain('x'.repeat(161));
+    expect(text.length).toBeLessThanOrEqual(DESCRIBE_MAX_CHARS + 40);
+    expect(text).toContain('Connectors on in this space: none.');
+  });
+
+  it('keeps the tools when the rest has to be cut', () => {
+    const files = Array.from({ length: 60 }, (_, i) => ({ relPath: `${'deep/'.repeat(30)}n${i}.md`, mtimeMs: NOW }));
+    const text = formatSpaceOverview(
+      { name: 'big', description: null, people: [], files, skills: [], connectors: { on: [] }, projectServers: [], tools: [{ name: 'rig_people', description: 'List who is here.' }] },
+      NOW
+    );
+    expect(text.length).toBeLessThanOrEqual(DESCRIBE_MAX_CHARS + 40);
+    expect(text).toContain('…(cut to keep this short)');
+    expect(text).toContain('- rig_people: List who is here.');
+  });
+
+  it('says what it could not read, and still describes the rest', () => {
+    const text = formatSpaceOverview(
+      {
+        name: null,
+        description: null,
+        people: { error: 'offline' },
+        files: { error: 'folder missing' },
+        skills: [],
+        connectors: { error: 'offline' },
+        projectServers: [],
+        tools: [],
+      },
+      NOW
+    );
+    expect(text).toContain('Space: (no name yet)');
+    expect(text).toContain("People: couldn't load them (offline).");
+    expect(text).toContain("Files: couldn't read them (folder missing).");
+    expect(text).toContain('Skills: none in .claude/skills or .agents/skills.');
+  });
+});
+
+describe('dedupeSkills', () => {
+  it('keeps one skill per folder name, with every folder it is in and the first description found', () => {
+    expect(
+      dedupeSkills([
+        { dir: '.agents/skills', folder: 'b', skillMd: null },
+        { dir: '.claude/skills', folder: 'a', skillMd: '---\ndescription: From Claude\n---\n' },
+        { dir: '.agents/skills', folder: 'a', skillMd: '---\ndescription: From agents\n---\n' },
+        { dir: '.agents/skills', folder: 'b', skillMd: '---\ndescription: Late but only one\n---\n' },
+      ])
+    ).toEqual([
+      { name: 'a', description: 'From Claude', dirs: ['.claude/skills', '.agents/skills'] },
+      { name: 'b', description: 'Late but only one', dirs: ['.agents/skills'] },
+    ]);
+  });
+});
+
+describe('parseSpaceManifest', () => {
+  it('reads the name and description from rig.toml, and nothing from an empty or broken one', () => {
+    expect(parseSpaceManifest('[rig]\nname = "launch"\ndescription = ""\n')).toEqual({ name: 'launch', description: null });
+    expect(parseSpaceManifest('not = [toml')).toEqual({ name: null, description: null });
+    expect(parseSpaceManifest(null)).toEqual({ name: null, description: null });
   });
 });

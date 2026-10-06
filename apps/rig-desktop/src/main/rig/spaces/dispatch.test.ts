@@ -5,8 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  agentsMdForClaude,
+  claudeMdForCodex,
   createDeviceIdResolver,
   createSpacesDispatcher,
+  INSTRUCTIONS_MAX_CHARS,
+  spaceIntroContext,
   finalAnswerFromEvents,
   connectorsHiddenContext,
   leakedProviderError,
@@ -1809,7 +1813,14 @@ describe('rig tools', () => {
 
     await dispatch(makeRequest({ targetAgent: 'codex' }));
 
-    expect(rigTools).toHaveBeenCalledWith({ bindingId: 'binding-1', ownerUserId: 'owner-1', agent: 'codex', cwd: '/rigs/one' });
+    expect(rigTools).toHaveBeenCalledWith({
+      bindingId: 'binding-1',
+      ownerUserId: 'owner-1',
+      agent: 'codex',
+      cwd: '/rigs/one',
+      // What rig_space_describe says it can reach.
+      reachable: { connectors: ['linear'], global: [] },
+    });
     expect(fake.started[0]).toMatchObject({ mcpServers: [LINEAR, rigServer('rig-token')] });
     const hidden = fake.queued[0]!.hiddenContext!;
     expect(hidden).toContain("You also have rig's own tools for this space (rig_invite, rig_people");
@@ -2198,5 +2209,173 @@ describe('createSpacesDispatcher — attached files', () => {
     expect(calls[0]!.images).toBeUndefined();
     expect(prepareImage).not.toHaveBeenCalled();
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('what each agent is told about its space', () => {
+  /** A space folder as files by path (`readSpaceFile`), changeable between turns. */
+  function spaceFiles(initial: Record<string, string>) {
+    const files = { ...initial };
+    return { files, read: async (_cwd: string, relPath: string) => files[relPath] ?? null };
+  }
+  const TOML = (name: string) => `[rig]\nname = "${name}"\n`;
+
+  it('names the space once per session: on its first turn, then again only after a rename', async () => {
+    const { api } = makeFakeApi({ listMessages: async () => ok([]), listMembers: async () => ok([]) });
+    const fake = makeFakeAcp();
+    const space = spaceFiles({ 'rig.toml': TOML('rig-feedback') });
+    const { dispatch } = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      readSpaceFile: space.read,
+      rigTools: async () => ({ type: 'http', name: 'rig', url: 'http://127.0.0.1:1/mcp', headers: [] }),
+    });
+
+    await dispatch(makeRequest({ id: 'r1' }));
+    await dispatch(makeRequest({ id: 'r2' }));
+    space.files['rig.toml'] = TOML('launch-feedback');
+    await dispatch(makeRequest({ id: 'r3' }));
+    await dispatch(makeRequest({ id: 'r4' }));
+
+    const intros = fake.queued.map((q) => /<rig_space>(.*)<\/rig_space>/.exec(q.hiddenContext ?? '')?.[1] ?? null);
+    expect(intros).toEqual([
+      "You're working in the Rig space #rig-feedback. To see what is in it (files, skills, connectors, people), call rig_space_describe.",
+      null,
+      "You're working in the Rig space #launch-feedback. To see what is in it (files, skills, connectors, people), call rig_space_describe.",
+      null,
+    ]);
+    // The per-turn rules stay on every turn.
+    for (const q of fake.queued) expect(q.hiddenContext).toContain('<rig_space_context>');
+  });
+
+  it('names it again in a new session, and when the prompt never reached the agent', async () => {
+    const { api } = makeFakeApi({ listMessages: async () => ok([]), listMembers: async () => ok([]) });
+    const fake = makeFakeAcp();
+    const space = spaceFiles({ 'rig.toml': TOML('ops') });
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one', readSpaceFile: space.read });
+
+    let refuse = true;
+    const sent: Array<string | undefined> = [];
+    fake.setQueuePromptImpl(async (_c, _t, hiddenContext) => {
+      sent.push(hiddenContext);
+      if (refuse) return err('runtime down');
+      return ok({ turnId: `t-${sent.length}` });
+    });
+    await dispatch(makeRequest({ id: 'r1' }));
+    refuse = false;
+    await dispatch(makeRequest({ id: 'r2' }));
+    await dispatch(makeRequest({ id: 'r3', targetAgent: 'codex' }));
+    expect(sent.map((h) => h?.includes("You're working in the Rig space #ops."))).toEqual([true, true, true]);
+    // No rig tools on this session: no pointer at a tool it doesn't have.
+    expect(sent[1]).not.toContain('rig_space_describe');
+  });
+
+  it("gives Claude the space's AGENTS.md after its system prompt, unless its CLAUDE.md already imports it", async () => {
+    const { api } = makeFakeApi({ listMessages: async () => ok([]), listMembers: async () => ok([]) });
+    const fake = makeFakeAcp();
+    const space = spaceFiles({ 'AGENTS.md': '# Rules\nCite sources.\n', 'CLAUDE.md': '# Claude\nBe brief.\n' });
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one', readSpaceFile: space.read });
+    await dispatch(makeRequest());
+    expect(fake.started[0]).toMatchObject({
+      providerId: 'claude',
+      systemPromptAppend: "This space's AGENTS.md (instructions for every agent working in it):\n\n# Rules\nCite sources.",
+    });
+    // Never in Claude's turn context: it's in the system prompt.
+    expect(fake.queued[0].hiddenContext).not.toContain('Cite sources');
+
+    const fake2 = makeFakeAcp();
+    space.files['CLAUDE.md'] = '@AGENTS.md\n\nBe brief.\n';
+    const second = createSpacesDispatcher({ api, acp: fake2.acp, resolveWorkspace: async () => '/rigs/one', readSpaceFile: space.read });
+    await second.dispatch(makeRequest());
+    expect(fake2.started[0]).not.toHaveProperty('systemPromptAppend');
+  });
+
+  it('passes AGENTS.md on a resume too, and reloads an idle Claude session when AGENTS.md changes', async () => {
+    const { api } = makeFakeApi({ listMessages: async () => ok([]), listMembers: async () => ok([]) });
+    const fake = makeFakeAcp();
+    const space = spaceFiles({ 'AGENTS.md': 'v1', 'CLAUDE.md': 'Be brief' });
+    const resumedWith: Array<string | undefined> = [];
+    const resumeSession = fake.acp.resumeSession.bind(fake.acp);
+    fake.acp.resumeSession = async (input) => {
+      resumedWith.push(input.systemPromptAppend);
+      return resumeSession(input);
+    };
+    const stored: StoredSpaceSession = { conversationId: 'conv-old', acpSessionId: 'acp-old', providerId: 'claude', cwd: '/rigs/one', updatedAt: 0 };
+    const store: SpaceSessionStore = { get: () => stored, set: () => {} };
+    const { dispatch } = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      readSpaceFile: space.read,
+      store,
+      connectors: async () => ({ servers: [], gaps: [] }),
+    });
+
+    await dispatch(makeRequest({ id: 'r1' }));
+    expect(resumedWith).toEqual([expect.stringContaining('v1')]);
+    fake.emitTurnStart('conv-old', fake.queued[0].turnId);
+    fake.emitTurnEnd('conv-old', fake.queued[0].turnId, 'end_turn');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    space.files['AGENTS.md'] = 'v2';
+    await dispatch(makeRequest({ id: 'r2' }));
+    expect(fake.stopped).toEqual(['conv-old']);
+    expect(resumedWith).toEqual([expect.stringContaining('v1'), expect.stringContaining('v2')]);
+  });
+
+  it("gives Codex the CLAUDE.md it doesn't read beside an AGENTS.md: once, and again when it changes", async () => {
+    const { api } = makeFakeApi({ listMessages: async () => ok([]), listMembers: async () => ok([]) });
+    const fake = makeFakeAcp();
+    const space = spaceFiles({ 'AGENTS.md': '# Shared\n', 'CLAUDE.md': '@AGENTS.md\n\nAlways answer in French.\n' });
+    const { dispatch } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one', readSpaceFile: space.read });
+
+    await dispatch(makeRequest({ id: 'r1', targetAgent: 'codex' }));
+    await dispatch(makeRequest({ id: 'r2', targetAgent: 'codex' }));
+    space.files['CLAUDE.md'] = 'Always answer in German.\n';
+    await dispatch(makeRequest({ id: 'r3', targetAgent: 'codex' }));
+
+    const claudeMd = fake.queued.map((q) => /<space_claude_md>([\s\S]*?)<\/space_claude_md>/.exec(q.hiddenContext ?? '')?.[1] ?? null);
+    expect(claudeMd[0]).toContain('Always answer in French.');
+    expect(claudeMd[0]).not.toContain('@AGENTS.md');
+    expect(claudeMd[1]).toBeNull();
+    expect(claudeMd[2]).toContain('Always answer in German.');
+    // Codex reads AGENTS.md itself: nothing appended to a system prompt.
+    expect(fake.started[0]).not.toHaveProperty('systemPromptAppend');
+  });
+});
+
+describe('instructions parity helpers', () => {
+  it('agentsMdForClaude: only beside a CLAUDE.md that neither imports AGENTS.md nor is the same file', () => {
+    const files = { agentsMd: 'Rules', claudeMd: 'Be brief', dotClaudeMd: null };
+    expect(agentsMdForClaude(files)).toContain('Rules');
+    expect(agentsMdForClaude({ ...files, agentsMd: null })).toBeNull();
+    // No CLAUDE.md: Claude Code reads AGENTS.md itself.
+    expect(agentsMdForClaude({ ...files, claudeMd: null })).toBeNull();
+    expect(agentsMdForClaude({ ...files, claudeMd: null, dotClaudeMd: 'Notes' })).toContain('Rules');
+    expect(agentsMdForClaude({ ...files, claudeMd: 'Intro\n@AGENTS.md\n' })).toBeNull();
+    expect(agentsMdForClaude({ ...files, claudeMd: 'See @./AGENTS.md' })).toBeNull();
+    expect(agentsMdForClaude({ ...files, dotClaudeMd: '@../AGENTS.md' })).toBeNull();
+    expect(agentsMdForClaude({ ...files, claudeMd: 'Rules\n' })).toBeNull();
+    expect(agentsMdForClaude({ ...files, claudeMd: 'Read AGENTS.md first' })).toContain('Rules');
+  });
+
+  it('caps a long AGENTS.md or CLAUDE.md', () => {
+    const long = 'a'.repeat(INSTRUCTIONS_MAX_CHARS + 500);
+    expect(agentsMdForClaude({ agentsMd: long, claudeMd: 'Be brief', dotClaudeMd: null })!.length).toBeLessThan(INSTRUCTIONS_MAX_CHARS + 200);
+    expect(claudeMdForCodex({ agentsMd: 'x', claudeMd: long, dotClaudeMd: null })!.length).toBeLessThan(INSTRUCTIONS_MAX_CHARS + 300);
+  });
+
+  it('claudeMdForCodex: only beside an AGENTS.md, and only what is left after the import line', () => {
+    expect(claudeMdForCodex({ agentsMd: null, claudeMd: 'Be brief', dotClaudeMd: null })).toBeNull();
+    expect(claudeMdForCodex({ agentsMd: 'A', claudeMd: '@AGENTS.md\n', dotClaudeMd: null })).toBeNull();
+    expect(claudeMdForCodex({ agentsMd: 'A', claudeMd: 'A', dotClaudeMd: null })).toBeNull();
+    expect(claudeMdForCodex({ agentsMd: 'A', claudeMd: '@AGENTS.md\nBe brief', dotClaudeMd: null })).toContain('Be brief');
+  });
+
+  it('spaceIntroContext is one line, with the # name, and points at rig_space_describe only when it has rig tools', () => {
+    expect(spaceIntroContext('rig-feedback', true).split('\n')).toHaveLength(1);
+    expect(spaceIntroContext('#rig-feedback', true)).toContain('#rig-feedback.');
+    expect(spaceIntroContext(null, false)).toBe("<rig_space>You're working in a Rig space.</rig_space>");
   });
 });

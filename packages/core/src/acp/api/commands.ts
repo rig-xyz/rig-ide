@@ -39,6 +39,13 @@ export const acpStartInputSchema = z.object({
    * hooks that run commands.
    */
   disabledProjectMcpServers: z.array(z.string()).optional(),
+  /**
+   * Claude only: text appended to Claude Code's own system prompt (the
+   * adapter's `_meta.systemPrompt.append`), never replacing it. A space
+   * session uses it for the folder's AGENTS.md, which Claude Code skips when
+   * there's also a CLAUDE.md.
+   */
+  systemPromptAppend: z.string().max(64_000).optional(),
 });
 export type AcpStartInputWire = z.infer<typeof acpStartInputSchema>;
 

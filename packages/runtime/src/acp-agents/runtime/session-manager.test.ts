@@ -259,6 +259,32 @@ describe('AcpRuntime session manager', () => {
     expect(h.agent.newSession).toHaveBeenLastCalledWith(expect.not.objectContaining({ _meta: expect.anything() }));
   });
 
+  it("appends to a Claude session's system prompt, keeping its preset, on new and load; never for Codex", async () => {
+    const h = makeAcpHarness();
+    const rt = new AcpRuntime(h.deps);
+    await rt.startSession({ ...makeStartInput({ conversationId: 'conv-append' }), systemPromptAppend: 'Space rules' });
+    expect(h.agent.newSession).toHaveBeenLastCalledWith(expect.objectContaining({ _meta: { systemPrompt: { append: 'Space rules' } } }));
+
+    h.agent.loadSession = vi.fn(async () => ({}));
+    await rt.resumeSession({
+      ...makeStartInput({ conversationId: 'conv-append-load' }),
+      sessionId: 'session-old',
+      systemPromptAppend: 'Space rules',
+      disabledProjectMcpServers: ['customerio'],
+    });
+    expect(h.agent.loadSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _meta: {
+          claudeCode: { options: { settings: { disabledMcpjsonServers: ['customerio'] } } },
+          systemPrompt: { append: 'Space rules' },
+        },
+      })
+    );
+
+    await rt.startSession({ ...makeStartInput({ conversationId: 'conv-append-codex', providerId: 'codex' }), systemPromptAppend: 'x' });
+    expect(JSON.stringify(vi.mocked(h.agent.newSession).mock.calls)).not.toContain('"append":"x"');
+  });
+
   it('waits for a closing session to finish closing before loading it again', async () => {
     const h = makeAcpHarness();
     const rt = new AcpRuntime(h.deps);

@@ -17,6 +17,30 @@ function resolveCodexAcpEntry(): string {
   return _require.resolve('@agentclientprotocol/codex-acp/dist/index.js');
 }
 
+/**
+ * codex-acp's `CODEX_CONFIG` (JSON it merges into every thread's config), with
+ * CLAUDE.md added to Codex's `project_doc_fallback_filenames`: Codex then reads
+ * a folder's CLAUDE.md when it has no AGENTS.md, as Claude reads CLAUDE.md.
+ * Anything already in `existing` is kept.
+ */
+export function codexConfigWithClaudeMd(existing: string | undefined): string {
+  let config: Record<string, unknown> = {};
+  if (existing) {
+    try {
+      const parsed: unknown = JSON.parse(existing);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) config = parsed as Record<string, unknown>;
+    } catch {
+      // Not JSON: codex-acp would fail to start on it anyway.
+    }
+  }
+  const current = config.project_doc_fallback_filenames;
+  const fallbacks = Array.isArray(current) ? current.filter((name): name is string => typeof name === 'string') : [];
+  return JSON.stringify({
+    ...config,
+    project_doc_fallback_filenames: fallbacks.includes('CLAUDE.md') ? fallbacks : [...fallbacks, 'CLAUDE.md'],
+  });
+}
+
 export const plugin = definePlugin(
   {
     id: 'codex',
@@ -154,6 +178,7 @@ export const provider = registerPluginBehavior(plugin, {
         // tools) whose name matches one in the user's own Codex config
         // (`shouldDeduplicateMcpConflicts` in its dist/index.js).
         DISABLE_MCP_CONFIG_FILTERING: 'true',
+        CODEX_CONFIG: codexConfigWithClaudeMd(ctx.env.CODEX_CONFIG),
       },
     }),
     connect: (io, toClient) => {
