@@ -110,6 +110,11 @@ export class SpacesDispatchController {
     return this.dispatcher.settleIfNotLive(runId, bindingId);
   }
 
+  /** Reports runs that have gone 30 minutes with no events (see `reportStalled`); a no-op while the dispatcher isn't running. */
+  reportStalledRuns(now?: number): void {
+    this.dispatcher?.reportStalled(now);
+  }
+
   /** Runs a turn in the owner's room agent with no relay request behind it (doc comments in a space). Null when the dispatcher isn't running (Spaces off, or signed out). */
   runLocal(
     spec: Parameters<ReturnType<typeof createSpacesDispatcher>['runLocal']>[0]

@@ -3,7 +3,16 @@ import type { IDisposable, IInitializable } from '@emdash/shared';
 import { app } from 'electron';
 import { KV } from '@main/db/kv';
 import { env as appEnv } from '@main/lib/env';
-import type { TelemetryEnvelope, TelemetryEvent, TelemetryProperties } from '@shared/telemetry';
+import { recentRelayRequestId } from '@main/rig/relay-request';
+import type {
+  AgentRunFailedProps,
+  DailyActiveAgentProps,
+  SyncProblemProps,
+  TelemetryEnvelope,
+  TelemetryEvent,
+  TelemetryProperties,
+} from '@shared/telemetry';
+import { scrubErrorMessage, topStackFrame } from './telemetry-scrub';
 
 interface InitOptions {
   installSource?: string;
@@ -15,6 +24,10 @@ type TelemetryKVSchema = {
   lastActiveDate: string;
   lastSessionId: string;
   lastHeartbeatTs: string;
+  /** 'false' once the user turns off "Send error reports"; absent means on. */
+  errorReports: string;
+  /** `{ date, keys }`: which space/reason pairs already sent a `sync_problem` today. */
+  syncProblemsSent: string;
 };
 
 const LIB_NAME = 'rig-desktop';
@@ -27,8 +40,24 @@ const DEFAULT_API_KEY = 'rig-desktop-v1';
 const DEFAULT_HOST = 'https://userig.xyz/api/telemetry';
 /** Hard cap on `app_error` events per session — a crash loop must never flood the endpoint. */
 const MAX_ERROR_EVENTS_PER_SESSION = 20;
+/** Hard cap on `agent_run_failed` events per session, for the same reason. */
+const MAX_AGENT_FAILURE_EVENTS_PER_SESSION = 20;
 /** Stack frames included in an error fingerprint — enough to disambiguate, never the whole trace. */
 const FINGERPRINT_STACK_FRAMES = 3;
+
+/**
+ * Events governed by "Send error reports" rather than "Usage data": what
+ * went wrong, never what someone did. A crash (`app_closed` with
+ * `was_crash`) counts as one.
+ */
+const ERROR_EVENTS = new Set<string>(['app_error', 'agent_run_failed', 'sync_problem', '$exception']);
+
+export function isErrorEvent(event: string, props?: Record<string, unknown>): boolean {
+  return ERROR_EVENTS.has(event) || (event === 'app_closed' && props?.was_crash === true);
+}
+
+/** Longer string limits for the few fields that need them; everything else is cut at 100. */
+const STRING_LIMITS: Record<string, number> = { message: 300 };
 
 // ---------------------------------------------------------------------------
 // Error fingerprinting — content-free by construction: no message, no raw
@@ -86,6 +115,9 @@ function fingerprint(kind: string, name: string, frames: string[]): string {
 
 export const __testing = { errorName, stackFrames, fingerprint };
 
+/** Which agent CLIs this computer runs, for `daily_active_user`; filled in once the dependency probe has run. */
+export type AgentCliInfoProvider = () => Promise<DailyActiveAgentProps>;
+
 class TelemetryService implements IInitializable, IDisposable {
   private enabled = true;
   private apiKey: string | undefined;
@@ -93,6 +125,10 @@ class TelemetryService implements IInitializable, IDisposable {
   private instanceId: string | undefined;
   private installSource: string | undefined;
   private userOptOut: boolean | undefined;
+  private errorReportsOptOut = false;
+  private agentFailureCount = 0;
+  private agentCliInfo: AgentCliInfoProvider | undefined;
+  private syncProblemsSent: { date: string; keys: string[] } | undefined;
   private sessionId: string | undefined;
   private lastActiveDate: string | undefined;
   private errorEventCount = 0;
@@ -103,16 +139,31 @@ class TelemetryService implements IInitializable, IDisposable {
   // Internal helpers
   // ---------------------------------------------------------------------------
 
-  private isEnabled(): boolean {
+  /** A build that may send at all: never a dev build, not turned off by env, with somewhere to send to. */
+  private canTransmit(): boolean {
     return (
       !isViteDevBuild &&
       this.enabled === true &&
-      this.userOptOut !== true &&
       !!this.apiKey &&
       !!this.host &&
       typeof this.instanceId === 'string' &&
       this.instanceId.length > 0
     );
+  }
+
+  /** Usage events: "Usage data" is on. */
+  private isEnabled(): boolean {
+    return this.canTransmit() && this.userOptOut !== true;
+  }
+
+  /** Error events: "Send error reports" is on, whatever "Usage data" says. */
+  private errorReportsAllowed(): boolean {
+    return this.canTransmit() && !this.errorReportsOptOut;
+  }
+
+  /** Whether `event` may go, by the switch that governs it. */
+  private allows(event: string, props?: Record<string, unknown>): boolean {
+    return isErrorEvent(event, props) ? this.errorReportsAllowed() : this.isEnabled();
   }
 
   private getVersionSafe(): string {
@@ -211,6 +262,22 @@ class TelemetryService implements IInitializable, IDisposable {
       'duration_ms',
       'error_step',
       'error_code',
+      // Error reports (see `isErrorEvent`): scrubbed message and top frame, the
+      // relay request that failed, agent run failures and sync problems.
+      'message',
+      'frame',
+      'req_id',
+      'agent',
+      'reason',
+      'cli_version',
+      'cli_source',
+      'model',
+      'apply_error_kind',
+      'tapd_version',
+      // daily_active_user: which agent CLIs this computer runs.
+      'claude_cli',
+      'codex_cli',
+      'codex_source',
     ]);
     const passthroughProps = new Set([
       '$exception_message',
@@ -224,7 +291,7 @@ class TelemetryService implements IInitializable, IDisposable {
         if (!allowedProps.has(key) && !passthroughProps.has(key)) continue;
 
         if (typeof value === 'string') {
-          const maxLength = passthroughProps.has(key) ? 2_000 : 100;
+          const maxLength = passthroughProps.has(key) ? 2_000 : (STRING_LIMITS[key] ?? 100);
           sanitized[key] = value.trim().slice(0, maxLength);
         } else if (typeof value === 'number') {
           if (key === 'event_ts_ms') {
@@ -262,7 +329,7 @@ class TelemetryService implements IInitializable, IDisposable {
     event: TelemetryEvent,
     properties?: Record<string, unknown>
   ): Promise<void> {
-    if (!this.isEnabled()) return;
+    if (!this.allows(event, properties)) return;
     try {
       const u = (this.host ?? '').replace(/\/$/, '') + '/capture/';
       const body = {
@@ -294,14 +361,16 @@ class TelemetryService implements IInitializable, IDisposable {
     try {
       const today = new Date().toISOString().split('T')[0]!;
       if (this.lastActiveDate === today) return;
+      // Claimed before waiting on the agent probe, so a focus event meanwhile doesn't send a second one.
+      this.lastActiveDate = today;
+      void this.kv.set('lastActiveDate', today);
 
+      const agents = this.agentCliInfo ? await this.agentCliInfo().catch(() => null) : null;
       void this.posthogCapture('daily_active_user', {
         date: today,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown',
+        ...(agents ?? {}),
       });
-
-      this.lastActiveDate = today;
-      void this.kv.set('lastActiveDate', today);
     } catch {
       // Never let telemetry errors crash the app
     }
@@ -332,6 +401,8 @@ class TelemetryService implements IInitializable, IDisposable {
     let storedActiveDate: string | null = null;
     let storedLastSessionId: string | null = null;
     let storedLastHeartbeatTs: string | null = null;
+    let storedErrorReports: string | null = null;
+    let storedSyncProblems: string | null = null;
     try {
       [
         storedInstanceId,
@@ -339,12 +410,16 @@ class TelemetryService implements IInitializable, IDisposable {
         storedActiveDate,
         storedLastSessionId,
         storedLastHeartbeatTs,
+        storedErrorReports,
+        storedSyncProblems,
       ] = await Promise.all([
         this.kv.get('instanceId'),
         this.kv.get('enabled'),
         this.kv.get('lastActiveDate'),
         this.kv.get('lastSessionId'),
         this.kv.get('lastHeartbeatTs'),
+        this.kv.get('errorReports'),
+        this.kv.get('syncProblemsSent'),
       ]);
     } catch {
       // KV unavailable during startup (e.g. DB migration not yet applied) — use in-memory defaults
@@ -356,6 +431,8 @@ class TelemetryService implements IInitializable, IDisposable {
     }
 
     this.userOptOut = storedEnabled === 'false' ? true : undefined;
+    this.errorReportsOptOut = storedErrorReports === 'false';
+    this.syncProblemsSent = parseSyncProblemsSent(storedSyncProblems);
     this.lastActiveDate = storedActiveDate ?? undefined;
 
     // Detect unclean exit from the previous session: if we have a recorded session ID
@@ -416,7 +493,7 @@ class TelemetryService implements IInitializable, IDisposable {
    * Capture an exception for PostHog error tracking.
    */
   captureException(error: Error | unknown, additionalProperties?: Record<string, unknown>): void {
-    if (!this.isEnabled()) return;
+    if (!this.errorReportsAllowed()) return;
 
     const errorObj = error instanceof Error ? error : new Error(String(error));
 
@@ -453,6 +530,26 @@ class TelemetryService implements IInitializable, IDisposable {
     return this.userOptOut !== true;
   }
 
+  /** User-facing toggle (Settings → "Send error reports"). On by default; independent of usage data. */
+  setErrorReportsEnabled(enabledFlag: boolean): void {
+    this.errorReportsOptOut = !enabledFlag;
+    void this.kv.set('errorReports', String(enabledFlag));
+  }
+
+  isErrorReportsEnabled(): boolean {
+    return !this.errorReportsOptOut;
+  }
+
+  /** Whether an error event would actually go now (switch on, a packaged build): lets callers skip work that only feeds one. */
+  canSendErrorReports(): boolean {
+    return this.errorReportsAllowed();
+  }
+
+  /** Where `daily_active_user` reads the agent CLI versions from (wired in `main/index.ts`). */
+  setAgentCliInfoProvider(provider: AgentCliInfoProvider): void {
+    this.agentCliInfo = provider;
+  }
+
   async checkAndReportDailyActiveUser(): Promise<void> {
     return this.checkDailyActiveUser();
   }
@@ -476,24 +573,70 @@ class TelemetryService implements IInitializable, IDisposable {
   }
 
   /**
-   * Records a content-free error: `error_type` (the error's name, never its
-   * message) and a fingerprint derived from the kind plus up to
-   * `FINGERPRINT_STACK_FRAMES` stack frames, each reduced to `basename:function`
-   * — no directory paths, no message, no raw stack ever leaves the machine.
-   * Capped at `MAX_ERROR_EVENTS_PER_SESSION` so a crash loop can't flood the
-   * endpoint.
+   * Records an error: `error_type` (the error's name), a fingerprint derived
+   * from the kind plus up to `FINGERPRINT_STACK_FRAMES` stack frames (each
+   * reduced to `basename:function`, never the message), the message scrubbed
+   * by `scrubErrorMessage` (paths cut to file names, secrets and emails
+   * removed, 300 characters at most), the top frame as `file.ts:line`, and the
+   * relay request id of a relay call that failed in the last two minutes. No
+   * directory path or raw stack ever leaves the machine. Governed by "Send
+   * error reports"; capped at `MAX_ERROR_EVENTS_PER_SESSION` so a crash loop
+   * can't flood the endpoint.
    */
   trackError(kind: 'main-uncaught' | 'main-rejection' | 'renderer', error: unknown): void {
-    if (!this.isEnabled()) return;
+    if (!this.errorReportsAllowed()) return;
     if (this.errorEventCount >= MAX_ERROR_EVENTS_PER_SESSION) return;
     this.errorEventCount++;
 
     const name = errorName(error);
+    const message = scrubErrorMessage((error as { message?: unknown } | null)?.message);
+    const frame = topStackFrame(error);
+    const reqId = recentRelayRequestId();
     this.capture('app_error', {
       error_type: name,
       source: kind,
       $exception_fingerprint: fingerprint(kind, name, stackFrames(error)),
+      ...(message ? { message } : {}),
+      ...(frame ? { frame } : {}),
+      ...(reqId ? { req_id: reqId } : {}),
     });
+  }
+
+  /** A Room, space or comment agent run that ended in an error (or never ended). Never carries prompt or answer text. */
+  trackAgentRunFailed(props: AgentRunFailedProps): void {
+    if (!this.errorReportsAllowed()) return;
+    if (this.agentFailureCount >= MAX_AGENT_FAILURE_EVENTS_PER_SESSION) return;
+    this.agentFailureCount++;
+    const reqId = props.req_id ?? recentRelayRequestId();
+    this.capture('agent_run_failed', { ...props, ...(reqId ? { req_id: reqId } : {}) });
+  }
+
+  /**
+   * A space's sync turned unhealthy. At most once per `dedupeKey` (a hash of
+   * the space, never its name or id) and reason per day, across restarts.
+   * Returns whether it was sent.
+   */
+  trackSyncProblem(dedupeKey: string, props: SyncProblemProps, now = new Date()): boolean {
+    if (!this.errorReportsAllowed()) return false;
+    const today = now.toISOString().split('T')[0]!;
+    const sent = this.syncProblemsSent?.date === today ? this.syncProblemsSent : { date: today, keys: [] };
+    const key = `${dedupeKey}:${props.reason}`;
+    if (sent.keys.includes(key)) return false;
+    this.syncProblemsSent = { date: today, keys: [...sent.keys, key].slice(-200) };
+    void this.kv.set('syncProblemsSent', JSON.stringify(this.syncProblemsSent));
+    this.capture('sync_problem', props);
+    return true;
+  }
+}
+
+function parseSyncProblemsSent(raw: string | null): { date: string; keys: string[] } | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { date?: unknown; keys?: unknown };
+    if (typeof parsed.date !== 'string' || !Array.isArray(parsed.keys)) return undefined;
+    return { date: parsed.date, keys: parsed.keys.filter((k): k is string => typeof k === 'string') };
+  } catch {
+    return undefined;
   }
 }
 

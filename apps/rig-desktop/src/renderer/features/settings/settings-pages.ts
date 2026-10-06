@@ -137,6 +137,13 @@ export const SETTINGS_ROWS: readonly SettingsRowEntry[] = [
     label: 'Usage data',
     description: "Counts like daily use, which agents you run and error types. Never what's in your files or chats.",
   },
+  {
+    id: 'error-reports',
+    page: 'privacy',
+    label: 'Send error reports',
+    description:
+      "When something goes wrong, Rig sends what went wrong and where in its code. Never your files or messages.",
+  },
   { id: 'privacy-policy', page: 'privacy', label: 'Privacy policy', description: 'What Rig Labs collects and why.' },
   { id: 'terms', page: 'privacy', label: 'Terms of service', description: 'The agreement for using Rig.' },
   {

@@ -81,7 +81,12 @@ vi.mock('@renderer/lib/ipc', () => ({
       listMetadata: async () => [claude, codex, gemini],
       update: agentsUpdateMock,
     },
-    telemetry: { isUserEnabled: async () => true, setEnabled: async () => {} },
+    telemetry: {
+      isUserEnabled: async () => false,
+      setEnabled: async () => {},
+      isErrorReportsEnabled: async () => true,
+      setErrorReportsEnabled: async () => {},
+    },
     app: { getAppVersion: async () => '0.0.0-test' },
     update: { isSupported: async () => false, getState: async () => ({ success: false }) },
   },
@@ -180,6 +185,15 @@ describe('SettingsSheet', () => {
     expect(currentPage()).toBe('notifications');
     expect(pageTitle()).toBe('Notifications');
     expect(document.querySelector('[data-settings-row="quiet-while-using"]')).toBeTruthy();
+  });
+
+  it('Privacy has its own error reports switch, on even with usage data off', async () => {
+    await renderSettings({ initialPage: 'privacy' });
+    const usage = document.querySelector<HTMLButtonElement>('#telemetry-enabled');
+    const errors = document.querySelector<HTMLButtonElement>('#error-reports-enabled');
+    expect(document.querySelector('[data-settings-row="error-reports"]')?.textContent).toContain('Send error reports');
+    expect(usage?.getAttribute('aria-checked')).toBe('false');
+    expect(errors?.getAttribute('aria-checked')).toBe('true');
   });
 
   it('moves between pages from the rail, and remembers the last one for next time', async () => {

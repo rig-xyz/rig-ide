@@ -11,6 +11,7 @@ import type {
 import { resolveCommentTarget } from './comments';
 import { readRelayToken } from './config';
 import { checkRelayTrust } from './relay-trust';
+import { fetchRelay } from './relay-request';
 
 /**
  * Relay-backed share-link management (`docs/share-links-spec.md` in the tap
@@ -129,7 +130,7 @@ async function relayFetch(
   url: string,
   init: { method: 'GET' | 'POST'; body?: unknown }
 ): Promise<Response> {
-  return fetch(url, {
+  return fetchRelay(url, {
     method: init.method,
     headers: {
       authorization: `Bearer ${ctx.token}`,

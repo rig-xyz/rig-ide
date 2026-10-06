@@ -221,6 +221,23 @@ type QueuedTurn = {
   promptSent?: boolean;
   /** Its end is recorded; a stopped turn stays in `pending` until the runtime gets to it, so it's cancelled then and never claims another turn's start. */
   finalized?: boolean;
+  /** Which agent runs it, and on what model (when the session said), for a failure report. */
+  agent: SessionAgent;
+  model: string | null;
+  /** When the runtime last told us anything about this turn; a long silence counts it as stalled once (`reportStalled`). */
+  lastEventAt: number;
+  stallReported?: boolean;
+};
+
+/** How long a run can go with no events before it counts as stalled. */
+export const RUN_STALL_MS = 30 * 60_000;
+
+/** What a failed run is reported as: the text never leaves this computer, it only picks a reason (`agent-run-failure.ts`). */
+export type RunFailure = {
+  agent: SessionAgent;
+  text: string;
+  phase: 'start' | 'run' | 'stalled';
+  model: string | null;
 };
 
 type PersistentSession = {
@@ -664,6 +681,8 @@ export function createSpacesDispatcher(deps: {
   codexVersion?: () => string | null;
   /** Reads a file in the space's folder as text (rig.toml, AGENTS.md, CLAUDE.md), null when it isn't there. Omitted: from disk. */
   readSpaceFile?: (cwd: string, relPath: string) => Promise<string | null>;
+  /** A run that couldn't start, ended in an error, or went quiet for `RUN_STALL_MS` (the error report). */
+  onRunFailed?: (failure: RunFailure) => void;
 }): {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
@@ -692,6 +711,8 @@ export function createSpacesDispatcher(deps: {
   resolvePermission: (runId: string, requestId: string, optionId: string) => Promise<boolean>;
   /** The run the owner's session with this agent is on right now (or about to start), for per-turn limits on rig tools; null when idle. */
   currentRunId: (bindingId: string, ownerUserId: string, agent: SessionAgent) => string | null;
+  /** Reports each running turn that has had no events for `RUN_STALL_MS` (once per turn, not while it waits on an approval). */
+  reportStalled: (now?: number) => void;
 } {
   const sessions = new Map<PersistentKey, PersistentSession>();
   /** Runs this process has started and not yet finalized: the only ones truly running here. */
@@ -727,7 +748,10 @@ export function createSpacesDispatcher(deps: {
     switch (raw.kind) {
       case 'turn_start': {
         const turn = claimTurn(session, raw.turnId);
-        if (turn) session.current = turn;
+        if (turn) {
+          session.current = turn;
+          turn.lastEventAt = Date.now();
+        }
         // Stopped while it waited in the runtime's queue: the runtime started it anyway.
         if (turn?.finalized) void deps.acp.cancelTurn(session.conversationId);
         return;
@@ -758,6 +782,7 @@ export function createSpacesDispatcher(deps: {
         if (raw.update.sessionUpdate === 'available_commands_update') return;
         const turn = session.current;
         if (!turn || turn.finalized) return;
+        turn.lastEventAt = Date.now();
         turn.publisher.record(raw.update.sessionUpdate, raw.update);
         if (raw.update.sessionUpdate === 'agent_message_chunk') collectAnswer(turn, raw.update);
         return;
@@ -771,6 +796,14 @@ export function createSpacesDispatcher(deps: {
     // The card flips out of "running" on this event (run status changes
     // aren't broadcast to the Room), so it must land before `finish`.
     turn.publisher.record('turn_ended', reason ? { status, reason } : { status });
+    if (status === 'failed') {
+      deps.onRunFailed?.({
+        agent: turn.agent,
+        text: [reason, turn.answer.text].filter(Boolean).join('\n'),
+        phase: 'run',
+        model: turn.model,
+      });
+    }
     await turn.publisher.finish(status);
     deps.store?.clearInFlight?.(turn.runId);
     liveRunIds.delete(turn.runId);
@@ -866,6 +899,8 @@ export function createSpacesDispatcher(deps: {
       const option = held.request.options.find((o) => o.optionId === optionId);
       if (!option) return false;
       session.heldPermissions.delete(requestId);
+      // The wait for its owner ends here: the stall clock starts again.
+      held.turn.lastEventAt = Date.now();
       notifyPermissions(session, held.turn);
       // The owner just allowed an always-ask rig tool call: the receipt that call needs (`ownerApprovals`).
       const rigTool = rigToolOf(held.request.toolCall.title);
@@ -1196,6 +1231,7 @@ export function createSpacesDispatcher(deps: {
       ms: Date.now() - t0,
     });
     if (!sessionResult.success) {
+      deps.onRunFailed?.({ agent: spec.agent, text: sessionResult.error, phase: 'start', model: null });
       publisher.record('turn_ended', { status: 'failed', reason: `couldn't start the agent: ${sessionResult.error}` });
       await publisher.finish('failed');
       deps.store?.clearInFlight?.(created.data.id);
@@ -1220,6 +1256,9 @@ export function createSpacesDispatcher(deps: {
       answer: { messageId: null, text: '' },
       onSettled: spec.onSettled,
       onPermissionsChanged: spec.onPermissionsChanged,
+      agent: spec.agent,
+      model: model ?? null,
+      lastEventAt: Date.now(),
     };
     // Stopped while it was still reaching the agent: it ends here, and the prompt never goes.
     if (stopRequested.delete(turn.runId)) {
@@ -1530,6 +1569,20 @@ export function createSpacesDispatcher(deps: {
     return session?.current?.runId ?? session?.pending[0]?.runId ?? null;
   }
 
+  function reportStalled(now = Date.now()): void {
+    for (const session of sessions.values()) {
+      // The turn the runtime is on, or the first one it was sent and never started.
+      const turn = session.current ?? (session.pending[0]?.promptSent ? session.pending[0] : null);
+      if (!turn || turn.finalized || turn.stallReported) continue;
+      if (now - turn.lastEventAt < RUN_STALL_MS) continue;
+      // Waiting on its owner's approval isn't stalled.
+      if ([...session.heldPermissions.values()].some((held) => held.turn === turn)) continue;
+      turn.stallReported = true;
+      log.warn('Rig spaces dispatch: a run has had no events for 30 minutes', { runId: turn.runId });
+      deps.onRunFailed?.({ agent: turn.agent, text: '', phase: 'stalled', model: turn.model });
+    }
+  }
+
   return {
     dispatch,
     runLocal,
@@ -1540,6 +1593,7 @@ export function createSpacesDispatcher(deps: {
     agentConfig,
     setAgentConfig,
     currentRunId,
+    reportStalled,
   };
 }
 

@@ -8,6 +8,7 @@ import {
 } from '@shared/rig/recent-themes';
 import { isError, resolveContext } from './account';
 import { localCacheAccountId } from './local-cache-account';
+import { fetchRelay } from './relay-request';
 
 /**
  * Home's Room themes of the last 24h across the account's spaces: `GET
@@ -51,7 +52,7 @@ async function fetchLive(): Promise<RigRecentTheme[] | null> {
   const ctx = await resolveContext();
   if (isError(ctx)) return null;
   try {
-    const response = await fetch(new URL('/v1/me/themes/recent', ctx.url), {
+    const response = await fetchRelay(new URL('/v1/me/themes/recent', ctx.url), {
       headers: { authorization: `Bearer ${ctx.token}`, accept: 'application/json' },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });

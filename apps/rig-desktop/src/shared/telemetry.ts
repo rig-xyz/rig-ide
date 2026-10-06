@@ -45,7 +45,7 @@ export type TelemetryEventProperties = {
   app_closed: { was_crash?: boolean };
   app_window_focused: EmptyProps;
   app_window_unfocused: EmptyProps;
-  daily_active_user: { date: string; timezone: string };
+  daily_active_user: { date: string; timezone: string } & DailyActiveAgentProps;
 
   focus_changed: {
     view: FocusView | null;
@@ -175,7 +175,19 @@ export type TelemetryEventProperties = {
 
   // Rig-native events — see `main/lib/telemetry.ts`'s `trackError` for
   // `app_error`, and the various `main/rig/*` call sites for the rest.
-  app_error: { error_type: string; source: 'main-uncaught' | 'main-rejection' | 'renderer'; $exception_fingerprint: string };
+  app_error: {
+    error_type: string;
+    source: 'main-uncaught' | 'main-rejection' | 'renderer';
+    $exception_fingerprint: string;
+    /** Scrubbed: paths cut to file names, secrets and emails removed, 300 characters at most. */
+    message?: string;
+    /** The top stack frame, `file.ts:line`. */
+    frame?: string;
+    /** The relay's `x-request-id` of a relay call that failed in the two minutes before. */
+    req_id?: string;
+  };
+  agent_run_failed: AgentRunFailedProps;
+  sync_problem: SyncProblemProps;
   rig_opened: { source: 'recent' | 'create' | 'join' | 'deeplink' | 'other' };
   rig_created: EmptyProps;
   agent_dispatched: { provider: string };
@@ -183,6 +195,52 @@ export type TelemetryEventProperties = {
   invite_sent: EmptyProps;
   invite_accepted: EmptyProps;
   document_saved: EmptyProps;
+};
+
+export type AgentCli = 'claude' | 'codex';
+/** Where the agent CLI on this computer came from, read off its resolved path. */
+export type AgentCliSource = 'npm' | 'chatgpt_app' | 'homebrew' | 'other';
+export type AgentRunFailureReason =
+  | 'outdated_cli'
+  | 'model_unsupported'
+  | 'auth'
+  | 'network'
+  | 'rate_limit'
+  | 'start_failed'
+  | 'stalled'
+  | 'other';
+
+/** `agent_run_failed`: a Room, space or comment agent run that ended in an error, or ran 30 minutes with no events. */
+export type AgentRunFailedProps = {
+  agent: AgentCli;
+  reason: AgentRunFailureReason;
+  cli_version: string | null;
+  cli_source: AgentCliSource | null;
+  model?: string;
+  req_id?: string;
+};
+
+export type SyncProblemReason =
+  | 'daemon_stalled'
+  | 'apply_error'
+  | 'offline_long'
+  | 'conflicts'
+  | 'paused_unexpectedly'
+  | 'other';
+
+/** `sync_problem`: a space's sync turned unhealthy. No space name, id or path, ever. */
+export type SyncProblemProps = {
+  reason: SyncProblemReason;
+  /** A short code like `eacces` or `hash_mismatch`, never a path or file name. */
+  apply_error_kind?: string;
+  tapd_version: string | null;
+};
+
+/** `daily_active_user`'s agent fields: which Claude and Codex CLIs this computer runs. */
+export type DailyActiveAgentProps = {
+  claude_cli?: string | null;
+  codex_cli?: string | null;
+  codex_source?: AgentCliSource | null;
 };
 
 export type TelemetryEvent = keyof TelemetryEventProperties;

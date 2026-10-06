@@ -13,5 +13,9 @@ export const telemetryController = createRPCController({
     telemetryService.setEnabled(enabled);
   },
   isUserEnabled: () => telemetryService.isUserEnabled(),
+  setErrorReportsEnabled: (enabled: boolean) => {
+    telemetryService.setErrorReportsEnabled(enabled);
+  },
+  isErrorReportsEnabled: () => telemetryService.isErrorReportsEnabled(),
   getFeatureFlags: () => telemetryService.getFeatureFlags(),
 });

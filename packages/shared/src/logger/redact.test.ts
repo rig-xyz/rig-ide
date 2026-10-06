@@ -24,6 +24,24 @@ describe('redactSecrets', () => {
     expect(redactSecrets('sk-abcdefghijklmnopqrstuvwxyz123456')).toContain('[REDACTED_OPENAI_KEY]');
   });
 
+  it('redacts Rig relay tokens and secrets wherever they appear', () => {
+    const line =
+      'RIG_RELAY_TOKEN=rpat_AbCdEfGhIjKlMnOpQrStUvWxYz012345 {"relayToken":"rsk_AbCdEfGhIjKlMnOpQrSt"} ' +
+      'GET /v1/invites/tap_inv_AbCdEfGhIjKlMnOpQrStUvWx tap_cap_AbCdEfGhIjKlMnOpQrSt tap_shr_AbCdEfGhIjKlMnOpQrSt';
+    const redacted = redactSecrets(line);
+    expect(redacted).not.toMatch(/rpat_|rsk_|tap_inv_|tap_cap_|tap_shr_/);
+    expect(redacted.match(/\[REDACTED_RIG_TOKEN\]/g)).toHaveLength(5);
+  });
+
+  it('redacts a bearer credential logged without a header name', () => {
+    const redacted = redactSecrets('fetch failed with headers Bearer abc.def-ghi_jkl123 and more');
+    expect(redacted).toBe('fetch failed with headers Bearer [REDACTED] and more');
+  });
+
+  it('leaves the word bearer in prose alone', () => {
+    expect(redactSecrets('the bearer of bad news')).toBe('the bearer of bad news');
+  });
+
   it('redacts PEM blocks', () => {
     const pem = '-----BEGIN RSA PRIVATE KEY-----\nMIIEpA\n-----END RSA PRIVATE KEY-----';
     expect(redactSecrets(pem)).toBe('[REDACTED_PEM_BLOCK]');

@@ -20,6 +20,7 @@ import {
 import { findBindingConfig, type RigBindingLocation } from './binding';
 import { readRelayToken } from './config';
 import { checkRelayTrust } from './relay-trust';
+import { fetchRelay } from './relay-request';
 
 /**
  * Relay-backed comments for doc tabs.
@@ -253,7 +254,7 @@ async function relayFetch(
   url: string,
   init: { method: 'GET' | 'POST'; body?: unknown }
 ): Promise<Response> {
-  return fetch(url, {
+  return fetchRelay(url, {
     method: init.method,
     headers: {
       authorization: `Bearer ${ctx.token}`,
@@ -416,7 +417,7 @@ async function readSelfIdentity(target: RigCommentTarget): Promise<SelfIdentity 
 
   try {
     const base = target.relayUrl.replace(/\/+$/, '');
-    const response = await fetch(`${base}/v1/me`, {
+    const response = await fetchRelay(`${base}/v1/me`, {
       headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });

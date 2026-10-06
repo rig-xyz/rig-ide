@@ -15,6 +15,8 @@ import {
   connectorsHiddenContext,
   leakedProviderError,
   roomContextLines,
+  RUN_STALL_MS,
+  type RunFailure,
   spacesHiddenContext,
   type RawSessionEvent,
   type SpaceSessionStore,
@@ -2397,5 +2399,83 @@ describe('instructions parity helpers', () => {
     expect(spaceIntroContext('rig-feedback', true).split('\n')).toHaveLength(1);
     expect(spaceIntroContext('#rig-feedback', true)).toContain('#rig-feedback.');
     expect(spaceIntroContext(null, false)).toBe("<rig_space>You're working in a Rig space.</rig_space>");
+  });
+});
+
+describe('failed and stalled runs (the agent_run_failed report)', () => {
+  function setup() {
+    const { api } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const failures: RunFailure[] = [];
+    const dispatcher = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      onRunFailed: (failure) => failures.push(failure),
+    });
+    return { fake, failures, dispatcher };
+  }
+
+  it('reports an agent that could not start, with its own words to classify', async () => {
+    const { fake, failures, dispatcher } = setup();
+    fake.setStartResult(err('Not logged in. Run claude /login'));
+    await dispatcher.dispatch(makeRequest());
+    expect(failures).toEqual([{ agent: 'claude', text: 'Not logged in. Run claude /login', phase: 'start', model: null }]);
+  });
+
+  it('reports a turn that ended in an error, and a provider error that came back as the answer', async () => {
+    const { fake, failures, dispatcher } = setup();
+    await dispatcher.dispatch(makeRequest({ id: 'a' }));
+    const conversationId = fake.started[0].conversationId;
+    const [first] = fake.queued.map((q) => q.turnId);
+    fake.emitTurnStart(conversationId, first!);
+    fake.emitTurnEnd(conversationId, first!, null);
+    await vi.waitFor(() => expect(failures).toHaveLength(1));
+    expect(failures[0]).toMatchObject({ agent: 'claude', phase: 'run', text: 'the agent stopped with an error' });
+
+    await dispatcher.dispatch(makeRequest({ id: 'b' }));
+    const second = fake.queued[1]!.turnId;
+    fake.emitTurnStart(conversationId, second);
+    fake.emitUpdate(conversationId, {
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: '{"type":"error","error":{"message":"The model requires a newer version of Codex."}}' },
+    });
+    fake.emitTurnEnd(conversationId, second, 'end_turn');
+    await vi.waitFor(() => expect(failures).toHaveLength(2));
+    expect(failures[1]!.text).toContain('requires a newer version of Codex');
+  });
+
+  it('a done turn is not a failure', async () => {
+    const { fake, failures, dispatcher } = setup();
+    await dispatcher.dispatch(makeRequest());
+    const conversationId = fake.started[0].conversationId;
+    fake.emitTurnStart(conversationId, fake.queued[0]!.turnId);
+    fake.emitTurnEnd(conversationId, fake.queued[0]!.turnId, 'end_turn');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(failures).toEqual([]);
+  });
+
+  it('a run with no events for 30 minutes counts once as stalled', async () => {
+    const { fake, failures, dispatcher } = setup();
+    await dispatcher.dispatch(makeRequest());
+    const conversationId = fake.started[0].conversationId;
+    fake.emitTurnStart(conversationId, fake.queued[0]!.turnId);
+
+    dispatcher.reportStalled(Date.now() + RUN_STALL_MS - 60_000);
+    expect(failures).toEqual([]);
+    dispatcher.reportStalled(Date.now() + RUN_STALL_MS + 1_000);
+    dispatcher.reportStalled(Date.now() + 2 * RUN_STALL_MS);
+    expect(failures).toEqual([{ agent: 'claude', text: '', phase: 'stalled', model: null }]);
+  });
+
+  it('a run waiting on its owner’s approval is not stalled', async () => {
+    const { fake, failures, dispatcher } = setup();
+    await dispatcher.dispatch(makeRequest());
+    const conversationId = fake.started[0].conversationId;
+    fake.emitTurnStart(conversationId, fake.queued[0]!.turnId);
+    fake.emitPermissionRequest(conversationId, makePermissionRequest());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    dispatcher.reportStalled(Date.now() + RUN_STALL_MS + 1_000);
+    expect(failures).toEqual([]);
   });
 });

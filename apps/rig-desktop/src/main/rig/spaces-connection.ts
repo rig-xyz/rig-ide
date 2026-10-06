@@ -22,6 +22,7 @@ import {
   type SessionRun,
   type SpaceConnectorRow,
 } from './spaces/relay-api';
+import { fetchRelay } from './relay-request';
 
 /**
  * Spaces: everything the renderer's `RelayRoomSource` needs from the relay,
@@ -303,7 +304,7 @@ export const rigSpacesConnectionController = createRPCController({
     const ctx = await resolveContext();
     if (isError(ctx)) return NO_DRAFT_PREVIEW;
     try {
-      const response = await fetch(
+      const response = await fetchRelay(
         `${ctx.url.replace(/\/+$/, '')}/v1/me/bindings/${encodeURIComponent(input.bindingId)}/draft-preview`,
         {
           method: 'POST',

@@ -10,6 +10,7 @@ import {
   type ThemesSnapshotWire,
 } from '@shared/spaces/themes';
 import { isError, resolveContext, type Resolved } from '../account';
+import { fetchRelay } from '../relay-request';
 
 /**
  * Spaces (lane 3): the relay's session-log, agent-request-queue, and room-
@@ -407,7 +408,7 @@ async function request(
   const base = ctx.url.replace(/\/+$/, '');
   let response: Response;
   try {
-    response = await fetch(`${base}${path}`, {
+    response = await fetchRelay(`${base}${path}`, {
       method,
       headers: {
         authorization: `Bearer ${ctx.token}`,

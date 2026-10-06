@@ -24,6 +24,7 @@ import { findBindingConfig, type RigBindingLocation } from './binding';
 import { disposeReplicaSafely } from './intent-bridge-lifecycle';
 import { intentContextFromTurn } from './intent-context';
 import { clearAcpSessionStart, getAcpSessionStart } from './session-registry';
+import { fetchRelay } from './relay-request';
 
 const POLL_INTERVAL_MS = 2_000;
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -647,7 +648,7 @@ class RigIntentBridge {
     init: { method: string; body?: unknown }
   ): Promise<Response> {
     const base = binding.config.relayUrl.replace(/\/+$/, '');
-    return fetch(`${base}${path}`, {
+    return fetchRelay(`${base}${path}`, {
       method: init.method,
       headers: {
         authorization: `Bearer ${binding.config.token}`,

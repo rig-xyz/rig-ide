@@ -10,6 +10,7 @@ import { err, ok, type Result } from '@emdash/shared';
 import { ReplicaState } from '@emdash/wire';
 import { getAcpRuntimeClient, type AcpRuntimeClient } from '@main/core/acp/controller';
 import { resolveRoomTurnPermission, runCommentTurnInRoom } from './spaces/dispatch-controller-instance';
+import { reportAgentRunFailure } from './agent-run-failure-instance';
 import { agentHookService } from '@main/core/agent-hooks/agent-hook-service';
 import { isValidProviderId } from '@main/core/agents/plugin-registry';
 import { events } from '@main/lib/events';
@@ -623,11 +624,17 @@ export const rigCommentAgentController = createRPCController({
       }
     }
 
+    // The error report for a standalone run that fails (a room run reports its own, in `dispatch.ts`).
+    const reportFailure = (text: string, phase: 'start' | 'run' | 'stalled', model?: string | null) => {
+      if (roomAgent) reportAgentRunFailure({ agent: roomAgent, text, phase, model });
+    };
+
     let client: AcpRuntimeClient;
     try {
       client = await getAcpRuntimeClient();
     } catch (error) {
       log.warn('Rig comment agent: ACP runtime unavailable', { providerId, error: String(error) });
+      reportFailure(String(error), 'start');
       return err(agentError('The agent runtime could not be started.'));
     }
 
@@ -803,6 +810,7 @@ export const rigCommentAgentController = createRPCController({
           error: started.error,
         });
         const detail = causeMessage(started.error);
+        reportFailure(detail ?? '', 'start', model);
         return err(
           agentError(
             detail ? `The agent could not be started: ${detail}` : 'The agent could not be started.'
@@ -820,6 +828,7 @@ export const rigCommentAgentController = createRPCController({
 
       const outcome = await turn.outcome;
       if (outcome === 'error') {
+        reportFailure('', 'run', model);
         return err(agentError('The agent stopped with an error before answering.'));
       }
 
@@ -848,6 +857,7 @@ export const rigCommentAgentController = createRPCController({
         // terminal state; this is that state's message, distinct from the
         // general one so a reviewer knows to retry rather than wonder what
         // "did not answer in time" even means for a stroke.
+        reportFailure('', outcome === 'timeout' ? 'stalled' : 'run', usedModel);
         return err(
           agentError(
             outcome === 'timeout'
@@ -927,6 +937,7 @@ export const rigCommentAgentController = createRPCController({
       }
 
       if (classification.kind === 'failure') {
+        reportFailure(rawAnswer, 'run', usedModel);
         return err(agentError(classification.message));
       }
       const cleanAnswer = classification.text;
@@ -955,6 +966,7 @@ export const rigCommentAgentController = createRPCController({
         providerId,
         error: String(error),
       });
+      reportFailure(String(error), 'run');
       return err(agentError('The agent could not be reached.'));
     } finally {
       turn.dispose();

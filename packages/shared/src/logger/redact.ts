@@ -36,6 +36,10 @@ const SECRET_PATTERNS: Array<[RegExp, RedactionReplacement]> = [
   [/\bsk-[A-Za-z0-9_-]{20,}\b/g, '[REDACTED_OPENAI_KEY]'],
   [/\bxox[baprs]-[A-Za-z0-9-]{20,}\b/g, '[REDACTED_SLACK_TOKEN]'],
   [/\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_JWT]'],
+  // Rig relay secrets: sign-in tokens (rpat_, rsk_) and capability, invite and share secrets (tap_cap_, tap_inv_, tap_shr_)
+  [/(?<![A-Za-z0-9])(?:rpat|rsk|tap_cap|tap_inv|tap_shr)_[A-Za-z0-9_-]{16,}/g, '[REDACTED_RIG_TOKEN]'],
+  // A bearer credential on its own, e.g. a header value logged without its name
+  [/\b(bearer)\s+[A-Za-z0-9._~+/-]{8,}=*/gi, '$1 [REDACTED]'],
 ];
 
 const PII_PATTERNS: Array<[RegExp, RedactionReplacement]> = [

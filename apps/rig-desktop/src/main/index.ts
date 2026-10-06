@@ -47,6 +47,8 @@ import {
 import { log } from './lib/logger';
 import { withRpcLogging } from './lib/rpc-logging';
 import { telemetryService } from './lib/telemetry';
+import { dailyAgentCliInfo } from './rig/agent-run-failure-instance';
+import { startSyncProblemWatch } from './rig/sync-problems-instance';
 import { wireAgentRunnabilityPersistence } from './rig/agent-runnability';
 import {
   ensurePreferredRigBinInPath,
@@ -59,7 +61,11 @@ import { createEntryMoveFollower } from './rig/path-refs';
 import { rigSettingsStore } from './rig/settings-instance';
 import { startNotifications } from './rig/notifications/electron';
 import { wireActiveMac } from './rig/active-mac-instance';
-import { spacesDispatchController, wireAgentsReporter } from './rig/spaces/dispatch-controller-instance';
+import {
+  spacesDispatchController,
+  wireAgentsReporter,
+  wireStalledRunCheck,
+} from './rig/spaces/dispatch-controller-instance';
 import { bufferOpenFilePath } from './rig/workspace';
 import { rpcRouter } from './rpc';
 import { resolveUserEnv } from './utils/userEnv';
@@ -175,6 +181,10 @@ void app.whenReady().then(async () => {
     return;
   }
 
+  // `daily_active_user` names the agent CLIs, so it waits for the launch probe below.
+  let settleLaunchProbe!: () => void;
+  const launchProbe = new Promise<void>((resolve) => (settleLaunchProbe = resolve));
+  telemetryService.setAgentCliInfoProvider(dailyAgentCliInfo(launchProbe));
   try {
     await telemetryService.initialize({ installSource: app.isPackaged ? 'dmg' : 'dev' });
   } catch (e) {
@@ -209,6 +219,8 @@ void app.whenReady().then(async () => {
   registerRigBridge();
   spacesDispatchController.initialize();
   wireAgentsReporter();
+  wireStalledRunCheck();
+  startSyncProblemWatch();
   wireActiveMac();
 
   registerRPCRouter(rpcRouter, app.isPackaged ? ipcMain : withRpcLogging(ipcMain));
@@ -219,9 +231,12 @@ void app.whenReady().then(async () => {
   // the initial sweep — see `agent-runnability.ts`'s own header comment.
   wireAgentRunnabilityPersistence();
 
-  localDependencyManager.probeAll().catch((e: unknown) => {
-    log.error('Failed to probe dependencies:', e);
-  });
+  localDependencyManager
+    .probeAll()
+    .catch((e: unknown) => {
+      log.error('Failed to probe dependencies:', e);
+    })
+    .finally(settleLaunchProbe);
 
   // Round (first-launch prompts): both blocks that used to sit here —
   // an unconditional `systemPreferences.askForMediaAccess('microphone')`

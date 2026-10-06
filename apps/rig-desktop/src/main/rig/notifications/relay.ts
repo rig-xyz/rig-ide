@@ -10,6 +10,7 @@ import type {
 } from '@shared/rig/notifications';
 import { log } from '@main/lib/logger';
 import { isError, resolveContext } from '../account';
+import { fetchRelay } from '../relay-request';
 
 /**
  * The relay's notification routes (tap `packages/relay/src/routes/
@@ -121,7 +122,7 @@ async function call(
   if (!ctx.success) return ctx;
   let response: Response;
   try {
-    response = await fetch(new URL(path, ctx.data.url), {
+    response = await fetchRelay(new URL(path, ctx.data.url), {
       method,
       headers: {
         authorization: `Bearer ${ctx.data.token}`,

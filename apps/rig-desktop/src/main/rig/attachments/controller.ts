@@ -19,6 +19,7 @@ import { resolveLocalPathsImpl } from '../recent-rigs';
 import { createAttachmentsService } from './service';
 import { attachmentStatus, resolveInSpace } from './status';
 import type { ManifestSize } from './usage';
+import { fetchRelay } from '../relay-request';
 
 /**
  * Real wiring for the attachments service (Electron dialog, the local rigs
@@ -40,7 +41,7 @@ async function fetchManifest(bindingId: string): Promise<ManifestSize[] | null> 
   try {
     for (let page = 0; page < 20; page += 1) {
       const query = new URLSearchParams({ limit: String(MANIFEST_PAGE), ...(after ? { after } : {}) });
-      const response = await fetch(`${base}/v1/me/bindings/${encodeURIComponent(bindingId)}/manifest?${query}`, {
+      const response = await fetchRelay(`${base}/v1/me/bindings/${encodeURIComponent(bindingId)}/manifest?${query}`, {
         headers: { authorization: `Bearer ${ctx.token}`, accept: 'application/json' },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });

@@ -9,6 +9,7 @@ import type {
 } from '@shared/rig/account';
 import { readRelayToken } from './config';
 import { checkRelayTrust } from './relay-trust';
+import { fetchRelay } from './relay-request';
 
 /**
  * Account-scoped relay reads: who the signed-in user is (`GET /v1/me`) and
@@ -115,7 +116,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 async function relayGet(ctx: Resolved, path: string): Promise<Response> {
   const base = ctx.url.replace(/\/+$/, '');
-  return fetch(`${base}${path}`, {
+  return fetchRelay(`${base}${path}`, {
     headers: { authorization: `Bearer ${ctx.token}`, accept: 'application/json' },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
@@ -386,7 +387,7 @@ export async function requestAccountDeletion(): Promise<
   if (isError(ctx)) return err(ctx);
   let response: Response;
   try {
-    response = await fetch(`${ctx.url.replace(/\/+$/, '')}/v1/me/delete`, {
+    response = await fetchRelay(`${ctx.url.replace(/\/+$/, '')}/v1/me/delete`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${ctx.token}`,

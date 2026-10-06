@@ -17,6 +17,7 @@ import {
   type HomeLayoutPutResult,
 } from './home-layout-sync';
 import { localCacheAccountId } from './local-cache-account';
+import { fetchRelay } from './relay-request';
 
 /**
  * Home's layout (`@shared/rig/home-layout`): the relay's
@@ -49,7 +50,7 @@ async function request(method: 'GET' | 'PUT', body?: unknown): Promise<Response 
   const ctx = await resolveContext();
   if (isError(ctx)) return null;
   try {
-    return await fetch(new URL('/v1/me/home-layout', ctx.url), {
+    return await fetchRelay(new URL('/v1/me/home-layout', ctx.url), {
       method,
       headers: {
         authorization: `Bearer ${ctx.token}`,

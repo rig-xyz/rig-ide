@@ -27,6 +27,7 @@ import { notAMemberMessage, readSelfUserId, toMember } from './comments';
 import { findBindingConfig } from './binding';
 import { readRelayToken } from './config';
 import { checkRelayTrust } from './relay-trust';
+import { fetchRelay } from './relay-request';
 
 /**
  * Rig-level sharing (the file browser header's Share button): who is on this
@@ -143,7 +144,7 @@ export function accountFetch(
   suffix: string,
   init: { method: 'GET' | 'POST' | 'DELETE' | 'PATCH'; body?: unknown }
 ): Promise<Response> {
-  return fetch(`${ctx.url.replace(/\/+$/, '')}/v1/me${suffix}`, {
+  return fetchRelay(`${ctx.url.replace(/\/+$/, '')}/v1/me${suffix}`, {
     method: init.method,
     headers: {
       authorization: `Bearer ${ctx.token}`,
@@ -247,7 +248,7 @@ async function relayFetch(
   url: string,
   init: { method: 'GET' | 'POST' | 'DELETE' | 'PATCH'; body?: unknown }
 ): Promise<Response> {
-  return fetch(url, {
+  return fetchRelay(url, {
     method: init.method,
     headers: {
       authorization: `Bearer ${ctx.token}`,
@@ -544,7 +545,7 @@ async function fetchInvitePreview(
   action: string
 ): Promise<Result<RigInvitePreview, RigInviteLinkError>> {
   try {
-    const response = await fetch(`${relayUrl.replace(/\/+$/, '')}/v1/invites/${encodeURIComponent(secret)}`, {
+    const response = await fetchRelay(`${relayUrl.replace(/\/+$/, '')}/v1/invites/${encodeURIComponent(secret)}`, {
       method: 'GET',
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -1028,7 +1029,7 @@ export const rigShareController = createRPCController({
 
     let response: Response;
     try {
-      response = await fetch(`${inviteUrl}/accept`, {
+      response = await fetchRelay(`${inviteUrl}/accept`, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${ctx.token}`,

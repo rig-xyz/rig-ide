@@ -7,6 +7,7 @@ import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { isError, resolveContext, rigAccountController } from '../account';
+import { reportAgentRunFailure } from '../agent-run-failure-instance';
 import { findBindingConfig } from '../binding';
 import { resolveLocalPathsImpl } from '../recent-rigs';
 import { rigSettingsStore } from '../settings-instance';
@@ -111,6 +112,7 @@ function realDeps(): SpacesDispatchControllerDeps {
         // Attached images go in as image content, shrunk to fit when they must.
         prepareImage: createImagePreparer(join(app.getPath('temp'), 'rig-agent-images')),
         codexVersion: () => localDependencyManager.get('codex')?.version ?? null,
+        onRunFailed: (failure) => reportAgentRunFailure(failure),
         defaultConfig: (agent) => {
           const settings = rigSettingsStore.get();
           const model = settings.lastModelByHarness[agent];
@@ -150,6 +152,14 @@ function realDeps(): SpacesDispatchControllerDeps {
 const relayApi = createHttpSpacesRelayApi();
 
 export const spacesDispatchController = new SpacesDispatchController(realDeps());
+
+/** How often running turns are checked for a 30-minute silence (`reportStalled`). */
+const STALL_CHECK_MS = 60_000;
+
+/** Counts runs that never finish as failures (`agent_run_failed` with reason `stalled`). */
+export function wireStalledRunCheck(): void {
+  setInterval(() => spacesDispatchController.reportStalledRuns(), STALL_CHECK_MS).unref?.();
+}
 
 /** How often a sign-in or account switch is noticed for the agents report (there's no event for it). */
 const AGENTS_REPORT_RECHECK_MS = 60_000;

@@ -13,6 +13,7 @@ import type {
 import { resolveRelayUrl } from './account';
 import { readRelayToken } from './config';
 import { checkRelayTrust } from './relay-trust';
+import { fetchRelay } from './relay-request';
 
 /**
  * Polish round, lane C: Home's per-space live status — `GET
@@ -247,7 +248,7 @@ export function createOwnerNameCache(
 async function fetchMemberNames(ctx: Resolved, bindingId: string): Promise<MemberNames | null> {
   try {
     const base = ctx.url.replace(/\/+$/, '');
-    const response = await fetch(`${base}/v1/me/bindings/${encodeURIComponent(bindingId)}/members`, {
+    const response = await fetchRelay(`${base}/v1/me/bindings/${encodeURIComponent(bindingId)}/members`, {
       headers: { authorization: `Bearer ${ctx.token}`, accept: 'application/json' },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -288,7 +289,7 @@ export const rigSpaceStatusController = createRPCController({
     let response: Response;
     try {
       const base = ctx.url.replace(/\/+$/, '');
-      response = await fetch(`${base}/v1/me/spaces/status`, {
+      response = await fetchRelay(`${base}/v1/me/spaces/status`, {
         headers: { authorization: `Bearer ${ctx.token}`, accept: 'application/json' },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });

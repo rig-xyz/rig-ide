@@ -13,6 +13,7 @@ import type {
 import { resolveRelayUrl } from './account';
 import { readRelayToken } from './config';
 import { checkRelayTrust } from './relay-trust';
+import { fetchRelay } from './relay-request';
 
 /**
  * Round H3 — pulse parity: the relay's read-plane intelligence
@@ -70,7 +71,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 async function relayGet(ctx: Resolved, path: string, timeoutMs: number): Promise<Response> {
   const base = ctx.url.replace(/\/+$/, '');
-  return fetch(`${base}${path}`, {
+  return fetchRelay(`${base}${path}`, {
     headers: { authorization: `Bearer ${ctx.token}`, accept: 'application/json' },
     signal: AbortSignal.timeout(timeoutMs),
   });
@@ -83,7 +84,7 @@ async function relayPost(
   timeoutMs: number
 ): Promise<Response> {
   const base = ctx.url.replace(/\/+$/, '');
-  return fetch(`${base}${path}`, {
+  return fetchRelay(`${base}${path}`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${ctx.token}`,
