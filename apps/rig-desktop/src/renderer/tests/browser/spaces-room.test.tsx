@@ -315,7 +315,7 @@ describe('Room transcript — flat rows', () => {
     }
   });
 
-  it('opens a finished turn\'s steps from its summary line, and the full trace from there', async () => {
+  it('opens a finished turn\'s steps from its summary line; the full trace link is hidden for now', async () => {
     const snapshot = replayedSnapshot();
     await act(async () => {
       root.render(<RoomTranscript snapshot={snapshot} ownId="bob" />);
@@ -335,13 +335,7 @@ describe('Room transcript — flat rows', () => {
     const steps = card!.querySelectorAll('[data-testid="session-step"]');
     expect(steps.length).toBe(Number(summary.textContent?.match(/(\d+) steps?/)?.[1]));
 
-    // The full trace opens beside the Room, rendered the way the rig chat does.
-    await act(async () => {
-      card!
-        .querySelector<HTMLButtonElement>('[data-testid="session-open-trace"]')!
-        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    expect(document.querySelector('[data-testid="session-trace"]')).not.toBeNull();
+    expect(card!.querySelector('[data-testid="session-open-trace"]')).toBeNull();
   });
 
   it('renders the invite row, join row and comment-mirror lines from the scripted story', async () => {

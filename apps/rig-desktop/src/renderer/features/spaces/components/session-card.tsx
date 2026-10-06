@@ -63,6 +63,12 @@ import { excerptOf, ROW_GRID, RowActions, RowTime } from './transcript-items';
 import { QuickReactions, ReactionChips } from './reactions';
 
 /**
+ * The "Open full trace" sheet beside the Room is hidden until it shows more
+ * than the steps already listed under the answer (Dylan, 2026-10-06).
+ */
+const SHOW_FULL_TRACE = false;
+
+/**
  * Spaces: one agent turn in the Room, drawn like any other speaker's row
  * rather than as a card: the agent's avatar, its name and model, then what
  * it is doing or what it did, and its answer as plain prose (people's
@@ -917,14 +923,16 @@ export function SessionCard({
                   {card.thinking.trim() && <ThinkingBlock text={card.thinking} />}
                   {card.plan.length > 0 && <PlanBlock plan={card.plan} />}
                   <StepList card={card} ownerName={ownerName} agent={meta.agent} />
-                  <button
-                    type="button"
-                    onClick={() => setTraceOpen(true)}
-                    className="text-accent ml-5 w-fit text-xs hover:underline"
-                    data-testid="session-open-trace"
-                  >
-                    Open full trace
-                  </button>
+                  {SHOW_FULL_TRACE && (
+                    <button
+                      type="button"
+                      onClick={() => setTraceOpen(true)}
+                      className="text-accent ml-5 w-fit text-xs hover:underline"
+                      data-testid="session-open-trace"
+                    >
+                      Open full trace
+                    </button>
+                  )}
                 </>
               )}
             </div>
