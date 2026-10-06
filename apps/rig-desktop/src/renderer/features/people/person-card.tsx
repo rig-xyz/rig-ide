@@ -1,12 +1,15 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, type RefObject } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { MoreHorizontal, Search } from 'lucide-react';
+import { useRef, useState, type RefObject } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
-import { Popover } from '@renderer/lib/ui/popover';
+import { Popover, PopoverMenuItem } from '@renderer/lib/ui/popover';
+import { cn } from '@renderer/lib/utils';
 import type { RigWorkspaceBinding } from '@shared/rig/account';
 import { requestOpenSpace } from './open-space-request';
-import { PEOPLE_QUERY_KEY, usePeople } from './use-people';
+import { foldName, spacesWithYou, withSpacesOnly } from './people-state';
+import { PEOPLE_QUERY_KEY, useMySpaces, usePeople } from './use-people';
 
 /**
  * Marks a floating layer opened from inside another popover (a person card,
@@ -20,49 +23,64 @@ export const insidePeopleLayer = (target: Element): boolean =>
 /** Enough to picture someone before Your people has loaded. `userId` is the relay's tap user id (`usr_…`). */
 export type PersonRef = { userId: string; name: string | null; avatarUrl: string | null };
 
-const WORKSPACES_KEY = ['rig', 'account', 'workspaces'] as const;
+/** Shared spaces shown before "+N more". */
+const SHARED_ROWS = 4;
 
-function spaceLabel(name: string | null, binding: RigWorkspaceBinding | undefined): string {
-  const label = binding?.name ?? name ?? 'A space';
-  return binding?.kind === 'space' ? `#${label}` : label;
+const bare = (name: string) => name.replace(/^#/, '');
+
+/** "# name": the hash quiet, the name in the row's own color. */
+function SpaceName({ name }: { name: string }) {
+  return (
+    <span className="flex min-w-0 items-center gap-1.5">
+      <span className="text-text-muted">#</span>
+      <span className="truncate">{bare(name)}</span>
+    </span>
+  );
 }
 
 /**
- * A person, anywhere (board 26, panel 4): their photo and name, the spaces
- * you share (a click opens one), "Invite to a space" for your spaces
- * they're not in, and "Remove from your people". Exported on its own for
- * surfaces that already have a popover; most callers want
- * `PersonCardPopover`.
+ * A person, anywhere (board 26, panel 4): their photo and name, how many
+ * spaces you share, the first few of those spaces (a click opens one),
+ * "Invite to a space" with a searchable picker of your spaces they're not
+ * in, and "Remove from your people" behind the ⋯ button. Spaces only: a rig
+ * you share never shows here. Exported on its own for surfaces that already
+ * have a popover; most callers want `PersonCardPopover`.
  */
 export function PersonCard({ person, onClose }: { person: PersonRef; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const moreRef = useRef<HTMLButtonElement>(null);
   const { supported, people } = usePeople();
+  const spaces = useMySpaces();
   const entry = people.find((p) => p.userId === person.userId) ?? null;
   const name = entry?.name ?? person.name ?? 'Someone';
-  const avatarUrl = entry?.avatarUrl ?? person.avatarUrl;
+  // The face that was clicked first, so the card shows the same one.
+  const avatarUrl = person.avatarUrl ?? entry?.avatarUrl ?? null;
 
-  const workspacesQuery = useQuery({
-    queryKey: WORKSPACES_KEY,
-    queryFn: () => rpc.rig.account.workspaces(),
-  });
-  const workspaces = workspacesQuery.data?.success ? workspacesQuery.data.data : [];
-  const byId = new Map(workspaces.map((w) => [w.id, w]));
-
-  const shared = entry?.sharedSpaces ?? [];
-  const sharedIds = new Set(shared.map((s) => s.bindingId));
+  const spaceById = new Map((spaces ?? []).map((space) => [space.id, space]));
+  const shared =
+    entry && spaces ? (withSpacesOnly([entry], new Set(spaceById.keys()))[0]?.sharedSpaces ?? []) : [];
+  const sharedIds = new Set(entry?.sharedSpaces.map((s) => s.bindingId) ?? []);
   // Only an owner can invite into a space.
-  const invitable = workspaces.filter((w) => w.role === 'owner' && !sharedIds.has(w.id));
+  const invitable = (spaces ?? []).filter((s) => s.role === 'owner' && !sharedIds.has(s.id));
 
+  const [showAll, setShowAll] = useState(false);
   const [mode, setMode] = useState<'idle' | 'picking' | 'confirmRemove'>('idle');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const invite = async (binding: RigWorkspaceBinding) => {
+  const visibleShared = showAll ? shared : shared.slice(0, SHARED_ROWS);
+  const hiddenCount = shared.length - visibleShared.length;
+  const q = foldName(search);
+  const pickable = q ? invitable.filter((s) => foldName(bare(s.name)).includes(q)) : invitable;
+
+  const invite = async (space: RigWorkspaceBinding) => {
     setBusy(true);
     setError(null);
     const result = await rpc.rig.share.inviteToSpace({
-      bindingId: binding.id,
+      bindingId: space.id,
       targetUserId: person.userId,
       role: 'editor',
     });
@@ -72,7 +90,8 @@ export function PersonCard({ person, onClose }: { person: PersonRef; onClose: ()
       return;
     }
     setMode('idle');
-    setNotice(`Invited ${name} to ${spaceLabel(binding.name, binding)}.`);
+    setSearch('');
+    setNotice(`Invited to #${bare(space.name)}`);
     void queryClient.invalidateQueries({ queryKey: PEOPLE_QUERY_KEY });
   };
 
@@ -89,69 +108,95 @@ export function PersonCard({ person, onClose }: { person: PersonRef; onClose: ()
     onClose();
   };
 
+  const subtitle = entry?.viaOrg && shared.length === 0 ? 'Your organization' : spacesWithYou(shared.length);
+
   return (
-    <div className="flex flex-col gap-3 p-3" data-testid="person-card">
+    <div className="flex flex-col gap-3 p-4" data-testid="person-card">
       <div className="flex items-center gap-3">
-        <IdentityAvatar
-          name={name}
-          avatarUrl={avatarUrl}
-          sizeClassName="size-10"
-          textClassName="text-sm"
-        />
-        <p className="min-w-0 truncate text-sm font-medium text-text-primary">{name}</p>
+        <IdentityAvatar name={name} avatarUrl={avatarUrl} sizeClassName="size-10" textClassName="text-sm" />
+        <div className="flex min-w-0 flex-col">
+          <p className="truncate text-sm font-medium text-text-primary">{name}</p>
+          {subtitle && <p className="truncate text-xs text-text-muted">{subtitle}</p>}
+        </div>
       </div>
 
       {shared.length > 0 && (
-        <div className="flex flex-col gap-0.5">
-          <p className="px-1 text-xs text-text-muted">
-            {shared.length === 1 ? '1 space together' : `${shared.length} spaces together`}
-          </p>
-          {shared.map((space) => (
+        <div className="-mx-2 flex flex-col" data-testid="person-card-shared">
+          {visibleShared.map((space) => {
+            const spaceName = spaceById.get(space.bindingId)?.name ?? space.name ?? 'A space';
+            return (
+              <button
+                key={space.bindingId}
+                type="button"
+                onClick={() => {
+                  requestOpenSpace({ bindingId: space.bindingId, spaceName });
+                  onClose();
+                }}
+                className="flex h-7 items-center rounded-control px-2 text-left text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
+              >
+                <SpaceName name={spaceName} />
+              </button>
+            );
+          })}
+          {hiddenCount > 0 && (
             <button
-              key={space.bindingId}
               type="button"
-              onClick={() => {
-                const binding = byId.get(space.bindingId);
-                requestOpenSpace({
-                  bindingId: space.bindingId,
-                  spaceName: binding?.name ?? space.name,
-                });
-                onClose();
-              }}
-              className="truncate rounded-control px-1 py-1 text-left text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
+              onClick={() => setShowAll(true)}
+              className="flex h-7 items-center rounded-control px-2 text-left text-xs text-text-muted transition-colors hover:bg-bg-2 hover:text-text-primary"
             >
-              {spaceLabel(space.name, byId.get(space.bindingId))}
+              +{hiddenCount} more
             </button>
-          ))}
+          )}
         </div>
       )}
 
       {mode === 'picking' && (
-        <div className="flex flex-col gap-0.5" data-testid="person-card-spaces">
-          <p className="px-1 text-xs text-text-muted">Invite {name} to</p>
-          {invitable.length === 0 ? (
-            <p className="px-1 text-xs text-text-muted">They're already in every space you own.</p>
-          ) : (
-            invitable.map((binding) => (
+        <div className="flex flex-col gap-1" data-testid="person-card-spaces">
+          <label className="flex h-8 items-center gap-2 rounded-control border border-border-hairline px-2 focus-within:border-border-strong">
+            <Search className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
+            <input
+              autoFocus
+              type="text"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && pickable[0] && !busy) void invite(pickable[0]);
+              }}
+              placeholder="Find a space"
+              aria-label="Find a space"
+              className="min-w-0 flex-1 bg-transparent text-xs text-text-primary outline-none placeholder:text-text-muted"
+            />
+          </label>
+          {/* The card's one scroll region: about six spaces, then it scrolls. */}
+          <div className="-mx-2 flex max-h-[168px] flex-col overflow-y-auto">
+            {pickable.map((space) => (
               <button
-                key={binding.id}
+                key={space.id}
                 type="button"
                 disabled={busy}
-                onClick={() => void invite(binding)}
-                className="truncate rounded-control px-1 py-1 text-left text-xs text-text-primary transition-colors hover:bg-bg-2 disabled:opacity-50"
+                onClick={() => void invite(space)}
+                className="flex h-7 shrink-0 items-center rounded-control px-2 text-left text-xs text-text-primary transition-colors hover:bg-bg-2 disabled:opacity-50"
               >
-                {spaceLabel(binding.name, binding)}
+                <SpaceName name={space.name} />
               </button>
-            ))
-          )}
+            ))}
+            {pickable.length === 0 && (
+              <p className="flex h-7 items-center px-2 text-xs text-text-muted">
+                {spaces === null
+                  ? 'Loading your spaces…'
+                  : invitable.length === 0
+                    ? 'They’re in every space you own.'
+                    : 'No space by that name.'}
+              </p>
+            )}
+          </div>
         </div>
       )}
 
       {mode === 'confirmRemove' && (
         <div className="flex flex-col gap-2 rounded-control bg-bg-2 p-2">
           <p className="text-xs text-text-secondary">
-            Take {name} off your people? You keep the spaces you share, and they can still invite
-            you.
+            Take {name} off your people? You keep the spaces you share, and they can still invite you.
           </p>
           <div className="flex gap-1.5">
             <Button size="xs" variant="destructive" disabled={busy} onClick={() => void forget()}>
@@ -167,24 +212,63 @@ export function PersonCard({ person, onClose }: { person: PersonRef; onClose: ()
       {notice && <p className="text-xs text-text-secondary">{notice}</p>}
       {error && <p className="text-xs text-danger">{error}</p>}
 
-      {mode === 'idle' && (
-        <div className="flex flex-wrap gap-1.5">
+      {mode !== 'confirmRemove' && (supported === true || entry) && (
+        <div className="flex items-center gap-1.5">
           {supported === true && (
-            <Button size="xs" onClick={() => setMode('picking')}>
-              Invite to a space
+            <Button
+              size="sm"
+              variant={mode === 'picking' ? 'secondary' : 'default'}
+              className="flex-1"
+              onClick={() => {
+                setNotice(null);
+                setMode(mode === 'picking' ? 'idle' : 'picking');
+              }}
+            >
+              {mode === 'picking' ? 'Cancel' : 'Invite to a space'}
             </Button>
           )}
           {entry && (
-            <Button size="xs" variant="ghost" onClick={() => setMode('confirmRemove')}>
-              Remove from your people
+            <Button
+              ref={moreRef}
+              size="icon-sm"
+              variant="ghost"
+              className={cn('size-7', menuOpen && 'bg-bg-2')}
+              aria-label={`More for ${name}`}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              <MoreHorizontal strokeWidth={1.5} />
             </Button>
           )}
         </div>
       )}
 
-      <p className="border-t border-border-hairline pt-2 text-2xs text-text-muted">
+      <p className="border-t border-border-hairline pt-3 text-2xs text-text-muted">
         Name and photo only. People you work with don't see your email.
       </p>
+
+      {entry && (
+        <Popover
+          anchor={moreRef}
+          open={menuOpen}
+          onClose={() => setMenuOpen(false)}
+          align="right"
+          minWidth={200}
+          estimatedWidth={200}
+          ariaLabel={`More for ${name}`}
+          className={PEOPLE_LAYER_CLASS}
+        >
+          <PopoverMenuItem
+            label="Remove from your people"
+            danger
+            onSelect={() => {
+              setMenuOpen(false);
+              setMode('confirmRemove');
+            }}
+          />
+        </Popover>
+      )}
     </div>
   );
 }
@@ -192,18 +276,21 @@ export function PersonCard({ person, onClose }: { person: PersonRef; onClose: ()
 /**
  * The person card as a popover anchored to whatever was clicked (an avatar,
  * a name). Marked as a people layer, so it can open from inside the share
- * popover. The Room transcript can use this as is.
+ * popover, and it keeps itself open for its own ⋯ menu. The Room
+ * transcript can use this as is.
  */
 export function PersonCardPopover({
   person,
   anchor,
   open,
   onClose,
+  align = 'left',
 }: {
   person: PersonRef;
   anchor: RefObject<HTMLElement | null>;
   open: boolean;
   onClose: () => void;
+  align?: 'left' | 'right';
 }) {
   return (
     <Popover
@@ -211,11 +298,13 @@ export function PersonCardPopover({
       open={open}
       onClose={onClose}
       role="dialog"
+      align={align}
       gap={6}
-      estimatedWidth={260}
-      minWidth={260}
+      estimatedWidth={320}
+      minWidth={320}
       ariaLabel={person.name ?? 'Person'}
-      className={PEOPLE_LAYER_CLASS}
+      className={cn(PEOPLE_LAYER_CLASS, 'py-0')}
+      keepOpenOn={insidePeopleLayer}
     >
       <PersonCard person={person} onClose={onClose} />
     </Popover>

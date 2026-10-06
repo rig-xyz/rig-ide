@@ -116,6 +116,8 @@ function PersonRow({ person, at, now }: { person: RigPulsePerPerson; at: string 
           anchor={anchor}
           open={open}
           onClose={() => setOpen(false)}
+          // The column sits on the window's right edge: the card grows left, over the feed.
+          align="right"
         />
       )}
     </li>

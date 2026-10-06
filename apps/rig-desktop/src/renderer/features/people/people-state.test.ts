@@ -12,7 +12,9 @@ import {
   rankCollaborators,
   rankPeople,
   sendLabel,
+  spacesWithYou,
   splitTyped,
+  withSpacesOnly,
 } from './people-state';
 
 const NOW = Date.parse('2026-10-06T12:00:00Z');
@@ -175,6 +177,42 @@ describe('rankPeople', () => {
   it('skips a person with no name at all, since there is nothing to show or match', () => {
     const nameless = { ...person({ userId: 'usr_z', name: 'x' }), name: null };
     expect(rankPeople([nameless], { query: '', exclude: new Set(), nowMs: NOW })).toEqual([]);
+  });
+});
+
+describe('withSpacesOnly', () => {
+  it('drops rigs from what you share, so counts and lines say spaces only', () => {
+    const both = person({
+      userId: 'usr_b',
+      name: 'Hugo Renaudin',
+      sharedSpaces: [
+        { bindingId: 'b_space', name: 'rig-feedback' },
+        { bindingId: 'b_rig', name: 'cto-rig' },
+        { bindingId: 'b_rig2', name: 'taprig' },
+      ],
+    });
+    const [only] = withSpacesOnly([both], new Set(['b_space']));
+    expect(only.sharedSpaces).toEqual([{ bindingId: 'b_space', name: 'rig-feedback' }]);
+    expect(rankPeople([only], { query: '', exclude: new Set(), nowMs: NOW })[0].why).toBe(
+      '1 space together · today'
+    );
+  });
+
+  it('leaves someone who shares only rigs with no spaces', () => {
+    const rigOnly = person({ userId: 'usr_r', name: 'Rae', sharedSpaces: [{ bindingId: 'b_rig', name: 'rig' }] });
+    const [only] = withSpacesOnly([rigOnly], new Set(['b_space']));
+    expect(only.sharedSpaces).toEqual([]);
+    expect(rankPeople([only], { query: '', exclude: new Set(), nowMs: NOW })[0].why).toBe(
+      'Worked with you before'
+    );
+  });
+});
+
+describe('spacesWithYou', () => {
+  it('words the person card subtitle, and says nothing for none', () => {
+    expect(spacesWithYou(0)).toBe('');
+    expect(spacesWithYou(1)).toBe('In 1 space with you');
+    expect(spacesWithYou(8)).toBe('In 8 spaces with you');
   });
 });
 

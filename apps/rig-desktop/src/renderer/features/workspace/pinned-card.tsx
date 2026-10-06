@@ -868,7 +868,12 @@ export function PinnedCard({
           </button>
           {expanded === 'people' && (
             <div className="popover-in shrink-0 pt-1 pb-1.5">
-              <RigSharePopoverContent root={root} name={name} variant={isSpace ? 'compact' : 'full'} />
+              <RigSharePopoverContent
+                root={root}
+                name={name}
+                variant={isSpace ? 'compact' : 'full'}
+                isSpace={isSpace}
+              />
             </div>
           )}
         </>

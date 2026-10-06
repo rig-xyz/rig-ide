@@ -138,12 +138,13 @@ export function RigShareButton({
           role="dialog"
           align="right"
           gap={6}
-          estimatedWidth={320}
-          minWidth={320}
+          estimatedWidth={POPOVER_WIDTH}
+          minWidth={POPOVER_WIDTH}
+          className="py-0"
           ariaLabel="People and invites"
           keepOpenOn={insidePeopleLayer}
         >
-          <RigSharePopoverContent root={root} name={name} />
+          <RigSharePopoverContent root={root} name={name} isSpace />
         </Popover>
       </>
     );
@@ -190,8 +191,9 @@ export function RigShareButton({
         role="dialog"
         align="right"
         gap={6}
-        estimatedWidth={320}
-        minWidth={320}
+        estimatedWidth={POPOVER_WIDTH}
+        minWidth={POPOVER_WIDTH}
+        className="py-0"
         ariaLabel="Share"
         keepOpenOn={insidePeopleLayer}
       >
@@ -201,12 +203,23 @@ export function RigShareButton({
   );
 }
 
+const POPOVER_WIDTH = 400;
+
+/** How a space or rig is named in this surface: a space with `#`. */
+function placeLabel(name: string | null, isSpace: boolean): string | null {
+  if (!name) return null;
+  const bare = name.replace(/^#/, '');
+  return isSpace ? `#${bare}` : bare;
+}
+
 /**
  * Exported for the pinned card's People row — same surface, second anchor.
  *
- * `variant`: `'full'` (default, the top-bar popover's own shape) renders the
- * "People in <name>" header, the member list, and — for an owner — the
- * always-visible invite form plus pending invites. `'compact'` (the space
+ * `variant`: `'full'` (default, the top-bar popover's own shape, board 26
+ * panels 1 and 3): for an owner, "Invite to #name" first (the field, its
+ * suggestions in the flow, the role and Send), then a divider and "In this
+ * space · N", the members and pending invites, the popover's one scroll
+ * region. Everyone else sees only the members. `'compact'` (the space
  * panel's People row) shows only the member list; invite management collapses
  * into a single "Invite people" pill that expands the same invite form in
  * place, so the row doesn't default to showing a full form nobody asked for.
@@ -215,10 +228,13 @@ export function RigSharePopoverContent({
   root,
   name,
   variant = 'full',
+  isSpace = false,
 }: {
   root: string;
   name: string | null;
   variant?: 'full' | 'compact';
+  /** A space is named with `#`. */
+  isSpace?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [enablingSync, setEnablingSync] = useState(false);
@@ -309,20 +325,38 @@ export function RigSharePopoverContent({
   // UI on a broken client-side guess is the worse failure.
   const showInvites = memberList.selfRole === 'owner' || memberList.selfRole === null;
 
+  const label = placeLabel(name, isSpace);
+  const inviteTitle = label ? `Invite to ${label}` : 'Invite people';
+
   if (variant === 'compact') {
-    return <CompactSharePanel root={root} name={name} memberList={memberList} showInvites={showInvites} />;
+    return (
+      <CompactSharePanel
+        root={root}
+        name={label}
+        inviteTitle={inviteTitle}
+        memberList={memberList}
+        showInvites={showInvites}
+      />
+    );
   }
 
   return (
-    <div className="flex flex-col gap-3 p-3">
-      <div className="flex flex-col gap-1.5">
-        <p className="text-text-muted px-1 text-xs">{name ? `People in ${name}` : 'People'}</p>
-        <MemberList root={root} spaceName={name} memberList={memberList} canManage={showInvites} />
-      </div>
+    <div className="flex flex-col gap-3 p-4">
       {/* Invite and member management are owner-only ON THE RELAY (403
           `forbidden` for an editor), hidden only when the caller is
           POSITIVELY known to be a non-owner; see `showInvites` above. */}
-      {showInvites && <InviteByName root={root} spaceName={name} currentMembers={memberList.members} />}
+      {showInvites && (
+        <>
+          <InviteByName root={root} title={inviteTitle} currentMembers={memberList.members} />
+          <div className="bg-border-hairline -mx-4 h-px" />
+        </>
+      )}
+      <div className="flex flex-col gap-1">
+        <p className="flex h-6 items-center text-2xs text-text-muted" data-testid="members-label">
+          {`${isSpace ? 'In this space' : 'People'} · ${memberList.members.length}`}
+        </p>
+        <MemberList root={root} spaceName={label} memberList={memberList} canManage={showInvites} />
+      </div>
     </div>
   );
 }
@@ -335,11 +369,13 @@ export function RigSharePopoverContent({
 function CompactSharePanel({
   root,
   name,
+  inviteTitle,
   memberList,
   showInvites,
 }: {
   root: string;
   name: string | null;
+  inviteTitle: string;
   memberList: RigMemberList;
   showInvites: boolean;
 }) {
@@ -349,8 +385,8 @@ function CompactSharePanel({
       <MemberList root={root} spaceName={name} memberList={memberList} canManage={showInvites} compact />
       {showInvites &&
         (inviting ? (
-          <div className="px-2 pt-1">
-            <InviteByName root={root} spaceName={name} currentMembers={memberList.members} />
+          <div className="mt-2 border-t border-border-hairline px-2 pt-3">
+            <InviteByName root={root} title={inviteTitle} currentMembers={memberList.members} />
           </div>
         ) : (
           <button

@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { rpc } from '@renderer/lib/ipc';
+import type { RigWorkspaceBinding } from '@shared/rig/account';
 import type { RigPerson } from '@shared/rig/rig-share';
 
 /**
@@ -24,4 +25,20 @@ export function usePeople(enabled = true): { supported: boolean | null; people: 
   if (!query.data) return { supported: query.isError ? false : null, people: [] };
   if (!query.data.success) return { supported: false, people: [] };
   return query.data.data;
+}
+
+export const WORKSPACES_QUERY_KEY = ['rig', 'account', 'workspaces'] as const;
+
+/**
+ * Your spaces (`kind: 'space'` bindings), never your rigs. `null` while the
+ * list hasn't loaded, so callers can wait rather than show a rig by mistake.
+ */
+export function useMySpaces(): RigWorkspaceBinding[] | null {
+  const query = useQuery({
+    queryKey: WORKSPACES_QUERY_KEY,
+    queryFn: () => rpc.rig.account.workspaces(),
+  });
+  if (!query.data) return query.isError ? [] : null;
+  if (!query.data.success) return [];
+  return query.data.data.filter((binding) => binding.kind === 'space');
 }

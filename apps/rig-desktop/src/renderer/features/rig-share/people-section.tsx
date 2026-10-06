@@ -71,7 +71,14 @@ export function MemberList({
 }) {
   const { pending, error } = usePendingInvites(root, memberList.members, canManage);
   return (
-    <div className="flex flex-col" data-testid="member-list">
+    <div
+      className={cn(
+        'flex flex-col',
+        // The popover's one scroll region: about six rows, then it scrolls.
+        !compact && '-mx-2 max-h-[216px] overflow-y-auto'
+      )}
+      data-testid="member-list"
+    >
       {memberList.members.map((member) => (
         <MemberRow
           key={member.userId}
@@ -88,7 +95,7 @@ export function MemberList({
       ))}
       {error && (
         <p
-          className={cn('text-text-muted px-1 py-1 text-xs', isOfflineError(error) && 'font-mono')}
+          className={cn('text-text-muted px-2 py-1 text-xs', isOfflineError(error) && 'font-mono')}
         >
           {isOfflineError(error) ? 'offline · invites unavailable' : error.message}
         </p>
@@ -147,7 +154,7 @@ function MemberRow({
     void run(() => rpc.rig.share.setMemberRole({ root, userId: member.userId, role }));
   };
 
-  const avatarSize = compact ? 'size-4' : 'size-5';
+  const avatarSize = compact ? 'size-4' : 'size-6';
   const identity = (
     <>
       <IdentityAvatar
@@ -163,7 +170,7 @@ function MemberRow({
 
   return (
     <div className="flex flex-col">
-      <div className={cn('flex items-center gap-2', compact ? 'h-7 pr-2 pl-8' : 'px-1 py-1.5')}>
+      <div className={cn('flex items-center gap-2', compact ? 'h-7 pr-2 pl-8' : 'h-9 px-2')}>
         {isSelf ? (
           <span className="flex min-w-0 flex-1 items-center gap-2">{identity}</span>
         ) : (
@@ -199,12 +206,7 @@ function MemberRow({
       </div>
 
       {confirm && (
-        <div
-          className={cn(
-            'bg-bg-2 rounded-control mb-1 flex flex-col gap-2 p-2',
-            compact ? 'mx-2' : 'mx-1'
-          )}
-        >
+        <div className="bg-bg-2 rounded-control mx-2 mb-1 flex flex-col gap-2 p-2">
           <p className="text-xs text-text-secondary">
             {confirm === 'remove'
               ? `Remove ${name} from ${spaceName ?? 'this space'}? They lose access to its files and Room.`
@@ -232,7 +234,7 @@ function MemberRow({
         </div>
       )}
       {error && (
-        <p className={cn('text-danger pb-1 text-xs', compact ? 'px-8' : 'px-1')}>{error}</p>
+        <p className={cn('text-danger pb-1 text-xs', compact ? 'px-8' : 'px-2')}>{error}</p>
       )}
 
       {manageable && (
@@ -341,18 +343,18 @@ function PendingInviteRow({
 
   return (
     <div className="flex flex-col" data-testid="pending-invite">
-      <div className={cn('flex items-center gap-2', compact ? 'min-h-7 pr-2 pl-8' : 'px-1 py-1.5')}>
+      <div className={cn('flex items-center gap-2', compact ? 'min-h-7 pr-2 pl-8' : 'min-h-9 px-2')}>
         {invite.targetUserId || invite.email ? (
           <IdentityAvatar
             name={label}
             avatarUrl={invite.targetAvatarUrl}
-            sizeClassName={compact ? 'size-4' : 'size-5'}
+            sizeClassName={compact ? 'size-4' : 'size-6'}
             textClassName="text-2xs"
             className="opacity-70"
           />
         ) : (
           <Link2
-            className={cn('text-text-muted shrink-0', compact ? 'size-4' : 'size-5')}
+            className={cn('text-text-muted shrink-0', compact ? 'size-4' : 'size-6 p-1')}
             strokeWidth={1.5}
           />
         )}
@@ -377,7 +379,7 @@ function PendingInviteRow({
         </Button>
       </div>
       {error && (
-        <p className={cn('text-danger pb-1 text-xs', compact ? 'px-8' : 'px-1')}>{error}</p>
+        <p className={cn('text-danger pb-1 text-xs', compact ? 'px-8' : 'px-2')}>{error}</p>
       )}
     </div>
   );

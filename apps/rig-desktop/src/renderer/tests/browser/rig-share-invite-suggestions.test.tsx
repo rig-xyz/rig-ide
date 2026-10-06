@@ -8,10 +8,11 @@ import type { RigMember, RigMemberList, RigPerson } from '@shared/rig/rig-share'
 /**
  * Invite by name (board 26, panel 1): typing suggests Your people, picks
  * and full emails become chips, and one Send mints one invite per chip, a
- * person by `targetUserId` and an email by address. The list is an overlay,
- * so the Send button never moves under a click. An older relay without
- * `/v1/me/people` falls back to the members fan-out, and a pick there is an
- * email.
+ * person by `targetUserId` and an email by address. The suggestions sit in
+ * the flow under the field (at most five, then "Keep typing to see more"),
+ * and stay put through a press on Send. Shared spaces count spaces only,
+ * never rigs. An older relay without `/v1/me/people` falls back to the
+ * members fan-out, and a pick there is an email.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -67,26 +68,25 @@ function person(userId: string, name: string, extra: Partial<RigPerson> = {}): R
 
 const PEOPLE = [
   person('usr_hugo', 'Hugo Renaudin'), // already a member: never suggested
-  person('usr_jeremie', 'Jérémie Rappaz'),
+  person('usr_jeremie', 'Jérémie Rappaz', {
+    // A rig you share is never counted.
+    sharedSpaces: [
+      { bindingId: 'b_other', name: 'other' },
+      { bindingId: 'b_rig', name: 'cto-rig' },
+    ],
+  }),
   person('usr_nat', 'Nat Okafor'), // has a pending invite: never suggested
   person('usr_jean', 'Jean Dubois', { sharedSpaces: [], viaOrg: true }),
 ];
 
 const SAM: RigMember = { userId: 'u_sam', name: 'Sam Rivera', email: 'sam@example.com', avatarUrl: null, role: 'editor' };
 
-// This harness doesn't run Tailwind; the utilities that decide whether the
-// list is an overlay are reproduced so layout assertions measure real positions.
+// This harness doesn't run Tailwind; the utilities that decide the layout
+// are reproduced so layout assertions measure real positions.
 const LAYOUT_UTILITIES = `
-  .relative { position: relative; }
-  .absolute { position: absolute; }
-  .inset-x-0 { left: 0; right: 0; }
-  .top-full { top: 100%; }
-  .z-10 { z-index: 10; }
   .flex { display: flex; }
   .flex-col { flex-direction: column; }
-  .w-full { width: 100%; }
-  .bg-bg-1 { background: white; }
-  .pointer-events-none { pointer-events: none; }
+  .h-9 { height: 36px; }
 `;
 
 beforeAll(() => {
@@ -150,7 +150,13 @@ describe('InviteByName', () => {
         ],
       },
     });
-    mocks.workspaces.mockReset().mockResolvedValue({ success: true, data: [{ id: 'b_other' }] });
+    mocks.workspaces.mockReset().mockResolvedValue({
+      success: true,
+      data: [
+        { id: 'b_other', name: 'other', role: 'owner', kind: 'space' },
+        { id: 'b_rig', name: 'cto-rig', role: 'owner', kind: 'rig' },
+      ],
+    });
     mocks.collaborators.mockReset().mockResolvedValue({ success: true, data: [SAM] });
     mocks.people.mockReset().mockResolvedValue({ success: true, data: { supported: true, people: PEOPLE } });
     mocks.createInvite
@@ -209,7 +215,9 @@ describe('InviteByName', () => {
     const text = list()?.textContent ?? '';
     expect(text).toContain('Your people');
     expect(text).toContain('Jérémie Rappaz');
+    // Jérémie shares a space and a rig with you: only the space counts.
     expect(text).toContain('1 space together · today');
+    expect(text).not.toContain('2 spaces together');
     expect(text).toContain('Your organization');
     expect(text).toContain('Jean Dubois');
     expect(text.indexOf('Jérémie')).toBeLessThan(text.indexOf('Jean'));
@@ -262,9 +270,11 @@ describe('InviteByName', () => {
     });
     await flush();
     expect(list()?.textContent).toContain('Invite by email');
+    // Nothing to send yet.
+    expect(sendButton().disabled).toBe(true);
 
     await act(async () => {
-      await userEvent.click(sendButton());
+      await userEvent.keyboard('{Enter}');
     });
     await flush();
     expect(host.textContent).toContain('type a full email address');
@@ -286,18 +296,76 @@ describe('InviteByName', () => {
     expect(host.textContent).toContain('Anyone with this link can join');
   });
 
-  it('the Send button doesn’t move when the list closes', async () => {
+  it('puts invite first and the people in the space after it', async () => {
+    await render();
+    const invite = host.querySelector('[data-testid="invite-by-name"]')!;
+    const members = host.querySelector('[data-testid="member-list"]')!;
+    expect(invite.textContent).toContain('Invite to growth');
+    expect(invite.compareDocumentPosition(members) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(host.querySelector('[data-testid="members-label"]')?.textContent).toBe('People · 2');
+  });
+
+  it('shows the suggestions in the flow, at most five, then asks to keep typing', async () => {
+    mocks.people.mockResolvedValue({
+      success: true,
+      data: {
+        supported: true,
+        people: Array.from({ length: 8 }, (_, i) => person(`usr_p${i}`, `Pat ${i}`)),
+      },
+    });
     await render();
     await act(async () => {
       await userEvent.click(field());
-      await userEvent.type(field(), 'j');
+    });
+    await flush();
+    expect(host.querySelectorAll('[role="option"]')).toHaveLength(5);
+    expect(list()?.textContent).toContain('Keep typing to see more');
+    // In the flow: the list sits between the field and the Send row.
+    const listBox = list()!.getBoundingClientRect();
+    expect(listBox.top).toBeGreaterThanOrEqual(field().getBoundingClientRect().bottom);
+    expect(sendButton().getBoundingClientRect().top).toBeGreaterThanOrEqual(listBox.bottom);
+    expect(getComputedStyle(list()!).position).toBe('static');
+  });
+
+  it('a press on Send while the list shows still sends; the list stays while focus is in the section', async () => {
+    await render();
+    await act(async () => {
+      await userEvent.click(field());
+      await userEvent.type(field(), 'jer');
+      await userEvent.keyboard('{Enter}');
     });
     await flush();
     expect(list()).toBeTruthy();
-    const before = sendButton().getBoundingClientRect().top;
-    await act(async () => field().blur());
+    await act(async () => {
+      await userEvent.click(sendButton());
+    });
+    await flush();
+    expect(mocks.createInvite).toHaveBeenCalledWith({
+      root: '/rigs/growth',
+      email: null,
+      targetUserId: 'usr_jeremie',
+      role: 'editor',
+    });
+    // Sent: the suggestions step aside.
     expect(list()).toBeNull();
-    expect(sendButton().getBoundingClientRect().top).toBe(before);
+
+    await act(async () => {
+      await userEvent.click(field());
+    });
+    await flush();
+    expect(list()).toBeTruthy();
+    // Moving within the section (the role control) keeps it open.
+    await act(async () => {
+      await userEvent.click(button(/^Can view$/));
+    });
+    await flush();
+    expect(list()).toBeTruthy();
+    // Leaving the section closes it.
+    await act(async () => {
+      (document.activeElement as HTMLElement | null)?.blur();
+    });
+    await flush();
+    expect(list()).toBeNull();
   });
 
   it('falls back to the members fan-out on an older relay, and a pick there is an email', async () => {

@@ -93,6 +93,28 @@ function sharedLine(person: RigPerson, nowMs: number): string {
   return Number.isNaN(at) ? together : `${together} · ${ageWord(at, nowMs)}`;
 }
 
+/**
+ * Spaces only, everywhere a person is shown: the relay's `sharedSpaces`
+ * counts every binding you share, rigs included, and carries no kind, so
+ * it is filtered against the known list of your spaces (`kind: 'space'`
+ * in `rig.account.workspaces`).
+ */
+export function withSpacesOnly(people: RigPerson[], spaceIds: ReadonlySet<string>): RigPerson[] {
+  return people.map((person) => ({
+    ...person,
+    sharedSpaces: person.sharedSpaces.filter((space) => spaceIds.has(space.bindingId)),
+  }));
+}
+
+/** The person card's subtitle. Empty when you share no space. */
+export function spacesWithYou(count: number): string {
+  if (count === 0) return '';
+  return count === 1 ? 'In 1 space with you' : `In ${count} spaces with you`;
+}
+
+/** How many suggestion rows the invite field shows before "Keep typing to see more". */
+export const SUGGESTION_ROWS = 5;
+
 /** "today", "yesterday", "this week", "last week", "this month", "a while ago". */
 export function ageWord(at: number, nowMs: number): string {
   const days = Math.floor((nowMs - at) / 86_400_000);

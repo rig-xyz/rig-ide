@@ -141,6 +141,7 @@ describe('Manage who is in a space', () => {
         { id: 'b_growth', name: 'growth', role: 'owner', kind: 'space' },
         { id: 'b_design', name: 'design', role: 'owner', kind: 'space' },
         { id: 'b_theirs', name: 'theirs', role: 'editor', kind: 'space' },
+        { id: 'b_rig', name: 'a-rig', role: 'owner', kind: 'rig' },
       ])
     );
     mocks.inviteToSpace.mockResolvedValue(
@@ -274,8 +275,8 @@ describe('Manage who is in a space', () => {
     await render();
     await click(host.querySelector<HTMLElement>('[aria-label="About Hugo Renaudin"]')!);
     const card = document.querySelector<HTMLElement>('[data-testid="person-card"]')!;
-    expect(card.textContent).toContain('1 space together');
-    expect(card.textContent).toContain('#growth');
+    expect(card.textContent).toContain('In 1 space with you');
+    expect(card.querySelector('[data-testid="person-card-shared"]')?.textContent).toBe('#growth');
 
     await click(byText(card, 'Invite to a space'));
     const picker = document.querySelector<HTMLElement>('[data-testid="person-card-spaces"]')!;
@@ -283,15 +284,17 @@ describe('Manage who is in a space', () => {
     expect(picker.textContent).toContain('#design');
     expect(picker.textContent).not.toContain('#growth');
     expect(picker.textContent).not.toContain('#theirs');
+    expect(picker.textContent).not.toContain('a-rig');
     await click(byText(picker, '#design'));
     expect(mocks.inviteToSpace).toHaveBeenCalledWith({
       bindingId: 'b_design',
       targetUserId: 'usr_hugo',
       role: 'editor',
     });
-    expect(card.textContent).toContain('Invited Hugo Renaudin to #design.');
+    expect(card.textContent).toContain('Invited to #design');
 
-    await click(byText(card, 'Remove from your people'));
+    await click(card.querySelector<HTMLElement>('[aria-label="More for Hugo Renaudin"]')!);
+    await click(byText(document.querySelector('[role="menu"]')!, 'Remove from your people'));
     expect(mocks.forgetPerson).not.toHaveBeenCalled();
     await click(byText(card, 'Remove'));
     expect(mocks.forgetPerson).toHaveBeenCalledWith({ userId: 'usr_hugo' });

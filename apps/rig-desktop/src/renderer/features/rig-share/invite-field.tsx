@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AtSign, Check, Copy, X } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   addChip,
   chipKey,
@@ -14,8 +14,16 @@ import {
   rankPeople,
   sendLabel,
   splitTyped,
+  SUGGESTION_ROWS,
+  withSpacesOnly,
 } from '@renderer/features/people/people-state';
-import { PEOPLE_QUERY_KEY, usePeople } from '@renderer/features/people/use-people';
+import {
+  PEOPLE_QUERY_KEY,
+  useMySpaces,
+  usePeople,
+  WORKSPACES_QUERY_KEY,
+} from '@renderer/features/people/use-people';
+import { SettingsSegmented } from '@renderer/features/settings/settings-row';
 import { useClipboard } from '@renderer/lib/hooks/use-clipboard';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
@@ -26,12 +34,18 @@ import { mintedInviteMatchesRole } from './invite-state';
 import { invitesKey, usePendingInvites } from './people-section';
 
 /**
- * Invite by name (board 26, panel 1). The field takes names or emails: as
- * you type it suggests Your people (`rig.share.people`), people you know
- * through your organization after them, and leaves out whoever is already
- * in the space or invited. A pick becomes a chip; a full email becomes an
- * email chip. One Send mints one invite per chip, a person by id and an
- * email by address. "Copy link" is the explicit open link anyone can use.
+ * Invite by name (board 26, panel 1). The field takes names or emails: it
+ * suggests Your people (`rig.share.people`), people you know through your
+ * organization after them, and leaves out whoever is already in the space
+ * or invited. A pick becomes a chip; a full email becomes an email chip. One
+ * Send mints one invite per chip, a person by id and an email by address.
+ * "Copy link" is the explicit open link anyone can use.
+ *
+ * The suggestions sit in the flow under the field, never floating over the
+ * popover: at most five rows, then "Keep typing to see more". They show
+ * while the field is focused or has text, and close only once focus leaves
+ * this section, after the press that moved it, so nothing shifts under a
+ * click. Shared spaces are counted from your spaces only, never rigs.
  *
  * An older relay without `/v1/me/people` gets today's suggestions instead
  * (members of your other spaces, `rig.share.collaborators`), and a pick
@@ -51,18 +65,21 @@ type Sent = { chip: InviteChip; minted: RigInviteMinted };
 
 export function InviteByName({
   root,
-  spaceName,
+  title,
   currentMembers,
 }: {
   root: string;
-  spaceName: string | null;
+  /** The section's header, e.g. "Invite to #launch-plan". */
+  title: string;
   currentMembers: RigMember[];
 }) {
   const queryClient = useQueryClient();
+  const sectionRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pressing = useRef(false);
   const [chips, setChips] = useState<InviteChip[]>([]);
   const [query, setQuery] = useState('');
-  const [focused, setFocused] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const [role, setRole] = useState<RigInviteRole>('editor');
   const [sending, setSending] = useState(false);
@@ -73,12 +90,30 @@ export function InviteByName({
   const clipboard = useClipboard();
 
   const { supported, people } = usePeople();
+  const spaces = useMySpaces();
   const { pending } = usePendingInvites(root, currentMembers, true);
+
+  // Whether a mouse button is down, so the list closes after the press
+  // that took focus away rather than in the middle of it.
+  useEffect(() => {
+    const down = () => {
+      pressing.current = true;
+    };
+    const up = () => {
+      pressing.current = false;
+    };
+    document.addEventListener('mousedown', down, true);
+    document.addEventListener('mouseup', up, true);
+    return () => {
+      document.removeEventListener('mousedown', down, true);
+      document.removeEventListener('mouseup', up, true);
+    };
+  }, []);
 
   // The older relay's fan-out, only asked for once `/v1/me/people` said no.
   const fallback = supported === false;
   const workspacesQuery = useQuery({
-    queryKey: ['rig', 'account', 'workspaces'],
+    queryKey: WORKSPACES_QUERY_KEY,
     queryFn: () => rpc.rig.account.workspaces(),
     enabled: fallback,
   });
@@ -102,11 +137,13 @@ export function InviteByName({
     ...chips.flatMap((chip) => (chip.kind === 'email' ? [chip.email.toLowerCase()] : [])),
   ]);
 
-  const suggestions: Suggestion[] = fallback
+  // Every match, best first; only the first few are drawn.
+  const matches: Suggestion[] = fallback
     ? rankCollaborators(collaboratorsQuery.data?.success ? collaboratorsQuery.data.data : [], {
         query,
         exclude,
         excludeEmails,
+        limit: Number.POSITIVE_INFINITY,
       }).map((member) => ({
         key: member.userId,
         name: member.name ?? member.email ?? '',
@@ -115,25 +152,32 @@ export function InviteByName({
         group: 'People from your spaces',
         chip: { kind: 'email', email: member.email ?? '' },
       }))
-    : rankPeople(people, { query, exclude, nowMs: Date.now() }).map((person) => ({
-        key: person.userId,
-        name: person.name,
-        avatarUrl: person.avatarUrl,
-        why: person.why,
-        group: person.group === 'org' ? 'Your organization' : 'Your people',
-        chip: {
-          kind: 'person',
-          userId: person.userId,
+    : spaces === null
+      ? []
+      : rankPeople(withSpacesOnly(people, new Set(spaces.map((space) => space.id))), {
+          query,
+          exclude,
+          nowMs: Date.now(),
+          limit: Number.POSITIVE_INFINITY,
+        }).map((person) => ({
+          key: person.userId,
           name: person.name,
           avatarUrl: person.avatarUrl,
-        },
-      }));
+          why: person.why,
+          group: person.group === 'org' ? 'Your organization' : 'Your people',
+          chip: {
+            kind: 'person',
+            userId: person.userId,
+            name: person.name,
+            avatarUrl: person.avatarUrl,
+          },
+        }));
+  const suggestions = matches.slice(0, SUGGESTION_ROWS);
+  const more = matches.length > suggestions.length;
 
   const typedEmail = isValidEmail(query) ? query.trim() : null;
   const active = Math.min(highlight, Math.max(0, suggestions.length - 1));
-  // With chips picked and nothing typed, the list stays closed so it doesn't sit over Send.
-  const showList =
-    focused && (query.trim().length > 0 || (chips.length === 0 && suggestions.length > 0));
+  const showList = listOpen || query.trim().length > 0;
   // Chips to send: the picked ones, plus a full email still sitting in the field.
   const toSend = typedEmail ? addChip(chips, { kind: 'email', email: typedEmail }) : chips;
 
@@ -142,6 +186,24 @@ export function InviteByName({
     setQuery('');
     setHighlight(0);
     setError(null);
+  };
+
+  // Focus left this section: close the list, and keep a full email still in
+  // the field as a chip. After the press that moved focus, if there was one.
+  const leaveSection = () => {
+    const settle = () => {
+      if (sectionRef.current?.contains(document.activeElement)) return;
+      setListOpen(false);
+      if (typedEmail) {
+        setChips((current) => addChip(current, { kind: 'email', email: typedEmail }));
+        setQuery('');
+      }
+    };
+    if (pressing.current) {
+      document.addEventListener('mouseup', () => setTimeout(settle, 0), { once: true });
+    } else {
+      settle();
+    }
   };
 
   const send = async () => {
@@ -179,6 +241,8 @@ export function InviteByName({
     setSending(false);
     setChips(failed);
     setQuery('');
+    // Done: the suggestions step aside for what was sent.
+    setListOpen(false);
     setSent(done);
     setError(messages.length > 0 ? messages.join(' ') : null);
     if (done.length > 0) {
@@ -225,7 +289,7 @@ export function InviteByName({
         setError(next.error);
       } else if (chips.length > 0) {
         void send();
-      } else if (suggestions[active] && focused) {
+      } else if (suggestions[active] && showList) {
         pick(suggestions[active].chip);
       }
     } else if (event.key === 'Backspace' && query === '' && chips.length > 0) {
@@ -238,14 +302,16 @@ export function InviteByName({
 
   return (
     <div
-      className="flex flex-col gap-2.5 border-t border-border-hairline pt-3"
+      ref={sectionRef}
+      className="flex flex-col gap-3"
       data-testid="invite-by-name"
+      onBlur={(event) => {
+        if (!sectionRef.current?.contains(event.relatedTarget as Node | null)) leaveSection();
+      }}
     >
-      <p className="px-1 text-xs text-text-muted">
-        {spaceName ? `Invite to ${spaceName}` : 'Invite people'}
-      </p>
+      <p className="text-sm font-medium text-text-primary">{title}</p>
 
-      <div className="relative">
+      <div className="flex flex-col gap-1">
         <div
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
@@ -253,13 +319,13 @@ export function InviteByName({
               inputRef.current?.focus();
             }
           }}
-          className="flex min-h-8 flex-wrap items-center gap-1 rounded-control border border-border-hairline bg-bg-1 px-1.5 py-1"
+          className="flex min-h-9 flex-wrap items-center gap-1 rounded-control border border-border-hairline bg-bg-1 px-1.5 py-1 focus-within:border-border-strong"
         >
           {chips.map((chip) => (
             <span
               key={chipKey(chip)}
               data-testid="invite-chip"
-              className="flex max-w-full items-center gap-1 rounded-chip bg-bg-2 py-0.5 pr-0.5 pl-1 text-xs text-text-primary"
+              className="flex h-6 max-w-full items-center gap-1 rounded-chip bg-bg-2 pr-0.5 pl-1 text-xs text-text-primary"
             >
               {chip.kind === 'person' ? (
                 <IdentityAvatar
@@ -295,64 +361,45 @@ export function InviteByName({
               setQuery(next.query);
               setError(next.error);
               setHighlight(0);
-              setFocused(true);
+              setListOpen(true);
             }}
-            onFocus={() => setFocused(true)}
-            onBlur={() => {
-              setFocused(false);
-              // Leaving the field with a full email in it keeps it as a chip.
-              if (typedEmail) {
-                setChips((current) => addChip(current, { kind: 'email', email: typedEmail }));
-                setQuery('');
-              }
-            }}
+            onFocus={() => setListOpen(true)}
             onKeyDown={onKeyDown}
-            placeholder={chips.length === 0 ? 'Name or email' : 'Add someone else'}
+            placeholder={chips.length === 0 ? 'Name or email' : 'Add more'}
             aria-label="Name or email"
-            className="min-w-24 flex-1 bg-transparent px-1 py-0.5 text-xs text-text-primary outline-none placeholder:text-text-muted"
+            className="h-6 min-w-24 flex-1 bg-transparent px-1 text-xs text-text-primary outline-none placeholder:text-text-muted"
           />
         </div>
 
-        {/* An overlay, not in-flow content: blurring the field (e.g. by
-            pressing Send) hides the list, and an in-flow list would shift
-            the button out from under that very click. */}
         {showList && (
-          <div
-            data-testid="invite-suggestions"
-            role="listbox"
-            className={cn(
-              'border-border-hairline bg-bg-1 rounded-control shadow-soft absolute inset-x-0 top-full z-10 mt-1 flex max-h-64 flex-col gap-0.5 overflow-y-auto border p-1',
-              // Only a hint inside: a click goes through to the Send button under it.
-              suggestions.length === 0 && !typedEmail && 'pointer-events-none'
-            )}
-          >
+          <div data-testid="invite-suggestions" role="listbox" className="flex flex-col">
             {suggestions.map((s, index) => {
               const header = s.group !== lastGroup ? s.group : null;
               lastGroup = s.group;
               return (
                 <div key={s.key} className="flex flex-col">
                   {header && (
-                    <p className="px-1.5 pt-1 pb-0.5 text-2xs text-text-muted">{header}</p>
+                    <p className="flex h-6 items-center px-2 text-2xs text-text-muted">{header}</p>
                   )}
                   <button
                     type="button"
                     role="option"
                     aria-selected={index === active}
                     onMouseDown={(event) => {
-                      // Keeps the field focused, so this click isn't a blur that hides the list first.
+                      // Keeps the field focused, so picking someone doesn't close the list.
                       event.preventDefault();
                       pick(s.chip);
                     }}
                     onMouseEnter={() => setHighlight(index)}
                     className={cn(
-                      'rounded-control flex items-center gap-2 px-1.5 py-1 text-left transition-colors',
+                      'flex h-9 items-center gap-2 rounded-control px-2 text-left transition-colors',
                       index === active ? 'bg-bg-2' : 'hover:bg-bg-2'
                     )}
                   >
                     <IdentityAvatar
                       name={s.name}
                       avatarUrl={s.avatarUrl}
-                      sizeClassName="size-5"
+                      sizeClassName="size-6"
                       textClassName="text-2xs"
                     />
                     <span className="min-w-0 flex-1">
@@ -365,6 +412,11 @@ export function InviteByName({
                 </div>
               );
             })}
+            {more && (
+              <p className="flex h-6 items-center px-2 text-2xs text-text-muted">
+                Keep typing to see more
+              </p>
+            )}
             {query.trim() &&
               suggestions.length === 0 &&
               (typedEmail ? (
@@ -374,13 +426,13 @@ export function InviteByName({
                     event.preventDefault();
                     pick({ kind: 'email', email: typedEmail });
                   }}
-                  className="flex items-center gap-2 rounded-control px-1.5 py-1 text-left hover:bg-bg-2"
+                  className="flex h-9 items-center gap-2 rounded-control px-2 text-left hover:bg-bg-2"
                 >
                   <AtSign className="size-4 shrink-0 text-text-muted" strokeWidth={1.5} />
                   <span className="truncate text-xs text-text-primary">Invite {typedEmail}</span>
                 </button>
               ) : (
-                <div className="flex items-center gap-2 px-1.5 py-1">
+                <div className="flex min-h-9 items-center gap-2 px-2">
                   <AtSign className="size-4 shrink-0 text-text-muted" strokeWidth={1.5} />
                   <span className="min-w-0 flex-1">
                     <span className="block text-xs text-text-primary">Invite by email</span>
@@ -394,39 +446,27 @@ export function InviteByName({
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-1 rounded-control border border-border-hairline p-1">
-        {(
-          [
-            ['editor', 'Can edit'],
-            ['viewer', 'Can view'],
-          ] as const
-        ).map(([option, label]) => (
-          <button
-            key={option}
-            type="button"
-            onClick={() => setRole(option)}
-            aria-pressed={role === option}
-            className={cn(
-              'rounded-control px-2.5 py-1.5 text-xs transition-colors',
-              role === option
-                ? 'bg-bg-2 text-text-primary'
-                : 'text-text-secondary hover:text-text-primary'
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
       {error && <p className="text-xs text-danger">{error}</p>}
 
-      <div className="flex gap-1.5">
-        <Button size="sm" variant="outline" onClick={() => void copyLink()} disabled={linking}>
-          {linking ? 'Creating…' : displayedLink && clipboard.copied ? 'Copied' : 'Copy link'}
-        </Button>
-        <Button size="sm" className="flex-1" onClick={() => void send()} disabled={sending}>
-          {sendLabel(Math.max(1, toSend.length), sending)}
-        </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <SettingsSegmented
+          label="Role"
+          value={role}
+          options={ROLE_OPTIONS}
+          onChange={setRole}
+        />
+        <div className="ml-auto flex items-center gap-1.5">
+          <Button size="sm" variant="ghost" onClick={() => void copyLink()} disabled={linking}>
+            {linking ? 'Creating…' : displayedLink && clipboard.copied ? 'Copied' : 'Copy link'}
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => void send()}
+            disabled={sending || toSend.length === 0}
+          >
+            {sendLabel(Math.max(1, toSend.length), sending)}
+          </Button>
+        </div>
       </div>
 
       {sent.length > 0 && <SentInvites sent={sent} />}
@@ -439,6 +479,11 @@ export function InviteByName({
     </div>
   );
 }
+
+const ROLE_OPTIONS = [
+  { id: 'editor', label: 'Can edit' },
+  { id: 'viewer', label: 'Can view' },
+] as const;
 
 /** What each sent invite did: a person sees it in Rig, an email went out, or here's the link to send yourself. */
 function SentInvites({ sent }: { sent: Sent[] }) {
