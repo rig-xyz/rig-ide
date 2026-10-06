@@ -242,7 +242,7 @@ describe('InviteByName', () => {
     });
     await flush();
     expect(chips()).toEqual(['Jérémie Rappaz', 'sam@northwind.io']);
-    expect(sendButton().textContent).toBe('Send 2 invites');
+    expect(sendButton().textContent).toContain('Send 2 invites');
 
     await act(async () => {
       await userEvent.click(button(/^Can view$/));

@@ -213,12 +213,12 @@ export function PersonCard({ person, onClose }: { person: PersonRef; onClose: ()
       {error && <p className="text-xs text-danger">{error}</p>}
 
       {mode !== 'confirmRemove' && (supported === true || entry) && (
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center justify-between gap-1.5">
           {supported === true && (
             <Button
               size="sm"
-              variant={mode === 'picking' ? 'secondary' : 'default'}
-              className="flex-1"
+              variant={mode === 'picking' ? 'ghost' : 'default'}
+              className={cn(mode !== 'picking' && 'flex-1')}
               onClick={() => {
                 setNotice(null);
                 setMode(mode === 'picking' ? 'idle' : 'picking');
@@ -243,10 +243,6 @@ export function PersonCard({ person, onClose }: { person: PersonRef; onClose: ()
           )}
         </div>
       )}
-
-      <p className="border-t border-border-hairline pt-3 text-2xs text-text-muted">
-        Name and photo only. People you work with don't see your email.
-      </p>
 
       {entry && (
         <Popover

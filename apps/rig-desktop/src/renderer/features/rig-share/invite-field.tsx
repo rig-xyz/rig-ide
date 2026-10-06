@@ -372,7 +372,7 @@ export function InviteByName({
         </div>
 
         {showList && (
-          <div data-testid="invite-suggestions" role="listbox" className="flex flex-col">
+          <div data-testid="invite-suggestions" role="listbox" className="-mx-2 flex flex-col">
             {suggestions.map((s, index) => {
               const header = s.group !== lastGroup ? s.group : null;
               lastGroup = s.group;
@@ -448,23 +448,36 @@ export function InviteByName({
 
       {error && <p className="text-xs text-danger">{error}</p>}
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <SettingsSegmented
-          label="Role"
-          value={role}
-          options={ROLE_OPTIONS}
-          onChange={setRole}
-        />
+      <div className="@container flex items-center justify-between gap-2">
+        <div className="shrink-0 whitespace-nowrap">
+          <SettingsSegmented
+            label="Role"
+            value={role}
+            options={ROLE_OPTIONS}
+            onChange={setRole}
+          />
+        </div>
         <div className="ml-auto flex items-center gap-1.5">
-          <Button size="sm" variant="ghost" onClick={() => void copyLink()} disabled={linking}>
-            {linking ? 'Creating…' : displayedLink && clipboard.copied ? 'Copied' : 'Copy link'}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => void copyLink()}
+            disabled={linking}
+            aria-label="Copy link"
+            title="Copy link"
+          >
+            <Copy className="size-3.5 @[340px]:hidden" strokeWidth={1.5} />
+            <span className="hidden @[340px]:inline">
+              {linking ? 'Creating…' : displayedLink && clipboard.copied ? 'Copied' : 'Copy link'}
+            </span>
           </Button>
           <Button
             size="sm"
             onClick={() => void send()}
             disabled={sending || toSend.length === 0}
           >
-            {sendLabel(Math.max(1, toSend.length), sending)}
+            <span className="@[340px]:hidden">{sending ? 'Sending…' : 'Send'}</span>
+            <span className="hidden @[340px]:inline">{sendLabel(Math.max(1, toSend.length), sending)}</span>
           </Button>
         </div>
       </div>
