@@ -290,7 +290,8 @@ export function App() {
     toast({
       title: `Rig ${version} is ready`,
       action: { label: 'Restart', onClick: updateStatus.restart },
-      closeButton: true,
+      // A quiet "Later" beside Restart rather than a × floating off the corner.
+      cancel: { label: 'Later', onClick: () => {} },
       duration: Infinity,
     });
   }, [updateStatus]);
@@ -1246,7 +1247,7 @@ export function App() {
       updateStatus.restart();
       return;
     }
-    openSettings('general');
+    openSettings('about');
     updateStatus.check();
   }, [nativeUpdateAction, openSettings, updateStatus]);
 
@@ -1654,7 +1655,7 @@ export function Topbar({
   /** The mini-breadcrumb's house button (rig view only) — up-navigation
    * lives HERE now, not in the panel headers below the bar. */
   onGoHome: () => void;
-  /** Opens Settings, on `page` when given. The gear's own click opens General (where Updates lives) while an update is ready (see below). */
+  /** Opens Settings, on `page` when given. The gear's own click opens About (where Updates lives) while an update is ready (see below). */
   onOpenSettings: (page?: SettingsPageId) => void;
   /** Threaded down to `ActivityBell` — an invite's post-accept "Set up locally" opens the result the same way every other "open a rig" entry point does. Also `RigSwitcher`'s own row clicks. */
   onOpenPath: (path: string, opts?: { kind?: 'space' }) => void;
@@ -1836,7 +1837,7 @@ export function Topbar({
             render={
               <button
                 type="button"
-                onClick={() => onOpenSettings(updateReady ? 'general' : undefined)}
+                onClick={() => onOpenSettings(updateReady ? 'about' : undefined)}
                 aria-label="Settings"
                 className="relative flex size-7 items-center justify-center rounded-control text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
               >

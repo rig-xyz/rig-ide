@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { CSSProperties } from 'react';
 import ReactDOM from 'react-dom/client';
 import { Toaster } from 'sonner';
 import { PULSE_QUERY_KEY } from '@renderer/features/home/briefing-spine';
@@ -33,7 +34,29 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <App />
-        <Toaster position="bottom-right" theme="system" />
+        <Toaster
+          position="bottom-right"
+          theme="system"
+          // Toasts wear the app's own popover surface, not sonner's black or
+          // white box: its colour variables point at the theme tokens, and the
+          // buttons use the app's primary and quiet styles.
+          style={
+            {
+              '--normal-bg': 'var(--bg-1)',
+              '--normal-border': 'var(--border-hairline)',
+              '--normal-text': 'var(--text-primary)',
+              '--border-radius': 'var(--radius-card)',
+            } as CSSProperties
+          }
+          toastOptions={{
+            classNames: {
+              toast: '!shadow-[var(--shadow-float)] !font-sans',
+              actionButton: '!bg-accent !text-accent-ink !rounded-control !h-7 !px-3 !text-xs !font-medium',
+              cancelButton:
+                '!bg-transparent !text-text-secondary hover:!text-text-primary !rounded-control !h-7 !px-2 !text-xs',
+            },
+          }}
+        />
       </TooltipProvider>
     </QueryClientProvider>
   </RecoveryBoundary>

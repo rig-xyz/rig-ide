@@ -13,6 +13,8 @@ type Toast = {
   description?: string;
   variant?: 'default' | 'destructive';
   action?: ToastAction;
+  /** A quiet second button beside `action`, e.g. "Later". */
+  cancel?: ToastAction;
   icon?: ReactNode;
   /** Explicit `×` affordance — sonner's own default is swipe-to-dismiss only, which isn't a discoverable "dismiss" for a standing notification. Opt-in per call, not global, so every other toast in the app keeps its current look. */
   closeButton?: boolean;
@@ -22,12 +24,13 @@ type Toast = {
   id?: string | number;
 };
 
-function toast({ title, description, variant, action, icon, closeButton, duration, id }: Toast) {
+function toast({ title, description, variant, action, cancel, icon, closeButton, duration, id }: Toast) {
   const options = {
     description,
     ...(id !== undefined && { id }),
     icon,
     ...(action && { action: { label: action.label, onClick: action.onClick } }),
+    ...(cancel && { cancel: { label: cancel.label, onClick: cancel.onClick } }),
     ...(closeButton !== undefined && { closeButton }),
     ...(duration !== undefined && { duration }),
   };
