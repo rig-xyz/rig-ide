@@ -7,8 +7,9 @@ import {
   MessageSquare,
   Sparkles,
 } from 'lucide-react';
+import { getSearchQuery, openSearchPanel, SearchQuery, searchPanelOpen, setSearchQuery } from '@codemirror/search';
 import { observer } from 'mobx-react-lite';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { commentDecorations } from '@renderer/features/docs/comments/comment-decorations';
 import { CommentSelectionButton } from '@renderer/features/docs/comments/comment-selection';
 import { CommentPins } from '@renderer/features/docs/comments/comment-pins';
@@ -28,7 +29,9 @@ import { usePaintbrushEditorSync } from '@renderer/features/docs/paintbrush/use-
 import { usePaintbrushMode } from '@renderer/features/docs/paintbrush/use-paintbrush';
 import { PaintbrushPreviewSweep } from '@renderer/features/docs/paintbrush/paintbrush-preview-sweep';
 import { PreviewCommentSelectionButton } from '@renderer/features/docs/preview/preview-comment-selection';
+import { ReadingFindBar, type ReadingFind } from '@renderer/features/docs/preview/reading-find-bar';
 import { usePreviewComments } from '@renderer/features/docs/preview/use-preview-comments';
+import { cmdFTarget, CmdFRouteContext, focusOf, isCmdF } from '@renderer/features/shell/cmd-f-target';
 import { archiveEntry } from '@renderer/features/workspace/file-actions';
 import { requestOpenFile } from '@renderer/features/workspace/open-file-request';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
@@ -443,18 +446,18 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // not a pixel offset, because Preview and Edit almost never agree on
   // total document height.
   const pendingScrollRatio = useRef<number | null>(null);
-  const setMode = useCallback(
-    (next: PreviewMode) => {
-      const el = containerRef.current;
-      if (el) {
-        const scrollable = el.scrollHeight - el.clientHeight;
-        pendingScrollRatio.current = scrollable > 0 ? el.scrollTop / scrollable : 0;
-      }
-      setPreviewMode(path, next);
-      setModeState(next);
-    },
-    [path]
-  );
+
+  // Find (Cmd-F): CodeMirror's own panel while editing, `ReadingFindBar`
+  // while reading. Switching between them with find open keeps the query.
+  const [readingFind, setReadingFindState] = useState<ReadingFind | null>(null);
+  // Closed, it keeps what was typed for the next Cmd-F, as the editor's does.
+  const lastReadingFind = useRef<ReadingFind | null>(null);
+  const setReadingFind = useCallback((next: ReadingFind | null) => {
+    if (next) lastReadingFind.current = next;
+    setReadingFindState(next);
+  }, []);
+  const carryToEditor = useRef<{ query: string; caseSensitive: boolean } | null>(null);
+
   useLayoutEffect(() => {
     const el = containerRef.current;
     const ratio = pendingScrollRatio.current;
@@ -490,6 +493,99 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
     // the grandparent (`App.tsx`'s `<ArtifactView key={nav.path} .../>`)
     // guarantees a remount rather than relying on this dependency array.
   }, [path, root, rootId, commentsEnabled]);
+
+  const setMode = useCallback(
+    (next: PreviewMode) => {
+      const el = containerRef.current;
+      if (el) {
+        const scrollable = el.scrollHeight - el.clientHeight;
+        pendingScrollRatio.current = scrollable > 0 ? el.scrollTop / scrollable : 0;
+      }
+      const view = resource.editorRef.current?.getView() ?? null;
+      if (next === 'edit' && readingFind) {
+        carryToEditor.current = { query: readingFind.query, caseSensitive: readingFind.caseSensitive };
+        setReadingFind(null);
+      } else if (next === 'preview' && view && searchPanelOpen(view.state)) {
+        const query = getSearchQuery(view.state);
+        setReadingFind({ query: query.search, caseSensitive: query.caseSensitive, focusNonce: Date.now() });
+      }
+      setPreviewMode(path, next);
+      setModeState(next);
+    },
+    [path, resource, readingFind, setReadingFind]
+  );
+
+  // Reading → editing with find open: CodeMirror's panel opens on the same
+  // query (the fresh editor has mounted by now: child effects run first).
+  useEffect(() => {
+    const carried = carryToEditor.current;
+    if (mode !== 'edit' || !carried) return;
+    carryToEditor.current = null;
+    const view = resource.editorRef.current?.getView();
+    if (!view) return;
+    view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: carried.query, caseSensitive: carried.caseSensitive })) });
+    openSearchPanel(view);
+  }, [mode, resource]);
+
+  // Cmd-F finds in this doc when it's the pane you're in (`cmd-f-target.ts`),
+  // the chat's search otherwise. In the editor CodeMirror's own keymap
+  // answers first; from elsewhere in the pane it focuses the editor and
+  // opens the same panel. On its own, outside App, the doc is the only pane.
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const getCmdFRoute = useContext(CmdFRouteContext);
+  const findTarget = useCallback(
+    (event: KeyboardEvent) => {
+      const route = getCmdFRoute?.() ?? { layout: 'files' as const, lastPane: 'artifact' as const };
+      const target = event.target instanceof Element ? event.target : null;
+      return cmdFTarget({
+        ...route,
+        focus: focusOf(event.target, { root: paneRef.current, pane: 'artifact' }),
+        editorFocused: target?.closest('.cm-editor') != null,
+        previewOpen: mode === 'preview',
+      });
+    },
+    [getCmdFRoute, mode]
+  );
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !isCmdF(event)) return;
+      const target = findTarget(event);
+      if (target === 'doc-reading') {
+        event.preventDefault();
+        const last = lastReadingFind.current;
+        setReadingFind({
+          query: last?.query ?? '',
+          caseSensitive: last?.caseSensitive ?? false,
+          focusNonce: (last?.focusNonce ?? 0) + 1,
+        });
+      } else if (target === 'doc-editor') {
+        const view = resource.editorRef.current?.getView();
+        if (!view) return;
+        event.preventDefault();
+        view.focus();
+        openSearchPanel(view);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [findTarget, resource, setReadingFind]);
+  // Esc closes the reading view's find from the doc (the field closes it
+  // itself), before the pane's own Esc closes the tab.
+  const readingFindOpen = readingFind !== null && mode === 'preview';
+  useEffect(() => {
+    if (!readingFindOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      if (findTarget(event) !== 'doc-reading') return;
+      event.preventDefault();
+      setReadingFind(null);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [readingFindOpen, findTarget, setReadingFind]);
+  const getPreviewRoot = useCallback(() => previewRef.current?.getRoot() ?? null, []);
 
   useEffect(() => {
     return () => {
@@ -627,7 +723,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   const resolvedCount = comments !== null && showComments ? comments.visibleResolvedThreads.length : 0;
 
   return (
-    <div className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+    <div ref={paneRef} className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden">
       <ArtifactHeaderBar
         path={path}
         crumbs={crumbs}
@@ -708,6 +804,17 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
         </div>
       )}
       {banner}
+
+      {readingFindOpen && !resource.isLoading && !resource.loadError && (
+        <ReadingFindBar
+          find={readingFind}
+          onChange={setReadingFind}
+          onClose={() => setReadingFind(null)}
+          content={resource.content}
+          getRoot={getPreviewRoot}
+          scrollerRef={containerRef}
+        />
+      )}
 
       <div
         ref={containerRef}

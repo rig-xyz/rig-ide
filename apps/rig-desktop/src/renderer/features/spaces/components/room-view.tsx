@@ -1,7 +1,8 @@
 import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { deriveRoomConnection } from '@renderer/features/home/home-connection';
+import { cmdFTarget, CmdFRouteContext, focusOf, isCmdF } from '@renderer/features/shell/cmd-f-target';
 import { ConnectionBanner } from '@renderer/features/shell/connection-banner';
 import { useAutoReconnect, useNavigatorOnline } from '@renderer/features/shell/use-connection';
 import { toast } from '@renderer/lib/hooks/use-toast';
@@ -1199,41 +1200,55 @@ export function RoomView({
     };
   }, [shownSnapshot, searchActive, searchMatches, searchRemote]);
 
-  // Cmd-F in the Room opens the search, or selects what's in it. Not from a
-  // doc's editor (it has its own find) nor from anywhere outside the Room.
+  // Cmd-F in the Room opens the search, or selects what's in it, when the
+  // chat is the pane you're in (`cmd-f-target.ts`): beside a doc, the one you
+  // last clicked or focused; a doc's editor has its own find. On its own,
+  // outside App, the Room is the only pane.
   const roomRootRef = useRef<HTMLDivElement>(null);
   const openChatSearch = chatSearch.openSearch;
   const searchOpen = chatSearch.open;
+  const getCmdFRoute = useContext(CmdFRouteContext);
+  const isChatsKey = useCallback(
+    (event: KeyboardEvent) => {
+      const route = getCmdFRoute?.() ?? { layout: 'chat' as const, lastPane: 'chat' as const };
+      const target = event.target instanceof Element ? event.target : null;
+      return (
+        cmdFTarget({
+          ...route,
+          focus: focusOf(event.target, { root: roomRootRef.current, pane: 'chat' }),
+          editorFocused: target?.closest('.cm-editor') != null,
+          previewOpen: false,
+        }) === 'chat-search'
+      );
+    },
+    [getCmdFRoute]
+  );
   useEffect(() => {
     if (collapsed) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey)) return;
-      if (event.key.toLowerCase() !== 'f') return;
-      const target = event.target instanceof Node ? event.target : null;
-      const root = roomRootRef.current;
-      if (!root) return;
-      const inRoom = !target || target === document.body || target === document.documentElement || root.contains(target);
-      if (!inRoom) return;
-      if (target instanceof Element && target.closest('.cm-editor')) return;
+      if (event.defaultPrevented || !isCmdF(event) || !isChatsKey(event)) return;
       event.preventDefault();
       openChatSearch();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [collapsed, openChatSearch]);
-  // Esc closes it from anywhere in the Room (in the field, the field says so first), before a focused theme hears it.
+  }, [collapsed, openChatSearch, isChatsKey]);
+  // Esc closes it from anywhere in the Room (in the field, the field says so
+  // first), before a focused theme hears it. Beside a doc, only when the chat
+  // is the pane you're in.
   useEffect(() => {
     if (!searchOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
       const target = event.target;
       if (target instanceof HTMLElement && (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      if (!isChatsKey(event)) return;
       event.preventDefault();
       closeSearch();
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [searchOpen, closeSearch]);
+  }, [searchOpen, closeSearch, isChatsKey]);
 
   // A notification pointing at a reply: the main column goes to its root, and its thread opens on it.
   const jumpTargetId = useMemo(() => {

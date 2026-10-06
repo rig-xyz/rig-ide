@@ -43,6 +43,7 @@ import {
   deriveNativeCloseTarget,
   type FocusedRigPane,
 } from '@renderer/features/shell/native-close-target';
+import { CmdFRouteContext, type CmdFRoute } from '@renderer/features/shell/cmd-f-target';
 import { RigSwitcher } from '@renderer/features/shell/rig-switcher';
 import { SettingsSheet } from '@renderer/features/settings/settings-sheet';
 import type { SettingsPageId } from '@renderer/features/settings/settings-pages';
@@ -374,6 +375,13 @@ export function App() {
   }, []);
   const layout: RigLayout = windowWidth < NARROW_WINDOW_PX && rigLayout === 'split' ? 'files' : rigLayout;
   const [focusedRigPane, setFocusedRigPane] = useState<FocusedRigPane>('chat');
+  // Cmd-F goes to the pane you're in (`cmd-f-target.ts`): the chat's search
+  // and the doc's find read this at key-press time.
+  const cmdFRouteRef = useRef<CmdFRoute>({ layout, lastPane: focusedRigPane });
+  useEffect(() => {
+    cmdFRouteRef.current = { layout, lastPane: focusedRigPane };
+  }, [layout, focusedRigPane]);
+  const getCmdFRoute = useCallback(() => cmdFRouteRef.current, []);
   // Doc-focus round: opening a doc beside the Room/session (any layout flip
   // away from 'chat') fades + slides the artefact pane in instead of it
   // popping into place — see the pane's own render below for the
@@ -1413,8 +1421,10 @@ export function App() {
         // `ChatPanel`'s own session rail and gives the artefact pane
         // everything else. The chat wrapper is the same element across all
         // three layouts, so `ChatPanel` never remounts when it changes.
+        <CmdFRouteContext.Provider value={getCmdFRoute}>
         <div className={cn('flex min-h-0 flex-1', !chrome.panesUnderBar && 'pt-10')}>
           <div
+            data-rig-pane="chat"
             style={{
               order: CHAT_PANEL_ORDER,
               // Capped so a narrow window always leaves room for the file.
@@ -1506,6 +1516,7 @@ export function App() {
               );
               return (
                 <div
+                  data-rig-pane="artifact"
                   style={{ order: ARTIFACT_PANEL_ORDER }}
                   onPointerDownCapture={() => setFocusedRigPane('artifact')}
                   onFocusCapture={() => setFocusedRigPane('artifact')}
@@ -1529,6 +1540,7 @@ export function App() {
               );
             })()}
         </div>
+        </CmdFRouteContext.Provider>
       ) : (
         // Round H2 feedback: `items-center justify-center` directly on the
         // SCROLLING element clips content taller than the viewport at the
