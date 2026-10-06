@@ -392,9 +392,11 @@ function CompactSharePanel({
           <button
             type="button"
             onClick={() => setInviting(true)}
-            className="bg-bg-2 text-text-secondary hover:text-text-primary rounded-chip mx-2 mt-1 flex w-fit shrink-0 items-center gap-1.5 px-2.5 py-1 text-xs transition-colors"
+            className="text-text-muted hover:text-text-primary flex h-7 shrink-0 items-center gap-2 pr-2 pl-8 text-left text-xs transition-colors"
           >
-            <UserPlus className="size-3" strokeWidth={1.5} />
+            <span className="grid size-4 shrink-0 place-items-center">
+              <UserPlus className="size-3.5" strokeWidth={1.5} />
+            </span>
             Invite people
           </button>
         ))}
