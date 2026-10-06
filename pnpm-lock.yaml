@@ -5,9 +5,9 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@agentclientprotocol/codex-acp@1.10.0':
-    hash: a4120c8db64b908f4c906395718faee4fd94b957adf68b50d450fbd527b08af1
-    path: patches/@agentclientprotocol__codex-acp@1.10.0.patch
+  '@agentclientprotocol/codex-acp@2.1.1':
+    hash: 1af500f513c2258cc4405ebcc9de131e224481e3e5da48756aac7d3075b1944a
+    path: patches/@agentclientprotocol__codex-acp@2.1.1.patch
 
 importers:
 
@@ -979,11 +979,11 @@ importers:
   packages/plugins:
     dependencies:
       '@agentclientprotocol/claude-agent-acp':
-        specifier: 0.81.2
-        version: 0.81.2(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
+        specifier: 0.86.0
+        version: 0.86.0(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
       '@agentclientprotocol/codex-acp':
-        specifier: 1.10.0
-        version: 1.10.0(patch_hash=a4120c8db64b908f4c906395718faee4fd94b957adf68b50d450fbd527b08af1)
+        specifier: 2.1.1
+        version: 2.1.1(patch_hash=1af500f513c2258cc4405ebcc9de131e224481e3e5da48756aac7d3075b1944a)
       '@agentclientprotocol/sdk':
         specifier: ^1.5.0
         version: 1.5.0(zod@4.4.3)
@@ -1277,13 +1277,13 @@ packages:
   '@adobe/css-tools@4.5.0':
     resolution: {integrity: sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q==}
 
-  '@agentclientprotocol/claude-agent-acp@0.81.2':
-    resolution: {integrity: sha512-/yvpesq8e6Jv8kl5PHEhwbKRVvzVudXD+ujC0q6PZFmrZK0+xPtiVQYtZIdlUtdhgNKBgBTsGwZkbb2Iw+rbjA==}
+  '@agentclientprotocol/claude-agent-acp@0.86.0':
+    resolution: {integrity: sha512-TrdQZvT8YT3eOzMZngatm5GJi93dR4/bHoDXRd+8TxfY1cVYtJFK3KApIr6aDreti/Xn15rGCqX7OxxOV/sM4Q==}
     engines: {node: '>=22'}
     hasBin: true
 
-  '@agentclientprotocol/codex-acp@1.10.0':
-    resolution: {integrity: sha512-b4dDCPkH/GgHRb3JelXz4QdNirdoTjO3yYM1ImUJMxVXxgZLZMguEXNhZOH2G755UKzf6ZypiiC7UHe3fKgp2Q==}
+  '@agentclientprotocol/codex-acp@2.1.1':
+    resolution: {integrity: sha512-dppZxW3f8kNbTDbR25+lBLtNst5DIC/Sm7GtRF69PI1Ilqv12tDSsIb0hJQW0iNzkx+JdDvX76HOyv5Uibu1qQ==}
     hasBin: true
 
   '@agentclientprotocol/sdk@1.1.0':
@@ -1296,11 +1296,16 @@ packages:
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
+  '@agentclientprotocol/sdk@1.7.0':
+    resolution: {integrity: sha512-ZORuxsuEnLjRly7t6Ad7zAsWitjWsyprswyPUHz/yycPb+tTm3DGa8XheaHhRXqX8LS9snuxaYavXSRA50TlHw==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
+
   '@antfu/install-pkg@1.1.0':
     resolution: {integrity: sha512-MGQsmw10ZyI+EJo45CdSER4zEb+p31LpDAFp2Z3gkSd1yqVZGi0Ebx++YTEMonJy4oChEMLsxZ64j8FH6sSqtQ==}
 
-  '@anthropic-ai/claude-agent-sdk@0.3.280':
-    resolution: {integrity: sha512-aIQSTKcCJcOgi125GAGQaNZUYgxbEBQwV2Ac+Utp0+gGUjIEWjTqz4B8kXr9XjkcCTYiRUMTDsXPAUfIcBDjnw==}
+  '@anthropic-ai/claude-agent-sdk@0.3.287':
+    resolution: {integrity: sha512-DrYUMzmSVfL1VciNDo/9BhxiVnTsSCKVzxLHB3+NvvRiyN4pfWTKFrUzQesPnWswds9x1Ir10Gi6GRsnjT0UkA==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.93.0'
@@ -3087,8 +3092,8 @@ packages:
   '@octokit/types@16.0.0':
     resolution: {integrity: sha512-sKq+9r1Mm4efXW1FCk7hFSeJo4QKreL/tTbR0rz/qx/r1Oa2VV83LTA/H/MuCOX7uCIJmQVRKBcbmWoySjAnSg==}
 
-  '@openai/codex@0.153.4':
-    resolution: {integrity: sha512-wbHDmit7S/YvBGVX1DQmk13xtWblZ2cApeJ/pB7xDZ10Cna+DZc5ij7f0F4OxdsXN4FW1oLT48OpogUI1+8Y2w==}
+  '@openai/codex@0.159.3':
+    resolution: {integrity: sha512-hg4nlqCwRb87GocxNnHvz4sadOrdJ71mO0a4CUYWXjAozJe2gtuAdRFldKGSQXw9m7SgR4ydis12KDVVPgzDkQ==}
     engines: {node: '>=16'}
     hasBin: true
 
@@ -10236,23 +10241,24 @@ snapshots:
 
   '@adobe/css-tools@4.5.0': {}
 
-  '@agentclientprotocol/claude-agent-acp@0.81.2(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))':
+  '@agentclientprotocol/claude-agent-acp@0.86.0(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))':
     dependencies:
-      '@agentclientprotocol/sdk': 1.5.0(zod@4.6.5)
-      '@anthropic-ai/claude-agent-sdk': 0.3.280(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.6.5)
+      '@agentclientprotocol/sdk': 1.7.0(zod@4.6.5)
+      '@anthropic-ai/claude-agent-sdk': 0.3.287(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.6.5)
+      diff: 9.0.0
       zod: 4.6.5
     transitivePeerDependencies:
       - '@anthropic-ai/sdk'
       - '@modelcontextprotocol/sdk'
 
-  '@agentclientprotocol/codex-acp@1.10.0(patch_hash=a4120c8db64b908f4c906395718faee4fd94b957adf68b50d450fbd527b08af1)':
+  '@agentclientprotocol/codex-acp@2.1.1(patch_hash=1af500f513c2258cc4405ebcc9de131e224481e3e5da48756aac7d3075b1944a)':
     dependencies:
-      '@agentclientprotocol/sdk': 1.5.0(zod@4.4.3)
-      '@openai/codex': 0.153.4
+      '@agentclientprotocol/sdk': 1.5.0(zod@4.6.5)
+      '@openai/codex': 0.159.3
       diff: 9.0.0
       open: 11.0.2
       vscode-jsonrpc: 9.0.2
-      zod: 4.4.3
+      zod: 4.6.5
 
   '@agentclientprotocol/sdk@1.1.0(zod@4.4.3)':
     dependencies:
@@ -10266,12 +10272,16 @@ snapshots:
     dependencies:
       zod: 4.6.5
 
+  '@agentclientprotocol/sdk@1.7.0(zod@4.6.5)':
+    dependencies:
+      zod: 4.6.5
+
   '@antfu/install-pkg@1.1.0':
     dependencies:
       package-manager-detector: 1.6.0
       tinyexec: 1.2.4
 
-  '@anthropic-ai/claude-agent-sdk@0.3.280(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.6.5)':
+  '@anthropic-ai/claude-agent-sdk@0.3.287(@anthropic-ai/sdk@0.106.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.6.5)':
     dependencies:
       '@anthropic-ai/sdk': 0.106.0(zod@4.4.3)
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
@@ -11968,7 +11978,7 @@ snapshots:
     dependencies:
       '@octokit/openapi-types': 27.0.0
 
-  '@openai/codex@0.153.4': {}
+  '@openai/codex@0.159.3': {}
 
   '@oxc-parser/binding-android-arm-eabi@0.127.0':
     optional: true

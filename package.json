@@ -50,7 +50,7 @@
       "@openai/codex-win32-x64"
     ],
     "patchedDependencies": {
-      "@agentclientprotocol/codex-acp@1.10.0": "patches/@agentclientprotocol__codex-acp@1.10.0.patch"
+      "@agentclientprotocol/codex-acp@2.1.1": "patches/@agentclientprotocol__codex-acp@2.1.1.patch"
     }
   },
   "devDependencies": {

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * Tripwire for the vendored codex-acp sandbox patch
- * (`patches/@agentclientprotocol__codex-acp@1.10.0.patch`, see
+ * (`patches/@agentclientprotocol__codex-acp@2.1.1.patch`, see
  * `agents/roadmaps/agent-queryable-context-verification.md`'s addendum).
  *
  * The adapter hardcodes its "Agent" mode as workspace-write with
