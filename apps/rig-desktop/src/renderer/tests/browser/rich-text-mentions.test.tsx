@@ -8,9 +8,12 @@ const linkTitle = vi.hoisted(() => vi.fn(async ({ url }: { url: string }) => (ur
 const openExternal = vi.hoisted(() => vi.fn(async (_url: string) => {}));
 vi.mock('@renderer/lib/ipc', () => ({ rpc: { app: { openExternal }, rig: { pages: { linkTitle } } } }));
 
+/** The agents a space has: `@claude` and `@codex` name them. */
+const AGENTS = ['claude', 'codex'];
+
 /** 0.4.3: "@gmail" inside an email address was styled as an @mention. */
 function highlighted(text: string): string[] {
-  const html = renderToStaticMarkup(<>{richText(text, 'bob')}</>);
+  const html = renderToStaticMarkup(<>{richText(text, 'bob', [], [], AGENTS)}</>);
   return [...html.matchAll(/<span[^>]*>([^<]*)<\/span>/g)].map((m) => m[1]!);
 }
 
@@ -43,7 +46,7 @@ describe('richText person mentions', () => {
     { id: 'bob', name: 'Bob Stone' },
   ];
   const spans = (text: string, ownId = 'bob') => {
-    const html = renderToStaticMarkup(<>{richText(text, ownId, members)}</>);
+    const html = renderToStaticMarkup(<>{richText(text, ownId, members, [], AGENTS)}</>);
     return [...html.matchAll(/<span([^>]*)>([^<]*)<\/span>/g)].map((m) => ({ attrs: m[1]!, text: m[2]! }));
   };
 
@@ -86,7 +89,7 @@ describe('richText person mentions', () => {
 describe('richText links', () => {
   const render = (text: string) => {
     const host = document.createElement('div');
-    host.innerHTML = renderToStaticMarkup(<>{richText(text, 'bob')}</>);
+    host.innerHTML = renderToStaticMarkup(<>{richText(text, 'bob', [], [], AGENTS)}</>);
     return host;
   };
 
@@ -115,7 +118,7 @@ describe('richText links', () => {
     await act(async () => {
       root.render(
         <OpenPageContext.Provider value={openPage}>
-          {richText('see https://www.userig.xyz/download#top, https://zoom.us/j/123 and https://dl.userig.xyz/Rig-0.4.5.dmg', 'bob')}
+          {richText('see https://www.userig.xyz/download#top, https://zoom.us/j/123 and https://dl.userig.xyz/Rig-0.4.5.dmg', 'bob', [], [], AGENTS)}
         </OpenPageContext.Provider>
       );
     });
@@ -169,7 +172,7 @@ describe('richText links', () => {
     document.body.appendChild(host);
     const root = createRoot(host);
     await act(async () => {
-      root.render(<>{richText('see https://claude.ai/artifact/AbC123?x=1 and https://docs.google.com/document/d/1AbC/edit', 'bob')}</>);
+      root.render(<>{richText('see https://claude.ai/artifact/AbC123?x=1 and https://docs.google.com/document/d/1AbC/edit', 'bob', [], [], AGENTS)}</>);
     });
     await vi.waitFor(() => expect(host.querySelector('[data-kind="claude-artifact"]')?.textContent).toBe('Homepage explorations'));
     const chip = host.querySelector<HTMLAnchorElement>('[data-kind="claude-artifact"]')!;

@@ -268,11 +268,13 @@ export function richText(
   /** The room's people, so a display-name mention ("@Hugo Renaudin", what the composer's Tab inserts) reads as one. */
   members: readonly Pick<RoomMember, 'id' | 'name'>[] = [],
   /** Who the message says it tagged (`meta.mentions`): matched first, by id. */
-  mentions: readonly MessageMention[] = []
+  mentions: readonly MessageMention[] = [],
+  /** The space's agent kinds, so `@claude` reads as a mention and `@rigxyz` doesn't. */
+  agents: readonly string[] = []
 ): ReactNode {
   return (
     <ReactMarkdown
-      remarkPlugins={[[remarkGfm, { singleTilde: false }], [remarkRoomTokens, { members, mentions }]]}
+      remarkPlugins={[[remarkGfm, { singleTilde: false }], [remarkRoomTokens, { members, mentions, agents }]]}
       components={{
         span: ({ node, children }) => (
           <RoomToken node={node as HastElement | undefined} ownId={ownId}>
@@ -462,9 +464,10 @@ export function MessageRow({
   const mentions = message.meta.kind === 'text' ? message.meta.mentions : undefined;
   // Only files were sent: the body was written for older apps; the cards say it.
   const hideBody = !!files?.length && message.meta.kind === 'text' && message.meta.autoBody;
+  const agentKinds = useMemo(() => [...new Set(snapshot.agents.map((a) => a.agent))], [snapshot.agents]);
   const body = useMemo(
-    () => (message.body && !hideBody ? richText(message.body, ownId, snapshot.members, mentions) : null),
-    [message.body, hideBody, ownId, snapshot.members, mentions]
+    () => (message.body && !hideBody ? richText(message.body, ownId, snapshot.members, mentions, agentKinds) : null),
+    [message.body, hideBody, ownId, snapshot.members, mentions, agentKinds]
   );
   const replyTo = message.meta.kind === 'text' ? message.meta.replyTo : undefined;
   // The emoji picker open from the hover bar keeps the bar showing.

@@ -48,6 +48,7 @@ describe('a person’s message', () => {
       { id: 'u_hugo', name: 'Hugo Renaudin' },
       { id: 'u_me', name: 'Me' },
     ],
+    agents: [{ agent: 'claude', owner: 'u_me', model: '', busy: false }],
   } as unknown as RoomSnapshot;
   const message = (body: string): RoomMessage =>
     ({

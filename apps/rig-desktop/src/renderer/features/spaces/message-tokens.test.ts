@@ -18,7 +18,7 @@ function render(text: string): string {
       {
         remarkPlugins: [
           [remarkGfm, { singleTilde: false }],
-          [remarkRoomTokens, { members }],
+          [remarkRoomTokens, { members, agents: ['claude', 'codex'] }],
         ],
       },
       text
@@ -51,6 +51,11 @@ describe('remarkRoomTokens', () => {
     expect(render('@Bob hi')).toContain('data-member="u_bob"');
     // Inside emphasis is still ordinary text.
     expect(tokens('**@claude** please')).toEqual([['mention', '@claude']]);
+    // Only the space's people and agents: a package scope or a stranger stays text.
+    expect(tokens('npm i @rigxyz/cli and ask @someone')).toEqual([]);
+    expect(tokens('@codex and @claude/x')).toEqual([['mention', '@codex']]);
+    // A first name alone, when it's unique, like the relay's notification rule.
+    expect(tokens('thanks @hugo')).toEqual([['mention', '@hugo']]);
   });
 
   it('takes a /command only at the very start of the message', () => {
