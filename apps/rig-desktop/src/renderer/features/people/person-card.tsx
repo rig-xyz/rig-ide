@@ -42,8 +42,9 @@ function SpaceName({ name }: { name: string }) {
  * A person, anywhere (board 26, panel 4): their photo and name, how many
  * spaces you share, the first few of those spaces (a click opens one),
  * "Invite to a space" with a searchable picker of your spaces they're not
- * in, and "Remove from your people" behind the ⋯ button. Spaces only: a rig
- * you share never shows here. Exported on its own for surfaces that already
+ * in, and "Hide" behind the ⋯ button, which drops them from suggestions
+ * until you share a space again. Spaces only: a rig you share never shows
+ * here. Exported on its own for surfaces that already
  * have a popover; most callers want `PersonCardPopover`.
  */
 export function PersonCard({ person, onClose }: { person: PersonRef; onClose: () => void }) {
@@ -64,7 +65,7 @@ export function PersonCard({ person, onClose }: { person: PersonRef; onClose: ()
   const invitable = (spaces ?? []).filter((s) => s.role === 'owner' && !sharedIds.has(s.id));
 
   const [showAll, setShowAll] = useState(false);
-  const [mode, setMode] = useState<'idle' | 'picking' | 'confirmRemove'>('idle');
+  const [mode, setMode] = useState<'idle' | 'picking'>('idle');
   const [menuOpen, setMenuOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
@@ -193,26 +194,10 @@ export function PersonCard({ person, onClose }: { person: PersonRef; onClose: ()
         </div>
       )}
 
-      {mode === 'confirmRemove' && (
-        <div className="flex flex-col gap-2 rounded-control bg-bg-2 p-2">
-          <p className="text-xs text-text-secondary">
-            Take {name} off your people? You keep the spaces you share, and they can still invite you.
-          </p>
-          <div className="flex gap-1.5">
-            <Button size="xs" variant="destructive" disabled={busy} onClick={() => void forget()}>
-              Remove
-            </Button>
-            <Button size="xs" variant="ghost" disabled={busy} onClick={() => setMode('idle')}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
-
       {notice && <p className="text-xs text-text-secondary">{notice}</p>}
       {error && <p className="text-xs text-danger">{error}</p>}
 
-      {mode !== 'confirmRemove' && (supported === true || entry) && (
+      {(supported === true || entry) && (
         <div className="flex items-center justify-between gap-1.5">
           {supported === true && (
             <Button
@@ -256,11 +241,10 @@ export function PersonCard({ person, onClose }: { person: PersonRef; onClose: ()
           className={PEOPLE_LAYER_CLASS}
         >
           <PopoverMenuItem
-            label="Remove from your people"
-            danger
+            label="Hide"
             onSelect={() => {
               setMenuOpen(false);
-              setMode('confirmRemove');
+              void forget();
             }}
           />
         </Popover>

@@ -146,7 +146,7 @@ function Members({
                   tabIndex={0}
                   role="img"
                   aria-label={memberLabel(entry)}
-                  className="relative rounded-full transition-transform hover:-translate-y-0.5"
+                  className="relative inline-flex rounded-full transition-transform hover:-translate-y-0.5"
                   data-testid="dock-member"
                   data-presence={present ? 'here' : 'away'}
                 >

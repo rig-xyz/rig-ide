@@ -271,7 +271,7 @@ describe('Manage who is in a space', () => {
     expect(mocks.listInvites).not.toHaveBeenCalled();
   });
 
-  it('a name opens the person card: invite them to a space they’re not in, or remove them from your people', async () => {
+  it('a name opens the person card: invite them to a space they’re not in, or hide them', async () => {
     await render();
     await click(host.querySelector<HTMLElement>('[aria-label="About Hugo Renaudin"]')!);
     const card = document.querySelector<HTMLElement>('[data-testid="person-card"]')!;
@@ -294,9 +294,7 @@ describe('Manage who is in a space', () => {
     expect(card.textContent).toContain('Invited to #design');
 
     await click(card.querySelector<HTMLElement>('[aria-label="More for Hugo Renaudin"]')!);
-    await click(byText(document.querySelector('[role="menu"]')!, 'Remove from your people'));
-    expect(mocks.forgetPerson).not.toHaveBeenCalled();
-    await click(byText(card, 'Remove'));
+    await click(byText(document.querySelector('[role="menu"]')!, 'Hide'));
     expect(mocks.forgetPerson).toHaveBeenCalledWith({ userId: 'usr_hugo' });
   });
 });

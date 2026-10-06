@@ -386,7 +386,7 @@ function CompactSharePanel({
       {showInvites &&
         (inviting ? (
           <div className="mt-2 border-t border-border-hairline px-2 pt-3">
-            <InviteByName root={root} title={inviteTitle} currentMembers={memberList.members} />
+            <InviteByName root={root} title={inviteTitle} currentMembers={memberList.members} compact />
           </div>
         ) : (
           <button

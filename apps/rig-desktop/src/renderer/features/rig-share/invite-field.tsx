@@ -67,11 +67,14 @@ export function InviteByName({
   root,
   title,
   currentMembers,
+  compact = false,
 }: {
   root: string;
   /** The section's header, e.g. "Invite to #launch-plan". */
   title: string;
   currentMembers: RigMember[];
+  /** In the space panel: a muted label and smaller controls, like the panel's other sections. */
+  compact?: boolean;
 }) {
   const queryClient = useQueryClient();
   const sectionRef = useRef<HTMLDivElement>(null);
@@ -309,7 +312,7 @@ export function InviteByName({
         if (!sectionRef.current?.contains(event.relatedTarget as Node | null)) leaveSection();
       }}
     >
-      <p className="text-sm font-medium text-text-primary">{title}</p>
+      <p className={compact ? 'text-xs text-text-muted' : 'text-sm font-medium text-text-primary'}>{title}</p>
 
       <div className="flex flex-col gap-1">
         <div
@@ -319,7 +322,10 @@ export function InviteByName({
               inputRef.current?.focus();
             }
           }}
-          className="flex min-h-9 flex-wrap items-center gap-1 rounded-control border border-border-hairline bg-bg-1 px-1.5 py-1 focus-within:border-border-strong"
+          className={cn(
+            'flex flex-wrap items-center gap-1 rounded-control border border-border-hairline bg-bg-1 px-1.5 focus-within:border-border-strong',
+            compact ? 'min-h-8 py-0.5' : 'min-h-9 py-1'
+          )}
         >
           {chips.map((chip) => (
             <span
@@ -459,7 +465,7 @@ export function InviteByName({
         </div>
         <div className="ml-auto flex items-center gap-1.5">
           <Button
-            size="sm"
+            size={compact ? 'xs' : 'sm'}
             variant="ghost"
             onClick={() => void copyLink()}
             disabled={linking}
@@ -472,7 +478,7 @@ export function InviteByName({
             </span>
           </Button>
           <Button
-            size="sm"
+            size={compact ? 'xs' : 'sm'}
             onClick={() => void send()}
             disabled={sending || toSend.length === 0}
           >
