@@ -176,12 +176,12 @@ describe('Home offline', () => {
     await mount();
 
     expect(newSpace().disabled).toBe(true);
-    expect(newRig().disabled).toBe(true);
-    const wrapper = newRig().closest<HTMLElement>('[data-needs-connection]')!;
+    // Plain rigs are hidden while spaces are on: no Rigs card, no New rig.
+    expect(newRig()).toBeFalsy();
+    const wrapper = host.querySelector('[data-testid="new-space-cta"]')!.closest<HTMLElement>('[data-needs-connection]')!;
     expect(wrapper).not.toBeNull();
     await userEvent.hover(wrapper);
     await vi.waitFor(() => expect(document.body.textContent).toContain('Needs a connection'));
-    expect(host.querySelector('[data-testid="new-space-cta"]')?.closest('[data-needs-connection]')).not.toBeNull();
   });
 
   it('says "offline" with no network, and clears once back online and the relay answers', async () => {

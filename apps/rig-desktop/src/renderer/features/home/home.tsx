@@ -56,6 +56,7 @@ import {
   topicBySpace,
 } from './recent-themes-state';
 import { RigsRail } from './rigs-rail';
+import { generateSpaceName } from './space-create';
 import { indexSpaceStatuses } from './space-status-state';
 import { SpacesCard } from './spaces-card';
 import { useRecentThemes, RECENT_THEMES_QUERY_KEY } from './use-recent-themes';
@@ -143,6 +144,13 @@ export function Home({
   // made, or null.
   const spacesEnabled = useSpacesEnabled();
   const createSpace = startSpaceSetup;
+  // Plain rigs are hidden while spaces are on, so Welcome's "Start fresh"
+  // makes a space, named like the New space button names one.
+  const spaceNamesRef = useRef<ReadonlySet<string>>(new Set());
+  const createFirst = useCallback(() => {
+    if (spacesEnabled) void createSpace(generateSpaceName(spaceNamesRef.current));
+    else void createRig();
+  }, [spacesEnabled, createSpace, createRig]);
   const spaceSetups = useSpaceSetups();
   // Pulse round: which rigs-rail row a WHAT'S NEW/ACROSS YOUR RIGS rig-name
   // link (no local match) should scroll to/flash — lives here, not in
@@ -188,15 +196,15 @@ export function Home({
     signIn: signInThenCreateRig,
     phase: createSignInPhase,
     error: createSignInError,
-  } = useRigSignIn(() => void createRig());
+  } = useRigSignIn(() => createFirst());
 
   const startFreshOrCreate = useCallback(() => {
     if (signedIn) {
-      void createRig();
+      createFirst();
     } else {
       void signInThenCreateRig();
     }
-  }, [signedIn, createRig, signInThenCreateRig]);
+  }, [signedIn, createFirst, signInThenCreateRig]);
 
   const welcomePhase: WelcomePhase = deriveWelcomePhase({
     authLoading: authQuery.isLoading,
@@ -423,6 +431,7 @@ export function Home({
     ...spaceRows.map((row) => row.name).filter((name): name is string => !!name),
     ...settingUpSpaces.map((setup) => setup.name),
   ]);
+  spaceNamesRef.current = spaceNames;
   // Offline: each space's last activity from this computer (opened here, its chats, its saved chat).
   const offlineActivity = new Map(
     spaceRows.map((row) => [
@@ -667,33 +676,36 @@ export function Home({
               />
             </>
           )}
-          <FloatingCard
-            storageKey="rig-home-solo-rigs-collapsed"
-            title="Rigs"
-            count={soloRigRows.length}
-            headerAction={
-              // A new rig syncs from the start, so it needs the relay too.
-              <NeedsConnection blocked={connectionDown}>
-                <button
-                  type="button"
-                  onClick={startFreshOrCreate}
-                  disabled={connectionDown}
-                  className="bg-bg-2 text-text-muted hover:text-text-primary flex items-center gap-1 rounded-chip px-2 py-0.5 text-xs transition-colors disabled:pointer-events-none disabled:opacity-50"
-                >
-                  <Plus className="size-3 shrink-0" strokeWidth={1.5} />
-                  New
-                </button>
-              </NeedsConnection>
-            }
-          >
-            <RigsRail
-              rows={soloRigRows}
-              identities={identities}
-              onOpenPath={onOpenPath}
-              onOpenSession={onContinueSession}
-              highlightBindingId={highlightBindingId}
-            />
-          </FloatingCard>
+          {/* Plain rigs are hidden while spaces are on: a space is the one thing to make and join. */}
+          {!spacesEnabled && (
+            <FloatingCard
+              storageKey="rig-home-solo-rigs-collapsed"
+              title="Rigs"
+              count={soloRigRows.length}
+              headerAction={
+                // A new rig syncs from the start, so it needs the relay too.
+                <NeedsConnection blocked={connectionDown}>
+                  <button
+                    type="button"
+                    onClick={startFreshOrCreate}
+                    disabled={connectionDown}
+                    className="bg-bg-2 text-text-muted hover:text-text-primary flex items-center gap-1 rounded-chip px-2 py-0.5 text-xs transition-colors disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    <Plus className="size-3 shrink-0" strokeWidth={1.5} />
+                    New
+                  </button>
+                </NeedsConnection>
+              }
+            >
+              <RigsRail
+                rows={soloRigRows}
+                identities={identities}
+                onOpenPath={onOpenPath}
+                onOpenSession={onContinueSession}
+                highlightBindingId={highlightBindingId}
+              />
+            </FloatingCard>
+          )}
         </div>
       </div>
     </div>
