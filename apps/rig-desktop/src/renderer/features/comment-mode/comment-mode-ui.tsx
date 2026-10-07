@@ -20,19 +20,25 @@ export function shortAgentName(name: string): string {
 
 /**
  * How many comments are open, with a quiet toggle for the resolved ones:
- * the left half of the comments group. Nothing when there are none.
+ * the left half of the comments group. Nothing when there are none. Given a
+ * `list`, a click opens it instead, and the list carries the toggle.
  */
 export function CommentCount({
   open,
   resolved,
   showResolved,
   onToggleResolved,
+  list,
 }: {
   open: number;
   resolved: number;
   showResolved: boolean;
   onToggleResolved: () => void;
+  /** Every thread, listed under the count: a page's pin that can't be placed is still reachable here. */
+  list?: (close: () => void) => React.ReactNode;
 }) {
+  const [listOpen, setListOpen] = useState(false);
+  const listRef = useRef<HTMLButtonElement>(null);
   if (open === 0 && resolved === 0) return null;
   const label = (
     <>
@@ -55,6 +61,31 @@ export function CommentCount({
       )}
     </>
   );
+  if (list) {
+    const close = () => setListOpen(false);
+    return (
+      <>
+        <button
+          ref={listRef}
+          type="button"
+          onClick={() => setListOpen((v) => !v)}
+          aria-haspopup="menu"
+          aria-expanded={listOpen}
+          title="All comments"
+          className={cn(
+            'flex h-7 items-center gap-1 rounded-chip px-1.5 text-xs transition-colors hover:text-text-primary',
+            listOpen || showResolved ? 'text-text-primary' : 'text-text-muted'
+          )}
+          data-testid="comment-count"
+        >
+          {label}
+        </button>
+        <Popover anchor={listRef} open={listOpen} onClose={close} role="menu" align="right" estimatedWidth={288} minWidth={288} ariaLabel="Comments">
+          {list(close)}
+        </Popover>
+      </>
+    );
+  }
   if (resolved === 0) {
     return (
       <span className="text-text-muted flex h-7 items-center gap-1 px-1.5 text-xs" data-testid="comment-count">

@@ -23,6 +23,7 @@ import { normalizeBrowserZoomFactor } from '@shared/browser';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { hitPage, locateOnPage } from './page-frames';
 import { threadsFromRows } from './page-pins';
+import { createPinMissLog } from './pin-miss-log';
 
 /**
  * The renderer's view of pages in the panel: placing and finding pins on the
@@ -33,6 +34,7 @@ import { threadsFromRows } from './page-pins';
 
 type Failure = { message: string };
 const api = createHttpSpacesRelayApi();
+const logPinMiss = createPinMissLog((message, fields) => log.info(message, fields));
 
 function pageContents(id: number): WebContents | null {
   const wc = allWebContents.fromId(id);
@@ -194,7 +196,14 @@ export const rigPagesController = createRPCController({
   locate: async ({ webContentsId, pins }: { webContentsId: number; pins: { id: string; anchor: PageAnchor }[] }): Promise<Result<({ id: string } & PagePlace)[], Failure>> => {
     const page = pageContents(webContentsId);
     if (!page) return err({ message: 'That page is no longer open.' });
-    const places = await Promise.all(pins.map(async (p) => ({ id: p.id, ...(await locateOnPage(page, p.anchor).catch(() => ({ found: false }))) })));
+    const places = await Promise.all(
+      pins.map(async (p) => {
+        const at: PagePlace = await locateOnPage(page, p.anchor).catch(() => ({ found: false, why: 'error' }));
+        // Why a pin isn't drawn for someone: once per page, pin and reason.
+        if (!at.found) logPinMiss(page.getURL(), p, at.why);
+        return { id: p.id, ...at };
+      })
+    );
     return ok(places);
   },
 

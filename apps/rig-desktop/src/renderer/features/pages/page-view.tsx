@@ -11,6 +11,7 @@ import {
   CommentCardFrame,
   CommentCardQuote,
   CommentCardTo,
+  CommentNumber,
   REPLY_PLACEHOLDER,
 } from '@renderer/features/comment-mode/comment-card';
 import { PaintbrushCursorChip } from '@renderer/features/docs/paintbrush/paintbrush-cursor-chip';
@@ -29,6 +30,7 @@ import { AccountChip, SignInBanner } from './account-chip';
 import { clearAutoSignIn, getAutoState, registerPanelPage, runAutoSignIn } from './auto-sign-in';
 import { ConnectSheet } from './connect-sheet';
 import { NotSharedNotice } from './not-shared-notice';
+import { replyCountLabel, threadExcerpt, threadListGroups } from './page-thread-list';
 import { PageZoomControl, usePageZoom } from './page-zoom';
 import { startRelocator, type Relocator } from './pin-relocator';
 import { SignInSheet } from './sign-in-sheet';
@@ -335,6 +337,10 @@ export function PageView({
 
   const openThread = open.find((t) => t.id === openId) ?? null;
   const openPlace = openThread ? places[openThread.id] : undefined;
+  // The open thread's card sits at its pin; one opened from the list whose pin
+  // isn't placed sits at the panel's top right. It says so only once a look
+  // found nothing, not while the first look is on its way.
+  const openAt = openPlace?.found && openPlace.x !== undefined && openPlace.y !== undefined ? { x: openPlace.x, y: openPlace.y } : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="page-view">
@@ -361,6 +367,24 @@ export function PageView({
                 resolved={resolvedCount}
                 showResolved={showResolved}
                 onToggleResolved={() => setShowResolved((on) => !on)}
+                list={(close) => (
+                  <ThreadList
+                    threads={threads.data ?? []}
+                    openId={openId}
+                    showResolved={showResolved}
+                    onPick={(t) => {
+                      // A resolved thread's pin is drawn only while resolved ones are shown.
+                      if (t.resolved) setShowResolved(true);
+                      setDraft(null);
+                      setOpenId(t.id);
+                      close();
+                    }}
+                    onToggleResolved={() => {
+                      setShowResolved((on) => !on);
+                      close();
+                    }}
+                  />
+                )}
               />
             }
             testId="page-comment-mode"
@@ -440,10 +464,11 @@ export function PageView({
             </button>
           );
         })}
-        {openThread && openPlace?.found && (
+        {openThread && (
           <ThreadCard
             thread={openThread}
-            at={{ x: openPlace.x!, y: openPlace.y! }}
+            at={openAt}
+            lost={openPlace !== undefined && !openPlace.found}
             width={stageWidth}
             onReply={async (body) => {
               const agent = mentionedAgent(body);
@@ -504,12 +529,16 @@ function cardStyle(at: { x: number; y: number }, width: number): React.CSSProper
 function ThreadCard({
   thread,
   at,
+  lost,
   width,
   onReply,
   onResolve,
 }: {
   thread: Thread;
-  at: { x: number; y: number };
+  /** Its pin's point; null when the pin isn't placed, and the card sits at the top right. */
+  at: { x: number; y: number } | null;
+  /** The page was looked over and the pinned element isn't on it. */
+  lost: boolean;
   width: number;
   onReply: (body: string) => Promise<void>;
   onResolve: () => Promise<void>;
@@ -520,10 +549,11 @@ function ThreadCard({
       active
       resolved={thread.resolved}
       className="absolute z-10 w-[288px] shadow-lg"
-      style={cardStyle(at, width)}
+      style={at ? cardStyle(at, width) : { right: 8, top: 8 }}
       data-testid="page-thread-card"
     >
       <CommentCardQuote n={thread.n} quote={thread.quote} active resolved={thread.resolved} />
+      {!at && lost && <p className="text-xs text-text-muted">Can't find where this was pinned on the page.</p>}
       <CommentCardAuthor who={thread.authorName ?? 'Someone'} at={thread.createdAt} />
       <p className="text-sm text-text-primary">{thread.comment}</p>
       {thread.replies.map((r) => (
@@ -562,6 +592,73 @@ function ThreadCard({
         </button>
       </div>
     </CommentCardFrame>
+  );
+}
+
+/**
+ * Under the comment count: every thread on the page, open ones first, each
+ * opening its card. The count's resolved toggle moves in here.
+ */
+function ThreadList({
+  threads,
+  openId,
+  showResolved,
+  onPick,
+  onToggleResolved,
+}: {
+  threads: Thread[];
+  openId: string | null;
+  showResolved: boolean;
+  onPick: (thread: Thread) => void;
+  onToggleResolved: () => void;
+}) {
+  const { open, resolved } = threadListGroups(threads);
+  const row = (t: Thread) => {
+    const replies = replyCountLabel(t.replies.length);
+    return (
+      <button
+        key={t.id}
+        type="button"
+        role="menuitem"
+        tabIndex={-1}
+        onClick={() => onPick(t)}
+        className={cn(
+          'flex w-full items-start gap-2 rounded-control px-2.5 py-1.5 text-left outline-none transition-colors hover:bg-bg-2 focus-visible:bg-bg-2',
+          openId === t.id && 'bg-bg-2'
+        )}
+        data-testid="page-thread-list-item"
+      >
+        <CommentNumber n={t.n} active={openId === t.id} resolved={t.resolved} />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 truncate text-xs font-medium text-text-primary">{t.authorName ?? 'Someone'}</span>
+            {replies && <span className="ml-auto shrink-0 text-xs text-text-muted">{replies}</span>}
+          </span>
+          <span className="truncate text-xs text-text-secondary">{threadExcerpt(t.comment)}</span>
+        </span>
+      </button>
+    );
+  };
+  return (
+    <>
+      {open.map(row)}
+      {resolved.length > 0 && (
+        <>
+          <p className="border-border-hairline mt-1 border-t px-2.5 pt-2 pb-1 text-2xs text-text-muted">Resolved</p>
+          {resolved.map(row)}
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            tabIndex={-1}
+            aria-checked={showResolved}
+            onClick={onToggleResolved}
+            className="border-border-hairline mt-1 flex w-full items-center border-t px-2.5 pt-2 pb-1.5 text-left text-xs text-text-muted outline-none transition-colors hover:text-text-primary focus-visible:text-text-primary"
+          >
+            {showResolved ? 'Hide resolved pins' : 'Show resolved pins'}
+          </button>
+        </>
+      )}
+    </>
   );
 }
 
