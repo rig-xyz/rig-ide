@@ -11,7 +11,7 @@ import { canonicalEmoji, MAX_REACTIONS_PER_RUN, reactionCounts, type MessageReac
 import { filterToContentOnly } from '@shared/rig/file-navigator-categories';
 import type { RigCommentAnchor, RigCommentMessage } from '@shared/rig/comments';
 import type { RigFileNode } from '@shared/rig/files';
-import type { RigInviteMinted, RigInviteRole } from '@shared/rig/rig-share';
+import type { RigInviteMinted, RigInviteRole, RigPeopleList } from '@shared/rig/rig-share';
 import type { AgentConfig, AgentConfigChoice } from './dispatch';
 import type { RoomInviteRow, RoomMemberRow, RoomMessageRow, SessionAgent } from './relay-api';
 
@@ -148,6 +148,10 @@ export interface RigToolsBackend {
   bindingAt(dir: string): string | null;
   /** The Share popover's invite: mints an email-bound invite for the space whose folder is `root`. */
   createInvite(root: string, email: string, role: RigInviteRole): Promise<Result<RigInviteMinted, Failure>>;
+  /** Your people: everyone you've shared a space with, by name and id, never their email. Absent or unsupported on an older app or relay. */
+  listPeople?(): Promise<Result<RigPeopleList, Failure>>;
+  /** Invite Board 26's way: aimed at a person, who hears about it in Rig and by email, with no address involved. */
+  invitePerson?(bindingId: string, userId: string, role: RigInviteRole): Promise<Result<RigInviteMinted, Failure>>;
   listMembers(bindingId: string): Promise<Result<RoomMemberRow[], Failure>>;
   listInvites(bindingId: string): Promise<Result<RoomInviteRow[], Failure>>;
   /** Every file under the space's folder, with its last-change time. */
@@ -636,6 +640,48 @@ async function spaceOverview(
  * `allTools`: every tool the session's `rig` server offers (these and the
  * browser tools), for rig_space_describe's list; omitted, just these.
  */
+/** How many of your people rig_people lists, most recent first. */
+const PEOPLE_LISTED = 30;
+
+/**
+ * `rig_invite`'s person path: find them in your people by id, by full name,
+ * or by a first name only one of them has, and send a person invite. An
+ * ambiguous or unknown name fails with what to do, never a guess.
+ */
+async function invitePerson(
+  backend: RigToolsBackend,
+  bindingId: string,
+  asked: string,
+  role: RigInviteRole
+): Promise<RigToolResult> {
+  if (!backend.listPeople || !backend.invitePerson) {
+    return failed("This version of Rig can't invite by name yet. Ask for their email and pass `email`.");
+  }
+  const listed = await backend.listPeople();
+  if (!listed.success) return failed(`Couldn't load your owner's people: ${listed.error.message}`);
+  if (!listed.data.supported) return failed("This Rig server can't invite by name yet. Ask for their email and pass `email`.");
+  const key = asked.replace(/^@/, '').trim().toLowerCase();
+  const people = listed.data.people.filter((p) => p.name);
+  let hits = people.filter((p) => p.userId.toLowerCase() === key || p.name!.trim().toLowerCase() === key);
+  if (hits.length === 0) hits = people.filter((p) => p.name!.trim().toLowerCase().split(/\s+/)[0] === key);
+  if (hits.length > 1) {
+    return failed(`More than one person matches "${asked}": ${hits.map((p) => `${p.name} (id ${p.userId})`).join(', ')}. Pass the id.`);
+  }
+  const person = hits[0];
+  if (!person) {
+    return failed(`"${asked}" isn't among the people your owner has worked with. Ask your owner for their email and pass \`email\`. Don't look an address up elsewhere.`);
+  }
+  const minted = await backend.invitePerson(bindingId, person.userId, role);
+  if (!minted.success) return failed(`Couldn't invite ${person.name}: ${minted.error.message}`);
+  const sent = minted.data.email;
+  return {
+    text: [
+      `Invited ${person.name} to this space as ${role}. They'll see it in Rig${sent.sent ? ' and by email' : ''}.`,
+      `Join link (only ${person.name} can use it): ${minted.data.url}`,
+    ].join('\n'),
+  };
+}
+
 export function createRigTools(
   backend: RigToolsBackend,
   now: () => number = Date.now,
@@ -656,22 +702,27 @@ export function createRigTools(
     {
       name: 'rig_invite',
       description:
-        "Invite a person to this rig space by email. Use it whenever you're asked to invite, add or share the space with someone, instead of running `rig share`: the request is the go-ahead. " +
-        'It emails them an invite and returns the join link, which you can also pass on. ' +
+        "Invite a person to this rig space. Use it whenever you're asked to invite, add or share the space with someone, instead of running `rig share`: the request is the go-ahead. " +
+        "For someone your owner has worked with, pass `person`: their name or id as rig_people lists them. They hear about it in Rig and by email, and nobody needs their address. " +
+        'For anyone else pass `email`, the address you were given. Never look an address up elsewhere, such as Slack, a directory or old messages: if the person isn\'t in rig_people and you weren\'t given an email, ask for one. ' +
         'role is editor (can edit files and ask their own agents; the default) or viewer (read-only). ' +
         "Owners and editors can invite; if your owner can't, the result says so.",
       inputSchema: {
-        email: z.string().describe("The person's email address."),
+        person: z.string().optional().describe("Someone from your owner's people: their name as rig_people lists it, or their id."),
+        email: z.string().optional().describe("An email address you were given, for someone who isn't in your owner's people."),
         role: z.enum(['editor', 'viewer']).optional().describe('editor (default) or viewer.'),
       },
       annotations: { title: 'Invite to this space', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
       run: async (scope, input) => {
-        const email = String(input.email ?? '').trim();
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return failed(`"${email}" doesn't look like an email address.`);
         const role: RigInviteRole = input.role === 'viewer' ? 'viewer' : 'editor';
         if (backend.bindingAt(scope.cwd) !== scope.bindingId) {
           return failed("This space's folder on this device isn't linked to the space any more, so no invite was sent.");
         }
+        const asked = String(input.person ?? '').trim();
+        if (asked) return invitePerson(backend, scope.bindingId, asked, role);
+        const email = String(input.email ?? '').trim();
+        if (!email) return failed('Say who to invite: `person` for someone in rig_people, or `email`.');
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return failed(`"${email}" doesn't look like an email address.`);
         const minted = await backend.createInvite(scope.cwd, email, role);
         if (!minted.success) return failed(`Couldn't invite ${email}: ${minted.error.message}`);
         const { email: sent, url } = minted.data;
@@ -684,7 +735,8 @@ export function createRigTools(
     {
       name: 'rig_people',
       description:
-        "List who is in this rig space (name, email, role) and the invites still waiting to be accepted. Use it when asked who has access or who's here, and before inviting someone who may already be a member.",
+        "List who is in this rig space (name and role) and the invites still waiting to be accepted, then your owner's people who aren't in it yet: everyone they've shared a space with, by name and id, ready for rig_invite's `person`. " +
+        "Use it when asked who has access or who's here, and before inviting anyone.",
       inputSchema: {},
       annotations: { title: "Who's in this space", readOnlyHint: true },
       run: async (scope) => {
@@ -707,6 +759,13 @@ export function createRigTools(
           const pending = invites.data.filter((i) => !i.revoked && !(i.email && memberEmails.has(i.email.toLowerCase())));
           lines.push('', pending.length > 0 ? `Pending invites (${pending.length}):` : 'No pending invites.');
           for (const i of pending) lines.push(`- ${i.email ?? 'invite link'}: ${i.role}`);
+        }
+        const people = backend.listPeople ? await backend.listPeople() : null;
+        if (people?.success && people.data.supported) {
+          const here = new Set(members.data.map((m) => m.userId));
+          const others = people.data.people.filter((p) => p.name && !here.has(p.userId)).slice(0, PEOPLE_LISTED);
+          lines.push('', others.length > 0 ? `Your owner's people, not in this space (${others.length}):` : "Your owner's people are all in this space.");
+          for (const p of others) lines.push(`- ${p.name} (id ${p.userId})`);
         }
         return { text: lines.join('\n') };
       },

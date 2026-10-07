@@ -306,6 +306,68 @@ describe('rig_invite', () => {
   });
 });
 
+describe('rig_invite to a person', () => {
+  const person = (userId: string, name: string) => ({
+    userId,
+    clerkUserId: null,
+    name,
+    avatarUrl: null,
+    sharedSpaces: [],
+    lastSharedAt: null,
+    viaOrg: false,
+  });
+  const people = [person('u-hugo', 'Hugo Renaudin'), person('u-alex1', 'Alex Martin'), person('u-alex2', 'Alex Chen'), person('u-sam', 'Sam')];
+  const minted = (url: string) =>
+    ok({
+      invite: { id: 'i', emailConstraint: null, role: 'editor' as const, maxUses: 1, useCount: 0, expiresAt: null, revokedAt: null, label: null, createdAt: '' },
+      url,
+      email: { sent: true, to: null, reason: null },
+    });
+  const withPeople = () =>
+    fakeBackend({
+      listPeople: vi.fn(async () => ok({ supported: true, people })),
+      invitePerson: vi.fn(async () => minted('https://userig.xyz/join/p')),
+    });
+
+  it('invites someone your owner knows by name, with no email involved', async () => {
+    const backend = withPeople();
+    const result = await call(backend, 'rig_invite', { person: '@Hugo Renaudin' });
+    expect(backend.invitePerson).toHaveBeenCalledWith('b1', 'u-hugo', 'editor');
+    expect(backend.createInvite).not.toHaveBeenCalled();
+    expect(result.text).toContain("Invited Hugo Renaudin to this space as editor. They'll see it in Rig and by email.");
+  });
+
+  it('takes a unique first name or an id, and refuses to guess between two', async () => {
+    const backend = withPeople();
+    await call(backend, 'rig_invite', { person: 'hugo', role: 'viewer' });
+    expect(backend.invitePerson).toHaveBeenLastCalledWith('b1', 'u-hugo', 'viewer');
+    await call(backend, 'rig_invite', { person: 'u-alex2' });
+    expect(backend.invitePerson).toHaveBeenLastCalledWith('b1', 'u-alex2', 'editor');
+    const both = await call(backend, 'rig_invite', { person: 'Alex' });
+    expect(both.isError).toBe(true);
+    expect(both.text).toContain('Alex Martin (id u-alex1), Alex Chen (id u-alex2)');
+  });
+
+  it("asks for an email for someone it doesn't know, and says never to look one up", async () => {
+    const backend = withPeople();
+    const result = await call(backend, 'rig_invite', { person: 'Jérémie' });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("Don't look an address up elsewhere.");
+    expect(backend.invitePerson).not.toHaveBeenCalled();
+  });
+
+  it('says so on an app or relay that predates people', async () => {
+    const result = await call(fakeBackend(), 'rig_invite', { person: 'Hugo' });
+    expect(result.text).toContain('pass `email`');
+    const older = fakeBackend({ listPeople: async () => ok({ supported: false, people: [] }), invitePerson: vi.fn() });
+    expect((await call(older, 'rig_invite', { person: 'Hugo' })).text).toContain("This Rig server can't invite by name yet");
+  });
+
+  it("tells the agent not to look addresses up elsewhere", () => {
+    expect(tool(fakeBackend(), 'rig_invite').description).toContain('Never look an address up elsewhere');
+  });
+});
+
 describe('rig_people', () => {
   it('lists members and the invites still pending', async () => {
     const backend = fakeBackend();
@@ -317,6 +379,21 @@ describe('rig_people', () => {
     // Revoked, and already joined (Sam), are left out.
     expect(text).toContain('Pending invites (1):\n- hugo@acme.co: viewer');
     expect(text).not.toContain('old@acme.co');
+  });
+
+  it("lists your owner's people who aren't here yet, by name and id, never email", async () => {
+    const backend = fakeBackend({
+      listPeople: async () =>
+        ok({
+          supported: true,
+          people: [
+            { userId: 'u-sam', clerkUserId: null, name: 'Sam', avatarUrl: null, sharedSpaces: [], lastSharedAt: null, viaOrg: false },
+            { userId: 'u-hugo', clerkUserId: null, name: 'Hugo Renaudin', avatarUrl: null, sharedSpaces: [], lastSharedAt: null, viaOrg: false },
+          ],
+        }),
+    });
+    const { text } = await call(backend, 'rig_people');
+    expect(text).toContain("Your owner's people, not in this space (1):\n- Hugo Renaudin (id u-hugo)");
   });
 
   it("still lists members when invites can't load", async () => {
@@ -940,7 +1017,7 @@ describe('rig_space_describe', () => {
     expect(text).toContain("Your owner's own setup also gives you: Sentry.");
     expect(text).toContain("MCP servers this space's .mcp.json declares: posthog.");
     for (const t of all) expect(text).toContain(`- ${t.name}: `);
-    expect(text).toContain('- rig_invite: Invite a person to this rig space by email.');
+    expect(text).toContain('- rig_invite: Invite a person to this rig space.');
     expect(text.length).toBeLessThan(4_000);
   });
 
