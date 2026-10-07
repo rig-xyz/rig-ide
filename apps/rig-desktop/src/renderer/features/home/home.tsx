@@ -519,7 +519,11 @@ export function Home({
   if (!authQuery.isLoading && !signedIn && !regions.showEmptyState) {
     return (
       <div className="flex min-h-full w-full items-center justify-center p-8">
-        <SignedOutGate signInPhase={signInPhase} onSignIn={signIn} />
+        <SignedOutGate
+          signInPhase={signInPhase}
+          onSignIn={signIn}
+          expired={authStatusSignedIn && meQuery.data?.success === false && meQuery.data.error.kind === 'invalidToken'}
+        />
       </div>
     );
   }
@@ -783,12 +787,26 @@ function Welcome({
  * `signedIn` flip and `home.tsx` re-renders past this gate on its own — no
  * local phase to track here beyond `signInPhase` itself.
  */
-function SignedOutGate({ signInPhase, onSignIn }: { signInPhase: RigSignInPhase; onSignIn: () => void }) {
+function SignedOutGate({
+  signInPhase,
+  onSignIn,
+  expired = false,
+}: {
+  signInPhase: RigSignInPhase;
+  onSignIn: () => void;
+  /** The stored sign-in was refused (expired or revoked): say so, not a fresh-install greeting. */
+  expired?: boolean;
+}) {
   const waiting = signInPhase !== 'idle';
   return (
     <div className="flex w-full max-w-sm flex-col items-center gap-8 text-center">
       <RigAppIcon size={112} className="shadow-soft" />
-      <p className="font-display text-text-primary text-xl">Sign in to see your rigs</p>
+      <div className="flex flex-col gap-2">
+        <p className="font-display text-text-primary text-xl">
+          {expired ? 'Your sign-in has expired' : 'Sign in to see your rigs'}
+        </p>
+        {expired && <p className="text-text-muted text-sm">Sign in again to pick up where you left off.</p>}
+      </div>
       <button
         type="button"
         onClick={() => void onSignIn()}
