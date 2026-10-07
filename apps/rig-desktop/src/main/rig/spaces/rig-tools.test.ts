@@ -296,6 +296,17 @@ describe('rig_invite', () => {
     expect(result).toEqual({ text: "Couldn't invite hugo@acme.co: You don't have permission.", isError: true });
   });
 
+  it('makes an open link when asked for one, and never without being asked', async () => {
+    const backend = fakeBackend();
+    const result = await call(backend, 'rig_invite', { link: true, role: 'viewer' });
+    expect(backend.createInvite).toHaveBeenCalledWith('/rigs/space', null, 'viewer');
+    expect(result.text).toContain('Invite link to this space, as viewer. Anyone with it can join.');
+    expect(result.text).toContain('https://userig.xyz/join/secret');
+    const unasked = fakeBackend();
+    expect((await call(unasked, 'rig_invite', {})).isError).toBe(true);
+    expect(unasked.createInvite).not.toHaveBeenCalled();
+  });
+
   it("refuses a non-email, and a folder that isn't this space's any more", async () => {
     const backend = fakeBackend();
     expect((await call(backend, 'rig_invite', { email: 'hugo' })).isError).toBe(true);

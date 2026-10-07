@@ -147,7 +147,8 @@ export interface RigToolsBackend {
   /** The binding a folder belongs to (walking up), or null when none. */
   bindingAt(dir: string): string | null;
   /** The Share popover's invite: mints an email-bound invite for the space whose folder is `root`. */
-  createInvite(root: string, email: string, role: RigInviteRole): Promise<Result<RigInviteMinted, Failure>>;
+  /** `email` null mints an open link anyone can use. */
+  createInvite(root: string, email: string | null, role: RigInviteRole): Promise<Result<RigInviteMinted, Failure>>;
   /** Your people: everyone you've shared a space with, by name and id, never their email. Absent or unsupported on an older app or relay. */
   listPeople?(): Promise<Result<RigPeopleList, Failure>>;
   /** Invite Board 26's way: aimed at a person, who hears about it in Rig and by email, with no address involved. */
@@ -705,11 +706,13 @@ export function createRigTools(
         "Invite a person to this rig space. Use it whenever you're asked to invite, add or share the space with someone, instead of running `rig share`: the request is the go-ahead. " +
         "For someone your owner has worked with, pass `person`: their name or id as rig_people lists them. They hear about it in Rig and by email, and nobody needs their address. " +
         'For anyone else pass `email`, the address you were given. Never look an address up elsewhere, such as Slack, a directory or old messages: if the person isn\'t in rig_people and you weren\'t given an email, ask for one. ' +
+        'Asked for an invite link without anyone named, pass `link: true`: anyone with that link can join, so make one only when asked for a link. ' +
         'role is editor (can edit files and ask their own agents; the default) or viewer (read-only). ' +
         "Owners and editors can invite; if your owner can't, the result says so.",
       inputSchema: {
         person: z.string().optional().describe("Someone from your owner's people: their name as rig_people lists it, or their id."),
         email: z.string().optional().describe("An email address you were given, for someone who isn't in your owner's people."),
+        link: z.boolean().optional().describe('true for an open invite link anyone can join with, when asked for a link and no one is named.'),
         role: z.enum(['editor', 'viewer']).optional().describe('editor (default) or viewer.'),
       },
       annotations: { title: 'Invite to this space', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
@@ -721,7 +724,12 @@ export function createRigTools(
         const asked = String(input.person ?? '').trim();
         if (asked) return invitePerson(backend, scope.bindingId, asked, role);
         const email = String(input.email ?? '').trim();
-        if (!email) return failed('Say who to invite: `person` for someone in rig_people, or `email`.');
+        if (!email && input.link === true) {
+          const minted = await backend.createInvite(scope.cwd, null, role);
+          if (!minted.success) return failed(`Couldn't make an invite link: ${minted.error.message}`);
+          return { text: [`Invite link to this space, as ${role}. Anyone with it can join.`, minted.data.url].join('\n') };
+        }
+        if (!email) return failed('Say who to invite: `person` for someone in rig_people, or `email`. For an open link, pass `link: true`.');
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return failed(`"${email}" doesn't look like an email address.`);
         const minted = await backend.createInvite(scope.cwd, email, role);
         if (!minted.success) return failed(`Couldn't invite ${email}: ${minted.error.message}`);
