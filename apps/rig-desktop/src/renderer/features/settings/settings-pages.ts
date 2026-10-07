@@ -110,6 +110,12 @@ export const SETTINGS_ROWS: readonly SettingsRowEntry[] = [
     description: 'Threads folds every reply under the message it answers. Flow keeps one timeline.',
   },
   {
+    id: 'show-plain-rigs',
+    page: 'spaces',
+    label: 'Show plain rigs',
+    description: "Rigs are synced folders that aren't spaces. Shown, Home lists them and lets you start one.",
+  },
+  {
     id: 'room-sees-default',
     page: 'spaces',
     label: "What others see of your agent's work",

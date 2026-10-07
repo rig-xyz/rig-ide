@@ -648,6 +648,19 @@ describe('RigSettingsStore', () => {
     });
   });
 
+  describe('showPlainRigs', () => {
+    it('is off until set, and keeps true once saved', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().showPlainRigs).toBe(false);
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(settingsPath, JSON.stringify({ ...DEFAULT_RIG_SETTINGS, showPlainRigs: true }));
+      const reloaded = new RigSettingsStore(settingsPath);
+      reloaded.initialize();
+      expect(reloaded.get().showPlainRigs).toBe(true);
+    });
+  });
+
   describe('spacesEnabled (on for everyone since 0.4.3, no longer switchable)', () => {
 
     it('defaults to true before anything is ever set', () => {

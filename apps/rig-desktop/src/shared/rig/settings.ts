@@ -231,6 +231,12 @@ export type RigSettings = {
    */
   spacesChatView: SpacesChatView;
   /**
+   * Settings › Spaces › Show plain rigs: Home lists rigs that aren't spaces,
+   * with a New button, and Welcome's Start fresh makes one. Off by default:
+   * a space is the one thing to make and join.
+   */
+  showPlainRigs: boolean;
+  /**
    * Spaces: keep each space's last Room on disk (`rig_room_cache`, see
    * rig/docs/room-disk-cache-spec.md), so the first open after launch shows
    * it at once and only catches up. On by default since 0.4.9.
@@ -289,6 +295,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   paintbrushAgent: null,
   spacesEnabled: true,
   spacesDefaultOnApplied: true,
+  showPlainRigs: false,
   spacesRoomSees: {},
   spacesRoomSeesDefault: DEFAULT_ROOM_SEES,
   spacesChatView: 'flow',

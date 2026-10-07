@@ -3,7 +3,7 @@ import { rpc } from '@renderer/lib/ipc';
 import type { RigSettings, SpacesChatView } from '@shared/rig/settings';
 import { DEFAULT_ROOM_SEES, ROOM_SEES_LABEL, ROOM_SEES_LEVELS, ROOM_SEES_TOOLTIP, type RoomSees } from '@shared/spaces/room-sees';
 import { settingsRow } from '../settings-pages';
-import { SettingsRow, SettingsRows, SettingsSegmented, type SegmentOption } from '../settings-row';
+import { SettingsRow, SettingsRows, SettingsSegmented, SettingsSwitch, type SegmentOption } from '../settings-row';
 
 const ROOM_SEES_OPTIONS: readonly SegmentOption<RoomSees>[] = ROOM_SEES_LEVELS.map((id) => ({
   id,
@@ -27,6 +27,7 @@ const QUERY_KEY = ['rig', 'settings', 'spacesRoomSeesDefault'];
 export function SpacesPage() {
   const row = settingsRow('room-sees-default')!;
   const chatRow = settingsRow('chat-view')!;
+  const rigsRow = settingsRow('show-plain-rigs')!;
   const queryClient = useQueryClient();
   const { data } = useQuery({ queryKey: QUERY_KEY, queryFn: () => rpc.rig.settings.get() });
   const level = data?.spacesRoomSeesDefault ?? DEFAULT_ROOM_SEES;
@@ -64,6 +65,19 @@ export function SpacesPage() {
             value={level}
             options={ROOM_SEES_OPTIONS}
             onChange={(next) => save({ spacesRoomSeesDefault: next })}
+          />
+        }
+      />
+      <SettingsRow
+        id={rigsRow.id}
+        label={rigsRow.label}
+        description={rigsRow.description}
+        control={
+          <SettingsSwitch
+            id="show-plain-rigs"
+            label={rigsRow.label}
+            checked={data?.showPlainRigs ?? false}
+            onToggle={() => save({ showPlainRigs: !(data?.showPlainRigs ?? false) })}
           />
         }
       />

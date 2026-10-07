@@ -57,6 +57,7 @@ import {
 } from './recent-themes-state';
 import { RigsRail } from './rigs-rail';
 import { generateSpaceName } from './space-create';
+import { useShowPlainRigs } from './use-show-plain-rigs';
 import { indexSpaceStatuses } from './space-status-state';
 import { SpacesCard } from './spaces-card';
 import { useRecentThemes, RECENT_THEMES_QUERY_KEY } from './use-recent-themes';
@@ -144,13 +145,16 @@ export function Home({
   // made, or null.
   const spacesEnabled = useSpacesEnabled();
   const createSpace = startSpaceSetup;
-  // Plain rigs are hidden while spaces are on, so Welcome's "Start fresh"
-  // makes a space, named like the New space button names one.
+  // Plain rigs are hidden while spaces are on, unless Settings › Spaces shows
+  // them; hidden, Welcome's "Start fresh" makes a space, named like the New
+  // space button names one.
+  const showPlainRigs = useShowPlainRigs();
+  const rigsHidden = spacesEnabled && !showPlainRigs;
   const spaceNamesRef = useRef<ReadonlySet<string>>(new Set());
   const createFirst = useCallback(() => {
-    if (spacesEnabled) void createSpace(generateSpaceName(spaceNamesRef.current));
+    if (rigsHidden) void createSpace(generateSpaceName(spaceNamesRef.current));
     else void createRig();
-  }, [spacesEnabled, createSpace, createRig]);
+  }, [rigsHidden, createSpace, createRig]);
   const spaceSetups = useSpaceSetups();
   // Pulse round: which rigs-rail row a WHAT'S NEW/ACROSS YOUR RIGS rig-name
   // link (no local match) should scroll to/flash — lives here, not in
@@ -676,8 +680,8 @@ export function Home({
               />
             </>
           )}
-          {/* Plain rigs are hidden while spaces are on: a space is the one thing to make and join. */}
-          {!spacesEnabled && (
+          {/* Plain rigs are hidden while spaces are on, unless Settings › Spaces shows them. */}
+          {!rigsHidden && (
             <FloatingCard
               storageKey="rig-home-solo-rigs-collapsed"
               title="Rigs"
