@@ -1008,6 +1008,11 @@ export function SessionCard({
             />
           </div>
         )}
+        {!card.finalAnswer && status === 'done' && card.reacted.length > 0 && (
+          <span className="text-sm text-text-secondary" data-testid="session-reacted">
+            {agentName} reacted {card.reacted.join(' ')}
+          </span>
+        )}
         {card.finalAnswer && status === 'failed' && (
           <details className="text-xs text-text-muted">
             <summary className="w-fit cursor-pointer hover:text-text-secondary">What the agent printed</summary>

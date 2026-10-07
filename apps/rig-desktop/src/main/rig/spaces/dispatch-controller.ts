@@ -85,6 +85,11 @@ export class SpacesDispatchController {
     return this.dispatcher?.currentRunId(bindingId, ownerUserId, agent) ?? null;
   }
 
+  /** A reaction a run's agent made, so the run's card can show it (see `noteReaction`). */
+  noteReaction(runId: string, emoji: string): void {
+    this.dispatcher?.noteReaction(runId, emoji);
+  }
+
   async agentConfig(
     bindingId: string,
     ownerUserId: string,

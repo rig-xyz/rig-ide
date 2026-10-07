@@ -301,6 +301,14 @@ describe('RoomSeesFilter at Steps', () => {
     expect(out.at(-1)).toEqual({ kind: 'turn_ended', payload: { status: 'done' } });
   });
 
+  it("keeps a turn's reactions on its end: they're on the message for everyone already", () => {
+    const filter = new RoomSeesFilter('answer', '/rigs/one');
+    expect(filter.filter('turn_ended', { status: 'done', reacted: ['👍', { who: 'x' }], extra: 1 }).at(-1)).toEqual({
+      kind: 'turn_ended',
+      payload: { status: 'done', reacted: ['👍'] },
+    });
+  });
+
   it('redacts an approval to its step label: no command, no option names', () => {
     expect(out.find((e) => e.kind === 'permission_requested')?.payload).toEqual({
       requestId: 'p1',

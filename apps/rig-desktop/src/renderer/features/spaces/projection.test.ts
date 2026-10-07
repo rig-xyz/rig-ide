@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { FIXTURE_EVENTS, FIXTURE_RUNS, type FixtureRunKey } from './fixtures';
-import { applySessionEvent, effectiveRunStatus, newSessionCard, projectSessionCard } from './projection';
+import {
+  applySessionEvent,
+  cardFromSummary,
+  effectiveRunStatus,
+  newSessionCard,
+  projectSessionCard,
+  summarizeCard,
+} from './projection';
 import type { SessionEvent } from './types';
 
 const RUN_KEYS = Object.keys(FIXTURE_EVENTS) as FixtureRunKey[];
@@ -203,6 +210,14 @@ describe('projectSessionCard — against real exported fixtures', () => {
     expect(projectSessionCard([{ seq: 1, kind: 'turn_ended', payload: { stopReason: 'end_turn' } }]).status).toBe(
       'done'
     );
+  });
+
+  it('keeps the emojis of a turn that only reacted, through the disk cache too', () => {
+    const card = projectSessionCard([{ seq: 1, kind: 'turn_ended', payload: { status: 'done', reacted: ['👍', 7, '🎉'] } }]);
+    expect(card.status).toBe('done');
+    expect(card.reacted).toEqual(['👍', '🎉']);
+    expect(cardFromSummary(summarizeCard(card)).reacted).toEqual(['👍', '🎉']);
+    expect(summarizeCard(projectSessionCard([]))).not.toHaveProperty('reacted');
   });
 
   it("doesn't keep spinning a run the relay already marks finished", () => {

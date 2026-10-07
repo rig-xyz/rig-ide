@@ -222,7 +222,7 @@ describe('rig tools', () => {
   it('each say what they do up front, so a truncated listing still tells them apart', () => {
     const openings = createRigTools(fakeBackend()).map((t) => t.description.slice(0, 60));
     expect(new Set(openings).size).toBe(openings.length);
-    for (const opening of openings) expect(opening).toMatch(/^(Describe|Invite|List|Read|Add|React|Rename|Change) /);
+    for (const opening of openings) expect(opening).toMatch(/^(Describe|Invite|List|Read|Add|Acknowledge|Rename|Change)[ ,]/);
   });
 
   it('pre-approve only tools that are read-only, and rig_react (an emoji, a few per turn)', () => {
@@ -591,6 +591,25 @@ describe('rig_chat_history', () => {
 });
 
 describe('rig_react', () => {
+  it('says what a reaction is for: no words, possibly the whole answer, and nobody notified', () => {
+    const { description } = tool(fakeBackend(), 'rig_react');
+    expect(description.startsWith('Acknowledge, vote or agree without words.')).toBe(true);
+    expect(description).toContain('A reaction can be the whole answer to a message that only needs one');
+    expect(description).toContain("Reacting doesn't trigger or notify any agent.");
+    expect(description).not.toContain('not your reply');
+    expect(description).not.toContain('still answers');
+  });
+
+  it("tells the run it reacted, so its card can say so; not when the reaction failed", async () => {
+    const noteReaction = vi.fn(async () => {});
+    const backend = fakeBackend({ currentRunId: vi.fn(async () => 'run-7'), noteReaction });
+    await runRigTool(backend, tool(backend, 'rig_react'), SCOPE, { messageId: 'msg_a', emoji: '👍' });
+    expect(noteReaction).toHaveBeenCalledWith('run-7', '👍');
+    const refused = fakeBackend({ currentRunId: vi.fn(async () => 'run-7'), noteReaction, react: vi.fn(async () => err({ message: 'offline' })) });
+    await runRigTool(refused, tool(refused, 'rig_react'), SCOPE, { messageId: 'msg_a', emoji: '🎉' });
+    expect(noteReaction).toHaveBeenCalledTimes(1);
+  });
+
   it('reacts as the session\'s agent to a message by #seq or id, and answers with counts only', async () => {
     const backend = fakeBackend({ listMessages: chatRelay([msg(40), msg(42)]) });
     const bySeq = await call(backend, 'rig_react', { messageId: '#42', emoji: '✅' });

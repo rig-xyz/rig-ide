@@ -456,7 +456,7 @@ describe('SessionEventPublisher: hidden context never leaves in an echo', () => 
   // Built exactly as `startTurn` builds it: the space context (room transcript
   // included), the connectors note, and a doc thread with no rig tag.
   const hidden = [
-    spacesHiddenContext({ bindingId: 'b1' }, ['Sam: the acquisition closes on the 14th, keep it quiet']),
+    spacesHiddenContext({}, ['#3 Sam: the acquisition closes on the 14th, keep it quiet']),
     connectorsHiddenContext(['linear'], []),
     'The thread so far, oldest first:\n- Priya: salary bands are in comp.md',
   ].join('\n\n');

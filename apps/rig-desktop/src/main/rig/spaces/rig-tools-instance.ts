@@ -141,6 +141,10 @@ const backend: RigToolsBackend = {
     const { spacesDispatchController } = await import('./dispatch-controller-instance');
     return spacesDispatchController.currentRunId(bindingId, ownerUserId, agent);
   },
+  noteReaction: async (runId, emoji) => {
+    const { spacesDispatchController } = await import('./dispatch-controller-instance');
+    spacesDispatchController.noteReaction(runId, emoji);
+  },
 };
 
 export const rigToolsServer = createRigToolsServer({ backend, extraTools: browserRigTools(api) });

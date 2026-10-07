@@ -29,6 +29,8 @@ export const runSummarySchema = z.object({
   privacy: z.string().nullable(),
   detailsHidden: z.boolean(),
   lastSeq: z.number(),
+  /** A run that ended with only reactions: its card's "Claude reacted 👍". Optional, so older blobs still load. */
+  reacted: z.array(z.string()).optional(),
 });
 export type RunSummary = z.infer<typeof runSummarySchema>;
 

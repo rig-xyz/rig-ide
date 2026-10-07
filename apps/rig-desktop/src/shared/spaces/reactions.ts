@@ -75,6 +75,12 @@ export function reactionCounts(reactions: readonly MessageReaction[] | undefined
     .join(' ');
 }
 
+/** How an agent's context marks a message's reactions, the same everywhere: "[reactions: 👍 4 🎉 2]", or empty. */
+export function reactionsLabel(reactions: readonly MessageReaction[] | undefined): string {
+  const counts = reactionCounts(reactions);
+  return counts ? `[reactions: ${counts}]` : '';
+}
+
 function sameReactor(a: Reactor, b: Reactor): boolean {
   return a.userId === b.userId && a.agent === b.agent;
 }

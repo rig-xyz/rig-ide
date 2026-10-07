@@ -294,9 +294,12 @@ export class RoomSeesFilter {
   }
 
   private turnEnded(payload: Record<string, unknown>): Record<string, unknown> {
+    // A reaction is on the message for everyone to see already.
+    const reacted = Array.isArray(payload.reacted) ? payload.reacted.filter((e) => typeof e === 'string') : [];
     return {
       ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
       ...(typeof payload.reason === 'string' ? { reason: payload.reason } : {}),
+      ...(reacted.length > 0 ? { reacted } : {}),
     };
   }
 

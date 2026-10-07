@@ -7,7 +7,13 @@ import { z } from 'zod';
 import { secretReason, syncIgnoreMatcher } from '../attachments/rules';
 import { CONNECTORS, connectorById, isConnectorId, RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
 import { ROOM_SEES_LEVELS, type RoomSees } from '@shared/spaces/room-sees';
-import { canonicalEmoji, MAX_REACTIONS_PER_RUN, reactionCounts, type MessageReaction } from '@shared/spaces/reactions';
+import {
+  canonicalEmoji,
+  MAX_REACTIONS_PER_RUN,
+  reactionCounts,
+  reactionsLabel,
+  type MessageReaction,
+} from '@shared/spaces/reactions';
 import { filterToContentOnly } from '@shared/rig/file-navigator-categories';
 import type { RigCommentAnchor, RigCommentMessage } from '@shared/rig/comments';
 import type { RigFileNode } from '@shared/rig/files';
@@ -200,6 +206,8 @@ export interface RigToolsBackend {
   react(bindingId: string, messageId: string, emoji: string, agent: SessionAgent): Promise<Result<MessageReaction[], Failure>>;
   /** The run the session is on right now (per-turn limits); null when unknown. */
   currentRunId(scope: RigToolScope): Promise<string | null>;
+  /** A reaction the run made, so its card can show it when the turn ends without words. */
+  noteReaction?(runId: string, emoji: string): Promise<void>;
 }
 
 export type RigToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: 'image/png' };
@@ -850,8 +858,8 @@ export function createRigTools(
         const entry = async (row: RoomMessageRow): Promise<string | null> => {
           const text = await entryText(row);
           // Counts only, never who: a reaction can't carry anyone's words here.
-          const counts = reactionCounts(row.reactions);
-          return text !== null && counts ? `${text}\n[reactions: ${counts}]` : text;
+          const label = reactionsLabel(row.reactions);
+          return text !== null && label ? `${text}\n${label}` : text;
         };
         const entryText = async (row: RoomMessageRow): Promise<string | null> => {
           const meta = row.meta ?? {};
@@ -934,10 +942,11 @@ export function createRigTools(
     {
       name: 'rig_react',
       description:
-        "React to a message in this space's chat with one emoji, as yourself (it shows as your owner's agent). " +
-        'Use it whenever a reaction says enough: to acknowledge a message (👍, 👀), vote or pick when asked, or mark a request done (✅), instead of posting words. ' +
-        `A reaction never asks an agent and is not your reply: your final message still answers. Up to ${MAX_REACTIONS_PER_RUN} per turn. ` +
-        "messageId is the message's #seq (from rig_chat_history) or its id; emoji is the emoji itself (👍), not its name.",
+        "Acknowledge, vote or agree without words. Puts one emoji on a message in this space's chat, as your owner's agent. " +
+        'Use it whenever a reaction says enough: 👍 or 👀 to acknowledge, a vote or a pick when asked, ✅ to mark a request done. ' +
+        'A reaction can be the whole answer to a message that only needs one: then end your turn without a reply. ' +
+        `Reacting doesn't trigger or notify any agent. Up to ${MAX_REACTIONS_PER_RUN} per turn. ` +
+        "messageId is the message's number, like #42, as your context or rig_chat_history shows it, or its id. emoji is the emoji itself, like 👍, not its name.",
       inputSchema: {
         messageId: z.string().describe('The message: its #seq (e.g. "#42") or its id.'),
         emoji: z.string().describe('One emoji, e.g. 👍 ✅ 👀 🎉.'),
@@ -971,6 +980,8 @@ export function createRigTools(
           giveBack();
           return failed(`Couldn't react: ${reacted.error.message}`);
         }
+        // The run's card says "Claude reacted 👍" when that's all the turn did.
+        if (runId && backend.noteReaction) await backend.noteReaction(runId, emoji).catch(() => {});
         const counts = reactionCounts(reacted.data);
         return { text: `Reacted ${emoji}.${counts ? ` The message's reactions: ${counts}.` : ''}` };
       },

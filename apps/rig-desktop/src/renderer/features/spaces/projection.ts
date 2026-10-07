@@ -57,6 +57,7 @@ export function newSessionCard(): SessionCard {
     privacy: null,
     privateSteps: 0,
     detailsHidden: false,
+    reacted: [],
   };
 }
 
@@ -329,6 +330,7 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
             : 'done';
       state.status = status;
       if (status === 'failed' && typeof p.reason === 'string' && p.reason) state.failureReason = p.reason;
+      if (Array.isArray(p.reacted)) state.reacted = p.reacted.filter((e): e is string => typeof e === 'string');
       state.currentStep = null;
       break;
     }
@@ -363,6 +365,7 @@ export function summarizeCard(card: SessionCard): RunSummary {
     privacy: card.privacy,
     detailsHidden: card.detailsHidden,
     lastSeq: card.lastSeq,
+    ...(card.reacted.length > 0 ? { reacted: card.reacted } : {}),
   };
 }
 
@@ -381,6 +384,7 @@ export function cardFromSummary(summary: RunSummary): SessionCard {
     privacy: isRoomSees(summary.privacy) ? summary.privacy : null,
     detailsHidden: summary.detailsHidden,
     lastSeq: summary.lastSeq,
+    reacted: summary.reacted ?? [],
   };
 }
 

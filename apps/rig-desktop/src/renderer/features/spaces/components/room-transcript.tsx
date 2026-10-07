@@ -515,7 +515,10 @@ function mapEntriesFor(units: TranscriptUnit[], snapshot: RoomSnapshot, ownId: s
         id: m.id,
         tone: 'agent',
         label: `${meta.owner === ownId ? 'Your' : `${nameOf(meta.owner)}'s`} ${AGENT_NAME[meta.agent]} · ${m.time}`,
-        preview: () => runCard(snapshot, meta.id).finalAnswer || 'Working…',
+        preview: () => {
+          const card = runCard(snapshot, meta.id);
+          return card.finalAnswer || (card.reacted.length > 0 ? `Reacted ${card.reacted.join(' ')}` : 'Working…');
+        },
       });
     }
   }

@@ -153,6 +153,8 @@ export interface SessionCard {
   privateSteps: number;
   /** Its owner hid its details after the fact: the room now sees only the answer. */
   detailsHidden: boolean;
+  /** The emojis the run reacted with when it ended without words (`turn_ended.reacted`); empty otherwise. */
+  reacted: string[];
 }
 
 /**
