@@ -53,6 +53,10 @@ export type SyncHealthDeps = {
   isAlive: (pid: number) => boolean;
   /** That process's command line, or null when it can't be read. */
   commandOf: (pid: number) => Promise<string | null>;
+  /** A file's last-modified time in ms, or null when it can't be read. Omitted: from disk. */
+  modifiedAt?: (path: string) => Promise<number | null>;
+  /** Asks a process to stop (SIGTERM). Omitted: `process.kill`. */
+  stop?: (pid: number) => void;
 };
 
 function isAlive(pid: number): boolean {
@@ -72,7 +76,25 @@ function commandOf(pid: number): Promise<string | null> {
   });
 }
 
-const defaultDeps: SyncHealthDeps = { isAlive, commandOf };
+function modifiedAt(path: string): Promise<number | null> {
+  return stat(path).then(
+    (info) => info.mtimeMs,
+    () => null
+  );
+}
+
+function stopProcess(pid: number): void {
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    // Already gone.
+  }
+}
+
+const defaultDeps: SyncHealthDeps = { isAlive, commandOf, modifiedAt, stop: stopProcess };
+
+/** How long a stopped daemon gets to exit before the sweep starts a new one anyway. */
+const STOP_WAIT_MS = 5_000;
 
 /** Starts the app is running (or ran and failed) — what `readSyncHealth` reports over what's on disk. */
 const starting = new Set<string>();
@@ -226,6 +248,33 @@ export async function startSync(root: string, deps: SyncHealthDeps = defaultDeps
   }
 }
 
+/** The tapd script a daemon's command line runs, `…/tapd/dist/bin.js`. */
+function tapdScriptOf(command: string): string | null {
+  return /(\S*tapd\/dist\/bin\.js)/.exec(command)?.[1] ?? null;
+}
+
+/**
+ * Stops this folder's daemon when it started before its own tapd script
+ * was last replaced: an app or npm update since then, so it still runs the
+ * old code and would keep doing so for days. The daemon writes its pidfile
+ * as it starts, so that file's time is when it started. True when it was
+ * stopped, for the sweep to start it again.
+ */
+export async function stopOutdatedDaemon(root: string, deps: SyncHealthDeps = defaultDeps): Promise<boolean> {
+  if ((await probeDaemon(root, deps)) !== 'running') return false;
+  const pid = await readPid(root);
+  const command = pid === null ? null : await deps.commandOf(pid);
+  const script = command ? tapdScriptOf(command) : null;
+  if (pid === null || !script) return false;
+  const mtime = deps.modifiedAt ?? modifiedAt;
+  const [startedAt, scriptAt] = await Promise.all([mtime(pidfileOf(root)), mtime(script)]);
+  if (startedAt === null || scriptAt === null || startedAt >= scriptAt) return false;
+  (deps.stop ?? stopProcess)(pid);
+  for (let waited = 0; waited < STOP_WAIT_MS && deps.isAlive(pid); waited += 100) await wait(100);
+  log.info('rig: restarting a sync daemon left from before an update', { root });
+  return true;
+}
+
 /** Whether the launch sweep should start this folder: there, bound, not paused, and no daemon of its own running. */
 export async function shouldStartAtLaunch(root: string, deps: SyncHealthDeps = defaultDeps): Promise<boolean> {
   const health = await readSyncHealth(root, deps);
@@ -280,7 +329,7 @@ export async function resumeSyncOnLaunch(
     const paths = await getLinkedPathsForAccount(account.id, await getAccountBindingIds(account.id));
     const toStart: string[] = [];
     for (const path of paths) {
-      if (await shouldStartAtLaunch(path, deps)) toStart.push(path);
+      if ((await shouldStartAtLaunch(path, deps)) || (await stopOutdatedDaemon(path, deps))) toStart.push(path);
     }
     for (const path of toStart) sweep.pending.add(keyOf(path));
     sweep.planned = true;

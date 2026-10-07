@@ -34,8 +34,15 @@ vi.mock('./recent-rigs', async (importOriginal) => {
 });
 vi.mock('./rig-controls', () => ({ toggleSync: mocks.toggleSync }));
 
-const { probeDaemon, readShownSyncHealth, readSyncHealth, resetLaunchSweepForTests, resumeSyncOnLaunch, startSync } =
-  await import('./sync-health');
+const {
+  probeDaemon,
+  readShownSyncHealth,
+  readSyncHealth,
+  resetLaunchSweepForTests,
+  resumeSyncOnLaunch,
+  startSync,
+  stopOutdatedDaemon,
+} = await import('./sync-health');
 
 let root: string;
 
@@ -143,6 +150,57 @@ describe('startSync', () => {
     expect(await readSyncHealth(root, deps({ 1: tapdFor(root) }))).toEqual({ state: 'running' });
     await rm(join(root, '.rig', 'tap', 'daemon.pid'));
     expect(await readSyncHealth(root, deps({}))).toEqual({ state: 'stopped' });
+  });
+});
+
+describe('stopOutdatedDaemon', () => {
+  const script = '/Applications/Rig.app/Contents/Resources/rig-cli/node_modules/@rigxyz/tapd/dist/bin.js';
+  const command = (dir: string) => `/Applications/Rig.app/Contents/MacOS/Rig ${script} start --dir ${dir}`;
+  /** A daemon that started at `startedAt`, running a tapd script last replaced at `scriptAt`. */
+  function daemon(dir: string, startedAt: number, scriptAt: number) {
+    const alive = new Set([77]);
+    const stop = vi.fn((pid: number) => alive.delete(pid));
+    return {
+      stop,
+      deps: {
+        isAlive: (pid: number) => alive.has(pid),
+        commandOf: async (pid: number) => (pid === 77 ? command(dir) : null),
+        modifiedAt: async (path: string) => (path === script ? scriptAt : path.endsWith('daemon.pid') ? startedAt : null),
+        stop,
+      },
+    };
+  }
+
+  it('stops a daemon that started before its tapd was updated', async () => {
+    await bind(root);
+    await writePid(root, 77);
+    const { deps, stop } = daemon(root, 1_000, 2_000);
+    expect(await stopOutdatedDaemon(root, deps)).toBe(true);
+    expect(stop).toHaveBeenCalledWith(77);
+  });
+
+  it('leaves a daemon alone that started after the update, or whose script can’t be read', async () => {
+    await bind(root);
+    await writePid(root, 77);
+    const current = daemon(root, 3_000, 2_000);
+    expect(await stopOutdatedDaemon(root, current.deps)).toBe(false);
+    expect(current.stop).not.toHaveBeenCalled();
+    const unknown = daemon(root, 1_000, 2_000);
+    expect(await stopOutdatedDaemon(root, { ...unknown.deps, modifiedAt: async () => null })).toBe(false);
+    expect(unknown.stop).not.toHaveBeenCalled();
+  });
+
+  it('the launch sweep starts the outdated daemon again', async () => {
+    const outdated = join(root, 'outdated');
+    await bind(outdated);
+    await writePid(outdated, 77);
+    mocks.account.mockResolvedValue({ status: 'known', id: 'usr_a' });
+    mocks.rows = [{ accountId: 'usr_a', path: outdated, bindingId: 'bnd_1' }];
+    mocks.toggleSync.mockResolvedValue({ success: true, data: { paused: false } });
+
+    await resumeSyncOnLaunch({ deps: daemon(outdated, 1_000, 2_000).deps, delays: [] });
+
+    expect(mocks.toggleSync.mock.calls).toEqual([['resume', outdated]]);
   });
 });
 
