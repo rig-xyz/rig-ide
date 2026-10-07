@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Bot, ChevronRight, Circle, FileText, FolderOpen, MessageSquare, Send, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
@@ -15,6 +15,7 @@ import {
   deriveAskSourceItems,
   derivePulseSectionState,
   isPulseStale,
+  keepLastGoodPulse,
   resolveAskSourceClick,
   summarizeAskSources,
   type AskSourceListItem,
@@ -22,6 +23,17 @@ import {
 import { rigLinks, summarySegments } from './summary-segments';
 
 export const PULSE_QUERY_KEY = ['rig', 'pulse', 'get'];
+
+type PulseResult = Awaited<ReturnType<typeof rpc.rig.pulse.get>>;
+
+/**
+ * The one pulse fetch every reader of `PULSE_QUERY_KEY` uses: a refresh that
+ * fails keeps the briefing already shown (`keepLastGoodPulse`).
+ */
+export async function loadPulse(queryClient: QueryClient, args: { refresh?: boolean } = {}): Promise<PulseResult> {
+  const result = await rpc.rig.pulse.get(args);
+  return keepLastGoodPulse(result, queryClient.getQueryData<PulseResult>(PULSE_QUERY_KEY));
+}
 
 const ASK_SUGGESTIONS = ["What's blocked?", 'What shipped recently?', 'What should I pick up next?'];
 
@@ -87,7 +99,7 @@ export function BriefingSpine({
   const queryClient = useQueryClient();
   const pulseQuery = useQuery({
     queryKey: PULSE_QUERY_KEY,
-    queryFn: () => rpc.rig.pulse.get({}),
+    queryFn: () => loadPulse(queryClient),
     staleTime: 60_000,
     // Explicit rather than relying on QueryClient's own default (which
     // happens to already be `true`) — this is a designed behavior here,
@@ -116,8 +128,7 @@ export function BriefingSpine({
     if (!isPulseStale(pulseQuery.data.data.briefing.generatedAt, Date.now())) return;
     if (forcingRef.current) return;
     forcingRef.current = true;
-    void rpc.rig.pulse
-      .get({ refresh: true })
+    void loadPulse(queryClient, { refresh: true })
       .then((result) => queryClient.setQueryData(PULSE_QUERY_KEY, result))
       .finally(() => {
         forcingRef.current = false;

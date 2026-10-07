@@ -1,11 +1,10 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { PersonCardPopover } from '@renderer/features/people/person-card';
-import { rpc } from '@renderer/lib/ipc';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import type { RigPulsePerPerson } from '@shared/rig/pulse';
-import { PULSE_QUERY_KEY } from './briefing-spine';
+import { loadPulse, PULSE_QUERY_KEY } from './briefing-spine';
 import { HomeFeedLabel } from './home-feed-label';
 import { derivePulseSectionState } from './pulse-state';
 import { firstNameKey, shortAge } from './recent-themes-state';
@@ -32,9 +31,10 @@ export function PeopleRail({
   lastActivity?: ReadonlyMap<string, string>;
   className?: string;
 }) {
+  const queryClient = useQueryClient();
   const pulseQuery = useQuery({
     queryKey: PULSE_QUERY_KEY,
-    queryFn: () => rpc.rig.pulse.get({}),
+    queryFn: () => loadPulse(queryClient),
     staleTime: 60_000,
   });
   const state = derivePulseSectionState({ isLoading: pulseQuery.isLoading, data: pulseQuery.data });

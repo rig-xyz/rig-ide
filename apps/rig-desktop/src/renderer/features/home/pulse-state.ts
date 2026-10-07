@@ -265,3 +265,13 @@ export function askErrorMessage(error: RigPulseError): string {
   }
   return error.message;
 }
+
+/**
+ * A failed pulse refresh keeps the briefing Home already shows. The RPC
+ * answers a timeout as `{ success: false }`, which would otherwise replace
+ * it and take the summary, People and the topic pictures with it. With no
+ * good briefing to keep, the failure shows.
+ */
+export function keepLastGoodPulse<T extends { success: boolean }>(next: T, last: T | undefined): T {
+  return !next.success && last?.success ? last : next;
+}

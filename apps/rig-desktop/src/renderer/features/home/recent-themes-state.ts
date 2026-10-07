@@ -73,6 +73,24 @@ export function firstNameKey(name: string | null | undefined): string | null {
 }
 
 /**
+ * A picture for each first-name key, from everyone Home already knows: you,
+ * your people, then Pulse's people. The first picture for a key wins, so a
+ * first name two people share shows the one listed first.
+ */
+export function avatarsByFirstName(
+  ...sources: ReadonlyArray<{ name: string | null; avatarUrl: string | null }>[]
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const people of sources) {
+    for (const person of people) {
+      const key = firstNameKey(person.name);
+      if (key && person.avatarUrl && !out.has(key)) out.set(key, person.avatarUrl);
+    }
+  }
+  return out;
+}
+
+/**
  * When each person last wrote in a Room today, by `firstNameKey`, their
  * agents included: the newest theme they're a face on. People are named by
  * first name only on the wire, so two teammates sharing one share a time.

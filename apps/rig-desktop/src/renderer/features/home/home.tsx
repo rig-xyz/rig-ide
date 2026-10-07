@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, LogIn, Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
+import { usePeople } from '@renderer/features/people/use-people';
 import { deriveSignedIn } from '@renderer/features/rig-account/auth-state';
 import { useRigSignIn, type RigSignInPhase } from '@renderer/features/rig-account/use-rig-sign-in';
 import { ConnectionBanner } from '@renderer/features/shell/connection-banner';
@@ -21,7 +22,7 @@ import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { cn } from '@renderer/lib/utils';
 import { AcrossYourSpacesToday } from './across-your-spaces-today';
-import { BriefingSpine, PULSE_QUERY_KEY } from './briefing-spine';
+import { BriefingSpine, loadPulse, PULSE_QUERY_KEY } from './briefing-spine';
 import { FloatingCard } from './floating-card';
 import {
   deriveHomeConnection,
@@ -46,6 +47,7 @@ import { NewSpaceCta } from './new-space-cta';
 import { PeopleRail } from './people-rail';
 import { shouldShowPulseSection } from './pulse-state';
 import {
+  avatarsByFirstName,
   deriveAcrossSpacesView,
   firstNameKey,
   lastActivityByPerson,
@@ -459,20 +461,20 @@ export function Home({
   const topicByBinding = topicBySpace(acrossView.kind === 'themes' && !connectionDown ? acrossView.themes : []);
   const roomThemesOn = useRoomThemesEnabled();
   // The topic lines' faces and People's times both come from what Home
-  // already reads: Pulse's people (their pictures) and the day's themes.
+  // already reads: the day's themes, and pictures from you, your people and
+  // Pulse's people. Pulse alone misses anyone its briefing leaves out.
   const pulseQuery = useQuery({
     queryKey: PULSE_QUERY_KEY,
-    queryFn: () => rpc.rig.pulse.get({}),
+    queryFn: () => loadPulse(queryClient),
     staleTime: 60_000,
     enabled: showPulse,
   });
-  const avatarByName = new Map<string, string>();
-  if (pulseQuery.data?.success) {
-    for (const person of pulseQuery.data.data.briefing.perPerson) {
-      const key = firstNameKey(person.name);
-      if (key && person.avatarUrl && !avatarByName.has(key)) avatarByName.set(key, person.avatarUrl);
-    }
-  }
+  const { people: yourPeople } = usePeople(showPulse && spacesEnabled);
+  const avatarByName = avatarsByFirstName(
+    meQuery.data?.success ? [meQuery.data.data] : [],
+    yourPeople,
+    pulseQuery.data?.success ? pulseQuery.data.data.briefing.perPerson : []
+  );
   const avatarOf = (name: string) => avatarByName.get(firstNameKey(name) ?? '') ?? null;
   const lastActivity = lastActivityByPerson(acrossView.kind === 'themes' ? acrossView.themes : []);
   // A theme line opens its space's Room, on that theme when Room themes is

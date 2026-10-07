@@ -6,6 +6,7 @@ import {
   derivePulseSectionState,
   isFreshPickBackUp,
   isPulseStale,
+  keepLastGoodPulse,
   PULSE_STALE_MS,
   shouldShowPulseSection,
   splitPickBackUp,
@@ -373,5 +374,24 @@ describe('askErrorMessage', () => {
     expect(
       askErrorMessage({ kind: 'unavailable', message: "Ask isn't available on this relay right now." })
     ).toBe("Ask isn't available on this relay right now.");
+  });
+});
+
+describe('keepLastGoodPulse', () => {
+  const good = { success: true as const, data: 'briefing' };
+  const failed = { success: false as const, error: 'timeout' };
+
+  it('keeps the briefing already shown when a refresh fails', () => {
+    expect(keepLastGoodPulse<typeof good | typeof failed>(failed, good)).toBe(good);
+  });
+
+  it('shows the failure when there is nothing good to keep', () => {
+    expect(keepLastGoodPulse<typeof good | typeof failed>(failed, undefined)).toBe(failed);
+    expect(keepLastGoodPulse<typeof good | typeof failed>(failed, failed)).toBe(failed);
+  });
+
+  it('takes a new briefing over the old one', () => {
+    const fresh = { success: true as const, data: 'newer' };
+    expect(keepLastGoodPulse(fresh, good)).toBe(fresh);
   });
 });

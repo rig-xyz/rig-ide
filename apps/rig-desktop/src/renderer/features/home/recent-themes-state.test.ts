@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { RigRecentTheme } from '@shared/rig/recent-themes';
 import { parseRecentThemes } from '@shared/rig/recent-themes';
 import {
+  avatarsByFirstName,
   deriveAcrossSpacesView,
   firstNameKey,
   lastActivityByPerson,
@@ -219,5 +220,27 @@ describe('lastActivityByPerson', () => {
     expect(at.get('hugo')).toBe('2026-10-02T11:00:00.000Z');
     expect(at.get('ana')).toBe('2026-10-02T11:00:00.000Z');
     expect(at.has('lea')).toBe(false);
+  });
+});
+
+describe('avatarsByFirstName', () => {
+  it("finds a face Pulse's briefing left out, from your people", () => {
+    const pulse = [{ name: 'Hugo Renaudin', avatarUrl: 'hugo.png' }];
+    const people = [{ name: 'Jérémie Rappaz', avatarUrl: 'jeremie.png' }];
+    const avatars = avatarsByFirstName([], people, pulse);
+    expect(avatars.get(firstNameKey('Jérémie')!)).toBe('jeremie.png');
+    expect(avatars.get('hugo')).toBe('hugo.png');
+  });
+
+  it('keeps the first picture for a first name, and skips people without one', () => {
+    const avatars = avatarsByFirstName(
+      [{ name: 'Dylan Bourgeois', avatarUrl: 'me.png' }],
+      [
+        { name: 'Dylan Other', avatarUrl: 'other.png' },
+        { name: 'Ada', avatarUrl: null },
+      ]
+    );
+    expect(avatars.get('dylan')).toBe('me.png');
+    expect(avatars.has('ada')).toBe(false);
   });
 });
