@@ -1,5 +1,5 @@
 diff --git a/dist/index.js b/dist/index.js
-index 16daa15df86bfa40062889c8bec02c8881354a18..952966a5b6f1a3f075fcc242e7a75d3f7596db54 100755
+index 16daa15df86bfa40062889c8bec02c8881354a18..693b6e8353d4a1ab00d3fba0e09e58edb8187ae4 100755
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -33089,7 +33089,7 @@ var AgentMode = class _AgentMode {
@@ -11,3 +11,87 @@ index 16daa15df86bfa40062889c8bec02c8881354a18..952966a5b6f1a3f075fcc242e7a75d3f
        excludeTmpdirEnvVar: false,
        excludeSlashTmp: false
      },
+@@ -33988,7 +33988,7 @@ var CodexAcpClient = class {
+     await this.refreshSkills(request.cwd, additionalDirectories);
+     const response = await this.resumeThread({
+       excludeTurns: true,
+-      config: await this.createSessionConfig(request.cwd, additionalDirectories, request.mcpServers ?? []),
++      config: await this.createSessionConfig(request.cwd, additionalDirectories, request.mcpServers ?? [], developerInstructionsOf(request._meta)),
+       cwd: request.cwd,
+       modelProvider: await this.getResumeModelProvider(),
+       threadId: request.sessionId
+@@ -34024,7 +34024,7 @@ var CodexAcpClient = class {
+     await this.refreshSkills(request.cwd, additionalDirectories);
+     const response = await this.resumeThread({
+       excludeTurns: true,
+-      config: await this.createSessionConfig(request.cwd, additionalDirectories, request.mcpServers ?? []),
++      config: await this.createSessionConfig(request.cwd, additionalDirectories, request.mcpServers ?? [], developerInstructionsOf(request._meta)),
+       cwd: request.cwd,
+       modelProvider: await this.getResumeModelProvider(),
+       threadId: request.sessionId
+@@ -34085,7 +34085,7 @@ var CodexAcpClient = class {
+     const additionalDirectories = readAdditionalDirectories(request.cwd, request.additionalDirectories, request._meta);
+     await this.refreshSkills(request.cwd, additionalDirectories);
+     const response = await this.codexClient.threadStart({
+-      config: await this.createSessionConfig(request.cwd, additionalDirectories, request.mcpServers),
++      config: await this.createSessionConfig(request.cwd, additionalDirectories, request.mcpServers, developerInstructionsOf(request._meta)),
+       modelProvider: this.getModelProvider(),
+       cwd: request.cwd
+     });
+@@ -34184,7 +34184,7 @@ var CodexAcpClient = class {
+   getMcpServerStartupVersion() {
+     return this.codexClient.getMcpServerStartupVersion();
+   }
+-  async createSessionConfig(projectPath, additionalDirectories, mcpServers) {
++  async createSessionConfig(projectPath, additionalDirectories, mcpServers, developerInstructions = null) {
+     const sessionRoots = [projectPath, ...additionalDirectories];
+     const activeProvider = this.gatewayConfig ? {
+       apiType: gatewayApiTypeFromConfig(this.gatewayConfig),
+@@ -34201,7 +34201,9 @@ var CodexAcpClient = class {
+       ...forceGitRootTurnDiffPaths(mergeGatewayConfig(this.config, this.gatewayConfig)),
+       projects: Object.fromEntries(sessionRoots.map((root) => [root, {
+         trust_level: "trusted"
+-      }]))
++      }])),
++      // rig: this thread's own instructions from the client (`_meta.developerInstructions`).
++      ...developerInstructions ? { developer_instructions: developerInstructions } : {}
+     };
+     const configWithWorkspaceRoots = mergeSandboxWorkspaceWriteRoots(mergedConfig, additionalDirectories);
+     if (mcpServers.length === 0) {
+@@ -34562,6 +34564,10 @@ function readMetaAdditionalRoots(meta3) {
+   }
+   return uniqueStrings(rawRoots.filter((value) => typeof value === "string").map((value) => value.trim()).filter((value) => value.length > 0));
+ }
++function developerInstructionsOf(meta3) {
++  const value = meta3?.developerInstructions;
++  return typeof value === "string" && value.trim() ? value : null;
++}
+ function readAdditionalDirectories(cwd, additionalDirectories, meta3) {
+   const rawDirectories = additionalDirectories ?? readMetaAdditionalRoots(meta3);
+   if (!rawDirectories) {
+@@ -37747,6 +37753,7 @@ Check ${configPath} and project .codex directories, especially their config.toml
+       cwd: request.cwd,
+       additionalDirectories: sessionMetadata.additionalDirectories,
+       mcpServers: requestedMcpServers,
++      developerInstructions: developerInstructionsOf(request._meta),
+       fastModeEnabled: sessionMetadata.currentServiceTier === "fast",
+       currentModelSupportsFast,
+       sessionMcpServers,
+@@ -38107,7 +38114,8 @@ Check ${configPath} and project .codex directories, especially their config.toml
+             sessionId: session.sessionId,
+             cwd: session.cwd,
+             additionalDirectories: session.additionalDirectories,
+-            mcpServers: session.mcpServers ?? []
++            mcpServers: session.mcpServers ?? [],
++            ...session.developerInstructions ? { _meta: { developerInstructions: session.developerInstructions } } : {}
+           });
+           session.authProvider = replacement.getModelProvider();
+           session.asyncTasks.refresh();
+@@ -38838,6 +38846,7 @@ Check ${configPath} and project .codex directories, especially their config.toml
+       cwd: request.cwd,
+       additionalDirectories: sessionMetadata.additionalDirectories,
+       mcpServers: requestedMcpServers,
++      developerInstructions: developerInstructionsOf(request._meta),
+       fastModeEnabled: sessionMetadata.currentServiceTier === "fast",
+       currentModelSupportsFast,
+       sessionMcpServers,

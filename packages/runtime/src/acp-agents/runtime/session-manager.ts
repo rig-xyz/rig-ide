@@ -829,15 +829,30 @@ export class SessionManager implements InboundRouter {
  * And `_meta.systemPrompt.append`: extra instructions after Claude Code's own
  * system prompt. The adapter keeps its `claude_code` preset and only adds
  * this, on a new session and on a load alike.
+ *
+ * For Codex, the same text goes in `_meta.developerInstructions`, which our
+ * codex-acp patch sets as that thread's `developer_instructions` (on new,
+ * load and resume). Per thread, never the adapter's process-wide config: one
+ * adapter serves every Codex session in a folder.
  */
 function sessionMeta(input: AcpStartInput): { _meta?: Record<string, unknown> } {
+  if (input.providerId === 'codex') {
+    return input.systemPromptAppend ? { _meta: { developerInstructions: input.systemPromptAppend } } : {};
+  }
   if (input.providerId !== 'claude') return {};
   const disabled = input.disabledProjectMcpServers ?? [];
   const append = input.systemPromptAppend ?? '';
   if (disabled.length === 0 && !append) return {};
+  const options = {
+    ...(disabled.length > 0 ? { settings: { disabledMcpjsonServers: disabled } } : {}),
+    // A space session (the only kind with an append) lists every tool upfront:
+    // with tool search on, Claude Code shows MCP tools by name only, and
+    // Rig's own tools went unused. Private sessions keep tool search.
+    ...(append ? { env: { ENABLE_TOOL_SEARCH: 'false' } } : {}),
+  };
   return {
     _meta: {
-      ...(disabled.length > 0 ? { claudeCode: { options: { settings: { disabledMcpjsonServers: disabled } } } } : {}),
+      ...(Object.keys(options).length > 0 ? { claudeCode: { options } } : {}),
       ...(append ? { systemPrompt: { append } } : {}),
     },
   };

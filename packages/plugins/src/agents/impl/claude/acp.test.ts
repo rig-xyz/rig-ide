@@ -59,6 +59,10 @@ describe('claude acp behavior', () => {
       expect(result.env?.CLAUDE_CODE_EXECUTABLE).toBe('/usr/local/bin/claude');
     });
 
+    it('leaves Claude Code tool search alone for the process: space sessions turn it off per session', () => {
+      expect(acpBehavior().buildSpawn(spawnCtx).env?.ENABLE_TOOL_SEARCH).toBeUndefined();
+    });
+
     it('sets ELECTRON_RUN_AS_NODE=1', () => {
       const result = acpBehavior().buildSpawn({ ...spawnCtx, cli: '/x/claude' });
       expect(result.env?.ELECTRON_RUN_AS_NODE).toBe('1');

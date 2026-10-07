@@ -66,10 +66,12 @@ export const acpStartInputSchema = z.object({
    */
   disabledProjectMcpServers: z.array(z.string()).optional(),
   /**
-   * Claude only: text appended to Claude Code's own system prompt (the
-   * adapter's `_meta.systemPrompt.append`), never replacing it. A space
-   * session uses it for the folder's AGENTS.md, which Claude Code skips when
-   * there's also a CLAUDE.md.
+   * Claude: text appended to Claude Code's own system prompt (the adapter's
+   * `_meta.systemPrompt.append`), never replacing it. Codex: the thread's
+   * developer instructions (`_meta.developerInstructions`, through our
+   * codex-acp patch). A space session uses it for the space's rules and, for
+   * Claude, the folder's AGENTS.md, which Claude Code skips when there's also
+   * a CLAUDE.md.
    */
   systemPromptAppend: z.string().max(64_000).optional(),
 });

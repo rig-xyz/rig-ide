@@ -17,10 +17,25 @@ function resolveCodexAcpEntry(): string {
   return _require.resolve('@agentclientprotocol/codex-acp/dist/index.js');
 }
 
+/** The namespace Codex gives the tools of rig's own MCP server (`rig`): `mcp__` plus the server name. */
+const RIG_TOOLS_NAMESPACE = 'mcp__rig';
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
 /**
  * codex-acp's `CODEX_CONFIG` (JSON it merges into every thread's config), with
  * CLAUDE.md added to Codex's `project_doc_fallback_filenames`: Codex then reads
  * a folder's CLAUDE.md when it has no AGENTS.md, as Claude reads CLAUDE.md.
+ *
+ * And rig's own tools listed upfront: Codex defers every MCP tool behind tool
+ * search (its `tool_search_always_defer_mcp_tools` is on and can't be turned
+ * off), so the agent never sees their descriptions until it goes looking. A
+ * namespace in `features.code_mode.direct_only_tool_namespaces` skips that and
+ * is a top-level tool instead. Only the `rig` server's tools, which only a
+ * space session has, so other sessions are unchanged.
+ *
  * Anything already in `existing` is kept.
  */
 export function codexConfigWithClaudeMd(existing: string | undefined): string {
@@ -35,9 +50,22 @@ export function codexConfigWithClaudeMd(existing: string | undefined): string {
   }
   const current = config.project_doc_fallback_filenames;
   const fallbacks = Array.isArray(current) ? current.filter((name): name is string => typeof name === 'string') : [];
+  const features = asObject(config.features);
+  // `code_mode = true` is the same feature with no settings: keep it on.
+  const codeMode = typeof features.code_mode === 'boolean' ? { enabled: features.code_mode } : asObject(features.code_mode);
+  const direct = Array.isArray(codeMode.direct_only_tool_namespaces)
+    ? codeMode.direct_only_tool_namespaces.filter((name): name is string => typeof name === 'string')
+    : [];
   return JSON.stringify({
     ...config,
     project_doc_fallback_filenames: fallbacks.includes('CLAUDE.md') ? fallbacks : [...fallbacks, 'CLAUDE.md'],
+    features: {
+      ...features,
+      code_mode: {
+        ...codeMode,
+        direct_only_tool_namespaces: direct.includes(RIG_TOOLS_NAMESPACE) ? direct : [...direct, RIG_TOOLS_NAMESPACE],
+      },
+    },
   });
 }
 

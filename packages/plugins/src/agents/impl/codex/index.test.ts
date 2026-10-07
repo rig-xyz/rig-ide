@@ -50,8 +50,13 @@ describe('codex plugin static model catalog', () => {
 });
 
 describe('codex plugin CODEX_CONFIG', () => {
+  const rigUpfront = { code_mode: { direct_only_tool_namespaces: ['mcp__rig'] } };
+
   it('adds CLAUDE.md as a fallback project doc, so Codex reads it where there is no AGENTS.md', () => {
-    expect(JSON.parse(codexConfigWithClaudeMd(undefined))).toEqual({ project_doc_fallback_filenames: ['CLAUDE.md'] });
+    expect(JSON.parse(codexConfigWithClaudeMd(undefined))).toEqual({
+      project_doc_fallback_filenames: ['CLAUDE.md'],
+      features: rigUpfront,
+    });
   });
 
   it('keeps a config already there, and its own fallbacks, without listing CLAUDE.md twice', () => {
@@ -59,10 +64,33 @@ describe('codex plugin CODEX_CONFIG', () => {
     expect(JSON.parse(codexConfigWithClaudeMd(existing))).toEqual({
       model_provider: 'gateway',
       project_doc_fallback_filenames: ['README.md', 'CLAUDE.md'],
+      features: rigUpfront,
     });
     const already = JSON.stringify({ project_doc_fallback_filenames: ['CLAUDE.md'] });
-    expect(JSON.parse(codexConfigWithClaudeMd(already))).toEqual({ project_doc_fallback_filenames: ['CLAUDE.md'] });
-    expect(JSON.parse(codexConfigWithClaudeMd('not json'))).toEqual({ project_doc_fallback_filenames: ['CLAUDE.md'] });
+    expect(JSON.parse(codexConfigWithClaudeMd(already))).toEqual({
+      project_doc_fallback_filenames: ['CLAUDE.md'],
+      features: rigUpfront,
+    });
+    expect(JSON.parse(codexConfigWithClaudeMd('not json'))).toEqual({
+      project_doc_fallback_filenames: ['CLAUDE.md'],
+      features: rigUpfront,
+    });
+  });
+
+  it("lists rig's own tools upfront instead of behind tool search, keeping the features already set", () => {
+    const existing = JSON.stringify({
+      features: { hooks: true, code_mode: { excluded_tool_namespaces: ['x'], direct_only_tool_namespaces: ['mcp__notes'] } },
+    });
+    expect(JSON.parse(codexConfigWithClaudeMd(existing)).features).toEqual({
+      hooks: true,
+      code_mode: { excluded_tool_namespaces: ['x'], direct_only_tool_namespaces: ['mcp__notes', 'mcp__rig'] },
+    });
+    const listed = codexConfigWithClaudeMd(codexConfigWithClaudeMd(undefined));
+    expect(JSON.parse(listed).features).toEqual(rigUpfront);
+    // A bare `code_mode = true` stays on.
+    expect(JSON.parse(codexConfigWithClaudeMd(JSON.stringify({ features: { code_mode: true } }))).features).toEqual({
+      code_mode: { enabled: true, direct_only_tool_namespaces: ['mcp__rig'] },
+    });
   });
 
   it('hands it to codex-acp at spawn, merged with the agent env', () => {
@@ -74,6 +102,7 @@ describe('codex plugin CODEX_CONFIG', () => {
     expect(JSON.parse(spawn.env!.CODEX_CONFIG!)).toEqual({
       model_reasoning_effort: 'high',
       project_doc_fallback_filenames: ['CLAUDE.md'],
+      features: rigUpfront,
     });
   });
 });
