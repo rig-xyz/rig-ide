@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentCliSource, classifyAgentRunFailure } from './agent-run-failure';
+import { agentCliSource, classifyAgentRunFailure, isSignInFailure } from './agent-run-failure';
 
 describe('classifyAgentRunFailure', () => {
   it('an old Codex, in either wording the provider uses, is outdated_cli', () => {
@@ -60,5 +60,19 @@ describe('agentCliSource', () => {
     expect(agentCliSource('/usr/local/Cellar/claude/2.1.149/bin/claude')).toBe('homebrew');
     expect(agentCliSource('/Users/a/.local/bin/claude')).toBe('other');
     expect(agentCliSource(null)).toBeNull();
+  });
+});
+
+describe('isSignInFailure', () => {
+  it('reads an expired or missing CLI login as a sign-in failure', () => {
+    expect(isSignInFailure('Failed to authenticate: OAuth session expired and could not be refreshed')).toBe(true);
+    expect(isSignInFailure('Not logged in · Please run /login')).toBe(true);
+    expect(isSignInFailure('authentication_error: invalid x-api-key')).toBe(true);
+  });
+
+  it('leaves a run alone that only talks about credentials or auth', () => {
+    expect(isSignInFailure('Could not read the credentials file in the repo')).toBe(false);
+    expect(isSignInFailure('The authentication middleware returned 500')).toBe(false);
+    expect(isSignInFailure('rate limit exceeded')).toBe(false);
   });
 });

@@ -1,6 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, LogIn, Plus } from 'lucide-react';
+import { CircleAlert, Loader2, LogIn, Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AgentSignInButton } from '@renderer/features/agents/agent-sign-in-button';
+import { useAgentSignInNeeded } from '@renderer/features/agents/use-agent-sign-in-needed';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
 import { usePeople } from '@renderer/features/people/use-people';
 import { deriveSignedIn } from '@renderer/features/rig-account/auth-state';
@@ -555,6 +557,12 @@ export function Home({
         <ConnectionBanner connection={connection} retrying={retrying} onTryAgain={tryAgain} />
       )}
       {regions.health && <HealthLine message={regions.health} onSignIn={signIn} signInPhase={signInPhase} />}
+      {!regions.showEmptyState && (
+        <>
+          <AgentSignInLine agentId="claude" />
+          <AgentSignInLine agentId="codex" />
+        </>
+      )}
       {/*
        * D6 fix: below `lg` (this app's own window can go as narrow as
        * 700px, well under the 1024px `lg` breakpoint — this is the COMMON
@@ -909,4 +917,26 @@ function HealthLine({
     );
   }
   return <p className="text-text-muted self-start font-mono text-xs">{message.text}</p>;
+}
+
+/**
+ * Stays up while an installed agent needs its owner to sign in again on this
+ * Mac (`useAgentSignInNeeded`: its probe says signed out, or a run failed on
+ * its sign-in). Sign in opens the same dialog Settings uses.
+ */
+function AgentSignInLine({ agentId }: { agentId: 'claude' | 'codex' }) {
+  const { needed, agent, loginMethod, markSignedIn } = useAgentSignInNeeded(agentId);
+  if (!needed || !agent || !loginMethod) return null;
+  return (
+    <div className="text-text-muted flex items-center gap-1.5 self-start font-mono text-xs" data-testid="agent-sign-in-line">
+      <CircleAlert className="text-warning size-3 shrink-0" strokeWidth={1.5} />
+      {agentId === 'codex' ? 'Codex' : 'Claude'} isn't signed in on this Mac.
+      <AgentSignInButton
+        agent={agent}
+        loginMethod={loginMethod}
+        onSignedIn={markSignedIn}
+        className="text-accent transition-opacity hover:opacity-80"
+      />
+    </div>
+  );
 }

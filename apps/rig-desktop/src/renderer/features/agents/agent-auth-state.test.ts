@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cliLoginMethod, deriveAgentAuthRowState, type CliLoginMethod } from './agent-auth-state';
+import { agentNeedsSignIn, cliLoginMethod, deriveAgentAuthRowState, type CliLoginMethod } from './agent-auth-state';
 
 const CLI_LOGIN: CliLoginMethod = { kind: 'cli-login', id: 'login', name: 'Login', args: [] };
 const API_KEY = {
@@ -91,6 +91,38 @@ describe('deriveAgentAuthRowState', () => {
         probeData: { kind: 'authenticated', account: 'dylan@userig.xyz' },
       })
     ).toEqual({ kind: 'signedIn', account: 'dylan@userig.xyz' });
+  });
+});
+
+describe('agentNeedsSignIn', () => {
+  const base = {
+    runnable: true,
+    loginMethod: CLI_LOGIN as CliLoginMethod | null,
+    probeData: { kind: 'authenticated' } as AgentAuthStatusLike | null | undefined,
+    failedOnSignIn: false,
+  };
+
+  it('signed in and no failed run: no warning', () => {
+    expect(agentNeedsSignIn(base)).toBe(false);
+  });
+
+  it('a definite unauthenticated probe: needs sign-in', () => {
+    expect(agentNeedsSignIn({ ...base, probeData: { kind: 'unauthenticated' } })).toBe(true);
+  });
+
+  it('an unknown, failed or pending probe is never a false alarm', () => {
+    expect(agentNeedsSignIn({ ...base, probeData: { kind: 'unknown' } })).toBe(false);
+    expect(agentNeedsSignIn({ ...base, probeData: null })).toBe(false);
+    expect(agentNeedsSignIn({ ...base, probeData: undefined })).toBe(false);
+  });
+
+  it('a run that failed on its sign-in counts even while the probe still says signed in', () => {
+    expect(agentNeedsSignIn({ ...base, failedOnSignIn: true })).toBe(true);
+  });
+
+  it('not runnable here, or no CLI sign-in to offer: never', () => {
+    expect(agentNeedsSignIn({ ...base, runnable: false, failedOnSignIn: true })).toBe(false);
+    expect(agentNeedsSignIn({ ...base, loginMethod: null, probeData: { kind: 'unauthenticated' } })).toBe(false);
   });
 });
 

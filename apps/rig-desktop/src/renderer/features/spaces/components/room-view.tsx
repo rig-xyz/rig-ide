@@ -66,6 +66,7 @@ import { readThreadSeen, writeThreadSeen } from '../thread-seen';
 import { useSpacesChatView } from '../use-chat-view';
 import { ReactionsContext, type ReactionsApi } from './reactions';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
+import { AgentSignInRow } from './agent-sign-in-row';
 import { SpaceRail } from './space-rail';
 import { AgentSettingsContext, type AgentSettingsApi } from './agent-settings';
 import { ConnectorGallery } from './connector-gallery';
@@ -1813,7 +1814,12 @@ export function RoomView({
         {awaitingLive && !(source instanceof RelayRoomSource) ? null : source instanceof RelayRoomSource ? (
           (renderPanel?.(
             <>
-              <AgentRows snapshot={room} selfUserId={selfUserId} bindingId={bindingId} />
+              <AgentRows
+                snapshot={room}
+                selfUserId={selfUserId}
+                bindingId={bindingId}
+                signInRow={(agent) => <AgentSignInRow agent={agent} />}
+              />
               <ConnectorsSection
                 snapshot={room}
                 selfUserId={selfUserId}

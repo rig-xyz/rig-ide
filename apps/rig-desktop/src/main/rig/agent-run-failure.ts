@@ -21,6 +21,20 @@ const NETWORK =
 export type AgentFailurePhase = 'start' | 'run' | 'stalled';
 
 /**
+ * The CLI's own words for a sign-in it can't use: an expired or missing
+ * login. Narrower than `AUTH` on purpose: this one tells everyone in a space
+ * that the owner must sign in again, so a run that merely talks about
+ * credentials must not trip it.
+ */
+const SIGN_IN =
+  /failed to authenticate|oauth (?:session|token)[^\n]{0,40}(?:expired|invalid|revoked)|not (?:logged|signed) in|please (?:run )?\/login|run `?(?:claude|codex) (?:auth )?login|authentication_error|invalid[_ ]api[_ ]key/i;
+
+/** Whether a failed run's words say its agent needs signing in again. */
+export function isSignInFailure(text: string): boolean {
+  return SIGN_IN.test(text);
+}
+
+/**
  * Most specific first: an outdated CLI (the existing comment-agent
  * classifier's own patterns) before a model the account can't use, then
  * sign-in, rate limits, the network, and finally whether it never started.

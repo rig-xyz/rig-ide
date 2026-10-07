@@ -17,6 +17,7 @@ import {
   roomContextLines,
   RUN_STALL_MS,
   type RunFailure,
+  signInFailureReason,
   spacesHiddenContext,
   type RawSessionEvent,
   type SpaceSessionStore,
@@ -2477,5 +2478,82 @@ describe('failed and stalled runs (the agent_run_failed report)', () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     dispatcher.reportStalled(Date.now() + RUN_STALL_MS + 1_000);
     expect(failures).toEqual([]);
+  });
+});
+
+describe('a run that failed on its sign-in', () => {
+  it('signInFailureReason names the owner by first name, or says whose Mac without one', () => {
+    expect(signInFailureReason('claude', 'Dylan Bourgeois')).toBe("Dylan's Claude needs to sign in again.");
+    expect(signInFailureReason('codex', 'Sam')).toBe("Sam's Codex needs to sign in again.");
+    expect(signInFailureReason('claude', null)).toBe("Claude needs to sign in again on its owner's Mac.");
+    expect(signInFailureReason('claude', '  ')).toBe("Claude needs to sign in again on its owner's Mac.");
+  });
+
+  function setup(listMembers: SpacesRelayApi['listMembers']) {
+    const { api, postedEvents } = makeFakeApi({ listMembers, listMessages: async () => ok([]) });
+    const fake = makeFakeAcp();
+    const failures: RunFailure[] = [];
+    const succeeded: string[] = [];
+    const dispatcher = createSpacesDispatcher({
+      api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      onRunFailed: (failure) => failures.push(failure),
+      onRunSucceeded: (agent) => succeeded.push(agent),
+    });
+    return { fake, postedEvents, failures, succeeded, dispatcher };
+  }
+
+  async function failOnSignIn(ctx: ReturnType<typeof setup>) {
+    await ctx.dispatcher.dispatch(makeRequest());
+    const conversationId = ctx.fake.started[0].conversationId;
+    const turnId = ctx.fake.queued[0]!.turnId;
+    ctx.fake.emitTurnStart(conversationId, turnId);
+    ctx.fake.emitUpdate(conversationId, {
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: 'Failed to authenticate: OAuth session expired and could not be refreshed' },
+    });
+    ctx.fake.emitTurnEnd(conversationId, turnId, null);
+    await vi.waitFor(() => expect(ctx.postedEvents.flatMap((p) => p.kinds)).toContain('turn_ended'));
+    const payloads = ctx.postedEvents.flatMap((p) => p.payloads);
+    return payloads[ctx.postedEvents.flatMap((p) => p.kinds).indexOf('turn_ended')];
+  }
+
+  it("the card says the owner's agent needs to sign in again, and the report keeps the agent's own words", async () => {
+    const ctx = setup(async () =>
+      ok([{ userId: 'owner-1', clerkUserId: null, name: 'Dylan Bourgeois', email: null, role: 'owner', avatarUrl: null }])
+    );
+    expect(await failOnSignIn(ctx)).toEqual({ status: 'failed', reason: "Dylan's Claude needs to sign in again." });
+    await vi.waitFor(() => expect(ctx.failures).toHaveLength(1));
+    expect(ctx.failures[0]!.text).toContain('OAuth session expired');
+    expect(ctx.succeeded).toEqual([]);
+  });
+
+  it("without the owner's name, it says whose Mac", async () => {
+    const ctx = setup(async () => {
+      throw new Error('offline');
+    });
+    expect(await failOnSignIn(ctx)).toEqual({ status: 'failed', reason: "Claude needs to sign in again on its owner's Mac." });
+  });
+
+  it('any other error keeps the generic reason, and a finished run is reported as one', async () => {
+    const ctx = setup(async () => ok([]));
+    await ctx.dispatcher.dispatch(makeRequest({ id: 'a' }));
+    const conversationId = ctx.fake.started[0].conversationId;
+    const first = ctx.fake.queued[0]!.turnId;
+    ctx.fake.emitTurnStart(conversationId, first);
+    ctx.fake.emitTurnEnd(conversationId, first, null);
+    await vi.waitFor(() => expect(ctx.failures).toHaveLength(1));
+    const kinds = ctx.postedEvents.flatMap((p) => p.kinds);
+    expect(ctx.postedEvents.flatMap((p) => p.payloads)[kinds.indexOf('turn_ended')]).toEqual({
+      status: 'failed',
+      reason: 'the agent stopped with an error',
+    });
+
+    await ctx.dispatcher.dispatch(makeRequest({ id: 'b' }));
+    const second = ctx.fake.queued[1]!.turnId;
+    ctx.fake.emitTurnStart(conversationId, second);
+    ctx.fake.emitTurnEnd(conversationId, second, 'end_turn');
+    await vi.waitFor(() => expect(ctx.succeeded).toEqual(['claude']));
   });
 });

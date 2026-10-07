@@ -59,11 +59,13 @@ const fail = { success: false, error: { kind: 'relay', message: 'nope' } };
 vi.mock('@renderer/lib/ipc', () => ({
   rpc: {
     agents: {
-      list: async () => [{ id: 'claude', name: 'Claude', icon: null, status: 'available' }],
+      list: async () => [{ id: 'claude', name: 'Claude', icon: null, status: 'available', capabilities: { auth: { kind: 'none' } } }],
       listMetadata: async () => [],
     },
     rig: {
       auth: { status: async () => ({ signedIn: true }) },
+      // Home's needs-sign-in line: nothing failed on its sign-in here.
+      agentSignIn: { needed: async () => [] },
       account: {
         me: async () => ({
           success: true,

@@ -1,5 +1,5 @@
 import { ChevronRight, Bot } from 'lucide-react';
-import { useState } from 'react';
+import { Fragment, type ReactNode, useState } from 'react';
 import { effectiveRunStatus, runCard } from '../projection';
 import type { AgentKind, RoomSnapshot } from '../types';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
@@ -22,11 +22,14 @@ export function AgentRows({
   snapshot,
   selfUserId,
   bindingId,
+  signInRow,
 }: {
   snapshot: RoomSnapshot;
   selfUserId: string;
   /** Keys this section's remembered expanded/collapsed state to its space. */
   bindingId: string;
+  /** The warning for one of your agents that needs you to sign in again (`AgentSignInRow`), or nothing. The Room passes it; fixtures don't. */
+  signInRow?: (agent: AgentKind) => ReactNode;
 }) {
   const runs = Object.values(snapshot.sessionMetaByRun);
   const runsOf = (owner: string, kind: AgentKind) =>
@@ -112,19 +115,23 @@ export function AgentRows({
           />
         </span>
       </button>
+      {/* A needed sign-in shows even while collapsed: it stops your agent from running at all. */}
+      {!expanded && signInRow && mine.map((agent) => <Fragment key={agent.agent}>{signInRow(agent.agent)}</Fragment>)}
       {expanded && (
         <div className="popover-in flex shrink-0 flex-col pt-1 pb-1.5" data-testid="agents-expanded">
           {mine.map((agent) => {
             const latest = runsOf(selfUserId, agent.agent)[0];
             return (
-              <AgentConfigRow
-                key={agent.agent}
-                agent={agent.agent}
-                avatar={<AgentAvatar agent={agent.agent} owner={snapshot.members.find((m) => m.id === selfUserId)} size="sm" />}
-                busy={isWorking(selfUserId, agent.agent) ? <DotMatrix state="thinking" size="sm" /> : null}
-                lastModel={lastModel(selfUserId, agent.agent) ?? (agent.model || null)}
-                usage={latest ? cardOf(latest.id).usage : null}
-              />
+              <Fragment key={agent.agent}>
+                <AgentConfigRow
+                  agent={agent.agent}
+                  avatar={<AgentAvatar agent={agent.agent} owner={snapshot.members.find((m) => m.id === selfUserId)} size="sm" />}
+                  busy={isWorking(selfUserId, agent.agent) ? <DotMatrix state="thinking" size="sm" /> : null}
+                  lastModel={lastModel(selfUserId, agent.agent) ?? (agent.model || null)}
+                  usage={latest ? cardOf(latest.id).usage : null}
+                />
+                {signInRow?.(agent.agent)}
+              </Fragment>
             );
           })}
           {[...theirs.values()].map(({ owner, agent }) => {

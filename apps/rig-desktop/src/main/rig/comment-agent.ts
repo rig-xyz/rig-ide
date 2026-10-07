@@ -10,7 +10,9 @@ import { err, ok, type Result } from '@emdash/shared';
 import { ReplicaState } from '@emdash/wire';
 import { getAcpRuntimeClient, type AcpRuntimeClient } from '@main/core/acp/controller';
 import { resolveRoomTurnPermission, runCommentTurnInRoom } from './spaces/dispatch-controller-instance';
+import { isSignInFailure } from './agent-run-failure';
 import { reportAgentRunFailure } from './agent-run-failure-instance';
+import { clearAgentSignInNeeded, noteAgentRunFailedForSignIn } from './agent-sign-in-needed';
 import { agentHookService } from '@main/core/agent-hooks/agent-hook-service';
 import { isValidProviderId } from '@main/core/agents/plugin-registry';
 import { events } from '@main/lib/events';
@@ -92,6 +94,11 @@ const HISTORY_LIMIT = 20;
 
 function agentError(message: string): RigCommentsError {
   return { kind: 'agent', message };
+}
+
+/** What the person who asked reads when their own agent's sign-in ran out on this Mac. */
+function signInAgainMessage(agent: 'claude' | 'codex'): string {
+  return `${agent === 'codex' ? 'Codex' : 'Claude'} needs to sign in again on this Mac. Sign in from Home, then try again.`;
 }
 
 /** Cap on how much of a session-start failure's cause message reaches the reader. */
@@ -604,9 +611,11 @@ export const rigCommentAgentController = createRPCController({
               agentError(
                 status === 'stopped'
                   ? 'The agent was stopped before answering.'
-                  : classification?.kind === 'failure'
-                    ? classification.message
-                    : 'The agent finished without writing an answer.'
+                  : isSignInFailure(answer)
+                    ? signInAgainMessage(roomAgent)
+                    : classification?.kind === 'failure'
+                      ? classification.message
+                      : 'The agent finished without writing an answer.'
               )
             );
           }
@@ -626,8 +635,13 @@ export const rigCommentAgentController = createRPCController({
 
     // The error report for a standalone run that fails (a room run reports its own, in `dispatch.ts`).
     const reportFailure = (text: string, phase: 'start' | 'run' | 'stalled', model?: string | null) => {
-      if (roomAgent) reportAgentRunFailure({ agent: roomAgent, text, phase, model });
+      if (!roomAgent) return;
+      reportAgentRunFailure({ agent: roomAgent, text, phase, model });
+      noteAgentRunFailedForSignIn({ agent: roomAgent, text, phase });
     };
+    /** The sign-in message when this failure is an expired sign-in, else `fallback`. */
+    const failureMessage = (text: string, phase: 'start' | 'run', fallback: string) =>
+      roomAgent && isSignInFailure(text) ? signInAgainMessage(roomAgent) : fallback;
 
     let client: AcpRuntimeClient;
     try {
@@ -813,7 +827,11 @@ export const rigCommentAgentController = createRPCController({
         reportFailure(detail ?? '', 'start', model);
         return err(
           agentError(
-            detail ? `The agent could not be started: ${detail}` : 'The agent could not be started.'
+            failureMessage(
+              detail ?? '',
+              'start',
+              detail ? `The agent could not be started: ${detail}` : 'The agent could not be started.'
+            )
           )
         );
       }
@@ -938,9 +956,11 @@ export const rigCommentAgentController = createRPCController({
 
       if (classification.kind === 'failure') {
         reportFailure(rawAnswer, 'run', usedModel);
-        return err(agentError(classification.message));
+        return err(agentError(failureMessage(rawAnswer, 'run', classification.message)));
       }
       const cleanAnswer = classification.text;
+      // It answered, so its sign-in works.
+      if (roomAgent) clearAgentSignInNeeded(roomAgent);
 
       // Paintbrush strokes ask the agent for a structured replacement
       // alongside its prose (`comment-agent-prompt.ts`); every other mention

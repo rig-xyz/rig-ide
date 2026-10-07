@@ -8,6 +8,7 @@ import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { isError, resolveContext, rigAccountController } from '../account';
 import { reportAgentRunFailure } from '../agent-run-failure-instance';
+import { clearAgentSignInNeeded, noteAgentRunFailedForSignIn } from '../agent-sign-in-needed';
 import { findBindingConfig } from '../binding';
 import { resolveLocalPathsImpl } from '../recent-rigs';
 import { rigSettingsStore } from '../settings-instance';
@@ -112,7 +113,11 @@ function realDeps(): SpacesDispatchControllerDeps {
         // Attached images go in as image content, shrunk to fit when they must.
         prepareImage: createImagePreparer(join(app.getPath('temp'), 'rig-agent-images')),
         codexVersion: () => localDependencyManager.get('codex')?.version ?? null,
-        onRunFailed: (failure) => reportAgentRunFailure(failure),
+        onRunFailed: (failure) => {
+          reportAgentRunFailure(failure);
+          noteAgentRunFailedForSignIn(failure);
+        },
+        onRunSucceeded: (agent) => clearAgentSignInNeeded(agent),
         defaultConfig: (agent) => {
           const settings = rigSettingsStore.get();
           const model = settings.lastModelByHarness[agent];

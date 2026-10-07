@@ -65,3 +65,24 @@ export function deriveAgentAuthRowState(input: {
   if (input.probeStatus === 'pending') return { kind: 'probing' };
   return { kind: 'notSignedIn' };
 }
+
+/**
+ * Whether an installed agent needs its owner to sign in again on this Mac,
+ * for the persistent warnings on Home and in the space panel. Only a
+ * definite `unauthenticated` probe counts, never `unknown` or a failed
+ * probe, so a flaky `auth status` doesn't raise a false alarm. Main's record
+ * of a run that failed on its sign-in counts on its own, because
+ * `claude auth status` can still say signed in once the token on disk has
+ * expired and can't refresh.
+ */
+export function agentNeedsSignIn(input: {
+  /** Installed and runnable on this Mac. */
+  runnable: boolean;
+  loginMethod: CliLoginMethod | null;
+  probeData: AgentAuthStatus | null | undefined;
+  /** Main saw a run of this agent fail on its sign-in, with no sign-in or finished run since. */
+  failedOnSignIn: boolean;
+}): boolean {
+  if (!input.runnable || !input.loginMethod) return false;
+  return input.failedOnSignIn || input.probeData?.kind === 'unauthenticated';
+}

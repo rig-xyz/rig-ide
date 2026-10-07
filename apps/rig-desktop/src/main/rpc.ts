@@ -35,6 +35,7 @@ import { viewStateController } from './core/view-state/controller';
 import { projectSettingsController } from './core/workspaces/project-settings-controller';
 import { legacyPortController } from './db/legacy-port/controller';
 import { rigAccountController } from './rig/account';
+import { rigAgentSignInController } from './rig/agent-sign-in-needed';
 import { rigAttachmentsController } from './rig/attachments/controller';
 import { rigAuthController } from './rig/auth';
 import { rigBundledCliController } from './rig/bundled-cli';
@@ -124,6 +125,9 @@ export const rpcRouter = createRPCRouter({
     // on) — no workspace involved, unlike `comments`, so it's its own key
     // rather than folded into that surface.
     account: rigAccountController,
+    // Agents that need their owner to sign in again on this Mac, learned from
+    // a run that failed on its sign-in. See `agent-sign-in-needed.ts`.
+    agentSignIn: rigAgentSignInController,
     // Local, offline binding detection for the "Open Folder…" flow — is the
     // picked directory (or an ancestor) a bound rig, and if so, its name.
     // Also where a successful open is recorded (see `recentRigs` below).

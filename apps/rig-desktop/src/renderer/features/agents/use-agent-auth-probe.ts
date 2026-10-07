@@ -1,8 +1,29 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useState } from 'react';
 import { getAgentConfigRuntimeClient } from '@renderer/lib/agent-config/runtime-client';
+import { rpc } from '@renderer/lib/ipc';
 import type { AgentPayload } from '@shared/core/agents/agent-payload';
 import { cliLoginMethod, deriveAgentAuthRowState } from './agent-auth-state';
+
+/** The one auth-status query per agent, shared by every row and warning that reads it. */
+export function agentAuthQuery(agentId: string, enabled: boolean) {
+  return {
+    queryKey: ['rig', 'agent-auth', agentId] as const,
+    enabled,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const client = await getAgentConfigRuntimeClient();
+      const result = await client.refreshAuthStatus({ providerId: agentId });
+      return result.success ? result.data : null;
+    },
+  };
+}
+
+/** After the sign-in dialog succeeds: main forgets the run that failed on its sign-in, and the probe runs again. */
+export function afterAgentSignIn(queryClient: QueryClient, agentId: string): void {
+  void rpc.rig.agentSignIn.signedIn(agentId as 'claude' | 'codex').catch(() => {});
+  void queryClient.invalidateQueries({ queryKey: agentAuthQuery(agentId, true).queryKey });
+}
 
 /**
  * Probes one installed agent's CLI auth status via the already-running
@@ -18,18 +39,8 @@ export function useAgentAuthProbe(agent: AgentPayload) {
   const queryClient = useQueryClient();
   const [signedInOverride, setSignedInOverride] = useState(false);
   const loginMethod = useMemo(() => cliLoginMethod(agent.capabilities), [agent.capabilities]);
-  const queryKey = useMemo(() => ['rig', 'agent-auth', agent.id] as const, [agent.id]);
 
-  const query = useQuery({
-    queryKey,
-    enabled: loginMethod !== null,
-    staleTime: 30_000,
-    queryFn: async () => {
-      const client = await getAgentConfigRuntimeClient();
-      const result = await client.refreshAuthStatus({ providerId: agent.id });
-      return result.success ? result.data : null;
-    },
-  });
+  const query = useQuery(agentAuthQuery(agent.id, loginMethod !== null));
 
   const state = deriveAgentAuthRowState({
     loginMethod,
@@ -41,8 +52,8 @@ export function useAgentAuthProbe(agent: AgentPayload) {
   /** Called by the sign-in dialog on success: flips the row immediately, then re-probes for the real account label. */
   const markSignedIn = useCallback(() => {
     setSignedInOverride(true);
-    void queryClient.invalidateQueries({ queryKey });
-  }, [queryClient, queryKey]);
+    afterAgentSignIn(queryClient, agent.id);
+  }, [queryClient, agent.id]);
 
   return { loginMethod, state, markSignedIn };
 }

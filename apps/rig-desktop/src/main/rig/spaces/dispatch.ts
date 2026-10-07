@@ -38,6 +38,7 @@ import {
   type PrepareImage,
   type PromptImage,
 } from './attachment-context';
+import { isSignInFailure } from '../agent-run-failure';
 import { classifyProviderAnswer } from '../comment-agent-answer-classify';
 
 /**
@@ -201,6 +202,8 @@ type QueuedTurn = {
   /** The relay agent request this turn answers; null for a local turn (e.g. a doc comment) with no relay request. */
   requestId: string | null;
   bindingId: string;
+  /** Whose agent runs it, named in the card when its sign-in ran out. */
+  ownerUserId: string;
   runId: string;
   publisher: SessionEventPublisher;
   cancelledByStop: boolean;
@@ -630,6 +633,17 @@ function claimTurn(session: PersistentSession, turnId: string): QueuedTurn | nul
  */
 const LEAKED_ERROR_PREFIX = 'The agent reported an error instead of answering: ';
 
+/**
+ * The card's reason when a run failed because the agent's sign-in ran out.
+ * Everyone in the space reads it, so it names the owner (first name) when
+ * known; only the owner can sign in again, on their own Mac.
+ */
+export function signInFailureReason(agent: SessionAgent, ownerName: string | null): string {
+  const agentName = agent === 'codex' ? 'Codex' : 'Claude';
+  const firstName = ownerName?.trim().split(/\s+/)[0];
+  return firstName ? `${firstName}'s ${agentName} needs to sign in again.` : `${agentName} needs to sign in again on its owner's Mac.`;
+}
+
 /** The reason to show when an answer is really a provider error, or null for a genuine answer. */
 export function leakedProviderError(answer: string, codexVersion?: string | null): string | null {
   if (!answer.trim()) return null;
@@ -683,6 +697,8 @@ export function createSpacesDispatcher(deps: {
   readSpaceFile?: (cwd: string, relPath: string) => Promise<string | null>;
   /** A run that couldn't start, ended in an error, or went quiet for `RUN_STALL_MS` (the error report). */
   onRunFailed?: (failure: RunFailure) => void;
+  /** A run that finished: its agent is signed in and working. */
+  onRunSucceeded?: (agent: SessionAgent) => void;
 }): {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
@@ -790,20 +806,36 @@ export function createSpacesDispatcher(deps: {
     }
   }
 
+  /** The owner's name as the space knows it, for a card everyone reads; null when the relay can't say. */
+  async function ownerNameOf(bindingId: string, ownerUserId: string): Promise<string | null> {
+    try {
+      const members = await deps.api.listMembers(bindingId);
+      return members.success ? (members.data.find((m) => m.userId === ownerUserId)?.name ?? null) : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function finalizeTurn(turn: QueuedTurn, status: SessionStatus, reason?: string): Promise<void> {
     if (turn.finalized) return;
     turn.finalized = true;
+    const failureText = status === 'failed' ? [reason, turn.answer.text].filter(Boolean).join('\n') : '';
+    // An expired sign-in says so, instead of the generic reason with the real one hidden in the output.
+    if (status === 'failed' && isSignInFailure(failureText)) {
+      reason = signInFailureReason(turn.agent, await ownerNameOf(turn.bindingId, turn.ownerUserId));
+    }
     // The card flips out of "running" on this event (run status changes
     // aren't broadcast to the Room), so it must land before `finish`.
     turn.publisher.record('turn_ended', reason ? { status, reason } : { status });
     if (status === 'failed') {
       deps.onRunFailed?.({
         agent: turn.agent,
-        text: [reason, turn.answer.text].filter(Boolean).join('\n'),
+        text: failureText,
         phase: 'run',
         model: turn.model,
       });
     }
+    if (status === 'done') deps.onRunSucceeded?.(turn.agent);
     await turn.publisher.finish(status);
     deps.store?.clearInFlight?.(turn.runId);
     liveRunIds.delete(turn.runId);
@@ -1232,7 +1264,11 @@ export function createSpacesDispatcher(deps: {
     });
     if (!sessionResult.success) {
       deps.onRunFailed?.({ agent: spec.agent, text: sessionResult.error, phase: 'start', model: null });
-      publisher.record('turn_ended', { status: 'failed', reason: `couldn't start the agent: ${sessionResult.error}` });
+      const reason =
+        isSignInFailure(sessionResult.error)
+          ? signInFailureReason(spec.agent, await ownerNameOf(spec.bindingId, spec.ownerUserId))
+          : `couldn't start the agent: ${sessionResult.error}`;
+      publisher.record('turn_ended', { status: 'failed', reason });
       await publisher.finish('failed');
       deps.store?.clearInFlight?.(created.data.id);
       liveRunIds.delete(created.data.id);
@@ -1249,6 +1285,7 @@ export function createSpacesDispatcher(deps: {
     const turn: QueuedTurn = {
       requestId: spec.requestId,
       bindingId: spec.bindingId,
+      ownerUserId: spec.ownerUserId,
       runId: created.data.id,
       publisher,
       cancelledByStop: false,

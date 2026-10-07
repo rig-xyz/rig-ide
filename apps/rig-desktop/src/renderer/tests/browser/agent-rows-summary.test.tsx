@@ -90,4 +90,24 @@ describe('AgentRows — collapsed summary', () => {
     const theirsRows = [...host.querySelectorAll<HTMLElement>('[data-testid="space-agent-row-theirs"]')];
     expect(theirsRows.some((row) => row.title === "Only Alice can change Alice's Claude")).toBe(true);
   });
+
+  it('a needed sign-in for one of your agents shows collapsed, and under its row once expanded', async () => {
+    await act(async () => {
+      root.render(
+        <AgentRows
+          snapshot={replayedSnapshot()}
+          selfUserId="bob"
+          bindingId="space-agents-sign-in"
+          signInRow={(agent) => (agent === 'claude' ? <span data-testid="sign-in-slot" data-kind={agent} /> : null)}
+        />
+      );
+    });
+    expect(host.querySelectorAll('[data-testid="sign-in-slot"]')).toHaveLength(1);
+
+    const summary = host.querySelector<HTMLButtonElement>('[data-testid="agents-summary-row"]')!;
+    await act(async () => summary.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const slots = host.querySelectorAll('[data-testid="agents-expanded"] [data-testid="sign-in-slot"]');
+    expect(slots).toHaveLength(1);
+    expect(host.querySelectorAll('[data-testid="sign-in-slot"]')).toHaveLength(1);
+  });
 });
