@@ -1,8 +1,9 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { addFallbackReferer, mimeTypeFor, resolveRigFile, rigFileRequestAllowed, rigFileResponse, type RigFileDeps } from './rig-file-protocol';
+import { addFallbackReferer, mimeTypeFor, resolveRigFile, rigFileExternalUrl, rigFileRequestAllowed, rigFileResponse, type RigFileDeps } from './rig-file-protocol';
 
 // A space folder on disk, bound as bnd_space; a nested rig inside it bound as bnd_other.
 let base: string;
@@ -196,5 +197,21 @@ describe('addFallbackReferer', () => {
     expect(run('rig-file://bnd_space/site/index.html')).toEqual({});
     expect(run('data:image/png;base64,AAAA')).toEqual({});
     expect(run('ws://example.com/socket')).toEqual({});
+  });
+});
+
+describe('rigFileExternalUrl', () => {
+  it("is the real file's file:// URL, a folder's index.html for a folder", async () => {
+    expect(await rigFileExternalUrl(deps, 'rig-file://bnd_space/site/css/app.css')).toBe(pathToFileURL(join(root, 'site', 'css', 'app.css')).href);
+    expect(await rigFileExternalUrl(deps, 'rig-file://bnd_space/site/')).toBe(pathToFileURL(join(root, 'site', 'index.html')).href);
+    expect(await rigFileExternalUrl(deps, 'rig-file://bnd_space/notes%20with%20space.html')).toBe(pathToFileURL(join(root, 'notes with space.html')).href);
+  });
+
+  it('opens nothing the protocol refuses', async () => {
+    for (const path of ['.env', 'escape.html', 'token.json', 'nested/page.html', 'missing.html', 'server.pem']) {
+      expect(await rigFileExternalUrl(deps, `rig-file://bnd_space/${path}`)).toBeNull();
+    }
+    expect(await rigFileExternalUrl(deps, 'rig-file://bnd_unknown/site/index.html')).toBeNull();
+    expect(await rigFileExternalUrl(deps, 'https://example.com/')).toBeNull();
   });
 });

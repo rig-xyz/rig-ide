@@ -31,6 +31,7 @@ import { AccountChip, SignInBanner } from './account-chip';
 import { clearAutoSignIn, getAutoState, registerPanelPage, runAutoSignIn } from './auto-sign-in';
 import { ConnectSheet } from './connect-sheet';
 import { NotSharedNotice } from './not-shared-notice';
+import { openPageInBrowser } from './open-in-browser';
 import { replyCountLabel, threadExcerpt, threadListGroups } from './page-thread-list';
 import { PageZoomControl, usePageZoom } from './page-zoom';
 import { startRelocator, type Relocator } from './pin-relocator';
@@ -433,7 +434,7 @@ export function PageView({
           <PageZoomControl factor={zoom.factor} fitted={zoom.fitted} onPress={zoom.press} />
           <button
             type="button"
-            onClick={() => void rpc.app.openExternal(url)}
+            onClick={() => void openPageInBrowser(url)}
             className="hover:bg-bg-2 flex h-7 items-center gap-1.5 rounded-control px-2 text-xs text-text-secondary transition-colors"
             aria-label="Open in browser"
             title="Open in browser"

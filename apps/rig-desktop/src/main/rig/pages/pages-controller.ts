@@ -15,6 +15,8 @@ import { pageSignIns, startPageSignInsKeepInStep } from './page-sign-ins-instanc
 import { isPanelPage } from './panel-page';
 import { watchPins } from './pin-watch';
 import { applyPageZoom, watchZoomKeys } from './page-zoom';
+import { rigFileExternalUrl } from './rig-file-protocol';
+import { rigFileDeps } from './rig-file-session';
 import { pageAccess } from './sign-in-check';
 import { events } from '@main/lib/events';
 import { pagePinsMovedChannel } from '@shared/pages/pin-events';
@@ -149,6 +151,18 @@ export const rigPagesController = createRPCController({
     const spec = (browser && CHROMIUM_BROWSERS.find((b) => b.id === browser)) || installedBrowsers()[0];
     if (!spec) return void (await shell.openExternal(url));
     await new Promise<void>((resolve) => execFile('open', ['-b', spec.bundleId, url], () => resolve()));
+  },
+
+  /**
+   * "Open in browser" on a space's file page: the real file in the default
+   * browser, resolved the way `rig-file://` serves it. False when the
+   * protocol would refuse it, so nothing opens.
+   */
+  openRigFileInBrowser: async ({ url }: { url: string }): Promise<boolean> => {
+    const fileUrl = await rigFileExternalUrl(rigFileDeps, url);
+    if (!fileUrl) return false;
+    await shell.openExternal(fileUrl);
+    return true;
   },
 
   /** The name behind a Claude or Google link chip, read from the page as the person sees it; null when it can't be named. */

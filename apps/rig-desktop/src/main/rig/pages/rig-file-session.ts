@@ -2,9 +2,15 @@ import type { Session } from 'electron';
 import { RIG_FILE_SCHEME } from '@shared/spaces/rig-file';
 import { findBindingConfig } from '../binding';
 import { resolveLocalPathsImpl } from '../recent-rigs';
-import { rigFileRequestAllowed, rigFileResponse } from './rig-file-protocol';
+import { rigFileRequestAllowed, rigFileResponse, type RigFileDeps } from './rig-file-protocol';
 
 const installed = new WeakSet<Session>();
+
+/** Where a space's files are on this Mac: what the protocol serves from, and what "Open in browser" opens. */
+export const rigFileDeps: RigFileDeps = {
+  rootFor: async (bindingId) => (await resolveLocalPathsImpl([bindingId]))[bindingId] ?? null,
+  bindingAt: (dir) => findBindingConfig(dir)?.config.bindingId ?? null,
+};
 
 /**
  * Serves `rig-file://` in a session: the space files' own profile
@@ -21,10 +27,5 @@ export function installRigFileProtocol(ses: Session): void {
     const asking = details.resourceType === 'subFrame' ? (details.frame?.parent?.url ?? null) : (details.frame?.url ?? null);
     callback({ cancel: !rigFileRequestAllowed(details.url, details.resourceType, asking) });
   });
-  ses.protocol.handle(RIG_FILE_SCHEME, (request) =>
-    rigFileResponse(request, {
-      rootFor: async (bindingId) => (await resolveLocalPathsImpl([bindingId]))[bindingId] ?? null,
-      bindingAt: (dir) => findBindingConfig(dir)?.config.bindingId ?? null,
-    })
-  );
+  ses.protocol.handle(RIG_FILE_SCHEME, (request) => rigFileResponse(request, rigFileDeps));
 }

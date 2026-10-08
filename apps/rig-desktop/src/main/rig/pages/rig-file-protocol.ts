@@ -1,5 +1,6 @@
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, extname, join, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { parseRigFileUrl, RIG_FILE_SCHEME } from '@shared/spaces/rig-file';
 import { secretReason } from '../attachments/rules';
 
@@ -160,6 +161,19 @@ export function addFallbackReferer(url: string, headers: Record<string, string>)
   if (!/^https?:/i.test(url)) return;
   if (Object.keys(headers).some((name) => name.toLowerCase() === 'referer')) return;
   headers.Referer = RIG_FILE_FALLBACK_REFERER;
+}
+
+/**
+ * The real file behind a `rig-file://` link as a `file://` URL, for "Open in
+ * browser". It goes through the same resolver the protocol serves with, so
+ * a link the panel would refuse (a private file, a way out of the folder,
+ * another rig nested inside) opens nothing. Null when it can't be opened.
+ */
+export async function rigFileExternalUrl(deps: RigFileDeps, url: string): Promise<string | null> {
+  const link = parseRigFileUrl(url);
+  if (!link) return null;
+  const resolved = await resolveRigFile(deps, link.bindingId, link.relPath);
+  return resolved.ok ? pathToFileURL(resolved.absPath).href : null;
 }
 
 /**
