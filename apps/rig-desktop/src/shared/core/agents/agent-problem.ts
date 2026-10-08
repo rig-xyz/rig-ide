@@ -8,9 +8,14 @@ import { agentUpdateNotice, isOlderVersion } from './agent-update-notice';
  * space's agent list all show it the same way (`agent-problem-line.tsx`).
  * Each line names the CLI, its version when known, and the minimum Rig
  * needs when one is known.
+ *
+ * A copy older than the version Rig is tested with (`belowMinimum`) is a soft
+ * notice: only Settings › Agents asks for it, and the app raises it once per
+ * version as a toast (`agent-minimum-alert.ts`). Home and a space's panel
+ * leave it out.
  */
 
-export type AgentProblemKind = 'missing' | 'outdated' | 'signedOut' | 'error';
+export type AgentProblemKind = 'missing' | 'outdated' | 'belowMinimum' | 'signedOut' | 'error';
 
 export type AgentProblem = {
   kind: AgentProblemKind;
@@ -55,9 +60,11 @@ export function agentProblem(input: {
   signInNeeded: boolean;
   /** Missing counts as a problem here: false where one missing agent of two isn't worth a line. */
   showMissing?: boolean;
+  /** The soft notice for a copy older than Rig is tested with counts here: only Settings › Agents. */
+  belowMinimum?: boolean;
   minimum?: string | null;
 }): AgentProblem | null {
-  const { id, name, payload, signInNeeded, showMissing = true } = input;
+  const { id, name, payload, signInNeeded, showMissing = true, belowMinimum: showBelowMinimum = false } = input;
   const cli = CLI_NAMES[id] ?? id;
   const minimum = input.minimum === undefined ? (AGENT_MINIMUM_VERSIONS[id] ?? null) : input.minimum;
   const needs = minimum ? ` Rig is tested with ${minimum} or newer.` : '';
@@ -90,9 +97,9 @@ export function agentProblem(input: {
     return { kind: 'signedOut', cli, version, minimum, text: `${name} isn't signed in on this Mac.${is}`, action: 'sign-in' };
   }
   const belowMinimum = !!minimum && !!version && isOlderVersion(version, minimum);
-  if (belowMinimum) {
+  if (belowMinimum && showBelowMinimum) {
     return {
-      kind: 'outdated',
+      kind: 'belowMinimum',
       cli,
       version,
       minimum,

@@ -35,8 +35,19 @@ const CHATGPT = {
   provenance: { kind: 'unknown', confidence: 'inferred' },
 } as const;
 
-const codex = (p: Payload | null | undefined, over: { signInNeeded?: boolean; showMissing?: boolean; minimum?: string | null } = {}) =>
-  agentProblem({ id: 'codex', name: 'Codex', payload: p, signInNeeded: over.signInNeeded ?? false, showMissing: over.showMissing, minimum: over.minimum ?? null });
+const codex = (
+  p: Payload | null | undefined,
+  over: { signInNeeded?: boolean; showMissing?: boolean; minimum?: string | null; belowMinimum?: boolean } = {}
+) =>
+  agentProblem({
+    id: 'codex',
+    name: 'Codex',
+    payload: p,
+    signInNeeded: over.signInNeeded ?? false,
+    showMissing: over.showMissing,
+    minimum: over.minimum ?? null,
+    belowMinimum: over.belowMinimum,
+  });
 
 describe('agentProblem', () => {
   it('says nothing for a current, signed in agent, or before the probe answers', () => {
@@ -92,14 +103,27 @@ describe('agentProblem', () => {
     });
   });
 
-  it('older than the tested version: a soft notice with the version, after a sign in', () => {
-    expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0' })).toMatchObject({
-      kind: 'outdated',
+  it('older than the tested version: a soft notice with the version where asked for, after a sign in', () => {
+    expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0', belowMinimum: true })).toMatchObject({
+      kind: 'belowMinimum',
       minimum: '0.150.0',
       text: 'Codex is older than Rig is tested with. The codex CLI is 0.147.0. Rig is tested with 0.150.0 or newer.',
       update: { how: 'rig' },
     });
+    expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0', belowMinimum: true, signInNeeded: true })?.kind).toBe('signedOut');
+  });
+
+  it('older than the tested version is left out by default: Home and a space only say it is behind the latest', () => {
+    expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0' })).toMatchObject({
+      kind: 'outdated',
+      text: 'Codex is out of date. The codex CLI is 0.147.0. 0.160.1 is out.',
+    });
+    // Behind the tested version but current with the latest: no line at all.
+    expect(codex(payload({ latestVersion: '0.147.0' }, { version: '0.147.0', latestVersion: '0.147.0' }), { minimum: '0.150.0' })).toBeNull();
+    // Missing, signed out and failing to start still show.
+    expect(codex(payload({ status: 'missing', version: null, installations: [] }), { minimum: '0.150.0' })?.kind).toBe('missing');
     expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0', signInNeeded: true })?.kind).toBe('signedOut');
+    expect(codex(payload({ status: 'error' }), { minimum: '0.150.0' })?.kind).toBe('error');
   });
 
   it('a signed out agent that is merely behind the latest asks to sign in first', () => {
@@ -108,8 +132,8 @@ describe('agentProblem', () => {
 
   it("Codex inside the ChatGPT app: Update says to update the ChatGPT app", () => {
     const p = payload({}, { ...CHATGPT, version: '0.147.0' });
-    expect(codex(p, { minimum: '0.150.0' })).toMatchObject({
-      kind: 'outdated',
+    expect(codex(p, { minimum: '0.150.0', belowMinimum: true })).toMatchObject({
+      kind: 'belowMinimum',
       update: { how: 'elsewhere', hint: 'ChatGPT carries its own codex CLI. Update the ChatGPT app to update Codex.' },
     });
     // Only behind npm's latest: the app updates it on its own, so no line.

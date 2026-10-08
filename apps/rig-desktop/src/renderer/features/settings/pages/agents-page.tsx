@@ -10,6 +10,7 @@ import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { Button } from '@renderer/lib/ui/button';
 import { cn } from '@renderer/lib/utils';
 import type { AgentPayload, DependencyStatus } from '@shared/core/agents/agent-payload';
+import { agentProblem } from '@shared/core/agents/agent-problem';
 import { agentUpdateNotice } from '@shared/core/agents/agent-update-notice';
 import { agentInstallationStatusUpdatedChannel } from '@shared/events/appEvents';
 import { settingsRow } from '../settings-pages';
@@ -184,7 +185,8 @@ function PrimaryAgentRow({ row }: { row: AgentListRow }) {
           <Pill tone={row.agent?.status === 'error' ? 'warning' : 'muted'}>{notAvailableLabel(row.agent?.status)}</Pill>
         )}
       </div>
-      {row.agent?.status === 'available' && <AgentUpdateLine agent={row.agent} />}
+      {row.agent?.status === 'available' &&
+        (belowMinimum(row.agent) ? <AgentMinimumLine agent={row.agent} /> : <AgentUpdateLine agent={row.agent} />)}
       {missing && (
         <AgentInstallRow
           className="ml-7"
@@ -224,6 +226,44 @@ function AgentUpdateLine({ agent }: { agent: AgentPayload }) {
         {state === 'failed' && " The update didn't finish. Try again."}
       </span>
       {notice.kind === 'update' && (
+        <Button size="xs" variant="outline" disabled={state === 'busy'} onClick={() => void update()}>
+          {state === 'busy' ? 'Updating…' : 'Update'}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+const belowMinimum = (agent: AgentPayload) =>
+  agentProblem({ id: agent.id, name: agent.name, payload: agent, signInNeeded: false, belowMinimum: true })?.kind === 'belowMinimum';
+
+/**
+ * The soft notice for a copy older than Rig is tested with. It lives here
+ * only; Home and a space's panel leave it out, and the app raises it once
+ * per version as a toast (`use-agent-minimum-alert.ts`). It takes the place
+ * of "Update available", since the same Update fixes both.
+ */
+function AgentMinimumLine({ agent }: { agent: AgentPayload }) {
+  const queryClient = useQueryClient();
+  const [state, setState] = useState<'idle' | 'busy' | 'failed'>('idle');
+  const problem = agentProblem({ id: agent.id, name: agent.name, payload: agent, signInNeeded: false, belowMinimum: true });
+  if (problem?.kind !== 'belowMinimum') return null;
+
+  const update = async () => {
+    setState('busy');
+    const result = await rpc.agents.update(agent.id).catch(() => null);
+    setState(result?.success ? 'idle' : 'failed');
+    void queryClient.invalidateQueries({ queryKey: ['rig', 'agents', 'list'] });
+  };
+
+  return (
+    <div className="flex items-center gap-2 pr-1 pb-1.5 pl-7" data-testid="agent-minimum-line" data-agent-id={agent.id}>
+      <span className="text-text-secondary min-w-0 flex-1 text-xs">
+        {problem.text}
+        {problem.update?.how === 'elsewhere' && ` ${problem.update.hint}`}
+        {state === 'failed' && " The update didn't finish. Try again."}
+      </span>
+      {problem.update?.how === 'rig' && (
         <Button size="xs" variant="outline" disabled={state === 'busy'} onClick={() => void update()}>
           {state === 'busy' ? 'Updating…' : 'Update'}
         </Button>

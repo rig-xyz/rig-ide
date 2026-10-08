@@ -139,10 +139,20 @@ describe('AgentProblemLine', () => {
     mocks.agents = [codex({ version: '0.147.0' }, { version: '0.147.0' })];
     await render();
     expect(line()?.dataset.kind).toBe('outdated');
-    expect(line()?.textContent).toContain('Codex is older than Rig is tested with. The codex CLI is 0.147.0. Rig is tested with 0.159.1 or newer.');
+    // Older than Rig is tested with too, but that soft notice is for Settings only.
+    expect(line()?.textContent).toContain('Codex is out of date. The codex CLI is 0.147.0. 0.160.1 is out.');
+    expect(line()?.textContent).not.toContain('tested with');
     await act(async () => line()!.querySelector<HTMLButtonElement>('[data-testid="agent-problem-update"]')!.click());
     expect(mocks.update).toHaveBeenCalledWith('codex');
     expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it('older than Rig is tested with but current: no line on Home or in a space', async () => {
+    mocks.agents = [codex({ version: '0.147.0', latestVersion: '0.147.0' }, { version: '0.147.0', latestVersion: '0.147.0' })];
+    await render();
+    expect(line()).toBeNull();
+    await render({ variant: 'space' });
+    expect(line()).toBeNull();
   });
 
   it('outdated, a Homebrew copy: Update says how to update it', async () => {

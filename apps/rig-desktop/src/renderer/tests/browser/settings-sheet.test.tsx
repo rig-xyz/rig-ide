@@ -368,7 +368,7 @@ describe('SettingsSheet', () => {
       manageable: true,
       provenance: { kind: 'npm', confidence: 'confirmed' },
       status: 'available',
-      version: '0.147.0',
+      version: '0.159.5',
       latestVersion: '0.160.1',
       updateAvailable: true,
     };
@@ -377,7 +377,37 @@ describe('SettingsSheet', () => {
     try {
       await renderSettings({ initialPage: 'agents' });
       const line = () => document.querySelector<HTMLElement>('[data-testid="agent-update-line"][data-agent-id="codex"]');
-      await vi.waitFor(() => expect(line()?.textContent).toContain('Update available: 0.160.1. You have 0.147.0.'));
+      await vi.waitFor(() => expect(line()?.textContent).toContain('Update available: 0.160.1. You have 0.159.5.'));
+      const button = Array.from(line()!.querySelectorAll('button')).find((b) => b.textContent === 'Update');
+      await act(async () => button!.click());
+      expect(agentsUpdateMock).toHaveBeenCalledWith('codex');
+    } finally {
+      Object.assign(codex, before);
+    }
+  });
+
+  it('says when Codex is older than Rig is tested with, in place of Update available', async () => {
+    const npmCodex = {
+      id: '/usr/local/lib/node_modules/@openai/codex/bin/codex.js',
+      realpath: '/usr/local/lib/node_modules/@openai/codex/bin/codex.js',
+      pathEntry: '/usr/local/bin/codex',
+      isActive: true,
+      manageable: true,
+      provenance: { kind: 'npm', confidence: 'confirmed' },
+      status: 'available',
+      version: '0.147.0',
+      latestVersion: '0.160.1',
+      updateAvailable: true,
+    };
+    const before = { ...codex };
+    Object.assign(codex, { status: 'available', installations: [npmCodex], used: { kind: 'auto' }, latestVersion: '0.160.1' });
+    try {
+      await renderSettings({ initialPage: 'agents' });
+      const line = () => document.querySelector<HTMLElement>('[data-testid="agent-minimum-line"][data-agent-id="codex"]');
+      await vi.waitFor(() =>
+        expect(line()?.textContent).toContain('Codex is older than Rig is tested with. The codex CLI is 0.147.0. Rig is tested with 0.159.1 or newer.')
+      );
+      expect(document.querySelector('[data-testid="agent-update-line"][data-agent-id="codex"]')).toBeNull();
       const button = Array.from(line()!.querySelectorAll('button')).find((b) => b.textContent === 'Update');
       await act(async () => button!.click());
       expect(agentsUpdateMock).toHaveBeenCalledWith('codex');

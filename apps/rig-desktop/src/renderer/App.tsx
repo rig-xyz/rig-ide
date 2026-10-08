@@ -17,6 +17,7 @@ import {
   openFocusTab,
   type ArtefactTabsState,
 } from '@renderer/features/artifact/artefact-tabs';
+import { useAgentMinimumAlert } from '@renderer/features/agents/use-agent-minimum-alert';
 import { ChatPanel } from '@renderer/features/chat/chat-panel';
 import { relativeTime } from '@renderer/features/chat/session-history';
 import { DeepLinkJoinDialog } from '@renderer/features/deep-link/deep-link-join-dialog';
@@ -276,6 +277,9 @@ export function App() {
     setSettingsPage(page ?? null);
     setSettingsOpen(true);
   }, []);
+  // An agent older than Rig is tested with: a toast once per version, pointing at Settings › Agents.
+  const openAgentsSettings = useCallback(() => openSettings('agents'), [openSettings]);
+  useAgentMinimumAlert(openAgentsSettings);
   const updateStatus = useUpdateStatus();
   const updateSupportedQuery = useQuery({
     queryKey: ['rig', 'updates', 'supported'],
