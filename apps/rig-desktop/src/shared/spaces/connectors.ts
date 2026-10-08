@@ -268,6 +268,10 @@ export function prettyRigTool(raw: string, args?: RigToolArgs): string | null {
       return 'browser read';
     case 'browser_screenshot':
       return 'browser screenshot';
+    case 'browser_open':
+      return 'open in browser';
+    case 'topic_show':
+      return 'show topic';
     default:
       return tool.replace(/[_-]+/g, ' ').trim().toLowerCase();
   }

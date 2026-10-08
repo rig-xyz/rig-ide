@@ -85,6 +85,11 @@ export class SpacesDispatchController {
     return this.dispatcher?.currentRunId(bindingId, ownerUserId, agent) ?? null;
   }
 
+  /** Who asked for the run the owner's session with this agent is on; null when idle. */
+  currentAsker(bindingId: string, ownerUserId: string, agent: 'claude' | 'codex'): string | null {
+    return this.dispatcher?.currentAsker(bindingId, ownerUserId, agent) ?? null;
+  }
+
   /** A reaction a run's agent made, so the run's card can show it (see `noteReaction`). */
   noteReaction(runId: string, emoji: string): void {
     this.dispatcher?.noteReaction(runId, emoji);

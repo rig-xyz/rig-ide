@@ -193,7 +193,7 @@ async function call(backend: RigToolsBackend, name: string, input: Record<string
 }
 
 describe('rig tools', () => {
-  it('are the eleven tools, each saying when to use it', () => {
+  it('are the thirteen tools, each saying when to use it', () => {
     const tools = createRigTools(fakeBackend());
     expect(tools.map((t) => t.name)).toEqual([
       'rig_space_describe',
@@ -207,6 +207,8 @@ describe('rig tools', () => {
       'rig_space_rename',
       'rig_settings_read',
       'rig_settings_update',
+      'rig_browser_open',
+      'rig_topic_show',
     ]);
     for (const t of tools) expect(t.description).toMatch(/Use it when|Use it whenever/);
     expect(tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name)).toEqual([
@@ -216,13 +218,15 @@ describe('rig tools', () => {
       'rig_chat_read',
       'rig_comments_read',
       'rig_settings_read',
+      'rig_browser_open',
+      'rig_topic_show',
     ]);
   });
 
   it('each say what they do up front, so a truncated listing still tells them apart', () => {
     const openings = createRigTools(fakeBackend()).map((t) => t.description.slice(0, 60));
     expect(new Set(openings).size).toBe(openings.length);
-    for (const opening of openings) expect(opening).toMatch(/^(Describe|Invite|List|Read|Add|Acknowledge|Rename|Change)[ ,]/);
+    for (const opening of openings) expect(opening).toMatch(/^(Describe|Invite|List|Read|Add|Acknowledge|Rename|Change|Show|Filter)[ ,]/);
   });
 
   it('pre-approve only tools that are read-only, and rig_chat_react (an emoji, a few per turn)', () => {
@@ -238,6 +242,9 @@ describe('rig tools', () => {
     expect([...PRE_APPROVED_RIG_TOOLS]).toContain('rig_chat_read');
     expect([...PRE_APPROVED_RIG_TOOLS]).toContain('rig_settings_read');
     expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_settings_update');
+    // They only move the asker's own view.
+    expect([...PRE_APPROVED_RIG_TOOLS]).toContain('rig_browser_open');
+    expect([...PRE_APPROVED_RIG_TOOLS]).toContain('rig_topic_show');
   });
 
   it('approve and always ask only by names they serve, so a rename never leaves a stale entry', () => {
@@ -290,6 +297,139 @@ describe('rig tools', () => {
       },
     });
     expect(await call(backend, 'rig_people_list')).toEqual({ text: 'rig_people_list failed: boom', isError: true });
+  });
+});
+
+describe('rig_browser_open', () => {
+  const owner = () =>
+    fakeBackend({
+      currentAsker: vi.fn(async () => 'u-dylan'),
+      show: vi.fn(),
+      pathKind: vi.fn(async (abs: string) =>
+        abs === '/rigs/space/site' ? ('dir' as const) : ['/rigs/space/site/index.html', '/rigs/space/notes/plan.md'].includes(abs) ? ('file' as const) : null
+      ),
+    });
+
+  it("opens a web link beside the chat on the asker's screen when the asker is the owner", async () => {
+    const backend = owner();
+    const result = await call(backend, 'rig_browser_open', { url: 'https://claude.ai/artifact/abc', passage: ' Pricing ' });
+    expect(backend.show).toHaveBeenCalledWith({ kind: 'page', bindingId: 'b1', url: 'https://claude.ai/artifact/abc', passage: 'Pricing' });
+    expect(result).toEqual({ text: 'Opened https://claude.ai/artifact/abc in the browser beside the chat for the person who asked.' });
+  });
+
+  it('opens an html file in the space as a page, by path, by folder or by rig-file link', async () => {
+    const backend = owner();
+    for (const url of ['site/index.html', './site/index.html#top', 'site', 'rig-file://b1/site/index.html', '/rigs/space/site/index.html']) {
+      const result = await call(backend, 'rig_browser_open', { url });
+      expect(result.text).toBe('Opened site/index.html in the browser beside the chat for the person who asked.');
+    }
+    expect(backend.show).toHaveBeenLastCalledWith({ kind: 'file', bindingId: 'b1', relPath: 'site/index.html' });
+  });
+
+  it('opens any other file in the file viewer, at a line', async () => {
+    const backend = owner();
+    const result = await call(backend, 'rig_browser_open', { url: 'notes/plan.md', line: 12 });
+    expect(backend.show).toHaveBeenCalledWith({ kind: 'file', bindingId: 'b1', relPath: 'notes/plan.md', line: 12 });
+    expect(result.text).toBe('Opened notes/plan.md in the file viewer for the person who asked.');
+  });
+
+  it("moves nothing on the owner's screen when someone else asked, and says to put the link in the reply", async () => {
+    const backend = fakeBackend({ currentAsker: vi.fn(async () => 'u-sam'), show: vi.fn(), pathKind: vi.fn(async () => 'file' as const) });
+    const file = await call(backend, 'rig_browser_open', { url: 'site/index.html' });
+    expect(file).toEqual({
+      text: "Nothing moved: only the screen of the person who asked can change, and they're on another Mac. Put this link in your reply so they can open it: [site/index.html](site/index.html)",
+    });
+    const page = await call(backend, 'rig_browser_open', { url: 'https://example.com/a' });
+    expect(page.text).toMatch(/Put this link in your reply so they can open it: https:\/\/example.com\/a$/);
+    expect(backend.show).not.toHaveBeenCalled();
+  });
+
+  it('moves nothing when it cannot tell who asked', async () => {
+    const backend = fakeBackend({ currentAsker: vi.fn(async () => null), show: vi.fn(), pathKind: vi.fn(async () => 'file' as const) });
+    expect((await call(backend, 'rig_browser_open', { url: 'notes/plan.md' })).text).toMatch(/^Nothing moved/);
+    expect(backend.show).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['nothing', '', 'Give a web link or a path in this space, like site/index.html.'],
+    ['a path outside the space', '../other/x.html', `"../other/x.html" isn't a file in this space.`],
+    ['an absolute path elsewhere', '/etc/passwd', `"/etc/passwd" isn't a file in this space.`],
+    ['a link to another space', 'rig-file://b2/x.html', `"rig-file://b2/x.html" isn't a link to a file in this space.`],
+    ['an unsafe rig-file link', 'rig-file://b1/../x.html', `"rig-file://b1/../x.html" isn't a link to a file in this space.`],
+    ['another scheme', 'file:///etc/passwd', `"file:///etc/passwd" can't be opened. Give a web link or a path in this space.`],
+    ['a missing file', 'notes/gone.md', "notes/gone.md isn't on this Mac."],
+    ['a meeting link', 'https://zoom.us/j/1', "https://zoom.us/j/1 doesn't open beside the chat. Put the link in your reply instead."],
+  ])('refuses %s', async (_what, url, text) => {
+    const backend = owner();
+    const result = await call(backend, 'rig_browser_open', { url });
+    expect(result.isError).toBe(true);
+    expect(result.text.startsWith(text)).toBe(true);
+    expect(backend.show).not.toHaveBeenCalled();
+  });
+
+  it('refuses a file inside a different rig nested in the space', async () => {
+    const backend = fakeBackend({
+      currentAsker: vi.fn(async () => 'u-dylan'),
+      show: vi.fn(),
+      pathKind: vi.fn(async () => 'file' as const),
+      bindingAt: vi.fn((dir: string) => (dir.startsWith('/rigs/space/nested') ? 'b9' : 'b1')),
+    });
+    expect(await call(backend, 'rig_browser_open', { url: 'nested/index.html' })).toEqual({
+      text: `"nested/index.html" isn't part of this space.`,
+      isError: true,
+    });
+  });
+});
+
+describe('rig_topic_show', () => {
+  const topics = [
+    { id: 't1', name: 'Launch plan' },
+    { id: 't2', name: 'Pricing' },
+    { id: 't3', name: 'Pricing page copy' },
+  ];
+  const backendWith = (asker: string | null, over: Partial<RigToolsBackend> = {}) =>
+    fakeBackend({
+      currentAsker: vi.fn(async () => asker),
+      show: vi.fn(),
+      listTopics: vi.fn(async () => ok({ enabled: true, topics })),
+      ...over,
+    });
+
+  it("filters the owner's Room to the topic by name, any case, and a part of a name that only one topic has", async () => {
+    const backend = backendWith('u-dylan');
+    expect(await call(backend, 'rig_topic_show', { topic: 'pricing' })).toEqual({ text: 'Showing only the Pricing topic in the chat of the person who asked.' });
+    expect(backend.show).toHaveBeenCalledWith({ kind: 'topic', bindingId: 'b1', themeId: 't2' });
+    await call(backend, 'rig_topic_show', { topic: 'launch' });
+    expect(backend.show).toHaveBeenLastCalledWith({ kind: 'topic', bindingId: 'b1', themeId: 't1' });
+  });
+
+  it('moves nothing when someone else asked, and says what to tell them', async () => {
+    const backend = backendWith('u-sam');
+    expect((await call(backend, 'rig_topic_show', { topic: 'Launch plan' })).text).toBe(
+      "Nothing moved: only the screen of the person who asked can change, and they're on another Mac. Tell them they can click the Launch plan topic above the chat to see only it."
+    );
+    expect(backend.show).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['no name', '', 'Say which topic to show.'],
+    ['an unknown name', 'Hiring', 'No topic is called "Hiring". The topics are: Launch plan, Pricing, Pricing page copy.'],
+    ['a name more than one topic has', 'pric', 'More than one topic matches "pric": Pricing, Pricing page copy. Give the full name.'],
+  ])('refuses %s', async (_what, topic, text) => {
+    const backend = backendWith('u-dylan');
+    const result = await call(backend, 'rig_topic_show', { topic });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain(text);
+    expect(backend.show).not.toHaveBeenCalled();
+  });
+
+  it('says when topics are off, or the relay has none', async () => {
+    const off = backendWith('u-dylan', { listTopics: vi.fn(async () => ok({ enabled: false, topics })) });
+    expect(await call(off, 'rig_topic_show', { topic: 'Pricing' })).toEqual({ text: 'Topics are off in this space.', isError: true });
+    const none = backendWith('u-dylan', { listTopics: vi.fn(async () => ok(null)) });
+    expect((await call(none, 'rig_topic_show', { topic: 'Pricing' })).isError).toBe(true);
+    const failing = backendWith('u-dylan', { listTopics: vi.fn(async () => err({ message: 'offline' })) });
+    expect(await call(failing, 'rig_topic_show', { topic: 'Pricing' })).toEqual({ text: "Couldn't load this space's topics: offline", isError: true });
   });
 });
 

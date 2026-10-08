@@ -103,6 +103,14 @@ describe("rig's own tools", () => {
     expect(prettyAgentTool('mcp.rig.rig_comments_add', { path: 'plan.md', replyTo: 'm1' })?.action).toBe('reply on plan.md');
   });
 
+  it('labels the tools that move the asker\'s view in plain words', async () => {
+    const { prettyAgentTool } = await import('./connectors');
+    expect(prettyAgentTool('mcp__rig__rig_browser_open', { path: 'site/index.html' })?.action).toBe('open in browser');
+    expect(prettyAgentTool('mcp.rig.rig_browser_open')?.action).toBe('open in browser');
+    expect(prettyAgentTool('mcp__rig__rig_topic_show')?.action).toBe('show topic');
+    expect(prettyAgentTool('mcp.rig.rig_topic_show')).toEqual({ label: 'Rig', action: 'show topic', connector: null, via: 'rig' });
+  });
+
   it('keeps arguments only for rig tools', async () => {
     const { rigToolArgs } = await import('./connectors');
     expect(rigToolArgs('mcp__linear__list_issues', { email: 'a@b.co' })).toBeUndefined();

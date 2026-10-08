@@ -1594,6 +1594,34 @@ describe('runLocal (doc comments in a space)', () => {
   });
 });
 
+describe('currentAsker (whose screen a rig tool may move)', () => {
+  it('is the person who asked the run in progress, the owner for a doc comment, and null when idle', async () => {
+    const { api } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const { dispatch, runLocal, currentAsker } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+    expect(currentAsker('binding-1', 'owner-1', 'claude')).toBeNull();
+
+    await dispatch(makeRequest({ requestedByUserId: 'sam' }));
+    const conversationId = fake.started[0].conversationId;
+    fake.emitTurnStart(conversationId, fake.queued[0].turnId);
+    expect(currentAsker('binding-1', 'owner-1', 'claude')).toBe('sam');
+    expect(currentAsker('binding-1', 'owner-1', 'codex')).toBeNull();
+    fake.emitTurnEnd(conversationId, fake.queued[0].turnId, 'end_turn');
+    await vi.waitFor(() => expect(currentAsker('binding-1', 'owner-1', 'claude')).toBeNull());
+
+    await dispatch(makeRequest({ id: 'req2', requestedByUserId: 'owner-1' }));
+    fake.emitTurnStart(conversationId, fake.queued[1].turnId);
+    expect(currentAsker('binding-1', 'owner-1', 'claude')).toBe('owner-1');
+    fake.emitTurnEnd(conversationId, fake.queued[1].turnId, 'end_turn');
+    await vi.waitFor(() => expect(currentAsker('binding-1', 'owner-1', 'claude')).toBeNull());
+
+    const local = await runLocal({ bindingId: 'binding-1', ownerUserId: 'owner-1', agent: 'claude', prompt: 'Why?' });
+    if (!local.success) throw new Error(local.error);
+    fake.emitTurnStart(conversationId, fake.queued[2].turnId);
+    expect(currentAsker('binding-1', 'owner-1', 'claude')).toBe('owner-1');
+  });
+});
+
 describe('runLocal approvals mirrored to the caller (doc margin)', () => {
   it('reports pending approvals as they arrive and clears them once answered', async () => {
     const { api } = makeFakeApi();
@@ -2068,6 +2096,10 @@ describe('rig tools', () => {
     expect(rules(true)).toContain("Use rig's own tools for this space instead of the `rig` CLI");
     expect(rules(true)).toContain('use rig_browser_pins, rig_browser_read and rig_browser_screenshot with its link');
     expect(rules(false)).not.toContain('rig_browser_pins');
+    expect(rules(true)).toContain('To show the person who asked you a web page or a file from the space, call rig_browser_open instead of only naming it.');
+    expect(rules(true)).toContain('To show them only one topic of the chat, call rig_topic_show with its name.');
+    expect(rules(false)).not.toContain('rig_browser_open');
+    expect(rules(false)).not.toContain('rig_topic_show');
   });
 
   it('sends older or full chat messages to rig_chat_read, not the skill, when the agent has the tools', () => {

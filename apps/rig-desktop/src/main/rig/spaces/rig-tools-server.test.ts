@@ -155,6 +155,8 @@ describe('rig tools server', () => {
       'rig_space_rename',
       'rig_settings_read',
       'rig_settings_update',
+      'rig_browser_open',
+      'rig_topic_show',
     ]);
     expect(tools.find((t) => t.name === 'rig_people_list')?.annotations?.readOnlyHint).toBe(true);
     // Permissions mode and auto-approve aren't settings it takes: no extra arguments at all.

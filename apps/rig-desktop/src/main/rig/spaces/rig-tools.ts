@@ -6,6 +6,9 @@ import * as toml from 'smol-toml';
 import { z } from 'zod';
 import { secretReason, syncIgnoreMatcher } from '../attachments/rules';
 import { CONNECTORS, connectorById, isConnectorId, RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
+import { opensBesideChat } from '@shared/spaces/links';
+import { isHtmlPath, isRigFileUrl, parseRigFileUrl } from '@shared/spaces/rig-file';
+import type { RigShowRequest } from '@shared/spaces/show';
 import { ROOM_SEES_LEVELS, type RoomSees } from '@shared/spaces/room-sees';
 import {
   canonicalEmoji,
@@ -58,8 +61,9 @@ export type RigToolScope = {
  * Rig's own tools a room agent runs without asking its owner: the read-only
  * ones (who's here, what changed lately, a file's comments, the chat), and
  * `rig_chat_react`, which only puts an emoji on a message (a few per turn, never a
- * message, never asks anyone). `rig_people_invite` and `rig_comments_add` act on the
- * space, so they still ask.
+ * message, never asks anyone), and `rig_browser_open` and `rig_topic_show`,
+ * which only move the asker's own view. `rig_people_invite` and
+ * `rig_comments_add` act on the space, so they still ask.
  */
 export const PRE_APPROVED_RIG_TOOLS: ReadonlySet<string> = new Set([
   'rig_space_describe',
@@ -69,6 +73,9 @@ export const PRE_APPROVED_RIG_TOOLS: ReadonlySet<string> = new Set([
   'rig_chat_read',
   'rig_settings_read',
   'rig_chat_react',
+  // Only move the view of the person who asked, on their own Mac.
+  'rig_browser_open',
+  'rig_topic_show',
 ]);
 
 /**
@@ -208,6 +215,14 @@ export interface RigToolsBackend {
   currentRunId(scope: RigToolScope): Promise<string | null>;
   /** A reaction the run made, so its card can show it when the turn ends without words. */
   noteReaction?(runId: string, emoji: string): Promise<void>;
+  /** Who asked for the run the session is on now (their relay user id); null when unknown. */
+  currentAsker?(scope: RigToolScope): Promise<string | null>;
+  /** Moves this Mac's window: only called when the person who asked is the one signed in here. */
+  show?(request: RigShowRequest): void;
+  /** Whether a path is a file or a folder on this Mac; null when it isn't there. */
+  pathKind?(absPath: string): Promise<'file' | 'dir' | null>;
+  /** The space's topics; `enabled` false when topics are off in the space, null when this relay has none. */
+  listTopics?(bindingId: string): Promise<Result<{ enabled: boolean; topics: { id: string; name: string }[] } | null, Failure>>;
 }
 
 export type RigToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: 'image/png' };
@@ -1249,8 +1264,131 @@ export function createRigTools(
         return { text: lines.join('\n'), ...(changed.length === 0 && refused.length > 0 ? { isError: true } : {}) };
       },
     },
+    ...showTools(backend),
   ];
   return tools;
+}
+
+/** What an agent is told when the person who asked isn't the one at this Mac. */
+const ASKER_ELSEWHERE = "Nothing moved: only the screen of the person who asked can change, and they're on another Mac.";
+
+/** Whether the person who asked this run is the one signed in here, the session's owner. */
+async function askedHere(backend: RigToolsBackend, scope: RigToolScope): Promise<boolean> {
+  if (!backend.show || !backend.currentAsker) return false;
+  const asker = await backend.currentAsker(scope).catch(() => null);
+  return asker !== null && asker === scope.ownerUserId;
+}
+
+/** A web link to open beside the chat, a file in the space, or why not. */
+async function openTarget(
+  backend: RigToolsBackend,
+  scope: RigToolScope,
+  raw: string
+): Promise<Result<{ kind: 'page'; url: string } | { kind: 'file'; relPath: string }, string>> {
+  const asked = raw.trim();
+  if (!asked) return err('Give a web link or a path in this space, like site/index.html.');
+  if (/^https?:\/\//i.test(asked)) {
+    try {
+      const url = new URL(asked).toString();
+      if (!opensBesideChat(url)) return err(`${url} doesn't open beside the chat. Put the link in your reply instead.`);
+      return ok({ kind: 'page', url });
+    } catch {
+      return err(`"${asked}" isn't a valid link.`);
+    }
+  }
+  let path = asked;
+  if (isRigFileUrl(asked)) {
+    const link = parseRigFileUrl(asked);
+    if (!link || link.bindingId !== scope.bindingId.toLowerCase()) return err(`"${asked}" isn't a link to a file in this space.`);
+    path = link.relPath;
+  } else if (/^[a-z][a-z0-9+.-]*:/i.test(asked)) {
+    return err(`"${asked}" can't be opened. Give a web link or a path in this space.`);
+  }
+  const file = spaceFile(backend, scope, path.replace(/[?#].*$/, ''));
+  if (!file.success) return err(file.error);
+  const kind = backend.pathKind ? await backend.pathKind(file.data.absPath) : 'file';
+  if (kind === 'dir') {
+    const index = `${file.data.relPath}/index.html`;
+    const indexKind = backend.pathKind ? await backend.pathKind(`${file.data.absPath}/index.html`) : null;
+    if (indexKind === 'file') return ok({ kind: 'file', relPath: index });
+    return err(`${file.data.relPath} is a folder. Give a file in it.`);
+  }
+  if (kind !== 'file') return err(`${file.data.relPath} isn't on this Mac.`);
+  return ok({ kind: 'file', relPath: file.data.relPath });
+}
+
+/** The tools that move the asker's own view: open a page or file, show a topic. */
+function showTools(backend: RigToolsBackend): RigTool[] {
+  return [
+    {
+      name: 'rig_browser_open',
+      description:
+        'Show the person who asked you a web page or a file from this space, on their screen. ' +
+        'Use it when they ask to open, show or see something, or when they should look at the page or file your answer is about. ' +
+        'A web link and an html file in the space open in the browser beside the chat, the html as a working page with its scripts, styles and images. Any other file opens in the file viewer. ' +
+        'url is a web link or a path in this space, like site/index.html. passage scrolls to that text. line scrolls a text file to that line. ' +
+        'It only moves the screen of the person who asked, on their own Mac. When they are on another Mac nothing moves, and the result says to put the link in your reply. ' +
+        'To read or look at a page yourself, use rig_browser_read or rig_browser_screenshot.',
+      inputSchema: {
+        url: z.string().describe('A web link, or a path in this space like site/index.html.'),
+        passage: z.string().optional().describe('Text on the page or in the file to scroll to.'),
+        line: z.number().int().min(1).optional().describe('A line to scroll to, in a file shown as text.'),
+      },
+      annotations: { title: 'Open in browser', readOnlyHint: true, openWorldHint: true },
+      run: async (scope, input) => {
+        const target = await openTarget(backend, scope, String(input.url ?? ''));
+        if (!target.success) return failed(target.error);
+        const passage = typeof input.passage === 'string' && input.passage.trim() ? input.passage.trim() : undefined;
+        const line = typeof input.line === 'number' ? input.line : undefined;
+        const shown = target.data.kind === 'page' ? target.data.url : target.data.relPath;
+        if (!(await askedHere(backend, scope))) {
+          const link = target.data.kind === 'page' ? target.data.url : `[${target.data.relPath}](${target.data.relPath})`;
+          return { text: `${ASKER_ELSEWHERE} Put this link in your reply so they can open it: ${link}` };
+        }
+        const where =
+          target.data.kind === 'page' || isHtmlPath(target.data.relPath) ? 'in the browser beside the chat' : 'in the file viewer';
+        backend.show!(
+          target.data.kind === 'page'
+            ? { kind: 'page', bindingId: scope.bindingId, url: target.data.url, ...(passage ? { passage } : {}) }
+            : { kind: 'file', bindingId: scope.bindingId, relPath: target.data.relPath, ...(passage ? { passage } : {}), ...(line ? { line } : {}) }
+        );
+        return { text: `Opened ${shown} ${where} for the person who asked.` };
+      },
+    },
+    {
+      name: 'rig_topic_show',
+      description:
+        'Filter the chat of the person who asked you to one topic, the same as clicking its pill above the chat. ' +
+        'Use it when they ask to see, focus on or catch up on a topic. topic is its name as the chat shows it. ' +
+        'It only moves the screen of the person who asked, on their own Mac. When they are on another Mac nothing moves, and the result says what to tell them.',
+      inputSchema: {
+        topic: z.string().describe('The topic\'s name, as the chat shows it.'),
+      },
+      annotations: { title: 'Show a topic', readOnlyHint: true },
+      run: async (scope, input) => {
+        const asked = String(input.topic ?? '').trim();
+        if (!asked) return failed('Say which topic to show.');
+        if (!backend.listTopics) return failed("This version of Rig can't show topics.");
+        const listed = await backend.listTopics(scope.bindingId);
+        if (!listed.success) return failed(`Couldn't load this space's topics: ${listed.error.message}`);
+        if (!listed.data) return failed("This space's Rig server has no topics yet.");
+        if (!listed.data.enabled) return failed('Topics are off in this space.');
+        const topics = listed.data.topics;
+        const key = asked.toLowerCase();
+        let hits = topics.filter((t) => t.name.trim().toLowerCase() === key);
+        if (hits.length === 0) hits = topics.filter((t) => t.name.toLowerCase().includes(key));
+        const names = topics.map((t) => t.name).join(', ');
+        if (hits.length > 1) return failed(`More than one topic matches "${asked}": ${hits.map((t) => t.name).join(', ')}. Give the full name.`);
+        const topic = hits[0];
+        if (!topic) return failed(topics.length > 0 ? `No topic is called "${asked}". The topics are: ${names}.` : 'This space has no topics yet.');
+        if (!(await askedHere(backend, scope))) {
+          return { text: `${ASKER_ELSEWHERE} Tell them they can click the ${topic.name} topic above the chat to see only it.` };
+        }
+        backend.show!({ kind: 'topic', bindingId: scope.bindingId, themeId: topic.id });
+        return { text: `Showing only the ${topic.name} topic in the chat of the person who asked.` };
+      },
+    },
+  ];
 }
 
 /**

@@ -204,6 +204,8 @@ type QueuedTurn = {
   bindingId: string;
   /** Whose agent runs it, named in the card when its sign-in ran out. */
   ownerUserId: string;
+  /** Who asked for it: only their screen may move (`rig_browser_open`, `rig_topic_show`). */
+  askerUserId: string;
   runId: string;
   publisher: SessionEventPublisher;
   cancelledByStop: boolean;
@@ -483,7 +485,9 @@ export function spaceRules(spec: { bindingId: string; agent: SessionAgent; rigTo
     lines.push(
       "Use rig's own tools for this space instead of the `rig` CLI: rig_people_invite to invite people, rig_people_list to see who's here, rig_changes_list to see what changed, rig_chat_read to read the chat, rig_comments_read and rig_comments_add for file comments, rig_chat_react to react, rig_space_rename to rename the space, and rig_settings_read and rig_settings_update for your own settings here. Fall back to the CLI only if a tool fails.",
       'The space conversation you get each turn is only the latest messages, and long ones are cut. For older messages, a message in full, or to find what someone said, use rig_chat_read.',
-      "To look at a web page posted or pinned in the space, like a Claude artifact or a Google Doc, use rig_browser_pins, rig_browser_read and rig_browser_screenshot with its link. They open it as your owner, read only, without moving anyone's view. Read a board in full or screenshot it rather than guessing at small text."
+      "To look at a web page posted or pinned in the space, like a Claude artifact or a Google Doc, use rig_browser_pins, rig_browser_read and rig_browser_screenshot with its link. They open it as your owner, read only, without moving anyone's view. Read a board in full or screenshot it rather than guessing at small text. They also take an html file in the space by its path.",
+      'To show the person who asked you a web page or a file from the space, call rig_browser_open instead of only naming it.',
+      'To show them only one topic of the chat, call rig_topic_show with its name.'
     );
   }
   lines.push(
@@ -783,6 +787,8 @@ export function createSpacesDispatcher(deps: {
   resolvePermission: (runId: string, requestId: string, optionId: string) => Promise<boolean>;
   /** The run the owner's session with this agent is on right now (or about to start), for per-turn limits on rig tools; null when idle. */
   currentRunId: (bindingId: string, ownerUserId: string, agent: SessionAgent) => string | null;
+  /** Who asked for that run (their relay user id); null when idle. */
+  currentAsker: (bindingId: string, ownerUserId: string, agent: SessionAgent) => string | null;
   /** A reaction a run's agent made (rig_chat_react), for its card when the turn ends without words. */
   noteReaction: (runId: string, emoji: string) => void;
   /** Reports each running turn that has had no events for `RUN_STALL_MS` (once per turn, not while it waits on an approval). */
@@ -1228,6 +1234,8 @@ export function createSpacesDispatcher(deps: {
     sourceMessageId: string | null;
     /** The owner asked their own agent (so a local-only attachment is on this computer). */
     askedByOwner?: boolean;
+    /** Who asked; the owner when absent (a doc comment on this computer). */
+    askerUserId?: string;
     /** Extra hidden context for this turn (e.g. a doc comment thread), after the space context. */
     extraHiddenContext?: string;
     /** The doc comment thread this run answers; its card is grouped with that thread in the Room. */
@@ -1350,6 +1358,7 @@ export function createSpacesDispatcher(deps: {
       requestId: spec.requestId,
       bindingId: spec.bindingId,
       ownerUserId: spec.ownerUserId,
+      askerUserId: spec.askerUserId ?? spec.ownerUserId,
       runId: created.data.id,
       publisher,
       cancelledByStop: false,
@@ -1485,6 +1494,7 @@ export function createSpacesDispatcher(deps: {
       requestId: request.id,
       sourceMessageId: request.sourceMessageId,
       askedByOwner: request.requestedByUserId === request.targetOwnerUserId,
+      askerUserId: request.requestedByUserId,
     });
     return started.success ? { runId: started.data.runId } : { failed: true, reason: started.error };
   }
@@ -1667,6 +1677,11 @@ export function createSpacesDispatcher(deps: {
     return session?.current?.runId ?? session?.pending[0]?.runId ?? null;
   }
 
+  function currentAsker(bindingId: string, ownerUserId: string, agent: SessionAgent): string | null {
+    const session = sessions.get(keyFor(bindingId, ownerUserId, agent));
+    return session?.current?.askerUserId ?? session?.pending[0]?.askerUserId ?? null;
+  }
+
   function noteReaction(runId: string, emoji: string): void {
     for (const session of sessions.values()) {
       const turn = [session.current, ...session.pending].find((t) => t?.runId === runId);
@@ -1700,6 +1715,7 @@ export function createSpacesDispatcher(deps: {
     agentConfig,
     setAgentConfig,
     currentRunId,
+    currentAsker,
     noteReaction,
     reportStalled,
   };
