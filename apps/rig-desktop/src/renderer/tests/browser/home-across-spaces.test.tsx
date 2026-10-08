@@ -360,7 +360,7 @@ describe('Home: Across your spaces today', () => {
     expect(desc.textContent).toBe('Things to fix');
     expect(desc.className).not.toContain('truncate');
     const detail = lines()[0]!.querySelector('[data-testid="theme-line-detail"]')!;
-    expect(detail.textContent).toMatch(/^Hugo with ClaudeOpen in #.+ ›$/);
+    expect(detail.textContent).toMatch(/^Hugo with ClaudeOpen in #.+›$/);
     expect(desc.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // The other line keeps its summary cut to one line.
     expect(lines()[1]!.querySelector('[data-testid="theme-line-desc"]')!.className).toContain(

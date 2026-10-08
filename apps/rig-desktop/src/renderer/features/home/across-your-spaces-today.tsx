@@ -171,7 +171,7 @@ function ThemeLine({
             onToggle();
           }}
           className={cn(
-            'min-w-0 shrink truncate text-left text-sm text-text-primary outline-none focus-visible:underline',
+            'min-w-0 shrink cursor-pointer truncate text-left text-sm text-text-primary outline-none focus-visible:underline',
             seen ? 'font-medium' : 'font-semibold'
           )}
           data-testid="theme-line-name"
@@ -185,7 +185,7 @@ function ThemeLine({
               event.stopPropagation();
               onOpen();
             }}
-            className="min-w-0 shrink-[2] truncate text-xs text-text-muted transition-colors hover:text-text-primary"
+            className="min-w-0 shrink-[2] cursor-pointer truncate text-xs text-text-muted underline-offset-2 transition-colors hover:text-text-primary hover:underline"
             data-testid="theme-line-space"
           >
             # {theme.spaceName}
@@ -249,10 +249,13 @@ function ThemeLine({
               event.stopPropagation();
               onOpen();
             }}
-            className="shrink-0 text-text-secondary transition-colors hover:text-text-primary"
+            className="group/open focus-visible:outline-accent inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-control text-text-secondary outline-none transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2"
             data-testid="theme-line-open"
           >
-            {theme.spaceName ? `Open in #${theme.spaceName}` : 'Open the space'} ›
+            {theme.spaceName ? `Open in #${theme.spaceName}` : 'Open the space'}
+            <span aria-hidden className="transition-transform group-hover/open:translate-x-0.5 motion-reduce:transition-none">
+              ›
+            </span>
           </button>
         </div>
       )}
