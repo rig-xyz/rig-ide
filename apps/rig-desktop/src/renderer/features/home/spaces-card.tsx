@@ -686,6 +686,7 @@ function SpaceRow({
       <SpaceStatusTile
         attention={shown}
         seed={row.bindingId}
+        dot={weight === 'needs' ? 'forYou' : count ? 'unread' : null}
         className={cn((offline || weight === 'quiet') && 'opacity-55 transition-opacity')}
       />
       {/* The name button stretches over the whole column (its `before:`
@@ -783,15 +784,9 @@ function SpaceRow({
         )}
       </div>
       <ReasonFaces faces={faces} />
+      {/* The count lives in the tile's dot; screen readers still hear it. */}
       {count && (
-        <span
-          className={cn(
-            'flex h-[18px] min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 font-mono text-2xs font-medium tabular-nums',
-            // Accent only when it's for you; plain unread stays neutral.
-            weight === 'needs' ? 'bg-accent text-accent-ink' : 'bg-bg-3 text-text-secondary'
-          )}
-          data-testid="space-row-count"
-        >
+        <span className="sr-only" data-testid="space-row-count">
           {count}
         </span>
       )}

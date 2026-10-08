@@ -16,17 +16,20 @@ export function SpaceStatusTile({
   attention,
   seed,
   size = 'md',
+  dot,
   className,
 }: {
   attention: SpaceAttention;
   /** The space's bindingId — seeds its idle pattern. */
   seed: string;
   size?: 'sm' | 'md' | 'lg';
+  /** A dot on the top right corner: accent when something is for you, grey for plain unread. */
+  dot?: 'forYou' | 'unread' | null;
   className?: string;
 }) {
   return (
     <span
-      className={cn('bg-bg-2 inline-flex shrink-0 items-center justify-center rounded-control p-1.5', className)}
+      className={cn('relative inline-flex shrink-0 items-center justify-center rounded-control p-1.5', className)}
       aria-hidden
       data-tile={attention.kind}
     >
@@ -46,6 +49,16 @@ export function SpaceStatusTile({
         />
       ) : (
         <StillDots size={size} lit={idlePattern(seed)} tone="bg-text-muted" on={0.42} off={0.1} />
+      )}
+      {dot && (
+        <span
+          className={cn(
+            'ring-bg-1 absolute top-0 right-0 size-2 rounded-full ring-2',
+            dot === 'forYou' ? 'bg-accent' : 'bg-text-muted'
+          )}
+          data-testid="space-row-dot"
+          data-dot={dot}
+        />
       )}
     </span>
   );

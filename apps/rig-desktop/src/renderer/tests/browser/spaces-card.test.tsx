@@ -337,6 +337,11 @@ describe('SpacesCard — what you missed', () => {
     expect(weightOf('calm-valley')).toBe('unread');
     expect(nameOf('calm-valley').className).toContain('font-semibold');
     expect(countOf('calm-valley')).toBe('5');
+    const dotOf = (name: string) => rowOf(name).querySelector<HTMLElement>('[data-testid="space-row-dot"]');
+    expect(dotOf('calm-valley')?.dataset.dot).toBe('unread');
+    expect(dotOf('growth')).toBeNull();
+    expect(dotOf('research')).toBeNull();
+    expect(tileOf('research').className).not.toContain('bg-bg-2');
     expect(countOf('launch')).toBe('9+');
     expect(weightOf('gentle-island')).toBe('unread');
 
