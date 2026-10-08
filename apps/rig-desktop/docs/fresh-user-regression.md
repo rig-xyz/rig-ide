@@ -23,21 +23,23 @@ bottom for `--no-providers`, `--loopback`, and `--no-launch`.
       screen and nothing else: the mark, one line of copy, and exactly one
       button, **Start fresh** (no recent-rigs list, no "Welcome back", no
       sign-in, no provider setup).
-- [ ] **Create first rig.** Click **Start fresh**. Since this is a genuinely
-      fresh profile you're signed out, so this is the FIRST thing a real new
-      user experiences: the button should become **Waiting for sign-in…**
-      (disabled) with one quiet line beneath, "Rig is collaborative — sign
-      in to start," and the browser should open to `rig login`'s real
-      Clerk sign-up/sign-in flow. "Quick" means exactly that: no dialog, no
-      name/location/sync questions on this side, sign in the browser, and
-      the app continues on its own the moment it lands — no second click
-      back in the app. Expect it to then create immediately and land inside
-      the isolated `~/Rig` (i.e. `<temp root>/home/Rig/untitled-rig`, not
-      your real `~/Rig`) open on `Start here.md` in Preview. If sign-in is
-      cancelled or fails, expect the button to return to idle **Start
-      fresh** with a short, honest error line beneath it — not a stuck
-      spinner.
-- [ ] **Rename inline.** Expect the rig name in the topbar to already be
+- [ ] **Create the first space.** Click **Start fresh**. Since this is a
+      genuinely fresh profile you're signed out, so this is the FIRST thing
+      a real new user experiences: the button should become **Waiting for
+      sign-in…** (disabled) with one quiet line beneath, and the browser
+      should open to `rig login`'s real Clerk sign-up/sign-in flow. Sign in
+      there and the app continues on its own, with no second click back in
+      the app. With spaces on, which is the default, expect a new space
+      with a generated name under the isolated `~/Rig`, so
+      `<temp root>/home/Rig/<name>` and not your real `~/Rig`, opened on its
+      Room. There is no `Start here.md` on this path: the empty Room shows
+      **RoomWelcome** instead, "This is #name" with **Invite someone** and
+      **Ask @claude**, or **Set up an agent** when no agent is installed.
+      If sign-in is cancelled or fails, expect the button to return to idle
+      **Start fresh** with a short, honest error line beneath it, never a
+      stuck spinner. The plain rig path, with spaces off, still opens on
+      `Start here.md` in Preview.
+- [ ] **Rename inline.** Plain rig path only. Expect the rig name in the topbar to already be
       auto-focused in edit mode with its text selected; type a name and
       press Enter. Expect the folder itself to be renamed (confirm via
       Settings → "Rig folder" or the rig switcher), not just the on-screen
@@ -86,6 +88,37 @@ bottom for `--no-providers`, `--loopback`, and `--no-launch`.
       settings, and your sign-in state to all still be there — the isolation
       is per temp-root, not per-launch.
 
+## Spaces first-run cases
+
+Each of these starts from a fresh temp root unless it says otherwise.
+
+- [ ] **No providers, then tag @claude.** Launch with `--no-providers` and
+      check Settings › Agents shows neither Claude nor Codex as installed.
+      Start fresh, then type `@claude hi` in the Room. Expect the composer
+      to say Claude isn't set up on this Mac, the message to go out as plain
+      chat, and no agent run to start. Home shows a line per agent saying it
+      isn't installed and which CLI Rig runs, each with **Install**.
+- [ ] **Install from Settings and from Home.** Still with `--no-providers`,
+      install Claude from Settings › Agents with its **Install** button, then
+      quit, start again from a fresh temp root and install it from Home's
+      **Install** on the Claude line. Both open the same install offer.
+      Expect the line to go away once the probe finds the CLI, and `@claude`
+      to answer in the Room after that. On the space's agent list, a
+      missing agent shows the same line with **Install**.
+- [ ] **Codex only.** With only `codex` on PATH, which takes hiding
+      `claude` from PATH by hand since `--no-providers` hides both, start
+      fresh. Expect RoomWelcome to offer **Ask @codex**, `@codex` to answer,
+      and no line on Home about Claude being missing, since one agent is
+      set up.
+- [ ] **Double click Start fresh.** Click **Start fresh** twice quickly,
+      signed in and signed out. Expect one space to be created and one
+      sign-in round trip at most, never two spaces or two browser tabs.
+- [ ] **Pending invite with zero spaces.** From a second account, invite
+      this fresh account's email to a space before it has any space. Sign
+      in on the fresh profile. Expect the first-run Home to show the pending
+      invite under Start fresh, and accepting it to open that space's Room
+      without creating a space of its own.
+
 ## Two-profile run
 
 To see a second person join and see the first person's comments, run the
@@ -119,8 +152,11 @@ What we found tracing `src/main/rig/bundled-cli.ts` and
   (`<resources>/rig-cli`, vendored by `scripts/vendor-rig-cli.ts`) — a real
   beta user needs NOTHING preinstalled for `rig` itself to work. This dev
   harness fakes that guarantee via `RIG_DEV_CLI_DIR` pointing at a rig CLI
-  checkout (see `RIG_CLI_ROOT` in the harness's usage text), since a dev
-  build has no bundled copy of its own.
+  checkout, since a dev build has no bundled copy of its own. It uses
+  `RIG_CLI_ROOT` when set, else the vendored CLI in `vendor/rig-cli` (from
+  `corepack pnpm run vendor:rig-cli`), else `~/Code/rig`: the first that has
+  `bin/rig.mjs` and its `node_modules`. With none of them it stops and says
+  where it looked.
 - **Claude/Codex CLIs**: NOT bundled. `src/main/core/dependencies/registry.ts`
   builds `AGENT_DEPENDENCIES` from the plugin registry and probes for them on
   PATH via `HostDependencyManager` — a real beta user needs to install

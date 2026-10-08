@@ -29,7 +29,9 @@
 #
 # Env overrides:
 #   RIG_CLI_ROOT        Path to a rig CLI checkout used for RIG_DEV_CLI_DIR.
-#                        Defaults to ../rig-doc-context next to this repo.
+#                        Defaults to the vendored CLI (vendor/rig-cli, from
+#                        `pnpm run vendor:rig-cli`), else ~/Code/rig, the
+#                        first that has bin/rig.mjs and its node_modules.
 #   TAP_CONTEXT_ROOT     Path to a tap checkout, only used by --loopback.
 #                        Defaults to ../tap-doc-context next to this repo.
 #   TAP_POSTGRES_CONTAINER  Docker container name for --loopback's Postgres.
@@ -48,7 +50,21 @@ set -eu
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 APP_DIR=$(CDPATH='' cd -- "$SCRIPT_DIR/.." && pwd -P)
 REPO_ROOT=$(CDPATH='' cd -- "$APP_DIR/../.." && pwd -P)
-RIG_CLI_ROOT_SRC=${RIG_CLI_ROOT:-"$REPO_ROOT/../rig-doc-context"}
+# A CLI checkout this run can use: bin/rig.mjs and its installed dependencies.
+usable_cli() {
+  [ -x "$1/bin/rig.mjs" ] && [ -d "$1/node_modules" ]
+}
+if [ -n "${RIG_CLI_ROOT:-}" ]; then
+  RIG_CLI_ROOT_SRC=$RIG_CLI_ROOT
+else
+  RIG_CLI_ROOT_SRC=""
+  for candidate in "$APP_DIR/vendor/rig-cli" "$HOME/Code/rig"; do
+    if usable_cli "$candidate"; then
+      RIG_CLI_ROOT_SRC=$candidate
+      break
+    fi
+  done
+fi
 TAP_ROOT=${TAP_CONTEXT_ROOT:-"$REPO_ROOT/../tap-doc-context"}
 POSTGRES_CONTAINER=${TAP_POSTGRES_CONTAINER:-tap-postgres}
 
@@ -61,7 +77,7 @@ for arg in "$@"; do
     --no-providers) NO_PROVIDERS=1 ;;
     --loopback) LOOPBACK=1 ;;
     -h | --help)
-      sed -n '2,33p' "$0" | sed 's/^#$//;s/^# //'
+      sed -n '2,35p' "$0" | sed 's/^#$//;s/^# //'
       exit 0
       ;;
     *)
@@ -71,11 +87,18 @@ for arg in "$@"; do
   esac
 done
 
-if [ ! -x "$RIG_CLI_ROOT_SRC/bin/rig.mjs" ]; then
-  echo "No rig CLI checkout found at $RIG_CLI_ROOT_SRC/bin/rig.mjs" >&2
+if [ -z "$RIG_CLI_ROOT_SRC" ] || ! usable_cli "$RIG_CLI_ROOT_SRC"; then
+  if [ -n "${RIG_CLI_ROOT:-}" ]; then
+    echo "RIG_CLI_ROOT=$RIG_CLI_ROOT has no bin/rig.mjs with node_modules next to it." >&2
+  else
+    echo "No usable rig CLI found. Looked for bin/rig.mjs with node_modules in:" >&2
+    echo "  $APP_DIR/vendor/rig-cli   (run: corepack pnpm run vendor:rig-cli)" >&2
+    echo "  $HOME/Code/rig            (run: npm install there)" >&2
+  fi
   echo "Set RIG_CLI_ROOT to a rig CLI checkout with dependencies installed." >&2
   exit 1
 fi
+echo "rig CLI: $RIG_CLI_ROOT_SRC"
 
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/rig-fresh-user.XXXXXX")
 HOME_DIR="$TMP_ROOT/home"
