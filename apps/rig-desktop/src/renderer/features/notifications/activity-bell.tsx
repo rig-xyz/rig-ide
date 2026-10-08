@@ -183,20 +183,40 @@ function readDismissed(): boolean {
  * and Electron never asks on its own:
  *   - never asked, and something about you has arrived: ask, in context,
  *     once (Not now is remembered on this computer);
- *   - turned off: say so, with rig's page in System Settings one click away.
+ *   - turned off: say so, with rig's page in System Settings one click away;
+ *   - Turn on pressed, and macOS still hasn't answered a few seconds later
+ *     (it showed no prompt, as for an unsigned dev build): the same System
+ *     Settings card, since asking again would do nothing.
  * Allowed, or not a Mac: nothing.
  */
-function PermissionCard({ hasActivity }: { hasActivity: boolean }) {
+export const NO_PROMPT_AFTER_MS = 3_000;
+
+export function PermissionCard({ hasActivity, noPromptAfterMs = NO_PROMPT_AFTER_MS }: { hasActivity: boolean; noPromptAfterMs?: number }) {
   const permission = useNotificationPermission();
   const request = useRequestNotificationPermission();
   const [dismissed, setDismissed] = useState(readDismissed);
+  const [askedLongAgo, setAskedLongAgo] = useState(false);
+  const askTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (askTimer.current) clearTimeout(askTimer.current);
+  }, []);
+  const turnOn = () => {
+    request();
+    if (askTimer.current) clearTimeout(askTimer.current);
+    askTimer.current = setTimeout(() => setAskedLongAgo(true), noPromptAfterMs);
+  };
+  const noPrompt = askedLongAgo && permission === 'notDetermined';
 
-  if (permission === 'denied') {
+  if (permission === 'denied' || noPrompt) {
     return (
       <div className="border-border-hairline flex items-start gap-2 border-b px-3.5 py-2.5" data-testid="notification-permission-card">
         <BellOff className="text-text-muted mt-0.5 size-3.5 shrink-0" strokeWidth={1.5} />
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <p className="text-text-primary text-xs">Banners are off for rig in macOS, so you won't hear about these.</p>
+          <p className="text-text-primary text-xs">
+            {noPrompt
+              ? "macOS didn't ask about banners for rig. Turn them on in System Settings."
+              : "Banners are off for rig in macOS, so you won't hear about these."}
+          </p>
           <Button
             variant="outline"
             size="xs"
@@ -224,7 +244,7 @@ function PermissionCard({ hasActivity }: { hasActivity: boolean }) {
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <p className="text-text-primary text-xs">Get a banner when someone needs you, even with rig in the background.</p>
         <div className="flex items-center gap-1">
-          <Button size="xs" onClick={request}>
+          <Button size="xs" onClick={turnOn}>
             Turn on
           </Button>
           <Button variant="ghost" size="xs" onClick={notNow}>
