@@ -113,19 +113,32 @@ describe('Browser mode in the file viewer', () => {
   const page = () => host.querySelector<HTMLElement>('[data-testid="page-view"]');
   const loaded = () => !host.textContent?.includes('Loading…') && (page() !== null || host.querySelector('.cm-content') !== null);
 
-  it('gives an html file Browser next to Edit, showing the page from its rig-file link', async () => {
+  it('opens an html file in Browser, from its rig-file link, with Edit one click away and no Preview', async () => {
+    // Nothing asked for a mode: the file tree opens a file this way.
     await render(viewer(HTML));
     await waitFor(loaded);
-    // It opens as before, in Edit.
-    expect(host.querySelector('.cm-content')?.textContent).toContain('<h1>Pricing</h1>');
+    expect(page()?.dataset.url).toBe('rig-file://bnd_abc/site/index.html');
+    expect(host.querySelector('.cm-content')).toBeNull();
     expect(button('Browser')).toBeTruthy();
+    expect(button('Edit')).toBeTruthy();
     expect(button('Preview')).toBeNull();
+
+    await act(async () => button('Edit')!.click());
+    expect(page()).toBeNull();
+    expect(host.querySelector('.cm-content')?.textContent).toContain('<h1>Pricing</h1>');
 
     await act(async () => button('Browser')!.click());
     expect(page()?.dataset.url).toBe('rig-file://bnd_abc/site/index.html');
-    expect(host.querySelector('.cm-content')).toBeNull();
+  });
 
+  it('remembers Edit for a file once chosen, for this session', async () => {
+    await render(viewer(HTML));
+    await waitFor(loaded);
     await act(async () => button('Edit')!.click());
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await render(viewer(HTML));
+    await waitFor(loaded);
     expect(page()).toBeNull();
     expect(host.querySelector('.cm-content')).toBeTruthy();
   });
@@ -155,6 +168,7 @@ describe('Browser mode in the file viewer', () => {
   it('switches an open file to Browser mode when asked', async () => {
     await render(viewer(HTML));
     await waitFor(loaded);
+    await act(async () => button('Edit')!.click());
     expect(page()).toBeNull();
     await act(async () => requestView(HTML, { mode: 'browser' }));
     expect(page()?.dataset.url).toBe('rig-file://bnd_abc/site/index.html');

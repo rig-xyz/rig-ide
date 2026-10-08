@@ -452,15 +452,17 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // module for one, so its render path stays byte-for-byte what it was
   // before this file existed.
   const isMarkdown = language === 'markdown';
-  // An html file in a space or synced rig can also be seen as a working
-  // page: Browser, next to Edit. It opens in Edit unless chosen otherwise.
+  // An html file in a space or synced rig is seen as a working page:
+  // Browser, with Edit one click away. It opens in Browser however it was
+  // opened, unless Edit was chosen for it this session.
   const relPath = relPathFromRoot(root, path);
   const browserUrl = language === 'html' && bindingId && relPath ? rigFileUrl(bindingId, relPath) : null;
   const modes: readonly PreviewMode[] = isMarkdown ? ['preview', 'edit'] : browserUrl ? ['browser', 'edit'] : ['edit'];
   const [mode, setModeState] = useState<PreviewMode>(() => {
     if (isMarkdown) return getPreviewMode(path);
     const remembered = rememberedPreviewMode(path);
-    return remembered && modes.includes(remembered) ? remembered : 'edit';
+    if (remembered && modes.includes(remembered)) return remembered;
+    return browserUrl ? 'browser' : 'edit';
   });
   // Scroll position survives a toggle only approximately (spec's own
   // wording): captured as a fraction of the scrollable range right before
