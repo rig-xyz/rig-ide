@@ -4,7 +4,13 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import { CORNER_SIZE } from '../dock-layout';
-import { agentDisplayName, forYouCount } from '../dock-model';
+import {
+  agentDisplayName,
+  forYouCount,
+  sameWho,
+  whoMessageIds,
+  type DockWho,
+} from '../dock-model';
 import { EMPTY_FOR_YOU } from '../for-you';
 import type { AgentKind, RoomSnapshot } from '../types';
 import type { DockFocusState } from '../use-dock-focus';
@@ -13,7 +19,7 @@ import type { ForYouState } from '../use-for-you';
 import { ApprovalsPanel, useDismissOutside } from './dock-approvals';
 import { usePillColumn } from './dock-pills';
 import { FOCUS_RING, GOO_SPRING } from './dock-glass';
-import { DockRail } from './dock-rail';
+import { DockRail, type FaceHandlers } from './dock-rail';
 import { DockStage, type StageFloat } from './dock-stage';
 
 /**
@@ -29,6 +35,11 @@ import { DockStage, type StageFloat } from './dock-stage';
  * into one column; the text, avatars and buttons above. What the stage draws
  * comes from here: the rail, the column (`usePillColumn`) and the float
  * (the approvals panel, else the hovered pill's peek).
+ *
+ * The spotlight: a hovered face dims everyone else's messages through the
+ * same preview a pill uses, and lights its rows in the conversation's outline
+ * (`onTrailChange`); a clicked one filters the transcript (`focus.toggleWho`).
+ * Agents' tasks in progress hang under their topics in the column.
  *
  * TODO(room-themes): a drop flying from a new message's row to its pill
  * (spec §7 Motion). Left out of this round; pills pulse when a message joins.
@@ -50,6 +61,8 @@ export function ThemeDock({
   card,
   onGutterChange,
   onPreviewChange,
+  onTrailChange,
+  onJumpToRun,
   className,
 }: {
   /** The Room's snapshot with your pending sends in it. */
@@ -58,7 +71,7 @@ export function ThemeDock({
   /** Null until the Room's For you has been worked out: no asks, no approvals yet. */
   forYouState: ForYouState | null;
   focus: DockFocusState;
-  /** A narrow Room: under the rail only For you and one "Themes N" pill, so the dock stays out of the conversation. */
+  /** A narrow Room: under the rail only For you and one "Topics N" pill, so the dock stays out of the conversation. */
   narrow?: boolean;
   /**
    * Opens the pinned panel (the Space's settings), at a section if given. Absent: the rail has no gear. The panel brings
@@ -83,6 +96,13 @@ export function ThemeDock({
    * when the dock goes away.
    */
   onPreviewChange?: (ids: ReadonlySet<string> | null) => void;
+  /**
+   * The messages of the hovered face, else of the face the transcript is
+   * filtered to, for the outline to light; null when there is neither.
+   */
+  onTrailChange?: (ids: ReadonlySet<string> | null) => void;
+  /** A task row was clicked: scroll the transcript to its run's card. */
+  onJumpToRun?: (runId: string) => void;
   /** Where the dock sits in its parent. */
   className?: string;
 }) {
@@ -95,18 +115,44 @@ export function ThemeDock({
     forYouShown,
     forYouState?.ready ?? false
   );
+  // The spotlight: the face under the pointer (or the keyboard).
+  const [hoverWho, setHoverWho] = useState<DockWho | null>(null);
+  const toggleWho = focus.toggleWho;
+  const faces = useMemo<FaceHandlers>(
+    () => ({
+      selected: focus.who,
+      onHover: (who) =>
+        setHoverWho((current) => (who === null || !sameWho(current, who) ? who : current)),
+      onToggle: toggleWho,
+    }),
+    [focus.who, toggleWho]
+  );
+  const hoverIds = useMemo(
+    () => (hoverWho ? whoMessageIds(snapshot, hoverWho) : null),
+    [hoverWho, snapshot]
+  );
+  const whoIds = useMemo(
+    () => (focus.who ? whoMessageIds(snapshot, focus.who) : null),
+    [focus.who, snapshot]
+  );
+
   const column = usePillColumn({
     snapshot,
     themes,
     forYou,
     selfUserId,
     focus: focus.focus,
+    who: focus.who,
+    whoIds,
+    hoverWho,
+    onClearWho: focus.clearWho,
+    onJumpToRun,
     freshThemeIds: signals.freshThemeIds,
     bornIds: signals.bornIds,
     swell: signals.swell,
     narrow,
     onToggle: focus.toggle,
-    onClear: focus.clear,
+    onClear: focus.clearTopic,
   });
 
   const [openAgent, setOpenAgent] = useState<AgentKind | null>(null);
@@ -114,10 +160,10 @@ export function ThemeDock({
   const railRef = useRef<HTMLDivElement>(null);
   const floatRef = useRef<HTMLDivElement>(null);
   const dismissRoots = useMemo(() => [railRef, floatRef], []);
-  // A press in the rail or the panel is inside; Esc hands the keyboard back to the agent whose panel it was.
+  // A press in the rail or the panel is inside; Esc hands the keyboard back to the badge that opened it.
   useDismissOutside(dismissRoots, openAgent !== null, closeAgent, () =>
     railRef.current?.querySelector<HTMLElement>(
-      `[data-testid="dock-agent"][data-own="true"][data-agent="${openAgent}"]`
+      `[data-testid="dock-approvals-badge"][data-agent="${openAgent}"]`
     )
   );
   const clearFocus = focus.clear;
@@ -145,14 +191,23 @@ export function ThemeDock({
   }, []);
   useEffect(() => () => gutterRef.current?.(0), []);
 
-  // The transcript dims what the hovered pill does not hold.
+  // The transcript dims what the hovered face or pill does not hold.
   const previewRef = useRef(onPreviewChange);
   previewRef.current = onPreviewChange;
-  const previewIds = column.previewIds;
+  const previewIds = hoverIds ?? column.previewIds;
   useEffect(() => {
     previewRef.current?.(previewIds);
   }, [previewIds]);
   useEffect(() => () => previewRef.current?.(null), []);
+
+  // The outline lights the hovered face's rows, else the filtered face's.
+  const trailRef = useRef(onTrailChange);
+  trailRef.current = onTrailChange;
+  const trailIds = hoverIds ?? whoIds;
+  useEffect(() => {
+    trailRef.current?.(trailIds);
+  }, [trailIds]);
+  useEffect(() => () => trailRef.current?.(null), []);
 
   const approvals: StageFloat | null = openAgent
     ? {
@@ -201,6 +256,7 @@ export function ThemeDock({
             onToggleAgent={(agent) =>
               setOpenAgent((current) => (current === agent ? null : agent))
             }
+            faces={faces}
             onExpand={expand}
           />
         </div>

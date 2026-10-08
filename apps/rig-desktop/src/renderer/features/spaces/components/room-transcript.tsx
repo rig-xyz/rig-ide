@@ -572,6 +572,7 @@ export function RoomTranscript({
   onLoadOlder,
   focus,
   previewIds,
+  trailIds,
   topBar,
   threads,
   readThroughSeq,
@@ -614,6 +615,8 @@ export function RoomTranscript({
    * without the transcript moving. Absent: nothing is dimmed.
    */
   previewIds?: ReadonlySet<string> | null;
+  /** A face in the dock is hovered or spotlit: its messages show in the accent in the outline. */
+  trailIds?: ReadonlySet<string> | null;
   /**
    * The app's bare top bar overlays the 40px above this transcript: the
    * scroll view reaches up beneath it (its first row still starts clear of
@@ -921,7 +924,16 @@ export function RoomTranscript({
     () => (newFromId ? units.findIndex((u) => unitMessages(u).some((m) => m.id === newFromId)) : -1),
     [units, newFromId]
   );
-  const mapEntries = useMemo(() => mapEntriesFor(units, snapshot, ownId), [units, snapshot, ownId]);
+  const baseMapEntries = useMemo(() => mapEntriesFor(units, snapshot, ownId), [units, snapshot, ownId]);
+  const mapEntries = useMemo(() => {
+    if (!trailIds) return baseMapEntries;
+    const litIds = new Set<string>();
+    for (const unit of units) {
+      if (!unitMessages(unit).some((m) => trailIds.has(m.id))) continue;
+      litIds.add(unit.kind === 'message' ? unit.message.id : unit.threadId);
+    }
+    return baseMapEntries.map((entry) => (litIds.has(entry.id) ? { ...entry, lit: true } : entry));
+  }, [baseMapEntries, units, trailIds]);
 
   const agentWorking = Object.values(snapshot.sessionMetaByRun).some(
     (meta) =>

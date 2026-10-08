@@ -8,6 +8,8 @@ import {
   pendingFor,
   railAgents,
   railMembers,
+  sameWho,
+  type DockWho,
   type RailAgent,
   type RailMember,
 } from '../dock-model';
@@ -24,7 +26,11 @@ import { deriveAgentTileState, describeAgentTileState } from './space-rail-statu
  * else (the agent's mark on a square tile, its owner's face on the corner), and at the end a slot for the dock's
  * one toggle (`theme-dock.tsx`), the chevron that opens the pinned panel. The
  * rail hugs what it holds. Your own agents carry a badge with the approvals waiting on
- * you, and open the approvals panel (`dock-approvals.tsx`).
+ * you, and the badge opens the approvals panel (`dock-approvals.tsx`).
+ *
+ * The spotlight: every face is a button. Hovering one dims everyone else's
+ * messages in the transcript, clicking it filters the transcript to them
+ * (`use-dock-focus.tsx`), and the selected face wears an accent ring.
  *
  * The capsule behind it is a shape in the dock's goo layer (`dock-stage.tsx`),
  * not drawn here, and so is the panel's: this is only what sits on top.
@@ -51,11 +57,11 @@ function ListenerMatrix({ state, hearing }: { state: ListenerState; hearing: boo
             data-hearing={hearing ? 'true' : 'false'}
           >
             {/* The medium matrix is 16px, centered in a slot the size of an avatar: the same weight as one. */}
-            <DotMatrix state={state} size="md" label="Listening for themes" />
+            <DotMatrix state={state} size="md" label="Listening for topics" />
           </span>
         }
       />
-      <TooltipContent side="bottom">Listening for themes</TooltipContent>
+      <TooltipContent side="bottom">Listening for topics</TooltipContent>
     </Tooltip>
   );
 }
@@ -127,13 +133,46 @@ function memberLabel({ member, present, typing }: RailMember): string {
   return typing ? `${member.name}, typing` : present ? member.name : `${member.name}, away`;
 }
 
+/** The ring on the face the transcript is filtered to. */
+function Selected({ square = false }: { square?: boolean }) {
+  return (
+    <span
+      className="pointer-events-none absolute -inset-[3px] shadow-[0_0_0_2px_var(--accent)]"
+      style={{ borderRadius: square ? 'calc(var(--radius-card) + 3px)' : '9999px' }}
+      data-testid="dock-face-selected"
+      aria-hidden
+    />
+  );
+}
+
+/** What a face does on hover, focus and click: the spotlight's handlers. */
+export type FaceHandlers = {
+  selected: DockWho | null;
+  onHover: (who: DockWho | null) => void;
+  onToggle: (who: DockWho) => void;
+};
+
+function faceProps(who: DockWho, faces: FaceHandlers) {
+  const leave = () => faces.onHover(null);
+  return {
+    onMouseEnter: () => faces.onHover(who),
+    onMouseLeave: leave,
+    onFocus: () => faces.onHover(who),
+    onBlur: leave,
+    onClick: () => faces.onToggle(who),
+    'aria-pressed': sameWho(faces.selected, who),
+  };
+}
+
 function Members({
   snapshot,
   selfUserId,
+  faces,
   onMore,
 }: {
   snapshot: RoomSnapshot;
   selfUserId: string;
+  faces: FaceHandlers;
   onMore: (() => void) | undefined;
 }) {
   const { shown, more } = railMembers(snapshot, selfUserId);
@@ -142,17 +181,27 @@ function Members({
     <span className="flex items-center gap-[5px]" data-testid="dock-members">
       {shown.map((entry) => {
         const { member, present, typing } = entry;
+        const who: DockWho = { kind: 'person', userId: member.id };
+        const selected = sameWho(faces.selected, who);
+        const state =
+          member.id === selfUserId
+            ? 'You are here'
+            : `${member.name} is ${typing ? 'typing' : present ? 'here' : 'away'}`;
         return (
           <Tooltip key={member.id}>
             <TooltipTrigger
               render={
-                <span
-                  tabIndex={0}
-                  role="img"
+                <button
+                  type="button"
                   aria-label={memberLabel(entry)}
-                  className="relative inline-flex rounded-full transition-transform hover:-translate-y-0.5"
+                  className={cn(
+                    'relative inline-flex rounded-full transition-transform hover:-translate-y-0.5',
+                    FOCUS_RING
+                  )}
                   data-testid="dock-member"
+                  data-member-id={member.id}
                   data-presence={present ? 'here' : 'away'}
+                  {...faceProps(who, faces)}
                 >
                   <span
                     className={cn(
@@ -163,13 +212,12 @@ function Members({
                     <PersonAvatar member={member} size="md" />
                   </span>
                   {typing && <Halo />}
-                </span>
+                  {selected && <Selected />}
+                </button>
               }
             />
             <TooltipContent side="bottom">
-              {member.id === selfUserId
-                ? 'You are here'
-                : `${member.name} is ${present ? 'here' : 'away'}`}
+              {selected ? `${state}. Click to show everyone.` : `${state}. Click to filter.`}
             </TooltipContent>
           </Tooltip>
         );
@@ -186,21 +234,45 @@ function Members({
   );
 }
 
-/** The count of approvals waiting, on the corner of your agent. */
-function ApprovalsBadge({ count }: { count: number }) {
+/**
+ * The count of approvals waiting, on the corner of your agent: a button that
+ * opens the approvals panel. The face itself filters the transcript.
+ */
+function ApprovalsBadge({
+  agent,
+  count,
+  name,
+  open,
+  onToggle,
+}: {
+  agent: AgentKind;
+  count: number;
+  name: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
   return (
     <AnimatePresence>
       {count > 0 && (
-        <motion.span
-          className="pointer-events-none absolute -top-1.5 -right-2 z-10 min-w-[15px] rounded-full bg-accent px-1 text-center font-mono text-2xs leading-[15px] font-semibold text-accent-ink ring-2 ring-[var(--pill-fill)]"
+        <motion.button
+          type="button"
+          onClick={onToggle}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-label={`${count} ${count === 1 ? 'approval' : 'approvals'} waiting for ${name}`}
+          className={cn(
+            'absolute -top-1.5 -right-2 z-10 min-w-[15px] rounded-full bg-accent px-1 text-center font-mono text-2xs leading-[15px] font-semibold text-accent-ink ring-2 ring-[var(--pill-fill)]',
+            FOCUS_RING
+          )}
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
           exit={{ scale: 0 }}
           transition={{ type: 'spring', stiffness: 500, damping: 28 }}
           data-testid="dock-approvals-badge"
+          data-agent={agent}
         >
           {count}
-        </motion.span>
+        </motion.button>
       )}
     </AnimatePresence>
   );
@@ -211,13 +283,15 @@ function AgentTile({
   snapshot,
   pending,
   open,
-  onToggle,
+  faces,
+  onToggleApprovals,
 }: {
   railAgent: RailAgent;
   snapshot: RoomSnapshot;
   pending: number;
   open: boolean;
-  onToggle: () => void;
+  faces: FaceHandlers;
+  onToggleApprovals: () => void;
 }) {
   const owner = snapshot.members.find((m) => m.id === railAgent.owner);
   const ownerName = railAgent.own ? null : personOf(snapshot, railAgent.owner).name;
@@ -229,69 +303,61 @@ function AgentTile({
   const label = describeAgentTileState(state, name, ownerName ?? undefined);
   // Working, the rule the tooltip and the chip share: a running turn that is not waiting on an approval.
   const working = state.kind === 'live' && state.state === 'thinking';
-  const avatar = (
-    <span
-      className={cn(
-        'inline-flex rounded-card transition-[opacity,filter]',
-        !railAgent.active && GREYED
-      )}
-    >
-      <AgentAvatar
-        agent={railAgent.agent}
-        owner={owner}
-        title={null}
-        badgeRingClassName="ring-[var(--pill-fill)]"
-      />
-    </span>
-  );
-  const tile = railAgent.own ? (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-haspopup="dialog"
-      aria-expanded={open}
-      aria-label={
-        pending > 0
-          ? `${name}, ${pending} ${pending === 1 ? 'approval' : 'approvals'} waiting`
-          : working
-            ? `${name}, working`
-            : name
-      }
-      data-testid="dock-agent"
-      data-own="true"
-      data-agent={railAgent.agent}
-      data-state={railAgent.active ? 'active' : 'idle'}
-      className={cn(
-        'relative inline-flex rounded-card transition-transform hover:-translate-y-0.5',
-        FOCUS_RING
-      )}
-    >
-      {avatar}
-      {working && <Halo square />}
-      <ApprovalsBadge count={pending} />
-    </button>
-  ) : (
-    <span
-      tabIndex={0}
-      role="img"
-      aria-label={label}
-      data-testid="dock-agent"
-      data-own="false"
-      data-agent={railAgent.agent}
-      data-state={railAgent.active ? 'active' : 'idle'}
-      className="relative inline-flex rounded-card transition-transform hover:-translate-y-0.5"
-    >
-      {avatar}
-      {working && <Halo square />}
-    </span>
-  );
+  const who: DockWho = { kind: 'agent', owner: railAgent.owner, agent: railAgent.agent };
+  const selected = sameWho(faces.selected, who);
   return (
-    <Tooltip>
-      <TooltipTrigger render={tile} />
-      <TooltipContent side="bottom">
-        {railAgent.own && pending > 0 ? `${label}. Click to review.` : label}
-      </TooltipContent>
-    </Tooltip>
+    <span className="relative inline-flex">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={
+                railAgent.own && pending > 0
+                  ? `${name}, ${pending} ${pending === 1 ? 'approval' : 'approvals'} waiting`
+                  : railAgent.own
+                    ? working
+                      ? `${name}, working`
+                      : name
+                    : label
+              }
+              data-testid="dock-agent"
+              data-own={railAgent.own ? 'true' : 'false'}
+              data-agent={railAgent.agent}
+              data-owner={railAgent.owner}
+              data-state={railAgent.active ? 'active' : 'idle'}
+              className={cn(
+                'relative inline-flex rounded-card transition-transform hover:-translate-y-0.5',
+                FOCUS_RING
+              )}
+              {...faceProps(who, faces)}
+            >
+              <span
+                className={cn(
+                  'inline-flex rounded-card transition-[opacity,filter]',
+                  !railAgent.active && GREYED
+                )}
+              >
+                <AgentAvatar
+                  agent={railAgent.agent}
+                  owner={owner}
+                  title={null}
+                  badgeRingClassName="ring-[var(--pill-fill)]"
+                />
+              </span>
+              {working && <Halo square />}
+              {selected && <Selected square />}
+            </button>
+          }
+        />
+        <TooltipContent side="bottom">
+          {selected ? `${label}. Click to show everyone.` : `${label}. Click to filter.`}
+        </TooltipContent>
+      </Tooltip>
+      {railAgent.own && (
+        <ApprovalsBadge agent={railAgent.agent} count={pending} name={name} open={open} onToggle={onToggleApprovals} />
+      )}
+    </span>
   );
 }
 
@@ -303,6 +369,7 @@ export function DockRail({
   birthing,
   openAgent,
   onToggleAgent,
+  faces,
   onExpand,
 }: {
   snapshot: RoomSnapshot;
@@ -311,8 +378,12 @@ export function DockRail({
   hearing: boolean;
   /** A birth is under way: the listener ripples. */
   birthing: boolean;
+  /** Your agent whose approvals panel is open. */
   openAgent: AgentKind | null;
+  /** Opens or closes your agent's approvals panel (its badge). */
   onToggleAgent: (agent: AgentKind) => void;
+  /** The spotlight: hovering and clicking faces. */
+  faces: FaceHandlers;
   /**
    * Opens the pinned panel at a section ("+N" people goes to People, "+N"
    * agents to the panel as it is). Its presence also leaves a slot at the end
@@ -331,6 +402,7 @@ export function DockRail({
       <Members
         snapshot={snapshot}
         selfUserId={selfUserId}
+        faces={faces}
         onMore={onExpand ? () => onExpand('people') : undefined}
       />
       {agents.length > 0 && (
@@ -344,7 +416,8 @@ export function DockRail({
                 snapshot={snapshot}
                 pending={railAgent.own ? pendingFor(forYou, railAgent.agent) : 0}
                 open={openAgent === railAgent.agent && railAgent.own}
-                onToggle={() => onToggleAgent(railAgent.agent)}
+                faces={faces}
+                onToggleApprovals={() => onToggleAgent(railAgent.agent)}
               />
             ))}
             {moreAgents > 0 && (

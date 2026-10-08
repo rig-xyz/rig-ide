@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
+  dockTasks,
   forYouLine,
+  JUST_FINISHED_MS,
   railAgents,
   railMembers,
   sameFocus,
+  sameWho,
   splitThemes,
+  spotlightFocus,
   themeColor,
+  whoMessageIds,
+  whoName,
 } from './dock-model';
 import type { Approval, Ask } from './for-you';
-import type { RoomTheme } from './themes';
-import type { RoomMember, SessionRunMeta } from './types';
+import type { RoomTheme, RoomThemes } from './themes';
+import type { RoomMember, RoomMessage, SessionEvent, SessionRunMeta } from './types';
 
 const theme = (id: string, count: number, lastSeq: number): RoomTheme => ({
   id,
@@ -169,5 +175,231 @@ describe('sameFocus', () => {
     expect(sameFocus({ kind: 'theme', themeId: 'a' }, { kind: 'theme', themeId: 'a' })).toBe(true);
     expect(sameFocus({ kind: 'theme', themeId: 'a' }, { kind: 'theme', themeId: 'b' })).toBe(false);
     expect(sameFocus({ kind: 'for-you' }, null)).toBe(false);
+  });
+});
+
+// ────────── spotlight ──────────
+
+const message = (id: string, authorId: string, meta: RoomMessage['meta'] = { kind: 'text' }): RoomMessage => ({
+  id,
+  seq: 0,
+  authorId,
+  createdAt: '2026-10-01T10:00:00Z',
+  time: '10:00',
+  meta,
+});
+
+const runMeta = (
+  id: string,
+  owner: string,
+  agent: 'claude' | 'codex',
+  extra: Partial<SessionRunMeta> = {}
+): SessionRunMeta => ({
+  id,
+  owner,
+  agent,
+  model: 'x',
+  title: `Task ${id}`,
+  status: 'running',
+  startedAt: '2026-10-01T10:00:00Z',
+  endedAt: null,
+  ...extra,
+});
+
+describe('sameWho', () => {
+  it('compares a person by id and an agent by owner and kind', () => {
+    expect(sameWho(null, null)).toBe(true);
+    expect(sameWho({ kind: 'person', userId: 'a' }, { kind: 'person', userId: 'a' })).toBe(true);
+    expect(sameWho({ kind: 'person', userId: 'a' }, { kind: 'person', userId: 'b' })).toBe(false);
+    const claude = { kind: 'agent', owner: 'a', agent: 'claude' } as const;
+    expect(sameWho(claude, { ...claude })).toBe(true);
+    expect(sameWho(claude, { ...claude, agent: 'codex' })).toBe(false);
+    expect(sameWho(claude, { kind: 'person', userId: 'a' })).toBe(false);
+    expect(sameWho(claude, null)).toBe(false);
+  });
+});
+
+describe('whoMessageIds', () => {
+  const snapshot = {
+    messages: [
+      message('sam-1', 'sam'),
+      message('maya-ask', 'maya'),
+      message('maya-run', 'maya', { kind: 'session', runId: 'r1', sourceMessageId: 'maya-ask' }),
+      message('maya-codex', 'maya', { kind: 'session', runId: 'r2' }),
+      message('maya-reply', 'maya', {
+        kind: 'comment_mirror',
+        commentId: 'c',
+        path: 'a.md',
+        quote: '',
+        replyFromAgent: 'claude',
+      }),
+      message('sam-2', 'sam'),
+    ],
+    sessionMetaByRun: { r1: runMeta('r1', 'maya', 'claude'), r2: runMeta('r2', 'maya', 'codex') },
+  };
+
+  it("keeps a person's own messages and every run of their agents", () => {
+    expect([...whoMessageIds(snapshot, { kind: 'person', userId: 'sam' })]).toEqual(['sam-1', 'sam-2']);
+    expect([...whoMessageIds(snapshot, { kind: 'person', userId: 'maya' })]).toEqual([
+      'maya-ask',
+      'maya-run',
+      'maya-codex',
+      'maya-reply',
+    ]);
+  });
+
+  it("keeps an agent's runs, the asks that started them and its doc replies, and not its owner's other agent", () => {
+    expect([...whoMessageIds(snapshot, { kind: 'agent', owner: 'maya', agent: 'claude' })].sort()).toEqual([
+      'maya-ask',
+      'maya-reply',
+      'maya-run',
+    ]);
+    expect([...whoMessageIds(snapshot, { kind: 'agent', owner: 'maya', agent: 'codex' })]).toEqual([
+      'maya-codex',
+    ]);
+  });
+});
+
+describe('whoName', () => {
+  const snapshot = {
+    members: [{ id: 'sam', name: 'Sam', email: '', role: 'editor', initial: 'S', status: 'here' }] as RoomMember[],
+    messages: [],
+  };
+  it('says You, a name, or whose agent', () => {
+    expect(whoName(snapshot, { kind: 'person', userId: 'me' }, 'me')).toBe('You');
+    expect(whoName(snapshot, { kind: 'person', userId: 'sam' }, 'me')).toBe('Sam');
+    expect(whoName(snapshot, { kind: 'agent', owner: 'me', agent: 'claude' }, 'me')).toBe('Your Claude');
+    expect(whoName(snapshot, { kind: 'agent', owner: 'sam', agent: 'codex' }, 'me')).toBe("Sam's Codex");
+  });
+});
+
+describe('spotlightFocus', () => {
+  const sam = { who: { kind: 'person', userId: 'sam' } as const, messageIds: new Set(['a', 'b', 'c']) };
+
+  it('is the topic as it is without a face, and the face alone without a topic', () => {
+    const topic = { messageIds: new Set(['a']), key: 't', foldLabel: () => '' };
+    expect(spotlightFocus(topic, null, false)).toBe(topic);
+    expect(spotlightFocus(undefined, null, false)).toBeUndefined();
+    const alone = spotlightFocus(undefined, sam, false)!;
+    expect([...alone.messageIds]).toEqual(['a', 'b', 'c']);
+    expect(alone.key).toBe('person:sam');
+    expect(alone.foldLabel(1)).toBe('1 message from others');
+    expect(alone.foldLabel(3)).toBe('3 messages from others');
+  });
+
+  it('keeps what is in both a topic and the face, and says why the rest is folded', () => {
+    const topic = { messageIds: new Set(['b', 'c', 'd']), key: 'pricing', foldLabel: () => '' };
+    const both = spotlightFocus(topic, sam, false)!;
+    expect([...both.messageIds]).toEqual(['b', 'c']);
+    expect(both.key).toBe('pricing|person:sam');
+    expect(both.foldLabel(2)).toBe('2 messages from others or in other topics');
+  });
+
+  it('narrows For you and its asks to the face too', () => {
+    const forYou = {
+      messageIds: new Set(['a', 'd']),
+      askIds: new Set(['a', 'd']),
+      order: 'asks-first' as const,
+      key: 'for-you',
+      foldLabel: () => '',
+    };
+    const both = spotlightFocus(forYou, sam, true)!;
+    expect([...both.messageIds]).toEqual(['a']);
+    expect([...both.askIds!]).toEqual(['a']);
+    expect(both.order).toBe('asks-first');
+    expect(both.foldLabel(1)).toBe('1 message from others or not waiting on you');
+  });
+});
+
+// ────────── tasks in progress ──────────
+
+describe('dockTasks', () => {
+  const NOW = Date.parse('2026-10-01T10:10:00Z');
+  const themes: RoomThemes = {
+    enabled: true,
+    list: [{ id: 'launch', name: 'Launch', description: '', bornSeq: 1, count: 2, lastSeq: 2 }],
+    themeOf: { s1: { themeId: 'launch', via: 'jev' }, ask3: { themeId: 'launch', via: 'jev' } },
+    cursor: '1',
+  };
+  const step = (kind: string, title: string): SessionEvent[] => [
+    { seq: 1, kind: 'tool_call', payload: { toolCallId: 't', title, kind, status: 'in_progress' } },
+  ];
+  const approval: SessionEvent[] = [
+    { seq: 1, kind: 'tool_call', payload: { toolCallId: 't', title: 'Run tests', kind: 'execute', status: 'pending' } },
+    {
+      seq: 2,
+      kind: 'permission_requested',
+      payload: { requestId: 'p', toolCall: { toolCallId: 't', title: 'Run tests' }, options: [] },
+    },
+  ];
+  const snapshot = {
+    members: [{ id: 'sam', name: 'Sam', email: '', role: 'editor', initial: 'S', status: 'here' }] as RoomMember[],
+    messages: [
+      message('s1', 'me', { kind: 'session', runId: 'r1' }),
+      message('s2', 'sam', { kind: 'session', runId: 'r2' }),
+      message('s3', 'sam', { kind: 'session', runId: 'r3', sourceMessageId: 'ask3' }),
+      message('s4', 'me', { kind: 'session', runId: 'r4' }),
+      message('s5', 'me', { kind: 'session', runId: 'r5' }),
+    ],
+    sessionMetaByRun: {
+      r1: runMeta('r1', 'me', 'claude', { startedAt: '2026-10-01T10:07:30Z' }),
+      r2: runMeta('r2', 'sam', 'codex', { startedAt: '2026-10-01T10:05:00Z' }),
+      r3: runMeta('r3', 'sam', 'claude', {
+        status: 'done',
+        startedAt: '2026-10-01T10:01:00Z',
+        endedAt: '2026-10-01T10:08:00Z',
+      }),
+      r4: runMeta('r4', 'me', 'codex', {
+        status: 'done',
+        startedAt: '2026-09-30T10:00:00Z',
+        endedAt: new Date(NOW - JUST_FINISHED_MS - 1).toISOString(),
+      }),
+      r5: runMeta('r5', 'me', 'codex', {
+        status: 'failed',
+        startedAt: '2026-10-01T10:09:00Z',
+        endedAt: '2026-10-01T10:09:30Z',
+      }),
+    },
+    sessionEventsByRun: { r1: step('read', 'Read notes.md'), r2: approval },
+  };
+
+  it('lists running, waiting and just finished runs, oldest first, and drops older finished ones', () => {
+    const tasks = dockTasks(snapshot, themes, 'me', NOW);
+    expect(tasks.map((t) => `${t.runId}:${t.state}`)).toEqual([
+      'r3:done',
+      'r2:waiting',
+      'r1:working',
+      'r5:done',
+    ]);
+  });
+
+  it('says what each is doing, with its dot matrix and time', () => {
+    const byId = Object.fromEntries(dockTasks(snapshot, themes, 'me', NOW).map((t) => [t.runId, t]));
+    expect(byId.r1).toMatchObject({ matrix: 'reading', step: 'Read notes.md', status: '2m 30s', own: true });
+    expect(byId.r2).toMatchObject({ matrix: 'waiting', step: 'Waiting on Sam', status: 'Waiting on Sam' });
+    expect(byId.r3).toMatchObject({ matrix: 'done', status: 'Done' });
+    expect(byId.r5).toMatchObject({ matrix: 'failed', status: 'Failed' });
+  });
+
+  it('places a task under the topic of its run or its ask, and none while the relay holds both', () => {
+    const byId = Object.fromEntries(dockTasks(snapshot, themes, 'me', NOW).map((t) => [t.runId, t]));
+    expect(byId.r1!.themeId).toBe('launch');
+    expect(byId.r3!.themeId).toBe('launch');
+    expect(byId.r2!.themeId).toBeNull();
+    expect(dockTasks(snapshot, null, 'me', NOW).every((t) => t.themeId === null)).toBe(true);
+  });
+
+  it("hides the step of someone else's run whose details the Room only sees as an answer", () => {
+    const hidden = {
+      ...snapshot,
+      sessionEventsByRun: {
+        r2: [
+          { seq: 1, kind: 'run_privacy', payload: { level: 'answer' } },
+          ...step('read', 'Read secrets.md').map((e) => ({ ...e, seq: 2 })),
+        ],
+      },
+    };
+    const r2 = dockTasks(hidden, themes, 'me', NOW).find((t) => t.runId === 'r2')!;
+    expect(r2.step).not.toContain('secrets');
   });
 });

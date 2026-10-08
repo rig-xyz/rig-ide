@@ -37,6 +37,14 @@ describe('computeLayout: strictly left, ragged right', () => {
     expect(layout.width).toBe(RAIL.w);
   });
 
+  it('sits an indented entry in from the column edge, a task row under its topic', () => {
+    const layout = computeLayout(RAIL, [pill('topic', 120), pill('task', 90, { indent: 14 })]);
+    const edge = (id: string) => layout.items[id]!.right + layout.items[id]!.w;
+    expect(edge('topic')).toBe(RAIL.w);
+    expect(edge('task')).toBe(RAIL.w - 14);
+    expect(layout.items.task!.top).toBe(layout.items.topic!.top + 30 + GAP);
+  });
+
   it('shifts only the one box that would overflow the right edge, and the others stay put', () => {
     const narrow = computeLayout(RAIL, [pill('a', 80), pill('b', 120)]);
     const wide = computeLayout(RAIL, [
