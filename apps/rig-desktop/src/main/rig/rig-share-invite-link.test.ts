@@ -144,6 +144,24 @@ describe('acceptInviteLink', () => {
     }
   });
 
+  it('keeps both addresses on an email invite opened by the wrong account, and names them', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(200, ACTIVE_PREVIEW))
+      .mockResolvedValueOnce(
+        json(400, { error: 'invite_invalid', reason: 'email_mismatch', invitedHint: 'h•••@gmail.com', signedInAs: 'x@y.com' })
+      );
+    expect(await rigShareController.acceptInviteLink({ link: LINK })).toEqual({
+      success: false,
+      error: {
+        kind: 'wrongAccount',
+        status: 400,
+        message: "This invite is for h•••@gmail.com. You're signed in as x@y.com.",
+        invitedHint: 'h•••@gmail.com',
+        signedInAs: 'x@y.com',
+      },
+    });
+  });
+
   it('says notFound for an unknown secret', async () => {
     fetchMock.mockResolvedValueOnce(json(404, { error: 'not_found' }));
     expect(await rigShareController.acceptInviteLink({ link: LINK })).toMatchObject({
@@ -199,7 +217,7 @@ describe('previewInviteLink', () => {
 
     const result = await rigShareController.previewInviteLink({ link: LINK });
 
-    expect(result).toEqual({ success: true, data: { spaceName: 'growth', inviterName: 'Ada' } });
+    expect(result).toEqual({ success: true, data: { spaceName: 'growth', inviterName: 'Ada', emailHint: null } });
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe(`${RELAY}/v1/invites/${SECRET}`);
     expect(init.headers.authorization).toBeUndefined();
@@ -212,12 +230,20 @@ describe('previewInviteLink', () => {
     );
     expect(await rigShareController.previewInviteLink({ link: LINK })).toEqual({
       success: true,
-      data: { spaceName: 'growth', inviterName: 'ada@example.com' },
+      data: { spaceName: 'growth', inviterName: 'ada@example.com', emailHint: null },
     });
     fetchMock.mockResolvedValueOnce(json(200, { status: 'active', binding: { name: null }, inviter: {} }));
     expect(await rigShareController.previewInviteLink({ link: LINK })).toEqual({
       success: true,
-      data: { spaceName: null, inviterName: null },
+      data: { spaceName: null, inviterName: null, emailHint: null },
+    });
+  });
+
+  it('says who an email invite is for, masked as the relay sent it', async () => {
+    fetchMock.mockResolvedValueOnce(json(200, { ...ACTIVE_PREVIEW, emailHint: 'h•••@gmail.com' }));
+    expect(await rigShareController.previewInviteLink({ link: LINK })).toEqual({
+      success: true,
+      data: { spaceName: 'growth', inviterName: null, emailHint: 'h•••@gmail.com' },
     });
   });
 

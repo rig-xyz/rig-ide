@@ -87,8 +87,8 @@ type Phase =
   | { kind: 'ready' }
   | { kind: 'joining' }
   | { kind: 'signIn' }
-  /** Final for this link: only dismissable. */
-  | { kind: 'error'; message: string };
+  /** Final for this link: only dismissable, or (`wrongAccount`) tried again from another account. */
+  | { kind: 'error'; message: string; wrongAccount?: boolean };
 
 function JoinConfirm({
   link,
@@ -139,7 +139,7 @@ function JoinConfirm({
         setPhase(
           joined.error.kind === 'notSignedIn'
             ? { kind: 'signIn' }
-            : { kind: 'error', message: joined.error.message }
+            : { kind: 'error', message: joined.error.message, wrongAccount: joined.error.kind === 'wrongAccount' }
         );
         return;
       }
@@ -184,6 +184,18 @@ function JoinConfirm({
     };
   }, []);
 
+  // The invite is for another address: sign this computer out, sign in as
+  // the right account, and the join carries on from there.
+  const signInAnother = async () => {
+    const out = await rpc.rig.auth.logout().catch(() => null);
+    if (!out?.success) {
+      setPhase({ kind: 'error', message: "Couldn't sign out of this account. Try again from Settings." });
+      return;
+    }
+    setPhase({ kind: 'signIn' });
+    void signIn.signIn();
+  };
+
   const title =
     phase.kind === 'error'
       ? "Couldn't join"
@@ -206,6 +218,11 @@ function JoinConfirm({
           You opened an invite link. Join only if you expected it.
         </p>
       )}
+      {(phase.kind === 'ready' || phase.kind === 'joining') && preview?.emailHint && (
+        <p className="text-xs text-text-muted" data-testid="deep-link-invited-email">
+          This invite is for {preview.emailHint}.
+        </p>
+      )}
       {phase.kind === 'signIn' && (
         <p className="text-sm text-text-secondary">
           {signIn.phase === 'waiting'
@@ -217,12 +234,24 @@ function JoinConfirm({
         <p className="text-xs text-danger">{signIn.error}</p>
       )}
       {phase.kind === 'error' && <p className="text-sm text-danger">{phase.message}</p>}
+      {phase.kind === 'error' && phase.wrongAccount && (
+        <p className="text-xs text-text-muted">
+          Sign in with the account it was sent to. If that address is yours too, add it to your Rig account, then try again.
+        </p>
+      )}
 
       <div className="flex justify-end gap-2 pt-1">
         {phase.kind === 'error' ? (
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            Close
-          </Button>
+          <>
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              Close
+            </Button>
+            {phase.wrongAccount && (
+              <Button size="sm" onClick={() => void signInAnother()} data-testid="deep-link-sign-in-another">
+                Sign in with another account
+              </Button>
+            )}
+          </>
         ) : phase.kind === 'signIn' ? (
           <>
             <Button variant="ghost" size="sm" onClick={onClose}>
