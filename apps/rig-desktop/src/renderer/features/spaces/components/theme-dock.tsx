@@ -63,6 +63,7 @@ export function ThemeDock({
   onPreviewChange,
   onTrailChange,
   onJumpToRun,
+  readKey,
   className,
 }: {
   /** The Room's snapshot with your pending sends in it. */
@@ -103,6 +104,8 @@ export function ThemeDock({
   onTrailChange?: (ids: ReadonlySet<string> | null) => void;
   /** A task row was clicked: scroll the transcript to its run's card. */
   onJumpToRun?: (runId: string) => void;
+  /** The space's binding, for which finished runs were seen before this launch (`run-seen.ts`). */
+  readKey?: string;
   /** Where the dock sits in its parent. */
   className?: string;
 }) {
@@ -147,6 +150,7 @@ export function ThemeDock({
     hoverWho,
     onClearWho: focus.clearWho,
     onJumpToRun,
+    readKey,
     freshThemeIds: signals.freshThemeIds,
     bornIds: signals.bornIds,
     swell: signals.swell,

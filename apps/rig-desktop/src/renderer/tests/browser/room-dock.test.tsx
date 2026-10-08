@@ -19,6 +19,7 @@ import {
 } from '@renderer/features/spaces/themes';
 import type { RoomMessage, RoomSnapshot, SessionEvent } from '@renderer/features/spaces/types';
 import { requestRoomTheme } from '@renderer/features/spaces/room-theme-request';
+import { markRunSeen, resetRunSeenForTests } from '@renderer/features/spaces/run-seen';
 import { useDockFocus } from '@renderer/features/spaces/use-dock-focus';
 import { DOCK_TIMING } from '@renderer/features/spaces/use-dock-signals';
 import { useForYou } from '@renderer/features/spaces/use-for-you';
@@ -1651,7 +1652,20 @@ describe('Room dock', () => {
 
   describe('tasks in progress', () => {
     const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
-    /** Your Claude waiting on you (Launch), Sam's Codex reading with no topic yet, Maya's Claude just done (Pricing), and an old run. */
+    // A finished card on screen in a shown window is a finished run seen
+    // (`run-seen.ts`). These tests hide the window so a finished row stays
+    // put while they look at it; the old run r4 was seen earlier.
+    const setVisibility = (state: 'visible' | 'hidden') =>
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+    beforeEach(() => {
+      resetRunSeenForTests();
+      markRunSeen('r4');
+      setVisibility('hidden');
+    });
+    afterEach(() => {
+      delete (document as { visibilityState?: unknown }).visibilityState;
+    });
+    /** Your Claude waiting on you (Launch), Sam's Codex reading with no topic yet, Maya's Claude done and not seen yet (Pricing), and an old run seen earlier. */
     const busy = () =>
       room({
         messages: [
@@ -1782,6 +1796,40 @@ describe('Room dock', () => {
       await sleep(120);
       expect(order()).toEqual(['for-you', 'unsorted', 'task:r2', 'theme:launch', 'task:r1', 'more', 'task:r3']);
       expect(task('r1').dataset.topicId).toBeUndefined();
+    });
+
+    it('keeps a finished task however long ago it ended, until it has been seen', async () => {
+      resetRunSeenForTests();
+      await show(busy());
+      expect(task('r4').dataset.state).toBe('done');
+      expect(task('r3').dataset.state).toBe('done');
+    });
+
+    it('lets a finished task go once its card is on screen in a shown window', async () => {
+      await show(busy());
+      expect(task('r3')).not.toBeNull();
+      setVisibility('visible');
+      await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+      await until(() => expect(task('r3')).toBeNull());
+      // Running ones stay.
+      expect(task('r1')).not.toBeNull();
+      expect(task('r2')).not.toBeNull();
+    });
+
+    it('lets a finished task go when its row is clicked', async () => {
+      await show(busy());
+      await act(async () => click(task('r3')));
+      await until(() => expect(task('r3')).toBeNull());
+    });
+
+    it('lets a task watched as it finishes go at once', async () => {
+      setVisibility('visible');
+      const running = busy();
+      running.sessionMetaByRun.r3 = { ...running.sessionMetaByRun.r3!, status: 'running', endedAt: null };
+      await show(running);
+      expect(task('r3').dataset.state).toBe('working');
+      await show(busy());
+      await until(() => expect(task('r3')).toBeNull());
     });
 
     it("shows only the spotlit face's tasks", async () => {

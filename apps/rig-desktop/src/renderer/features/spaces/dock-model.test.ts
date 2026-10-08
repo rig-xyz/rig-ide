@@ -3,7 +3,6 @@ import {
   dockTasks,
   placeTasks,
   forYouLine,
-  JUST_FINISHED_MS,
   railAgents,
   railMembers,
   sameFocus,
@@ -353,7 +352,7 @@ describe('dockTasks', () => {
       r4: runMeta('r4', 'me', 'codex', {
         status: 'done',
         startedAt: '2026-09-30T10:00:00Z',
-        endedAt: new Date(NOW - JUST_FINISHED_MS - 1).toISOString(),
+        endedAt: new Date(NOW - 60 * 60 * 1000).toISOString(),
       }),
       r5: runMeta('r5', 'me', 'codex', {
         status: 'failed',
@@ -364,8 +363,11 @@ describe('dockTasks', () => {
     sessionEventsByRun: { r1: step('read', 'Read notes.md'), r2: approval },
   };
 
-  it('lists running, waiting and just finished runs, oldest first, and drops older finished ones', () => {
-    const tasks = dockTasks(snapshot, themes, 'me', NOW);
+  // r4 finished and was seen; r3 and r5 finished and weren't, however long ago.
+  const seenOnly = (...ids: string[]) => (run: { runId: string }) => ids.includes(run.runId);
+
+  it('lists running, waiting and finished runs not yet seen, oldest first, and drops seen ones', () => {
+    const tasks = dockTasks(snapshot, themes, 'me', NOW, seenOnly('r4'));
     expect(tasks.map((t) => `${t.runId}:${t.state}`)).toEqual([
       'r3:done',
       'r2:waiting',
@@ -374,8 +376,20 @@ describe('dockTasks', () => {
     ]);
   });
 
+  it('keeps a finished run that was never seen, however long ago it ended, and asks with its seq and end', () => {
+    const asked: unknown[] = [];
+    const tasks = dockTasks(snapshot, themes, 'me', NOW, (run) => {
+      asked.push(run);
+      return false;
+    });
+    expect(tasks.map((t) => t.runId)).toContain('r4');
+    expect(asked).toContainEqual({ runId: 'r3', seq: snapshot.messages[2]!.seq, endedAt: Date.parse('2026-10-01T10:08:00Z') });
+    // A running one is never asked about.
+    expect(asked.some((r) => (r as { runId: string }).runId === 'r1')).toBe(false);
+  });
+
   it('says what each is doing, with its dot matrix and time', () => {
-    const byId = Object.fromEntries(dockTasks(snapshot, themes, 'me', NOW).map((t) => [t.runId, t]));
+    const byId = Object.fromEntries(dockTasks(snapshot, themes, 'me', NOW, seenOnly('r4')).map((t) => [t.runId, t]));
     expect(byId.r1).toMatchObject({ matrix: 'reading', step: 'Read notes.md', status: '2m 30s', own: true });
     expect(byId.r2).toMatchObject({ matrix: 'waiting', step: 'Waiting on Sam', status: 'Waiting on Sam' });
     expect(byId.r3).toMatchObject({ matrix: 'done', status: 'Done' });
@@ -383,11 +397,11 @@ describe('dockTasks', () => {
   });
 
   it('places a task under the topic of its run or its ask, and none while the relay holds both', () => {
-    const byId = Object.fromEntries(dockTasks(snapshot, themes, 'me', NOW).map((t) => [t.runId, t]));
+    const byId = Object.fromEntries(dockTasks(snapshot, themes, 'me', NOW, seenOnly('r4')).map((t) => [t.runId, t]));
     expect(byId.r1!.themeId).toBe('launch');
     expect(byId.r3!.themeId).toBe('launch');
     expect(byId.r2!.themeId).toBeNull();
-    expect(dockTasks(snapshot, null, 'me', NOW).every((t) => t.themeId === null)).toBe(true);
+    expect(dockTasks(snapshot, null, 'me', NOW, seenOnly('r4')).every((t) => t.themeId === null)).toBe(true);
   });
 
   it("hides the step of someone else's run whose details the Room only sees as an answer", () => {
@@ -400,7 +414,7 @@ describe('dockTasks', () => {
         ],
       },
     };
-    const r2 = dockTasks(hidden, themes, 'me', NOW).find((t) => t.runId === 'r2')!;
+    const r2 = dockTasks(hidden, themes, 'me', NOW, seenOnly('r4')).find((t) => t.runId === 'r2')!;
     expect(r2.step).not.toContain('secrets');
   });
 });

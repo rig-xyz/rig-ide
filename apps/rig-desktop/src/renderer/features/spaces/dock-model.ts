@@ -331,9 +331,6 @@ export function whoName(
 
 // ────────── tasks in progress ──────────
 
-/** A finished run stays in the dock this long, as "Done". */
-export const JUST_FINISHED_MS = 5 * 60 * 1000;
-
 const STEP_MATRIX: Record<string, DotMatrixState> = {
   read: 'reading',
   fetch: 'reading',
@@ -366,7 +363,8 @@ export type DockTask = {
 
 /**
  * The agent runs to show in the dock: working, waiting on an approval, or
- * finished in the last few minutes, oldest first. Each sits under its topic;
+ * finished and not yet seen (`finishedSeen`, from `run-seen.ts`), oldest
+ * first. Each sits under its topic;
  * the relay holds an agent ask until its run ends (room-themes-spec.md §3.3),
  * so a running task usually has none yet.
  */
@@ -377,7 +375,9 @@ export function dockTasks(
   >,
   themes: RoomThemes | null | undefined,
   selfUserId: string,
-  now: number
+  now: number,
+  /** A finished run's row goes once you've seen it. */
+  finishedSeen: (run: { runId: string; seq: number; endedAt: number }) => boolean
 ): DockTask[] {
   const tasks: Array<DockTask & { at: number }> = [];
   for (const message of snapshot.messages) {
@@ -410,8 +410,9 @@ export function dockTasks(
           : (card.currentStep?.title ?? 'Thinking');
       label = pending ? waitingOn : formatElapsed(now - startedAt);
     } else {
-      const endedAt = meta.endedAt ? Date.parse(meta.endedAt) : NaN;
-      if (Number.isNaN(endedAt) || now - endedAt > JUST_FINISHED_MS) continue;
+      const parsed = meta.endedAt ? Date.parse(meta.endedAt) : NaN;
+      const endedAt = Number.isNaN(parsed) ? startedAt : parsed;
+      if (finishedSeen({ runId: meta.id, seq: message.seq, endedAt })) continue;
       state = 'done';
       matrix = status === 'failed' ? 'failed' : status === 'stopped' ? 'stopped' : 'done';
       label = status === 'failed' ? 'Failed' : status === 'stopped' ? 'Stopped' : 'Done';
@@ -438,6 +439,21 @@ export function dockTasks(
   }
   tasks.sort((a, b) => a.at - b.at || a.runId.localeCompare(b.runId));
   return tasks.map(({ at: _at, ...task }) => task);
+}
+
+/** The finished runs' cards in the transcript: message id to run id. */
+export function finishedRunsByMessage(
+  snapshot: Pick<RoomSnapshot, 'messages' | 'sessionMetaByRun' | 'sessionEventsByRun' | 'sessionSummaryByRun'>
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const message of snapshot.messages) {
+    if (message.meta.kind !== 'session') continue;
+    const meta = snapshot.sessionMetaByRun[message.meta.runId];
+    if (!meta) continue;
+    const status = effectiveRunStatus(meta.status, runCard(snapshot, meta.id));
+    if (status !== 'running' && status !== 'waiting') out.set(message.id, meta.id);
+  }
+  return out;
 }
 
 /**

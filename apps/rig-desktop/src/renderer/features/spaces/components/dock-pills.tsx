@@ -30,6 +30,7 @@ import type { Phase } from '../dock-layout';
 import { themesWithForYou, type ForYou } from '../for-you';
 import type { RoomTheme, RoomThemes } from '../themes';
 import { personOf } from '../person-identity';
+import { finishedRunSeen, markRunSeen, useRunSeenVersion } from '../run-seen';
 import type { RoomSnapshot } from '../types';
 import { DOCK_TIMING, FOR_YOU_ID, type DockSwell } from '../use-dock-signals';
 import { useDismissOutside } from './dock-approvals';
@@ -729,6 +730,8 @@ export type PillColumnInput = {
   onClearWho?: () => void;
   /** A task row was clicked. */
   onJumpToRun?: (runId: string) => void;
+  /** The space's binding: its read markers say which runs ended before this launch were already seen. */
+  readKey?: string;
 };
 
 export type PillColumn = {
@@ -756,6 +759,7 @@ export function usePillColumn({
   hoverWho = null,
   onClearWho,
   onJumpToRun,
+  readKey,
 }: PillColumnInput): PillColumn {
   const reduced = useReducedMotion() ?? false;
   const [hovered, setHovered] = useState<string | null>(null);
@@ -782,13 +786,15 @@ export function usePillColumn({
   // Tasks in progress, the spotlit face's only while there is one.
   const [hasTasks, setHasTasks] = useState(false);
   const now = useTaskClock(hasTasks);
+  const seenVersion = useRunSeenVersion();
   const tasks = useMemo(() => {
-    const all = dockTasks(snapshot, themes, selfUserId, now);
+    void seenVersion;
+    const all = dockTasks(snapshot, themes, selfUserId, now, (run) => finishedRunSeen(readKey, run));
     if (!who) return all;
     return all.filter((t) =>
       who.kind === 'person' ? t.owner === who.userId : t.owner === who.owner && t.agent === who.agent
     );
-  }, [snapshot, themes, selfUserId, now, who]);
+  }, [snapshot, themes, selfUserId, now, who, readKey, seenVersion]);
   if (hasTasks !== tasks.length > 0) setHasTasks(tasks.length > 0);
 
   // While a face is spotlit, each pill counts its messages.
@@ -870,7 +876,15 @@ export function usePillColumn({
             task={task}
             snapshot={snapshot}
             lit={lit}
-            onJump={onJumpToRun ? () => onJumpToRun(task.runId) : undefined}
+            onJump={
+              onJumpToRun
+                ? () => {
+                    // Jumping to a finished run's answer is seeing it: its row goes.
+                    if (task.state === 'done') markRunSeen(task.runId);
+                    onJumpToRun(task.runId);
+                  }
+                : undefined
+            }
             topic={topic}
             compact={narrow}
           />

@@ -99,6 +99,23 @@ export function readSpaceMarker(bindingId: string): SpaceReadMarker {
   return { lastSeenSeq: readLastSeen(bindingId), openedAt: readOpenedAt(bindingId) };
 }
 
+/** Every space's markers on this computer, by binding id. Empty when storage can't be read. */
+export function readAllSpaceMarkers(): Map<string, SpaceReadMarker> {
+  const out = new Map<string, SpaceReadMarker>();
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      const prefix = key?.startsWith(LAST_SEEN_PREFIX) ? LAST_SEEN_PREFIX : key?.startsWith(OPENED_AT_PREFIX) ? OPENED_AT_PREFIX : null;
+      if (!key || !prefix) continue;
+      const bindingId = key.slice(prefix.length);
+      if (!out.has(bindingId)) out.set(bindingId, readSpaceMarker(bindingId));
+    }
+  } catch {
+    // Storage unavailable: no markers.
+  }
+  return out;
+}
+
 function onStorage(event: StorageEvent): void {
   if (event.key?.startsWith(LAST_SEEN_PREFIX) || event.key?.startsWith(OPENED_AT_PREFIX)) notify();
 }

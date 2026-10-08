@@ -1,12 +1,14 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { ArrowDown, ChevronDown, ChevronUp } from 'lucide-react';
-import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { dayKey, dayStart, formatDayLabel } from '@renderer/lib/time-format';
 import type { ConnectResult, GlobalServer } from '@shared/spaces/connectors';
 import { effectiveRunStatus, runCard } from '../projection';
+import { finishedRunsByMessage } from '../dock-model';
 import { markReadThrough, readLastSeen } from '../room-read-marker';
+import { markRunSeen } from '../run-seen';
 import type { SearchPlan } from '../chat-search';
 import { clearSearchMatches, paintSearchMatches } from '../search-highlight';
 import type { ThreadSummary } from '../threads';
@@ -651,6 +653,45 @@ export function RoomTranscript({
   const [pinned, setPinned] = useState(true);
   const [unseen, setUnseen] = useState(0);
   const reducedMotion = useReducedMotion();
+
+  // A finished run's card on screen is a finished run seen: its dock row
+  // goes (`run-seen.ts`). Checked as cards scroll into view, as runs end
+  // (a card watched as it ends counts at once), and when the window shows.
+  const onScreenIds = useRef(new Set<string>());
+  const finishedRuns = useMemo(() => finishedRunsByMessage(snapshot), [snapshot]);
+  const finishedRunsRef = useRef(finishedRuns);
+  finishedRunsRef.current = finishedRuns;
+  const markOnScreenRunsSeen = useCallback(() => {
+    if (document.visibilityState !== 'visible') return;
+    for (const id of onScreenIds.current) {
+      const runId = finishedRunsRef.current.get(id);
+      if (runId) markRunSeen(runId);
+    }
+  }, []);
+  useEffect(() => markOnScreenRunsSeen(), [finishedRuns, markOnScreenRunsSeen]);
+  useEffect(() => {
+    document.addEventListener('visibilitychange', markOnScreenRunsSeen);
+    return () => document.removeEventListener('visibilitychange', markOnScreenRunsSeen);
+  }, [markOnScreenRunsSeen]);
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const id = (entry.target as HTMLElement).dataset.messageId;
+          if (!id) continue;
+          if (entry.isIntersecting) onScreenIds.current.add(id);
+          else onScreenIds.current.delete(id);
+        }
+        markOnScreenRunsSeen();
+      },
+      { root }
+    );
+    onScreenIds.current.clear();
+    for (const el of root.querySelectorAll<HTMLElement>('[data-message-id]')) observer.observe(el);
+    return () => observer.disconnect();
+  }, [snapshot.messages, markOnScreenRunsSeen]);
 
   // Calm Room open: every message id already here the moment this transcript
   // first mounts (a full, already-loaded snapshot — see `RelayRoomSource`'s

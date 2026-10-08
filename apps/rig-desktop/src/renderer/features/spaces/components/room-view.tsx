@@ -1935,6 +1935,7 @@ export function RoomView({
                       onPreviewChange={setDockPreview}
                       onTrailChange={setDockTrail}
                       onJumpToRun={jumpToRun}
+                      readKey={source instanceof RelayRoomSource ? bindingId : undefined}
                       className="absolute top-[52px] right-4"
                     />
                   )
@@ -1954,6 +1955,7 @@ export function RoomView({
             onPreviewChange={setDockPreview}
             onTrailChange={setDockTrail}
             onJumpToRun={jumpToRun}
+            readKey={source instanceof RelayRoomSource ? bindingId : undefined}
             className="absolute top-3 right-4"
           />
         ) : (
