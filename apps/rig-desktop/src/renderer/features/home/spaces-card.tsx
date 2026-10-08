@@ -644,14 +644,9 @@ function SpaceRow({
     <div
       className={cn(
         'group relative flex items-center gap-2.5 rounded-control px-2 py-2',
-        isHighlighted
-          ? 'bg-accent-subtle transition-colors'
-          : weight === 'needs'
-            ? 'bg-accent/6 hover:bg-accent/10 transition-colors'
-            : 'glass-hover',
-        // Needs you: a short accent bar on the left edge.
-        weight === 'needs' &&
-          "before:bg-accent before:absolute before:top-[7px] before:bottom-[7px] before:-left-px before:w-[3px] before:rounded-full before:content-['']",
+        // Weight comes from the name, the line and the count, not from the
+        // row's background: a tinted or barred row reads as selected.
+        isHighlighted ? 'bg-accent-subtle transition-colors' : 'glass-hover',
         grouping?.dragging && 'opacity-50'
       )}
       data-testid="space-row"
@@ -790,7 +785,11 @@ function SpaceRow({
       <ReasonFaces faces={faces} />
       {count && (
         <span
-          className="bg-accent text-accent-ink flex h-[18px] min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 font-mono text-2xs font-medium tabular-nums"
+          className={cn(
+            'flex h-[18px] min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 font-mono text-2xs font-medium tabular-nums',
+            // Accent only when it's for you; plain unread stays neutral.
+            weight === 'needs' ? 'bg-accent text-accent-ink' : 'bg-bg-3 text-text-secondary'
+          )}
           data-testid="space-row-count"
         >
           {count}
