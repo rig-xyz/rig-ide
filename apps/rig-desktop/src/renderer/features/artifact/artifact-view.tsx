@@ -3,11 +3,13 @@ import {
   Code as CodeIcon,
   Eye,
   GitMerge,
+  Globe,
   Loader2,
   MessageSquare,
   Sparkles,
 } from 'lucide-react';
 import { getSearchQuery, openSearchPanel, SearchQuery, searchPanelOpen, setSearchQuery } from '@codemirror/search';
+import { EditorView } from '@codemirror/view';
 import { observer } from 'mobx-react-lite';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { commentDecorations } from '@renderer/features/docs/comments/comment-decorations';
@@ -31,6 +33,7 @@ import { PaintbrushPreviewSweep } from '@renderer/features/docs/paintbrush/paint
 import { PreviewCommentSelectionButton } from '@renderer/features/docs/preview/preview-comment-selection';
 import { ReadingFindBar, type ReadingFind } from '@renderer/features/docs/preview/reading-find-bar';
 import { usePreviewComments } from '@renderer/features/docs/preview/use-preview-comments';
+import { PageView } from '@renderer/features/pages/page-view';
 import { cmdFTarget, CmdFRouteContext, focusOf, isCmdF } from '@renderer/features/shell/cmd-f-target';
 import { archiveEntry } from '@renderer/features/workspace/file-actions';
 import { requestOpenFile } from '@renderer/features/workspace/open-file-request';
@@ -38,16 +41,18 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/toolti
 import { cn } from '@renderer/lib/utils';
 import { conflictCopyOriginal } from '@shared/rig/conflict-copies';
 import { classifyEntryCategory, relPathFromRoot } from '@shared/rig/file-navigator-categories';
+import { rigFileUrl } from '@shared/spaces/rig-file';
 import { breadcrumbSegments, type BreadcrumbSegment } from './breadcrumb';
 import type { EditorLanguage } from './file-type';
 import { ImageArtifact } from './image-artifact';
 import { PdfArtifact } from './pdf-artifact';
-import { getPreviewMode, setPreviewMode, type PreviewMode } from './preview-mode-memory';
+import { getPreviewMode, rememberedPreviewMode, setPreviewMode, type PreviewMode } from './preview-mode-memory';
 import { PreviewPane, type PreviewHandle } from './preview-pane';
 import { FileOptionsButton } from './file-options-menu';
 import { ShareButton } from './share-popover';
 import { UnsupportedArtifact } from './unsupported-artifact';
 import { useFileType } from './use-file-type';
+import { requestView, useViewRequest, type ViewRequest } from './view-request';
 
 /**
  * The document-level view (`docs/collab-pivot-spec.md` §4.3): the living
@@ -123,6 +128,7 @@ export const ArtifactView = observer(function ArtifactView({
         onNavigateFolder={onNavigateFolder}
         fileOptions={fileOptions}
         banner={conflictBanner}
+        bindingId={bindingId ?? null}
       />
     );
   }
@@ -301,17 +307,23 @@ const SaveStatus = observer(function SaveStatus({ resource }: { resource: DocTab
  * `radiogroup`/`radio` pair that rests on the current mode's icon and opens
  * on hover, rather than inventing a second toggle visual language.
  */
+const MODE_SEGMENTS: Record<PreviewMode, { label: string; Icon: typeof Eye }> = {
+  preview: { label: 'Preview', Icon: Eye },
+  browser: { label: 'Browser', Icon: Globe },
+  edit: { label: 'Edit', Icon: CodeIcon },
+};
+
 function PreviewModeToggle({
   mode,
+  modes,
   onChange,
 }: {
   mode: PreviewMode;
+  /** The modes this file has, in order: Preview and Edit for markdown, Browser and Edit for html. */
+  modes: readonly PreviewMode[];
   onChange: (next: PreviewMode) => void;
 }) {
-  const segments: { value: PreviewMode; label: string; Icon: typeof Eye }[] = [
-    { value: 'preview', label: 'Preview', Icon: Eye },
-    { value: 'edit', label: 'Edit', Icon: CodeIcon },
-  ];
+  const segments = modes.map((value) => ({ value, ...MODE_SEGMENTS[value] }));
   // Same treatment as the top bar's layout switch: at rest just the current
   // mode's icon, no frame; the other slides out on its left on hover or
   // keyboard focus, and the current one never moves.
@@ -398,6 +410,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   onNavigateFolder,
   fileOptions,
   banner,
+  bindingId,
 }: {
   root: string;
   rootId: string;
@@ -413,6 +426,8 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   fileOptions: React.ReactNode;
   /** A line under the title bar (a conflict copy's). */
   banner?: React.ReactNode;
+  /** The space or rig the file is in: an html file opens in Browser mode through it. */
+  bindingId?: string | null;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<PreviewHandle | null>(null);
@@ -437,9 +452,16 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // module for one, so its render path stays byte-for-byte what it was
   // before this file existed.
   const isMarkdown = language === 'markdown';
-  const [mode, setModeState] = useState<PreviewMode>(() =>
-    isMarkdown ? getPreviewMode(path) : 'edit'
-  );
+  // An html file in a space or synced rig can also be seen as a working
+  // page: Browser, next to Edit. It opens in Edit unless chosen otherwise.
+  const relPath = relPathFromRoot(root, path);
+  const browserUrl = language === 'html' && bindingId && relPath ? rigFileUrl(bindingId, relPath) : null;
+  const modes: readonly PreviewMode[] = isMarkdown ? ['preview', 'edit'] : browserUrl ? ['browser', 'edit'] : ['edit'];
+  const [mode, setModeState] = useState<PreviewMode>(() => {
+    if (isMarkdown) return getPreviewMode(path);
+    const remembered = rememberedPreviewMode(path);
+    return remembered && modes.includes(remembered) ? remembered : 'edit';
+  });
   // Scroll position survives a toggle only approximately (spec's own
   // wording): captured as a fraction of the scrollable range right before
   // the mode flips, then reapplied once the new pane has laid out. A ratio,
@@ -514,6 +536,60 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
     },
     [path, resource, readingFind, setReadingFind]
   );
+
+  // An agent or a chat link asked for a mode, a passage or a line
+  // (`view-request.ts`). A line is only in the text, so it opens Edit.
+  const [reveal, setReveal] = useState<(ViewRequest & { at: number }) | null>(null);
+  useViewRequest(path, (request) => {
+    const wanted = request.line ? 'edit' : request.mode;
+    if (wanted && modes.includes(wanted) && wanted !== mode) setMode(wanted);
+    setReveal({ ...request, at: Date.now() });
+  });
+  useEffect(() => {
+    if (!reveal || resource.isLoading) return;
+    if (mode === 'browser') {
+      if (reveal.passage && browserUrl) requestView(browserUrl, { passage: reveal.passage });
+      setReveal(null);
+      return;
+    }
+    if (mode === 'preview') {
+      if (reveal.passage) setReadingFind({ query: reveal.passage, caseSensitive: false, focusNonce: reveal.at });
+      setReveal(null);
+      return;
+    }
+    const view = resource.editorRef.current?.getView();
+    if (!view) return;
+    const doc = view.state.doc;
+    let at: number | null = null;
+    if (reveal.line) at = doc.line(Math.min(reveal.line, doc.lines)).from;
+    else if (reveal.passage) {
+      const found = doc.toString().toLowerCase().indexOf(reveal.passage.toLowerCase());
+      if (found !== -1) at = found;
+    }
+    if (at !== null) {
+      const end = reveal.passage && !reveal.line ? at + reveal.passage.length : at;
+      view.dispatch({ selection: { anchor: at, head: end }, effects: EditorView.scrollIntoView(at, { y: 'center' }) });
+    }
+    setReveal(null);
+  }, [reveal, mode, resource, resource.isLoading, browserUrl, setReadingFind]);
+
+  // Browser mode follows the file: an agent writing it reloads the page.
+  const [pageReload, setPageReload] = useState(0);
+  const shownContent = useRef<string | null>(null);
+  const liveContent = resource.isLoading ? null : resource.content;
+  useEffect(() => {
+    if (mode !== 'browser' || liveContent === null) return;
+    if (shownContent.current === null) {
+      shownContent.current = liveContent;
+      return;
+    }
+    if (shownContent.current === liveContent) return;
+    const timer = setTimeout(() => {
+      shownContent.current = liveContent;
+      setPageReload((n) => n + 1);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [mode, liveContent]);
 
   // Reading → editing with find open: CodeMirror's panel opens on the same
   // query (the fresh editor has mounted by now: child effects run first).
@@ -636,7 +712,9 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // JSX below). `comments.paintbrushOverlay` is null whenever there's
   // nothing to track, so both are inert until a stroke actually happens.
   const paintbrushOverlay = comments?.paintbrushOverlay ?? null;
-  usePaintbrushEditorSync(resource, mode, paintbrushOverlay);
+  // Browser mode shows no text of its own: to these, it reads like Preview with nothing in it.
+  const textMode = mode === 'browser' ? 'preview' : mode;
+  usePaintbrushEditorSync(resource, textMode, paintbrushOverlay);
 
   // Cursor affordance while armed (punch-list finding 3): the document
   // keeps its plain native text cursor — no CSS override in either mode —
@@ -668,7 +746,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
     root,
     rootId,
     resource,
-    mode,
+    mode: textMode,
     getPreviewRoot: () => previewRef.current?.getRoot() ?? null,
     getPreviewIndex: () => previewRef.current?.getIndex() ?? null,
   });
@@ -765,7 +843,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 testId="doc-comment-mode"
               />
             )}
-            {isMarkdown && <PreviewModeToggle mode={mode} onChange={setMode} />}
+            {modes.length > 1 && <PreviewModeToggle mode={mode} modes={modes} onChange={setMode} />}
             {/* Hidden in Preview along with the margin/composer it controls
                 — a toggle for UI that isn't rendered has nothing to do. */}
             {comments && mode === 'edit' && (
@@ -816,6 +894,12 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
         />
       )}
 
+      {mode === 'browser' && browserUrl ? (
+        // The page itself, from this Mac's copy of the space, with the space's pins on it.
+        <div className="relative min-h-0 flex-1" data-testid="doc-browser-mode">
+          <PageView url={browserUrl} title={relPath.split('/').pop() ?? relPath} bindingId={bindingId!} reloadKey={pageReload} />
+        </div>
+      ) : (
       <div
         ref={containerRef}
         className="relative min-h-0 flex-1 overflow-y-auto"
@@ -898,6 +982,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
           </>
         )}
       </div>
+      )}
       {isMarkdown && comments && (
         <PaintbrushCursorChip
           active={paintbrush.on && !paintbrushComposerOpen}

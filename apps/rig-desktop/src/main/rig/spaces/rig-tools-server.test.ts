@@ -145,38 +145,40 @@ describe('rig tools server', () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).toEqual([
       'rig_space_describe',
-      'rig_invite',
-      'rig_people',
-      'rig_recent_changes',
-      'rig_chat_history',
-      'rig_react',
-      'rig_file_comments',
-      'rig_comment',
-      'rig_rename_space',
-      'rig_settings',
-      'rig_update_settings',
+      'rig_people_invite',
+      'rig_people_list',
+      'rig_changes_list',
+      'rig_chat_read',
+      'rig_chat_react',
+      'rig_comments_read',
+      'rig_comments_add',
+      'rig_space_rename',
+      'rig_settings_read',
+      'rig_settings_update',
+      'rig_browser_open',
+      'rig_topic_show',
     ]);
-    expect(tools.find((t) => t.name === 'rig_people')?.annotations?.readOnlyHint).toBe(true);
+    expect(tools.find((t) => t.name === 'rig_people_list')?.annotations?.readOnlyHint).toBe(true);
     // Permissions mode and auto-approve aren't settings it takes: no extra arguments at all.
-    expect(tools.find((t) => t.name === 'rig_update_settings')?.inputSchema).toMatchObject({ additionalProperties: false });
-    expect(tools.find((t) => t.name === 'rig_chat_history')?.annotations?.readOnlyHint).toBe(true);
+    expect(tools.find((t) => t.name === 'rig_settings_update')?.inputSchema).toMatchObject({ additionalProperties: false });
+    expect(tools.find((t) => t.name === 'rig_chat_read')?.annotations?.readOnlyHint).toBe(true);
     // One short sentence: Codex shows it ahead of each tool's own description.
     expect(client.getInstructions()).toBe("Rig's tools for this space, acting as your owner: prefer them over the `rig` CLI.");
 
-    const result = await client.callTool({ name: 'rig_people', arguments: {} });
+    const result = await client.callTool({ name: 'rig_people_list', arguments: {} });
     expect(result.isError).toBeFalsy();
     expect((result.content as Array<{ text: string }>)[0]!.text).toContain('Dylan in b1');
     expect(backend.listMembers).toHaveBeenCalledWith('b1');
-    const chat = await client.callTool({ name: 'rig_chat_history', arguments: { tail: 5 } });
+    const chat = await client.callTool({ name: 'rig_chat_read', arguments: { tail: 5 } });
     expect((chat.content as Array<{ text: string }>)[0]!.text).toBe("No messages in this space's chat yet.");
     expect(backend.listMessages).toHaveBeenCalledWith('b1', { latest: 5 });
     await client.close();
 
     // Another space's token acts on that space.
     const other = await connect(await server.serverFor(OTHER_SPACE));
-    const otherResult = await other.callTool({ name: 'rig_people', arguments: {} });
+    const otherResult = await other.callTool({ name: 'rig_people_list', arguments: {} });
     expect((otherResult.content as Array<{ text: string }>)[0]!.text).toContain('Dylan in b2');
-    await other.callTool({ name: 'rig_chat_history', arguments: {} });
+    await other.callTool({ name: 'rig_chat_read', arguments: {} });
     expect(backend.listMessages).toHaveBeenLastCalledWith('b2', { latest: 30 });
     await other.close();
   });
@@ -191,12 +193,12 @@ describe('rig tools server', () => {
     }));
     server = createRigToolsServer({
       backend: fakeBackend(),
-      extraTools: [{ name: 'browser_screenshot', description: 'Look at a page.', inputSchema: {}, annotations: { title: 'Browser · screenshot', readOnlyHint: true }, run }],
+      extraTools: [{ name: 'rig_browser_screenshot', description: 'Look at a page.', inputSchema: {}, annotations: { title: 'Browser · screenshot', readOnlyHint: true }, run }],
     });
     const client = await connect(await server.serverFor(DYLAN));
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).at(-1)).toBe('browser_screenshot');
-    const result = await client.callTool({ name: 'browser_screenshot', arguments: {} });
+    expect(tools.map((t) => t.name).at(-1)).toBe('rig_browser_screenshot');
+    const result = await client.callTool({ name: 'rig_browser_screenshot', arguments: {} });
     expect(result.content).toEqual([
       { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' },
       { type: 'text', text: 'Board 2 at full size.' },
@@ -208,16 +210,16 @@ describe('rig tools server', () => {
   it('reports bad tool input as a tool error', async () => {
     server = createRigToolsServer({ backend: fakeBackend() });
     const client = await connect(await server.serverFor(DYLAN));
-    const result = await client.callTool({ name: 'rig_invite', arguments: { email: 'hugo@acme.co', role: 'owner' } });
+    const result = await client.callTool({ name: 'rig_people_invite', arguments: { email: 'hugo@acme.co', role: 'owner' } });
     expect(result.isError).toBe(true);
     await client.close();
   });
 
-  it('refuses permissions mode and auto-approve in rig_update_settings, saying the owner changes those', async () => {
+  it('refuses permissions mode and auto-approve in rig_settings_update, saying the owner changes those', async () => {
     const backend = fakeBackend();
     server = createRigToolsServer({ backend });
     const client = await connect(await server.serverFor(DYLAN));
-    const result = await client.callTool({ name: 'rig_update_settings', arguments: { mode: 'bypassPermissions', auto_approve: true } });
+    const result = await client.callTool({ name: 'rig_settings_update', arguments: { mode: 'bypassPermissions', auto_approve: true } });
     expect(result.isError).toBe(true);
     const text = (result.content as Array<{ text: string }>)[0]!.text;
     expect(text).toContain("Can't change mode, auto_approve.");

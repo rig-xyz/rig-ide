@@ -71,6 +71,11 @@ import {
 import { useUpdateStatus } from '@renderer/features/shell/use-update-status';
 import { onFileMove } from '@renderer/features/workspace/file-moves';
 import { onOpenFileRequest } from '@renderer/features/workspace/open-file-request';
+import { requestBrowserMode, requestView } from '@renderer/features/artifact/view-request';
+import { requestRoomTheme } from '@renderer/features/spaces/room-theme-request';
+import { canonicalPageUrl, webLinkLabel } from '@shared/spaces/links';
+import { isHtmlPath } from '@shared/spaces/rig-file';
+import { rigShowChannel, type RigShowRequest } from '@shared/spaces/show';
 import { PinnedCard } from '@renderer/features/workspace/pinned-card';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
@@ -1023,6 +1028,49 @@ export function App() {
       void rpc.rig.notifications.releaseOpen().catch(() => {});
     };
   }, []);
+
+  // An agent showing the person who asked something (`rig_browser_open`,
+  // `rig_topic_show`): main only sends these when that person is the one
+  // signed in here. In another space, that space opens first; the request
+  // waits for it here, after the reset above that clears a new space's tabs.
+  const [pendingShow, setPendingShow] = useState<(RigShowRequest & { at: number }) | null>(null);
+  const boundBindingIdRef = useRef(boundBindingId);
+  boundBindingIdRef.current = boundBindingId;
+  useEffect(
+    () =>
+      events.on(rigShowChannel, (request) => {
+        setPendingShow({ ...request, at: Date.now() });
+        if (boundBindingIdRef.current !== request.bindingId) void openSpaceAtRef.current({ bindingId: request.bindingId });
+      }),
+    []
+  );
+  useEffect(() => {
+    if (!pendingShow || !boundRoot || boundBindingId !== pendingShow.bindingId) return;
+    setPendingShow(null);
+    // A space that took too long to open: the moment has passed.
+    if (Date.now() - pendingShow.at > 60_000) return;
+    if (pendingShow.kind === 'topic') {
+      setRigLayout((current) => (current === 'files' ? 'split' : current));
+      setFocusedRigPane('chat');
+      requestRoomTheme(pendingShow.bindingId, pendingShow.themeId);
+      return;
+    }
+    if (pendingShow.kind === 'page') {
+      const url = canonicalPageUrl(pendingShow.url);
+      if (pendingShow.passage) requestView(url, { passage: pendingShow.passage });
+      openPage(url, webLinkLabel(url));
+      return;
+    }
+    const absPath = `${boundRoot.replace(/\/+$/, '')}/${pendingShow.relPath}`;
+    const reveal = {
+      ...(pendingShow.passage ? { passage: pendingShow.passage } : {}),
+      ...(pendingShow.line ? { line: pendingShow.line } : {}),
+    };
+    // An html file as a working page, unless a line was asked for: that's in its text.
+    if (isHtmlPath(pendingShow.relPath) && !pendingShow.line) requestBrowserMode(absPath, reveal);
+    else requestView(absPath, reveal);
+    openFile(absPath);
+  }, [pendingShow, boundRoot, boundBindingId, openFile, openPage]);
 
   const openFocus = useCallback(() => {
     setRigLayout((current) => (current === 'chat' ? 'split' : current));

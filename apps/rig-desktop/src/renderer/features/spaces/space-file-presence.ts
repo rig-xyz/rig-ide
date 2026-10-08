@@ -54,7 +54,7 @@ export type SpaceFile = {
 export function useSpaceFile(link: string | null): SpaceFile {
   const space = useContext(AttachmentSpaceContext);
   const root = space?.spaceRoot ?? null;
-  const resolved = link && root ? resolveSpaceLink(link, root) : null;
+  const resolved = link && root ? resolveSpaceLink(link, root, space?.bindingId) : null;
   const relPath = resolved?.kind === 'inside' ? resolved.relPath : null;
   const [present, setPresent] = useState<boolean | null>(null);
 

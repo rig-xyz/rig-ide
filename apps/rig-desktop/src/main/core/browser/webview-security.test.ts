@@ -91,4 +91,16 @@ describe('browser webview security helpers', () => {
       partition: 'persist:emdash-browser-project-workspace-task-browser',
     });
   });
+
+  it("lets only the pages browser open a space's file as a page", () => {
+    const pages = 'persist:emdash-browser-rig-pages';
+    const other = 'persist:emdash-browser-profile';
+    const src = 'rig-file://bnd_abc/site/index.html';
+    expect(validateBrowserWebviewAttach({ partition: pages, src }, new Set([pages]))).toEqual({ ok: true, partition: pages, url: src });
+    expect(validateBrowserWebviewAttach({ partition: other, src }, new Set([other]))).toEqual({ ok: false, reason: 'unsupported-url' });
+    expect(validateBrowserWebviewAttach({ partition: pages, src: 'rig-file://bnd_abc/../x' }, new Set([pages]))).toEqual({
+      ok: false,
+      reason: 'unsupported-url',
+    });
+  });
 });

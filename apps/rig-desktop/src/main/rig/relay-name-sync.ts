@@ -8,7 +8,7 @@ import { SPACE_NAME_MAX } from './spaces/rig-tools';
  * copy show).
  *
  * Two ways a name changes:
- *   1. The Rename dialog / `rig_rename_space` tool (`renameRig`): writes
+ *   1. The Rename dialog / `rig_space_rename` tool (`renameRig`): writes
  *      rig.toml, then `pushRename` PATCHes the relay straight away.
  *   2. Anything else edits rig.toml (an agent editing the file, a rename
  *      synced down from another member's machine): `reconcile` notices it

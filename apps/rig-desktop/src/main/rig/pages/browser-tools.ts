@@ -1,5 +1,7 @@
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { NativeImage } from 'electron';
 import { z } from 'zod';
+import { isRigFileUrl, parseRigFileUrl, rigFileUrl } from '@shared/spaces/rig-file';
 import { agentPage, renderSnapshot } from './agent-pages';
 import { EXPORT_MAX_BYTES, type GoogleExportResult } from './google-export';
 import { frameBoards, frameBoardSnapshot, frameCall, type BoardInfo, type BoardSnapshot, type PageAnchor } from './page-frame-scripts';
@@ -32,7 +34,7 @@ export interface BrowserToolsDeps {
    */
   signInWall?(url: string): Promise<string | null>;
   /**
-   * Google Docs, Sheets and Slides draw on a canvas, so `browser_read` asks
+   * Google Docs, Sheets and Slides draw on a canvas, so `rig_browser_read` asks
    * for the file's own text export instead (`google-export.ts`). Null for
    * any other page; absent, every page is read as rendered.
    */
@@ -65,6 +67,7 @@ function image(img: NativeImage, text: string): BrowserToolResult {
 
 function webUrl(url: unknown): string | null {
   if (typeof url !== 'string') return null;
+  if (isRigFileUrl(url)) return parseRigFileUrl(url) ? url : null;
   try {
     const u = new URL(url);
     return u.protocol === 'https:' || u.protocol === 'http:' ? u.toString() : null;
@@ -72,6 +75,28 @@ function webUrl(url: unknown): string | null {
     return null;
   }
 }
+
+/**
+ * The page a browser tool was given, as a link: a web link as it is, and a
+ * file in the space, by its path or its `rig-file://` link, as that space's
+ * `rig-file://` link. Null for a path outside the space or a link to
+ * another space.
+ */
+export function pageLink(input: unknown, space: { bindingId: string; cwd: string }): string | null {
+  if (typeof input !== 'string' || !input.trim()) return null;
+  const raw = input.trim();
+  if (isRigFileUrl(raw)) {
+    const link = parseRigFileUrl(raw);
+    return link && link.bindingId === space.bindingId.toLowerCase() ? raw : null;
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) return raw;
+  const abs = resolve(space.cwd, raw.replace(/[?#].*$/, ''));
+  const rel = relative(space.cwd, abs);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
+  return rigFileUrl(space.bindingId, rel.split(sep).join('/')) + (raw.match(/[?#].*$/)?.[0] ?? '');
+}
+
+const NOT_A_PAGE = 'Give the page link, or the path of an html file in this space like site/index.html.';
 
 async function boardsOf(url: string, withText: boolean): Promise<BoardInfo[]> {
   const page = await agentPage(url);
@@ -96,18 +121,18 @@ function around(snap: BoardSnapshot): { x: number; y: number; width: number; hei
   };
 }
 
-const URL_FIELD = z.string().describe('The page link, as posted in the space.');
+const URL_FIELD = z.string().describe('The page link as posted in the space, or the path of an html file in the space.');
 
 export const BROWSER_TOOLS: readonly BrowserTool[] = [
   {
-    name: 'browser_pins',
+    name: 'rig_browser_pins',
     title: 'Browser · pins',
     description:
-      "The comments pinned on a page in this space: each pin's number, its comment, the board it's on and what it points at. Start here when someone asks about a pin.",
+      "The comments pinned on a page in this space: each pin's number, its comment, the board it's on and what it points at. Start here when someone asks about a pin." + "\nWas called browser_pins before Rig 0.4.13.",
     inputSchema: { url: URL_FIELD },
     async run(input, deps) {
       const url = webUrl(input.url);
-      if (!url) return say('Give the page link (http or https).', true);
+      if (!url) return say(NOT_A_PAGE, true);
       const pins = await deps.pinsFor(url);
       if (pins.length === 0) return say('No pins on this page.');
       const wall = await deps.signInWall?.(url);
@@ -118,21 +143,21 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
       for (const p of pins) {
         const at = await locateOnPage(page, p.anchor).catch(() => ({ found: false }));
         const b = boards.find((x) => x.i === p.anchor.hops[0]?.index);
-        const what = p.anchor.text ? `a ${p.anchor.tag} reading "${p.anchor.text.slice(0, 80)}"` : `a ${p.anchor.tag} with no text (use browser_screenshot with this pin)`;
+        const what = p.anchor.text ? `a ${p.anchor.tag} reading "${p.anchor.text.slice(0, 80)}"` : `a ${p.anchor.tag} with no text (use rig_browser_screenshot with this pin)`;
         lines.push(`Pin ${p.n}${at.found ? '' : ' (not on the page any more)'}: "${p.comment}" on ${b ? `board ${b.i} (${b.title.slice(0, 50)})` : 'the page'}, ${what}`);
       }
       return say(lines.join('\n'));
     },
   },
   {
-    name: 'browser_read',
+    name: 'rig_browser_read',
     title: 'Browser · read',
     description:
-      "Read a page as your owner sees it. Without board: its title, a list of its boards (canvases and decks keep each board in its own frame), and the text of boards with pins or on screen. With board (words from a board's title, or its number): that board in full. A Google Doc, Sheet or Slides deck comes back as the whole file's text (a sheet as CSV of one tab: the link's #gid, else the first). Charts and images have no text: use browser_screenshot.",
+      "Read a page as your owner sees it. Without board: its title, a list of its boards (canvases and decks keep each board in its own frame), and the text of boards with pins or on screen. With board (words from a board's title, or its number): that board in full. A Google Doc, Sheet or Slides deck comes back as the whole file's text (a sheet as CSV of one tab: the link's #gid, else the first). Charts and images have no text: use rig_browser_screenshot." + "\nWas called browser_read before Rig 0.4.13.",
     inputSchema: { url: URL_FIELD, board: z.union([z.string(), z.number()]).optional() },
     async run(input, deps) {
       const url = webUrl(input.url);
-      if (!url) return say('Give the page link (http or https).', true);
+      if (!url) return say(NOT_A_PAGE, true);
       const wall = await deps.signInWall?.(url);
       if (wall) return say(wall, true);
       const page = await agentPage(url);
@@ -162,15 +187,15 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
         budget -= t.length;
         lines.push('', `--- Board ${b.i}: ${b.title}`, t);
       }
-      lines.push('', 'Read any other board in full with browser_read and its board.');
+      lines.push('', 'Read any other board in full with rig_browser_read and its board.');
       return say(lines.join('\n'));
     },
   },
   {
-    name: 'browser_screenshot',
+    name: 'rig_browser_screenshot',
     title: 'Browser · screenshot',
     description:
-      "Look at part of a page as an image. pin (a pin number from browser_pins) or text (a phrase on the page) gives that element with context; board (words from a title, or its number) gives the whole board. Boards are re-rendered at full size, so they're legible whatever the zoom. With none of them: the top of the page.",
+      "Look at part of a page as an image. pin (a pin number from rig_browser_pins) or text (a phrase on the page) gives that element with context; board (words from a title, or its number) gives the whole board. Boards are re-rendered at full size, so they're legible whatever the zoom. With none of them: the top of the page." + "\nWas called browser_screenshot before Rig 0.4.13.",
     inputSchema: {
       url: URL_FIELD,
       pin: z.number().int().optional(),
@@ -179,7 +204,7 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
     },
     async run(input, deps) {
       const url = webUrl(input.url);
-      if (!url) return say('Give the page link (http or https).', true);
+      if (!url) return say(NOT_A_PAGE, true);
       const wall = await deps.signInWall?.(url);
       if (wall) return say(wall, true);
       if (typeof input.pin === 'number') {

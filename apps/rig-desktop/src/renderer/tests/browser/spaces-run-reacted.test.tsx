@@ -32,7 +32,7 @@ const STARTED = new Date(Date.now() - 60_000).toISOString();
 const REACT_STEP: SessionEvent = {
   seq: 1,
   kind: 'tool_call',
-  payload: { toolCallId: 't1', kind: 'other', status: 'completed', title: 'mcp__rig__rig_react' },
+  payload: { toolCallId: 't1', kind: 'other', status: 'completed', title: 'mcp__rig__rig_chat_react' },
 };
 
 function meta(agent: SessionRunMeta['agent'] = 'claude'): SessionRunMeta {

@@ -6,6 +6,9 @@ import * as toml from 'smol-toml';
 import { z } from 'zod';
 import { secretReason, syncIgnoreMatcher } from '../attachments/rules';
 import { CONNECTORS, connectorById, isConnectorId, RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
+import { opensBesideChat } from '@shared/spaces/links';
+import { isHtmlPath, isRigFileUrl, parseRigFileUrl } from '@shared/spaces/rig-file';
+import type { RigShowRequest } from '@shared/spaces/show';
 import { ROOM_SEES_LEVELS, type RoomSees } from '@shared/spaces/room-sees';
 import {
   canonicalEmoji,
@@ -57,18 +60,22 @@ export type RigToolScope = {
 /**
  * Rig's own tools a room agent runs without asking its owner: the read-only
  * ones (who's here, what changed lately, a file's comments, the chat), and
- * `rig_react`, which only puts an emoji on a message (a few per turn, never a
- * message, never asks anyone). `rig_invite` and `rig_comment` act on the
- * space, so they still ask.
+ * `rig_chat_react`, which only puts an emoji on a message (a few per turn, never a
+ * message, never asks anyone), and `rig_browser_open` and `rig_topic_show`,
+ * which only move the asker's own view. `rig_people_invite` and
+ * `rig_comments_add` act on the space, so they still ask.
  */
 export const PRE_APPROVED_RIG_TOOLS: ReadonlySet<string> = new Set([
   'rig_space_describe',
-  'rig_people',
-  'rig_recent_changes',
-  'rig_file_comments',
-  'rig_chat_history',
-  'rig_settings',
-  'rig_react',
+  'rig_people_list',
+  'rig_changes_list',
+  'rig_comments_read',
+  'rig_chat_read',
+  'rig_settings_read',
+  'rig_chat_react',
+  // Only move the view of the person who asked, on their own Mac.
+  'rig_browser_open',
+  'rig_topic_show',
 ]);
 
 /**
@@ -77,16 +84,16 @@ export const PRE_APPROVED_RIG_TOOLS: ReadonlySet<string> = new Set([
  * what also needs the owner's own fresh "allow" (`ownerApprovals`), which an
  * agent's never-ask permission mode or an "allow always" can't stand in for.
  */
-export const ALWAYS_ASK_RIG_TOOLS: ReadonlySet<string> = new Set(['rig_update_settings']);
+export const ALWAYS_ASK_RIG_TOOLS: ReadonlySet<string> = new Set(['rig_settings_update']);
 
-/** `rig_people` from a rig tool call's title as agents report it (Claude `mcp__rig__rig_people`, Codex `mcp.rig.rig_people`); null for any other tool. */
+/** `rig_people_list` from a rig tool call's title as agents report it (Claude `mcp__rig__rig_people_list`, Codex `mcp.rig.rig_people_list`); null for any other tool. */
 export function rigToolOf(title: string): string | null {
   const match = new RegExp(`^mcp__${RIG_TOOLS_SERVER}__(.+)$|^mcp\\.${RIG_TOOLS_SERVER}\\.(.+)$`).exec(title);
   return match ? (match[1] ?? match[2]!) : null;
 }
 
 /** The browser tools (`pages/browser-tools.ts`) only read a page as the owner: no clicks, no typing. */
-export const PRE_APPROVED_BROWSER_TOOLS: ReadonlySet<string> = new Set(['browser_pins', 'browser_read', 'browser_screenshot']);
+export const PRE_APPROVED_BROWSER_TOOLS: ReadonlySet<string> = new Set(['rig_browser_pins', 'rig_browser_read', 'rig_browser_screenshot']);
 
 /**
  * The read-only half of the owner's claude.ai Claude Docs connector: reading a
@@ -95,7 +102,7 @@ export const PRE_APPROVED_BROWSER_TOOLS: ReadonlySet<string> = new Set(['browser
  */
 const PRE_APPROVED_CLAUDE_DOCS_TOOLS = ['guide', 'read', 'query'].map((tool) => `mcp__claude_ai_Claude_Docs__${tool}`);
 
-/** Their exact names as agents report them: Claude `mcp__rig__rig_people`, Codex `mcp.rig.rig_people`. */
+/** Their exact names as agents report them: Claude `mcp__rig__rig_people_list`, Codex `mcp.rig.rig_people_list`. */
 const PRE_APPROVED_TOOL_NAMES = new Set([
   ...[...PRE_APPROVED_RIG_TOOLS, ...PRE_APPROVED_BROWSER_TOOLS].flatMap((tool) => [`mcp__${RIG_TOOLS_SERVER}__${tool}`, `mcp.${RIG_TOOLS_SERVER}.${tool}`]),
   ...PRE_APPROVED_CLAUDE_DOCS_TOOLS,
@@ -208,6 +215,14 @@ export interface RigToolsBackend {
   currentRunId(scope: RigToolScope): Promise<string | null>;
   /** A reaction the run made, so its card can show it when the turn ends without words. */
   noteReaction?(runId: string, emoji: string): Promise<void>;
+  /** Who asked for the run the session is on now (their relay user id); null when unknown. */
+  currentAsker?(scope: RigToolScope): Promise<string | null>;
+  /** Moves this Mac's window: only called when the person who asked is the one signed in here. */
+  show?(request: RigShowRequest): void;
+  /** Whether a path is a file or a folder on this Mac; null when it isn't there. */
+  pathKind?(absPath: string): Promise<'file' | 'dir' | null>;
+  /** The space's topics; `enabled` false when topics are off in the space, null when this relay has none. */
+  listTopics?(bindingId: string): Promise<Result<{ enabled: boolean; topics: { id: string; name: string }[] } | null, Failure>>;
 }
 
 export type RigToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: 'image/png' };
@@ -304,7 +319,7 @@ const CHAT_TAIL_DEFAULT = 30;
 const CHAT_TAIL_MAX = 200;
 /** The relay's largest page of messages (it caps `latest` and `limit` at 500); also how many one `query` searches. */
 const RELAY_PAGE = 500;
-/** Roughly the most one rig_chat_history call returns, so a long chat never floods the agent's context. */
+/** Roughly the most one rig_chat_read call returns, so a long chat never floods the agent's context. */
 export const CHAT_HISTORY_MAX_CHARS = 40_000;
 /** Relay requests one call may make paging back through a long chat. */
 const CHAT_MAX_REQUESTS = 20;
@@ -381,7 +396,7 @@ const CHAT_SEES_MEANING: Record<RoomSees, string> = {
 const UPDATE_SETTINGS_KEYS: ReadonlySet<string> = new Set(['model', 'effort', 'chat_sees', 'connectors']);
 
 const SETTINGS_OUT_OF_SCOPE =
-  "rig_update_settings only changes model, effort, chat_sees and connectors. Permissions mode and \"Auto-approve agent actions\" are your owner's to change themselves, in the agent's settings.";
+  "rig_settings_update only changes model, effort, chat_sees and connectors. Permissions mode and \"Auto-approve agent actions\" are your owner's to change themselves, in the agent's settings.";
 
 const NEEDS_OWNER_APPROVAL =
   "Raising chat sees or turning a connector on or off needs your owner's approval every time, and they didn't just approve this call (their permission settings may skip asking). Ask them to allow it when prompted, or to change it themselves in the space panel.";
@@ -434,7 +449,7 @@ function chatHaystack(row: RoomMessageRow): string {
 }
 
 /**
- * A message the agent names: its #seq (as rig_chat_history shows it) or its
+ * A message the agent names: its #seq (as rig_chat_read shows it) or its
  * id. Seqs are shared by every space, so a seq is looked up in this space's
  * own chat.
  */
@@ -449,7 +464,7 @@ async function messageIdFor(backend: RigToolsBackend, bindingId: string, value: 
     return row && row.seq === seq ? ok(row.id) : err(`There's no message #${seq} in this space's chat.`);
   }
   if (/^msg_[A-Za-z0-9]+$/.test(raw)) return ok(raw);
-  return err(`"${raw}" isn't a message: give its #seq (from rig_chat_history) or its id.`);
+  return err(`"${raw}" isn't a message: give its #seq (from rig_chat_read) or its id.`);
 }
 
 /** `[rig].name` and `[rig].description` from a space's `rig.toml` text; null for each one missing or empty. */
@@ -537,7 +552,7 @@ export function formatSpaceOverview(o: SpaceOverview, now: number): string {
     lines.push('', `People (${o.people.length}):`);
     for (const p of o.people.slice(0, DESCRIBE_PEOPLE_MAX)) lines.push(`- ${nameOf(p)}: ${p.role}${p.you ? ' (your owner)' : ''}`);
     if (o.people.length > DESCRIBE_PEOPLE_MAX) lines.push(`- …and ${o.people.length - DESCRIBE_PEOPLE_MAX} more`);
-    lines.push('rig_people also lists pending invites.');
+    lines.push('rig_people_list also lists pending invites.');
   }
 
   lines.push('');
@@ -649,11 +664,11 @@ async function spaceOverview(
  * `allTools`: every tool the session's `rig` server offers (these and the
  * browser tools), for rig_space_describe's list; omitted, just these.
  */
-/** How many of your people rig_people lists, most recent first. */
+/** How many of your people rig_people_list lists, most recent first. */
 const PEOPLE_LISTED = 30;
 
 /**
- * `rig_invite`'s person path: find them in your people by id, by full name,
+ * `rig_people_invite`'s person path: find them in your people by id, by full name,
  * or by a first name only one of them has, and send a person invite. An
  * ambiguous or unknown name fails with what to do, never a guess.
  */
@@ -709,16 +724,16 @@ export function createRigTools(
       run: async (scope) => ({ text: formatSpaceOverview(await spaceOverview(backend, scope, (allTools ?? (() => tools))()), now()) }),
     },
     {
-      name: 'rig_invite',
+      name: 'rig_people_invite',
       description:
         "Invite a person to this rig space. Use it whenever you're asked to invite, add or share the space with someone, instead of running `rig share`: the request is the go-ahead. " +
-        "For someone your owner has worked with, pass `person`: their name or id as rig_people lists them. They hear about it in Rig and by email, and nobody needs their address. " +
-        'For anyone else pass `email`, the address you were given. Never look an address up elsewhere, such as Slack, a directory or old messages: if the person isn\'t in rig_people and you weren\'t given an email, ask for one. ' +
+        "For someone your owner has worked with, pass `person`: their name or id as rig_people_list lists them. They hear about it in Rig and by email, and nobody needs their address. " +
+        'For anyone else pass `email`, the address you were given. Never look an address up elsewhere, such as Slack, a directory or old messages: if the person isn\'t in rig_people_list and you weren\'t given an email, ask for one. ' +
         'Asked for an invite link without anyone named, pass `link: true`: anyone with that link can join, so make one only when asked for a link. ' +
         'role is editor (can edit files and ask their own agents; the default) or viewer (read-only). ' +
-        "Owners and editors can invite; if your owner can't, the result says so.",
+        "Owners and editors can invite; if your owner can't, the result says so." + "\nWas called rig_invite before Rig 0.4.13.",
       inputSchema: {
-        person: z.string().optional().describe("Someone from your owner's people: their name as rig_people lists it, or their id."),
+        person: z.string().optional().describe("Someone from your owner's people: their name as rig_people_list lists it, or their id."),
         email: z.string().optional().describe("An email address you were given, for someone who isn't in your owner's people."),
         link: z.boolean().optional().describe('true for an open invite link anyone can join with, when asked for a link and no one is named.'),
         role: z.enum(['editor', 'viewer']).optional().describe('editor (default) or viewer.'),
@@ -737,7 +752,7 @@ export function createRigTools(
           if (!minted.success) return failed(`Couldn't make an invite link: ${minted.error.message}`);
           return { text: [`Invite link to this space, as ${role}. Anyone with it can join.`, minted.data.url].join('\n') };
         }
-        if (!email) return failed('Say who to invite: `person` for someone in rig_people, or `email`. For an open link, pass `link: true`.');
+        if (!email) return failed('Say who to invite: `person` for someone in rig_people_list, or `email`. For an open link, pass `link: true`.');
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return failed(`"${email}" doesn't look like an email address.`);
         const minted = await backend.createInvite(scope.cwd, email, role);
         if (!minted.success) return failed(`Couldn't invite ${email}: ${minted.error.message}`);
@@ -749,10 +764,10 @@ export function createRigTools(
       },
     },
     {
-      name: 'rig_people',
+      name: 'rig_people_list',
       description:
-        "List who is in this rig space (name and role) and the invites still waiting to be accepted, then your owner's people who aren't in it yet: everyone they've shared a space with, by name and id, ready for rig_invite's `person`. " +
-        "Use it when asked who has access or who's here, and before inviting anyone.",
+        "List who is in this rig space (name and role) and the invites still waiting to be accepted, then your owner's people who aren't in it yet: everyone they've shared a space with, by name and id, ready for rig_people_invite's `person`. " +
+        "Use it when asked who has access or who's here, and before inviting anyone." + "\nWas called rig_people before Rig 0.4.13.",
       inputSchema: {},
       annotations: { title: "Who's in this space", readOnlyHint: true },
       run: async (scope) => {
@@ -787,10 +802,10 @@ export function createRigTools(
       },
     },
     {
-      name: 'rig_recent_changes',
+      name: 'rig_changes_list',
       description:
         "List the files changed recently in this rig space and who did what: files changed in the last `hours` (default 24), newest first, and rig's one-line summary of who (people and their agents) did what. " +
-        "Use it when asked what's new, what changed, or what people have been working on. For one file's full history, use `rig history <path>`.",
+        "Use it when asked what's new, what changed, or what people have been working on. For one file's full history, use `rig history <path>`." + "\nWas called rig_recent_changes before Rig 0.4.13.",
       inputSchema: {
         hours: z.number().int().min(1).max(24 * 14).optional().describe('How far back to look, in hours (default 24).'),
       },
@@ -820,12 +835,12 @@ export function createRigTools(
       },
     },
     {
-      name: 'rig_chat_history',
+      name: 'rig_chat_read',
       description:
         "Read this space's chat history in full: messages from people and agents (with each agent's reply), file comments and joins, oldest first, each with its #seq, time, author and kind, and its reactions as counts. " +
         'Use it whenever you need chat older than the recent messages in your context, a message in full, or to find what someone said, instead of `rig chat`. ' +
         `tail is how many messages (default ${CHAT_TAIL_DEFAULT}, max ${CHAT_TAIL_MAX}); before_seq pages back (pass the oldest #seq you have). ` +
-        `query keeps only messages whose text, file or quoted passage contains it (any case; agents' replies aren't searched), within the ${RELAY_PAGE} messages before before_seq.`,
+        `query keeps only messages whose text, file or quoted passage contains it (any case; agents' replies aren't searched), within the ${RELAY_PAGE} messages before before_seq.` + "\nWas called rig_chat_history before Rig 0.4.13.",
       inputSchema: {
         tail: z.number().int().min(1).max(CHAT_TAIL_MAX).optional().describe(`How many messages, newest last (default ${CHAT_TAIL_DEFAULT}).`),
         before_seq: z.number().int().min(1).optional().describe('Only messages before this #seq, to page back.'),
@@ -932,7 +947,7 @@ export function createRigTools(
         if (blocks.length > 0) lines.push('', blocks.join('\n\n'));
         if (cut) lines.push('', `(Stopped at about ${CHAT_HISTORY_MAX_CHARS / 1000}k characters.)`);
         if (older && nextBefore !== null) {
-          lines.push('', `${query ? 'To search' : 'For'} older messages, call rig_chat_history with before_seq=${nextBefore}.`);
+          lines.push('', `${query ? 'To search' : 'For'} older messages, call rig_chat_read with before_seq=${nextBefore}.`);
         } else if (rows.length > 0) {
           lines.push('', "That's the start of the chat.");
         }
@@ -940,13 +955,13 @@ export function createRigTools(
       },
     },
     {
-      name: 'rig_react',
+      name: 'rig_chat_react',
       description:
         "Acknowledge, vote or agree without words. Puts one emoji on a message in this space's chat, as your owner's agent. " +
         'Use it whenever a reaction says enough: 👍 or 👀 to acknowledge, a vote or a pick when asked, ✅ to mark a request done. ' +
         'A reaction can be the whole answer to a message that only needs one: then end your turn without a reply. ' +
         `Reacting doesn't trigger or notify any agent. Up to ${MAX_REACTIONS_PER_RUN} per turn. ` +
-        "messageId is the message's number, like #42, as your context or rig_chat_history shows it, or its id. emoji is the emoji itself, like 👍, not its name.",
+        "messageId is the message's number, like #42, as your context or rig_chat_read shows it, or its id. emoji is the emoji itself, like 👍, not its name." + "\nWas called rig_react before Rig 0.4.13.",
       inputSchema: {
         messageId: z.string().describe('The message: its #seq (e.g. "#42") or its id.'),
         emoji: z.string().describe('One emoji, e.g. 👍 ✅ 👀 🎉.'),
@@ -987,11 +1002,11 @@ export function createRigTools(
       },
     },
     {
-      name: 'rig_file_comments',
+      name: 'rig_comments_read',
       description:
         "Read the comment threads on a file in this rig space: each thread's id, the passage it's pinned to, and who said what (people and agents). " +
-        'Use it when asked about comments, feedback or open questions on a file, and before replying with rig_comment. ' +
-        "path is relative to the space's folder. Resolved threads are left out unless include_resolved is true.",
+        'Use it when asked about comments, feedback or open questions on a file, and before replying with rig_comments_add. ' +
+        "path is relative to the space's folder. Resolved threads are left out unless include_resolved is true." + "\nWas called rig_file_comments before Rig 0.4.13.",
       inputSchema: {
         path: z.string().describe("The file, relative to the space's folder, e.g. notes/plan.md."),
         include_resolved: z.boolean().optional().describe('Also show resolved threads.'),
@@ -1018,17 +1033,17 @@ export function createRigTools(
       },
     },
     {
-      name: 'rig_comment',
+      name: 'rig_comments_add',
       description:
         'Add a comment on a file in this rig space, or reply to a thread on it. Everyone in the space sees it, marked as written by you (the agent) for your owner. ' +
         'New thread: give quote, a passage copied exactly from the file, which the comment is pinned to. ' +
-        'Reply: give reply_to, a thread id from rig_file_comments, and no quote. ' +
-        'Use it when asked to comment on, annotate or review a file, or to answer feedback on it, instead of `rig comment`.',
+        'Reply: give reply_to, a thread id from rig_comments_read, and no quote. ' +
+        'Use it when asked to comment on, annotate or review a file, or to answer feedback on it, instead of `rig comment`.' + "\nWas called rig_comment before Rig 0.4.13.",
       inputSchema: {
         path: z.string().describe("The file, relative to the space's folder, e.g. notes/plan.md."),
         body: z.string().describe('The comment, in markdown.'),
         quote: z.string().optional().describe('For a new thread: the exact passage from the file to pin it to.'),
-        reply_to: z.string().optional().describe('For a reply: the thread id (from rig_file_comments).'),
+        reply_to: z.string().optional().describe('For a reply: the thread id (from rig_comments_read).'),
       },
       annotations: { title: 'Comment on a file', readOnlyHint: false, destructiveHint: false },
       run: async (scope, input) => {
@@ -1060,11 +1075,11 @@ export function createRigTools(
       },
     },
     {
-      name: 'rig_rename_space',
+      name: 'rig_space_rename',
       description:
         "Rename this rig space: the new name shows for everyone in it. Use it whenever you're asked to rename the space (or give it a name), instead of editing rig.toml yourself: the request is the go-ahead. " +
         `name is the new name, one line, up to ${SPACE_NAME_MAX} characters. ` +
-        'Owners and editors can rename; if your owner is a viewer, the result says so.',
+        'Owners and editors can rename; if your owner is a viewer, the result says so.' + "\nWas called rig_rename_space before Rig 0.4.13.",
       inputSchema: {
         name: z.string().describe(`The new name, e.g. Launch planning (up to ${SPACE_NAME_MAX} characters).`),
       },
@@ -1092,10 +1107,10 @@ export function createRigTools(
       },
     },
     {
-      name: 'rig_settings',
+      name: 'rig_settings_read',
       description:
         "Read your own agent settings in this space: model, effort, permissions, how much of your work the chat sees, and the space's connectors, with the valid choices for each. " +
-        'Use it when asked about your settings, and before changing them with rig_update_settings.',
+        'Use it when asked about your settings, and before changing them with rig_settings_update.' + "\nWas called rig_settings before Rig 0.4.13.",
       inputSchema: {},
       annotations: { title: 'Your settings in this space', readOnlyHint: true },
       run: async (scope) => {
@@ -1124,20 +1139,20 @@ export function createRigTools(
         }
         lines.push(
           '',
-          "Change model, effort, chat sees or connectors with rig_update_settings. Raising chat sees or turning a connector on always needs your owner's approval."
+          "Change model, effort, chat sees or connectors with rig_settings_update. Raising chat sees or turning a connector on always needs your owner's approval."
         );
         return { text: lines.join('\n') };
       },
     },
     {
-      name: 'rig_update_settings',
+      name: 'rig_settings_update',
       description:
         "Change your own agent settings in this space: model, effort, chat_sees (answer, steps or everything: how much of your work other members see) and the space's connectors (for every member). " +
-        'Use it when your owner asks you to change these; rig_settings lists the valid values. Give only what changes; the rest stays. ' +
-        "Raising chat_sees or turning a connector on always needs your owner's approval. Permissions mode and auto-approve can't be changed here: your owner changes those themselves.",
+        'Use it when your owner asks you to change these; rig_settings_read lists the valid values. Give only what changes; the rest stays. ' +
+        "Raising chat_sees or turning a connector on always needs your owner's approval. Permissions mode and auto-approve can't be changed here: your owner changes those themselves." + "\nWas called rig_update_settings before Rig 0.4.13.",
       inputSchema: {
-        model: z.string().optional().describe('A model id from rig_settings.'),
-        effort: z.string().optional().describe('An effort id from rig_settings.'),
+        model: z.string().optional().describe('A model id from rig_settings_read.'),
+        effort: z.string().optional().describe('An effort id from rig_settings_read.'),
         chat_sees: z.enum(['answer', 'steps', 'everything']).optional().describe('How much of your work other members see.'),
         connectors: z
           .object({
@@ -1167,7 +1182,7 @@ export function createRigTools(
         }
         const unknownIds = [...enable, ...disable].filter((id) => !isConnectorId(id));
         if (unknownIds.length > 0) {
-          return failed(`No connector called ${unknownIds.join(', ')}, so nothing changed. rig_settings lists the ids (e.g. ${CONNECTORS.slice(0, 3).map((c) => c.id).join(', ')}).`);
+          return failed(`No connector called ${unknownIds.join(', ')}, so nothing changed. rig_settings_read lists the ids (e.g. ${CONNECTORS.slice(0, 3).map((c) => c.id).join(', ')}).`);
         }
         if (enable.some((id) => disable.includes(id))) return failed('A connector is in both enable and disable, so nothing changed.');
 
@@ -1249,8 +1264,131 @@ export function createRigTools(
         return { text: lines.join('\n'), ...(changed.length === 0 && refused.length > 0 ? { isError: true } : {}) };
       },
     },
+    ...showTools(backend),
   ];
   return tools;
+}
+
+/** What an agent is told when the person who asked isn't the one at this Mac. */
+const ASKER_ELSEWHERE = "Nothing moved: only the screen of the person who asked can change, and they're on another Mac.";
+
+/** Whether the person who asked this run is the one signed in here, the session's owner. */
+async function askedHere(backend: RigToolsBackend, scope: RigToolScope): Promise<boolean> {
+  if (!backend.show || !backend.currentAsker) return false;
+  const asker = await backend.currentAsker(scope).catch(() => null);
+  return asker !== null && asker === scope.ownerUserId;
+}
+
+/** A web link to open beside the chat, a file in the space, or why not. */
+async function openTarget(
+  backend: RigToolsBackend,
+  scope: RigToolScope,
+  raw: string
+): Promise<Result<{ kind: 'page'; url: string } | { kind: 'file'; relPath: string }, string>> {
+  const asked = raw.trim();
+  if (!asked) return err('Give a web link or a path in this space, like site/index.html.');
+  if (/^https?:\/\//i.test(asked)) {
+    try {
+      const url = new URL(asked).toString();
+      if (!opensBesideChat(url)) return err(`${url} doesn't open beside the chat. Put the link in your reply instead.`);
+      return ok({ kind: 'page', url });
+    } catch {
+      return err(`"${asked}" isn't a valid link.`);
+    }
+  }
+  let path = asked;
+  if (isRigFileUrl(asked)) {
+    const link = parseRigFileUrl(asked);
+    if (!link || link.bindingId !== scope.bindingId.toLowerCase()) return err(`"${asked}" isn't a link to a file in this space.`);
+    path = link.relPath;
+  } else if (/^[a-z][a-z0-9+.-]*:/i.test(asked)) {
+    return err(`"${asked}" can't be opened. Give a web link or a path in this space.`);
+  }
+  const file = spaceFile(backend, scope, path.replace(/[?#].*$/, ''));
+  if (!file.success) return err(file.error);
+  const kind = backend.pathKind ? await backend.pathKind(file.data.absPath) : 'file';
+  if (kind === 'dir') {
+    const index = `${file.data.relPath}/index.html`;
+    const indexKind = backend.pathKind ? await backend.pathKind(`${file.data.absPath}/index.html`) : null;
+    if (indexKind === 'file') return ok({ kind: 'file', relPath: index });
+    return err(`${file.data.relPath} is a folder. Give a file in it.`);
+  }
+  if (kind !== 'file') return err(`${file.data.relPath} isn't on this Mac.`);
+  return ok({ kind: 'file', relPath: file.data.relPath });
+}
+
+/** The tools that move the asker's own view: open a page or file, show a topic. */
+function showTools(backend: RigToolsBackend): RigTool[] {
+  return [
+    {
+      name: 'rig_browser_open',
+      description:
+        'Show the person who asked you a web page or a file from this space, on their screen. ' +
+        'Use it when they ask to open, show or see something, or when they should look at the page or file your answer is about. ' +
+        'A web link and an html file in the space open in the browser beside the chat, the html as a working page with its scripts, styles and images. Any other file opens in the file viewer. ' +
+        'url is a web link or a path in this space, like site/index.html. passage scrolls to that text. line scrolls a text file to that line. ' +
+        'It only moves the screen of the person who asked, on their own Mac. When they are on another Mac nothing moves, and the result says to put the link in your reply. ' +
+        'To read or look at a page yourself, use rig_browser_read or rig_browser_screenshot.',
+      inputSchema: {
+        url: z.string().describe('A web link, or a path in this space like site/index.html.'),
+        passage: z.string().optional().describe('Text on the page or in the file to scroll to.'),
+        line: z.number().int().min(1).optional().describe('A line to scroll to, in a file shown as text.'),
+      },
+      annotations: { title: 'Open in browser', readOnlyHint: true, openWorldHint: true },
+      run: async (scope, input) => {
+        const target = await openTarget(backend, scope, String(input.url ?? ''));
+        if (!target.success) return failed(target.error);
+        const passage = typeof input.passage === 'string' && input.passage.trim() ? input.passage.trim() : undefined;
+        const line = typeof input.line === 'number' ? input.line : undefined;
+        const shown = target.data.kind === 'page' ? target.data.url : target.data.relPath;
+        if (!(await askedHere(backend, scope))) {
+          const link = target.data.kind === 'page' ? target.data.url : `[${target.data.relPath}](${target.data.relPath})`;
+          return { text: `${ASKER_ELSEWHERE} Put this link in your reply so they can open it: ${link}` };
+        }
+        const where =
+          target.data.kind === 'page' || isHtmlPath(target.data.relPath) ? 'in the browser beside the chat' : 'in the file viewer';
+        backend.show!(
+          target.data.kind === 'page'
+            ? { kind: 'page', bindingId: scope.bindingId, url: target.data.url, ...(passage ? { passage } : {}) }
+            : { kind: 'file', bindingId: scope.bindingId, relPath: target.data.relPath, ...(passage ? { passage } : {}), ...(line ? { line } : {}) }
+        );
+        return { text: `Opened ${shown} ${where} for the person who asked.` };
+      },
+    },
+    {
+      name: 'rig_topic_show',
+      description:
+        'Filter the chat of the person who asked you to one topic, the same as clicking its pill above the chat. ' +
+        'Use it when they ask to see, focus on or catch up on a topic. topic is its name as the chat shows it. ' +
+        'It only moves the screen of the person who asked, on their own Mac. When they are on another Mac nothing moves, and the result says what to tell them.',
+      inputSchema: {
+        topic: z.string().describe('The topic\'s name, as the chat shows it.'),
+      },
+      annotations: { title: 'Show a topic', readOnlyHint: true },
+      run: async (scope, input) => {
+        const asked = String(input.topic ?? '').trim();
+        if (!asked) return failed('Say which topic to show.');
+        if (!backend.listTopics) return failed("This version of Rig can't show topics.");
+        const listed = await backend.listTopics(scope.bindingId);
+        if (!listed.success) return failed(`Couldn't load this space's topics: ${listed.error.message}`);
+        if (!listed.data) return failed("This space's Rig server has no topics yet.");
+        if (!listed.data.enabled) return failed('Topics are off in this space.');
+        const topics = listed.data.topics;
+        const key = asked.toLowerCase();
+        let hits = topics.filter((t) => t.name.trim().toLowerCase() === key);
+        if (hits.length === 0) hits = topics.filter((t) => t.name.toLowerCase().includes(key));
+        const names = topics.map((t) => t.name).join(', ');
+        if (hits.length > 1) return failed(`More than one topic matches "${asked}": ${hits.map((t) => t.name).join(', ')}. Give the full name.`);
+        const topic = hits[0];
+        if (!topic) return failed(topics.length > 0 ? `No topic is called "${asked}". The topics are: ${names}.` : 'This space has no topics yet.');
+        if (!(await askedHere(backend, scope))) {
+          return { text: `${ASKER_ELSEWHERE} Tell them they can click the ${topic.name} topic above the chat to see only it.` };
+        }
+        backend.show!({ kind: 'topic', bindingId: scope.bindingId, themeId: topic.id });
+        return { text: `Showing only the ${topic.name} topic in the chat of the person who asked.` };
+      },
+    },
+  ];
 }
 
 /**

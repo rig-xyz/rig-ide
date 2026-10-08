@@ -55,32 +55,66 @@ describe('global setup helpers', () => {
 describe("rig's own tools", () => {
   it('reads as "Rig · invite hugo@…" for both agents, with who or which file', async () => {
     const { prettyAgentTool, rigToolArgs } = await import('./connectors');
-    const claude = rigToolArgs('mcp__rig__rig_invite', { email: 'hugo@acme.co', role: 'editor' });
-    expect(prettyAgentTool('mcp__rig__rig_invite', claude)).toEqual({
+    const claude = rigToolArgs('mcp__rig__rig_people_invite', { email: 'hugo@acme.co', role: 'editor' });
+    expect(prettyAgentTool('mcp__rig__rig_people_invite', claude)).toEqual({
       label: 'Rig',
       action: 'invite hugo@acme.co',
       connector: null,
       via: 'rig',
     });
     // Codex wraps the arguments.
-    const codex = rigToolArgs('mcp.rig.rig_comment', {
+    const codex = rigToolArgs('mcp.rig.rig_comments_add', {
       server: 'rig',
-      tool: 'rig_comment',
+      tool: 'rig_comments_add',
       arguments: { path: 'notes/plan.md', reply_to: 'm1', body: 'Done' },
     });
-    expect(prettyAgentTool('mcp.rig.rig_comment', codex)?.action).toBe('reply on notes/plan.md');
-    expect(prettyAgentTool('mcp__rig__rig_comment', { path: 'plan.md' })?.action).toBe('comment on plan.md');
-    expect(prettyAgentTool('mcp__rig__rig_file_comments', { path: 'plan.md' })?.action).toBe('comments on plan.md');
-    expect(prettyAgentTool('mcp__rig__rig_people')?.action).toBe('people');
-    expect(prettyAgentTool('mcp__rig__rig_recent_changes')?.action).toBe('recent changes');
+    expect(prettyAgentTool('mcp.rig.rig_comments_add', codex)?.action).toBe('reply on notes/plan.md');
+    expect(prettyAgentTool('mcp__rig__rig_comments_add', { path: 'plan.md' })?.action).toBe('comment on plan.md');
+    expect(prettyAgentTool('mcp__rig__rig_comments_read', { path: 'plan.md' })?.action).toBe('comments on plan.md');
+    expect(prettyAgentTool('mcp__rig__rig_people_list')?.action).toBe('people');
+    expect(prettyAgentTool('mcp__rig__rig_changes_list')?.action).toBe('recent changes');
     // Before the arguments stream in, the bare action.
-    expect(prettyAgentTool('mcp__rig__rig_invite')?.action).toBe('invite');
+    expect(prettyAgentTool('mcp__rig__rig_people_invite')?.action).toBe('invite');
+  });
+
+  it('labels every tool the same by its 0.4.13 name and its old one, so old transcripts read right', async () => {
+    const { prettyAgentTool } = await import('./connectors');
+    const pairs: Array<[string, string, string]> = [
+      ['rig_space_rename', 'rig_rename_space', 'rename space'],
+      ['rig_people_invite', 'rig_invite', 'invite hugo@acme.co'],
+      ['rig_people_list', 'rig_people', 'people'],
+      ['rig_chat_read', 'rig_chat_history', 'chat history'],
+      ['rig_chat_react', 'rig_react', 'react'],
+      ['rig_changes_list', 'rig_recent_changes', 'recent changes'],
+      ['rig_comments_read', 'rig_file_comments', 'comments on plan.md'],
+      ['rig_comments_add', 'rig_comment', 'comment on plan.md'],
+      ['rig_settings_read', 'rig_settings', 'settings'],
+      ['rig_settings_update', 'rig_update_settings', 'update settings'],
+      ['rig_browser_pins', 'browser_pins', 'browser pins'],
+      ['rig_browser_read', 'browser_read', 'browser read'],
+      ['rig_browser_screenshot', 'browser_screenshot', 'browser screenshot'],
+    ];
+    const args = { email: 'hugo@acme.co', path: 'plan.md' };
+    for (const [now, was, action] of pairs) {
+      expect(prettyAgentTool(`mcp__rig__${now}`, args)?.action).toBe(action);
+      expect(prettyAgentTool(`mcp.rig.${now}`, args)?.action).toBe(action);
+      expect(prettyAgentTool(`mcp__rig__${was}`, args)?.action).toBe(action);
+    }
+    expect(prettyAgentTool('mcp.rig.rig_comments_add', { path: 'plan.md', replyTo: 'm1' })?.action).toBe('reply on plan.md');
+  });
+
+  it('labels the tools that move the asker\'s view in plain words', async () => {
+    const { prettyAgentTool } = await import('./connectors');
+    expect(prettyAgentTool('mcp__rig__rig_browser_open', { path: 'site/index.html' })?.action).toBe('open in browser');
+    expect(prettyAgentTool('mcp.rig.rig_browser_open')?.action).toBe('open in browser');
+    expect(prettyAgentTool('mcp__rig__rig_topic_show')?.action).toBe('show topic');
+    expect(prettyAgentTool('mcp.rig.rig_topic_show')).toEqual({ label: 'Rig', action: 'show topic', connector: null, via: 'rig' });
   });
 
   it('keeps arguments only for rig tools', async () => {
     const { rigToolArgs } = await import('./connectors');
     expect(rigToolArgs('mcp__linear__list_issues', { email: 'a@b.co' })).toBeUndefined();
-    expect(rigToolArgs('mcp__rig__rig_people', {})).toBeUndefined();
+    expect(rigToolArgs('mcp__rig__rig_people_list', {})).toBeUndefined();
     expect(rigToolArgs(undefined, { email: 'a@b.co' })).toBeUndefined();
   });
 });

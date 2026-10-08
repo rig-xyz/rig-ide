@@ -3,6 +3,7 @@ import { err, ok, type Result } from '@emdash/shared';
 import { events } from '@main/lib/events';
 import type { RigFileNode } from '@shared/rig/files';
 import { spacesAgentConfigChangedChannel } from '@shared/spaces/agent-settings';
+import { rigShowChannel } from '@shared/spaces/show';
 import { roomSeesFor } from '@shared/spaces/room-sees';
 import { findBindingConfig } from '../binding';
 import { rigSettingsStore } from '../settings-instance';
@@ -144,6 +145,28 @@ const backend: RigToolsBackend = {
   noteReaction: async (runId, emoji) => {
     const { spacesDispatchController } = await import('./dispatch-controller-instance');
     spacesDispatchController.noteReaction(runId, emoji);
+  },
+  currentAsker: async ({ bindingId, ownerUserId, agent }) => {
+    const { spacesDispatchController } = await import('./dispatch-controller-instance');
+    return spacesDispatchController.currentAsker(bindingId, ownerUserId, agent);
+  },
+  // This Mac's window, which `App.tsx` moves (`rigShowChannel`).
+  show: (request) => events.emit(rigShowChannel, request),
+  pathKind: async (absPath) => {
+    try {
+      const info = await stat(absPath);
+      return info.isDirectory() ? 'dir' : info.isFile() ? 'file' : null;
+    } catch {
+      return null;
+    }
+  },
+  listTopics: async (bindingId) => {
+    if (!api.getThemes) return ok(null);
+    const fetched = await api.getThemes(bindingId);
+    if (!fetched.success) return err(fetched.error);
+    if (!fetched.data.supported) return ok(null);
+    const { enabled, themes } = fetched.data.data;
+    return ok({ enabled, topics: themes.map((t) => ({ id: t.id, name: t.name })) });
   },
 };
 

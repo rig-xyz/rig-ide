@@ -1,6 +1,8 @@
 import { BrowserWindow, type NativeImage, type Session, type WebContents } from 'electron';
 import { configureBrowserProfileSession } from '@main/core/browser/browser-profile-session';
 import { RIG_PAGES_PARTITION } from '@shared/spaces/links';
+import { isRigFileUrl } from '@shared/spaces/rig-file';
+import { installRigFileProtocol } from './rig-file-session';
 
 /**
  * The browser that pages open in: one session for the panel's `<webview>`s
@@ -9,7 +11,12 @@ import { RIG_PAGES_PARTITION } from '@shared/spaces/links';
  * deny-by-default permissions, the Google sign-in user agent), kept apart
  * from the general in-app browser.
  */
-export const pagesSession = (): Session => configureBrowserProfileSession(RIG_PAGES_PARTITION);
+export const pagesSession = (): Session => {
+  const ses = configureBrowserProfileSession(RIG_PAGES_PARTITION);
+  // Space files open there too (`rig-file://`), for the panel and agents alike.
+  installRigFileProtocol(ses);
+  return ses;
+};
 
 /**
  * Agents read pages in hidden tabs of their own, never in the person's panel
@@ -21,10 +28,17 @@ const IDLE_MS = 5 * 60_000;
 const SETTLE_MS = 2_500;
 const tabs = new Map<string, { win: BrowserWindow; ready: Promise<void>; timer: NodeJS.Timeout }>();
 
+/** A load, plus a moment for the page's scripts to draw. */
+function settled(load: Promise<void>): Promise<void> {
+  return load.then(() => new Promise<void>((r) => setTimeout(r, SETTLE_MS)));
+}
+
 export async function agentPage(url: string): Promise<WebContents> {
   const existing = tabs.get(url);
   if (existing && !existing.win.isDestroyed()) {
     existing.timer.refresh();
+    // A space's file may have just changed: read it as it is now.
+    if (isRigFileUrl(url)) existing.ready = existing.ready.then(() => settled(existing.win.loadURL(url)));
     await existing.ready;
     return existing.win.webContents;
   }
@@ -34,7 +48,7 @@ export async function agentPage(url: string): Promise<WebContents> {
     height: 900,
     webPreferences: { session: pagesSession(), sandbox: true, contextIsolation: true, backgroundThrottling: false },
   });
-  const ready = win.loadURL(url).then(() => new Promise<void>((r) => setTimeout(r, SETTLE_MS)));
+  const ready = settled(win.loadURL(url));
   const timer = setTimeout(() => {
     tabs.delete(url);
     if (!win.isDestroyed()) win.destroy();

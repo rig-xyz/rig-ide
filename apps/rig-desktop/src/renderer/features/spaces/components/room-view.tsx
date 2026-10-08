@@ -29,6 +29,8 @@ import { readLastSeen, writeOpenedAt } from '../room-read-marker';
 import { reportSpaceRead, windowIsLooking } from '@renderer/features/notifications/space-read-sync';
 import { useRefreshMemberReadsOnRosterChange } from '../roster-refresh';
 import { resolveSpaceLink } from '../space-link';
+import { requestBrowserMode } from '@renderer/features/artifact/view-request';
+import { isHtmlPath } from '@shared/spaces/rig-file';
 import { effectiveRunStatus, runCard } from '../projection';
 import type { AgentKind, MessageMention, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import { mentionPeople } from '../mentions';
@@ -814,8 +816,10 @@ export function RoomView({
       if (!open) return;
       // Folder not known (yet): hand it over as before.
       if (!spaceRoot) return open(link);
-      const resolved = resolveSpaceLink(link, spaceRoot);
+      const resolved = resolveSpaceLink(link, spaceRoot, bindingId);
       if (resolved.kind === 'inside') {
+        // An html file from the chat opens as a working page: Browser mode.
+        if (isHtmlPath(resolved.relPath)) requestBrowserMode(`${spaceRoot.replace(/\/+$/, '')}/${resolved.relPath}`);
         // Made on someone else's computer and not synced here yet: say so,
         // instead of opening an editor that can only fail.
         void Promise.resolve()
@@ -906,7 +910,7 @@ export function RoomView({
               if (result.success) configCache.current.set(agent, Promise.resolve(result.data));
               return result.success ? result.data : { error: result.error };
             },
-            // Your agent changed its own settings (rig_update_settings).
+            // Your agent changed its own settings (rig_settings_update).
             watch: (agent, onChange) =>
               events.on(spacesAgentConfigChangedChannel, (changed) => {
                 if (changed.bindingId !== bindingId || changed.agent !== agent) return;

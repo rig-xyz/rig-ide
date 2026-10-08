@@ -59,4 +59,13 @@ describe('resolveSpaceLink', () => {
     expect(resolveSpaceLink('mailto:sam@example.com', ROOT)).toEqual({ kind: 'external' });
     expect(resolveSpaceLink('//cdn.example.com/x', ROOT)).toEqual({ kind: 'external' });
   });
+
+  it("opens an agent's rig-file link to this space's file, and no other space's", () => {
+    expect(resolveSpaceLink('rig-file://bnd_abc/site/index.html', ROOT, 'bnd_abc')).toEqual({ kind: 'inside', relPath: 'site/index.html' });
+    expect(resolveSpaceLink('rig-file://bnd_abc/my%20page.html#top', ROOT, 'bnd_abc')).toEqual({ kind: 'inside', relPath: 'my page.html' });
+    expect(resolveSpaceLink('rig-file://bnd_other/x.html', ROOT, 'bnd_abc')).toEqual({ kind: 'outside', path: 'rig-file://bnd_other/x.html' });
+    expect(resolveSpaceLink('rig-file://bnd_abc/../x.html', ROOT, 'bnd_abc')).toEqual({ kind: 'outside', path: 'rig-file://bnd_abc/../x.html' });
+    expect(resolveSpaceLink('rig-file://bnd_abc', ROOT, 'bnd_abc')).toEqual({ kind: 'outside', path: 'rig-file://bnd_abc' });
+  });
 });
+

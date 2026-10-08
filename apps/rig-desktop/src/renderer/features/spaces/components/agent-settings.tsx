@@ -23,13 +23,13 @@ export type AgentSettingsApi = {
   change: (agent: AgentKind, change: AgentConfigChange) => Promise<AgentConfig | { error: string }>;
   /** Makes a pick your default for this agent everywhere (new chats and spaces). */
   remember?: (agent: AgentKind, change: AgentConfigChange) => void;
-  /** Calls back with the agent's new settings when they change from elsewhere (its own `rig_update_settings`). */
+  /** Calls back with the agent's new settings when they change from elsewhere (its own `rig_settings_update`). */
   watch?: (agent: AgentKind, onChange: (config: AgentConfig) => void) => () => void;
   /** "Room sees" in this space: how much of your agents' work other members see. Kept on this computer. */
   roomSees?: {
     load: () => Promise<RoomSees>;
     change: (level: RoomSees) => Promise<boolean>;
-    /** Calls back with the level whenever the saved settings change (the pill, or your agent's `rig_update_settings`). */
+    /** Calls back with the level whenever the saved settings change (the pill, or your agent's `rig_settings_update`). */
     watch?: (onChange: (level: RoomSees) => void) => () => void;
   };
 };

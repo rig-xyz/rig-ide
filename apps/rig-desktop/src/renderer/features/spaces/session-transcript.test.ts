@@ -31,12 +31,12 @@ describe('replaySessionTranscript', () => {
       {
         seq: 1,
         kind: 'tool_call',
-        payload: { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'mcp__rig__rig_people', kind: 'other', status: 'completed' },
+        payload: { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'mcp__rig__rig_people_list', kind: 'other', status: 'completed' },
       },
       { seq: 2, kind: 'turn_ended', payload: { status: 'done' } },
     ]);
     const json = JSON.stringify(committed);
     expect(json).toContain('Rig · people');
-    expect(json).not.toContain('mcp__rig__rig_people');
+    expect(json).not.toContain('mcp__rig__rig_people_list');
   });
 });

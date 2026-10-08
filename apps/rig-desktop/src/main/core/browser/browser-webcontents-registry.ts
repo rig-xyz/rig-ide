@@ -26,6 +26,7 @@ import {
   resolveDefaultHotkey,
   type ShortcutSettingsKey,
 } from '@shared/shortcuts';
+import { parseRigFileUrl } from '@shared/spaces/rig-file';
 import { isGoogleAuthUrl, userAgentForBrowserUrl } from './browser-user-agent';
 
 type RegisteredBrowserSession = {
@@ -330,7 +331,7 @@ export class BrowserWebContentsRegistry {
     });
 
     webContents.on('will-navigate', (event, url) => {
-      if (!isSupportedBrowserNavigationUrl(url)) {
+      if (!isAllowedNavigation(webContents.getURL(), url)) {
         event.preventDefault();
       }
     });
@@ -405,6 +406,16 @@ function installBrowserUserAgentSwitch(webContents: WebContents): void {
 
 function isSupportedBrowserNavigationUrl(url: string): boolean {
   return normalizeBrowserUrl(url, { allowSearchQueries: false }).ok;
+}
+
+/**
+ * A space's file page (`rig-file://`) may follow its own links within that
+ * space; nothing else may navigate into a space's files.
+ */
+export function isAllowedNavigation(from: string, to: string): boolean {
+  const target = parseRigFileUrl(to);
+  if (target) return parseRigFileUrl(from)?.bindingId === target.bindingId;
+  return isSupportedBrowserNavigationUrl(to);
 }
 
 function isExternalHttpUrl(url: string): boolean {

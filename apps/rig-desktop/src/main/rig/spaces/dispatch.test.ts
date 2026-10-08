@@ -1328,13 +1328,13 @@ describe('room context for the agent', () => {
     expect(spacesHiddenContext({ sourceMessageId: 'msg_src' }, [], true)).toContain('The message that asked you is msg_src.');
     // A doc comment's turn has no message: it answers in words.
     expect(spacesHiddenContext({ sourceMessageId: null }, [], true)).toContain('there is nothing to react to. Answer in words.');
-    // Without rig tools there's no rig_react to give it to.
+    // Without rig tools there's no rig_chat_react to give it to.
     expect(spacesHiddenContext({ sourceMessageId: 'msg_src' }, [], false, 'everything', 57)).not.toContain('asked you');
   });
 
   it('keeps only what changes per turn: no rules in it', () => {
     const context = spacesHiddenContext({ sourceMessageId: 'msg_src' }, ['#1 Sam: hi'], true, 'everything', 2);
-    expect(context).not.toContain('rig_invite');
+    expect(context).not.toContain('rig_people_invite');
     expect(context).not.toContain('Reply or react');
     expect(context).not.toContain('SKILL.md');
     expect(context.length).toBeLessThan(800);
@@ -1349,12 +1349,12 @@ describe('space rules (once per session)', () => {
     const lines = text.split('\n');
     expect(lines.findIndex((l) => l.startsWith('Reply or react.'))).toBeLessThan(6);
     expect(text).toContain(
-      'Reply or react. When a message only needs an acknowledgement, a thanks, a yes or a vote, react to it with rig_react and end your turn without a reply. Reply in words when you have something to say.'
+      'Reply or react. When a message only needs an acknowledgement, a thanks, a yes or a vote, react to it with rig_chat_react and end your turn without a reply. Reply in words when you have something to say.'
     );
     expect(text).toContain('- "thanks @claude": react 👍 and don\'t reply.');
     expect(rules(true, 'codex')).toContain('- "thanks @codex"');
     expect(text).toContain('A reaction does not trigger or notify any agent.');
-    expect(text).toContain('rig_invite to invite people');
+    expect(text).toContain('rig_people_invite to invite people');
     // No CLI paths the tools cover, and no "still answers" wording.
     expect(text).not.toContain('rig share');
     expect(text).not.toContain('rig chat');
@@ -1365,7 +1365,7 @@ describe('space rules (once per session)', () => {
 
   it('without rig tools: the CLI fallbacks, and no reactions', () => {
     const text = rules(false);
-    expect(text).not.toContain('rig_react');
+    expect(text).not.toContain('rig_chat_react');
     expect(text).not.toContain('Reply or react');
     expect(text).toContain('run `rig share <email>`');
     expect(text).toContain('Do not also post it with `rig chat send`.');
@@ -1591,6 +1591,34 @@ describe('runLocal (doc comments in a space)', () => {
     await expect(started.data.done).resolves.toEqual({ status: 'done', answer: 'A tracking bug, fixed by Alice.' });
     // Only the Room request was ever settled on the relay.
     await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: 'req1', status: 'done' }]));
+  });
+});
+
+describe('currentAsker (whose screen a rig tool may move)', () => {
+  it('is the person who asked the run in progress, the owner for a doc comment, and null when idle', async () => {
+    const { api } = makeFakeApi();
+    const fake = makeFakeAcp();
+    const { dispatch, runLocal, currentAsker } = createSpacesDispatcher({ api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+    expect(currentAsker('binding-1', 'owner-1', 'claude')).toBeNull();
+
+    await dispatch(makeRequest({ requestedByUserId: 'sam' }));
+    const conversationId = fake.started[0].conversationId;
+    fake.emitTurnStart(conversationId, fake.queued[0].turnId);
+    expect(currentAsker('binding-1', 'owner-1', 'claude')).toBe('sam');
+    expect(currentAsker('binding-1', 'owner-1', 'codex')).toBeNull();
+    fake.emitTurnEnd(conversationId, fake.queued[0].turnId, 'end_turn');
+    await vi.waitFor(() => expect(currentAsker('binding-1', 'owner-1', 'claude')).toBeNull());
+
+    await dispatch(makeRequest({ id: 'req2', requestedByUserId: 'owner-1' }));
+    fake.emitTurnStart(conversationId, fake.queued[1].turnId);
+    expect(currentAsker('binding-1', 'owner-1', 'claude')).toBe('owner-1');
+    fake.emitTurnEnd(conversationId, fake.queued[1].turnId, 'end_turn');
+    await vi.waitFor(() => expect(currentAsker('binding-1', 'owner-1', 'claude')).toBeNull());
+
+    const local = await runLocal({ bindingId: 'binding-1', ownerUserId: 'owner-1', agent: 'claude', prompt: 'Why?' });
+    if (!local.success) throw new Error(local.error);
+    fake.emitTurnStart(conversationId, fake.queued[2].turnId);
+    expect(currentAsker('binding-1', 'owner-1', 'claude')).toBe('owner-1');
   });
 });
 
@@ -1882,7 +1910,7 @@ describe('rig tools', () => {
     });
     expect(fake.started[0]).toMatchObject({ mcpServers: [LINEAR, rigServer('rig-token')] });
     // Codex gets the rules as its developer instructions, the tools named in them.
-    expect(fake.started[0]!.systemPromptAppend).toContain("Use rig's own tools for this space instead of the `rig` CLI: rig_invite");
+    expect(fake.started[0]!.systemPromptAppend).toContain("Use rig's own tools for this space instead of the `rig` CLI: rig_people_invite");
     expect(fake.started[0]!.systemPromptAppend).not.toContain('rig-token');
     const hidden = fake.queued[0]!.hiddenContext!;
     // Rig's tools aren't a connector: the connectors note only names Linear.
@@ -1993,7 +2021,7 @@ describe('rig tools', () => {
       ['codex', 'mcp.rig.'],
     ] as const)('%s: the read-only rig and browser tools are allowed once, with no card', async (agent, prefix) => {
       const { fake, conversationId, requested } = await startTurn(agent);
-      const tools = ['rig_people', 'rig_recent_changes', 'rig_file_comments', 'browser_pins', 'browser_read', 'browser_screenshot'];
+      const tools = ['rig_people_list', 'rig_changes_list', 'rig_comments_read', 'rig_browser_pins', 'rig_browser_read', 'rig_browser_screenshot'];
       tools.forEach((tool, i) => fake.emitPermissionRequest(conversationId, request(`${prefix}${tool}`, `perm-${i}`)));
 
       await vi.waitFor(() => expect(fake.resolvedPermissions).toHaveLength(tools.length));
@@ -2015,22 +2043,22 @@ describe('rig tools', () => {
       expect(requested()).toEqual(['write-0', 'write-1', 'write-2', 'write-3']);
     });
 
-    it('still asks for rig_invite and rig_comment, a same-named tool on another server, and anything without rig tools', async () => {
+    it('still asks for rig_people_invite and rig_comments_add, a same-named tool on another server, and anything without rig tools', async () => {
       const { fake, dispatcher, runId, conversationId, requested } = await startTurn('claude');
       const asks = [
-        'mcp__rig__rig_invite',
-        'mcp.rig.rig_invite',
-        'mcp__rig__rig_comment',
-        'mcp.rig.rig_comment',
-        'mcp__granola__rig_people',
-        'mcp.linear.rig_people',
-        'rig_people',
+        'mcp__rig__rig_people_invite',
+        'mcp.rig.rig_people_invite',
+        'mcp__rig__rig_comments_add',
+        'mcp.rig.rig_comments_add',
+        'mcp__granola__rig_people_list',
+        'mcp.linear.rig_people_list',
+        'rig_people_list',
         'mcp__rig__rig_people_and_more',
       ];
       asks.forEach((title, i) => fake.emitPermissionRequest(conversationId, request(title, `ask-${i}`)));
       // A pre-approved tool offering no plain "allow once" waits too, rather than being granted "always".
       fake.emitPermissionRequest(conversationId, {
-        ...request('mcp__rig__rig_people', 'only-always'),
+        ...request('mcp__rig__rig_people_list', 'only-always'),
         options: [{ optionId: 'allow-always', name: 'Always allow', kind: 'allow_always' }],
       });
 
@@ -2040,17 +2068,17 @@ describe('rig tools', () => {
       await expect(dispatcher.resolvePermission(runId, 'ask-0', 'reject-once')).resolves.toBe(true);
 
       const without = await startTurn('codex', false);
-      without.fake.emitPermissionRequest(without.conversationId, request('mcp.rig.rig_people'));
+      without.fake.emitPermissionRequest(without.conversationId, request('mcp.rig.rig_people_list'));
       await vi.waitFor(() => expect(without.requested()).toEqual(['perm-1']));
       expect(without.fake.resolvedPermissions).toEqual([]);
     });
 
-    it("always asks for rig_update_settings, and hands its tool the owner's allow, never a decline", async () => {
+    it("always asks for rig_settings_update, and hands its tool the owner's allow, never a decline", async () => {
       const { fake, dispatcher, runId, conversationId, requested } = await startTurn('claude');
       const key = 'binding-1::owner-1::claude';
       ownerApprovals.take(key);
-      fake.emitPermissionRequest(conversationId, request('mcp__rig__rig_update_settings', 'settings-1'));
-      fake.emitPermissionRequest(conversationId, request('mcp__rig__rig_update_settings', 'settings-2'));
+      fake.emitPermissionRequest(conversationId, request('mcp__rig__rig_settings_update', 'settings-1'));
+      fake.emitPermissionRequest(conversationId, request('mcp__rig__rig_settings_update', 'settings-2'));
       await vi.waitFor(() => expect(requested()).toEqual(['settings-1', 'settings-2']));
       expect(fake.resolvedPermissions).toEqual([]);
 
@@ -2064,17 +2092,21 @@ describe('rig tools', () => {
 
   it('points the agent at the tools only when it has them', () => {
     const rules = (rigTools: boolean) => spaceRules({ bindingId: 'b', agent: 'claude', rigTools });
-    expect(rules(false)).not.toContain('rig_invite');
+    expect(rules(false)).not.toContain('rig_people_invite');
     expect(rules(true)).toContain("Use rig's own tools for this space instead of the `rig` CLI");
-    expect(rules(true)).toContain('use browser_pins, browser_read and browser_screenshot with its link');
-    expect(rules(false)).not.toContain('browser_pins');
+    expect(rules(true)).toContain('use rig_browser_pins, rig_browser_read and rig_browser_screenshot with its link');
+    expect(rules(false)).not.toContain('rig_browser_pins');
+    expect(rules(true)).toContain('To show the person who asked you a web page or a file from the space, call rig_browser_open instead of only naming it.');
+    expect(rules(true)).toContain('To show them only one topic of the chat, call rig_topic_show with its name.');
+    expect(rules(false)).not.toContain('rig_browser_open');
+    expect(rules(false)).not.toContain('rig_topic_show');
   });
 
-  it('sends older or full chat messages to rig_chat_history, not the skill, when the agent has the tools', () => {
+  it('sends older or full chat messages to rig_chat_read, not the skill, when the agent has the tools', () => {
     const withTools = spaceRules({ bindingId: 'b', agent: 'claude', rigTools: true });
-    expect(withTools).toContain('For older messages, a message in full, or to find what someone said, use rig_chat_history.');
+    expect(withTools).toContain('For older messages, a message in full, or to find what someone said, use rig_chat_read.');
     const without = spaceRules({ bindingId: 'b', agent: 'claude', rigTools: false });
-    expect(without).not.toContain('rig_chat_history');
+    expect(without).not.toContain('rig_chat_read');
   });
 });
 

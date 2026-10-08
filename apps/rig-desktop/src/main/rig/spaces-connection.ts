@@ -253,7 +253,7 @@ export const rigSpacesConnectionController = createRPCController({
   }): Promise<Result<{ run: SessionRun; events: SessionEventRow[] }, RelayApiError>> =>
     api.getSessionEvents(input.bindingId, input.runId, input.after),
 
-  /** Your own reaction on a message, on or off (never as an agent: that's `rig_react`'s). */
+  /** Your own reaction on a message, on or off (never as an agent: that's `rig_chat_react`'s). */
   setReaction: async (input: {
     bindingId: string;
     messageId: string;

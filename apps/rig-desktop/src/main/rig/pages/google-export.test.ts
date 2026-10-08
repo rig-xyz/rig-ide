@@ -11,7 +11,7 @@ import {
   type ExportResponse,
 } from './google-export';
 
-// Google editors draw on a canvas: browser_read gets the file's own export,
+// Google editors draw on a canvas: rig_browser_read gets the file's own export,
 // in the agent tab's session, and never through a sign-in.
 
 /** A fake Electron ClientRequest: the test scripts what the server does once `end()` is called. */

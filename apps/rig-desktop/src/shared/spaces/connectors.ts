@@ -195,8 +195,8 @@ export function connectorIdForUrl(url: string): ConnectorId | null {
 /**
  * The MCP server name rig's own tools (invite, people, recent changes, file
  * comments) are handed to room agents under, by the desktop itself — see
- * `main/rig/spaces/rig-tools.ts`. Claude sees `mcp__rig__rig_invite`, Codex
- * `mcp.rig.rig_invite`.
+ * `main/rig/spaces/rig-tools.ts`. Claude sees `mcp__rig__rig_people_invite`, Codex
+ * `mcp.rig.rig_people_invite`.
  */
 export const RIG_TOOLS_SERVER = 'rig';
 
@@ -221,23 +221,57 @@ export function rigToolArgs(raw: string | undefined, rawInput: unknown): RigTool
   return Object.keys(args).length > 0 ? args : undefined;
 }
 
-/** "invite hugo@acme.co" from a rig tool's raw name and arguments, or null when it isn't one of rig's own tools. */
+/**
+ * "invite hugo@acme.co" from a rig tool's raw name and arguments, or null when
+ * it isn't one of rig's own tools. Knows the names from before Rig 0.4.13 too
+ * (`rig_invite`, `browser_read`…), so old transcripts keep reading right.
+ */
 export function prettyRigTool(raw: string, args?: RigToolArgs): string | null {
   const match = RIG_TOOL_NAME.exec(raw);
   if (!match) return null;
   const tool = (match[1] ?? match[2]!).replace(/^rig_/, '');
   const on = args?.path ? ` on ${args.path}` : '';
   switch (tool) {
+    case 'space_rename':
+    case 'rename_space':
+      return 'rename space';
+    case 'people_invite':
     case 'invite':
       return args?.email ? `invite ${args.email}` : 'invite';
+    case 'people_list':
     case 'people':
       return 'people';
+    case 'chat_read':
+    case 'chat_history':
+      return 'chat history';
+    case 'chat_react':
+    case 'react':
+      return 'react';
+    case 'changes_list':
     case 'recent_changes':
       return 'recent changes';
+    case 'comments_read':
     case 'file_comments':
       return `comments${on}`;
+    case 'comments_add':
     case 'comment':
       return `${args?.replyTo ? 'reply' : 'comment'}${on}`;
+    case 'settings_read':
+    case 'settings':
+      return 'settings';
+    case 'settings_update':
+    case 'update_settings':
+      return 'update settings';
+    case 'browser_pins':
+      return 'browser pins';
+    case 'browser_read':
+      return 'browser read';
+    case 'browser_screenshot':
+      return 'browser screenshot';
+    case 'browser_open':
+      return 'open in browser';
+    case 'topic_show':
+      return 'show topic';
     default:
       return tool.replace(/[_-]+/g, ' ').trim().toLowerCase();
   }

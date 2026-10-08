@@ -43,7 +43,7 @@ export function replaySessionTranscript(
   return { committed: parser.history, active: parser.activeTurn };
 }
 
-/** An MCP tool call titled `mcp__rig__rig_people` reads "Rig · people" here too, as it does on the turn itself. */
+/** An MCP tool call titled `mcp__rig__rig_people_list` reads "Rig · people" here too, as it does on the turn itself. */
 function readableToolTitle(payload: Record<string, unknown>): Record<string, unknown> {
   const kind = payload.sessionUpdate;
   if ((kind !== 'tool_call' && kind !== 'tool_call_update') || typeof payload.title !== 'string') return payload;
