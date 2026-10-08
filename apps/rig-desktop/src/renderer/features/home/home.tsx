@@ -46,7 +46,7 @@ import {
   type HomeRecentSession,
   type LegacyRowVisibility,
 } from './home-sections';
-import { NeedsYouSection } from './needs-you-section';
+import { WaitingOnYouSection } from './needs-you-section';
 import { NewSpaceCta } from './new-space-cta';
 import { PeopleRail } from './people-rail';
 import { shouldShowPulseSection } from './pulse-state';
@@ -680,8 +680,9 @@ export function Home({
         {showPulse && (
           <div className="min-w-0 flex-1 lg:order-2" data-testid="home-center">
             {/*
-             * The center column, 80px from the Spaces card: Ask and its
-             * chips, then Needs you, the topics and People, 20px apart.
+             * The center column, 80px from the Spaces card: the greeting,
+             * the summary, Ask and its chips, then Waiting on you, the
+             * topics and People, 20px apart.
              */}
             <div className="flex w-full flex-col gap-5">
               <BriefingSpine
@@ -690,11 +691,12 @@ export function Home({
                 onHighlightRig={setHighlightBindingId}
                 askChips={askChips}
               />
-              <NeedsYouSection
+              {/* Waiting on you: direct, unread things, each with its one action. */}
+              <WaitingOnYouSection
                 spaceRows={spaceRows}
-                statusByBinding={statusByBinding}
+                statusByBinding={connectionDown ? new Map() : statusByBinding}
                 selfUserId={selfUserId}
-                onOpenPath={onOpenPath}
+                onOpenPath={(path) => onOpenPath(path, { kind: 'space' })}
               />
               {spacesEnabled && (
                 <AcrossYourSpacesToday

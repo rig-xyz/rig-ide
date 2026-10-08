@@ -47,7 +47,6 @@ import type {
   RoomSearchPage,
 } from '@main/rig/spaces/relay-api';
 import type { DraftPreview } from '@main/rig/spaces-connection';
-import type { MessageAttachment } from '@shared/rig/attachments';
 import { connectorById, type ConnectionStatus } from '@shared/spaces/connectors';
 import { ROOM_CACHE_FORMAT_VERSION, ROOM_CACHE_MAX_BYTES, type CachedRoomBlob } from '@shared/spaces/room-cache';
 import type { LocalRunEvent } from '@shared/spaces/room-sees';
@@ -56,7 +55,6 @@ import { compareEventIds, type ThemeEventsPage, type ThemesFetch, type ThemesSna
 import type {
   AgentKind,
   MessageKind,
-  MessageMention,
   RoomConnector,
   RoomEvent,
   RoomMessage,
@@ -66,6 +64,7 @@ import type {
 } from './types';
 import { parseMessageAttachments } from './attachments';
 import { parseMessageMentions } from './mentions';
+import { roomTextMessage, type RoomSendExtra } from './room-send';
 import { SOMEONE } from './person-identity';
 import { reduceRoom } from './fixtures/room-feed';
 import { effectiveRunStatus, runCard, summarizeCard } from './projection';
@@ -1664,36 +1663,9 @@ export class RelayRoomSource implements RoomSource {
     text: string,
     replyTo?: RoomReplyRef,
     asks?: AgentKind,
-    extra?: {
-      attachments?: MessageAttachment[];
-      autoBody?: boolean;
-      clientId?: string;
-      alsoInChannel?: boolean;
-      /** You chose to just send it: the relay's router leaves it alone. */
-      route?: 'none';
-      /** People tagged by picking them: their ids go in `meta.mentions` (the relay notifies by them), their names as written in `meta.mentionNames`. */
-      mentions?: readonly MessageMention[];
-    }
+    extra?: RoomSendExtra
   ): Promise<string | null> {
-    const meta = {
-      ...(replyTo ? { replyTo } : {}),
-      ...(asks ? { asks } : {}),
-      ...(extra?.attachments && extra.attachments.length > 0
-        ? { attachments: extra.attachments, ...(extra.autoBody ? { autoBody: true } : {}) }
-        : {}),
-      ...(extra?.clientId ? { clientId: extra.clientId } : {}),
-      // A thread reply that also shows in the main column (Threads view); text meta is free-form on the relay.
-      ...(extra?.alsoInChannel ? { alsoInChannel: true } : {}),
-      ...(extra?.route ? { route: extra.route } : {}),
-      ...(extra?.mentions && extra.mentions.length > 0
-        ? { mentions: extra.mentions.map((m) => m.id), mentionNames: extra.mentions.map((m) => m.name) }
-        : {}),
-    };
-    const result = await this.opts.relay.postMessage(this.opts.bindingId, {
-      body: text,
-      kind: 'text',
-      ...(Object.keys(meta).length > 0 ? { meta } : {}),
-    });
+    const result = await this.opts.relay.postMessage(this.opts.bindingId, roomTextMessage(text, replyTo, asks, extra));
     return result.success ? result.data.id : null;
   }
 

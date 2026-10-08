@@ -51,7 +51,6 @@ const mocks = vi.hoisted(() => ({
   getCalls: 0,
   requests: [] as Array<[string, string]>,
   pulse: null as unknown,
-  expiredConnector: false,
   summary: null as unknown,
   activity: [] as unknown[],
 }));
@@ -154,14 +153,9 @@ vi.mock('@renderer/lib/ipc', () => ({
       spaceStatus: { get: async () => ({ success: true, data: [] }) },
       spacesConnection: {
         listMembers: async () => ({ success: true, data: [] }),
-        listConnectors: async () => ({
-          success: true,
-          data: mocks.expiredConnector ? [{ connectorId: 'linear' }] : [],
-        }),
+        listMessages: async () => ({ success: true, data: [] }),
       },
-      connectors: {
-        list: async () => (mocks.expiredConnector ? [{ id: 'linear', state: 'expired' }] : []),
-      },
+      spacesDispatch: { localRunEvents: async () => ({ events: null }) },
       pulse: { get: async () => mocks.pulse ?? fail },
       syncHealth: {
         get: async ({ paths }: { paths: string[] }) =>
@@ -254,7 +248,6 @@ describe('Home: Across your spaces today', () => {
     mocks.getCalls = 0;
     mocks.requests = [];
     mocks.pulse = null;
-    mocks.expiredConnector = false;
     mocks.summary = null;
     mocks.activity = [];
     opened = [];
@@ -609,8 +602,8 @@ describe('Home: Across your spaces today', () => {
     expect(lines()).toHaveLength(0);
   });
 
-  it('Needs you sits right under the Ask box and its chips, above the topics and People', async () => {
-    mocks.expiredConnector = true;
+  it('Waiting on you sits right under the Ask box and its chips, above the topics and People', async () => {
+    mocks.activity = [mention('s-launch', 'u-hugo', 'Hugo Renaudin')];
     mocks.live = { kind: 'live', savedAt: NOW, themes: [theme(1)] };
     mocks.pulse = {
       success: true,
@@ -630,8 +623,8 @@ describe('Home: Across your spaces today', () => {
     await mount();
     const center = host.querySelector<HTMLElement>('[data-testid="home-center"]')!;
     const ask = center.querySelector('input[placeholder="Ask across your spaces…"]')!;
-    const needsYou = center.querySelector('[data-testid="needs-you"]')!;
-    expect(needsYou.textContent).toContain('Your Linear login expired');
+    const needsYou = center.querySelector('[data-testid="waiting-on-you"]')!;
+    expect(needsYou.textContent).toContain('Hugo Renaudin mentioned you in #launch');
     const people = center.querySelector('[data-testid="home-people"]')!;
     const follows = (a: Node, b: Node) =>
       Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
