@@ -8,6 +8,7 @@ import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import type { RigAskAnswer, RigAskSource, RigPulseError } from '@shared/rig/pulse';
+import { FALLBACK_ASK_CHIPS, type AskChip } from './ask-chips';
 import { composeGreeting, firstNameOf } from './greeting';
 import { resolveRigNameClick } from './home-sections';
 import {
@@ -34,8 +35,6 @@ export async function loadPulse(queryClient: QueryClient, args: { refresh?: bool
   const result = await rpc.rig.pulse.get(args);
   return keepLastGoodPulse(result, queryClient.getQueryData<PulseResult>(PULSE_QUERY_KEY));
 }
-
-const ASK_SUGGESTIONS = ["What's blocked?", 'What shipped recently?', 'What should I pick up next?'];
 
 /** A "slow" background nudge for a window left open unattended — window focus covers the realistic "came back to check" moment; this covers the rest, without hammering the relay. */
 const PULSE_REFETCH_INTERVAL_MS = 20 * 60 * 1000;
@@ -76,6 +75,7 @@ export function BriefingSpine({
   localRigs,
   onOpenPath,
   onHighlightRig,
+  askChips = FALLBACK_ASK_CHIPS,
 }: {
   /**
    * Bindings this device already has, for resolving an Ask source's link
@@ -95,6 +95,8 @@ export function BriefingSpine({
   onOpenPath: (path: string, opts?: { openFilePath?: string }) => void;
   /** Scrolls to/flashes the matching row in `RigsRail` (`home.tsx`'s own state) — the relay-only half of an Ask source's link. */
   onHighlightRig: (bindingId: string) => void;
+  /** The chips under Ask, from what's on Home (`deriveAskChips`); the standing three when nothing is new. */
+  askChips?: readonly AskChip[];
 }) {
   const queryClient = useQueryClient();
   const pulseQuery = useQuery({
@@ -193,7 +195,7 @@ export function BriefingSpine({
         />
       )}
 
-      <PulseAsk onClickSource={onClickSource} rigNameOf={rigNameOf} />
+      <PulseAsk onClickSource={onClickSource} rigNameOf={rigNameOf} chips={askChips} />
     </div>
   );
 }
@@ -293,9 +295,11 @@ function HeaderSkeleton() {
 function PulseAsk({
   onClickSource,
   rigNameOf,
+  chips,
 }: {
   onClickSource: (item: AskSourceListItem) => void;
   rigNameOf: (bindingId: string) => string | null;
+  chips: readonly AskChip[];
 }) {
   const [question, setQuestion] = useState('');
   const [asking, setAsking] = useState(false);
@@ -362,15 +366,21 @@ function PulseAsk({
         </form>
 
         {idle && (
-          <div className="flex flex-wrap gap-1.5">
-            {ASK_SUGGESTIONS.map((s) => (
+          <div className="flex flex-wrap gap-1.5" data-testid="ask-chips">
+            {chips.map((chip) => (
               <button
-                key={s}
+                key={chip.question}
                 type="button"
-                onClick={() => void runAsk(s)}
-                className="border-border-hairline text-text-muted hover:text-text-primary hover:border-border-strong rounded-chip border px-2 py-1 font-mono text-xs transition-colors"
+                onClick={() => void runAsk(chip.question)}
+                className={cn(
+                  'border-border-hairline hover:text-text-primary hover:border-border-strong flex max-w-full items-center gap-1.5 rounded-chip border px-2 py-1 text-left text-xs transition-colors',
+                  // The standing questions stay quiet mono; ones made from the screen read as plain words.
+                  chip.why ? 'text-text-secondary' : 'text-text-muted font-mono'
+                )}
+                data-testid="ask-chip"
               >
-                {s}
+                <span className="min-w-0 truncate">{chip.question}</span>
+                {chip.why && <span className="text-text-muted shrink-0 font-mono text-2xs">{chip.why}</span>}
               </button>
             ))}
           </div>

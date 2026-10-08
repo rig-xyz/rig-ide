@@ -564,6 +564,42 @@ describe('Home: Across your spaces today', () => {
     expect(unknown!.className).not.toContain('opacity-50');
   });
 
+  it("Ask's chips come from the screen: the busiest space, who mentioned you on their topic, a new topic", async () => {
+    mocks.summary = {
+      spaces: [
+        {
+          bindingId: 's-launch',
+          name: 'launch',
+          latestDirect: null,
+          level: 'all',
+          lastReadSeq: 90,
+          spaceUnread: 25,
+          directUnread: 1,
+          directUnreadNoMessage: 0,
+        },
+      ],
+      invitesUnread: 0,
+      directUnreadTotal: 1,
+    };
+    mocks.activity = [mention('s-launch', 'u-hugo', 'Hugo Renaudin')];
+    mocks.live = {
+      kind: 'live',
+      savedAt: NOW,
+      themes: [
+        theme(1, { name: 'Onboarding Strategy', people: ['Hugo'], lastSeq: 99 }),
+        theme(2, { name: 'Pricing page', people: ['Ana'], lastSeq: 98 }),
+      ],
+    };
+    await mount();
+    const chips = [...host.querySelectorAll<HTMLElement>('[data-testid="ask-chip"]')].map((c) => c.textContent);
+    expect(chips).toEqual([
+      'Catch me up on launch25 new',
+      'What did Hugo decide on Onboarding Strategy?mentioned you',
+      "What's left on Pricing page?#launch",
+    ]);
+    expect(host.textContent).not.toContain("What's blocked?");
+  });
+
   it('says "Quiet day across your spaces" when nothing happened', async () => {
     mocks.live = { kind: 'live', savedAt: NOW, themes: [] };
     await mount();

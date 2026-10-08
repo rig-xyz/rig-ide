@@ -66,6 +66,8 @@ import { SpacesCard } from './spaces-card';
 import { useRecentThemes, RECENT_THEMES_QUERY_KEY } from './use-recent-themes';
 import { useSpaceStatus } from './use-space-status';
 import { useFaceReasons } from './use-face-reasons';
+import { deriveAskChips } from './ask-chips';
+import { unreadMentionsBySpace } from './face-reasons';
 import { deriveWelcomePhase, type WelcomePhase } from './welcome-state';
 
 /**
@@ -499,6 +501,38 @@ export function Home({
     selfUserId,
     enabled: spacesEnabled && signedIn && !connectionDown,
   });
+  // Ask's chips, from what's on this screen: no model call.
+  const unreadBySpace = new Map(notificationSummary.spaces.map((s) => [s.bindingId, s.spaceUnread]));
+  const askChips = deriveAskChips({
+    spaces: spaceRows.map((r) => ({
+      bindingId: r.bindingId,
+      name: r.name ?? 'Untitled space',
+      unread: connectionDown ? 0 : (unreadBySpace.get(r.bindingId) ?? 0),
+    })),
+    mentions: connectionDown
+      ? []
+      : [...unreadMentionsBySpace(activity ?? []).values()]
+          .flat()
+          .filter((n) => n.actor.kind === 'user' && n.actor.name)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map((n) => ({
+            bindingId: n.bindingId!,
+            spaceName: n.spaceName ?? spaceRows.find((r) => r.bindingId === n.bindingId)?.name ?? 'this space',
+            who: n.actor.name!,
+          })),
+    topics:
+      acrossView.kind === 'themes' && !connectionDown
+        ? [...acrossView.themes]
+            .sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt))
+            .map((t) => ({
+              bindingId: t.bindingId,
+              spaceName: t.spaceName,
+              name: t.name,
+              isNew: topicMarks.get(t.themeId)?.kind === 'new',
+              people: t.people,
+            }))
+        : [],
+  });
   // The topic lines' faces and People's times both come from what Home
   // already reads: the day's themes, and pictures from you, your people and
   // Pulse's people. Pulse alone misses anyone its briefing leaves out.
@@ -654,6 +688,7 @@ export function Home({
                 localRigs={localRigs}
                 onOpenPath={onOpenPath}
                 onHighlightRig={setHighlightBindingId}
+                askChips={askChips}
               />
               <NeedsYouSection
                 spaceRows={spaceRows}
