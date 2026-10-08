@@ -1,7 +1,8 @@
 import { BrowserWindow, type NativeImage, type Session, type WebContents } from 'electron';
-import { configureBrowserProfileSession } from '@main/core/browser/browser-profile-session';
+import { configureBrowserProfileSession, setRequestHeadersHook } from '@main/core/browser/browser-profile-session';
 import { RIG_PAGES_PARTITION } from '@shared/spaces/links';
 import { isRigFileUrl, RIG_FILES_PARTITION } from '@shared/spaces/rig-file';
+import { addFallbackReferer } from './rig-file-protocol';
 import { installRigFileProtocol } from './rig-file-session';
 
 /**
@@ -20,6 +21,7 @@ export const pagesSession = (): Session => configureBrowserProfileSession(RIG_PA
  * the web. Only this profile serves `rig-file://`.
  */
 export const rigFilesSession = (): Session => {
+  setRequestHeadersHook(RIG_FILES_PARTITION, addFallbackReferer);
   const ses = configureBrowserProfileSession(RIG_FILES_PARTITION);
   installRigFileProtocol(ses);
   return ses;

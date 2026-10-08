@@ -22,6 +22,18 @@ const ALLOWED_BROWSER_PERMISSIONS: ReadonlySet<string> = new Set([
 ]);
 
 const configuredPartitions = new Set<string>();
+/**
+ * A partition's own changes to outgoing request headers, run inside the one
+ * `onBeforeSendHeaders` listener a session can have (a second listener would
+ * replace the first). Looked up per request, so it applies whichever caller
+ * configured the partition first.
+ */
+type RequestHeadersHook = (url: string, headers: Record<string, string>) => void;
+const requestHeadersHooks = new Map<string, RequestHeadersHook>();
+
+export function setRequestHeadersHook(partition: string, hook: RequestHeadersHook): void {
+  requestHeadersHooks.set(partition, hook);
+}
 let relaxCorsForLocalDevelopment = false;
 
 export function setBrowserCorsRelaxationSettings(browser: AppSettings['browser']): void {
@@ -47,6 +59,7 @@ export function configureBrowserProfileSession(partition: string): Session {
     if (isGoogleAuthUrl(details.url)) {
       details.requestHeaders['User-Agent'] = firefoxUserAgent();
     }
+    requestHeadersHooks.get(partition)?.(details.url, details.requestHeaders);
 
     const corsRequest = relaxCorsForLocalDevelopment
       ? localDevelopmentCorsRelaxationRequest(details.requestHeaders)

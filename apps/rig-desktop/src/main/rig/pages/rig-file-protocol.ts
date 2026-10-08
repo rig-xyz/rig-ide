@@ -145,6 +145,23 @@ export async function resolveRigFile(
   return { ok: true, absPath: real };
 }
 
+/** What a space file page's outgoing web requests say they came from when Chromium sends nothing. */
+export const RIG_FILE_FALLBACK_REFERER = 'https://userig.xyz/';
+
+/**
+ * A page served from `rig-file://` sends no Referer to the web (Chromium
+ * sends none from a custom scheme), and some servers refuse a request
+ * without one: OpenStreetMap's tile servers answer 403 to every Leaflet
+ * tile. So an http(s) request with no Referer gets Rig's own. Requests to
+ * `rig-file://` itself and ones that already carry a Referer are left as
+ * they are.
+ */
+export function addFallbackReferer(url: string, headers: Record<string, string>): void {
+  if (!/^https?:/i.test(url)) return;
+  if (Object.keys(headers).some((name) => name.toLowerCase() === 'referer')) return;
+  headers.Referer = RIG_FILE_FALLBACK_REFERER;
+}
+
 /**
  * Whether a request for a space's file may load, from what asks for it: a
  * page opened on its own (the panel, an agent's tab, a link followed inside

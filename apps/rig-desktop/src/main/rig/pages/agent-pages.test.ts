@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sessions = new Map<string, { partition: string }>();
 const installed: string[] = [];
+const headerHooks = new Map<string, (url: string, headers: Record<string, string>) => void>();
 const windows: { session: unknown; url?: string }[] = [];
 
 vi.mock('electron', () => ({
@@ -29,6 +30,7 @@ vi.mock('@main/core/browser/browser-profile-session', () => ({
     if (!sessions.has(partition)) sessions.set(partition, { partition });
     return sessions.get(partition);
   },
+  setRequestHeadersHook: (partition: string, hook: (url: string, headers: Record<string, string>) => void) => headerHooks.set(partition, hook),
 }));
 vi.mock('./rig-file-session', () => ({
   installRigFileProtocol: (ses: { partition: string }) => installed.push(ses.partition),
@@ -50,6 +52,15 @@ describe('the space files profile', () => {
     expect((pagesSession() as unknown as { partition: string }).partition).toBe(RIG_PAGES_PARTITION);
     expect((rigFilesSession() as unknown as { partition: string }).partition).toBe(RIG_FILES_PARTITION);
     expect([...new Set(installed)]).toEqual([RIG_FILES_PARTITION]);
+  });
+
+  it('gives its web requests a Referer when they have none, and only it', () => {
+    rigFilesSession();
+    pagesSession();
+    expect([...headerHooks.keys()]).toEqual([RIG_FILES_PARTITION]);
+    const headers: Record<string, string> = {};
+    headerHooks.get(RIG_FILES_PARTITION)!('https://tile.openstreetmap.org/1/0/0.png', headers);
+    expect(headers).toEqual({ Referer: 'https://userig.xyz/' });
   });
 
   it('is where a space file opens, and a web page opens in the pages browser', () => {

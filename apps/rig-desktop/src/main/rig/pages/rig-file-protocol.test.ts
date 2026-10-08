@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mimeTypeFor, resolveRigFile, rigFileRequestAllowed, rigFileResponse, type RigFileDeps } from './rig-file-protocol';
+import { addFallbackReferer, mimeTypeFor, resolveRigFile, rigFileRequestAllowed, rigFileResponse, type RigFileDeps } from './rig-file-protocol';
 
 // A space folder on disk, bound as bnd_space; a nested rig inside it bound as bnd_other.
 let base: string;
@@ -173,5 +173,28 @@ describe('mimeTypeFor', () => {
     ['Makefile', 'application/octet-stream'],
   ])('%s is %s', (name, type) => {
     expect(mimeTypeFor(name)).toBe(type);
+  });
+});
+
+describe('addFallbackReferer', () => {
+  const run = (url: string, headers: Record<string, string> = {}) => {
+    addFallbackReferer(url, headers);
+    return headers;
+  };
+
+  it('gives an http(s) request with no Referer Rig\'s own', () => {
+    expect(run('https://tile.openstreetmap.org/3/4/2.png', { Accept: 'image/png' })).toEqual({ Accept: 'image/png', Referer: 'https://userig.xyz/' });
+    expect(run('http://example.com/a.js')).toEqual({ Referer: 'https://userig.xyz/' });
+  });
+
+  it('leaves a request that already has a Referer as it is, whatever its case', () => {
+    expect(run('https://tile.openstreetmap.org/a.png', { Referer: 'https://a.example/' })).toEqual({ Referer: 'https://a.example/' });
+    expect(run('https://tile.openstreetmap.org/a.png', { referer: 'https://a.example/' })).toEqual({ referer: 'https://a.example/' });
+  });
+
+  it('never touches rig-file:// or other schemes', () => {
+    expect(run('rig-file://bnd_space/site/index.html')).toEqual({});
+    expect(run('data:image/png;base64,AAAA')).toEqual({});
+    expect(run('ws://example.com/socket')).toEqual({});
   });
 });
