@@ -696,6 +696,11 @@ export function Home({
                 spaceRows={spaceRows}
                 statusByBinding={connectionDown ? new Map() : statusByBinding}
                 selfUserId={selfUserId}
+                self={meQuery.data?.success ? meQuery.data.data : null}
+                avatarOf={({ userId, name }) =>
+                  (userId ? yourPeople.find((p) => p.userId === userId || p.clerkUserId === userId)?.avatarUrl : null) ??
+                  avatarOf(name)
+                }
                 onOpenPath={(path) => onOpenPath(path, { kind: 'space' })}
               />
               {spacesEnabled && (

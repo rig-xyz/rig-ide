@@ -48,7 +48,7 @@ describe('deriveWaitingItems', () => {
     expect(items[2]).toMatchObject({
       kind: 'reply',
       who: { userId: 'u_hugo', name: 'Hugo Renaudin' },
-      verb: 'mentioned you in',
+      verb: 'mentioned you',
       spaceName: 'rig-marketing',
       quote: '@Dylan wdyt',
     });
@@ -63,7 +63,7 @@ describe('deriveWaitingItems', () => {
       statusByBinding: new Map(),
       selfUserId: ME,
     });
-    expect(item).toMatchObject({ who: { name: "Hugo's Claude" } });
+    expect(item).toMatchObject({ who: { name: "Hugo's Claude", agent: 'claude', owner: 'Hugo' } });
   });
 
   it('nothing waiting: empty', () => {
@@ -117,7 +117,7 @@ describe('waitingAction and doneLine', () => {
     bindingId: 'b',
     spaceName: 'rig-marketing',
     who: { userId: 'u', name: 'Hugo' },
-    verb: 'mentioned you in',
+    verb: 'mentioned you',
     quote: 'wdyt',
     messageId: 'm1',
     messageSeq: 5,
@@ -129,7 +129,7 @@ describe('waitingAction and doneLine', () => {
     expect(waitingAction({ ...reply, path: 'docs/plan.md' }, { approvable: false })).toBe('Open');
     const invite: WaitingItem = { kind: 'invite', key: 'i', inviteId: 'i', bindingId: 'b', spaceName: 'x', who: { userId: null, name: 'Ana' }, at: '' };
     expect(waitingAction(invite, { approvable: false })).toBe('Accept');
-    const approval: WaitingItem = { kind: 'approval', key: 'r', runId: 'r', bindingId: 'b', spaceName: 'rig-ops', agent: 'Claude', title: null, at: '' };
+    const approval: WaitingItem = { kind: 'approval', key: 'r', runId: 'r', bindingId: 'b', spaceName: 'rig-ops', agent: 'Claude', agentKind: 'claude', title: null, at: '' };
     expect(waitingAction(approval, { approvable: true })).toBe('Approve');
     expect(waitingAction(approval, { approvable: false })).toBe('Open');
     expect(doneLine(reply)).toBe('Replied in #rig-marketing.');
@@ -141,9 +141,10 @@ describe('waitingAction and doneLine', () => {
 describe('contextLine', () => {
   it('names who wrote the message before, with a short excerpt', () => {
     expect(contextLine({ authorName: 'Hugo Renaudin', body: '@claude looks like:\n- a mandatory onboarding call' })).toBe(
-      'Right after this message from Hugo: “@claude looks like: - a mandatory onboarding call”'
+      'Hugo: @claude looks like: a mandatory onboarding call'
     );
-    expect(contextLine({ authorName: null, body: 'x'.repeat(200) })).toMatch(/^Right after this message from someone: “x{139}…”$/);
+    expect(contextLine({ authorName: 'Ana', body: '1. first\n2. second\n* third' })).toBe('Ana: first, second, third');
+    expect(contextLine({ authorName: null, body: 'x'.repeat(200) })).toMatch(/^Someone: x{139}…$/);
     expect(contextLine(null)).toBeNull();
     expect(contextLine({ authorName: 'Hugo', body: '  ' })).toBeNull();
   });

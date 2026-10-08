@@ -624,7 +624,7 @@ describe('Home: Across your spaces today', () => {
     const center = host.querySelector<HTMLElement>('[data-testid="home-center"]')!;
     const ask = center.querySelector('input[placeholder="Ask across your spaces…"]')!;
     const needsYou = center.querySelector('[data-testid="waiting-on-you"]')!;
-    expect(needsYou.textContent).toContain('Hugo Renaudin mentioned you in #launch');
+    expect(needsYou.textContent).toContain('Hugo mentioned you · #launch');
     const people = center.querySelector('[data-testid="home-people"]')!;
     const follows = (a: Node, b: Node) =>
       Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);

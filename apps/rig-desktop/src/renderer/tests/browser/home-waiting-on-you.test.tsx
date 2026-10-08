@@ -4,11 +4,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * Home's "Waiting on you": only direct, unread things, each with its quote,
- * the message before it as context, and one action. Reply sends inline
+ * Home's "Waiting on you": only direct, unread things, drawn as flat rows
+ * like the topics under it: the person's face, one muted line saying who
+ * and where, their message with mentions as the Room draws them, the
+ * message before it as context, and one quiet action. Reply sends inline
  * through the Room's own message shape, Accept joins, Approve answers your
  * own agent from this computer's copy of the run. A done item fades with a
- * line saying so, then clears. Nothing waiting says so in one line.
+ * line saying so, then folds away. Nothing waiting says so in one line.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -109,6 +111,8 @@ describe('Home: Waiting on you', () => {
             spaceRows={[space('b-mkt', 'rig-marketing'), space('b-ops', 'rig-ops')]}
             statusByBinding={statusByBinding}
             selfUserId="u-me"
+            self={{ name: 'Dylan Bourgeois', avatarUrl: 'https://img/dylan.png' }}
+            avatarOf={({ userId }) => (userId === 'u-hugo' ? 'https://img/hugo.png' : null)}
             onOpenPath={(path) => opened.push(path)}
           />
         </QueryClientProvider>
@@ -137,7 +141,7 @@ describe('Home: Waiting on you', () => {
           seq: 1333,
           author: { userId: 'c-hugo', name: 'Hugo Renaudin', avatarUrl: null, kind: 'user' },
           kind: 'text',
-          body: '@claude looks like: mandatory onboarding call',
+          body: '@claude looks like:\n- mandatory onboarding call',
           meta: null,
           createdAt: '',
         },
@@ -162,18 +166,43 @@ describe('Home: Waiting on you', () => {
     expect(items()).toHaveLength(0);
   });
 
-  it('a mention: who, where, the quote, the message before it, and Reply', async () => {
+  it('a mention: their face, who and where on one line, the message, the message before it, and Reply', async () => {
     mocks.activity = [hugoMention];
     await mount();
-    expect(host.querySelector('h2')?.textContent).toBe('Waiting on you1');
+    // The heading reads like "Across your spaces today": the count is quiet mono text, not a pill.
+    const heading = host.querySelector('h2')!;
+    expect(heading.textContent).toBe('Waiting on you1');
+    expect(heading.querySelector('.bg-accent')).toBeNull();
     const [item] = items();
-    expect(item!.textContent).toContain('Hugo Renaudin mentioned you in #rig-marketing');
+    // A flat row: no card around the list, no bar on the edge.
+    expect(host.querySelector('ul')!.className).not.toContain('border');
+    expect(item!.innerHTML).not.toContain('before:');
+    expect(item!.querySelector('img')?.getAttribute('src')).toBe('https://img/hugo.png');
+    expect(item!.querySelector('[data-testid="waiting-meta"]')?.textContent).toBe('Hugo mentioned you · #rig-marketing · 1m');
     expect(item!.querySelector('[data-testid="waiting-quote"]')?.textContent).toBe('@Dylan Bourgeois wdyt');
-    expect(item!.querySelector('[data-testid="waiting-context"]')?.textContent).toBe(
-      'Right after this message from Hugo: “@claude looks like: mandatory onboarding call”'
-    );
+    // A mention of you, tinted the way the Room tints it.
+    const mention = item!.querySelector<HTMLElement>('[data-testid="waiting-mention"]')!;
+    expect(mention.textContent).toBe('@Dylan Bourgeois');
+    expect(mention.className).toContain('bg-accent-subtle');
+    // Context on one line, after a reply glyph, without its list marks or line breaks.
+    const context = item!.querySelector<HTMLElement>('[data-testid="waiting-context"]')!;
+    expect(context.textContent).toBe('Hugo: @claude looks like: mandatory onboarding call');
+    expect(context.querySelector('svg')).toBeTruthy();
+    expect(context.querySelector('span')!.className).toContain('truncate');
     expect(mocks.listMessages).toHaveBeenCalledWith({ bindingId: 'b-mkt', query: { before: '1334', latest: 1 } });
-    expect(buttonNamed('Reply')).toBeTruthy();
+    // A quiet button, not a filled one.
+    const reply = buttonNamed('Reply')!;
+    expect(reply.className).toContain('border-border-hairline');
+    expect(reply.className).not.toContain('bg-accent');
+  });
+
+  it("someone with no picture: their initials", async () => {
+    mocks.activity = [{ ...hugoMention, actor: { kind: 'user', userId: 'u-ana', name: 'Ana Silva', agent: null } }];
+    await mount();
+    const item = items()[0]!;
+    expect(item.querySelector('img')).toBeNull();
+    expect(item.textContent).toContain('AS');
+    expect(item.querySelector('[data-testid="waiting-meta"]')?.textContent).toBe('Ana mentioned you · #rig-marketing · 1m');
   });
 
   it('Reply opens an inline box that sends through the Room, marks it read, then fades and clears', async () => {
@@ -182,6 +211,8 @@ describe('Home: Waiting on you', () => {
     await act(async () => buttonNamed('Reply')!.click());
     const input = host.querySelector<HTMLInputElement>('input[aria-label="Reply"]')!;
     expect(input.placeholder).toBe('Reply to Hugo in #rig-marketing');
+    // Send is the one filled button, inside the box.
+    expect(buttonNamed('Send')!.className).toContain('bg-accent');
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
       setter.call(input, 'Yes, the call is a good start');
@@ -205,9 +236,16 @@ describe('Home: Waiting on you', () => {
     expect(done.className).toContain('opacity-60');
     expect(done.querySelector('[data-testid="waiting-done"]')?.textContent).toBe('Replied in #rig-marketing.');
     expect(buttonNamed('Reply')).toBeUndefined();
+    // Then it folds away, still when motion is reduced, just without the animation.
+    expect(done.className).toContain('motion-reduce:transition-none');
+    await act(async () => {
+      vi.advanceTimersByTime(3_700);
+    });
+    expect(items()[0]!.className).toContain('grid-rows-[0fr]');
+    expect(items()[0]!.className).toContain('opacity-0');
     // Then it clears.
     await act(async () => {
-      vi.advanceTimersByTime(4_000);
+      vi.advanceTimersByTime(300);
     });
     vi.useRealTimers();
     expect(items()).toHaveLength(0);
@@ -243,7 +281,7 @@ describe('Home: Waiting on you', () => {
       },
     ];
     await mount();
-    expect(items()[0]!.textContent).toContain('Ana Silva invited you to #warm-island');
+    expect(items()[0]!.querySelector('[data-testid="waiting-meta"]')?.textContent).toBe('Ana invited you · #warm-island · now');
     await act(async () => buttonNamed('Accept')!.click());
     await flush();
     expect(mocks.accept).toHaveBeenCalledWith({ id: 'inv1' });
@@ -277,8 +315,12 @@ describe('Home: Waiting on you', () => {
     ];
     await mount(new Map([['b-ops', waitingRun]]));
     const item = items()[0]!;
-    expect(item.textContent).toContain('Your Claude is waiting for your approval in #rig-ops');
+    expect(item.querySelector('[data-testid="waiting-meta"]')?.textContent).toBe('Your Claude needs your approval · #rig-ops · now');
     expect(item.querySelector('[data-testid="waiting-quote"]')?.textContent).toBe('Run npm test');
+    // The agent's tile with your face as its owner badge.
+    const tile = item.querySelector<HTMLElement>('[data-testid="agent-avatar"]')!;
+    expect(tile.dataset.agent).toBe('claude');
+    expect(tile.querySelector('img')?.getAttribute('src')).toBe('https://img/dylan.png');
     await act(async () => buttonNamed('Approve')!.click());
     await flush();
     expect(mocks.resolve).toHaveBeenCalledWith({ runId: 'run-1', requestId: 'req-1', optionId: 'once' });

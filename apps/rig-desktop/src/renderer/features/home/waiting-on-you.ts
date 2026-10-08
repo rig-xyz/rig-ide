@@ -7,7 +7,7 @@
  */
 
 import type { RigNotification } from '@shared/rig/notifications';
-import type { RigSpaceStatus } from '@shared/rig/space-status';
+import type { RigSpaceAgent, RigSpaceStatus } from '@shared/rig/space-status';
 import type { LocalRunEvent } from '@shared/spaces/room-sees';
 import { agentLabel } from './space-status-state';
 
@@ -18,8 +18,12 @@ export type WaitingItem =
       notificationId: string;
       bindingId: string;
       spaceName: string;
-      who: { userId: string | null; name: string };
-      verb: 'mentioned you in' | 'replied to you in';
+      /**
+       * Who wrote it. For an agent, `name` is "Hugo's Claude", `agent` its
+       * kind and `owner` the person whose agent it is.
+       */
+      who: { userId: string | null; name: string; agent?: RigSpaceAgent | null; owner?: string | null };
+      verb: 'mentioned you' | 'replied to you';
       quote: string;
       messageId: string | null;
       messageSeq: number | null;
@@ -43,6 +47,7 @@ export type WaitingItem =
       bindingId: string;
       spaceName: string;
       agent: string;
+      agentKind: RigSpaceAgent;
       /** What it asks to do, when the run said. */
       title: string | null;
       at: string;
@@ -73,8 +78,9 @@ export function deriveWaitingItems(input: {
           n.actor.kind === 'agent' && n.actor.agent
             ? `${n.actor.name ?? 'Someone'}'s ${agentLabel(n.actor.agent)}`
             : (n.actor.name ?? (n.actor.kind === 'guest' ? 'A guest' : 'Someone')),
+        ...(n.actor.kind === 'agent' && n.actor.agent ? { agent: n.actor.agent, owner: n.actor.name } : {}),
       },
-      verb: n.type === 'mention' ? 'mentioned you in' : 'replied to you in',
+      verb: n.type === 'mention' ? 'mentioned you' : 'replied to you',
       quote: n.body,
       messageId: n.messageId,
       messageSeq: n.messageSeq,
@@ -105,6 +111,7 @@ export function deriveWaitingItems(input: {
           bindingId: space.bindingId,
           spaceName: space.name ?? 'a space',
           agent: agentLabel(run.agent),
+          agentKind: run.agent,
           title: run.title ?? null,
           at: run.startedAt,
         });
@@ -180,11 +187,24 @@ export function doneLine(item: WaitingItem): string {
   }
 }
 
-/** The message before the one quoted, as context: who wrote it and a short excerpt. */
+/**
+ * The message before the one quoted, as context: who wrote it and a short
+ * excerpt on one line ("Hugo: looks like: a mandatory onboarding call").
+ * Markdown list marks and line breaks are flattened out of it.
+ */
 export function contextLine(prev: { authorName: string | null; body: string } | null): string | null {
   if (!prev) return null;
-  const flat = prev.body.replace(/\s+/g, ' ').trim();
+  const LIST_MARK = /^\s*(?:[-*+]|\d+[.)])\s+/;
+  const lines = prev.body
+    .split('\n')
+    .map((line) => ({ item: LIST_MARK.test(line), text: line.replace(LIST_MARK, '').trim() }))
+    .filter((line) => line.text);
+  // List items read as a list: "a, b, c".
+  const flat = lines
+    .map((line, i) => (i > 0 ? (line.item && lines[i - 1]!.item ? ', ' : ' ') : '') + line.text)
+    .join('')
+    .replace(/\s+/g, ' ');
   if (!flat) return null;
   const excerpt = flat.length > 140 ? `${flat.slice(0, 139)}…` : flat;
-  return `Right after this message from ${prev.authorName?.trim().split(/\s+/)[0] || 'someone'}: “${excerpt}”`;
+  return `${prev.authorName?.trim().split(/\s+/)[0] || 'Someone'}: ${excerpt}`;
 }
