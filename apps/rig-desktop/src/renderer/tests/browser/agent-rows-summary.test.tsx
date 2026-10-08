@@ -91,14 +91,14 @@ describe('AgentRows — collapsed summary', () => {
     expect(theirsRows.some((row) => row.title === "Only Alice can change Alice's Claude")).toBe(true);
   });
 
-  it('a needed sign-in for one of your agents shows collapsed, and under its row once expanded', async () => {
+  it('a problem with one of your agents shows collapsed, and under its row once expanded', async () => {
     await act(async () => {
       root.render(
         <AgentRows
           snapshot={replayedSnapshot()}
           selfUserId="bob"
           bindingId="space-agents-sign-in"
-          signInRow={(agent) => (agent === 'claude' ? <span data-testid="sign-in-slot" data-kind={agent} /> : null)}
+          problemRow={(agent) => (agent === 'claude' ? <span data-testid="sign-in-slot" data-kind={agent} /> : null)}
         />
       );
     });
@@ -146,6 +146,27 @@ describe('AgentRows — collapsed summary', () => {
     expect(rows[0]!.textContent).toContain('Not installed on this Mac');
     await act(async () => rows[0]!.querySelector<HTMLButtonElement>('[data-testid="space-agent-set-up"]')!.click());
     expect(setUp).toEqual(['claude']);
+  });
+
+  it('gives a not installed agent the problem line when the Room passes one, collapsed only when none of yours runs here', async () => {
+    const calls: Array<[string, boolean]> = [];
+    const problemRow = (agent: string, missing: boolean) => {
+      calls.push([agent, missing]);
+      return <span data-testid="problem-slot" data-kind={agent} data-missing={String(missing)} />;
+    };
+    await act(async () => {
+      root.render(<AgentRows snapshot={bothOfBobs()} selfUserId="bob" bindingId="space-agents-problem" availableAgents={['codex']} problemRow={problemRow} />);
+    });
+    // Collapsed: Codex runs here, so the missing Claude stays quiet; Codex's own problems still show.
+    expect([...host.querySelectorAll<HTMLElement>('[data-testid="problem-slot"]')].map((el) => [el.dataset.kind, el.dataset.missing])).toEqual([['codex', 'false']]);
+    const summary = host.querySelector<HTMLButtonElement>('[data-testid="agents-summary-row"]')!;
+    await act(async () => summary.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect([...host.querySelectorAll<HTMLElement>('[data-testid="problem-slot"]')].map((el) => [el.dataset.kind, el.dataset.missing])).toEqual([
+      ['claude', 'true'],
+      ['codex', 'false'],
+    ]);
+    expect(host.querySelector('[data-testid="space-agent-row-not-installed"]')).toBeNull();
+    expect(calls.length).toBeGreaterThan(0);
   });
 
   it('with none of yours installed here, says so even while collapsed', async () => {

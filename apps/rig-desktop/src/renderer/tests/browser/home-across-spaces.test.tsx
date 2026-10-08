@@ -59,7 +59,9 @@ const fail = { success: false, error: { kind: 'relay', message: 'nope' } };
 vi.mock('@renderer/lib/ipc', () => ({
   rpc: {
     agents: {
-      list: async () => [{ id: 'claude', name: 'Claude', icon: null, status: 'available', capabilities: { auth: { kind: 'none' } } }],
+      list: async () => [
+        { id: 'claude', name: 'Claude', icon: null, status: 'available', version: null, installations: [], used: { kind: 'auto' }, latestVersion: null, capabilities: { auth: { kind: 'none' } } },
+      ],
       listMetadata: async () => [],
     },
     rig: {

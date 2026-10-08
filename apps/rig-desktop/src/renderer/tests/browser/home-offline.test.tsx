@@ -38,7 +38,10 @@ vi.mock('@renderer/lib/ipc', () => ({
   rpc: {
     agents: {
       list: async () =>
-        mocks.noAgents ? [] : [{ id: 'claude', name: 'Claude', icon: null, status: 'available', capabilities: { auth: { kind: 'none' } } }],
+        mocks.noAgents
+          ? ['claude', 'codex'].map((id) => ({ id, name: id, icon: { variants: [] }, status: 'missing', version: null, installations: [], used: { kind: 'auto' }, latestVersion: null, installOptions: [], capabilities: { auth: { kind: 'none' } } }))
+          : [{ id: 'claude', name: 'Claude', icon: null, status: 'available', version: '2.1.160', installations: [], used: { kind: 'auto' }, latestVersion: null, capabilities: { auth: { kind: 'none' } } }],
+      probeAll: async () => undefined,
       listMetadata: async () => [],
     },
     rig: {
@@ -263,18 +266,21 @@ describe('Home offline', () => {
     }
   });
 
-  it('with no agent set up, says so and offers Set up an agent, on the full Home and the first-run one', async () => {
+  it('with no agent set up, says so and gives each agent its line with Install, on the full Home and the first-run one', async () => {
     mocks.noAgents = true;
     await mount();
     const line = host.querySelector<HTMLElement>('[data-testid="home-no-agent"]');
     expect(line?.textContent).toContain('No agent is set up on this Mac yet.');
-    await act(async () => line!.querySelector<HTMLButtonElement>('[data-testid="home-set-up-agent"]')!.click());
-    await vi.waitFor(() => expect(document.querySelector('[data-testid="agent-setup-dialog"]')).not.toBeNull());
+    const problems = () => [...host.querySelectorAll<HTMLElement>('[data-testid="agent-problem"]')];
+    await vi.waitFor(() => expect(problems().map((p) => [p.dataset.agent, p.dataset.kind])).toEqual([['claude', 'missing'], ['codex', 'missing']]));
+    expect(problems()[0]!.textContent).toContain("Claude isn't installed on this Mac. Rig runs the claude CLI.");
+    await act(async () => problems()[1]!.querySelector<HTMLButtonElement>('[data-testid="agent-problem-install"]')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="agent-setup-dialog"]')?.textContent).toContain('Set up Codex'));
     await act(async () => root.unmount());
 
     root = createRoot(host);
     mocks.empty = true;
     await mount();
-    expect(host.querySelector('[data-testid="home-set-up-agent"]')).not.toBeNull();
+    await vi.waitFor(() => expect(problems().map((p) => p.dataset.kind)).toEqual(['missing', 'missing']));
   });
 });

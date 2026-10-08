@@ -68,9 +68,9 @@ import { readThreadSeen, writeThreadSeen } from '../thread-seen';
 import { useSpacesChatView } from '../use-chat-view';
 import { ReactionsContext, type ReactionsApi } from './reactions';
 import { AgentSetupDialog } from '@renderer/features/agents/agent-install';
+import { AgentProblemLine } from '@renderer/features/agents/agent-problem-line';
 import { openInviteForm } from '@renderer/features/rig-share/open-invite';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
-import { AgentSignInRow } from './agent-sign-in-row';
 import { SpaceRail } from './space-rail';
 import { AgentSettingsContext, type AgentSettingsApi } from './agent-settings';
 import { ConnectorGallery } from './connector-gallery';
@@ -1886,7 +1886,9 @@ export function RoomView({
                 snapshot={room}
                 selfUserId={selfUserId}
                 bindingId={bindingId}
-                signInRow={(agent) => <AgentSignInRow agent={agent} />}
+                problemRow={(agent, missing) => (
+                  <AgentProblemLine agentId={agent} variant="space" missing={missing} onInstall={() => setSetUpAgent(agent)} />
+                )}
                 availableAgents={availableAgents}
                 onSetUp={setSetUpAgent}
               />

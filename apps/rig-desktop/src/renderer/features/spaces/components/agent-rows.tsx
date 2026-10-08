@@ -22,7 +22,7 @@ export function AgentRows({
   snapshot,
   selfUserId,
   bindingId,
-  signInRow,
+  problemRow,
   availableAgents,
   onSetUp,
 }: {
@@ -30,8 +30,13 @@ export function AgentRows({
   selfUserId: string;
   /** Keys this section's remembered expanded/collapsed state to its space. */
   bindingId: string;
-  /** The warning for one of your agents that needs you to sign in again (`AgentSignInRow`), or nothing. The Room passes it; fixtures don't. */
-  signInRow?: (agent: AgentKind) => ReactNode;
+  /**
+   * The problem line for one of your agents (`AgentProblemLine`): not
+   * installed here (`missing`), out of date, signed out or failing to
+   * start, or nothing. The Room passes it; fixtures don't, and get the
+   * plain not-installed row.
+   */
+  problemRow?: (agent: AgentKind, missing: boolean) => ReactNode;
   /** Your agents that can run on this Mac; the others show as not installed. Unknown: every one shows as set up. */
   availableAgents?: readonly AgentKind[];
   /** Opens the install offer for one of yours that isn't installed here; no button without it. */
@@ -124,13 +129,24 @@ export function AgentRows({
           />
         </span>
       </button>
-      {/* A needed sign-in shows even while collapsed: it stops your agent from running at all. */}
-      {!expanded && signInRow && mine.map((agent) => <Fragment key={agent.agent}>{signInRow(agent.agent)}</Fragment>)}
-      {!expanded && noneHere && mine.map((agent) => <NotInstalledRow key={agent.agent} agent={agent.agent} onSetUp={onSetUp} />)}
+      {/* A problem shows even while collapsed: it stops your agent from running. Not installed only when none of yours is. */}
+      {!expanded &&
+        mine.map((agent) => (
+          <Fragment key={agent.agent}>
+            {missingHere(agent.agent)
+              ? noneHere && (problemRow ? problemRow(agent.agent, true) : <NotInstalledRow agent={agent.agent} onSetUp={onSetUp} />)
+              : problemRow?.(agent.agent, false)}
+          </Fragment>
+        ))}
       {expanded && (
         <div className="popover-in flex shrink-0 flex-col pt-1 pb-1.5" data-testid="agents-expanded">
           {mine.map((agent) => {
-            if (missingHere(agent.agent)) return <NotInstalledRow key={agent.agent} agent={agent.agent} onSetUp={onSetUp} />;
+            if (missingHere(agent.agent))
+              return problemRow ? (
+                <Fragment key={agent.agent}>{problemRow(agent.agent, true)}</Fragment>
+              ) : (
+                <NotInstalledRow key={agent.agent} agent={agent.agent} onSetUp={onSetUp} />
+              );
             const latest = runsOf(selfUserId, agent.agent)[0];
             return (
               <Fragment key={agent.agent}>
@@ -141,7 +157,7 @@ export function AgentRows({
                   lastModel={lastModel(selfUserId, agent.agent) ?? (agent.model || null)}
                   usage={latest ? cardOf(latest.id).usage : null}
                 />
-                {signInRow?.(agent.agent)}
+                {problemRow?.(agent.agent, false)}
               </Fragment>
             );
           })}

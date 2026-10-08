@@ -1,9 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CircleAlert, Loader2, LogIn, Plus } from 'lucide-react';
+import { Loader2, LogIn, Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AgentSetupDialog } from '@renderer/features/agents/agent-install';
-import { AgentSignInButton } from '@renderer/features/agents/agent-sign-in-button';
-import { useAgentSignInNeeded } from '@renderer/features/agents/use-agent-sign-in-needed';
+import { AgentProblemLine } from '@renderer/features/agents/agent-problem-line';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
 import { usePeople } from '@renderer/features/people/use-people';
 import { deriveSignedIn } from '@renderer/features/rig-account/auth-state';
@@ -561,8 +559,13 @@ export function Home({
           needsConnection={connectionDown || !navigatorOnline}
         />
         {pendingInvite && <PendingInviteInline invite={pendingInvite} onOpenPath={onOpenPath} />}
-        {/* Skipped the agent step on the first run: the way back to it. */}
-        {localReady && agents.length === 0 && <SetUpAgentButton className="text-sm" />}
+        {/* Skipped the agent step on the first run: the way back to it, one line per agent. */}
+        {localReady && (
+          <div className="flex flex-col gap-1.5" data-testid="home-agent-problems">
+            <AgentProblemLine agentId="claude" variant="home" showMissing={agents.length === 0} />
+            <AgentProblemLine agentId="codex" variant="home" showMissing={agents.length === 0} />
+          </div>
+        )}
       </div>
     );
   }
@@ -587,8 +590,9 @@ export function Home({
       {regions.health && <HealthLine message={regions.health} onSignIn={signIn} signInPhase={signInPhase} />}
       {!regions.showEmptyState && (
         <>
-          <AgentSignInLine agentId="claude" />
-          <AgentSignInLine agentId="codex" />
+          {/* Missing only counts when no agent is set up: one of two is a choice. */}
+          <AgentProblemLine agentId="claude" variant="home" showMissing={localReady && agents.length === 0} />
+          <AgentProblemLine agentId="codex" variant="home" showMissing={localReady && agents.length === 0} />
         </>
       )}
       {/*
@@ -992,50 +996,11 @@ function HealthLine({
       </button>
     );
   }
+  // Each agent's own line below says what to install.
   return (
     <div className="text-text-muted flex items-center gap-2 self-start font-mono text-xs" data-testid="home-no-agent">
       {message.text}
-      <SetUpAgentButton />
     </div>
   );
 }
 
-/** "Set up an agent": the install offer for Claude and Codex, for anyone who skipped it on the first run. */
-function SetUpAgentButton({ className }: { className?: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className={cn('text-accent font-sans transition-opacity hover:opacity-80', className)}
-        data-testid="home-set-up-agent"
-      >
-        Set up an agent
-      </button>
-      <AgentSetupDialog open={open} onOpenChange={setOpen} />
-    </>
-  );
-}
-
-/**
- * Stays up while an installed agent needs its owner to sign in again on this
- * Mac (`useAgentSignInNeeded`: its probe says signed out, or a run failed on
- * its sign-in). Sign in opens the same dialog Settings uses.
- */
-function AgentSignInLine({ agentId }: { agentId: 'claude' | 'codex' }) {
-  const { needed, agent, loginMethod, markSignedIn } = useAgentSignInNeeded(agentId);
-  if (!needed || !agent || !loginMethod) return null;
-  return (
-    <div className="text-text-muted flex items-center gap-1.5 self-start font-mono text-xs" data-testid="agent-sign-in-line">
-      <CircleAlert className="text-warning size-3 shrink-0" strokeWidth={1.5} />
-      {agentId === 'codex' ? 'Codex' : 'Claude'} isn't signed in on this Mac.
-      <AgentSignInButton
-        agent={agent}
-        loginMethod={loginMethod}
-        onSignedIn={markSignedIn}
-        className="text-accent transition-opacity hover:opacity-80"
-      />
-    </div>
-  );
-}
