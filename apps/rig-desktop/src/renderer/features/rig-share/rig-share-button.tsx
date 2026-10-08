@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Share2, UserPlus } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { insidePeopleLayer } from '@renderer/features/people/person-card';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { rpc } from '@renderer/lib/ipc';
@@ -10,6 +10,7 @@ import { Popover } from '@renderer/lib/ui/popover';
 import { cn } from '@renderer/lib/utils';
 import type { RigMemberList } from '@shared/rig/rig-share';
 import { deriveAvatarStack } from './avatar-stack';
+import { onOpenInviteForm } from './open-invite';
 import { InviteByName } from './invite-field';
 import { MemberList } from './people-section';
 import { deriveSharePopoverPhase } from './share-sync-state';
@@ -79,6 +80,12 @@ export function RigShareButton({
   const memberList = membersQuery.data?.success ? membersQuery.data.data : null;
 
   const stack = deriveAvatarStack(memberList?.members ?? []);
+
+  // The space's pill opens when something asks for the invite form (the empty Room's "Invite someone").
+  useEffect(() => {
+    if (variant !== 'pill' || pendingReason) return;
+    return onOpenInviteForm(() => setOpen(true));
+  }, [variant, pendingReason]);
 
   if (variant === 'pill') {
     return (

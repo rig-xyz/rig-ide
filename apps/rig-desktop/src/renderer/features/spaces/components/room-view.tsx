@@ -1,4 +1,4 @@
-import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucide-react';
+import { AtSign, Bot, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { deriveRoomConnection } from '@renderer/features/home/home-connection';
@@ -66,6 +66,7 @@ import { readThreadSeen, writeThreadSeen } from '../thread-seen';
 import { useSpacesChatView } from '../use-chat-view';
 import { ReactionsContext, type ReactionsApi } from './reactions';
 import { AgentSetupDialog } from '@renderer/features/agents/agent-install';
+import { openInviteForm } from '@renderer/features/rig-share/open-invite';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
 import { AgentSignInRow } from './agent-sign-in-row';
 import { SpaceRail } from './space-rail';
@@ -207,17 +208,29 @@ export function RoomLoadingSkeleton() {
   );
 }
 
-/** A space with nothing in it yet: what it is, and three ways in. While the Room is still opening, the loading skeleton. */
-function RoomWelcome({
+/**
+ * A space with nothing in it yet: what it is, and three ways in. While the
+ * Room is still opening, the loading skeleton. Ask names the agent you have
+ * on this Mac; with none, it offers to set one up and Invite opens the
+ * invite form instead of asking an agent to invite.
+ */
+export function RoomWelcome({
   spaceName,
   connecting,
   hasSkills,
+  agent,
   onPrefill,
+  onInvite,
+  onSetUpAgent,
 }: {
   spaceName: string;
   connecting: boolean;
   hasSkills: boolean;
+  /** Your agent the buttons use: the first one set up on this Mac; null for none. */
+  agent: AgentKind | null;
   onPrefill: (text: string) => void;
+  onInvite: () => void;
+  onSetUpAgent: () => void;
 }) {
   if (connecting) {
     return <RoomLoadingSkeleton />;
@@ -237,14 +250,26 @@ function RoomWelcome({
         <p className="text-sm text-text-secondary">A space for you, your team and your agents.</p>
       </div>
       <div className="flex flex-wrap justify-center gap-2">
-        <button type="button" className={action} onClick={() => onPrefill('@claude invite ')}>
+        <button
+          type="button"
+          className={action}
+          onClick={() => (agent ? onPrefill(`@${agent} invite `) : onInvite())}
+          data-testid="room-welcome-invite"
+        >
           <UserPlus className="size-3.5 text-text-muted" strokeWidth={1.5} />
           Invite someone
         </button>
-        <button type="button" className={action} onClick={() => onPrefill('@claude ')}>
-          <AtSign className="size-3.5 text-text-muted" strokeWidth={1.5} />
-          Ask @claude
-        </button>
+        {agent ? (
+          <button type="button" className={action} onClick={() => onPrefill(`@${agent} `)} data-testid="room-welcome-ask">
+            <AtSign className="size-3.5 text-text-muted" strokeWidth={1.5} />
+            Ask @{agent}
+          </button>
+        ) : (
+          <button type="button" className={action} onClick={onSetUpAgent} data-testid="room-welcome-set-up">
+            <Bot className="size-3.5 text-text-muted" strokeWidth={1.5} />
+            Set up an agent
+          </button>
+        )}
         {hasSkills && (
           <button type="button" className={action} onClick={() => onPrefill('/')}>
             <Sparkles className="size-3.5 text-text-muted" strokeWidth={1.5} />
@@ -953,7 +978,8 @@ export function RoomView({
   );
   const availableAgents = useAvailableAgents();
   // "Set up" from the composer's notice: the install offer for that agent.
-  const [setUpAgent, setSetUpAgent] = useState<AgentKind | null>(null);
+  // 'none': no agent named, both are offered.
+  const [setUpAgent, setSetUpAgent] = useState<AgentKind | 'none' | null>(null);
 
   // The router's private "was this for your agent?" about one of your
   // messages: one quiet button under it, until you use it, send something
@@ -1676,7 +1702,11 @@ export function RoomView({
               // space is known to be empty as soon as its messages come back.
               connecting={room.loaded === false}
               hasSkills={room.skills.length > 0}
+              // Not known yet: Claude, as before. Known: the first one this Mac runs.
+              agent={availableAgents ? (availableAgents[0] ?? null) : 'claude'}
               onPrefill={(text) => setPrefill({ text, nonce: Date.now() })}
+              onInvite={openInviteForm}
+              onSetUpAgent={() => setSetUpAgent('none')}
             />
           ) : (
           withRoomContexts(
@@ -1809,7 +1839,7 @@ export function RoomView({
         <AgentSetupDialog
           open={setUpAgent !== null}
           onOpenChange={(open) => !open && setSetUpAgent(null)}
-          agent={setUpAgent ?? undefined}
+          agent={setUpAgent === 'none' ? undefined : (setUpAgent ?? undefined)}
         />
         {dockOn && shownSnapshot && (
           <ForYouFeeder
