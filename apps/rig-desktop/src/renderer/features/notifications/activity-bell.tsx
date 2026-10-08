@@ -17,8 +17,10 @@ import {
   type RigNotification,
 } from '@shared/rig/notifications';
 import type { RigMyInvite } from '@shared/rig/rig-share';
+import { leftOutLine, shapeBell, type BellContext } from './bell-model';
 import {
   NOTIFICATION_ACTIVITY_KEY,
+  NOTIFICATION_AWAY_KEY,
   NOTIFICATION_SUMMARY_KEY,
   useNotificationPermission,
   useNotificationSummary,
@@ -91,19 +93,28 @@ export function ActivityBell({
     staleTime: Infinity,
   });
   const activity = activityQuery.data?.success ? activityQuery.data.data : null;
+  // Which rows came in while you were away: your own agents finishing then
+  // stay in the bell, the ones you were here for don't (`bell-model.ts`).
+  const awayQuery = useQuery({
+    queryKey: NOTIFICATION_AWAY_KEY,
+    queryFn: () => rpc.rig.notifications.arrivedWhileAway(),
+    enabled: signedIn,
+    staleTime: Infinity,
+  });
+  const bellCtx: BellContext = { selfUserId: accountId, awayIds: new Set(awayQuery.data ?? []) };
 
   // A banner click for an invite focuses the window and asks the bell to
   // show its invite list rather than trying to open a space that doesn't
   // exist yet for the invitee.
   useEffect(() => events.on(rigOpenInvitesChannel, () => setOpen(true)), []);
 
-  // Reuses `deriveBellState` for the signed-out carve-out only — its count
-  // here is pending invites plus direct unread, not invites alone, so the
-  // real total isn't hidden behind the invites fetch still being in flight.
-  // The Dock's number exactly (`dockCount`): unread rows about you, invite
-  // rows included. A pending invite you've already seen stays listed below,
-  // it just isn't counted again.
-  const bell = deriveBellState(signedIn, summary.directUnreadTotal);
+  // Reuses `deriveBellState` for the signed-out carve-out only. Its count is
+  // the unread rows the bell keeps for you (`shapeBell`), invite rows
+  // included; until they load, the summary's unread rows about you. A
+  // pending invite you've already seen stays listed below, it just isn't
+  // counted again.
+  // The count is what the bell keeps for you, once its rows are in.
+  const bell = deriveBellState(signedIn, activity ? shapeBell(activity, bellCtx).unread : summary.directUnreadTotal);
   if (!bell.visible) return null;
 
   return (
@@ -156,6 +167,7 @@ export function ActivityBell({
             activity={activity}
             error={activityQuery.isError || activityQuery.data?.success === false}
             directUnreadTotal={summary.directUnreadTotal}
+            ctx={bellCtx}
             onOpenTarget={(target) => {
               setOpen(false);
               onOpenTarget(target);
@@ -302,11 +314,13 @@ function ActivitySection({
   activity,
   error,
   directUnreadTotal,
+  ctx,
   onOpenTarget,
 }: {
   activity: RigNotification[] | null;
   error: boolean;
   directUnreadTotal: number;
+  ctx: BellContext;
   onOpenTarget: (target: OpenSpaceAt) => void;
 }) {
   const queryClient = useQueryClient();
@@ -317,6 +331,8 @@ function ActivitySection({
   const [olderState, setOlderState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
   const rows = activity ? [...activity, ...older.filter((o) => !activity.some((a) => a.id === o.id))] : null;
   const canPage = activity !== null && activity.length >= ACTIVITY_PAGE && olderState !== 'done';
+  const model = rows ? shapeBell(rows, ctx) : null;
+  const footer = model ? leftOutLine(model.leftOut) : null;
 
   const loadOlder = async () => {
     const last = rows?.[rows.length - 1];
@@ -363,14 +379,24 @@ function ActivitySection({
           Mark all as read
         </button>
       </div>
-      {rows === null ? (
+      {model === null ? (
         <p className="text-text-muted px-1.5 py-2 text-xs">{error ? 'Could not load activity.' : 'Loading…'}</p>
-      ) : rows.length === 0 ? (
+      ) : model.groups.length === 0 ? (
         <p className="text-text-muted px-1.5 py-2 text-xs">
           Nothing new. Mentions, replies and your agents' news show up here.
         </p>
       ) : (
-        rows.map((row) => <ActivityRow key={row.id} row={row} onOpen={() => void openRow(row)} />)
+        model.groups.map((group) => (
+          <div key={group.key} className="flex flex-col" data-testid="activity-group">
+            <p className="text-text-secondary flex items-center gap-1 px-1.5 pt-1.5 pb-0.5 text-xs font-medium">
+              <span className="text-text-muted font-mono">#</span>
+              {group.spaceName ?? 'A space'}
+            </p>
+            {group.rows.map((row) => (
+              <ActivityRow key={row.id} row={row} onOpen={() => void openRow(row)} />
+            ))}
+          </div>
+        ))
       )}
       {canPage && (
         <button
@@ -381,6 +407,14 @@ function ActivitySection({
         >
           {olderState === 'loading' ? 'Loading…' : olderState === 'error' ? "Couldn't load. Try again" : 'Show older'}
         </button>
+      )}
+      {footer && (
+        <p
+          className="border-border-hairline text-text-muted -mx-2 mt-1 -mb-2 border-t px-3.5 pt-2 pb-2.5 text-xs leading-normal"
+          data-testid="activity-left-out"
+        >
+          {footer}
+        </p>
       )}
     </div>
   );

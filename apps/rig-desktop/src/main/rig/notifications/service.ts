@@ -58,6 +58,8 @@ const POLL_MS = 60_000;
 const SIGNED_OUT_RETRY_MS = 30_000;
 const IDLE_TIMEOUT_MS = 75_000;
 const SUMMARY_DEBOUNCE_MS = 300;
+/** Rows remembered as arrived while you were away; the oldest are forgotten past this. */
+const AWAY_IDS_MAX = 500;
 
 export function reconnectDelayMs(attempt: number): number {
   return Math.min(60_000, 1_000 * 2 ** attempt);
@@ -71,11 +73,16 @@ export class NotificationService {
   private chain: Promise<void> = Promise.resolve();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private summaryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** When this service last started: a row from before then came in while rig was closed. */
+  private startedAt = 0;
+  /** Rows that came in while you were away (no rig window focused, or rig closed), newest last. */
+  private away = new Set<string>();
 
   constructor(private readonly deps: NotificationServiceDeps) {}
 
   start(): void {
     if (this.abort) return;
+    this.startedAt = this.deps.now();
     this.abort = new AbortController();
     void this.run(this.abort.signal);
     this.pollTimer = setInterval(() => {
@@ -109,6 +116,16 @@ export class NotificationService {
 
   summary(): RigNotificationSummary {
     return this.summaryCache;
+  }
+
+  /**
+   * The rows that came in while you were away, by the same rule as a banner
+   * (`decideBanner`: away means no rig window is focused), plus the ones
+   * from while rig was closed. Only rows this app has seen arrive since it
+   * started; the bell keeps your own agents' finishes only when they're here.
+   */
+  arrivedWhileAway(): string[] {
+    return [...this.away];
   }
 
   /** The renderer says which space is on screen (`null`: none). */
@@ -219,6 +236,7 @@ export class NotificationService {
         for (const row of page.data) {
           cursor = row.id;
           this.deps.cursor.set(account, row.id);
+          this.noteArrival(row);
           if (this.seenOnScreen(row)) seen.push(row.id);
           else this.consider(row);
         }
@@ -230,6 +248,13 @@ export class NotificationService {
         void this.refreshSummary();
       }
     }
+  }
+
+  private noteArrival(row: RigNotification): void {
+    const before = Date.parse(row.createdAt) < this.startedAt;
+    if (!before && this.deps.appFocused()) return;
+    this.away.add(row.id);
+    if (this.away.size > AWAY_IDS_MAX) this.away.delete(this.away.values().next().value!);
   }
 
   /** Unread, about the space in a focused window, and arrived while it was there. */
@@ -277,6 +302,7 @@ export class NotificationService {
 
   private signedOut(): void {
     this.account = null;
+    this.away.clear();
     this.summaryCache = EMPTY_NOTIFICATION_SUMMARY;
     this.deps.presenter.closeAll();
     this.deps.setBadge(0);

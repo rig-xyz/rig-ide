@@ -20,6 +20,8 @@ import {
 
 export const NOTIFICATION_SUMMARY_KEY = ['rig', 'notifications', 'summary'];
 export const NOTIFICATION_ACTIVITY_KEY = ['rig', 'notifications', 'activity'];
+/** Under the activity key, so the same change event re-reads which rows came in while you were away. */
+export const NOTIFICATION_AWAY_KEY = [...NOTIFICATION_ACTIVITY_KEY, 'away'];
 
 /** Refetch everything notification-shaped when main says something changed. Mount once (App). */
 export function useNotificationsInvalidation(): void {

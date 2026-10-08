@@ -254,6 +254,8 @@ export const rigNotificationsController = createRPCController({
     notificationService.refresh();
     return res;
   },
+  /** The rows that came in while you were away (`NotificationService.arrivedWhileAway`). */
+  arrivedWhileAway: (): string[] => notificationService.arrivedWhileAway(),
   /** The space on screen in a focused window (`null`: none), for focus suppression. */
   setViewing: (input: { bindingId: string | null }): void => notificationService.setViewing(input.bindingId),
   /** macOS's permission for rig: never asked, allowed, or turned off. */

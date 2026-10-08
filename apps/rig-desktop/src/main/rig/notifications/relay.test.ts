@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { listNotifications } from './relay';
+import { listNotifications, toNotification } from './relay';
 
 /** The list route's query string: the Room's For you asks for one Space's rows with `bindingId`. */
 
@@ -44,5 +44,29 @@ describe('listNotifications', () => {
     const result = await listNotifications({ tier: 'direct', bindingId: 'bnd_a' });
     expect(result.success).toBe(false);
     if (!result.success) expect(result.error).toMatchObject({ status: 400 });
+  });
+});
+
+describe('toNotification', () => {
+  const wire = {
+    id: '7',
+    type: 'comment',
+    tier: 'ambient',
+    bindingId: 'bnd_a',
+    spaceName: 'Launch',
+    actor: { kind: 'user', userId: 'u_maya', name: 'Maya', agent: null },
+    messageId: 'm1',
+    messageSeq: 3,
+    path: 'docs/plan.md',
+    title: 'Maya commented on plan.md in Launch',
+    body: 'looks short',
+    createdAt: '2026-10-08T10:00:00Z',
+    readAt: null,
+  };
+
+  it("keeps a comment's file author, and leaves it out for a relay that doesn't send one", () => {
+    expect(toNotification({ ...wire, fileAuthorUserId: 'u_me' })?.fileAuthorUserId).toBe('u_me');
+    expect(toNotification({ ...wire, fileAuthorUserId: null })).not.toHaveProperty('fileAuthorUserId');
+    expect(toNotification(wire)).not.toHaveProperty('fileAuthorUserId');
   });
 });

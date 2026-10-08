@@ -225,6 +225,31 @@ describe('NotificationService', () => {
     expect(t.queries.length).toBeGreaterThan(connects);
   });
 
+  it('remembers which rows came in while you were away: unfocused, or from before rig started', async () => {
+    const t = setup({
+      cursor: '1',
+      rows: [
+        row({ id: '2', createdAt: new Date(Date.now() - 3_600_000).toISOString() }),
+        row({ id: '3', createdAt: fresh() }),
+      ],
+    });
+    current = t;
+    t.setFocused(true);
+    t.service.start();
+    await t.connected();
+    // Row 2 is from before this launch: rig was closed. Row 3 came in while a window was focused.
+    expect(t.service.arrivedWhileAway()).toEqual(['2']);
+
+    t.setFocused(false);
+    t.setRows([row({ id: '3', createdAt: fresh() }), row({ id: '4', createdAt: fresh() })]);
+    t.push({ event: 'notification', data: '{"id":"4"}' });
+    await t.service.catchUp();
+    expect(t.service.arrivedWhileAway()).toEqual(['2', '4']);
+
+    t.service.stop();
+    expect(t.service.arrivedWhileAway()).toEqual([]);
+  });
+
   it('backs off reconnects up to a minute', () => {
     expect([0, 1, 2, 5, 10].map(reconnectDelayMs)).toEqual([1000, 2000, 4000, 32000, 60000]);
   });

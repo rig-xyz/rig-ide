@@ -65,6 +65,7 @@ export function toNotification(value: unknown): RigNotification | null {
     requestId: str(r.requestId),
     inviteId: str(r.inviteId),
     path: str(r.path),
+    ...(typeof r.fileAuthorUserId === 'string' ? { fileAuthorUserId: r.fileAuthorUserId } : {}),
     title: r.title,
     body: typeof r.body === 'string' ? r.body : '',
     createdAt: r.createdAt,

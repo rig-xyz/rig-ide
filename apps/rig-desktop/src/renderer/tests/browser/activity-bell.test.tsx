@@ -12,6 +12,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 const mocks = vi.hoisted(() => ({
   accept: vi.fn(),
   attach: vi.fn(),
+  activity: [] as unknown[],
+  away: [] as string[],
+  invites: true,
 }));
 
 vi.mock('@renderer/lib/ipc', () => ({
@@ -23,7 +26,7 @@ vi.mock('@renderer/lib/ipc', () => ({
         listMyInvites: async () => ({
           success: true,
           data: {
-            invites: [
+            invites: !mocks.invites ? [] : [
               {
                 id: 'inv1',
                 role: 'member',
@@ -41,7 +44,8 @@ vi.mock('@renderer/lib/ipc', () => ({
       join: { attach: (...args: unknown[]) => mocks.attach(...args) },
       notifications: {
         summary: async () => ({ spaces: [], invitesUnread: 0, directUnreadTotal: 0 }),
-        activity: async () => ({ success: true, data: [] }),
+        activity: async () => ({ success: true, data: mocks.activity }),
+        arrivedWhileAway: async () => mocks.away,
         markRead: async () => ({ success: true, data: undefined }),
       },
     },
@@ -50,6 +54,7 @@ vi.mock('@renderer/lib/ipc', () => ({
 }));
 
 import { ActivityBell } from '@renderer/features/notifications/activity-bell';
+import { row } from '@shared/rig/notification-fixture';
 
 function click(el: Element): void {
   el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -146,5 +151,59 @@ describe('ActivityBell — invite Accept', () => {
     expect(mocks.attach).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain('Invite expired');
     expect(buttonNamed('Accept')).toBeTruthy();
+  });
+});
+
+describe('ActivityBell — only what is for you, by space', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(async () => {
+    mocks.invites = false;
+    const mine = { kind: 'agent' as const, userId: 'u-sam', name: 'Sam', agent: 'claude' as const };
+    mocks.activity = [
+      row({ id: '9', type: 'mention', tier: 'direct', bindingId: 'b-mkt', spaceName: 'rig-marketing', title: 'Hugo mentioned you in rig-marketing' }),
+      row({ id: '8', type: 'message', bindingId: 'b-mkt', spaceName: 'rig-marketing' }),
+      row({ id: '7', type: 'agent_finished', tier: 'direct', bindingId: 'b-ops', spaceName: 'rig-ops', actor: mine, title: 'Your Claude finished in rig-ops' }),
+      row({ id: '6', type: 'agent_finished', tier: 'direct', bindingId: 'b-ops', spaceName: 'rig-ops', actor: mine, title: 'Your Claude finished while away' }),
+      row({ id: '5', type: 'comment', bindingId: 'b-mkt', spaceName: 'rig-marketing', fileAuthorUserId: 'u-hugo' }),
+      row({ id: '4', type: 'comment', bindingId: 'b-fkn', spaceName: 'rig-fkn-sht', fileAuthorUserId: 'u-sam', title: 'Raf commented on plan.md', readAt: '2026-10-07T00:00:00Z' }),
+    ];
+    mocks.away = ['6'];
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={new QueryClient()}>
+          <ActivityBell onOpenPath={() => {}} onOpenTarget={() => {}} />
+        </QueryClientProvider>
+      );
+    });
+    await flush();
+    await flush();
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+    mocks.invites = true;
+    mocks.activity = [];
+    mocks.away = [];
+  });
+
+  it('counts only the unread it keeps, lists them by space, and says what it left out', async () => {
+    const trigger = host.querySelector('[aria-label^="Activity"]')!;
+    expect(trigger.getAttribute('aria-label')).toBe('Activity (2)');
+    await act(async () => click(trigger));
+    const groups = [...document.body.querySelectorAll<HTMLElement>('[data-testid="activity-group"]')];
+    expect(groups.map((g) => g.querySelector('p')?.textContent)).toEqual(['#rig-marketing', '#rig-ops', '#rig-fkn-sht']);
+    expect(groups[0]!.textContent).toContain('Hugo mentioned you in rig-marketing');
+    expect(groups[1]!.textContent).toContain('Your Claude finished while away');
+    expect(groups[1]!.textContent).not.toContain('Your Claude finished in rig-ops');
+    expect(groups[2]!.textContent).toContain('Raf commented on plan.md');
+    expect(document.body.querySelector('[data-testid="activity-left-out"]')?.textContent).toBe(
+      "3 more are left out: 1 run of your own agents finishing while you were here, 1 room message and 1 comment on a file that isn't yours. They stay in each space."
+    );
   });
 });

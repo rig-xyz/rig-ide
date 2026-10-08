@@ -48,6 +48,8 @@ export type RigNotification = {
   requestId: string | null;
   inviteId: string | null;
   path: string | null;
+  /** On a row about a file: who first wrote it. Absent from a relay before it sends this. */
+  fileAuthorUserId?: string | null;
   title: string;
   body: string;
   createdAt: string;
