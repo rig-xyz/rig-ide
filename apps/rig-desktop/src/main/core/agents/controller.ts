@@ -22,6 +22,7 @@ import {
   buildAgentPayloads,
   toAgentInstallationStatus,
 } from './agent-payload-builder';
+import { toolOnPath } from './install-tools';
 
 /** Enrich a manager HostDependency snapshot with latestVersion/updateAvailable from the coordinator. */
 const enrichHostDep = (
@@ -35,13 +36,14 @@ export const agentsController = createRPCController({
   list: async (connectionId?: string) => {
     const mgr = await getDependencyManager(connectionId);
     if (connectionId) await ensureAgentDependenciesProbed(mgr);
-    return buildAgentPayloads(mgr.platform, mgr, enrichHostDep);
+    // On this computer, say which install ways need a program it lacks (npm, brew).
+    return buildAgentPayloads(mgr.platform, mgr, enrichHostDep, connectionId ? undefined : toolOnPath);
   },
 
   get: async (id: string, connectionId?: string) => {
     const mgr = await getDependencyManager(connectionId);
     if (connectionId) await ensureAgentDependenciesProbed(mgr);
-    return buildAgentPayload(id, mgr.platform, mgr, enrichHostDep);
+    return buildAgentPayload(id, mgr.platform, mgr, enrichHostDep, connectionId ? undefined : toolOnPath);
   },
 
   // ── Installation status ──────────────────────────────────────────────────────

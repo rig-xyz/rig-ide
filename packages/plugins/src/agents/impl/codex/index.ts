@@ -69,6 +69,13 @@ export function codexConfigWithClaudeMd(existing: string | undefined): string {
   });
 }
 
+/** OpenAI's standalone installer: a native binary in ~/.local/bin, no Node or npm needed. */
+const CODEX_NATIVE_INSTALLER = {
+  method: 'curl' as const,
+  command: 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh',
+  recommended: true,
+};
+
 export const plugin = definePlugin(
   {
     id: 'codex',
@@ -146,9 +153,12 @@ export const plugin = definePlugin(
     hostDependency: npmDependency({
       id: 'codex',
       package: '@openai/codex',
+      // OpenAI's own installer needs no Node, which a clean Mac lacks: it's
+      // the one offered first. npm stays for people who already use it.
+      recommended: false,
       extraOptions: {
-        macos: [homebrewOption({ formula: 'codex', cask: true })],
-        linux: [homebrewOption({ formula: 'codex', cask: true })],
+        macos: [CODEX_NATIVE_INSTALLER, homebrewOption({ formula: 'codex', cask: true })],
+        linux: [CODEX_NATIVE_INSTALLER, homebrewOption({ formula: 'codex', cask: true })],
         windows: [
           {
             method: 'powershell',
@@ -167,6 +177,8 @@ export const plugin = definePlugin(
       // stays for older app versions.
       extraLocations: {
         macos: [
+          // Where OpenAI's own installer puts it, for an app that doesn't see the shell's PATH.
+          '~/.local/bin/codex',
           '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex',
           '~/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex',
           '/Applications/ChatGPT.app/Contents/Resources/codex',

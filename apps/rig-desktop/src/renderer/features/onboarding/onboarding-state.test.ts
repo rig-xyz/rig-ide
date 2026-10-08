@@ -76,6 +76,20 @@ describe('preferredInstallOptions', () => {
     expect(preferredInstallOptions(options)).toEqual(options);
   });
 
+  it('picks a way that needs no npm when this Mac has no npm, even over a recommended npm', () => {
+    const options = [
+      { method: 'npm', recommended: true, missingTool: 'npm' },
+      { method: 'curl' },
+      { method: 'homebrew', missingTool: 'brew' },
+    ];
+    expect(preferredInstallOptions(options)).toEqual([{ method: 'curl' }]);
+  });
+
+  it('still shows the ways it has when every one needs a missing program', () => {
+    const options = [{ method: 'npm', missingTool: 'npm' }];
+    expect(preferredInstallOptions(options)).toEqual(options);
+  });
+
   it('is empty for an empty list', () => {
     expect(preferredInstallOptions([])).toEqual([]);
   });

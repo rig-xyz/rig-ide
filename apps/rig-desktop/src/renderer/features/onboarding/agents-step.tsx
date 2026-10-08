@@ -10,22 +10,14 @@ import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { Button } from '@renderer/lib/ui/button';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { cn } from '@renderer/lib/utils';
-import type { AgentPayload, InstallMethod } from '@shared/core/agents/agent-payload';
+import type { AgentPayload } from '@shared/core/agents/agent-payload';
 import { RIG_WEBSITE_URL } from '@shared/urls';
 import { CATALOG_FOOTNOTE_AGENT_IDS, deriveCatalogFootnote } from './catalog-footnote';
-import { AgentInstallRow } from '@renderer/features/agents/agent-install';
+import { AgentInstallRow, useAgentInstaller } from '@renderer/features/agents/agent-install';
 import { hasInstalledAgent, onboardingAgents } from './onboarding-state';
 
 /** Same query key `useRunnableAgents` already reads (`rpc.agents.list()`) — reusing its hook here means the harness picker and this step share one cache entry instead of two independent fetches of the same data. */
 const AGENTS_QUERY_KEY = ['rig', 'agents', 'list'];
-
-/** `rpc.agents.install`'s failure union carries a `.message` on most variants (a real command failure) but not all (`unknown-dependency`/`no-install-command`/`not-detected-after-install` only ever carry an `.id`) — read structurally (`unknown` in, so this never fights the union's own type checking) rather than assuming every variant has one, so `toast`'s description degrades to nothing rather than crashing the app it's trying to report an error FROM. */
-function installErrorMessage(error: unknown): string | undefined {
-  if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') {
-    return error.message;
-  }
-  return undefined;
-}
 
 /**
  * Step 1 — agents, always shown first (round H2's explicit order: "an
@@ -65,7 +57,7 @@ export function AgentsStep({ onComplete }: { onComplete: () => void }) {
   const identities = useAgentIdentities();
   const showCatalogCard = identities.size > CATALOG_FOOTNOTE_AGENT_IDS.length;
 
-  const [installingId, setInstallingId] = useState<string | null>(null);
+  const { installingId, install } = useAgentInstaller(() => void refetchAgents());
   const [checking, setChecking] = useState(false);
 
   const refetchAgents = () => queryClient.invalidateQueries({ queryKey: AGENTS_QUERY_KEY });
@@ -78,30 +70,6 @@ export function AgentsStep({ onComplete }: { onComplete: () => void }) {
   // guarantees the busy state always clears; the `catch` (and, for
   // install, an in-band `!result.success`) surfaces what actually went
   // wrong instead of silently doing nothing.
-  const install = async (id: string, name: string, method: InstallMethod) => {
-    setInstallingId(id);
-    try {
-      const result = await rpc.agents.install(id, undefined, method);
-      if (!result.success) {
-        toast({
-          title: `Couldn't install ${name}`,
-          description: installErrorMessage(result.error),
-          variant: 'destructive',
-        });
-        return;
-      }
-      void refetchAgents();
-    } catch (error) {
-      toast({
-        title: `Couldn't install ${name}`,
-        description: error instanceof Error ? error.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setInstallingId(null);
-    }
-  };
-
   const checkAgain = async () => {
     setChecking(true);
     try {
@@ -163,7 +131,7 @@ export function AgentsStep({ onComplete }: { onComplete: () => void }) {
               key={agent.id}
               agent={agent}
               installing={installingId === agent.id}
-              onInstall={(method) => void install(agent.id, agent.name, method)}
+              onInstall={(method) => void install(agent, method)}
             />
           ))
         )}

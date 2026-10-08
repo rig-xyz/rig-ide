@@ -24,6 +24,8 @@ export type InstallOption = {
   command: string;
   label?: string;
   recommended?: boolean;
+  /** The program this method needs that this computer doesn't have (e.g. `npm`); set by main. */
+  missingTool?: string;
   updateCommand?: string;
   uninstallCommand?: string;
 };

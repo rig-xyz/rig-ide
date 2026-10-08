@@ -126,6 +126,12 @@ export function AgentInstallRow({
       {hasCliLogin(agent.capabilities) && (
         <p className="text-text-muted text-xs">{agent.name} may ask you to sign in the first time you use it.</p>
       )}
+      {agent.id === 'codex' && (
+        // The ChatGPT app carries its own Codex, which Rig finds by itself.
+        <p className="text-text-muted text-xs" data-testid="codex-chatgpt-hint">
+          Already use the ChatGPT app? Sign in there and Rig will find Codex.
+        </p>
+      )}
     </div>
   );
 }
