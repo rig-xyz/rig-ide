@@ -45,6 +45,7 @@ import { Topbar, topbarChrome } from '@renderer/App';
 import { ChatDivider } from '@renderer/features/shell/chat-divider';
 import type { RigLayout } from '@renderer/features/shell/layout-switcher';
 import { RigShareButton } from '@renderer/features/rig-share/rig-share-button';
+import { openInviteForm } from '@renderer/features/rig-share/open-invite';
 
 function click(el: Element): void {
   el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -160,6 +161,14 @@ describe('Topbar', () => {
       // in this app): who's here, and inviting someone new.
       await act(async () => click(trigger!));
       expect(document.body.textContent).toContain('Dylan');
+    });
+
+    it('opens the Invite pill when the empty Room asks for the invite form', async () => {
+      await render({ isSpace: true, sharePillSlot: <RigShareButton root="/rigs/growth" name="growth" variant="pill" /> });
+      const trigger = host.querySelector<HTMLButtonElement>('[aria-label="People and invites"]')!;
+      expect(trigger.getAttribute('aria-expanded')).toBe('false');
+      await act(async () => openInviteForm());
+      expect(trigger.getAttribute('aria-expanded')).toBe('true');
     });
 
     it('shows only the combined trigger beside the name for a plain rig, not the split People/Share pair', async () => {

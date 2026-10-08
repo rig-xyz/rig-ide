@@ -118,7 +118,7 @@ export function deriveHomeRegions(input: HomeRegionsInput): HomeRegions {
     if (!input.hasRunnableAgent) {
       health = {
         kind: 'noAgent',
-        text: 'No runnable agent installed — install one to start or continue a session.',
+        text: 'No agent is set up on this Mac yet.',
       };
     } else if (!input.signedIn) {
       health = { kind: 'signedOut', text: "Sign in to see your team's rigs" };

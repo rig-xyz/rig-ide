@@ -208,6 +208,8 @@ export function Composer({
   autoFocus = false,
   people = [],
   onInvitePerson,
+  onSetUpAgent,
+  elsewhereAgents,
 }: {
   spaceName: string;
   /** Where this composer keeps its unsent draft (the space's id); no draft kept without one. */
@@ -253,6 +255,10 @@ export function Composer({
   people?: readonly MentionPerson[];
   /** Invites someone tagged from outside the space ("Invite and send"); resolves to whether it worked. No offer without it. */
   onInvitePerson?: (person: MessageMention) => Promise<boolean>;
+  /** Opens the install offer for one of your agents that isn't set up on this Mac; no button without it. */
+  onSetUpAgent?: (agent: AgentKind) => void;
+  /** Your agents your other Macs report; undefined or null when unknown, and then every agent of yours can be asked. */
+  elsewhereAgents?: readonly AgentKind[] | null;
 }) {
   const [value, setValue] = useState(() => readDraft(draftKey));
   const [focused, setFocused] = useState(false);
@@ -318,6 +324,30 @@ export function Composer({
     };
   }, [value, suggestReply, replyTo, override]);
 
+  // Your agents that can run on this Mac: the only ones the @-pill (whose
+  // pickers reach this Mac's session) shows for.
+  const runnable = useMemo(
+    () => (availableAgents ? agents.filter((a) => availableAgents.includes(a.agent)) : agents),
+    [agents, availableAgents]
+  );
+  // The ones a message can ask: these, plus those another Mac of yours runs
+  // (all of yours while that isn't known).
+  const askable = useMemo(
+    () =>
+      availableAgents && elsewhereAgents
+        ? agents.filter((a) => availableAgents.includes(a.agent) || elsewhereAgents.includes(a.agent))
+        : agents,
+    [agents, availableAgents, elsewhereAgents]
+  );
+  // What the @ and send menus offer: the ones known to run on one of your Macs.
+  const offered = useMemo(
+    () =>
+      availableAgents
+        ? agents.filter((a) => availableAgents.includes(a.agent) || !!elsewhereAgents?.includes(a.agent))
+        : agents,
+    [agents, availableAgents, elsewhereAgents]
+  );
+  const runsElsewhere = (agent: AgentKind) => !runnable.some((a) => a.agent === agent);
   const skillQuery = /^\/(\S*)$/.exec(value)?.[1] ?? null;
   // Everyone `@` can name: a whole name followed by a space is a finished tag.
   const mentionNames = useMemo(
@@ -476,14 +506,18 @@ export function Composer({
     }
     if (mentionQuery !== null) {
       const q = foldName(mentionQuery);
-      const agentItems: MenuItem[] = agents
+      const agentItems: MenuItem[] = offered
         .filter((a) => a.agent.startsWith(q))
         .map((a) => ({
           key: `agent-${a.agent}`,
           section: 'Agents',
           icon: <AgentAvatar agent={a.agent} owner={members.find((m) => m.id === a.owner)} size="sm" />,
           label: a.agent,
-          detail: busyAgents.includes(a.agent) ? `your ${AGENT_NAME[a.agent]} · working` : `your ${AGENT_NAME[a.agent]}`,
+          detail: busyAgents.includes(a.agent)
+            ? `your ${AGENT_NAME[a.agent]} · working`
+            : runsElsewhere(a.agent)
+              ? `your ${AGENT_NAME[a.agent]} · on your other Mac`
+              : `your ${AGENT_NAME[a.agent]}`,
           apply: () => applyMention(a.agent),
         }));
       const memberIds = new Set(members.map((m) => m.id));
@@ -516,7 +550,7 @@ export function Composer({
     }
     return [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skillQuery, mentionQuery, fileQuery, emojiQuery, emojiIndex, spaceFiles, skills, members, agents, busyAgents, people]);
+  }, [skillQuery, mentionQuery, fileQuery, emojiQuery, emojiIndex, spaceFiles, skills, members, offered, runnable, busyAgents, people]);
 
   const menuOpen = items.length > 0 && dismissedFor !== value;
   // Skills, files and emoji open the list above the input; people and agents the pill row.
@@ -560,13 +594,13 @@ export function Composer({
     !droppedSuggestion &&
     !replyTo &&
     !hasMention(value) &&
-    agents.some((a) => a.agent === reply.agent) &&
+    askable.some((a) => a.agent === reply.agent) &&
     sameDraft(preview!.draft, value.trim())
       ? reply
       : null;
   // Called by name at the start, no @ and no Reply chosen.
   const addressed =
-    !replyTo && !droppedSuggestion && !hasMention(value) ? addressedAgent(value, agents) : null;
+    !replyTo && !droppedSuggestion && !hasMention(value) ? addressedAgent(value, askable) : null;
   // Your agent without an @, as one pill: a guessed reply wins (it carries the
   // turn). Never beside the other pills: they need an @ or a Reply you chose.
   const ownPill: { agent: AgentKind; replyTo: RoomReplyRef | null; reason: string } | null = suggested
@@ -582,7 +616,9 @@ export function Composer({
           reason: `You started with "${addressed.word}", so it goes to ${AGENT_NAME[addressed.agent]}.`,
         }
       : null;
-  const agentPill = tagged && !droppedAgent ? tagged : null;
+  // A tag of your agent that can't run here gets no pill: the notice above the box says so.
+  const keptTag = tagged && !droppedAgent ? tagged : null;
+  const agentPill = keptTag && runnable.some((a) => a.agent === keptTag) ? keptTag : null;
   const replyPill = replyTo ?? null;
   const docPill = agentPill && openDoc && !droppedDoc ? openDoc : null;
   // The pill stays only while it's still where the message goes (another agent chosen in the menu drops it).
@@ -590,7 +626,9 @@ export function Composer({
   const decision = decideSend({
     text: value,
     ownAgents: agents.map((a) => a.agent),
-    tagged: agentPill,
+    runnable: runnable.map((a) => a.agent),
+    elsewhere: availableAgents ? elsewhereAgents : null,
+    tagged: keptTag,
     pill: shownOwnPill?.agent ?? null,
     route: preview?.route ?? null,
     override,
@@ -602,7 +640,7 @@ export function Composer({
     textareaRef.current?.focus();
   };
   // The send button's menu: your agents that can run here, then Send.
-  const menuAgents = (availableAgents ?? agents.map((a) => a.agent)).filter((agent) => agents.some((a) => a.agent === agent));
+  const menuAgents = offered.map((a) => a.agent);
   const choose = (choice: SendOverride) => {
     setOverride(choice);
     setSendMenuOpen(false);
@@ -818,6 +856,34 @@ export function Composer({
             Send only
           </Button>
         </div>
+      )}
+
+      {!menuOpen && decision.unavailable && (
+        <div
+          className="popover-in border-border-hairline bg-bg-1 shadow-float mb-2 flex items-center gap-2.5 rounded-card border px-3 py-2"
+          role="status"
+          data-testid="composer-agent-unavailable"
+        >
+          <span className="min-w-0 flex-1 text-xs text-text-secondary">
+            {AGENT_NAME[decision.unavailable]} isn’t set up on this Mac.
+          </span>
+          {onSetUpAgent && (
+            <Button
+              size="xs"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => onSetUpAgent(decision.unavailable!)}
+              data-testid="composer-set-up-agent"
+            >
+              Set up
+            </Button>
+          )}
+        </div>
+      )}
+
+      {!menuOpen && decision.elsewhere && (
+        <p className="popover-in mb-2 px-1 text-xs text-text-secondary" role="status" data-testid="composer-agent-elsewhere">
+          {AGENT_NAME[decision.elsewhere]} will run on your other Mac.
+        </p>
       )}
 
       {!menuOpen && (shownOwnPill || replyPill || agentPill || docPill) && (

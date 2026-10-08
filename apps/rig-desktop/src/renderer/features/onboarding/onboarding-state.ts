@@ -48,12 +48,18 @@ export function onboardingAgents<T extends { id: string; name: string }>(
   return recommended.length > 0 ? recommended : all;
 }
 
-/** The install commands to show for one agent — narrows to the recommended method(s) when the plugin names any, else shows everything the platform offers. */
-export function preferredInstallOptions<T extends { recommended?: boolean }>(
+/**
+ * The install commands to show for one agent. Ways that need a program this
+ * Mac lacks (npm with no Node) drop out while another way is left; of the
+ * rest, the recommended ones when the plugin names any, else all of them.
+ */
+export function preferredInstallOptions<T extends { recommended?: boolean; missingTool?: string }>(
   options: readonly T[]
 ): T[] {
-  const recommended = options.filter((option) => option.recommended);
-  return recommended.length > 0 ? recommended : [...options];
+  const usable = options.filter((option) => !option.missingTool);
+  const pool = usable.length > 0 ? usable : [...options];
+  const recommended = pool.filter((option) => option.recommended);
+  return recommended.length > 0 ? recommended : pool;
 }
 
 /**

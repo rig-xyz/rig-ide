@@ -3,6 +3,7 @@ import type { IExecutionContext } from '../../exec/execution-context';
 import type { Platform } from '../capability';
 import { toPlatform } from './install-options';
 import type { ProbeResult } from './types';
+import { compareVersionStrings } from './version-order';
 
 const WHICH_TIMEOUT_MS = 5_000;
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
@@ -34,12 +35,54 @@ export async function resolveExtraLocationPath(
   ctx: IExecutionContext
 ): Promise<string | null> {
   const expanded = expandHome(location);
+  if (expanded.includes('*')) return resolveExtraLocationGlob(expanded, ctx);
   try {
     await ctx.exec('test', ['-x', expanded], { timeout: EXTRA_LOCATION_PROBE_TIMEOUT_MS });
     return expanded;
   } catch {
     return null;
   }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * A location where a `*` stands for one path segment, for an app that keeps
+ * several versions side by side (the Claude desktop app's own Claude Code
+ * lives at `claude-code/<version>/<hash>/claude.app/...`). Of the executable
+ * matches, the one whose first `*` segment is the highest version wins, so
+ * only the newest copy becomes a candidate. Null when nothing matches.
+ */
+export async function resolveExtraLocationGlob(
+  pattern: string,
+  ctx: IExecutionContext
+): Promise<string | null> {
+  // Quote every literal segment (paths like "Application Support" have
+  // spaces) and leave the `*` ones bare for the shell to expand.
+  const shellPattern = pattern
+    .split('/')
+    .map((segment) => (segment.includes('*') ? segment.replace(/[^*A-Za-z0-9._-]/g, '') : segment ? shellQuote(segment) : ''))
+    .join('/');
+  let stdout: string;
+  try {
+    ({ stdout } = await ctx.exec(
+      'sh',
+      ['-c', `for p in ${shellPattern}; do [ -x "$p" ] && printf '%s\\n' "$p"; done; true`],
+      { timeout: EXTRA_LOCATION_PROBE_TIMEOUT_MS }
+    ));
+  } catch {
+    return null;
+  }
+  const firstStar = pattern.split('/').findIndex((segment) => segment.includes('*'));
+  const matches = stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const versionOf = (path: string) => path.split('/')[firstStar] ?? null;
+  matches.sort((a, b) => compareVersionStrings(versionOf(b), versionOf(a)));
+  return matches[0] ?? null;
 }
 
 /** Resolves a list of extra-location hints, dropping any that don't exist/aren't executable. */

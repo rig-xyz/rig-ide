@@ -191,6 +191,8 @@ export type RigInviteLinkJoined = {
 export type RigInvitePreview = {
   spaceName: string | null;
   inviterName: string | null;
+  /** An email invite's address, masked by the relay (`h•••@gmail.com`); null for a link anyone can use. */
+  emailHint: string | null;
 };
 
 export type RigInviteLinkError = {
@@ -212,4 +214,8 @@ export type RigInviteLinkError = {
     | 'relay';
   message: string;
   status?: number;
+  /** `wrongAccount`: the address the invite is for, masked by the relay. */
+  invitedHint?: string;
+  /** `wrongAccount`: the address you're signed in with. */
+  signedInAs?: string;
 };

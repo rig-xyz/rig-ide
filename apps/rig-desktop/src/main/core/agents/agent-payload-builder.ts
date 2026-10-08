@@ -21,6 +21,7 @@ import type {
   InstallOption,
 } from '@shared/core/agents/agent-payload';
 import { getDependencyDescriptor } from '../dependencies/registry';
+import { markMissingTools } from './install-tools';
 import { providerOverrideSettings } from '../settings/provider-settings-service';
 import { getPlugin, listPlugins } from './plugin-registry';
 
@@ -30,6 +31,9 @@ import { getPlugin, listPlugins } from './plugin-registry';
  * AgentUpdateService before building the payload.
  */
 type EnrichHostDep = (id: DependencyId, hostDep: HostDependency) => HostDependency;
+
+/** Whether this computer has a program an install method needs (`npm`, `brew`); omitted for a remote host. */
+type HasTool = (tool: string) => boolean;
 
 function buildMetadata(provider: CLIAgentPluginProvider): AgentMetadata {
   const { metadata, capabilities, assets } = provider;
@@ -79,7 +83,8 @@ async function buildOne(
   id: AgentProviderId,
   platform: Platform,
   dependencyManager?: HostDependencyManager,
-  enrichHostDep?: EnrichHostDep
+  enrichHostDep?: EnrichHostDep,
+  hasTool?: HasTool
 ): Promise<AgentPayload | null> {
   const provider = getPlugin(id);
   if (!provider) return null;
@@ -107,7 +112,11 @@ async function buildOne(
     updateAvailable,
     command: usedInst?.pathEntry ?? state?.path ?? null,
     settings: settingsMeta,
-    installOptions: descriptor ? resolveInstallOptions(descriptor, platform) : [],
+    installOptions: descriptor
+      ? hasTool
+        ? markMissingTools(resolveInstallOptions(descriptor, platform), hasTool)
+        : resolveInstallOptions(descriptor, platform)
+      : [],
     installations: hostDep?.installations ?? [],
     used,
     usedId: sourceKey(used),
@@ -118,19 +127,21 @@ export async function buildAgentPayload(
   id: string,
   platform: Platform = toPlatform(process.platform),
   dependencyManager?: HostDependencyManager,
-  enrichHostDep?: EnrichHostDep
+  enrichHostDep?: EnrichHostDep,
+  hasTool?: HasTool
 ): Promise<AgentPayload | null> {
-  return buildOne(id as AgentProviderId, platform, dependencyManager, enrichHostDep);
+  return buildOne(id as AgentProviderId, platform, dependencyManager, enrichHostDep, hasTool);
 }
 
 export async function buildAgentPayloads(
   platform: Platform = toPlatform(process.platform),
   dependencyManager?: HostDependencyManager,
-  enrichHostDep?: EnrichHostDep
+  enrichHostDep?: EnrichHostDep,
+  hasTool?: HasTool
 ): Promise<AgentPayload[]> {
   const results = await Promise.all(
     listPlugins().map((provider) =>
-      buildOne(provider.metadata.id as AgentProviderId, platform, dependencyManager, enrichHostDep)
+      buildOne(provider.metadata.id as AgentProviderId, platform, dependencyManager, enrichHostDep, hasTool)
     )
   );
   return results.filter((r): r is AgentPayload => r !== null);

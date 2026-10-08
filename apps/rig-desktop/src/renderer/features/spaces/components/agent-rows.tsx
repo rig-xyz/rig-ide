@@ -23,6 +23,8 @@ export function AgentRows({
   selfUserId,
   bindingId,
   signInRow,
+  availableAgents,
+  onSetUp,
 }: {
   snapshot: RoomSnapshot;
   selfUserId: string;
@@ -30,6 +32,10 @@ export function AgentRows({
   bindingId: string;
   /** The warning for one of your agents that needs you to sign in again (`AgentSignInRow`), or nothing. The Room passes it; fixtures don't. */
   signInRow?: (agent: AgentKind) => ReactNode;
+  /** Your agents that can run on this Mac; the others show as not installed. Unknown: every one shows as set up. */
+  availableAgents?: readonly AgentKind[];
+  /** Opens the install offer for one of yours that isn't installed here; no button without it. */
+  onSetUp?: (agent: AgentKind) => void;
 }) {
   const runs = Object.values(snapshot.sessionMetaByRun);
   const runsOf = (owner: string, kind: AgentKind) =>
@@ -48,6 +54,9 @@ export function AgentRows({
   };
 
   const mine = snapshot.agents.filter((a) => a.owner === selfUserId);
+  const missingHere = (agent: AgentKind) => !!availableAgents && !availableAgents.includes(agent);
+  // None of yours can run here: say so even while collapsed, it's why nothing answers.
+  const noneHere = mine.length > 0 && mine.every((a) => missingHere(a.agent));
   // Everyone else's agents that have worked in this space: shown so you know
   // what they run, but only their owner can change them.
   const theirs = new Map<string, { owner: string; agent: AgentKind }>();
@@ -117,9 +126,11 @@ export function AgentRows({
       </button>
       {/* A needed sign-in shows even while collapsed: it stops your agent from running at all. */}
       {!expanded && signInRow && mine.map((agent) => <Fragment key={agent.agent}>{signInRow(agent.agent)}</Fragment>)}
+      {!expanded && noneHere && mine.map((agent) => <NotInstalledRow key={agent.agent} agent={agent.agent} onSetUp={onSetUp} />)}
       {expanded && (
         <div className="popover-in flex shrink-0 flex-col pt-1 pb-1.5" data-testid="agents-expanded">
           {mine.map((agent) => {
+            if (missingHere(agent.agent)) return <NotInstalledRow key={agent.agent} agent={agent.agent} onSetUp={onSetUp} />;
             const latest = runsOf(selfUserId, agent.agent)[0];
             return (
               <Fragment key={agent.agent}>
@@ -284,4 +295,30 @@ function ChipStatus({ status }: { status: SpaceChipStatus }) {
         </span>
       );
   }
+}
+
+/** One of your agents that isn't installed on this Mac: it can't answer here until it is. */
+function NotInstalledRow({ agent, onSetUp }: { agent: AgentKind; onSetUp?: (agent: AgentKind) => void }) {
+  return (
+    <div
+      className="flex h-7 shrink-0 items-center gap-2 rounded-control pr-2 pl-2"
+      data-testid="space-agent-row-not-installed"
+      data-agent={agent}
+    >
+      <AgentAvatar agent={agent} owner={null} size="sm" className="opacity-60" />
+      <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+        {AGENT_NAME[agent]} <span className="text-text-muted">Not installed on this Mac</span>
+      </span>
+      {onSetUp && (
+        <button
+          type="button"
+          onClick={() => onSetUp(agent)}
+          className="shrink-0 text-xs text-accent transition-opacity hover:opacity-80"
+          data-testid="space-agent-set-up"
+        >
+          Set up
+        </button>
+      )}
+    </div>
+  );
 }

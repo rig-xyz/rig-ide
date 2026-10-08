@@ -1,12 +1,15 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CircleAlert, Loader2, LogIn, Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AgentSetupDialog } from '@renderer/features/agents/agent-install';
 import { AgentSignInButton } from '@renderer/features/agents/agent-sign-in-button';
 import { useAgentSignInNeeded } from '@renderer/features/agents/use-agent-sign-in-needed';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
 import { usePeople } from '@renderer/features/people/use-people';
 import { deriveSignedIn } from '@renderer/features/rig-account/auth-state';
 import { useRigSignIn, type RigSignInPhase } from '@renderer/features/rig-account/use-rig-sign-in';
+import { ManualLink } from '@renderer/features/onboarding/sign-in-step';
+import { Button } from '@renderer/lib/ui/button';
 import { ConnectionBanner } from '@renderer/features/shell/connection-banner';
 import {
   MY_INVITES_KEY_PREFIX,
@@ -200,6 +203,8 @@ export function Home({
     signIn: signInThenCreateRig,
     phase: createSignInPhase,
     error: createSignInError,
+    url: createSignInUrl,
+    cancel: cancelCreateSignIn,
   } = useRigSignIn(() => createFirst());
 
   const startFreshOrCreate = useCallback(() => {
@@ -246,7 +251,7 @@ export function Home({
     staleTime: 5_000,
   });
 
-  const { signIn, phase: signInPhase } = useRigSignIn();
+  const { signIn, phase: signInPhase, url: signInUrl, cancel: cancelSignIn } = useRigSignIn();
 
   const localReady = !agentsLoading && !localRigsQuery.isLoading && !recentSessionsQuery.isLoading;
 
@@ -522,6 +527,8 @@ export function Home({
         <SignedOutGate
           signInPhase={signInPhase}
           onSignIn={signIn}
+          signInUrl={signInUrl}
+          onCancel={cancelSignIn}
           expired={authStatusSignedIn && meQuery.data?.success === false && meQuery.data.error.kind === 'invalidToken'}
         />
       </div>
@@ -548,10 +555,14 @@ export function Home({
           phase={welcomePhase}
           authLoading={authQuery.isLoading}
           onStartFresh={startFreshOrCreate}
+          signInUrl={createSignInUrl}
+          onCancelSignIn={cancelCreateSignIn}
           // Signing in and creating both need the network.
           needsConnection={connectionDown || !navigatorOnline}
         />
         {pendingInvite && <PendingInviteInline invite={pendingInvite} onOpenPath={onOpenPath} />}
+        {/* Skipped the agent step on the first run: the way back to it. */}
+        {localReady && agents.length === 0 && <SetUpAgentButton className="text-sm" />}
       </div>
     );
   }
@@ -736,16 +747,22 @@ export function Home({
  * spec), but the button must still be momentarily disabled so a signed-out
  * guess never flashes as a clickable "Start fresh" for a signed-in user.
  */
-function Welcome({
+export function Welcome({
   phase,
   authLoading,
   onStartFresh,
   needsConnection,
+  signInUrl = null,
+  onCancelSignIn,
 }: {
   phase: WelcomePhase;
   authLoading: boolean;
   onStartFresh: () => void;
   needsConnection: boolean;
+  /** The sign-in page's address while waiting, to open or copy by hand. */
+  signInUrl?: string | null;
+  /** Stops waiting for sign-in, back to Start fresh. */
+  onCancelSignIn?: () => void;
 }) {
   const disabled = phase.kind !== 'idle' || authLoading || needsConnection;
   const waiting = phase.kind === 'signingIn' || phase.kind === 'creating';
@@ -769,7 +786,7 @@ function Welcome({
         </button>
       </NeedsConnection>
       {phase.kind === 'signingIn' && (
-        <p className="text-text-muted text-xs">Rig is collaborative — sign in to start.</p>
+        <SignInWaiting url={signInUrl} onCancel={onCancelSignIn} note="Sign in to start." />
       )}
       {phase.kind === 'error' && <p className="text-danger text-xs">{phase.message}</p>}
     </div>
@@ -787,15 +804,21 @@ function Welcome({
  * `signedIn` flip and `home.tsx` re-renders past this gate on its own — no
  * local phase to track here beyond `signInPhase` itself.
  */
-function SignedOutGate({
+export function SignedOutGate({
   signInPhase,
   onSignIn,
   expired = false,
+  signInUrl = null,
+  onCancel,
 }: {
   signInPhase: RigSignInPhase;
   onSignIn: () => void;
   /** The stored sign-in was refused (expired or revoked): say so, not a fresh-install greeting. */
   expired?: boolean;
+  /** The sign-in page's address while waiting, to open or copy by hand. */
+  signInUrl?: string | null;
+  /** Stops waiting for sign-in. */
+  onCancel?: () => void;
 }) {
   const waiting = signInPhase !== 'idle';
   return (
@@ -816,6 +839,25 @@ function SignedOutGate({
         {waiting && <Loader2 className="size-4 animate-spin" strokeWidth={1.5} />}
         {waiting ? 'Waiting for sign-in…' : 'Sign in'}
       </button>
+      {waiting && <SignInWaiting url={signInUrl} onCancel={onCancel} />}
+    </div>
+  );
+}
+
+/**
+ * Under a "Waiting for sign-in…" button: the link to open by hand when the
+ * browser tab closed or never opened, and Cancel to stop waiting.
+ */
+function SignInWaiting({ url, onCancel, note }: { url: string | null; onCancel?: () => void; note?: string }) {
+  return (
+    <div className="flex w-full flex-col items-center gap-3" data-testid="sign-in-waiting">
+      {note && <p className="text-text-muted text-xs">{note}</p>}
+      {url && <ManualLink url={url} />}
+      {onCancel && (
+        <Button variant="ghost" size="sm" onClick={onCancel} data-testid="sign-in-cancel">
+          Cancel
+        </Button>
+      )}
     </div>
   );
 }
@@ -950,7 +992,30 @@ function HealthLine({
       </button>
     );
   }
-  return <p className="text-text-muted self-start font-mono text-xs">{message.text}</p>;
+  return (
+    <div className="text-text-muted flex items-center gap-2 self-start font-mono text-xs" data-testid="home-no-agent">
+      {message.text}
+      <SetUpAgentButton />
+    </div>
+  );
+}
+
+/** "Set up an agent": the install offer for Claude and Codex, for anyone who skipped it on the first run. */
+function SetUpAgentButton({ className }: { className?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={cn('text-accent font-sans transition-opacity hover:opacity-80', className)}
+        data-testid="home-set-up-agent"
+      >
+        Set up an agent
+      </button>
+      <AgentSetupDialog open={open} onOpenChange={setOpen} />
+    </>
+  );
 }
 
 /**

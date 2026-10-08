@@ -54,6 +54,7 @@ const codex = agentPayload('codex', 'Codex', 'missing');
 const gemini = agentPayload('gemini', 'Gemini', 'missing');
 
 const agentsUpdateMock = vi.hoisted(() => vi.fn(async (_id: string) => ({ success: true })));
+const agentsInstallMock = vi.hoisted(() => vi.fn(async (_id: string, _c?: string, _m?: string) => ({ success: true, data: {} })));
 
 const settingsMock = vi.hoisted(() => ({
   current: {} as Record<string, unknown>,
@@ -80,6 +81,7 @@ vi.mock('@renderer/lib/ipc', () => ({
       list: async () => [claude, codex, gemini],
       listMetadata: async () => [claude, codex, gemini],
       update: agentsUpdateMock,
+      install: agentsInstallMock,
     },
     telemetry: {
       isUserEnabled: async () => false,
@@ -337,6 +339,24 @@ describe('SettingsSheet', () => {
       expect(pill.textContent).not.toEqual(pill.textContent?.toUpperCase());
     }
     expect(Array.from(document.querySelectorAll('button')).some((b) => b.textContent === 'More agents')).toBe(true);
+  });
+
+  it('offers Install under a Claude or Codex that is not installed, wired to the agent install', async () => {
+    const before = { ...codex };
+    Object.assign(codex, {
+      installOptions: [{ method: 'installer-macos', command: 'brew install --cask codex', recommended: true }],
+    });
+    try {
+      await renderSettings({ initialPage: 'agents' });
+      const row = () => document.querySelector<HTMLElement>('[data-testid="agent-install-row"][data-agent-id="codex"]');
+      await vi.waitFor(() => expect(row()).not.toBeNull());
+      // Claude is installed: no install offer for it.
+      expect(document.querySelector('[data-testid="agent-install-row"][data-agent-id="claude"]')).toBeNull();
+      await act(async () => row()!.querySelector<HTMLButtonElement>('[data-testid="agent-install-installer-macos"]')!.click());
+      await vi.waitFor(() => expect(agentsInstallMock).toHaveBeenCalledWith('codex', undefined, 'installer-macos'));
+    } finally {
+      Object.assign(codex, before);
+    }
   });
 
   it('shows Update available under an outdated Codex, and Update runs the agent update', async () => {

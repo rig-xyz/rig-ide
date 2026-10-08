@@ -505,7 +505,10 @@ const INVITE_LINK_NOT_FOUND: RigInviteLinkError = {
 };
 
 /** The relay's `invite_invalid` reasons (and the preview's `status`) → this plane's typed kinds. */
-function inviteLinkInvalid(reason: unknown): RigInviteLinkError {
+export function inviteLinkInvalid(
+  reason: unknown,
+  emails: { invitedHint?: unknown; signedInAs?: unknown } = {}
+): RigInviteLinkError {
   switch (reason) {
     case 'expired':
       return { kind: 'expired', status: 400, message: 'This invite link has expired — ask for a new one.' };
@@ -513,16 +516,42 @@ function inviteLinkInvalid(reason: unknown): RigInviteLinkError {
       return { kind: 'revoked', status: 400, message: 'This invite link was revoked — ask for a new one.' };
     case 'exhausted':
       return { kind: 'used', status: 400, message: 'This invite link has already been used — ask for a new one.' };
-    case 'email_mismatch':
+    case 'email_mismatch': {
+      const invitedHint = typeof emails.invitedHint === 'string' && emails.invitedHint ? emails.invitedHint : undefined;
+      const signedInAs = typeof emails.signedInAs === 'string' && emails.signedInAs ? emails.signedInAs : undefined;
       return {
         kind: 'wrongAccount',
         status: 400,
-        message: "This invite is for a different email than the one you're signed in with.",
+        message:
+          invitedHint && signedInAs
+            ? `This invite is for ${invitedHint}. You're signed in as ${signedInAs}.`
+            : invitedHint
+              ? `This invite is for ${invitedHint}, not the account you're signed in with.`
+              : "This invite is for a different email than the one you're signed in with.",
+        ...(invitedHint ? { invitedHint } : {}),
+        ...(signedInAs ? { signedInAs } : {}),
       };
+    }
     default:
       return { kind: 'relay', status: 400, message: 'This invite link is no longer valid — ask for a new one.' };
   }
 }
+
+/** The accept route's other refusals, in plain words instead of the relay's code. */
+const INVITE_ACCEPT_ERRORS: Record<string, Pick<RigInviteLinkError, 'kind' | 'message'>> = {
+  invite_for_someone_else: {
+    kind: 'wrongAccount',
+    message: 'This invite was sent to someone else. Ask them to invite your account.',
+  },
+  account_deletion_pending: {
+    kind: 'relay',
+    message: 'Your account is set to be deleted. Sign in again to keep it, then open the invite again.',
+  },
+  clerk_unavailable: {
+    kind: 'network',
+    message: 'Rig couldn’t check your account just now. Try again in a minute.',
+  },
+};
 
 /** Like `transportError`, but the logged error text is scrubbed of the secret (it rides in the request URL). */
 function inviteLinkTransportError(action: string, error: unknown, secret: string): RigInviteLinkError {
@@ -531,7 +560,7 @@ function inviteLinkTransportError(action: string, error: unknown, secret: string
   return { kind: 'network', message: `Could not ${action}. Rig can't reach the server right now.` };
 }
 
-const EMPTY_INVITE_PREVIEW: RigInvitePreview = { spaceName: null, inviterName: null };
+const EMPTY_INVITE_PREVIEW: RigInvitePreview = { spaceName: null, inviterName: null, emailHint: null };
 
 /**
  * `GET /v1/invites/:secret` — the relay's public preview (no token: the
@@ -562,6 +591,7 @@ async function fetchInvitePreview(
     return ok({
       spaceName: typeof name === 'string' && name ? name : null,
       inviterName: inviterName ?? null,
+      emailHint: typeof data?.emailHint === 'string' && data.emailHint ? data.emailHint : null,
     });
   } catch (error) {
     return err(inviteLinkTransportError(action, error, secret));
@@ -1048,8 +1078,10 @@ export const rigShareController = createRPCController({
         return err<RigInviteLinkError>({ kind: 'notSignedIn', status: 401, message: 'Your sign-in has expired.' });
       }
       if (response.status === 404) return err(INVITE_LINK_NOT_FOUND);
-      if (response.status === 400 && body?.error === 'invite_invalid') return err(inviteLinkInvalid(body.reason));
+      if (response.status === 400 && body?.error === 'invite_invalid') return err(inviteLinkInvalid(body.reason, body));
       const code = typeof body?.error === 'string' ? body.error : null;
+      const plain = code ? INVITE_ACCEPT_ERRORS[code] : undefined;
+      if (plain) return err<RigInviteLinkError>({ ...plain, status: response.status });
       return err<RigInviteLinkError>({
         kind: 'relay',
         status: response.status,

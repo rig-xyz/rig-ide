@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
+import { cliMissingMessage, noSignInLinkMessage, signInTimedOutMessage } from './cli-advice';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import type { RigAccountDeletion, RigAccountError } from '@shared/rig/account';
 import type { RigAuthError, RigAuthStatus, RigLoginStarted } from '@shared/rig/auth';
@@ -102,7 +103,7 @@ function startLogin(): LoginSession {
     settleDone(
       err<RigAuthError>({
         kind: 'timeout',
-        message: 'Sign-in timed out. Try again, or run `rig login` in a terminal.',
+        message: signInTimedOutMessage(),
       })
     );
   }, LOGIN_TIMEOUT_MS);
@@ -112,7 +113,7 @@ function startLogin(): LoginSession {
     settleDone(
       err<RigAuthError>({
         kind: 'failed',
-        message: 'rig login did not print a sign-in link. Try running `rig login` in a terminal.',
+        message: noSignInLinkMessage(),
       })
     );
   }, URL_TIMEOUT_MS);
@@ -131,7 +132,7 @@ function startLogin(): LoginSession {
     settleDone(
       err<RigAuthError>({
         kind: 'cliMissing',
-        message: `Could not run \`${bin}\`. Install the rig CLI (npm i -g @rigxyz/cli) and try again.`,
+        message: cliMissingMessage(bin),
       })
     );
   });
@@ -219,7 +220,7 @@ function runLogout(): Promise<Result<void, RigAuthError>> {
       settle(
         err<RigAuthError>({
           kind: 'cliMissing',
-          message: `Could not run \`${bin}\`. Install the rig CLI (npm i -g @rigxyz/cli) and try again.`,
+          message: cliMissingMessage(bin),
         })
       );
     });

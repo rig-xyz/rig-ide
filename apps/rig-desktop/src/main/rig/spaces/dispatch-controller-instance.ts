@@ -35,8 +35,8 @@ import { SpacesDispatchController, type SpacesDispatchControllerDeps } from './d
 import { createImagePreparer } from './agent-images';
 import { createAgentsReporter } from './agents-reporter';
 import { LocalRunStore } from './local-runs';
-import { createHttpSpacesRelayApi } from './relay-api';
-import { RequestClaimPoller } from './request-claim';
+import { createHttpSpacesRelayApi, otherMacsAgents, type SessionAgent } from './relay-api';
+import { RequestClaimPoller, unrunnableRequestLine } from './request-claim';
 import { rigToolsServer } from './rig-tools-instance';
 import { createFileSpaceSessionStore } from './session-store';
 
@@ -142,6 +142,15 @@ function realDeps(): SpacesDispatchControllerDeps {
         canRun: async (request) =>
           rigSettingsStore.get().lastKnownRunnableAgents.includes(request.targetAgent) &&
           (await folderOf(request.bindingId)) !== null,
+        // A request for an agent this Mac doesn't have, that no other Mac of
+        // yours reports and none took: fail it in plain words. When the relay
+        // can't say what your other Macs have, it stays queued for them.
+        giveUp: async (request) => {
+          const line = unrunnableRequestLine(request, rigSettingsStore.get().lastKnownRunnableAgents, Date.now());
+          if (!line) return null;
+          const elsewhere = await otherMacsAgentsNow();
+          return elsewhere && !elsewhere.includes(request.targetAgent) ? line : null;
+        },
         // The Mac you're at gets the first go (the relay holds the others back for a moment).
         computer: thisMacId(),
       });
@@ -155,6 +164,13 @@ function realDeps(): SpacesDispatchControllerDeps {
 }
 
 const relayApi = createHttpSpacesRelayApi();
+
+/** The agents your other Macs report, or null when the relay can't say (an error, or no route). */
+async function otherMacsAgentsNow(): Promise<SessionAgent[] | null> {
+  const report = await relayApi.getMyAgents?.().catch(() => null);
+  if (!report?.success || !report.data) return null;
+  return otherMacsAgents(report.data, thisMacId());
+}
 
 export const spacesDispatchController = new SpacesDispatchController(realDeps());
 
@@ -274,6 +290,11 @@ export const rigSpacesDispatchController = createRPCController({
   }),
   checkNow: async (): Promise<void> => {
     await spacesDispatchController.checkNow();
+  },
+  /** The agents your other Macs report, so the composer can say where a tagged agent runs; null when unknown. */
+  otherMacsAgents: async (): Promise<{ agents: SessionAgent[] } | null> => {
+    const agents = await otherMacsAgentsNow();
+    return agents ? { agents } : null;
   },
   resolvePermission: async ({
     runId,

@@ -1,4 +1,4 @@
-import { AtSign, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucide-react';
+import { AtSign, Bot, Hash, Pause, Play, RadioTower, Sparkles, UserPlus } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { deriveRoomConnection } from '@renderer/features/home/home-connection';
@@ -50,7 +50,7 @@ import { AttachmentSpaceContext, type AttachmentSpace } from './attachment-cards
 import { Composer, keepUnsentAsDraft, type ComposerPreview, type ComposerSendContext } from './composer';
 import { ownTurnSuggestion } from '../own-turn-suggestion';
 import { routeFromPreview } from '../send-decision';
-import { useAvailableAgents } from '../use-available-agents';
+import { useAvailableAgents, useOtherMacsAgents } from '../use-available-agents';
 import { settlePendingSends, withPendingSends, type PendingSend } from '../pending-sends';
 import {
   isContinuation,
@@ -67,6 +67,8 @@ import { buildThreads, focusForThreads, newestSeq, summarizeThread, threadRootFo
 import { readThreadSeen, writeThreadSeen } from '../thread-seen';
 import { useSpacesChatView } from '../use-chat-view';
 import { ReactionsContext, type ReactionsApi } from './reactions';
+import { AgentSetupDialog } from '@renderer/features/agents/agent-install';
+import { openInviteForm } from '@renderer/features/rig-share/open-invite';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
 import { AgentSignInRow } from './agent-sign-in-row';
 import { SpaceRail } from './space-rail';
@@ -208,17 +210,29 @@ export function RoomLoadingSkeleton() {
   );
 }
 
-/** A space with nothing in it yet: what it is, and three ways in. While the Room is still opening, the loading skeleton. */
-function RoomWelcome({
+/**
+ * A space with nothing in it yet: what it is, and three ways in. While the
+ * Room is still opening, the loading skeleton. Ask names the agent you have
+ * on this Mac; with none, it offers to set one up and Invite opens the
+ * invite form instead of asking an agent to invite.
+ */
+export function RoomWelcome({
   spaceName,
   connecting,
   hasSkills,
+  agent,
   onPrefill,
+  onInvite,
+  onSetUpAgent,
 }: {
   spaceName: string;
   connecting: boolean;
   hasSkills: boolean;
+  /** Your agent the buttons use: the first one set up on this Mac; null for none. */
+  agent: AgentKind | null;
   onPrefill: (text: string) => void;
+  onInvite: () => void;
+  onSetUpAgent: () => void;
 }) {
   if (connecting) {
     return <RoomLoadingSkeleton />;
@@ -238,14 +252,26 @@ function RoomWelcome({
         <p className="text-sm text-text-secondary">A space for you, your team and your agents.</p>
       </div>
       <div className="flex flex-wrap justify-center gap-2">
-        <button type="button" className={action} onClick={() => onPrefill('@claude invite ')}>
+        <button
+          type="button"
+          className={action}
+          onClick={() => (agent ? onPrefill(`@${agent} invite `) : onInvite())}
+          data-testid="room-welcome-invite"
+        >
           <UserPlus className="size-3.5 text-text-muted" strokeWidth={1.5} />
           Invite someone
         </button>
-        <button type="button" className={action} onClick={() => onPrefill('@claude ')}>
-          <AtSign className="size-3.5 text-text-muted" strokeWidth={1.5} />
-          Ask @claude
-        </button>
+        {agent ? (
+          <button type="button" className={action} onClick={() => onPrefill(`@${agent} `)} data-testid="room-welcome-ask">
+            <AtSign className="size-3.5 text-text-muted" strokeWidth={1.5} />
+            Ask @{agent}
+          </button>
+        ) : (
+          <button type="button" className={action} onClick={onSetUpAgent} data-testid="room-welcome-set-up">
+            <Bot className="size-3.5 text-text-muted" strokeWidth={1.5} />
+            Set up an agent
+          </button>
+        )}
         {hasSkills && (
           <button type="button" className={action} onClick={() => onPrefill('/')}>
             <Sparkles className="size-3.5 text-text-muted" strokeWidth={1.5} />
@@ -955,6 +981,16 @@ export function RoomView({
     [source, selfUserId]
   );
   const availableAgents = useAvailableAgents();
+  const elsewhereAgents = useOtherMacsAgents();
+  // Your agents a message can ask: the ones this Mac runs and the ones your
+  // other Macs report. Undefined while either isn't known: every one, as before.
+  const askableAgents = useMemo(
+    () => (availableAgents && elsewhereAgents ? [...new Set([...availableAgents, ...elsewhereAgents])] : undefined),
+    [availableAgents, elsewhereAgents]
+  );
+  // "Set up" from the composer's notice: the install offer for that agent.
+  // 'none': no agent named, both are offered.
+  const [setUpAgent, setSetUpAgent] = useState<AgentKind | 'none' | null>(null);
 
   // The router's private "was this for your agent?" about one of your
   // messages: one quiet button under it, until you use it, send something
@@ -973,6 +1009,8 @@ export function RoomView({
   const askSuggestion = useMemo((): AskSuggestion | null => {
     if (!dispatchSuggestion || !(source instanceof RelayRoomSource)) return null;
     const { messageId, agent } = dispatchSuggestion;
+    // Never offer to ask an agent none of your Macs can run.
+    if (askableAgents && !askableAgents.includes(agent)) return null;
     return {
       messageId,
       agent,
@@ -990,7 +1028,7 @@ export function RoomView({
           });
       },
     };
-  }, [dispatchSuggestion, source]);
+  }, [dispatchSuggestion, source, askableAgents]);
 
   const togglePlay = () => {
     if (!source || source.isDone()) return;
@@ -1011,7 +1049,10 @@ export function RoomView({
   ) => {
     if (!(source instanceof RelayRoomSource) || !snapshot) return;
     setDispatchSuggestion(null);
-    const ownAgents = snapshot.agents.filter((a) => a.owner === selfUserId).map((a) => a.agent);
+    // Only agents one of your Macs can run get a request: one none can would wait forever.
+    const ownAgents = snapshot.agents
+      .filter((a) => a.owner === selfUserId && (!askableAgents || askableAgents.includes(a.agent)))
+      .map((a) => a.agent);
     const localId = `sending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const files = context.files ?? [];
     setPendingSends((current) => [
@@ -1530,6 +1571,8 @@ export function RoomView({
                 onInvitePerson={live ? invitePerson : undefined}
                 agents={room.agents.filter((a) => a.owner === selfUserId)}
                 availableAgents={availableAgents}
+                elsewhereAgents={elsewhereAgents}
+                onSetUpAgent={setSetUpAgent}
                 skills={room.skills}
                 onSend={(text, context) => {
                   setThreadReplyTo(null);
@@ -1671,7 +1714,12 @@ export function RoomView({
               // space is known to be empty as soon as its messages come back.
               connecting={room.loaded === false}
               hasSkills={room.skills.length > 0}
+              // Not known yet: Claude, as before. Known: the first one this Mac
+              // runs, else one your other Mac runs.
+              agent={availableAgents ? (availableAgents[0] ?? elsewhereAgents?.[0] ?? null) : 'claude'}
               onPrefill={(text) => setPrefill({ text, nonce: Date.now() })}
+              onInvite={openInviteForm}
+              onSetUpAgent={() => setSetUpAgent('none')}
             />
           ) : (
           withRoomContexts(
@@ -1793,6 +1841,8 @@ export function RoomView({
               listFiles={live ? listSpaceFiles : undefined}
               suggestReply={live ? suggestReply : undefined}
               availableAgents={availableAgents}
+              elsewhereAgents={elsewhereAgents}
+              onSetUpAgent={setSetUpAgent}
               onTypingChange={
                 source instanceof RelayRoomSource ? (typing) => source.setTyping(typing) : undefined
               }
@@ -1800,6 +1850,11 @@ export function RoomView({
           </div>
         </motion.div>
         {threadPanel}
+        <AgentSetupDialog
+          open={setUpAgent !== null}
+          onOpenChange={(open) => !open && setSetUpAgent(null)}
+          agent={setUpAgent === 'none' ? undefined : (setUpAgent ?? undefined)}
+        />
         {dockOn && shownSnapshot && (
           <ForYouFeeder
             bindingId={bindingId}
@@ -1823,6 +1878,8 @@ export function RoomView({
                 selfUserId={selfUserId}
                 bindingId={bindingId}
                 signInRow={(agent) => <AgentSignInRow agent={agent} />}
+                availableAgents={availableAgents}
+                onSetUp={setSetUpAgent}
               />
               <ConnectorsSection
                 snapshot={room}

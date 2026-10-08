@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   login: vi.fn(),
   awaitLogin: vi.fn(),
   cancelLogin: vi.fn(),
+  logout: vi.fn(),
   listener: null as ((payload: { link: string }) => void) | null,
 }));
 
@@ -40,6 +41,7 @@ vi.mock('@renderer/lib/ipc', () => ({
         login: (...args: unknown[]) => mocks.login(...args),
         awaitLogin: (...args: unknown[]) => mocks.awaitLogin(...args),
         cancel: (...args: unknown[]) => mocks.cancelLogin(...args),
+        logout: (...args: unknown[]) => mocks.logout(...args),
       },
     },
   },
@@ -112,6 +114,7 @@ describe('DeepLinkJoinDialog', () => {
     mocks.login.mockReset().mockResolvedValue({ success: true, data: { url: null } });
     mocks.awaitLogin.mockReset().mockResolvedValue({ success: true, data: null });
     mocks.cancelLogin.mockReset().mockResolvedValue(undefined);
+    mocks.logout.mockReset().mockResolvedValue({ success: true, data: undefined });
   });
 
   afterEach(async () => {
@@ -222,6 +225,42 @@ describe('DeepLinkJoinDialog', () => {
     expect(dialog()?.textContent).toContain('already been used');
     expect(mocks.attach).not.toHaveBeenCalled();
     expect(opened).toEqual([]);
+  });
+
+  it('names who an email invite is for, then on the wrong account names both and signs in with another', async () => {
+    mocks.consumePending.mockResolvedValue({ link: LINK });
+    mocks.preview.mockResolvedValue({
+      success: true,
+      data: { spaceName: 'growth', inviterName: 'Ada', emailHint: 'h•••@gmail.com' },
+    });
+    mocks.accept
+      .mockResolvedValueOnce({
+        success: false,
+        error: {
+          kind: 'wrongAccount',
+          message: "This invite is for h•••@gmail.com. You're signed in as x@y.com.",
+          invitedHint: 'h•••@gmail.com',
+          signedInAs: 'x@y.com',
+        },
+      })
+      .mockResolvedValueOnce({ success: true, data: { bindingId: 'b_1', spaceName: 'growth', becameMember: true } });
+    await render();
+    expect(document.body.querySelector('[data-testid="deep-link-invited-email"]')?.textContent).toBe(
+      'This invite is for h•••@gmail.com.'
+    );
+
+    await act(async () => click(buttonNamed('Join')!));
+    await flush();
+    expect(dialog()?.dataset.phase).toBe('error');
+    expect(dialog()?.textContent).toContain("This invite is for h•••@gmail.com. You're signed in as x@y.com.");
+
+    await act(async () => click(buttonNamed('Sign in with another account')!));
+    await flush();
+    await flush();
+    expect(mocks.logout).toHaveBeenCalledTimes(1);
+    expect(mocks.login).toHaveBeenCalled();
+    expect(mocks.accept).toHaveBeenCalledTimes(2);
+    expect(opened).toEqual(['/Rig/growth']);
   });
 
   it('without a sign-in, offers Sign in and resumes the join once it finishes', async () => {

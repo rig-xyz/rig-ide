@@ -32,7 +32,8 @@ export function describeSpawnFailure(text: string, agentName?: string): string |
     return `This Mac isn't allowed to run ${installed} (permission denied). Reinstall it, then try again.`;
   }
   if (/\bspawn\b.*\bENOENT\b/.test(text)) {
-    return `Rig couldn't find ${agentName ?? 'the agent'} where it expected it. Reinstall it, then try again.`;
+    const name = agentName ?? 'the agent';
+    return `Rig couldn't find ${name} on this Mac. Install ${agentName ?? 'it'}, then try again.`;
   }
   return null;
 }

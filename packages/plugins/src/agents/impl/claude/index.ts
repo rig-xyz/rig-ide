@@ -86,7 +86,14 @@ export const plugin = definePlugin(
       // a stale PATH-first copy (e.g. an Intel-only build on a Mac without
       // Rosetta) shouldn't hide a working one.
       extraLocations: {
-        macos: ['~/.local/bin/claude', '~/.claude/local/claude', '/opt/homebrew/bin/claude'],
+        // Last, the Claude desktop app's own Claude Code (newest version it
+        // keeps): runs on its own and reads the same ~/.claude config.
+        macos: [
+          '~/.local/bin/claude',
+          '~/.claude/local/claude',
+          '/opt/homebrew/bin/claude',
+          '~/Library/Application Support/Claude/claude-code/*/*/claude.app/Contents/MacOS/claude',
+        ],
       },
       installCommands: {
         macos: [

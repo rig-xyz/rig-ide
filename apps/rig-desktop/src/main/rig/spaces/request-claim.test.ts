@@ -3,8 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   claimAndDispatchQueued,
   claimOne,
+  GIVE_UP_AFTER_MS,
   markRequestSettled,
   RequestClaimPoller,
+  unrunnableRequestLine,
   type ClaimDispatchResult,
 } from './request-claim';
 import type { AgentRequest, RelayApiError, SpacesRelayApi } from './relay-api';
@@ -253,6 +255,49 @@ describe('claimOne / claimAndDispatchQueued', () => {
     expect(store.patches.filter((p) => p.status === 'failed')).toEqual([]);
   });
 
+  it('settles a request no computer can run as failed, with a plain line, and leaves the rest queued', async () => {
+    const store = makeSharedStore([
+      makeRequest({ id: 'no-claude', status: 'queued' }),
+      makeRequest({ id: 'no-folder', bindingId: 'binding-elsewhere', status: 'queued' }),
+    ]);
+    const posted: Array<{ body: string; kind?: string; meta?: Record<string, unknown> }> = [];
+    const api = {
+      ...store.apiFor(),
+      postMessage: async (_b: string, input: (typeof posted)[number]) => {
+        posted.push(input);
+        return ok({} as never);
+      },
+    };
+    const dispatched: string[] = [];
+    await claimAndDispatchQueued({
+      api,
+      deviceId: 'device-a',
+      canRun: async () => false,
+      giveUp: (request) => (request.id === 'no-claude' ? 'Claude couldn’t answer.' : null),
+      dispatch: async (request) => {
+        dispatched.push(request.id);
+        return { runId: 'r1' };
+      },
+    });
+    expect(dispatched).toEqual([]);
+    expect(store.get('no-claude')?.status).toBe('failed');
+    expect(store.get('no-folder')?.status).toBe('queued');
+    expect(posted).toEqual([{ body: 'Claude couldn’t answer.', kind: 'system', meta: { event: 'agent_failed' } }]);
+  });
+
+  it('leaves the request queued when giveUp answers later with nothing (another Mac of yours has the agent)', async () => {
+    const store = makeSharedStore([makeRequest({ id: 'elsewhere', status: 'queued' })]);
+    await claimAndDispatchQueued({
+      api: store.apiFor(),
+      deviceId: 'device-a',
+      canRun: async () => false,
+      giveUp: async () => null,
+      dispatch: async () => ({ runId: 'r1' }),
+    });
+    expect(store.get('elsewhere')?.status).toBe('queued');
+    expect(store.patches).toEqual([]);
+  });
+
   it("sends this Mac's id with each claim", async () => {
     const store = makeSharedStore([makeRequest({ id: 'q1', status: 'queued' })]);
     const api = store.apiFor();
@@ -391,5 +436,21 @@ describe('RequestClaimPoller', () => {
     // called a second time for the same request.
     expect(dispatchCount).toBe(1);
     expect(store.get('req1')?.status).toBe('running');
+  });
+});
+
+describe('unrunnableRequestLine', () => {
+  const createdAt = '2026-10-07T10:00:00Z';
+  const at = (ms: number) => Date.parse(createdAt) + ms;
+
+  it('gives up on an agent this Mac lacks once another Mac had its chance', () => {
+    expect(unrunnableRequestLine({ targetAgent: 'claude', createdAt }, ['codex'], at(GIVE_UP_AFTER_MS))).toBe(
+      "Claude couldn't answer because it isn't set up on a Mac yet. Install Claude, then ask again."
+    );
+  });
+
+  it('waits while the request is new, and never gives up on an agent this Mac has', () => {
+    expect(unrunnableRequestLine({ targetAgent: 'claude', createdAt }, [], at(10_000))).toBeNull();
+    expect(unrunnableRequestLine({ targetAgent: 'codex', createdAt }, ['codex'], at(GIVE_UP_AFTER_MS * 10))).toBeNull();
   });
 });
