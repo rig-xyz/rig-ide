@@ -23,7 +23,11 @@ const mocks = vi.hoisted(() => ({
   clipboardWriteText: vi.fn<(text: string) => Promise<unknown>>(),
   showItemInFolder: vi.fn<(path: string) => Promise<unknown>>(),
   settingsSet: vi.fn<(args: unknown) => Promise<unknown>>(),
+  saveToDownloads: vi.fn<(path: string) => Promise<unknown>>(),
+  toast: vi.fn(),
 }));
+
+vi.mock('@renderer/lib/hooks/use-toast', () => ({ toast: mocks.toast }));
 
 vi.mock('@renderer/lib/ipc', () => ({
   rpc: {
@@ -50,6 +54,7 @@ vi.mock('@renderer/lib/ipc', () => ({
     app: {
       clipboardWriteText: (...args: unknown[]) => mocks.clipboardWriteText(args[0] as string),
       showItemInFolder: (...args: unknown[]) => mocks.showItemInFolder(args[0] as string),
+      saveToDownloads: (...args: unknown[]) => mocks.saveToDownloads(args[0] as string),
       openPath: vi.fn(async () => ({ success: true, data: undefined })),
     },
   },
@@ -103,6 +108,8 @@ describe('File options menu in the title bar', () => {
     mocks.clipboardWriteText.mockReset().mockResolvedValue({ success: true, data: undefined });
     mocks.showItemInFolder.mockReset().mockResolvedValue({ success: true, data: undefined });
     mocks.settingsSet.mockReset().mockResolvedValue({ success: true, data: undefined });
+    mocks.saveToDownloads.mockReset().mockResolvedValue({ success: true, path: '/Users/me/Downloads/config 2.toml' });
+    mocks.toast.mockReset();
     moves = [];
     stopListening = onFileMove((move) => moves.push(move));
   });
@@ -152,7 +159,7 @@ describe('File options menu in the title bar', () => {
     const labels = Array.from(menu()!.querySelectorAll('[role="menuitem"]')).map(
       (el) => el.textContent
     );
-    expect(labels).toEqual(['Pin to top', 'Copy path', 'Reveal in Finder', 'Rename', 'Archive']);
+    expect(labels).toEqual(['Pin to top', 'Copy path', 'Reveal in Finder', 'Save to Downloads', 'Rename', 'Archive']);
     expect(trigger()!.getAttribute('aria-expanded')).toBe('true');
   });
 
@@ -169,6 +176,28 @@ describe('File options menu in the title bar', () => {
     await openMenu();
     await act(async () => click(item('Reveal in Finder')));
     expect(mocks.showItemInFolder).toHaveBeenCalledWith('/repo/notes/config.toml');
+  });
+
+  it('Save to Downloads copies the file there, then says so with Show in Finder', async () => {
+    await render('/repo/notes/config.toml');
+    await openMenu();
+    await act(async () => click(item('Save to Downloads')));
+    await waitFor(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.saveToDownloads).toHaveBeenCalledWith('/repo/notes/config.toml');
+    const shown = mocks.toast.mock.calls[0]![0] as { title: string; action: { label: string; onClick: () => void } };
+    expect(shown.title).toBe('Saved to Downloads');
+    expect(shown.action.label).toBe('Show in Finder');
+    shown.action.onClick();
+    expect(mocks.showItemInFolder).toHaveBeenCalledWith('/Users/me/Downloads/config 2.toml');
+  });
+
+  it('Save to Downloads says when the copy failed', async () => {
+    mocks.saveToDownloads.mockResolvedValue({ success: false, error: 'No space left.' });
+    await render('/repo/notes/config.toml');
+    await openMenu();
+    await act(async () => click(item('Save to Downloads')));
+    await waitFor(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith(expect.objectContaining({ title: "Couldn't save to Downloads", description: 'No space left.' }));
   });
 
   it('Rename opens the rename dialog, and saving announces the new path for the tab to follow', async () => {

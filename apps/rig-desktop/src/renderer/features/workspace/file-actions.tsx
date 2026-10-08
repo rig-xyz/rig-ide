@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Archive, Copy, FolderOpen, GitMerge, Pencil, Pin } from 'lucide-react';
+import { Archive, Copy, Download, FolderOpen, GitMerge, Pencil, Pin } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { flushOpenDocs } from '@renderer/features/docs/doc-file-sync';
 import { toast } from '@renderer/lib/hooks/use-toast';
@@ -95,6 +95,26 @@ export async function archiveEntry(
   return false;
 }
 
+/**
+ * "Save to Downloads": a copy in ~/Downloads, under a free name ("notes 2.md"
+ * when "notes.md" is taken), with unsaved edits written first. Says where it
+ * went with a toast that shows it in Finder.
+ */
+export async function saveToDownloads(absPath: string): Promise<void> {
+  try {
+    await flushOpenDocs(absPath);
+    const result = await rpc.app.saveToDownloads(absPath);
+    if (result.success) {
+      const saved = result.path;
+      toast({ title: 'Saved to Downloads', action: { label: 'Show in Finder', onClick: () => void rpc.app.showItemInFolder(saved) } });
+      return;
+    }
+    toast({ title: "Couldn't save to Downloads", description: result.error, variant: 'destructive' });
+  } catch {
+    toast({ title: "Couldn't save to Downloads", description: 'Try again.', variant: 'destructive' });
+  }
+}
+
 /** One of a file's conflict copies (`shared/rig/conflict-copies.ts`), with when it was written. */
 export type ConflictCopy = { relPath: string; mtimeMs: number | null };
 
@@ -143,7 +163,7 @@ export function conflictCopyLabel(mtimeMs: number | null): string {
 
 /**
  * The shared rows: Pin to top/Unpin (only when `onTogglePin` is given),
- * Copy path, Reveal in Finder, Rename, Archive. Each row runs its action
+ * Copy path, Reveal in Finder, Save to Downloads, Rename, Archive. Each row runs its action
  * and then `onDone`, which closes whichever menu hosts them.
  */
 export function FileActionItems({
@@ -186,6 +206,14 @@ export function FileActionItems({
         icon={FolderOpen}
         onSelect={() => {
           void rpc.app.showItemInFolder(absPath);
+          onDone();
+        }}
+      />
+      <ContextMenuItem
+        label="Save to Downloads"
+        icon={Download}
+        onSelect={() => {
+          void saveToDownloads(absPath);
           onDone();
         }}
       />

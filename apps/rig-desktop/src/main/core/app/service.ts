@@ -31,6 +31,7 @@ import {
   type PlatformConfig,
   type PlatformKey,
 } from '@shared/openInApps';
+import { copyToDownloads } from './save-to-downloads';
 import {
   checkCommand,
   checkMacApp,
@@ -226,6 +227,12 @@ class AppService implements IInitializable, IDisposable {
   async showItemInFolder(rawPath: string): Promise<void> {
     const realPath = await resolveHomeJailedPath(rawPath);
     shell.showItemInFolder(realPath);
+  }
+
+  /** The file menu's "Save to Downloads": a copy in ~/Downloads under a free name. Returns the copy's path. */
+  async saveToDownloads(rawPath: string): Promise<string> {
+    const realPath = await resolveHomeJailedPath(rawPath);
+    return copyToDownloads(realPath, app.getPath('downloads'));
   }
 
   /**

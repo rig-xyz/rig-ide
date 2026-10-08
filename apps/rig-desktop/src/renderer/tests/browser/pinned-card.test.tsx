@@ -387,7 +387,7 @@ describe('PinnedCard', () => {
         row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }));
       });
       await flush();
-      expect(menuLabels()).toEqual(['Pin to top', 'Copy path', 'Reveal in Finder', 'Rename', 'Archive']);
+      expect(menuLabels()).toEqual(['Pin to top', 'Copy path', 'Reveal in Finder', 'Save to Downloads', 'Rename', 'Archive']);
     });
 
     it('Shift+F10 on a focused file row opens the same menu', async () => {
@@ -397,7 +397,7 @@ describe('PinnedCard', () => {
         row.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true }));
       });
       await flush();
-      expect(menuLabels()).toEqual(['Pin to top', 'Copy path', 'Reveal in Finder', 'Rename', 'Archive']);
+      expect(menuLabels()).toEqual(['Pin to top', 'Copy path', 'Reveal in Finder', 'Save to Downloads', 'Rename', 'Archive']);
     });
 
     it('Rename from the list moves an open tab to the new name', async () => {
