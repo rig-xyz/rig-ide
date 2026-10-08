@@ -427,7 +427,11 @@ function ActivityRow({ row, onOpen }: { row: RigNotification; onOpen: () => void
     <button
       type="button"
       onClick={onOpen}
-      className="hover:bg-bg-2 flex items-start gap-2 rounded-control px-1.5 py-1.5 text-left transition-colors"
+      className={cn(
+        'hover:bg-bg-2 flex items-start gap-2 rounded-control px-1.5 py-1.5 text-left transition-colors',
+        // An invite row has no space to open: it stays in place.
+        openTargetOf(row) && 'cursor-pointer'
+      )}
     >
       <IdentityAvatar
         name={row.actor.name}

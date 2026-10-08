@@ -232,7 +232,7 @@ function Header({
                 key={`${segment.target.bindingId}-${index}`}
                 type="button"
                 onClick={() => onClickRig((segment.target as { kind: 'rig'; bindingId: string }).bindingId)}
-                className="text-text-primary hover:decoration-text-primary underline decoration-current/30 underline-offset-2 transition-colors"
+                className="text-text-primary hover:decoration-text-primary cursor-pointer underline decoration-current/30 underline-offset-2 transition-colors"
               >
                 {segment.text}
               </button>
@@ -587,7 +587,7 @@ function SourceRow({
     <button
       type="button"
       onClick={() => onClickSource(item)}
-      className="group flex items-start gap-2 text-left"
+      className="group flex cursor-pointer items-start gap-2 text-left"
       data-testid="ask-source"
       data-kind={item.kind}
     >

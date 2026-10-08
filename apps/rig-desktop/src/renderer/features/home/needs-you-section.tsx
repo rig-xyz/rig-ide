@@ -509,7 +509,13 @@ function WaitingRow({
                 )}
               </div>
               {!done && canAct && !replying && (
-                <Button variant="outline" size="xs" onClick={onAction} disabled={busy} className="mt-0.5">
+                <Button
+                  variant="outline"
+                  size="xs"
+                  onClick={onAction}
+                  disabled={busy}
+                  className={cn('mt-0.5', action === 'Open' && 'cursor-pointer')}
+                >
                   {busy ? workingLabel(action) : action}
                 </Button>
               )}

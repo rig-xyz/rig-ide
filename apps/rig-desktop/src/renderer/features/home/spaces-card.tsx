@@ -437,7 +437,7 @@ function SettingUpRow({ setup, onOpen }: { setup: SpaceSetup; onOpen: () => void
     <button
       type="button"
       onClick={onOpen}
-      className="hover:bg-bg-2 flex items-center gap-2.5 rounded-control px-2 py-2 text-left transition-colors"
+      className="hover:bg-bg-2 flex cursor-pointer items-center gap-2.5 rounded-control px-2 py-2 text-left transition-colors"
       data-testid="space-setup-row"
       data-status={setup.status}
     >
@@ -703,7 +703,7 @@ function SpaceRow({
           }}
           disabled={busy || (!openablePath && !downloadable)}
           aria-busy={busy || undefined}
-          className="flex max-w-full min-w-0 items-center gap-1 text-left before:absolute before:inset-0 before:content-[''] disabled:cursor-default"
+          className="flex max-w-full min-w-0 cursor-pointer items-center gap-1 text-left before:absolute before:inset-0 before:content-[''] disabled:cursor-default"
           data-testid="space-row-name"
         >
           <span className="text-text-muted font-mono text-sm">#</span>

@@ -537,7 +537,7 @@ function LocalRigRow({
           type="button"
           onClick={() => onOpenPath(row.path)}
           title={row.path}
-          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-2 py-2 text-left"
         >
           {row.isSpace ? (
             <Hash className="size-3.5 shrink-0 text-text-muted" strokeWidth={1.5} />
@@ -864,7 +864,7 @@ function SessionSubRow({
     <button
       type="button"
       onClick={onOpen}
-      className="flex items-center gap-1.5 rounded-control px-2 py-1 text-left transition-colors hover:bg-bg-2"
+      className="flex cursor-pointer items-center gap-1.5 rounded-control px-2 py-1 text-left transition-colors hover:bg-bg-2"
     >
       {attention !== 'idle' && (
         <span
@@ -1005,7 +1005,7 @@ function RelayOnlyRigRow({
           <button
             type="button"
             onClick={() => onOpenPath(status.path)}
-            className="flex shrink-0 items-center gap-1 text-xs text-accent transition-opacity hover:opacity-80"
+            className="flex shrink-0 cursor-pointer items-center gap-1 text-xs text-accent transition-opacity hover:opacity-80"
           >
             Open
           </button>

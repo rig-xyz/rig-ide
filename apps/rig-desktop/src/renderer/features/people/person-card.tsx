@@ -133,7 +133,7 @@ export function PersonCard({ person, onClose }: { person: PersonRef; onClose: ()
                   requestOpenSpace({ bindingId: space.bindingId, spaceName });
                   onClose();
                 }}
-                className="flex h-7 items-center rounded-control px-2 text-left text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
+                className="flex h-7 cursor-pointer items-center rounded-control px-2 text-left text-xs text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
               >
                 <SpaceName name={spaceName} />
               </button>
