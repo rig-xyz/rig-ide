@@ -226,6 +226,21 @@ describe('SettingsSheet', () => {
     expect(row.className).toContain('bg-accent-subtle');
   });
 
+  it('keeps the Rig folder in Advanced, not General, and search finds it there', async () => {
+    await renderSettings({ initialPage: 'general' });
+    expect(document.querySelector('[data-settings-row="rig-folder"]')).toBeNull();
+    await typeSearch('Rig folder');
+    const result = document.querySelector<HTMLButtonElement>('[data-settings-result="rig-folder"]')!;
+    expect(result.textContent).toContain('Advanced');
+    await act(async () => result.click());
+    await settle();
+    expect(currentPage()).toBe('advanced');
+    const row = document.querySelector<HTMLElement>('[data-settings-row="rig-folder"]')!;
+    expect(row.textContent).toContain('New rigs are created here.');
+    expect(row.querySelector('[data-testid="rig-home-path"]')?.textContent).toBe('~/Rig');
+    expect(row.textContent).toContain('Change it at your own risk');
+  });
+
   it('says so when nothing matches', async () => {
     await renderSettings();
     await typeSearch('zzzz nothing');
