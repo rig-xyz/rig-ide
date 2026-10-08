@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { app } from 'electron';
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
+import { cliMissingMessage } from './cli-advice';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { rigSlug } from '@shared/rig/create';
 import type { RigAttachError, RigJoinResult, RigLocateError } from '@shared/rig/join';
@@ -255,7 +256,7 @@ async function spawnAttach(
       settle(
         err<RigAttachError>({
           kind: 'cliMissing',
-          message: `Could not run \`${bin}\`. Install the rig CLI (npm i -g @rigxyz/cli) and try again.`,
+          message: cliMissingMessage(bin),
         })
       );
     });

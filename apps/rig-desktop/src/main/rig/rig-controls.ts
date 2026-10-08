@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
 import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
+import { cliMissingMessage } from './cli-advice';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { rigRenamedChannel } from '@shared/rig/workspace';
 import { commandFailureMessage } from './auth-output';
@@ -44,7 +45,7 @@ function spawnFailureMessage(command: string, outcome: Extract<SpawnOutcome, { k
 
 function spawnOutcomeToMessage(command: string, outcome: SpawnOutcome): { message: string } | null {
   if (outcome.kind === 'spawnFailed') {
-    return { message: `Could not run \`${outcome.bin}\`. Install the rig CLI (npm i -g @rigxyz/cli) and try again.` };
+    return { message: cliMissingMessage(outcome.bin) };
   }
   if (outcome.kind === 'timedOut') {
     return { message: `rig ${command} timed out.` };

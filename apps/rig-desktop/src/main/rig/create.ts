@@ -4,6 +4,7 @@ import { writeFile } from 'node:fs/promises';
 import { join as joinPath } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
+import { cliMissingMessage } from './cli-advice';
 import { telemetryService } from '@main/lib/telemetry';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import {
@@ -438,7 +439,7 @@ export function interpretInitFailure(outcome: SpawnOutcome): RigCreateError | nu
   if (outcome.kind === 'spawnFailed') {
     return {
       kind: 'cliMissing',
-      message: `Could not run \`${outcome.bin}\`. Install the rig CLI (npm i -g @rigxyz/cli) and try again.`,
+      message: cliMissingMessage(outcome.bin),
     };
   }
   if (outcome.kind === 'timedOut') {
