@@ -537,6 +537,22 @@ export function inviteLinkInvalid(
   }
 }
 
+/** The accept route's other refusals, in plain words instead of the relay's code. */
+const INVITE_ACCEPT_ERRORS: Record<string, Pick<RigInviteLinkError, 'kind' | 'message'>> = {
+  invite_for_someone_else: {
+    kind: 'wrongAccount',
+    message: 'This invite was sent to someone else. Ask them to invite your account.',
+  },
+  account_deletion_pending: {
+    kind: 'relay',
+    message: 'Your account is set to be deleted. Sign in again to keep it, then open the invite again.',
+  },
+  clerk_unavailable: {
+    kind: 'network',
+    message: 'Rig couldn’t check your account just now. Try again in a minute.',
+  },
+};
+
 /** Like `transportError`, but the logged error text is scrubbed of the secret (it rides in the request URL). */
 function inviteLinkTransportError(action: string, error: unknown, secret: string): RigInviteLinkError {
   const scrubbed = String(error).split(secret).join('…').split(encodeURIComponent(secret)).join('…');
@@ -1064,6 +1080,8 @@ export const rigShareController = createRPCController({
       if (response.status === 404) return err(INVITE_LINK_NOT_FOUND);
       if (response.status === 400 && body?.error === 'invite_invalid') return err(inviteLinkInvalid(body.reason, body));
       const code = typeof body?.error === 'string' ? body.error : null;
+      const plain = code ? INVITE_ACCEPT_ERRORS[code] : undefined;
+      if (plain) return err<RigInviteLinkError>({ ...plain, status: response.status });
       return err<RigInviteLinkError>({
         kind: 'relay',
         status: response.status,

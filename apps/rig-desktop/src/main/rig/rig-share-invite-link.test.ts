@@ -162,6 +162,20 @@ describe('acceptInviteLink', () => {
     });
   });
 
+  it('says the 403 and 503 refusals in plain words, never the relay code', async () => {
+    const cases: Array<[number, string, string, string]> = [
+      [403, 'invite_for_someone_else', 'wrongAccount', 'This invite was sent to someone else. Ask them to invite your account.'],
+      [403, 'account_deletion_pending', 'relay', 'Your account is set to be deleted. Sign in again to keep it, then open the invite again.'],
+      [503, 'clerk_unavailable', 'network', 'Rig couldn’t check your account just now. Try again in a minute.'],
+    ];
+    for (const [status, code, kind, message] of cases) {
+      fetchMock.mockResolvedValueOnce(json(200, ACTIVE_PREVIEW)).mockResolvedValueOnce(json(status, { error: code }));
+      const result = await rigShareController.acceptInviteLink({ link: LINK });
+      expect(result).toEqual({ success: false, error: { kind, message, status } });
+      expect(message).not.toMatch(/relay|_/);
+    }
+  });
+
   it('says notFound for an unknown secret', async () => {
     fetchMock.mockResolvedValueOnce(json(404, { error: 'not_found' }));
     expect(await rigShareController.acceptInviteLink({ link: LINK })).toMatchObject({
