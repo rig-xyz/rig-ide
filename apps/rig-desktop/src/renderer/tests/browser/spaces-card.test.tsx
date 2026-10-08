@@ -341,14 +341,15 @@ describe('SpacesCard — what you missed', () => {
     expect(dotOf('calm-valley')?.dataset.dot).toBe('unread');
     expect(dotOf('growth')).toBeNull();
     expect(dotOf('research')).toBeNull();
-    expect(tileOf('research').className).toContain('bg-bg-1');
+    expect(tileOf('research').className).toContain('bg-bg-2');
+    expect(tileOf('research').className).not.toContain('opacity');
     expect(countOf('launch')).toBe('9+');
     expect(weightOf('gentle-island')).toBe('unread');
 
     expect(weightOf('research')).toBe('quiet');
     expect(nameOf('research').className).toContain('text-text-secondary');
     expect(nameOf('research').className).not.toContain('font-semibold');
-    expect(tileOf('research').className).toContain('opacity-55');
+    expect(tileOf('research').querySelector('.opacity-55')).not.toBeNull();
     expect(countOf('research')).toBeNull();
   });
 

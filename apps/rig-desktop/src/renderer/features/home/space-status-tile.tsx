@@ -17,6 +17,7 @@ export function SpaceStatusTile({
   seed,
   size = 'md',
   dot,
+  quiet = false,
   className,
 }: {
   attention: SpaceAttention;
@@ -25,31 +26,35 @@ export function SpaceStatusTile({
   size?: 'sm' | 'md' | 'lg';
   /** A dot on the top right corner: accent when something is for you, grey for plain unread. */
   dot?: 'forYou' | 'unread' | null;
+  /** Fades the dots only, so every tile keeps the same background. */
+  quiet?: boolean;
   className?: string;
 }) {
   return (
     <span
-      className={cn('bg-bg-1 border-border-hairline relative inline-flex shrink-0 items-center justify-center rounded-control border p-[5px]', className)}
+      className={cn('bg-bg-2 relative inline-flex shrink-0 items-center justify-center rounded-control p-1.5', className)}
       aria-hidden
       data-tile={attention.kind}
     >
-      {attention.kind === 'live' ? (
-        <DotMatrix state={attention.state} size={size} />
-      ) : attention.kind === 'failed' ? (
-        <DotMatrix state="failed" size={size} />
-      ) : attention.kind === 'finished' ? (
-        <DotMatrix state="done" size={size} />
-      ) : attention.kind === 'messages' || attention.kind === 'forYou' ? (
-        <StillDots
-          size={size}
-          lit={DICE_FACES[Math.min(attention.count, MAX_NEW_MESSAGES)]!}
-          tone="bg-accent"
-          on={0.95}
-          off={0.08}
-        />
-      ) : (
-        <StillDots size={size} lit={idlePattern(seed)} tone="bg-text-muted" on={0.42} off={0.1} />
-      )}
+      <span className={cn('inline-flex transition-opacity', quiet && 'opacity-55')}>
+        {attention.kind === 'live' ? (
+          <DotMatrix state={attention.state} size={size} />
+        ) : attention.kind === 'failed' ? (
+          <DotMatrix state="failed" size={size} />
+        ) : attention.kind === 'finished' ? (
+          <DotMatrix state="done" size={size} />
+        ) : attention.kind === 'messages' || attention.kind === 'forYou' ? (
+          <StillDots
+            size={size}
+            lit={DICE_FACES[Math.min(attention.count, MAX_NEW_MESSAGES)]!}
+            tone="bg-accent"
+            on={0.95}
+            off={0.08}
+          />
+        ) : (
+          <StillDots size={size} lit={idlePattern(seed)} tone="bg-text-muted" on={0.42} off={0.1} />
+        )}
+      </span>
       {dot && (
         <span
           className={cn(

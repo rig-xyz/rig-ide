@@ -687,7 +687,8 @@ function SpaceRow({
         attention={shown}
         seed={row.bindingId}
         dot={weight === 'needs' ? 'forYou' : count ? 'unread' : null}
-        className={cn((offline || weight === 'quiet') && 'opacity-55 transition-opacity')}
+        quiet={weight === 'quiet'}
+        className={cn(offline && 'opacity-50')}
       />
       {/* The name button stretches over the whole column (its `before:`
           layer), so clicking the status line opens the row too; only the
