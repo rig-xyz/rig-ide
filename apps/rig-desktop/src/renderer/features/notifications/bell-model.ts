@@ -8,15 +8,15 @@
  * counted in the footer; they're still in each space. Pure.
  */
 
-import type { RigNotification } from '@shared/rig/notifications';
+import {
+  bellPlace,
+  type BellContext,
+  type BellLeftOut,
+  type RigNotification,
+} from '@shared/rig/notifications';
 
-export type BellLeftOut = {
-  /** Your own agents finishing while you were here. */
-  ownAgents: number;
-  messages: number;
-  comments: number;
-  reactions: number;
-};
+// The keep rule lives in shared, so main's Dock badge counts the same rows.
+export { bellPlace, type BellContext, type BellLeftOut };
 
 export type BellGroup = {
   key: string;
@@ -33,29 +33,6 @@ export type BellModel = {
   unread: number;
   leftOut: BellLeftOut;
 };
-
-export type BellContext = { selfUserId: string | null; awayIds: ReadonlySet<string> };
-
-/** Whether one row is for you, and if not, which footer count it goes to. */
-export function bellPlace(row: RigNotification, ctx: BellContext): 'keep' | keyof BellLeftOut {
-  switch (row.type) {
-    case 'message':
-      return 'messages';
-    case 'reaction':
-      return 'reactions';
-    case 'comment':
-      // A guest commenting through your link is direct; otherwise only your own file.
-      return row.tier === 'direct' || (!!ctx.selfUserId && row.fileAuthorUserId === ctx.selfUserId)
-        ? 'keep'
-        : 'comments';
-    case 'agent_finished': {
-      const yours = !!ctx.selfUserId && row.actor.userId === ctx.selfUserId;
-      return !yours || ctx.awayIds.has(row.id) ? 'keep' : 'ownAgents';
-    }
-    default:
-      return 'keep';
-  }
-}
 
 export function shapeBell(rows: readonly RigNotification[], ctx: BellContext): BellModel {
   const leftOut: BellLeftOut = { ownAgents: 0, messages: 0, comments: 0, reactions: 0 };

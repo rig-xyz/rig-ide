@@ -39,8 +39,9 @@ import {
  * the same helpers the old invites bell polled with (`invites-inbox.ts`):
  * focus refetch plus a slow 5-minute interval, under an account-scoped key.
  *
- * The bell's count is `summary.directUnreadTotal`, the Dock's number too,
- * and the same rows Home's space rows fold into their status line ("Hugo
+ * The bell's count is the unread rows it keeps (`shapeBell`), and main
+ * puts the same number on the Dock (`dockCount`, same rows, same rule).
+ * Home's space rows fold the same rows into their status line ("Hugo
  * mentioned you"), so every surface agrees.
  */
 

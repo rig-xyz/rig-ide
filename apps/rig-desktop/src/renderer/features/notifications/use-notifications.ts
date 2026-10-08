@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { events, rpc } from '@renderer/lib/ipc';
 import {
+  BELL_PAGE,
   EMPTY_NOTIFICATION_SUMMARY,
   rigNotificationsChangedChannel,
   type MacNotificationPermission,
@@ -49,7 +50,7 @@ export function useNotificationSummary(): RigNotificationSummary {
 export function useActivity(enabled = true): RigNotification[] | null {
   const { data } = useQuery({
     queryKey: NOTIFICATION_ACTIVITY_KEY,
-    queryFn: () => rpc.rig.notifications.activity({ limit: 50 }),
+    queryFn: () => rpc.rig.notifications.activity({ limit: BELL_PAGE }),
     enabled,
     staleTime: Infinity,
   });
@@ -80,7 +81,7 @@ export async function fetchSpaceActivity(bindingId: string): Promise<RigNotifica
     // fall through to the cross-Space page
   }
   try {
-    const page = await rpc.rig.notifications.activity({ limit: 50 });
+    const page = await rpc.rig.notifications.activity({ limit: BELL_PAGE });
     return page.success ? ofSpace(page.data) : null;
   } catch {
     return null;

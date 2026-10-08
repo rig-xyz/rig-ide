@@ -13,7 +13,15 @@ import type { SseEvent } from './sse';
 
 const fresh = () => new Date().toISOString();
 
-function setup(opts: { rows?: RigNotification[]; cursor?: string | null; summary?: RigNotificationSummary } = {}) {
+function setup(
+  opts: {
+    rows?: RigNotification[];
+    cursor?: string | null;
+    summary?: RigNotificationSummary;
+    /** The bell's page (`tier: 'direct'`); absent, the relay can't answer it. */
+    bellRows?: RigNotification[];
+  } = {}
+) {
   let rows = opts.rows ?? [];
   const cursors = new Map<string, string>();
   if (opts.cursor !== undefined && opts.cursor !== null) cursors.set('u_me', opts.cursor);
@@ -44,6 +52,9 @@ function setup(opts: { rows?: RigNotification[]; cursor?: string | null; summary
     context: async () => (signedIn ? ok({ url: 'https://relay.test', token: 't' }) : err({ kind: 'notSignedIn', message: 'no' } as never)),
     selfUserId: async () => 'u_me',
     list: async (q) => {
+      if (q.tier === 'direct') {
+        return opts.bellRows ? ok(opts.bellRows.slice(0, q.limit)) : err({ kind: 'relay', message: 'no' } as never);
+      }
       queries.push(q);
       if (q.after === undefined) return ok(rows.slice(-1));
       return ok(rows.filter((r) => BigInt(r.id) > BigInt(q.after!)).slice(0, q.limit));
@@ -160,6 +171,40 @@ describe('NotificationService', () => {
     expect(t.badges.at(-1)).toBe(0);
   });
 
+  it("shows the bell's count on the Dock: unread rows it keeps, not every unread row about you", async () => {
+    const t = setup({
+      cursor: '10',
+      summary: { spaces: [], invitesUnread: 0, directUnreadTotal: 4 },
+      bellRows: [
+        row({ id: '4', type: 'mention', tier: 'direct' }),
+        row({ id: '3', type: 'mention', tier: 'direct', readAt: '2026-10-08T00:00:00Z' }),
+        row({ id: '2', type: 'message' }),
+        // Your own agent finishing while you were here: the bell leaves it out.
+        row({ id: '1', type: 'agent_finished', tier: 'direct', actor: { kind: 'agent', userId: 'u_me', name: 'Me', agent: 'claude' } }),
+      ],
+    });
+    current = t;
+    t.service.start();
+    await t.connected();
+    expect(t.badges.at(-1)).toBe(1);
+  });
+
+  it('counts your own agent finishing once it came in while you were away, as the bell does', async () => {
+    const finished = row({
+      id: '1',
+      type: 'agent_finished',
+      tier: 'direct',
+      actor: { kind: 'agent', userId: 'u_me', name: 'Me', agent: 'claude' },
+      createdAt: fresh(),
+    });
+    const t = setup({ cursor: '0', rows: [finished], bellRows: [finished] });
+    current = t;
+    t.service.start();
+    await t.connected();
+    await vi.waitFor(() => expect(t.badges.at(-1)).toBe(1));
+    expect(t.service.arrivedWhileAway()).toEqual(['1']);
+  });
+
   it('uses the space level from the summary when deciding a banner', async () => {
     const t = setup({
       cursor: '0',
@@ -230,7 +275,8 @@ describe('NotificationService', () => {
       cursor: '1',
       rows: [
         row({ id: '2', createdAt: new Date(Date.now() - 3_600_000).toISOString() }),
-        row({ id: '3', createdAt: fresh() }),
+        // A moment ahead, so it's never from before start() when the clock ticks between.
+        row({ id: '3', createdAt: new Date(Date.now() + 1_000).toISOString() }),
       ],
     });
     current = t;

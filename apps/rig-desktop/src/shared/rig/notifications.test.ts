@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   decideBanner,
   DEFAULT_NOTIFICATION_PREFS,
+  bellUnread,
   dockCount,
   normalizeNotificationPrefs,
   directPhrase,
@@ -86,6 +87,23 @@ describe('dockCount', () => {
         directUnreadTotal: 4,
       })
     ).toBe(4);
+  });
+
+  it("once the bell's rows are read, is exactly what the bell keeps unread", () => {
+    const summary = { spaces: [], invitesUnread: 0, directUnreadTotal: 5 };
+    const ctx = { selfUserId: 'u_me', awayIds: new Set(['7']) };
+    const mine = { kind: 'agent' as const, userId: 'u_me', name: 'Me', agent: 'claude' as const };
+    const rows = [
+      row({ id: '1', type: 'mention', tier: 'direct' }),
+      row({ id: '2', type: 'invite', tier: 'direct', bindingId: null }),
+      row({ id: '3', type: 'reply', tier: 'direct', readAt: '2026-10-08T00:00:00Z' }),
+      row({ id: '4', type: 'message' }),
+      row({ id: '5', type: 'comment', tier: 'ambient', fileAuthorUserId: 'u_other' }),
+      row({ id: '6', type: 'agent_finished', tier: 'direct', actor: mine }),
+      row({ id: '7', type: 'agent_finished', tier: 'direct', actor: mine }),
+    ];
+    expect(dockCount(summary, { rows, ctx })).toBe(3);
+    expect(bellUnread(rows, ctx)).toBe(3);
   });
 });
 

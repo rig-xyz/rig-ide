@@ -1,5 +1,6 @@
 import type { Result } from '@emdash/shared';
 import {
+  BELL_PAGE,
   decideBanner,
   dockCount,
   EMPTY_NOTIFICATION_SUMMARY,
@@ -77,6 +78,8 @@ export class NotificationService {
   private startedAt = 0;
   /** Rows that came in while you were away (no rig window focused, or rig closed), newest last. */
   private away = new Set<string>();
+  /** The bell's own page of rows about you, for the Dock badge; null until read. */
+  private bellRows: RigNotification[] | null = null;
 
   constructor(private readonly deps: NotificationServiceDeps) {}
 
@@ -229,12 +232,14 @@ export class NotificationService {
     // finishing posts no new message, so the Room's read marker never moves
     // for it; this covers that and any other row without one.
     const seen: string[] = [];
+    let arrived = 0;
     try {
       for (;;) {
         const page = await this.deps.list({ after: cursor, limit: PAGE });
         if (!page.success || this.account !== account) return;
         for (const row of page.data) {
           cursor = row.id;
+          arrived += 1;
           this.deps.cursor.set(account, row.id);
           this.noteArrival(row);
           if (this.seenOnScreen(row)) seen.push(row.id);
@@ -243,6 +248,8 @@ export class NotificationService {
         if (page.data.length < PAGE) return;
       }
     } finally {
+      // New rows change what the bell keeps, so the Dock badge reads again.
+      if (arrived > 0 && this.account === account) this.scheduleSummary();
       if (seen.length > 0 && this.account === account) {
         await this.deps.markRead(seen);
         void this.refreshSummary();
@@ -289,20 +296,27 @@ export class NotificationService {
   async refreshSummary(): Promise<void> {
     const account = this.account;
     if (!account) return;
-    const res = await this.deps.summary();
+    const [res, rows] = await Promise.all([
+      this.deps.summary(),
+      this.deps.list({ tier: 'direct', limit: BELL_PAGE }),
+    ]);
     if (!res.success || this.account !== account) return;
     this.summaryCache = res.data;
+    this.bellRows = rows.success ? rows.data : null;
     this.applyBadge();
     this.deps.emitChanged('notification');
   }
 
+  /** The Dock shows what the bell keeps for you (`dockCount`). */
   private applyBadge(): void {
-    this.deps.setBadge(this.deps.prefs().dockBadge ? dockCount(this.summaryCache) : 0);
+    const bell = this.bellRows ? { rows: this.bellRows, ctx: { selfUserId: this.account, awayIds: this.away } } : null;
+    this.deps.setBadge(this.deps.prefs().dockBadge ? dockCount(this.summaryCache, bell) : 0);
   }
 
   private signedOut(): void {
     this.account = null;
     this.away.clear();
+    this.bellRows = null;
     this.summaryCache = EMPTY_NOTIFICATION_SUMMARY;
     this.deps.presenter.closeAll();
     this.deps.setBadge(0);

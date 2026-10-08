@@ -161,15 +161,63 @@ function legacyScope(r: Record<string, unknown>): BannerScope {
   return types.message === false && types.comment === false ? 'aboutMe' : 'everything';
 }
 
+/** How many rows the Activity bell reads: the newest page of rows about you. */
+export const BELL_PAGE = 50;
+
+/** What the bell leaves out, by why: the footer's counts. */
+export type BellLeftOut = {
+  /** Your own agents finishing while you were here. */
+  ownAgents: number;
+  messages: number;
+  comments: number;
+  reactions: number;
+};
+
+export type BellContext = { selfUserId: string | null; awayIds: ReadonlySet<string> };
+
 /**
- * The Dock badge: unread rows about you (mentions, replies, your agent,
- * requests to it, invites), the same number the Activity bell shows, in
- * every space whatever its level. Plain new messages show on each space's
- * row on Home, not here: a count of every message in a busy space never
- * goes down. Dylan, 2026-10-01: "It needs to be consistent."
+ * Whether one row is for you, and if not, which footer count it goes to
+ * (renderer `bell-model.ts` has the whole rule). Shared so main's Dock
+ * badge keeps exactly what the bell keeps.
  */
-export function dockCount(summary: RigNotificationSummary): number {
-  return summary.directUnreadTotal;
+export function bellPlace(row: RigNotification, ctx: BellContext): 'keep' | keyof BellLeftOut {
+  switch (row.type) {
+    case 'message':
+      return 'messages';
+    case 'reaction':
+      return 'reactions';
+    case 'comment':
+      // A guest commenting through your link is direct; otherwise only your own file.
+      return row.tier === 'direct' || (!!ctx.selfUserId && row.fileAuthorUserId === ctx.selfUserId)
+        ? 'keep'
+        : 'comments';
+    case 'agent_finished': {
+      const yours = !!ctx.selfUserId && row.actor.userId === ctx.selfUserId;
+      return !yours || ctx.awayIds.has(row.id) ? 'keep' : 'ownAgents';
+    }
+    default:
+      return 'keep';
+  }
+}
+
+/** The bell's count: unread rows it keeps. */
+export function bellUnread(rows: readonly RigNotification[], ctx: BellContext): number {
+  return rows.filter((row) => !row.readAt && bellPlace(row, ctx) === 'keep').length;
+}
+
+/**
+ * The Dock badge: the same number the Activity bell shows, the unread
+ * rows it keeps for you (`bellUnread` over the bell's own page), in every
+ * space whatever its level. Until those rows are read, the summary's
+ * unread rows about you, as the bell does. Plain new messages show on each
+ * space's row on Home, not here: a count of every message in a busy space
+ * never goes down. Dylan, 2026-10-01: "It needs to be consistent."
+ */
+export function dockCount(
+  summary: RigNotificationSummary,
+  bell: { rows: readonly RigNotification[]; ctx: BellContext } | null = null
+): number {
+  return bell ? bellUnread(bell.rows, bell.ctx) : summary.directUnreadTotal;
 }
 
 export type BannerContext = {
