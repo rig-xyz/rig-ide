@@ -411,6 +411,30 @@ describe('rig_topic_show', () => {
     expect(backend.show).not.toHaveBeenCalled();
   });
 
+  it('says topics are off for the person who asked, and moves nothing, when they turned topics off', async () => {
+    const backend = backendWith('u-dylan', { topicsOnHere: () => false });
+    const result = await call(backend, 'rig_topic_show', { topic: 'Pricing' });
+    expect(result).toEqual({
+      text: 'Topics are off for the person who asked, so nothing changed on their screen. Tell them they can turn Topics on in Settings, Advanced, or answer from the chat yourself.',
+      isError: true,
+    });
+    expect(backend.show).not.toHaveBeenCalled();
+  });
+
+  it('shows the topic when the person who asked has topics on', async () => {
+    const backend = backendWith('u-dylan', { topicsOnHere: () => true });
+    expect((await call(backend, 'rig_topic_show', { topic: 'Pricing' })).isError).toBeUndefined();
+    expect(backend.show).toHaveBeenCalledWith({ kind: 'topic', bindingId: 'b1', themeId: 't2' });
+  });
+
+  it('says topics are off in the space when the space turned them off', async () => {
+    const backend = backendWith('u-dylan', { listTopics: vi.fn(async () => ok({ enabled: false, topics })) });
+    const result = await call(backend, 'rig_topic_show', { topic: 'Pricing' });
+    expect(result.isError).toBe(true);
+    expect(result.text).toBe('Topics are off in this space.');
+    expect(backend.show).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['no name', '', 'Say which topic to show.'],
     ['an unknown name', 'Hiring', 'No topic is called "Hiring". The topics are: Launch plan, Pricing, Pricing page copy.'],

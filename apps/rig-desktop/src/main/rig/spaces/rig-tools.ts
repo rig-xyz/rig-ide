@@ -223,6 +223,8 @@ export interface RigToolsBackend {
   pathKind?(absPath: string): Promise<'file' | 'dir' | null>;
   /** The space's topics; `enabled` false when topics are off in the space, null when this relay has none. */
   listTopics?(bindingId: string): Promise<Result<{ enabled: boolean; topics: { id: string; name: string }[] } | null, Failure>>;
+  /** Whether the person signed in here sees topics: their Topics setting, which shows the topic dock above the chat. */
+  topicsOnHere?(): boolean;
 }
 
 export type RigToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: 'image/png' };
@@ -1272,6 +1274,11 @@ export function createRigTools(
 /** What an agent is told when the person who asked isn't the one at this Mac. */
 const ASKER_ELSEWHERE = "Nothing moved: only the screen of the person who asked can change, and they're on another Mac.";
 
+/** What an agent is told when the person who asked has turned topics off, so there's no topic dock to filter. */
+const TOPICS_OFF_FOR_ASKER =
+  'Topics are off for the person who asked, so nothing changed on their screen. ' +
+  'Tell them they can turn Topics on in Settings, Advanced, or answer from the chat yourself.';
+
 /** Whether the person who asked this run is the one signed in here, the session's owner. */
 async function askedHere(backend: RigToolsBackend, scope: RigToolScope): Promise<boolean> {
   if (!backend.show || !backend.currentAsker) return false;
@@ -1360,7 +1367,8 @@ function showTools(backend: RigToolsBackend): RigTool[] {
       description:
         'Filter the chat of the person who asked you to one topic, the same as clicking its pill above the chat. ' +
         'Use it when they ask to see, focus on or catch up on a topic. topic is its name as the chat shows it. ' +
-        'It only moves the screen of the person who asked, on their own Mac. When they are on another Mac nothing moves, and the result says what to tell them.',
+        'It only moves the screen of the person who asked, on their own Mac. When they are on another Mac nothing moves, and the result says what to tell them. ' +
+        'When they have turned topics off nothing moves either, and the result says so.',
       inputSchema: {
         topic: z.string().describe('The topic\'s name, as the chat shows it.'),
       },
@@ -1384,6 +1392,7 @@ function showTools(backend: RigToolsBackend): RigTool[] {
         if (!(await askedHere(backend, scope))) {
           return { text: `${ASKER_ELSEWHERE} Tell them they can click the ${topic.name} topic above the chat to see only it.` };
         }
+        if (backend.topicsOnHere && !backend.topicsOnHere()) return failed(TOPICS_OFF_FOR_ASKER);
         backend.show!({ kind: 'topic', bindingId: scope.bindingId, themeId: topic.id });
         return { text: `Showing only the ${topic.name} topic in the chat of the person who asked.` };
       },

@@ -160,6 +160,8 @@ const backend: RigToolsBackend = {
       return null;
     }
   },
+  // The asker is the one signed in here (checked first): their Topics setting decides whether the dock shows.
+  topicsOnHere: () => rigSettingsStore.get().roomThemesEnabled === true,
   listTopics: async (bindingId) => {
     if (!api.getThemes) return ok(null);
     const fetched = await api.getThemes(bindingId);
