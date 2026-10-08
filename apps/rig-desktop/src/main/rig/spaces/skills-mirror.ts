@@ -1,5 +1,5 @@
 import { type FSWatcher, watch as fsWatch } from 'node:fs';
-import { copyFile, lstat, mkdir, readdir, readFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { log } from '@main/lib/logger';
 
@@ -20,6 +20,10 @@ import { log } from '@main/lib/logger';
  * that side is newer, reaches the other next time). Symlinks are skipped,
  * and when either skills folder (or `.claude`/`.agents`) is itself a link
  * nothing is touched, since it may point outside the space.
+ *
+ * The one exception to "nothing is deleted": the `rig-canvas` skill older
+ * rig CLIs wrote into both folders is removed first (see
+ * `removeCanvasLeftovers`), so the mirror never brings it back.
  */
 
 export const SKILL_DIRS = ['.claude/skills', '.agents/skills'] as const;
@@ -127,6 +131,78 @@ async function copyInto(
 const newest = (files: Map<string, FileInfo>) =>
   Math.max(0, ...[...files.values()].map((f) => f.mtimeMs));
 
+const CANVAS_SKILL = 'rig-canvas';
+/** The line older rig CLIs wrote into a space's `rig` skill (and maybe its instructions); Canvas doesn't work in spaces. */
+const CANVAS_LINE =
+  '- To render this rig as a local visual UI, use the `rig-canvas` skill: author `.canvas/<name>.board.toml` and run `npx @rigxyz/canvas`.';
+const CANVAS_LINE_FILES = [
+  ...SKILL_DIRS.map((dir) => `${dir}/rig/SKILL.md`),
+  'AGENTS.md',
+  'CLAUDE.md',
+];
+
+/** A SKILL.md the rig CLI wrote: frontmatter names `rig-canvas` and mentions `@rigxyz/canvas`. */
+function isGeneratedCanvasSkill(text: string): boolean {
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1];
+  return (
+    frontmatter !== undefined &&
+    /^name:\s*rig-canvas\s*$/m.test(frontmatter) &&
+    frontmatter.includes('@rigxyz/canvas')
+  );
+}
+
+/** `text` without the generated Canvas line (every exact copy of it, newline included). */
+function withoutCanvasLine(text: string): string {
+  return text
+    .split(/(?<=\n)/)
+    .filter((line) => line.replace(/\r?\n$/, '').trimEnd() !== CANVAS_LINE)
+    .join('');
+}
+
+/**
+ * Removes what older rig CLIs wrote for Canvas: the `rig-canvas` skill folder
+ * in either skills folder when its SKILL.md is the generated one, and the
+ * generated Canvas line in the `rig` skill's SKILL.md (both folders) and in
+ * AGENTS.md / CLAUDE.md. Anything user-authored, and anything behind a link,
+ * is left alone. Returns what it removed, relative to the space; nothing on a
+ * second pass.
+ */
+export async function removeCanvasLeftovers(root: string): Promise<string[]> {
+  const removed: string[] = [];
+  for (const dir of SKILL_DIRS) {
+    const rel = `${dir}/${CANVAS_SKILL}`;
+    try {
+      if ((await kindOf(join(root, rel))) !== 'dir') continue;
+      const skill = join(root, rel, 'SKILL.md');
+      if (!(await lstat(skill).catch(() => null))?.isFile()) continue;
+      if (!isGeneratedCanvasSkill(await readFile(skill, 'utf8'))) continue;
+      await rm(join(root, rel), { recursive: true, force: true });
+      removed.push(rel);
+    } catch (error) {
+      log.warn('Rig spaces: could not remove the old Canvas skill', {
+        code: (error as NodeJS.ErrnoException)?.code,
+      });
+    }
+  }
+  for (const file of CANVAS_LINE_FILES) {
+    const path = join(root, file);
+    try {
+      // Not written through a link anywhere on the way.
+      if ((await kindOf(path)) !== 'other' || !(await writable(root, file))) continue;
+      const text = await readFile(path, 'utf8');
+      const next = withoutCanvasLine(text);
+      if (next === text) continue;
+      await writeFile(path, next, 'utf8');
+      removed.push(`${file}: Canvas line`);
+    } catch (error) {
+      log.warn('Rig spaces: could not remove the old Canvas line', {
+        code: (error as NodeJS.ErrnoException)?.code,
+      });
+    }
+  }
+  return removed;
+}
+
 /**
  * One pass over a space folder. Returns what it copied, as
  * `<skills folder>/<skill>/<file>` paths relative to the space.
@@ -136,6 +212,9 @@ export async function mirrorSkills(root: string): Promise<string[]> {
   for (const path of ['.claude', '.agents', ...SKILL_DIRS]) {
     if ((await kindOf(join(root, path))) === 'other') return [];
   }
+  // Before mirroring, so a generated Canvas skill on one side isn't copied back to the other.
+  const removed = await removeCanvasLeftovers(root);
+  if (removed.length > 0) log.info('Rig spaces: removed old Canvas leftovers', { removed });
   const [claudeDir, agentsDir] = SKILL_DIRS.map((d) => join(root, d)) as [string, string];
   const [claude, agents] = await Promise.all([skillFolders(claudeDir), skillFolders(agentsDir)]);
   const copied: string[] = [];

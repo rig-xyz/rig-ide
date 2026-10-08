@@ -3,7 +3,12 @@ import { mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createSkillsMirror, isSkillsPath, mirrorSkills } from './skills-mirror';
+import {
+  createSkillsMirror,
+  isSkillsPath,
+  mirrorSkills,
+  removeCanvasLeftovers,
+} from './skills-mirror';
 
 let root: string;
 
@@ -105,6 +110,110 @@ describe('mirrorSkills', () => {
     await put('notes.md', 'notes');
     expect(await mirrorSkills(root)).toEqual([]);
     expect(existsSync(join(root, '.agents'))).toBe(false);
+  });
+});
+
+const CANVAS_SKILL = [
+  '---',
+  'name: rig-canvas',
+  'description: Build and view a local Canvas UI for this rig.',
+  'allowed-tools: Bash(npx @rigxyz/canvas*), Read(.canvas/*)',
+  '---',
+  '',
+  '# Canvas',
+  '',
+].join('\n');
+const CANVAS_LINE =
+  '- To render this rig as a local visual UI, use the `rig-canvas` skill: author `.canvas/<name>.board.toml` and run `npx @rigxyz/canvas`.';
+const has = (rel: string) => existsSync(join(root, rel));
+
+describe('removeCanvasLeftovers', () => {
+  it('removes the generated rig-canvas skill from both folders', async () => {
+    await put('.claude/skills/rig-canvas/SKILL.md', CANVAS_SKILL);
+    await put('.agents/skills/rig-canvas/SKILL.md', CANVAS_SKILL);
+    await put('.claude/skills/report/SKILL.md', 'report');
+    expect(await removeCanvasLeftovers(root)).toEqual([
+      '.claude/skills/rig-canvas',
+      '.agents/skills/rig-canvas',
+    ]);
+    expect(has('.claude/skills/rig-canvas')).toBe(false);
+    expect(has('.agents/skills/rig-canvas')).toBe(false);
+    expect(await read('.claude/skills/report/SKILL.md')).toBe('report');
+    expect(await removeCanvasLeftovers(root)).toEqual([]);
+  });
+
+  it('leaves a user-authored rig-canvas skill alone', async () => {
+    await put('.claude/skills/rig-canvas/SKILL.md', '---\nname: rig-canvas\ndescription: mine\n---\n');
+    await put('.agents/skills/rig-canvas/SKILL.md', '# notes on @rigxyz/canvas, no frontmatter');
+    expect(await removeCanvasLeftovers(root)).toEqual([]);
+    expect(has('.claude/skills/rig-canvas/SKILL.md')).toBe(true);
+    expect(has('.agents/skills/rig-canvas/SKILL.md')).toBe(true);
+  });
+
+  it('leaves a linked rig-canvas skill alone', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'skills-outside-'));
+    try {
+      await writeFile(join(outside, 'SKILL.md'), CANVAS_SKILL);
+      await mkdir(join(root, '.claude/skills'), { recursive: true });
+      await symlink(outside, join(root, '.claude/skills/rig-canvas'));
+      expect(await removeCanvasLeftovers(root)).toEqual([]);
+      expect(existsSync(join(outside, 'SKILL.md'))).toBe(true);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('removes only the generated line from the rig skill in both folders', async () => {
+    const rig = `---\nname: rig\n---\n\n- \`.mcp.json\` declares servers.\n${CANVAS_LINE}\n- \`[sync]\` means live.\n`;
+    const clean = '---\nname: rig\n---\n\n- `.mcp.json` declares servers.\n- `[sync]` means live.\n';
+    await put('.claude/skills/rig/SKILL.md', rig, 1_000);
+    await put('.agents/skills/rig/SKILL.md', rig, 1_000);
+    expect(await removeCanvasLeftovers(root)).toEqual([
+      '.claude/skills/rig/SKILL.md: Canvas line',
+      '.agents/skills/rig/SKILL.md: Canvas line',
+    ]);
+    expect(await read('.claude/skills/rig/SKILL.md')).toBe(clean);
+    expect(await read('.agents/skills/rig/SKILL.md')).toBe(clean);
+    expect(await mirrorSkills(root)).toEqual([]);
+  });
+
+  it('does not write the line removal through a linked rig skill', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'skills-outside-'));
+    try {
+      await writeFile(join(outside, 'SKILL.md'), `${CANVAS_LINE}\n`);
+      await mkdir(join(root, '.claude/skills'), { recursive: true });
+      await symlink(outside, join(root, '.claude/skills/rig'));
+      expect(await removeCanvasLeftovers(root)).toEqual([]);
+      expect(await readFile(join(outside, 'SKILL.md'), 'utf8')).toBe(`${CANVAS_LINE}\n`);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('removes only the generated line from AGENTS.md and CLAUDE.md', async () => {
+    await put('AGENTS.md', `# Space\n\n- one\n${CANVAS_LINE}\n- two\n`);
+    await put('CLAUDE.md', `- keep\r\n${CANVAS_LINE}\r\n`);
+    expect(await removeCanvasLeftovers(root)).toEqual([
+      'AGENTS.md: Canvas line',
+      'CLAUDE.md: Canvas line',
+    ]);
+    expect(await read('AGENTS.md')).toBe('# Space\n\n- one\n- two\n');
+    expect(await read('CLAUDE.md')).toBe('- keep\r\n');
+    expect(await removeCanvasLeftovers(root)).toEqual([]);
+  });
+
+  it('leaves instructions without the exact line untouched', async () => {
+    const text = `- Use the rig-canvas skill sometimes.\n  ${CANVAS_LINE} (edited)\n`;
+    await put('AGENTS.md', text);
+    expect(await removeCanvasLeftovers(root)).toEqual([]);
+    expect(await read('AGENTS.md')).toBe(text);
+  });
+
+  it('mirrorSkills removes the generated skill instead of copying it back', async () => {
+    await put('.claude/skills/rig-canvas/SKILL.md', CANVAS_SKILL);
+    expect(await mirrorSkills(root)).toEqual([]);
+    expect(has('.claude/skills/rig-canvas')).toBe(false);
+    expect(has('.agents/skills/rig-canvas')).toBe(false);
   });
 });
 
