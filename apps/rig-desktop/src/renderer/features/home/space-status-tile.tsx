@@ -29,7 +29,7 @@ export function SpaceStatusTile({
 }) {
   return (
     <span
-      className={cn('relative inline-flex shrink-0 items-center justify-center rounded-control p-1.5', className)}
+      className={cn('bg-bg-1 border-border-hairline relative inline-flex shrink-0 items-center justify-center rounded-control border p-[5px]', className)}
       aria-hidden
       data-tile={attention.kind}
     >

@@ -341,7 +341,7 @@ describe('SpacesCard — what you missed', () => {
     expect(dotOf('calm-valley')?.dataset.dot).toBe('unread');
     expect(dotOf('growth')).toBeNull();
     expect(dotOf('research')).toBeNull();
-    expect(tileOf('research').className).not.toContain('bg-bg-2');
+    expect(tileOf('research').className).toContain('bg-bg-1');
     expect(countOf('launch')).toBe('9+');
     expect(weightOf('gentle-island')).toBe('unread');
 
