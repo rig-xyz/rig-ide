@@ -439,3 +439,25 @@ export function dockTasks(
   tasks.sort((a, b) => a.at - b.at || a.runId.localeCompare(b.runId));
   return tasks.map(({ at: _at, ...task }) => task);
 }
+
+/**
+ * Where each task hangs in the column: under its topic when that topic has a
+ * pill or card (`shownThemeIds`), under "Not sorted yet" when it has no topic
+ * yet, and otherwise `folded`: its topic is behind "+N" (or "Topics N" in a
+ * narrow Room), so it hangs under that button, still in sight. No task is
+ * ever left out.
+ */
+export function placeTasks(
+  tasks: readonly DockTask[],
+  shownThemeIds: ReadonlySet<string>
+): { unsorted: DockTask[]; underTheme: Map<string, DockTask[]>; folded: DockTask[] } {
+  const unsorted: DockTask[] = [];
+  const underTheme = new Map<string, DockTask[]>();
+  const folded: DockTask[] = [];
+  for (const task of tasks) {
+    if (task.themeId === null) unsorted.push(task);
+    else if (shownThemeIds.has(task.themeId)) underTheme.set(task.themeId, [...(underTheme.get(task.themeId) ?? []), task]);
+    else folded.push(task);
+  }
+  return { unsorted, underTheme, folded };
+}

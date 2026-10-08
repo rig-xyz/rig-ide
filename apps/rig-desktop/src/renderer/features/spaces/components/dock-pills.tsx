@@ -15,6 +15,7 @@ import {
   activeThemes,
   agentDisplayName,
   dockTasks,
+  placeTasks,
   forYouCount,
   forYouLine,
   splitThemes,
@@ -58,8 +59,11 @@ import { AgentAvatar, PersonAvatar } from './identity';
  * Tasks in progress: each agent run that is working, waiting or just done
  * hangs as a small row under its topic, with the agent, its dot matrix and
  * its time. A run whose ask the relay still holds has no topic yet and sits
- * under "Not sorted yet". Hovering a row peeks its live step; clicking it
- * jumps to the run's card. Hovering an agent's face lights its rows.
+ * under "Not sorted yet". A run whose topic is folded behind "+N" hangs
+ * under that button with its topic's dot. In a narrow Room the rows are
+ * compact: the agent, its dot matrix and its time, the title in the peek.
+ * Hovering a row peeks its live step; clicking it jumps to the run's card.
+ * Hovering an agent's face lights its rows.
  *
  * By keyboard: Tab reaches every pill (with a ring), Enter or Space focuses it
  * and the keyboard goes to the card's ×; the × (or Esc) lets go and the keyboard
@@ -538,23 +542,31 @@ function TaskRow({
   snapshot,
   lit,
   onJump,
+  topic,
+  compact = false,
 }: {
   task: DockTask;
   snapshot: RoomSnapshot;
   /** Its agent's face is hovered. */
   lit: boolean;
   onJump: (() => void) | undefined;
+  /** Its topic, when the row isn't under that topic's pill (folded behind "+N"): its dot leads the row. */
+  topic?: RoomTheme;
+  /** A narrow Room: no title in the row, only in the peek and the accessible name. */
+  compact?: boolean;
 }) {
   const name = taskAgentName(task, snapshot);
   return (
     <button
       type="button"
       onClick={onJump}
-      aria-label={`${name}: ${task.title}. ${task.status}`}
+      aria-label={`${name}: ${task.title}.${topic ? ` In ${topic.name}.` : ''} ${task.status}`}
       data-testid="dock-task"
       data-run-id={task.runId}
       data-state={task.state}
       data-lit={lit ? 'true' : undefined}
+      data-compact={compact ? 'true' : undefined}
+      data-topic-id={topic?.id}
       className={cn(
         'flex h-[26px] max-w-full items-center gap-[7px] rounded-full pr-2.5 pl-1 text-xs whitespace-nowrap transition-colors',
         FOCUS_RING,
@@ -568,8 +580,9 @@ function TaskRow({
         title={null}
         badgeRingClassName="ring-[var(--pill-fill)]"
       />
+      {topic && <Dot color={themeColor(topic.id)} />}
       <DotMatrix state={task.matrix} size="sm" />
-      <span className="max-w-[120px] min-w-0 truncate">{task.title}</span>
+      {!compact && <span className="max-w-[120px] min-w-0 truncate">{task.title}</span>}
       <span
         className={cn(
           'shrink-0 text-2xs tabular-nums',
@@ -583,10 +596,12 @@ function TaskRow({
 }
 
 /** A task's peek: whose agent, what it was asked, and the step it is on now. */
-function TaskPeek({ task, snapshot }: { task: DockTask; snapshot: RoomSnapshot }) {
-  const foot = task.themeId
-    ? 'Click to jump to it.'
-    : 'It gets a topic when it finishes. Click to jump to it.';
+function TaskPeek({ task, snapshot, topic }: { task: DockTask; snapshot: RoomSnapshot; topic?: RoomTheme }) {
+  const foot = topic
+    ? `In the ${topic.name} topic. Click to jump to it.`
+    : task.themeId
+      ? 'Click to jump to it.'
+      : 'It gets a topic when it finishes. Click to jump to it.';
   return (
     <div
       className="px-3 py-2.5 text-xs"
@@ -766,15 +781,14 @@ export function usePillColumn({
 
   // Tasks in progress, the spotlit face's only while there is one.
   const [hasTasks, setHasTasks] = useState(false);
-  const now = useTaskClock(hasTasks && !narrow);
+  const now = useTaskClock(hasTasks);
   const tasks = useMemo(() => {
-    if (narrow) return [];
     const all = dockTasks(snapshot, themes, selfUserId, now);
     if (!who) return all;
     return all.filter((t) =>
       who.kind === 'person' ? t.owner === who.userId : t.owner === who.owner && t.agent === who.agent
     );
-  }, [narrow, snapshot, themes, selfUserId, now, who]);
+  }, [snapshot, themes, selfUserId, now, who]);
   if (hasTasks !== tasks.length > 0) setHasTasks(tasks.length > 0);
 
   // While a face is spotlit, each pill counts its messages.
@@ -794,6 +808,7 @@ export function usePillColumn({
   const showForYou = youCount > 0 || youFocused;
   const visibleThemes = narrow ? shown.filter((theme) => theme.id === focusedThemeId) : shown;
   const moreThemes = narrow ? listed : rest;
+  const placed = placeTasks(tasks, new Set(visibleThemes.map((t) => t.id)));
 
   const phases = useBirthPhases(bornIds, reduced);
   const rises = useRises({
@@ -834,8 +849,9 @@ export function usePillColumn({
     });
   }
 
-  const taskEntries = (list: DockTask[]) => {
+  const taskEntries = (list: DockTask[], withTopic = false) => {
     for (const task of list) {
+      const topic = withTopic ? themes?.list.find((t) => t.id === task.themeId) : undefined;
       const id = TASK_PREFIX + task.runId;
       const lit =
         task.state !== 'done' &&
@@ -855,10 +871,12 @@ export function usePillColumn({
             snapshot={snapshot}
             lit={lit}
             onJump={onJumpToRun ? () => onJumpToRun(task.runId) : undefined}
+            topic={topic}
+            compact={narrow}
           />
         ),
       });
-      peeks.set(id, { anchor: id, peek: <TaskPeek task={task} snapshot={snapshot} /> });
+      peeks.set(id, { anchor: id, peek: <TaskPeek task={task} snapshot={snapshot} topic={topic} /> });
     }
   };
 
@@ -907,7 +925,7 @@ export function usePillColumn({
     }
   }
 
-  const unsorted = tasks.filter((t) => t.themeId === null);
+  const unsorted = placed.unsorted;
   if (unsorted.length > 0) {
     entries.push({
       id: UNSORTED_ID,
@@ -973,7 +991,7 @@ export function usePillColumn({
         ),
       });
     }
-    taskEntries(tasks.filter((t) => t.themeId === theme.id));
+    taskEntries(placed.underTheme.get(theme.id) ?? []);
   }
 
   if (moreThemes.length > 0) {
@@ -1006,6 +1024,9 @@ export function usePillColumn({
       ),
     });
   }
+
+  // Tasks whose topic is folded behind "+N" (or "Topics N"): under it, each with its topic's dot.
+  taskEntries(placed.folded, true);
 
   // A pill that is still on its way (the bead, the drop) is not hovered yet.
   const hoveredEntry = hovered ? entries.find((e) => e.id === hovered) : undefined;

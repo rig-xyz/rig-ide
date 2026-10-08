@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   dockTasks,
+  placeTasks,
   forYouLine,
   JUST_FINISHED_MS,
   railAgents,
@@ -401,5 +402,24 @@ describe('dockTasks', () => {
     };
     const r2 = dockTasks(hidden, themes, 'me', NOW).find((t) => t.runId === 'r2')!;
     expect(r2.step).not.toContain('secrets');
+  });
+});
+
+describe('placeTasks', () => {
+  const task = (runId: string, themeId: string | null) =>
+    ({ runId, messageId: `m-${runId}`, agent: 'claude', owner: 'me', own: true, title: runId, state: 'working', matrix: 'thinking', step: '', status: '1m', themeId }) as const;
+
+  it('hangs a task under its shown topic, under "Not sorted yet" without one, and under "+N" when its topic is folded', () => {
+    const tasks = [task('a', 'launch'), task('b', null), task('c', 'old'), task('d', 'launch'), task('e', 'older')];
+    const { unsorted, underTheme, folded } = placeTasks(tasks, new Set(['launch', 'pricing']));
+    expect(unsorted.map((t) => t.runId)).toEqual(['b']);
+    expect([...underTheme.entries()].map(([id, list]) => [id, list.map((t) => t.runId)])).toEqual([['launch', ['a', 'd']]]);
+    expect(folded.map((t) => t.runId)).toEqual(['c', 'e']);
+  });
+
+  it('leaves no task out, whatever is shown', () => {
+    const tasks = [task('a', 'launch'), task('b', null), task('c', 'old')];
+    const { unsorted, underTheme, folded } = placeTasks(tasks, new Set());
+    expect(unsorted.length + [...underTheme.values()].flat().length + folded.length).toBe(tasks.length);
   });
 });

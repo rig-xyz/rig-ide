@@ -1744,6 +1744,46 @@ describe('Room dock', () => {
       expect(task('r2').dataset.lit).toBeUndefined();
     });
 
+    it('hangs a task whose topic is folded behind "+N" under it, with its topic in the row and the peek', async () => {
+      const list = Array.from({ length: 7 }, (_, i) => theme(`t${i}`, 1, 10 + i, `Topic ${i}`));
+      const assignments: Record<string, string> = Object.fromEntries(list.map((t, i) => [`x${i}`, t.id]));
+      assignments.s1 = 't0';
+      await show(
+        room({
+          messages: [...list.map((_, i) => msg(`x${i}`, 10 + i)), msg('s1', 20, { authorId: SELF, meta: { kind: 'session', runId: 'r1' } })],
+          sessionMetaByRun: {
+            r1: { id: 'r1', agent: 'claude', owner: SELF, model: 'opus', title: 'Draft the old plan', status: 'running', startedAt: minutesAgo(2), endedAt: null },
+          },
+          sessionEventsByRun: {},
+          themes: themesOf(list, assignments),
+        })
+      );
+      expect(q('dock-more')!.textContent).toBe('+1');
+      expect(order().slice(-2)).toEqual(['more', 'task:r1']);
+      expect(task('r1').dataset.topicId).toBe('t0');
+      expect(task('r1').getAttribute('aria-label')).toContain('In Topic 0.');
+      await act(async () => hover(task('r1')));
+      await until(() => expect(q('dock-task-peek')).not.toBeNull());
+      expect(q('dock-task-peek')!.textContent).toContain('In the Topic 0 topic. Click to jump to it.');
+    });
+
+    it('keeps the task rows in a narrow Room, compact: the agent, its dot matrix and its time', async () => {
+      await show(busy(), undefined, true);
+      expect(order()).toEqual(['for-you', 'unsorted', 'task:r2', 'more', 'task:r1', 'task:r3']);
+      expect(all('dock-task').every((t) => t.dataset.compact === 'true')).toBe(true);
+      expect(task('r1').textContent).toMatch(/Waiting on you$/);
+      expect(task('r1').textContent).not.toContain('Review the launch numbers');
+      expect(task('r1').getAttribute('aria-label')).toContain('Review the launch numbers');
+      expect(task('r1').dataset.topicId).toBe('launch');
+      // A topic focused as a card keeps its tasks under it.
+      await act(async () => click(q('dock-themes')!));
+      await sleep(80);
+      await act(async () => click(all('dock-more-item').find((i) => i.dataset.themeId === 'launch')!));
+      await sleep(120);
+      expect(order()).toEqual(['for-you', 'unsorted', 'task:r2', 'theme:launch', 'task:r1', 'more', 'task:r3']);
+      expect(task('r1').dataset.topicId).toBeUndefined();
+    });
+
     it("shows only the spotlit face's tasks", async () => {
       await show(busy());
       await act(async () =>
@@ -1941,17 +1981,18 @@ describe('Room dock', () => {
       await narrow();
       expect(q('dock-rail')).not.toBeNull();
       expect(all('dock-pill')).toHaveLength(0);
-      const pills = [...q('dock-pills')!.querySelectorAll('button')];
+      // The fixture's running task hangs as a compact row below (see "tasks in progress").
+      const pills = [...q('dock-pills')!.querySelectorAll('button:not([data-testid="dock-task"])')] as HTMLElement[];
       expect(pills.map((b) => b.dataset.testid)).toEqual(['dock-pill-for-you', 'dock-themes']);
       expect(q('dock-themes')!.textContent).toBe('Topics3');
     });
 
     it('has only the Themes pill when nothing waits on you, and nothing when there are no themes', async () => {
       await narrow(room({ sessionEventsByRun: {} }));
-      expect([...q('dock-pills')!.querySelectorAll('button')].map((b) => b.dataset.testid)).toEqual(
-        ['dock-themes']
-      );
-      await narrow(room({ sessionEventsByRun: {}, themes: themesOf([], {}) }));
+      expect(
+        ([...q('dock-pills')!.querySelectorAll('button:not([data-testid="dock-task"])')] as HTMLElement[]).map((b) => b.dataset.testid)
+      ).toEqual(['dock-themes']);
+      await narrow(room({ sessionEventsByRun: {}, sessionMetaByRun: {}, themes: themesOf([], {}) }));
       await until(() => expect(q('dock-pills')).toBeNull());
     });
 
