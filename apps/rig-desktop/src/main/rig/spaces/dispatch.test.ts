@@ -11,6 +11,7 @@ import {
   createSpacesDispatcher,
   INSTRUCTIONS_MAX_CHARS,
   spaceIntroContext,
+  NOT_FROM_RIG_TOML,
   finalAnswerFromEvents,
   connectorsHiddenContext,
   leakedProviderError,
@@ -2351,9 +2352,9 @@ describe('what each agent is told about its space', () => {
 
     const intros = fake.queued.map((q) => /<rig_space>(.*)<\/rig_space>/.exec(q.hiddenContext ?? '')?.[1] ?? null);
     expect(intros).toEqual([
-      "You're working in the Rig space #rig-feedback. To see what is in it (files, skills, connectors, people), call rig_space_describe.",
+      "You're working in the Rig space #rig-feedback. To see what is in it (files, skills, connectors, people), call rig_space_describe. rig.toml only names the space, so don't say what's here from it, even where AGENTS.md points to it.",
       null,
-      "You're working in the Rig space #launch-feedback. To see what is in it (files, skills, connectors, people), call rig_space_describe.",
+      "You're working in the Rig space #launch-feedback. To see what is in it (files, skills, connectors, people), call rig_space_describe. rig.toml only names the space, so don't say what's here from it, even where AGENTS.md points to it.",
       null,
     ]);
     // The per-turn rules stay on every turn.
@@ -2570,7 +2571,16 @@ describe('instructions parity helpers', () => {
   it('spaceIntroContext is one line, with the # name, and points at rig_space_describe only when it has rig tools', () => {
     expect(spaceIntroContext('rig-feedback', true).split('\n')).toHaveLength(1);
     expect(spaceIntroContext('#rig-feedback', true)).toContain('#rig-feedback.');
-    expect(spaceIntroContext(null, false)).toBe("<rig_space>You're working in a Rig space.</rig_space>");
+    expect(spaceIntroContext(null, false)).toBe(
+      "<rig_space>You're working in a Rig space. rig.toml only names the space, so don't say what's here from it, even where AGENTS.md points to it.</rig_space>"
+    );
+  });
+
+  it("tells Claude and Codex alike not to say what's in a space from rig.toml, which older spaces' AGENTS.md points to", () => {
+    for (const rigTools of [true, false]) {
+      expect(spaceIntroContext('rig-feedback', rigTools)).toContain(NOT_FROM_RIG_TOML);
+      expect(spaceIntroContext('rig-feedback', rigTools).split('\n')).toHaveLength(1);
+    }
   });
 });
 

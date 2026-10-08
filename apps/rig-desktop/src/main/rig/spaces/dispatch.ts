@@ -363,10 +363,13 @@ export function claudeMdForCodex(files: SpaceInstructionFiles): string | null {
  * after the space is renamed. Its files, skills, connectors and people are a
  * rig_space_describe call away, never listed here.
  */
+/** Older spaces' AGENTS.md says "See rig.toml for the full manifest", which no longer lists what's in a space. */
+export const NOT_FROM_RIG_TOML = " rig.toml only names the space, so don't say what's here from it, even where AGENTS.md points to it.";
+
 export function spaceIntroContext(name: string | null, rigTools: boolean): string {
   const where = name ? `You're working in the Rig space ${spaceLabel(name)}.` : "You're working in a Rig space.";
   const look = rigTools ? ' To see what is in it (files, skills, connectors, people), call rig_space_describe.' : '';
-  return `<rig_space>${where}${look}</rig_space>`;
+  return `<rig_space>${where}${look}${NOT_FROM_RIG_TOML}</rig_space>`;
 }
 
 /** A file at the space's root as text, or null (missing, not a file, or over 256 KB). */
