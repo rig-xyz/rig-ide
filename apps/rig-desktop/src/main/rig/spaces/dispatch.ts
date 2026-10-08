@@ -209,7 +209,7 @@ type QueuedTurn = {
   cancelledByStop: boolean;
   /** The agent's latest message so far (its final answer once the turn ends). */
   answer: { messageId: unknown; text: string };
-  /** The emojis it reacted with (rig_react), shown on its card when it ends without words. */
+  /** The emojis it reacted with (rig_chat_react), shown on its card when it ends without words. */
   reactions: string[];
   /** Called once the turn is settled, with its status and final answer. */
   onSettled?: (status: SessionStatus, answer: string) => void;
@@ -456,11 +456,11 @@ export function spaceRules(spec: { bindingId: string; agent: SessionAgent; rigTo
   ];
   if (rigTools) {
     lines.push(
-      'Reply or react. When a message only needs an acknowledgement, a thanks, a yes or a vote, react to it with rig_react and end your turn without a reply. Reply in words when you have something to say.',
+      'Reply or react. When a message only needs an acknowledgement, a thanks, a yes or a vote, react to it with rig_chat_react and end your turn without a reply. Reply in words when you have something to say.',
       `- "thanks @${spec.agent}": react 👍 and don't reply.`,
       '- "+1 if you agree": react with your vote.',
       '- "can you look at X": react 👀 on it, then do the work and reply.',
-      'Each turn names the message that asked you by its number, like #42. Give rig_react that number. A reaction does not trigger or notify any agent.'
+      'Each turn names the message that asked you by its number, like #42. Give rig_chat_react that number. A reaction does not trigger or notify any agent.'
     );
   }
   lines.push(
@@ -481,9 +481,9 @@ export function spaceRules(spec: { bindingId: string; agent: SessionAgent; rigTo
   );
   if (rigTools) {
     lines.push(
-      "Use rig's own tools for this space instead of the `rig` CLI: rig_invite to invite people, rig_people to see who's here, rig_recent_changes to see what changed, rig_chat_history to read the chat, rig_file_comments and rig_comment for file comments, rig_react to react, rig_rename_space to rename the space, and rig_settings and rig_update_settings for your own settings here. Fall back to the CLI only if a tool fails.",
-      'The space conversation you get each turn is only the latest messages, and long ones are cut. For older messages, a message in full, or to find what someone said, use rig_chat_history.',
-      "To look at a web page posted or pinned in the space, like a Claude artifact or a Google Doc, use browser_pins, browser_read and browser_screenshot with its link. They open it as your owner, read only, without moving anyone's view. Read a board in full or screenshot it rather than guessing at small text."
+      "Use rig's own tools for this space instead of the `rig` CLI: rig_people_invite to invite people, rig_people_list to see who's here, rig_changes_list to see what changed, rig_chat_read to read the chat, rig_comments_read and rig_comments_add for file comments, rig_chat_react to react, rig_space_rename to rename the space, and rig_settings_read and rig_settings_update for your own settings here. Fall back to the CLI only if a tool fails.",
+      'The space conversation you get each turn is only the latest messages, and long ones are cut. For older messages, a message in full, or to find what someone said, use rig_chat_read.',
+      "To look at a web page posted or pinned in the space, like a Claude artifact or a Google Doc, use rig_browser_pins, rig_browser_read and rig_browser_screenshot with its link. They open it as your owner, read only, without moving anyone's view. Read a board in full or screenshot it rather than guessing at small text."
     );
   }
   lines.push(
@@ -576,7 +576,7 @@ export function finalAnswerFromEvents(events: readonly { kind: string; payload: 
  * The recent room conversation as "#seq name: text" lines for the agent's
  * context: human messages, and for earlier agent runs the prompt plus the
  * agent's final answer (which lives in the run's log, not in a room
- * message). The #seq is what rig_react takes. A message's reactions follow
+ * message). The #seq is what rig_chat_react takes. A message's reactions follow
  * it as counts only ("[reactions: 👍 4 🎉 2]"), never who reacted. Also the
  * asking message's own #seq, which isn't a line. Best-effort: any relay
  * failure just yields fewer lines.
@@ -783,7 +783,7 @@ export function createSpacesDispatcher(deps: {
   resolvePermission: (runId: string, requestId: string, optionId: string) => Promise<boolean>;
   /** The run the owner's session with this agent is on right now (or about to start), for per-turn limits on rig tools; null when idle. */
   currentRunId: (bindingId: string, ownerUserId: string, agent: SessionAgent) => string | null;
-  /** A reaction a run's agent made (rig_react), for its card when the turn ends without words. */
+  /** A reaction a run's agent made (rig_chat_react), for its card when the turn ends without words. */
   noteReaction: (runId: string, emoji: string) => void;
   /** Reports each running turn that has had no events for `RUN_STALL_MS` (once per turn, not while it waits on an approval). */
   reportStalled: (now?: number) => void;

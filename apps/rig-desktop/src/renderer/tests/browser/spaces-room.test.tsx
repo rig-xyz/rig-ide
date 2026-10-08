@@ -3017,7 +3017,7 @@ describe('Connectors — Room copy and turn footer', () => {
 
   it("reads rig's own tools as \"Rig · invite hugo@…\", once their input streams in, in the live line, the approval and the step list", async () => {
     const running: SessionEvent[] = [
-      { seq: 1, kind: 'tool_call', payload: { toolCallId: 't1', title: 'mcp__rig__rig_invite', kind: 'other', status: 'pending', rawInput: {} } },
+      { seq: 1, kind: 'tool_call', payload: { toolCallId: 't1', title: 'mcp__rig__rig_people_invite', kind: 'other', status: 'pending', rawInput: {} } },
       { seq: 2, kind: 'tool_call_update', payload: { toolCallId: 't1', rawInput: { email: 'hugo@acme.co', role: 'editor' } } },
     ];
     await act(async () => {
@@ -3032,7 +3032,7 @@ describe('Connectors — Room copy and turn footer', () => {
         kind: 'permission_requested',
         payload: {
           requestId: 'perm-1',
-          toolCall: { toolCallId: 't1', title: 'mcp__rig__rig_invite' },
+          toolCall: { toolCallId: 't1', title: 'mcp__rig__rig_people_invite' },
           options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }],
         },
       },

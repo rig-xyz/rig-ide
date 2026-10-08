@@ -112,7 +112,7 @@ export function isForeignAccountRow(
 export const rigOpenRecentChannel = defineEvent<string>('rig:open-recent');
 
 /**
- * A space was renamed from main (an agent's `rig_rename_space` tool), not
+ * A space was renamed from main (an agent's `rig_space_rename` tool), not
  * from the Rename dialog — so the renderer refreshes the rig lists the way
  * the dialog does. The open space's own title follows `rig.toml` by itself
  * (the file watcher re-reads its name).

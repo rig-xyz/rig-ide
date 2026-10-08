@@ -197,25 +197,25 @@ describe('rig tools', () => {
     const tools = createRigTools(fakeBackend());
     expect(tools.map((t) => t.name)).toEqual([
       'rig_space_describe',
-      'rig_invite',
-      'rig_people',
-      'rig_recent_changes',
-      'rig_chat_history',
-      'rig_react',
-      'rig_file_comments',
-      'rig_comment',
-      'rig_rename_space',
-      'rig_settings',
-      'rig_update_settings',
+      'rig_people_invite',
+      'rig_people_list',
+      'rig_changes_list',
+      'rig_chat_read',
+      'rig_chat_react',
+      'rig_comments_read',
+      'rig_comments_add',
+      'rig_space_rename',
+      'rig_settings_read',
+      'rig_settings_update',
     ]);
     for (const t of tools) expect(t.description).toMatch(/Use it when|Use it whenever/);
     expect(tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name)).toEqual([
       'rig_space_describe',
-      'rig_people',
-      'rig_recent_changes',
-      'rig_chat_history',
-      'rig_file_comments',
-      'rig_settings',
+      'rig_people_list',
+      'rig_changes_list',
+      'rig_chat_read',
+      'rig_comments_read',
+      'rig_settings_read',
     ]);
   });
 
@@ -225,24 +225,52 @@ describe('rig tools', () => {
     for (const opening of openings) expect(opening).toMatch(/^(Describe|Invite|List|Read|Add|Acknowledge|Rename|Change)[ ,]/);
   });
 
-  it('pre-approve only tools that are read-only, and rig_react (an emoji, a few per turn)', () => {
+  it('pre-approve only tools that are read-only, and rig_chat_react (an emoji, a few per turn)', () => {
     const tools = createRigTools(fakeBackend());
     for (const name of PRE_APPROVED_RIG_TOOLS) {
-      if (name === 'rig_react') continue;
+      if (name === 'rig_chat_react') continue;
       expect(tools.find((t) => t.name === name)?.annotations.readOnlyHint).toBe(true);
     }
-    expect([...PRE_APPROVED_RIG_TOOLS]).toContain('rig_react');
-    expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_invite');
-    expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_comment');
-    expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_rename_space');
-    expect([...PRE_APPROVED_RIG_TOOLS]).toContain('rig_chat_history');
-    expect([...PRE_APPROVED_RIG_TOOLS]).toContain('rig_settings');
-    expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_update_settings');
+    expect([...PRE_APPROVED_RIG_TOOLS]).toContain('rig_chat_react');
+    expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_people_invite');
+    expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_comments_add');
+    expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_space_rename');
+    expect([...PRE_APPROVED_RIG_TOOLS]).toContain('rig_chat_read');
+    expect([...PRE_APPROVED_RIG_TOOLS]).toContain('rig_settings_read');
+    expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_settings_update');
+  });
+
+  it('approve and always ask only by names they serve, so a rename never leaves a stale entry', () => {
+    const names = createRigTools(fakeBackend()).map((t) => t.name);
+    for (const name of [...PRE_APPROVED_RIG_TOOLS, ...ALWAYS_ASK_RIG_TOOLS]) expect(names).toContain(name);
+    expect([...ALWAYS_ASK_RIG_TOOLS]).toEqual(['rig_settings_update']);
+  });
+
+  it('say their name from before Rig 0.4.13 on one last line, and serve only the new name', () => {
+    const was: Record<string, string> = {
+      rig_people_invite: 'rig_invite',
+      rig_people_list: 'rig_people',
+      rig_changes_list: 'rig_recent_changes',
+      rig_chat_read: 'rig_chat_history',
+      rig_chat_react: 'rig_react',
+      rig_comments_read: 'rig_file_comments',
+      rig_comments_add: 'rig_comment',
+      rig_space_rename: 'rig_rename_space',
+      rig_settings_read: 'rig_settings',
+      rig_settings_update: 'rig_update_settings',
+    };
+    const tools = createRigTools(fakeBackend());
+    for (const t of tools) {
+      const last = t.description.split('\n').at(-1);
+      if (was[t.name]) expect(last).toBe(`Was called ${was[t.name]} before Rig 0.4.13.`);
+      else expect(t.description).not.toContain('Was called');
+    }
+    for (const old of Object.values(was)) expect(tools.map((t) => t.name)).not.toContain(old);
   });
 
   it('refuse to act once the device is signed in as someone else', async () => {
     const backend = fakeBackend({ whoami: async () => ok({ id: 'u-other' }) });
-    const result = await call(backend, 'rig_invite', { email: 'hugo@acme.co' });
+    const result = await call(backend, 'rig_people_invite', { email: 'hugo@acme.co' });
     expect(result.isError).toBe(true);
     expect(result.text).toContain('signed in to rig as someone else');
     expect(backend.createInvite).not.toHaveBeenCalled();
@@ -250,7 +278,7 @@ describe('rig tools', () => {
 
   it('refuse when who is signed in cannot be checked', async () => {
     const backend = fakeBackend({ whoami: async () => err({ message: 'Your sign-in has expired.' }) });
-    const result = await call(backend, 'rig_people');
+    const result = await call(backend, 'rig_people_list');
     expect(result).toEqual({ text: "Couldn't check who's signed in to rig: Your sign-in has expired.", isError: true });
     expect(backend.listMembers).not.toHaveBeenCalled();
   });
@@ -261,14 +289,14 @@ describe('rig tools', () => {
         throw new Error('boom');
       },
     });
-    expect(await call(backend, 'rig_people')).toEqual({ text: 'rig_people failed: boom', isError: true });
+    expect(await call(backend, 'rig_people_list')).toEqual({ text: 'rig_people_list failed: boom', isError: true });
   });
 });
 
-describe('rig_invite', () => {
+describe('rig_people_invite', () => {
   it("invites through the space's folder, as editor by default, and returns the link", async () => {
     const backend = fakeBackend();
-    const result = await call(backend, 'rig_invite', { email: ' hugo@acme.co ' });
+    const result = await call(backend, 'rig_people_invite', { email: ' hugo@acme.co ' });
     expect(backend.createInvite).toHaveBeenCalledWith('/rigs/space', 'hugo@acme.co', 'editor');
     expect(result.isError).toBeUndefined();
     expect(result.text).toContain('Invited hugo@acme.co to this space as editor.');
@@ -285,39 +313,39 @@ describe('rig_invite', () => {
           email: { sent: false, to: null, reason: 'email_not_configured' },
         }),
     });
-    const result = await call(backend, 'rig_invite', { email: 'hugo@acme.co', role: 'viewer' });
+    const result = await call(backend, 'rig_people_invite', { email: 'hugo@acme.co', role: 'viewer' });
     expect(result.text).toContain('as viewer');
     expect(result.text).toContain('No invite email went out (email_not_configured)');
   });
 
   it("passes on the relay's refusal", async () => {
     const backend = fakeBackend({ createInvite: async () => err({ message: "You don't have permission." }) });
-    const result = await call(backend, 'rig_invite', { email: 'hugo@acme.co' });
+    const result = await call(backend, 'rig_people_invite', { email: 'hugo@acme.co' });
     expect(result).toEqual({ text: "Couldn't invite hugo@acme.co: You don't have permission.", isError: true });
   });
 
   it('makes an open link when asked for one, and never without being asked', async () => {
     const backend = fakeBackend();
-    const result = await call(backend, 'rig_invite', { link: true, role: 'viewer' });
+    const result = await call(backend, 'rig_people_invite', { link: true, role: 'viewer' });
     expect(backend.createInvite).toHaveBeenCalledWith('/rigs/space', null, 'viewer');
     expect(result.text).toContain('Invite link to this space, as viewer. Anyone with it can join.');
     expect(result.text).toContain('https://userig.xyz/join/secret');
     const unasked = fakeBackend();
-    expect((await call(unasked, 'rig_invite', {})).isError).toBe(true);
+    expect((await call(unasked, 'rig_people_invite', {})).isError).toBe(true);
     expect(unasked.createInvite).not.toHaveBeenCalled();
   });
 
   it("refuses a non-email, and a folder that isn't this space's any more", async () => {
     const backend = fakeBackend();
-    expect((await call(backend, 'rig_invite', { email: 'hugo' })).isError).toBe(true);
+    expect((await call(backend, 'rig_people_invite', { email: 'hugo' })).isError).toBe(true);
     const moved = fakeBackend({ bindingAt: () => 'b-other' });
-    expect((await call(moved, 'rig_invite', { email: 'hugo@acme.co' })).isError).toBe(true);
+    expect((await call(moved, 'rig_people_invite', { email: 'hugo@acme.co' })).isError).toBe(true);
     expect(backend.createInvite).not.toHaveBeenCalled();
     expect(moved.createInvite).not.toHaveBeenCalled();
   });
 });
 
-describe('rig_invite to a person', () => {
+describe('rig_people_invite to a person', () => {
   const person = (userId: string, name: string) => ({
     userId,
     clerkUserId: null,
@@ -342,7 +370,7 @@ describe('rig_invite to a person', () => {
 
   it('invites someone your owner knows by name, with no email involved', async () => {
     const backend = withPeople();
-    const result = await call(backend, 'rig_invite', { person: '@Hugo Renaudin' });
+    const result = await call(backend, 'rig_people_invite', { person: '@Hugo Renaudin' });
     expect(backend.invitePerson).toHaveBeenCalledWith('b1', 'u-hugo', 'editor');
     expect(backend.createInvite).not.toHaveBeenCalled();
     expect(result.text).toContain("Invited Hugo Renaudin to this space as editor. They'll see it in Rig and by email.");
@@ -350,39 +378,39 @@ describe('rig_invite to a person', () => {
 
   it('takes a unique first name or an id, and refuses to guess between two', async () => {
     const backend = withPeople();
-    await call(backend, 'rig_invite', { person: 'hugo', role: 'viewer' });
+    await call(backend, 'rig_people_invite', { person: 'hugo', role: 'viewer' });
     expect(backend.invitePerson).toHaveBeenLastCalledWith('b1', 'u-hugo', 'viewer');
-    await call(backend, 'rig_invite', { person: 'u-alex2' });
+    await call(backend, 'rig_people_invite', { person: 'u-alex2' });
     expect(backend.invitePerson).toHaveBeenLastCalledWith('b1', 'u-alex2', 'editor');
-    const both = await call(backend, 'rig_invite', { person: 'Alex' });
+    const both = await call(backend, 'rig_people_invite', { person: 'Alex' });
     expect(both.isError).toBe(true);
     expect(both.text).toContain('Alex Martin (id u-alex1), Alex Chen (id u-alex2)');
   });
 
   it("asks for an email for someone it doesn't know, and says never to look one up", async () => {
     const backend = withPeople();
-    const result = await call(backend, 'rig_invite', { person: 'Jérémie' });
+    const result = await call(backend, 'rig_people_invite', { person: 'Jérémie' });
     expect(result.isError).toBe(true);
     expect(result.text).toContain("Don't look an address up elsewhere.");
     expect(backend.invitePerson).not.toHaveBeenCalled();
   });
 
   it('says so on an app or relay that predates people', async () => {
-    const result = await call(fakeBackend(), 'rig_invite', { person: 'Hugo' });
+    const result = await call(fakeBackend(), 'rig_people_invite', { person: 'Hugo' });
     expect(result.text).toContain('pass `email`');
     const older = fakeBackend({ listPeople: async () => ok({ supported: false, people: [] }), invitePerson: vi.fn() });
-    expect((await call(older, 'rig_invite', { person: 'Hugo' })).text).toContain("This Rig server can't invite by name yet");
+    expect((await call(older, 'rig_people_invite', { person: 'Hugo' })).text).toContain("This Rig server can't invite by name yet");
   });
 
   it("tells the agent not to look addresses up elsewhere", () => {
-    expect(tool(fakeBackend(), 'rig_invite').description).toContain('Never look an address up elsewhere');
+    expect(tool(fakeBackend(), 'rig_people_invite').description).toContain('Never look an address up elsewhere');
   });
 });
 
-describe('rig_people', () => {
+describe('rig_people_list', () => {
   it('lists members and the invites still pending', async () => {
     const backend = fakeBackend();
-    const { text } = await call(backend, 'rig_people');
+    const { text } = await call(backend, 'rig_people_list');
     expect(backend.listMembers).toHaveBeenCalledWith('b1');
     expect(text).toContain('Members (2):');
     expect(text).toContain('- Dylan <dylan@rig.xyz>: owner (your owner)');
@@ -403,22 +431,22 @@ describe('rig_people', () => {
           ],
         }),
     });
-    const { text } = await call(backend, 'rig_people');
+    const { text } = await call(backend, 'rig_people_list');
     expect(text).toContain("Your owner's people, not in this space (1):\n- Hugo Renaudin (id u-hugo)");
   });
 
   it("still lists members when invites can't load", async () => {
     const backend = fakeBackend({ listInvites: async () => err({ message: 'forbidden' }) });
-    const result = await call(backend, 'rig_people');
+    const result = await call(backend, 'rig_people_list');
     expect(result.isError).toBeUndefined();
     expect(result.text).toContain("Pending invites: couldn't load them (forbidden).");
   });
 });
 
-describe('rig_recent_changes', () => {
+describe('rig_changes_list', () => {
   it("lists the space's changed files newest first, with Pulse's story", async () => {
     const backend = fakeBackend();
-    const { text } = await call(backend, 'rig_recent_changes');
+    const { text } = await call(backend, 'rig_changes_list');
     expect(backend.listFiles).toHaveBeenCalledWith('/rigs/space');
     expect(backend.spaceStory).toHaveBeenCalledWith('b1');
     expect(text).toBe(
@@ -434,7 +462,7 @@ describe('rig_recent_changes', () => {
 
   it('looks further back when asked, and works without a story', async () => {
     const backend = fakeBackend({ spaceStory: async () => null });
-    const { text } = await call(backend, 'rig_recent_changes', { hours: 96 });
+    const { text } = await call(backend, 'rig_changes_list', { hours: 96 });
     expect(text).toContain('3 files changed in the last 96 h');
     expect(text).toContain('- notes/old.md (3 d ago)');
     expect(text).not.toContain('Summary');
@@ -442,11 +470,11 @@ describe('rig_recent_changes', () => {
 
   it('says so when nothing changed', async () => {
     const backend = fakeBackend({ listFiles: async () => ok([]), spaceStory: async () => null });
-    expect((await call(backend, 'rig_recent_changes')).text).toBe('No files changed in the last 24 h.');
+    expect((await call(backend, 'rig_changes_list')).text).toBe('No files changed in the last 24 h.');
   });
 });
 
-describe('rig_chat_history', () => {
+describe('rig_chat_read', () => {
   const long = `Launch plan: ${'every detail spelled out. '.repeat(40)}The end.`;
 
   it("reads this space's latest chat in full: people, agents and their replies, comments", async () => {
@@ -463,7 +491,7 @@ describe('rig_chat_history', () => {
       ]),
       runAnswer: vi.fn(async () => ({ agent: 'claude' as const, text: 'Ship Oct 3, then review.', endedAt: '2026-09-25T10:05:00Z' })),
     });
-    const result = await call(backend, 'rig_chat_history');
+    const result = await call(backend, 'rig_chat_read');
     expect(backend.listMessages).toHaveBeenCalledWith('b1', { latest: 30 });
     expect(backend.runAnswer).toHaveBeenCalledWith('b1', 'run-1');
     expect(result.isError).toBeUndefined();
@@ -494,7 +522,7 @@ describe('rig_chat_history', () => {
         msg(2, { body: 'No reactions here' }),
       ]),
     });
-    const result = await call(backend, 'rig_chat_history');
+    const result = await call(backend, 'rig_chat_read');
     expect(result.text).toContain('#1 · 2026-09-25T10:00:00Z · Sam · message\nShip Friday?\n[reactions: 👍 4 🎉 2]');
     expect(result.text).toContain('#2 · 2026-09-25T10:00:00Z · Sam · message\nNo reactions here\n\n');
     expect(result.text).not.toContain('Dylan');
@@ -504,24 +532,24 @@ describe('rig_chat_history', () => {
     const history = Array.from({ length: 40 }, (_, i) => msg((i + 1) * 7));
     const backend = fakeBackend({ listMessages: chatRelay(history) });
 
-    const latest = await call(backend, 'rig_chat_history', { tail: 5 });
+    const latest = await call(backend, 'rig_chat_read', { tail: 5 });
     expect(latest.text).toContain('(5 messages)');
     expect(latest.text).toContain('#252 ·');
     expect(latest.text).toContain('#280 ·');
     expect(latest.text).not.toContain('#245 ·');
-    expect(latest.text).toContain('For older messages, call rig_chat_history with before_seq=252.');
+    expect(latest.text).toContain('For older messages, call rig_chat_read with before_seq=252.');
 
-    const older = await call(backend, 'rig_chat_history', { tail: 5, before_seq: 252 });
+    const older = await call(backend, 'rig_chat_read', { tail: 5, before_seq: 252 });
     expect(backend.listMessages).toHaveBeenLastCalledWith('b1', { latest: 500 });
     expect(older.text).toContain('#217 ·');
     expect(older.text).toContain('#245 ·');
     expect(older.text).not.toContain('#252 ·');
     expect(older.text).toContain('before_seq=217.');
 
-    const first = await call(backend, 'rig_chat_history', { tail: 5, before_seq: 21 });
+    const first = await call(backend, 'rig_chat_read', { tail: 5, before_seq: 21 });
     expect(first.text).toContain('(2 messages)');
     expect(first.text).toContain("That's the start of the chat.");
-    expect(await call(backend, 'rig_chat_history', { before_seq: 7 })).toEqual({ text: 'No messages before #7.' });
+    expect(await call(backend, 'rig_chat_read', { before_seq: 7 })).toEqual({ text: 'No messages before #7.' });
   });
 
   it("reaches messages older than the relay's newest page by walking forward from earlier seqs", async () => {
@@ -529,7 +557,7 @@ describe('rig_chat_history', () => {
     const history = Array.from({ length: 1_200 }, (_, i) => msg(1_000 + i * 3));
     const backend = fakeBackend({ listMessages: chatRelay(history) });
     const oldestOfNewestPage = history[700]!.seq; // 3100
-    const result = await call(backend, 'rig_chat_history', { tail: 3, before_seq: oldestOfNewestPage });
+    const result = await call(backend, 'rig_chat_read', { tail: 3, before_seq: oldestOfNewestPage });
     expect(result.text).toContain('(3 messages)');
     expect(result.text).toContain('#3091 ·');
     expect(result.text).toContain('#3097 ·');
@@ -537,7 +565,7 @@ describe('rig_chat_history', () => {
     expect(result.text).toContain('before_seq=3091.');
     expect(backend.listMessages).toHaveBeenCalledWith('b1', expect.objectContaining({ after: expect.any(String), limit: 500 }));
 
-    const start = await call(backend, 'rig_chat_history', { tail: 3, before_seq: 1_004 });
+    const start = await call(backend, 'rig_chat_read', { tail: 3, before_seq: 1_004 });
     expect(start.text).toContain('#1000 ·');
     expect(start.text).toContain("That's the start of the chat.");
   });
@@ -551,48 +579,48 @@ describe('rig_chat_history', () => {
         msg(4, { body: 'launch moved' }),
       ]),
     });
-    const result = await call(backend, 'rig_chat_history', { query: ' Launch ', tail: 2 });
+    const result = await call(backend, 'rig_chat_read', { query: ' Launch ', tail: 2 });
     expect(backend.listMessages).toHaveBeenCalledWith('b1', { latest: 500 });
     expect(result.text).toContain('3 of the 4 messages searched (#1–#4) match "Launch"; 2 shown, oldest first:');
     expect(result.text).toContain('commented on launch.md — Looks good');
     expect(result.text).toContain('launch moved');
     expect(result.text).not.toContain('The LAUNCH is on');
-    expect(result.text).toContain('To search older messages, call rig_chat_history with before_seq=3.');
+    expect(result.text).toContain('To search older messages, call rig_chat_read with before_seq=3.');
 
-    const none = await call(backend, 'rig_chat_history', { query: 'budget' });
+    const none = await call(backend, 'rig_chat_read', { query: 'budget' });
     expect(none.text).toBe('No messages matching "budget" in the 4 messages searched (#1–#4).\n\nThat\'s the start of the chat.');
   });
 
   it('keeps a call to about 40k characters, dropping the oldest and saying how to page back', async () => {
     const big = 'x'.repeat(CHAT_HISTORY_MAX_CHARS / 2);
     const backend = fakeBackend({ listMessages: chatRelay([msg(1, { body: big }), msg(2, { body: big }), msg(3, { body: big })]) });
-    const result = await call(backend, 'rig_chat_history');
+    const result = await call(backend, 'rig_chat_read');
     expect(result.text).toContain('(1 message)');
     expect(result.text).toContain('#3 ·');
     expect(result.text).not.toContain('#2 ·');
     expect(result.text).toContain('(Stopped at about 40k characters.)');
-    expect(result.text).toContain('For older messages, call rig_chat_history with before_seq=3.');
+    expect(result.text).toContain('For older messages, call rig_chat_read with before_seq=3.');
     expect(result.text.length).toBeLessThan(CHAT_HISTORY_MAX_CHARS + 500);
 
     // One message longer than the budget is shown cut, not dropped.
     const huge = fakeBackend({ listMessages: chatRelay([msg(1, { body: 'y'.repeat(CHAT_HISTORY_MAX_CHARS * 2) })]) });
-    const cut = await call(huge, 'rig_chat_history');
+    const cut = await call(huge, 'rig_chat_read');
     expect(cut.text).toContain('…(cut: this message is too long to show in full)');
     expect(cut.text.length).toBeLessThan(CHAT_HISTORY_MAX_CHARS + 500);
   });
 
   it("only reads the session's own space, and passes on a relay failure", async () => {
     const backend = fakeBackend({ listMessages: vi.fn(async () => err({ message: 'You are offline.' })) });
-    const result = await runRigTool(backend, tool(backend, 'rig_chat_history'), { ...SCOPE, bindingId: 'b2' }, {});
+    const result = await runRigTool(backend, tool(backend, 'rig_chat_read'), { ...SCOPE, bindingId: 'b2' }, {});
     expect(backend.listMessages).toHaveBeenCalledWith('b2', { latest: 30 });
     expect(backend.listMessages).not.toHaveBeenCalledWith('b1', expect.anything());
     expect(result).toEqual({ text: "Couldn't load the space's chat: You are offline.", isError: true });
   });
 });
 
-describe('rig_react', () => {
+describe('rig_chat_react', () => {
   it('says what a reaction is for: no words, possibly the whole answer, and nobody notified', () => {
-    const { description } = tool(fakeBackend(), 'rig_react');
+    const { description } = tool(fakeBackend(), 'rig_chat_react');
     expect(description.startsWith('Acknowledge, vote or agree without words.')).toBe(true);
     expect(description).toContain('A reaction can be the whole answer to a message that only needs one');
     expect(description).toContain("Reacting doesn't trigger or notify any agent.");
@@ -603,34 +631,34 @@ describe('rig_react', () => {
   it("tells the run it reacted, so its card can say so; not when the reaction failed", async () => {
     const noteReaction = vi.fn(async () => {});
     const backend = fakeBackend({ currentRunId: vi.fn(async () => 'run-7'), noteReaction });
-    await runRigTool(backend, tool(backend, 'rig_react'), SCOPE, { messageId: 'msg_a', emoji: '👍' });
+    await runRigTool(backend, tool(backend, 'rig_chat_react'), SCOPE, { messageId: 'msg_a', emoji: '👍' });
     expect(noteReaction).toHaveBeenCalledWith('run-7', '👍');
     const refused = fakeBackend({ currentRunId: vi.fn(async () => 'run-7'), noteReaction, react: vi.fn(async () => err({ message: 'offline' })) });
-    await runRigTool(refused, tool(refused, 'rig_react'), SCOPE, { messageId: 'msg_a', emoji: '🎉' });
+    await runRigTool(refused, tool(refused, 'rig_chat_react'), SCOPE, { messageId: 'msg_a', emoji: '🎉' });
     expect(noteReaction).toHaveBeenCalledTimes(1);
   });
 
   it('reacts as the session\'s agent to a message by #seq or id, and answers with counts only', async () => {
     const backend = fakeBackend({ listMessages: chatRelay([msg(40), msg(42)]) });
-    const bySeq = await call(backend, 'rig_react', { messageId: '#42', emoji: '✅' });
+    const bySeq = await call(backend, 'rig_chat_react', { messageId: '#42', emoji: '✅' });
     expect(backend.react).toHaveBeenCalledWith('b1', 'm42', '✅', 'claude');
     expect(bySeq).toEqual({ text: "Reacted ✅. The message's reactions: ✅ 2." });
-    await call(backend, 'rig_react', { messageId: 'msg_abc123', emoji: '👍' });
+    await call(backend, 'rig_chat_react', { messageId: 'msg_abc123', emoji: '👍' });
     expect(backend.react).toHaveBeenLastCalledWith('b1', 'msg_abc123', '👍', 'claude');
     // The same emoji however it's spelled.
-    await call(backend, 'rig_react', { messageId: '40', emoji: '👍\uFE0F' });
+    await call(backend, 'rig_chat_react', { messageId: '40', emoji: '👍\uFE0F' });
     expect(backend.react).toHaveBeenLastCalledWith('b1', 'm40', '👍', 'claude');
   });
 
   it('refuses text, shortcodes, a missing message, and passes on a relay refusal', async () => {
     const backend = fakeBackend({ listMessages: chatRelay([msg(40)]) });
-    expect((await call(backend, 'rig_react', { messageId: '#40', emoji: ':tada:' })).isError).toBe(true);
-    expect((await call(backend, 'rig_react', { messageId: '#40', emoji: 'ok' })).isError).toBe(true);
-    const missing = await call(backend, 'rig_react', { messageId: '#41', emoji: '👍' });
+    expect((await call(backend, 'rig_chat_react', { messageId: '#40', emoji: ':tada:' })).isError).toBe(true);
+    expect((await call(backend, 'rig_chat_react', { messageId: '#40', emoji: 'ok' })).isError).toBe(true);
+    const missing = await call(backend, 'rig_chat_react', { messageId: '#41', emoji: '👍' });
     expect(missing).toEqual({ text: "There's no message #41 in this space's chat.", isError: true });
     expect(backend.react).not.toHaveBeenCalled();
     const refused = fakeBackend({ react: vi.fn(async () => err({ message: 'Could not add the reaction (relay: not_found).' })) });
-    expect(await call(refused, 'rig_react', { messageId: 'msg_x', emoji: '👍' })).toEqual({
+    expect(await call(refused, 'rig_chat_react', { messageId: 'msg_x', emoji: '👍' })).toEqual({
       text: "Couldn't react: Could not add the reaction (relay: not_found).",
       isError: true,
     });
@@ -639,7 +667,7 @@ describe('rig_react', () => {
   it('allows at most 10 reactions per run, then says so; a new run starts over', async () => {
     let run = 'run-1';
     const backend = fakeBackend({ currentRunId: vi.fn(async () => run) });
-    const react = tool(backend, 'rig_react');
+    const react = tool(backend, 'rig_chat_react');
     const results = [];
     for (let i = 0; i < 11; i++) results.push(await runRigTool(backend, react, SCOPE, { messageId: 'msg_a', emoji: '👍' }));
     expect(results.slice(0, 10).every((r) => !r.isError)).toBe(true);
@@ -656,7 +684,7 @@ describe('rig_react', () => {
 
   it('a failed reaction does not count toward the cap', async () => {
     const backend = fakeBackend({ react: vi.fn(async () => err({ message: 'offline' })) });
-    const react = tool(backend, 'rig_react');
+    const react = tool(backend, 'rig_chat_react');
     for (let i = 0; i < 12; i++) await runRigTool(backend, react, SCOPE, { messageId: 'msg_a', emoji: '👍' });
     expect(backend.react).toHaveBeenCalledTimes(12);
   });
@@ -671,15 +699,15 @@ describe('rig_react', () => {
           { optionId: 'no', name: 'Reject', kind: 'reject_once' },
         ],
       }) as unknown as AcpPermissionRequest;
-    expect(preApprovedRigToolOption(request('mcp__rig__rig_react'))).toBe('allow');
-    expect(preApprovedRigToolOption(request('mcp.rig.rig_react'))).toBe('allow');
+    expect(preApprovedRigToolOption(request('mcp__rig__rig_chat_react'))).toBe('allow');
+    expect(preApprovedRigToolOption(request('mcp.rig.rig_chat_react'))).toBe('allow');
   });
 });
 
-describe('rig_file_comments', () => {
+describe('rig_comments_read', () => {
   it("reads a file's open threads with their ids, quotes, and who said what", async () => {
     const backend = fakeBackend();
-    const { text } = await call(backend, 'rig_file_comments', { path: 'notes/plan.md' });
+    const { text } = await call(backend, 'rig_comments_read', { path: 'notes/plan.md' });
     expect(backend.listComments).toHaveBeenCalledWith('/rigs/space/notes/plan.md');
     expect(text).toBe(
       [
@@ -693,23 +721,23 @@ describe('rig_file_comments', () => {
   });
 
   it('includes resolved threads when asked', async () => {
-    const { text } = await call(fakeBackend(), 'rig_file_comments', { path: 'notes/plan.md', include_resolved: true });
+    const { text } = await call(fakeBackend(), 'rig_comments_read', { path: 'notes/plan.md', include_resolved: true });
     expect(text).toContain('Thread m3 (resolved)');
   });
 
   it('never reads outside the space, or from a different rig nested in it', async () => {
     const backend = fakeBackend({ bindingAt: (dir) => (dir === '/rigs/space/vendor' ? 'b-nested' : 'b1') });
     for (const path of ['../other/plan.md', '/etc/passwd', '', 'vendor/readme.md']) {
-      expect((await call(backend, 'rig_file_comments', { path })).isError).toBe(true);
+      expect((await call(backend, 'rig_comments_read', { path })).isError).toBe(true);
     }
     expect(backend.listComments).not.toHaveBeenCalled();
   });
 });
 
-describe('rig_comment', () => {
+describe('rig_comments_add', () => {
   it('pins a new comment to the quoted passage, as the agent', async () => {
     const backend = fakeBackend();
-    const result = await call(backend, 'rig_comment', { path: 'notes/plan.md', body: 'Confirm with legal', quote: 'ship on Oct 3' });
+    const result = await call(backend, 'rig_comments_add', { path: 'notes/plan.md', body: 'Confirm with legal', quote: 'ship on Oct 3' });
     expect(result.text).toBe('Commented on notes/plan.md (thread m9).');
     expect(backend.readText).toHaveBeenCalledWith('/rigs/space', 'notes/plan.md');
     expect(backend.createComment).toHaveBeenCalledWith({
@@ -722,7 +750,7 @@ describe('rig_comment', () => {
 
   it('replies to a thread', async () => {
     const backend = fakeBackend();
-    const result = await call(backend, 'rig_comment', { path: 'notes/plan.md', body: 'Done.', reply_to: 'm1' });
+    const result = await call(backend, 'rig_comments_add', { path: 'notes/plan.md', body: 'Done.', reply_to: 'm1' });
     expect(result.text).toBe('Replied in thread m1 on notes/plan.md.');
     expect(backend.replyComment).toHaveBeenCalledWith({
       absPath: '/rigs/space/notes/plan.md',
@@ -734,13 +762,13 @@ describe('rig_comment', () => {
 
   it('refuses a quote that is not in the file, an empty body, and both quote and reply_to', async () => {
     const backend = fakeBackend();
-    const missing = await call(backend, 'rig_comment', { path: 'notes/plan.md', body: 'x', quote: 'ship in November' });
+    const missing = await call(backend, 'rig_comments_add', { path: 'notes/plan.md', body: 'x', quote: 'ship in November' });
     expect(missing.isError).toBe(true);
     expect(missing.text).toContain("isn't in notes/plan.md word for word");
-    expect((await call(backend, 'rig_comment', { path: 'notes/plan.md', body: '  ' })).isError).toBe(true);
-    expect((await call(backend, 'rig_comment', { path: 'notes/plan.md', body: 'x' })).text).toContain('needs quote');
+    expect((await call(backend, 'rig_comments_add', { path: 'notes/plan.md', body: '  ' })).isError).toBe(true);
+    expect((await call(backend, 'rig_comments_add', { path: 'notes/plan.md', body: 'x' })).text).toContain('needs quote');
     expect(
-      (await call(backend, 'rig_comment', { path: 'notes/plan.md', body: 'x', quote: 'ship on Oct 3', reply_to: 'm1' })).isError
+      (await call(backend, 'rig_comments_add', { path: 'notes/plan.md', body: 'x', quote: 'ship on Oct 3', reply_to: 'm1' })).isError
     ).toBe(true);
     expect(backend.createComment).not.toHaveBeenCalled();
     expect(backend.replyComment).not.toHaveBeenCalled();
@@ -748,15 +776,15 @@ describe('rig_comment', () => {
 
   it('never writes outside the space', async () => {
     const backend = fakeBackend();
-    expect((await call(backend, 'rig_comment', { path: '../x.md', body: 'x', quote: 'y' })).isError).toBe(true);
+    expect((await call(backend, 'rig_comments_add', { path: '../x.md', body: 'x', quote: 'y' })).isError).toBe(true);
     expect(backend.readText).not.toHaveBeenCalled();
   });
 });
 
-describe('rig_rename_space', () => {
+describe('rig_space_rename', () => {
   it('renames the space through its folder, with the name trimmed onto one line', async () => {
     const backend = fakeBackend();
-    const result = await call(backend, 'rig_rename_space', { name: '  Launch\n  planning ' });
+    const result = await call(backend, 'rig_space_rename', { name: '  Launch\n  planning ' });
     expect(backend.renameSpace).toHaveBeenCalledWith('b1', '/rigs/space', 'Launch planning');
     expect(result).toEqual({ text: 'Renamed this space to "Launch planning". Everyone in it will see the new name.' });
   });
@@ -768,11 +796,11 @@ describe('rig_rename_space', () => {
           ok([{ userId: 'u-dylan', clerkUserId: 'c1', name: 'Dylan', email: 'dylan@rig.xyz', role, avatarUrl: null }]),
       });
     const editor = asRole('editor');
-    expect((await call(editor, 'rig_rename_space', { name: 'Launch planning' })).isError).toBeUndefined();
+    expect((await call(editor, 'rig_space_rename', { name: 'Launch planning' })).isError).toBeUndefined();
     expect(editor.renameSpace).toHaveBeenCalled();
 
     const viewer = asRole('viewer');
-    const refused = await call(viewer, 'rig_rename_space', { name: 'Launch planning' });
+    const refused = await call(viewer, 'rig_space_rename', { name: 'Launch planning' });
     expect(refused).toEqual({
       text: "Your owner is a viewer in this space, so they can't rename it. Ask an owner or editor to.",
       isError: true,
@@ -782,42 +810,42 @@ describe('rig_rename_space', () => {
 
   it("refuses when the owner's role can't be checked, or they aren't a member", async () => {
     const offline = fakeBackend({ listMembers: async () => err({ message: 'network down' }) });
-    const unchecked = await call(offline, 'rig_rename_space', { name: 'Launch planning' });
+    const unchecked = await call(offline, 'rig_space_rename', { name: 'Launch planning' });
     expect(unchecked.isError).toBe(true);
     expect(unchecked.text).toContain('network down');
     const gone = fakeBackend({ listMembers: async () => ok([]) });
-    expect((await call(gone, 'rig_rename_space', { name: 'Launch planning' })).isError).toBe(true);
+    expect((await call(gone, 'rig_space_rename', { name: 'Launch planning' })).isError).toBe(true);
     expect(offline.renameSpace).not.toHaveBeenCalled();
     expect(gone.renameSpace).not.toHaveBeenCalled();
   });
 
   it("refuses an empty or too-long name, and a folder that isn't this space's any more", async () => {
     const backend = fakeBackend();
-    expect((await call(backend, 'rig_rename_space', { name: '   ' })).isError).toBe(true);
-    expect((await call(backend, 'rig_rename_space', {})).isError).toBe(true);
-    expect((await call(backend, 'rig_rename_space', { name: 'x'.repeat(SPACE_NAME_MAX) })).isError).toBeUndefined();
-    const long = await call(backend, 'rig_rename_space', { name: 'x'.repeat(SPACE_NAME_MAX + 1) });
+    expect((await call(backend, 'rig_space_rename', { name: '   ' })).isError).toBe(true);
+    expect((await call(backend, 'rig_space_rename', {})).isError).toBe(true);
+    expect((await call(backend, 'rig_space_rename', { name: 'x'.repeat(SPACE_NAME_MAX) })).isError).toBeUndefined();
+    const long = await call(backend, 'rig_space_rename', { name: 'x'.repeat(SPACE_NAME_MAX + 1) });
     expect(long.isError).toBe(true);
     expect(long.text).toContain(`${SPACE_NAME_MAX} or fewer`);
     expect(backend.renameSpace).toHaveBeenCalledTimes(1);
     const moved = fakeBackend({ bindingAt: () => 'b-other' });
-    expect((await call(moved, 'rig_rename_space', { name: 'Launch planning' })).isError).toBe(true);
+    expect((await call(moved, 'rig_space_rename', { name: 'Launch planning' })).isError).toBe(true);
     expect(moved.renameSpace).not.toHaveBeenCalled();
   });
 
   it('passes on a failed rename', async () => {
     const backend = fakeBackend({ renameSpace: async () => err({ message: 'Could not save rig.toml: EACCES' }) });
-    expect(await call(backend, 'rig_rename_space', { name: 'Launch planning' })).toEqual({
+    expect(await call(backend, 'rig_space_rename', { name: 'Launch planning' })).toEqual({
       text: "Couldn't rename the space: Could not save rig.toml: EACCES",
       isError: true,
     });
   });
 });
 
-describe('rig_settings', () => {
+describe('rig_settings_read', () => {
   it("reads the session's own agent settings in its space, with the valid choices", async () => {
     const backend = fakeBackend();
-    const result = await call(backend, 'rig_settings');
+    const result = await call(backend, 'rig_settings_read');
     expect(backend.agentConfig).toHaveBeenCalledWith(SCOPE);
     expect(backend.roomSees).toHaveBeenCalledWith('b1');
     expect(backend.listSpaceConnectors).toHaveBeenCalledWith('b1');
@@ -832,44 +860,44 @@ describe('rig_settings', () => {
 
   it("still reads chat sees and connectors when the agent's settings can't be reached", async () => {
     const backend = fakeBackend({ agentConfig: vi.fn(async () => err({ message: "this space's folder isn't open on this device" })) });
-    const result = await call(backend, 'rig_settings');
+    const result = await call(backend, 'rig_settings_read');
     expect(result.text).toContain("Model, effort, permissions: couldn't read them");
     expect(result.text).toContain('- Chat sees: steps');
   });
 });
 
-describe('rig_update_settings', () => {
+describe('rig_settings_update', () => {
   it("changes the session's own model and effort through the pill's path, validated against its choices", async () => {
     const backend = fakeBackend();
-    const result = await call(backend, 'rig_update_settings', { model: 'Sonnet 4.6', effort: 'high' });
+    const result = await call(backend, 'rig_settings_update', { model: 'Sonnet 4.6', effort: 'high' });
     expect(backend.setAgentConfig).toHaveBeenCalledWith(SCOPE, { model: 'sonnet', effort: 'high' });
     expect(result.text).toBe(
       'Changed, from your next turn:\n- model: opus (Opus 4.7) → sonnet (Sonnet 4.6)\n- effort: medium → high'
     );
 
     const bad = fakeBackend();
-    const refused = await call(bad, 'rig_update_settings', { model: 'gpt-9', effort: 'high' });
+    const refused = await call(bad, 'rig_settings_update', { model: 'gpt-9', effort: 'high' });
     expect(refused).toEqual({ text: '"gpt-9" isn\'t one of the model choices (opus, sonnet), so nothing changed.', isError: true });
     expect(bad.setAgentConfig).not.toHaveBeenCalled();
-    expect((await call(bad, 'rig_update_settings', {})).text).toContain('Nothing to change');
+    expect((await call(bad, 'rig_settings_update', {})).text).toContain('Nothing to change');
   });
 
   it("only ever changes the session owner's own agent, in its own space", async () => {
     const backend = fakeBackend();
     const codexInB2: RigToolScope = { ...SCOPE, bindingId: 'b2', agent: 'codex' };
-    await runRigTool(backend, tool(backend, 'rig_update_settings'), codexInB2, { effort: 'low', chat_sees: 'answer' });
+    await runRigTool(backend, tool(backend, 'rig_settings_update'), codexInB2, { effort: 'low', chat_sees: 'answer' });
     expect(backend.setAgentConfig).toHaveBeenCalledWith(codexInB2, { effort: 'low' });
     expect(backend.setRoomSees).toHaveBeenCalledWith('b2', 'answer');
     // And never for someone else's session on this device.
     const other = fakeBackend({ whoami: async () => ok({ id: 'u-sam' }) });
-    expect((await call(other, 'rig_update_settings', { effort: 'low' })).isError).toBe(true);
+    expect((await call(other, 'rig_settings_update', { effort: 'low' })).isError).toBe(true);
     expect(other.setAgentConfig).not.toHaveBeenCalled();
   });
 
   it('refuses permissions mode, auto-approve and any other unknown setting, changing nothing', async () => {
     const backend = fakeBackend({ takeOwnerApproval: vi.fn(() => true) });
     for (const input of [{ mode: 'bypassPermissions' }, { auto_approve: true, effort: 'low' }, { autoApproveAgentActions: true }]) {
-      const result = await call(backend, 'rig_update_settings', input);
+      const result = await call(backend, 'rig_settings_update', input);
       expect(result.isError).toBe(true);
       expect(result.text).toContain("Permissions mode and \"Auto-approve agent actions\" are your owner's to change themselves");
     }
@@ -879,19 +907,19 @@ describe('rig_update_settings', () => {
 
   it('narrows chat sees without the owner approval receipt', async () => {
     const backend = fakeBackend();
-    const result = await call(backend, 'rig_update_settings', { chat_sees: 'answer' });
+    const result = await call(backend, 'rig_settings_update', { chat_sees: 'answer' });
     expect(backend.setRoomSees).toHaveBeenCalledWith('b1', 'answer');
     expect(result.text).toBe('Changed, from your next turn:\n- chat sees: steps → answer (only your final reply)');
   });
 
   it("turns a connector off only with the owner's fresh approval: it's gone for everyone in the space", async () => {
     const unapproved = fakeBackend();
-    const refused = await call(unapproved, 'rig_update_settings', { connectors: { disable: ['linear', 'notion'] } });
+    const refused = await call(unapproved, 'rig_settings_update', { connectors: { disable: ['linear', 'notion'] } });
     expect(unapproved.removeSpaceConnector).not.toHaveBeenCalled();
     expect(refused.text).toContain("turn off Linear: changes it for everyone in the space, needs your owner's approval");
 
     const approved = fakeBackend({ takeOwnerApproval: vi.fn(() => true) });
-    const result = await call(approved, 'rig_update_settings', { connectors: { disable: ['linear', 'notion'] } });
+    const result = await call(approved, 'rig_settings_update', { connectors: { disable: ['linear', 'notion'] } });
     // Only one that's on is turned off.
     expect(approved.removeSpaceConnector).toHaveBeenCalledTimes(1);
     expect(approved.removeSpaceConnector).toHaveBeenCalledWith('b1', 'linear');
@@ -900,7 +928,7 @@ describe('rig_update_settings', () => {
 
   it("widens chat sees or turns a connector on only with the owner's fresh approval", async () => {
     const unapproved = fakeBackend();
-    const refused = await call(unapproved, 'rig_update_settings', { chat_sees: 'everything', connectors: { enable: ['notion'] }, effort: 'low' });
+    const refused = await call(unapproved, 'rig_settings_update', { chat_sees: 'everything', connectors: { enable: ['notion'] }, effort: 'low' });
     expect(unapproved.setRoomSees).not.toHaveBeenCalled();
     expect(unapproved.addSpaceConnector).not.toHaveBeenCalled();
     // The rest of the call still goes through.
@@ -910,7 +938,7 @@ describe('rig_update_settings', () => {
     expect(refused.text).toContain('Ask them to allow it when prompted, or to change it themselves in the space panel.');
 
     const approved = fakeBackend({ takeOwnerApproval: vi.fn(() => true) });
-    const done = await call(approved, 'rig_update_settings', { chat_sees: 'everything', connectors: { enable: ['notion', 'linear'] } });
+    const done = await call(approved, 'rig_settings_update', { chat_sees: 'everything', connectors: { enable: ['notion', 'linear'] } });
     expect(approved.takeOwnerApproval).toHaveBeenCalledWith(SCOPE);
     expect(approved.setRoomSees).toHaveBeenCalledWith('b1', 'everything');
     expect(approved.addSpaceConnector).toHaveBeenCalledTimes(1);
@@ -920,12 +948,12 @@ describe('rig_update_settings', () => {
 
   it("refuses an unknown connector, and passes on the relay's refusal", async () => {
     const backend = fakeBackend({ takeOwnerApproval: () => true });
-    expect((await call(backend, 'rig_update_settings', { connectors: { enable: ['myspace'] } })).text).toContain('No connector called myspace');
+    expect((await call(backend, 'rig_settings_update', { connectors: { enable: ['myspace'] } })).text).toContain('No connector called myspace');
     const viewer = fakeBackend({
       takeOwnerApproval: () => true,
       addSpaceConnector: vi.fn(async () => err({ message: "You don't have permission to do that." })),
     });
-    const result = await call(viewer, 'rig_update_settings', { connectors: { enable: ['notion'] } });
+    const result = await call(viewer, 'rig_settings_update', { connectors: { enable: ['notion'] } });
     expect(result).toEqual({ text: "Nothing changed.\n\nNot changed:\n- turn on Notion: You don't have permission to do that.", isError: true });
   });
 });
@@ -949,12 +977,12 @@ describe('the always-ask carve-out', () => {
     expect(wideningParts({ chat_sees: 'steps' }, current)).toEqual([]);
   });
 
-  it('never pre-approves rig_update_settings, while the read-only tools still are', () => {
-    expect(ALWAYS_ASK_RIG_TOOLS.has('rig_update_settings')).toBe(true);
-    expect(preApprovedRigToolOption(request('mcp__rig__rig_update_settings'))).toBeNull();
-    expect(preApprovedRigToolOption(request('mcp.rig.rig_update_settings'))).toBeNull();
-    expect(preApprovedRigToolOption(request('mcp__rig__rig_settings'))).toBe('once');
-    expect(preApprovedRigToolOption(request('mcp.rig.rig_chat_history'))).toBe('once');
+  it('never pre-approves rig_settings_update, while the read-only tools still are', () => {
+    expect(ALWAYS_ASK_RIG_TOOLS.has('rig_settings_update')).toBe(true);
+    expect(preApprovedRigToolOption(request('mcp__rig__rig_settings_update'))).toBeNull();
+    expect(preApprovedRigToolOption(request('mcp.rig.rig_settings_update'))).toBeNull();
+    expect(preApprovedRigToolOption(request('mcp__rig__rig_settings_read'))).toBe('once');
+    expect(preApprovedRigToolOption(request('mcp.rig.rig_chat_read'))).toBe('once');
   });
 
   it("keeps an owner's approval for one call, briefly", () => {
@@ -1047,13 +1075,13 @@ describe('rig_space_describe', () => {
     expect(text).toContain("Your owner's own setup also gives you: Sentry.");
     expect(text).toContain("MCP servers this space's .mcp.json declares: posthog.");
     for (const t of all) expect(text).toContain(`- ${t.name}: `);
-    expect(text).toContain('- rig_invite: Invite a person to this rig space.');
+    expect(text).toContain('- rig_people_invite: Invite a person to this rig space.');
     expect(text.length).toBeLessThan(4_000);
   });
 
   it('lists every tool the server offers when given them, and is pre-approved', async () => {
     const extra: RigTool = {
-      name: 'browser_read',
+      name: 'rig_browser_read',
       description: 'Read a page as your owner sees it. More detail here.',
       inputSchema: {},
       annotations: { title: 'Read a page', readOnlyHint: true },
@@ -1061,7 +1089,7 @@ describe('rig_space_describe', () => {
     };
     const tools: RigTool[] = [...createRigTools(backend(), () => NOW, () => tools), extra];
     const result = await runRigTool(backend(), tools[0]!, SCOPE, {});
-    expect(result.text).toContain('- browser_read: Read a page as your owner sees it.');
+    expect(result.text).toContain('- rig_browser_read: Read a page as your owner sees it.');
     expect(result.text).not.toContain('More detail here');
     expect(PRE_APPROVED_RIG_TOOLS.has('rig_space_describe')).toBe(true);
   });
@@ -1087,12 +1115,12 @@ describe('rig_space_describe', () => {
   it('keeps the tools when the rest has to be cut', () => {
     const files = Array.from({ length: 60 }, (_, i) => ({ relPath: `${'deep/'.repeat(30)}n${i}.md`, mtimeMs: NOW }));
     const text = formatSpaceOverview(
-      { name: 'big', description: null, people: [], files, skills: [], connectors: { on: [] }, projectServers: [], tools: [{ name: 'rig_people', description: 'List who is here.' }] },
+      { name: 'big', description: null, people: [], files, skills: [], connectors: { on: [] }, projectServers: [], tools: [{ name: 'rig_people_list', description: 'List who is here.' }] },
       NOW
     );
     expect(text.length).toBeLessThanOrEqual(DESCRIBE_MAX_CHARS + 40);
     expect(text).toContain('…(cut to keep this short)');
-    expect(text).toContain('- rig_people: List who is here.');
+    expect(text).toContain('- rig_people_list: List who is here.');
   });
 
   it('says what it could not read, and still describes the rest', () => {

@@ -906,7 +906,7 @@ export function RoomView({
               if (result.success) configCache.current.set(agent, Promise.resolve(result.data));
               return result.success ? result.data : { error: result.error };
             },
-            // Your agent changed its own settings (rig_update_settings).
+            // Your agent changed its own settings (rig_settings_update).
             watch: (agent, onChange) =>
               events.on(spacesAgentConfigChangedChannel, (changed) => {
                 if (changed.bindingId !== bindingId || changed.agent !== agent) return;

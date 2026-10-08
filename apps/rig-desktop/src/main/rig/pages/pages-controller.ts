@@ -60,7 +60,7 @@ export function pinHiddenContext(url: string, thread: Pick<PageThread, 'n' | 'qu
     '<rig_page_pin>',
     `This question was asked in a comment pinned on a web page open in the space: ${url}`,
     `It is about pin ${thread.n}, on a ${thread.anchor.tag} reading "${thread.quote}"${board ? ` (on the board starting "${board}")` : ''}.`,
-    `Look at the page with browser_pins, browser_read and browser_screenshot (pin ${thread.n}) using that link; read a board in full rather than guessing at small text.`,
+    `Look at the page with rig_browser_pins, rig_browser_read and rig_browser_screenshot (pin ${thread.n}) using that link; read a board in full rather than guessing at small text.`,
     "Your final message is posted as your reply in that pin's thread, where the person asked: keep it to a few sentences.",
     '</rig_page_pin>',
   ].join('\n');

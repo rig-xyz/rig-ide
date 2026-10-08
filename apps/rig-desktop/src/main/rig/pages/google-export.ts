@@ -2,7 +2,7 @@ import { net, type Session } from 'electron';
 
 /**
  * Google Docs, Sheets and Slides draw their text on a canvas, so reading the
- * page's DOM gets the title and little else. For those links `browser_read`
+ * page's DOM gets the title and little else. For those links `rig_browser_read`
  * asks Google for the file's own text export instead, in the hidden tab's
  * session (the pages browser profile), so it's exactly what the person's
  * sign-in there can see.
@@ -205,7 +205,7 @@ export function sessionGet(session: Session): ExportGet {
 }
 
 /**
- * What `browser_read` gets for a link: the export of the Google file the
+ * What `rig_browser_read` gets for a link: the export of the Google file the
  * agent's tab (`tab`, already loaded and past the sign-in check) shows, in
  * that tab's session. Null when the link isn't a Google editor link.
  */

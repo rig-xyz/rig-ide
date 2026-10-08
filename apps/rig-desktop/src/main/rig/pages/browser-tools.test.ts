@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PRE_APPROVED_BROWSER_TOOLS } from '../spaces/rig-tools';
 import { BROWSER_TOOLS, type BrowserToolsDeps } from './browser-tools';
 
-// browser_read on a Google editor: the export's full text when there is one,
+// rig_browser_read on a Google editor: the export's full text when there is one,
 // else the page as rendered, saying why.
 
 let rendered: unknown = 'Only the part on screen';
@@ -17,7 +18,7 @@ vi.mock('./page-frames', () => ({
   locateOnPage: vi.fn(),
 }));
 
-const read = BROWSER_TOOLS.find((t) => t.name === 'browser_read')!;
+const read = BROWSER_TOOLS.find((t) => t.name === 'rig_browser_read')!;
 const URL = 'https://docs.google.com/document/d/abc/edit';
 const deps = (fullText?: BrowserToolsDeps['fullText']): BrowserToolsDeps => ({ pinsFor: async () => [], signInWall: async () => null, fullText });
 const text = (r: Awaited<ReturnType<typeof read.run>>) => r.content.map((c) => (c.type === 'text' ? c.text : '')).join('');
@@ -27,7 +28,18 @@ beforeEach(() => {
   executeJavaScript.mockClear();
 });
 
-describe('browser_read with a Google export', () => {
+describe('browser tool names', () => {
+  it('are rig_browser_*, each saying its name from before Rig 0.4.13 on one last line', () => {
+    expect(BROWSER_TOOLS.map((t) => [t.name, t.description.split('\n').at(-1)])).toEqual([
+      ['rig_browser_pins', 'Was called browser_pins before Rig 0.4.13.'],
+      ['rig_browser_read', 'Was called browser_read before Rig 0.4.13.'],
+      ['rig_browser_screenshot', 'Was called browser_screenshot before Rig 0.4.13.'],
+    ]);
+    expect([...PRE_APPROVED_BROWSER_TOOLS]).toEqual(BROWSER_TOOLS.map((t) => t.name));
+  });
+});
+
+describe('rig_browser_read with a Google export', () => {
   it("returns the export's full text, saying so, instead of the DOM", async () => {
     const r = await read.run({ url: URL }, deps(async () => ({ ok: true, label: 'Google Docs', text: '# Plan\n\nAll of it.', truncated: false })));
     expect(text(r)).toBe(`Plan - Google Docs (${URL})\n\n[Full document text via Google Docs export, not just what's on screen.]\n\n# Plan\n\nAll of it.`);

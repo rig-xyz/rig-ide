@@ -5,7 +5,7 @@ type Choice = { selected: string | null; options: Array<{ id: string; name: stri
 
 /**
  * A space agent's model / effort changed from outside its settings pill (the
- * agent's own `rig_update_settings`): the new settings, so an open pill shows
+ * agent's own `rig_settings_update`): the new settings, so an open pill shows
  * them without refetching.
  */
 export const spacesAgentConfigChangedChannel = defineEvent<{

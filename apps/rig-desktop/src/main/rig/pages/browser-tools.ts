@@ -32,7 +32,7 @@ export interface BrowserToolsDeps {
    */
   signInWall?(url: string): Promise<string | null>;
   /**
-   * Google Docs, Sheets and Slides draw on a canvas, so `browser_read` asks
+   * Google Docs, Sheets and Slides draw on a canvas, so `rig_browser_read` asks
    * for the file's own text export instead (`google-export.ts`). Null for
    * any other page; absent, every page is read as rendered.
    */
@@ -100,10 +100,10 @@ const URL_FIELD = z.string().describe('The page link, as posted in the space.');
 
 export const BROWSER_TOOLS: readonly BrowserTool[] = [
   {
-    name: 'browser_pins',
+    name: 'rig_browser_pins',
     title: 'Browser · pins',
     description:
-      "The comments pinned on a page in this space: each pin's number, its comment, the board it's on and what it points at. Start here when someone asks about a pin.",
+      "The comments pinned on a page in this space: each pin's number, its comment, the board it's on and what it points at. Start here when someone asks about a pin." + "\nWas called browser_pins before Rig 0.4.13.",
     inputSchema: { url: URL_FIELD },
     async run(input, deps) {
       const url = webUrl(input.url);
@@ -118,17 +118,17 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
       for (const p of pins) {
         const at = await locateOnPage(page, p.anchor).catch(() => ({ found: false }));
         const b = boards.find((x) => x.i === p.anchor.hops[0]?.index);
-        const what = p.anchor.text ? `a ${p.anchor.tag} reading "${p.anchor.text.slice(0, 80)}"` : `a ${p.anchor.tag} with no text (use browser_screenshot with this pin)`;
+        const what = p.anchor.text ? `a ${p.anchor.tag} reading "${p.anchor.text.slice(0, 80)}"` : `a ${p.anchor.tag} with no text (use rig_browser_screenshot with this pin)`;
         lines.push(`Pin ${p.n}${at.found ? '' : ' (not on the page any more)'}: "${p.comment}" on ${b ? `board ${b.i} (${b.title.slice(0, 50)})` : 'the page'}, ${what}`);
       }
       return say(lines.join('\n'));
     },
   },
   {
-    name: 'browser_read',
+    name: 'rig_browser_read',
     title: 'Browser · read',
     description:
-      "Read a page as your owner sees it. Without board: its title, a list of its boards (canvases and decks keep each board in its own frame), and the text of boards with pins or on screen. With board (words from a board's title, or its number): that board in full. A Google Doc, Sheet or Slides deck comes back as the whole file's text (a sheet as CSV of one tab: the link's #gid, else the first). Charts and images have no text: use browser_screenshot.",
+      "Read a page as your owner sees it. Without board: its title, a list of its boards (canvases and decks keep each board in its own frame), and the text of boards with pins or on screen. With board (words from a board's title, or its number): that board in full. A Google Doc, Sheet or Slides deck comes back as the whole file's text (a sheet as CSV of one tab: the link's #gid, else the first). Charts and images have no text: use rig_browser_screenshot." + "\nWas called browser_read before Rig 0.4.13.",
     inputSchema: { url: URL_FIELD, board: z.union([z.string(), z.number()]).optional() },
     async run(input, deps) {
       const url = webUrl(input.url);
@@ -162,15 +162,15 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
         budget -= t.length;
         lines.push('', `--- Board ${b.i}: ${b.title}`, t);
       }
-      lines.push('', 'Read any other board in full with browser_read and its board.');
+      lines.push('', 'Read any other board in full with rig_browser_read and its board.');
       return say(lines.join('\n'));
     },
   },
   {
-    name: 'browser_screenshot',
+    name: 'rig_browser_screenshot',
     title: 'Browser · screenshot',
     description:
-      "Look at part of a page as an image. pin (a pin number from browser_pins) or text (a phrase on the page) gives that element with context; board (words from a title, or its number) gives the whole board. Boards are re-rendered at full size, so they're legible whatever the zoom. With none of them: the top of the page.",
+      "Look at part of a page as an image. pin (a pin number from rig_browser_pins) or text (a phrase on the page) gives that element with context; board (words from a title, or its number) gives the whole board. Boards are re-rendered at full size, so they're legible whatever the zoom. With none of them: the top of the page." + "\nWas called browser_screenshot before Rig 0.4.13.",
     inputSchema: {
       url: URL_FIELD,
       pin: z.number().int().optional(),
