@@ -11,13 +11,19 @@
  * the component to mean anything.
  */
 
-export type PreviewMode = 'preview' | 'edit';
+/** Browser: an html file as a working page (`rig-file://`), next to Edit. */
+export type PreviewMode = 'preview' | 'edit' | 'browser';
 
 const modeByPath = new Map<string, PreviewMode>();
 
 /** Preview is the default for a markdown file this session hasn't recorded a choice for yet. */
 export function getPreviewMode(path: string): PreviewMode {
   return modeByPath.get(path) ?? 'preview';
+}
+
+/** The mode chosen for this file this session, or null when none was. */
+export function rememberedPreviewMode(path: string): PreviewMode | null {
+  return modeByPath.get(path) ?? null;
 }
 
 export function setPreviewMode(path: string, mode: PreviewMode): void {

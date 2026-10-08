@@ -92,12 +92,13 @@ const FILE_LINK_SANITIZE_SCHEMA = {
   ...SANITIZE_SCHEMA,
   protocols: {
     ...SANITIZE_SCHEMA.protocols,
-    href: [...(SANITIZE_SCHEMA.protocols?.href ?? []), 'file'],
+    // `rig-file://`: an agent's link to a space file shown as a page.
+    href: [...(SANITIZE_SCHEMA.protocols?.href ?? []), 'file', 'rig-file'],
   },
 };
 
 function fileLinkUrlTransform(value: string): string {
-  return /^file:/i.test(value) ? value : urlTransform(value);
+  return /^(file|rig-file):/i.test(value) ? value : urlTransform(value);
 }
 
 /** A file link, as handed to `renderFileLink`: the href as written, the link's own text, and whether that text was `code`. */

@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { WebviewTag } from 'electron';
 import { ExternalLink } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useViewRequest } from '@renderer/features/artifact/view-request';
 import { useRunnableAgents, type RunnableAgent } from '@renderer/features/chat/use-runnable-agents';
 import { CommentCount, CommentModeControl, CommentModeStatus, shortAgentName } from '@renderer/features/comment-mode/comment-mode-ui';
 import { useCommentMode } from '@renderer/features/comment-mode/use-comment-mode';
@@ -79,12 +80,15 @@ export function PageView({
   title,
   bindingId,
   onTitle,
+  reloadKey,
 }: {
   url: string;
   title: string;
   bindingId: string;
   /** The page's own title, once it loads: the tab takes it. */
   onTitle?: (title: string) => void;
+  /** Changing it reloads the page: a space's file that was just written. */
+  reloadKey?: number;
 }) {
   // Held in a ref: a new callback from the parent must not recreate the page.
   const onTitleRef = useRef(onTitle);
@@ -211,6 +215,41 @@ export function PageView({
     };
     // A new link is a new tab (keyed by url), so url never changes here.
   }, [browserId, url]);
+
+  // Reloads when the file behind it changes (Browser mode).
+  const lastReloadKey = useRef(reloadKey);
+  useEffect(() => {
+    if (lastReloadKey.current === reloadKey) return;
+    lastReloadKey.current = reloadKey;
+    viewRef.current?.reload();
+  }, [reloadKey]);
+
+  // An agent showing the asker a passage: found and scrolled to once the page
+  // is up, then left selected.
+  const [findText, setFindText] = useState<string | null>(null);
+  useViewRequest(url, (request) => {
+    if (request.passage) setFindText(request.passage);
+  });
+  const findDoneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (findDoneTimer.current) clearTimeout(findDoneTimer.current);
+  }, []);
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!findText || webContentsId === null || !view) return;
+    const find = () => {
+      view.removeEventListener('did-stop-loading', find);
+      view.findInPage(findText);
+      if (findDoneTimer.current) clearTimeout(findDoneTimer.current);
+      findDoneTimer.current = setTimeout(() => view.stopFindInPage('keepSelection'), 2_500);
+      setFindText(null);
+    };
+    if (view.isLoading()) view.addEventListener('did-stop-loading', find);
+    else find();
+    return () => {
+      view.removeEventListener('did-stop-loading', find);
+    };
+  }, [findText, webContentsId]);
 
   // A new sign-in for the site (the sheet, Settings, Keep in step), or one
   // removed, reloads the page as that account (cases 9 and 13).

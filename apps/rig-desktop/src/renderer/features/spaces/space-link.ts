@@ -17,8 +17,13 @@
  *     like this space's (`/Users/sam/Rig/growth/plan.md` for our
  *     `/Users/me/Rig/growth`): a teammate's agent wrote it, so it's the same
  *     file in their copy of the space — the rest after that folder;
- *   - anything else absolute → outside: refuse, and say so.
+ *   - anything else absolute → outside: refuse, and say so;
+ *   - `rig-file://<binding id>/<path>` (an agent's link to a space file as
+ *     a page) → inside when it's this space, given `bindingId`; outside for
+ *     another space or an unsafe path.
  */
+
+import { parseRigFileUrl } from '@shared/spaces/rig-file';
 
 export type SpaceLink =
   | { kind: 'inside'; relPath: string }
@@ -73,8 +78,13 @@ function startsWith(path: string[], prefix: string[], caseInsensitive: boolean):
   );
 }
 
-export function resolveSpaceLink(link: string, root: string): SpaceLink {
+export function resolveSpaceLink(link: string, root: string, bindingId?: string): SpaceLink {
   let raw = link.trim();
+  if (/^rig-file:/i.test(raw)) {
+    const target = parseRigFileUrl(raw);
+    if (!target || !target.relPath || (bindingId && target.bindingId !== bindingId.toLowerCase())) return { kind: 'outside', path: link };
+    return { kind: 'inside', relPath: target.relPath };
+  }
   if (/^file:/i.test(raw)) {
     try {
       raw = decode(new URL(raw).pathname);
