@@ -8,7 +8,7 @@ import {
   writeLastSeen,
   writeOpenedAt,
 } from '@renderer/features/spaces/room-read-marker';
-import { useNotificationSummary, useSpaceNotifications } from '@renderer/features/notifications/use-notifications';
+import { useNotificationSummary } from '@renderer/features/notifications/use-notifications';
 import { directPhrase, type RigNotificationSpaceSummary } from '@shared/rig/notifications';
 import { newGroupId, type HomeGroup } from '@shared/rig/home-layout';
 import { NeedsConnection } from '@renderer/features/shell/needs-connection';
@@ -41,6 +41,7 @@ import {
   withNotifications,
   deriveSpaceRowLine,
   filterSpaceRows,
+  hasUnread,
   lastActivityAt,
   readPinnedSpaceIds,
   SPACE_FILTER_LABELS,
@@ -153,7 +154,26 @@ export function SpacesCard({
     offline,
   });
   const needsYouIds = new Set([...signals].filter(([, s]) => s.needsYou).map(([id]) => id));
-  const filterCtx = { statusByBinding, pinnedIds: pinned, selfUserId, needsYouIds };
+  // Each row's attention with its notifications folded in: what its tile,
+  // line and weight show, and what the Unread filter reads.
+  const summaryByBinding = new Map(summary.spaces.map((s) => [s.bindingId, s]));
+  const shownByBinding = new Map(
+    named.map((r) => {
+      const n = summaryByBinding.get(r.bindingId);
+      const base = attentionByBinding.get(r.bindingId) ?? IDLE;
+      return [
+        r.bindingId,
+        withNotifications(
+          base,
+          statusByBinding.get(r.bindingId),
+          n ? { ...n, known: true } : { level: 'all', directUnread: 0, known: false },
+          n?.latestDirect ? { phrase: directPhrase(n.latestDirect) } : null
+        ),
+      ] as const;
+    })
+  );
+  const unreadIds = new Set([...shownByBinding].filter(([, a]) => hasUnread(a)).map(([id]) => id));
+  const filterCtx = { statusByBinding, selfUserId, needsYouIds, unreadIds };
   const filtered = filterSpaceRows(named, filter, filterCtx);
   const recentOrder = new Map(
     sortSpaceRowsByActivity(filtered, statusByBinding, attentionByBinding, selfUserId, now, offlineActivity).map(
@@ -161,7 +181,10 @@ export function SpacesCard({
     )
   );
   const view = buildSpaceSections({ rows: filtered, layout, signals, pinned, recentOrder, now, keepVisible: madeHere });
-  const needsYouCount = filterSpaceRows(named, 'needsYou', filterCtx).length;
+  const filterCount: Partial<Record<SpaceRowFilter, number>> = {
+    needsYou: filterSpaceRows(named, 'needsYou', filterCtx).length,
+    unread: unreadIds.size,
+  };
   const nameOf = new Map(named.map((r) => [r.bindingId, r.name]));
   const customGroups = layout.groupBy === 'custom';
   const highlightFolded = view.folded.some((r) => r.bindingId === highlightBindingId);
@@ -211,7 +234,8 @@ export function SpacesCard({
         key={row.bindingId}
         row={row}
         status={statusByBinding.get(row.bindingId)}
-        attention={attentionByBinding.get(row.bindingId) ?? { kind: 'idle', lastActivityAt: null }}
+        attention={shownByBinding.get(row.bindingId) ?? IDLE}
+        muted={summaryByBinding.get(row.bindingId)?.level === 'nothing'}
         topic={offline ? undefined : topicByBinding?.get(row.bindingId)}
         onOpenPath={onOpenPath}
         pinned={pinned.has(row.bindingId)}
@@ -270,7 +294,9 @@ export function SpacesCard({
               )}
             >
               {SPACE_FILTER_LABELS[f]}
-              {f === 'needsYou' && needsYouCount > 0 && ` · ${needsYouCount}`}
+              {(filterCount[f] ?? 0) > 0 && (
+                <span className="ml-1 font-mono text-2xs tabular-nums">{filterCount[f]}</span>
+              )}
             </button>
           ))}
         </div>
@@ -358,6 +384,8 @@ export function SpacesCard({
 }
 
 type DragItem = { kind: 'space'; bindingId: string; groupId: string | null } | { kind: 'group'; id: string };
+
+const IDLE: SpaceAttention = { kind: 'idle', lastActivityAt: null };
 
 /** Each space's needs-you / live / last-activity signals, for grouping by state and folding quiet spaces. */
 function spaceSignalsOf(
@@ -512,7 +540,8 @@ function Faces({ bindingId }: { bindingId: string }) {
 function SpaceRow({
   row,
   status,
-  attention: baseAttention,
+  attention: shown,
+  muted,
   topic,
   onOpenPath,
   pinned,
@@ -523,7 +552,10 @@ function SpaceRow({
 }: {
   row: HomeRigRow;
   status: RigSpaceStatus | undefined;
+  /** The row's attention, notifications folded in (`withNotifications`). */
   attention: SpaceAttention;
+  /** The space's level is "nothing": the row reads quiet and dimmed. */
+  muted: boolean;
   topic?: RigRecentTheme;
   onOpenPath: (path: string) => void;
   pinned: boolean;
@@ -536,19 +568,13 @@ function SpaceRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Notifications fold into the row's own dice and line ("Hugo mentioned
-  // you"), not a badge of their own; a muted space reads quiet and dimmed.
-  const notifications = useSpaceNotifications(row.bindingId);
-  const shown = withNotifications(
-    baseAttention,
-    status,
-    notifications,
-    notifications.latestDirect ? { phrase: directPhrase(notifications.latestDirect) } : null
-  );
+  // you"), not a badge of their own (the card folds them in); a muted space
+  // reads quiet and dimmed.
   // One line, the highest rung of the ladder wins (`deriveSpaceRowLine`); the
   // topic leads only new or today's activity. Rung 1, sync, is `syncLine` below.
   const line = deriveSpaceRowLine({ status, attention: shown, topic: topic?.name, now: Date.now() });
   const statusLine = line.text;
-  const dimmed = notifications.level === 'nothing';
+  const dimmed = muted;
   const path = row.kind === 'local' ? row.path : null;
   const relayStatus = row.kind === 'relayOnly' ? deriveRelayOnlyRowStatus(row) : null;
   const openablePath = path ?? (relayStatus?.kind === 'localPath' ? relayStatus.path : null);

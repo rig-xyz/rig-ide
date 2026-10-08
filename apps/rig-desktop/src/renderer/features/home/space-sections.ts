@@ -61,7 +61,7 @@ export type SpaceSectionsInput<T extends { bindingId: string; name: string }> = 
 };
 
 /**
- * Inside a section: spaces that need you first, then pinned ones, then the
+ * Inside a section: pinned spaces first, then spaces that need you, then the
  * chosen order (recent activity, or name).
  */
 export function compareSpaceRows<T extends { bindingId: string; name: string }>(
@@ -69,12 +69,12 @@ export function compareSpaceRows<T extends { bindingId: string; name: string }>(
 ): (a: T, b: T) => number {
   const recent = (row: T) => input.recentOrder.get(row.bindingId) ?? Number.MAX_SAFE_INTEGER;
   return (a, b) => {
+    const pin = Number(input.pinned.has(b.bindingId)) - Number(input.pinned.has(a.bindingId));
+    if (pin !== 0) return pin;
     const needs =
       Number(input.signals.get(b.bindingId)?.needsYou ?? false) -
       Number(input.signals.get(a.bindingId)?.needsYou ?? false);
     if (needs !== 0) return needs;
-    const pin = Number(input.pinned.has(b.bindingId)) - Number(input.pinned.has(a.bindingId));
-    if (pin !== 0) return pin;
     if (input.layout.sortBy === 'name') {
       const byName = a.name.localeCompare(b.name, undefined, {
         sensitivity: 'base',

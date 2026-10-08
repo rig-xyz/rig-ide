@@ -135,7 +135,7 @@ describe('buildSpaceSections — state and none', () => {
 describe('buildSpaceSections — sorting', () => {
   const rows = [row('r1', 'zeta'), row('r2', 'Alpha'), row('r3', 'beta'), row('r4', 'gamma')];
 
-  it('needs you first, then pinned, then recent activity', () => {
+  it('pinned first, then needs you, then recent activity', () => {
     const view = buildSpaceSections(
       input({
         rows,
@@ -143,7 +143,20 @@ describe('buildSpaceSections — sorting', () => {
         pinned: new Set(['r3']),
       })
     );
-    expect(ids(view.sections[0]!.rows)).toEqual(['r4', 'r3', 'r1', 'r2']);
+    expect(ids(view.sections[0]!.rows)).toEqual(['r3', 'r4', 'r1', 'r2']);
+  });
+
+  it('pinned spaces lead their own group, and the name order still holds inside', () => {
+    const layout: HomeLayout = {
+      ...DEFAULT_HOME_LAYOUT,
+      sortBy: 'name',
+      groups: [{ id: 'g1', name: 'Launch', collapsed: false, spaces: ['r1', 'r2'] }],
+    };
+    const view = buildSpaceSections(input({ rows, layout, pinned: new Set(['r1', 'r4']) }));
+    expect(shape(view)).toEqual([
+      ['Launch', ['r1', 'r2']],
+      ['Ungrouped', ['r4', 'r3']],
+    ]);
   });
 
   it('or by name, ignoring case', () => {

@@ -8,6 +8,8 @@ import {
   deriveSpaceStatusLine,
   DICE_FACES,
   filterSpaceRows,
+  hasUnread,
+  SPACE_FILTER_LABELS,
   idlePattern,
   indexSpaceStatuses,
   RESERVED_PATTERNS,
@@ -393,7 +395,7 @@ describe('filterSpaceRows', () => {
     ['a', { bindingId: 'a', running: [running({ activity: 'waiting', ownerUserId: 'me' })] }],
     ['b', { bindingId: 'b', running: [running({ activity: 'editing' })] }],
   ]);
-  const ctx = { statusByBinding, pinnedIds: new Set(['c']), selfUserId: 'me' };
+  const ctx = { statusByBinding, selfUserId: 'me' };
 
   it('all — everything', () => {
     expect(filterSpaceRows(rows, 'all', ctx).map((r) => r.bindingId)).toEqual(['a', 'b', 'c']);
@@ -401,11 +403,15 @@ describe('filterSpaceRows', () => {
   it('needsYou — only rows waiting on the caller', () => {
     expect(filterSpaceRows(rows, 'needsYou', ctx).map((r) => r.bindingId)).toEqual(['a']);
   });
-  it('active — anything running', () => {
-    expect(filterSpaceRows(rows, 'active', ctx).map((r) => r.bindingId)).toEqual(['a', 'b']);
+  it('unread — the rows the card says have something unread, none without the set', () => {
+    expect(filterSpaceRows(rows, 'unread', { ...ctx, unreadIds: new Set(['b', 'c']) }).map((r) => r.bindingId)).toEqual([
+      'b',
+      'c',
+    ]);
+    expect(filterSpaceRows(rows, 'unread', ctx)).toEqual([]);
   });
-  it('pinned — only pinned bindingIds', () => {
-    expect(filterSpaceRows(rows, 'pinned', ctx).map((r) => r.bindingId)).toEqual(['c']);
+  it('the chips are All, Needs you and Unread: Active and Pinned are gone', () => {
+    expect(Object.values(SPACE_FILTER_LABELS)).toEqual(['All', 'Needs you', 'Unread']);
   });
   it('needsYou — the card own needs-you set when given, mentions included', () => {
     expect(filterSpaceRows(rows, 'needsYou', { ...ctx, needsYouIds: new Set(['a', 'c']) }).map((r) => r.bindingId)).toEqual([
@@ -555,5 +561,16 @@ describe('withNotifications', () => {
   it('without unread rows about you, nothing changes', () => {
     const messages = { kind: 'messages', count: 2 } as const;
     expect(withNotifications(messages, undefined, all, null)).toBe(messages);
+  });
+});
+
+describe('hasUnread', () => {
+  it('new messages and rows about you are unread; live, finished, failed and idle are not', () => {
+    expect(hasUnread({ kind: 'messages', count: 3 })).toBe(true);
+    expect(hasUnread({ kind: 'forYou', count: 1, line: 'Hugo mentioned you', messages: 0 })).toBe(true);
+    expect(hasUnread({ kind: 'live', state: 'editing' })).toBe(false);
+    expect(hasUnread({ kind: 'finished', agent: 'claude', endedAt: 1 })).toBe(false);
+    expect(hasUnread({ kind: 'failed', agent: 'claude', endedAt: 1 })).toBe(false);
+    expect(hasUnread({ kind: 'idle', lastActivityAt: null })).toBe(false);
   });
 });

@@ -348,18 +348,21 @@ export function spaceIsActive(status: RigSpaceStatus | undefined): boolean {
   return (status?.running.length ?? 0) > 0;
 }
 
-export type SpaceRowFilter = 'all' | 'needsYou' | 'active' | 'pinned';
+export type SpaceRowFilter = 'all' | 'needsYou' | 'unread';
 
 export const SPACE_FILTER_LABELS: Record<SpaceRowFilter, string> = {
   all: 'All',
   needsYou: 'Needs you',
-  active: 'Active',
-  pinned: '★ Pinned',
+  unread: 'Unread',
 };
+
+/** Something new in the space for you to read: messages past your read position, or rows about you. */
+export function hasUnread(attention: SpaceAttention): boolean {
+  return attention.kind === 'messages' || attention.kind === 'forYou';
+}
 
 export type SpaceFilterContext = {
   statusByBinding: ReadonlyMap<string, RigSpaceStatus>;
-  pinnedIds: ReadonlySet<string>;
   selfUserId: string | null;
   /**
    * Spaces that need you, mentions and requests included (the Spaces card's
@@ -367,6 +370,8 @@ export type SpaceFilterContext = {
    * run of yours waiting on approval.
    */
   needsYouIds?: ReadonlySet<string>;
+  /** Spaces with something unread (`hasUnread` on each row's attention). Without it, "Unread" is empty. */
+  unreadIds?: ReadonlySet<string>;
 };
 
 export function filterSpaceRows<T extends { bindingId: string }>(
@@ -377,10 +382,8 @@ export function filterSpaceRows<T extends { bindingId: string }>(
   switch (filter) {
     case 'all':
       return [...rows];
-    case 'pinned':
-      return rows.filter((r) => ctx.pinnedIds.has(r.bindingId));
-    case 'active':
-      return rows.filter((r) => spaceIsActive(ctx.statusByBinding.get(r.bindingId)));
+    case 'unread':
+      return rows.filter((r) => ctx.unreadIds?.has(r.bindingId) ?? false);
     case 'needsYou':
       return rows.filter((r) =>
         ctx.needsYouIds

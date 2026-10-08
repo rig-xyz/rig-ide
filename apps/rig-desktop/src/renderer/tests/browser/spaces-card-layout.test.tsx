@@ -368,13 +368,18 @@ describe('SpacesCard — arranging many spaces', () => {
       ['Active2', ['alpha', 'beta']],
       ['Quiet1', ['delta']],
     ]);
-    expect(byText('button', 'Needs you · 1', host)).toBeTruthy();
+    expect(byText('button', 'Needs you1', host)).toBeTruthy();
+    expect(byText('button', 'Unread1', host)).toBeTruthy();
     expect(host.querySelector('[data-testid="new-group"]')).toBeNull();
   });
 
-  it('the filter chips still filter across sections', async () => {
+  it('the filter chips are All, Needs you and Unread, and still filter across sections', async () => {
     await render(launch());
-    await act(async () => click(byText('button', '★ Pinned', host)!));
+    const chips = [...host.querySelectorAll('button')]
+      .map((b) => b.textContent ?? '')
+      .filter((t) => /^(All|Needs you|Unread|Active|★ Pinned)/.test(t));
+    expect(chips).toEqual(['All', 'Needs you', 'Unread']);
+    await act(async () => click(byText('button', 'Unread', host)!));
     expect(host.textContent).toContain('No spaces match this filter.');
   });
 
