@@ -38,6 +38,34 @@ export function themeActivityLine(theme: RigRecentTheme): string {
   return `${count} · ${rest > 0 ? `${named} and ${rest} more` : named}`;
 }
 
+/**
+ * Who took part in a topic, people first with their agents folded in:
+ * "Hugo with Claude and Codex", "You with Claude, Mia". The signed-in person
+ * reads as You. At most three people, then "and N more".
+ */
+export function themePeopleLine(people: readonly string[], self: readonly string[] = []): string {
+  const order: string[] = [];
+  const agentsOf = new Map<string, string[]>();
+  for (const label of people) {
+    const match = /^(.+)'s (Claude|Codex|An agent)$/.exec(label);
+    const owner = match?.[1] ?? label;
+    if (!agentsOf.has(owner)) {
+      agentsOf.set(owner, []);
+      order.push(owner);
+    }
+    const agent = match?.[2] === 'An agent' ? 'an agent' : match?.[2];
+    if (agent && !agentsOf.get(owner)!.includes(agent)) agentsOf.get(owner)!.push(agent);
+  }
+  const and = (xs: readonly string[]) => (xs.length < 2 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
+  const parts = order.slice(0, PEOPLE_SHOWN_CAP).map((owner) => {
+    const name = self.includes(owner) ? 'You' : owner;
+    const agents = agentsOf.get(owner)!;
+    return agents.length > 0 ? `${name} with ${and(agents)}` : name;
+  });
+  const rest = order.length - PEOPLE_SHOWN_CAP;
+  return rest > 0 ? `${parts.join(', ')} and ${rest} more` : parts.join(', ');
+}
+
 /** A line's age, short: "now", "4m", "1h", "3d". Empty when `at` can't be read. */
 export function shortAge(at: string, now: number): string {
   const time = Date.parse(at);

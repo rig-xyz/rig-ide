@@ -1,15 +1,18 @@
 import { ChevronDown } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { themeColor } from '@renderer/features/spaces/dock-model';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
+import { rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
 import type { RigRecentTheme } from '@shared/rig/recent-themes';
+import { firstNameOf } from './greeting';
 import { HomeFeedLabel } from './home-feed-label';
 import {
   moreTopicsLabel,
   shortAge,
   splitRecentThemes,
-  themeActivityLine,
+  themePeopleLine,
   type AcrossSpacesView,
   type TopicMark,
 } from './recent-themes-state';
@@ -141,6 +144,10 @@ function ThemeLine({
   // Faces only for the people who are why this topic matters to you.
   const faces = topicFaceReasons(theme.people, reasons, mark);
   const seen = mark?.kind === 'seen';
+  // Your own name in the people line reads as You: the relay labels people by display or first name.
+  const meQuery = useQuery({ queryKey: ['rig', 'account', 'me'], queryFn: () => rpc.rig.account.me() });
+  const myName = meQuery.data?.success ? meQuery.data.data.name : null;
+  const selfNames = myName ? [myName, firstNameOf(myName)].filter((n): n is string => !!n) : [];
   return (
     <li
       className={cn(
@@ -234,23 +241,20 @@ function ThemeLine({
         </p>
       )}
       {open && (
-        <p
-          className="popover-in pl-[19px] font-mono text-2xs text-text-muted"
-          data-testid="theme-line-detail"
-        >
-          {themeActivityLine(theme)} ·{' '}
+        <div className="popover-in flex min-w-0 items-center gap-3 pl-[19px] text-xs" data-testid="theme-line-detail">
+          <span className="min-w-0 flex-1 truncate text-text-muted">{themePeopleLine(theme.people, selfNames)}</span>
           <button
             type="button"
             onClick={(event) => {
               event.stopPropagation();
               onOpen();
             }}
-            className="transition-colors hover:text-text-primary"
+            className="shrink-0 text-text-secondary transition-colors hover:text-text-primary"
             data-testid="theme-line-open"
           >
-            Open the space on this topic ›
+            {theme.spaceName ? `Open in #${theme.spaceName}` : 'Open the space'} ›
           </button>
-        </p>
+        </div>
       )}
     </li>
   );

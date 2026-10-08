@@ -11,6 +11,7 @@ import {
   shortAge,
   splitRecentThemes,
   themeActivityLine,
+  themePeopleLine,
   themeFaces,
   topicBySpace,
 } from './recent-themes-state';
@@ -280,5 +281,19 @@ describe('markTopics', () => {
 
   it('a space with no known cursor leaves its topics unmarked', () => {
     expect(markTopics([theme('x', { bindingId: 'nope', lastSeq: 9 })], reads).has('x')).toBe(false);
+  });
+});
+
+describe('themePeopleLine', () => {
+  it('folds agents into their owner and reads you as You', () => {
+    expect(themePeopleLine(["Hugo's Claude", 'Hugo', "Hugo's Codex"])).toBe('Hugo with Claude and Codex');
+    expect(themePeopleLine(["Dylan's Claude", 'Dylan', "Dylan's Codex"], ['Dylan Bourgeois', 'Dylan'])).toBe(
+      'You with Claude and Codex'
+    );
+    expect(themePeopleLine(['Mia', "Hugo's Claude"])).toBe('Mia, Hugo with Claude');
+    expect(themePeopleLine([])).toBe('');
+  });
+  it('names three people at most', () => {
+    expect(themePeopleLine(['A', 'B', 'C', 'D', 'E'])).toBe('A, B, C and 2 more');
   });
 });
