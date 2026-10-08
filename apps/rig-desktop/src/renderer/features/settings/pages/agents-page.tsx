@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
+import { AgentInstallRow, useAgentInstaller } from '@renderer/features/agents/agent-install';
 import { AgentAuthTrailing } from '@renderer/features/agents/agent-auth-trailing';
 import { AgentSignInDialog } from '@renderer/features/agents/agent-sign-in-dialog';
 import { useAgentAuthProbe } from '@renderer/features/agents/use-agent-auth-probe';
@@ -165,8 +166,13 @@ function PrimaryAgentStatus({ agent }: { agent: AgentPayload }) {
   );
 }
 
-/** Rig's own two harnesses — always shown, installed or not, so this reads as "here's what Rig runs" rather than a probe result. */
+/** Rig's own two harnesses — always shown, installed or not, so this reads as "here's what Rig runs" rather than a probe result. A missing one carries its install offer. */
 function PrimaryAgentRow({ row }: { row: AgentListRow }) {
+  const queryClient = useQueryClient();
+  const { installingId, install } = useAgentInstaller(
+    () => void queryClient.invalidateQueries({ queryKey: ['rig', 'agents', 'list'] })
+  );
+  const missing = row.agent?.status === 'missing' ? row.agent : null;
   return (
     <>
       <div className="flex min-h-9 items-center gap-2 px-1 py-1.5" data-testid="primary-agent-row" data-agent-id={row.id}>
@@ -179,6 +185,14 @@ function PrimaryAgentRow({ row }: { row: AgentListRow }) {
         )}
       </div>
       {row.agent?.status === 'available' && <AgentUpdateLine agent={row.agent} />}
+      {missing && (
+        <AgentInstallRow
+          className="ml-7"
+          agent={missing}
+          installing={installingId === missing.id}
+          onInstall={(method) => void install(missing, method)}
+        />
+      )}
     </>
   );
 }

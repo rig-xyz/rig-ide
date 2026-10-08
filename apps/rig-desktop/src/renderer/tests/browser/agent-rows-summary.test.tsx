@@ -110,4 +110,52 @@ describe('AgentRows — collapsed summary', () => {
     expect(slots).toHaveLength(1);
     expect(host.querySelectorAll('[data-testid="sign-in-slot"]')).toHaveLength(1);
   });
+
+  /** Bob with both of his agents, as the Room always lists them. */
+  function bothOfBobs() {
+    const snapshot = replayedSnapshot();
+    return {
+      ...snapshot,
+      agents: [
+        ...snapshot.agents.filter((a) => a.owner !== 'bob'),
+        { agent: 'claude' as const, owner: 'bob', model: '', busy: false },
+        { agent: 'codex' as const, owner: 'bob', model: '', busy: false },
+      ],
+    };
+  }
+
+  it('shows an agent of yours that is not installed on this Mac as a not-installed row with Set up', async () => {
+    const setUp: string[] = [];
+    await act(async () => {
+      root.render(
+        <AgentRows
+          snapshot={bothOfBobs()}
+          selfUserId="bob"
+          bindingId="space-agents-not-installed"
+          availableAgents={['codex']}
+          onSetUp={(agent) => setUp.push(agent)}
+        />
+      );
+    });
+    // One still runs here: collapsed stays quiet.
+    expect(host.querySelector('[data-testid="space-agent-row-not-installed"]')).toBeNull();
+    const summary = host.querySelector<HTMLButtonElement>('[data-testid="agents-summary-row"]')!;
+    await act(async () => summary.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const rows = [...host.querySelectorAll<HTMLElement>('[data-testid="space-agent-row-not-installed"]')];
+    expect(rows.map((r) => r.dataset.agent)).toEqual(['claude']);
+    expect(rows[0]!.textContent).toContain('Not installed on this Mac');
+    await act(async () => rows[0]!.querySelector<HTMLButtonElement>('[data-testid="space-agent-set-up"]')!.click());
+    expect(setUp).toEqual(['claude']);
+  });
+
+  it('with none of yours installed here, says so even while collapsed', async () => {
+    await act(async () => {
+      root.render(
+        <AgentRows snapshot={bothOfBobs()} selfUserId="bob" bindingId="space-agents-none-here" availableAgents={[]} />
+      );
+    });
+    const rows = [...host.querySelectorAll<HTMLElement>('[data-testid="space-agent-row-not-installed"]')];
+    expect(rows.map((r) => r.dataset.agent).sort()).toEqual(['claude', 'codex']);
+    expect(host.querySelector('[data-testid="space-agent-set-up"]')).toBeNull();
+  });
 });

@@ -1834,6 +1834,8 @@ export function RoomView({
                 selfUserId={selfUserId}
                 bindingId={bindingId}
                 signInRow={(agent) => <AgentSignInRow agent={agent} />}
+                availableAgents={availableAgents}
+                onSetUp={setSetUpAgent}
               />
               <ConnectorsSection
                 snapshot={room}

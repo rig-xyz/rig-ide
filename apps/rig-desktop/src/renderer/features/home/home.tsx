@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CircleAlert, Loader2, LogIn, Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AgentSetupDialog } from '@renderer/features/agents/agent-install';
 import { AgentSignInButton } from '@renderer/features/agents/agent-sign-in-button';
 import { useAgentSignInNeeded } from '@renderer/features/agents/use-agent-sign-in-needed';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
@@ -552,6 +553,8 @@ export function Home({
           needsConnection={connectionDown || !navigatorOnline}
         />
         {pendingInvite && <PendingInviteInline invite={pendingInvite} onOpenPath={onOpenPath} />}
+        {/* Skipped the agent step on the first run: the way back to it. */}
+        {localReady && agents.length === 0 && <SetUpAgentButton className="text-sm" />}
       </div>
     );
   }
@@ -950,7 +953,30 @@ function HealthLine({
       </button>
     );
   }
-  return <p className="text-text-muted self-start font-mono text-xs">{message.text}</p>;
+  return (
+    <div className="text-text-muted flex items-center gap-2 self-start font-mono text-xs" data-testid="home-no-agent">
+      {message.text}
+      <SetUpAgentButton />
+    </div>
+  );
+}
+
+/** "Set up an agent": the install offer for Claude and Codex, for anyone who skipped it on the first run. */
+function SetUpAgentButton({ className }: { className?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={cn('text-accent font-sans transition-opacity hover:opacity-80', className)}
+        data-testid="home-set-up-agent"
+      >
+        Set up an agent
+      </button>
+      <AgentSetupDialog open={open} onOpenChange={setOpen} />
+    </>
+  );
 }
 
 /**

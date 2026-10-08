@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Loader2, RefreshCw } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { AgentAuthTrailing } from '@renderer/features/agents/agent-auth-trailing';
@@ -10,11 +10,11 @@ import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { Button } from '@renderer/lib/ui/button';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import { cn } from '@renderer/lib/utils';
-import { useClipboard } from '@renderer/lib/hooks/use-clipboard';
-import type { AgentPayload, InstallMethod, InstallOption } from '@shared/core/agents/agent-payload';
+import type { AgentPayload, InstallMethod } from '@shared/core/agents/agent-payload';
 import { RIG_WEBSITE_URL } from '@shared/urls';
 import { CATALOG_FOOTNOTE_AGENT_IDS, deriveCatalogFootnote } from './catalog-footnote';
-import { hasCliLogin, hasInstalledAgent, onboardingAgents, preferredInstallOptions } from './onboarding-state';
+import { AgentInstallRow } from '@renderer/features/agents/agent-install';
+import { hasInstalledAgent, onboardingAgents } from './onboarding-state';
 
 /** Same query key `useRunnableAgents` already reads (`rpc.agents.list()`) — reusing its hook here means the harness picker and this step share one cache entry instead of two independent fetches of the same data. */
 const AGENTS_QUERY_KEY = ['rig', 'agents', 'list'];
@@ -159,7 +159,7 @@ export function AgentsStep({ onComplete }: { onComplete: () => void }) {
           ))
         ) : (
           candidates.map((agent) => (
-            <InstallRow
+            <AgentInstallRow
               key={agent.id}
               agent={agent}
               installing={installingId === agent.id}
@@ -206,85 +206,6 @@ export function AgentsStep({ onComplete }: { onComplete: () => void }) {
           </Button>
         </div>
       </div>
-    </div>
-  );
-}
-
-/** One agent's install offer: copyable command(s) + a real Install button, plus a static cli-login note once it's actually installed and re-probed as ready. */
-function InstallRow({
-  agent,
-  installing,
-  onInstall,
-}: {
-  agent: AgentPayload;
-  installing: boolean;
-  onInstall: (method: InstallMethod) => void;
-}) {
-  const options = preferredInstallOptions(agent.installOptions);
-  if (options.length === 0) {
-    // F fix: this used to silently vanish (`return null`) — the agent just
-    // disappeared from the candidates list with no explanation. A quiet
-    // fallback line at least says why there's nothing to install here.
-    return (
-      <div className="border-border-hairline flex items-center gap-2 rounded-control border p-3">
-        <AgentIcon icon={agent.icon} size={16} />
-        <span className="text-text-primary flex-1 text-sm font-medium">{agent.name}</span>
-        <span className="text-text-muted text-xs">No install method available</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="border-border-hairline flex flex-col gap-2 rounded-control border p-3">
-      <div className="flex items-center gap-2">
-        <AgentIcon icon={agent.icon} size={16} />
-        <span className="text-text-primary text-sm font-medium">{agent.name}</span>
-      </div>
-      {options.map((option) => (
-        <InstallCommandRow
-          key={option.method}
-          option={option}
-          installing={installing}
-          onInstall={() => onInstall(option.method)}
-        />
-      ))}
-      {hasCliLogin(agent.capabilities) && (
-        <p className="text-text-muted text-xs">
-          {agent.name} may ask you to sign in the first time you use it.
-        </p>
-      )}
-    </div>
-  );
-}
-
-function InstallCommandRow({
-  option,
-  installing,
-  onInstall,
-}: {
-  option: InstallOption;
-  installing: boolean;
-  onInstall: () => void;
-}) {
-  const clipboard = useClipboard();
-  return (
-    <div className="bg-bg-2 flex items-center gap-2 rounded-control px-2 py-1.5">
-      <code className="text-text-secondary min-w-0 flex-1 truncate font-mono text-xs">
-        {option.command}
-      </code>
-      <button
-        type="button"
-        onClick={() => clipboard.copy(option.command)}
-        // D8 fix (Rule 7): icon-only had no visible word — matches
-        // `sign-in-step.tsx`'s `ManualLink` icon+"Copy…" pattern.
-        className="text-text-muted hover:text-text-primary flex shrink-0 items-center gap-1 text-xs"
-      >
-        {clipboard.copied ? <Check className="size-3" /> : <Copy className="size-3" />}
-        {clipboard.copied ? 'Copied' : 'Copy'}
-      </button>
-      <Button size="xs" onClick={onInstall} disabled={installing}>
-        {installing ? <Loader2 className="size-3 animate-spin" /> : 'Install'}
-      </Button>
     </div>
   );
 }

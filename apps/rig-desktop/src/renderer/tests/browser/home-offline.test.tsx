@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   online: true,
   /** Nothing on this computer: no local rigs, no remembered spaces. */
   empty: false,
+  /** No agent set up on this Mac. */
+  noAgents: false,
   workspaces: vi.fn<() => Promise<unknown>>(),
   me: vi.fn<() => Promise<unknown>>(),
 }));
@@ -35,7 +37,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@renderer/lib/ipc', () => ({
   rpc: {
     agents: {
-      list: async () => [{ id: 'claude', name: 'Claude', icon: null, status: 'available', capabilities: { auth: { kind: 'none' } } }],
+      list: async () =>
+        mocks.noAgents ? [] : [{ id: 'claude', name: 'Claude', icon: null, status: 'available', capabilities: { auth: { kind: 'none' } } }],
       listMetadata: async () => [],
     },
     rig: {
@@ -139,6 +142,7 @@ describe('Home offline', () => {
   beforeEach(() => {
     mocks.online = true;
     mocks.empty = false;
+    mocks.noAgents = false;
     mocks.me.mockReset().mockResolvedValue(fail);
     mocks.workspaces.mockReset().mockResolvedValue(fail);
     opened = [];
@@ -257,5 +261,20 @@ describe('Home offline', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('with no agent set up, says so and offers Set up an agent, on the full Home and the first-run one', async () => {
+    mocks.noAgents = true;
+    await mount();
+    const line = host.querySelector<HTMLElement>('[data-testid="home-no-agent"]');
+    expect(line?.textContent).toContain('No agent is set up on this Mac yet.');
+    await act(async () => line!.querySelector<HTMLButtonElement>('[data-testid="home-set-up-agent"]')!.click());
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="agent-setup-dialog"]')).not.toBeNull());
+    await act(async () => root.unmount());
+
+    root = createRoot(host);
+    mocks.empty = true;
+    await mount();
+    expect(host.querySelector('[data-testid="home-set-up-agent"]')).not.toBeNull();
   });
 });
