@@ -53,7 +53,30 @@ const mocks = vi.hoisted(() => ({
   pulse: null as unknown,
   expiredConnector: false,
   summary: null as unknown,
+  activity: [] as unknown[],
 }));
+
+/** An unread mention of you in a space, as the Activity rows carry it. */
+function mention(bindingId: string, userId: string, name: string) {
+  return {
+    id: `n-${bindingId}-${userId}`,
+    type: 'mention',
+    tier: 'direct',
+    bindingId,
+    spaceName: 'launch',
+    actor: { kind: 'user', userId, name, agent: null },
+    messageId: 'm1',
+    messageSeq: 90,
+    runId: null,
+    requestId: null,
+    inviteId: null,
+    path: null,
+    title: `${name} mentioned you in launch`,
+    body: '@Dylan wdyt',
+    createdAt: new Date(NOW).toISOString(),
+    readAt: null,
+  };
+}
 
 const fail = { success: false, error: { kind: 'relay', message: 'nope' } };
 
@@ -147,7 +170,7 @@ vi.mock('@renderer/lib/ipc', () => ({
       homeLayout: { get: async () => null, apply: async () => null },
       notifications: {
         summary: async () => mocks.summary ?? { spaces: [], invitesUnread: 0, directUnreadTotal: 0 },
-        activity: async () => ({ notifications: [], nextCursor: null }),
+        activity: async () => ({ success: true, data: mocks.activity }),
         permission: async () => 'granted',
       },
       settings: {
@@ -233,6 +256,7 @@ describe('Home: Across your spaces today', () => {
     mocks.pulse = null;
     mocks.expiredConnector = false;
     mocks.summary = null;
+    mocks.activity = [];
     opened = [];
     host = document.createElement('div');
     document.body.appendChild(host);
@@ -263,7 +287,8 @@ describe('Home: Across your spaces today', () => {
     expect(mocks.getCalls).toBe(1);
   });
 
-  it('a line: color dot, the theme in bold, its space, faces with agents as their owner, and its age', async () => {
+  it('a line: color dot, the theme in bold, its space, faces only for who is a reason (agents as their owner), and its age', async () => {
+    mocks.activity = [mention('s-launch', 'u-hugo', 'Hugo Renaudin')];
     mocks.live = {
       kind: 'live',
       savedAt: NOW,
@@ -290,8 +315,9 @@ describe('Home: Across your spaces today', () => {
     const dot = line.querySelector<HTMLElement>('span[aria-hidden]')!;
     expect(dot.style.background).toMatch(/^var\(--theme-[1-8]\)$/);
     expect(dot.style.boxShadow).toContain('color-mix');
+    // Hugo mentioned you there; Ana wrote in the topic but isn't a reason, so no face.
     const faces = line.querySelector('[data-testid="theme-line-faces"]')!;
-    expect([...faces.children].map((f) => f.getAttribute('title'))).toEqual(['Hugo', 'Ana']);
+    expect([...faces.children].map((f) => f.getAttribute('title'))).toEqual(['Hugo Renaudin mentioned you']);
     expect(line.querySelector('[data-testid="theme-line-age"]')?.textContent).toBe('4m');
     // Its description is always there as a one line summary under it; the activity waits until it's opened.
     const desc = line.querySelector<HTMLElement>('[data-testid="theme-line-desc"]')!;
@@ -299,6 +325,12 @@ describe('Home: Across your spaces today', () => {
     expect(desc.className).toContain('truncate');
     expect(desc.className).toContain('text-text-secondary');
     expect(line.querySelector('[data-testid="theme-line-detail"]')).toBeNull();
+  });
+
+  it('no faces on a line when no one in it is a reason', async () => {
+    mocks.live = { kind: 'live', savedAt: NOW, themes: [theme(1, { people: ['Hugo', 'Ana'] })] };
+    await mount();
+    expect(lines()[0]!.querySelector('[data-testid="theme-line-faces"]')).toBeNull();
   });
 
   it('every line carries its summary, and a line without a description has none', async () => {
@@ -413,6 +445,7 @@ describe('Home: Across your spaces today', () => {
   });
 
   it('People: You first, a time, the Pulse sentence; under the topics, and a column on the right on wide windows', async () => {
+    mocks.activity = [mention('s-launch', 'u2', 'Ana Silva')];
     mocks.live = {
       kind: 'live',
       savedAt: NOW,

@@ -3,7 +3,7 @@ import { Loader2, LogIn, Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentProblemLine } from '@renderer/features/agents/agent-problem-line';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
-import { useNotificationSummary } from '@renderer/features/notifications/use-notifications';
+import { useActivity, useNotificationSummary } from '@renderer/features/notifications/use-notifications';
 import { usePeople } from '@renderer/features/people/use-people';
 import { deriveSignedIn } from '@renderer/features/rig-account/auth-state';
 import { useRigSignIn, type RigSignInPhase } from '@renderer/features/rig-account/use-rig-sign-in';
@@ -65,6 +65,7 @@ import { indexSpaceStatuses } from './space-status-state';
 import { SpacesCard } from './spaces-card';
 import { useRecentThemes, RECENT_THEMES_QUERY_KEY } from './use-recent-themes';
 import { useSpaceStatus } from './use-space-status';
+import { useFaceReasons } from './use-face-reasons';
 import { deriveWelcomePhase, type WelcomePhase } from './welcome-state';
 
 /**
@@ -487,6 +488,17 @@ export function Home({
     notificationSummary.spaces.map((s) => [s.bindingId, { cursor: s.lastReadSeq, unread: s.spaceUnread }])
   );
   const topicMarks = markTopics(acrossView.kind === 'themes' && !connectionDown ? acrossView.themes : [], spaceReads);
+  // Faces only when they're the reason: who mentioned you, who left unread
+  // work, whose agent is running. The Activity rows give the mentions.
+  const activity = useActivity(spacesEnabled && signedIn);
+  const facesByBinding = useFaceReasons({
+    bindingIds: spaceRows.map((r) => r.bindingId),
+    statusByBinding,
+    summarySpaces: notificationSummary.spaces,
+    activity,
+    selfUserId,
+    enabled: spacesEnabled && signedIn && !connectionDown,
+  });
   // The topic lines' faces and People's times both come from what Home
   // already reads: the day's themes, and pictures from you, your people and
   // Pulse's people. Pulse alone misses anyone its briefing leaves out.
@@ -655,6 +667,7 @@ export function Home({
                   onOpenTheme={(theme) => openSpaceOnTheme(theme.bindingId, theme.themeId)}
                   avatarOf={avatarOf}
                   marks={topicMarks}
+                  reasonsOf={(bindingId) => facesByBinding.get(bindingId) ?? []}
                 />
               )}
               <PeopleRail lastActivity={lastActivity} className="min-[87.5rem]:hidden" />
@@ -697,6 +710,7 @@ export function Home({
                 // Opened as a space even while the relay can't confirm its kind.
                 onOpenPath={(path) => onOpenPath(path, { kind: 'space' })}
                 highlightBindingId={highlightBindingId}
+                facesByBinding={facesByBinding}
                 offline={connectionDown}
                 offlineActivity={offlineActivity}
                 emptyHint={

@@ -628,3 +628,72 @@ describe("SpacesCard — the row's topic of the day", () => {
     await act(async () => probeRoot.unmount());
   });
 });
+
+describe('SpacesCard — faces only when they are the reason', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  function space(bindingId: string, name: string): HomeRigRow {
+    return {
+      kind: 'local',
+      bindingId,
+      isSpace: true,
+      name,
+      path: `/Rig/${name}`,
+      lastOpenedAt: 0,
+      sessions: [],
+      paused: false,
+      outsideHome: false,
+      notARigAnymore: false,
+      role: 'owner',
+    };
+  }
+
+  beforeEach(async () => {
+    localStorage.clear();
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={new QueryClient()}>
+          <SpacesCard
+            rows={[space('b-marketing', 'rig-marketing'), space('b-ops', 'rig-ops')]}
+            statusByBinding={new Map()}
+            selfUserId="me"
+            onOpenPath={() => {}}
+            facesByBinding={
+              new Map([
+                [
+                  'b-marketing',
+                  [
+                    { userId: 'u-hugo', name: 'Hugo Renaudin', avatarUrl: null, kind: 'mentioned' as const },
+                    { userId: 'u-raf', name: 'Rafael', avatarUrl: null, kind: 'running' as const },
+                  ],
+                ],
+                ['b-ops', []],
+              ])
+            }
+          />
+        </QueryClientProvider>
+      );
+    });
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  const facesOf = (bindingId: string) =>
+    host.querySelector(`[data-testid="space-row"][data-binding-id="${bindingId}"] [data-testid="space-row-faces"]`);
+
+  it('shows who mentioned you and whose agent runs, each saying why; a row with no reason has no faces', () => {
+    const faces = facesOf('b-marketing')!;
+    expect([...faces.children].map((f) => [f.getAttribute('data-reason'), f.getAttribute('title')])).toEqual([
+      ['mentioned', 'Hugo Renaudin mentioned you'],
+      ['running', "Rafael's agent is working here"],
+    ]);
+    expect(facesOf('b-ops')).toBeNull();
+  });
+});

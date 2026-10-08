@@ -10,10 +10,10 @@ import {
   shortAge,
   splitRecentThemes,
   themeActivityLine,
-  themeFaces,
   type AcrossSpacesView,
   type TopicMark,
 } from './recent-themes-state';
+import { faceReasonLabel, topicFaceReasons, type FaceReason } from './face-reasons';
 
 /** Faces on a line before the rest are left out. */
 const FACES_SHOWN_CAP = 3;
@@ -32,6 +32,7 @@ export function AcrossYourSpacesToday({
   onOpenTheme,
   avatarOf,
   marks,
+  reasonsOf,
 }: {
   view: AcrossSpacesView;
   onOpenTheme: (theme: RigRecentTheme) => void;
@@ -39,6 +40,8 @@ export function AcrossYourSpacesToday({
   avatarOf?: (name: string) => string | null;
   /** Each topic against its space's read cursor (`markTopics`): new ones get a pill, read ones step back. */
   marks?: ReadonlyMap<string, TopicMark>;
+  /** A space's reason faces (`use-face-reasons.ts`): a line shows only the people it names who are one. */
+  reasonsOf?: (bindingId: string) => readonly FaceReason[];
 }) {
   const [showMore, setShowMore] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -56,6 +59,7 @@ export function AcrossYourSpacesToday({
       onOpen={() => onOpenTheme(theme)}
       avatarOf={avatarOf}
       mark={marks?.get(theme.themeId)}
+      reasons={reasonsOf?.(theme.bindingId) ?? []}
     />
   );
 
@@ -123,6 +127,7 @@ function ThemeLine({
   onOpen,
   avatarOf,
   mark,
+  reasons,
 }: {
   theme: RigRecentTheme;
   now: number;
@@ -131,8 +136,10 @@ function ThemeLine({
   onOpen: () => void;
   avatarOf?: (name: string) => string | null;
   mark?: TopicMark;
+  reasons: readonly FaceReason[];
 }) {
-  const faces = themeFaces(theme.people);
+  // Faces only for the people who are why this topic matters to you.
+  const faces = topicFaceReasons(theme.people, reasons, mark);
   const seen = mark?.kind === 'seen';
   return (
     <li
@@ -180,11 +187,17 @@ function ThemeLine({
         <span className="ml-auto flex shrink-0 items-center gap-2.5 pl-2">
           {faces.length > 0 && (
             <span className="flex items-center" data-testid="theme-line-faces">
-              {faces.slice(0, FACES_SHOWN_CAP).map((name, i) => (
-                <span key={name} title={name} className={cn('flex', i > 0 && '-ml-[7px]')}>
+              {faces.slice(0, FACES_SHOWN_CAP).map(({ name, reason }, i) => (
+                <span
+                  key={name}
+                  title={faceReasonLabel(reason)}
+                  data-name={name}
+                  data-reason={reason.kind}
+                  className={cn('flex', i > 0 && '-ml-[7px]')}
+                >
                   <IdentityAvatar
-                    name={name}
-                    avatarUrl={avatarOf?.(name) ?? null}
+                    name={reason.name ?? name}
+                    avatarUrl={reason.avatarUrl ?? avatarOf?.(name) ?? null}
                     sizeClassName="size-5"
                     textClassName="text-2xs"
                     className="ring-2 ring-bg-0"

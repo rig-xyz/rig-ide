@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { Download, FolderInput, FolderSearch, LogOut, MoreHorizontal, Pencil, Plus, Star, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
@@ -73,8 +73,7 @@ import {
   SubmenuItem,
 } from './spaces-card-sections';
 import { useHomeLayout } from './use-home-layout';
-
-const FACES_MAX = 3;
+import { faceReasonLabel, REASON_FACES_MAX, type FaceReason } from './face-reasons';
 
 /**
  * The Spaces floating card (design doc "9a" — "spaces first"): a
@@ -101,6 +100,7 @@ export function SpacesCard({
   offline = false,
   offlineActivity,
   emptyHint,
+  facesByBinding,
 }: {
   rows: readonly HomeRigRow[];
   /** New spaces still being set up (or that failed to), listed first until they're real rows. */
@@ -122,6 +122,8 @@ export function SpacesCard({
   offlineActivity?: ReadonlyMap<string, number | null>;
   /** Replaces the empty card's line (e.g. while the list is still loading). */
   emptyHint?: string;
+  /** Each space's reason faces (`use-face-reasons.ts`): only people who are why the row matters. */
+  facesByBinding?: ReadonlyMap<string, FaceReason[]>;
 }) {
   const [filter, setFilter] = useState<SpaceRowFilter>('all');
   const [quietOpen, setQuietOpen] = useState(false);
@@ -237,6 +239,7 @@ export function SpacesCard({
         status={statusByBinding.get(row.bindingId)}
         attention={shownByBinding.get(row.bindingId) ?? IDLE}
         muted={summaryByBinding.get(row.bindingId)?.level === 'nothing'}
+        faces={offline ? [] : (facesByBinding?.get(row.bindingId) ?? [])}
         topic={offline ? undefined : topicByBinding?.get(row.bindingId)}
         onOpenPath={onOpenPath}
         pinned={pinned.has(row.bindingId)}
@@ -504,36 +507,25 @@ function useSpacePins(): { pinned: ReadonlySet<string>; toggle: (bindingId: stri
   return { pinned, toggle };
 }
 
-function useSpaceMembers(bindingId: string) {
-  const query = useQuery({
-    queryKey: ['rig', 'spacesConnection', 'listMembers', bindingId],
-    queryFn: () => rpc.rig.spacesConnection.listMembers({ bindingId }),
-    staleTime: 60_000,
-  });
-  return query.data?.success ? query.data.data : [];
-}
-
-/** A space's member faces (first few, then "+N"). */
-function Faces({ bindingId }: { bindingId: string }) {
-  const members = useSpaceMembers(bindingId);
-  if (members.length === 0) return null;
+/**
+ * The faces that are why a row matters: who mentioned you there, who has
+ * unread messages there, whose agent is running there. None otherwise.
+ */
+function ReasonFaces({ faces }: { faces: readonly FaceReason[] }) {
+  if (faces.length === 0) return null;
   return (
-    <span className="flex shrink-0 items-center">
-      {members.slice(0, FACES_MAX).map((m, i) => (
-        <IdentityAvatar
-          key={m.userId}
-          name={m.name ?? m.email}
-          avatarUrl={m.avatarUrl}
-          sizeClassName="size-5"
-          textClassName="text-2xs"
-          className={cn('ring-bg-1 ring-1', i > 0 && '-ml-1.5')}
-        />
-      ))}
-      {members.length > FACES_MAX && (
-        <span className="bg-bg-2 text-text-muted ring-bg-1 text-2xs -ml-1.5 flex size-5 shrink-0 items-center justify-center rounded-full ring-1">
-          +{members.length - FACES_MAX}
+    <span className="flex shrink-0 items-center" data-testid="space-row-faces">
+      {faces.slice(0, REASON_FACES_MAX).map((face, i) => (
+        <span key={face.userId} title={faceReasonLabel(face)} data-reason={face.kind} className={cn('flex', i > 0 && '-ml-1.5')}>
+          <IdentityAvatar
+            name={face.name}
+            avatarUrl={face.avatarUrl}
+            sizeClassName="size-5"
+            textClassName="text-2xs"
+            className="ring-bg-1 ring-1"
+          />
         </span>
-      )}
+      ))}
     </span>
   );
 }
@@ -543,6 +535,7 @@ function SpaceRow({
   status,
   attention: shown,
   muted,
+  faces,
   topic,
   onOpenPath,
   pinned,
@@ -557,6 +550,7 @@ function SpaceRow({
   attention: SpaceAttention;
   /** The space's level is "nothing": the row reads quiet and dimmed. */
   muted: boolean;
+  faces: readonly FaceReason[];
   topic?: RigRecentTheme;
   onOpenPath: (path: string) => void;
   pinned: boolean;
@@ -793,7 +787,7 @@ function SpaceRow({
           </span>
         )}
       </div>
-      <Faces bindingId={row.bindingId} />
+      <ReasonFaces faces={faces} />
       {count && (
         <span
           className="bg-accent text-accent-ink flex h-[18px] min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 font-mono text-2xs font-medium tabular-nums"
