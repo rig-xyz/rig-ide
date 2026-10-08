@@ -135,32 +135,15 @@ describe('AgentProblemLine', () => {
     expect(document.querySelector('[data-testid="sign-in-dialog"]')).not.toBeNull();
   });
 
-  it("outdated, a copy Rig manages: Update runs Rig's update", async () => {
+  it('says nothing about versions on Home or in a space: behind the latest, or older than Rig is tested with', async () => {
     mocks.agents = [codex({ version: '0.147.0' }, { version: '0.147.0' })];
-    await render();
-    expect(line()?.dataset.kind).toBe('outdated');
-    // Older than Rig is tested with too, but that soft notice is for Settings only.
-    expect(line()?.textContent).toContain('Codex is out of date. The codex CLI is 0.147.0. 0.160.1 is out.');
-    expect(line()?.textContent).not.toContain('tested with');
-    await act(async () => line()!.querySelector<HTMLButtonElement>('[data-testid="agent-problem-update"]')!.click());
-    expect(mocks.update).toHaveBeenCalledWith('codex');
-    expect(mocks.toast).not.toHaveBeenCalled();
-  });
-
-  it('older than Rig is tested with but current: no line on Home or in a space', async () => {
-    mocks.agents = [codex({ version: '0.147.0', latestVersion: '0.147.0' }, { version: '0.147.0', latestVersion: '0.147.0' })];
     await render();
     expect(line()).toBeNull();
     await render({ variant: 'space' });
     expect(line()).toBeNull();
-  });
-
-  it('outdated, a Homebrew copy: Update says how to update it', async () => {
-    mocks.agents = [codex({ version: '0.147.0' }, { version: '0.147.0', provenance: { kind: 'homebrew', confidence: 'confirmed', managerRef: 'codex' } })];
+    mocks.agents = [codex({ version: '0.147.0', latestVersion: '0.147.0' }, { version: '0.147.0', latestVersion: '0.147.0' })];
     await render();
-    await act(async () => line()!.querySelector<HTMLButtonElement>('[data-testid="agent-problem-update"]')!.click());
-    expect(mocks.update).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith({ title: 'Update Codex', description: 'Homebrew installed this copy. Update it with brew upgrade codex.' });
+    expect(line()).toBeNull();
   });
 
   it('errored: names the CLI and its version, with Install', async () => {

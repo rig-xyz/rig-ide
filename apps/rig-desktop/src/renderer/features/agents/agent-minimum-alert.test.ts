@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentsToAlert } from './agent-minimum-alert';
+import { agentsToAlert, alertLines } from './agent-minimum-alert';
 
 const agent = (id: 'claude' | 'codex', version: string, over: Record<string, unknown> = {}) => ({
   id,
@@ -36,7 +36,22 @@ describe('agentsToAlert', () => {
     expect(agentsToAlert([agent('codex', '0.101.0')], { codex: '0.100.0' })).toHaveLength(1);
   });
 
-  it('says nothing for a tested version, a missing agent, or one still being probed', () => {
+  it('alerts an agent merely behind the latest release too, once per installed version', () => {
+    const current = agent('codex', '9.0.0');
+    const behind = { ...current, latestVersion: '9.1.0', installations: [{ ...current.installations[0]!, latestVersion: '9.1.0' }] };
+    expect(agentsToAlert([behind], {})).toMatchObject([{ id: 'codex', version: '9.0.0', problem: { kind: 'outdated' } }]);
+    expect(agentsToAlert([behind], { codex: '9.0.0' })).toEqual([]);
+  });
+
+  it('splits the notice into a title and a description', () => {
+    const [alert] = agentsToAlert([agent('codex', '0.100.0')], {});
+    expect(alertLines(alert!.problem)).toEqual({
+      title: 'Codex is older than Rig is tested with',
+      description: 'The codex CLI is 0.100.0. Rig is tested with 0.159.1 or newer.',
+    });
+  });
+
+  it('says nothing for a current version, a missing agent, or one that fails to start', () => {
     expect(agentsToAlert([agent('codex', '9.0.0'), agent('claude', '9.0.0')], {})).toEqual([]);
     expect(agentsToAlert([agent('codex', '0.100.0', { status: 'missing', version: null, installations: [] })], {})).toEqual([]);
     expect(agentsToAlert([agent('codex', '0.100.0', { status: 'error' })], {})).toEqual([]);

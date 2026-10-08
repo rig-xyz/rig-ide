@@ -37,7 +37,7 @@ const CHATGPT = {
 
 const codex = (
   p: Payload | null | undefined,
-  over: { signInNeeded?: boolean; showMissing?: boolean; minimum?: string | null; belowMinimum?: boolean } = {}
+  over: { signInNeeded?: boolean; showMissing?: boolean; minimum?: string | null; soft?: boolean } = {}
 ) =>
   agentProblem({
     id: 'codex',
@@ -46,7 +46,7 @@ const codex = (
     signInNeeded: over.signInNeeded ?? false,
     showMissing: over.showMissing,
     minimum: over.minimum ?? null,
-    belowMinimum: over.belowMinimum,
+    soft: over.soft,
   });
 
 describe('agentProblem', () => {
@@ -93,8 +93,8 @@ describe('agentProblem', () => {
     });
   });
 
-  it('outdated behind the latest release: Update that Rig runs', () => {
-    expect(codex(payload({}, { version: '0.147.0' }))).toMatchObject({
+  it('outdated behind the latest release: Update that Rig runs, where asked for', () => {
+    expect(codex(payload({}, { version: '0.147.0' }), { soft: true })).toMatchObject({
       kind: 'outdated',
       version: '0.147.0',
       text: 'Codex is out of date. The codex CLI is 0.147.0. 0.160.1 is out.',
@@ -104,22 +104,18 @@ describe('agentProblem', () => {
   });
 
   it('older than the tested version: a soft notice with the version where asked for, after a sign in', () => {
-    expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0', belowMinimum: true })).toMatchObject({
+    expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0', soft: true })).toMatchObject({
       kind: 'belowMinimum',
       minimum: '0.150.0',
       text: 'Codex is older than Rig is tested with. The codex CLI is 0.147.0. Rig is tested with 0.150.0 or newer.',
       update: { how: 'rig' },
     });
-    expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0', belowMinimum: true, signInNeeded: true })?.kind).toBe('signedOut');
+    expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0', soft: true, signInNeeded: true })?.kind).toBe('signedOut');
   });
 
-  it('older than the tested version is left out by default: Home and a space only say it is behind the latest', () => {
-    expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0' })).toMatchObject({
-      kind: 'outdated',
-      text: 'Codex is out of date. The codex CLI is 0.147.0. 0.160.1 is out.',
-    });
-    // Behind the tested version but current with the latest: no line at all.
-    expect(codex(payload({ latestVersion: '0.147.0' }, { version: '0.147.0', latestVersion: '0.147.0' }), { minimum: '0.150.0' })).toBeNull();
+  it('the version notices are left out by default: Home and a space show only hard problems', () => {
+    expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0' })).toBeNull();
+    expect(codex(payload({}, { version: '0.147.0' }))).toBeNull();
     // Missing, signed out and failing to start still show.
     expect(codex(payload({ status: 'missing', version: null, installations: [] }), { minimum: '0.150.0' })?.kind).toBe('missing');
     expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0', signInNeeded: true })?.kind).toBe('signedOut');
@@ -132,17 +128,17 @@ describe('agentProblem', () => {
 
   it("Codex inside the ChatGPT app: Update says to update the ChatGPT app", () => {
     const p = payload({}, { ...CHATGPT, version: '0.147.0' });
-    expect(codex(p, { minimum: '0.150.0', belowMinimum: true })).toMatchObject({
+    expect(codex(p, { minimum: '0.150.0', soft: true })).toMatchObject({
       kind: 'belowMinimum',
       update: { how: 'elsewhere', hint: 'ChatGPT carries its own codex CLI. Update the ChatGPT app to update Codex.' },
     });
     // Only behind npm's latest: the app updates it on its own, so no line.
-    expect(codex(p)).toBeNull();
+    expect(codex(p, { soft: true })).toBeNull();
   });
 
   it('a Homebrew copy: Update says how to update it with Homebrew', () => {
     const p = payload({}, { version: '0.147.0', provenance: { kind: 'homebrew', confidence: 'confirmed', managerRef: 'codex' } });
-    expect(codex(p)?.update).toEqual({ how: 'elsewhere', hint: 'Homebrew installed this copy. Update it with brew upgrade codex.' });
+    expect(codex(p, { soft: true })?.update).toEqual({ how: 'elsewhere', hint: 'Homebrew installed this copy. Update it with brew upgrade codex.' });
   });
 
   it('names Claude Code by its CLI', () => {

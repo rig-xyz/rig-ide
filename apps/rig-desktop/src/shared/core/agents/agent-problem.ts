@@ -9,10 +9,12 @@ import { agentUpdateNotice, isOlderVersion } from './agent-update-notice';
  * Each line names the CLI, its version when known, and the minimum Rig
  * needs when one is known.
  *
- * A copy older than the version Rig is tested with (`belowMinimum`) is a soft
- * notice: only Settings › Agents asks for it, and the app raises it once per
- * version as a toast (`agent-minimum-alert.ts`). Home and a space's panel
- * leave it out.
+ * The version notices are soft: a copy older than the version Rig is
+ * tested with (`belowMinimum`) or behind the latest release (`outdated`).
+ * Only Settings › Agents asks for them (`soft`), and the app raises them
+ * once per version as a toast (`agent-minimum-alert.ts`). Home and a
+ * space's panel show only the hard problems: missing, signed out, failing
+ * to start.
  */
 
 export type AgentProblemKind = 'missing' | 'outdated' | 'belowMinimum' | 'signedOut' | 'error';
@@ -60,11 +62,11 @@ export function agentProblem(input: {
   signInNeeded: boolean;
   /** Missing counts as a problem here: false where one missing agent of two isn't worth a line. */
   showMissing?: boolean;
-  /** The soft notice for a copy older than Rig is tested with counts here: only Settings › Agents. */
-  belowMinimum?: boolean;
+  /** The soft version notices count here: Settings › Agents and the once-per-version alert. */
+  soft?: boolean;
   minimum?: string | null;
 }): AgentProblem | null {
-  const { id, name, payload, signInNeeded, showMissing = true, belowMinimum: showBelowMinimum = false } = input;
+  const { id, name, payload, signInNeeded, showMissing = true, soft = false } = input;
   const cli = CLI_NAMES[id] ?? id;
   const minimum = input.minimum === undefined ? (AGENT_MINIMUM_VERSIONS[id] ?? null) : input.minimum;
   const needs = minimum ? ` Rig is tested with ${minimum} or newer.` : '';
@@ -96,8 +98,9 @@ export function agentProblem(input: {
   if (signInNeeded) {
     return { kind: 'signedOut', cli, version, minimum, text: `${name} isn't signed in on this Mac.${is}`, action: 'sign-in' };
   }
+  if (!soft) return null;
   const belowMinimum = !!minimum && !!version && isOlderVersion(version, minimum);
-  if (belowMinimum && showBelowMinimum) {
+  if (belowMinimum) {
     return {
       kind: 'belowMinimum',
       cli,

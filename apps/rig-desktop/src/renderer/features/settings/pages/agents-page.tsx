@@ -235,7 +235,7 @@ function AgentUpdateLine({ agent }: { agent: AgentPayload }) {
 }
 
 const belowMinimum = (agent: AgentPayload) =>
-  agentProblem({ id: agent.id, name: agent.name, payload: agent, signInNeeded: false, belowMinimum: true })?.kind === 'belowMinimum';
+  agentProblem({ id: agent.id, name: agent.name, payload: agent, signInNeeded: false, soft: true })?.kind === 'belowMinimum';
 
 /**
  * The soft notice for a copy older than Rig is tested with. It lives here
@@ -246,7 +246,7 @@ const belowMinimum = (agent: AgentPayload) =>
 function AgentMinimumLine({ agent }: { agent: AgentPayload }) {
   const queryClient = useQueryClient();
   const [state, setState] = useState<'idle' | 'busy' | 'failed'>('idle');
-  const problem = agentProblem({ id: agent.id, name: agent.name, payload: agent, signInNeeded: false, belowMinimum: true });
+  const problem = agentProblem({ id: agent.id, name: agent.name, payload: agent, signInNeeded: false, soft: true });
   if (problem?.kind !== 'belowMinimum') return null;
 
   const update = async () => {
