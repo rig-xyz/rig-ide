@@ -53,12 +53,13 @@ export type ClaimAndDispatchOptions = {
   canRun?: (request: AgentRequest) => Promise<boolean>;
   /**
    * For a request `canRun` turned down: the plain line to post when no
-   * computer of yours will ever run it (the agent isn't set up here and it
-   * has waited past the moment another Mac would have taken it). This Mac
-   * then claims it and settles it as failed with that line, so it doesn't
-   * wait forever. Null, or absent, leaves it queued.
+   * computer of yours will ever run it (the agent isn't set up here, no
+   * other Mac of yours reports it, and it has waited past the moment
+   * another Mac would have taken it). This Mac then claims it and settles
+   * it as failed with that line, so it doesn't wait forever. Null, or
+   * absent, leaves it queued.
    */
-  giveUp?: (request: AgentRequest) => string | null;
+  giveUp?: (request: AgentRequest) => string | null | Promise<string | null>;
   /** This Mac's id among the account's computers, sent with each claim (see `claimAgentRequest`). */
   computer?: string;
 };
@@ -109,7 +110,7 @@ export async function claimAndDispatchQueued(options: ClaimAndDispatchOptions): 
 
   for (const request of queued.data) {
     if (canRun && !(await canRun(request).catch(() => false))) {
-      const line = giveUp?.(request) ?? null;
+      const line = giveUp ? await Promise.resolve(giveUp(request)).catch(() => null) : null;
       if (line) {
         const id = typeof deviceId === 'string' ? deviceId : await deviceId(request.bindingId).catch(() => null);
         if (id) await failUnrunnable(api, id, request, line, computer);

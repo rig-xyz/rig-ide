@@ -12,6 +12,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 const ICON = { kind: 'svg' as const, variants: [{ minSize: 0, light: 'data:image/svg+xml,<svg/>' }] };
 const NO_AUTH = { auth: { kind: 'unsupported' } };
 const install = vi.fn(async () => ({ success: true, data: {} }));
+/** What GET /v1/me/agents says your other Macs have; a rejection is a relay that can't say. */
+const otherMacs = vi.fn(async (): Promise<{ agents: string[] } | null> => ({ agents: [] }));
 
 vi.mock('@renderer/lib/ipc', () => ({
   rpc: {
@@ -39,7 +41,11 @@ vi.mock('@renderer/lib/ipc', () => ({
         getConnectionInfo: async () => ({ success: false, error: { message: 'offline' } }),
         log: async () => undefined,
       },
-      spacesDispatch: { checkNow: async () => undefined, settleStaleRun: async () => ({ settled: true }) },
+      spacesDispatch: {
+        checkNow: async () => undefined,
+        settleStaleRun: async () => ({ settled: true }),
+        otherMacsAgents: () => otherMacs(),
+      },
       attachments: { prepare: async () => ({ space: { status: 'ok' }, files: [] }) },
       recent: { resolveLocalPaths: async () => ({}) },
     },
@@ -168,6 +174,7 @@ describe('Room — an agent that isn’t set up on this Mac', () => {
     posted = [];
     requested = [];
     install.mockClear();
+    otherMacs.mockReset().mockResolvedValue({ agents: [] });
     stored = [row('m1', 1, 'notes from the call')];
     host = document.createElement('div');
     host.style.width = '1200px';
@@ -217,5 +224,33 @@ describe('Room — an agent that isn’t set up on this Mac', () => {
     expect(dialog.textContent).toContain('Set up Claude');
     await click(dialog.querySelector('[data-testid="agent-install-curl"]'));
     await vi.waitFor(() => expect(install).toHaveBeenCalledWith('claude', undefined, 'curl'));
+  });
+
+  it('asks Claude anyway when your other Mac has it, and says it runs there', async () => {
+    otherMacs.mockResolvedValue({ agents: ['claude'] });
+    await open();
+    const textarea = host.querySelector<HTMLTextAreaElement>('textarea')!;
+    await type(textarea, '@claude hi');
+    await vi.waitFor(() =>
+      expect(host.querySelector('[data-testid="composer-agent-elsewhere"]')?.textContent).toBe(
+        'Claude will run on your other Mac.'
+      )
+    );
+    expect(host.querySelector('[data-testid="composer-agent-unavailable"]')).toBeNull();
+    await pressEnter(textarea);
+    await vi.waitFor(() => expect(requested).toHaveLength(1));
+    expect(requested[0]).toMatchObject({ targetAgent: 'claude', targetOwnerUserId: ME });
+    expect(posted[0]!.meta).toMatchObject({ asks: 'claude' });
+  });
+
+  it('files the request when the relay can’t say what your other Macs have', async () => {
+    otherMacs.mockRejectedValue(new Error('offline'));
+    await open();
+    const textarea = host.querySelector<HTMLTextAreaElement>('textarea')!;
+    await type(textarea, '@claude hi');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(host.querySelector('[data-testid="composer-agent-unavailable"]')).toBeNull();
+    await pressEnter(textarea);
+    await vi.waitFor(() => expect(requested).toHaveLength(1));
   });
 });

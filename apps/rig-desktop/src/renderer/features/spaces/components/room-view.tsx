@@ -48,7 +48,7 @@ import { AttachmentSpaceContext, type AttachmentSpace } from './attachment-cards
 import { Composer, keepUnsentAsDraft, type ComposerPreview, type ComposerSendContext } from './composer';
 import { ownTurnSuggestion } from '../own-turn-suggestion';
 import { routeFromPreview } from '../send-decision';
-import { useAvailableAgents } from '../use-available-agents';
+import { useAvailableAgents, useOtherMacsAgents } from '../use-available-agents';
 import { settlePendingSends, withPendingSends, type PendingSend } from '../pending-sends';
 import {
   isContinuation,
@@ -977,6 +977,13 @@ export function RoomView({
     [source, selfUserId]
   );
   const availableAgents = useAvailableAgents();
+  const elsewhereAgents = useOtherMacsAgents();
+  // Your agents a message can ask: the ones this Mac runs and the ones your
+  // other Macs report. Undefined while either isn't known: every one, as before.
+  const askableAgents = useMemo(
+    () => (availableAgents && elsewhereAgents ? [...new Set([...availableAgents, ...elsewhereAgents])] : undefined),
+    [availableAgents, elsewhereAgents]
+  );
   // "Set up" from the composer's notice: the install offer for that agent.
   // 'none': no agent named, both are offered.
   const [setUpAgent, setSetUpAgent] = useState<AgentKind | 'none' | null>(null);
@@ -998,8 +1005,8 @@ export function RoomView({
   const askSuggestion = useMemo((): AskSuggestion | null => {
     if (!dispatchSuggestion || !(source instanceof RelayRoomSource)) return null;
     const { messageId, agent } = dispatchSuggestion;
-    // Never offer to ask an agent this Mac can't run.
-    if (availableAgents && !availableAgents.includes(agent)) return null;
+    // Never offer to ask an agent none of your Macs can run.
+    if (askableAgents && !askableAgents.includes(agent)) return null;
     return {
       messageId,
       agent,
@@ -1017,7 +1024,7 @@ export function RoomView({
           });
       },
     };
-  }, [dispatchSuggestion, source, availableAgents]);
+  }, [dispatchSuggestion, source, askableAgents]);
 
   const togglePlay = () => {
     if (!source || source.isDone()) return;
@@ -1038,9 +1045,9 @@ export function RoomView({
   ) => {
     if (!(source instanceof RelayRoomSource) || !snapshot) return;
     setDispatchSuggestion(null);
-    // Only agents this Mac can run get a request: one it can't would wait forever.
+    // Only agents one of your Macs can run get a request: one none can would wait forever.
     const ownAgents = snapshot.agents
-      .filter((a) => a.owner === selfUserId && (!availableAgents || availableAgents.includes(a.agent)))
+      .filter((a) => a.owner === selfUserId && (!askableAgents || askableAgents.includes(a.agent)))
       .map((a) => a.agent);
     const localId = `sending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const files = context.files ?? [];
@@ -1560,6 +1567,7 @@ export function RoomView({
                 onInvitePerson={live ? invitePerson : undefined}
                 agents={room.agents.filter((a) => a.owner === selfUserId)}
                 availableAgents={availableAgents}
+                elsewhereAgents={elsewhereAgents}
                 onSetUpAgent={setSetUpAgent}
                 skills={room.skills}
                 onSend={(text, context) => {
@@ -1702,8 +1710,9 @@ export function RoomView({
               // space is known to be empty as soon as its messages come back.
               connecting={room.loaded === false}
               hasSkills={room.skills.length > 0}
-              // Not known yet: Claude, as before. Known: the first one this Mac runs.
-              agent={availableAgents ? (availableAgents[0] ?? null) : 'claude'}
+              // Not known yet: Claude, as before. Known: the first one this Mac
+              // runs, else one your other Mac runs.
+              agent={availableAgents ? (availableAgents[0] ?? elsewhereAgents?.[0] ?? null) : 'claude'}
               onPrefill={(text) => setPrefill({ text, nonce: Date.now() })}
               onInvite={openInviteForm}
               onSetUpAgent={() => setSetUpAgent('none')}
@@ -1828,6 +1837,7 @@ export function RoomView({
               listFiles={live ? listSpaceFiles : undefined}
               suggestReply={live ? suggestReply : undefined}
               availableAgents={availableAgents}
+              elsewhereAgents={elsewhereAgents}
               onSetUpAgent={setSetUpAgent}
               onTypingChange={
                 source instanceof RelayRoomSource ? (typing) => source.setTyping(typing) : undefined

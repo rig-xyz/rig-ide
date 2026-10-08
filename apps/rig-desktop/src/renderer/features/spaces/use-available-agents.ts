@@ -34,3 +34,34 @@ export function useAvailableAgents(): AgentKind[] | undefined {
   }, []);
   return agents;
 }
+
+/**
+ * Your agents that your OTHER Macs report (GET /v1/me/agents through main):
+ * a tag of one this Mac can't run still goes to them. Undefined while
+ * loading; null when the relay can't say, and the composer then files the
+ * request as it always did rather than dropping it.
+ */
+export function useOtherMacsAgents(): AgentKind[] | null | undefined {
+  const [agents, setAgents] = useState<AgentKind[] | null | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      Promise.resolve()
+        .then(() => rpc.rig.spacesDispatch.otherMacsAgents())
+        .then(
+          (answer) => {
+            if (alive) setAgents(answer ? answer.agents : null);
+          },
+          () => {
+            if (alive) setAgents(null);
+          }
+        );
+    void load();
+    const off = events.on(rigAgentRunnabilityChangedChannel, () => void load());
+    return () => {
+      alive = false;
+      off();
+    };
+  }, []);
+  return agents;
+}

@@ -35,19 +35,41 @@ describe('decideSend', () => {
     expect(decideSend({ ...base, ownAgents: ['codex'], override: { kind: 'agent', agent: 'claude' } }).mode).toBe('send');
   });
 
-  it('an agent of yours this Mac can\'t run is a plain send, kept from the router, and named', () => {
-    expect(decideSend({ ...base, runnable: ['codex'], tagged: 'claude' })).toEqual({
+  it('an agent of yours that none of your Macs can run is a plain send, kept from the router, and named', () => {
+    const none = { elsewhere: [] as const };
+    expect(decideSend({ ...base, ...none, runnable: ['codex'], tagged: 'claude' })).toEqual({
       label: 'Send',
       mode: 'send',
       agent: null,
       meta: { route: 'none' },
       unavailable: 'claude',
     });
-    expect(decideSend({ ...base, runnable: [], route: asks })).toMatchObject({ mode: 'send', unavailable: 'claude' });
-    expect(decideSend({ ...base, runnable: [], pill: 'claude' })).toMatchObject({ mode: 'send', unavailable: 'claude' });
-    expect(decideSend({ ...base, runnable: ['codex'], override: { kind: 'agent', agent: 'claude' } }).mode).toBe('send');
+    expect(decideSend({ ...base, ...none, runnable: [], route: asks })).toMatchObject({ mode: 'send', unavailable: 'claude' });
+    expect(decideSend({ ...base, ...none, runnable: [], pill: 'claude' })).toMatchObject({ mode: 'send', unavailable: 'claude' });
+    expect(decideSend({ ...base, ...none, runnable: ['codex'], override: { kind: 'agent', agent: 'claude' } }).mode).toBe('send');
     // One it can run still asks.
-    expect(decideSend({ ...base, runnable: ['codex'], tagged: 'codex' })).toMatchObject({ mode: 'ask', agent: 'codex' });
+    expect(decideSend({ ...base, ...none, runnable: ['codex'], tagged: 'codex' })).toMatchObject({ mode: 'ask', agent: 'codex' });
+  });
+
+  it('asks an agent your other Mac has, and says so', () => {
+    expect(decideSend({ ...base, runnable: [], elsewhere: ['claude'], tagged: 'claude' })).toEqual({
+      label: 'Ask Claude',
+      mode: 'ask',
+      agent: 'claude',
+      meta: {},
+      elsewhere: 'claude',
+    });
+  });
+
+  it('asks anyway when what your other Macs have is unknown, never dropping the request', () => {
+    for (const elsewhere of [undefined, null]) {
+      expect(decideSend({ ...base, runnable: [], elsewhere, tagged: 'claude' })).toEqual({
+        label: 'Ask Claude',
+        mode: 'ask',
+        agent: 'claude',
+        meta: {},
+      });
+    }
   });
 
   it('the no-@ pill (a reply to its turn, or its name first) asks its agent', () => {

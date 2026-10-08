@@ -74,6 +74,22 @@ export type AgentRequestStatus =
   | 'failed'
   | 'cancelled';
 
+/** `GET /v1/me/agents`, reduced: which agents each of your computers reported lately. */
+export type MyAgentsReport = { devices: Array<{ device: string; agents: SessionAgent[] }> };
+
+/**
+ * The agents your OTHER computers report: every device but `thisDevice`.
+ * A report without a device id (an older desktop) counts as another Mac.
+ */
+export function otherMacsAgents(report: MyAgentsReport, thisDevice: string): SessionAgent[] {
+  const agents = new Set<SessionAgent>();
+  for (const d of report.devices) {
+    if (d.device === thisDevice) continue;
+    for (const a of d.agents) agents.add(a);
+  }
+  return (['claude', 'codex'] as const).filter((a) => agents.has(a));
+}
+
 export type AgentRequest = {
   id: string;
   bindingId: string;
@@ -337,6 +353,13 @@ export interface SpacesRelayApi {
    * route answers 404, read as `{ supported: false }`.
    */
   setMyAgents?(agents: SessionAgent[], device?: string): Promise<Result<{ supported: boolean }, RelayApiError>>;
+
+  /**
+   * `GET /v1/me/agents`: what each of your computers reported lately, so a
+   * Mac without an agent can tell "set up on your other Mac" from "set up
+   * nowhere". Null from a relay without the route.
+   */
+  getMyAgents?(): Promise<Result<MyAgentsReport | null, RelayApiError>>;
 
   /**
    * `PUT /v1/me/computers/active {device}` marks this Mac in use now (with
@@ -1009,6 +1032,25 @@ export function createHttpSpacesRelayApi(): SpacesRelayApi {
         return missing ? ok({ supported: false }) : err(result.error);
       }
       return ok({ supported: true });
+    },
+
+    async getMyAgents() {
+      const ctxResult = await ctxOrError();
+      if (!ctxResult.success) return err(ctxResult.error);
+      const result = await request(ctxResult.data, 'GET', '/v1/me/agents', 'check which agents your computers have');
+      if (!result.success) {
+        const missing = result.error.kind === 'relay' && result.error.status === 404;
+        return missing ? ok(null) : err(result.error);
+      }
+      const devices = Array.isArray(asRecord(result.data)?.devices) ? (asRecord(result.data)!.devices as unknown[]) : [];
+      return ok({
+        devices: devices.flatMap((entry) => {
+          const d = asRecord(entry);
+          if (!d || typeof d.device !== 'string' || !Array.isArray(d.agents)) return [];
+          const agents = d.agents.filter((a): a is SessionAgent => a === 'claude' || a === 'codex');
+          return [{ device: d.device, agents }];
+        }),
+      });
     },
 
     async activeComputer(markActive) {

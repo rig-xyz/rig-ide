@@ -285,6 +285,19 @@ describe('claimOne / claimAndDispatchQueued', () => {
     expect(posted).toEqual([{ body: 'Claude couldn’t answer.', kind: 'system', meta: { event: 'agent_failed' } }]);
   });
 
+  it('leaves the request queued when giveUp answers later with nothing (another Mac of yours has the agent)', async () => {
+    const store = makeSharedStore([makeRequest({ id: 'elsewhere', status: 'queued' })]);
+    await claimAndDispatchQueued({
+      api: store.apiFor(),
+      deviceId: 'device-a',
+      canRun: async () => false,
+      giveUp: async () => null,
+      dispatch: async () => ({ runId: 'r1' }),
+    });
+    expect(store.get('elsewhere')?.status).toBe('queued');
+    expect(store.patches).toEqual([]);
+  });
+
   it("sends this Mac's id with each claim", async () => {
     const store = makeSharedStore([makeRequest({ id: 'q1', status: 'queued' })]);
     const api = store.apiFor();
