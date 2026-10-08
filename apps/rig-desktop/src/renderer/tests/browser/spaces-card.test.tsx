@@ -326,6 +326,27 @@ describe('SpacesCard — what you missed', () => {
     expect(lineOf('lively-island').textContent).toBe('No activity yet');
   });
 
+  it('rows are weighted by state: live, unread bold with its count, quiet dimmed', () => {
+    const weightOf = (name: string) => rowOf(name).dataset.weight;
+    const nameOf = (name: string) => [...rowOf(name).querySelectorAll('span')].find((s) => s.textContent === name)!;
+    const countOf = (name: string) => rowOf(name).querySelector('[data-testid="space-row-count"]')?.textContent ?? null;
+
+    expect(weightOf('growth')).toBe('live');
+    expect(countOf('growth')).toBeNull();
+
+    expect(weightOf('calm-valley')).toBe('unread');
+    expect(nameOf('calm-valley').className).toContain('font-semibold');
+    expect(countOf('calm-valley')).toBe('5');
+    expect(countOf('launch')).toBe('9+');
+    expect(weightOf('gentle-island')).toBe('unread');
+
+    expect(weightOf('research')).toBe('quiet');
+    expect(nameOf('research').className).toContain('text-text-secondary');
+    expect(nameOf('research').className).not.toContain('font-semibold');
+    expect(tileOf('research').className).toContain('opacity-55');
+    expect(countOf('research')).toBeNull();
+  });
+
   it('opening a space clears what you missed — Home re-reads the markers', async () => {
     await act(async () => {
       writeOpenedAt('w-failed', Date.now());

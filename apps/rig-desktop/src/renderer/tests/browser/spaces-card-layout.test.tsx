@@ -369,6 +369,9 @@ describe('SpacesCard — arranging many spaces', () => {
       ['Quiet1', ['delta']],
     ]);
     expect(byText('button', 'Needs you1', host)).toBeTruthy();
+    // Needs you: the accent bar's weight, and the reason as its line.
+    expect(rowEl('gamma')!.closest('[data-testid="space-row"]')!.getAttribute('data-weight')).toBe('needs');
+    expect(rowEl('gamma')!.closest('[data-testid="space-row"]')!.textContent).toContain('Hugo mentioned you');
     expect(byText('button', 'Unread1', host)).toBeTruthy();
     expect(host.querySelector('[data-testid="new-group"]')).toBeNull();
   });

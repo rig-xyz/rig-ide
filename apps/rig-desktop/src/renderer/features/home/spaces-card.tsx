@@ -40,6 +40,7 @@ import {
   deriveSpaceAttention,
   withNotifications,
   deriveSpaceRowLine,
+  deriveSpaceRowWeight,
   filterSpaceRows,
   hasUnread,
   lastActivityAt,
@@ -574,6 +575,7 @@ function SpaceRow({
   // topic leads only new or today's activity. Rung 1, sync, is `syncLine` below.
   const line = deriveSpaceRowLine({ status, attention: shown, topic: topic?.name, now: Date.now() });
   const statusLine = line.text;
+  const { weight, count } = deriveSpaceRowWeight(shown, line.rung);
   const dimmed = muted;
   const path = row.kind === 'local' ? row.path : null;
   const relayStatus = row.kind === 'relayOnly' ? deriveRelayOnlyRowStatus(row) : null;
@@ -647,11 +649,19 @@ function SpaceRow({
   return (
     <div
       className={cn(
-        'group flex items-center gap-2.5 rounded-control px-2 py-2',
-        isHighlighted ? 'bg-accent-subtle transition-colors' : 'glass-hover',
+        'group relative flex items-center gap-2.5 rounded-control px-2 py-2',
+        isHighlighted
+          ? 'bg-accent-subtle transition-colors'
+          : weight === 'needs'
+            ? 'bg-accent/6 hover:bg-accent/10 transition-colors'
+            : 'glass-hover',
+        // Needs you: a short accent bar on the left edge.
+        weight === 'needs' &&
+          "before:bg-accent before:absolute before:top-[7px] before:bottom-[7px] before:-left-px before:w-[3px] before:rounded-full before:content-['']",
         grouping?.dragging && 'opacity-50'
       )}
       data-testid="space-row"
+      data-weight={weight}
       data-binding-id={row.bindingId}
       data-offline={offline || undefined}
       draggable={grouping ? true : undefined}
@@ -687,7 +697,7 @@ function SpaceRow({
       <SpaceStatusTile
         attention={shown}
         seed={row.bindingId}
-        className={cn(offline && 'opacity-50')}
+        className={cn((offline || weight === 'quiet') && 'opacity-55 transition-opacity')}
       />
       {/* The name button stretches over the whole column (its `before:`
           layer), so clicking the status line opens the row too; only the
@@ -706,7 +716,13 @@ function SpaceRow({
           data-testid="space-row-name"
         >
           <span className="text-text-muted font-mono text-sm">#</span>
-          <span className={cn('truncate text-sm', dimmed ? 'text-text-muted' : 'text-text-primary')}>
+          <span
+            className={cn(
+              'truncate text-sm',
+              dimmed ? 'text-text-muted' : weight === 'quiet' ? 'text-text-secondary' : 'text-text-primary',
+              (weight === 'needs' || weight === 'unread') && 'font-semibold'
+            )}
+          >
             {row.name}
           </span>
           {pinned && <Star className="text-text-muted size-3 shrink-0 fill-current" strokeWidth={1.5} />}
@@ -778,6 +794,14 @@ function SpaceRow({
         )}
       </div>
       <Faces bindingId={row.bindingId} />
+      {count && (
+        <span
+          className="bg-accent text-accent-ink flex h-[18px] min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 font-mono text-2xs font-medium tabular-nums"
+          data-testid="space-row-count"
+        >
+          {count}
+        </span>
+      )}
       <SpaceRowMenu
         row={row}
         pinned={pinned}

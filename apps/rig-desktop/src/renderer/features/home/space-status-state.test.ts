@@ -5,6 +5,7 @@ import {
   countNewMessages,
   deriveSpaceAttention,
   deriveSpaceRowLine,
+  deriveSpaceRowWeight,
   deriveSpaceStatusLine,
   DICE_FACES,
   filterSpaceRows,
@@ -572,5 +573,46 @@ describe('hasUnread', () => {
     expect(hasUnread({ kind: 'finished', agent: 'claude', endedAt: 1 })).toBe(false);
     expect(hasUnread({ kind: 'failed', agent: 'claude', endedAt: 1 })).toBe(false);
     expect(hasUnread({ kind: 'idle', lastActivityAt: null })).toBe(false);
+  });
+});
+
+describe('deriveSpaceRowWeight', () => {
+  const weigh = (attention: Parameters<typeof deriveSpaceRowWeight>[0]) =>
+    deriveSpaceRowWeight(attention, deriveSpaceRowLine({ status: undefined, attention, topic: null, now: 0 }).rung);
+
+  it('needs you: a mention carries the unread messages as its count, else how many rows are about you', () => {
+    expect(weigh({ kind: 'forYou', count: 1, line: 'Hugo mentioned you', messages: 25, exact: true })).toEqual({
+      weight: 'needs',
+      count: '25',
+    });
+    expect(weigh({ kind: 'forYou', count: 2, line: 'Hugo mentioned you', messages: 0 })).toEqual({
+      weight: 'needs',
+      count: '2',
+    });
+  });
+
+  it('your run waiting on you needs you, with nothing to count', () => {
+    const status: RigSpaceStatus = { bindingId: 'x', running: [running({ activity: 'waiting', ownerUserId: 'me' })] };
+    const attention = deriveSpaceAttention(status, null, 'me');
+    const line = deriveSpaceRowLine({ status, attention, topic: null, now: 0 });
+    expect(deriveSpaceRowWeight(attention, line.rung)).toEqual({ weight: 'needs', count: null });
+  });
+
+  it('live shows its motion, no count', () => {
+    expect(deriveSpaceRowWeight({ kind: 'live', state: 'editing' }, 4)).toEqual({ weight: 'live', count: null });
+  });
+
+  it('unread is bold with its count, capped like the line', () => {
+    expect(weigh({ kind: 'messages', count: 3 })).toEqual({ weight: 'unread', count: '3' });
+    expect(weigh({ kind: 'messages', count: 9 })).toEqual({ weight: 'unread', count: '9+' });
+    expect(weigh({ kind: 'messages', count: 99, exact: true })).toEqual({ weight: 'unread', count: '99' });
+    expect(weigh({ kind: 'messages', count: 100, exact: true })).toEqual({ weight: 'unread', count: '99+' });
+    expect(weigh({ kind: 'finished', agent: 'claude', endedAt: 0 })).toEqual({ weight: 'unread', count: null });
+    expect(weigh({ kind: 'failed', agent: 'codex', endedAt: 0 })).toEqual({ weight: 'unread', count: null });
+  });
+
+  it('nothing new is quiet', () => {
+    expect(weigh({ kind: 'idle', lastActivityAt: 5 })).toEqual({ weight: 'quiet', count: null });
+    expect(deriveSpaceRowWeight({ kind: 'idle', lastActivityAt: 5 }, 6)).toEqual({ weight: 'quiet', count: null });
   });
 });

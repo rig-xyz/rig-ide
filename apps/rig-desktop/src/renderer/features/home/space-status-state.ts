@@ -316,6 +316,39 @@ export function deriveSpaceRowLine(input: {
   return { text, tone: RUNG_TONE[rung], rung };
 }
 
+/** How much a Spaces row stands out, loudest first. */
+export type SpaceRowWeight = 'needs' | 'live' | 'unread' | 'quiet';
+
+/**
+ * A row's weight and the count on its right, from the same ladder as its
+ * line (`deriveSpaceRowLine`): rung 2 needs you (an accent bar, a bold name,
+ * the reason as its line); a live run shows its motion; something new since
+ * you looked (rungs 3 and 5) is bold with its count; the rest is quiet and
+ * steps back. The count is the unread messages, else the rows about you,
+ * capped like the line ("9+" from this computer's marker, "99+" from the
+ * relay's count). Null when there's nothing to count.
+ */
+export function deriveSpaceRowWeight(
+  attention: SpaceAttention,
+  rung: SpaceLineRung
+): { weight: SpaceRowWeight; count: string | null } {
+  const count =
+    attention.kind === 'messages'
+      ? countLabel(attention.count, attention.exact)
+      : attention.kind === 'forYou'
+        ? countLabel(attention.messages > 0 ? attention.messages : attention.count, attention.messages > 0 ? attention.exact : true)
+        : null;
+  if (rung === 2) return { weight: 'needs', count };
+  if (attention.kind === 'live') return { weight: 'live', count: null };
+  if (rung === 3 || rung === 5) return { weight: 'unread', count };
+  return { weight: 'quiet', count: null };
+}
+
+function countLabel(count: number, exact = false): string {
+  const cap = exact ? MAX_EXACT_MESSAGES : MAX_NEW_MESSAGES;
+  return count > cap || (!exact && count >= cap) ? `${cap}+` : String(count);
+}
+
 /**
  * What to remember for a space this device has no marker for yet (never
  * opened here, or opened before these markers existed): "seen up to now",
