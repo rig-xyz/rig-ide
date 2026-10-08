@@ -71,6 +71,8 @@ export type StageEntry = {
    * wide as it needs and only then reaches further left.
    */
   fit?: boolean;
+  /** Sits this far in from the column's left edge, and is that much narrower at most (a task row under its topic). */
+  indent?: number;
   /** In its birth: its shape falls without overshoot. */
   birthing?: boolean;
   /** Pulses the entry when it changes. */
@@ -436,6 +438,7 @@ export function DockStage({
     size: ghost ? undefined : sizes[entry.id],
     card: entry.card,
     phase: entry.phase,
+    indent: entry.indent,
   }));
   // A ghost takes no room: only the live entries are laid out, and it goes to the bead.
   const live = column.filter((_, i) => !rows[i]!.ghost);
@@ -592,7 +595,7 @@ export function DockStage({
                   hidden={!layout || !measured || entry.phase === 'bead'}
                   ghost={ghost || entry.phase === 'bead'}
                   phase={ghost ? undefined : entry.phase}
-                  maxWidth={entry.fit && railSize ? columnWidth(railSize.w) : undefined}
+                  maxWidth={entry.fit && railSize ? columnWidth(railSize.w) - (entry.indent ?? 0) : undefined}
                   easing={entry.birthing ? GOO_DRIP : GOO_SPRING}
                   bump={entry.bump}
                   reduced={reduced}

@@ -46,6 +46,8 @@ export type ColumnItem = {
   size: Size | undefined;
   card: boolean;
   phase: Phase;
+  /** Sits this far in from the column's left edge (a task row under its topic). */
+  indent?: number;
 };
 
 export type Box = { right: number; top: number; w: number; h: number; r: number };
@@ -79,23 +81,24 @@ export function computeLayout(rail: Size, column: readonly ColumnItem[]): DockLa
   let width = rail.w;
   const columnW = columnWidth(rail.w);
   let y = rail.h + GAP;
-  const placed: Array<{ id: string; size: Size; top: number; card: boolean }> = [];
+  const placed: Array<{ id: string; size: Size; top: number; card: boolean; indent: number }> = [];
   for (const item of column) {
     if (!item.size) {
       items[item.id] = { ...bead, left: 0, slot: { right: bead.right, top: bead.top } };
       continue;
     }
     const { w, h } = item.size;
-    const right = Math.max(0, columnW - w);
-    placed.push({ id: item.id, size: item.size, top: y, card: item.card });
+    const indent = item.indent ?? 0;
+    const right = Math.max(0, columnW - indent - w);
+    placed.push({ id: item.id, size: item.size, top: y, card: item.card, indent });
     width = Math.max(width, right + w);
     y += h + GAP;
   }
   const height = placed.length > 0 ? y - GAP : rail.h;
   const phases = new Map(column.map((item) => [item.id, item.phase]));
-  for (const { id, size, top, card } of placed) {
+  for (const { id, size, top, card, indent } of placed) {
     const { w, h } = size;
-    const right = Math.max(0, columnW - w);
+    const right = Math.max(0, columnW - indent - w);
     const r = card ? CARD_RADIUS : h / 2;
     const phase = phases.get(id) ?? 'placed';
     const slot = { right, top };

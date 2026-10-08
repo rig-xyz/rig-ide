@@ -9,16 +9,21 @@ import {
   useRef,
   useState,
 } from 'react';
+import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import {
   activeThemes,
   agentDisplayName,
+  dockTasks,
   forYouCount,
   forYouLine,
   splitThemes,
   themeColor,
   themeLastActivity,
+  whoName,
   type DockFocus,
+  type DockTask,
+  type DockWho,
 } from '../dock-model';
 import type { Phase } from '../dock-layout';
 import { themesWithForYou, type ForYou } from '../for-you';
@@ -46,6 +51,16 @@ import { AgentAvatar, PersonAvatar } from './identity';
  * place in the column and becomes the pill. An arrival in For you swells the
  * For you pill itself, to say what came in, and folds back.
  *
+ * The spotlight: while the transcript is filtered to a face, a chip for it
+ * leads the column (its × lets go), and each pill counts that face's
+ * messages out of its own.
+ *
+ * Tasks in progress: each agent run that is working, waiting or just done
+ * hangs as a small row under its topic, with the agent, its dot matrix and
+ * its time. A run whose ask the relay still holds has no topic yet and sits
+ * under "Not sorted yet". Hovering a row peeks its live step; clicking it
+ * jumps to the run's card. Hovering an agent's face lights its rows.
+ *
  * By keyboard: Tab reaches every pill (with a ring), Enter or Space focuses it
  * and the keyboard goes to the card's ×; the × (or Esc) lets go and the keyboard
  * goes back to the pill. A list of themes takes the keyboard in when it opens,
@@ -55,7 +70,12 @@ import { AgentAvatar, PersonAvatar } from './identity';
 const SPRING = { type: 'spring', stiffness: 420, damping: 32, mass: 0.8 } as const;
 
 const THEME_PREFIX = 'theme:';
+const TASK_PREFIX = 'task:';
 const MORE_ID = 'more';
+const WHO_ID = 'who';
+const UNSORTED_ID = 'unsorted';
+/** Task rows sit this far in from the column's left edge, under their topic. */
+const TASK_INDENT = 14;
 
 function Dot({ color, className }: { color: string; className?: string }) {
   return (
@@ -122,6 +142,7 @@ function Pill({
   color,
   label,
   count,
+  of,
   dim,
   waiting,
   fresh,
@@ -135,6 +156,8 @@ function Pill({
   color: string;
   label: string;
   count: number;
+  /** While a face is spotlit: the count is theirs, out of this. */
+  of?: number;
   dim: boolean;
   waiting: boolean;
   fresh: boolean;
@@ -161,8 +184,9 @@ function Pill({
       data-theme-id={themeId}
       data-swell={swell?.kind}
       className={cn(
-        'relative flex h-[30px] max-w-full items-center rounded-full pr-3 pl-2.5 text-xs whitespace-nowrap transition-colors',
+        'relative flex h-[30px] max-w-full items-center rounded-full pr-3 pl-2.5 text-xs whitespace-nowrap transition-[color,opacity]',
         FOCUS_RING,
+        of !== undefined && count === 0 && 'opacity-45',
         accent
           ? 'text-accent'
           : dim
@@ -189,7 +213,13 @@ function Pill({
           </span>
           <span className="max-w-[170px] min-w-0 truncate">{label}</span>
           <span className="shrink-0" style={marks}>
-            <Count n={count} />
+            {of === undefined ? (
+              <Count n={count} />
+            ) : (
+              <span className="font-mono text-2xs text-text-muted tabular-nums" data-testid="dock-pill-of">
+                {count} of {of}
+              </span>
+            )}
           </span>
           {waiting && (
             <span
@@ -391,7 +421,7 @@ function ThemeListPill({
           <motion.div
             ref={listRef}
             role="menu"
-            aria-label="Themes"
+            aria-label="Topics"
             data-testid="dock-more-list"
             onKeyDown={onListKeyDown}
             className="absolute top-0 right-full mr-3 flex max-h-[320px] w-[240px] origin-top-right flex-col gap-0.5 overflow-y-auto rounded-card border border-border-hairline bg-bg-1 p-1.5 shadow-float"
@@ -426,6 +456,166 @@ function ThemeListPill({
       </AnimatePresence>
     </div>
   );
+}
+
+/** The spotlit face, leading the column: who, how many of their messages, and the × that lets go. */
+function WhoChip({
+  who,
+  name,
+  count,
+  snapshot,
+  onClear,
+}: {
+  who: DockWho;
+  name: string;
+  count: number;
+  snapshot: RoomSnapshot;
+  onClear: () => void;
+}) {
+  const face =
+    who.kind === 'person' ? (
+      <PersonAvatar
+        member={snapshot.members.find((m) => m.id === who.userId)}
+        person={personOf(snapshot, who.userId)}
+        size="sm"
+      />
+    ) : (
+      <AgentAvatar
+        agent={who.agent}
+        owner={snapshot.members.find((m) => m.id === who.owner)}
+        size="sm"
+        title={null}
+        badgeRingClassName="ring-[var(--pill-fill)]"
+      />
+    );
+  return (
+    <div
+      className="flex h-[30px] max-w-full items-center gap-2 rounded-full pr-1.5 pl-1.5 text-xs whitespace-nowrap text-text-primary shadow-[inset_0_0_0_1.5px_var(--accent)]"
+      data-testid="dock-who-chip"
+      role="group"
+      aria-label={`Showing ${name}`}
+    >
+      {face}
+      <span className="max-w-[150px] min-w-0 truncate">{name}</span>
+      <Count n={count} />
+      <button
+        type="button"
+        onClick={onClear}
+        aria-label={`Show everyone, not only ${name}`}
+        data-testid="dock-who-clear"
+        className={cn(
+          'flex size-[18px] shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-bg-3 hover:text-text-primary',
+          FOCUS_RING
+        )}
+      >
+        <X className="size-3" strokeWidth={1.75} />
+      </button>
+    </div>
+  );
+}
+
+/** "Not sorted yet": the heading over tasks whose ask the relay still holds. Not a filter. */
+function UnsortedHeading({ count }: { count: number }) {
+  return (
+    <span
+      className="flex h-[30px] items-center gap-2 rounded-full pr-3 pl-2.5 text-xs whitespace-nowrap text-text-secondary"
+      data-testid="dock-unsorted"
+    >
+      <span className="size-2 shrink-0 rounded-full shadow-[inset_0_0_0_1.5px_var(--text-muted)]" aria-hidden />
+      Not sorted yet
+      <Count n={count} />
+    </span>
+  );
+}
+
+function taskAgentName(task: DockTask, snapshot: RoomSnapshot): string {
+  return agentDisplayName(task.agent, task.own ? null : personOf(snapshot, task.owner).name);
+}
+
+/** One task under its topic: the agent, its dot matrix, what it is, and its time. */
+function TaskRow({
+  task,
+  snapshot,
+  lit,
+  onJump,
+}: {
+  task: DockTask;
+  snapshot: RoomSnapshot;
+  /** Its agent's face is hovered. */
+  lit: boolean;
+  onJump: (() => void) | undefined;
+}) {
+  const name = taskAgentName(task, snapshot);
+  return (
+    <button
+      type="button"
+      onClick={onJump}
+      aria-label={`${name}: ${task.title}. ${task.status}`}
+      data-testid="dock-task"
+      data-run-id={task.runId}
+      data-state={task.state}
+      data-lit={lit ? 'true' : undefined}
+      className={cn(
+        'flex h-[26px] max-w-full items-center gap-[7px] rounded-full pr-2.5 pl-1 text-xs whitespace-nowrap transition-colors',
+        FOCUS_RING,
+        lit ? 'text-accent' : task.state === 'done' ? 'text-text-secondary' : 'text-text-primary'
+      )}
+    >
+      <AgentAvatar
+        agent={task.agent}
+        owner={snapshot.members.find((m) => m.id === task.owner)}
+        size="sm"
+        title={null}
+        badgeRingClassName="ring-[var(--pill-fill)]"
+      />
+      <DotMatrix state={task.matrix} size="sm" />
+      <span className="max-w-[120px] min-w-0 truncate">{task.title}</span>
+      <span
+        className={cn(
+          'shrink-0 text-2xs tabular-nums',
+          task.state === 'waiting' ? 'text-warning' : 'text-text-muted'
+        )}
+      >
+        {task.status}
+      </span>
+    </button>
+  );
+}
+
+/** A task's peek: whose agent, what it was asked, and the step it is on now. */
+function TaskPeek({ task, snapshot }: { task: DockTask; snapshot: RoomSnapshot }) {
+  const foot = task.themeId
+    ? 'Click to jump to it.'
+    : 'It gets a topic when it finishes. Click to jump to it.';
+  return (
+    <div
+      className="px-3 py-2.5 text-xs"
+      style={{ width: 250, pointerEvents: 'none' }}
+      data-testid="dock-task-peek"
+    >
+      <b className="font-semibold text-text-primary">{taskAgentName(task, snapshot)}</b>
+      <p className="mt-1 line-clamp-2 leading-snug text-text-prose">{task.title}</p>
+      <div className="mt-1.5 flex h-5 min-w-0 items-center gap-2 text-text-secondary">
+        <DotMatrix state={task.matrix} size="sm" />
+        <span className={cn('min-w-0 truncate', task.state === 'working' && 'active-shimmer-muted')}>
+          {task.step}
+        </span>
+      </div>
+      <p className="mt-1.5 text-text-muted">{foot}</p>
+    </div>
+  );
+}
+
+/** The clock for the task rows' times: ticks once a second while there are tasks to show. */
+function useTaskClock(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [active]);
+  return now;
 }
 
 /**
@@ -512,10 +702,18 @@ export type PillColumnInput = {
   freshThemeIds: ReadonlySet<string>;
   bornIds: ReadonlySet<string>;
   swell: DockSwell | null;
-  /** A narrow Room: For you, the focused theme, and one "Themes N" for the rest. */
+  /** A narrow Room: For you, the focused theme, and one "Topics N" for the rest. */
   narrow?: boolean;
   onToggle: (target: DockFocus) => void;
   onClear: () => void;
+  /** The face the transcript is filtered to, and its messages. */
+  who?: DockWho | null;
+  whoIds?: ReadonlySet<string> | null;
+  /** The face under the pointer: its agent's task rows light up. */
+  hoverWho?: DockWho | null;
+  onClearWho?: () => void;
+  /** A task row was clicked. */
+  onJumpToRun?: (runId: string) => void;
 };
 
 export type PillColumn = {
@@ -538,6 +736,11 @@ export function usePillColumn({
   narrow = false,
   onToggle,
   onClear,
+  who = null,
+  whoIds = null,
+  hoverWho = null,
+  onClearWho,
+  onJumpToRun,
 }: PillColumnInput): PillColumn {
   const reduced = useReducedMotion() ?? false;
   const [hovered, setHovered] = useState<string | null>(null);
@@ -560,6 +763,31 @@ export function usePillColumn({
       themes ? themesWithForYou(forYou, themes.themeOf, snapshot.messages) : new Set<string>(),
     [forYou, themes, snapshot.messages]
   );
+
+  // Tasks in progress, the spotlit face's only while there is one.
+  const [hasTasks, setHasTasks] = useState(false);
+  const now = useTaskClock(hasTasks && !narrow);
+  const tasks = useMemo(() => {
+    if (narrow) return [];
+    const all = dockTasks(snapshot, themes, selfUserId, now);
+    if (!who) return all;
+    return all.filter((t) =>
+      who.kind === 'person' ? t.owner === who.userId : t.owner === who.owner && t.agent === who.agent
+    );
+  }, [narrow, snapshot, themes, selfUserId, now, who]);
+  if (hasTasks !== tasks.length > 0) setHasTasks(tasks.length > 0);
+
+  // While a face is spotlit, each pill counts its messages.
+  const themeOfMap = themes?.themeOf;
+  const whoCounts = useMemo(() => {
+    if (!whoIds || !themeOfMap) return null;
+    const counts = new Map<string, number>();
+    for (const id of whoIds) {
+      const themeId = themeOfMap[id]?.themeId;
+      if (themeId) counts.set(themeId, (counts.get(themeId) ?? 0) + 1);
+    }
+    return counts;
+  }, [whoIds, themeOfMap]);
 
   const youFocused = focus?.kind === 'for-you';
   const youCount = forYouCount(forYou);
@@ -587,6 +815,52 @@ export function usePillColumn({
   const line = forYouLine(forYou);
   const entries: StageEntry[] = [];
   const peeks = new Map<string, { anchor: string; peek: ReactNode }>();
+
+  if (who && whoIds && onClearWho) {
+    entries.push({
+      id: WHO_ID,
+      card: false,
+      fit: true,
+      phase: 'placed',
+      content: (
+        <WhoChip
+          who={who}
+          name={whoName(snapshot, who, selfUserId)}
+          count={whoIds.size}
+          snapshot={snapshot}
+          onClear={onClearWho}
+        />
+      ),
+    });
+  }
+
+  const taskEntries = (list: DockTask[]) => {
+    for (const task of list) {
+      const id = TASK_PREFIX + task.runId;
+      const lit =
+        task.state !== 'done' &&
+        hoverWho?.kind === 'agent' &&
+        hoverWho.owner === task.owner &&
+        hoverWho.agent === task.agent;
+      entries.push({
+        id,
+        card: false,
+        fit: true,
+        indent: TASK_INDENT,
+        phase: 'placed',
+        wrapperProps: hover(id),
+        content: (
+          <TaskRow
+            task={task}
+            snapshot={snapshot}
+            lit={lit}
+            onJump={onJumpToRun ? () => onJumpToRun(task.runId) : undefined}
+          />
+        ),
+      });
+      peeks.set(id, { anchor: id, peek: <TaskPeek task={task} snapshot={snapshot} /> });
+    }
+  };
 
   if (showForYou) {
     const swollen = swell && !youFocused ? { key: swell.key, ...swellOf(swell, snapshot, selfUserId) } : null;
@@ -633,6 +907,18 @@ export function usePillColumn({
     }
   }
 
+  const unsorted = tasks.filter((t) => t.themeId === null);
+  if (unsorted.length > 0) {
+    entries.push({
+      id: UNSORTED_ID,
+      card: false,
+      fit: true,
+      phase: 'placed',
+      content: <UnsortedHeading count={unsorted.length} />,
+    });
+    taskEntries(unsorted);
+  }
+
   for (const theme of visibleThemes) {
     const id = THEME_PREFIX + theme.id;
     const focused = focusedThemeId === theme.id;
@@ -650,9 +936,9 @@ export function usePillColumn({
           testId="dock-focus-card"
           color={color}
           title={theme.name}
-          count={theme.count}
+          count={whoCounts ? (whoCounts.get(theme.id) ?? 0) : theme.count}
           body={theme.description}
-          foot={`Showing ${theme.count} of ${snapshot.messages.length} messages.`}
+          foot={`Showing ${whoCounts ? (whoCounts.get(theme.id) ?? 0) : theme.count} of ${snapshot.messages.length} messages.`}
           restoreSelector={`[data-testid="dock-pill"][data-theme-id="${CSS.escape(theme.id)}"]`}
           onClear={onClear}
         />
@@ -662,7 +948,8 @@ export function usePillColumn({
           themeId={theme.id}
           color={color}
           label={theme.name}
-          count={theme.count}
+          count={whoCounts ? (whoCounts.get(theme.id) ?? 0) : theme.count}
+          of={whoCounts ? theme.count : undefined}
           dim={dimOthers}
           waiting={waitingThemes.has(theme.id)}
           fresh={freshThemeIds.has(theme.id)}
@@ -686,6 +973,7 @@ export function usePillColumn({
         ),
       });
     }
+    taskEntries(tasks.filter((t) => t.themeId === theme.id));
   }
 
   if (moreThemes.length > 0) {
@@ -699,10 +987,10 @@ export function usePillColumn({
           themes={listed}
           onPick={(theme) => onToggle({ kind: 'theme', themeId: theme.id })}
           testId="dock-themes"
-          ariaLabel={`Themes ${listed.length}`}
+          ariaLabel={`Topics ${listed.length}`}
           label={
             <span className="relative flex items-center gap-1.5">
-              Themes
+              Topics
               <span className="font-mono text-2xs tabular-nums">{listed.length}</span>
             </span>
           }
@@ -712,7 +1000,7 @@ export function usePillColumn({
           themes={rest}
           onPick={(theme) => onToggle({ kind: 'theme', themeId: theme.id })}
           testId="dock-more"
-          ariaLabel={`${rest.length} more ${rest.length === 1 ? 'theme' : 'themes'}`}
+          ariaLabel={`${rest.length} more ${rest.length === 1 ? 'topic' : 'topics'}`}
           label={<span className="relative font-mono text-2xs tabular-nums">+{rest.length}</span>}
         />
       ),
@@ -729,6 +1017,10 @@ export function usePillColumn({
   const previewIds = useMemo<ReadonlySet<string> | null>(() => {
     if (focus !== null || previewed === null) return null;
     if (previewed === FOR_YOU_ID) return forYou.messageIds;
+    if (previewed.startsWith(TASK_PREFIX)) {
+      const task = tasks.find((t) => TASK_PREFIX + t.runId === previewed);
+      return task ? new Set([task.messageId]) : null;
+    }
     if (!previewed.startsWith(THEME_PREFIX) || !themeOf) return null;
     const themeId = previewed.slice(THEME_PREFIX.length);
     const ids = new Set<string>();
@@ -736,7 +1028,7 @@ export function usePillColumn({
       if (assignment.themeId === themeId) ids.add(messageId);
     }
     return ids;
-  }, [focus, previewed, forYou.messageIds, themeOf]);
+  }, [focus, previewed, forYou.messageIds, themeOf, tasks]);
 
   return {
     entries,

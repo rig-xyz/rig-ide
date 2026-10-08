@@ -1126,6 +1126,7 @@ export function RoomView({
   const dockForYou = dockOn ? forYouState : null;
   const dockFocus = useDockFocus({
     enabled: dockOn,
+    snapshot: shownSnapshot,
     themes: snapshot?.themes,
     forYou: dockForYou?.forYou ?? null,
     dismiss: dockForYou?.dismiss ?? null,
@@ -1137,6 +1138,8 @@ export function RoomView({
   useRoomThemeRequest({ bindingId, enabled: dockOn, themes: snapshot?.themes, focusOn: dockFocus.focusOn });
   // The messages the hovered pill holds: the transcript dims the rest.
   const [dockPreview, setDockPreview] = useState<ReadonlySet<string> | null>(null);
+  // The messages of the face hovered or spotlit in the dock: the outline lights them.
+  const [dockTrail, setDockTrail] = useState<ReadonlySet<string> | null>(null);
   // How far the dock's pills reach from the right edge, which the transcript keeps clear of.
   const [dockGutter, setDockGutter] = useState(0);
   const [gutterMoving, setGutterMoving] = useState(false);
@@ -1259,6 +1262,11 @@ export function RoomView({
   const activeJump = useMemo(
     () => (!localJump ? jump : !jump || localJump.nonce > jump.nonce ? localJump : jump),
     [jump, localJump]
+  );
+  // A task row in the dock: to its run's card, opening a fold if one hides it.
+  const jumpToRun = useCallback(
+    (runId: string) => setLocalJump({ messageId: null, runId, nonce: Date.now() }),
+    []
   );
   const closeSearch = chatSearch.close;
   const showInChat = useCallback(
@@ -1748,6 +1756,7 @@ export function RoomView({
             onLoadOlder={handleLoadOlder}
             focus={transcriptFocus}
             previewIds={dockPreview}
+            trailIds={dockTrail}
             topBar={topBar}
             threads={transcriptThreads}
             readThroughSeq={readThroughSeq}
@@ -1922,6 +1931,8 @@ export function RoomView({
                       card={{ open, content: card, onFold }}
                       onGutterChange={onDockGutter}
                       onPreviewChange={setDockPreview}
+                      onTrailChange={setDockTrail}
+                      onJumpToRun={jumpToRun}
                       className="absolute top-[52px] right-4"
                     />
                   )
@@ -1939,6 +1950,8 @@ export function RoomView({
             narrow={narrow}
             onGutterChange={onDockGutter}
             onPreviewChange={setDockPreview}
+            onTrailChange={setDockTrail}
+            onJumpToRun={jumpToRun}
             className="absolute top-3 right-4"
           />
         ) : (

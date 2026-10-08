@@ -9,6 +9,9 @@ import { cn } from '@renderer/lib/utils';
  * readable list (who, and the first words), the rows in view marked;
  * clicking one jumps to it.
  * Hidden while the whole conversation fits on screen.
+ *
+ * A light trail: while a face in the dock is hovered or spotlit, that
+ * person's or agent's rows show in the accent.
  */
 
 export type MapEntry = {
@@ -17,6 +20,8 @@ export type MapEntry = {
   tone: 'agent' | 'person' | 'mine' | 'other';
   label: string;
   preview: () => string;
+  /** On the trail of the face the dock is showing. */
+  lit?: boolean;
 };
 
 type Placed = { id: string; top: number };
@@ -100,8 +105,15 @@ export function ConversationMap({
                 className={cn(
                   'block h-0.5 rounded-full transition-[width,background-color] duration-150',
                   entry.tone === 'agent' ? 'w-4' : 'w-2.5',
-                  visible ? 'bg-text-primary' : 'bg-text-muted/45'
+                  entry.lit
+                    ? visible
+                      ? 'bg-accent'
+                      : 'bg-accent/60'
+                    : visible
+                      ? 'bg-text-primary'
+                      : 'bg-text-muted/45'
                 )}
+                data-lit={entry.lit ? 'true' : undefined}
               />
             );
           })}
@@ -134,7 +146,12 @@ export function ConversationMap({
                     )}
                   />
                   <span className="flex min-w-0 flex-col">
-                    <span className="truncate text-2xs text-text-muted">{entry.label}</span>
+                    <span
+                      className={cn('truncate text-2xs', entry.lit ? 'text-accent' : 'text-text-muted')}
+                      data-lit={entry.lit ? 'true' : undefined}
+                    >
+                      {entry.label}
+                    </span>
                     <span className="line-clamp-1 text-xs text-text-secondary">{entry.preview() || '…'}</span>
                   </span>
                 </button>

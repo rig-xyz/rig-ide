@@ -4,8 +4,11 @@
  * The components (`components/theme-dock.tsx` and its parts) only draw it.
  */
 
+import type { DotMatrixState } from '@renderer/lib/ui/dot-matrix';
+import { formatElapsed } from '@renderer/lib/time-format';
+import type { TranscriptFocus } from './components/room-transcript';
 import type { ForYou } from './for-you';
-import { effectiveRunStatus, projectSessionCard } from './projection';
+import { effectiveRunStatus, projectSessionCard, runCard } from './projection';
 import type { RoomTheme, RoomThemes } from './themes';
 import { personOf } from './person-identity';
 import type { AgentKind, RoomMember, RoomSnapshot } from './types';
@@ -219,4 +222,220 @@ export function themeLastActivity(
     return { who, time: message.time };
   }
   return null;
+}
+
+// ────────── spotlight: a person or an agent ──────────
+
+/** A face in the dock the transcript can be filtered to: a person, or one person's agent of one kind. */
+export type DockWho =
+  | { kind: 'person'; userId: string }
+  | { kind: 'agent'; owner: string; agent: AgentKind };
+
+export function sameWho(a: DockWho | null, b: DockWho | null): boolean {
+  if (a === null || b === null) return a === b;
+  if (a.kind === 'person') return b.kind === 'person' && a.userId === b.userId;
+  return b.kind === 'agent' && a.owner === b.owner && a.agent === b.agent;
+}
+
+/** A stable key for a face, for focus keys and React keys. */
+export function whoKey(who: DockWho): string {
+  return who.kind === 'person' ? `person:${who.userId}` : `agent:${who.owner}:${who.agent}`;
+}
+
+/**
+ * The messages that belong to a face. A person: everything they wrote, and
+ * every run of their agents (those messages carry the owner as their author).
+ * An agent: its runs, its replies in doc threads, and the messages that asked
+ * for its runs.
+ */
+export function whoMessageIds(
+  snapshot: Pick<RoomSnapshot, 'messages' | 'sessionMetaByRun'>,
+  who: DockWho
+): Set<string> {
+  const ids = new Set<string>();
+  for (const message of snapshot.messages) {
+    if (who.kind === 'person') {
+      const run =
+        message.meta.kind === 'session' ? snapshot.sessionMetaByRun[message.meta.runId] : undefined;
+      if (message.authorId === who.userId || run?.owner === who.userId) ids.add(message.id);
+      continue;
+    }
+    if (message.meta.kind === 'session') {
+      const run = snapshot.sessionMetaByRun[message.meta.runId];
+      if (run && run.owner === who.owner && run.agent === who.agent) {
+        ids.add(message.id);
+        if (message.meta.sourceMessageId) ids.add(message.meta.sourceMessageId);
+      }
+    } else if (
+      message.meta.kind === 'comment_mirror' &&
+      message.meta.replyFromAgent === who.agent &&
+      message.authorId === who.owner
+    ) {
+      ids.add(message.id);
+    }
+  }
+  return ids;
+}
+
+function intersect(a: ReadonlySet<string>, b: ReadonlySet<string>): Set<string> {
+  const out = new Set<string>();
+  for (const id of a) if (b.has(id)) out.add(id);
+  return out;
+}
+
+const pluralMessages = (n: number) => `${n} ${n === 1 ? 'message' : 'messages'}`;
+
+/**
+ * A topic's (or For you's) focus with the spotlit face on top: the transcript
+ * keeps what is in both, and the fold rows say why the rest is folded. No
+ * face: the topic's focus as it is. A face alone: its messages.
+ */
+export function spotlightFocus(
+  topic: TranscriptFocus | undefined,
+  spotlight: { who: DockWho; messageIds: ReadonlySet<string> } | null,
+  forYou: boolean
+): TranscriptFocus | undefined {
+  if (!spotlight) return topic;
+  const key = whoKey(spotlight.who);
+  if (!topic) {
+    return {
+      messageIds: spotlight.messageIds,
+      key,
+      foldLabel: (n) => `${pluralMessages(n)} from others`,
+    };
+  }
+  const rest = forYou ? 'not waiting on you' : 'in other topics';
+  return {
+    ...topic,
+    messageIds: intersect(topic.messageIds, spotlight.messageIds),
+    ...(topic.askIds ? { askIds: intersect(topic.askIds, spotlight.messageIds) } : {}),
+    key: `${topic.key ?? ''}|${key}`,
+    foldLabel: (n) => `${pluralMessages(n)} from others or ${rest}`,
+  };
+}
+
+/** What the chip calls a face: "You", "Sam", "Your Claude", "Sam's Codex". */
+export function whoName(
+  snapshot: Pick<RoomSnapshot, 'members' | 'messages'>,
+  who: DockWho,
+  selfUserId: string
+): string {
+  if (who.kind === 'person') {
+    return who.userId === selfUserId ? 'You' : personOf(snapshot, who.userId).name;
+  }
+  return agentDisplayName(
+    who.agent,
+    who.owner === selfUserId ? null : personOf(snapshot, who.owner).name
+  );
+}
+
+// ────────── tasks in progress ──────────
+
+/** A finished run stays in the dock this long, as "Done". */
+export const JUST_FINISHED_MS = 5 * 60 * 1000;
+
+const STEP_MATRIX: Record<string, DotMatrixState> = {
+  read: 'reading',
+  fetch: 'reading',
+  edit: 'editing',
+  delete: 'editing',
+  move: 'editing',
+  search: 'searching',
+  execute: 'running',
+  think: 'thinking',
+};
+
+export type DockTask = {
+  runId: string;
+  /** The run's own message in the transcript, to jump to. */
+  messageId: string;
+  agent: AgentKind;
+  owner: string;
+  own: boolean;
+  title: string;
+  state: 'working' | 'waiting' | 'done';
+  /** The run's dot matrix: its live motion, or its end glyph. */
+  matrix: DotMatrixState;
+  /** What it is doing now, in words, for the peek. */
+  step: string;
+  /** The row's time: how long it has run, who it waits on, or that it is done. */
+  status: string;
+  /** Its topic, once the relay has placed the run or its ask; null until then. */
+  themeId: string | null;
+};
+
+/**
+ * The agent runs to show in the dock: working, waiting on an approval, or
+ * finished in the last few minutes, oldest first. Each sits under its topic;
+ * the relay holds an agent ask until its run ends (room-themes-spec.md §3.3),
+ * so a running task usually has none yet.
+ */
+export function dockTasks(
+  snapshot: Pick<
+    RoomSnapshot,
+    'messages' | 'members' | 'sessionMetaByRun' | 'sessionEventsByRun' | 'sessionSummaryByRun'
+  >,
+  themes: RoomThemes | null | undefined,
+  selfUserId: string,
+  now: number
+): DockTask[] {
+  const tasks: Array<DockTask & { at: number }> = [];
+  for (const message of snapshot.messages) {
+    if (message.meta.kind !== 'session') continue;
+    const meta = snapshot.sessionMetaByRun[message.meta.runId];
+    if (!meta) continue;
+    const card = runCard(snapshot, meta.id);
+    const status = effectiveRunStatus(meta.status, card);
+    const own = meta.owner === selfUserId;
+    const ownerName = own ? null : personOf(snapshot, meta.owner).name;
+    const startedAt = Date.parse(meta.startedAt) || now;
+    let state: DockTask['state'];
+    let matrix: DotMatrixState;
+    let step: string;
+    let label: string;
+    if (status === 'running' || status === 'waiting') {
+      const pending = card.permissions.pending.length > 0;
+      const hidden = !own && (card.privacy === 'answer' || card.detailsHidden);
+      state = pending ? 'waiting' : 'working';
+      matrix = pending
+        ? 'waiting'
+        : card.currentStep
+          ? (STEP_MATRIX[card.currentStep.kind ?? ''] ?? 'thinking')
+          : 'thinking';
+      const waitingOn = ownerName ? `Waiting on ${ownerName}` : 'Waiting on you';
+      step = pending
+        ? waitingOn
+        : hidden
+          ? 'Working'
+          : (card.currentStep?.title ?? 'Thinking');
+      label = pending ? waitingOn : formatElapsed(now - startedAt);
+    } else {
+      const endedAt = meta.endedAt ? Date.parse(meta.endedAt) : NaN;
+      if (Number.isNaN(endedAt) || now - endedAt > JUST_FINISHED_MS) continue;
+      state = 'done';
+      matrix = status === 'failed' ? 'failed' : status === 'stopped' ? 'stopped' : 'done';
+      label = status === 'failed' ? 'Failed' : status === 'stopped' ? 'Stopped' : 'Done';
+      step = label;
+    }
+    const themeId =
+      themes?.themeOf[message.id]?.themeId ??
+      (message.meta.sourceMessageId ? themes?.themeOf[message.meta.sourceMessageId]?.themeId : undefined) ??
+      null;
+    tasks.push({
+      runId: meta.id,
+      messageId: message.id,
+      agent: meta.agent,
+      owner: meta.owner,
+      own,
+      title: meta.title.trim() || agentDisplayName(meta.agent, ownerName),
+      state,
+      matrix,
+      step,
+      status: label,
+      themeId: themeId && themes?.list.some((t) => t.id === themeId) ? themeId : null,
+      at: startedAt,
+    });
+  }
+  tasks.sort((a, b) => a.at - b.at || a.runId.localeCompare(b.runId));
+  return tasks.map(({ at: _at, ...task }) => task);
 }

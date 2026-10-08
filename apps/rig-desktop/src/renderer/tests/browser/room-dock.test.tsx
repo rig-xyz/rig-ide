@@ -2,10 +2,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type * as MotionModule from 'motion/react';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { userEvent } from 'vitest/browser';
 import type * as NotificationsModule from '@renderer/features/notifications/use-notifications';
-import { RoomTranscript } from '@renderer/features/spaces/components/room-transcript';
+import {
+  RoomTranscript,
+  type RoomJumpRequest,
+} from '@renderer/features/spaces/components/room-transcript';
 import { RoomView } from '@renderer/features/spaces/components/room-view';
 import { ThemeDock } from '@renderer/features/spaces/components/theme-dock';
 import type * as RoomFeedModule from '@renderer/features/spaces/fixtures/room-feed';
@@ -303,9 +306,12 @@ function Harness({
 }) {
   const [cardOpen, setCardOpen] = React.useState(false);
   const [preview, setPreview] = React.useState<ReadonlySet<string> | null>(null);
+  const [trail, setTrail] = React.useState<ReadonlySet<string> | null>(null);
+  const [jump, setJump] = React.useState<RoomJumpRequest | null>(null);
   const forYouState = useForYou('b1', snapshot, SELF);
   const focus = useDockFocus({
     enabled: true,
+    snapshot,
     themes: snapshot.themes,
     forYou: forYouState.forYou,
     dismiss: forYouState.dismiss,
@@ -317,6 +323,8 @@ function Harness({
         ownId={SELF}
         focus={focus.transcriptFocus}
         previewIds={preview}
+        trailIds={trail}
+        jump={jump}
       />
       <ThemeDock
         snapshot={snapshot}
@@ -338,6 +346,8 @@ function Harness({
             : undefined
         }
         onPreviewChange={setPreview}
+        onTrailChange={setTrail}
+        onJumpToRun={(runId) => setJump({ runId, nonce: Date.now() })}
         className="absolute top-3 right-4"
       />
     </div>
@@ -675,7 +685,7 @@ describe('Room dock', () => {
       const matrix = () => listener.querySelector<HTMLElement>('[data-state]');
       expect(listener.dataset.hearing).toBe('false');
       expect(matrix()!.dataset.state).toBe('waiting');
-      expect(matrix()!.getAttribute('aria-label')).toBe('Listening for themes');
+      expect(matrix()!.getAttribute('aria-label')).toBe('Listening for topics');
       // One matrix, and no bars or bead beside it.
       expect(listener.querySelectorAll('[data-state]')).toHaveLength(1);
       // The medium one (4px dots, about an avatar's weight), not the large.
@@ -962,8 +972,8 @@ describe('Room dock', () => {
       await sleep(100);
       expect(rows()).toEqual(['fold', 'm2', 'm3', 'fold']);
       expect(all('transcript-fold').map((f) => f.textContent)).toEqual([
-        '1 message in other themes',
-        '3 messages in other themes',
+        '1 message in other topics',
+        '3 messages in other topics',
       ]);
       const card = q('dock-focus-card')!;
       expect(card.textContent).toContain('Pricing');
@@ -1048,17 +1058,27 @@ describe('Room dock', () => {
   describe('approvals on your agent', () => {
     const badge = () => q('dock-approvals-badge');
     const openPanel = async () => {
-      await act(async () => click(q('dock-agent')!));
+      await act(async () => click(q('dock-approvals-badge')!));
       await sleep(80);
     };
 
-    it('badges your agent with the pending requests, and says so when there are none', async () => {
+    it('badges your agent with the pending requests, and has no badge when there are none', async () => {
       await show(room());
       expect(badge()!.textContent).toBe('2');
+      expect(badge()!.getAttribute('aria-label')).toBe('2 approvals waiting for Your Claude');
       await show(room({ sessionEventsByRun: {} }));
       await until(() => expect(badge()).toBeNull());
+    });
+
+    it('opens the panel from the badge, while a click on the face filters the transcript', async () => {
+      await show(room());
+      await act(async () => click(q('dock-agent')!));
+      await sleep(80);
+      expect(q('dock-approvals-panel')).toBeNull();
+      expect(q('dock-who-chip')).not.toBeNull();
       await openPanel();
-      expect(q('dock-approvals-empty')!.textContent).toBe('Nothing waiting for your approval.');
+      expect(q('dock-approvals-panel')).not.toBeNull();
+      expect(badge()!.getAttribute('aria-expanded')).toBe('true');
     });
 
     it('groups requests by run with the theme and who asked, and approves one with the one-off allow', async () => {
@@ -1230,7 +1250,14 @@ describe('Room dock', () => {
       await show(room());
       expect(all('dock-goo')).toHaveLength(1);
       const layer = q('dock-goo')!;
-      expect(shapes()).toEqual(['rail', 'for-you', 'theme:launch', 'theme:pricing', 'theme:lunch']);
+      expect(shapes()).toEqual([
+        'rail',
+        'for-you',
+        'theme:launch',
+        'task:r1',
+        'theme:pricing',
+        'theme:lunch',
+      ]);
       // Plain shapes: nothing to read, nothing to press.
       expect(layer.textContent).toBe('');
       expect(layer.querySelector('button, img, svg, [data-testid]')).toBeNull();
@@ -1281,7 +1308,7 @@ describe('Room dock', () => {
 
     it('hangs the approvals panel from the rail the same way', async () => {
       await show(room());
-      await act(async () => click(q('dock-agent')!));
+      await act(async () => click(q('dock-approvals-badge')!));
       // The panel's edge is the rail's edge and the gap, and the neck bridges them.
       await until(() => expect(Number(shape('float-neck')?.dataset.edge)).toBe(edge('rail') + 12));
       expect(q('dock-goo')!.contains(shape('float'))).toBe(true);
@@ -1531,6 +1558,202 @@ describe('Room dock', () => {
     });
   });
 
+  describe('the spotlight', () => {
+    const face = (id: string) =>
+      host.querySelector<HTMLElement>(`[data-testid="dock-member"][data-member-id="${id}"]`)!;
+    const foldLabels = () => all('transcript-fold').map((f) => f.textContent?.trim());
+
+    it("dims everyone else's messages while a face is hovered, and restores them on leave", async () => {
+      await show(room());
+      await act(async () => hover(face('sam')));
+      expect(dimmedRows()).toEqual(['m2', 'm4', 's1']);
+      await act(async () => unhover(face('sam')));
+      expect(dimmedRows()).toEqual([]);
+      // Your own face keeps your agent's runs too.
+      await act(async () => hover(face(SELF)));
+      expect(dimmedRows()).toEqual(['m1', 'm2', 'm3', 'm4', 'm5']);
+      await act(async () => unhover(face(SELF)));
+      // An agent's face keeps its runs.
+      await act(async () => hover(q('dock-agent')!));
+      expect(dimmedRows()).toEqual(['m1', 'm2', 'm3', 'm4', 'm5']);
+    });
+
+    it('filters to a face on a click, with a chip that combines with a topic and recounts the pills', async () => {
+      await show(room());
+      await act(async () => click(face('sam')));
+      await sleep(80);
+      expect(face('sam').getAttribute('aria-pressed')).toBe('true');
+      expect(q('dock-face-selected')).not.toBeNull();
+      expect(rows()).toEqual(['m1', 'fold', 'm3', 'fold', 'm5', 'fold']);
+      expect(foldLabels()).toEqual(['1 message from others', '1 message from others', '1 message from others']);
+      const chip = q('dock-who-chip')!;
+      expect(chip.textContent).toContain('Sam');
+      expect(chip.textContent).toContain('3');
+      // Each pill counts Sam's messages out of its own.
+      expect(all('dock-pill-of').map((n) => n.textContent)).toEqual(['1 of 3', '1 of 2', '1 of 1']);
+      // A topic on top keeps what is in both.
+      await act(async () => click(all('dock-pill').find((p) => p.dataset.themeId === 'pricing')!));
+      await sleep(80);
+      expect(rows()).toEqual(['fold', 'm3', 'fold']);
+      expect(foldLabels()).toEqual([
+        '2 messages from others or in other topics',
+        '3 messages from others or in other topics',
+      ]);
+      // The chip's × lets go of the face only.
+      await act(async () => click(q('dock-who-clear')!));
+      await until(() => expect(q('dock-who-chip')).toBeNull());
+      expect(q('dock-focus-card')).not.toBeNull();
+      expect(rows()).toEqual(['fold', 'm2', 'm3', 'fold']);
+    });
+
+    it('lets go of a face when it is clicked again, and of the face and the topic on Esc', async () => {
+      await show(room());
+      await act(async () => click(face('sam')));
+      await act(async () => click(face('sam')));
+      await until(() => expect(q('dock-who-chip')).toBeNull());
+      await act(async () => click(face('maya')));
+      await act(async () => click(all('dock-pill')[0]!));
+      await sleep(60);
+      expect(q('dock-who-chip')).not.toBeNull();
+      await act(async () => void press('Escape'));
+      await until(() => expect(q('dock-who-chip')).toBeNull());
+      await until(() => expect(q('dock-focus-card')).toBeNull());
+      expect(rows()).toEqual(['m1', 'm2', 'm3', 'm4', 'm5', 's1']);
+    });
+
+    it("lights the face's rows in the conversation's outline while it is hovered or picked", async () => {
+      const long = Array.from({ length: 80 }, (_, i) =>
+        msg(`l${i}`, i + 1, { body: `line ${i}\nand a second line\nand a third` })
+      );
+      // The transcript scrolls in its 640px, so the outline has something to map.
+      const style = document.createElement('style');
+      style.textContent =
+        ':has(> [data-testid="room-transcript"]){display:flex;flex-direction:column;flex:1 1 0;min-height:0;position:relative}' +
+        '[data-testid="room-transcript"]{flex:1 1 0;min-height:0;overflow-y:auto}';
+      document.head.appendChild(style);
+      onTestFinished(() => style.remove());
+      await show(room({ messages: long, sessionMetaByRun: {}, sessionEventsByRun: {} }));
+      const lit = () => host.querySelectorAll('[data-testid="conversation-map"] [data-lit="true"]').length;
+      await until(() => expect(q('conversation-map')).not.toBeNull());
+      expect(lit()).toBe(0);
+      await act(async () => hover(face('sam')));
+      await until(() => expect(lit()).toBeGreaterThan(0));
+      const dashes = host.querySelectorAll('[data-testid="conversation-map"] button > span').length;
+      expect(lit()).toBeLessThan(dashes);
+      await act(async () => unhover(face('sam')));
+      await until(() => expect(lit()).toBe(0));
+      // Picked, the trail stays after the pointer leaves.
+      await act(async () => click(face('sam')));
+      await act(async () => unhover(face('sam')));
+      await until(() => expect(lit()).toBeGreaterThan(0));
+    });
+  });
+
+  describe('tasks in progress', () => {
+    const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+    /** Your Claude waiting on you (Launch), Sam's Codex reading with no topic yet, Maya's Claude just done (Pricing), and an old run. */
+    const busy = () =>
+      room({
+        messages: [
+          msg('m1', 1),
+          msg('m2', 2),
+          msg('m3', 3),
+          msg('m4', 4),
+          msg('m5', 5),
+          msg('s1', 6, { authorId: SELF, meta: { kind: 'session', runId: 'r1' } }),
+          msg('s2', 7, { authorId: 'sam', meta: { kind: 'session', runId: 'r2' } }),
+          msg('s3', 8, { authorId: 'maya', meta: { kind: 'session', runId: 'r3' } }),
+          msg('s4', 9, { authorId: 'maya', meta: { kind: 'session', runId: 'r4' } }),
+        ],
+        sessionMetaByRun: {
+          r1: { id: 'r1', agent: 'claude', owner: SELF, model: 'opus', title: 'Review the launch numbers', status: 'running', startedAt: minutesAgo(4), endedAt: null },
+          r2: { id: 'r2', agent: 'codex', owner: 'sam', model: 'gpt', title: 'Fix the export crash', status: 'running', startedAt: minutesAgo(2), endedAt: null },
+          r3: { id: 'r3', agent: 'claude', owner: 'maya', model: 'opus', title: 'Rewrite the pricing FAQ', status: 'done', startedAt: minutesAgo(3), endedAt: minutesAgo(1) },
+          r4: { id: 'r4', agent: 'claude', owner: 'maya', model: 'opus', title: 'Old run', status: 'done', startedAt: minutesAgo(60), endedAt: minutesAgo(50) },
+        },
+        sessionEventsByRun: {
+          r1: permissionEvents('p1', 1, 'Read the numbers'),
+          r2: [
+            {
+              seq: 1,
+              kind: 'tool_call',
+              payload: { toolCallId: 't1', title: 'Read export.ts', kind: 'read', status: 'in_progress' },
+            },
+          ],
+        },
+        themes: themesOf(
+          [theme('launch', 3, 6, 'Launch'), theme('pricing', 3, 8, 'Pricing'), theme('lunch', 1, 1, 'Lunch')],
+          { m1: 'lunch', m2: 'pricing', m3: 'pricing', m4: 'launch', m5: 'launch', s1: 'launch', s3: 'pricing' }
+        ),
+      });
+    const order = () =>
+      [...host.querySelectorAll<HTMLElement>('[data-testid="dock-pills"] [data-dock-item]')].map(
+        (el) => el.dataset.dockItem
+      );
+    const task = (runId: string) =>
+      host.querySelector<HTMLElement>(`[data-testid="dock-task"][data-run-id="${runId}"]`)!;
+
+    it('hangs each running, waiting or just finished task under its topic, and the rest under "Not sorted yet"', async () => {
+      await show(busy());
+      expect(order()).toEqual([
+        'for-you',
+        'unsorted',
+        'task:r2',
+        'theme:pricing',
+        'task:r3',
+        'theme:launch',
+        'task:r1',
+        'theme:lunch',
+      ]);
+      expect(q('dock-unsorted')!.textContent).toBe('Not sorted yet1');
+      expect(task('r1').dataset.state).toBe('waiting');
+      expect(task('r1').textContent).toContain('Waiting on you');
+      expect(task('r2').dataset.state).toBe('working');
+      expect(task('r2').textContent).toMatch(/Fix the export crash2m \d+s/);
+      expect(task('r2').querySelector('[data-state]')!.getAttribute('data-state')).toBe('reading');
+      expect(task('r3').dataset.state).toBe('done');
+      expect(task('r3').textContent).toContain('Done');
+      // Rows sit in from the column's edge, under their topic.
+      expect(edge('task:r1')).toBe(edge('theme:launch') - 14);
+    });
+
+    it('peeks the live step on hover, and jumps to the run card on a click, opening a fold if it must', async () => {
+      await show(busy());
+      await act(async () => hover(task('r2')));
+      await until(() => expect(q('dock-task-peek')).not.toBeNull());
+      expect(q('dock-task-peek')!.textContent).toContain("Sam's Codex");
+      expect(q('dock-task-peek')!.textContent).toContain('Read export.ts');
+      expect(q('dock-task-peek')!.textContent).toContain('It gets a topic when it finishes.');
+      expect(dimmedRows()).toEqual(['m1', 'm2', 'm3', 'm4', 'm5', 's1', 's3', 's4']);
+      await act(async () => unhover(task('r2')));
+      // Focused on Pricing, Launch's run is folded away: the jump opens its fold.
+      await act(async () => click(all('dock-pill').find((p) => p.dataset.themeId === 'pricing')!));
+      await sleep(80);
+      expect(rows()).not.toContain('s1');
+      await act(async () => click(task('r1')));
+      await until(() => expect(rows()).toContain('s1'));
+    });
+
+    it("lights an agent's active task rows while its face is hovered", async () => {
+      await show(busy());
+      const codex = all('dock-agent').find((a) => a.dataset.agent === 'codex')!;
+      await act(async () => hover(codex));
+      expect(task('r2').dataset.lit).toBe('true');
+      expect(task('r1').dataset.lit).toBeUndefined();
+      await act(async () => unhover(codex));
+      expect(task('r2').dataset.lit).toBeUndefined();
+    });
+
+    it("shows only the spotlit face's tasks", async () => {
+      await show(busy());
+      await act(async () =>
+        click(host.querySelector('[data-testid="dock-member"][data-member-id="maya"]')!)
+      );
+      await until(() => expect(all('dock-task').map((t) => t.dataset.runId)).toEqual(['r3']));
+      await until(() => expect(q('dock-unsorted')).toBeNull());
+    });
+  });
+
   describe('the pinned panel', () => {
     it('lets go of the focus when the panel opens, so the transcript is not left filtered with no card', async () => {
       const onExpand = vi.fn();
@@ -1683,12 +1906,12 @@ describe('Room dock', () => {
 
     it('closes the approvals panel and any hovered peek when the panel opens', async () => {
       await show(room(), undefined, false, true);
-      await act(async () => click(q('dock-agent')!));
+      await act(async () => click(q('dock-approvals-badge')!));
       await sleep(80);
       expect(q('dock-float')).not.toBeNull();
       await act(async () => click(q('dock-toggle')!));
       await sleep(60);
-      expect(q('dock-agent')!.getAttribute('aria-expanded')).toBe('false');
+      expect(q('dock-approvals-badge')!.getAttribute('aria-expanded')).toBe('false');
       await until(() => expect(q('dock-float')).toBeNull());
     });
 
@@ -1720,7 +1943,7 @@ describe('Room dock', () => {
       expect(all('dock-pill')).toHaveLength(0);
       const pills = [...q('dock-pills')!.querySelectorAll('button')];
       expect(pills.map((b) => b.dataset.testid)).toEqual(['dock-pill-for-you', 'dock-themes']);
-      expect(q('dock-themes')!.textContent).toBe('Themes3');
+      expect(q('dock-themes')!.textContent).toBe('Topics3');
     });
 
     it('has only the Themes pill when nothing waits on you, and nothing when there are no themes', async () => {
@@ -1746,13 +1969,13 @@ describe('Room dock', () => {
       expect(q('dock-focus-card')?.textContent).toContain('Pricing');
       expect(rows()).toEqual(['fold', 'm2', 'm3', 'fold']);
       // The card stands in for the pill, and the list is now the others.
-      expect(q('dock-themes')!.textContent).toBe('Themes2');
+      expect(q('dock-themes')!.textContent).toBe('Topics2');
       await act(async () => click(q('dock-themes')!));
       await sleep(80);
       expect(all('dock-more-item').map((i) => i.dataset.themeId)).toEqual(['launch', 'lunch']);
       await act(async () => click(q('dock-focus-clear')!));
       await sleep(100);
-      expect(q('dock-themes')!.textContent).toBe('Themes3');
+      expect(q('dock-themes')!.textContent).toBe('Topics3');
     });
   });
 
@@ -1780,6 +2003,10 @@ describe('Room dock', () => {
       await userEvent.tab();
       expect(focused()).toBe(all('dock-pill')[0]);
       expect(hasRing(focused()!)).toBe(true);
+      // The task under it is next, with a ring too.
+      await userEvent.tab();
+      expect(focused()).toBe(q('dock-task'));
+      expect(hasRing(focused()!)).toBe(true);
       // Enter on the next one focuses that theme; the keyboard goes to the card's ×.
       await userEvent.tab();
       expect(focused()?.dataset.themeId).toBe('pricing');
@@ -1802,6 +2029,9 @@ describe('Room dock', () => {
       await userEvent.tab();
       expect(focused()).toBe(all('dock-pill')[0]);
       await until(() => expect(dimmedRows()).toEqual(['m1', 'm2', 'm3']));
+      // The task under it: only its run's card stays.
+      await userEvent.tab();
+      await until(() => expect(dimmedRows()).toEqual(['m1', 'm2', 'm3', 'm4', 'm5']));
       await userEvent.tab();
       await until(() => expect(dimmedRows()).toEqual(['m1', 'm4', 'm5', 's1']));
       q('dock-toggle')!.focus();
@@ -1818,9 +2048,9 @@ describe('Room dock', () => {
       await until(() => expect(focused()?.dataset.themeId).toBe('pricing'));
     });
 
-    it('moves into the approvals panel when it opens, and back to the agent when it closes', async () => {
+    it('moves into the approvals panel when it opens, and back to the badge when it closes', async () => {
       await showForKeys(room());
-      const agent = q('dock-agent')!;
+      const agent = q('dock-approvals-badge')!;
       agent.focus();
       await userEvent.keyboard('{Enter}');
       await until(() => expect(q('dock-approvals-panel')).not.toBeNull());
@@ -1839,7 +2069,7 @@ describe('Room dock', () => {
 
     it('keeps the keyboard in the panel when the request it pressed leaves', async () => {
       await showForKeys(room());
-      q('dock-agent')!.focus();
+      q('dock-approvals-badge')!.focus();
       await userEvent.keyboard('{Enter}');
       await until(() => expect(q('dock-approvals-panel')).not.toBeNull());
       await userEvent.tab();
@@ -1902,7 +2132,7 @@ describe('Room dock', () => {
       expect(rows()).toEqual(['fold', 'm4', 'm5', 's1']);
       await act(async () => click(q('dock-focus-clear')!));
       expect(q('dock-focus-card')).toBeNull();
-      await act(async () => click(q('dock-agent')!));
+      await act(async () => click(q('dock-approvals-badge')!));
       expect(q('dock-approvals-panel')).not.toBeNull();
       await act(async () => void press('Escape'));
       expect(q('dock-approvals-panel')).toBeNull();
@@ -1954,7 +2184,7 @@ describe('Room dock', () => {
       await sleep(100);
       expect(q('dock-focus-card')).not.toBeNull();
       expect(all('transcript-fold').length).toBeGreaterThan(0);
-      await act(async () => click(q('dock-agent')!));
+      await act(async () => click(q('dock-approvals-badge')!));
       await sleep(80);
       expect(q('dock-approvals-panel')).not.toBeNull();
 
@@ -1984,7 +2214,7 @@ describe('Room dock', () => {
     it('answers the demo approvals in its fixture: the request leaves, the real call is never made', async () => {
       await openDemo(true);
       expect(q('dock-approvals-badge')!.textContent).toBe('2');
-      await act(async () => click(q('dock-agent')!));
+      await act(async () => click(q('dock-approvals-badge')!));
       await sleep(80);
       const buttonOf = (index: number, label: string) =>
         [...all('dock-approval-request')[index]!.querySelectorAll('button')].find(
@@ -2003,7 +2233,7 @@ describe('Room dock', () => {
     it('keeps the dock clear of the conversation in a narrow Room: a short column, and a gutter', async () => {
       await openDemo(true, 'Room', 800);
       expect(all('dock-pill')).toHaveLength(0);
-      expect(q('dock-themes')!.textContent).toBe('Themes4');
+      expect(q('dock-themes')!.textContent).toBe('Topics4');
       expect(q('dock-pill-for-you')).not.toBeNull();
       const column = host
         .querySelector<HTMLElement>('[data-testid="room-transcript"]')!
