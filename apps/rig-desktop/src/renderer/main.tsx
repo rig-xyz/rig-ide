@@ -49,8 +49,13 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
             } as CSSProperties
           }
           toastOptions={{
+            // `theme="system"` follows macOS, not the app's own theme, so with
+            // Rig light and macOS dark sonner painted the description near
+            // white. The description and close button use the tokens instead.
             classNames: {
               toast: '!shadow-[var(--shadow-float)] !font-sans',
+              description: '!text-text-secondary',
+              closeButton: '!bg-bg-1 !border-border-hairline !text-text-secondary hover:!text-text-primary',
               actionButton: '!bg-accent !text-accent-ink !rounded-control !h-7 !px-3 !text-xs !font-medium',
               cancelButton:
                 '!bg-transparent !text-text-secondary hover:!text-text-primary !rounded-control !h-7 !px-2 !text-xs',
