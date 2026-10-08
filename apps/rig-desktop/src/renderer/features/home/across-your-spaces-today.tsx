@@ -151,7 +151,7 @@ function ThemeLine({
   return (
     <li
       className={cn(
-        'glass-hover -mx-3 flex cursor-pointer flex-col gap-1 rounded-[12px] px-3 py-2.5 leading-normal',
+        'glass-hover -mx-3 flex flex-col gap-1 rounded-[12px] px-3 py-2.5 leading-normal',
         // Read already: it steps back until hovered or opened.
         seen && !open && 'opacity-50 transition-opacity hover:opacity-85'
       )}
@@ -171,7 +171,7 @@ function ThemeLine({
             onToggle();
           }}
           className={cn(
-            'min-w-0 shrink cursor-pointer truncate text-left text-sm text-text-primary outline-none focus-visible:underline',
+            'min-w-0 shrink truncate text-left text-sm text-text-primary outline-none focus-visible:underline',
             seen ? 'font-medium' : 'font-semibold'
           )}
           data-testid="theme-line-name"
