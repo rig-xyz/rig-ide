@@ -3,6 +3,8 @@ import { type ReactNode, useContext } from 'react';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import type { FileLinkParts } from '@renderer/lib/ui/comment-markdown';
 import { cn } from '@renderer/lib/utils';
+import { requestBrowserMode } from '@renderer/features/artifact/view-request';
+import { isHtmlPath } from '@shared/spaces/rig-file';
 import { AttachmentSpaceContext } from './attachment-cards';
 import { NOT_HERE_YET_DETAIL, NOT_HERE_YET_TITLE, notHereYetText, useSpaceFile } from '../space-file-presence';
 
@@ -71,7 +73,11 @@ export function SpaceFileLink({
           return;
         }
         if (onOpen) onOpen(href);
-        else if (file.relPath) space?.onOpenFile?.(file.relPath);
+        else if (file.relPath) {
+          // An html file opens as a working page, as it does from an agent's answer.
+          if (isHtmlPath(file.relPath) && space?.spaceRoot) requestBrowserMode(`${space.spaceRoot.replace(/\/+$/, '')}/${file.relPath}`);
+          space?.onOpenFile?.(file.relPath);
+        }
       }}
     >
       {label}

@@ -13,7 +13,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { Children, createContext, type MouseEvent, type ReactNode, useContext, useEffect, useMemo, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MARKDOWN_ELEMENTS_CLASS, TABLE_CLASS, TABLE_WRAPPER_CLASS } from '@renderer/lib/ui/markdown-classes';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
@@ -21,6 +21,7 @@ import { cn } from '@renderer/lib/utils';
 import { formatClock, formatClockShort, formatFull } from '@renderer/lib/time-format';
 import type { ConnectResult } from '@shared/spaces/connectors';
 import { canonicalPageUrl, classifyLink, opensBesideChat, webLinkLabel, type LinkKind } from '@shared/spaces/links';
+import { isRigFileUrl } from '@shared/spaces/rig-file';
 import { agentLogoId, BrandLogo, ConnectorMark } from '../logos';
 import { remarkRoomTokens, type RoomTokenKind } from '../message-tokens';
 import { personOf } from '../person-identity';
@@ -249,6 +250,13 @@ function RoomToken({ node, ownId, children }: { node?: HastElement; ownId: strin
   }
 }
 
+/** A written link's own words, as plain text. */
+function childText(children: ReactNode): string {
+  return Children.toArray(children)
+    .map((child) => (typeof child === 'string' || typeof child === 'number' ? String(child) : ''))
+    .join('');
+}
+
 /** A heading in chat is a bold line, not a title. */
 function ChatHeading({ children }: { children?: ReactNode }) {
   return <p className="font-semibold">{children}</p>;
@@ -275,6 +283,8 @@ export function richText(
   return (
     <ReactMarkdown
       remarkPlugins={[[remarkGfm, { singleTilde: false }], [remarkRoomTokens, { members, mentions, agents }]]}
+      // A written link to a space's file (`[the page](rig-file://…)`) keeps its link.
+      urlTransform={(url) => (isRigFileUrl(url) ? url : defaultUrlTransform(url))}
       components={{
         span: ({ node, children }) => (
           <RoomToken node={node as HastElement | undefined} ownId={ownId}>
@@ -282,7 +292,15 @@ export function richText(
           </RoomToken>
         ),
         a: ({ href, children }) =>
-          href && /^(https?|mailto):/i.test(href) ? <MessageTextLink href={href}>{children}</MessageTextLink> : <>{children}</>,
+          href && isRigFileUrl(href) ? (
+            <SpaceFileLink href={href} text={childText(children)} code={false} className="text-accent cursor-pointer underline underline-offset-2">
+              {children}
+            </SpaceFileLink>
+          ) : href && /^(https?|mailto):/i.test(href) ? (
+            <MessageTextLink href={href}>{children}</MessageTextLink>
+          ) : (
+            <>{children}</>
+          ),
         h1: ChatHeading,
         h2: ChatHeading,
         h3: ChatHeading,

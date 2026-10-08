@@ -5,7 +5,7 @@ import type { MessageMention, RoomMember } from './types';
 /**
  * The Room's own bits inside a person's message, picked out of the
  * markdown's ordinary text: links, @mentions, a /command at the very start,
- * `+file` tags, `reviews/*.md` and absolute paths. Code (inline or fenced)
+ * `+file` tags, `reviews/*.md`, absolute paths and `rig-file://` links. Code (inline or fenced)
  * and link text are never looked into, so `npm i -g @openai/codex` in
  * backticks stays code and never reads as a mention.
  *
@@ -113,7 +113,7 @@ export function mentionAt(
 function tokenPattern(atStart: boolean): RegExp {
   const command = atStart ? String.raw`^\/[a-z-]+(?![\w/.])` : '(?!)';
   return new RegExp(
-    `(${URL_PATTERN.source})|((?<![\\w.@/:-])@)|(${command})|(${FILE_TAG_SOURCE})|(reviews\\/[\\w.-]+\\.md)|(?<abspath>(?<![\\w/.:~-])(?:file:\\/\\/)?\\/(?:Users|home|Volumes)\\/[^\\s'"\x60<>()\\[\\]{}|]+)`,
+    `(${URL_PATTERN.source})|((?<![\\w.@/:-])@)|(${command})|(${FILE_TAG_SOURCE})|(reviews\\/[\\w.-]+\\.md)|(?<abspath>(?<![\\w/.:~-])(?:file:\\/\\/)?\\/(?:Users|home|Volumes)\\/[^\\s'"\x60<>()\\[\\]{}|]+)|(?<rigfile>rig-file:\\/\\/[^\\s<>"'\x60]+)`,
     'g'
   );
 }
@@ -165,7 +165,11 @@ export function splitTokens(
     }
     if (match.index > lastIndex) pushText(out, text.slice(lastIndex, match.index));
     let raw = match[0];
-    if (match.groups?.abspath) {
+    if (match.groups?.rigfile) {
+      // A link to a space's file as a page: opened like a path, the sentence's punctuation left as text.
+      raw = trimUrl(raw);
+      out.push(token('path', raw, raw));
+    } else if (match.groups?.abspath) {
       // The sentence's own punctuation after a path stays text.
       raw = match.groups.abspath.replace(/[.,;:!?]+$/, '');
       out.push(token('path', raw, raw));

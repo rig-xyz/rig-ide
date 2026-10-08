@@ -78,6 +78,11 @@ describe('remarkRoomTokens', () => {
     ]);
   });
 
+  it('picks out a rig-file link to a space’s page, leaving the sentence’s punctuation', () => {
+    expect(tokens('See rig-file://bnd_abc/site/index.html, then reply')).toEqual([['path', 'rig-file://bnd_abc/site/index.html']]);
+    expect(tokens('`rig-file://bnd_abc/x.html` in code')).toEqual([]);
+  });
+
   it('keeps the Room’s own link rules for bare URLs, and leaves www and emails as text', () => {
     expect(
       tokens('see https://userig.xyz/download. and https://en.wikipedia.org/wiki/Foo_(bar)')

@@ -37,6 +37,7 @@ import { SpaceFileLink } from '@renderer/features/spaces/components/space-file-l
 import { SyncHealthNotice } from '@renderer/features/spaces/components/sync-health-notice';
 import { richText } from '@renderer/features/spaces/components/transcript-items';
 import { SafeMarkdown } from '@renderer/lib/ui/comment-markdown';
+import { getPreviewMode, resetPreviewModeMemoryForTests } from '@renderer/features/artifact/preview-mode-memory';
 
 beforeAll(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -168,6 +169,49 @@ describe('paths in a Room message', () => {
     expect(host.textContent).toBe('Put it in notes/plan.md, thanks');
     await act(async () => link.click());
     expect(opened).toEqual(['notes/plan.md']);
+  });
+});
+
+describe('rig-file links in a Room message', () => {
+  const renderMessage = (text: string) =>
+    act(async () =>
+      root.render(
+        <AttachmentSpaceContext.Provider value={space()}>
+          <div>{richText(text, 'usr_me')}</div>
+        </AttachmentSpaceContext.Provider>
+      )
+    );
+
+  beforeEach(() => resetPreviewModeMemoryForTests());
+
+  it('makes a bare rig-file link clickable, opening the page in Browser mode', async () => {
+    present = new Set(['site/index.html']);
+    await renderMessage(`Have a look at rig-file://bnd_${spaceN}/site/index.html.`);
+    await settle();
+    const link = host.querySelector('[data-testid="space-file-link"]') as HTMLElement;
+    expect(link.textContent).toBe('site/index.html');
+    expect(host.textContent).toBe('Have a look at site/index.html.');
+    await act(async () => link.click());
+    expect(opened).toEqual(['site/index.html']);
+    expect(getPreviewMode('/Users/me/Rig/clear-harbor/site/index.html')).toBe('browser');
+  });
+
+  it('keeps a written rig-file link’s own words, and opens it the same way', async () => {
+    present = new Set(['site/index.html']);
+    await renderMessage(`Here is [the pricing page](rig-file://bnd_${spaceN}/site/index.html)`);
+    await settle();
+    const link = host.querySelector('[data-testid="space-file-link"]') as HTMLElement;
+    expect(link.textContent).toBe('the pricing page');
+    await act(async () => link.click());
+    expect(opened).toEqual(['site/index.html']);
+    expect(getPreviewMode('/Users/me/Rig/clear-harbor/site/index.html')).toBe('browser');
+  });
+
+  it('leaves a link to another space’s file as text', async () => {
+    await renderMessage('See rig-file://bnd_elsewhere/site/index.html');
+    await settle();
+    expect(host.querySelector('a')).toBeNull();
+    expect(host.textContent).toBe('See rig-file://bnd_elsewhere/site/index.html');
   });
 });
 
