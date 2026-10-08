@@ -139,7 +139,7 @@ describe('AgentProblemLine', () => {
     mocks.agents = [codex({ version: '0.147.0' }, { version: '0.147.0' })];
     await render();
     expect(line()?.dataset.kind).toBe('outdated');
-    expect(line()?.textContent).toContain('Codex is out of date. The codex CLI is 0.147.0. 0.160.1 is out.');
+    expect(line()?.textContent).toContain('Codex is older than Rig is tested with. The codex CLI is 0.147.0. Rig is tested with 0.159.1 or newer.');
     await act(async () => line()!.querySelector<HTMLButtonElement>('[data-testid="agent-problem-update"]')!.click());
     expect(mocks.update).toHaveBeenCalledWith('codex');
     expect(mocks.toast).not.toHaveBeenCalled();

@@ -32,10 +32,12 @@ export type AgentProblem = {
 };
 
 /**
- * The oldest CLI version Rig works with, per agent, when known. Empty means
- * no minimum is recorded, and lines fall back to the latest release.
+ * The CLI versions Rig's bundled adapters are built against: the Claude Agent
+ * SDK's `claudeCodeVersion`, and codex-acp's `@openai/codex` dependency.
+ * Rig runs the copy on the Mac, so an older one gets a soft notice, never a
+ * block. agent-problem.test.ts fails when an adapter bump moves them.
  */
-export const AGENT_MINIMUM_VERSIONS: Readonly<Record<string, string>> = {};
+export const AGENT_MINIMUM_VERSIONS: Readonly<Record<string, string>> = { claude: '2.1.287', codex: '0.159.1' };
 
 const CLI_NAMES: Record<string, string> = { claude: 'claude', codex: 'codex' };
 
@@ -58,7 +60,7 @@ export function agentProblem(input: {
   const { id, name, payload, signInNeeded, showMissing = true } = input;
   const cli = CLI_NAMES[id] ?? id;
   const minimum = input.minimum === undefined ? (AGENT_MINIMUM_VERSIONS[id] ?? null) : input.minimum;
-  const needs = minimum ? ` Rig needs ${minimum} or later.` : '';
+  const needs = minimum ? ` Rig is tested with ${minimum} or newer.` : '';
   if (!payload) return null;
 
   if (payload.status === 'missing') {
@@ -84,6 +86,9 @@ export function agentProblem(input: {
   const app = active ? bundlingApp(active.realpath) : null;
   const appHint = app ? `${app} carries its own ${cli} CLI. Update the ${app} app to update ${name}.` : null;
   const notice = agentUpdateNotice(name, payload);
+  if (signInNeeded) {
+    return { kind: 'signedOut', cli, version, minimum, text: `${name} isn't signed in on this Mac.${is}`, action: 'sign-in' };
+  }
   const belowMinimum = !!minimum && !!version && isOlderVersion(version, minimum);
   if (belowMinimum) {
     return {
@@ -91,7 +96,7 @@ export function agentProblem(input: {
       cli,
       version,
       minimum,
-      text: `${name} is out of date.${is}${needs}`,
+      text: `${name} is older than Rig is tested with.${is}${needs}`,
       action: 'update',
       update: appHint
         ? { how: 'elsewhere', hint: appHint }
@@ -99,10 +104,6 @@ export function agentProblem(input: {
           ? { how: 'elsewhere', hint: notice.hint }
           : { how: 'rig' },
     };
-  }
-
-  if (signInNeeded) {
-    return { kind: 'signedOut', cli, version, minimum, text: `${name} isn't signed in on this Mac.${is}`, action: 'sign-in' };
   }
 
   if (notice.kind !== 'none') {

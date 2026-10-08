@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentInstallationStatus, Installation } from './agent-payload';
-import { agentProblem } from './agent-problem';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
+import { AGENT_MINIMUM_VERSIONS, agentProblem } from './agent-problem';
 
 function install(overrides: Partial<Installation> = {}): Installation {
   return {
@@ -47,7 +50,7 @@ describe('agentProblem', () => {
       cli: 'codex',
       version: null,
       minimum: '0.150.0',
-      text: "Codex isn't installed on this Mac. Rig runs the codex CLI. Rig needs 0.150.0 or later.",
+      text: "Codex isn't installed on this Mac. Rig runs the codex CLI. Rig is tested with 0.150.0 or newer.",
       action: 'install',
     });
     expect(codex(payload({ status: 'missing', version: null, installations: [] }))?.text).toBe("Codex isn't installed on this Mac. Rig runs the codex CLI.");
@@ -89,13 +92,14 @@ describe('agentProblem', () => {
     });
   });
 
-  it('outdated below the minimum: says the minimum, and comes before a sign in', () => {
-    expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0', signInNeeded: true })).toMatchObject({
+  it('older than the tested version: a soft notice with the version, after a sign in', () => {
+    expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0' })).toMatchObject({
       kind: 'outdated',
       minimum: '0.150.0',
-      text: 'Codex is out of date. The codex CLI is 0.147.0. Rig needs 0.150.0 or later.',
+      text: 'Codex is older than Rig is tested with. The codex CLI is 0.147.0. Rig is tested with 0.150.0 or newer.',
       update: { how: 'rig' },
     });
+    expect(codex(payload({}, { version: '0.147.0' }), { minimum: '0.150.0', signInNeeded: true })?.kind).toBe('signedOut');
   });
 
   it('a signed out agent that is merely behind the latest asks to sign in first', () => {
@@ -119,6 +123,31 @@ describe('agentProblem', () => {
 
   it('names Claude Code by its CLI', () => {
     const result = agentProblem({ id: 'claude', name: 'Claude', payload: payload({ status: 'missing', version: null, installations: [] }), signInNeeded: false });
-    expect(result?.text).toBe("Claude isn't installed on this Mac. Rig runs the claude CLI.");
+    expect(result?.text).toBe("Claude isn't installed on this Mac. Rig runs the claude CLI. Rig is tested with 2.1.287 or newer.");
+  });
+});
+
+describe('AGENT_MINIMUM_VERSIONS', () => {
+  // The bundled adapters are resolved from packages/plugins, which depends on them.
+  const fromPlugins = createRequire(join(__dirname, '../../../../../../packages/plugins/package.json'));
+  // Find a package's folder by hand, since exports may hide package.json and main.
+  const dirOf = (name: string, from = fromPlugins) => {
+    for (const dir of from.resolve.paths(name) ?? []) {
+      try {
+        readFileSync(join(dir, name, 'package.json'));
+        return join(dir, name);
+      } catch {
+        // not in this node_modules
+      }
+    }
+    throw new Error(`${name} not found`);
+  };
+  const pkg = (name: string, from = fromPlugins) => JSON.parse(readFileSync(join(dirOf(name, from), 'package.json'), 'utf8'));
+
+  it("match what the bundled adapters are built against, so an adapter bump moves them", () => {
+    const claudeAcp = createRequire(join(dirOf('@agentclientprotocol/claude-agent-acp'), 'package.json'));
+    expect(AGENT_MINIMUM_VERSIONS.claude).toBe(pkg('@anthropic-ai/claude-agent-sdk', claudeAcp).claudeCodeVersion);
+    const codexDep: string = pkg('@agentclientprotocol/codex-acp').dependencies['@openai/codex'];
+    expect(AGENT_MINIMUM_VERSIONS.codex).toBe(codexDep.replace(/^[\^~>=]+/, ''));
   });
 });
