@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PRE_APPROVED_BROWSER_TOOLS } from '../spaces/rig-tools';
-import { BROWSER_TOOLS, type BrowserToolsDeps } from './browser-tools';
+import { BROWSER_TOOLS, pageLink, type BrowserToolsDeps } from './browser-tools';
 
 // rig_browser_read on a Google editor: the export's full text when there is one,
 // else the page as rendered, saying why.
@@ -76,5 +76,40 @@ describe('rig_browser_read with a Google export', () => {
     const fullText = vi.fn();
     await read.run({ url: URL, board: 2 }, deps(fullText));
     expect(fullText).not.toHaveBeenCalled();
+  });
+});
+
+describe('pageLink', () => {
+  const space = { bindingId: 'bnd_abc', cwd: '/Users/me/Rig/site' };
+
+  it('keeps a web link as it is', () => {
+    expect(pageLink('https://claude.ai/artifact/x', space)).toBe('https://claude.ai/artifact/x');
+  });
+
+  it("turns a path in the space into the space's rig-file link", () => {
+    expect(pageLink('site/index.html', space)).toBe('rig-file://bnd_abc/site/index.html');
+    expect(pageLink('./my page.html#top', space)).toBe('rig-file://bnd_abc/my%20page.html#top');
+    expect(pageLink('/Users/me/Rig/site/a/b.html', space)).toBe('rig-file://bnd_abc/a/b.html');
+  });
+
+  it("takes this space's rig-file links, and no other space's", () => {
+    expect(pageLink('rig-file://bnd_abc/x.html', space)).toBe('rig-file://bnd_abc/x.html');
+    expect(pageLink('rig-file://bnd_other/x.html', space)).toBeNull();
+    expect(pageLink('rig-file://bnd_abc/../x.html', space)).toBeNull();
+  });
+
+  it('refuses a path outside the space', () => {
+    expect(pageLink('../other/x.html', space)).toBeNull();
+    expect(pageLink('/etc/passwd', space)).toBeNull();
+    expect(pageLink('', space)).toBeNull();
+  });
+});
+
+describe('the browser tools and space files', () => {
+  it('read a rig-file link, and refuse what is neither a page nor a space file', async () => {
+    const r = await read.run({ url: 'rig-file://bnd_abc/site/index.html' }, deps());
+    expect(r.isError).toBeUndefined();
+    const bad = await read.run({ url: 'site/index.html' }, deps());
+    expect(bad).toEqual({ content: [{ type: 'text', text: 'Give the page link, or the path of an html file in this space like site/index.html.' }], isError: true });
   });
 });

@@ -3,7 +3,7 @@ import { canonicalPageUrl } from '@shared/spaces/links';
 import type { RigTool } from '../spaces/rig-tools';
 import type { SpacesRelayApi } from '../spaces/relay-api';
 import { agentPage } from './agent-pages';
-import { BROWSER_TOOLS } from './browser-tools';
+import { BROWSER_TOOLS, pageLink } from './browser-tools';
 import { googleFullText } from './google-export';
 import { pinsFromRows } from './page-pins';
 import { pageSignIns } from './page-sign-ins-instance';
@@ -23,7 +23,9 @@ export function browserRigTools(api: Pick<SpacesRelayApi, 'listMessages'>): RigT
       inputSchema: tool.inputSchema,
       annotations: { title: tool.title, readOnlyHint: true, openWorldHint: true },
       async run(scope, input) {
-        const url = typeof input.url === 'string' ? canonicalPageUrl(input.url) : input.url;
+        // A file in the space, by its path or link, reads as this Mac's copy.
+        const link = pageLink(input.url, scope);
+        const url = link ? canonicalPageUrl(link) : input.url;
         const result = await tool.run(
           { ...input, url },
           {

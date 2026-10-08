@@ -1,5 +1,7 @@
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { NativeImage } from 'electron';
 import { z } from 'zod';
+import { isRigFileUrl, parseRigFileUrl, rigFileUrl } from '@shared/spaces/rig-file';
 import { agentPage, renderSnapshot } from './agent-pages';
 import { EXPORT_MAX_BYTES, type GoogleExportResult } from './google-export';
 import { frameBoards, frameBoardSnapshot, frameCall, type BoardInfo, type BoardSnapshot, type PageAnchor } from './page-frame-scripts';
@@ -65,6 +67,7 @@ function image(img: NativeImage, text: string): BrowserToolResult {
 
 function webUrl(url: unknown): string | null {
   if (typeof url !== 'string') return null;
+  if (isRigFileUrl(url)) return parseRigFileUrl(url) ? url : null;
   try {
     const u = new URL(url);
     return u.protocol === 'https:' || u.protocol === 'http:' ? u.toString() : null;
@@ -72,6 +75,28 @@ function webUrl(url: unknown): string | null {
     return null;
   }
 }
+
+/**
+ * The page a browser tool was given, as a link: a web link as it is, and a
+ * file in the space, by its path or its `rig-file://` link, as that space's
+ * `rig-file://` link. Null for a path outside the space or a link to
+ * another space.
+ */
+export function pageLink(input: unknown, space: { bindingId: string; cwd: string }): string | null {
+  if (typeof input !== 'string' || !input.trim()) return null;
+  const raw = input.trim();
+  if (isRigFileUrl(raw)) {
+    const link = parseRigFileUrl(raw);
+    return link && link.bindingId === space.bindingId.toLowerCase() ? raw : null;
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) return raw;
+  const abs = resolve(space.cwd, raw.replace(/[?#].*$/, ''));
+  const rel = relative(space.cwd, abs);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
+  return rigFileUrl(space.bindingId, rel.split(sep).join('/')) + (raw.match(/[?#].*$/)?.[0] ?? '');
+}
+
+const NOT_A_PAGE = 'Give the page link, or the path of an html file in this space like site/index.html.';
 
 async function boardsOf(url: string, withText: boolean): Promise<BoardInfo[]> {
   const page = await agentPage(url);
@@ -96,7 +121,7 @@ function around(snap: BoardSnapshot): { x: number; y: number; width: number; hei
   };
 }
 
-const URL_FIELD = z.string().describe('The page link, as posted in the space.');
+const URL_FIELD = z.string().describe('The page link as posted in the space, or the path of an html file in the space.');
 
 export const BROWSER_TOOLS: readonly BrowserTool[] = [
   {
@@ -107,7 +132,7 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
     inputSchema: { url: URL_FIELD },
     async run(input, deps) {
       const url = webUrl(input.url);
-      if (!url) return say('Give the page link (http or https).', true);
+      if (!url) return say(NOT_A_PAGE, true);
       const pins = await deps.pinsFor(url);
       if (pins.length === 0) return say('No pins on this page.');
       const wall = await deps.signInWall?.(url);
@@ -132,7 +157,7 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
     inputSchema: { url: URL_FIELD, board: z.union([z.string(), z.number()]).optional() },
     async run(input, deps) {
       const url = webUrl(input.url);
-      if (!url) return say('Give the page link (http or https).', true);
+      if (!url) return say(NOT_A_PAGE, true);
       const wall = await deps.signInWall?.(url);
       if (wall) return say(wall, true);
       const page = await agentPage(url);
@@ -179,7 +204,7 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
     },
     async run(input, deps) {
       const url = webUrl(input.url);
-      if (!url) return say('Give the page link (http or https).', true);
+      if (!url) return say(NOT_A_PAGE, true);
       const wall = await deps.signInWall?.(url);
       if (wall) return say(wall, true);
       if (typeof input.pin === 'number') {

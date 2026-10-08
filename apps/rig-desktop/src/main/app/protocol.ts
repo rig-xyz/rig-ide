@@ -1,6 +1,7 @@
 import { join, normalize, sep } from 'node:path';
 import { net, protocol } from 'electron';
 import { APP_NAME_LOWER } from '@shared/app-identity';
+import { RIG_FILE_PRIVILEGES } from '../rig/pages/rig-file-protocol';
 
 export const APP_SCHEME = 'app';
 export const APP_ORIGIN = `${APP_SCHEME}://${APP_NAME_LOWER}`;
@@ -16,6 +17,8 @@ export function registerAppScheme(): void {
         corsEnabled: true,
       },
     },
+    // Electron takes every privileged scheme in this one call: a space's files as pages.
+    RIG_FILE_PRIVILEGES,
   ]);
 }
 

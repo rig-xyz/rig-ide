@@ -2,7 +2,7 @@ import type { WebContents } from 'electron';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { events } from '@main/lib/events';
 import { browserAppShortcutChannel, tabNavigationShortcutChannel } from '@shared/events/appEvents';
-import { BrowserWebContentsRegistry } from './browser-webcontents-registry';
+import { BrowserWebContentsRegistry, isAllowedNavigation } from './browser-webcontents-registry';
 
 const sessionsByPartition = new Map<string, object>();
 
@@ -389,5 +389,15 @@ describe('BrowserWebContentsRegistry', () => {
         'webSQL',
       ],
     });
+  });
+});
+
+describe('isAllowedNavigation', () => {
+  it("lets a space's file page follow links within that space only", () => {
+    expect(isAllowedNavigation('rig-file://bnd_a/site/index.html', 'rig-file://bnd_a/site/about.html')).toBe(true);
+    expect(isAllowedNavigation('rig-file://bnd_a/site/index.html', 'rig-file://bnd_b/x.html')).toBe(false);
+    expect(isAllowedNavigation('https://example.com/', 'rig-file://bnd_a/site/index.html')).toBe(false);
+    expect(isAllowedNavigation('rig-file://bnd_a/site/index.html', 'https://example.com/')).toBe(true);
+    expect(isAllowedNavigation('https://example.com/', 'file:///etc/passwd')).toBe(false);
   });
 });
