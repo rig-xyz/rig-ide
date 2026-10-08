@@ -47,6 +47,8 @@ import type { EditorLanguage } from './file-type';
 import { ImageArtifact } from './image-artifact';
 import { PdfArtifact } from './pdf-artifact';
 import { getPreviewMode, rememberedPreviewMode, setPreviewMode, type PreviewMode } from './preview-mode-memory';
+import { isJsonPreviewPath } from './json-preview';
+import { JsonPreviewPane } from './json-preview-pane';
 import { PreviewPane, type PreviewHandle } from './preview-pane';
 import { FileOptionsButton } from './file-options-menu';
 import { ShareButton } from './share-popover';
@@ -457,9 +459,11 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // opened, unless Edit was chosen for it this session.
   const relPath = relPathFromRoot(root, path);
   const browserUrl = language === 'html' && bindingId && relPath ? rigFileUrl(bindingId, relPath) : null;
-  const modes: readonly PreviewMode[] = isMarkdown ? ['preview', 'edit'] : browserUrl ? ['browser', 'edit'] : ['edit'];
+  // A .json or .geojson file reads pretty printed in Preview, by default, with the raw text in Edit.
+  const isJson = language === 'json' && isJsonPreviewPath(path);
+  const modes: readonly PreviewMode[] = isMarkdown || isJson ? ['preview', 'edit'] : browserUrl ? ['browser', 'edit'] : ['edit'];
   const [mode, setModeState] = useState<PreviewMode>(() => {
-    if (isMarkdown) return getPreviewMode(path);
+    if (isMarkdown || isJson) return getPreviewMode(path);
     const remembered = rememberedPreviewMode(path);
     if (remembered && modes.includes(remembered)) return remembered;
     return browserUrl ? 'browser' : 'edit';
@@ -922,8 +926,8 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
         ) : (
           <>
             {mode === 'preview' ? (
-              // Only reachable for markdown — the initializer above never
-              // sets `mode` to `'preview'` for anything else. Reads
+              // Only reachable for markdown and JSON: the initializer above
+              // never sets `mode` to `'preview'` for anything else. Reads
               // `resource.content` directly — the same observable
               // DocEditor writes on every keystroke and `_absorb` writes on
               // every external (agent/disk) edit, so this re-renders live
@@ -931,7 +935,11 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
               // from an agent writing mid-read. No CM6 involved: Preview is
               // read-only, so there's nothing here for `resource.editorRef`
               // to point at.
-              <PreviewPane ref={previewRef} content={resource.content} />
+              isJson ? (
+                <JsonPreviewPane ref={previewRef} content={resource.content} />
+              ) : (
+                <PreviewPane ref={previewRef} content={resource.content} />
+              )
             ) : (
               <DocEditor
                 key={resource.path}

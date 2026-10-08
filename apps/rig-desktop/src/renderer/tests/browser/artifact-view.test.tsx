@@ -354,6 +354,36 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
     expect(host.querySelector('h1')).toBeNull();
   });
 
+  it('opens a .json file in Preview, pretty printed and colored, with the raw text in Edit', async () => {
+    mocks.read.mockImplementation(() =>
+      resolveOnMacrotask({ success: true, data: { content: '{"a":[1,2],"b":"x"}', truncated: false } })
+    );
+    await renderArtifact('/repo/data.json');
+    await waitFor(() => loadingGone(host));
+
+    const preview = host.querySelector<HTMLElement>('[data-testid="json-preview"]');
+    expect(preview).not.toBeNull();
+    expect(host.querySelector('.cm-content')).toBeNull();
+    expect(preview!.querySelector('pre')!.innerText).toBe('{\n  "a": [\n    1,\n    2\n  ],\n  "b": "x"\n}');
+    expect(preview!.querySelector('.text-accent')?.textContent).toBe('"a"');
+    expect(host.querySelector('[data-testid="json-preview-invalid"]')).toBeNull();
+
+    const editButton = Array.from(host.querySelectorAll('button')).find((button) => button.getAttribute('aria-label') === 'Edit');
+    await act(async () => editButton!.click());
+    expect(host.querySelector('.cm-content')?.textContent).toBe('{"a":[1,2],"b":"x"}');
+    expect(host.querySelector('[data-testid="json-preview"]')).toBeNull();
+  });
+
+  it('opens a .geojson file in Preview too, and shows text that does not parse as written, with a note', async () => {
+    mocks.read.mockImplementation(() =>
+      resolveOnMacrotask({ success: true, data: { content: '{"type": "Feature",}', truncated: false } })
+    );
+    await renderArtifact('/repo/map.geojson');
+    await waitFor(() => loadingGone(host));
+    expect(host.querySelector('[data-testid="json-preview-invalid"]')?.textContent).toBe("This isn't valid JSON, so it shows as written.");
+    expect(host.querySelector<HTMLElement>('[data-testid="json-preview"] pre')!.innerText).toBe('{"type": "Feature",}');
+  });
+
   it('turns one Preview selection into both a comment affordance and a passage context target', async () => {
     const sourceSelection = 'The Q3\nforecast is $4.2m.';
     mocks.read.mockResolvedValue({

@@ -95,6 +95,7 @@ const GRAMMAR_LANGUAGE_BY_EXTENSION: Record<string, EditorLanguage> = {
   json: 'json',
   jsonc: 'json',
   json5: 'json',
+  geojson: 'json',
   yaml: 'yaml',
   yml: 'yaml',
   toml: 'toml',
