@@ -7,7 +7,7 @@ import { canonicalPageUrl } from '@shared/spaces/links';
 import { log } from '@main/lib/logger';
 import { runCommentTurnInRoom } from '../spaces/dispatch-controller-instance';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
-import { pagesSession } from './agent-pages';
+import { isPagesBrowserSession, pagesSession, rigFilesSession } from './agent-pages';
 import { CHROMIUM_BROWSERS, installedBrowsers } from './chrome-sign-in';
 import { linkTitle } from './link-titles';
 import type { AutoSignInOutcome } from './page-sign-ins';
@@ -38,7 +38,12 @@ const logPinMiss = createPinMissLog((message, fields) => log.info(message, field
 
 function pageContents(id: number): WebContents | null {
   const wc = allWebContents.fromId(id);
-  return wc && !wc.isDestroyed() && wc.session === pagesSession() ? wc : null;
+  return wc && !wc.isDestroyed() && isPagesBrowserSession(wc.session) ? wc : null;
+}
+
+/** A page the person opened in the panel, a web page or a space's file: pins and zoom work on both. */
+function panelPage(wc: WebContents | null | undefined): boolean {
+  return isPanelPage(wc, pagesSession()) || isPanelPage(wc, rigFilesSession());
 }
 
 /** What a new pin quotes: the element's text, else the board it's on. */
@@ -174,7 +179,7 @@ export const rigPagesController = createRPCController({
    */
   watchPins: ({ webContentsId }: { webContentsId: number }): boolean => {
     const wc = allWebContents.fromId(webContentsId);
-    if (!wc || !isPanelPage(wc, pagesSession())) return false;
+    if (!wc || !panelPage(wc)) return false;
     watchPins(wc, () => events.emit(pagePinsMovedChannel, { webContentsId }));
     return true;
   },
@@ -187,7 +192,7 @@ export const rigPagesController = createRPCController({
    */
   setZoom: ({ webContentsId, factor }: { webContentsId: number; factor: number }): boolean => {
     const wc = allWebContents.fromId(webContentsId);
-    if (!wc || !isPanelPage(wc, pagesSession())) return false;
+    if (!wc || !panelPage(wc)) return false;
     watchZoomKeys(wc, (key) => events.emit(pageZoomKeyChannel, { webContentsId, key }));
     applyPageZoom(wc, normalizeBrowserZoomFactor(factor));
     return true;

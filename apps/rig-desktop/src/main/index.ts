@@ -270,7 +270,7 @@ void app.whenReady().then(async () => {
 
   setupAppProtocol(join(app.getAppPath(), 'out', 'renderer'));
   // Space files as pages (`rig-file://`), before any page panel loads one.
-  void import('./rig/pages/agent-pages').then((m) => m.pagesSession());
+  void import('./rig/pages/agent-pages').then((m) => m.rigFilesSession());
   setupApplicationMenu();
   createMainWindow();
 

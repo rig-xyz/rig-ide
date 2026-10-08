@@ -8,6 +8,14 @@
 
 export const RIG_FILE_SCHEME = 'rig-file';
 
+/**
+ * The browser profile space files open in, in the panel and in agents' tabs:
+ * its own cookies and storage, apart from the pages browser
+ * (`RIG_PAGES_PARTITION`), so a file someone added to a space never acts
+ * with the person's web sign-ins. Only this profile serves `rig-file://`.
+ */
+export const RIG_FILES_PARTITION = 'persist:emdash-browser-rig-files';
+
 /** `notes/a b.html` → `notes/a%20b.html`: each segment encoded, the slashes kept. */
 function encodePath(relPath: string): string {
   return relPath

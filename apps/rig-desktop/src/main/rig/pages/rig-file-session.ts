@@ -7,10 +7,11 @@ import { rigFileRequestAllowed, rigFileResponse } from './rig-file-protocol';
 const installed = new WeakSet<Session>();
 
 /**
- * Serves `rig-file://` in a session: the pages browser's, which the page
- * panel and agents' hidden tabs share. A protocol handler belongs to one
- * session, so nothing else (the app's own window, the general in-app
- * browser) can load these links.
+ * Serves `rig-file://` in a session: the space files' own profile
+ * (`rigFilesSession`), which the page panel and agents' hidden tabs share
+ * for these links. A protocol handler belongs to one session, so nothing
+ * else (the app's own window, the pages browser with the person's web
+ * sign-ins, the general in-app browser) can load these links.
  */
 export function installRigFileProtocol(ses: Session): void {
   if (installed.has(ses)) return;

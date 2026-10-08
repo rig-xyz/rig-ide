@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalPageUrl, classifyLink, opensBesideChat, trimUrl, webLinkLabel } from './links';
+import { canonicalPageUrl, classifyLink, opensBesideChat, partitionForPage, RIG_PAGES_PARTITION, trimUrl, webLinkLabel } from './links';
+import { RIG_FILES_PARTITION } from './rig-file';
 
 describe('classifyLink', () => {
   it.each([
@@ -91,5 +92,15 @@ describe('webLinkLabel', () => {
     ['https://example.com/a-very-long-first-path-segment-indeed', 'example.com/a-very-long-first-path-…'],
   ])('%s → %s', (url, label) => {
     expect(webLinkLabel(url)).toBe(label);
+  });
+});
+
+describe('partitionForPage', () => {
+  it("opens a space's file in its own profile, apart from the pages browser's sign-ins", () => {
+    expect(RIG_FILES_PARTITION).not.toBe(RIG_PAGES_PARTITION);
+    expect(partitionForPage('rig-file://bnd_abc/site/index.html')).toBe(RIG_FILES_PARTITION);
+    expect(partitionForPage('RIG-FILE://bnd_abc/x.html')).toBe(RIG_FILES_PARTITION);
+    expect(partitionForPage('https://docs.google.com/document/d/abc/edit')).toBe(RIG_PAGES_PARTITION);
+    expect(partitionForPage('https://claude.ai/artifact/abc')).toBe(RIG_PAGES_PARTITION);
   });
 });

@@ -3,8 +3,7 @@ import {
   BROWSER_PARTITION_PREFIX,
   normalizeBrowserUrl,
 } from '@shared/browser';
-import { RIG_PAGES_PARTITION } from '@shared/spaces/links';
-import { parseRigFileUrl } from '@shared/spaces/rig-file';
+import { parseRigFileUrl, RIG_FILES_PARTITION } from '@shared/spaces/rig-file';
 
 const BROWSER_PARTITION_INSTANCE_PREFIX = `${BROWSER_PARTITION_PREFIX}-`;
 
@@ -46,9 +45,11 @@ export function validateBrowserWebviewAttach(
     return { ok: false, reason: 'unregistered-partition' };
   }
 
-  // A space's file as a page (`rig-file://`): only the pages browser serves those.
-  if (partition === RIG_PAGES_PARTITION && typeof params.src === 'string' && parseRigFileUrl(params.src)) {
-    return { ok: true, partition, url: params.src };
+  // A space's file as a page (`rig-file://`) opens in its own profile, and that profile opens nothing else.
+  if (partition === RIG_FILES_PARTITION) {
+    return typeof params.src === 'string' && parseRigFileUrl(params.src)
+      ? { ok: true, partition, url: params.src }
+      : { ok: false, reason: 'unsupported-url' };
   }
 
   const normalized = normalizeBrowserUrl(

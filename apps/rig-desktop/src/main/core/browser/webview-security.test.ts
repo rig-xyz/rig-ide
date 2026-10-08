@@ -92,13 +92,20 @@ describe('browser webview security helpers', () => {
     });
   });
 
-  it("lets only the pages browser open a space's file as a page", () => {
+  it("opens a space's file only in its own profile, and nothing else there", () => {
+    const files = 'persist:emdash-browser-rig-files';
     const pages = 'persist:emdash-browser-rig-pages';
     const other = 'persist:emdash-browser-profile';
     const src = 'rig-file://bnd_abc/site/index.html';
-    expect(validateBrowserWebviewAttach({ partition: pages, src }, new Set([pages]))).toEqual({ ok: true, partition: pages, url: src });
+    expect(validateBrowserWebviewAttach({ partition: files, src }, new Set([files]))).toEqual({ ok: true, partition: files, url: src });
+    // The pages browser holds the person's web sign-ins: a space's file never loads there.
+    expect(validateBrowserWebviewAttach({ partition: pages, src }, new Set([pages]))).toEqual({ ok: false, reason: 'unsupported-url' });
     expect(validateBrowserWebviewAttach({ partition: other, src }, new Set([other]))).toEqual({ ok: false, reason: 'unsupported-url' });
-    expect(validateBrowserWebviewAttach({ partition: pages, src: 'rig-file://bnd_abc/../x' }, new Set([pages]))).toEqual({
+    expect(validateBrowserWebviewAttach({ partition: files, src: 'rig-file://bnd_abc/../x' }, new Set([files]))).toEqual({
+      ok: false,
+      reason: 'unsupported-url',
+    });
+    expect(validateBrowserWebviewAttach({ partition: files, src: 'https://docs.google.com/' }, new Set([files]))).toEqual({
       ok: false,
       reason: 'unsupported-url',
     });

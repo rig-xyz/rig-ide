@@ -1,3 +1,5 @@
+import { isRigFileUrl, RIG_FILES_PARTITION } from './rig-file';
+
 /**
  * What a link posted in a space points at, from its URL alone: a Claude
  * artifact or chat, a Google Doc/Sheet/Slides, something on GitHub, or any
@@ -21,6 +23,11 @@ export interface LinkInfo {
 
 /** The browser profile pages open in (panel and agents alike); one of the app's registered browser partitions. */
 export const RIG_PAGES_PARTITION = 'persist:emdash-browser-rig-pages';
+
+/** The profile a page opens in: a space's file in its own (`RIG_FILES_PARTITION`), any other page in the pages browser. */
+export function partitionForPage(url: string): string {
+  return isRigFileUrl(url) ? RIG_FILES_PARTITION : RIG_PAGES_PARTITION;
+}
 
 /** `http(s)://…` up to whitespace or a quote/angle bracket. */
 export const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/g;

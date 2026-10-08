@@ -213,7 +213,7 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
         const hop = p.anchor.hops[0];
         const snap = await snapshotOf(url, { sig: hop?.sig, index: hop?.index, path: p.anchor.path, text: p.anchor.text || undefined });
         if (!snap || !snap.el) return say(`Pin ${p.n}'s element isn't on the page any more.`, true);
-        return image(await renderSnapshot(snap.html, snap, around(snap)), `Pin ${p.n} with context, from board ${snap.i} at full size.`);
+        return image(await renderSnapshot(snap.html, snap, around(snap), url), `Pin ${p.n} with context, from board ${snap.i} at full size.`);
       }
       if (input.board !== undefined || typeof input.text === 'string') {
         const q =
@@ -224,7 +224,7 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
         if (!snap) return say('No board matches that.', true);
         if (q.text && !snap.el) return say(`"${q.text}" isn't on board ${snap.i}.`, true);
         return image(
-          await renderSnapshot(snap.html, snap, q.text ? around(snap) : null),
+          await renderSnapshot(snap.html, snap, q.text ? around(snap) : null, url),
           q.text ? `"${q.text}" with context, from board ${snap.i} at full size.` : `Board ${snap.i} (${snap.title.slice(0, 50)}) at full size.`
         );
       }

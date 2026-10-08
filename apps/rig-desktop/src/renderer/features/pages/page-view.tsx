@@ -25,7 +25,7 @@ import { cn } from '@renderer/lib/utils';
 import { pagePinsMovedChannel } from '@shared/pages/pin-events';
 import { pageZoomKeyChannel, pageZoomSite } from '@shared/pages/page-zoom';
 import { isSignInWall, KNOWN_SIGN_IN_SITES, signInSiteForUrl } from '@shared/pages/sign-in-sites';
-import { canonicalPageUrl, RIG_PAGES_PARTITION } from '@shared/spaces/links';
+import { canonicalPageUrl, partitionForPage } from '@shared/spaces/links';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { AccountChip, SignInBanner } from './account-chip';
 import { clearAutoSignIn, getAutoState, registerPanelPage, runAutoSignIn } from './auto-sign-in';
@@ -158,11 +158,13 @@ export function PageView({
     let wallTimer: ReturnType<typeof setTimeout> | null = null;
     let unregister: (() => void) | null = null;
     let looked = false;
-    void rpc.browser.registerSession({ browserId, partition: RIG_PAGES_PARTITION }).then(() => {
+    // A space's file opens in a profile of its own, with none of the person's web sign-ins.
+    const partition = partitionForPage(url);
+    void rpc.browser.registerSession({ browserId, partition }).then(() => {
       if (cancelled || !hostRef.current) return;
       view = document.createElement('webview') as WebviewTag;
       viewRef.current = view;
-      view.setAttribute('partition', RIG_PAGES_PARTITION);
+      view.setAttribute('partition', partition);
       view.setAttribute('src', url);
       view.className = 'absolute inset-0 size-full';
       view.addEventListener('dom-ready', () => {
