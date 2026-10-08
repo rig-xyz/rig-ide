@@ -3,7 +3,9 @@
  * unread things, each with the one action it needs. Your unread mentions
  * and replies (Reply, inline), invites to a space (Accept), and your own
  * agents waiting on your approval (Approve, from this computer's own copy
- * of the run; Open when the run isn't here). Pure; the section draws it.
+ * of the run; Open when the run isn't here), and your own logins to
+ * connectors your spaces use that expired or signed you out (Reconnect).
+ * Pure; the section draws it.
  */
 
 import type { RigNotification } from '@shared/rig/notifications';
@@ -51,9 +53,31 @@ export type WaitingItem =
       /** What it asks to do, when the run said. */
       title: string | null;
       at: string;
+    }
+  | {
+      kind: 'connector';
+      key: string;
+      connectorId: string;
+      /** The connector's own name and brand colour ("Linear"). */
+      name: string;
+      brand: string;
+      /** The first space that uses it; `spaces` has them all. */
+      bindingId: string;
+      spaceName: string;
+      spaces: readonly { bindingId: string; name: string }[];
+      /** No time of its own: it sorts after everything with one. */
+      at: string;
     };
 
-export type WaitingAction = 'Reply' | 'Accept' | 'Approve' | 'Open';
+export type WaitingAction = 'Reply' | 'Accept' | 'Approve' | 'Open' | 'Reconnect';
+
+/** A connector login of yours that expired or signed you out, and the spaces that use it. */
+export type ExpiredConnector = {
+  connectorId: string;
+  name: string;
+  brand: string;
+  spaces: readonly { bindingId: string; name: string }[];
+};
 
 export function deriveWaitingItems(input: {
   activity: readonly RigNotification[] | null;
@@ -61,6 +85,7 @@ export function deriveWaitingItems(input: {
   spaces: readonly { bindingId: string; name: string | null }[];
   statusByBinding: ReadonlyMap<string, RigSpaceStatus>;
   selfUserId: string | null;
+  connectors?: readonly ExpiredConnector[];
 }): WaitingItem[] {
   const nameOf = (bindingId: string) => input.spaces.find((s) => s.bindingId === bindingId)?.name ?? null;
   const items: WaitingItem[] = [];
@@ -118,7 +143,29 @@ export function deriveWaitingItems(input: {
       }
     }
   }
+  for (const connector of input.connectors ?? []) {
+    const first = connector.spaces[0];
+    if (!first) continue;
+    items.push({
+      kind: 'connector',
+      key: `c:${connector.connectorId}`,
+      connectorId: connector.connectorId,
+      name: connector.name,
+      brand: connector.brand,
+      bindingId: first.bindingId,
+      spaceName: first.name,
+      spaces: connector.spaces,
+      at: '',
+    });
+  }
   return items.sort((a, b) => b.at.localeCompare(a.at));
+}
+
+/** Where a connector is used: "#rig-ops", "#rig-ops and #launch", or "3 spaces". */
+export function usedInLabel(spaces: readonly { name: string }[]): string {
+  if (spaces.length === 1) return `#${spaces[0]!.name}`;
+  if (spaces.length === 2) return `#${spaces[0]!.name} and #${spaces[1]!.name}`;
+  return `${spaces.length} spaces`;
 }
 
 export type PendingRequest = {
@@ -172,6 +219,8 @@ export function waitingAction(item: WaitingItem, ctx: { approvable: boolean }): 
       return 'Accept';
     case 'approval':
       return ctx.approvable ? 'Approve' : 'Open';
+    case 'connector':
+      return 'Reconnect';
   }
 }
 
@@ -184,6 +233,8 @@ export function doneLine(item: WaitingItem): string {
       return `You joined #${item.spaceName}.`;
     case 'approval':
       return `Approved. ${item.agent} is back at work in #${item.spaceName}.`;
+    case 'connector':
+      return `You're signed in to ${item.name} again.`;
   }
 }
 

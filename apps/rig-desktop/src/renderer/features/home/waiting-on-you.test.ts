@@ -6,6 +6,7 @@ import {
   deriveWaitingItems,
   doneLine,
   pendingRequestOf,
+  usedInLabel,
   waitingAction,
   type WaitingItem,
 } from './waiting-on-you';
@@ -135,6 +136,33 @@ describe('waitingAction and doneLine', () => {
     expect(doneLine(reply)).toBe('Replied in #rig-marketing.');
     expect(doneLine(invite)).toBe('You joined #x.');
     expect(doneLine(approval)).toBe('Approved. Claude is back at work in #rig-ops.');
+  });
+});
+
+describe('expired connectors', () => {
+  it('waits on you only where a space uses it, after everything with a time, with Reconnect', () => {
+    const items = deriveWaitingItems({
+      activity: [row({ id: '9', type: 'mention', tier: 'direct', bindingId: 'b_mkt', createdAt: '2026-10-08T09:00:00Z' })],
+      invites: [],
+      spaces,
+      statusByBinding: new Map(),
+      selfUserId: ME,
+      connectors: [
+        { connectorId: 'linear', name: 'Linear', brand: '#5E6AD2', spaces: [{ bindingId: 'b_ops', name: 'rig-ops' }] },
+        { connectorId: 'notion', name: 'Notion', brand: '#000', spaces: [] },
+      ],
+    });
+    expect(items.map((i) => i.key)).toEqual(['n:9', 'c:linear']);
+    const connector = items[1]!;
+    expect(connector).toMatchObject({ kind: 'connector', bindingId: 'b_ops', spaceName: 'rig-ops', name: 'Linear' });
+    expect(waitingAction(connector, { approvable: false })).toBe('Reconnect');
+    expect(doneLine(connector)).toBe("You're signed in to Linear again.");
+  });
+
+  it('names where it is used', () => {
+    expect(usedInLabel([{ name: 'a' }])).toBe('#a');
+    expect(usedInLabel([{ name: 'a' }, { name: 'b' }])).toBe('#a and #b');
+    expect(usedInLabel([{ name: 'a' }, { name: 'b' }, { name: 'c' }])).toBe('3 spaces');
   });
 });
 

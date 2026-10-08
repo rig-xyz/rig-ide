@@ -8,6 +8,8 @@ import {
 } from '@renderer/features/notifications/use-notifications';
 import { MY_INVITES_KEY_PREFIX, myInvitesQueryKey, shapeMyInvites } from '@renderer/features/shell/invites-inbox';
 import { approveOption } from '@renderer/features/spaces/approval-options';
+import { connectorsApi } from '@renderer/features/spaces/connectors-api';
+import { ConnectorLogo } from '@renderer/features/spaces/logos';
 import { AgentAvatar } from '@renderer/features/spaces/components/identity';
 import { mentionAt } from '@renderer/features/spaces/message-tokens';
 import type { RoomMember } from '@renderer/features/spaces/types';
@@ -17,6 +19,7 @@ import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { Button } from '@renderer/lib/ui/button';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
+import { connectorById, type ConnectorId } from '@shared/spaces/connectors';
 import type { RigSpaceStatus } from '@shared/rig/space-status';
 import type { HomeRigRow } from './home-sections';
 import { HomeFeedLabel } from './home-feed-label';
@@ -26,7 +29,9 @@ import {
   deriveWaitingItems,
   doneLine,
   pendingRequestOf,
+  usedInLabel,
   waitingAction,
+  type ExpiredConnector,
   type PendingRequest,
   type WaitingAction,
   type WaitingItem,
@@ -36,6 +41,14 @@ import {
 const DONE_LINGER_MS = 4_000;
 /** How long it takes to fold away at the end of that. */
 const COLLAPSE_MS = 300;
+
+/**
+ * How many spaces are asked "do you use this connector", per expired
+ * connector: enough to name where it's used, without asking every space
+ * this account has ever touched.
+ */
+const MAX_SPACES_CHECKED = 24;
+const CONNECTIONS_KEY = ['rig', 'connectors', 'list'];
 
 /** Who's asking: a name, and their picture when Home knows one. */
 type AvatarOf = (who: { userId: string | null; name: string }) => string | null;
@@ -74,12 +87,14 @@ export function WaitingOnYouSection({
     enabled: selfUserId !== null,
   });
   const invites = invitesQuery.data?.success ? shapeMyInvites(invitesQuery.data.data.invites) : [];
+  const connectors = useExpiredConnectors(spaceRows);
   const items = deriveWaitingItems({
     activity,
     invites,
     spaces: spaceRows,
     statusByBinding,
     selfUserId,
+    connectors,
   });
 
   // Your agents' approvals, read from this computer's own copy of each run.
@@ -202,12 +217,47 @@ export function WaitingOnYouSection({
                 void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY_PREFIX });
                 void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
               }}
+              onConnectionsChanged={() => void queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY })}
             />
           ))}
         </ul>
       )}
     </section>
   );
+}
+
+/**
+ * Your connector logins that expired or signed you out, each with the
+ * spaces here that use it (`listConnectors`, one small read per space).
+ * One no space uses isn't waiting on you.
+ */
+function useExpiredConnectors(spaceRows: readonly HomeRigRow[]): ExpiredConnector[] {
+  const connectionsQuery = useQuery({
+    queryKey: CONNECTIONS_KEY,
+    queryFn: () => connectorsApi.list(),
+    staleTime: 60_000,
+  });
+  const expiredIds = (connectionsQuery.data ?? []).filter((c) => c.state === 'expired').map((c) => c.id);
+  const candidates = spaceRows.slice(0, MAX_SPACES_CHECKED);
+  const listings = useQueries({
+    queries: candidates.map((row) => ({
+      queryKey: ['rig', 'spacesConnection', 'listConnectors', row.bindingId],
+      queryFn: () => rpc.rig.spacesConnection.listConnectors({ bindingId: row.bindingId }),
+      staleTime: 60_000,
+      enabled: expiredIds.length > 0,
+    })),
+  });
+  return expiredIds.flatMap((id): ExpiredConnector[] => {
+    const def = connectorById(id);
+    if (!def) return [];
+    const spaces = candidates
+      .filter((_, i) => {
+        const result = listings[i]?.data;
+        return result?.success && result.data.some((c) => c.connectorId === id);
+      })
+      .map((row) => ({ bindingId: row.bindingId, name: row.name ?? row.bindingId }));
+    return spaces.length > 0 ? [{ connectorId: id, name: def.name, brand: def.brand, spaces }] : [];
+  });
 }
 
 /** A person's first name; an email or a single word stays whole. */
@@ -236,6 +286,7 @@ function WaitingRow({
   onMarkRead,
   onDone,
   onInvitesChanged,
+  onConnectionsChanged,
 }: {
   item: WaitingItem;
   first: boolean;
@@ -254,6 +305,7 @@ function WaitingRow({
   onMarkRead: (notificationId: string) => Promise<void>;
   onDone: () => void;
   onInvitesChanged: () => void;
+  onConnectionsChanged: () => void;
 }) {
   const [replying, setReplying] = useState(false);
   const [draft, setDraft] = useState('');
@@ -328,6 +380,18 @@ function WaitingRow({
       });
       return;
     }
+    if (action === 'Reconnect' && item.kind === 'connector') {
+      // The same browser sign-in the connector gallery runs.
+      void run(async () => {
+        const result = await connectorsApi.connect(item.connectorId as ConnectorId);
+        onConnectionsChanged();
+        if (result.ok) return null;
+        return result.reason === 'cancelled' || result.reason === 'timeout'
+          ? `You didn't finish signing in to ${item.name}. Try again.`
+          : (result.message ?? `${item.name} didn't sign you in. Try again.`);
+      });
+      return;
+    }
     if (action === 'Approve' && item.kind === 'approval' && pending && approve) {
       void run(async () => {
         const answer = await rpc.rig.spacesDispatch.resolvePermission({
@@ -342,7 +406,9 @@ function WaitingRow({
 
   const selfMember = badgeMember(selfUserId, self?.name ?? 'You', self?.avatarUrl ?? null);
   const avatar =
-    item.kind === 'approval' ? (
+    item.kind === 'connector' ? (
+      <ConnectorLogo id={item.connectorId} name={item.name} brand={item.brand} size={28} />
+    ) : item.kind === 'approval' ? (
       <AgentAvatar agent={item.agentKind} owner={selfMember} badgeRingClassName="ring-bg-0" />
     ) : item.kind === 'reply' && item.who.agent ? (
       <AgentAvatar
@@ -364,8 +430,22 @@ function WaitingRow({
     );
 
   const who =
-    item.kind === 'approval' ? `Your ${item.agent}` : item.kind === 'reply' && item.who.agent ? item.who.name : firstName(item.who.name);
-  const verb = item.kind === 'approval' ? 'needs your approval' : item.kind === 'invite' ? 'invited you' : item.verb;
+    item.kind === 'connector'
+      ? item.name
+      : item.kind === 'approval'
+        ? `Your ${item.agent}`
+        : item.kind === 'reply' && item.who.agent
+          ? item.who.name
+          : firstName(item.who.name);
+  const verb =
+    item.kind === 'connector'
+      ? 'signed you out'
+      : item.kind === 'approval'
+        ? 'needs your approval'
+        : item.kind === 'invite'
+          ? 'invited you'
+          : item.verb;
+  const where = item.kind === 'connector' ? `used in ${usedInLabel(item.spaces)}` : `#${item.spaceName}`;
   const age = shortAge(item.at, now);
 
   const message: ReactNode =
@@ -378,6 +458,8 @@ function WaitingRow({
         ]}
         selfId={selfUserId ?? 'self'}
       />
+    ) : item.kind === 'connector' ? (
+      `Your agents can't use ${item.name} until you sign in again.`
     ) : item.kind === 'approval' ? (
       (pending?.title ?? item.title ?? 'It needs your answer before it goes on.')
     ) : (
@@ -407,13 +489,13 @@ function WaitingRow({
             <div className="flex min-w-0 items-start gap-3">
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <p className="truncate text-xs text-text-muted" data-testid="waiting-meta">
-                  <span className="font-medium text-text-primary">{who}</span> {verb} · #{item.spaceName}
+                  <span className="font-medium text-text-primary">{who}</span> {verb} · {where}
                   {age && <> · {age}</>}
                 </p>
                 <p
                   className={cn(
                     'line-clamp-3 text-sm break-words whitespace-pre-line',
-                    item.kind === 'invite' ? 'text-text-secondary' : 'text-text-primary'
+                    item.kind === 'invite' || item.kind === 'connector' ? 'text-text-secondary' : 'text-text-primary'
                   )}
                   data-testid="waiting-quote"
                 >
@@ -513,7 +595,13 @@ function MessageText({
 }
 
 function workingLabel(action: WaitingAction): string {
-  return action === 'Accept' ? 'Joining…' : action === 'Approve' ? 'Approving…' : 'Working…';
+  return action === 'Accept'
+    ? 'Joining…'
+    : action === 'Approve'
+      ? 'Approving…'
+      : action === 'Reconnect'
+        ? 'Waiting for your browser…'
+        : 'Working…';
 }
 
 function excerpt(text: string, max = 90): string {

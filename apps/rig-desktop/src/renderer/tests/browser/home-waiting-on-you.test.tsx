@@ -23,6 +23,9 @@ const mocks = vi.hoisted(() => ({
   attach: vi.fn(),
   resolve: vi.fn(),
   listMessages: vi.fn(),
+  connections: [] as unknown[],
+  connectorsBySpace: {} as Record<string, string[]>,
+  connect: vi.fn(),
 }));
 
 vi.mock('@renderer/lib/ipc', () => ({
@@ -37,9 +40,17 @@ vi.mock('@renderer/lib/ipc', () => ({
         acceptMyInvite: (...args: unknown[]) => mocks.accept(...args),
       },
       join: { attach: (...args: unknown[]) => mocks.attach(...args) },
+      connectors: {
+        list: async () => mocks.connections,
+        connect: (...args: unknown[]) => mocks.connect(...args),
+      },
       spacesConnection: {
         listMessages: (...args: unknown[]) => mocks.listMessages(...args),
         postMessage: (...args: unknown[]) => mocks.postMessage(...args),
+        listConnectors: async ({ bindingId }: { bindingId: string }) => ({
+          success: true,
+          data: (mocks.connectorsBySpace[bindingId] ?? []).map((connectorId) => ({ connectorId })),
+        }),
       },
       spacesDispatch: {
         localRunEvents: async () => ({ events: mocks.localEvents }),
@@ -128,6 +139,9 @@ describe('Home: Waiting on you', () => {
     mocks.activity = [];
     mocks.invites = [];
     mocks.localEvents = null;
+    mocks.connections = [];
+    mocks.connectorsBySpace = {};
+    mocks.connect.mockReset().mockResolvedValue({ ok: true });
     mocks.postMessage.mockReset().mockResolvedValue({ success: true, data: { id: 'msg-new' } });
     mocks.markRead.mockReset().mockResolvedValue({ success: true, data: undefined });
     mocks.accept.mockReset().mockResolvedValue({ success: true, data: { bindingId: 'b-warm', becameMember: true } });
@@ -334,5 +348,41 @@ describe('Home: Waiting on you', () => {
     expect(buttonNamed('Approve')).toBeUndefined();
     await act(async () => buttonNamed('Open')!.click());
     expect(opened).toEqual(['/Rig/rig-ops']);
+  });
+
+  it('a connector login that expired: Reconnect runs the sign-in, then says so', async () => {
+    mocks.connections = [
+      { id: 'linear', state: 'expired' },
+      { id: 'notion', state: 'expired' },
+      { id: 'github', state: 'connected' },
+    ];
+    // Notion expired too, but no space here uses it: nothing waits on you for it.
+    mocks.connectorsBySpace = { 'b-mkt': ['linear', 'github'], 'b-ops': ['linear'] };
+    await mount();
+    expect(items()).toHaveLength(1);
+    const item = items()[0]!;
+    expect(item.dataset.kind).toBe('connector');
+    expect(item.querySelector('[data-testid="waiting-meta"]')?.textContent).toBe(
+      'Linear signed you out · used in #rig-marketing and #rig-ops'
+    );
+    expect(item.querySelector('[data-testid="waiting-quote"]')?.textContent).toBe(
+      "Your agents can't use Linear until you sign in again."
+    );
+    await act(async () => buttonNamed('Reconnect')!.click());
+    await flush();
+    expect(mocks.connect).toHaveBeenCalledWith({ id: 'linear' });
+    expect(items()[0]!.querySelector('[data-testid="waiting-done"]')?.textContent).toBe("You're signed in to Linear again.");
+  });
+
+  it('a reconnect you did not finish keeps the item and says so', async () => {
+    mocks.connections = [{ id: 'linear', state: 'expired' }];
+    mocks.connectorsBySpace = { 'b-ops': ['linear'] };
+    mocks.connect.mockResolvedValueOnce({ ok: false, reason: 'cancelled' });
+    await mount();
+    await act(async () => buttonNamed('Reconnect')!.click());
+    await flush();
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("You didn't finish signing in to Linear. Try again.");
+    expect(items()[0]!.dataset.done).toBeUndefined();
+    expect(buttonNamed('Reconnect')).toBeTruthy();
   });
 });
