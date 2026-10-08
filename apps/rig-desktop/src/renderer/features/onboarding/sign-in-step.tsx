@@ -74,7 +74,8 @@ export function SignInStep({ onComplete }: { onComplete: () => void }) {
   );
 }
 
-function ManualLink({ url }: { url: string }) {
+/** The sign-in link to open or copy by hand, for when the browser didn't open it. */
+export function ManualLink({ url }: { url: string }) {
   // F fix: reuse `useClipboard` instead of duplicating its copy/reset logic.
   const clipboard = useClipboard();
   return (
