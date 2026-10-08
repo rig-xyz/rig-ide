@@ -6,6 +6,7 @@ import {
   deriveAcrossSpacesView,
   firstNameKey,
   lastActivityByPerson,
+  markTopics,
   moreTopicsLabel,
   shortAge,
   splitRecentThemes,
@@ -242,5 +243,42 @@ describe('avatarsByFirstName', () => {
     );
     expect(avatars.get('dylan')).toBe('me.png');
     expect(avatars.has('ada')).toBe(false);
+  });
+});
+
+describe('markTopics', () => {
+  const reads = new Map([
+    ['b1', { cursor: 1180, unread: 25 }],
+    ['b2', { cursor: 1299, unread: 0 }],
+    ['b3', { cursor: 50, unread: 0 }],
+  ]);
+
+  it('a topic past the read cursor is new, counted by its messages but never more than the space has unread', () => {
+    const marks = markTopics(
+      [
+        theme('onboarding', { bindingId: 'b1', lastSeq: 1334, messageCount: 40 }),
+        theme('pricing', { bindingId: 'b1', lastSeq: 1200, messageCount: 3 }),
+      ],
+      reads
+    );
+    expect(marks.get('onboarding')).toEqual({ kind: 'new', count: 25 });
+    expect(marks.get('pricing')).toEqual({ kind: 'new', count: 3 });
+  });
+
+  it('read up to or past its newest message: seen', () => {
+    const marks = markTopics(
+      [theme('old', { bindingId: 'b1', lastSeq: 1180 }), theme('vision', { bindingId: 'b2', lastSeq: 1295 })],
+      reads
+    );
+    expect(marks.get('old')).toEqual({ kind: 'seen' });
+    expect(marks.get('vision')).toEqual({ kind: 'seen' });
+  });
+
+  it('past the cursor but nothing unread from anyone else (your own messages): seen', () => {
+    expect(markTopics([theme('mine', { bindingId: 'b3', lastSeq: 60 })], reads).get('mine')).toEqual({ kind: 'seen' });
+  });
+
+  it('a space with no known cursor leaves its topics unmarked', () => {
+    expect(markTopics([theme('x', { bindingId: 'nope', lastSeq: 9 })], reads).has('x')).toBe(false);
   });
 });

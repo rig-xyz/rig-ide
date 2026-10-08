@@ -12,6 +12,7 @@ import {
   themeActivityLine,
   themeFaces,
   type AcrossSpacesView,
+  type TopicMark,
 } from './recent-themes-state';
 
 /** Faces on a line before the rest are left out. */
@@ -30,11 +31,14 @@ export function AcrossYourSpacesToday({
   view,
   onOpenTheme,
   avatarOf,
+  marks,
 }: {
   view: AcrossSpacesView;
   onOpenTheme: (theme: RigRecentTheme) => void;
   /** A face's picture, when Home knows one for that name. */
   avatarOf?: (name: string) => string | null;
+  /** Each topic against its space's read cursor (`markTopics`): new ones get a pill, read ones step back. */
+  marks?: ReadonlyMap<string, TopicMark>;
 }) {
   const [showMore, setShowMore] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -51,6 +55,7 @@ export function AcrossYourSpacesToday({
       onToggle={() => setOpenId((id) => (id === theme.themeId ? null : theme.themeId))}
       onOpen={() => onOpenTheme(theme)}
       avatarOf={avatarOf}
+      mark={marks?.get(theme.themeId)}
     />
   );
 
@@ -117,6 +122,7 @@ function ThemeLine({
   onToggle,
   onOpen,
   avatarOf,
+  mark,
 }: {
   theme: RigRecentTheme;
   now: number;
@@ -124,15 +130,22 @@ function ThemeLine({
   onToggle: () => void;
   onOpen: () => void;
   avatarOf?: (name: string) => string | null;
+  mark?: TopicMark;
 }) {
   const faces = themeFaces(theme.people);
+  const seen = mark?.kind === 'seen';
   return (
     <li
-      className="glass-hover -mx-3 flex cursor-pointer flex-col gap-1 rounded-[12px] px-3 py-2.5 leading-normal"
+      className={cn(
+        'glass-hover -mx-3 flex cursor-pointer flex-col gap-1 rounded-[12px] px-3 py-2.5 leading-normal',
+        // Read already: it steps back until hovered or opened.
+        seen && !open && 'opacity-50 transition-opacity hover:opacity-85'
+      )}
       onClick={onToggle}
       data-testid="theme-line"
       data-theme-id={theme.themeId}
       data-open={open ? 'true' : undefined}
+      data-mark={mark?.kind}
     >
       <div className="flex min-w-0 items-center gap-2.5">
         <ThemeDot color={themeColor(theme.themeId)} />
@@ -143,7 +156,10 @@ function ThemeLine({
             event.stopPropagation();
             onToggle();
           }}
-          className="min-w-0 shrink truncate text-left text-sm font-semibold text-text-primary outline-none focus-visible:underline"
+          className={cn(
+            'min-w-0 shrink truncate text-left text-sm text-text-primary outline-none focus-visible:underline',
+            seen ? 'font-medium' : 'font-semibold'
+          )}
           data-testid="theme-line-name"
         >
           {theme.name}
@@ -177,6 +193,14 @@ function ThemeLine({
               ))}
             </span>
           )}
+          {mark?.kind === 'new' && (
+            <span
+              className="bg-accent-subtle text-accent rounded-full px-[7px] py-px text-2xs font-medium whitespace-nowrap"
+              data-testid="theme-line-new"
+            >
+              {mark.count} new
+            </span>
+          )}
           <span
             className="w-11 text-right font-mono text-2xs text-text-muted tabular-nums"
             data-testid="theme-line-age"
@@ -185,7 +209,7 @@ function ThemeLine({
           </span>
         </span>
       </div>
-      {theme.description && (
+      {theme.description && (!seen || open) && (
         <p
           className={cn(
             'pl-[19px] text-xs leading-normal text-text-secondary',

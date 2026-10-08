@@ -3,6 +3,7 @@ import { Loader2, LogIn, Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentProblemLine } from '@renderer/features/agents/agent-problem-line';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
+import { useNotificationSummary } from '@renderer/features/notifications/use-notifications';
 import { usePeople } from '@renderer/features/people/use-people';
 import { deriveSignedIn } from '@renderer/features/rig-account/auth-state';
 import { useRigSignIn, type RigSignInPhase } from '@renderer/features/rig-account/use-rig-sign-in';
@@ -54,6 +55,7 @@ import {
   deriveAcrossSpacesView,
   firstNameKey,
   lastActivityByPerson,
+  markTopics,
   topicBySpace,
 } from './recent-themes-state';
 import { RigsRail } from './rigs-rail';
@@ -478,6 +480,13 @@ export function Home({
   // Offline, like the rows' live status, no row claims a topic.
   const topicByBinding = topicBySpace(acrossView.kind === 'themes' && !connectionDown ? acrossView.themes : []);
   const roomThemesOn = useRoomThemesEnabled();
+  // Each space's read cursor and unread count, the relay's (the Activity
+  // bell's summary): topics past it are marked new, the rest step back.
+  const notificationSummary = useNotificationSummary();
+  const spaceReads = new Map(
+    notificationSummary.spaces.map((s) => [s.bindingId, { cursor: s.lastReadSeq, unread: s.spaceUnread }])
+  );
+  const topicMarks = markTopics(acrossView.kind === 'themes' && !connectionDown ? acrossView.themes : [], spaceReads);
   // The topic lines' faces and People's times both come from what Home
   // already reads: the day's themes, and pictures from you, your people and
   // Pulse's people. Pulse alone misses anyone its briefing leaves out.
@@ -645,6 +654,7 @@ export function Home({
                   view={acrossView}
                   onOpenTheme={(theme) => openSpaceOnTheme(theme.bindingId, theme.themeId)}
                   avatarOf={avatarOf}
+                  marks={topicMarks}
                 />
               )}
               <PeopleRail lastActivity={lastActivity} className="min-[87.5rem]:hidden" />

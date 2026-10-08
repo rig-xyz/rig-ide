@@ -52,6 +52,7 @@ const mocks = vi.hoisted(() => ({
   requests: [] as Array<[string, string]>,
   pulse: null as unknown,
   expiredConnector: false,
+  summary: null as unknown,
 }));
 
 const fail = { success: false, error: { kind: 'relay', message: 'nope' } };
@@ -145,7 +146,7 @@ vi.mock('@renderer/lib/ipc', () => ({
       },
       homeLayout: { get: async () => null, apply: async () => null },
       notifications: {
-        summary: async () => ({ spaces: [], invitesUnread: 0, directUnreadTotal: 0 }),
+        summary: async () => mocks.summary ?? { spaces: [], invitesUnread: 0, directUnreadTotal: 0 },
         activity: async () => ({ notifications: [], nextCursor: null }),
         permission: async () => 'granted',
       },
@@ -231,6 +232,7 @@ describe('Home: Across your spaces today', () => {
     mocks.requests = [];
     mocks.pulse = null;
     mocks.expiredConnector = false;
+    mocks.summary = null;
     opened = [];
     host = document.createElement('div');
     document.body.appendChild(host);
@@ -479,6 +481,54 @@ describe('Home: Across your spaces today', () => {
     expect(box.className).toContain('min-[87.5rem]:flex');
     // Plain: no outline, no fill.
     expect(box.className).not.toMatch(/\bborder\b|\bbg-/);
+  });
+
+  it('marks topics past the read cursor with "N new" and their summary; the read ones step back', async () => {
+    mocks.summary = {
+      spaces: [
+        {
+          bindingId: 's-launch',
+          name: 'launch',
+          latestDirect: null,
+          level: 'all',
+          lastReadSeq: 96,
+          spaceUnread: 25,
+          directUnread: 0,
+          directUnreadNoMessage: 0,
+        },
+      ],
+      invitesUnread: 0,
+      directUnreadTotal: 0,
+    };
+    mocks.live = {
+      kind: 'live',
+      savedAt: NOW,
+      themes: [
+        theme(1, { name: 'Onboarding Strategy', messageCount: 40, lastSeq: 99 }),
+        theme(2, { name: 'Space Rename', lastSeq: 96 }),
+        theme(3, { bindingId: 's-pricing', spaceName: 'pricing', lastSeq: 500 }),
+      ],
+    };
+    await mount();
+    const [fresh, read, unknown] = lines();
+    expect(fresh!.dataset.mark).toBe('new');
+    expect(fresh!.querySelector('[data-testid="theme-line-new"]')?.textContent).toBe('25 new');
+    expect(fresh!.querySelector('[data-testid="theme-line-desc"]')?.textContent).toBe('What topic 1 is about');
+    expect(fresh!.className).not.toContain('opacity-50');
+
+    expect(read!.dataset.mark).toBe('seen');
+    expect(read!.className).toContain('opacity-50');
+    expect(read!.querySelector('[data-testid="theme-line-new"]')).toBeNull();
+    expect(read!.querySelector('[data-testid="theme-line-desc"]')).toBeNull();
+    expect(read!.querySelector('[data-testid="theme-line-name"]')!.className).toContain('font-medium');
+    // Opened, a read topic comes back to full strength with its summary.
+    await act(async () => toggle(read!).click());
+    expect(lines()[1]!.className).not.toContain('opacity-50');
+    expect(lines()[1]!.querySelector('[data-testid="theme-line-desc"]')).not.toBeNull();
+
+    // A space whose cursor isn't known: unmarked, as before.
+    expect(unknown!.dataset.mark).toBeUndefined();
+    expect(unknown!.className).not.toContain('opacity-50');
   });
 
   it('says "Quiet day across your spaces" when nothing happened', async () => {

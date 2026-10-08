@@ -127,6 +127,38 @@ export function topicBySpace(themes: readonly RigRecentTheme[]): Map<string, Rig
   return out;
 }
 
+/** Where you've read a space up to: the relay's read cursor, and how many messages past it are someone else's. */
+export type SpaceRead = { cursor: number; unread: number };
+
+/** A topic past your read position, with how many of its messages are new to you; or one you've read. */
+export type TopicMark = { kind: 'new'; count: number } | { kind: 'seen' };
+
+/**
+ * Marks each topic against its space's read cursor (the notifications
+ * summary): new when its newest message is past the cursor and the space
+ * has unread messages from someone else, with the topic's messages of the
+ * day as its count, never more than the space's unread. Every other topic
+ * of a space whose cursor is known is seen. A space with no known cursor
+ * leaves its topics unmarked.
+ */
+export function markTopics(
+  themes: readonly RigRecentTheme[],
+  reads: ReadonlyMap<string, SpaceRead>
+): Map<string, TopicMark> {
+  const out = new Map<string, TopicMark>();
+  for (const theme of themes) {
+    const read = reads.get(theme.bindingId);
+    if (!read) continue;
+    out.set(
+      theme.themeId,
+      theme.lastSeq > read.cursor && read.unread > 0
+        ? { kind: 'new', count: Math.max(1, Math.min(theme.messageCount, read.unread)) }
+        : { kind: 'seen' }
+    );
+  }
+  return out;
+}
+
 export type AcrossSpacesView =
   | { kind: 'loading' }
   | { kind: 'offline' }
