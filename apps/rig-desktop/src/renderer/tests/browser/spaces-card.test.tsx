@@ -339,6 +339,7 @@ describe('SpacesCard — what you missed', () => {
     expect(countOf('calm-valley')).toBe('5');
     const dotOf = (name: string) => rowOf(name).querySelector<HTMLElement>('[data-testid="space-row-dot"]');
     expect(dotOf('calm-valley')?.dataset.dot).toBe('unread');
+    expect(tileOf('calm-valley').className).toContain('bg-bg-2');
     expect(dotOf('growth')).toBeNull();
     expect(dotOf('research')).toBeNull();
     expect(tileOf('research').className).toContain('bg-bg-2');

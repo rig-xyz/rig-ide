@@ -32,7 +32,12 @@ export function SpaceStatusTile({
 }) {
   return (
     <span
-      className={cn('bg-bg-2 relative inline-flex shrink-0 items-center justify-center rounded-control p-1.5', className)}
+      className={cn(
+        'relative inline-flex shrink-0 items-center justify-center rounded-control p-1.5 transition-colors',
+        // Something waiting on you tints the tile a very light blue.
+        dot === 'forYou' ? 'bg-accent/8' : 'bg-bg-2',
+        className
+      )}
       aria-hidden
       data-tile={attention.kind}
     >
