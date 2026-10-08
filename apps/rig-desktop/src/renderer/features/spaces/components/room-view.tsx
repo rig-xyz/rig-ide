@@ -65,6 +65,7 @@ import { buildThreads, focusForThreads, newestSeq, summarizeThread, threadRootFo
 import { readThreadSeen, writeThreadSeen } from '../thread-seen';
 import { useSpacesChatView } from '../use-chat-view';
 import { ReactionsContext, type ReactionsApi } from './reactions';
+import { AgentSetupDialog } from '@renderer/features/agents/agent-install';
 import { AgentRows, SpaceChipSummary } from './agent-rows';
 import { AgentSignInRow } from './agent-sign-in-row';
 import { SpaceRail } from './space-rail';
@@ -951,6 +952,8 @@ export function RoomView({
     [source, selfUserId]
   );
   const availableAgents = useAvailableAgents();
+  // "Set up" from the composer's notice: the install offer for that agent.
+  const [setUpAgent, setSetUpAgent] = useState<AgentKind | null>(null);
 
   // The router's private "was this for your agent?" about one of your
   // messages: one quiet button under it, until you use it, send something
@@ -969,6 +972,8 @@ export function RoomView({
   const askSuggestion = useMemo((): AskSuggestion | null => {
     if (!dispatchSuggestion || !(source instanceof RelayRoomSource)) return null;
     const { messageId, agent } = dispatchSuggestion;
+    // Never offer to ask an agent this Mac can't run.
+    if (availableAgents && !availableAgents.includes(agent)) return null;
     return {
       messageId,
       agent,
@@ -986,7 +991,7 @@ export function RoomView({
           });
       },
     };
-  }, [dispatchSuggestion, source]);
+  }, [dispatchSuggestion, source, availableAgents]);
 
   const togglePlay = () => {
     if (!source || source.isDone()) return;
@@ -1007,7 +1012,10 @@ export function RoomView({
   ) => {
     if (!(source instanceof RelayRoomSource) || !snapshot) return;
     setDispatchSuggestion(null);
-    const ownAgents = snapshot.agents.filter((a) => a.owner === selfUserId).map((a) => a.agent);
+    // Only agents this Mac can run get a request: one it can't would wait forever.
+    const ownAgents = snapshot.agents
+      .filter((a) => a.owner === selfUserId && (!availableAgents || availableAgents.includes(a.agent)))
+      .map((a) => a.agent);
     const localId = `sending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const files = context.files ?? [];
     setPendingSends((current) => [
@@ -1526,6 +1534,7 @@ export function RoomView({
                 onInvitePerson={live ? invitePerson : undefined}
                 agents={room.agents.filter((a) => a.owner === selfUserId)}
                 availableAgents={availableAgents}
+                onSetUpAgent={setSetUpAgent}
                 skills={room.skills}
                 onSend={(text, context) => {
                   setThreadReplyTo(null);
@@ -1789,6 +1798,7 @@ export function RoomView({
               listFiles={live ? listSpaceFiles : undefined}
               suggestReply={live ? suggestReply : undefined}
               availableAgents={availableAgents}
+              onSetUpAgent={setSetUpAgent}
               onTypingChange={
                 source instanceof RelayRoomSource ? (typing) => source.setTyping(typing) : undefined
               }
@@ -1796,6 +1806,11 @@ export function RoomView({
           </div>
         </motion.div>
         {threadPanel}
+        <AgentSetupDialog
+          open={setUpAgent !== null}
+          onOpenChange={(open) => !open && setSetUpAgent(null)}
+          agent={setUpAgent ?? undefined}
+        />
         {dockOn && shownSnapshot && (
           <ForYouFeeder
             bindingId={bindingId}

@@ -35,6 +35,21 @@ describe('decideSend', () => {
     expect(decideSend({ ...base, ownAgents: ['codex'], override: { kind: 'agent', agent: 'claude' } }).mode).toBe('send');
   });
 
+  it('an agent of yours this Mac can\'t run is a plain send, kept from the router, and named', () => {
+    expect(decideSend({ ...base, runnable: ['codex'], tagged: 'claude' })).toEqual({
+      label: 'Send',
+      mode: 'send',
+      agent: null,
+      meta: { route: 'none' },
+      unavailable: 'claude',
+    });
+    expect(decideSend({ ...base, runnable: [], route: asks })).toMatchObject({ mode: 'send', unavailable: 'claude' });
+    expect(decideSend({ ...base, runnable: [], pill: 'claude' })).toMatchObject({ mode: 'send', unavailable: 'claude' });
+    expect(decideSend({ ...base, runnable: ['codex'], override: { kind: 'agent', agent: 'claude' } }).mode).toBe('send');
+    // One it can run still asks.
+    expect(decideSend({ ...base, runnable: ['codex'], tagged: 'codex' })).toMatchObject({ mode: 'ask', agent: 'codex' });
+  });
+
   it('the no-@ pill (a reply to its turn, or its name first) asks its agent', () => {
     expect(decideSend({ ...base, pill: 'claude', route: none })).toMatchObject({ mode: 'ask', agent: 'claude' });
   });

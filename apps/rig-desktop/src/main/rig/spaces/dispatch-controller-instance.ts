@@ -36,7 +36,7 @@ import { createImagePreparer } from './agent-images';
 import { createAgentsReporter } from './agents-reporter';
 import { LocalRunStore } from './local-runs';
 import { createHttpSpacesRelayApi } from './relay-api';
-import { RequestClaimPoller } from './request-claim';
+import { RequestClaimPoller, unrunnableRequestLine } from './request-claim';
 import { rigToolsServer } from './rig-tools-instance';
 import { createFileSpaceSessionStore } from './session-store';
 
@@ -142,6 +142,9 @@ function realDeps(): SpacesDispatchControllerDeps {
         canRun: async (request) =>
           rigSettingsStore.get().lastKnownRunnableAgents.includes(request.targetAgent) &&
           (await folderOf(request.bindingId)) !== null,
+        // A request for an agent this Mac doesn't have, that no other Mac took: fail it in plain words.
+        giveUp: (request) =>
+          unrunnableRequestLine(request, rigSettingsStore.get().lastKnownRunnableAgents, Date.now()),
         // The Mac you're at gets the first go (the relay holds the others back for a moment).
         computer: thisMacId(),
       });

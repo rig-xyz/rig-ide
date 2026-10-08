@@ -55,6 +55,12 @@ describe('describeSpawnFailure', () => {
     expect(describeSpawnFailure(text, 'Claude')).toContain(expected);
   });
 
+  it('says to install an agent that was never found, not to reinstall it', () => {
+    expect(describeSpawnFailure('spawn claude ENOENT', 'Claude')).toBe(
+      "Rig couldn't find Claude on this Mac. Install Claude, then try again."
+    );
+  });
+
   it('leaves other text alone', () => {
     expect(describeSpawnFailure('rate limited', 'Claude')).toBeNull();
     expect(

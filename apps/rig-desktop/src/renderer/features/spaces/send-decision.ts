@@ -26,6 +26,8 @@ export type SendDecision = {
   /** Your agent the message asks; null for a plain send. */
   agent: AgentKind | null;
   meta: { route?: 'none' };
+  /** Your agent the draft is for, but it isn't set up on this Mac: the message goes as plain chat instead. */
+  unavailable?: AgentKind;
 };
 
 /** The preview's routing, or null from a relay that doesn't route (no `action`): the composer behaves as it always did. */
@@ -42,6 +44,8 @@ export function decideSend(input: {
   text: string;
   /** Your agents this composer can ask. */
   ownAgents: readonly AgentKind[];
+  /** Those of `ownAgents` that can run on this Mac; all of them without it. */
+  runnable?: readonly AgentKind[];
   /** Your agent the draft @tags (and you kept the tag's pill). */
   tagged: AgentKind | null;
   /** Your agent the one no-@ pill names (a reply to its turn, or called by name). */
@@ -59,15 +63,19 @@ export function decideSend(input: {
   });
   const ask = (agent: AgentKind): SendDecision => ({ label: `Ask ${AGENT_NAME[agent]}`, mode: 'ask', agent, meta: {} });
   const own = (agent: AgentKind | null | undefined): agent is AgentKind => !!agent && input.ownAgents.includes(agent);
+  // An agent this Mac can't run: plain chat, and route none so the relay
+  // doesn't file the request this Mac would never claim.
+  const askOrPlain = (agent: AgentKind): SendDecision =>
+    !input.runnable || input.runnable.includes(agent) ? ask(agent) : { ...plain({ route: 'none' }), unavailable: agent };
 
   if (!input.text.trim()) return plain();
-  if (own(input.tagged)) return ask(input.tagged);
-  if (input.override?.kind === 'agent' && own(input.override.agent)) return ask(input.override.agent);
+  if (own(input.tagged)) return askOrPlain(input.tagged);
+  if (input.override?.kind === 'agent' && own(input.override.agent)) return askOrPlain(input.override.agent);
   if (input.override?.kind === 'send') {
     const wouldRoute = input.route?.action === 'ask' || input.route?.action === 'suggest';
     return plain(wouldRoute ? { route: 'none' } : {});
   }
-  if (own(input.pill)) return ask(input.pill);
-  if (input.route?.action === 'ask' && own(input.route.agent)) return ask(input.route.agent);
+  if (own(input.pill)) return askOrPlain(input.pill);
+  if (input.route?.action === 'ask' && own(input.route.agent)) return askOrPlain(input.route.agent);
   return plain();
 }

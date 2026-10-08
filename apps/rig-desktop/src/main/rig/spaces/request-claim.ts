@@ -51,9 +51,41 @@ export type ClaimAndDispatchOptions = {
    * every request is claimed.
    */
   canRun?: (request: AgentRequest) => Promise<boolean>;
+  /**
+   * For a request `canRun` turned down: the plain line to post when no
+   * computer of yours will ever run it (the agent isn't set up here and it
+   * has waited past the moment another Mac would have taken it). This Mac
+   * then claims it and settles it as failed with that line, so it doesn't
+   * wait forever. Null, or absent, leaves it queued.
+   */
+  giveUp?: (request: AgentRequest) => string | null;
   /** This Mac's id among the account's computers, sent with each claim (see `claimAgentRequest`). */
   computer?: string;
 };
+
+/**
+ * How long a request for an agent this Mac can't run waits for another of
+ * your Macs before this one gives up on it. A Mac that's on claims within
+ * one poll (15 seconds), and the relay holds others back only briefly.
+ */
+export const GIVE_UP_AFTER_MS = 2 * 60_000;
+
+/**
+ * `giveUp` for this Mac: a request for an agent that isn't set up here,
+ * still unclaimed after `GIVE_UP_AFTER_MS`, fails with a plain line the
+ * whole space reads. Null for anything this Mac could run, or that's new.
+ */
+export function unrunnableRequestLine(
+  request: Pick<AgentRequest, 'targetAgent' | 'createdAt'>,
+  runnableHere: readonly string[],
+  now: number
+): string | null {
+  if (runnableHere.includes(request.targetAgent)) return null;
+  const created = Date.parse(request.createdAt);
+  if (Number.isFinite(created) && now - created < GIVE_UP_AFTER_MS) return null;
+  const name = request.targetAgent === 'codex' ? 'Codex' : 'Claude';
+  return `${name} couldn't answer because it isn't set up on a Mac yet. Install ${name}, then ask again.`;
+}
 
 function isConflict(error: { kind: string; status?: number }): boolean {
   return error.kind === 'relay' && error.status === 409;
@@ -66,7 +98,7 @@ function isConflict(error: { kind: string; status?: number }): boolean {
  * a multi-device account, not an error.
  */
 export async function claimAndDispatchQueued(options: ClaimAndDispatchOptions): Promise<void> {
-  const { api, deviceId, dispatch, canRun, computer } = options;
+  const { api, deviceId, dispatch, canRun, giveUp, computer } = options;
   const queued = await api.listAgentRequests('queued');
   if (!queued.success) {
     log.warn('Rig spaces: could not list queued agent requests', {
@@ -77,6 +109,12 @@ export async function claimAndDispatchQueued(options: ClaimAndDispatchOptions): 
 
   for (const request of queued.data) {
     if (canRun && !(await canRun(request).catch(() => false))) {
+      const line = giveUp?.(request) ?? null;
+      if (line) {
+        const id = typeof deviceId === 'string' ? deviceId : await deviceId(request.bindingId).catch(() => null);
+        if (id) await failUnrunnable(api, id, request, line, computer);
+        continue;
+      }
       log.debug('Rig spaces: left a queued agent request for another computer', {
         requestId: request.id,
         bindingId: request.bindingId,
@@ -180,6 +218,36 @@ export async function claimOne(
       error: running.error.message,
     });
   }
+}
+
+/**
+ * Settles a request no computer of yours can run: claims it (so a Mac that
+ * could run it, racing in, still wins), marks it failed and says why in the
+ * Room in plain words.
+ */
+async function failUnrunnable(
+  api: SpacesRelayApi,
+  deviceId: string,
+  request: AgentRequest,
+  line: string,
+  computer?: string
+): Promise<void> {
+  const claimed = await api.claimAgentRequest(request.bindingId, request.id, deviceId, computer);
+  if (!claimed.success) return;
+  log.info('Rig spaces: settled an agent request no computer can run', {
+    requestId: request.id,
+    agent: request.targetAgent,
+  });
+  const patched = await api.patchAgentRequest(request.bindingId, request.id, { status: 'failed' });
+  if (!patched.success) {
+    log.warn('Rig spaces: could not mark an unrunnable agent request as failed', {
+      requestId: request.id,
+      error: patched.error.message,
+    });
+  }
+  await api
+    .postMessage(request.bindingId, { body: line, kind: 'system', meta: { event: 'agent_failed' } })
+    .catch(() => undefined);
 }
 
 /**
