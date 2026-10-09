@@ -29,6 +29,7 @@ export function CommentCount({
   showResolved,
   onToggleResolved,
   list,
+  note,
 }: {
   open: number;
   resolved: number;
@@ -36,6 +37,8 @@ export function CommentCount({
   onToggleResolved: () => void;
   /** Every thread, listed under the count: a page's pin that can't be placed is still reachable here. */
   list?: (close: () => void) => React.ReactNode;
+  /** Why the pins can't be placed (a sign-in wall): the count's tooltip and the list's first line. */
+  note?: string;
 }) {
   const [listOpen, setListOpen] = useState(false);
   const listRef = useRef<HTMLButtonElement>(null);
@@ -71,7 +74,7 @@ export function CommentCount({
           onClick={() => setListOpen((v) => !v)}
           aria-haspopup="menu"
           aria-expanded={listOpen}
-          title="All comments"
+          title={note ?? 'All comments'}
           className={cn(
             'flex h-7 items-center gap-1 rounded-chip px-1.5 text-xs transition-colors hover:text-text-primary',
             listOpen || showResolved ? 'text-text-primary' : 'text-text-muted'
@@ -81,6 +84,11 @@ export function CommentCount({
           {label}
         </button>
         <Popover anchor={listRef} open={listOpen} onClose={close} role="menu" align="right" estimatedWidth={288} minWidth={288} ariaLabel="Comments">
+          {note && (
+            <p className="px-2.5 pt-1.5 pb-1 text-xs text-text-muted" data-testid="comment-count-note">
+              {note}
+            </p>
+          )}
           {list(close)}
         </Popover>
       </>

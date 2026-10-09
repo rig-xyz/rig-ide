@@ -212,14 +212,23 @@ export const rigPagesController = createRPCController({
     return true;
   },
 
-  locate: async ({ webContentsId, pins }: { webContentsId: number; pins: { id: string; anchor: PageAnchor }[] }): Promise<Result<({ id: string } & PagePlace)[], Failure>> => {
+  /** `wall`: the page is on a sign-in wall, so a pin not found there is no miss to log. */
+  locate: async ({
+    webContentsId,
+    pins,
+    wall,
+  }: {
+    webContentsId: number;
+    pins: { id: string; anchor: PageAnchor }[];
+    wall?: boolean;
+  }): Promise<Result<({ id: string } & PagePlace)[], Failure>> => {
     const page = pageContents(webContentsId);
     if (!page) return err({ message: 'That page is no longer open.' });
     const places = await Promise.all(
       pins.map(async (p) => {
         const at: PagePlace = await locateOnPage(page, p.anchor).catch(() => ({ found: false, why: 'error' }));
         // Why a pin isn't drawn for someone: once per page, pin and reason.
-        if (!at.found) logPinMiss(page.getURL(), p, at.why);
+        if (!at.found && !wall) logPinMiss(page.getURL(), p, at.why);
         return { id: p.id, ...at };
       })
     );
