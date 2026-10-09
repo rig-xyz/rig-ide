@@ -118,8 +118,27 @@ export function framePin(op: 'hit' | 'locate' | 'xoFrame', arg: any): any {
         y = ly;
         continue;
       }
-      const r = el.getBoundingClientRect();
-      return { hops, path: cssPath(el), tag: el.tagName.toLowerCase(), text: textOf(el), fx: (x - r.left) / (r.width || 1), fy: (y - r.top) / (r.height || 1) };
+      // A click on the page's blank space lands on the body or a wrapper
+      // that fills the page. That box grows with the viewport, so a pin on
+      // it stays put on screen while the content moves away on a zoom or a
+      // resize. Pin the nearest element inside it instead, with the click's
+      // offset from it (fx, fy outside 0 to 1).
+      const view = doc.defaultView || window;
+      const area = (r: DOMRect) => r.width * r.height;
+      const fills = (e: Element) => e === doc.body || e === doc.documentElement || area(e.getBoundingClientRect()) >= 0.6 * view.innerWidth * view.innerHeight;
+      let target: Element = el;
+      if (fills(el)) {
+        let best: { e: Element; d: number; a: number } | null = null;
+        for (const c of Array.from(el.querySelectorAll('*')).slice(0, 3000)) {
+          const cr = c.getBoundingClientRect();
+          if (!cr.width || !cr.height || fills(c)) continue;
+          const d = Math.hypot(Math.max(cr.left - x, 0, x - cr.right), Math.max(cr.top - y, 0, y - cr.bottom));
+          if (!best || d < best.d || (d === best.d && area(cr) < best.a)) best = { e: c, d, a: area(cr) };
+        }
+        if (best) target = best.e;
+      }
+      const r = target.getBoundingClientRect();
+      return { hops, path: cssPath(target), tag: target.tagName.toLowerCase(), text: textOf(target), fx: (x - r.left) / (r.width || 1), fy: (y - r.top) / (r.height || 1) };
     }
   }
 

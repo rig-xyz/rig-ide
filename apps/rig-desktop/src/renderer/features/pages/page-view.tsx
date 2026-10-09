@@ -329,8 +329,8 @@ export function PageView({
       relocatorRef.current = null;
     };
   }, [webContentsId, pinIds]);
-  // The panel itself resized: the page moved under the pins.
-  useEffect(() => relocatorRef.current?.poke(), [stageWidth]);
+  // The panel itself resized, or the page was zoomed: the page moved under the pins.
+  useEffect(() => relocatorRef.current?.poke(), [stageWidth, zoom.factor]);
 
   // Esc closes the draft, then leaves comment mode, then closes the open
   // thread. Capture phase, and marked used, so the panel's own Esc (close
