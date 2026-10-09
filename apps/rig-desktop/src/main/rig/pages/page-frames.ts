@@ -23,8 +23,28 @@ function childOf(frame: WebFrameMain, hop: { origin: string; index: number }): W
   })[hop.index];
 }
 
-/** An anchor for whatever is at (x, y) in the page's viewport, or null. */
+/**
+ * How many panel pixels one of the page's CSS pixels takes. The panel zooms
+ * a page with `setZoomFactor` (`page-zoom.ts`), relative to its host's zoom,
+ * so the panel's points are divided by this on the way in and the page's
+ * places multiplied by it on the way out. 1 for a tab with no host.
+ */
+export function pageScale(page: WebContents): number {
+  try {
+    const own = page.getZoomFactor?.() ?? 1;
+    const host = page.hostWebContents && !page.hostWebContents.isDestroyed() ? page.hostWebContents.getZoomFactor() : 1;
+    const scale = own / host;
+    return Number.isFinite(scale) && scale > 0 ? scale : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/** An anchor for whatever is at (x, y) in the panel's pixels, or null. */
 export async function hitPage(page: WebContents, x: number, y: number): Promise<PageAnchor | null> {
+  const scale = pageScale(page);
+  x /= scale;
+  y /= scale;
   let frame = page.mainFrame;
   const xo: PageAnchor['xo'] = [];
   for (let depth = 0; depth < 4; depth++) {
@@ -41,7 +61,7 @@ export async function hitPage(page: WebContents, x: number, y: number): Promise<
   return null;
 }
 
-/** Where an anchor is now, in the page's viewport. */
+/** Where an anchor is now, in the panel's pixels. */
 export async function locateOnPage(page: WebContents, anchor: PageAnchor): Promise<PagePlace> {
   let frame = page.mainFrame;
   const geos: { left: number; top: number; sx: number; sy: number }[] = [];
@@ -62,7 +82,8 @@ export async function locateOnPage(page: WebContents, anchor: PageAnchor): Promi
     w *= g.sx;
     h *= g.sy;
   }
-  return { found: true, x, y, w, h };
+  const scale = pageScale(page);
+  return { found: true, x: x * scale, y: y * scale, w: w * scale, h: h * scale };
 }
 
 /**
