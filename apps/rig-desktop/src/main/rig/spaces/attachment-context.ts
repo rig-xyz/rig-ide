@@ -28,7 +28,7 @@ const PROMPT_IMAGE_MIMES = new Set<string>(['image/png', 'image/jpeg', 'image/gi
 /**
  * Whether each agent's ACP adapter takes image content in a prompt
  * (`agentCapabilities.promptCapabilities.image` in its `initialize`
- * answer). Read from the pinned adapters (claude-agent-acp 0.86.0 and
+ * answer). Read from the pinned adapters (claude-agent-acp 0.88.0 and
  * codex-acp 2.1.1 both say true); `attachment-context.test.ts` re-reads the
  * installed adapters so a version bump that drops it fails a test rather
  * than a run. The runtime doesn't pass the live answer through yet.

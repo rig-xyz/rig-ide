@@ -44,7 +44,7 @@ export type AgentProblem = {
  * Rig runs the copy on the Mac, so an older one gets a soft notice, never a
  * block. agent-problem.test.ts fails when an adapter bump moves them.
  */
-export const AGENT_MINIMUM_VERSIONS: Readonly<Record<string, string>> = { claude: '2.1.287', codex: '0.159.1' };
+export const AGENT_MINIMUM_VERSIONS: Readonly<Record<string, string>> = { claude: '2.1.293', codex: '0.159.1' };
 
 const CLI_NAMES: Record<string, string> = { claude: 'claude', codex: 'codex' };
 

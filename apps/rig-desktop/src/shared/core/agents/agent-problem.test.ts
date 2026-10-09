@@ -143,7 +143,7 @@ describe('agentProblem', () => {
 
   it('names Claude Code by its CLI', () => {
     const result = agentProblem({ id: 'claude', name: 'Claude', payload: payload({ status: 'missing', version: null, installations: [] }), signInNeeded: false });
-    expect(result?.text).toBe("Claude isn't installed on this Mac. Rig runs the claude CLI. Rig is tested with 2.1.287 or newer.");
+    expect(result?.text).toBe("Claude isn't installed on this Mac. Rig runs the claude CLI. Rig is tested with 2.1.293 or newer.");
   });
 });
 
