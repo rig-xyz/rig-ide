@@ -113,7 +113,7 @@ export function InviteRow({
     <div className="flex flex-col gap-1.5 px-1.5 py-1.5">
       <div className="flex items-center gap-2">
         <span className="text-text-primary min-w-0 flex-1 truncate text-xs font-medium">
-          {row.rigName}
+          {row.label}
         </span>
         <span className="bg-bg-2 text-text-secondary rounded-chip shrink-0 px-1.5 py-0.5 font-mono text-xs">
           {row.roleLabel}

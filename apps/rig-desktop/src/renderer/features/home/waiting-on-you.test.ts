@@ -40,7 +40,7 @@ describe('deriveWaitingItems', () => {
         row({ id: '6', type: 'agent_waiting', tier: 'direct', bindingId: 'b_ops', createdAt: '2026-10-08T12:00:01Z' }),
         row({ id: '5', type: 'invite', tier: 'direct', bindingId: null, createdAt: '2026-10-08T11:00:00Z' }),
       ],
-      invites: [{ id: 'inv1', bindingId: 'b_warm', rigName: 'warm-island', inviterLabel: 'Ana', createdAt: '2026-10-08T10:00:00Z' }],
+      invites: [{ id: 'inv1', bindingId: 'b_warm', rigName: 'warm-island', label: '#warm-island', inviterLabel: 'Ana', createdAt: '2026-10-08T10:00:00Z' }],
       spaces,
       statusByBinding: status,
       selfUserId: ME,
@@ -128,7 +128,7 @@ describe('waitingAction and doneLine', () => {
   it('one action each: Reply, Open for a file comment, Accept, Approve, or Open when the run is not here', () => {
     expect(waitingAction(reply, { approvable: false })).toBe('Reply');
     expect(waitingAction({ ...reply, path: 'docs/plan.md' }, { approvable: false })).toBe('Open');
-    const invite: WaitingItem = { kind: 'invite', key: 'i', inviteId: 'i', bindingId: 'b', spaceName: 'x', who: { userId: null, name: 'Ana' }, at: '' };
+    const invite: WaitingItem = { kind: 'invite', key: 'i', inviteId: 'i', bindingId: 'b', spaceName: 'x', label: '#x', who: { userId: null, name: 'Ana' }, at: '' };
     expect(waitingAction(invite, { approvable: false })).toBe('Accept');
     const approval: WaitingItem = { kind: 'approval', key: 'r', runId: 'r', bindingId: 'b', spaceName: 'rig-ops', agent: 'Claude', agentKind: 'claude', title: null, at: '' };
     expect(waitingAction(approval, { approvable: true })).toBe('Approve');

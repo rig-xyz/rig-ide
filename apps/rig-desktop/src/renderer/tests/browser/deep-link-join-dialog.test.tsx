@@ -90,12 +90,14 @@ describe('DeepLinkJoinDialog', () => {
   let host: HTMLDivElement;
   let root: Root;
   let opened: string[];
+  let openedKinds: Array<string | undefined>;
 
   beforeEach(() => {
     host = document.createElement('div');
     document.body.appendChild(host);
     root = createRoot(host);
     opened = [];
+    openedKinds = [];
     mocks.listener = null;
     mocks.consumePending.mockReset().mockResolvedValue(null);
     mocks.release.mockReset().mockResolvedValue(undefined);
@@ -126,7 +128,12 @@ describe('DeepLinkJoinDialog', () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={new QueryClient()}>
-          <DeepLinkJoinDialog onOpenPath={(path) => opened.push(path)} />
+          <DeepLinkJoinDialog
+            onOpenPath={(path, kind) => {
+              opened.push(path);
+              openedKinds.push(kind);
+            }}
+          />
         </QueryClientProvider>
       );
     });
@@ -149,6 +156,25 @@ describe('DeepLinkJoinDialog', () => {
     expect(dialog()?.textContent).not.toContain(SECRET);
     expect(mocks.preview).toHaveBeenCalledWith({ link: LINK });
     expect(mocks.accept).not.toHaveBeenCalled();
+  });
+
+  it('names a plain rig without # and opens it as a rig, not a space', async () => {
+    mocks.preview.mockResolvedValue({ success: true, data: { spaceName: 'notes', inviterName: 'Ada', emailHint: null, kind: 'rig' } });
+    mocks.accept.mockResolvedValue({ success: true, data: { bindingId: 'b_2', spaceName: 'notes', kind: 'rig', becameMember: true } });
+    mocks.consumePending.mockResolvedValue({ link: LINK });
+    await render();
+    expect(dialog()?.textContent).toContain('Join notes?');
+    await act(async () => click(buttonNamed('Join')!));
+    await flush();
+    expect(openedKinds).toEqual([undefined]);
+  });
+
+  it('opens a space as a space', async () => {
+    mocks.consumePending.mockResolvedValue({ link: LINK });
+    await render();
+    await act(async () => click(buttonNamed('Join')!));
+    await flush();
+    expect(openedKinds).toEqual(['space']);
   });
 
   it('shows a live link, then Join runs accept → attach → open and closes', async () => {

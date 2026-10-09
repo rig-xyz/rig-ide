@@ -39,6 +39,8 @@ export type WaitingItem =
       inviteId: string;
       bindingId: string;
       spaceName: string;
+      /** How it's named: `#name` for a space, the plain name for a rig. */
+      label: string;
       who: { userId: null; name: string };
       at: string;
     }
@@ -81,7 +83,7 @@ export type ExpiredConnector = {
 
 export function deriveWaitingItems(input: {
   activity: readonly RigNotification[] | null;
-  invites: readonly { id: string; bindingId: string; rigName: string; inviterLabel: string; createdAt: string }[];
+  invites: readonly { id: string; bindingId: string; rigName: string; label: string; inviterLabel: string; createdAt: string }[];
   spaces: readonly { bindingId: string; name: string | null }[];
   statusByBinding: ReadonlyMap<string, RigSpaceStatus>;
   selfUserId: string | null;
@@ -120,6 +122,7 @@ export function deriveWaitingItems(input: {
       inviteId: invite.id,
       bindingId: invite.bindingId,
       spaceName: invite.rigName,
+      label: invite.label,
       who: { userId: null, name: invite.inviterLabel },
       at: invite.createdAt,
     });

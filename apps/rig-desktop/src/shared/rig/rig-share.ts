@@ -10,6 +10,7 @@
  */
 
 import type { RigCommentMember } from './comments';
+import type { InviteBindingKind } from './invite-label';
 
 /**
  * Same failure vocabulary as `share-links.ts`'s, minus the file-specific
@@ -147,7 +148,8 @@ export type RigMyInvite = {
   role: string | null;
   createdAt: string;
   expiresAt: string | null;
-  binding: { id: string; name: string | null };
+  /** `kind`: a space or a plain rig; null from an older relay that doesn't say. */
+  binding: { id: string; name: string | null; kind: InviteBindingKind };
   inviter: { name: string | null; email: string | null; avatarUrl: string | null };
 };
 
@@ -179,6 +181,8 @@ export type RigMyInviteAccepted = {
 export type RigInviteLinkJoined = {
   bindingId: string;
   spaceName: string | null;
+  /** A space or a plain rig, from the preview; null when it didn't say. */
+  kind: InviteBindingKind;
   becameMember: boolean;
 };
 
@@ -193,6 +197,8 @@ export type RigInvitePreview = {
   inviterName: string | null;
   /** An email invite's address, masked by the relay (`h•••@gmail.com`); null for a link anyone can use. */
   emailHint: string | null;
+  /** A space or a plain rig; null when the relay didn't say. */
+  kind: InviteBindingKind;
 };
 
 export type RigInviteLinkError = {

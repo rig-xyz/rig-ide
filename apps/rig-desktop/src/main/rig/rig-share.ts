@@ -28,6 +28,7 @@ import { findBindingConfig } from './binding';
 import { readRelayToken } from './config';
 import { checkRelayTrust } from './relay-trust';
 import { fetchRelay } from './relay-request';
+import { parseBindingKind } from '@shared/rig/invite-label';
 
 /**
  * Rig-level sharing (the file browser header's Share button): who is on this
@@ -487,6 +488,7 @@ export function toMyInvite(value: unknown): RigMyInvite | null {
     binding: {
       id: binding.id,
       name: typeof binding.name === 'string' ? binding.name : null,
+      kind: parseBindingKind(binding.kind),
     },
     inviter: {
       name: typeof inviter?.name === 'string' ? inviter.name : null,
@@ -560,7 +562,7 @@ function inviteLinkTransportError(action: string, error: unknown, secret: string
   return { kind: 'network', message: `Could not ${action}. Rig can't reach the server right now.` };
 }
 
-const EMPTY_INVITE_PREVIEW: RigInvitePreview = { spaceName: null, inviterName: null, emailHint: null };
+const EMPTY_INVITE_PREVIEW: RigInvitePreview = { spaceName: null, inviterName: null, emailHint: null, kind: null };
 
 /**
  * `GET /v1/invites/:secret` — the relay's public preview (no token: the
@@ -583,7 +585,8 @@ async function fetchInvitePreview(
     if (!response.ok) return ok(EMPTY_INVITE_PREVIEW);
     const data = asRecord(await response.json());
     if (data?.status === 'revoked' || data?.status === 'expired') return err(inviteLinkInvalid(data.status));
-    const name = asRecord(data?.binding)?.name;
+    const binding = asRecord(data?.binding);
+    const name = binding?.name;
     const inviter = asRecord(data?.inviter);
     const inviterName = [inviter?.name, inviter?.email].find(
       (value): value is string => typeof value === 'string' && value.length > 0
@@ -592,6 +595,7 @@ async function fetchInvitePreview(
       spaceName: typeof name === 'string' && name ? name : null,
       inviterName: inviterName ?? null,
       emailHint: typeof data?.emailHint === 'string' && data.emailHint ? data.emailHint : null,
+      kind: parseBindingKind(binding?.kind),
     });
   } catch (error) {
     return err(inviteLinkTransportError(action, error, secret));
@@ -1055,7 +1059,7 @@ export const rigShareController = createRPCController({
 
     const preview = await fetchInvitePreview(ctx.url, secret, action);
     if (!preview.success) return err(preview.error);
-    const { spaceName } = preview.data;
+    const { spaceName, kind } = preview.data;
 
     let response: Response;
     try {
@@ -1095,7 +1099,7 @@ export const rigShareController = createRPCController({
       if (!bindingId) return err<RigInviteLinkError>({ kind: 'relay', message: `Could not ${action}.` });
       forgetPeopleCache();
       telemetryService.capture('invite_accepted', {});
-      return ok({ bindingId, spaceName, becameMember: asRecord(data?.member) !== null });
+      return ok({ bindingId, spaceName, kind, becameMember: asRecord(data?.member) !== null });
     } catch (error) {
       return err(inviteLinkTransportError(action, error, secret));
     }

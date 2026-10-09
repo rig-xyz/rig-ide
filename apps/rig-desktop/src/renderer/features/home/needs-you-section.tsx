@@ -445,7 +445,12 @@ function WaitingRow({
         : item.kind === 'invite'
           ? 'invited you'
           : item.verb;
-  const where = item.kind === 'connector' ? `used in ${usedInLabel(item.spaces)}` : `#${item.spaceName}`;
+  const where =
+    item.kind === 'connector'
+      ? `used in ${usedInLabel(item.spaces)}`
+      : item.kind === 'invite'
+        ? item.label
+        : `#${item.spaceName}`;
   const age = shortAge(item.at, now);
 
   const message: ReactNode =

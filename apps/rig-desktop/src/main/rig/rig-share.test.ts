@@ -124,7 +124,7 @@ describe('toMyInvite', () => {
         ops: ['read', 'write', 'subscribe'],
         expiresAt: null,
         createdAt: '2026-08-15T09:00:00Z',
-        binding: { id: 'bind_1', name: 'knee-ability-rig' },
+        binding: { id: 'bind_1', name: 'knee-ability-rig', kind: 'space' },
         inviter: { name: 'Dylan', email: 'dylan@example.com', avatarUrl: null },
       })
     ).toEqual({
@@ -132,7 +132,7 @@ describe('toMyInvite', () => {
       role: 'editor',
       createdAt: '2026-08-15T09:00:00Z',
       expiresAt: null,
-      binding: { id: 'bind_1', name: 'knee-ability-rig' },
+      binding: { id: 'bind_1', name: 'knee-ability-rig', kind: 'space' },
       inviter: { name: 'Dylan', email: 'dylan@example.com', avatarUrl: null },
     });
   });
@@ -150,7 +150,7 @@ describe('toMyInvite', () => {
       role: null,
       createdAt: '',
       expiresAt: null,
-      binding: { id: 'b', name: null },
+      binding: { id: 'b', name: null, kind: null },
       inviter: { name: null, email: null, avatarUrl: null },
     });
   });

@@ -7,6 +7,7 @@ import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { Button } from '@renderer/lib/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@renderer/lib/ui/dialog';
 import { rigDeepLinkJoinChannel, type RigDeepLinkJoin } from '@shared/rig/deep-link';
+import { inviteTargetLabel } from '@shared/rig/invite-label';
 import type { RigInvitePreview } from '@shared/rig/rig-share';
 
 /**
@@ -25,7 +26,7 @@ import type { RigInvitePreview } from '@shared/rig/rig-share';
  * later ones come live on `rigDeepLinkJoinChannel`. The link carries the
  * invite secret, so it's never shown or echoed into an error line.
  */
-export function DeepLinkJoinDialog({ onOpenPath }: { onOpenPath: (path: string) => void }) {
+export function DeepLinkJoinDialog({ onOpenPath }: { onOpenPath: (path: string, kind?: 'space') => void }) {
   const [request, setRequest] = useState<RigDeepLinkJoin | null>(null);
   // While a join is in flight, the dialog can't be dismissed and a newer
   // link doesn't replace it mid-way.
@@ -99,7 +100,8 @@ function JoinConfirm({
   link: string;
   onBusyChange: (busy: boolean) => void;
   onClose: () => void;
-  onOpenPath: (path: string) => void;
+  /** `kind` is 'space' unless the invite was to a plain rig. */
+  onOpenPath: (path: string, kind?: 'space') => void;
 }) {
   const queryClient = useQueryClient();
   const [preview, setPreview] = useState<RigInvitePreview | null>(null);
@@ -128,7 +130,8 @@ function JoinConfirm({
   }, [link]);
 
   const spaceName = preview?.spaceName ?? null;
-  const spaceLabel = spaceName ? `#${spaceName}` : 'this space';
+  const isRig = preview?.kind === 'rig';
+  const spaceLabel = isRig ? (spaceName ?? 'this shared folder') : spaceName ? `#${spaceName}` : 'this space';
 
   const join = useCallback(async () => {
     setPhase({ kind: 'joining' });
@@ -151,19 +154,19 @@ function JoinConfirm({
         // Joined server-side either way — the space shows on Home to set up from there.
         setPhase({
           kind: 'error',
-          message: `You joined ${name ? `#${name}` : 'the space'}, but it couldn't be set up here: ${attached.error.message}`,
+          message: `You joined ${inviteTargetLabel(joined.data.kind ?? preview?.kind ?? null, name)}, but it couldn't be set up here: ${attached.error.message}`,
         });
         return;
       }
       markJustAttachedSyncing(attached.data.localPath, attached.data.syncing);
-      onOpenPath(attached.data.localPath);
+      onOpenPath(attached.data.localPath, (joined.data.kind ?? preview?.kind) === 'rig' ? undefined : 'space');
       onClose();
     } catch {
       setPhase({ kind: 'error', message: "Couldn't join this space. Try the link again." });
     } finally {
       onBusyChange(false);
     }
-  }, [link, onBusyChange, onClose, onOpenPath, queryClient, spaceName]);
+  }, [link, onBusyChange, onClose, onOpenPath, queryClient, spaceName, preview?.kind]);
 
   // Signed in from here: carry straight on with the join the user already
   // asked for — but only while this confirm is still open. A dismissed one
@@ -200,7 +203,7 @@ function JoinConfirm({
     phase.kind === 'error'
       ? "Couldn't join"
       : phase.kind === 'loading'
-        ? 'Join a space?'
+        ? 'Join?'
         : `Join ${spaceLabel}?`;
 
   return (

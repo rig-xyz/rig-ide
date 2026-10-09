@@ -1003,7 +1003,7 @@ function PendingInviteInline({
   return (
     <div className="flex flex-col items-center gap-1">
       <p className="text-text-muted text-sm">
-        {invite.inviterLabel} invited you to {invite.rigName} ·{' '}
+        {invite.inviterLabel} invited you to {invite.label} ·{' '}
         <button
           type="button"
           onClick={() => void accept()}
