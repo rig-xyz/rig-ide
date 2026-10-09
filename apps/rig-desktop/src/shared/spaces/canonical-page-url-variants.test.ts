@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalPageUrl } from './links';
+import { canonicalPageUrl, legacyPagePaths } from './links';
 
 /**
  * Comments and pins spike (rig docs/comments-pins-spike.md), surface 4.
@@ -33,5 +33,34 @@ describe('canonicalPageUrl: one document, one set of pins', () => {
     expect(canonicalPageUrl('https://docs.google.com/spreadsheets/d/1AbC/edit#gid=0')).not.toBe(
       canonicalPageUrl('https://docs.google.com/spreadsheets/d/1AbC/edit#gid=482910')
     );
+  });
+});
+
+describe('legacyPagePaths: pins stored before one key per document', () => {
+  it("reads a Google Doc's old edit and view keys, and the link as it was stored", () => {
+    expect(legacyPagePaths('https://docs.google.com/document/u/1/d/1AbC/edit?usp=sharing#h.x')).toEqual([
+      'https://docs.google.com/document/u/1/d/1AbC/edit',
+      'https://docs.google.com/document/d/1AbC/edit',
+      'https://docs.google.com/document/d/1AbC/view',
+    ]);
+  });
+
+  it("reads a sheet tab's old key, which had no tab", () => {
+    expect(legacyPagePaths('https://docs.google.com/spreadsheets/d/1AbC/edit#gid=5')).toEqual([
+      'https://docs.google.com/spreadsheets/d/1AbC/edit',
+      'https://docs.google.com/spreadsheets/d/1AbC/view',
+    ]);
+  });
+
+  it("reads a Claude artifact's old key with its slug, and nothing for a link whose key didn't change", () => {
+    expect(legacyPagePaths('https://claude.ai/artifact/pilot-plan-6NZfLXaEewFt55zQ5tMn7d')).toEqual([
+      'https://claude.ai/artifact/pilot-plan-6NZfLXaEewFt55zQ5tMn7d',
+    ]);
+    expect(legacyPagePaths('https://example.com/report?id=7#s2')).toEqual([]);
+  });
+
+  it('keeps a UUID artifact link as it is', () => {
+    const url = 'https://claude.ai/code/artifact/0b7a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d';
+    expect(canonicalPageUrl(url)).toBe(url);
   });
 });

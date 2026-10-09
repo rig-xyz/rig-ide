@@ -69,7 +69,7 @@ export function classifyLink(url: string): LinkInfo {
     if (segments.some((s) => s === 'artifact' || s === 'artifacts')) return { kind: 'claude-artifact', label: 'Claude artifact' };
     if (segments[0] === 'share') return { kind: 'claude-chat', label: 'Claude chat' };
   }
-  if (host === 'docs.google.com' && segments[1] === 'd') {
+  if (host === 'docs.google.com' && segments.includes('d')) {
     const google = GOOGLE[segments[0] ?? ''];
     if (google) return google;
   }
@@ -79,12 +79,33 @@ export function classifyLink(url: string): LinkInfo {
   return { kind: 'web', label: url };
 }
 
-/**
- * The form a page's link is stored in, so every member's copy of it matches
- * the same comments: no #fragment, and for Claude and Google documents no
- * query either (`?usp=sharing`, a title slug's version marker).
- */
-export function canonicalPageUrl(url: string): string {
+/** A Google editor link's kind and file id, wherever the account (`/u/1/`) and the action (`/edit`, `/view`) sit. */
+function googleFile(parsed: URL): { kind: string; id: string } | null {
+  if (parsed.hostname.replace(/^www\./, '') !== 'docs.google.com') return null;
+  const segments = parsed.pathname.split('/').filter(Boolean);
+  const kind = segments[0] ?? '';
+  if (!GOOGLE[kind]) return null;
+  const d = segments.indexOf('d');
+  const id = d > 0 ? segments[d + 1] : undefined;
+  return id ? { kind, id } : null;
+}
+
+/** A sheet's tab, from `#gid=` or `?gid=`. */
+function sheetTab(parsed: URL): string | null {
+  return new URLSearchParams(parsed.hash.slice(1)).get('gid') ?? parsed.searchParams.get('gid');
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A Claude artifact link's last step without its title slug: `pilot-plan-6NZf…` is `6NZf…`. */
+function withoutSlug(step: string): string {
+  if (UUID.test(step)) return step;
+  const m = /^.+-([A-Za-z0-9]{16,})$/.exec(step);
+  return m ? m[1]! : step;
+}
+
+/** The stored form before one key per document: no #fragment, no query on Claude and Google links, the path as given. */
+function legacyCanonicalPageUrl(url: string): string {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -95,6 +116,54 @@ export function canonicalPageUrl(url: string): string {
   const { kind } = classifyLink(url);
   if (kind !== 'web' && kind !== 'github') parsed.search = '';
   return parsed.toString();
+}
+
+/**
+ * The form a page's link is stored in, so every member's copy of it matches
+ * the same comments: no #fragment, and for Claude and Google documents no
+ * query either (`?usp=sharing`). One key per document: a Google Doc, Sheet or
+ * Slides deck is `/<kind>/d/<id>` whichever account or action the link had,
+ * with a sheet's tab kept as `#gid=`; a Claude artifact drops its title slug.
+ */
+export function canonicalPageUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  const google = googleFile(parsed);
+  if (google) {
+    const gid = google.kind === 'spreadsheets' ? sheetTab(parsed) : null;
+    return `https://docs.google.com/${google.kind}/d/${google.id}${gid ? `#gid=${gid}` : ''}`;
+  }
+  parsed.hash = '';
+  const { kind } = classifyLink(url);
+  if (kind === 'claude-artifact') {
+    const steps = parsed.pathname.split('/');
+    const last = steps.length - (steps.at(-1) === '' ? 2 : 1);
+    if (last > 0) steps[last] = withoutSlug(steps[last]!);
+    parsed.pathname = steps.join('/');
+  }
+  if (kind !== 'web' && kind !== 'github') parsed.search = '';
+  return parsed.toString();
+}
+
+/**
+ * Where pins on a page may have been stored before `canonicalPageUrl` kept
+ * one key per document, other than its key now: the link as it used to be
+ * stored and, for a Google file, its plain edit and view links. Read
+ * alongside the key so existing pins stay. New pins go under the key only.
+ */
+export function legacyPagePaths(url: string): string[] {
+  const now = canonicalPageUrl(url);
+  const out = new Set<string>([legacyCanonicalPageUrl(url)]);
+  try {
+    const google = googleFile(new URL(url));
+    if (google) for (const action of ['edit', 'view']) out.add(`https://docs.google.com/${google.kind}/d/${google.id}/${action}`);
+  } catch {}
+  out.delete(now);
+  return [...out];
 }
 
 /** Meetings open in their own app (via the browser), never beside the chat. */

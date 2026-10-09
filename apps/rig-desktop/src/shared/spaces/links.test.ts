@@ -44,7 +44,7 @@ describe('trimUrl', () => {
 describe('canonicalPageUrl', () => {
   it('drops what differs between copies of the same document link', () => {
     expect(canonicalPageUrl('https://claude.ai/artifact/6NZf?v=2#top')).toBe('https://claude.ai/artifact/6NZf');
-    expect(canonicalPageUrl('https://docs.google.com/document/d/1AbC/edit?usp=sharing')).toBe('https://docs.google.com/document/d/1AbC/edit');
+    expect(canonicalPageUrl('https://docs.google.com/document/d/1AbC/edit?usp=sharing')).toBe('https://docs.google.com/document/d/1AbC');
     // Anywhere else the query can matter, only the fragment goes.
     expect(canonicalPageUrl('https://example.com/report?id=7#s2')).toBe('https://example.com/report?id=7');
   });

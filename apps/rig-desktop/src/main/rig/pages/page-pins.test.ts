@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RoomMessageRow } from '../spaces/relay-api';
-import { listAllMessages, pinsFromRows, threadsFromRows } from './page-pins';
+import { listAllMessages, listPageMessages, pinsFromRows, threadsFromRows } from './page-pins';
 
 const place = { xo: [], hops: [{ index: 2, sig: 'By quarter' }], path: 'body>td:nth-of-type(1)', tag: 'td', text: '398', fx: 0.5, fy: 0.5 };
 const row = (over: Partial<RoomMessageRow>): RoomMessageRow => ({
@@ -65,5 +65,24 @@ describe('listAllMessages', () => {
     const got = await listAllMessages(api, 'bnd', 'https://example.com/');
     expect(got.success && got.data.map((r) => r.id).at(-1)).toBe('m450');
     expect(calls).toEqual([undefined, '200', '400']);
+  });
+});
+
+describe('listPageMessages', () => {
+  it("reads a Google Doc's pins under its key now and under its old edit link, in the order they were made", async () => {
+    const byPath: Record<string, RoomMessageRow[]> = {
+      'https://docs.google.com/document/d/1AbC': [row({ id: 'new', seq: 9 })],
+      'https://docs.google.com/document/d/1AbC/edit': [row({ id: 'old', seq: 3 })],
+    };
+    const asked: string[] = [];
+    const api = {
+      listMessages: async (_b: string, q: { path?: string }) => {
+        asked.push(q.path!);
+        return { success: true as const, data: byPath[q.path!] ?? [] };
+      },
+    };
+    const got = await listPageMessages(api, 'bnd', 'https://docs.google.com/document/d/1AbC');
+    expect(got.success && got.data.map((r) => r.id)).toEqual(['old', 'new']);
+    expect(asked).toContain('https://docs.google.com/document/d/1AbC/view');
   });
 });

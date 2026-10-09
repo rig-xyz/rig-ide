@@ -24,7 +24,7 @@ import { pageZoomKeyChannel } from '@shared/pages/page-zoom';
 import { normalizeBrowserZoomFactor } from '@shared/browser';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { hitPage, locateOnPage } from './page-frames';
-import { listAllMessages, threadsFromRows } from './page-pins';
+import { listPageMessages, threadsFromRows } from './page-pins';
 import { createPinMissLog } from './pin-miss-log';
 
 /**
@@ -227,7 +227,7 @@ export const rigPagesController = createRPCController({
   },
 
   threads: async ({ bindingId, url }: { bindingId: string; url: string }): Promise<Result<PageThread[], Failure>> => {
-    const [rows, members] = await Promise.all([listAllMessages(api, bindingId, canonicalPageUrl(url)), api.listMembers(bindingId)]);
+    const [rows, members] = await Promise.all([listPageMessages(api, bindingId, url), api.listMembers(bindingId)]);
     if (!rows.success) return err({ message: rows.error.message });
     const names = new Map<string, string>();
     for (const m of members.success ? members.data : []) {
@@ -247,7 +247,7 @@ export const rigPagesController = createRPCController({
     const path = canonicalPageUrl(input.url);
     // The pin's number, saved with it so the chat can show it without the
     // page's whole history: pins number in the order they were made.
-    const existing = await listAllMessages(api, input.bindingId, path);
+    const existing = await listPageMessages(api, input.bindingId, input.url);
     const pin = existing.success ? threadsFromRows(existing.data).length + 1 : undefined;
     const posted = await api.postMessage(input.bindingId, {
       body: input.body,
@@ -279,7 +279,7 @@ export const rigPagesController = createRPCController({
    */
   askAgent: async (input: { bindingId: string; url: string; threadId: string; agent: 'claude' | 'codex'; question: string }): Promise<Result<{ runId: string }, Failure>> => {
     const url = canonicalPageUrl(input.url);
-    const rows = await listAllMessages(api, input.bindingId, url);
+    const rows = await listPageMessages(api, input.bindingId, input.url);
     const thread = rows.success ? threadsFromRows(rows.data).find((t) => t.id === input.threadId) : undefined;
     if (!thread) return err({ message: 'That pin is gone.' });
     const run = await runCommentTurnInRoom({
