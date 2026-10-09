@@ -39,13 +39,18 @@ describe('reanchor', () => {
     expect(result).toEqual({ status: 'anchored', index: text.lastIndexOf('HIT') });
   });
 
-  it('falls back to a whitespace-normalized match, without an offset', () => {
+  it('falls back to a whitespace-normalized match, mapped to its real offset', () => {
     // The document has been reflowed: same words, different line breaks.
     const text = 'A sentence that was\nrewrapped across lines.';
     const result = reanchor(text, { exact: 'that was rewrapped across' });
 
-    expect(result).toEqual({ status: 'anchored', normalized: true });
-    expect(result).not.toHaveProperty('index');
+    expect(result).toEqual({ status: 'anchored', index: 11, length: 25, normalized: true });
+    expect(text.slice(11, 11 + 25)).toBe('that was\nrewrapped across');
+  });
+
+  it('reports a tie as ambiguous, not the first occurrence', () => {
+    const text = 'x = 1;\nok();\ny = 2;\nok();\n';
+    expect(reanchor(text, { exact: 'ok();' })).toEqual({ status: 'ambiguous', candidates: [7, 20], normalized: false });
   });
 
   it('reports an orphan when the quoted passage is gone', () => {

@@ -1125,6 +1125,17 @@ export const ThreadCard = observer(function ThreadCard({
               </span>
             </div>
           )}
+          {thread.ambiguous ? (
+            <div className="mb-2">
+              <span
+                className="bg-bg-2 text-text-muted rounded-chip px-1.5 py-0.5 font-mono text-xs"
+                title="The quoted passage now appears more than once in the document, and nothing around it says which one this comment was on."
+                data-testid="comment-ambiguous"
+              >
+                text now appears {thread.ambiguous} times
+              </span>
+            </div>
+          ) : null}
 
           <CommentBody message={root} active={active} />
 
