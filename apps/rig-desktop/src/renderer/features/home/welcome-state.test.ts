@@ -121,4 +121,13 @@ describe('deriveWelcomePhase', () => {
       })
     ).toEqual({ kind: 'creating' });
   });
+
+  it('a failed create says why, and creating again clears it', () => {
+    const base = { authLoading: false, signedIn: true, signInPhase: 'idle' as const, signInError: null };
+    expect(deriveWelcomePhase({ ...base, creating: false, createError: "Rig couldn't make its folder in your home folder." })).toEqual({
+      kind: 'error',
+      message: "Rig couldn't make its folder in your home folder.",
+    });
+    expect(deriveWelcomePhase({ ...base, creating: true, createError: 'old' })).toEqual({ kind: 'creating' });
+  });
 });

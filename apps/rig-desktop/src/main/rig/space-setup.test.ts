@@ -3,9 +3,14 @@ import type { SpaceSetupEvent } from '@shared/rig/space-setup';
 
 vi.mock('@main/lib/telemetry', () => ({ telemetryService: { capture: vi.fn() } }));
 vi.mock('@main/lib/events', () => ({ events: { emit: vi.fn(), on: vi.fn() } }));
+const ensureRigHomeDir = vi.hoisted(() => vi.fn(async () => '/home'));
+vi.mock('./home', () => ({
+  ensureRigHomeDir,
+  resolveHomeLandingDir: (home: string, slug: string) => `${home}/${slug}`,
+}));
 
 import type { SpawnOutcome } from './create';
-import { createSpaceSetups, type SpaceSetupDeps } from './space-setup';
+import { createSpaceSetups, RIG_HOME_FAILED, rigSpaceSetupController, type SpaceSetupDeps } from './space-setup';
 
 const ran = (body: unknown, exitCode = 0): SpawnOutcome => ({
   kind: 'ran',
@@ -206,5 +211,14 @@ describe('space setup', () => {
     release(LIVE_SPACE);
     await h.setups.whenSettled('setup-1');
     expect(h.calls).toHaveLength(1);
+  });
+});
+
+describe('rigSpaceSetupController.start', () => {
+  it('says so plainly when the Rig home folder cannot be made', async () => {
+    // ~/Rig is a file: mkdir fails with ENOTDIR or EEXIST.
+    ensureRigHomeDir.mockRejectedValueOnce(Object.assign(new Error('EEXIST: file already exists'), { code: 'EEXIST' }));
+    const result = await rigSpaceSetupController.start({ name: 'bright-harbor' });
+    expect(result).toEqual({ success: false, error: { kind: 'initFailed', message: RIG_HOME_FAILED } });
   });
 });

@@ -235,6 +235,9 @@ const spaceSetups = createSpaceSetups({
   onCreated: () => telemetryService.capture('rig_created', {}),
 });
 
+/** `start` when the Rig home folder can't be made (say, `~/Rig` is a file). */
+export const RIG_HOME_FAILED = "Rig couldn't make its folder in your home folder.";
+
 export const rigSpaceSetupController = createRPCController({
   /**
    * Makes the new space's folder under the Rig home and returns at once;
@@ -243,7 +246,15 @@ export const rigSpaceSetupController = createRPCController({
   start: async ({ name }: { name: string }): Promise<Result<SpaceSetup, RigCreateError>> => {
     const invalid = validateRigName(name);
     if (invalid) return err<RigCreateError>({ kind: 'invalidName', message: invalid });
-    const home = await ensureRigHomeDir();
+    let home: string;
+    try {
+      home = await ensureRigHomeDir();
+    } catch (error) {
+      log.warn('Rig space setup: could not make the Rig home folder', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return err<RigCreateError>({ kind: 'initFailed', message: RIG_HOME_FAILED });
+    }
     const targetDir = resolveHomeLandingDir(home, rigSlug(name));
     try {
       mkdirSync(targetDir, { recursive: true });

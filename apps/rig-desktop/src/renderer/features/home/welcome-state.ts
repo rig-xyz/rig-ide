@@ -30,6 +30,8 @@ export function deriveWelcomePhase(params: {
   signInPhase: RigSignInPhase;
   signInError: string | null;
   creating: boolean;
+  /** Why the last create made nothing (the space's folder, the relay…), or null. */
+  createError?: string | null;
 }): WelcomePhase {
   // Creation wins outright: once sign-in succeeds it continues straight into
   // `createRig()` before `useRigSignIn`'s own `finally` resets `phase` to
@@ -37,6 +39,8 @@ export function deriveWelcomePhase(params: {
   // idle for a render between the two.
   if (params.creating) return { kind: 'creating' };
   if (params.signInPhase !== 'idle') return { kind: 'signingIn' };
+  // A failed create says why, signed in or not: the button is clickable again.
+  if (params.createError) return { kind: 'error', message: params.createError };
   // Auth status still loading, or already signed in: never show a stale
   // sign-in error from a previous attempt — requirement is "no flash of the
   // sign-in line" for a signed-in user, and a signed-in user has no reason

@@ -117,6 +117,8 @@ export function Home({
   // create is still in flight should just no-op, not start a second rig.
   const creatingRef = useRef(false);
   const [creating, setCreating] = useState(false);
+  // Why the last Start fresh didn't make anything, shown under the button.
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // One-click create (onboarding-flow-spec.md §2): Welcome's "Start fresh"
   // and the rail's "New rig" both drive this exact same request — no
@@ -128,6 +130,7 @@ export function Home({
     if (creatingRef.current) return;
     creatingRef.current = true;
     setCreating(true);
+    setCreateError(null);
     try {
       const result = await rpc.rig.create.create({
         parentDir: null,
@@ -135,11 +138,16 @@ export function Home({
         sync: true,
         seedDoc: true,
       });
-      if (!result.success) return; // best-effort — no dialog left to surface the error in
+      if (!result.success) {
+        setCreateError(result.error.message);
+        return;
+      }
       if (result.data.rootId) void rpc.rig.files.releaseRoot({ rootId: result.data.rootId });
       void queryClient.invalidateQueries({ queryKey: ['rig', 'recent'] });
       void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
       onRigCreated(result.data.path, result.data.docPath);
+    } catch {
+      setCreateError(START_FRESH_FAILED);
     } finally {
       creatingRef.current = false;
       setCreating(false);
@@ -157,9 +165,11 @@ export function Home({
   const showPlainRigs = useShowPlainRigs();
   const rigsHidden = spacesEnabled && !showPlainRigs;
   const spaceNamesRef = useRef<ReadonlySet<string>>(new Set());
-  const createFirst = useCallback(() => {
-    if (rigsHidden) void createSpace(generateSpaceName(spaceNamesRef.current));
-    else void createRig();
+  const createFirst = useCallback(async () => {
+    if (!rigsHidden) return createRig();
+    setCreateError(null);
+    const error = await createSpace(generateSpaceName(spaceNamesRef.current)).catch(() => START_FRESH_FAILED);
+    if (error) setCreateError(error);
   }, [rigsHidden, createSpace, createRig]);
   const spaceSetups = useSpaceSetups();
   // Pulse round: which rigs-rail row a WHAT'S NEW/ACROSS YOUR RIGS rig-name
@@ -208,11 +218,11 @@ export function Home({
     error: createSignInError,
     url: createSignInUrl,
     cancel: cancelCreateSignIn,
-  } = useRigSignIn(() => createFirst());
+  } = useRigSignIn(() => void createFirst());
 
   const startFreshOrCreate = useCallback(() => {
     if (signedIn) {
-      createFirst();
+      void createFirst();
     } else {
       void signInThenCreateRig();
     }
@@ -224,6 +234,7 @@ export function Home({
     signInPhase: createSignInPhase,
     signInError: createSignInError,
     creating,
+    createError,
   });
 
   const workspacesQuery = useQuery({
@@ -801,6 +812,9 @@ export function Home({
   );
 }
 
+/** Start fresh failed with nothing more specific to say. */
+const START_FRESH_FAILED = "Rig couldn't start your space. Try again.";
+
 /**
  * First run (docs/onboarding-flow-spec.md §1) — no rigs anywhere yet, for
  * anyone (local or shared). Exactly one primary action, per the spec's
@@ -834,8 +848,9 @@ export function Welcome({
   /** Stops waiting for sign-in, back to Start fresh. */
   onCancelSignIn?: () => void;
 }) {
-  const disabled = phase.kind !== 'idle' || authLoading || needsConnection;
   const waiting = phase.kind === 'signingIn' || phase.kind === 'creating';
+  // An error leaves the button clickable, to try again.
+  const disabled = waiting || authLoading || needsConnection;
   const label =
     phase.kind === 'signingIn' ? 'Waiting for sign-in…' : phase.kind === 'creating' ? 'Starting…' : 'Start fresh';
   return (
@@ -844,7 +859,7 @@ export function Welcome({
       <p className="font-display text-text-primary text-xl">
         Collaborate with your agents, and everyone else&rsquo;s.
       </p>
-      <NeedsConnection blocked={needsConnection && phase.kind === 'idle'}>
+      <NeedsConnection blocked={needsConnection && !waiting}>
         <button
           type="button"
           onClick={onStartFresh}
