@@ -59,7 +59,7 @@ import { AGENT_NAME, AgentAvatar } from './identity';
 import { SessionTrace } from './session-trace';
 import { SpaceFileLink, toastNotHereYet } from './space-file-link';
 import { notHereYetText, useSpaceFile } from '../space-file-presence';
-import { excerptOf, ROW_GRID, RowActions, RowTime } from './transcript-items';
+import { excerptOf, ROW_GRID, RowActions, RowTime, useOpenWebLink } from './transcript-items';
 import { QuickReactions, ReactionChips } from './reactions';
 
 /**
@@ -727,6 +727,8 @@ export function SessionCard({
   retriedLater?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // Web links in the answer open beside the Room, like the chat's own links.
+  const openWebLink = useOpenWebLink();
   // The emoji picker open from the hover bar keeps the bar showing.
   const [picking, setPicking] = useState(false);
   const [traceOpen, setTraceOpen] = useState(false);
@@ -1022,6 +1024,7 @@ export function SessionCard({
               className="text-sm leading-relaxed text-text-prose"
               onOpenPath={onOpenFile}
               renderFileLink={(parts) => <SpaceFileLink {...parts} onOpen={onOpenFile} from={mine ? null : (owner?.name ?? null)} />}
+              onOpenWebLink={openWebLink}
             />
           </div>
         )}

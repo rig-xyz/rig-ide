@@ -87,6 +87,21 @@ function AskSuggestionButton({ suggestion }: { suggestion: AskSuggestion }) {
   );
 }
 
+/**
+ * Opens a web link from the Room the way its chips do: beside the Room
+ * unless it can't work there (`opensBesideChat`) or it was a ⌘/ctrl-click,
+ * which go to the browser. Agents' answers use it for their links.
+ */
+export function useOpenWebLink(): (url: string, event?: { metaKey: boolean; ctrlKey: boolean }) => void {
+  const openPage = useContext(OpenPageContext);
+  return (url, event) => {
+    const toBrowser = !!event && (event.metaKey || event.ctrlKey);
+    if (openPage && !toBrowser && opensBesideChat(url)) openPage(canonicalPageUrl(url), webLinkLabel(url));
+    // Loaded on click: these rows render in tests and previews with no Electron bridge.
+    else void import('@renderer/lib/ipc').then(({ rpc }) => rpc.app.openExternal(url));
+  };
+}
+
 /** `inPanel`: open the page beside the Room whatever it is (a page with pins on it). */
 function useOpenLink(
   url: string,

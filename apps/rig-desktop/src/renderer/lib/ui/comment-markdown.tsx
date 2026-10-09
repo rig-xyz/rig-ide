@@ -168,6 +168,7 @@ export function SafeMarkdown({
   onOpenRigFile,
   onOpenPath,
   renderFileLink,
+  onOpenWebLink,
 }: {
   content: string;
   className?: string;
@@ -182,6 +183,8 @@ export function SafeMarkdown({
    * links (`bare-paths.ts`), so they get the same treatment.
    */
   renderFileLink?: (parts: FileLinkParts) => ReactNode;
+  /** Opens a web or mail link (the Room opens pages beside it); without it, links go to the browser. */
+  onOpenWebLink?: (href: string, event: { metaKey: boolean; ctrlKey: boolean }) => void;
 }) {
   return (
     <div className={cn(MARKDOWN_BODY_CLASS, className)}>
@@ -217,7 +220,8 @@ export function SafeMarkdown({
                     if (!href.startsWith('#')) onOpenPath(href);
                     return;
                   }
-                  if (href) void rpc.app.openExternal(href);
+                  if (href && onOpenWebLink && isWebLink(href)) onOpenWebLink(href, event);
+                  else if (href) void rpc.app.openExternal(href);
                 }}
               >
                 {children}
