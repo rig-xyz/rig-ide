@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, LogIn, Plus } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentProblemLine } from '@renderer/features/agents/agent-problem-line';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
 import { useActivity, useNotificationSummary } from '@renderer/features/notifications/use-notifications';
@@ -67,6 +67,7 @@ import { useSpaceStatus } from './use-space-status';
 import { useFaceReasons } from './use-face-reasons';
 import { deriveAskChips } from './ask-chips';
 import { unreadMentionsBySpace } from './face-reasons';
+import { InviteLinkField } from './invite-link-field';
 import { InviteWelcome } from './invite-welcome';
 import { deriveWelcomePhase, type WelcomePhase } from './welcome-state';
 
@@ -633,7 +634,9 @@ export function Home({
             onStartFresh={startFreshOrCreate}
             startFreshPhase={welcomePhase}
             needsConnection={connectionDown || !navigatorOnline}
-          />
+          >
+            <InviteLinkField onOpenPath={onOpenPath} needsConnection={connectionDown || !navigatorOnline} />
+          </InviteWelcome>
         ) : (
           <Welcome
             phase={welcomePhase}
@@ -649,7 +652,9 @@ export function Home({
                 ? { onSignIn: () => void signIn(), phase: signInPhase, url: signInUrl, onCancel: cancelSignIn }
                 : undefined
             }
-          />
+          >
+            <InviteLinkField onOpenPath={onOpenPath} needsConnection={connectionDown || !navigatorOnline} />
+          </Welcome>
         )}
         {/* Skipped the agent step on the first run: the way back to it, one line per agent. */}
         {localReady && (
@@ -865,6 +870,7 @@ export function Welcome({
   signInUrl = null,
   onCancelSignIn,
   signInOnly,
+  children,
 }: {
   phase: WelcomePhase;
   authLoading: boolean;
@@ -876,6 +882,8 @@ export function Welcome({
   onCancelSignIn?: () => void;
   /** Signed out: a plain Sign in that makes nothing, for someone who came for an invite. */
   signInOnly?: { onSignIn: () => void; phase: RigSignInPhase; url: string | null; onCancel: () => void };
+  /** Under it all: the invite link field. */
+  children?: ReactNode;
 }) {
   const signingInOnly = signInOnly && signInOnly.phase !== 'idle';
   const waiting = phase.kind === 'signingIn' || phase.kind === 'creating' || !!signingInOnly;
@@ -923,6 +931,7 @@ export function Welcome({
           </p>
         )
       )}
+      {children}
     </div>
   );
 }

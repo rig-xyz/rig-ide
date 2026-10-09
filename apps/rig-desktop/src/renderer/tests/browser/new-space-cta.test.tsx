@@ -363,6 +363,6 @@ describe('NewSpaceCta', () => {
 
     expect(mocks.acceptInviteLink).not.toHaveBeenCalled();
     expect(mocks.openExternal).not.toHaveBeenCalled();
-    expect(host.textContent).toContain("doesn't look like a rig invite link");
+    expect(host.textContent).toContain("doesn't look like a Rig invite link");
   });
 });

@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   accept: vi.fn(),
   attach: vi.fn(),
   login: vi.fn(),
+  acceptLink: vi.fn(),
 }));
 
 const invite = (id: string, name: string, inviter: string, kind: 'space' | 'rig' = 'space') => ({
@@ -56,6 +57,7 @@ vi.mock('@renderer/lib/ipc', () => ({
         listMyInvites: async () => ok({ invites: mocks.invites }),
         collaborators: async () => ok([]),
         acceptMyInvite: (...args: unknown[]) => mocks.accept(...args),
+        acceptInviteLink: (...args: unknown[]) => mocks.acceptLink(...args),
       },
       join: { attach: (...args: unknown[]) => mocks.attach(...args) },
       create: { create: (...args: unknown[]) => mocks.create(...args) },
@@ -116,6 +118,7 @@ describe('first-run Home with an invite', () => {
     mocks.create.mockReset();
     mocks.accept.mockReset().mockResolvedValue(ok({ bindingId: 'b_1', becameMember: true }));
     mocks.attach.mockReset().mockResolvedValue(ok({ localPath: '/Rig/launch', syncing: true }));
+    mocks.acceptLink.mockReset().mockResolvedValue(ok({ bindingId: 'b_9', spaceName: 'growth', kind: 'space', becameMember: true }));
     mocks.login.mockReset().mockResolvedValue(ok({ url: 'https://clerk.example/sign-in' }));
     opened = [];
     host = document.createElement('div');
@@ -181,5 +184,29 @@ describe('first-run Home with an invite', () => {
     expect(mocks.start).not.toHaveBeenCalled();
     expect(mocks.create).not.toHaveBeenCalled();
     expect(host.querySelector('[data-testid="sign-in-waiting"]')).toBeTruthy();
+  });
+
+  it('shows the invite link field without hover, and joins with a pasted link', async () => {
+    await mount();
+    const field = host.querySelector<HTMLFormElement>('[data-testid="invite-link-field"]')!;
+    expect(field.textContent).toContain('Have an invite link?');
+    const input = field.querySelector('input')!;
+    expect(input.offsetParent).not.toBeNull();
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(input, 'https://userig.xyz/join/tap_inv_Ab3-_x9QwErTyUiOpAsDfGhJkLzXcVbN');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => field.requestSubmit());
+    await flush();
+    expect(mocks.acceptLink).toHaveBeenCalledTimes(1);
+    expect(mocks.attach).toHaveBeenCalledWith({ bindingId: 'b_9', name: 'growth' });
+    expect(opened).toEqual([{ path: '/Rig/launch', kind: 'space' }]);
+  });
+
+  it('shows the invite link field beside an invite too', async () => {
+    mocks.invites = [invite('1', 'launch', 'Ana')];
+    await mount();
+    expect(host.querySelector('[data-testid="invite-welcome"] [data-testid="invite-link-field"]')).toBeTruthy();
   });
 });
