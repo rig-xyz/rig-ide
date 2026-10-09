@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   attach: vi.fn(),
   login: vi.fn(),
   acceptLink: vi.fn(),
+  openExternal: vi.fn(async (_url: unknown) => ({ success: true })),
 }));
 
 const invite = (id: string, name: string, inviter: string, kind: 'space' | 'rig' = 'space') => ({
@@ -33,7 +34,7 @@ const invite = (id: string, name: string, inviter: string, kind: 'space' | 'rig'
 
 vi.mock('@renderer/lib/ipc', () => ({
   rpc: {
-    app: { openExternal: async () => ({ success: true }) },
+    app: { openExternal: (url: unknown) => mocks.openExternal(url) },
     agents: {
       list: async () => [
         { id: 'claude', name: 'Claude', icon: null, status: 'available', version: '2.1.160', installations: [], used: { kind: 'auto' }, latestVersion: null, capabilities: { auth: { kind: 'none' } } },
@@ -208,5 +209,23 @@ describe('first-run Home with an invite', () => {
     mocks.invites = [invite('1', 'launch', 'Ana')];
     await mount();
     expect(host.querySelector('[data-testid="invite-welcome"] [data-testid="invite-link-field"]')).toBeTruthy();
+  });
+
+  it('says an organization invite opens in the browser, and offers to open it', async () => {
+    await mount();
+    const field = host.querySelector<HTMLFormElement>('[data-testid="invite-link-field"]')!;
+    const input = field.querySelector('input')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(input, 'https://userig.xyz/join/org/tok_9');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => field.requestSubmit());
+    await flush();
+    expect(mocks.acceptLink).not.toHaveBeenCalled();
+    const note = host.querySelector('[data-testid="org-invite-note"]')!;
+    expect(note.textContent).toContain('This is an organization invite. Open it in your browser.');
+    await act(async () => note.querySelector('button')!.click());
+    expect(mocks.openExternal).toHaveBeenCalledWith('https://userig.xyz/join/org/tok_9');
   });
 });

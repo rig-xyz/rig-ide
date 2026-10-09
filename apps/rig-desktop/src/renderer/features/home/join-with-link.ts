@@ -3,6 +3,7 @@ import { MY_INVITES_KEY_PREFIX } from '@renderer/features/shell/invites-inbox';
 import { rpc } from '@renderer/lib/ipc';
 import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { inviteTargetLabel } from '@shared/rig/invite-label';
+import { parseInviteLink } from '@shared/rig/invite-link';
 import { normalizeJoinLink } from './join-link';
 
 /** How a pasted invite link went. */
@@ -11,6 +12,8 @@ export type JoinWithLinkOutcome =
   | { kind: 'opened'; path: string; space: boolean }
   /** No usable sign-in here: the link opened in the browser instead. */
   | { kind: 'browser' }
+  /** An organization invite: only the website accepts it. */
+  | { kind: 'org'; url: string }
   | { kind: 'error'; message: string };
 
 /**
@@ -19,7 +22,12 @@ export type JoinWithLinkOutcome =
  * which can sign in there. The link carries the invite's secret, so no
  * message here ever repeats it.
  */
+/** What the app says about an organization invite link, which it can't accept itself. */
+export const ORG_INVITE_NOTE = 'This is an organization invite. Open it in your browser.';
+
 export async function joinWithInviteLink(value: string, queryClient: QueryClient): Promise<JoinWithLinkOutcome> {
+  const parsed = parseInviteLink(value);
+  if (parsed?.kind === 'org') return { kind: 'org', url: parsed.url };
   const url = normalizeJoinLink(value);
   if (!url) return { kind: 'error', message: "That doesn't look like a Rig invite link." };
   const joined = await rpc.rig.share.acceptInviteLink({ link: url });

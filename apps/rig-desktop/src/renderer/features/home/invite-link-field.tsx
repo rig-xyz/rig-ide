@@ -1,8 +1,9 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { useId, useState } from 'react';
+import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
-import { joinWithInviteLink } from './join-with-link';
+import { joinWithInviteLink, ORG_INVITE_NOTE } from './join-with-link';
 
 /**
  * "Have an invite link?" on the first-run screen: always showing, so
@@ -21,17 +22,20 @@ export function InviteLinkField({
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [orgUrl, setOrgUrl] = useState<string | null>(null);
 
   const submit = async () => {
     setJoining(true);
     setError(null);
     setNote(null);
+    setOrgUrl(null);
     const outcome = await joinWithInviteLink(value, queryClient).catch(() => ({
       kind: 'error' as const,
       message: "Rig couldn't join with that link. Try again.",
     }));
     setJoining(false);
     if (outcome.kind === 'error') return setError(outcome.message);
+    if (outcome.kind === 'org') return setOrgUrl(outcome.url);
     setValue('');
     if (outcome.kind === 'browser') return setNote('The invite opened in your browser. Sign in there to join.');
     onOpenPath(outcome.path, outcome.space ? { kind: 'space' } : undefined);
@@ -72,6 +76,19 @@ export function InviteLinkField({
         </p>
       )}
       {note && <p className="text-text-muted text-xs">{note}</p>}
+      {orgUrl && <OrgInviteNote url={orgUrl} />}
     </form>
+  );
+}
+
+/** An organization invite link: the app can't take it, so it says so and offers the browser. */
+export function OrgInviteNote({ url }: { url: string }) {
+  return (
+    <div className="flex items-center gap-2" data-testid="org-invite-note">
+      <p className="text-text-muted min-w-0 flex-1 text-xs">{ORG_INVITE_NOTE}</p>
+      <Button size="xs" variant="outline" onClick={() => void rpc.app.openExternal(url)}>
+        Open in browser
+      </Button>
+    </div>
   );
 }

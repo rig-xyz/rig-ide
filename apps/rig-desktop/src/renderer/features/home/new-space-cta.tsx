@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { NeedsConnection } from '@renderer/features/shell/needs-connection';
 import { Button } from '@renderer/lib/ui/button';
 import { cn } from '@renderer/lib/utils';
+import { OrgInviteNote } from './invite-link-field';
 import { joinWithInviteLink } from './join-with-link';
 import { generateSpaceName } from './space-create';
 
@@ -77,6 +78,7 @@ export function NewSpaceCta({
   const [value, setValue] = useState('');
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [orgUrl, setOrgUrl] = useState<string | null>(null);
 
   // Escape hands focus back to "New space", once it's mounted again.
   useEffect(() => {
@@ -131,10 +133,15 @@ export function NewSpaceCta({
   const submit = async () => {
     setJoining(true);
     setError(null);
+    setOrgUrl(null);
     const outcome = await joinWithInviteLink(value, queryClient);
     setJoining(false);
     if (outcome.kind === 'error') {
       setError(outcome.message);
+      return;
+    }
+    if (outcome.kind === 'org') {
+      setOrgUrl(outcome.url);
       return;
     }
     collapse(false);
@@ -332,6 +339,11 @@ export function NewSpaceCta({
         <p className="text-danger px-3 text-xs" role="alert">
           {error}
         </p>
+      )}
+      {orgUrl && (
+        <div className="px-3">
+          <OrgInviteNote url={orgUrl} />
+        </div>
       )}
     </div>
   );
