@@ -679,6 +679,7 @@ export function SessionCard({
   reactions,
   members = [],
   ownId,
+  retriedLater = false,
 }: {
   meta: SessionRunMeta;
   events: SessionEvent[];
@@ -722,6 +723,8 @@ export function SessionCard({
   members?: RoomMember[];
   /** The viewer's member id; reactions are offered once the turn is done. */
   ownId?: string;
+  /** A later run of the same ask by this same agent finished: a failure here is no longer news. */
+  retriedLater?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   // The emoji picker open from the hover bar keeps the bar showing.
@@ -769,6 +772,15 @@ export function SessionCard({
   // read while it ran, until the Room re-reads it) it shows no duration rather
   // than one measured against the clock, which grew for as long as it stayed on screen.
   const finished = status === 'done' || status === 'failed' || status === 'stopped';
+  // Failed, but the same ask worked later: no red error, only a quiet note in its details.
+  const quietFailure = status === 'failed' && retriedLater;
+  const signInFailed = /sign in again/.test(card.failureReason ?? '');
+  const retryNote =
+    (status === 'done' && card.retriedAfterSignIn) || (quietFailure && signInFailed)
+      ? 'Signed in again and retried'
+      : quietFailure
+        ? 'Tried again and it worked'
+        : null;
   const elapsed = finished && !meta.endedAt ? '' : formatElapsed(elapsedMs(meta.startedAt, meta.endedAt, now));
   const model = card.model ?? (meta.model && meta.model !== 'unknown' ? meta.model : null);
   const agentName = AGENT_NAME[meta.agent];
@@ -903,7 +915,7 @@ export function SessionCard({
                 className="flex h-6 w-fit items-center gap-1.5 text-xs text-text-muted transition-colors hover:text-text-primary"
                 data-testid="session-summary"
               >
-                {status !== 'done' && (
+                {status !== 'done' && !quietFailure && (
                   <DotMatrix state={status === 'failed' ? 'failed' : 'stopped'} size="sm" className="mr-0.5" />
                 )}
                 <ChevronRight
@@ -923,6 +935,11 @@ export function SessionCard({
                   {card.thinking.trim() && <ThinkingBlock text={card.thinking} />}
                   {card.plan.length > 0 && <PlanBlock plan={card.plan} />}
                   <StepList card={card} ownerName={ownerName} agent={meta.agent} />
+                  {retryNote && (
+                    <span className="ml-5 text-xs text-text-muted" data-testid="session-retried">
+                      {retryNote}
+                    </span>
+                  )}
                   {SHOW_FULL_TRACE && (
                     <button
                       type="button"
@@ -953,7 +970,7 @@ export function SessionCard({
           />
         )}
 
-        {status === 'failed' && (
+        {status === 'failed' && !quietFailure && (
           <div
             className="border-danger/25 bg-danger/10 flex items-start gap-2 rounded-card border px-3 py-2"
             data-testid="session-failed-line"
@@ -1013,7 +1030,7 @@ export function SessionCard({
             {agentName} reacted {card.reacted.join(' ')}
           </span>
         )}
-        {card.finalAnswer && status === 'failed' && (
+        {card.finalAnswer && status === 'failed' && !quietFailure && (
           <details className="text-xs text-text-muted">
             <summary className="w-fit cursor-pointer hover:text-text-secondary">What the agent printed</summary>
             <pre className="border-border-hairline bg-bg-1 mt-1 max-h-40 overflow-auto rounded-control border p-2 font-mono text-2xs whitespace-pre-wrap text-text-secondary">

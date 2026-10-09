@@ -2685,16 +2685,20 @@ describe('a run that failed on its sign-in', () => {
     return { fake, postedEvents, failures, succeeded, dispatcher };
   }
 
+  /** Both tries fail on the sign-in (the first is tried once more). */
   async function failOnSignIn(ctx: ReturnType<typeof setup>) {
     await ctx.dispatcher.dispatch(makeRequest());
     const conversationId = ctx.fake.started[0].conversationId;
-    const turnId = ctx.fake.queued[0]!.turnId;
-    ctx.fake.emitTurnStart(conversationId, turnId);
-    ctx.fake.emitUpdate(conversationId, {
-      sessionUpdate: 'agent_message_chunk',
-      content: { type: 'text', text: 'Failed to authenticate: OAuth session expired and could not be refreshed' },
-    });
-    ctx.fake.emitTurnEnd(conversationId, turnId, null);
+    for (const attempt of [0, 1]) {
+      await vi.waitFor(() => expect(ctx.fake.queued).toHaveLength(attempt + 1));
+      const turnId = ctx.fake.queued[attempt]!.turnId;
+      ctx.fake.emitTurnStart(conversationId, turnId);
+      ctx.fake.emitUpdate(conversationId, {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Failed to authenticate: OAuth session expired and could not be refreshed' },
+      });
+      ctx.fake.emitTurnEnd(conversationId, turnId, null);
+    }
     await vi.waitFor(() => expect(ctx.postedEvents.flatMap((p) => p.kinds)).toContain('turn_ended'));
     const payloads = ctx.postedEvents.flatMap((p) => p.payloads);
     return payloads[ctx.postedEvents.flatMap((p) => p.kinds).indexOf('turn_ended')];
@@ -2736,5 +2740,73 @@ describe('a run that failed on its sign-in', () => {
     ctx.fake.emitTurnStart(conversationId, second);
     ctx.fake.emitTurnEnd(conversationId, second, 'end_turn');
     await vi.waitFor(() => expect(ctx.succeeded).toEqual(['claude']));
+  });
+
+  /** The first try fails on its sign-in; returns the conversation, once the prompt has gone again. */
+  async function signInFailsOnce(ctx: ReturnType<typeof setup>) {
+    await ctx.dispatcher.dispatch(makeRequest());
+    const conversationId = ctx.fake.started[0].conversationId;
+    const first = ctx.fake.queued[0]!.turnId;
+    ctx.fake.emitTurnStart(conversationId, first);
+    ctx.fake.emitUpdate(conversationId, {
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: 'API Error: 401 {"type":"error","error":{"type":"authentication_error"}}' },
+    });
+    ctx.fake.emitTurnEnd(conversationId, first, null);
+    await vi.waitFor(() => expect(ctx.fake.queued).toHaveLength(2));
+    return conversationId;
+  }
+
+  it('sends the prompt once more in the same run, and a try that works is neither a failure nor a sign-in', async () => {
+    const ctx = setup(async () => ok([]));
+    const conversationId = await signInFailsOnce(ctx);
+    expect(ctx.fake.queued[1]!.text).toBe(ctx.fake.queued[0]!.text);
+    const second = ctx.fake.queued[1]!.turnId;
+    ctx.fake.emitTurnStart(conversationId, second);
+    ctx.fake.emitUpdate(conversationId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'All good.' } });
+    ctx.fake.emitTurnEnd(conversationId, second, 'end_turn');
+    await vi.waitFor(() => expect(ctx.succeeded).toEqual(['claude']));
+    const kinds = ctx.postedEvents.flatMap((p) => p.kinds);
+    const payloads = ctx.postedEvents.flatMap((p) => p.payloads);
+    expect(kinds.filter((k) => k === 'turn_ended')).toHaveLength(1);
+    expect(payloads[kinds.indexOf('turn_ended')]).toEqual({ status: 'done' });
+    expect(payloads[kinds.indexOf('run_retried')]).toEqual({ reason: 'sign_in' });
+    expect(kinds.indexOf('run_retried')).toBeLessThan(kinds.indexOf('turn_ended'));
+    expect(ctx.failures).toEqual([]);
+  });
+
+  it('a second sign-in failure ends the run as one, reported once', async () => {
+    const ctx = setup(async () =>
+      ok([{ userId: 'owner-1', clerkUserId: null, name: 'Hugo Martin', email: null, role: 'owner', avatarUrl: null }])
+    );
+    const conversationId = await signInFailsOnce(ctx);
+    const second = ctx.fake.queued[1]!.turnId;
+    ctx.fake.emitTurnStart(conversationId, second);
+    ctx.fake.emitUpdate(conversationId, {
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: 'Failed to authenticate: OAuth session expired and could not be refreshed' },
+    });
+    ctx.fake.emitTurnEnd(conversationId, second, null);
+    await vi.waitFor(() => expect(ctx.failures).toHaveLength(1));
+    const kinds = ctx.postedEvents.flatMap((p) => p.kinds);
+    expect(ctx.postedEvents.flatMap((p) => p.payloads)[kinds.indexOf('turn_ended')]).toEqual({
+      status: 'failed',
+      reason: "Hugo's Claude needs to sign in again.",
+    });
+    expect(ctx.failures[0]!.text).toContain('OAuth session expired');
+    expect(ctx.fake.queued).toHaveLength(2);
+    expect(ctx.succeeded).toEqual([]);
+  });
+
+  it('any other failure is not tried again', async () => {
+    const ctx = setup(async () => ok([]));
+    await ctx.dispatcher.dispatch(makeRequest());
+    const conversationId = ctx.fake.started[0].conversationId;
+    const first = ctx.fake.queued[0]!.turnId;
+    ctx.fake.emitTurnStart(conversationId, first);
+    ctx.fake.emitTurnEnd(conversationId, first, null);
+    await vi.waitFor(() => expect(ctx.failures).toHaveLength(1));
+    expect(ctx.fake.queued).toHaveLength(1);
+    expect(ctx.postedEvents.flatMap((p) => p.kinds)).not.toContain('run_retried');
   });
 });

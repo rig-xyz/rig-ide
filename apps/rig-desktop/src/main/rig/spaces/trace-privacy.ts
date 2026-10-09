@@ -1,6 +1,6 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { RIG_TOOLS_SERVER, RUN_CONNECTORS_EVENT } from '@shared/spaces/connectors';
-import { PRIVATE_PROGRESS_EVENT, RUN_PRIVACY_EVENT, type RoomSees } from '@shared/spaces/room-sees';
+import { PRIVATE_PROGRESS_EVENT, RUN_PRIVACY_EVENT, RUN_RETRIED_EVENT, type RoomSees } from '@shared/spaces/room-sees';
 
 /**
  * "Room sees" (see `shared/spaces/room-sees.ts`), enforced on the member's
@@ -154,6 +154,10 @@ export class RoomSeesFilter {
       case 'agent_message_chunk':
         this.collectAnswer(payload);
         return [];
+      case RUN_RETRIED_EVENT:
+        // What the failed try printed is no answer.
+        this.answer = { messageId: null, text: '' };
+        return [{ kind, payload }];
       case 'plan':
         return this.level === 'steps' ? [this.plan(payload)] : [];
       case 'usage_update':

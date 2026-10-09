@@ -155,6 +155,8 @@ export interface SessionCard {
   detailsHidden: boolean;
   /** The emojis the run reacted with when it ended without words (`turn_ended.reacted`); empty otherwise. */
   reacted: string[];
+  /** Its first try failed on the agent's sign-in and the prompt went again in this run (`run_retried`). */
+  retriedAfterSignIn: boolean;
 }
 
 /**
