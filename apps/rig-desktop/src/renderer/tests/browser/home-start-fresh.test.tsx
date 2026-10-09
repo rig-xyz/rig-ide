@@ -113,4 +113,19 @@ describe('Welcome Start fresh', () => {
     expect(host.textContent).toContain("Rig couldn't start your space. Try again.");
     expect(host.textContent).not.toContain('ipc closed');
   });
+
+  it('starts one space on a double click, and reads Starting meanwhile', async () => {
+    let finish: (value: unknown) => void = () => {};
+    mocks.start.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    await mount();
+    await act(async () => {
+      startFresh().click();
+      startFresh().click();
+    });
+    await flush();
+    expect(mocks.start).toHaveBeenCalledTimes(1);
+    expect(startFresh().textContent).toContain('Starting');
+    await act(async () => finish({ success: false, error: { kind: 'initFailed', message: 'nope' } }));
+    await flush();
+  });
 });

@@ -165,11 +165,21 @@ export function Home({
   const showPlainRigs = useShowPlainRigs();
   const rigsHidden = spacesEnabled && !showPlainRigs;
   const spaceNamesRef = useRef<ReadonlySet<string>>(new Set());
+  // Same guard as `createRig`: a second click while the space is starting
+  // does nothing, so a double click never makes two spaces.
   const createFirst = useCallback(async () => {
     if (!rigsHidden) return createRig();
+    if (creatingRef.current) return;
+    creatingRef.current = true;
+    setCreating(true);
     setCreateError(null);
-    const error = await createSpace(generateSpaceName(spaceNamesRef.current)).catch(() => START_FRESH_FAILED);
-    if (error) setCreateError(error);
+    try {
+      const error = await createSpace(generateSpaceName(spaceNamesRef.current)).catch(() => START_FRESH_FAILED);
+      if (error) setCreateError(error);
+    } finally {
+      creatingRef.current = false;
+      setCreating(false);
+    }
   }, [rigsHidden, createSpace, createRig]);
   const spaceSetups = useSpaceSetups();
   // Pulse round: which rigs-rail row a WHAT'S NEW/ACROSS YOUR RIGS rig-name
