@@ -113,6 +113,7 @@ function minted(id: string, extra: Record<string, unknown> = {}) {
         ...extra,
       },
       url: `https://userig.xyz/join/${id}`,
+      expiresAt: '2026-10-14T12:00:00.000Z',
       email: { sent: Boolean(extra.emailConstraint), to: (extra.emailConstraint as string) ?? null, reason: null },
     },
   };
@@ -294,6 +295,7 @@ describe('InviteByName', () => {
       role: 'editor',
     });
     expect(host.textContent).toContain('Anyone with this link can join');
+    expect(host.querySelector('[data-testid="invite-link-until"]')?.textContent).toBe('Works until Oct 14');
   });
 
   it('puts invite first and the people in the space after it', async () => {

@@ -22,3 +22,14 @@ export function inviteRoleLabel(role: string | null | undefined): string {
   if (role === 'owner') return 'owner';
   return 'can edit';
 }
+
+/**
+ * When an invite link stops working, as "Works until Oct 14", in this
+ * Mac's time zone. Null for a link with no end, or a date that can't be read.
+ */
+export function worksUntilLabel(expiresAt: string | null | undefined): string | null {
+  if (!expiresAt) return null;
+  const at = new Date(expiresAt);
+  if (Number.isNaN(at.getTime())) return null;
+  return `Works until ${at.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+}

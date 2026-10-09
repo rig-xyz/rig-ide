@@ -427,7 +427,7 @@ async function mintInvite(
     }
     forgetPeopleCache();
     telemetryService.capture('invite_sent', {});
-    return ok({ invite, url, email: toEmailOutcome(data?.email) });
+    return ok({ invite, url, expiresAt: invite.expiresAt, email: toEmailOutcome(data?.email) });
   } catch (error) {
     return err(transportError(action, error));
   }
@@ -726,8 +726,9 @@ export const rigShareController = createRPCController({
    * exactly (`POST /v1/me/bindings/:bindingId/invites`, owner-only):
    * full ops, a real role (editor/viewer only — the relay would accept
    * `owner` but the hub never offers it, and neither does this app), the
-   * email constraint when one was typed. No `ttlSeconds` = never expires,
-   * the hub's own default. The relay's `url` comes back for the copy flow —
+   * email constraint when one was typed. No `ttlSeconds`: the relay's
+   * default applies (a week, `security-config.ts`), and the answer's
+   * `expiresAt` says when. The relay's `url` comes back for the copy flow —
    * see `RigInviteMinted`'s doc comment for why no email goes out here.
    */
   createInvite: async ({

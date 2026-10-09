@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inviteRoleLabel, inviteTargetLabel, parseBindingKind } from './invite-label';
+import { inviteRoleLabel, inviteTargetLabel, parseBindingKind, worksUntilLabel } from './invite-label';
 
 describe('invite labels', () => {
   it('uses # only for a space', () => {
@@ -17,6 +17,12 @@ describe('invite labels', () => {
     expect(inviteRoleLabel('editor')).toBe('can edit');
     expect(inviteRoleLabel('viewer')).toBe('can view');
     expect(inviteRoleLabel(null)).toBe('can edit');
+  });
+
+  it('says when a link stops working, and nothing for one with no end', () => {
+    expect(worksUntilLabel('2026-10-14T12:00:00Z')).toBe('Works until Oct 14');
+    expect(worksUntilLabel(null)).toBeNull();
+    expect(worksUntilLabel('soon')).toBeNull();
   });
 
   it('reads only the kinds it knows', () => {

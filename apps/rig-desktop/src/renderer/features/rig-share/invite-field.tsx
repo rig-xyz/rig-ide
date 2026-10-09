@@ -32,6 +32,7 @@ import { cn } from '@renderer/lib/utils';
 import type { RigInviteMinted, RigInviteRole, RigMember } from '@shared/rig/rig-share';
 import { mintedInviteMatchesRole } from './invite-state';
 import { invitesKey, usePendingInvites } from './people-section';
+import { worksUntilLabel } from '@shared/rig/invite-label';
 
 /**
  * Invite by name (board 26, panel 1). The field takes names or emails: it
@@ -492,6 +493,7 @@ export function InviteByName({
       {displayedLink && (
         <LinkBox
           url={displayedLink.url}
+          expiresAt={displayedLink.expiresAt}
           note="Anyone with this link can join, so send it to whoever you’re inviting."
         />
       )}
@@ -521,6 +523,7 @@ function SentInvites({ sent }: { sent: Sent[] }) {
           <LinkBox
             key={chipKey(chip)}
             url={minted.url}
+            expiresAt={minted.expiresAt}
             note={`Email couldn’t be sent. Copy the link and send it to ${chip.email} yourself; only they can use it.`}
           />
         )
@@ -530,8 +533,9 @@ function SentInvites({ sent }: { sent: Sent[] }) {
 }
 
 /** The one moment a secret-bearing link exists client-side; the invites list never carries it again. */
-function LinkBox({ url, note }: { url: string; note: string }) {
+function LinkBox({ url, note, expiresAt }: { url: string; note: string; expiresAt?: string | null }) {
   const clipboard = useClipboard();
+  const until = worksUntilLabel(expiresAt);
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center gap-2 rounded-control border border-border-hairline bg-bg-2 px-2 py-1.5">
@@ -547,6 +551,11 @@ function LinkBox({ url, note }: { url: string; note: string }) {
         </button>
       </div>
       <p className="text-xs text-text-muted">{note}</p>
+      {until && (
+        <p className="text-xs text-text-muted" data-testid="invite-link-until">
+          {until}
+        </p>
+      )}
     </div>
   );
 }

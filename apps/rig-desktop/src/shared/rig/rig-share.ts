@@ -130,6 +130,8 @@ export type RigInviteEmailOutcome = {
 export type RigInviteMinted = {
   invite: RigInvite;
   url: string;
+  /** When the link stops working (the relay's default is a week); null for one with no end. */
+  expiresAt: string | null;
   email: RigInviteEmailOutcome;
 };
 
