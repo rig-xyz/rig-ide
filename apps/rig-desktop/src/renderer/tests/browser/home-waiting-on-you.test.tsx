@@ -172,11 +172,10 @@ describe('Home: Waiting on you', () => {
     host.remove();
   });
 
-  it("says so in one line when nothing's waiting", async () => {
+  it("hides the section when nothing's waiting", async () => {
     mocks.activity = [row({ id: '1', type: 'message' }), row({ id: '2', type: 'mention', tier: 'direct', readAt: '2026-10-08T00:00:00Z' })];
     await mount();
-    expect(host.querySelector('h2')?.textContent).toBe('Waiting on you');
-    expect(host.querySelector('[data-testid="waiting-empty"]')?.textContent).toBe('Nothing’s waiting on you.');
+    expect(host.querySelector('[data-testid="waiting-on-you"]')).toBeNull();
     expect(items()).toHaveLength(0);
   });
 

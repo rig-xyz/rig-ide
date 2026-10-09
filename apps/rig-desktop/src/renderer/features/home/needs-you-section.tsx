@@ -184,44 +184,40 @@ export function WaitingOnYouSection({
     refreshInbox();
   };
   const now = Date.now();
+  // Nothing waiting: the section steps out of the way entirely.
+  if (shown.length === 0) return null;
 
   return (
     <section className="flex flex-col gap-1.5" data-testid="waiting-on-you">
       <div className="pb-1">
         <HomeFeedLabel aside={open.length > 0 ? String(open.length) : undefined}>Waiting on you</HomeFeedLabel>
       </div>
-      {shown.length === 0 ? (
-        <p className="py-1.5 text-xs text-text-muted" data-testid="waiting-empty">
-          Nothing&rsquo;s waiting on you.
-        </p>
-      ) : (
-        <ul className="flex flex-col">
-          {shown.map(({ item, line }, index) => (
-            <WaitingRow
-              key={item.key}
-              item={item}
-              first={index === 0}
-              now={now}
-              selfUserId={selfUserId}
-              self={self}
-              avatarOf={avatarOf}
-              context={contextByKey.get(item.key) ?? null}
-              pending={item.kind === 'approval' ? (pendingByRun.get(item.runId) ?? null) : null}
-              doneText={line}
-              collapsing={collapsing.has(doneKeyOf(item))}
-              spacePath={pathOf(item.bindingId)}
-              onOpenPath={onOpenPath}
-              onMarkRead={markRead}
-              onDone={() => finish(item)}
-              onInvitesChanged={() => {
-                void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY_PREFIX });
-                void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
-              }}
-              onConnectionsChanged={() => void queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY })}
-            />
-          ))}
-        </ul>
-      )}
+      <ul className="flex flex-col">
+        {shown.map(({ item, line }, index) => (
+          <WaitingRow
+            key={item.key}
+            item={item}
+            first={index === 0}
+            now={now}
+            selfUserId={selfUserId}
+            self={self}
+            avatarOf={avatarOf}
+            context={contextByKey.get(item.key) ?? null}
+            pending={item.kind === 'approval' ? (pendingByRun.get(item.runId) ?? null) : null}
+            doneText={line}
+            collapsing={collapsing.has(doneKeyOf(item))}
+            spacePath={pathOf(item.bindingId)}
+            onOpenPath={onOpenPath}
+            onMarkRead={markRead}
+            onDone={() => finish(item)}
+            onInvitesChanged={() => {
+              void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY_PREFIX });
+              void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
+            }}
+            onConnectionsChanged={() => void queryClient.invalidateQueries({ queryKey: CONNECTIONS_KEY })}
+          />
+        ))}
+      </ul>
     </section>
   );
 }
