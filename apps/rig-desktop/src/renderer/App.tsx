@@ -1442,7 +1442,7 @@ export function App() {
         initialPage={settingsPage}
       />
       {/* `rig://join/<secret>` from the website's invite page: confirm, then join and open. */}
-      <DeepLinkJoinDialog onOpenPath={(path) => void openPath(path, { source: 'deeplink', kind: 'space' })} />
+      <DeepLinkJoinDialog onOpenPath={(path, kind) => void openPath(path, { source: 'deeplink', ...(kind ? { kind } : {}) })} />
       {/* Help › Report a Problem. */}
       <ReportProblemDialogHost />
       {bound && bindingDeleted ? (

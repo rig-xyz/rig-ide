@@ -24,8 +24,10 @@ import {
   type RigFileReadResult,
   type RigFileRenameError,
 } from '@shared/rig/files';
+import { firstPullFrom, type RigFirstPull } from '@shared/rig/first-pull';
 import { rigFileRootRegistry } from './file-root-registry';
 import { getFileTitle } from './file-title-cache';
+import { readTapdStatus } from './tapd-status';
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
@@ -470,6 +472,12 @@ export const rigFilesController = createRPCController({
     if (!startWatch(rootId, root.data))
       return failure({ kind: 'ioError', message: 'Could not watch this folder.' });
     return ok<void>();
+  },
+  /** Whether this root's first download from the space has finished, as its sync process says. */
+  firstPull: async ({ rootId }: { rootId: string }): Promise<Result<RigFirstPull, RigFileError>> => {
+    const root = await rigFileRootRegistry.getVerified(rootId);
+    if (!root.success) return mapRootError(root);
+    return ok(firstPullFrom(await readTapdStatus(root.data)));
   },
   unwatch: ({ rootId }: { rootId: string }): Result<void, RigFileError> => {
     stopWatch(rootId);

@@ -24,6 +24,7 @@ import { canonicalPageUrl, classifyLink, opensBesideChat, webLinkLabel, type Lin
 import { isRigFileUrl } from '@shared/spaces/rig-file';
 import { agentLogoId, BrandLogo, ConnectorMark } from '../logos';
 import { remarkRoomTokens, type RoomTokenKind } from '../message-tokens';
+import { waitingAgentFor } from '../pending-asks';
 import { personOf } from '../person-identity';
 import type { AgentKind, MessageMention, RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
 import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
@@ -491,6 +492,12 @@ export function MessageRow({
   // The emoji picker open from the hover bar keeps the bar showing.
   const [picking, setPicking] = useState(false);
   const askSuggestion = useContext(AskSuggestionContext);
+  const waitingAgent = message.sending ? null : waitingAgentFor(message, snapshot.messages, Date.now());
+  const waiting = waitingAgent ? (
+    <span className="text-xs text-text-muted active-shimmer-muted" data-testid="ask-waiting">
+      {mine ? `Waiting for ${AGENT_NAME[waitingAgent]} to start` : `Waiting for ${who.name}'s ${AGENT_NAME[waitingAgent]} to start`}
+    </span>
+  ) : null;
   const chips = (
     <ReactionChips
       messageId={message.id}
@@ -553,6 +560,7 @@ export function MessageRow({
             </div>
           )}
           {chips}
+          {waiting}
           {askSuggestion?.messageId === message.id && !message.sending && <AskSuggestionButton suggestion={askSuggestion} />}
         </div>
         {/* Nothing to reply to or copy a link to until the relay has it. */}
@@ -588,6 +596,7 @@ export function MessageRow({
           </div>
         )}
         {chips}
+        {waiting}
       </div>
       {actions}
     </div>

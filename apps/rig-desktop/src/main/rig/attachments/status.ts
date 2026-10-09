@@ -82,7 +82,8 @@ export async function attachmentStatus(
     const status: AttachmentFileStatus = { path: query.path, exists, synced, onRelay: onRelay ? onRelay.has(safe) : null };
     if (deletedOnRelay.has(safe)) status.deletedOnRelay = true;
     if (held && (!query.hash || !held.hash || held.hash === query.hash)) {
-      status.notSynced = held.reason === 'file_too_large' ? 'tooLarge' : 'overQuota';
+      status.notSynced =
+        held.reason === 'file_too_large' ? 'tooLarge' : held.reason === 'owner_only' ? 'ownerOnly' : 'overQuota';
     }
     out.push(status);
   }

@@ -56,6 +56,7 @@ const mocks = vi.hoisted(() => ({
   commentsList: vi.fn<(args: unknown) => Promise<unknown>>(),
   commentsCreate: vi.fn<(args: unknown) => Promise<unknown>>(),
   contextCreateTarget: vi.fn<(args: unknown) => Promise<unknown>>(),
+  workspaces: vi.fn<() => Promise<unknown>>(),
 }));
 
 vi.mock('@renderer/lib/ipc', () => ({
@@ -82,6 +83,9 @@ vi.mock('@renderer/lib/ipc', () => ({
       },
       context: {
         createTarget: (...args: unknown[]) => mocks.contextCreateTarget(args[0]),
+      },
+      account: {
+        workspaces: () => mocks.workspaces(),
       },
       // The paintbrush header control reads this unconditionally, even off
       // its own react-query path (`use-paintbrush.ts`'s `enabled` gate calls
@@ -162,6 +166,7 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
     });
     mocks.commentsList.mockReset().mockResolvedValue({ success: true, data: { messages: [] } });
     mocks.commentsCreate.mockReset();
+    mocks.workspaces.mockReset();
     mocks.contextCreateTarget.mockReset().mockResolvedValue({
       success: true,
       data: { targetRef: 'test-target' },
@@ -352,6 +357,52 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
     // Edit is CM6, byte-for-byte the raw source — no rendered heading.
     expect(host.querySelector('.cm-content')?.textContent).toContain('# Hello');
     expect(host.querySelector('h1')).toBeNull();
+  });
+
+  async function openEditAsRole(path: string, role: string): Promise<void> {
+    // A bindingId turns on the title bar menu's pins, which read this.
+    vi.mocked(rpc.rig.settings.get).mockResolvedValue({ pinnedPathsByRig: {} } as never);
+    onTestFinished(() => {
+      vi.mocked(rpc.rig.settings.get).mockResolvedValue({} as never);
+    });
+    mocks.workspaces.mockResolvedValue({
+      success: true,
+      data: [{ id: 'bnd-1', name: '#team', role, kind: 'space', lastSyncedAt: null, createdAt: '' }],
+    });
+    mocks.read.mockImplementation(() =>
+      resolveOnMacrotask({ success: true, data: { content: '# Instructions\n', truncated: false } })
+    );
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ArtifactView root="/repo" rootId="repo-1" path={path} bindingId="bnd-1" onNavigateFolder={() => {}} />
+        </QueryClientProvider>
+      );
+    });
+    await waitFor(() => loadingGone(host));
+    const editButton = Array.from(host.querySelectorAll('button')).find(
+      (button) => button.getAttribute('aria-label') === 'Edit'
+    );
+    await act(async () => {
+      editButton!.click();
+    });
+  }
+
+  it('makes an owner-only file read-only for a member who is not the owner, and says why', async () => {
+    await openEditAsRole('/repo/CLAUDE.md', 'editor');
+    await waitFor(() => host.querySelector('[data-testid="owner-only-line"]') !== null);
+    expect(host.querySelector('[data-testid="owner-only-line"]')?.textContent).toBe(
+      'Only the space’s owner can change this file.'
+    );
+    await waitFor(() => host.querySelector('.cm-content')?.getAttribute('contenteditable') === 'false');
+  });
+
+  it('keeps an owner-only file editable for the owner', async () => {
+    await openEditAsRole('/repo/CLAUDE.md', 'owner');
+    await waitFor(() => mocks.workspaces.mock.calls.length > 0 && host.querySelector('.cm-content') !== null);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(host.querySelector('[data-testid="owner-only-line"]')).toBeNull();
+    expect(host.querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('true');
   });
 
   it('opens a .json file in Preview, pretty printed and colored, with the raw text in Edit', async () => {

@@ -2,13 +2,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Hash, Link as LinkIcon, Loader2, Plus } from 'lucide-react';
 import { useReducedMotion } from 'motion/react';
 import { useEffect, useId, useRef, useState } from 'react';
-import { MY_INVITES_KEY_PREFIX } from '@renderer/features/shell/invites-inbox';
 import { NeedsConnection } from '@renderer/features/shell/needs-connection';
-import { rpc } from '@renderer/lib/ipc';
-import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { Button } from '@renderer/lib/ui/button';
 import { cn } from '@renderer/lib/utils';
-import { normalizeJoinLink } from './join-link';
+import { OrgInviteNote } from './invite-link-field';
+import { joinWithInviteLink } from './join-with-link';
 import { generateSpaceName } from './space-create';
 
 /**
@@ -80,6 +78,7 @@ export function NewSpaceCta({
   const [value, setValue] = useState('');
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [orgUrl, setOrgUrl] = useState<string | null>(null);
 
   // Escape hands focus back to "New space", once it's mounted again.
   useEffect(() => {
@@ -132,45 +131,21 @@ export function NewSpaceCta({
 
   // The pasted link carries the invite's secret, so it's never echoed back in an error line.
   const submit = async () => {
-    const url = normalizeJoinLink(value);
-    if (!url) {
-      setError("That doesn't look like a rig invite link.");
-      return;
-    }
     setJoining(true);
     setError(null);
-    const joined = await rpc.rig.share.acceptInviteLink({ link: url });
-    if (!joined.success) {
-      if (joined.error.kind === 'notSignedIn') {
-        // No usable sign-in on this device: the hub's own /join page can
-        // sign in and accept there instead.
-        const opened = await rpc.app.openExternal(url);
-        setJoining(false);
-        if (!opened.success) {
-          setError(opened.error ?? "Couldn't open the browser.");
-          return;
-        }
-        collapse(false);
-        return;
-      }
-      setJoining(false);
-      setError(joined.error.message);
-      return;
-    }
-
-    void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
-    void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY_PREFIX });
-    const { bindingId, spaceName } = joined.data;
-    const attached = await rpc.rig.join.attach({ bindingId, name: spaceName });
+    setOrgUrl(null);
+    const outcome = await joinWithInviteLink(value, queryClient);
     setJoining(false);
-    collapse(false);
-    if (!attached.success) {
-      // Joined server-side either way — the space shows on Home to set up from there.
-      setError(`You joined ${spaceName ? `#${spaceName}` : 'the space'}, but it couldn't be set up here: ${attached.error.message}`);
+    if (outcome.kind === 'error') {
+      setError(outcome.message);
       return;
     }
-    markJustAttachedSyncing(attached.data.localPath, attached.data.syncing);
-    onOpenPath(attached.data.localPath, { kind: 'space' });
+    if (outcome.kind === 'org') {
+      setOrgUrl(outcome.url);
+      return;
+    }
+    collapse(false);
+    if (outcome.kind === 'opened') onOpenPath(outcome.path, outcome.space ? { kind: 'space' } : undefined);
   };
 
   // Going offline mid-hover or mid-paste folds the bubble and the field away.
@@ -364,6 +339,11 @@ export function NewSpaceCta({
         <p className="text-danger px-3 text-xs" role="alert">
           {error}
         </p>
+      )}
+      {orgUrl && (
+        <div className="px-3">
+          <OrgInviteNote url={orgUrl} />
+        </div>
       )}
     </div>
   );

@@ -204,6 +204,8 @@ export type MessageMeta =
       alsoInChannel?: boolean;
       /** The people tagged by picking them in the composer, in order: their id and the name as written (`meta.mentions` + `meta.mentionNames`). */
       mentions?: MessageMention[];
+      /** The sender's own agent this message asked (`meta.asks`): the Room shows it as waiting until a run starts on it. */
+      asks?: AgentKind;
     }
   | {
       kind: 'session';

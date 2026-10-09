@@ -14,7 +14,7 @@ function invite(overrides: Partial<RigMyInvite> = {}): RigMyInvite {
     role: 'editor',
     createdAt: '2026-08-14T12:00:00Z',
     expiresAt: null,
-    binding: { id: 'bind_1', name: 'knee-ability-rig' },
+    binding: { id: 'bind_1', name: 'knee-ability-rig', kind: 'space' },
     inviter: { name: 'Dylan', email: 'dylan@example.com', avatarUrl: null },
     ...overrides,
   };
@@ -27,8 +27,10 @@ describe('shapeMyInvites', () => {
         id: 'inv_1',
         bindingId: 'bind_1',
         rigName: 'knee-ability-rig',
+        kind: 'space',
+        label: '#knee-ability-rig',
         inviterLabel: 'Dylan',
-        roleLabel: 'editor',
+        roleLabel: 'can edit',
         createdAt: '2026-08-14T12:00:00Z',
       },
     ]);
@@ -45,13 +47,21 @@ describe('shapeMyInvites', () => {
     ).toBe('Someone');
   });
 
-  it('names an unnamed or blank-named rig honestly and coerces a missing role', () => {
+  it('names an unnamed one by its kind and says a missing role as can edit', () => {
     expect(
-      shapeMyInvites([invite({ binding: { id: 'b', name: null }, role: null })])[0]
-    ).toMatchObject({ rigName: 'Unnamed rig', roleLabel: 'member' });
-    expect(shapeMyInvites([invite({ binding: { id: 'b', name: '  ' } })])[0]?.rigName).toBe(
-      'Unnamed rig'
+      shapeMyInvites([invite({ binding: { id: 'b', name: null, kind: 'space' }, role: null })])[0]
+    ).toMatchObject({ label: 'a space', roleLabel: 'can edit' });
+    expect(shapeMyInvites([invite({ binding: { id: 'b', name: '  ', kind: 'rig' } })])[0]?.label).toBe(
+      'a shared folder'
     );
+  });
+
+  it('uses # and space only for a space', () => {
+    expect(shapeMyInvites([invite({ binding: { id: 'b', name: 'notes', kind: 'rig' }, role: 'viewer' })])[0]).toMatchObject({
+      kind: 'rig',
+      label: 'notes',
+      roleLabel: 'can view',
+    });
   });
 
   it('preserves relay order (newest first) without re-sorting', () => {

@@ -69,6 +69,7 @@ function fakeBackend(over: Partial<RigToolsBackend> = {}): RigToolsBackend {
           createdAt: '2026-09-25T12:00:00Z',
         },
         url: 'https://userig.xyz/join/secret',
+        expiresAt: null,
         email: { sent: true, to: email, reason: null },
       })
     ),
@@ -474,6 +475,7 @@ describe('rig_people_invite', () => {
         ok({
           invite: { id: 'i', emailConstraint: email, role, maxUses: 1, useCount: 0, expiresAt: null, revokedAt: null, label: null, createdAt: '' },
           url: 'https://userig.xyz/join/s',
+          expiresAt: null,
           email: { sent: false, to: null, reason: 'email_not_configured' },
         }),
     });
@@ -524,6 +526,7 @@ describe('rig_people_invite to a person', () => {
     ok({
       invite: { id: 'i', emailConstraint: null, role: 'editor' as const, maxUses: 1, useCount: 0, expiresAt: null, revokedAt: null, label: null, createdAt: '' },
       url,
+      expiresAt: null,
       email: { sent: true, to: null, reason: null },
     });
   const withPeople = () =>

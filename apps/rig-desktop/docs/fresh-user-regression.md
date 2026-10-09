@@ -114,10 +114,19 @@ Each of these starts from a fresh temp root unless it says otherwise.
       signed in and signed out. Expect one space to be created and one
       sign-in round trip at most, never two spaces or two browser tabs.
 - [ ] **Pending invite with zero spaces.** From a second account, invite
-      this fresh account's email to a space before it has any space. Sign
-      in on the fresh profile. Expect the first-run Home to show the pending
-      invite under Start fresh, and accepting it to open that space's Room
-      without creating a space of its own.
+      this fresh account's email to a space before it has any space. On the
+      fresh profile, use Welcome's **Sign in** link, which signs in without
+      making a space. Expect the first-run Home to lead with "Name invited
+      you to #space" and a big **Join #space** button, with every other
+      invite listed under it and **Start fresh instead** as a quiet link.
+      Join opens that space's Room without creating a space of its own.
+- [ ] **Invite link on the first screen.** On a fresh profile, paste a
+      space invite link into **Have an invite link?** under Start fresh.
+      Expect it to join and open the space. An organization invite link
+      there says to open it in the browser, with **Open in browser**.
+- [ ] **Start fresh fails.** Make `~/Rig` a file in the temp home before
+      Start fresh. Expect "Rig couldn't make its folder in your home
+      folder." under the button, and the button still clickable.
 
 ## Two-profile run
 

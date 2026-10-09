@@ -8,16 +8,21 @@
  * simply "how many rows".
  */
 
+import { inviteRoleLabel, inviteTargetLabel, type InviteBindingKind } from '@shared/rig/invite-label';
 import type { RigMyInvite } from '@shared/rig/rig-share';
 
 export type MyInviteRow = {
   id: string;
   bindingId: string;
-  /** The rig's name, strong in the row. */
+  /** The binding's own name, '' when it has none. */
   rigName: string;
+  /** A space or a plain rig; null when the relay didn't say. */
+  kind: InviteBindingKind;
+  /** What it's to, as people read it: `#name` for a space, the plain name for a rig. */
+  label: string;
   /** Who invited — display name, else email, else an honest placeholder. */
   inviterLabel: string;
-  /** Mono role chip; invitee-plane invites always grant a role, but null coerces honestly. */
+  /** The role as the Room says it: "can edit" or "can view". */
   roleLabel: string;
   createdAt: string;
 };
@@ -26,9 +31,11 @@ export function shapeMyInvites(invites: RigMyInvite[]): MyInviteRow[] {
   return invites.map((invite) => ({
     id: invite.id,
     bindingId: invite.binding.id,
-    rigName: invite.binding.name?.trim() ? invite.binding.name : 'Unnamed rig',
+    rigName: invite.binding.name?.trim() ?? '',
+    kind: invite.binding.kind,
+    label: inviteTargetLabel(invite.binding.kind, invite.binding.name),
     inviterLabel: invite.inviter.name ?? invite.inviter.email ?? 'Someone',
-    roleLabel: invite.role ?? 'member',
+    roleLabel: inviteRoleLabel(invite.role),
     createdAt: invite.createdAt,
   }));
 }

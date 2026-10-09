@@ -77,6 +77,13 @@ describe('attachmentStatus', () => {
     expect(s).toMatchObject({ exists: true, synced: false, notSynced: 'overQuota' });
   });
 
+  it('reports files the relay refused as owner-only, not as over the quota', async () => {
+    writeFileSync(join(space, 'attachments', 'CLAUDE.md'), 'v');
+    state({}, [{ path: 'attachments/CLAUDE.md', reason: 'owner_only', hash: 'sha256:v', at: '' }]);
+    const [s] = (await attachmentStatus(deps(), 'bnd', [{ path: 'attachments/CLAUDE.md', hash: 'sha256:v' }], { withRelay: false }))!;
+    expect(s).toMatchObject({ exists: true, synced: false, notSynced: 'ownerOnly' });
+  });
+
   it('says whether a missing file is on the relay list, when asked', async () => {
     const result = await attachmentStatus(
       deps([{ path: 'attachments/coming.pdf', size: 1 }]),

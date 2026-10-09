@@ -28,6 +28,7 @@ import { findBindingConfig } from './binding';
 import { readRelayToken } from './config';
 import { checkRelayTrust } from './relay-trust';
 import { fetchRelay } from './relay-request';
+import { parseBindingKind } from '@shared/rig/invite-label';
 
 /**
  * Rig-level sharing (the file browser header's Share button): who is on this
@@ -54,11 +55,11 @@ type Resolved = { target: Target; token: string };
 
 const NOT_BOUND: RigShareError = {
   kind: 'notBound',
-  message: "This workspace isn't synced to a rig",
+  message: "This folder isn't synced yet.",
 };
 const UNAUTHENTICATED: RigShareError = {
   kind: 'unauthenticated',
-  message: 'Not signed in to Rig Hub — run `rig login`',
+  message: 'Sign in to Rig to share.',
 };
 
 /** Untrusted relays already warned about, keyed per (binding, host) — not per call. */
@@ -78,7 +79,7 @@ function gateRelayTrust(target: Target): RigShareError | null {
   return {
     kind: 'untrustedRelay',
     host: trust.host,
-    message: `This workspace points sharing at an unrecognized relay (${trust.host}) — sharing is disabled.`,
+    message: `Sharing is off because this space points at a server Rig doesn't recognize, ${trust.host}.`,
   };
 }
 
@@ -426,7 +427,7 @@ async function mintInvite(
     }
     forgetPeopleCache();
     telemetryService.capture('invite_sent', {});
-    return ok({ invite, url, email: toEmailOutcome(data?.email) });
+    return ok({ invite, url, expiresAt: invite.expiresAt, email: toEmailOutcome(data?.email) });
   } catch (error) {
     return err(transportError(action, error));
   }
@@ -487,6 +488,7 @@ export function toMyInvite(value: unknown): RigMyInvite | null {
     binding: {
       id: binding.id,
       name: typeof binding.name === 'string' ? binding.name : null,
+      kind: parseBindingKind(binding.kind),
     },
     inviter: {
       name: typeof inviter?.name === 'string' ? inviter.name : null,
@@ -501,7 +503,7 @@ export function toMyInvite(value: unknown): RigMyInvite | null {
 const INVITE_LINK_NOT_FOUND: RigInviteLinkError = {
   kind: 'notFound',
   status: 404,
-  message: "This invite link doesn't exist — check it, or ask for a new one.",
+  message: "This invite link doesn't exist. Check it, or ask for a new one.",
 };
 
 /** The relay's `invite_invalid` reasons (and the preview's `status`) → this plane's typed kinds. */
@@ -511,11 +513,11 @@ export function inviteLinkInvalid(
 ): RigInviteLinkError {
   switch (reason) {
     case 'expired':
-      return { kind: 'expired', status: 400, message: 'This invite link has expired — ask for a new one.' };
+      return { kind: 'expired', status: 400, message: 'This invite link has expired. Ask for a new one.' };
     case 'revoked':
-      return { kind: 'revoked', status: 400, message: 'This invite link was revoked — ask for a new one.' };
+      return { kind: 'revoked', status: 400, message: 'This invite link was revoked. Ask for a new one.' };
     case 'exhausted':
-      return { kind: 'used', status: 400, message: 'This invite link has already been used — ask for a new one.' };
+      return { kind: 'used', status: 400, message: 'This invite link has already been used. Ask for a new one.' };
     case 'email_mismatch': {
       const invitedHint = typeof emails.invitedHint === 'string' && emails.invitedHint ? emails.invitedHint : undefined;
       const signedInAs = typeof emails.signedInAs === 'string' && emails.signedInAs ? emails.signedInAs : undefined;
@@ -533,7 +535,7 @@ export function inviteLinkInvalid(
       };
     }
     default:
-      return { kind: 'relay', status: 400, message: 'This invite link is no longer valid — ask for a new one.' };
+      return { kind: 'relay', status: 400, message: 'This invite link no longer works. Ask for a new one.' };
   }
 }
 
@@ -560,7 +562,7 @@ function inviteLinkTransportError(action: string, error: unknown, secret: string
   return { kind: 'network', message: `Could not ${action}. Rig can't reach the server right now.` };
 }
 
-const EMPTY_INVITE_PREVIEW: RigInvitePreview = { spaceName: null, inviterName: null, emailHint: null };
+const EMPTY_INVITE_PREVIEW: RigInvitePreview = { spaceName: null, inviterName: null, emailHint: null, kind: null };
 
 /**
  * `GET /v1/invites/:secret` — the relay's public preview (no token: the
@@ -583,7 +585,8 @@ async function fetchInvitePreview(
     if (!response.ok) return ok(EMPTY_INVITE_PREVIEW);
     const data = asRecord(await response.json());
     if (data?.status === 'revoked' || data?.status === 'expired') return err(inviteLinkInvalid(data.status));
-    const name = asRecord(data?.binding)?.name;
+    const binding = asRecord(data?.binding);
+    const name = binding?.name;
     const inviter = asRecord(data?.inviter);
     const inviterName = [inviter?.name, inviter?.email].find(
       (value): value is string => typeof value === 'string' && value.length > 0
@@ -592,6 +595,7 @@ async function fetchInvitePreview(
       spaceName: typeof name === 'string' && name ? name : null,
       inviterName: inviterName ?? null,
       emailHint: typeof data?.emailHint === 'string' && data.emailHint ? data.emailHint : null,
+      kind: parseBindingKind(binding?.kind),
     });
   } catch (error) {
     return err(inviteLinkTransportError(action, error, secret));
@@ -722,8 +726,9 @@ export const rigShareController = createRPCController({
    * exactly (`POST /v1/me/bindings/:bindingId/invites`, owner-only):
    * full ops, a real role (editor/viewer only — the relay would accept
    * `owner` but the hub never offers it, and neither does this app), the
-   * email constraint when one was typed. No `ttlSeconds` = never expires,
-   * the hub's own default. The relay's `url` comes back for the copy flow —
+   * email constraint when one was typed. No `ttlSeconds`: the relay's
+   * default applies (a week, `security-config.ts`), and the answer's
+   * `expiresAt` says when. The relay's `url` comes back for the copy flow —
    * see `RigInviteMinted`'s doc comment for why no email goes out here.
    */
   createInvite: async ({
@@ -940,7 +945,7 @@ export const rigShareController = createRPCController({
         return err<RigShareError>({
           kind: 'relay',
           status: 400,
-          message: 'This invite is no longer valid — ask for a new one.',
+          message: 'This invite no longer works. Ask for a new one.',
         });
       }
       if (response.status === 404) {
@@ -1055,7 +1060,7 @@ export const rigShareController = createRPCController({
 
     const preview = await fetchInvitePreview(ctx.url, secret, action);
     if (!preview.success) return err(preview.error);
-    const { spaceName } = preview.data;
+    const { spaceName, kind } = preview.data;
 
     let response: Response;
     try {
@@ -1095,7 +1100,7 @@ export const rigShareController = createRPCController({
       if (!bindingId) return err<RigInviteLinkError>({ kind: 'relay', message: `Could not ${action}.` });
       forgetPeopleCache();
       telemetryService.capture('invite_accepted', {});
-      return ok({ bindingId, spaceName, becameMember: asRecord(data?.member) !== null });
+      return ok({ bindingId, spaceName, kind, becameMember: asRecord(data?.member) !== null });
     } catch (error) {
       return err(inviteLinkTransportError(action, error, secret));
     }

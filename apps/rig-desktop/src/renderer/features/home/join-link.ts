@@ -17,5 +17,6 @@ import { parseInviteLink } from '@shared/rig/invite-link';
  * rejecting it outright.
  */
 export function normalizeJoinLink(input: string): string | null {
-  return parseInviteLink(input)?.url ?? null;
+  const parsed = parseInviteLink(input);
+  return parsed?.kind === 'invite' ? parsed.url : null;
 }

@@ -5,11 +5,14 @@ import {
   GitMerge,
   Globe,
   Loader2,
+  Lock,
   MessageSquare,
   Sparkles,
 } from 'lucide-react';
 import { getSearchQuery, openSearchPanel, SearchQuery, searchPanelOpen, setSearchQuery } from '@codemirror/search';
+import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
+import { useQuery } from '@tanstack/react-query';
 import { observer } from 'mobx-react-lite';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { commentDecorations } from '@renderer/features/docs/comments/comment-decorations';
@@ -37,10 +40,12 @@ import { PageView } from '@renderer/features/pages/page-view';
 import { cmdFTarget, CmdFRouteContext, focusOf, isCmdF } from '@renderer/features/shell/cmd-f-target';
 import { archiveEntry } from '@renderer/features/workspace/file-actions';
 import { requestOpenFile } from '@renderer/features/workspace/open-file-request';
+import { rpc } from '@renderer/lib/ipc';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
 import { conflictCopyOriginal } from '@shared/rig/conflict-copies';
 import { classifyEntryCategory, relPathFromRoot } from '@shared/rig/file-navigator-categories';
+import { isLockedForRole, OWNER_ONLY_LINE } from '@shared/rig/owner-only';
 import { rigFileUrl } from '@shared/spaces/rig-file';
 import { breadcrumbSegments, type BreadcrumbSegment } from './breadcrumb';
 import type { EditorLanguage } from './file-type';
@@ -110,6 +115,20 @@ export const ArtifactView = observer(function ArtifactView({
     [root, path]
   );
   const conflictBanner = <ConflictCopyBanner root={root} rootId={rootId} path={path} />;
+  // Agent instructions change only by the space's owner: the relay refuses
+  // anyone else's edit, so for them the file is read-only here. The role
+  // comes from the same cached workspaces listing the rest of the app reads.
+  const workspacesQuery = useQuery({
+    queryKey: ['rig', 'account', 'workspaces'],
+    queryFn: () => rpc.rig.account.workspaces(),
+    enabled: !!bindingId,
+    staleTime: 60_000,
+  });
+  const role =
+    bindingId && workspacesQuery.data?.success
+      ? (workspacesQuery.data.data.find((b) => b.id === bindingId)?.role ?? null)
+      : null;
+  const ownerOnly = path.startsWith(`${root}/`) && isLockedForRole(role, relPathFromRoot(root, path));
 
   if (type !== null && (type.category === 'markdown' || type.category === 'text')) {
     return (
@@ -131,6 +150,7 @@ export const ArtifactView = observer(function ArtifactView({
         fileOptions={fileOptions}
         banner={conflictBanner}
         bindingId={bindingId ?? null}
+        ownerOnly={ownerOnly}
       />
     );
   }
@@ -413,6 +433,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   fileOptions,
   banner,
   bindingId,
+  ownerOnly = false,
 }: {
   root: string;
   rootId: string;
@@ -430,6 +451,8 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   banner?: React.ReactNode;
   /** The space or rig the file is in: an html file opens in Browser mode through it. */
   bindingId?: string | null;
+  /** Only the space's owner can change this file, and this isn't them: read-only, with a line saying why. */
+  ownerOnly?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<PreviewHandle | null>(null);
@@ -887,6 +910,15 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
           <span>Skill · teaches your agents</span>
         </div>
       )}
+      {ownerOnly && (
+        <div
+          data-testid="owner-only-line"
+          className="flex shrink-0 items-center gap-1.5 border-b border-border-hairline bg-bg-2 px-4 py-1.5 text-xs text-text-muted"
+        >
+          <Lock className="size-3 shrink-0" strokeWidth={1.5} />
+          <span>{OWNER_ONLY_LINE}</span>
+        </div>
+      )}
       {banner}
 
       {readingFindOpen && !resource.isLoading && !resource.loadError && (
@@ -942,7 +974,9 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
               )
             ) : (
               <DocEditor
-                key={resource.path}
+                // Read-only rides the key, as in the focus view: CM6 bakes
+                // editability in when the state is built.
+                key={`${resource.path}:${ownerOnly ? 'ro' : 'rw'}`}
                 ref={resource.editorRef}
                 path={resource.path}
                 initialContent={resource.content}
@@ -950,7 +984,14 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 onChange={resource.handleEditorChange}
                 onSave={() => void resource.flush()}
                 onSelectionChange={resource.handleSelectionChange}
-                extraExtensions={resource.extensionFactories}
+                extraExtensions={
+                  ownerOnly
+                    ? [
+                        ...resource.extensionFactories,
+                        () => [EditorState.readOnly.of(true), EditorView.editable.of(false)],
+                      ]
+                    : resource.extensionFactories
+                }
               />
             )}
             {comments && showComments && (

@@ -34,8 +34,18 @@ describe('extractInviteSecret', () => {
 describe('parseInviteLink', () => {
   it('returns the normalized URL alongside the secret', () => {
     expect(parseInviteLink('userig.xyz/join/abc123')).toEqual({
+      kind: 'invite',
       url: 'https://userig.xyz/join/abc123',
       secret: 'abc123',
     });
+  });
+
+  it('recognizes an organization invite, which is never taken as a space secret', () => {
+    expect(parseInviteLink('https://userig.xyz/join/org/tok_9')).toEqual({
+      kind: 'org',
+      url: 'https://userig.xyz/join/org/tok_9',
+      secret: 'tok_9',
+    });
+    expect(extractInviteSecret('https://userig.xyz/join/org/tok_9')).toBeNull();
   });
 });

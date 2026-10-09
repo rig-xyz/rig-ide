@@ -121,6 +121,14 @@ describe('Your people and member management', () => {
     });
   });
 
+  it('says when the minted link stops working', async () => {
+    fetchMock.mockResolvedValueOnce(
+      json(201, { invite: { ...INVITE, expiresAt: '2026-10-16T12:00:00.000Z' }, secret: 'tap_inv_x', email: { sent: false } })
+    );
+    const result = await rigShareController.createInvite({ root: '/rigs/growth', email: null, role: 'editor' });
+    expect(result).toMatchObject({ success: true, data: { expiresAt: '2026-10-16T12:00:00.000Z' } });
+  });
+
   it('revokes and fails when a relay ignored targetUserId and minted an open link', async () => {
     fetchMock
       .mockResolvedValueOnce(json(201, { invite: INVITE, secret: 'tap_inv_x' }))

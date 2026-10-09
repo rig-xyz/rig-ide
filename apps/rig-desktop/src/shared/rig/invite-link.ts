@@ -14,6 +14,12 @@ import { RIG_WEBSITE_URL } from '@shared/urls';
 const JOIN_HOST = new URL(RIG_WEBSITE_URL).hostname.toLowerCase();
 
 export type ParsedInviteLink = {
+  /**
+   * `invite`: a space or rig invite the app can accept. `org`: an
+   * organization invite (`/join/org/<token>`), which only the website
+   * accepts.
+   */
+  kind: 'invite' | 'org';
   /** The normalized link (scheme added when the paste had none). */
   url: string;
   /** The invite secret, URL-decoded. */
@@ -40,7 +46,9 @@ export function parseInviteLink(input: string): ParsedInviteLink | null {
   if (!['http:', 'https:'].includes(url.protocol)) return null;
   if (url.hostname.toLowerCase() !== JOIN_HOST) return null;
 
-  const match = /^\/join\/([^/]+)$/.exec(url.pathname.replace(/\/+$/, ''));
+  const path = url.pathname.replace(/\/+$/, '');
+  const org = /^\/join\/org\/([^/]+)$/.exec(path);
+  const match = org ?? /^\/join\/([^/]+)$/.exec(path);
   if (!match) return null;
   let secret: string;
   try {
@@ -50,12 +58,13 @@ export function parseInviteLink(input: string): ParsedInviteLink | null {
   }
   if (!secret) return null;
 
-  return { url: url.toString(), secret };
+  return { kind: org ? 'org' : 'invite', url: url.toString(), secret };
 }
 
 /** Just the secret out of a pasted invite link — `null` when it isn't one. */
 export function extractInviteSecret(input: string): string | null {
-  return parseInviteLink(input)?.secret ?? null;
+  const parsed = parseInviteLink(input);
+  return parsed?.kind === 'invite' ? parsed.secret : null;
 }
 
 /**

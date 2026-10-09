@@ -25,6 +25,7 @@ import { cn } from '@renderer/lib/utils';
 import { classifyEntryCategory, filterToContentOnly } from '@shared/rig/file-navigator-categories';
 import { rigFileChangeChannel } from '@shared/rig/files';
 import type { RigFileNode } from '@shared/rig/files';
+import { stillSyncingDetail, type RigFirstPull } from '@shared/rig/first-pull';
 import {
   collectFileRelPaths,
   computeUnseenSummary,
@@ -95,6 +96,8 @@ import { useRecentWrites } from './write-activity';
  */
 
 const HIGHLIGHT_MS = 1400;
+/** How often a just-joined tree asks tapd whether its first download is done. */
+const FIRST_PULL_POLL_MS = 3000;
 
 /** Sort names describe the resulting ORDER, not the machinery behind it. */
 const FILE_SORT_LABELS: Record<FileTreeSort, string> = {
@@ -239,15 +242,11 @@ export function FileTree({
    * "Set up locally" (`rig attach --json`'s own `syncing` flag, handed
    * through `App.tsx`'s `openPath` via `lib/just-attached.ts`) — while
    * true AND the listing is still empty, the empty branch below reads as
-   * "syncing files…" instead of "Empty folder." Investigated: no RPC in
-   * this app reports "tapd is actively pulling right now" as an ongoing
-   * status; the real signal used here instead is the SAME file-watcher
-   * subscription this component already runs (`sawChange` below) — the
-   * first `rigFileChangeChannel` event for this root means tapd either
-   * produced files (the listing itself stops being empty) or settled
-   * without any (a genuinely empty rig), and either way "syncing" has
-   * stopped being the honest word for the state. A timer would guess at
-   * that moment; this waits for real evidence of it instead.
+   * "Still syncing" instead of "Empty folder." It ends when tapd says the
+   * first download is done (`rpc.rig.files.firstPull`, polled from
+   * `tapd status`), not on the first disk event: tapd writes its own state
+   * files long before any of the space's files land. Only when tapd can't
+   * answer at all does it fall back to the first disk event (`sawChange`).
    */
   justAttachedSyncing?: boolean;
   /** File-navigator redesign: System entries stay hidden until this is true (`App.tsx`'s `FileBrowser` header toggle). */
@@ -273,6 +272,9 @@ export function FileTree({
   const queryClient = useQueryClient();
   const queryKey = useMemo(() => rigFilesQueryKey(root, rootId), [root, rootId]);
   const [sawChange, setSawChange] = useState(false);
+  const sawChangeRef = useRef(false);
+  sawChangeRef.current = sawChange;
+  const [firstPull, setFirstPull] = useState<RigFirstPull | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey,
     queryFn: async () => {
@@ -301,6 +303,38 @@ export function FileTree({
       void rpc.rig.files.unwatch({ rootId });
     };
   }, [root, rootId, queryClient, queryKey]);
+
+  // First download: ask tapd until it says it's done, then list once more.
+  useEffect(() => {
+    setFirstPull(null);
+    if (!justAttachedSyncing) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const check = async () => {
+      let result: Awaited<ReturnType<typeof rpc.rig.files.firstPull>> | null = null;
+      try {
+        result = await rpc.rig.files.firstPull({ rootId });
+      } catch {
+        result = null;
+      }
+      if (!alive) return;
+      const pull: RigFirstPull = result?.success ? result.data : { state: 'unknown' };
+      setFirstPull(pull);
+      if (pull.state === 'done') {
+        void queryClient.invalidateQueries({ queryKey });
+        return;
+      }
+      if (pull.state === 'unknown' && sawChangeRef.current) return;
+      timer = setTimeout(() => void check(), FIRST_PULL_POLL_MS);
+    };
+    void check();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [justAttachedSyncing, rootId, queryClient, queryKey]);
+  const stillSyncing =
+    justAttachedSyncing && firstPull?.state !== 'done' && !(firstPull?.state === 'unknown' && sawChange);
 
   const contentTree = useMemo(
     () => filterContentTree(data ?? [], showSystemFiles),
@@ -479,13 +513,15 @@ export function FileTree({
     );
   }
   if (!data || data.length === 0 || contentTree.length === 0) {
-    if (justAttachedSyncing && !sawChange) {
+    if (stillSyncing) {
+      const detail = stillSyncingDetail(firstPull);
       return (
         <>
           {tabs}
           <div className="flex flex-col items-center gap-2 px-3 py-8 text-center">
             <Loader2 className="size-4 animate-spin text-text-muted" strokeWidth={1.5} />
-            <p className="text-xs text-text-muted">Syncing files…</p>
+            <p className="text-xs text-text-muted">Still syncing…</p>
+            {detail && <p className="text-2xs text-text-muted">{detail}</p>}
           </div>
         </>
       );

@@ -317,14 +317,14 @@ describe('summarizeAskSources', () => {
 
   it('groups by bindingId across multiple rigs — "across N rigs", not names', () => {
     expect(summarizeAskSources([intent('i1', 'b1', 'rig-bike'), intent('i2', 'b2', 'rig-hike')])).toBe(
-      'Answered from 2 intents across 2 rigs'
+      'Answered from 2 intents across 2 spaces'
     );
   });
 
   it('multiple intents citing the SAME rig still count as one rig, not one per citation', () => {
     expect(
       summarizeAskSources([intent('i1', 'b1', 'rig-bike'), intent('i2', 'b1', 'rig-bike'), intent('i3', 'b2', 'rig-hike')])
-    ).toBe('Answered from 3 intents across 2 rigs');
+    ).toBe('Answered from 3 intents across 2 spaces');
   });
 
   it('a single rig with an unresolved name omits the "in ..." clause rather than showing null/undefined', () => {
@@ -333,7 +333,7 @@ describe('summarizeAskSources', () => {
 
   it('multiple rigs count honestly by bindingId even when some names are unresolved', () => {
     expect(summarizeAskSources([intent('i1', 'b1', 'rig-bike'), intent('i2', 'b2', null)])).toBe(
-      'Answered from 2 intents across 2 rigs'
+      'Answered from 2 intents across 2 spaces'
     );
   });
 
@@ -357,7 +357,7 @@ describe('askErrorMessage', () => {
   it('a 429 relay error gets the clearer, verified 40/hour line instead of the raw code', () => {
     expect(
       askErrorMessage({ kind: 'relay', status: 429, message: 'Could not ask about your rigs (relay: rate_limited).' })
-    ).toBe("You've reached the Ask limit for this hour (40 questions) — try again later.");
+    ).toBe("You've asked 40 questions this hour, which is the most Ask takes. Try again later.");
   });
 
   it('every other relay status keeps the relay\'s own message verbatim', () => {

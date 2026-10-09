@@ -34,7 +34,7 @@ function json(status: number, body: unknown): Response {
   });
 }
 
-const ACTIVE_PREVIEW = { status: 'active', binding: { name: 'growth' }, inviter: {}, invite: {} };
+const ACTIVE_PREVIEW = { status: 'active', binding: { name: 'growth', kind: 'space' }, inviter: {}, invite: {} };
 
 describe('acceptInviteLink', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -63,7 +63,7 @@ describe('acceptInviteLink', () => {
 
     expect(result).toEqual({
       success: true,
-      data: { bindingId: 'b_1', spaceName: 'growth', becameMember: true },
+      data: { bindingId: 'b_1', spaceName: 'growth', kind: 'space', becameMember: true },
     });
     const [previewUrl, previewInit] = fetchMock.mock.calls[0]!;
     expect(previewUrl).toBe(`${RELAY}/v1/invites/${SECRET}`);
@@ -84,7 +84,7 @@ describe('acceptInviteLink', () => {
 
     expect(result).toEqual({
       success: true,
-      data: { bindingId: 'b_1', spaceName: 'growth', becameMember: false },
+      data: { bindingId: 'b_1', spaceName: 'growth', kind: 'space', becameMember: false },
     });
   });
 
@@ -190,7 +190,7 @@ describe('acceptInviteLink', () => {
       .mockResolvedValueOnce(json(201, { bindingId: 'b_1', device: {}, token: {}, member: null }));
     expect(await rigShareController.acceptInviteLink({ link: LINK })).toEqual({
       success: true,
-      data: { bindingId: 'b_1', spaceName: null, becameMember: false },
+      data: { bindingId: 'b_1', spaceName: null, kind: null, becameMember: false },
     });
   });
 
@@ -231,7 +231,7 @@ describe('previewInviteLink', () => {
 
     const result = await rigShareController.previewInviteLink({ link: LINK });
 
-    expect(result).toEqual({ success: true, data: { spaceName: 'growth', inviterName: 'Ada', emailHint: null } });
+    expect(result).toEqual({ success: true, data: { spaceName: 'growth', inviterName: 'Ada', emailHint: null, kind: 'space' } });
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe(`${RELAY}/v1/invites/${SECRET}`);
     expect(init.headers.authorization).toBeUndefined();
@@ -244,12 +244,12 @@ describe('previewInviteLink', () => {
     );
     expect(await rigShareController.previewInviteLink({ link: LINK })).toEqual({
       success: true,
-      data: { spaceName: 'growth', inviterName: 'ada@example.com', emailHint: null },
+      data: { spaceName: 'growth', inviterName: 'ada@example.com', emailHint: null, kind: 'space' },
     });
     fetchMock.mockResolvedValueOnce(json(200, { status: 'active', binding: { name: null }, inviter: {} }));
     expect(await rigShareController.previewInviteLink({ link: LINK })).toEqual({
       success: true,
-      data: { spaceName: null, inviterName: null, emailHint: null },
+      data: { spaceName: null, inviterName: null, emailHint: null, kind: null },
     });
   });
 
@@ -257,7 +257,7 @@ describe('previewInviteLink', () => {
     fetchMock.mockResolvedValueOnce(json(200, { ...ACTIVE_PREVIEW, emailHint: 'h•••@gmail.com' }));
     expect(await rigShareController.previewInviteLink({ link: LINK })).toEqual({
       success: true,
-      data: { spaceName: 'growth', inviterName: null, emailHint: 'h•••@gmail.com' },
+      data: { spaceName: 'growth', inviterName: null, emailHint: 'h•••@gmail.com', kind: 'space' },
     });
   });
 

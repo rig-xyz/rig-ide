@@ -121,7 +121,7 @@ export function deriveHomeRegions(input: HomeRegionsInput): HomeRegions {
         text: 'No agent is set up on this Mac yet.',
       };
     } else if (!input.signedIn) {
-      health = { kind: 'signedOut', text: "Sign in to see your team's rigs" };
+      health = { kind: 'signedOut', text: "Sign in to see your team's spaces" };
     }
     // Relay unreachable is no longer a health line: Home's connection banner
     // (`home-connection.ts`) says it, with a way to try again.
@@ -277,7 +277,7 @@ export function canAutoJoin(role: string): boolean {
 }
 
 /** The honest sentence behind the relay-only row's status icon — `rigs-rail.tsx`'s tooltip, verbatim. */
-export const NOT_SET_UP_TOOLTIP = 'Not set up on this Mac — use ⋯ to download or locate';
+export const NOT_SET_UP_TOOLTIP = 'Not set up on this Mac. Use ⋯ to download it or find it.';
 
 /** Lane J: the Spaces card's not-set-up row is itself the download action, so its tooltip says so. */
 export const SPACE_NOT_SET_UP_TOOLTIP = 'Not on this Mac yet. Click to download it.';

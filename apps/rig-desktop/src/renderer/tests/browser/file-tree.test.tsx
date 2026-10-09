@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn<(args: { rootId: string }) => Promise<unknown>>(),
   watch: vi.fn<(args: { rootId: string }) => void>(),
   unwatch: vi.fn<(args: { rootId: string }) => void>(),
+  firstPull: vi.fn<(args: { rootId: string }) => Promise<unknown>>(),
 }));
 
 let fileChangeListener: ((data: { rootId: string }) => void) | null = null;
@@ -38,6 +39,7 @@ vi.mock('@renderer/lib/ipc', () => ({
         list: (...args: unknown[]) => mocks.list(...(args as [{ rootId: string }])),
         watch: (...args: unknown[]) => mocks.watch(...(args as [{ rootId: string }])),
         unwatch: (...args: unknown[]) => mocks.unwatch(...(args as [{ rootId: string }])),
+        firstPull: (...args: unknown[]) => mocks.firstPull(...(args as [{ rootId: string }])),
       },
     },
   },
@@ -83,6 +85,7 @@ describe('FileTree — live updates on disk change', () => {
     mocks.list.mockReset();
     mocks.watch.mockReset();
     mocks.unwatch.mockReset();
+    mocks.firstPull.mockReset();
     fileChangeListener = null;
   });
 
@@ -160,5 +163,59 @@ describe('FileTree — live updates on disk change', () => {
 
     await act(async () => root.unmount());
     expect(mocks.unwatch).toHaveBeenCalledWith({ rootId: 'rig-1' });
+  });
+
+  async function renderJustAttached(): Promise<void> {
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <FileTree root="/rig" rootId="rig-1" activePath={null} onOpenFile={() => {}} justAttachedSyncing />
+        </QueryClientProvider>
+      );
+    });
+  }
+
+  it('stays syncing through disk events until tapd reports the first pull, then lists the files', async () => {
+    mocks.list.mockResolvedValue({ success: true, data: [] });
+    mocks.firstPull.mockResolvedValue({ success: true, data: { state: 'syncing', pending: 3 } });
+
+    await renderJustAttached();
+    await waitFor(() => host.textContent?.includes('3 changes to go') ?? false);
+    expect(host.textContent).toContain('Still syncing');
+
+    // tapd writing its own state files: a disk event, but nothing has landed.
+    await act(async () => {
+      fileChangeListener?.({ rootId: 'rig-1' });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(host.textContent).toContain('Still syncing');
+    expect(host.textContent).not.toContain('Empty folder');
+
+    mocks.firstPull.mockResolvedValue({ success: true, data: { state: 'done' } });
+    mocks.list.mockResolvedValue({ success: true, data: [fileNode('alpha.md')] });
+    await waitFor(() => host.textContent?.includes('alpha') ?? false, 6000);
+    expect(host.textContent).not.toContain('Still syncing');
+  });
+
+  it('says Empty folder once tapd reports a first pull that brought nothing', async () => {
+    mocks.list.mockResolvedValue({ success: true, data: [] });
+    mocks.firstPull.mockResolvedValue({ success: true, data: { state: 'done' } });
+
+    await renderJustAttached();
+    await waitFor(() => host.textContent?.includes('Empty folder') ?? false);
+    expect(host.textContent).not.toContain('Still syncing');
+  });
+
+  it('falls back to the first disk event when tapd cannot answer', async () => {
+    mocks.list.mockResolvedValue({ success: true, data: [] });
+    mocks.firstPull.mockResolvedValue({ success: true, data: { state: 'unknown' } });
+
+    await renderJustAttached();
+    await waitFor(() => mocks.firstPull.mock.calls.length > 0);
+    expect(host.textContent).toContain('Still syncing');
+    await act(async () => {
+      fileChangeListener?.({ rootId: 'rig-1' });
+    });
+    await waitFor(() => host.textContent?.includes('Empty folder') ?? false);
   });
 });

@@ -95,9 +95,10 @@ export function onOpenSetupRequest(listener: (id: string) => void): () => void {
  */
 export async function startSpaceSetup(name: string): Promise<string | null> {
   attach();
-  const result = await rpc.rig.spaceSetup.start({ name }).catch((error: unknown) => ({
+  // A thrown call (IPC gone) has nothing a person can act on: say it plainly.
+  const result = await rpc.rig.spaceSetup.start({ name }).catch(() => ({
     success: false as const,
-    error: { message: error instanceof Error ? error.message : 'Could not start the space.' },
+    error: { message: "Rig couldn't start your space. Try again." },
   }));
   if (!result.success) return result.error.message;
   applySpaceSetup(result.data);
