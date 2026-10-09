@@ -23,6 +23,7 @@ import {
 } from '@renderer/features/docs/comments/comments-store';
 import { useRigDocumentContext } from '@renderer/features/docs/context/use-rig-document-context';
 import { DocEditor } from '@renderer/features/docs/doc-editor';
+import { FileThreadsList } from '@renderer/features/docs/comments/file-threads-list';
 import { DocTabResource } from '@renderer/features/docs/doc-file-sync';
 import { CommentCount, CommentModeControl, CommentModeStatus } from '@renderer/features/comment-mode/comment-mode-ui';
 import { PaintbrushCursorChip } from '@renderer/features/docs/paintbrush/paintbrush-cursor-chip';
@@ -43,7 +44,7 @@ import { conflictCopyOriginal } from '@shared/rig/conflict-copies';
 import { classifyEntryCategory, relPathFromRoot } from '@shared/rig/file-navigator-categories';
 import { rigFileUrl } from '@shared/spaces/rig-file';
 import { breadcrumbSegments, type BreadcrumbSegment } from './breadcrumb';
-import type { EditorLanguage } from './file-type';
+import { takesComments, type EditorLanguage } from './file-type';
 import { ImageArtifact } from './image-artifact';
 import { PdfArtifact } from './pdf-artifact';
 import { getPreviewMode, rememberedPreviewMode, setPreviewMode, type PreviewMode } from './preview-mode-memory';
@@ -119,12 +120,9 @@ export const ArtifactView = observer(function ArtifactView({
         path={path}
         crumbs={crumbs}
         language={type.category === 'markdown' ? 'markdown' : type.language}
-        // Comments/Share stay markdown-only this round — see this file's
-        // header comment and the round report for why (both are genuinely
-        // path-based/offset-based under the hood, not markdown-coupled;
-        // this is a scope choice, not a technical limit). Extending either
-        // to other text types is a real, cheap follow-up if wanted.
-        commentsEnabled={type.category === 'markdown'}
+        // Comments on markdown, text and code (not CSV: `takesComments`).
+        // Share stays markdown-only.
+        commentsEnabled={takesComments(type, path)}
         showShare={type.category === 'markdown'}
         isSkill={isSkill}
         onNavigateFolder={onNavigateFolder}
@@ -163,6 +161,7 @@ export const ArtifactView = observer(function ArtifactView({
           />
         )}
       </div>
+      {type !== null && <FileThreadsList path={path} />}
     </div>
   );
 });
@@ -704,7 +703,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // CM6 event handlers above. `active` is false in Edit mode (or with
   // comments off), so this never contends with CM6 for the store's surface.
   usePreviewComments({
-    active: mode === 'preview' && comments !== null && showComments,
+    active: mode === 'preview' && !isJson && comments !== null && showComments,
     getRoot: () => previewRef.current?.getRoot() ?? null,
     getIndex: () => previewRef.current?.getIndex() ?? null,
     sourceLength: resource.content.length,
@@ -796,13 +795,16 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
   // above). The store keeps running underneath regardless of mode (polling,
   // `_reanchor`, …) — only the painted UI steps aside, same as it already
   // does for `showComments`.
-  const showMargin = comments !== null && showComments && shouldShowMargin(comments);
+  // JSON's Preview is a pretty-printed tree with no anchors to the text:
+  // its comments show beside the text in Edit.
+  const jsonPreview = isJson && mode === 'preview';
+  const showMargin = comments !== null && showComments && !jsonPreview && shouldShowMargin(comments);
   // A real margin beside the text when the panel has room for one, pins only
   // when it doesn't (`marginMode`). With room, the text column always gives
   // the margin its space while comments are on, even before there are any,
   // so opening a draft never moves the text out from under the selection.
   const margin = useMarginMode(containerRef);
-  const commentsOn = isMarkdown && comments !== null && showComments;
+  const commentsOn = comments !== null && showComments && !jsonPreview;
   const openCount = comments !== null && showComments ? comments.visibleThreads.length : 0;
   const resolvedCount = comments !== null && showComments ? comments.visibleResolvedThreads.length : 0;
 
@@ -900,6 +902,21 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
         />
       )}
 
+      {jsonPreview && comments && comments.threads.length > 0 && (
+        <div
+          className="flex shrink-0 items-center gap-2 border-b border-border-hairline bg-bg-2 px-4 py-1.5 text-xs text-text-muted"
+          data-testid="json-preview-comments"
+        >
+          <span>
+            {comments.threads.length === 1 ? '1 comment on this file.' : `${comments.threads.length} comments on this file.`} They show beside
+            the text in Edit.
+          </span>
+          <button type="button" onClick={() => setMode('edit')} className="text-text-primary underline-offset-2 hover:underline">
+            Open Edit
+          </button>
+        </div>
+      )}
+
       {mode === 'browser' && browserUrl ? (
         // The page itself, from this Mac's copy of the space, with the space's pins on it.
         <div className="relative min-h-0 flex-1" data-testid="doc-browser-mode">
@@ -953,7 +970,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 extraExtensions={resource.extensionFactories}
               />
             )}
-            {comments && showComments && (
+            {comments && showComments && !jsonPreview && (
               <CommentPins store={comments} containerRef={containerRef} showResolved={showResolved} />
             )}
             {showMargin && comments && (
@@ -980,7 +997,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
                 overlay={paintbrushOverlay}
               />
             )}
-            {mode === 'preview' && comments && showComments && (
+            {mode === 'preview' && !jsonPreview && comments && showComments && (
               <PreviewCommentSelectionButton
                 getRoot={() => previewRef.current?.getRoot() ?? null}
                 getIndex={() => previewRef.current?.getIndex() ?? null}
@@ -993,6 +1010,7 @@ const EditableArtifactPane = observer(function EditableArtifactPane({
         )}
       </div>
       )}
+      {!commentsEnabled && <FileThreadsList path={path} />}
       {isMarkdown && comments && (
         <PaintbrushCursorChip
           active={paintbrush.on && !paintbrushComposerOpen}

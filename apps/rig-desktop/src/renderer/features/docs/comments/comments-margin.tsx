@@ -42,6 +42,7 @@ import {
 } from '@renderer/features/comment-mode/comment-card';
 import { PaintbrushOrb } from '../paintbrush/paintbrush-orb';
 import { shortenQuote } from './anchors';
+import { lineLabel, showsLineNumbers } from './comment-lines';
 import { offlineChipLabel } from './comments-cache';
 import {
   COMMENT_FILTERS,
@@ -1055,6 +1056,11 @@ export const ThreadCard = observer(function ThreadCard({
   const number = store.threadNumbers.get(root.id);
 
   const summary = shortenQuote(root.anchor?.exact ?? root.body, 140);
+  // Code and text files: which lines the passage is on.
+  const lines =
+    thread.index !== null && root.anchor && showsLineNumbers(store.path)
+      ? lineLabel(store.documentContent, thread.index, thread.length ?? root.anchor.exact.length)
+      : null;
 
   // Long threads fold their middle away by default — a single long thread
   // must not shove the whole rail down.
@@ -1104,6 +1110,11 @@ export const ThreadCard = observer(function ThreadCard({
         </span>
         {store.isPaintbrushThread(root.id) && (
           <PaintbrushOrb spin="off" size={12} className="mt-px shrink-0 opacity-90" />
+        )}
+        {lines && (
+          <span className="text-text-muted shrink-0 font-mono text-xs" data-testid="comment-lines">
+            {lines}
+          </span>
         )}
         {collapsed && (
           <span className="text-text-muted shrink-0 font-mono text-xs">
