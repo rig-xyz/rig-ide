@@ -14,7 +14,7 @@ import type { AcpRuntimeClient } from '@main/core/acp/controller';
 import { log } from '@main/lib/logger';
 import { connectorById, RIG_TOOLS_SERVER, RUN_CONNECTORS_EVENT, type ConnectorGap } from '@shared/spaces/connectors';
 import { reactionsLabel } from '@shared/spaces/reactions';
-import { RUN_PRIVACY_EVENT, type LocalRunEvent, type RoomSees } from '@shared/spaces/room-sees';
+import { RUN_PRIVACY_EVENT, RUN_RETRIED_EVENT, type LocalRunEvent, type RoomSees } from '@shared/spaces/room-sees';
 import type { SessionConnectors } from '../connectors/connections';
 import {
   ALWAYS_ASK_RIG_TOOLS,
@@ -234,6 +234,10 @@ type QueuedTurn = {
   /** When the runtime last told us anything about this turn; a long silence counts it as stalled once (`reportStalled`). */
   lastEventAt: number;
   stallReported?: boolean;
+  /** Sends its prompt again in the same run (`retryAfterSignIn`); `failure` is what the first try said, used if the prompt can't go. */
+  resend?: (failure: string) => Promise<void>;
+  /** It already had its one more try after a sign-in failure. */
+  signInRetried?: boolean;
 };
 
 /** How long a run can go with no events before it counts as stalled. */
@@ -853,6 +857,8 @@ export function createSpacesDispatcher(deps: {
         // itself: a turn that "finished" with one is a failure, with the
         // error's own words as the reason instead of raw JSON as the answer.
         const leaked = ended === 'done' ? leakedProviderError(turn.answer.text, deps.codexVersion?.()) : null;
+        const failure = leaked ?? (ended === 'failed' ? 'the agent stopped with an error' : null);
+        if (failure !== null && retryAfterSignIn(turn, failure)) return;
         if (leaked) {
           void finalizeTurn(turn, 'failed', leaked);
           return;
@@ -881,6 +887,27 @@ export function createSpacesDispatcher(deps: {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * A turn that failed on its sign-in gets one more try in the same run. A
+   * session left idle can hold an access token that has run out: the CLI
+   * gives up on that first 401, and the same prompt sent again usually
+   * works. Only a second failure says the owner must sign in again, and only
+   * it is reported, so a token the CLI got past never counts as one.
+   */
+  function retryAfterSignIn(turn: QueuedTurn, reason: string): boolean {
+    if (turn.signInRetried || !turn.resend || turn.cancelledByStop) return false;
+    const failureText = [reason, turn.answer.text].filter(Boolean).join('\n');
+    if (!isSignInFailure(failureText)) return false;
+    turn.signInRetried = true;
+    log.info('Rig spaces dispatch: the agent failed on its sign-in, sending the prompt once more', { runId: turn.runId });
+    turn.publisher.record(RUN_RETRIED_EVENT, { reason: 'sign_in' });
+    turn.answer = { messageId: null, text: '' };
+    turn.turnId = null;
+    turn.lastEventAt = Date.now();
+    void turn.resend(failureText);
+    return true;
   }
 
   async function finalizeTurn(turn: QueuedTurn, status: SessionStatus, reason?: string): Promise<void> {
@@ -1465,6 +1492,18 @@ export function createSpacesDispatcher(deps: {
         const again = await queue(onRejected);
         if (!again.success) fail(again.error);
       })();
+    };
+    // After a sign-in failure: the same prompt once more, in this run.
+    turn.resend = async (failure) => {
+      session.pending.push(turn);
+      const again = await queue(onRejected);
+      if (again.success) {
+        if (again.data.turnId) turn.turnId = again.data.turnId;
+        return;
+      }
+      const idx = session.pending.indexOf(turn);
+      if (idx !== -1) session.pending.splice(idx, 1);
+      void finalizeTurn(turn, 'failed', failure);
     };
     // Stopped while its context was gathered (`stopLocal` took it off the queue): don't send it.
     if (session.pending.indexOf(turn) === -1) {

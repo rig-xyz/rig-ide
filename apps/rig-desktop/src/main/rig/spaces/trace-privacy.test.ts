@@ -309,6 +309,20 @@ describe('RoomSeesFilter at Steps', () => {
     });
   });
 
+  it('a turn tried again after a sign-in failure sends only the answer from the try that worked', () => {
+    const filter = new RoomSeesFilter('answer', '/rigs/one');
+    const chunk = (text: string) => ({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+    const out = [
+      ...filter.filter('agent_message_chunk', chunk('API Error: 401 authentication_error')),
+      ...filter.filter('run_retried', { reason: 'sign_in' }),
+      ...filter.filter('agent_message_chunk', chunk('The launch is on Friday.')),
+      ...filter.filter('turn_ended', { status: 'done' }),
+    ];
+    expect(out[0]).toEqual({ kind: 'run_retried', payload: { reason: 'sign_in' } });
+    const answers = out.filter((e) => e.kind === 'agent_message_chunk').map((e) => e.payload.content);
+    expect(answers).toEqual([{ type: 'text', text: 'The launch is on Friday.' }]);
+  });
+
   it('redacts an approval to its step label: no command, no option names', () => {
     expect(out.find((e) => e.kind === 'permission_requested')?.payload).toEqual({
       requestId: 'p1',

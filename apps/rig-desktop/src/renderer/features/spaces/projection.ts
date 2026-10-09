@@ -23,7 +23,13 @@
 
 import { RUN_CONNECTORS_EVENT, rigToolArgs, type ConnectorGap } from '@shared/spaces/connectors';
 import type { RunSummary } from '@shared/spaces/room-cache';
-import { DETAILS_HIDDEN_EVENT, isRoomSees, PRIVATE_PROGRESS_EVENT, RUN_PRIVACY_EVENT } from '@shared/spaces/room-sees';
+import {
+  DETAILS_HIDDEN_EVENT,
+  isRoomSees,
+  PRIVATE_PROGRESS_EVENT,
+  RUN_PRIVACY_EVENT,
+  RUN_RETRIED_EVENT,
+} from '@shared/spaces/room-sees';
 import type {
   RoomSnapshot,
   SessionCard,
@@ -58,6 +64,7 @@ export function newSessionCard(): SessionCard {
     privateSteps: 0,
     detailsHidden: false,
     reacted: [],
+    retriedAfterSignIn: false,
   };
 }
 
@@ -316,6 +323,13 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
     case DETAILS_HIDDEN_EVENT: {
       state.detailsHidden = true;
       if (typeof p.steps === 'number') state.privateSteps = Math.max(state.privateSteps, p.steps);
+      break;
+    }
+    case RUN_RETRIED_EVENT: {
+      // The first try failed on the agent's sign-in and the prompt went again: what it printed is no answer.
+      state.retriedAfterSignIn = true;
+      state.finalAnswer = '';
+      state._lastMessageId = undefined;
       break;
     }
     case 'turn_ended': {

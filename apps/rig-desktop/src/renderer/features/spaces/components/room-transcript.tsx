@@ -93,6 +93,26 @@ function isQueued(meta: SessionRunMeta, snapshot: RoomSnapshot): boolean {
   );
 }
 
+/**
+ * A failed run whose same ask went to the same person's same agent again
+ * (Retry) and finished. Its card sits right above the one that worked, so
+ * its red error would read as part of that answer.
+ */
+export function retriedLater(message: RoomMessage, snapshot: RoomSnapshot): boolean {
+  if (message.meta.kind !== 'session' || !message.body) return false;
+  const meta = snapshot.sessionMetaByRun[message.meta.runId];
+  if (!meta) return false;
+  const later = snapshot.messages.flatMap((other) => {
+    if (other.meta.kind !== 'session' || other.body !== message.body) return [];
+    const run = snapshot.sessionMetaByRun[other.meta.runId];
+    const same = run && run.id !== meta.id && run.agent === meta.agent && run.owner === meta.owner;
+    return same && Date.parse(run.startedAt) > Date.parse(meta.startedAt) ? [run] : [];
+  });
+  if (later.length === 0) return false;
+  if (effectiveRunStatus(meta.status, runCard(snapshot, meta.id)) !== 'failed') return false;
+  return later.some((run) => effectiveRunStatus(run.status, runCard(snapshot, run.id)) === 'done');
+}
+
 /** One message as the transcript draws it (the thread panel draws its messages the same way). */
 export function renderItem(
   message: RoomMessage,
@@ -182,6 +202,7 @@ export function renderItem(
           reactions={message.reactions}
           members={snapshot.members}
           ownId={ownId}
+          retriedLater={retriedLater(message, snapshot)}
         />
       );
     }

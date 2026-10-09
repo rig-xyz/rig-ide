@@ -45,6 +45,8 @@ export const RUN_PRIVACY_EVENT = 'run_privacy';
 export const PRIVATE_PROGRESS_EVENT = 'private_progress';
 /** Appended by the relay when the owner hides a finished run's details: `{steps}`. */
 export const DETAILS_HIDDEN_EVENT = 'details_hidden';
+/** The run's turn failed on its agent's sign-in and its prompt went again in the same run: `{reason: 'sign_in'}`. What it printed before doesn't count. */
+export const RUN_RETRIED_EVENT = 'run_retried';
 
 /** One event of a run as its owner's computer recorded it, before the Room-sees filter. */
 export type LocalRunEvent = { seq: number; kind: string; payload: Record<string, unknown> };

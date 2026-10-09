@@ -238,6 +238,20 @@ describe('projectSessionCard — against real exported fixtures', () => {
     expect(card.failureReason).toBe("couldn't start the agent");
   });
 
+  it('a run tried again after a sign-in failure drops what the failed try printed', () => {
+    const say = (seq: number, text: string) => ({ seq, kind: 'agent_message_chunk', payload: { content: { type: 'text', text } } });
+    const card = projectSessionCard([
+      say(1, 'API Error: 401 authentication_error'),
+      { seq: 2, kind: 'run_retried', payload: { reason: 'sign_in' } },
+      say(3, 'Signups fell 17%.'),
+      { seq: 4, kind: 'turn_ended', payload: { status: 'done' } },
+    ]);
+    expect(card.retriedAfterSignIn).toBe(true);
+    expect(card.finalAnswer).toBe('Signups fell 17%.');
+    expect(card.status).toBe('done');
+    expect(newSessionCard().retriedAfterSignIn).toBe(false);
+  });
+
   it('an empty event log projects to the fresh-card defaults', () => {
     const card = projectSessionCard([]);
     expect(card).toEqual(newSessionCard());
