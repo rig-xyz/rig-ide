@@ -1,4 +1,3 @@
-import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { log } from '@main/lib/logger';
@@ -6,10 +5,11 @@ import { telemetryService } from '@main/lib/telemetry';
 import { scrubVersion } from '@main/lib/telemetry-scrub';
 import type { SyncHealth } from '@shared/rig/sync-health';
 import { getCurrentAccountId } from './account';
-import { readBundledCliVersions, resolveCliBin } from './bundled-cli';
+import { readBundledCliVersions } from './bundled-cli';
 import { getLinkedPathsForAccount } from './recent-rigs';
 import { getAccountBindingIds, readShownSyncHealth } from './sync-health';
-import { syncProblemsFrom, type TapdStatus } from './sync-problems';
+import { syncProblemsFrom } from './sync-problems';
+import { readTapdStatus } from './tapd-status';
 
 /**
  * Watches the sync of this account's rigs and spaces on this computer and
@@ -18,29 +18,10 @@ import { syncProblemsFrom, type TapdStatus } from './sync-problems';
  * anything. The telemetry service keeps it to once per space, reason and day.
  */
 
-const TAPD_STATUS_TIMEOUT_MS = 15_000;
 const FIRST_CHECK_MS = 3 * 60_000;
 const CHECK_EVERY_MS = 30 * 60_000;
 
-/** `tapd status --dir <root> --json` for one folder, or null when it can't answer. */
-export function readTapdStatus(root: string): Promise<TapdStatus | null> {
-  return new Promise((done) => {
-    execFile(
-      resolveCliBin('tapd'),
-      ['status', '--dir', root, '--json'],
-      { timeout: TAPD_STATUS_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
-      (error, stdout) => {
-        if (error && !stdout) return done(null);
-        try {
-          const parsed: unknown = JSON.parse(String(stdout));
-          done(typeof parsed === 'object' && parsed !== null ? (parsed as TapdStatus) : null);
-        } catch {
-          done(null);
-        }
-      }
-    );
-  });
-}
+export { readTapdStatus };
 
 /** A space's key for "once a day": a hash of its folder, never its name, id or path. */
 function spaceKey(root: string): string {
