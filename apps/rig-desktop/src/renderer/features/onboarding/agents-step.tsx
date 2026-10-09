@@ -13,8 +13,8 @@ import { cn } from '@renderer/lib/utils';
 import type { AgentPayload } from '@shared/core/agents/agent-payload';
 import { RIG_WEBSITE_URL } from '@shared/urls';
 import { CATALOG_FOOTNOTE_AGENT_IDS, deriveCatalogFootnote } from './catalog-footnote';
-import { AgentInstallRow, useAgentInstaller } from '@renderer/features/agents/agent-install';
-import { hasInstalledAgent, onboardingAgents } from './onboarding-state';
+import { AgentInstallRow, SPACE_AGENT_IDS, useAgentInstaller } from '@renderer/features/agents/agent-install';
+import { hasInstalledAgent, onboardingAgents, preferredInstallOptions } from './onboarding-state';
 
 /** Same query key `useRunnableAgents` already reads (`rpc.agents.list()`) — reusing its hook here means the harness picker and this step share one cache entry instead of two independent fetches of the same data. */
 const AGENTS_QUERY_KEY = ['rig', 'agents', 'list'];
@@ -46,6 +46,13 @@ export function AgentsStep({ onComplete }: { onComplete: () => void }) {
   const ready = hasInstalledAgent(agents);
   const installedAgents = agents.filter((agent) => agent.status === 'available');
   const candidates = onboardingAgents(agents);
+  // Ready with one of Claude and Codex: the other is still offered, quietly.
+  const otherSpaceAgents = agents.filter(
+    (agent) =>
+      (SPACE_AGENT_IDS as readonly string[]).includes(agent.id) &&
+      agent.status !== 'available' &&
+      preferredInstallOptions(agent.installOptions).length > 0
+  );
 
   // Catalog-breadth card (Dylan's concern): this step only ever shows a
   // couple of rows, so someone whose harness isn't among them has no signal
@@ -115,16 +122,37 @@ export function AgentsStep({ onComplete }: { onComplete: () => void }) {
             Checking installed agents…
           </div>
         ) : ready ? (
-          installedAgents.map((agent) => (
-            <div
-              key={agent.id}
-              className="border-border-hairline flex min-h-9 items-center gap-2 rounded-control border px-3 py-2"
-            >
-              <AgentIcon icon={agent.icon} size={16} />
-              <span className="text-text-primary min-w-0 flex-1 truncate text-sm">{agent.name}</span>
-              <AgentAuthTrailing agent={agent} />
-            </div>
-          ))
+          <>
+            {installedAgents.map((agent) => (
+              <div
+                key={agent.id}
+                className="border-border-hairline flex min-h-9 items-center gap-2 rounded-control border px-3 py-2"
+              >
+                <AgentIcon icon={agent.icon} size={16} />
+                <span className="text-text-primary min-w-0 flex-1 truncate text-sm">{agent.name}</span>
+                <AgentAuthTrailing agent={agent} />
+              </div>
+            ))}
+            {otherSpaceAgents.map((agent) => (
+              <div
+                key={agent.id}
+                className="flex min-h-9 items-center gap-2 px-3 py-1.5"
+                data-testid="agent-install-quiet"
+                data-agent-id={agent.id}
+              >
+                <AgentIcon icon={agent.icon} size={16} className="opacity-70" />
+                <span className="text-text-muted min-w-0 flex-1 truncate text-sm">{agent.name}</span>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabled={installingId !== null}
+                  onClick={() => void install(agent, preferredInstallOptions(agent.installOptions)[0]!.method)}
+                >
+                  {installingId === agent.id ? <Loader2 className="size-3 animate-spin" /> : 'Install'}
+                </Button>
+              </div>
+            ))}
+          </>
         ) : (
           candidates.map((agent) => (
             <AgentInstallRow
