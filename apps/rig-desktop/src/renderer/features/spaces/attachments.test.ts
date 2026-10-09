@@ -85,6 +85,9 @@ describe('cardStatus', () => {
     expect(cardStatus({ ...base, attachment: file, mine: true, status: status({ notSynced: 'overQuota' }) })?.label).toBe(
       'Not synced: over the space’s 50 MB'
     );
+    expect(cardStatus({ ...base, attachment: file, mine: true, status: status({ notSynced: 'ownerOnly' }) })?.label).toBe(
+      'Not synced: only the space’s owner can change this file'
+    );
     expect(cardStatus({ ...base, attachment: file, mine: true, status: status({ exists: false }) })?.label).toBe('Removed from the space');
     expect(cardStatus({ ...base, attachment: file, mine: true, status: status({}), sending: true })).toBeNull();
   });

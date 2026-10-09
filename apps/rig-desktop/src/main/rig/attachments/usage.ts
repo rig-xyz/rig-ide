@@ -28,8 +28,11 @@ export type UsageDeps = {
 const TAPD_STATE = join('.rig', 'tap', 'state.local.db');
 
 export type SyncedPath = { hash: string | null; dirty: boolean };
-/** A file the sync daemon held back (tapd 0.6.5+ records these in its state meta as `not_synced`). */
-export type NotSyncedPath = { reason: 'quota_exceeded' | 'file_too_large'; hash: string | null };
+/**
+ * A file the sync daemon held back (tapd 0.6.5+ records these in its state meta as `not_synced`).
+ * `owner_only` (tapd 0.6.6+): the relay refused it because only the space's owner can change it.
+ */
+export type NotSyncedPath = { reason: 'quota_exceeded' | 'file_too_large' | 'owner_only'; hash: string | null };
 export type SyncState = { paths: Map<string, SyncedPath>; notSynced: Map<string, NotSyncedPath> };
 
 /** The sync daemon's own record of this space on this computer, or null when there's no readable state. */
@@ -61,7 +64,8 @@ export async function readSyncState(root: string): Promise<SyncState | null> {
         if (Array.isArray(held)) {
           for (const entry of held as Array<Record<string, unknown>>) {
             if (typeof entry?.path !== 'string') continue;
-            const reason = entry.reason === 'file_too_large' ? 'file_too_large' : 'quota_exceeded';
+            const reason =
+              entry.reason === 'file_too_large' || entry.reason === 'owner_only' ? entry.reason : 'quota_exceeded';
             notSynced.set(entry.path, { reason, hash: typeof entry.hash === 'string' ? entry.hash : null });
           }
         }

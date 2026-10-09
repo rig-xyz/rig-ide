@@ -94,6 +94,7 @@ export function cardStatus(args: {
     if (!status.exists) return removed;
     if (status.notSynced === 'overQuota') return { label: 'Not synced: over the space’s 50 MB', short: 'not synced · space full', tone: 'bad' };
     if (status.notSynced === 'tooLarge') return { label: 'Not synced: too large', short: 'not synced · too large', tone: 'bad' };
+    if (status.notSynced === 'ownerOnly') return { label: 'Not synced: only the space’s owner can change this file', short: 'not synced · owner only', tone: 'bad' };
     if (status.synced === null) return { label: 'Added', short: 'added', tone: 'muted' };
     return status.synced
       ? { label: 'Synced', short: 'synced', tone: 'ok' }
