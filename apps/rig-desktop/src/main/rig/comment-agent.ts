@@ -535,7 +535,7 @@ export const rigCommentAgentController = createRPCController({
     if (!dispatchContext) {
       return err<RigCommentsError>({
         kind: 'notBound',
-        message: "This workspace isn't synced to a rig",
+        message: "This folder isn't synced yet.",
       });
     }
     const { target } = dispatchContext;
@@ -546,7 +546,7 @@ export const rigCommentAgentController = createRPCController({
       return err<RigCommentsError>({
         kind: 'untrustedRelay',
         host: trust.host,
-        message: `This workspace points comments at an unrecognized relay (${trust.host}) — comments are disabled.`,
+        message: `Comments are off because this space points at a server Rig doesn't recognize, ${trust.host}.`,
       });
     }
 
@@ -1027,7 +1027,7 @@ export const rigCommentAgentController = createRPCController({
     const roomRunId = roomTurnRuns.get(input.rootId);
     if (roomRunId) {
       const answered = await resolveRoomTurnPermission(roomRunId, input.requestId, input.optionId);
-      return answered ? ok() : err(agentError('That request could not be answered — it may have expired.'));
+      return answered ? ok() : err(agentError("That request couldn't be answered. It may have expired."));
     }
     const conversationId = liveTurns.get(input.rootId);
     if (!conversationId) {
@@ -1054,7 +1054,7 @@ export const rigCommentAgentController = createRPCController({
         requestId: input.requestId,
         error: String(resolved.error.type),
       });
-      return err(agentError('That request could not be answered — it may have expired.'));
+      return err(agentError("That request couldn't be answered. It may have expired."));
     }
     return ok();
   },

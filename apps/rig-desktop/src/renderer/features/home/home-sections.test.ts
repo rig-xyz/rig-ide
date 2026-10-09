@@ -81,7 +81,7 @@ describe('deriveHomeRegions', () => {
     const regions = deriveHomeRegions({ ...BASE, localRigs: [RIG_A], recentSessions: [SESSION_A] });
     expect(regions.showEmptyState).toBe(false);
     expect(regions.showRigs).toBe(true);
-    expect(regions.health).toEqual({ kind: 'signedOut', text: "Sign in to see your team's rigs" });
+    expect(regions.health).toEqual({ kind: 'signedOut', text: "Sign in to see your team's spaces" });
   });
 
   it('local + relay bindings, signed in and healthy — no health line at all', () => {

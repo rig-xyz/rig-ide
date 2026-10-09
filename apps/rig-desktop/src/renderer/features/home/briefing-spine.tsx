@@ -533,7 +533,7 @@ function AskSourcesSection({
         <Tooltip>
           <TooltipTrigger render={trigger} />
           <TooltipContent side="top" className="max-w-64 normal-case">
-            An intent is the rig&apos;s own record of a work session — what an agent or person did, and why.
+            An intent is the record of one work session: what an agent or person did, and why.
           </TooltipContent>
         </Tooltip>
       ) : (

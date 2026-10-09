@@ -220,7 +220,7 @@ describe('DeepLinkJoinDialog', () => {
     mocks.consumePending.mockResolvedValue({ link: LINK });
     mocks.preview.mockResolvedValue({
       success: false,
-      error: { kind: 'expired', message: 'This invite link has expired — ask for a new one.' },
+      error: { kind: 'expired', message: 'This invite link has expired. Ask for a new one.' },
     });
     await render();
 
@@ -239,7 +239,7 @@ describe('DeepLinkJoinDialog', () => {
       success: false,
       error: {
         kind: 'used',
-        message: 'This invite link has already been used — ask for a new one.',
+        message: 'This invite link has already been used. Ask for a new one.',
       },
     });
     await render();

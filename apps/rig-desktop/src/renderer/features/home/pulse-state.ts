@@ -219,7 +219,7 @@ export function resolveAskSourceClick(
 }
 
 /**
- * "Answered from 5 intents in rig-bike" / "...across 3 rigs" — the one
+ * "Answered from 5 intents in rig-bike" / "...across 3 spaces" — the one
  * collapsed summary line. Groups by `bindingId` (always defined, unlike
  * `rigName`) so the rig COUNT is honest even when a name failed to
  * resolve; only names a single rig when there's exactly one AND it
@@ -244,7 +244,7 @@ export function summarizeAskSources(items: readonly AskSourceListItem[]): string
       ? items[0]?.rigName
         ? ` in ${items[0].rigName}`
         : ''
-      : ` across ${uniqueBindingIds.length} rigs`;
+      : ` across ${uniqueBindingIds.length} spaces`;
   return `Answered from ${items.length} ${noun}${where}`;
 }
 
@@ -261,7 +261,7 @@ export function summarizeAskSources(items: readonly AskSourceListItem[]): string
  */
 export function askErrorMessage(error: RigPulseError): string {
   if (error.kind === 'relay' && error.status === 429) {
-    return "You've reached the Ask limit for this hour (40 questions) — try again later.";
+    return "You've asked 40 questions this hour, which is the most Ask takes. Try again later.";
   }
   return error.message;
 }

@@ -54,8 +54,7 @@ export function SignInStep({ onComplete }: { onComplete: () => void }) {
       <div className="flex flex-col gap-1.5">
         <h1 className="font-display text-text-primary text-xl">Sign in to Rig</h1>
         <p className="text-text-muted max-w-xs text-sm">
-          Your Rig account is what turns on comments, sync, and sharing work with teammates. Rig
-          works without it, and you can sign in later.
+          You need a Rig account to make a space and work with others.
         </p>
       </div>
 

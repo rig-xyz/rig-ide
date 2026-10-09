@@ -969,7 +969,7 @@ export function SignedOutGate({
       <RigAppIcon size={112} className="shadow-soft" />
       <div className="flex flex-col gap-2">
         <p className="font-display text-text-primary text-xl">
-          {expired ? 'Your sign-in has expired' : 'Sign in to see your rigs'}
+          {expired ? 'Your sign-in has expired' : 'Sign in to see your spaces'}
         </p>
         {expired && <p className="text-text-muted text-sm">Sign in again to pick up where you left off.</p>}
       </div>

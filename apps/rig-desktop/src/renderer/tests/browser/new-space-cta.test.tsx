@@ -302,7 +302,7 @@ describe('NewSpaceCta', () => {
   it('shows the typed error inline (never the link itself) and keeps the paste to fix', async () => {
     mocks.acceptInviteLink.mockResolvedValue({
       success: false,
-      error: { kind: 'expired', status: 400, message: 'This invite link has expired — ask for a new one.' },
+      error: { kind: 'expired', status: 400, message: 'This invite link has expired. Ask for a new one.' },
     });
     const onOpenPath = vi.fn();
     await render({ onOpenPath });
@@ -311,7 +311,7 @@ describe('NewSpaceCta', () => {
     await flush();
 
     const alert = host.querySelector('[role="alert"]');
-    expect(alert?.textContent).toBe('This invite link has expired — ask for a new one.');
+    expect(alert?.textContent).toBe('This invite link has expired. Ask for a new one.');
     expect(host.textContent).not.toContain(SECRET);
     expect(mocks.attach).not.toHaveBeenCalled();
     expect(mocks.openExternal).not.toHaveBeenCalled();

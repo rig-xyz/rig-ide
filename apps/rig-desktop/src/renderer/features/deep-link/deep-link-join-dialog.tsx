@@ -229,7 +229,7 @@ function JoinConfirm({
       {phase.kind === 'signIn' && (
         <p className="text-sm text-text-secondary">
           {signIn.phase === 'waiting'
-            ? 'Finish signing in in your browser — joining continues here after.'
+            ? 'Finish signing in in your browser. Joining carries on here after.'
             : `Sign in to join ${spaceLabel}.`}
         </p>
       )}
