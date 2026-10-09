@@ -1,4 +1,5 @@
-import type { RoomMessageRow } from '../spaces/relay-api';
+import type { RelayApiError, RoomMessageRow, SpacesRelayApi } from '../spaces/relay-api';
+import { ok, type Result } from '@emdash/shared';
 import type { PageAnchor, PageThread } from '@shared/spaces/pages';
 
 export type { PageThread, PageThreadReply } from '@shared/spaces/pages';
@@ -17,6 +18,35 @@ export interface PinnedThread {
   anchor: PageAnchor;
   resolved: boolean;
   authorName: string | null;
+}
+
+const PAGE_LIMIT = 200;
+const MAX_PAGES = 50;
+
+/**
+ * Every message on a page's link, paging with `after` until a short page, so
+ * pins and replies past the first 200 messages still load. The relay lists
+ * them oldest first.
+ */
+export async function listAllMessages(
+  api: Pick<SpacesRelayApi, 'listMessages'>,
+  bindingId: string,
+  path: string
+): Promise<Result<RoomMessageRow[], RelayApiError>> {
+  const all: RoomMessageRow[] = [];
+  let after: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const rows = await api.listMessages(bindingId, { path, limit: PAGE_LIMIT, ...(after ? { after } : {}) });
+    if (!rows.success) {
+      if (page === 0) return rows;
+      break;
+    }
+    all.push(...rows.data);
+    const last = rows.data.at(-1)?.seq;
+    if (rows.data.length < PAGE_LIMIT || last === undefined || String(last) === after) break;
+    after = String(last);
+  }
+  return ok(all);
 }
 
 export function isPageAnchor(value: unknown): value is PageAnchor {

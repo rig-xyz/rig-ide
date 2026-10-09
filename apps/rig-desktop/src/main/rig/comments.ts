@@ -37,6 +37,8 @@ import { fetchRelay } from './relay-request';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const LIST_LIMIT = 200;
+/** At most this many pages of a file's comments (10,000 messages). */
+const LIST_MAX_PAGES = 50;
 
 // ── path mapping ─────────────────────────────────────────────────────────────
 
@@ -496,30 +498,33 @@ export const rigCommentsController = createRPCController({
   list: async ({ absPath }: { absPath: string }) => {
     const ctx = await resolveContext(absPath);
     if (isError(ctx)) return err(ctx);
-    const query = new URLSearchParams({
-      path: ctx.target.relPath,
-      limit: String(LIST_LIMIT),
-    });
-
-    let response: Response;
-    try {
-      response = await relayFetch(ctx, messagesUrl(ctx, `?${query}`), { method: 'GET' });
-    } catch (error) {
-      return err(transportError('load comments', error));
+    // The relay pages oldest first with `after=<last seq>`: ask until a short page.
+    const messages: RigCommentMessage[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < LIST_MAX_PAGES; page++) {
+      const query = new URLSearchParams({ path: ctx.target.relPath, limit: String(LIST_LIMIT) });
+      if (after) query.set('after', after);
+      let response: Response;
+      try {
+        response = await relayFetch(ctx, messagesUrl(ctx, `?${query}`), { method: 'GET' });
+      } catch (error) {
+        return err(transportError('load comments', error));
+      }
+      if (!response.ok) return err(await relayError(response, 'load comments', ctx.target));
+      let raw: unknown[];
+      try {
+        const data = asRecord(await response.json());
+        raw = Array.isArray(data?.messages) ? data.messages : [];
+      } catch (error) {
+        return err(transportError('load comments', error));
+      }
+      messages.push(...raw.map(toMessage).filter((m): m is RigCommentMessage => m !== null));
+      const last = asRecord(raw.at(-1))?.seq;
+      if (raw.length < LIST_LIMIT || last === undefined || last === null || String(last) === after) break;
+      after = String(last);
     }
-    if (!response.ok) return err(await relayError(response, 'load comments', ctx.target));
-
-    try {
-      const data = asRecord(await response.json());
-      const raw = Array.isArray(data?.messages) ? data.messages : [];
-      const list: RigCommentList = {
-        messages: raw.map(toMessage).filter((m): m is RigCommentMessage => m !== null),
-        nextCursor: typeof data?.nextCursor === 'string' ? data.nextCursor : null,
-      };
-      return ok(list);
-    } catch (error) {
-      return err(transportError('load comments', error));
-    }
+    const list: RigCommentList = { messages, nextCursor: null };
+    return ok(list);
   },
 
   /** New anchored thread root. */

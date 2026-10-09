@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RoomMessageRow } from '../spaces/relay-api';
-import { pinsFromRows, threadsFromRows } from './page-pins';
+import { listAllMessages, pinsFromRows, threadsFromRows } from './page-pins';
 
 const place = { xo: [], hops: [{ index: 2, sig: 'By quarter' }], path: 'body>td:nth-of-type(1)', tag: 'td', text: '398', fx: 0.5, fy: 0.5 };
 const row = (over: Partial<RoomMessageRow>): RoomMessageRow => ({
@@ -48,5 +48,22 @@ describe('threadsFromRows', () => {
       ['r1', 'codex', 'dylan'],
       ['r2', null, 'janis'],
     ]);
+  });
+});
+
+describe('listAllMessages', () => {
+  it('pages with after until a short page, so pins past 200 messages load', async () => {
+    const all = Array.from({ length: 450 }, (_, i) => row({ id: `m${i + 1}`, seq: i + 1 }));
+    const calls: (string | undefined)[] = [];
+    const api = {
+      listMessages: async (_b: string, q: { after?: string; limit?: number }) => {
+        calls.push(q.after);
+        const after = Number(q.after ?? 0);
+        return { success: true as const, data: all.filter((r) => r.seq > after).slice(0, q.limit ?? 200) };
+      },
+    };
+    const got = await listAllMessages(api, 'bnd', 'https://example.com/');
+    expect(got.success && got.data.map((r) => r.id).at(-1)).toBe('m450');
+    expect(calls).toEqual([undefined, '200', '400']);
   });
 });

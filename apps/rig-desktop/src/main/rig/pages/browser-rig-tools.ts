@@ -5,7 +5,7 @@ import type { SpacesRelayApi } from '../spaces/relay-api';
 import { agentPage } from './agent-pages';
 import { BROWSER_TOOLS, pageLink } from './browser-tools';
 import { googleFullText } from './google-export';
-import { pinsFromRows } from './page-pins';
+import { listAllMessages, pinsFromRows } from './page-pins';
 import { pageSignIns } from './page-sign-ins-instance';
 import { pageIsSignInWall } from './sign-in-check';
 
@@ -30,7 +30,7 @@ export function browserRigTools(api: Pick<SpacesRelayApi, 'listMessages'>): RigT
           { ...input, url },
           {
             pinsFor: async (page) => {
-              const rows = await api.listMessages(scope.bindingId, { path: canonicalPageUrl(page), limit: 200 });
+              const rows = await listAllMessages(api, scope.bindingId, canonicalPageUrl(page));
               return rows.success
                 ? pinsFromRows(rows.data)
                     .filter((p) => !p.resolved)
