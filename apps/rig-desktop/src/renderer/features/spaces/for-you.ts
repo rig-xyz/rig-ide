@@ -133,7 +133,7 @@ export function withoutRequests(forYou: ForYou, hidden: ReadonlySet<string>): Fo
 /** A message that is you speaking in the chat: your text, or your comment (never your agent's answer). */
 function isYourWords(message: RoomMessage, selfUserId: string): boolean {
   if (message.authorId !== selfUserId) return false;
-  if (message.meta.kind === 'text') return true;
+  if (message.meta.kind === 'text') return !message.meta.byAgent;
   return message.meta.kind === 'comment_mirror' && !message.meta.replyFromAgent;
 }
 

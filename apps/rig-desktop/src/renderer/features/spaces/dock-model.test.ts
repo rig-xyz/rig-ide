@@ -234,6 +234,7 @@ describe('whoMessageIds', () => {
         replyFromAgent: 'claude',
       }),
       message('sam-2', 'sam'),
+      message('maya-post', 'maya', { kind: 'text', byAgent: { agent: 'codex', model: 'gpt-5' } }),
     ],
     sessionMetaByRun: { r1: runMeta('r1', 'maya', 'claude'), r2: runMeta('r2', 'maya', 'codex') },
   };
@@ -245,10 +246,11 @@ describe('whoMessageIds', () => {
       'maya-run',
       'maya-codex',
       'maya-reply',
+      'maya-post',
     ]);
   });
 
-  it("keeps an agent's runs, the asks that started them and its doc replies, and not its owner's other agent", () => {
+  it("keeps an agent's runs, the asks that started them, its doc replies and its chat posts, and not its owner's other agent", () => {
     expect([...whoMessageIds(snapshot, { kind: 'agent', owner: 'maya', agent: 'claude' })].sort()).toEqual([
       'maya-ask',
       'maya-reply',
@@ -256,6 +258,7 @@ describe('whoMessageIds', () => {
     ]);
     expect([...whoMessageIds(snapshot, { kind: 'agent', owner: 'maya', agent: 'codex' })]).toEqual([
       'maya-codex',
+      'maya-post',
     ]);
   });
 });

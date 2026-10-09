@@ -1258,7 +1258,7 @@ describe('room context for the agent', () => {
     ).toBe('Signups fell.');
   });
 
-  it("names people, includes earlier agent answers, and skips the request's own message and run", async () => {
+  it("names people and their agents' posts, includes earlier agent answers, and skips the request's own message and run", async () => {
     const { api } = makeFakeApi({
       listMembers: async () =>
         ok([
@@ -1268,6 +1268,7 @@ describe('room context for the agent', () => {
       listMessages: async () =>
         ok([
           { id: 'a', seq: 1, author: { userId: 'clerk_s', name: null, avatarUrl: null, kind: 'user' }, kind: 'text', body: 'Hey guys', meta: null, createdAt: '' },
+          { id: 'g', seq: 1.5, author: { userId: 'clerk_s', name: null, avatarUrl: null, kind: 'agent' }, kind: 'text', body: 'Digest is up.', meta: { agent: 'claude-code' }, createdAt: '' },
           { id: 'b', seq: 2, author: { userId: 'clerk_d', name: null, avatarUrl: null, kind: 'user' }, kind: 'session', body: '@claude review signups.md', meta: { runId: 'run-old' }, createdAt: '' },
           { id: 'k', seq: 2.5, author: { userId: 'clerk_d', name: null, avatarUrl: null, kind: 'user' }, kind: 'text', body: 'Why the drop?', meta: null, createdAt: '', path: 'signups.md', parentId: null, quote: '| W2 | 34 | 22 |' },
           { id: 'src', seq: 3, author: { userId: 'clerk_s', name: null, avatarUrl: null, kind: 'user' }, kind: 'text', body: '@claude summarize', meta: null, createdAt: '' },
@@ -1283,6 +1284,7 @@ describe('room context for the agent', () => {
     const { lines, askingSeq } = await roomContextLines(api, makeRequest({ sourceMessageId: 'src' }), 'run-now');
     expect(lines).toEqual([
       '#1 Sam: Hey guys',
+      "#1.5 Sam's agent: Digest is up.",
       '#2 dylan asked their agent: @claude review signups.md',
       "#2 dylan's agent replied: Only two weeks of data.",
       '#2.5 dylan commented in signups.md on “| W2 | 34 | 22 |”: Why the drop?',

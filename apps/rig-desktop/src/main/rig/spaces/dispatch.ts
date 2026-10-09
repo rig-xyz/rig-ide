@@ -629,7 +629,9 @@ export async function roomContextLines(
       const on = row.quote ? ` on “${clip(row.quote, 160)}”` : '';
       lines.push(`${n} ${who} ${row.parentId ? 'replied to a comment' : 'commented'} in ${row.path}${on}: ${clip(row.body)}${reacted}`);
     } else if (row.kind === 'text') {
-      lines.push(`${n} ${who}: ${clip(row.body)}${reacted}`);
+      // Posted by the author's agent (`rig chat send --agent`), not words the author typed.
+      const by = row.author.kind === 'agent' ? `${who}'s agent` : who;
+      lines.push(`${n} ${by}: ${clip(row.body)}${reacted}`);
     } else if (runId && runId !== currentRunId) {
       const events = await api.getSessionEvents(request.bindingId, runId);
       const answer = events.success ? finalAnswerFromEvents(events.data.events) : '';

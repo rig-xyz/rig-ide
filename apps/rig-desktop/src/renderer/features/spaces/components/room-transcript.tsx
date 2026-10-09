@@ -15,7 +15,7 @@ import type { ThreadSummary } from '../threads';
 import { personOf } from '../person-identity';
 import type { AgentKind, RoomMessage, RoomReplyRef, RoomSnapshot, SessionRunMeta } from '../types';
 import { type MapEntry, ConversationMap } from './conversation-map';
-import { AGENT_NAME } from './identity';
+import { AGENT_NAME, agentNameOf } from './identity';
 import { SessionCard, SessionCardPlaceholder } from './session-card';
 import { ThreadReplyRow } from './thread-panel';
 import {
@@ -58,7 +58,11 @@ function rowKey(message: RoomMessage): string {
 
 /** Who a row speaks as, for grouping follow-ups: a person, or one person's agent. */
 function speakerOf(message: RoomMessage, snapshot: RoomSnapshot): string | null {
-  if (message.meta.kind === 'text') return `person:${message.authorId}`;
+  if (message.meta.kind === 'text') {
+    // A post by the author's agent follows on from that agent's turns, not from the author's own words.
+    const byAgent = message.meta.byAgent;
+    return byAgent ? `agent:${byAgent.agent ?? 'agent'}:${message.authorId}` : `person:${message.authorId}`;
+  }
   if (message.meta.kind === 'session') {
     const meta = snapshot.sessionMetaByRun[message.meta.runId];
     return meta ? `agent:${meta.agent}:${meta.owner}` : null;
@@ -524,7 +528,15 @@ function mapEntriesFor(units: TranscriptUnit[], snapshot: RoomSnapshot, ownId: s
       continue;
     }
     const m = unit.message;
-    if (m.meta.kind === 'text') {
+    if (m.meta.kind === 'text' && m.meta.byAgent) {
+      const agent = agentNameOf(m.meta.byAgent.agent);
+      entries.push({
+        id: m.id,
+        tone: 'agent',
+        label: `${m.authorId === ownId ? 'Your' : `${nameOf(m.authorId)}'s`} ${agent} · ${m.time}`,
+        preview: () => m.body ?? '',
+      });
+    } else if (m.meta.kind === 'text') {
       entries.push({
         id: m.id,
         tone: m.authorId === ownId ? 'mine' : 'person',
@@ -914,7 +926,7 @@ export function RoomTranscript({
     const added = snapshot.messages.slice(lastAt + 1);
     lastIdRef.current = snapshot.messages[snapshot.messages.length - 1]?.id ?? null;
     if (added.length === 0) return;
-    if (added.some((m) => m.authorId === ownId && m.meta.kind === 'text')) {
+    if (added.some((m) => m.authorId === ownId && m.meta.kind === 'text' && !m.meta.byAgent)) {
       pinToBottom();
       return;
     }
@@ -1158,7 +1170,7 @@ export function RoomTranscript({
                           key={`thread-${m.id}`}
                           summary={summary}
                           members={snapshot.members}
-                          mine={m.authorId === ownId && m.meta.kind === 'text'}
+                          mine={m.authorId === ownId && m.meta.kind === 'text' && !m.meta.byAgent}
                           open={threads.openRootId === m.id}
                           onOpen={() => threads.onOpen(m.id)}
                         />

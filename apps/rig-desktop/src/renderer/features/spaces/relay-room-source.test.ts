@@ -325,6 +325,36 @@ describe('RelayRoomSource', () => {
     });
   });
 
+  it('marks a chat message an agent posted as that agent\'s, never as its author\'s own words', async () => {
+    const fake = makeFakeRelay();
+    const agentAuthor = { userId: 'u1', name: 'Alice', avatarUrl: null, kind: 'agent' };
+    fake.queueMessages([
+      // `rig chat send --agent --model …` from the CLI.
+      message({ id: 'a1', seq: 1, body: 'Digest is up.', author: agentAuthor, meta: { agent: 'claude-code', model: 'claude-opus-5-5' } }),
+      message({ id: 'a2', seq: 2, body: 'Ran the import.', author: agentAuthor, meta: { agent: 'codex' } }),
+      message({ id: 'a3', seq: 3, body: 'Checked in.', author: agentAuthor, meta: { agent: 'some-bot' } }),
+      message({ id: 'p1', seq: 4, body: 'thanks', meta: { agent: 'claude-code' } }),
+    ]);
+    const source = new RelayRoomSource({
+      bindingId: BINDING,
+      spaceName: 'Growth',
+      wsUrl: 'wss://relay.test/v1/realtime',
+      selfUserId: 'u1',
+      relay: fake.relay,
+      createProvider: () => new FakeProvider(),
+    });
+    source.play();
+    await flush();
+
+    expect(source.getSnapshot().messages.map((m) => [m.authorId, m.meta])).toEqual([
+      ['u1', { kind: 'text', byAgent: { agent: 'claude', model: 'claude-opus-5-5' } }],
+      ['u1', { kind: 'text', byAgent: { agent: 'codex' } }],
+      ['u1', { kind: 'text', byAgent: {} }],
+      // A person's message stays theirs, whatever its meta says.
+      ['u1', { kind: 'text' }],
+    ]);
+  });
+
   it('carries a comment thread\'s saved pin number onto its line and its replies', async () => {
     const fake = makeFakeRelay();
     fake.queueMessages([

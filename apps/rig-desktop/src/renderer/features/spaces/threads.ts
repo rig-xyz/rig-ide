@@ -138,11 +138,14 @@ export function summarizeThread(
     const reply = thread.replies[i]!;
     const run = reply.meta.kind === 'session' ? snapshot.sessionMetaByRun[reply.meta.runId] : undefined;
     if (run && !working && isRunning(run.id)) working = run.agent;
+    const postedBy = reply.meta.kind === 'text' ? reply.meta.byAgent?.agent : undefined;
     const face: ThreadFace | null = run
       ? { kind: 'agent', agent: run.agent, owner: run.owner }
       : reply.meta.kind === 'session'
         ? null
-        : { kind: 'person', id: reply.authorId };
+        : postedBy
+          ? { kind: 'agent', agent: postedBy, owner: reply.authorId }
+          : { kind: 'person', id: reply.authorId };
     const key = face ? (face.kind === 'agent' ? `agent:${face.agent}:${face.owner}` : `person:${face.id}`) : null;
     if (face && key && !seen.has(key) && faces.length < MAX_FACES) {
       seen.add(key);

@@ -218,7 +218,9 @@ export function themeLastActivity(
     const ownerName = message.authorId === selfUserId ? null : personOf(snapshot, message.authorId).name;
     const run =
       message.meta.kind === 'session' ? snapshot.sessionMetaByRun[message.meta.runId] : undefined;
-    const who = run ? agentDisplayName(run.agent, ownerName) : (ownerName ?? 'you');
+    const postedBy = message.meta.kind === 'text' ? message.meta.byAgent?.agent : undefined;
+    const agent = run?.agent ?? postedBy;
+    const who = agent ? agentDisplayName(agent, ownerName) : (ownerName ?? 'you');
     return { who, time: message.time };
   }
   return null;
@@ -245,8 +247,8 @@ export function whoKey(who: DockWho): string {
 /**
  * The messages that belong to a face. A person: everything they wrote, and
  * every run of their agents (those messages carry the owner as their author).
- * An agent: its runs, its replies in doc threads, and the messages that asked
- * for its runs.
+ * An agent: its runs, its replies in doc threads, its own chat posts, and
+ * the messages that asked for its runs.
  */
 export function whoMessageIds(
   snapshot: Pick<RoomSnapshot, 'messages' | 'sessionMetaByRun'>,
@@ -271,6 +273,8 @@ export function whoMessageIds(
       message.meta.replyFromAgent === who.agent &&
       message.authorId === who.owner
     ) {
+      ids.add(message.id);
+    } else if (message.meta.kind === 'text' && message.meta.byAgent?.agent === who.agent && message.authorId === who.owner) {
       ids.add(message.id);
     }
   }

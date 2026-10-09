@@ -21,7 +21,7 @@ import { connectorsApi } from '@renderer/features/spaces/connectors-api';
 import { buildRoomFeed } from '@renderer/features/spaces/fixtures/room-feed';
 import type { RelayRoomSource } from '@renderer/features/spaces/relay-room-source';
 import { FixtureRoomSource } from '@renderer/features/spaces/room-source';
-import type { RoomConnector, RoomMember, RoomMessage, RoomSnapshot, SessionEvent, SessionRunMeta } from '@renderer/features/spaces/types';
+import type { RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot, SessionEvent, SessionRunMeta } from '@renderer/features/spaces/types';
 // Real tokens — the message-row/session-card class assertions below rely
 // on the actual `--accent`/`--bg-2` etc. custom properties being present,
 // same as artifact-view.test.tsx.
@@ -186,6 +186,65 @@ describe('Room transcript — flat rows', () => {
     }
     // Day breaks come from the messages' own timestamps.
     expect(host.querySelectorAll('[data-testid="day-divider"]').length).toBeGreaterThan(0);
+  });
+
+  it('shows a message your agent posted as your agent, on the left, with Reply and reactions', async () => {
+    const snapshot = replayedSnapshot();
+    const last = snapshot.messages.at(-1)!;
+    const posted: RoomMessage = {
+      ...last,
+      id: 'agent-post-1',
+      seq: last.seq + 1,
+      authorId: 'bob',
+      body: 'The digest is up.',
+      meta: { kind: 'text', byAgent: { agent: 'claude', model: 'claude-opus-5-5' } },
+      threadId: undefined,
+      reactions: [{ emoji: '👍', count: 1, reactors: [{ userId: 'alice', agent: null }] }],
+    };
+    const replies: RoomReplyRef[] = [];
+    await act(async () => {
+      root.render(
+        <RoomTranscript
+          snapshot={{ ...snapshot, messages: [...snapshot.messages, posted] }}
+          ownId="bob"
+          onReply={(ref) => replies.push(ref)}
+        />
+      );
+    });
+    const row = host.querySelector<HTMLElement>('[data-message-id="agent-post-1"] [data-testid="message-row"]')!;
+    expect(row.dataset.mine).toBe('false');
+    expect(row.dataset.byAgent).toBe('claude');
+    expect(row.className).not.toContain('justify-end');
+    expect(row.querySelector('[data-testid="agent-avatar"]')?.getAttribute('data-agent')).toBe('claude');
+    expect(row.textContent).toContain('Claude');
+    expect(row.textContent).toContain('claude-opus-5-5 · yours');
+    expect(row.textContent).toContain('👍');
+    await act(async () => {
+      row.querySelector<HTMLButtonElement>('[aria-label="Reply"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(replies).toEqual([expect.objectContaining({ id: 'agent-post-1', authorId: 'bob', label: 'Your Claude' })]);
+  });
+
+  it('shows a teammate\'s post from an agent it can\'t name as their agent', async () => {
+    const snapshot = replayedSnapshot();
+    const last = snapshot.messages.at(-1)!;
+    const other = snapshot.members.find((m) => m.id !== 'bob')!;
+    const posted: RoomMessage = {
+      ...last,
+      id: 'agent-post-2',
+      seq: last.seq + 1,
+      authorId: other.id,
+      body: 'Checked in.',
+      meta: { kind: 'text', byAgent: {} },
+      threadId: undefined,
+    };
+    await act(async () => {
+      root.render(<RoomTranscript snapshot={{ ...snapshot, messages: [...snapshot.messages, posted] }} ownId="bob" />);
+    });
+    const row = host.querySelector<HTMLElement>('[data-message-id="agent-post-2"] [data-testid="message-row"]')!;
+    expect(row.dataset.byAgent).toBe('agent');
+    expect(row.querySelector('[data-testid="agent-avatar"]')?.getAttribute('data-agent')).toBe('agent');
+    expect(row.textContent).toContain(`Agent${other.name}'s`);
   });
 
   it('shows a reply with the message it quotes, and offers Reply on hover', async () => {
@@ -1469,7 +1528,7 @@ describe('Room disk cache — a Room shown from disk', () => {
     const rig = rpc.rig as unknown as Record<string, unknown>;
     rig.recent = { resolveLocalPaths: async () => ({}) };
     const blob = {
-      v: 1 as const,
+      v: 2 as const,
       relayHost: 'tap-relay.fly.dev',
       savedAt: Date.now(),
       lastMessageSeq: 1,

@@ -14,7 +14,8 @@ import z from 'zod';
  */
 
 /** Bumped when the shape changes; a row of another version is dropped (a cold open), never upgraded. */
-export const ROOM_CACHE_FORMAT_VERSION = 1;
+// 2: chat messages an agent posted carry `meta.byAgent` (a saved Room from before shows them as the person's own).
+export const ROOM_CACHE_FORMAT_VERSION = 2;
 /** Per space, after the renderer trims (oldest messages first, then answers). */
 export const ROOM_CACHE_MAX_BYTES = 512 * 1024;
 /** Spaces kept on disk in total; the least recently opened go first. */
