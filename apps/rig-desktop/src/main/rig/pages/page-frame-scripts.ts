@@ -235,14 +235,20 @@ export function frameBoardSnapshot(q: { i?: number; sig?: string | null; words?:
     const d = docOf(c);
     return d && d.body ? norm(d.body.innerText) : '';
   };
+  // A pin with no board (no sig, no index) is on this frame's own document.
+  const ownPin = q.path !== undefined && q.sig == null && q.index === undefined && q.i === undefined && q.words === undefined;
   let f: HTMLIFrameElement | undefined;
-  if (q.i !== undefined) f = frames[q.i];
-  if (!f && q.sig) f = frames.find((c) => textOf(c).startsWith(norm(q.sig!).slice(0, 40)));
-  if (!f && q.words) f = frames.find((c) => textOf(c).includes(norm(q.words!)));
-  if (!f && q.text) f = frames.find((c) => textOf(c).includes(norm(q.text!)));
-  if (!f && q.index !== undefined) f = frames[q.index];
-  const d = f && docOf(f);
-  if (!f || !d || !d.body) return null;
+  if (!ownPin) {
+    if (q.i !== undefined) f = frames[q.i];
+    if (!f && q.sig) f = frames.find((c) => textOf(c).startsWith(norm(q.sig!).slice(0, 40)));
+    if (!f && q.words) f = frames.find((c) => textOf(c).includes(norm(q.words!)));
+    if (!f && q.text) f = frames.find((c) => textOf(c).includes(norm(q.text!)));
+    if (!f && q.index !== undefined) f = frames[q.index];
+  }
+  // No board asked for and none holding the text: the page itself, as one board.
+  const own = !f && (ownPin || (q.i === undefined && q.words === undefined && q.sig == null && q.index === undefined));
+  const d = own ? document : f && docOf(f);
+  if ((!own && !f) || !d || !d.body) return null;
   let el: Element | null = null;
   if (q.path) {
     try {
@@ -253,15 +259,22 @@ export function frameBoardSnapshot(q: { i?: number; sig?: string | null; words?:
     const hits = [...d.body.querySelectorAll('*')].filter((e) => norm(e.textContent || '').includes(norm(q.text!)));
     el = hits[hits.length - 1] || null;
   }
+  if (own && !el) return null;
   const r = el && el.getBoundingClientRect();
   const clone = d.documentElement.cloneNode(true) as HTMLElement;
   clone.querySelectorAll('script').forEach((s) => s.remove());
+  if (own && !clone.querySelector('base')) {
+    // Relative styles and images still load once the copy is rendered from a data: link.
+    const base = d.createElement('base');
+    base.href = location.href;
+    clone.querySelector('head')?.prepend(base);
+  }
   return {
-    i: frames.indexOf(f),
+    i: own ? -1 : frames.indexOf(f!),
     title: (d.body.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 80),
     html: '<!doctype html>' + clone.outerHTML,
-    w: f.clientWidth,
-    h: f.clientHeight,
+    w: own ? d.documentElement.clientWidth : f!.clientWidth,
+    h: own ? Math.min(Math.max(d.documentElement.scrollHeight, innerHeight), 10000) : f!.clientHeight,
     el: r ? { x: r.left + d.defaultView!.scrollX, y: r.top + d.defaultView!.scrollY, width: r.width, height: r.height } : null,
   };
 }

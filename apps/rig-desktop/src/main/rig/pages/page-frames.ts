@@ -86,24 +86,64 @@ export async function locateOnPage(page: WebContents, anchor: PageAnchor): Promi
   return { found: true, x: x * scale, y: y * scale, w: w * scale, h: h * scale };
 }
 
+/** Pages that keep their content one cross-origin frame down: claude.ai's claudeusercontent frame. */
+const CONTENT_IN_FRAME_HOSTS = /(^|\.)claude\.ai$/;
+
 /**
- * The frame holding a page's content: the first cross-origin child of the
- * top frame (claude.ai's claudeusercontent frame), else the top frame itself.
+ * The frame holding a page's content: on a known host (claude.ai), its first
+ * cross-origin child; on any other page, a cross-origin child whose origin is
+ * in `filling` (one that fills most of the page, from `pageContentFrame`);
+ * else the top frame itself. So an ordinary page with an embedded video or
+ * map is read as the page.
  */
-export function contentFrameOf(page: WebContents): { frame: WebFrameMain; hop: { origin: string; index: number } | null } {
+export function contentFrameOf(
+  page: WebContents,
+  filling: readonly string[] = []
+): { frame: WebFrameMain; hop: { origin: string; index: number } | null } {
   const top = page.mainFrame;
   let topOrigin: string | null = null;
+  let known = false;
   try {
-    topOrigin = new URL(top.url).origin;
+    const u = new URL(top.url);
+    topOrigin = u.origin;
+    known = CONTENT_IN_FRAME_HOSTS.test(u.hostname);
   } catch {}
   const child = top.frames.find((f) => {
     try {
-      return f.url.startsWith('http') && new URL(f.url).origin !== topOrigin;
+      if (!f.url.startsWith('http')) return false;
+      const origin = new URL(f.url).origin;
+      return origin !== topOrigin && (known || filling.includes(origin));
     } catch {
       return false;
     }
   });
-  return child ? { frame: child, hop: { origin: new URL(child.url).origin, index: 0 } } : { frame: top, hop: null };
+  if (!child) return { frame: top, hop: null };
+  const origin = new URL(child.url).origin;
+  const index = top.frames.filter((f) => {
+    try {
+      return new URL(f.url).origin === origin;
+    } catch {
+      return false;
+    }
+  }).indexOf(child);
+  return { frame: child, hop: { origin, index } };
+}
+
+/** Share of the viewport a frame must cover to count as the page's content. */
+const FILLS_PAGE = 0.6;
+
+/** `contentFrameOf`, also taking a cross-origin frame that fills most of the page as its content. */
+export async function pageContentFrame(page: WebContents): Promise<ReturnType<typeof contentFrameOf>> {
+  const code = `[...document.querySelectorAll('iframe')].map((f) => {
+    const r = f.getBoundingClientRect();
+    const w = Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0));
+    const h = Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
+    let origin = null;
+    try { origin = new URL(f.src, location.href).origin; } catch {}
+    return { origin, share: (w * h) / Math.max(1, innerWidth * innerHeight) };
+  })`;
+  const frames = ((await page.mainFrame.executeJavaScript(code).catch(() => [])) ?? []) as { origin: string | null; share: number }[];
+  return contentFrameOf(page, frames.filter((f) => f.origin && f.share >= FILLS_PAGE).map((f) => f.origin!));
 }
 
 /** Maps a point in the content frame to the page's viewport. */

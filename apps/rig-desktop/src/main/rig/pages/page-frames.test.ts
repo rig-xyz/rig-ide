@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron';
 import { describe, expect, it, vi } from 'vitest';
-import { contentFrameOf, hitPage, locateOnPage } from './page-frames';
+import { contentFrameOf, hitPage, locateOnPage, pageContentFrame } from './page-frames';
 import type { PageAnchor } from '@shared/spaces/pages';
 
 /**
@@ -65,5 +65,22 @@ describe('which frame agents read', () => {
     const top = { url: 'https://blog.example.com/launch-notes', frames: [embed] };
     const page = { mainFrame: top } as unknown as WebContents;
     expect(contentFrameOf(page).frame).toBe(top);
+  });
+
+  it("reads claude.ai's artifact frame as the page's content", () => {
+    const art = { url: 'https://abc.claudeusercontent.com/frame', frames: [] };
+    const top = { url: 'https://claude.ai/public/artifacts/xyz', frames: [art] };
+    const page = { mainFrame: top } as unknown as WebContents;
+    expect(contentFrameOf(page)).toEqual({ frame: art, hop: { origin: 'https://abc.claudeusercontent.com', index: 0 } });
+  });
+
+  it('reads a cross-origin frame that fills most of the page as its content', async () => {
+    const app = { url: 'https://app.example.net/view', frames: [] };
+    const fills = [{ origin: 'https://app.example.net', share: 0.9 }];
+    const top = { url: 'https://wrapper.example.com/', frames: [app], executeJavaScript: async () => fills };
+    const page = { mainFrame: top } as unknown as WebContents;
+    expect((await pageContentFrame(page)).frame).toBe(app);
+    fills[0]!.share = 0.2;
+    expect((await pageContentFrame(page)).frame).toBe(top);
   });
 });

@@ -14,7 +14,7 @@ vi.mock('./agent-pages', () => ({
   renderSnapshot: vi.fn(),
 }));
 vi.mock('./page-frames', () => ({
-  contentFrameOf: () => ({ frame: { executeJavaScript }, hop: null }),
+  pageContentFrame: async () => ({ frame: { executeJavaScript }, hop: null }),
   locateOnPage: vi.fn(),
 }));
 
