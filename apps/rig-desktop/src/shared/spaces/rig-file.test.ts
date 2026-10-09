@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isHtmlPath, isRigFileUrl, parseRigFileUrl, rigFileUrl } from './rig-file';
+import { commentFilePath, isHtmlPath, isRigFileUrl, parseRigFileUrl, rigFileUrl } from './rig-file';
 
 describe('rigFileUrl', () => {
   it('encodes each step of the path and keeps the slashes', () => {
@@ -50,5 +50,17 @@ describe('isHtmlPath', () => {
     ['page.html.md', false],
   ])('%s', (path, html) => {
     expect(isHtmlPath(path)).toBe(html);
+  });
+});
+
+describe('commentFilePath', () => {
+  it.each([
+    ['notes/plan.md', 'notes/plan.md'],
+    ['rig-file://bnd_jak0s9/index.html', 'index.html'],
+    ['rig-file://bnd_jak0s9/site/a%20b.html', 'site/a b.html'],
+    ['rig-file://bnd_jak0s9/', null],
+    ['https://example.com/page', null],
+  ])('%s', (path, file) => {
+    expect(commentFilePath(path)).toBe(file);
   });
 });

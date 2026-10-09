@@ -75,7 +75,7 @@ import { onOpenFileRequest } from '@renderer/features/workspace/open-file-reques
 import { requestBrowserMode, requestView } from '@renderer/features/artifact/view-request';
 import { requestRoomTheme } from '@renderer/features/spaces/room-theme-request';
 import { canonicalPageUrl, webLinkLabel } from '@shared/spaces/links';
-import { isHtmlPath } from '@shared/spaces/rig-file';
+import { commentFilePath, isHtmlPath, isRigFileUrl, rigFileUrl } from '@shared/spaces/rig-file';
 import { rigShowChannel, type RigShowRequest } from '@shared/spaces/show';
 import { PinnedCard } from '@renderer/features/workspace/pinned-card';
 import { toast } from '@renderer/lib/hooks/use-toast';
@@ -993,7 +993,14 @@ export function App() {
         markJustAttachedSyncing(attached.data.localPath, attached.data.syncing);
         root = attached.data.localPath;
       }
-      const file = target.path && !/^[a-z]+:\/\//i.test(target.path) ? `${root.replace(/\/+$/, '')}/${target.path}` : null;
+      // A pin on a space's html file is stored under its rig-file link: open
+      // the file as a page, at the comment's thread.
+      const relPath = target.path ? commentFilePath(target.path) : null;
+      const file = relPath ? `${root.replace(/\/+$/, '')}/${relPath}` : null;
+      if (relPath && file && target.path && isRigFileUrl(target.path) && isHtmlPath(relPath)) {
+        requestBrowserMode(file);
+        if (target.messageId) requestView(rigFileUrl(target.bindingId, relPath), { thread: target.messageId });
+      }
       if (bound?.bindingId === target.bindingId) {
         if (file) openFile(file);
       } else {

@@ -232,8 +232,11 @@ export function PageView({
   // An agent showing the asker a passage: found and scrolled to once the page
   // is up, then left selected.
   const [findText, setFindText] = useState<string | null>(null);
+  // A comment's row in the Room or a notification: its thread, open once the threads load.
+  const [wantThread, setWantThread] = useState<string | null>(null);
   useViewRequest(url, (request) => {
     if (request.passage) setFindText(request.passage);
+    if (request.thread) setWantThread(request.thread);
   });
   const findDoneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
@@ -292,6 +295,19 @@ export function PageView({
   const refresh = () => queryClient.invalidateQueries({ queryKey: threadsKey });
   const openRef = useRef(open);
   openRef.current = open;
+  useEffect(() => {
+    if (!wantThread || !threads.data) return;
+    const thread = threads.data.find((t) => t.id === wantThread || t.replies.some((r) => r.id === wantThread));
+    // Not in what's cached yet: wait for the fetch on its way.
+    if (!thread && threads.isFetching) return;
+    if (thread) {
+      // A resolved thread's pin is drawn only while resolved ones are shown.
+      if (thread.resolved) setShowResolved(true);
+      setDraft(null);
+      setOpenId(thread.id);
+    }
+    setWantThread(null);
+  }, [wantThread, threads.data, threads.isFetching]);
 
   // A pin or a reply on this page, arriving in the space's live Room: the threads now, not at the next poll.
   useEffect(() => {

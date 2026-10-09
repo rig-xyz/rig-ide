@@ -21,7 +21,8 @@ import { cn } from '@renderer/lib/utils';
 import { formatClock, formatClockShort, formatFull } from '@renderer/lib/time-format';
 import type { ConnectResult } from '@shared/spaces/connectors';
 import { canonicalPageUrl, classifyLink, opensBesideChat, webLinkLabel, type LinkKind } from '@shared/spaces/links';
-import { isRigFileUrl } from '@shared/spaces/rig-file';
+import { commentFilePath, isRigFileUrl, parseRigFileUrl, rigFileUrl } from '@shared/spaces/rig-file';
+import { requestView } from '@renderer/features/artifact/view-request';
 import { agentLogoId, BrandLogo, ConnectorMark } from '../logos';
 import { remarkRoomTokens, type RoomTokenKind } from '../message-tokens';
 import { waitingAgentFor } from '../pending-asks';
@@ -828,7 +829,7 @@ export function CommentMirrorLine({
   inThread?: boolean;
 }) {
   if (message.meta.kind !== 'comment_mirror') return null;
-  const { path, quote, replyFromAgent, isReply, pin } = message.meta;
+  const { path, quote, replyFromAgent, isReply, pin, commentId } = message.meta;
   const person = personOf(snapshot, message.authorId);
   const author = person.member;
   const who = person.name;
@@ -856,18 +857,27 @@ export function CommentMirrorLine({
     );
   }
   const pageChip = /^https?:\/\//.test(path) ? <PageChip url={path} title={message.meta.pageTitle} /> : null;
+  // A pin on a space's html file is stored under its rig-file link: named
+  // by the file's path, like a comment on a file, and opened at its thread.
+  const label = commentFilePath(path) ?? path;
+  const openOnFile = () => {
+    const rigFile = parseRigFileUrl(path);
+    if (rigFile?.relPath) requestView(rigFileUrl(rigFile.bindingId, rigFile.relPath), { thread: commentId });
+    onOpenFile?.(path);
+  };
   const fileChip = pageChip ?? (onOpenFile ? (
     <button
       type="button"
-      onClick={() => onOpenFile(path)}
+      onClick={openOnFile}
       className="bg-bg-2 hover:bg-bg-3 inline-flex items-center gap-1 rounded-control px-1 align-[-1px] font-mono text-xs text-text-primary transition-colors"
-      title={`Open ${path}`}
+      title={`Open ${label}`}
+      data-testid="comment-file-chip"
     >
-      {path}
+      {label}
     </button>
   ) : (
     <span className="bg-bg-2 inline-flex items-center gap-1 rounded-control px-1 align-[-1px] font-mono text-xs text-text-primary">
-      {path}
+      {label}
     </span>
   ));
   return (

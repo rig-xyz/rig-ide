@@ -3,13 +3,20 @@ import { setPreviewMode, type PreviewMode } from './preview-mode-memory';
 
 /**
  * Ask an open (or about to open) file or page to show something: a mode
- * (Browser for an html file), a passage or a line to scroll to. Keyed by
+ * (Browser for an html file), a passage or a line to scroll to, or a
+ * page's comment thread. Keyed by
  * what the view shows: a file's absolute path, a page's link. The view
  * takes the request when it's mounted, or as soon as it mounts; one the
  * view never picks up lapses.
  */
 
-export type ViewRequest = { mode?: PreviewMode; passage?: string; line?: number };
+export type ViewRequest = {
+  mode?: PreviewMode;
+  passage?: string;
+  line?: number;
+  /** A page's comment thread to open, by its first comment's id or a reply's. */
+  thread?: string;
+};
 
 const LAPSES_AFTER_MS = 60_000;
 

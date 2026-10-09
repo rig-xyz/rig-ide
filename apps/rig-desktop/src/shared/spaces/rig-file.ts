@@ -65,3 +65,13 @@ export function parseRigFileUrl(url: string): { bindingId: string; relPath: stri
 export function isHtmlPath(path: string): boolean {
   return /\.html?$/i.test(path.replace(/[?#].*$/, ''));
 }
+
+/**
+ * The file in its space a comment is on, from the path the comment is
+ * stored under: a file's own path, or the path in a `rig-file://` link (a
+ * pin on a space's html file). Null for a web page's link.
+ */
+export function commentFilePath(path: string): string | null {
+  if (isRigFileUrl(path)) return parseRigFileUrl(path)?.relPath || null;
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(path) ? null : path;
+}
