@@ -2283,6 +2283,7 @@ function toMessageMeta(
         ...(attachments ? { attachments, ...(meta.autoBody === true ? { autoBody: true } : {}) } : {}),
         ...(meta.alsoInChannel === true ? { alsoInChannel: true } : {}),
         ...(mentions.length > 0 ? { mentions } : {}),
+        ...(meta.asks === 'claude' || meta.asks === 'codex' ? { asks: meta.asks } : {}),
       };
     }
   }
