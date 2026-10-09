@@ -127,8 +127,8 @@ export const CommentPins = observer(function CommentPins({
                   key={id}
                   type="button"
                   data-comment-pin
-                  aria-label={`Comment ${numbers.get(id) ?? ''}${thread.resolved ? ', resolved' : ''}${lost ? ', its passage is gone' : ''}`}
-                  title={lost ? 'The text this comment was on has changed' : undefined}
+                  aria-label={`Comment ${numbers.get(id) ?? ''}${thread.resolved ? ', resolved' : ''}${lost ? (thread.ambiguous ? ', its passage appears more than once' : ', its passage is gone') : ''}`}
+                  title={lost ? (thread.ambiguous ? `The text this comment was on now appears ${thread.ambiguous} times` : 'The text this comment was on has changed') : undefined}
                   onClick={() => store.setActiveThread(active ? null : id)}
                   onMouseEnter={() => store.setHoveredThread(id)}
                   onMouseLeave={() => store.setHoveredThread(null)}

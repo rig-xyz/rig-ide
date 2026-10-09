@@ -1038,13 +1038,13 @@ export function createRigTools(
       name: 'rig_comments_add',
       description:
         'Add a comment on a file in this rig space, or reply to a thread on it. Everyone in the space sees it, marked as written by you (the agent) for your owner. ' +
-        'New thread: give quote, a passage copied exactly from the file, which the comment is pinned to. ' +
+        'New thread: give quote, a passage copied exactly from the file that appears in it only once, which the comment is pinned to. ' +
         'Reply: give reply_to, a thread id from rig_comments_read, and no quote. ' +
         'Use it when asked to comment on, annotate or review a file, or to answer feedback on it, instead of `rig comment`.' + "\nWas called rig_comment before Rig 0.4.13.",
       inputSchema: {
         path: z.string().describe("The file, relative to the space's folder, e.g. notes/plan.md."),
         body: z.string().describe('The comment, in markdown.'),
-        quote: z.string().optional().describe('For a new thread: the exact passage from the file to pin it to.'),
+        quote: z.string().optional().describe('For a new thread: the exact passage from the file to pin it to, long enough to appear only once.'),
         reply_to: z.string().optional().describe('For a reply: the thread id (from rig_comments_read).'),
       },
       annotations: { title: 'Comment on a file', readOnlyHint: false, destructiveHint: false },
@@ -1070,6 +1070,10 @@ export function createRigTools(
         const anchor = anchorFor(text, quote);
         if (!anchor) {
           return failed(`That quote isn't in ${relPath} word for word. Copy the passage exactly as it appears in the file (same spacing and punctuation).`);
+        }
+        const times = text.split(quote).length - 1;
+        if (times > 1) {
+          return failed(`That quote appears ${times} times in ${relPath}, so the comment can't tell which one you mean. Quote a longer passage that appears only once.`);
         }
         const posted = await backend.createComment({ absPath, body, anchor, meta });
         if (!posted.success) return failed(`Couldn't post the comment on ${relPath}: ${posted.error.message}`);

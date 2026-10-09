@@ -32,7 +32,7 @@ import { clearAutoSignIn, getAutoState, registerPanelPage, runAutoSignIn } from 
 import { ConnectSheet } from './connect-sheet';
 import { NotSharedNotice } from './not-shared-notice';
 import { openPageInBrowser } from './open-in-browser';
-import { replyCountLabel, threadExcerpt, threadListGroups } from './page-thread-list';
+import { replyCountLabel, SIGN_IN_WALL_NOTE, threadExcerpt, threadListGroups } from './page-thread-list';
 import { PageZoomControl, usePageZoom } from './page-zoom';
 import { startRelocator, type Relocator } from './pin-relocator';
 import { SignInSheet } from './sign-in-sheet';
@@ -137,6 +137,8 @@ export function PageView({
   const signIns = useSignIns();
   const record = recordFor(signIns.data, site?.id);
   const [wall, setWall] = useState(false);
+  const wallRef = useRef(wall);
+  wallRef.current = wall;
   // Signed in, but the site's own page says this account can't see it (case 8); hidden for this load with ✕.
   const [notShared, setNotShared] = useState(false);
   const [notSharedHidden, setNotSharedHidden] = useState(false);
@@ -315,7 +317,8 @@ export function PageView({
     const relocator = startRelocator({
       locate: async () => {
         const pins = openRef.current.map((t) => ({ id: t.id, anchor: t.anchor }));
-        const result = await rpc.rig.pages.locate({ webContentsId, pins });
+        // On a sign-in wall the pins aren't missing, so main logs no miss.
+        const result = await rpc.rig.pages.locate({ webContentsId, pins, ...(wallRef.current ? { wall: true } : {}) });
         if (result.success) setPlaces(Object.fromEntries(result.data.map((p) => [p.id, p])));
       },
       subscribe: (onMoved) => events.on(pagePinsMovedChannel, (d) => d.webContentsId === webContentsId && onMoved()),
@@ -409,6 +412,7 @@ export function PageView({
                 resolved={resolvedCount}
                 showResolved={showResolved}
                 onToggleResolved={() => setShowResolved((on) => !on)}
+                {...(wall ? { note: SIGN_IN_WALL_NOTE } : {})}
                 list={(close) => (
                   <ThreadList
                     threads={threads.data ?? []}
@@ -511,6 +515,7 @@ export function PageView({
             thread={openThread}
             at={openAt}
             lost={openPlace !== undefined && !openPlace.found}
+            wall={wall}
             width={stageWidth}
             onReply={async (body) => {
               const agent = mentionedAgent(body);
@@ -572,6 +577,7 @@ function ThreadCard({
   thread,
   at,
   lost,
+  wall,
   width,
   onReply,
   onResolve,
@@ -581,6 +587,8 @@ function ThreadCard({
   at: { x: number; y: number } | null;
   /** The page was looked over and the pinned element isn't on it. */
   lost: boolean;
+  /** The page is on a sign-in wall: that, not a lost element, is why the pin isn't placed. */
+  wall: boolean;
   width: number;
   onReply: (body: string) => Promise<void>;
   onResolve: () => Promise<void>;
@@ -595,7 +603,8 @@ function ThreadCard({
       data-testid="page-thread-card"
     >
       <CommentCardQuote n={thread.n} quote={thread.quote} active resolved={thread.resolved} />
-      {!at && lost && <p className="text-xs text-text-muted">Can't find where this was pinned on the page.</p>}
+      {!at && wall && <p className="text-xs text-text-muted">{SIGN_IN_WALL_NOTE}</p>}
+      {!at && lost && !wall && <p className="text-xs text-text-muted">Can't find where this was pinned on the page.</p>}
       <CommentCardAuthor who={thread.authorName ?? 'Someone'} at={thread.createdAt} />
       <p className="text-sm text-text-primary">{thread.comment}</p>
       {thread.replies.map((r) => (

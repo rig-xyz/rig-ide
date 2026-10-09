@@ -27,3 +27,6 @@ export function replyCountLabel(count: number): string | null {
   if (count <= 0) return null;
   return count === 1 ? '1 reply' : `${count} replies`;
 }
+
+/** What a pin card and the count say while the page is on a sign-in wall. */
+export const SIGN_IN_WALL_NOTE = "This page needs a sign-in, so its pins can't be placed until you sign in.";

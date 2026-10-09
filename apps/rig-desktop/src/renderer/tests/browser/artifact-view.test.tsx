@@ -118,8 +118,8 @@ beforeAll(() => {
 });
 
 /** Resolves on a macrotask, after any same-tick/microtask re-render churn has already settled — see the file-level comment on why this matters for the primary regression test. */
-function resolveOnMacrotask<T>(value: T): Promise<T> {
-  return new Promise((resolve) => setTimeout(() => resolve(value), 20));
+function resolveOnMacrotask<T>(value: T, ms = 20): Promise<T> {
+  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
@@ -190,7 +190,9 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
 
   it('renders rig.toml content instead of hanging on Loading… forever (the reported bug)', async () => {
     mocks.read.mockImplementation(() =>
-      resolveOnMacrotask({ success: true, data: { content: 'key = "value"\n', truncated: false } })
+      // Longer than the rest: a toml file takes comments, and the store's
+      // first reads settle inside the render's act() before the check below.
+      resolveOnMacrotask({ success: true, data: { content: 'key = "value"\n', truncated: false } }, 200)
     );
 
     await renderArtifact('/repo/rig.toml');
@@ -660,6 +662,90 @@ describe('ArtifactView — beyond-markdown file types render, never hang on Load
     // already has the threads), so this settles quickly.
     await waitFor(() => host.querySelectorAll('.cm-rigComment').length > 0);
     expect(host.querySelector('[data-comments-rail]')?.textContent).toContain('Nice catch!');
+  });
+
+  /** One thread on `relPath`, by an agent, anchored to `exact`. */
+  function agentThread(relPath: string, exact: string | null, body: string) {
+    mocks.commentsResolveTarget.mockReset().mockResolvedValue({
+      success: true,
+      data: { target: { bindingId: 'binding-1', relayUrl: 'https://relay.example', relPath }, selfUserId: 'user-1' },
+    });
+    mocks.commentsList.mockReset().mockResolvedValue({
+      success: true,
+      data: {
+        messages: [
+          {
+            id: 'msg-a',
+            seq: '1',
+            bindingId: 'binding-1',
+            author: { userId: 'user-2', name: 'Sam', avatarUrl: null, kind: 'agent' },
+            kind: 'comment',
+            body,
+            parentId: null,
+            intentId: null,
+            path: relPath,
+            meta: { agent: 'claude-code' },
+            anchor: exact ? { exact } : null,
+            resolvedAt: null,
+            resolvedBy: null,
+            createdAt: '2026-10-01T00:00:00.000Z',
+            editedAt: null,
+            deletedAt: null,
+          },
+        ],
+      },
+    });
+  }
+
+  it('shows comments beside a code file, with the line in the card', async () => {
+    mocks.read.mockImplementation(() =>
+      resolveOnMacrotask({ success: true, data: { content: 'const a = 1;\nexport function f() {\n  return a;\n}\n', truncated: false } })
+    );
+    agentThread('src/f.ts', 'return a;', 'Should this be a + 1?');
+
+    await renderArtifact('/repo/src/f.ts');
+    await waitFor(() => loadingGone(host));
+    await waitFor(() => host.querySelectorAll('.cm-rigComment').length > 0, 8000);
+    expect(host.querySelector('[data-comments-rail]')?.textContent).toContain('Should this be a + 1?');
+    expect(host.querySelector('[data-testid="comment-lines"]')?.textContent).toBe('Line 3');
+  });
+
+  it('takes no comments on a CSV but lists an agent’s comment under it', async () => {
+    mocks.read.mockImplementation(() => resolveOnMacrotask({ success: true, data: { content: 'a,b\n1,2\n', truncated: false } }));
+    agentThread('data/t.csv', '1,2', 'Row 2 looks off.');
+
+    await renderArtifact('/repo/data/t.csv');
+    await waitFor(() => loadingGone(host));
+    await waitFor(() => host.querySelector('[data-testid="file-threads-list"]') !== null, 8000);
+    expect(host.querySelector('[data-testid="file-threads-list"]')?.textContent).toContain('Row 2 looks off.');
+    expect(host.querySelector('[data-comments-rail]')).toBeNull();
+  });
+
+  it('lists an agent’s comment under an image', async () => {
+    mocks.readBinary.mockImplementation(() =>
+      resolveOnMacrotask({ success: true, data: { data: btoa('not-real-png-bytes'), truncated: false, size: 19 } })
+    );
+    agentThread('photo.png', null, 'The logo is cropped.');
+
+    await renderArtifact('/repo/photo.png');
+    await waitFor(() => host.querySelector('[data-testid="file-threads-list"]') !== null, 8000);
+    const list = host.querySelector('[data-testid="file-threads-list"]')!;
+    expect(list.textContent).toContain('1 comment on this file');
+    expect(list.textContent).toContain("Sam's agent");
+    expect(list.textContent).toContain('The logo is cropped.');
+  });
+
+  it('says a JSON file’s comments show in Edit while it reads in Preview', async () => {
+    mocks.read.mockImplementation(() => resolveOnMacrotask({ success: true, data: { content: '{"a": 1}\n', truncated: false } }));
+    agentThread('config.json', '"a": 1', 'Why 1?');
+
+    await renderArtifact('/repo/config.json');
+    await waitFor(() => host.querySelector('[data-testid="json-preview-comments"]') !== null, 8000);
+    expect(host.querySelector('[data-comments-rail]')).toBeNull();
+    await act(async () => {
+      Array.from(host.querySelectorAll('button')).find((b) => b.textContent === 'Open Edit')!.click();
+    });
+    await waitFor(() => (host.querySelector('[data-comments-rail]')?.textContent ?? '').includes('Why 1?'), 8000);
   });
 
   it('in a narrow panel shows numbered pins only, and opens a thread under its passage from its pin (canvas board 17)', async () => {

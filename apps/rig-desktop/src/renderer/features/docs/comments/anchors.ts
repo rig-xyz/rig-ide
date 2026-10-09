@@ -1,12 +1,13 @@
 /**
  * Text-anchor helpers for the comments layer.
  *
- * A direct port of `rig/src/comment-anchors.mjs` — the CLI and the web hub run
- * the same algorithm, and an anchor built or resolved differently here would
- * disagree with them about which passage a comment belongs to. Change the three
- * implementations together or not at all.
+ * Ported from `rig/src/comment-anchors.mjs`. `reanchor` follows the CLI's
+ * `locateAnchor` (ties are ambiguous), and goes further in two ways the CLI
+ * should follow: surroundings are compared by similarity, not only exact
+ * equality, and a whitespace-normalized match is mapped back to a real offset.
+ * Anchors are built the same way as the CLI and the web hub.
  *
- * Pure string work: no I/O, no CM6, no relay. Ported verbatim from emdash.
+ * Pure string work: no I/O, no CM6, no relay.
  */
 
 import type { RigCommentAnchor } from '@shared/rig/comments';
@@ -36,51 +37,110 @@ export function findAllOccurrences(text: string, needle: string): number[] {
   return out;
 }
 
+/** Share of character pairs two strings have in common (Dice), 0 to 1. */
+function similarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+  const pairs = new Map<string, number>();
+  for (let i = 0; i < a.length - 1; i++) {
+    const pair = a.slice(i, i + 2);
+    pairs.set(pair, (pairs.get(pair) ?? 0) + 1);
+  }
+  let shared = 0;
+  for (let i = 0; i < b.length - 1; i++) {
+    const pair = b.slice(i, i + 2);
+    const left = pairs.get(pair) ?? 0;
+    if (left > 0) {
+      pairs.set(pair, left - 1);
+      shared++;
+    }
+  }
+  return (2 * shared) / (a.length - 1 + (b.length - 1));
+}
+
+/** Two candidates closer than this are a tie. */
+const TIE = 0.05;
+
 /**
- * Among several verbatim occurrences of the same quote, pick the one whose
- * surrounding text best matches the anchor's recorded prefix/suffix.
+ * Among several verbatim occurrences of the same quote, the one whose
+ * surrounding text is most like the anchor's recorded prefix and suffix. An
+ * exact match scores 1 per side; otherwise how alike the two are. Candidates
+ * that score the same stay ambiguous, never the first one by default.
  */
-function bestOccurrence(
+function bestOccurrences(
   fileText: string,
   exact: string,
   occurrences: number[],
   prefix: string | undefined,
   suffix: string | undefined
-): number {
-  let best = occurrences[0];
-  let bestScore = -1;
-  for (const idx of occurrences) {
-    const before = fileText.slice(Math.max(0, idx - (prefix?.length ?? 0)), idx);
-    const afterStart = idx + exact.length;
+): number[] {
+  const scored = occurrences.map((index) => {
+    const before = fileText.slice(Math.max(0, index - (prefix?.length ?? 0)), index);
+    const afterStart = index + exact.length;
     const after = fileText.slice(afterStart, afterStart + (suffix?.length ?? 0));
-    let score = 0;
-    if (prefix && before === prefix) score += 1;
-    if (suffix && after === suffix) score += 1;
-    if (score > bestScore) {
-      bestScore = score;
-      best = idx;
+    return { index, score: (prefix ? similarity(prefix, before) : 0) + (suffix ? similarity(suffix, after) : 0) };
+  });
+  const top = Math.max(...scored.map((c) => c.score));
+  if (top <= 0) return occurrences;
+  return scored.filter((c) => top - c.score < TIE).map((c) => c.index);
+}
+
+/**
+ * Where a whitespace-normalized match sits in the real text: the offsets of
+ * its first and last characters, widened over the quote's own leading and
+ * trailing whitespace (a newline only when the quote's has one).
+ */
+function realSpan(text: string, exact: string, normStart: number, normLength: number): { index: number; length: number } | null {
+  // Map each character of the normalized text back to its offset.
+  const offsets: number[] = [];
+  let pendingSpace = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (/\s/.test(text[i]!)) {
+      if (pendingSpace === -1) pendingSpace = i;
+      continue;
     }
+    if (pendingSpace !== -1 && offsets.length > 0) offsets.push(pendingSpace);
+    pendingSpace = -1;
+    offsets.push(i);
   }
-  return best;
+  const first = offsets[normStart];
+  const last = offsets[normStart + normLength - 1];
+  if (first === undefined || last === undefined) return null;
+  let start = first;
+  let end = last + 1;
+  const lead = /^\s*/.exec(exact)![0];
+  const trail = /\s*$/.exec(exact)![0];
+  const leadSpace = lead.includes('\n') ? /\s/ : /[^\S\r\n]/;
+  const trailSpace = trail.includes('\n') ? /\s/ : /[^\S\r\n]/;
+  if (lead) while (start > 0 && leadSpace.test(text[start - 1]!)) start--;
+  if (trail) while (end < text.length && trailSpace.test(text[end]!)) end++;
+  return { index: start, length: end - start };
 }
 
 export type ReanchorResult =
   /** Anchor-less (file-level) comment. */
   | { status: 'file-level' }
   /**
-   * Located. `index` is the document offset; it is absent when only the
-   * whitespace-normalized fallback matched, where no offset in the current text
-   * corresponds to the recorded quote.
+   * Located at `index`. `normalized` when only the whitespace-normalized
+   * fallback matched (a reindent, CRLF line endings): `length` is then the
+   * span's real length, which differs from the quote's.
    */
-  | { status: 'anchored'; index?: number; normalized?: boolean }
+  | { status: 'anchored'; index: number; length?: number; normalized?: boolean }
+  /** The quote is there more than once and nothing says which: `candidates` are their offsets. */
+  | { status: 'ambiguous'; candidates: number[]; normalized: boolean }
   | { status: 'orphan' };
 
 /**
- * Locate an existing comment's anchor in the current file text.
- *   1. Exact match(es) of anchor.exact.
- *   2. Multiple matches → pick by prefix/suffix similarity.
- *   3. No exact match → retry whitespace-normalized.
- *   4. Still nothing → orphan.
+ * Locate an existing comment's anchor in the current file text, the way the
+ * CLI's `locateAnchor` does (`rig/src/comment-anchors.mjs`): a tie is
+ * ambiguous, never the first match.
+ *   1. One exact match: there.
+ *   2. Several: the one whose surroundings best match the recorded prefix
+ *      and suffix, by similarity rather than only exact equality, so an edit
+ *      next to a repeated line doesn't move its thread. Ties are ambiguous.
+ *   3. No exact match: retry whitespace-normalized, mapped back to a real
+ *      offset, so a reindented or CRLF block keeps its place.
+ *   4. Still nothing: orphan.
  */
 export function reanchor(
   fileText: string,
@@ -91,18 +151,26 @@ export function reanchor(
   const text = String(fileText ?? '');
   const occurrences = findAllOccurrences(text, exact);
   if (occurrences.length === 1) {
-    return { status: 'anchored', index: occurrences[0] };
+    return { status: 'anchored', index: occurrences[0]! };
   }
   if (occurrences.length > 1) {
-    return {
-      status: 'anchored',
-      index: bestOccurrence(text, exact, occurrences, anchor.prefix, anchor.suffix),
-    };
+    const best = bestOccurrences(text, exact, occurrences, anchor.prefix, anchor.suffix);
+    return best.length === 1 ? { status: 'anchored', index: best[0]! } : { status: 'ambiguous', candidates: best, normalized: false };
   }
   const normExact = normalizeWhitespace(exact);
-  const normFile = normalizeWhitespace(text);
-  if (normExact && normFile.includes(normExact)) {
-    return { status: 'anchored', normalized: true };
+  if (!normExact) return { status: 'orphan' };
+  const normOccurrences = findAllOccurrences(normalizeWhitespace(text), normExact);
+  const spans = normOccurrences.map((at) => realSpan(text, exact, at, normExact.length)).filter((s) => s !== null);
+  if (spans.length === 1) return { status: 'anchored', index: spans[0]!.index, length: spans[0]!.length, normalized: true };
+  if (spans.length > 1) {
+    // Pick by surroundings, as for exact matches.
+    const byIndex = new Map(spans.map((s) => [s.index, s]));
+    const best = bestOccurrences(text, exact, [...byIndex.keys()], anchor.prefix, anchor.suffix);
+    if (best.length === 1) {
+      const span = byIndex.get(best[0]!)!;
+      return { status: 'anchored', index: span.index, length: span.length, normalized: true };
+    }
+    return { status: 'ambiguous', candidates: best, normalized: true };
   }
   return { status: 'orphan' };
 }

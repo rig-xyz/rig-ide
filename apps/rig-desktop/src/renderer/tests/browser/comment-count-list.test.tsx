@@ -67,4 +67,27 @@ describe('CommentCount', () => {
     expect(listed()).toBeNull();
     expect(onToggleResolved).not.toHaveBeenCalled();
   });
+
+  it('says why on a sign-in wall: in its tooltip and atop the list', async () => {
+    const note = "This page needs a sign-in, so its pins can't be placed until you sign in.";
+    await act(async () =>
+      root.render(
+        <CommentCount
+          open={2}
+          resolved={0}
+          showResolved={false}
+          onToggleResolved={() => {}}
+          note={note}
+          list={() => (
+            <button type="button" role="menuitem" data-testid="listed">
+              Pin 1
+            </button>
+          )}
+        />
+      )
+    );
+    expect(count().getAttribute('title')).toBe(note);
+    await act(async () => click(count()));
+    expect(document.querySelector('[data-testid="comment-count-note"]')?.textContent).toBe(note);
+  });
 });

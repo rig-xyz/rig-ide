@@ -941,6 +941,17 @@ describe('rig_comments_add', () => {
     expect(backend.replyComment).not.toHaveBeenCalled();
   });
 
+  it('refuses a quote that appears more than once, saying how many times', async () => {
+    const backend = fakeBackend();
+    const result = await call(backend, 'rig_comments_add', { path: 'notes/plan.md', body: 'x', quote: 'e' });
+    const times = '# Plan\n\nWe ship on Oct 3 after the review.\n'.split('e').length - 1;
+    expect(result.isError).toBe(true);
+    expect(result.text).toBe(
+      `That quote appears ${times} times in notes/plan.md, so the comment can't tell which one you mean. Quote a longer passage that appears only once.`
+    );
+    expect(backend.createComment).not.toHaveBeenCalled();
+  });
+
   it('never writes outside the space', async () => {
     const backend = fakeBackend();
     expect((await call(backend, 'rig_comments_add', { path: '../x.md', body: 'x', quote: 'y' })).isError).toBe(true);

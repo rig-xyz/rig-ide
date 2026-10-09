@@ -1,4 +1,6 @@
-import type { RoomMessageRow } from '../spaces/relay-api';
+import type { RelayApiError, RoomMessageRow, SpacesRelayApi } from '../spaces/relay-api';
+import { ok, type Result } from '@emdash/shared';
+import { canonicalPageUrl, legacyPagePaths } from '@shared/spaces/links';
 import type { PageAnchor, PageThread } from '@shared/spaces/pages';
 
 export type { PageThread, PageThreadReply } from '@shared/spaces/pages';
@@ -17,6 +19,54 @@ export interface PinnedThread {
   anchor: PageAnchor;
   resolved: boolean;
   authorName: string | null;
+}
+
+const PAGE_LIMIT = 200;
+const MAX_PAGES = 50;
+
+/**
+ * Every message on a page's link, paging with `after` until a short page, so
+ * pins and replies past the first 200 messages still load. The relay lists
+ * them oldest first.
+ */
+export async function listAllMessages(
+  api: Pick<SpacesRelayApi, 'listMessages'>,
+  bindingId: string,
+  path: string
+): Promise<Result<RoomMessageRow[], RelayApiError>> {
+  const all: RoomMessageRow[] = [];
+  let after: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const rows = await api.listMessages(bindingId, { path, limit: PAGE_LIMIT, ...(after ? { after } : {}) });
+    if (!rows.success) {
+      if (page === 0) return rows;
+      break;
+    }
+    all.push(...rows.data);
+    const last = rows.data.at(-1)?.seq;
+    if (rows.data.length < PAGE_LIMIT || last === undefined || String(last) === after) break;
+    after = String(last);
+  }
+  return ok(all);
+}
+
+/**
+ * Every message on a page: under its key now (`canonicalPageUrl`) and the
+ * keys pins had before one key per document (`legacyPagePaths`), merged in
+ * the order they were posted, so existing pins stay.
+ */
+export async function listPageMessages(
+  api: Pick<SpacesRelayApi, 'listMessages'>,
+  bindingId: string,
+  url: string
+): Promise<Result<RoomMessageRow[], RelayApiError>> {
+  const [now, ...before] = await Promise.all(
+    [canonicalPageUrl(url), ...legacyPagePaths(url)].map((path) => listAllMessages(api, bindingId, path))
+  );
+  if (!now!.success) return now!;
+  const byId = new Map(now!.data.map((r) => [r.id, r]));
+  for (const rows of before) if (rows.success) for (const r of rows.data) if (!byId.has(r.id)) byId.set(r.id, r);
+  return ok([...byId.values()].sort((a, b) => a.seq - b.seq));
 }
 
 export function isPageAnchor(value: unknown): value is PageAnchor {

@@ -26,7 +26,7 @@ export function resolveProposalApply(
 ): ProposalApplyResult {
   if (!anchor) return { ok: false, reason: 'no-anchor' };
   const located = reanchor(content, anchor);
-  if (located.status !== 'anchored' || located.index === undefined) {
+  if (located.status !== 'anchored' || located.normalized) {
     return { ok: false, reason: 'orphan' };
   }
   let from = located.index;

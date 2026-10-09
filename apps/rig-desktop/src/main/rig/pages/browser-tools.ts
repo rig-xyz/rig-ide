@@ -5,7 +5,7 @@ import { isRigFileUrl, parseRigFileUrl, rigFileUrl } from '@shared/spaces/rig-fi
 import { agentPage, renderSnapshot } from './agent-pages';
 import { EXPORT_MAX_BYTES, type GoogleExportResult } from './google-export';
 import { frameBoards, frameBoardSnapshot, frameCall, type BoardInfo, type BoardSnapshot, type PageAnchor } from './page-frame-scripts';
-import { contentFrameOf, locateOnPage } from './page-frames';
+import { locateOnPage, pageContentFrame } from './page-frames';
 
 /**
  * Read-only browser tools for any room agent, served with rig's own tools
@@ -100,12 +100,12 @@ const NOT_A_PAGE = 'Give the page link, or the path of an html file in this spac
 
 async function boardsOf(url: string, withText: boolean): Promise<BoardInfo[]> {
   const page = await agentPage(url);
-  return ((await contentFrameOf(page).frame.executeJavaScript(frameCall(frameBoards, withText))) as BoardInfo[] | null) ?? [];
+  return ((await (await pageContentFrame(page)).frame.executeJavaScript(frameCall(frameBoards, withText))) as BoardInfo[] | null) ?? [];
 }
 
 async function snapshotOf(url: string, q: Parameters<typeof frameBoardSnapshot>[0]): Promise<BoardSnapshot | null> {
   const page = await agentPage(url);
-  return (await contentFrameOf(page).frame.executeJavaScript(frameCall(frameBoardSnapshot, q))) as BoardSnapshot | null;
+  return (await (await pageContentFrame(page)).frame.executeJavaScript(frameCall(frameBoardSnapshot, q))) as BoardSnapshot | null;
 }
 
 /** A crop around an element in a board snapshot, with some context. */
@@ -169,7 +169,7 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
       const why = full ? `[No full document text via ${full.label} export: ${full.why}. This is only what the page renders, which may be just the part on screen.]\n\n` : '';
       const all = await boardsOf(url, true);
       if (all.length === 0) {
-        const text = String(await contentFrameOf(page).frame.executeJavaScript('document.body ? document.body.innerText : ""'));
+        const text = String(await (await pageContentFrame(page)).frame.executeJavaScript('document.body ? document.body.innerText : ""'));
         return say(`${page.getTitle()} (${page.getURL()})\n\n${why}${text.slice(0, 15000)}`);
       }
       const board = input.board;
@@ -213,7 +213,7 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
         const hop = p.anchor.hops[0];
         const snap = await snapshotOf(url, { sig: hop?.sig, index: hop?.index, path: p.anchor.path, text: p.anchor.text || undefined });
         if (!snap || !snap.el) return say(`Pin ${p.n}'s element isn't on the page any more.`, true);
-        return image(await renderSnapshot(snap.html, snap, around(snap), url), `Pin ${p.n} with context, from board ${snap.i} at full size.`);
+        return image(await renderSnapshot(snap.html, snap, around(snap), url), snap.i < 0 ? `Pin ${p.n} with context.` : `Pin ${p.n} with context, from board ${snap.i} at full size.`);
       }
       if (input.board !== undefined || typeof input.text === 'string') {
         const q =
@@ -221,11 +221,12 @@ export const BROWSER_TOOLS: readonly BrowserTool[] = [
             ? { i: input.board, text: input.text as string | undefined }
             : { words: input.board as string | undefined, text: input.text as string | undefined };
         const snap = await snapshotOf(url, q);
-        if (!snap) return say('No board matches that.', true);
+        if (!snap) return say(q.text && input.board === undefined ? `"${q.text}" isn't on the page.` : 'No board matches that.', true);
         if (q.text && !snap.el) return say(`"${q.text}" isn't on board ${snap.i}.`, true);
+        const from = snap.i < 0 ? '' : `, from board ${snap.i} at full size`;
         return image(
           await renderSnapshot(snap.html, snap, q.text ? around(snap) : null, url),
-          q.text ? `"${q.text}" with context, from board ${snap.i} at full size.` : `Board ${snap.i} (${snap.title.slice(0, 50)}) at full size.`
+          q.text ? `"${q.text}" with context${from}.` : `Board ${snap.i} (${snap.title.slice(0, 50)}) at full size.`
         );
       }
       const page = await agentPage(url);

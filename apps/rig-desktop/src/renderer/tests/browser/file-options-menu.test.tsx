@@ -46,6 +46,13 @@ vi.mock('@renderer/lib/ipc', () => ({
         set: (...args: unknown[]) => mocks.settingsSet(args[0]),
       },
       context: { createTarget: vi.fn(async () => ({ success: true, data: { targetRef: 't' } })) },
+      // A toml file takes comments: the store settles as not in a space.
+      comments: {
+        cacheGet: vi.fn(async () => null),
+        cacheSet: vi.fn(async () => ({ success: true, data: undefined })),
+        resolveTarget: vi.fn(async () => ({ success: false, error: { kind: 'notBound', message: 'Not bound' } })),
+        list: vi.fn(async () => ({ success: false, error: { kind: 'notBound', message: 'Not bound' } })),
+      },
     },
     agents: {
       list: vi.fn(async () => []),

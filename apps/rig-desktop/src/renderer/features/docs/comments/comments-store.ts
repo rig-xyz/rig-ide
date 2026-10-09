@@ -259,6 +259,10 @@ export type CommentThread = {
   index: number | null;
   /** The quoted passage no longer exists in the document. */
   orphan: boolean;
+  /** Length of the anchored span, when it differs from the quote's (a reindented passage). */
+  length?: number;
+  /** How many times the quote now appears, when nothing says which one it was on. */
+  ambiguous?: number;
   resolved: boolean;
 };
 
@@ -1563,8 +1567,10 @@ export class DocCommentsStore {
       threads.push({
         root,
         replies: [...replies].sort((a, b) => a.seq.localeCompare(b.seq)),
-        index: located.status === 'anchored' && located.index !== undefined ? located.index : null,
+        index: located.status === 'anchored' ? located.index : null,
         orphan: located.status === 'orphan',
+        ...(located.status === 'anchored' && located.length !== undefined ? { length: located.length } : {}),
+        ...(located.status === 'ambiguous' ? { ambiguous: located.candidates.length } : {}),
         resolved: root.resolvedAt !== null,
       });
     }
@@ -1606,7 +1612,7 @@ export class DocCommentsStore {
     for (const thread of threads) {
       if (thread.index === null || !thread.root.anchor) continue;
       const from = thread.index;
-      const to = Math.min(from + thread.root.anchor.exact.length, docLength);
+      const to = Math.min(from + (thread.length ?? thread.root.anchor.exact.length), docLength);
       if (to <= from) continue;
       markers.push({
         id: thread.root.id,

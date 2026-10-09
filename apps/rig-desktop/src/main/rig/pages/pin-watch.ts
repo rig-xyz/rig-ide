@@ -74,14 +74,21 @@ export function watchPins(wc: WatchedContents, onMoved: () => void): void {
   const onConsole = (details: { message?: string }) => {
     if (details?.message === marker) forward();
   };
+  // A document that just loaded (a reload after the file was written, a
+  // frame that loads later) has its new layout already: the watcher only
+  // hears what changes after it, so say "moved" once now.
+  const onLoad = () => {
+    inject();
+    forward();
+  };
   const stop = () => {
     wc.off('console-message', onConsole as never);
-    wc.off('did-frame-finish-load', inject as never);
+    wc.off('did-frame-finish-load', onLoad as never);
     watching.delete(wc.id);
   };
   wc.on('console-message', onConsole as never);
   // Every new document (a navigation, a frame that loads later) gets its watcher.
-  wc.on('did-frame-finish-load', inject as never);
+  wc.on('did-frame-finish-load', onLoad as never);
   wc.once('destroyed', stop as never);
   watching.set(wc.id, stop);
   inject();

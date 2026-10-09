@@ -24,7 +24,7 @@ import { pageZoomKeyChannel } from '@shared/pages/page-zoom';
 import { normalizeBrowserZoomFactor } from '@shared/browser';
 import type { PageAnchor, PagePlace, PageThread } from '@shared/spaces/pages';
 import { hitPage, locateOnPage } from './page-frames';
-import { threadsFromRows } from './page-pins';
+import { listPageMessages, threadsFromRows } from './page-pins';
 import { createPinMissLog } from './pin-miss-log';
 
 /**
@@ -212,14 +212,23 @@ export const rigPagesController = createRPCController({
     return true;
   },
 
-  locate: async ({ webContentsId, pins }: { webContentsId: number; pins: { id: string; anchor: PageAnchor }[] }): Promise<Result<({ id: string } & PagePlace)[], Failure>> => {
+  /** `wall`: the page is on a sign-in wall, so a pin not found there is no miss to log. */
+  locate: async ({
+    webContentsId,
+    pins,
+    wall,
+  }: {
+    webContentsId: number;
+    pins: { id: string; anchor: PageAnchor }[];
+    wall?: boolean;
+  }): Promise<Result<({ id: string } & PagePlace)[], Failure>> => {
     const page = pageContents(webContentsId);
     if (!page) return err({ message: 'That page is no longer open.' });
     const places = await Promise.all(
       pins.map(async (p) => {
         const at: PagePlace = await locateOnPage(page, p.anchor).catch(() => ({ found: false, why: 'error' }));
         // Why a pin isn't drawn for someone: once per page, pin and reason.
-        if (!at.found) logPinMiss(page.getURL(), p, at.why);
+        if (!at.found && !wall) logPinMiss(page.getURL(), p, at.why);
         return { id: p.id, ...at };
       })
     );
@@ -227,7 +236,7 @@ export const rigPagesController = createRPCController({
   },
 
   threads: async ({ bindingId, url }: { bindingId: string; url: string }): Promise<Result<PageThread[], Failure>> => {
-    const [rows, members] = await Promise.all([api.listMessages(bindingId, { path: canonicalPageUrl(url), limit: 200 }), api.listMembers(bindingId)]);
+    const [rows, members] = await Promise.all([listPageMessages(api, bindingId, url), api.listMembers(bindingId)]);
     if (!rows.success) return err({ message: rows.error.message });
     const names = new Map<string, string>();
     for (const m of members.success ? members.data : []) {
@@ -247,7 +256,7 @@ export const rigPagesController = createRPCController({
     const path = canonicalPageUrl(input.url);
     // The pin's number, saved with it so the chat can show it without the
     // page's whole history: pins number in the order they were made.
-    const existing = await api.listMessages(input.bindingId, { path, limit: 200 });
+    const existing = await listPageMessages(api, input.bindingId, input.url);
     const pin = existing.success ? threadsFromRows(existing.data).length + 1 : undefined;
     const posted = await api.postMessage(input.bindingId, {
       body: input.body,
@@ -279,7 +288,7 @@ export const rigPagesController = createRPCController({
    */
   askAgent: async (input: { bindingId: string; url: string; threadId: string; agent: 'claude' | 'codex'; question: string }): Promise<Result<{ runId: string }, Failure>> => {
     const url = canonicalPageUrl(input.url);
-    const rows = await api.listMessages(input.bindingId, { path: url, limit: 200 });
+    const rows = await listPageMessages(api, input.bindingId, input.url);
     const thread = rows.success ? threadsFromRows(rows.data).find((t) => t.id === input.threadId) : undefined;
     if (!thread) return err({ message: 'That pin is gone.' });
     const run = await runCommentTurnInRoom({

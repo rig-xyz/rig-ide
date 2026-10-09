@@ -192,6 +192,19 @@ export function detectByExtension(filename: string): DetectedFileType | null {
 }
 
 /**
+ * Whether people can comment on a file in the viewer: markdown and other
+ * text and code. A CSV or TSV is a table more than lines of text, and
+ * images and PDFs have no text to anchor to, so those take none; agents'
+ * comments on them are listed under the file instead.
+ */
+export function takesComments(type: DetectedFileType, filename: string): boolean {
+  if (type.category === 'markdown') return true;
+  if (type.category !== 'text') return false;
+  const ext = extensionOf(filename);
+  return ext !== 'csv' && ext !== 'tsv';
+}
+
+/**
  * The binary sniff: a null byte ANYWHERE in the sampled prefix. The same
  * heuristic git and most editors use — real text (any encoding a text
  * editor cares about, including UTF-16 with a BOM) essentially never
