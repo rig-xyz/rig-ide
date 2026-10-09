@@ -23,7 +23,6 @@ import { requestOpenSetup, startSpaceSetup, useSpaceSetups } from '@renderer/fea
 import { useRoomThemesEnabled } from '@renderer/features/spaces/use-room-themes-enabled';
 import { useSpacesEnabled } from '@renderer/features/spaces/use-spaces-enabled';
 import { rpc } from '@renderer/lib/ipc';
-import { markJustAttachedSyncing } from '@renderer/lib/just-attached';
 import { cn } from '@renderer/lib/utils';
 import { AcrossYourSpacesToday } from './across-your-spaces-today';
 import { BriefingSpine, loadPulse, PULSE_QUERY_KEY } from './briefing-spine';
@@ -68,6 +67,7 @@ import { useSpaceStatus } from './use-space-status';
 import { useFaceReasons } from './use-face-reasons';
 import { deriveAskChips } from './ask-chips';
 import { unreadMentionsBySpace } from './face-reasons';
+import { InviteWelcome } from './invite-welcome';
 import { deriveWelcomePhase, type WelcomePhase } from './welcome-state';
 
 /**
@@ -311,9 +311,9 @@ export function Home({
     queryFn: () => rpc.rig.share.listMyInvites(),
     enabled: signedIn,
   });
-  const pendingInvite: MyInviteRow | null = myInvitesQuery.data?.success
-    ? (shapeMyInvites(myInvitesQuery.data.data.invites)[0] ?? null)
-    : null;
+  const pendingInvites: MyInviteRow[] = myInvitesQuery.data?.success
+    ? shapeMyInvites(myInvitesQuery.data.data.invites)
+    : [];
 
   const workspaces = deriveWorkspacesState(signedIn, {
     isLoading: workspacesQuery.isLoading,
@@ -625,16 +625,32 @@ export function Home({
     // the plain first-run case.
     return (
       <div className="flex min-h-full w-full flex-col items-center justify-center gap-6 p-8">
-        <Welcome
-          phase={welcomePhase}
-          authLoading={authQuery.isLoading}
-          onStartFresh={startFreshOrCreate}
-          signInUrl={createSignInUrl}
-          onCancelSignIn={cancelCreateSignIn}
-          // Signing in and creating both need the network.
-          needsConnection={connectionDown || !navigatorOnline}
-        />
-        {pendingInvite && <PendingInviteInline invite={pendingInvite} onOpenPath={onOpenPath} />}
+        {pendingInvites.length > 0 ? (
+          <InviteWelcome
+            invites={pendingInvites}
+            icon={<RigAppIcon size={112} className="shadow-soft" />}
+            onOpenPath={onOpenPath}
+            onStartFresh={startFreshOrCreate}
+            startFreshPhase={welcomePhase}
+            needsConnection={connectionDown || !navigatorOnline}
+          />
+        ) : (
+          <Welcome
+            phase={welcomePhase}
+            authLoading={authQuery.isLoading}
+            onStartFresh={startFreshOrCreate}
+            signInUrl={createSignInUrl}
+            onCancelSignIn={cancelCreateSignIn}
+            // Signing in and creating both need the network.
+            needsConnection={connectionDown || !navigatorOnline}
+            // Signed out: sign in on its own, to see invites, without making a space.
+            signInOnly={
+              !authQuery.isLoading && !signedIn
+                ? { onSignIn: () => void signIn(), phase: signInPhase, url: signInUrl, onCancel: cancelSignIn }
+                : undefined
+            }
+          />
+        )}
         {/* Skipped the agent step on the first run: the way back to it, one line per agent. */}
         {localReady && (
           <div className="flex flex-col gap-1.5" data-testid="home-agent-problems">
@@ -848,6 +864,7 @@ export function Welcome({
   needsConnection,
   signInUrl = null,
   onCancelSignIn,
+  signInOnly,
 }: {
   phase: WelcomePhase;
   authLoading: boolean;
@@ -857,8 +874,11 @@ export function Welcome({
   signInUrl?: string | null;
   /** Stops waiting for sign-in, back to Start fresh. */
   onCancelSignIn?: () => void;
+  /** Signed out: a plain Sign in that makes nothing, for someone who came for an invite. */
+  signInOnly?: { onSignIn: () => void; phase: RigSignInPhase; url: string | null; onCancel: () => void };
 }) {
-  const waiting = phase.kind === 'signingIn' || phase.kind === 'creating';
+  const signingInOnly = signInOnly && signInOnly.phase !== 'idle';
+  const waiting = phase.kind === 'signingIn' || phase.kind === 'creating' || !!signingInOnly;
   // An error leaves the button clickable, to try again.
   const disabled = waiting || authLoading || needsConnection;
   const label =
@@ -884,6 +904,25 @@ export function Welcome({
         <SignInWaiting url={signInUrl} onCancel={onCancelSignIn} note="Sign in to start." />
       )}
       {phase.kind === 'error' && <p className="text-danger text-xs">{phase.message}</p>}
+      {signingInOnly ? (
+        <SignInWaiting url={signInOnly.url} onCancel={signInOnly.onCancel} />
+      ) : (
+        signInOnly &&
+        phase.kind !== 'signingIn' && (
+          <p className="text-text-muted text-sm">
+            Have an account or an invite?{' '}
+            <button
+              type="button"
+              onClick={signInOnly.onSignIn}
+              disabled={needsConnection || phase.kind === 'creating'}
+              className="text-accent hover:opacity-80 disabled:pointer-events-none disabled:opacity-50"
+              data-testid="welcome-sign-in"
+            >
+              Sign in
+            </button>
+          </p>
+        )
+      )}
     </div>
   );
 }
@@ -953,67 +992,6 @@ function SignInWaiting({ url, onCancel, note }: { url: string | null; onCancel?:
           Cancel
         </Button>
       )}
-    </div>
-  );
-}
-
-/**
- * Feedback round, Part C — an account with zero rigs but a pending invite
- * gets it surfaced right on the empty state, not only behind the topbar
- * bell (`invites-bell.tsx`'s `InviteRow`). One click does accept-then-
- * attach end to end (lane J made the bell's Accept do the same). Mirrors
- * `InviteRow`'s two relay calls exactly (`acceptMyInvite` then
- * `join.attach`) — a failure in the SECOND one still leaves the invite
- * accepted server-side, so this quietly falls back to idle rather than
- * showing an error; the `['rig','account']` invalidate below means the
- * next render already knows about the binding either way (it'll show as
- * relay-only in the rail once `regions.showEmptyState` flips).
- */
-function PendingInviteInline({
-  invite,
-  onOpenPath,
-}: {
-  invite: MyInviteRow;
-  onOpenPath: (path: string) => void;
-}) {
-  const queryClient = useQueryClient();
-  const [phase, setPhase] = useState<'idle' | 'working' | 'error'>('idle');
-  const [error, setError] = useState<string | null>(null);
-
-  const accept = async () => {
-    setPhase('working');
-    setError(null);
-    const accepted = await rpc.rig.share.acceptMyInvite({ id: invite.id });
-    if (!accepted.success) {
-      setPhase('error');
-      setError(accepted.error.message);
-      return;
-    }
-    void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
-    void queryClient.invalidateQueries({ queryKey: MY_INVITES_KEY_PREFIX });
-    const attached = await rpc.rig.join.attach({ bindingId: invite.bindingId });
-    if (!attached.success) {
-      setPhase('idle');
-      return;
-    }
-    markJustAttachedSyncing(attached.data.localPath, attached.data.syncing);
-    onOpenPath(attached.data.localPath);
-  };
-
-  return (
-    <div className="flex flex-col items-center gap-1">
-      <p className="text-text-muted text-sm">
-        {invite.inviterLabel} invited you to {invite.label} ·{' '}
-        <button
-          type="button"
-          onClick={() => void accept()}
-          disabled={phase === 'working'}
-          className="text-accent hover:opacity-80 disabled:pointer-events-none disabled:opacity-50"
-        >
-          {phase === 'working' ? 'Accepting…' : 'Accept'}
-        </button>
-      </p>
-      {phase === 'error' && error && <p className="text-danger text-xs">{error}</p>}
     </div>
   );
 }
