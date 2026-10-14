@@ -146,6 +146,18 @@ describe('computeForYou: asks', () => {
     expect(compute([message('m1', 1), reply], [row('n1', 'm1')]).asks).toEqual([]);
   });
 
+  it('is not handled by a quote-reply your agent posted', () => {
+    const reply = message('m2', 2, {
+      authorId: ME,
+      meta: {
+        kind: 'text',
+        replyTo: { id: 'm1', authorId: 'maya', label: 'Maya', excerpt: 'hey' },
+        byAgent: { agent: 'claude' },
+      },
+    });
+    expect(compute([message('m1', 1), reply], [row('n1', 'm1')]).asks).toHaveLength(1);
+  });
+
   it('is handled by a quote-reply even when the asked message is out of the loaded window', () => {
     const reply = message('m5', 5, {
       authorId: ME,

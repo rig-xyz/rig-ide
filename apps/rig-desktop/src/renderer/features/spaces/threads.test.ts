@@ -154,6 +154,13 @@ describe('summarizeThread', () => {
     expect(newestSeq(thread)).toBe(messages[3]!.seq);
   });
 
+  it("shows a reply someone's agent posted as that agent's face", () => {
+    const posted = text('a1', 'kim', 'a');
+    const layout = buildThreads([text('a', 'sam'), { ...posted, meta: { ...posted.meta, kind: 'text', byAgent: { agent: 'codex' } } }]);
+    const summary = summarizeThread(layout.threads.get('a')!, { sessionMetaByRun: {} }, 'me', null, () => false);
+    expect(summary.faces).toEqual([{ kind: 'agent', agent: 'codex', owner: 'kim' }]);
+  });
+
   it('says an agent is working while a run in the thread is live, and shows it as a face', () => {
     const thread = buildThreads([text('a', 'sam'), text('a1', 'me', 'a'), run('s1', 'run-1', 'me', 'a1')]).threads.get('a')!;
     const snapshot = { sessionMetaByRun: { 'run-1': meta('run-1', 'me') } };

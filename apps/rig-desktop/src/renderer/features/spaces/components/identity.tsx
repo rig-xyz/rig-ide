@@ -1,3 +1,4 @@
+import { Bot } from 'lucide-react';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import { agentLogoId, BrandLogo } from '../logos';
@@ -12,6 +13,11 @@ import type { AgentKind, RoomMember } from '../types';
  */
 
 export const AGENT_NAME: Record<AgentKind, string> = { claude: 'Claude', codex: 'Codex' };
+
+/** An agent's name, or "Agent" for a post from an agent we can't name. */
+export function agentNameOf(agent: AgentKind | null | undefined): string {
+  return agent ? AGENT_NAME[agent] : 'Agent';
+}
 
 type Size = 'md' | 'sm';
 
@@ -87,7 +93,8 @@ export function AgentAvatar({
   title,
   badgeRingClassName,
 }: {
-  agent: AgentKind;
+  /** `null`: an agent we can't name, drawn with a generic mark. */
+  agent: AgentKind | null;
   /** `null` = the agent kind itself, with no owner badge; `undefined` = an owner we can't resolve ("?"). */
   owner: RoomMember | undefined | null;
   size?: Size;
@@ -100,15 +107,25 @@ export function AgentAvatar({
   return (
     <span
       data-testid="agent-avatar"
-      data-agent={agent}
+      data-agent={agent ?? 'agent'}
       className={cn(
         'border-border-hairline bg-bg-2 relative inline-flex shrink-0 items-center justify-center border',
         AGENT_BOX[size],
         className
       )}
-      title={title === undefined ? (owner ? `${owner.name}'s ${AGENT_NAME[agent]}` : AGENT_NAME[agent]) : (title ?? undefined)}
+      title={
+        title === undefined
+          ? owner
+            ? `${owner.name}'s ${agentNameOf(agent)}`
+            : agentNameOf(agent)
+          : (title ?? undefined)
+      }
     >
-      <BrandLogo id={agentLogoId(agent)} size={AGENT_LOGO[size]} />
+      {agent ? (
+        <BrandLogo id={agentLogoId(agent)} size={AGENT_LOGO[size]} />
+      ) : (
+        <Bot size={AGENT_LOGO[size]} strokeWidth={1.75} className="text-text-secondary" aria-hidden />
+      )}
       {owner !== null && (
         <OwnerBadge owner={owner} className={cn('absolute', BADGE[size])} ringClassName={badgeRingClassName} />
       )}

@@ -28,7 +28,7 @@ import { remarkRoomTokens, type RoomTokenKind } from '../message-tokens';
 import { waitingAgentFor } from '../pending-asks';
 import { personOf } from '../person-identity';
 import type { AgentKind, MessageMention, RoomConnector, RoomMember, RoomMessage, RoomReplyRef, RoomSnapshot } from '../types';
-import { AGENT_NAME, AgentAvatar, PersonAvatar } from './identity';
+import { AGENT_NAME, AgentAvatar, agentNameOf, PersonAvatar } from './identity';
 import { FileTagChip, MessageAttachments } from './attachment-cards';
 import { ConnectPill } from './connectors-panel';
 import { SpaceFileLink } from './space-file-link';
@@ -494,7 +494,11 @@ export function MessageRow({
   onJumpTo?: (messageId: string) => void;
 }) {
   const who = personOf(snapshot, message.authorId);
-  const mine = message.authorId === ownId;
+  // Posted by the author's agent (`rig chat send --agent`): that agent speaks, so never your own bubble.
+  const byAgent = message.meta.kind === 'text' ? message.meta.byAgent : undefined;
+  const ownAgent = !!byAgent && message.authorId === ownId;
+  const mine = message.authorId === ownId && !byAgent;
+  const agentName = byAgent ? agentNameOf(byAgent.agent) : '';
   const files = message.meta.kind === 'text' ? message.meta.attachments : undefined;
   const mentions = message.meta.kind === 'text' ? message.meta.mentions : undefined;
   // Only files were sent: the body was written for older apps; the cards say it.
@@ -540,7 +544,7 @@ export function MessageRow({
               onReply({
                 id: message.id,
                 authorId: message.authorId,
-                label: who.name,
+                label: byAgent ? (ownAgent ? `Your ${agentName}` : `${who.name}'s ${agentName}`) : who.name,
                 excerpt: excerptOf(message.body ?? ''),
               })
           : undefined
@@ -590,17 +594,25 @@ export function MessageRow({
       data-testid="message-row"
       data-author={message.authorId}
       data-mine="false"
+      data-by-agent={byAgent ? (byAgent.agent ?? 'agent') : undefined}
       data-continued={continued}
     >
       {continued ? (
         <RowTime message={message} short className="self-center justify-self-center" />
+      ) : byAgent ? (
+        <AgentAvatar agent={byAgent.agent ?? null} owner={who.member} className="mt-0.5" />
       ) : (
         <PersonAvatar member={who.member} person={who} className="mt-0.5" />
       )}
       <div className="flex min-w-0 flex-col gap-1">
         {!continued && (
           <div className="flex items-baseline gap-2">
-            <b className="text-sm font-medium text-text-primary">{who.name}</b>
+            <b className="text-sm font-medium text-text-primary">{byAgent ? agentName : who.name}</b>
+            {byAgent && (
+              <span className="text-xs text-text-muted">
+                {[byAgent.model, ownAgent ? 'yours' : `${who.name}'s`].filter(Boolean).join(' · ')}
+              </span>
+            )}
             <RowTime message={message} />
           </div>
         )}

@@ -1458,7 +1458,7 @@ export class RelayRoomSource implements RoomSource {
         createdAt: row.createdAt,
         time: formatClock(row.createdAt),
         body: row.body || undefined,
-        meta: comment ?? toMessageMeta(row.kind, meta),
+        meta: comment ?? toMessageMeta(row.kind, meta, row.author.kind),
         ...(row.reactions?.length ? { reactions: this.memberReactions(row.reactions) } : {}),
         ...(row.author.name ? { authorName: row.author.name } : {}),
         ...(row.author.avatarUrl ? { authorAvatarUrl: row.author.avatarUrl } : {}),
@@ -2231,9 +2231,21 @@ function agentOfPost(meta: Record<string, unknown> | null): AgentKind | undefine
   return model ? 'codex' : undefined;
 }
 
+/**
+ * A chat message the author's agent posted (`rig chat send --agent` writes
+ * `meta.agent: "claude-code"`): which agent, when we can name it, and its model.
+ */
+function postingAgentOf(meta: Record<string, unknown>): { agent?: AgentKind; model?: string } {
+  const name = typeof meta.agent === 'string' ? meta.agent.toLowerCase() : '';
+  const agent: AgentKind | undefined = name.includes('claude') ? 'claude' : name.includes('codex') ? 'codex' : undefined;
+  const model = typeof meta.model === 'string' && meta.model.trim() ? meta.model.trim() : undefined;
+  return { ...(agent ? { agent } : {}), ...(model ? { model } : {}) };
+}
+
 function toMessageMeta(
   kind: string,
-  meta: Record<string, unknown>
+  meta: Record<string, unknown>,
+  authorKind?: string
 ): import('./types').MessageMeta {
   switch (kind) {
     case 'session':
@@ -2284,6 +2296,7 @@ function toMessageMeta(
         ...(meta.alsoInChannel === true ? { alsoInChannel: true } : {}),
         ...(mentions.length > 0 ? { mentions } : {}),
         ...(meta.asks === 'claude' || meta.asks === 'codex' ? { asks: meta.asks } : {}),
+        ...(authorKind === 'agent' ? { byAgent: postingAgentOf(meta) } : {}),
       };
     }
   }

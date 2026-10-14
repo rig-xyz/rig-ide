@@ -206,6 +206,11 @@ export type MessageMeta =
       mentions?: MessageMention[];
       /** The sender's own agent this message asked (`meta.asks`): the Room shows it as waiting until a run starts on it. */
       asks?: AgentKind;
+      /**
+       * Posted by the author's agent (`authorKind: 'agent'`, e.g. `rig chat send --agent`):
+       * shown as that agent, never as the author's own words. `agent` is unset for an agent we can't name.
+       */
+      byAgent?: { agent?: AgentKind; model?: string };
     }
   | {
       kind: 'session';
