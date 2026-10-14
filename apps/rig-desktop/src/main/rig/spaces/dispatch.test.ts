@@ -1627,6 +1627,7 @@ describe('a fresh session after a long idle', () => {
       acpSessionId: 'acp-old',
       providerId: 'claude',
       cwd: '/rigs/one',
+      toolSearch: 'on',
       updatedAt: now - 20 * HOUR,
       lastTurnAt: now - 20 * HOUR,
       contextTokens: 460_000,
@@ -1669,6 +1670,7 @@ describe('a fresh session after a long idle', () => {
         acpSessionId: 'acp-old',
         providerId: 'claude',
         cwd: '/rigs/one',
+        toolSearch: 'on',
         updatedAt: now - idleMs,
         ...extra,
       });
@@ -1732,6 +1734,7 @@ describe('a fresh session after a long idle', () => {
         acpSessionId: 'acp-old',
         providerId: 'claude',
         cwd: '/rigs/one',
+        toolSearch: 'on',
         updatedAt: Date.now(),
       });
       let clock = 1_000 * HOUR;
@@ -1760,6 +1763,7 @@ describe('a fresh session after a long idle', () => {
         acpSessionId: 'acp-old',
         providerId: 'claude',
         cwd: '/rigs/one',
+        toolSearch: 'on',
         updatedAt: Date.now(),
       });
       let clock = Date.now();
@@ -1786,6 +1790,110 @@ describe('a fresh session after a long idle', () => {
       expect(asked).toEqual([{ providerId: 'claude', cwd: '/rigs/one', sessionId: 'acp-resumed' }]);
       expect(fake.stopped).toEqual(['conv-old']);
       expect(fake.started).toHaveLength(1);
+    });
+  });
+
+  describe('a Claude session started with tool search off', () => {
+    /** A stored session with no tool search marker (started by Rig 0.4.12 to 0.4.14, or before 0.4.12), used an hour ago. */
+    function unmarked(providerId: 'claude' | 'codex' = 'claude', extra: Partial<StoredSpaceSession> = {}) {
+      const store = memoryStore();
+      store.set(`binding-1::owner-1::${providerId}`, {
+        conversationId: 'conv-old',
+        acpSessionId: 'acp-old',
+        providerId,
+        cwd: '/rigs/one',
+        updatedAt: Date.now() - HOUR,
+        lastTurnAt: Date.now() - HOUR,
+        contextTokens: 300_000,
+        roomSeqSent: 1,
+        config: { model: 'opus' },
+        ...extra,
+      });
+      return store;
+    }
+
+    it('starts fresh once, keeping its settings, and is marked so the next restart resumes it', async () => {
+      const store = unmarked();
+      const fake = makeFakeAcp();
+      const applied: unknown[] = [];
+      fake.acp.setConfig = async (_c, change) => {
+        applied.push(change);
+        return ok(undefined);
+      };
+      const dispatcher = createSpacesDispatcher({ api: roomApi(), acp: fake.acp, resolveWorkspace: async () => '/rigs/one', store });
+      await dispatcher.dispatch(makeRequest());
+      expect(fake.resumed).toEqual([]);
+      expect(fake.started).toHaveLength(1);
+      expect(fake.started[0]!.conversationId).not.toBe('conv-old');
+      expect(fake.started[0]!.systemPromptAppend).toContain('You are working in a shared Rig space.');
+      expect(applied).toEqual([{ model: 'opus' }]);
+      expect(fake.queued[0]!.hiddenContext).toContain('This is a fresh session');
+      expect(fake.queued[0]!.hiddenContext).toContain('#1 Sam: hello');
+      const saved = store.get('binding-1::owner-1::claude')!;
+      expect(saved).toMatchObject({ conversationId: fake.started[0]!.conversationId, toolSearch: 'on' });
+
+      // The next turn, and the next app run, resume it.
+      await dispatcher.dispatch(makeRequest({ id: 'req2' }));
+      expect(fake.started).toHaveLength(1);
+      expect(fake.queued[1]!.hiddenContext).not.toContain('fresh session');
+      const after = makeFakeAcp();
+      await createSpacesDispatcher({ api: roomApi(), acp: after.acp, resolveWorkspace: async () => '/rigs/one', store }).dispatch(
+        makeRequest({ id: 'req3' })
+      );
+      expect(after.started).toEqual([]);
+      expect(after.resumed).toEqual([{ conversationId: saved.conversationId, sessionId: 'acp-new' }]);
+      expect(store.get('binding-1::owner-1::claude')).toMatchObject({ toolSearch: 'on' });
+    });
+
+    it('resumes a marked session', async () => {
+      const store = unmarked('claude', { toolSearch: 'on' });
+      const fake = makeFakeAcp();
+      await createSpacesDispatcher({ api: roomApi(), acp: fake.acp, resolveWorkspace: async () => '/rigs/one', store }).dispatch(makeRequest());
+      expect(fake.started).toEqual([]);
+      expect(fake.resumed).toEqual([{ conversationId: 'conv-old', sessionId: 'acp-old' }]);
+      expect(store.get('binding-1::owner-1::claude')).toMatchObject({ toolSearch: 'on' });
+    });
+
+    it('leaves a Codex session alone', async () => {
+      const store = unmarked('codex');
+      const fake = makeFakeAcp();
+      await createSpacesDispatcher({ api: roomApi(), acp: fake.acp, resolveWorkspace: async () => '/rigs/one', store }).dispatch(
+        makeRequest({ targetAgent: 'codex' })
+      );
+      expect(fake.started).toEqual([]);
+      expect(fake.resumed).toEqual([{ conversationId: 'conv-old', sessionId: 'acp-old' }]);
+      expect(fake.queued[0]!.hiddenContext).not.toContain('fresh session');
+    });
+
+    it('never with a turn running and an approval waiting; the next turn after that starts fresh', async () => {
+      const store = unmarked();
+      const fake = makeFakeAcp();
+      fake.acp.readConfig = async () => ({ model: null, effort: null, mode: null });
+      const stopSession = fake.acp.stopSession;
+      const dispatcher = createSpacesDispatcher({ api: roomApi(), acp: fake.acp, resolveWorkspace: async () => '/rigs/one', store });
+      // Opened for its settings (not a turn): resumed as it is.
+      await dispatcher.agentConfig('binding-1', 'owner-1', 'claude');
+      expect(fake.resumed).toHaveLength(1);
+      // A turn it can't be reloaded for, now running and waiting on an approval.
+      fake.acp.stopSession = undefined;
+      await dispatcher.dispatch(makeRequest());
+      fake.acp.stopSession = stopSession;
+      fake.emitTurnStart('conv-old', fake.queued[0]!.turnId);
+      fake.emitPermissionRequest('conv-old', makePermissionRequest());
+
+      await dispatcher.dispatch(makeRequest({ id: 'req2' }));
+      expect(fake.stopped).toEqual([]);
+      expect(fake.started).toEqual([]);
+      expect(fake.queued[1]!.conversationId).toBe('conv-old');
+
+      fake.emitTurnEnd('conv-old', fake.queued[0]!.turnId, 'end_turn');
+      fake.emitTurnStart('conv-old', fake.queued[1]!.turnId);
+      fake.emitTurnEnd('conv-old', fake.queued[1]!.turnId, 'end_turn');
+      await dispatcher.dispatch(makeRequest({ id: 'req3' }));
+      expect(fake.stopped).toEqual(['conv-old']);
+      expect(fake.started).toHaveLength(1);
+      expect(fake.queued[2]!.hiddenContext).toContain('This is a fresh session');
+      expect(store.get('binding-1::owner-1::claude')).toMatchObject({ toolSearch: 'on' });
     });
   });
 
@@ -1919,6 +2027,7 @@ describe('memory across restarts', () => {
       acpSessionId: 'acp-old',
       providerId: 'claude',
       cwd: '/rigs/one',
+      toolSearch: 'on',
       updatedAt: Date.now(),
     });
     const fake = makeFakeAcp();
@@ -1947,6 +2056,7 @@ describe('memory across restarts', () => {
       acpSessionId: 'acp-gone',
       providerId: 'claude',
       cwd: '/rigs/one',
+      toolSearch: 'on',
       updatedAt: Date.now(),
     });
     const fake = makeFakeAcp();
@@ -1973,6 +2083,7 @@ describe('memory across restarts', () => {
       acpSessionId: 'acp-old',
       providerId: 'claude',
       cwd: '/rigs/one',
+      toolSearch: 'on',
       updatedAt: Date.now(),
     });
     const fake = makeFakeAcp();
@@ -2870,7 +2981,7 @@ describe('what each agent is told about its space', () => {
       resumedWith.push(input.systemPromptAppend);
       return resumeSession(input);
     };
-    const stored: StoredSpaceSession = { conversationId: 'conv-old', acpSessionId: 'acp-old', providerId: 'claude', cwd: '/rigs/one', updatedAt: Date.now() };
+    const stored: StoredSpaceSession = { conversationId: 'conv-old', acpSessionId: 'acp-old', providerId: 'claude', cwd: '/rigs/one', updatedAt: Date.now(), toolSearch: 'on' };
     const store: SpaceSessionStore = { get: () => stored, set: () => {} };
     const { dispatch } = createSpacesDispatcher({
       api,

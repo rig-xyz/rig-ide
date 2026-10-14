@@ -192,6 +192,8 @@ export type StoredSpaceSession = {
   lastTurnAt?: number;
   contextTokens?: number;
   contextEstimated?: boolean;
+  /** The tool search setup it was started under; unset for one started before Rig kept it (`startsFreshForToolSearch`). */
+  toolSearch?: 'on';
 };
 
 /** Where persistent space sessions are remembered across restarts (a small file in the app's data folder). */
@@ -269,6 +271,17 @@ export function startsFreshAfterIdle(state: { lastTurnAt?: number; contextTokens
   return state.contextTokens === undefined || state.contextTokens > FRESH_SESSION_MIN_TOKENS;
 }
 
+/**
+ * Whether a Claude session starts fresh once on its next turn because it may
+ * have been started with tool search off (Rig 0.4.12 to 0.4.14): Claude Code
+ * keeps the tools already in a conversation inline when it is resumed, so
+ * such a session carries all of the person's tools on every call. Ones
+ * started before Rig kept the marker count too. Codex: never.
+ */
+export function startsFreshForToolSearch(state: { providerId: SessionAgent; toolSearch?: 'on' }): boolean {
+  return state.providerId === 'claude' && state.toolSearch !== 'on';
+}
+
 /** What a failed run is reported as: the text never leaves this computer, it only picks a reason (`agent-run-failure.ts`). */
 export type RunFailure = {
   agent: SessionAgent;
@@ -304,8 +317,10 @@ type PersistentSession = {
   /** Its context size in tokens: the agent's own `usage_update`, else Rig's estimate from what it sent and got back. */
   contextTokens?: number;
   contextEstimated?: boolean;
-  /** Started fresh after a long idle: its first turn says so. */
+  /** Started fresh after a long idle (or for tool search): its first turn says so. */
   freshAfterIdle?: boolean;
+  /** The tool search setup it was started under, as stored (`StoredSpaceSession.toolSearch`). */
+  toolSearch?: 'on';
   /** Undoes the raw-event and permission subscriptions, for a reload. */
   unsubscribes: Array<() => void>;
 };
@@ -1288,6 +1303,8 @@ export function createSpacesDispatcher(deps: {
     // resuming this one. Never one with a turn running or queued, or an
     // approval waiting on its owner.
     let freshAfterIdle = false;
+    /** Why it starts fresh, for the log: a long idle, or started with tool search off. */
+    let freshReason: 'idle' | 'tool search' = 'idle';
     if (existing) {
       const unchanged = !wanted || connectorsFingerprint(wanted, held, appendFor(wanted)) === existing.connectorsFingerprint;
       const busy = existing.current !== null || existing.pending.length > 0 || existing.heldPermissions.size > 0;
@@ -1300,6 +1317,10 @@ export function createSpacesDispatcher(deps: {
           existing.contextEstimated = false;
         }
         freshAfterIdle = startsFreshAfterIdle(existing, at);
+        if (!freshAfterIdle && startsFreshForToolSearch(existing)) {
+          freshAfterIdle = true;
+          freshReason = 'tool search';
+        }
       }
       if (!freshAfterIdle && (unchanged || busy || !deps.acp.stopSession)) {
         // A turn is on its way: it isn't idle anymore, so a second turn right behind doesn't start it fresh.
@@ -1307,9 +1328,11 @@ export function createSpacesDispatcher(deps: {
         return ok(existing);
       }
       log.info(
-        freshAfterIdle
-          ? 'Rig spaces dispatch: idle and large, starting a fresh space session'
-          : 'Rig spaces dispatch: connectors changed, reloading the space session',
+        !freshAfterIdle
+          ? 'Rig spaces dispatch: connectors changed, reloading the space session'
+          : freshReason === 'tool search'
+            ? 'Rig spaces dispatch: created with tool search off, starting a fresh space session'
+            : 'Rig spaces dispatch: idle and large, starting a fresh space session',
         {
           conversationId: existing.conversationId,
           ...(freshAfterIdle ? { idleMs: at - (existing.lastTurnAt ?? at), contextTokens: existing.contextTokens } : {}),
@@ -1342,6 +1365,14 @@ export function createSpacesDispatcher(deps: {
       freshAfterIdle = startsFreshAfterIdle(last, at);
       if (freshAfterIdle) {
         log.info('Rig spaces dispatch: idle and large, starting a fresh space session', {
+          conversationId: sameSession.conversationId,
+          idleMs: at - last.lastTurnAt,
+          contextTokens: last.contextTokens,
+        });
+        carried = sameSession.config;
+      } else if (startsFreshForToolSearch(sameSession)) {
+        freshAfterIdle = true;
+        log.info('Rig spaces dispatch: created with tool search off, starting a fresh space session', {
           conversationId: sameSession.conversationId,
           idleMs: at - last.lastTurnAt,
           contextTokens: last.contextTokens,
@@ -1413,8 +1444,11 @@ export function createSpacesDispatcher(deps: {
       session.lastTurnAt = resumable.lastTurnAt ?? resumable.updatedAt;
       session.contextTokens = resumable.contextTokens;
       session.contextEstimated = resumable.contextEstimated;
+      if (resumable.toolSearch) session.toolSearch = resumable.toolSearch;
     } else {
       addEstimate(session, append.length);
+      // Started now, with tool search on (`ENABLE_TOOL_SEARCH`).
+      session.toolSearch = 'on';
     }
     if (forTurn) session.lastTurnAt = at;
     // A brand-new session starts from your usual settings for this agent. A
@@ -1441,6 +1475,7 @@ export function createSpacesDispatcher(deps: {
       ...(session.lastTurnAt !== undefined ? { lastTurnAt: session.lastTurnAt } : {}),
       ...(session.contextTokens !== undefined ? { contextTokens: session.contextTokens } : {}),
       ...(session.contextEstimated ? { contextEstimated: true } : {}),
+      ...(session.toolSearch ? { toolSearch: session.toolSearch } : {}),
     });
 
     // Permissions: the session-state topic only exists once the session
