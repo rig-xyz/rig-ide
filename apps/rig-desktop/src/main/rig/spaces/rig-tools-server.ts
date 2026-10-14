@@ -28,6 +28,9 @@ import { createRigTools, runRigTool, type RigTool, type RigToolScope, type RigTo
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
+/** The per-tool `_meta` key Claude Code reads to never defer a tool behind tool search. */
+const ALWAYS_LOAD_META = 'anthropic/alwaysLoad';
+
 /**
  * Kept to one sentence: Codex shows it ahead of every tool's description in
  * its (truncated) tool listing, so a long one made all the rig tools look
@@ -124,6 +127,10 @@ export function createRigToolsServer(deps: { backend: RigToolsBackend; now?: () 
               })
             : tool.inputSchema,
           annotations: tool.annotations,
+          // Claude Code keeps a tool marked this way out of tool search, so
+          // Rig's tools are in every call by name and schema while the
+          // owner's other MCP tools stay deferred.
+          _meta: { [ALWAYS_LOAD_META]: true },
         },
         async (input: Record<string, unknown>) => {
           const result = await runRigTool(deps.backend, tool, scope, input);

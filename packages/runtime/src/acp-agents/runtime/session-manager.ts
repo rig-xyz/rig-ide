@@ -843,13 +843,11 @@ function sessionMeta(input: AcpStartInput): { _meta?: Record<string, unknown> } 
   const disabled = input.disabledProjectMcpServers ?? [];
   const append = input.systemPromptAppend ?? '';
   if (disabled.length === 0 && !append) return {};
-  const options = {
-    ...(disabled.length > 0 ? { settings: { disabledMcpjsonServers: disabled } } : {}),
-    // A space session (the only kind with an append) lists every tool upfront:
-    // with tool search on, Claude Code shows MCP tools by name only, and
-    // Rig's own tools went unused. Private sessions keep tool search.
-    ...(append ? { env: { ENABLE_TOOL_SEARCH: 'false' } } : {}),
-  };
+  // Tool search stays on, space sessions included: turning it off put every
+  // tool of the owner's own MCP servers in every call, about 285,000 tokens.
+  // Rig's own tools skip the search by marking themselves always loaded
+  // (`anthropic/alwaysLoad` in each tool's `_meta`, rig-tools-server.ts).
+  const options = disabled.length > 0 ? { settings: { disabledMcpjsonServers: disabled } } : {};
   return {
     _meta: {
       ...(Object.keys(options).length > 0 ? { claudeCode: { options } } : {}),

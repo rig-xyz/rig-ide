@@ -158,6 +158,8 @@ describe('rig tools server', () => {
       'rig_browser_open',
       'rig_topic_show',
     ]);
+    // Every rig tool is always loaded, so tool search never hides one from the model.
+    expect(tools.every((t) => t._meta?.['anthropic/alwaysLoad'] === true)).toBe(true);
     expect(tools.find((t) => t.name === 'rig_people_list')?.annotations?.readOnlyHint).toBe(true);
     // Permissions mode and auto-approve aren't settings it takes: no extra arguments at all.
     expect(tools.find((t) => t.name === 'rig_settings_update')?.inputSchema).toMatchObject({ additionalProperties: false });
@@ -198,6 +200,7 @@ describe('rig tools server', () => {
     const client = await connect(await server.serverFor(DYLAN));
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).at(-1)).toBe('rig_browser_screenshot');
+    expect(tools.at(-1)?._meta).toEqual({ 'anthropic/alwaysLoad': true });
     const result = await client.callTool({ name: 'rig_browser_screenshot', arguments: {} });
     expect(result.content).toEqual([
       { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' },

@@ -265,7 +265,7 @@ describe('AcpRuntime session manager', () => {
     await rt.startSession({ ...makeStartInput({ conversationId: 'conv-append' }), systemPromptAppend: 'Space rules' });
     expect(h.agent.newSession).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        _meta: { claudeCode: { options: { env: { ENABLE_TOOL_SEARCH: 'false' } } }, systemPrompt: { append: 'Space rules' } },
+        _meta: { systemPrompt: { append: 'Space rules' } },
       })
     );
 
@@ -279,11 +279,15 @@ describe('AcpRuntime session manager', () => {
     expect(h.agent.loadSession).toHaveBeenCalledWith(
       expect.objectContaining({
         _meta: {
-          claudeCode: { options: { settings: { disabledMcpjsonServers: ['customerio'] }, env: { ENABLE_TOOL_SEARCH: 'false' } } },
+          claudeCode: { options: { settings: { disabledMcpjsonServers: ['customerio'] } } },
           systemPrompt: { append: 'Space rules' },
         },
       })
     );
+
+    // Tool search stays on: Rig's own tools are marked always loaded instead.
+    expect(JSON.stringify(vi.mocked(h.agent.newSession).mock.calls)).not.toContain('ENABLE_TOOL_SEARCH');
+    expect(JSON.stringify(vi.mocked(h.agent.loadSession).mock.calls)).not.toContain('ENABLE_TOOL_SEARCH');
 
     await rt.startSession({ ...makeStartInput({ conversationId: 'conv-append-codex', providerId: 'codex' }), systemPromptAppend: 'x' });
     expect(JSON.stringify(vi.mocked(h.agent.newSession).mock.calls)).not.toContain('"append":"x"');
