@@ -39,6 +39,7 @@ import { LocalRunStore } from './local-runs';
 import { createHttpSpacesRelayApi, otherMacsAgents, type SessionAgent } from './relay-api';
 import { RequestClaimPoller, unrunnableRequestLine } from './request-claim';
 import { rigToolsServer } from './rig-tools-instance';
+import { readAgentSessionSize } from './session-size';
 import { createFileSpaceSessionStore } from './session-store';
 
 /**
@@ -90,6 +91,7 @@ function realDeps(): SpacesDispatchControllerDeps {
       const dispatcher = createSpacesDispatcher({
         api,
         acp: createRuntimeAcpSessions(getAcpRuntimeClient, { claudeDebugFile }),
+        sessionSize: readAgentSessionSize,
         resolveWorkspace: async (bindingId) =>
           (await resolveLocalPathsImpl([bindingId]))[bindingId] ?? null,
         store: createFileSpaceSessionStore(join(app.getPath('userData'), 'spaces-sessions.json')),

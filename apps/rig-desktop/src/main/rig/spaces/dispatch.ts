@@ -258,10 +258,15 @@ export const RUN_STALL_MS = 30 * 60_000;
 export const FRESH_SESSION_IDLE_MS = 12 * 60 * 60_000;
 export const FRESH_SESSION_MIN_TOKENS = 150_000;
 
-/** Whether a session this idle and this large starts fresh on its next turn. Unknown idle time or size: never. */
+/**
+ * Whether a session this idle and this large starts fresh on its next turn.
+ * Unknown idle time: never. Unknown size, even after reading the agent's own
+ * session file (`sessionSize`): counted as large, since resuming one that
+ * is would write all of it again.
+ */
 export function startsFreshAfterIdle(state: { lastTurnAt?: number; contextTokens?: number }, now: number): boolean {
-  if (state.lastTurnAt === undefined || state.contextTokens === undefined) return false;
-  return now - state.lastTurnAt > FRESH_SESSION_IDLE_MS && state.contextTokens > FRESH_SESSION_MIN_TOKENS;
+  if (state.lastTurnAt === undefined || now - state.lastTurnAt <= FRESH_SESSION_IDLE_MS) return false;
+  return state.contextTokens === undefined || state.contextTokens > FRESH_SESSION_MIN_TOKENS;
 }
 
 /** What a failed run is reported as: the text never leaves this computer, it only picks a reason (`agent-run-failure.ts`). */
@@ -883,6 +888,12 @@ export function createSpacesDispatcher(deps: {
   onRunSucceeded?: (agent: SessionAgent) => void;
   /** The clock, for how long a session has been idle (tests set it). */
   now?: () => number;
+  /**
+   * A session's context size in tokens from the agent's own session file,
+   * for an idle one whose size Rig doesn't know or only estimated
+   * (`readAgentSessionSize`). Omitted: Rig's own figure only.
+   */
+  sessionSize?: (input: { providerId: SessionAgent; cwd: string; sessionId: string }) => Promise<number | null>;
 }): {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
@@ -1280,7 +1291,16 @@ export function createSpacesDispatcher(deps: {
     if (existing) {
       const unchanged = !wanted || connectorsFingerprint(wanted, held, appendFor(wanted)) === existing.connectorsFingerprint;
       const busy = existing.current !== null || existing.pending.length > 0 || existing.heldPermissions.size > 0;
-      freshAfterIdle = forTurn && !busy && !!deps.acp.stopSession && startsFreshAfterIdle(existing, at);
+      if (forTurn && !busy && deps.acp.stopSession) {
+        const stored = deps.store?.get(key);
+        const sessionId = stored?.conversationId === existing.conversationId ? stored.acpSessionId : undefined;
+        const size = await sizeWhenIdle(existing, providerId, cwd, sessionId, at);
+        if (size !== existing.contextTokens) {
+          existing.contextTokens = size;
+          existing.contextEstimated = false;
+        }
+        freshAfterIdle = startsFreshAfterIdle(existing, at);
+      }
       if (!freshAfterIdle && (unchanged || busy || !deps.acp.stopSession)) {
         // A turn is on its way: it isn't idle anymore, so a second turn right behind doesn't start it fresh.
         if (forTurn) existing.lastTurnAt = at;
@@ -1314,7 +1334,11 @@ export function createSpacesDispatcher(deps: {
     const sameSession = stored && stored.providerId === providerId && stored.cwd === cwd ? stored : null;
     if (!existing && sameSession && forTurn) {
       // Saved before Rig kept the last turn's time: when it was last opened.
-      const last = { lastTurnAt: sameSession.lastTurnAt ?? sameSession.updatedAt, contextTokens: sameSession.contextTokens };
+      const lastTurnAt = sameSession.lastTurnAt ?? sameSession.updatedAt;
+      const last = {
+        lastTurnAt,
+        contextTokens: await sizeWhenIdle({ ...sameSession, lastTurnAt }, providerId, cwd, sameSession.acpSessionId, at),
+      };
       freshAfterIdle = startsFreshAfterIdle(last, at);
       if (freshAfterIdle) {
         log.info('Rig spaces dispatch: idle and large, starting a fresh space session', {
@@ -1756,6 +1780,25 @@ export function createSpacesDispatcher(deps: {
       ...(session.contextEstimated ? { contextEstimated: true } : {}),
     };
     if (JSON.stringify(next) !== JSON.stringify(stored)) deps.store?.set(session.key, next);
+  }
+
+  /**
+   * A session's size for `startsFreshAfterIdle`. Once it is idle past the
+   * limit and Rig has no reported size (saved before Rig kept one, or only
+   * estimated), the agent's own session file says, when it can be read.
+   */
+  async function sizeWhenIdle(
+    state: { lastTurnAt?: number; contextTokens?: number; contextEstimated?: boolean },
+    providerId: SessionAgent,
+    cwd: string,
+    sessionId: string | undefined,
+    at: number
+  ): Promise<number | undefined> {
+    const idle = state.lastTurnAt !== undefined && at - state.lastTurnAt > FRESH_SESSION_IDLE_MS;
+    const reported = state.contextTokens !== undefined && !state.contextEstimated;
+    if (!idle || reported || !sessionId || !deps.sessionSize) return state.contextTokens;
+    const read = await deps.sessionSize({ providerId, cwd, sessionId }).catch(() => null);
+    return read ?? state.contextTokens;
   }
 
   /** Rig's own estimate of a session's size, when the agent doesn't report it: about 4 characters a token. */

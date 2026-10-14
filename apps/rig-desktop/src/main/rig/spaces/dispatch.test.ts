@@ -1535,7 +1535,7 @@ describe('a fresh session after a long idle', () => {
         ok([{ id: 'a', seq: 1, author: { userId: 'u', name: 'Sam', avatarUrl: null, kind: 'user' }, kind: 'text', body: 'hello', meta: null, createdAt: '' }]),
     }).api;
 
-  it('needs both: idle past the limit and larger than the limit, and never when either is unknown', () => {
+  it('needs both: idle past the limit and larger than the limit; unknown idle never, unknown size counts as large', () => {
     const now = 100 * HOUR;
     const idle = now - FRESH_SESSION_IDLE_MS - 1;
     const big = FRESH_SESSION_MIN_TOKENS + 1;
@@ -1545,7 +1545,8 @@ describe('a fresh session after a long idle', () => {
     expect(startsFreshAfterIdle({ lastTurnAt: now - 2 * HOUR, contextTokens: big }, now)).toBe(false);
     expect(startsFreshAfterIdle({ lastTurnAt: idle, contextTokens: 100_000 }, now)).toBe(false);
     expect(startsFreshAfterIdle({ contextTokens: big }, now)).toBe(false);
-    expect(startsFreshAfterIdle({ lastTurnAt: idle }, now)).toBe(false);
+    expect(startsFreshAfterIdle({ lastTurnAt: idle }, now)).toBe(true);
+    expect(startsFreshAfterIdle({ lastTurnAt: now - 2 * HOUR }, now)).toBe(false);
   });
 
   /** One finished turn whose agent reported `used` tokens, then the clock moved on by `idleMs`. */
@@ -1656,6 +1657,136 @@ describe('a fresh session after a long idle', () => {
     const reader = createSpacesDispatcher({ api: roomApi(), acp: other.acp, resolveWorkspace: async () => '/rigs/one', store, now: () => now });
     await reader.agentConfig('binding-1', 'owner-1', 'codex');
     expect(other.resumed).toHaveLength(1);
+  });
+
+  describe('a session saved before Rig kept its size', () => {
+    const now = 1_000 * HOUR;
+    /** A stored Claude session with no size, last opened `idleMs` ago, and the size its own transcript gives. */
+    async function afterRestart(idleMs: number, transcript: number | null, extra: Partial<StoredSpaceSession> = {}) {
+      const store = memoryStore();
+      store.set('binding-1::owner-1::claude', {
+        conversationId: 'conv-old',
+        acpSessionId: 'acp-old',
+        providerId: 'claude',
+        cwd: '/rigs/one',
+        updatedAt: now - idleMs,
+        ...extra,
+      });
+      const fake = makeFakeAcp();
+      const asked: unknown[] = [];
+      const dispatcher = createSpacesDispatcher({
+        api: roomApi(),
+        acp: fake.acp,
+        resolveWorkspace: async () => '/rigs/one',
+        store,
+        now: () => now,
+        sessionSize: async (input) => {
+          asked.push(input);
+          return transcript;
+        },
+      });
+      await dispatcher.dispatch(makeRequest());
+      return { fake, asked, store, dispatcher };
+    }
+
+    it("reads its size from the agent's own session file, and starts fresh when that is large", async () => {
+      const { fake, asked } = await afterRestart(6 * 24 * HOUR, 351_671);
+      expect(asked).toEqual([{ providerId: 'claude', cwd: '/rigs/one', sessionId: 'acp-old' }]);
+      expect(fake.resumed).toEqual([]);
+      expect(fake.started).toHaveLength(1);
+      expect(fake.queued[0]!.hiddenContext).toContain('This is a fresh session');
+    });
+
+    it('resumes it when the file says it is small', async () => {
+      const { fake } = await afterRestart(6 * 24 * HOUR, 40_000);
+      expect(fake.resumed).toHaveLength(1);
+      expect(fake.started).toEqual([]);
+    });
+
+    it('starts fresh when the size stays unknown and it was idle past the limit', async () => {
+      const { fake } = await afterRestart(6 * 24 * HOUR, null);
+      expect(fake.resumed).toEqual([]);
+      expect(fake.started).toHaveLength(1);
+    });
+
+    it("doesn't read the file, and resumes, when it was idle only a few hours", async () => {
+      const { fake, asked } = await afterRestart(2 * HOUR, null);
+      expect(asked).toEqual([]);
+      expect(fake.resumed).toHaveLength(1);
+    });
+
+    it('prefers the file to an estimate, and trusts a size the agent reported', async () => {
+      const estimated = await afterRestart(20 * HOUR, 40_000, { lastTurnAt: now - 20 * HOUR, contextTokens: 200_000, contextEstimated: true });
+      expect(estimated.asked).toHaveLength(1);
+      expect(estimated.fake.resumed).toHaveLength(1);
+
+      const reported = await afterRestart(20 * HOUR, 40_000, { lastTurnAt: now - 20 * HOUR, contextTokens: 200_000 });
+      expect(reported.asked).toEqual([]);
+      expect(reported.fake.resumed).toEqual([]);
+    });
+
+    it('never drops one opened for its settings that then has a turn running and an approval waiting', async () => {
+      const store = memoryStore();
+      store.set('binding-1::owner-1::claude', {
+        conversationId: 'conv-old',
+        acpSessionId: 'acp-old',
+        providerId: 'claude',
+        cwd: '/rigs/one',
+        updatedAt: Date.now(),
+      });
+      let clock = 1_000 * HOUR;
+      const fake = makeFakeAcp();
+      const dispatcher = createSpacesDispatcher({
+        api: roomApi(),
+        acp: fake.acp,
+        resolveWorkspace: async () => '/rigs/one',
+        store,
+        now: () => clock,
+        sessionSize: async () => null,
+      });
+      await dispatcher.dispatch(makeRequest());
+      fake.emitTurnStart('conv-old', fake.queued[0]!.turnId);
+      fake.emitPermissionRequest('conv-old', makePermissionRequest());
+      clock += 13 * HOUR;
+      await dispatcher.dispatch(makeRequest({ id: 'req2' }));
+      expect(fake.stopped).toEqual([]);
+      expect(fake.queued[1]!.conversationId).toBe('conv-old');
+    });
+
+    it('reads the file for a live session with no size once it has been idle past the limit', async () => {
+      const store = memoryStore();
+      store.set('binding-1::owner-1::claude', {
+        conversationId: 'conv-old',
+        acpSessionId: 'acp-old',
+        providerId: 'claude',
+        cwd: '/rigs/one',
+        updatedAt: Date.now(),
+      });
+      let clock = Date.now();
+      const fake = makeFakeAcp();
+      fake.acp.readConfig = async () => ({ model: null, effort: null, mode: null });
+      const asked: unknown[] = [];
+      const dispatcher = createSpacesDispatcher({
+        api: roomApi(),
+        acp: fake.acp,
+        resolveWorkspace: async () => '/rigs/one',
+        store,
+        now: () => clock,
+        sessionSize: async (input) => {
+          asked.push(input);
+          return 300_000;
+        },
+      });
+      // Opened for its settings: resumed, with no size known.
+      await dispatcher.agentConfig('binding-1', 'owner-1', 'claude');
+      expect(fake.resumed).toHaveLength(1);
+      clock += 13 * HOUR;
+      await dispatcher.dispatch(makeRequest());
+      // The agent session id the resume answered with, as saved.
+      expect(asked).toEqual([{ providerId: 'claude', cwd: '/rigs/one', sessionId: 'acp-resumed' }]);
+      expect(fake.stopped).toEqual(['conv-old']);
+      expect(fake.started).toHaveLength(1);
+    });
   });
 
   it("estimates the size from what it sent when the agent doesn't report one", async () => {
@@ -1788,7 +1919,7 @@ describe('memory across restarts', () => {
       acpSessionId: 'acp-old',
       providerId: 'claude',
       cwd: '/rigs/one',
-      updatedAt: 0,
+      updatedAt: Date.now(),
     });
     const fake = makeFakeAcp();
     const applied: unknown[] = [];
@@ -1816,7 +1947,7 @@ describe('memory across restarts', () => {
       acpSessionId: 'acp-gone',
       providerId: 'claude',
       cwd: '/rigs/one',
-      updatedAt: 0,
+      updatedAt: Date.now(),
     });
     const fake = makeFakeAcp();
     fake.setResumeResult(err('session not found'));
@@ -1842,7 +1973,7 @@ describe('memory across restarts', () => {
       acpSessionId: 'acp-old',
       providerId: 'claude',
       cwd: '/rigs/one',
-      updatedAt: 0,
+      updatedAt: Date.now(),
     });
     const fake = makeFakeAcp();
     let finishResume!: () => void;
@@ -1872,7 +2003,7 @@ describe('memory across restarts', () => {
       acpSessionId: 'acp-old',
       providerId: 'claude',
       cwd: '/somewhere/else',
-      updatedAt: 0,
+      updatedAt: Date.now(),
     });
     const fake = makeFakeAcp();
     const { dispatch } = createSpacesDispatcher({ api: makeFakeApi().api, acp: fake.acp, resolveWorkspace: async () => '/rigs/one', store });
@@ -2739,7 +2870,7 @@ describe('what each agent is told about its space', () => {
       resumedWith.push(input.systemPromptAppend);
       return resumeSession(input);
     };
-    const stored: StoredSpaceSession = { conversationId: 'conv-old', acpSessionId: 'acp-old', providerId: 'claude', cwd: '/rigs/one', updatedAt: 0 };
+    const stored: StoredSpaceSession = { conversationId: 'conv-old', acpSessionId: 'acp-old', providerId: 'claude', cwd: '/rigs/one', updatedAt: Date.now() };
     const store: SpaceSessionStore = { get: () => stored, set: () => {} };
     const { dispatch } = createSpacesDispatcher({
       api,
