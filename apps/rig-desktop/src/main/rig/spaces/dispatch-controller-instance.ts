@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { app } from 'electron';
 import { getAcpRuntimeClient } from '@main/core/acp/controller';
@@ -60,6 +61,25 @@ import { createFileSpaceSessionStore } from './session-store';
 const localRuns = new LocalRunStore();
 localRuns.subscribe((bindingId, runId, event) => events.emit(spacesLocalRunEventChannel, { bindingId, runId, event }));
 
+/**
+ * With the app run as RIG_CLAUDE_DEBUG=1, each Claude space session writes
+ * Claude Code's debug log (tool search, MCP, API calls) to
+ * <logs>/claude-debug/<conversation id>.log. Off otherwise.
+ */
+function claudeDebugFile(conversationId: string): string | undefined {
+  if (process.env.RIG_CLAUDE_DEBUG !== '1') return undefined;
+  const dir = join(app.getPath('logs'), 'claude-debug');
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (error) {
+    log.warn('Rig spaces: could not create the Claude debug log folder', { error: String(error) });
+    return undefined;
+  }
+  const file = join(dir, `${conversationId}.log`);
+  log.info('Rig spaces: Claude debug log for this space session', { conversationId, file });
+  return file;
+}
+
 function realDeps(): SpacesDispatchControllerDeps {
   return {
     isEnabled: () => rigSettingsStore.get().spacesEnabled,
@@ -69,7 +89,7 @@ function realDeps(): SpacesDispatchControllerDeps {
       const api = createHttpSpacesRelayApi();
       const dispatcher = createSpacesDispatcher({
         api,
-        acp: createRuntimeAcpSessions(getAcpRuntimeClient),
+        acp: createRuntimeAcpSessions(getAcpRuntimeClient, { claudeDebugFile }),
         resolveWorkspace: async (bindingId) =>
           (await resolveLocalPathsImpl([bindingId]))[bindingId] ?? null,
         store: createFileSpaceSessionStore(join(app.getPath('userData'), 'spaces-sessions.json')),

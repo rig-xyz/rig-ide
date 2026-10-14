@@ -59,3 +59,33 @@ describe('space session start failures', () => {
     expect(await acp.startSession(START)).toEqual(err("Claude couldn't open a session"));
   });
 });
+
+describe('a Claude space session debug log', () => {
+  function recordingSessions(claudeDebugFile?: (conversationId: string) => string | undefined) {
+    const client = {
+      startSession: vi.fn().mockResolvedValue({ success: true, data: { sessionId: 's1' } }),
+      resumeSession: vi.fn().mockResolvedValue({ success: true, data: { sessionId: 's1' } }),
+    };
+    const acp = createRuntimeAcpSessions(async () => client as unknown as AcpRuntimeClient, { claudeDebugFile });
+    return { acp, client };
+  }
+
+  it('goes to the file named for the conversation, on start and resume, for Claude only', async () => {
+    const { acp, client } = recordingSessions((id) => `/logs/claude-debug/${id}.log`);
+    await acp.startSession(START);
+    await acp.resumeSession({ ...START, sessionId: 's0' });
+    await acp.startSession({ ...START, providerId: 'codex' });
+    expect(client.startSession.mock.calls[0]![0].input.claudeDebugFile).toBe('/logs/claude-debug/c1.log');
+    expect(client.resumeSession.mock.calls[0]![0].input.claudeDebugFile).toBe('/logs/claude-debug/c1.log');
+    expect(client.startSession.mock.calls[1]![0].input).not.toHaveProperty('claudeDebugFile');
+  });
+
+  it('is off by default', async () => {
+    const { acp, client } = recordingSessions(() => undefined);
+    await acp.startSession(START);
+    expect(client.startSession.mock.calls[0]![0].input).not.toHaveProperty('claudeDebugFile');
+    const plain = recordingSessions();
+    await plain.acp.startSession(START);
+    expect(plain.client.startSession.mock.calls[0]![0].input).not.toHaveProperty('claudeDebugFile');
+  });
+});

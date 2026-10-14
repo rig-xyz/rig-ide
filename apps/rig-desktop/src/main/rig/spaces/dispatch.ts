@@ -2063,7 +2063,17 @@ function describeStartError(providerId: string, error: unknown): string {
 /** How long a prompt refused while its session was still loading waits for it before failing the run. */
 const SESSION_READY_TIMEOUT_MS = 60_000;
 
-export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClient>): SpacesAcpSessions {
+export function createRuntimeAcpSessions(
+  getClient: () => Promise<AcpRuntimeClient>,
+  options: {
+    /** Where a Claude space session's debug log goes (the app run with RIG_CLAUDE_DEBUG=1); undefined: no log. */
+    claudeDebugFile?: (conversationId: string) => string | undefined;
+  } = {}
+): SpacesAcpSessions {
+  const debugFor = (conversationId: string, providerId: SessionAgent) => {
+    const file = providerId === 'claude' ? options.claudeDebugFile?.(conversationId) : undefined;
+    return file ? { claudeDebugFile: file } : {};
+  };
   return {
     async startSession({ conversationId, providerId, cwd, mcpServers, disabledProjectServers, systemPromptAppend }) {
       const client = await getClient();
@@ -2080,6 +2090,7 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
           ...(mcpServers?.length ? { mcpServers } : {}),
           ...(disabledProjectServers?.length ? { disabledProjectMcpServers: disabledProjectServers } : {}),
           ...(systemPromptAppend ? { systemPromptAppend } : {}),
+          ...debugFor(conversationId, providerId),
         },
       });
       return result.success ? ok({ sessionId: result.data.sessionId }) : err(describeStartError(providerId, result.error));
@@ -2100,6 +2111,7 @@ export function createRuntimeAcpSessions(getClient: () => Promise<AcpRuntimeClie
           ...(mcpServers?.length ? { mcpServers } : {}),
           ...(disabledProjectServers?.length ? { disabledProjectMcpServers: disabledProjectServers } : {}),
           ...(systemPromptAppend ? { systemPromptAppend } : {}),
+          ...debugFor(conversationId, providerId),
         },
       });
       return result.success ? ok({ sessionId: result.data.sessionId }) : err(describeStartError(providerId, result.error));

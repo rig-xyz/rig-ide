@@ -842,12 +842,18 @@ function sessionMeta(input: AcpStartInput): { _meta?: Record<string, unknown> } 
   if (input.providerId !== 'claude') return {};
   const disabled = input.disabledProjectMcpServers ?? [];
   const append = input.systemPromptAppend ?? '';
-  if (disabled.length === 0 && !append) return {};
-  // Tool search stays on, space sessions included: turning it off put every
-  // tool of the owner's own MCP servers in every call, about 285,000 tokens.
-  // Rig's own tools skip the search by marking themselves always loaded
-  // (`anthropic/alwaysLoad` in each tool's `_meta`, rig-tools-server.ts).
-  const options = disabled.length > 0 ? { settings: { disabledMcpjsonServers: disabled } } : {};
+  const debugFile = input.claudeDebugFile ?? '';
+  if (disabled.length === 0 && !append && !debugFile) return {};
+  // Tool search on, said outright for a space session (the only kind with an
+  // append), new or loaded: with it off, every tool of the owner's own MCP
+  // servers went in every call, about 285,000 tokens. Rig's own tools skip
+  // the search by marking themselves always loaded (`anthropic/alwaysLoad`
+  // in each tool's `_meta`, rig-tools-server.ts).
+  const options = {
+    ...(disabled.length > 0 ? { settings: { disabledMcpjsonServers: disabled } } : {}),
+    ...(append ? { env: { ENABLE_TOOL_SEARCH: 'true' } } : {}),
+    ...(debugFile ? { debug: true, debugFile } : {}),
+  };
   return {
     _meta: {
       ...(Object.keys(options).length > 0 ? { claudeCode: { options } } : {}),

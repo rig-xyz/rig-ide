@@ -265,7 +265,7 @@ describe('AcpRuntime session manager', () => {
     await rt.startSession({ ...makeStartInput({ conversationId: 'conv-append' }), systemPromptAppend: 'Space rules' });
     expect(h.agent.newSession).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        _meta: { systemPrompt: { append: 'Space rules' } },
+        _meta: { claudeCode: { options: { env: { ENABLE_TOOL_SEARCH: 'true' } } }, systemPrompt: { append: 'Space rules' } },
       })
     );
 
@@ -279,18 +279,50 @@ describe('AcpRuntime session manager', () => {
     expect(h.agent.loadSession).toHaveBeenCalledWith(
       expect.objectContaining({
         _meta: {
-          claudeCode: { options: { settings: { disabledMcpjsonServers: ['customerio'] } } },
+          claudeCode: { options: { settings: { disabledMcpjsonServers: ['customerio'] }, env: { ENABLE_TOOL_SEARCH: 'true' } } },
           systemPrompt: { append: 'Space rules' },
         },
       })
     );
 
-    // Tool search stays on: Rig's own tools are marked always loaded instead.
-    expect(JSON.stringify(vi.mocked(h.agent.newSession).mock.calls)).not.toContain('ENABLE_TOOL_SEARCH');
-    expect(JSON.stringify(vi.mocked(h.agent.loadSession).mock.calls)).not.toContain('ENABLE_TOOL_SEARCH');
+    // Tool search is set on outright for a space session only: a private one keeps the owner's own setting.
+    await rt.startSession({ ...makeStartInput({ conversationId: 'conv-private' }), disabledProjectMcpServers: ['customerio'] });
+    expect(JSON.stringify(vi.mocked(h.agent.newSession).mock.lastCall)).not.toContain('ENABLE_TOOL_SEARCH');
 
     await rt.startSession({ ...makeStartInput({ conversationId: 'conv-append-codex', providerId: 'codex' }), systemPromptAppend: 'x' });
     expect(JSON.stringify(vi.mocked(h.agent.newSession).mock.calls)).not.toContain('"append":"x"');
+  });
+
+  it("writes a Claude session's debug log to the file it was given, on new and load, and only then", async () => {
+    const h = makeAcpHarness();
+    const rt = new AcpRuntime(h.deps);
+    const debug = { debug: true, debugFile: '/logs/claude-debug/conv-debug.log' };
+    await rt.startSession({
+      ...makeStartInput({ conversationId: 'conv-debug' }),
+      systemPromptAppend: 'Space rules',
+      claudeDebugFile: '/logs/claude-debug/conv-debug.log',
+    });
+    expect(h.agent.newSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        _meta: { claudeCode: { options: { env: { ENABLE_TOOL_SEARCH: 'true' }, ...debug } }, systemPrompt: { append: 'Space rules' } },
+      })
+    );
+
+    h.agent.loadSession = vi.fn(async () => ({}));
+    await rt.resumeSession({
+      ...makeStartInput({ conversationId: 'conv-debug-load' }),
+      sessionId: 'session-old',
+      systemPromptAppend: 'Space rules',
+      claudeDebugFile: '/logs/claude-debug/conv-debug.log',
+    });
+    expect(h.agent.loadSession).toHaveBeenCalledWith(
+      expect.objectContaining({ _meta: expect.objectContaining({ claudeCode: { options: expect.objectContaining(debug) } }) })
+    );
+
+    await rt.startSession({ ...makeStartInput({ conversationId: 'conv-no-debug' }), systemPromptAppend: 'Space rules' });
+    expect(JSON.stringify(vi.mocked(h.agent.newSession).mock.lastCall)).not.toContain('debugFile');
+    await rt.startSession({ ...makeStartInput({ conversationId: 'conv-debug-codex', providerId: 'codex' }), claudeDebugFile: '/x.log' });
+    expect(JSON.stringify(vi.mocked(h.agent.newSession).mock.lastCall)).not.toContain('debugFile');
   });
 
   it("gives a Codex session the same text as its thread's developer instructions, on new and load", async () => {

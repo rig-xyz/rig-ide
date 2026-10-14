@@ -74,6 +74,12 @@ export const acpStartInputSchema = z.object({
    * a CLAUDE.md.
    */
   systemPromptAppend: z.string().max(64_000).optional(),
+  /**
+   * Claude only: Claude Code's debug log for this session goes to this file
+   * (the adapter's `debug` and `debugFile` options). Set by the app for a
+   * space session when it runs with RIG_CLAUDE_DEBUG=1; off otherwise.
+   */
+  claudeDebugFile: z.string().optional(),
 });
 export type AcpStartInputWire = z.infer<typeof acpStartInputSchema>;
 
