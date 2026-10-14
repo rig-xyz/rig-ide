@@ -1342,6 +1342,183 @@ describe('room context for the agent', () => {
   });
 });
 
+describe('room context as a delta', () => {
+  const chunk = (messageId: string, text: string) => ({ messageId, content: { type: 'text', text } });
+  const author = (userId: string) => ({ userId, name: null, avatarUrl: null, kind: 'user' });
+  const text = (id: string, seq: number, body: string, meta: Record<string, unknown> | null = null) => ({
+    id,
+    seq,
+    author: author('clerk_s'),
+    kind: 'text',
+    body,
+    meta,
+    createdAt: '',
+  });
+  const members = async () =>
+    ok([{ userId: 'usr_s', clerkUserId: 'clerk_s', name: 'Sam', email: null, role: 'editor', avatarUrl: null }]);
+
+  it('sends only messages after the last one the session has, and the asking message by its number', async () => {
+    const { api } = makeFakeApi({
+      listMembers: members,
+      listMessages: async () => ok([text('a', 1, 'old one'), text('b', 2, 'old two'), text('c', 3, 'new one'), text('src', 4, '@claude go')]),
+    });
+    const room = await roomContextLines(api, makeRequest({ sourceMessageId: 'src' }), 'run-now', 2);
+    expect(room.lines).toEqual(['#3 Sam: new one']);
+    expect(room).toMatchObject({ askingSeq: 4, delta: true, messages: 1, seenThrough: 4, repliesTo: null });
+
+    const context = spacesHiddenContext({ sourceMessageId: 'src' }, room.lines, true, 'everything', room.askingSeq, room);
+    expect(context).toContain('Space messages since your last turn');
+    expect(context).not.toContain('#2 Sam');
+
+    // Nothing new besides the asking message: it says so, with no message list.
+    const quiet = await roomContextLines(api, makeRequest({ sourceMessageId: 'src' }), 'run-now', 3);
+    expect(quiet.lines).toEqual([]);
+    expect(spacesHiddenContext({ sourceMessageId: 'src' }, quiet.lines, true, 'everything', 4, quiet)).toContain(
+      'No new space messages since your last turn.'
+    );
+  });
+
+  it('without a known last message, sends the whole recent window as before', async () => {
+    const { api } = makeFakeApi({
+      listMembers: members,
+      listMessages: async () => ok([text('a', 1, 'old one'), text('b', 2, 'old two'), text('src', 3, '@claude go')]),
+    });
+    const room = await roomContextLines(api, makeRequest({ sourceMessageId: 'src' }), 'run-now');
+    expect(room.lines).toEqual(['#1 Sam: old one', '#2 Sam: old two']);
+    expect(room).toMatchObject({ delta: false, messages: 2, seenThrough: 3 });
+    expect(spacesHiddenContext({ sourceMessageId: 'src' }, room.lines, true, 'everything', 3, room)).toContain(
+      'Recent space conversation'
+    );
+  });
+
+  it('keeps the message the asking one replies to, even when the session already had it', async () => {
+    const { api } = makeFakeApi({
+      listMembers: members,
+      listMessages: async () =>
+        ok([
+          text('a', 1, 'Ship Friday?'),
+          text('b', 2, 'old two'),
+          text('c', 3, 'new one'),
+          text('src', 4, '@claude is that doable?', { replyTo: { id: 'a', authorId: 'clerk_s', label: 'Sam', excerpt: 'Ship Friday?' } }),
+        ]),
+    });
+    const room = await roomContextLines(api, makeRequest({ sourceMessageId: 'src' }), 'run-now', 2);
+    expect(room.lines).toEqual(['#1 Sam: Ship Friday?', '#3 Sam: new one']);
+    expect(room.repliesTo).toEqual({ seq: 1 });
+    expect(room.seenThrough).toBe(4);
+    expect(spacesHiddenContext({ sourceMessageId: 'src' }, room.lines, true, 'everything', 4, room)).toContain(
+      'The message that asked you replies to #1.'
+    );
+  });
+
+  it('quotes a replied-to message older than the recent window from the reply itself', async () => {
+    const { api } = makeFakeApi({
+      listMembers: members,
+      listMessages: async () =>
+        ok([text('c', 30, 'new one'), text('src', 31, '@claude and now?', { replyTo: { id: 'gone', authorId: 'x', label: 'Hugo', excerpt: 'Budget is 40k' } })]),
+    });
+    const room = await roomContextLines(api, makeRequest({ sourceMessageId: 'src' }), 'run-now', 29);
+    expect(room.lines).toEqual(['#30 Sam: new one']);
+    expect(room.repliesTo).toEqual({ label: 'Hugo', excerpt: 'Budget is 40k' });
+    expect(spacesHiddenContext({ sourceMessageId: 'src' }, room.lines, true, 'everything', 31, room)).toContain(
+      'The message that asked you replies to an earlier message by Hugo: “Budget is 40k”'
+    );
+  });
+
+  it("stops short of an earlier run whose answer isn't in yet, so the next turn gets that answer", async () => {
+    let answered = false;
+    const { api } = makeFakeApi({
+      listMembers: members,
+      listMessages: async () =>
+        ok([
+          text('a', 1, 'hi'),
+          { ...text('r', 2, '@codex check'), kind: 'session', meta: { runId: 'run-other' } },
+          text('b', 3, 'after'),
+          text('src', 4, '@claude go'),
+        ]),
+      getSessionEvents: async () =>
+        ok({ run: {} as never, events: (answered ? [{ seq: 1, kind: 'agent_message_chunk', payload: chunk('m', 'All fine.') }] : []) as never }),
+    });
+    const first = await roomContextLines(api, makeRequest({ sourceMessageId: 'src' }), 'run-now');
+    expect(first.seenThrough).toBe(1);
+    answered = true;
+    const next = await roomContextLines(api, makeRequest({ sourceMessageId: 'src' }), 'run-now', first.seenThrough);
+    expect(next.lines).toEqual(['#2 Sam asked their agent: @codex check', "#2 Sam's agent replied: All fine.", '#3 Sam: after']);
+    expect(next.seenThrough).toBe(4);
+  });
+
+  describe('in the dispatcher', () => {
+    function memoryStore(): SpaceSessionStore & { entries: Map<string, StoredSpaceSession> } {
+      const entries = new Map<string, StoredSpaceSession>();
+      return { entries, get: (k) => entries.get(k) ?? null, set: (k, v) => void entries.set(k, v) };
+    }
+    const roomOf = (rows: ReturnType<typeof text>[]) =>
+      makeFakeApi({ listMembers: members, listMessages: async () => ok([...rows]) }).api;
+
+    it("sends the whole window on a session's first turn, then only what came after", async () => {
+      const rows = [text('a', 1, 'first'), text('src1', 2, '@claude one')];
+      const fake = makeFakeAcp();
+      const store = memoryStore();
+      const { dispatch } = createSpacesDispatcher({ api: roomOf(rows), acp: fake.acp, resolveWorkspace: async () => '/rigs/one', store });
+
+      await dispatch(makeRequest({ sourceMessageId: 'src1' }));
+      expect(fake.queued[0]!.hiddenContext).toContain('#1 Sam: first');
+      expect(fake.queued[0]!.hiddenContext).toContain('Recent space conversation');
+      expect([...store.entries.values()][0]!.roomSeqSent).toBe(2);
+
+      rows.push(text('b', 3, 'second'), text('src2', 4, '@claude two'));
+      await dispatch(makeRequest({ id: 'req2', sourceMessageId: 'src2' }));
+      expect(fake.queued[1]!.hiddenContext).toContain('Space messages since your last turn');
+      expect(fake.queued[1]!.hiddenContext).toContain('#3 Sam: second');
+      expect(fake.queued[1]!.hiddenContext).not.toContain('#1 Sam: first');
+      expect([...store.entries.values()][0]!.roomSeqSent).toBe(4);
+    });
+
+    it('a session resumed after a restart still sends only newer messages; a fresh one sends the window', async () => {
+      const rows = [text('a', 1, 'first'), text('src1', 2, '@claude one')];
+      const store = memoryStore();
+      const first = makeFakeAcp();
+      await createSpacesDispatcher({ api: roomOf(rows), acp: first.acp, resolveWorkspace: async () => '/rigs/one', store }).dispatch(
+        makeRequest({ sourceMessageId: 'src1' })
+      );
+
+      rows.push(text('b', 3, 'second'), text('src2', 4, '@claude two'));
+      const second = makeFakeAcp();
+      await createSpacesDispatcher({ api: roomOf(rows), acp: second.acp, resolveWorkspace: async () => '/rigs/one', store }).dispatch(
+        makeRequest({ id: 'req2', sourceMessageId: 'src2' })
+      );
+      expect(second.resumed).toHaveLength(1);
+      expect(second.queued[0]!.hiddenContext).toContain('#3 Sam: second');
+      expect(second.queued[0]!.hiddenContext).not.toContain('#1 Sam: first');
+
+      // The resume fails: a new session has none of it, so it gets the whole window.
+      const third = makeFakeAcp();
+      third.setResumeResult(err('gone'));
+      await createSpacesDispatcher({ api: roomOf(rows), acp: third.acp, resolveWorkspace: async () => '/rigs/one', store }).dispatch(
+        makeRequest({ id: 'req3', sourceMessageId: 'src2' })
+      );
+      expect(third.started).toHaveLength(1);
+      expect(third.queued[0]!.hiddenContext).toContain('#1 Sam: first');
+      expect(third.queued[0]!.hiddenContext).toContain('Recent space conversation');
+    });
+
+    it('a prompt the runtime refuses leaves its messages to be sent again', async () => {
+      const rows = [text('a', 1, 'first'), text('src1', 2, '@claude one')];
+      const fake = makeFakeAcp();
+      const { dispatch } = createSpacesDispatcher({ api: roomOf(rows), acp: fake.acp, resolveWorkspace: async () => '/rigs/one' });
+      fake.setQueuePromptImpl(async () => err('busy'));
+      await dispatch(makeRequest({ sourceMessageId: 'src1' }));
+      const sent: Array<string | undefined> = [];
+      fake.setQueuePromptImpl(async (_c, _t, hidden) => {
+        sent.push(hidden);
+        return ok({ turnId: 't2' });
+      });
+      await dispatch(makeRequest({ id: 'req2', sourceMessageId: 'src1' }));
+      expect(sent[0]).toContain('#1 Sam: first');
+    });
+  });
+});
+
 describe('space rules (once per session)', () => {
   const rules = (rigTools: boolean, agent: 'claude' | 'codex' = 'claude') => spaceRules({ bindingId: 'bnd_1', agent, rigTools });
 
