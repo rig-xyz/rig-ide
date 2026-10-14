@@ -188,6 +188,10 @@ export type StoredSpaceSession = {
   config?: AgentConfigChange;
   /** The newest room message #seq the session has been sent, so a resumed one gets only later messages. */
   roomSeqSent?: number;
+  /** When it last took a turn, and its context size in tokens then (estimated when the agent didn't report it). */
+  lastTurnAt?: number;
+  contextTokens?: number;
+  contextEstimated?: boolean;
 };
 
 /** Where persistent space sessions are remembered across restarts (a small file in the app's data folder). */
@@ -245,6 +249,21 @@ type QueuedTurn = {
 /** How long a run can go with no events before it counts as stalled. */
 export const RUN_STALL_MS = 30 * 60_000;
 
+/**
+ * A space session idle longer than this, and larger than
+ * `FRESH_SESSION_MIN_TOKENS`, starts a new session on its next turn instead
+ * of resuming: after an hour the prompt cache has expired, so resuming
+ * would write the whole context again, and it only grows.
+ */
+export const FRESH_SESSION_IDLE_MS = 12 * 60 * 60_000;
+export const FRESH_SESSION_MIN_TOKENS = 150_000;
+
+/** Whether a session this idle and this large starts fresh on its next turn. Unknown idle time or size: never. */
+export function startsFreshAfterIdle(state: { lastTurnAt?: number; contextTokens?: number }, now: number): boolean {
+  if (state.lastTurnAt === undefined || state.contextTokens === undefined) return false;
+  return now - state.lastTurnAt > FRESH_SESSION_IDLE_MS && state.contextTokens > FRESH_SESSION_MIN_TOKENS;
+}
+
 /** What a failed run is reported as: the text never leaves this computer, it only picks a reason (`agent-run-failure.ts`). */
 export type RunFailure = {
   agent: SessionAgent;
@@ -275,6 +294,13 @@ type PersistentSession = {
   claudeMdSent?: string;
   /** The newest room message #seq this session has been sent; undefined until its first turn, so that turn gets the whole recent window. */
   roomSeqSent?: number;
+  /** When a turn last came to it, for `startsFreshAfterIdle`. */
+  lastTurnAt?: number;
+  /** Its context size in tokens: the agent's own `usage_update`, else Rig's estimate from what it sent and got back. */
+  contextTokens?: number;
+  contextEstimated?: boolean;
+  /** Started fresh after a long idle: its first turn says so. */
+  freshAfterIdle?: boolean;
   /** Undoes the raw-event and permission subscriptions, for a reload. */
   unsubscribes: Array<() => void>;
 };
@@ -536,9 +562,19 @@ export function spacesHiddenContext(
   roomSees: RoomSees = 'everything',
   /** The asking message's #seq, when the recent conversation had it. */
   askingSeq: number | null = null,
-  room: Pick<RoomContext, 'delta' | 'repliesTo'> = { delta: false, repliesTo: null }
+  room: Pick<RoomContext, 'delta' | 'repliesTo'> & {
+    /** The session was just started fresh after a long idle: say so, with how many room messages it gets. */
+    freshAfterIdle?: { messages: number };
+  } = { delta: false, repliesTo: null }
 ): string {
   const lines = ['<rig_space_context>'];
+  if (room.freshAfterIdle) {
+    const n = room.freshAfterIdle.messages;
+    const below = n > 0 ? ` Below ${n === 1 ? 'is the last message' : `are the last ${n} messages`} of the space.` : '';
+    lines.push(
+      `This is a fresh session: your earlier conversation in this space is not in it.${below}${rigTools ? ' rig_chat_read reaches further back.' : ''}`
+    );
+  }
   // Only a request from the chat has a message to react to; a doc comment's answer goes back to its thread.
   if (rigTools && request.sourceMessageId) {
     lines.push(`The message that asked you is ${askingSeq !== null ? `#${askingSeq}` : request.sourceMessageId}.`);
@@ -845,6 +881,8 @@ export function createSpacesDispatcher(deps: {
   onRunFailed?: (failure: RunFailure) => void;
   /** A run that finished: its agent is signed in and working. */
   onRunSucceeded?: (agent: SessionAgent) => void;
+  /** The clock, for how long a session has been idle (tests set it). */
+  now?: () => number;
 }): {
   dispatch: (request: AgentRequest) => Promise<ClaimDispatchResult>;
   /** Stops a run this device is (or was about to start) running. Returns false if this device has no such run — the structural half of "only the owner can stop it": a device that never dispatched a run has nothing here to find. */
@@ -881,6 +919,7 @@ export function createSpacesDispatcher(deps: {
   reportStalled: (now?: number) => void;
 } {
   const sessions = new Map<PersistentKey, PersistentSession>();
+  const now = () => deps.now?.() ?? Date.now();
   /** Runs this process has started and not yet finalized: the only ones truly running here. */
   const liveRunIds = new Set<string>();
   /** Runs stopped while still reaching their agent (no turn yet): they end stopped instead of sending the prompt. */
@@ -929,6 +968,9 @@ export function createSpacesDispatcher(deps: {
         // finalized this turn from the pending queue).
         if (!turn || turn.turnId !== raw.turnId) return;
         session.current = null;
+        session.lastTurnAt = now();
+        if (session.contextEstimated) addEstimate(session, turn.answer.text.length);
+        rememberSessionState(session);
         if (turn.finalized) return;
         releaseHeldPermissions(session, turn);
         const ended = statusForEndedTurn(turn, raw.stopReason);
@@ -948,6 +990,11 @@ export function createSpacesDispatcher(deps: {
       case 'acp_update': {
         // 19–50KB each and useless in the log — see the goal's own instruction.
         if (raw.update.sessionUpdate === 'available_commands_update') return;
+        // The context size the agent reports after each call: what decides a fresh session after a long idle.
+        if (raw.update.sessionUpdate === 'usage_update' && typeof raw.update.used === 'number' && raw.update.used > 0) {
+          session.contextTokens = raw.update.used;
+          session.contextEstimated = false;
+        }
         const turn = session.current;
         if (!turn || turn.finalized) return;
         turn.lastEventAt = Date.now();
@@ -1175,7 +1222,9 @@ export function createSpacesDispatcher(deps: {
     ownerUserId: string,
     providerId: SessionAgent,
     cwd: string,
-    connectors?: SessionConnectors
+    connectors?: SessionConnectors,
+    /** A turn is about to use it: a session idle and large enough starts fresh (`startsFreshAfterIdle`). */
+    forTurn = false
   ): Promise<Result<PersistentSession, string>> {
     // Two callers at once (a Room opening its agent's settings as a run
     // starts, right after a restart) used to resume the same conversation
@@ -1184,8 +1233,8 @@ export function createSpacesDispatcher(deps: {
     // refused (invalid_state). One at a time: the second finds the first's.
     const previous = ensuring.get(key);
     const next = (previous ?? Promise.resolve(null)).then(
-      () => ensureSessionNow(key, bindingId, ownerUserId, providerId, cwd, connectors),
-      () => ensureSessionNow(key, bindingId, ownerUserId, providerId, cwd, connectors)
+      () => ensureSessionNow(key, bindingId, ownerUserId, providerId, cwd, connectors, forTurn),
+      () => ensureSessionNow(key, bindingId, ownerUserId, providerId, cwd, connectors, forTurn)
     );
     ensuring.set(key, next);
     const done = () => {
@@ -1201,9 +1250,11 @@ export function createSpacesDispatcher(deps: {
     ownerUserId: string,
     providerId: SessionAgent,
     cwd: string,
-    connectors?: SessionConnectors
+    connectors?: SessionConnectors,
+    forTurn = false
   ): Promise<Result<PersistentSession, string>> {
     const existing = sessions.get(key);
+    const at = now();
     // What rig_space_describe says this session can reach.
     const scopeWith = (c: SessionConnectors): RigToolScope => ({
       bindingId,
@@ -1222,18 +1273,33 @@ export function createSpacesDispatcher(deps: {
       [spaceRules({ bindingId, agent: providerId, rigTools: hasRigTools(list) }), agentsMd].filter(Boolean).join('\n\n');
     /** The settings a reloaded session had, re-applied after the reload (some agents reset them on load). */
     let carried: AgentConfigChange | undefined;
+    // A turn after a long idle, on a large session: a new session instead of
+    // resuming this one. Never one with a turn running or queued, or an
+    // approval waiting on its owner.
+    let freshAfterIdle = false;
     if (existing) {
       const unchanged = !wanted || connectorsFingerprint(wanted, held, appendFor(wanted)) === existing.connectorsFingerprint;
-      const busy = existing.current !== null || existing.pending.length > 0;
-      if (unchanged || busy || !deps.acp.stopSession) return ok(existing);
-      log.info('Rig spaces dispatch: connectors changed, reloading the space session', {
-        conversationId: existing.conversationId,
-      });
+      const busy = existing.current !== null || existing.pending.length > 0 || existing.heldPermissions.size > 0;
+      freshAfterIdle = forTurn && !busy && !!deps.acp.stopSession && startsFreshAfterIdle(existing, at);
+      if (!freshAfterIdle && (unchanged || busy || !deps.acp.stopSession)) {
+        // A turn is on its way: it isn't idle anymore, so a second turn right behind doesn't start it fresh.
+        if (forTurn) existing.lastTurnAt = at;
+        return ok(existing);
+      }
+      log.info(
+        freshAfterIdle
+          ? 'Rig spaces dispatch: idle and large, starting a fresh space session'
+          : 'Rig spaces dispatch: connectors changed, reloading the space session',
+        {
+          conversationId: existing.conversationId,
+          ...(freshAfterIdle ? { idleMs: at - (existing.lastTurnAt ?? at), contextTokens: existing.contextTokens } : {}),
+        }
+      );
       const previous = await deps.acp.readConfig?.(existing.conversationId).catch(() => null);
       carried = previous ? pickedConfig(previous) : undefined;
       sessions.delete(key);
       for (const unsubscribe of existing.unsubscribes) unsubscribe();
-      await deps.acp.stopSession(existing.conversationId);
+      await deps.acp.stopSession?.(existing.conversationId);
     }
     // Started without the run's connectors (e.g. to read its settings): load them, so
     // the `.mcp.json` servers it must not load are held back from the start too.
@@ -1245,7 +1311,21 @@ export function createSpacesDispatcher(deps: {
     // Memory across restarts: reuse the stored conversation and resume the
     // agent's own session (same cwd) rather than starting from nothing.
     const stored = deps.store?.get(key) ?? null;
-    const resumable = stored && stored.providerId === providerId && stored.cwd === cwd ? stored : null;
+    const sameSession = stored && stored.providerId === providerId && stored.cwd === cwd ? stored : null;
+    if (!existing && sameSession && forTurn) {
+      // Saved before Rig kept the last turn's time: when it was last opened.
+      const last = { lastTurnAt: sameSession.lastTurnAt ?? sameSession.updatedAt, contextTokens: sameSession.contextTokens };
+      freshAfterIdle = startsFreshAfterIdle(last, at);
+      if (freshAfterIdle) {
+        log.info('Rig spaces dispatch: idle and large, starting a fresh space session', {
+          conversationId: sameSession.conversationId,
+          idleMs: at - last.lastTurnAt,
+          contextTokens: last.contextTokens,
+        });
+        carried = sameSession.config;
+      }
+    }
+    const resumable = freshAfterIdle ? null : sameSession;
     let conversationId = resumable?.conversationId ?? randomUUID();
     const session: PersistentSession = {
       key,
@@ -1259,6 +1339,7 @@ export function createSpacesDispatcher(deps: {
       rigTools: hasRigTools(servers),
       unsubscribes: [],
     };
+    if (freshAfterIdle) session.freshAfterIdle = true;
     // Raw events: subscribe BEFORE the session exists so nothing from the
     // very first turn is missed (the raw log is created on first subscribe).
     session.unsubscribes.push(await deps.acp.subscribeRaw(conversationId, (raw) => forwardRaw(session, raw)));
@@ -1301,8 +1382,17 @@ export function createSpacesDispatcher(deps: {
       systemPromptAppend: append,
     });
     if (!started.success) return err(started.error);
-    // A resumed session has the room messages it was sent; a new one gets the whole recent window.
-    if (!fresh) session.roomSeqSent = resumable?.roomSeqSent;
+    // A resumed session has the room messages it was sent, and its last known
+    // size; a new one gets the whole recent window, and starts at the size of its rules.
+    if (!fresh && resumable) {
+      session.roomSeqSent = resumable.roomSeqSent;
+      session.lastTurnAt = resumable.lastTurnAt ?? resumable.updatedAt;
+      session.contextTokens = resumable.contextTokens;
+      session.contextEstimated = resumable.contextEstimated;
+    } else {
+      addEstimate(session, append.length);
+    }
+    if (forTurn) session.lastTurnAt = at;
     // A brand-new session starts from your usual settings for this agent. A
     // reload carries the settings it had, and a resume after a restart gets
     // the ones last applied (some agents, Codex among them, reset their model
@@ -1324,6 +1414,9 @@ export function createSpacesDispatcher(deps: {
       updatedAt: Date.now(),
       ...(defaults && Object.keys(defaults).length > 0 ? { config: defaults } : {}),
       ...(session.roomSeqSent !== undefined ? { roomSeqSent: session.roomSeqSent } : {}),
+      ...(session.lastTurnAt !== undefined ? { lastTurnAt: session.lastTurnAt } : {}),
+      ...(session.contextTokens !== undefined ? { contextTokens: session.contextTokens } : {}),
+      ...(session.contextEstimated ? { contextEstimated: true } : {}),
     });
 
     // Permissions: the session-state topic only exists once the session
@@ -1441,7 +1534,7 @@ export function createSpacesDispatcher(deps: {
       ms: Date.now() - t0,
     });
     const connectors = await loadConnectors(spec.bindingId, spec.agent);
-    const sessionResult = await ensureSession(key, spec.bindingId, spec.ownerUserId, spec.agent, cwd, connectors);
+    const sessionResult = await ensureSession(key, spec.bindingId, spec.ownerUserId, spec.agent, cwd, connectors, true);
     log.info('Rig spaces dispatch: agent session ready', {
       runId: created.data.id,
       ok: sessionResult.success,
@@ -1499,7 +1592,13 @@ export function createSpacesDispatcher(deps: {
         return { lines: [], askingSeq: null, delta: roomSeqBefore !== undefined, messages: 0, seenThrough: null, repliesTo: null };
       }
     );
-    const spaceContext = spacesHiddenContext(contextRequest, room.lines, session.rigTools, roomSees, room.askingSeq, room);
+    // Its first turn after starting fresh says so; a later one doesn't.
+    const freshAfterIdle = session.freshAfterIdle === true;
+    session.freshAfterIdle = false;
+    const spaceContext = spacesHiddenContext(contextRequest, room.lines, session.rigTools, roomSees, room.askingSeq, {
+      ...room,
+      ...(freshAfterIdle ? { freshAfterIdle: { messages: room.messages } } : {}),
+    });
     // Counted as sent now, so a turn queued behind this one doesn't send the same messages again.
     if (room.seenThrough !== null && room.seenThrough > (session.roomSeqSent ?? -Infinity)) {
       session.roomSeqSent = room.seenThrough;
@@ -1545,9 +1644,10 @@ export function createSpacesDispatcher(deps: {
       // Unless a later turn has told it since.
       if (session.introducedName === introAfter.name) session.introducedName = introBefore.name;
       if (session.claudeMdSent === introAfter.claudeMd) session.claudeMdSent = introBefore.claudeMd;
+      if (freshAfterIdle) session.freshAfterIdle = true;
       if (session.roomSeqSent === roomSeqAfter) {
         session.roomSeqSent = roomSeqBefore;
-        rememberRoomSeq(session);
+        rememberSessionState(session);
       }
     };
     const hiddenContext = [introContext, spaceContext, claudeMdContext, connectorsContext, filesContext, spec.extraHiddenContext]
@@ -1618,25 +1718,52 @@ export function createSpacesDispatcher(deps: {
     // entry (see `claimTurn`'s own doc comment) — same value either way,
     // and a no-op in the common case where `queuePrompt` resolves first.
     if (queued.data.turnId) turn.turnId = queued.data.turnId;
-    rememberRoomSeq(session);
+    // The size it had going into this turn: what the agent last reported, or Rig's estimate.
+    const contextTokens = session.contextTokens ?? null;
+    const contextSource = contextTokens === null ? 'unknown' : session.contextEstimated ? 'estimated' : 'reported';
+    if (session.contextEstimated || session.contextTokens === undefined) {
+      addEstimate(session, spec.prompt.length + hiddenContext.length);
+    }
+    rememberSessionState(session);
     log.info('Rig spaces dispatch: turn context', {
       runId: created.data.id,
       agent: spec.agent,
+      conversationId: session.conversationId,
+      contextTokens,
+      contextSource,
       roomMessages: room.messages,
       roomDelta: room.delta,
+      freshAfterIdle,
       hiddenContextChars: hiddenContext.length,
     });
 
     return ok({ runId: created.data.id });
   }
 
-  /** Saves the newest room message the session was sent, so after a restart its resume sends only later ones. */
-  function rememberRoomSeq(session: PersistentSession): void {
+  /**
+   * Saves what a resume after a restart needs to know about the session:
+   * the newest room message it was sent, when it last took a turn, and its size.
+   */
+  function rememberSessionState(session: PersistentSession): void {
     const stored = deps.store?.get(session.key);
-    if (!stored || stored.conversationId !== session.conversationId || stored.roomSeqSent === session.roomSeqSent) return;
-    const { roomSeqSent: _previous, ...rest } = stored;
-    deps.store?.set(session.key, session.roomSeqSent === undefined ? rest : { ...rest, roomSeqSent: session.roomSeqSent });
+    if (!stored || stored.conversationId !== session.conversationId) return;
+    const { roomSeqSent: _seq, lastTurnAt: _at, contextTokens: _tokens, contextEstimated: _estimated, ...rest } = stored;
+    const next: StoredSpaceSession = {
+      ...rest,
+      ...(session.roomSeqSent !== undefined ? { roomSeqSent: session.roomSeqSent } : {}),
+      ...(session.lastTurnAt !== undefined ? { lastTurnAt: session.lastTurnAt } : {}),
+      ...(session.contextTokens !== undefined ? { contextTokens: session.contextTokens } : {}),
+      ...(session.contextEstimated ? { contextEstimated: true } : {}),
+    };
+    if (JSON.stringify(next) !== JSON.stringify(stored)) deps.store?.set(session.key, next);
   }
+
+  /** Rig's own estimate of a session's size, when the agent doesn't report it: about 4 characters a token. */
+  function addEstimate(session: PersistentSession, chars: number): void {
+    session.contextTokens = (session.contextTokens ?? 0) + Math.ceil(chars / 4);
+    session.contextEstimated = true;
+  }
+
 
   async function dispatch(request: AgentRequest): Promise<ClaimDispatchResult> {
     const started = await startTurn({

@@ -14,6 +14,9 @@ import {
   NOT_FROM_RIG_TOML,
   finalAnswerFromEvents,
   connectorsHiddenContext,
+  FRESH_SESSION_IDLE_MS,
+  FRESH_SESSION_MIN_TOKENS,
+  startsFreshAfterIdle,
   leakedProviderError,
   roomContextLines,
   RUN_STALL_MS,
@@ -1516,6 +1519,150 @@ describe('room context as a delta', () => {
       await dispatch(makeRequest({ id: 'req2', sourceMessageId: 'src1' }));
       expect(sent[0]).toContain('#1 Sam: first');
     });
+  });
+});
+
+describe('a fresh session after a long idle', () => {
+  const HOUR = 60 * 60_000;
+  function memoryStore(): SpaceSessionStore & { entries: Map<string, StoredSpaceSession> } {
+    const entries = new Map<string, StoredSpaceSession>();
+    return { entries, get: (k) => entries.get(k) ?? null, set: (k, v) => void entries.set(k, v) };
+  }
+  const roomApi = () =>
+    makeFakeApi({
+      listMembers: async () => ok([]),
+      listMessages: async () =>
+        ok([{ id: 'a', seq: 1, author: { userId: 'u', name: 'Sam', avatarUrl: null, kind: 'user' }, kind: 'text', body: 'hello', meta: null, createdAt: '' }]),
+    }).api;
+
+  it('needs both: idle past the limit and larger than the limit, and never when either is unknown', () => {
+    const now = 100 * HOUR;
+    const idle = now - FRESH_SESSION_IDLE_MS - 1;
+    const big = FRESH_SESSION_MIN_TOKENS + 1;
+    expect(FRESH_SESSION_IDLE_MS).toBe(12 * HOUR);
+    expect(FRESH_SESSION_MIN_TOKENS).toBe(150_000);
+    expect(startsFreshAfterIdle({ lastTurnAt: idle, contextTokens: big }, now)).toBe(true);
+    expect(startsFreshAfterIdle({ lastTurnAt: now - 2 * HOUR, contextTokens: big }, now)).toBe(false);
+    expect(startsFreshAfterIdle({ lastTurnAt: idle, contextTokens: 100_000 }, now)).toBe(false);
+    expect(startsFreshAfterIdle({ contextTokens: big }, now)).toBe(false);
+    expect(startsFreshAfterIdle({ lastTurnAt: idle }, now)).toBe(false);
+  });
+
+  /** One finished turn whose agent reported `used` tokens, then the clock moved on by `idleMs`. */
+  async function afterOneTurn(used: number | null, idleMs: number) {
+    let clock = 1_000 * HOUR;
+    const fake = makeFakeAcp();
+    const store = memoryStore();
+    const dispatcher = createSpacesDispatcher({
+      api: roomApi(),
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      store,
+      now: () => clock,
+    });
+    await dispatcher.dispatch(makeRequest());
+    const conversationId = fake.started[0]!.conversationId;
+    fake.emitTurnStart(conversationId, fake.queued[0]!.turnId);
+    if (used !== null) fake.emitUpdate(conversationId, { sessionUpdate: 'usage_update', used, size: 1_000_000 });
+    fake.emitTurnEnd(conversationId, fake.queued[0]!.turnId, 'end_turn');
+    clock += idleMs;
+    return { fake, store, dispatcher, conversationId, advance: (ms: number) => (clock += ms) };
+  }
+
+  it('starts a new session, with the space rules, the room window and a note saying so', async () => {
+    const { fake, store, dispatcher, conversationId } = await afterOneTurn(200_000, 13 * HOUR);
+    expect([...store.entries.values()][0]).toMatchObject({ contextTokens: 200_000, roomSeqSent: 1 });
+
+    await dispatcher.dispatch(makeRequest({ id: 'req2' }));
+    expect(fake.stopped).toEqual([conversationId]);
+    expect(fake.started).toHaveLength(2);
+    expect(fake.started[1]!.conversationId).not.toBe(conversationId);
+    expect(fake.started[1]!.systemPromptAppend).toContain('You are working in a shared Rig space.');
+    const hidden = fake.queued[1]!.hiddenContext!;
+    expect(hidden).toContain('This is a fresh session: your earlier conversation in this space is not in it. Below is the last message of the space.');
+    expect(hidden).toContain('Recent space conversation');
+    expect(hidden).toContain('#1 Sam: hello');
+    // Remembered as the session to resume from now on, without the old one's size.
+    const saved = [...store.entries.values()][0]!;
+    expect(saved.conversationId).toBe(fake.started[1]!.conversationId);
+    expect(saved.contextTokens).toBeLessThan(10_000);
+
+    // Only its first turn says so.
+    await dispatcher.dispatch(makeRequest({ id: 'req3' }));
+    expect(fake.queued[2]!.hiddenContext).not.toContain('fresh session');
+  });
+
+  it('keeps the session when it is small, or idle only a few hours', async () => {
+    const small = await afterOneTurn(100_000, 13 * HOUR);
+    await small.dispatcher.dispatch(makeRequest({ id: 'req2' }));
+    expect(small.fake.stopped).toEqual([]);
+    expect(small.fake.started).toHaveLength(1);
+    expect(small.fake.queued[1]!.hiddenContext).not.toContain('fresh session');
+
+    const recent = await afterOneTurn(400_000, 2 * HOUR);
+    await recent.dispatcher.dispatch(makeRequest({ id: 'req2' }));
+    expect(recent.fake.stopped).toEqual([]);
+    expect(recent.fake.started).toHaveLength(1);
+  });
+
+  it('never drops a session with a turn running and an approval waiting', async () => {
+    const { fake, dispatcher, conversationId, advance } = await afterOneTurn(200_000, 0);
+    await dispatcher.dispatch(makeRequest({ id: 'req2' }));
+    fake.emitTurnStart(conversationId, fake.queued[1]!.turnId);
+    fake.emitPermissionRequest(conversationId, makePermissionRequest());
+    advance(13 * HOUR);
+
+    await dispatcher.dispatch(makeRequest({ id: 'req3' }));
+    expect(fake.stopped).toEqual([]);
+    expect(fake.started).toHaveLength(1);
+    expect(fake.queued[2]!.conversationId).toBe(conversationId);
+  });
+
+  it('after a restart, starts fresh instead of resuming an idle large session, keeping its settings', async () => {
+    const store = memoryStore();
+    const now = 1_000 * HOUR;
+    store.set('binding-1::owner-1::claude', {
+      conversationId: 'conv-old',
+      acpSessionId: 'acp-old',
+      providerId: 'claude',
+      cwd: '/rigs/one',
+      updatedAt: now - 20 * HOUR,
+      lastTurnAt: now - 20 * HOUR,
+      contextTokens: 460_000,
+      roomSeqSent: 1,
+      config: { model: 'opus' },
+    });
+    const fake = makeFakeAcp();
+    const applied: unknown[] = [];
+    fake.acp.setConfig = async (_c, change) => {
+      applied.push(change);
+      return ok(undefined);
+    };
+    await createSpacesDispatcher({ api: roomApi(), acp: fake.acp, resolveWorkspace: async () => '/rigs/one', store, now: () => now }).dispatch(
+      makeRequest()
+    );
+    expect(fake.resumed).toEqual([]);
+    expect(fake.started).toHaveLength(1);
+    expect(fake.started[0]!.conversationId).not.toBe('conv-old');
+    expect(applied).toEqual([{ model: 'opus' }]);
+    // A new session has none of the room: the whole window, not a delta.
+    expect(fake.queued[0]!.hiddenContext).toContain('This is a fresh session');
+    expect(fake.queued[0]!.hiddenContext).toContain('#1 Sam: hello');
+
+    // Opening its settings after a restart is not a turn: that resumes as before.
+    const other = makeFakeAcp();
+    store.set('binding-1::owner-1::codex', { ...store.get('binding-1::owner-1::claude')!, providerId: 'codex', lastTurnAt: 0, contextTokens: 460_000 });
+    other.acp.readConfig = async () => ({ model: null, effort: null, mode: null });
+    const reader = createSpacesDispatcher({ api: roomApi(), acp: other.acp, resolveWorkspace: async () => '/rigs/one', store, now: () => now });
+    await reader.agentConfig('binding-1', 'owner-1', 'codex');
+    expect(other.resumed).toHaveLength(1);
+  });
+
+  it("estimates the size from what it sent when the agent doesn't report one", async () => {
+    const { store } = await afterOneTurn(null, 0);
+    const saved = [...store.entries.values()][0]!;
+    expect(saved.contextEstimated).toBe(true);
+    expect(saved.contextTokens).toBeGreaterThan(0);
   });
 });
 
