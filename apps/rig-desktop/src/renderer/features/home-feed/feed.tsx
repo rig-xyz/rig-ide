@@ -1,7 +1,24 @@
-import { ChevronLeft, ChevronRight, Eye, Play, Plus, Reply } from 'lucide-react';
+import {
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Eye,
+  EyeOff,
+  FilePen,
+  Inbox,
+  PanelRightOpen,
+  Play,
+  Plus,
+  Reply,
+  Send,
+  Undo2,
+  X,
+} from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   type ClipboardEvent,
+  type CSSProperties,
   type FormEvent,
   type KeyboardEvent,
   memo,
@@ -13,6 +30,7 @@ import {
 } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
+import { ActionButton } from './action-button';
 import { Face, Kicker, SessionMatrix, SourceLogo, sourceName } from './bits';
 import { rectOf, useHome } from './home-context';
 import { PEOPLE } from './mock';
@@ -55,27 +73,37 @@ export function Feed({ headerEnd }: { headerEnd?: ReactNode }) {
         )}
       </div>
       <div className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-5">
-        <Group title="Needs you" entries={needs} />
-        <Group title="Up next" entries={next} />
+        <Group title="Needs you" tone="warn" entries={needs} />
+        <Group title="Up next" tone="accent" entries={next} />
         {!needs.length && !next.length && (
           <p className="px-5 py-2.5 text-sm text-text-muted">Nothing waiting on you.</p>
         )}
       </div>
-      <div className="flex justify-between gap-2.5 border-t border-border-hairline px-5 py-2.5 text-meta text-text-muted">
+      <div className="flex items-center justify-between gap-2.5 border-t border-border-hairline px-5 py-2.5 text-meta text-text-muted">
         <span>3 topics held back</span>
-        <button
-          type="button"
-          className="text-accent hover:underline"
+        <ActionButton
+          variant="quiet"
+          size="sm"
+          icon={Inbox}
+          className="-my-1 -mr-2.5 text-accent hover:text-accent"
           onClick={() => toast("The Inbox isn't in this preview yet")}
         >
           See in Inbox
-        </button>
+        </ActionButton>
       </div>
     </aside>
   );
 }
 
-function Group({ title, entries }: { title: string; entries: FeedEntry[] }) {
+function Group({
+  title,
+  tone,
+  entries,
+}: {
+  title: string;
+  tone: 'warn' | 'accent';
+  entries: FeedEntry[];
+}) {
   const { reducedMotion } = useHome();
   return (
     <AnimatePresence initial={false} mode="popLayout">
@@ -87,7 +115,10 @@ function Group({ title, entries }: { title: string; entries: FeedEntry[] }) {
           transition={{ duration: reducedMotion ? 0 : 0.2 }}
           className="px-5 pt-3.5 pb-1.5"
         >
-          <Kicker>{title}</Kicker>
+          <Kicker className="flex items-center gap-2">
+            <span aria-hidden className="hf-group-dot" data-tone={tone} />
+            {title}
+          </Kicker>
         </motion.div>
       )}
       {entries.map((entry) => (
@@ -175,15 +206,18 @@ function FeedRow({ entry }: { entry: FeedEntry }) {
         </button>
         <Say entry={entry} choice={choice} onRun={run} />
         {entry.edited !== null && (
-          <div className="pl-7 text-xs text-text-muted">
-            <span className="mr-1.5">Edited</span>
-            <button
-              type="button"
+          <div className="flex items-center pl-7 text-xs text-text-muted">
+            <span className="mr-1">Edited</span>
+            <ActionButton
+              variant="quiet"
+              size="sm"
+              icon={Undo2}
+              motion="undo"
               onClick={() => dispatch({ type: 'reset', itemId: item.id })}
-              className="rounded-[6px] px-1.5 py-[3px] text-accent hover:bg-accent-subtle"
+              className="h-6 text-accent hover:bg-accent-subtle hover:text-accent"
             >
               Undo
-            </button>
+            </ActionButton>
           </div>
         )}
         <div className="mt-1.5 flex items-center justify-end gap-2.5 pl-7">
@@ -367,7 +401,7 @@ function Carousel({
   if (item.choices.length < 2) return <span className="mr-auto" />;
   const at = item.choices.indexOf(choice);
   const arrow =
-    'grid size-[26px] place-items-center rounded-full text-text-muted transition-colors hover:bg-bg-2 hover:text-text-primary';
+    'hf-nudge grid size-[26px] place-items-center rounded-full text-text-muted transition-colors hover:bg-bg-2 hover:text-text-primary';
   return (
     <div
       role="group"
@@ -378,6 +412,7 @@ function Carousel({
         type="button"
         aria-label="Previous option"
         onClick={() => onStep(-1)}
+        data-dir="left"
         className={arrow}
       >
         <ChevronLeft className="size-4" strokeWidth={1.8} />
@@ -393,7 +428,13 @@ function Carousel({
           className="hf-dot grid size-[18px] place-items-center"
         />
       ))}
-      <button type="button" aria-label="Next option" onClick={() => onStep(1)} className={arrow}>
+      <button
+        type="button"
+        aria-label="Next option"
+        onClick={() => onStep(1)}
+        data-dir="right"
+        className={arrow}
+      >
         <ChevronRight className="size-4" strokeWidth={1.8} />
       </button>
     </div>
@@ -401,6 +442,13 @@ function Carousel({
 }
 
 type MenuKey = 'open' | 'brief' | 'later' | 'ignore';
+
+const MENU_ICON: Record<MenuKey, typeof Play> = {
+  open: PanelRightOpen,
+  brief: FilePen,
+  later: Clock,
+  ignore: EyeOff,
+};
 
 function menuItems(
   item: FeedItem,
@@ -477,10 +525,17 @@ function Action({
         <button
           type="button"
           onClick={onRun}
-          className={cn(part, 'hf-goo-main gap-2 rounded-[18px] pr-4 pl-3.5')}
+          data-motion="slide"
+          style={{ '--hf-px': '15px' } as CSSProperties}
+          className={cn(part, 'hf-btn hf-goo-main rounded-[18px] border-0')}
         >
-          <Icon className="size-[15px]" strokeWidth={2.4} />
+          <span aria-hidden className="hf-btn-lead">
+            <Icon className="size-[15px]" strokeWidth={2.4} />
+          </span>
           <span>{VERB_LABEL[verb]}</span>
+          <span aria-hidden className="hf-btn-trail">
+            <ArrowRight className="size-[15px]" strokeWidth={2.6} />
+          </span>
         </button>
         <button
           ref={caretRef}
@@ -507,9 +562,9 @@ function Action({
               type="button"
               role="menuitem"
               onClick={() => onMenu(it.key)}
-              className="grid grid-cols-[18px_minmax(0,1fr)] gap-2 rounded-[8px] px-2.5 py-2 text-left outline-none hover:bg-bg-2 focus-visible:bg-bg-2"
+              className="group grid grid-cols-[18px_minmax(0,1fr)] gap-2 rounded-[8px] px-2.5 py-2 text-left outline-none hover:bg-bg-2 focus-visible:bg-bg-2"
             >
-              <span />
+              <MenuIcon k={it.key} />
               <span>
                 <b className="text-ui font-medium">{it.label}</b>
                 <small className="mt-px block text-meta leading-[1.4] text-text-secondary">
@@ -547,13 +602,16 @@ function IgnoredRow({ entry }: { entry: FeedEntry }) {
         <span className="min-w-0 truncate">
           Ignored <b className="font-medium text-text-secondary">{entry.item.title}</b>
         </span>
-        <button
-          type="button"
+        <ActionButton
+          variant="quiet"
+          size="sm"
+          icon={Undo2}
+          motion="undo"
           onClick={() => dispatch({ type: 'ignore', itemId: entry.item.id, value: false })}
-          className="ml-auto rounded-[6px] px-1.5 py-[3px] text-xs text-accent hover:bg-accent-subtle"
+          className="-my-1 ml-auto h-6 text-accent hover:bg-accent-subtle hover:text-accent"
         >
           Undo
-        </button>
+        </ActionButton>
       </div>
       <form onSubmit={submit} className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-1.5">
         <input
@@ -563,20 +621,24 @@ function IgnoredRow({ entry }: { entry: FeedEntry }) {
           aria-label="Why you ignored it (optional)"
           className="min-w-0 rounded-[8px] border border-border-hairline bg-bg-1 px-[9px] py-[5px] text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent"
         />
-        <button
-          type="submit"
-          className="rounded-[8px] border border-accent bg-accent px-2.5 py-1 text-meta font-medium text-accent-ink"
-        >
+        <ActionButton type="submit" variant="primary" size="sm" icon={Send} motion="send">
           Send
-        </button>
-        <button
-          type="button"
-          onClick={() => done('')}
-          className="rounded-[8px] px-2.5 py-1 text-meta text-text-secondary hover:text-text-primary"
-        >
+        </ActionButton>
+        <ActionButton variant="quiet" size="sm" icon={X} motion="nudge" onClick={() => done('')}>
           Skip
-        </button>
+        </ActionButton>
       </form>
     </div>
+  );
+}
+
+function MenuIcon({ k }: { k: MenuKey }) {
+  const Icon = MENU_ICON[k];
+  return (
+    <Icon
+      aria-hidden
+      className="mt-0.5 size-4 text-text-muted transition-colors group-hover:text-accent group-focus-visible:text-accent"
+      strokeWidth={1.8}
+    />
   );
 }

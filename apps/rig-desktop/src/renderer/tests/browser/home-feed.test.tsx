@@ -21,9 +21,25 @@ const space = (id: string, name: string) => ({
   relayHost: 'tap-relay.fly.dev',
 });
 
+const layoutActions = vi.hoisted(() => [] as unknown[]);
+
 vi.mock('@renderer/lib/ipc', () => ({
   rpc: {
     rig: {
+      homeLayout: {
+        get: async () => ({
+          groupBy: 'custom',
+          sortBy: 'recent',
+          showQuiet: true,
+          showEmptyGroups: false,
+          collapsed: [],
+          groups: [{ id: 'grp_internal', name: 'Internal', collapsed: false, spaces: ['b-ops'] }],
+        }),
+        apply: async ({ action }: { action: unknown }) => {
+          layoutActions.push(action);
+          return null;
+        },
+      },
       account: {
         me: async () => ({
           success: true,
@@ -116,6 +132,7 @@ const opened: Array<[string, unknown]> = [];
 
 beforeEach(async () => {
   opened.length = 0;
+  layoutActions.length = 0;
   host = document.createElement('div');
   host.style.height = '900px';
   host.style.width = '1400px';
@@ -163,15 +180,49 @@ describe('NewHome', () => {
     expect(host.querySelector('aside')!.textContent).toContain('2 need you · 4 up next');
   });
 
-  it('merges real spaces into the rail: a demo space takes the real one with its name, the rest follow', () => {
+  it('merges real spaces into the rail: a demo space takes the real one with its name, in your groups', () => {
     const ids = [...rail().querySelectorAll('[data-rail-id]')].map((e) =>
       e.getAttribute('data-rail-id')
     );
-    expect(ids.slice(0, 3)).toEqual(['ulys-backlog', 's-triage', 's-stale']);
+    // Your groups first (rig-ops is in Internal), then Ungrouped, demo spaces leading it.
+    expect(ids.slice(0, 2)).toEqual(['rig-ops', 's-domains']);
+    expect(ids.slice(2, 5)).toEqual(['ulys-backlog', 's-triage', 's-stale']);
     expect(ids.filter((id) => id === 'rig-ops')).toHaveLength(1);
     expect(ids.at(-1)).toBe('b-launch');
     // The real unread count shows on the merged space.
     expect(rail().querySelector('[data-rail-id="rig-ops"]')!.textContent).toContain('4');
+  });
+
+  it('shows your groups: a group folds under its header, and a space dragged onto it moves there', async () => {
+    // The rail is folded to icons below 1180px; open it to see the headers.
+    await click(button(rail(), 'Expand'));
+    const header = button(rail(), /Internal/)!;
+    expect(header.textContent).toContain('1');
+    expect(rail().textContent).toContain('Ungrouped');
+    await click(header);
+    expect(layoutActions).toContainEqual({
+      type: 'setGroupCollapsed',
+      id: 'grp_internal',
+      collapsed: true,
+    });
+
+    const launch = rail().querySelector('[data-rail-id="b-launch"]')!;
+    const data = new DataTransfer();
+    await act(async () => {
+      launch.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: data }));
+      header.parentElement!.dispatchEvent(
+        new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: data })
+      );
+      header.parentElement!.dispatchEvent(
+        new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data })
+      );
+    });
+    await flush();
+    expect(layoutActions).toContainEqual({
+      type: 'moveSpace',
+      bindingId: 'b-launch',
+      groupId: 'grp_internal',
+    });
   });
 
   it('stepping the options swaps the text, the space label and the verb', async () => {

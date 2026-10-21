@@ -1,9 +1,10 @@
 import { ArrowLeftToLine, ArrowRightToLine, Home as HomeIcon, Inbox, Lock } from 'lucide-react';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
 import { cn } from '@renderer/lib/utils';
 import { Count, Face, SessionMatrix, StatusWord } from './bits';
 import { useHome } from './home-context';
 import { type RailSession, type RailSpace, sessionLabelTone, sessionStatusWord } from './model';
+import { SPACE_DRAG_TYPE, SpaceGroups } from './rail-groups';
 import { needsYouPhrase } from './say';
 
 /**
@@ -99,25 +100,30 @@ export function Rail() {
       >
         <div
           className={cn(
-            'h-[22px] py-1 pl-1.5 font-mono text-kicker font-medium tracking-[0.1em] whitespace-nowrap text-text-muted uppercase',
+            'flex h-[22px] items-center gap-1.5 py-1 pl-1.5 font-mono text-kicker font-medium tracking-[0.1em] whitespace-nowrap text-text-muted uppercase',
             collapsed && 'invisible'
           )}
         >
           Spaces
+          <span className="tracking-normal text-text-muted/70">{spaces.length}</span>
         </div>
-        {spaces.map((space) => (
-          <SpaceEntry
-            key={space.id}
-            space={space}
-            collapsed={collapsed}
-            selected={selected}
-            landed={state.landed}
-            onOpen={(id, kind) =>
-              open(kind === 'space' ? { kind: 'space', id } : { kind: 'session', id })
-            }
-            onPeek={showPeek}
-          />
-        ))}
+        <SpaceGroups
+          spaces={spaces}
+          collapsed={collapsed}
+          renderSpace={(space) => (
+            <SpaceEntry
+              key={space.id}
+              space={space}
+              collapsed={collapsed}
+              selected={selected}
+              landed={state.landed}
+              onOpen={(id, kind) =>
+                open(kind === 'space' ? { kind: 'space', id } : { kind: 'session', id })
+              }
+              onPeek={showPeek}
+            />
+          )}
+        />
       </div>
       <div className="border-t border-border-hairline px-3 py-2">
         <RailItem
@@ -177,11 +183,8 @@ function SpaceEntry({
         ghost={space.fresh}
         landedKey={landed?.id === space.id ? landed.n : undefined}
         className="mt-1.5"
-        icon={
-          <span className="grid size-[22px] place-items-center rounded-[6px] border border-border-hairline bg-bg-2 font-mono text-kicker font-semibold text-text-secondary">
-            {space.name.slice(0, 1).toUpperCase()}
-          </span>
-        }
+        dragId={space.bindingId}
+        icon={<SpaceTile space={space} />}
         name={
           <>
             <i className="text-text-muted not-italic">#</i> {space.name}
@@ -289,6 +292,7 @@ function RailItem({
   stem,
   className,
   ariaExpanded,
+  dragId,
   onClick,
   onPeek,
 }: {
@@ -309,6 +313,8 @@ function RailItem({
   stem?: boolean;
   className?: string;
   ariaExpanded?: boolean;
+  /** A space's binding id: it can be dragged onto a group. */
+  dragId?: string;
   onClick: () => void;
   onPeek?: (el: HTMLElement) => void;
 }) {
@@ -318,15 +324,24 @@ function RailItem({
       type="button"
       data-rail-id={railId}
       aria-label={collapsed ? label : undefined}
+      draggable={!!dragId}
+      onDragStart={
+        dragId
+          ? (e) => {
+              e.dataTransfer.setData(SPACE_DRAG_TYPE, dragId);
+              e.dataTransfer.effectAllowed = 'move';
+            }
+          : undefined
+      }
       aria-current={current ? 'page' : undefined}
       aria-expanded={ariaExpanded}
       onClick={onClick}
       onMouseEnter={(e) => onPeek?.(e.currentTarget)}
       onFocus={(e) => onPeek?.(e.currentTarget)}
       className={cn(
-        'relative grid min-h-9 w-full items-center gap-2 rounded-[9px] text-left transition-colors',
+        'hf-rail-item relative grid min-h-9 w-full items-center gap-2 rounded-[9px] text-left',
         collapsed ? 'grid-cols-[36px] px-1' : 'grid-cols-[36px_minmax(0,1fr)_auto] pr-2 pl-1',
-        current ? 'bg-accent-subtle' : 'hover:bg-bg-2',
+        current ? 'hf-rail-current bg-accent-subtle' : 'hover:bg-bg-2',
         ghost && 'invisible',
         className
       )}
@@ -383,4 +398,22 @@ function HoverCard({ anchor, children }: { anchor: HTMLElement; children: ReactN
       {children}
     </div>
   );
+}
+
+/** A space's first letter on a tile tinted with its own theme color, so spaces tell apart at a glance. */
+function SpaceTile({ space }: { space: RailSpace }) {
+  return (
+    <span
+      style={{ '--hue': `var(--theme-${spaceHue(space.bindingId ?? space.id)})` } as CSSProperties}
+      className="hf-space-tile grid size-[22px] place-items-center rounded-[6px] border font-mono text-kicker font-semibold"
+    >
+      {space.name.slice(0, 1).toUpperCase()}
+    </span>
+  );
+}
+
+function spaceHue(id: string): number {
+  let h = 0;
+  for (const ch of id) h = (h * 33 + ch.charCodeAt(0)) >>> 0;
+  return (h % 8) + 1;
 }

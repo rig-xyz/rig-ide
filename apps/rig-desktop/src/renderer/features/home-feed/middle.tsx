@@ -1,4 +1,18 @@
-import { ArrowLeft } from 'lucide-react';
+import {
+  Activity,
+  ArrowLeft,
+  CalendarClock,
+  DoorOpen,
+  Inbox,
+  ListChecks,
+  type LucideIcon,
+  Play,
+  Repeat,
+  Reply,
+  Send,
+  Undo2,
+  UserPlus,
+} from 'lucide-react';
 import {
   type FormEvent,
   type ReactNode,
@@ -9,6 +23,7 @@ import {
 } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
+import { ActionButton } from './action-button';
 import { Face, Kicker, SessionMatrix, SourceLogo, sourceName, StatusWord } from './bits';
 import { rectOf, useHome } from './home-context';
 import { SOURCES } from './mock';
@@ -23,11 +38,11 @@ import { findSession } from './store';
  * ← Home comes back.
  */
 
-const QUICK: Array<{ label: string; say?: string; fill?: string }> = [
-  { label: 'Status update', say: 'Status update' },
-  { label: 'Start a session…', fill: 'Start a session to ' },
-  { label: 'Every Monday…', fill: 'Every Monday, clear stale Earn tickets' },
-  { label: 'What came in today?', say: 'What came in today?' },
+const QUICK: Array<{ label: string; icon: LucideIcon; say?: string; fill?: string }> = [
+  { label: 'Status update', icon: Activity, say: 'Status update' },
+  { label: 'Start a session…', icon: Play, fill: 'Start a session to ' },
+  { label: 'Every Monday…', icon: Repeat, fill: 'Every Monday, clear stale Earn tickets' },
+  { label: 'What came in today?', icon: Inbox, say: 'What came in today?' },
 ];
 
 export function Middle() {
@@ -95,7 +110,7 @@ function HomeChat() {
         aria-live="polite"
         className="grid min-h-0 flex-1 content-start gap-4 overflow-y-auto px-[26px] pt-[22px] pb-2"
       >
-        <Column>
+        <Column className="hf-glow">
           <Kicker className="text-2xs">{DATE.format(now)}</Kicker>
           <div className="mt-1.5 font-display text-2xl leading-[1.15] font-medium tracking-[-0.01em]">
             {greetingWord(now)}, {firstName}.
@@ -132,8 +147,12 @@ function HomeChat() {
                   });
                 }
               }}
-              className="rounded-full border border-border-hairline bg-bg-1 px-[11px] py-1 text-meta text-text-secondary transition-colors hover:border-border-strong hover:text-text-primary"
+              className="hf-chip group inline-flex items-center gap-1.5 rounded-full border border-border-hairline bg-bg-1 py-1 pr-[11px] pl-2.5 text-meta text-text-secondary hover:border-border-strong hover:text-text-primary"
             >
+              <q.icon
+                className="hf-chip-icon size-3.5 text-text-muted group-hover:text-accent"
+                strokeWidth={2}
+              />
               {q.label}
             </button>
           ))}
@@ -141,7 +160,7 @@ function HomeChat() {
         <Column>
           <form
             onSubmit={submit}
-            className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 rounded-[12px] border border-border-hairline bg-bg-1 py-2 pr-2 pl-3.5 transition-colors focus-within:border-border-strong"
+            className="hf-composer grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 rounded-[12px] border border-border-hairline bg-bg-1 py-2 pr-2 pl-3.5"
           >
             <textarea
               ref={inputRef}
@@ -158,7 +177,16 @@ function HomeChat() {
               aria-label="Message Rig"
               className="max-h-[120px] min-h-6 resize-none border-0 bg-transparent py-1 text-chat leading-[1.5] text-text-primary outline-none placeholder:text-text-muted"
             />
-            <PrimaryButton type="submit">Send</PrimaryButton>
+            <ActionButton
+              type="submit"
+              icon={Send}
+              motion="send"
+              variant={draft.trim() ? 'primary' : 'secondary'}
+              aria-disabled={!draft.trim()}
+              className={cn(!draft.trim() && 'text-text-muted')}
+            >
+              Ask
+            </ActionButton>
           </form>
         </Column>
       </div>
@@ -174,7 +202,10 @@ function Column({ children, className }: { children: ReactNode; className?: stri
 function RigMessage({ id, blocks }: { id?: string; blocks: ReplyBlock[] | null }) {
   return (
     <Column className="hf-rise grid grid-cols-[28px_minmax(0,1fr)] gap-2.5">
-      <span className="grid size-7 place-items-center rounded-[8px] border border-border-hairline bg-bg-2">
+      <span
+        data-thinking={!blocks}
+        className="hf-rig-tile grid size-7 place-items-center rounded-[8px] border border-border-hairline bg-bg-2"
+      >
         <DotMatrix state={blocks ? 'idle' : 'thinking'} size="sm" />
       </span>
       <div className="min-w-0">
@@ -214,7 +245,9 @@ function Block({ block, usedKey }: { block: ReplyBlock; usedKey?: string }) {
     case 'brief':
       return (
         <Brief title={<span>{block.title}</span>} rows={block.rows}>
-          <PrimaryButton
+          <ActionButton
+            variant="primary"
+            icon={Play}
             disabled={used}
             onClick={(e) => {
               if (usedKey) dispatch({ type: 'use', key: usedKey });
@@ -226,7 +259,7 @@ function Block({ block, usedKey }: { block: ReplyBlock; usedKey?: string }) {
             }}
           >
             Start session
-          </PrimaryButton>
+          </ActionButton>
         </Brief>
       );
     case 'routine':
@@ -240,7 +273,9 @@ function Block({ block, usedKey }: { block: ReplyBlock; usedKey?: string }) {
           }
           rows={block.rows}
         >
-          <PrimaryButton
+          <ActionButton
+            variant="primary"
+            icon={CalendarClock}
             disabled={used}
             onClick={(e) => {
               if (usedKey) dispatch({ type: 'use', key: usedKey });
@@ -248,7 +283,7 @@ function Block({ block, usedKey }: { block: ReplyBlock; usedKey?: string }) {
             }}
           >
             Save routine
-          </PrimaryButton>
+          </ActionButton>
         </Brief>
       );
   }
@@ -379,44 +414,6 @@ function KV({ row }: { row: BriefRow }) {
   );
 }
 
-function PrimaryButton({
-  children,
-  className,
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      {...props}
-      className={cn(
-        'bg-accent border-accent text-accent-ink rounded-[8px] border px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-[filter] hover:brightness-110 disabled:cursor-default disabled:opacity-50 disabled:hover:brightness-100',
-        className
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-function SecondaryButton({
-  children,
-  className,
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      {...props}
-      className={cn(
-        'border-border-hairline bg-bg-1 hover:border-border-strong rounded-[8px] border px-3 py-1.5 text-sm whitespace-nowrap transition-colors',
-        className
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
 // ── context ────────────────────────────────────────────────────────────────
 
 function ContextView() {
@@ -456,7 +453,8 @@ function ContextView() {
         <button
           type="button"
           onClick={() => open({ kind: 'home' })}
-          className="-ml-2 inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-sm text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
+          data-dir="left"
+          className="hf-nudge -ml-2 inline-flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-sm text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
         >
           <ArrowLeft className="size-3.5" strokeWidth={1.8} />
           Home
@@ -530,7 +528,9 @@ function SpaceBody({ space }: { space: RailSpace }) {
       />
       {space.root && (
         <div className="flex gap-1.5">
-          <SecondaryButton onClick={() => openInApp({ space })}>Open space</SecondaryButton>
+          <ActionButton icon={DoorOpen} onClick={() => openInApp({ space })}>
+            Open space
+          </ActionButton>
         </div>
       )}
       <Kicker className="text-2xs">Sessions · {space.sessions.length}</Kicker>
@@ -601,16 +601,19 @@ function SessionBody({ space, session }: { space: RailSpace; session: RailSessio
           }
           note={session.last.text}
         >
-          <PrimaryButton
+          <ActionButton
+            variant="primary"
+            icon={UserPlus}
             onClick={(e) => bringIn(session.id, rectOf(e.currentTarget.closest('[data-brief]')))}
           >
             Bring Riyad in
-          </PrimaryButton>
-          <SecondaryButton
+          </ActionButton>
+          <ActionButton
+            icon={Reply}
             onClick={() => toast('Type your answer in the session; Claude picks it up next step')}
           >
             Answer
-          </SecondaryButton>
+          </ActionButton>
         </Brief>
       )}
       {session.id === 's-stale' && (
@@ -623,23 +626,27 @@ function SessionBody({ space, session }: { space: RailSpace; session: RailSessio
           }
           note="61 closed in Linear with a reason each; 38 kept with a note."
         >
-          <PrimaryButton
+          <ActionButton
+            variant="primary"
+            icon={ListChecks}
             onClick={() => toast('Opens the per-item review: keep closed or reopen with a reason')}
           >
             Review 16
-          </PrimaryButton>
-          <SecondaryButton
+          </ActionButton>
+          <ActionButton
+            icon={Undo2}
+            motion="undo"
             onClick={() => toast('Would start a background session that reopens all 61')}
           >
             Undo all
-          </SecondaryButton>
+          </ActionButton>
         </Brief>
       )}
       {session.origin === 'real' && space.root && (
         <div className="flex gap-1.5">
-          <SecondaryButton onClick={() => openInApp({ space, session })}>
+          <ActionButton icon={DoorOpen} onClick={() => openInApp({ space, session })}>
             {session.id.startsWith('chat:') ? 'Open session' : 'Open space'}
-          </SecondaryButton>
+          </ActionButton>
         </div>
       )}
       <Kicker className="text-2xs">Activity</Kicker>
@@ -713,7 +720,9 @@ function BriefBody({ itemId }: { itemId: string }) {
         summary={`Edit the goal and limits, then start. Saved as .rig/briefs/${item.id.replace(/^(prp|ask)_/, '')}.md`}
       />
       <Brief rows={rows}>
-        <PrimaryButton
+        <ActionButton
+          variant="primary"
+          icon={Play}
           onClick={(e) => {
             dispatch({ type: 'remove', itemId });
             startSession(spaceId, item.title, rectOf(e.currentTarget.closest('[data-brief]')), {
@@ -722,7 +731,7 @@ function BriefBody({ itemId }: { itemId: string }) {
           }}
         >
           Start session
-        </PrimaryButton>
+        </ActionButton>
       </Brief>
     </>
   );

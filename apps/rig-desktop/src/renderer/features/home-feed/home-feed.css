@@ -259,3 +259,235 @@
     transition: none;
   }
 }
+
+/* ── buttons (`action-button.tsx`) ─────────────────────────────────────── */
+
+.hf-btn {
+  --hf-px: 12px;
+  --hf-gap: 7px;
+  --hf-icon: 15px;
+  padding-inline: var(--hf-px);
+  transition:
+    transform 0.22s cubic-bezier(0.3, 1.5, 0.5, 1),
+    padding 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
+    background-color 0.18s ease-out,
+    border-color 0.18s ease-out,
+    color 0.18s ease-out,
+    box-shadow 0.18s ease-out;
+}
+.hf-btn[data-size='sm'] {
+  --hf-px: 10px;
+  --hf-gap: 6px;
+  --hf-icon: 14px;
+}
+.hf-btn-lead,
+.hf-btn-trail {
+  display: inline-grid;
+  place-items: center;
+  overflow: hidden;
+  transition:
+    max-width 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
+    margin 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.18s ease-out,
+    transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.hf-btn-lead {
+  max-width: var(--hf-icon);
+  margin-right: var(--hf-gap);
+}
+.hf-btn-trail {
+  max-width: 0;
+  margin-left: 0;
+  opacity: 0;
+  transform: translateX(-6px);
+}
+
+/* The primary button: a lit top edge and a soft glow in its own color. */
+.hf-btn-primary {
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 22%, transparent),
+    0 1px 2px color-mix(in oklab, var(--accent) 30%, transparent);
+}
+.hf-btn-primary:hover,
+.hf-btn-primary:focus-visible {
+  background-color: color-mix(in oklab, var(--accent) 88%, white);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 28%, transparent),
+    0 6px 16px -4px color-mix(in oklab, var(--accent) 55%, transparent);
+}
+.hf-btn-secondary {
+  box-shadow: inset 0 1px 0 light-dark(rgb(255 255 255 / 0.8), rgb(255 255 255 / 0.04));
+}
+.hf-btn-secondary:hover,
+.hf-btn-secondary:focus-visible {
+  background-color: var(--bg-2);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hf-btn:hover,
+  .hf-btn:focus-visible {
+    transform: scale(1.02);
+  }
+  .hf-btn:active {
+    transform: scale(0.97);
+    transition-duration: 0.08s;
+  }
+  .hf-btn[data-motion='slide']:hover,
+  .hf-btn[data-motion='slide']:focus-visible {
+    padding-inline: calc(var(--hf-px) + 3px);
+  }
+  .hf-btn[data-motion='slide']:hover .hf-btn-lead,
+  .hf-btn[data-motion='slide']:focus-visible .hf-btn-lead {
+    max-width: 0;
+    margin-right: 0;
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  .hf-btn[data-motion='slide']:hover .hf-btn-trail,
+  .hf-btn[data-motion='slide']:focus-visible .hf-btn-trail {
+    max-width: var(--hf-icon);
+    margin-left: var(--hf-gap);
+    opacity: 1;
+    transform: none;
+  }
+  .hf-btn[data-motion='undo']:hover .hf-btn-lead,
+  .hf-btn[data-motion='undo']:focus-visible .hf-btn-lead {
+    transform: rotate(-40deg);
+  }
+  .hf-btn[data-motion='send']:hover .hf-btn-lead,
+  .hf-btn[data-motion='send']:focus-visible .hf-btn-lead {
+    transform: translate(2px, -2px);
+  }
+  .hf-btn[data-motion='nudge']:hover .hf-btn-lead,
+  .hf-btn[data-motion='nudge']:focus-visible .hf-btn-lead {
+    transform: translateX(2px);
+  }
+}
+
+/* Icon-only controls nudge their icon the way they point. */
+@media (prefers-reduced-motion: no-preference) {
+  .hf-nudge > svg {
+    transition: transform 0.22s cubic-bezier(0.3, 1.5, 0.5, 1);
+  }
+  .hf-nudge[data-dir='left']:hover > svg {
+    transform: translateX(-2px);
+  }
+  .hf-nudge[data-dir='right']:hover > svg {
+    transform: translateX(2px);
+  }
+  .hf-nudge:active > svg {
+    transform: scale(0.85);
+  }
+}
+
+/* ── color and touch ───────────────────────────────────────────────────── */
+
+/* Each space wears its own theme color on its tile (`--hue`, one of `--theme-1`…`--theme-8`). */
+.hf-space-tile {
+  background: color-mix(in oklab, var(--hue) 20%, var(--bg-1));
+  border-color: color-mix(in oklab, var(--hue) 40%, transparent);
+  color: color-mix(in oklab, var(--hue) 78%, var(--text-primary));
+}
+
+/* Rail rows answer the press; the open one carries a lit top edge. */
+.hf-rail-item {
+  transition:
+    background-color 0.15s ease-out,
+    transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .hf-rail-item:active {
+    transform: scale(0.98);
+  }
+}
+.hf-rail-current {
+  box-shadow: inset 0 1px 0 light-dark(rgb(255 255 255 / 0.7), rgb(255 255 255 / 0.05));
+}
+
+/* A row that needs you carries an amber edge, not just a tint. */
+.hf-row[data-needs='true'] {
+  box-shadow: inset 2px 0 0 color-mix(in oklab, var(--status-warn) 75%, transparent);
+}
+
+/* The Feed's group dots: amber for what needs you, the accent for what's next. */
+.hf-group-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.hf-group-dot[data-tone='warn'] {
+  background: var(--status-warn);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--status-warn) 20%, transparent);
+}
+.hf-group-dot[data-tone='accent'] {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+/* Quick chips lift toward the pointer; their icon picks up the accent. */
+.hf-chip {
+  transition:
+    transform 0.2s cubic-bezier(0.3, 1.5, 0.5, 1),
+    border-color 0.15s ease-out,
+    color 0.15s ease-out,
+    box-shadow 0.2s ease-out;
+}
+.hf-chip-icon {
+  transition:
+    color 0.15s ease-out,
+    transform 0.2s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .hf-chip:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-soft);
+  }
+  .hf-chip:hover .hf-chip-icon {
+    transform: scale(1.12);
+  }
+  .hf-chip:active {
+    transform: translateY(0) scale(0.97);
+  }
+}
+
+/* The composer glows in the accent while you type. */
+.hf-composer {
+  transition:
+    border-color 0.15s ease-out,
+    box-shadow 0.2s ease-out;
+}
+.hf-composer:focus-within {
+  border-color: color-mix(in oklab, var(--accent) 60%, var(--border-hairline));
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+/* The greeting's one wash of color, the same as the current Home's (`.hero-glow`). */
+.hf-glow {
+  position: relative;
+}
+.hf-glow::before {
+  content: '';
+  position: absolute;
+  inset: -22px -26px auto;
+  height: 260px;
+  background: radial-gradient(
+    ellipse 46% 90% at 24% 0%,
+    color-mix(in oklab, var(--accent) 12%, transparent),
+    transparent 72%
+  );
+  pointer-events: none;
+}
+.hf-glow > * {
+  position: relative;
+}
+
+/* Rig's tile lights up while it thinks. */
+.hf-rig-tile {
+  transition:
+    background-color 0.2s ease-out,
+    border-color 0.2s ease-out;
+}
+.hf-rig-tile[data-thinking='true'] {
+  background: var(--accent-subtle);
+  border-color: color-mix(in oklab, var(--accent) 35%, transparent);
+}

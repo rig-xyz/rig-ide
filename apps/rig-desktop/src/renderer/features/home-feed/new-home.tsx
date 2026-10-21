@@ -1,3 +1,4 @@
+import { CircleCheck } from 'lucide-react';
 import { useReducedMotion } from 'motion/react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { cn } from '@renderer/lib/utils';
@@ -108,10 +109,11 @@ function Toast({ toast }: { toast: { text: string; n: number } | null }) {
     <div
       role="status"
       className={cn(
-        'bg-text-primary text-bg-1 pointer-events-none absolute bottom-[18px] left-1/2 z-30 max-w-[calc(100%-32px)] -translate-x-1/2 rounded-[9px] px-3.5 py-2 text-sm transition-[opacity,transform] duration-[250ms] ease-out motion-reduce:transition-none',
-        visible ? 'translate-y-0 opacity-100' : 'translate-y-3.5 opacity-0'
+        'pointer-events-none absolute bottom-[18px] left-1/2 z-30 flex max-w-[calc(100%-32px)] -translate-x-1/2 items-center gap-2 rounded-[10px] bg-text-primary py-2 pr-3.5 pl-3 text-sm text-bg-1 shadow-float transition-[opacity,transform] duration-300 ease-[cubic-bezier(.3,1.4,.5,1)] motion-reduce:transition-none',
+        visible ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-3.5 scale-95 opacity-0'
       )}
     >
+      <CircleCheck aria-hidden className="size-4 shrink-0 text-status-ok" strokeWidth={2.2} />
       {shown?.text}
     </div>
   );
