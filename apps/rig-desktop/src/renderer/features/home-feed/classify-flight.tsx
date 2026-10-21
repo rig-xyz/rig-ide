@@ -1,3 +1,4 @@
+import { AnimatePresence, motion } from 'motion/react';
 import {
   type CSSProperties,
   useCallback,
@@ -8,32 +9,56 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
-import { cn } from '@renderer/lib/utils';
-import { SourceLogo } from './bits';
 import type { Cell, Topic } from './connectors-model';
+import type { SourceConnector } from './model';
 
 /**
- * A new item being classified, shown as it happens: it surfaces as a chip by
- * the connector that brought it ("Sorting…"), resolves to its topic and how
- * sure the sorting was, then shrinks into a square of its topic's color and
- * drops into its place in today's grid, where it pulses and its topic's pill
- * bumps. Items that arrive together go one after another.
+ * A new item being classified, shown as it happens. It opens inside the row
+ * of the connector that brought it, as a line under its status ("ULY-521 …
+ * Sorting…"), pushing the rows below down; it resolves to its topic and how
+ * sure the sorting was; then the line folds away and a square of its topic's
+ * color drops from there into its place in today's grid, which pulses as the
+ * topic's pill bumps. Items that arrive together go one after another.
  */
+
+export type FlightPhase = 'waiting' | 'reading' | 'sorted' | 'dropping';
 
 export interface Flight {
   cell: Cell;
-  delay: number;
+  phase: FlightPhase;
+  /** Where the line was when it folded: the square starts there. */
+  from?: { left: number; top: number; width: number; height: number };
 }
 
-/** Between items of one check, and the chip's beats: surface, read, sorted, then the drop. */
-const STAGGER_MS = 650;
-const BEATS = { sorted: 850, drop: 1650, dropMs: 650 } as const;
+/** Between items of one check, and the line's beats: open, sorted, then the drop. */
+const STAGGER_MS = 900;
+const BEATS = { sorted: 900, drop: 1800, dropMs: 650 } as const;
 
 /** Flights for the cells that arrive while the grid is on screen; reduced motion lets them simply appear. */
 export function useClassifyFlights(cells: readonly Cell[], reduced: boolean) {
   const seen = useRef<Set<string> | null>(null);
   if (seen.current === null) seen.current = new Set(cells.map((c) => c.id));
   const [flights, setFlights] = useState<Flight[]>([]);
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+
+  const setPhase = useCallback((id: string, phase: FlightPhase) => {
+    setFlights((current) =>
+      current.map((f) => {
+        if (f.cell.id !== id) return f;
+        if (phase !== 'dropping') return { ...f, phase };
+        // The line is still on screen: the square starts where it is.
+        const line = document.querySelector<HTMLElement>(
+          `[data-classify-line="${CSS.escape(id)}"]`
+        );
+        const r = line?.getBoundingClientRect();
+        return {
+          ...f,
+          phase,
+          from: r ? { left: r.left, top: r.top, width: r.width, height: r.height } : undefined,
+        };
+      })
+    );
+  }, []);
 
   useEffect(() => {
     const known = seen.current!;
@@ -42,9 +67,31 @@ export function useClassifyFlights(cells: readonly Cell[], reduced: boolean) {
     if (reduced || fresh.length === 0) return;
     setFlights((current) => [
       ...current,
-      ...fresh.map((cell, i) => ({ cell, delay: i * STAGGER_MS })),
+      ...fresh.map((cell) => ({ cell, phase: 'waiting' as const })),
     ]);
-  }, [cells, reduced]);
+    fresh.forEach((cell, i) => {
+      const at = (ms: number, phase: FlightPhase) => {
+        const t = setTimeout(
+          () => {
+            timers.current.delete(t);
+            setPhase(cell.id, phase);
+          },
+          i * STAGGER_MS + ms
+        );
+        timers.current.add(t);
+      };
+      at(0, 'reading');
+      at(BEATS.sorted, 'sorted');
+      at(BEATS.drop, 'dropping');
+    });
+  }, [cells, reduced, setPhase]);
+
+  useEffect(() => {
+    const set = timers.current;
+    return () => {
+      for (const t of set) clearTimeout(t);
+    };
+  }, []);
 
   const land = useCallback(
     (id: string) => setFlights((current) => current.filter((f) => f.cell.id !== id)),
@@ -53,7 +100,76 @@ export function useClassifyFlights(cells: readonly Cell[], reduced: boolean) {
   return { flights, flying: new Set(flights.map((f) => f.cell.id)), land };
 }
 
-export function ClassifyFlights({
+/** The line inside a connector's row while one of its items is being classified. */
+export function ClassifyLine({
+  connector,
+  flights,
+  topics,
+}: {
+  connector: SourceConnector;
+  flights: readonly Flight[];
+  topics: readonly Topic[];
+}) {
+  const flight = flights.find(
+    (f) => f.cell.connector === connector && (f.phase === 'reading' || f.phase === 'sorted')
+  );
+  const topic = flight ? topics.find((t) => t.id === flight.cell.topic) : undefined;
+  return (
+    <AnimatePresence initial={false}>
+      {flight && (
+        <motion.div
+          key={flight.cell.id}
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: 'auto', opacity: 1 }}
+          exit={{ height: 0, opacity: 0 }}
+          transition={{ duration: 0.28, ease: [0.2, 0.8, 0.2, 1] }}
+          className="overflow-hidden pl-[34px]"
+        >
+          <div
+            data-classify-line={flight.cell.id}
+            style={{ '--hue': `var(--theme-${topic?.hue ?? 4})` } as CSSProperties}
+            className="mt-1.5 mb-1 flex h-7 max-w-full items-center gap-2 rounded-full bg-bg-2/70 px-2.5 text-xs whitespace-nowrap"
+          >
+            <span className="font-mono text-2xs text-text-secondary">{flight.cell.ref}</span>
+            {flight.phase === 'reading' ? (
+              <>
+                <span className="min-w-0 truncate text-text-primary">{flight.cell.title}</span>
+                <DotMatrix state="thinking" size="sm" />
+                <span className="shrink-0 text-text-muted">Sorting…</span>
+              </>
+            ) : (
+              <>
+                <span className="text-text-muted">→</span>
+                <span
+                  aria-hidden
+                  className="size-2 shrink-0 rounded-full"
+                  style={{ background: 'var(--hue)' }}
+                />
+                <span className="min-w-0 truncate font-medium text-text-primary">
+                  {topic?.name}
+                </span>
+                {flight.cell.newTopic ? (
+                  <span className="shrink-0 font-mono text-2xs tracking-wide text-accent uppercase">
+                    new topic
+                  </span>
+                ) : (
+                  flight.cell.score !== undefined && (
+                    <span className="shrink-0 font-mono text-2xs text-text-muted tabular-nums">
+                      {flight.cell.score.toFixed(2)}
+                    </span>
+                  )
+                )}
+              </>
+            )}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/** The squares on their way from a folded line to their place in the grid. */
+export function DropLayer({
   flights,
   topics,
   onLand,
@@ -64,22 +180,22 @@ export function ClassifyFlights({
 }) {
   return createPortal(
     <>
-      {flights.map((f) => (
-        <ClassifyFlight
-          key={f.cell.id}
-          flight={f}
-          topic={topics.find((t) => t.id === f.cell.topic)}
-          onLand={onLand}
-        />
-      ))}
+      {flights
+        .filter((f) => f.phase === 'dropping')
+        .map((f) => (
+          <Drop
+            key={f.cell.id}
+            flight={f}
+            topic={topics.find((t) => t.id === f.cell.topic)}
+            onLand={onLand}
+          />
+        ))}
     </>,
     document.body
   );
 }
 
-type Phase = 'waiting' | 'reading' | 'sorted' | 'dropping';
-
-function ClassifyFlight({
+function Drop({
   flight,
   topic,
   onLand,
@@ -88,66 +204,37 @@ function ClassifyFlight({
   topic: Topic | undefined;
   onLand: (id: string) => void;
 }) {
-  const { cell, delay } = flight;
+  const { cell, from } = flight;
   const ref = useRef<HTMLDivElement>(null);
-  const [phase, setPhase] = useState<Phase>('waiting');
-  const [start, setStart] = useState<{ left: number; top: number } | null>(null);
 
   useLayoutEffect(() => {
-    const row = document.querySelector<HTMLElement>(`[data-connector-row="${cell.connector}"]`);
-    const target = document.querySelector<HTMLElement>(`[data-cell-id="${CSS.escape(cell.id)}"]`);
-    if (!row || !target) {
-      onLand(cell.id);
-      return;
-    }
-    const r = row.getBoundingClientRect();
-    setStart({ left: r.left + 34, top: r.top + r.height / 2 - 14 });
-    const timers = [
-      setTimeout(() => setPhase('reading'), delay),
-      setTimeout(() => setPhase('sorted'), delay + BEATS.sorted),
-      setTimeout(() => setPhase('dropping'), delay + BEATS.drop),
-    ];
-    return () => timers.forEach(clearTimeout);
-    // One flight, one run.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useLayoutEffect(() => {
-    if (phase === 'reading') {
-      ref.current?.animate(
-        [
-          { opacity: 0, transform: 'translateY(6px) scale(.94)' },
-          { opacity: 1, transform: 'none' },
-        ],
-        { duration: 260, easing: 'cubic-bezier(.2,.8,.2,1)' }
-      );
-    }
-    if (phase !== 'dropping') return;
     const el = ref.current;
     const target = document.querySelector<HTMLElement>(`[data-cell-id="${CSS.escape(cell.id)}"]`);
-    if (!el || !target) {
+    if (!el || !target || !from) {
       onLand(cell.id);
       return;
     }
-    const a = el.getBoundingClientRect();
     const b = target.getBoundingClientRect();
+    // The square leaves from the line's left end, where its color dot was.
+    const sx = from.left + 8;
+    const sy = from.top + from.height / 2 - 7;
     const anim = el.animate(
       [
         {
-          transform: 'translate(0, 0)',
-          width: `${a.width}px`,
-          height: `${a.height}px`,
-          borderRadius: '14px',
+          transform: `translate(${sx}px, ${sy}px) scale(1)`,
+          width: '14px',
+          height: '14px',
+          borderRadius: '7px',
         },
         {
-          transform: `translate(${(b.left - a.left) * 0.55}px, ${(b.top - a.top) * 0.4 - 18}px)`,
-          width: `${Math.max(b.width, 28)}px`,
-          height: `${Math.max(b.height, 14)}px`,
-          borderRadius: '7px',
+          transform: `translate(${sx + (b.left - sx) * 0.5}px, ${sy + (b.top - sy) * 0.35 - 16}px) scale(1.15)`,
+          width: '14px',
+          height: '14px',
+          borderRadius: '5px',
           offset: 0.5,
         },
         {
-          transform: `translate(${b.left - a.left}px, ${b.top - a.top}px)`,
+          transform: `translate(${b.left}px, ${b.top}px) scale(1)`,
           width: `${b.width}px`,
           height: `${b.height}px`,
           borderRadius: '3px',
@@ -170,57 +257,16 @@ function ClassifyFlight({
     return () => {
       anim.onfinish = null;
     };
-    // The drop runs once, when its beat comes.
+    // One drop, one run.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
+  }, []);
 
-  if (!start || phase === 'waiting') return null;
   return (
     <div
       ref={ref}
       aria-hidden
-      data-phase={phase}
-      style={
-        {
-          left: start.left,
-          top: start.top,
-          '--hue': `var(--theme-${topic?.hue ?? 4})`,
-        } as CSSProperties
-      }
-      className="hf-classify pointer-events-none fixed z-[60] flex h-7 max-w-[340px] items-center gap-2 overflow-hidden rounded-full border border-border-hairline bg-bg-1 px-2.5 text-xs whitespace-nowrap shadow-float"
-    >
-      <span className={cn('hf-classify-body flex min-w-0 items-center gap-2')}>
-        <SourceLogo connector={cell.connector} size={14} />
-        <span className="font-mono text-2xs text-text-secondary">{cell.ref}</span>
-        {phase === 'reading' ? (
-          <>
-            <span className="max-w-[150px] truncate text-text-primary">{cell.title}</span>
-            <DotMatrix state="thinking" size="sm" />
-            <span className="text-text-muted">Sorting…</span>
-          </>
-        ) : (
-          <>
-            <span className="text-text-muted">→</span>
-            <span
-              aria-hidden
-              className="size-2 shrink-0 rounded-full"
-              style={{ background: 'var(--hue)' }}
-            />
-            <span className="font-medium text-text-primary">{topic?.name}</span>
-            {cell.newTopic ? (
-              <span className="font-mono text-2xs tracking-wide text-accent uppercase">
-                new topic
-              </span>
-            ) : (
-              cell.score !== undefined && (
-                <span className="font-mono text-2xs text-text-muted tabular-nums">
-                  {cell.score.toFixed(2)}
-                </span>
-              )
-            )}
-          </>
-        )}
-      </span>
-    </div>
+      style={{ '--hue': `var(--theme-${topic?.hue ?? 4})` } as CSSProperties}
+      className="hf-drop pointer-events-none fixed top-0 left-0 z-[60]"
+    />
   );
 }

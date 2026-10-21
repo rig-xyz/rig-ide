@@ -555,24 +555,10 @@
   background: color-mix(in oklab, var(--pill-fill) 60%, transparent);
 }
 
-/* A new item being classified (`classify-flight.tsx`): as it drops, the chip
-   becomes a square of its topic's color and its words fade. */
-.hf-classify {
-  transition:
-    background-color 0.3s ease-out,
-    border-color 0.3s ease-out,
-    box-shadow 0.3s ease-out;
-}
-.hf-classify-body {
-  transition: opacity 0.15s ease-out;
-}
-.hf-classify[data-phase='dropping'] {
+/* A new item's square on its way into the grid (`classify-flight.tsx`). */
+.hf-drop {
   background: var(--hue);
-  border-color: transparent;
   box-shadow: 0 0 12px 1px color-mix(in oklab, var(--hue) 55%, transparent);
-}
-.hf-classify[data-phase='dropping'] .hf-classify-body {
-  opacity: 0;
 }
 
 /* Where the next item lands while Claude checks. */

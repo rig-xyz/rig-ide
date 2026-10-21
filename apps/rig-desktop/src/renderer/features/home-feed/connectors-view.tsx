@@ -8,7 +8,7 @@ import { cn } from '@renderer/lib/utils';
 import { CONNECTORS } from '@shared/spaces/connectors';
 import { ActionButton } from './action-button';
 import { Kicker, SourceLogo } from './bits';
-import { ClassifyFlights, useClassifyFlights } from './classify-flight';
+import { ClassifyLine, DropLayer, type Flight, useClassifyFlights } from './classify-flight';
 import { agoShort, resultLine, type Topic, type WatchedConnector } from './connectors-model';
 import { useHome } from './home-context';
 
@@ -37,8 +37,9 @@ export function ConnectorsView({
 }: {
   onOpenFeedItem: (itemId: string | null) => void;
 }) {
-  const { connectors, state } = useHome();
+  const { connectors, state, reducedMotion } = useHome();
   const now = useNow(15_000);
+  const { flights, flying, land } = useClassifyFlights(connectors.cells, reducedMotion);
   const checking = connectors.connectors.find((c) => c.checking);
   const lastCheck = Math.max(...connectors.connectors.map((c) => c.lastCheckAt));
   const inFeed = connectors.topics.filter((t) => t.state === 'feed').length;
@@ -75,7 +76,7 @@ export function ConnectorsView({
         </div>
         <div className="grid gap-px">
           {connectors.connectors.map((c) => (
-            <WatchedRow key={c.id} connector={c} now={now} />
+            <WatchedRow key={c.id} connector={c} now={now} flights={flights} />
           ))}
           <OtherConnected />
         </div>
@@ -83,7 +84,8 @@ export function ConnectorsView({
 
       <section>
         <Kicker className="mb-2">Today · {connectors.cells.length}</Kicker>
-        <TodayGrid />
+        <TodayGrid flying={flying} />
+        <DropLayer flights={flights} topics={connectors.topics} onLand={land} />
       </section>
 
       <section>
@@ -94,49 +96,61 @@ export function ConnectorsView({
   );
 }
 
-function WatchedRow({ connector: c, now }: { connector: WatchedConnector; now: number }) {
-  const { checkNow } = useHome();
+function WatchedRow({
+  connector: c,
+  now,
+  flights,
+}: {
+  connector: WatchedConnector;
+  now: number;
+  flights: readonly Flight[];
+}) {
+  const { checkNow, connectors } = useHome();
   return (
     <div
       data-connector-row={c.connector}
-      className="group grid grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-[10px] px-1.5 py-2 transition-colors hover:bg-bg-2/60"
+      className="group rounded-[10px] px-1.5 py-2 transition-colors hover:bg-bg-2/60"
     >
-      <span className="grid place-items-center">
-        <SourceLogo connector={c.connector} size={18} />
-      </span>
-      <span className="min-w-0">
-        <span className="block truncate text-ui font-medium">
-          {c.name} <span className="font-normal text-text-secondary">· {c.scope}</span>
+      <div className="grid grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-2.5">
+        <span className="grid place-items-center">
+          <SourceLogo connector={c.connector} size={18} />
         </span>
-        {c.checking ? (
-          <span className="flex items-center gap-1.5 text-xs text-accent">
-            <DotMatrix state="searching" size="sm" />
-            Claude is checking…
+        <span className="min-w-0">
+          <span className="block truncate text-ui font-medium">
+            {c.name} <span className="font-normal text-text-secondary">· {c.scope}</span>
           </span>
-        ) : (
-          <span className="block truncate text-xs text-text-muted">
-            Checked {agoShort(c.lastCheckAt, now)} · {resultLine(c)}
-          </span>
-        )}
-      </span>
-      <span className="flex items-center gap-1.5">
-        <button
-          type="button"
-          aria-label={`Check ${c.name} now`}
-          title={`Check now (usually ${c.cadence})`}
-          onClick={() => checkNow(c.connector)}
-          disabled={c.checking}
-          className="grid size-6 place-items-center rounded-control text-text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:bg-bg-3 hover:text-text-primary focus-visible:opacity-100 disabled:opacity-0"
-        >
-          <RefreshCw className="size-3.5" strokeWidth={1.8} />
-        </button>
-        <span
-          className="min-w-[2ch] text-right font-mono text-2xs text-text-muted tabular-nums"
-          title="Today"
-        >
-          {c.today}
+          {c.checking ? (
+            <span className="flex items-center gap-1.5 text-xs text-accent">
+              <DotMatrix state="searching" size="sm" />
+              Claude is checking…
+            </span>
+          ) : (
+            <span className="block truncate text-xs text-text-muted">
+              Checked {agoShort(c.lastCheckAt, now)} · {resultLine(c)}
+            </span>
+          )}
         </span>
-      </span>
+        <span className="flex items-center gap-1.5">
+          <button
+            type="button"
+            aria-label={`Check ${c.name} now`}
+            title={`Check now (usually ${c.cadence})`}
+            onClick={() => checkNow(c.connector)}
+            disabled={c.checking}
+            className="grid size-6 place-items-center rounded-control text-text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:bg-bg-3 hover:text-text-primary focus-visible:opacity-100 disabled:opacity-0"
+          >
+            <RefreshCw className="size-3.5" strokeWidth={1.8} />
+          </button>
+          <span
+            className="min-w-[2ch] text-right font-mono text-2xs text-text-muted tabular-nums"
+            title="Today"
+          >
+            {c.today}
+          </span>
+        </span>
+      </div>
+      {/* An item from this connector being classified opens here, under its status. */}
+      <ClassifyLine connector={c.connector} flights={flights} topics={connectors.topics} />
     </div>
   );
 }
@@ -258,10 +272,9 @@ function ConnectMenu() {
 }
 
 /** Today's items as cells, colored by topic; new ones pulse in. Focusing a topic dims the rest. */
-function TodayGrid() {
-  const { connectors, connectorsDispatch, reducedMotion } = useHome();
+function TodayGrid({ flying }: { flying: ReadonlySet<string> }) {
+  const { connectors, connectorsDispatch } = useHome();
   const byId = new Map(connectors.topics.map((t) => [t.id, t]));
-  const { flights, flying, land } = useClassifyFlights(connectors.cells, reducedMotion);
   const checking = connectors.connectors.some((c) => c.checking);
   return (
     <div className="grid grid-cols-[repeat(24,minmax(0,1fr))] gap-[3px]">
@@ -294,15 +307,14 @@ function TodayGrid() {
       })}
       {/* Where the next item will land, while Claude is checking. */}
       {checking && <span aria-hidden className="hf-cell-next aspect-square rounded-[3px]" />}
-      <ClassifyFlights flights={flights} topics={connectors.topics} onLand={land} />
     </div>
   );
 }
 
-/** New first, then what's in your Feed, then the rest, held back last. The focused one stays put, at the top. */
-function order(topics: readonly Topic[], focus: string | null): Topic[] {
+/** New first, then what's in your Feed, then the rest, held back last. */
+function order(topics: readonly Topic[]): Topic[] {
   const rank = (t: Topic) =>
-    t.id === focus ? -1 : t.fresh > 0 ? 0 : t.state === 'feed' ? 1 : t.state === 'none' ? 2 : 3;
+    t.fresh > 0 ? 0 : t.state === 'feed' ? 1 : t.state === 'none' ? 2 : 3;
   return [...topics].sort((a, b) => rank(a) - rank(b));
 }
 
@@ -310,7 +322,20 @@ function order(topics: readonly Topic[], focus: string | null): Topic[] {
 function TopicPills({ onOpenInFeed }: { onOpenInFeed: (topicId: string) => void }) {
   const { connectors, connectorsDispatch } = useHome();
   const [all, setAll] = useState(false);
-  const sorted = order(connectors.topics, connectors.focus);
+  // While a topic is open, the order holds still: it stays where you clicked it and its
+  // card pushes the pills after it down. New topics join at the end until you close it.
+  const held = useRef<string[]>([]);
+  const byId = new Map(connectors.topics.map((t) => [t.id, t]));
+  const live = order(connectors.topics).map((t) => t.id);
+  if (connectors.focus === null) held.current = live;
+  const ids =
+    connectors.focus === null
+      ? live
+      : [
+          ...held.current.filter((id) => byId.has(id)),
+          ...live.filter((id) => !held.current.includes(id)),
+        ];
+  const sorted = ids.map((id) => byId.get(id)!);
   const shown = all ? sorted : sorted.slice(0, MAX_PILLS);
   const more = sorted.length - shown.length;
   return (
