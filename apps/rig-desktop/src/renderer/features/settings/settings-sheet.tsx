@@ -46,7 +46,8 @@ export function SettingsSheet({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="settings-sheet"
-        backdropClassName="bg-black/20"
+        // What's behind dims and softens, so Settings reads as on top of it.
+        backdropClassName="bg-black/35 backdrop-blur-[6px] dark:bg-black/50"
         className="top-[68px] right-10 bottom-7 left-10 max-h-none w-auto max-w-none translate-x-0 translate-y-0 flex-row rounded-[26px]"
       >
         <DialogTitle className="sr-only">Settings</DialogTitle>

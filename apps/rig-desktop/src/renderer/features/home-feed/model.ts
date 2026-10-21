@@ -52,8 +52,10 @@ export interface Person {
   name: string;
   /** What hovering the face says: "Riyad Hasanov · owns account restrictions". */
   note?: string;
-  /** Which of the eight theme slots tints the face (`--theme-1`…`--theme-8`). */
+  /** Which face color their initial sits on when there's no photo (`--face-1`…`--face-7`). */
   hue: number;
+  /** Their account photo, when they have one: shown instead of the initial. */
+  avatarUrl?: string | null;
 }
 
 export interface ActivityStep {

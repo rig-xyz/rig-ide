@@ -11,7 +11,7 @@ export interface RealSpaceInput {
   bindingId: string;
   name: string;
   path: string | null;
-  members: readonly { userId: string; name: string | null }[] | null;
+  members: readonly { userId: string; name: string | null; avatarUrl?: string | null }[] | null;
   unread: number;
   status: RigSpaceStatus | undefined;
   chats: readonly { id: string; title: string | null; updatedAt: number }[];
@@ -103,9 +103,12 @@ export function realSpaceToRail(
   now: number
 ): RailSpace {
   const others = (input.members ?? []).filter((m) => m.userId !== selfUserId);
-  const faces: Person[] = others
-    .slice(0, 2)
-    .map((m) => ({ id: m.userId, name: m.name ?? 'Member', hue: hueFor(m.userId) }));
+  const faces: Person[] = others.slice(0, 2).map((m) => ({
+    id: m.userId,
+    name: m.name ?? 'Member',
+    hue: hueFor(m.userId),
+    avatarUrl: m.avatarUrl ?? null,
+  }));
   const runs = (input.status?.running ?? []).map((run) =>
     runToSession(input.bindingId, run, selfUserId, now)
   );

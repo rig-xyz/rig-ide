@@ -14,7 +14,11 @@ import { realSpaceToRail } from './rail-data';
  * disk so it can be opened. Shares every query key the current Home uses, so
  * switching between the two Homes reads the same caches.
  */
-export function useRealSpaces(): { spaces: RailSpace[]; selfName: string | null } {
+export function useRealSpaces(): {
+  spaces: RailSpace[];
+  selfName: string | null;
+  selfAvatarUrl: string | null;
+} {
   const bindings = useMySpaces();
   const ids = useMemo(() => (bindings ?? []).map((b) => b.id), [bindings]);
 
@@ -95,5 +99,5 @@ export function useRealSpaces(): { spaces: RailSpace[]; selfName: string | null 
     self?.id,
   ]);
 
-  return { spaces, selfName: self?.name ?? null };
+  return { spaces, selfName: self?.name ?? null, selfAvatarUrl: self?.avatarUrl ?? null };
 }

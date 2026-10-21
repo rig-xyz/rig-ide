@@ -84,7 +84,7 @@ vi.mock('@renderer/lib/ipc', () => ({
                     name: 'Hugo',
                     email: '',
                     role: 'member',
-                    avatarUrl: null,
+                    avatarUrl: 'https://img.example/hugo.png',
                   },
                 ]
               : [
@@ -132,9 +132,11 @@ async function flush(): Promise<void> {
 let host: HTMLDivElement;
 let root: Root;
 const opened: Array<[string, unknown]> = [];
+const settingsOpened: Array<string | undefined> = [];
 
 beforeEach(async () => {
   opened.length = 0;
+  settingsOpened.length = 0;
   layoutActions.length = 0;
   host = document.createElement('div');
   host.style.height = '900px';
@@ -148,6 +150,8 @@ beforeEach(async () => {
         <NewHome
           onOpenPath={(path, opts) => opened.push([path, opts])}
           onContinueSession={() => {}}
+          onOpenSettings={(page) => settingsOpened.push(page)}
+          updateReady={false}
         />
       </QueryClientProvider>
     );
@@ -192,16 +196,15 @@ describe('NewHome', () => {
     expect(ids.slice(2, 5)).toEqual(['ulys-backlog', 's-triage', 's-stale']);
     expect(ids.filter((id) => id === 'rig-ops')).toHaveLength(1);
     expect(ids.at(-1)).toBe('b-launch');
-    // The merged space's tile, as on the Spaces card: its running session's motion, and a grey
-    // dot for its real unread messages.
-    const opsTile = rail().querySelector('[data-rail-id="rig-ops"] [data-tile]')!;
-    expect(opsTile.getAttribute('data-tile')).toBe('live');
-    expect(opsTile.querySelector('[data-dot="unread"]')).toBeTruthy();
+    // The merged space keeps its real unread, named for screen readers in the folded rail.
+    expect(rail().querySelector('[data-rail-id="rig-ops"]')!.getAttribute('aria-label')).toBe(
+      '# rig-ops, 4 unread'
+    );
   });
 
   it('shows your groups: a group folds under its header, and a space dragged onto it moves there', async () => {
     // The rail is folded to icons below 1180px; open it to see the headers.
-    await click(button(rail(), 'Expand'));
+    await click(button(rail(), 'Open the sidebar'));
     const header = button(rail(), /Internal/)!;
     expect(header.textContent).toContain('1');
     expect(rail().textContent).toContain('Ungrouped');
@@ -281,6 +284,22 @@ describe('NewHome', () => {
   it('a space on disk opens straight into its Room from the rail', async () => {
     await click(rail().querySelector('[data-rail-id="b-launch"]'));
     expect(opened).toEqual([['/Users/me/Rig/launch', { kind: 'space' }]]);
+  });
+
+  it('a space is bold only while something in it is unread, and shows member photos', async () => {
+    await click(button(rail(), 'Open the sidebar'));
+    const name = (id: string) => rail().querySelector(`[data-rail-id="${id}"] .truncate`)!;
+    expect(name('rig-ops').className).toContain('font-semibold');
+    expect(name('b-launch').className).not.toContain('font-semibold');
+    expect(rail().querySelector('[data-rail-id="b-launch"] img')?.getAttribute('src')).toBe(
+      'https://img.example/hugo.png'
+    );
+  });
+
+  it('you and Settings sit at the foot of the rail', async () => {
+    await click(rail().querySelector('[aria-label="Dylan Bourgeois, your account"]'));
+    await click(button(rail(), 'Settings'));
+    expect(settingsOpened).toEqual(['account', undefined]);
   });
 
   it('the Feed folds to a strip of counts and opens again', async () => {

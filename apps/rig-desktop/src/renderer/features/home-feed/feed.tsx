@@ -22,7 +22,6 @@ import {
   type FormEvent,
   type KeyboardEvent,
   memo,
-  type ReactNode,
   type RefObject,
   useEffect,
   useRef,
@@ -31,7 +30,7 @@ import {
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { ActionButton } from './action-button';
-import { Face, Kicker, SessionMatrix, SourceLogo, sourceName } from './bits';
+import { Face, IconButton, Kicker, SessionMatrix, SourceLogo, sourceName } from './bits';
 import { rectOf, useHome } from './home-context';
 import { PEOPLE } from './mock';
 import type { FeedChoice, FeedItem, FeedVerb } from './model';
@@ -54,7 +53,7 @@ import { type FeedEntry, findSession } from './store';
  * on one moves it into the rail.
  */
 
-export function Feed({ headerEnd }: { headerEnd?: ReactNode }) {
+export function Feed() {
   const { state, dispatch, counts } = useHome();
   const needs = state.feed.filter((e) => e.item.group === 'needs_you');
   const next = state.feed.filter((e) => e.item.group === 'up_next');
@@ -71,7 +70,6 @@ export function Feed({ headerEnd }: { headerEnd?: ReactNode }) {
         <FoldedFeed
           needsYou={counts.needsYou}
           upNext={counts.upNext}
-          headerEnd={headerEnd}
           onOpen={() => setFolded(false)}
         />
       ) : (
@@ -83,7 +81,6 @@ export function Feed({ headerEnd }: { headerEnd?: ReactNode }) {
               next
             </span>
             <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
-              {headerEnd}
               <IconButton label="Fold the Feed" dir="right" onClick={() => setFolded(true)}>
                 <PanelRightClose className="size-[15px]" strokeWidth={1.6} />
               </IconButton>
@@ -102,16 +99,14 @@ export function Feed({ headerEnd }: { headerEnd?: ReactNode }) {
   );
 }
 
-/** The Feed folded: what's waiting as two counts, and the app's buttons, in a strip. */
+/** The Feed folded: what's waiting as two counts in a strip; either opens it again. */
 function FoldedFeed({
   needsYou,
   upNext,
-  headerEnd,
   onOpen,
 }: {
   needsYou: number;
   upNext: number;
-  headerEnd?: ReactNode;
   onOpen: () => void;
 }) {
   return (
@@ -125,7 +120,7 @@ function FoldedFeed({
         type="button"
         onClick={onOpen}
         aria-label={`Open the Feed: ${needsYou} need you, ${upNext} up next`}
-        className="hf-feed-strip mt-2 grid gap-2 rounded-full p-1.5"
+        className="hf-feed-strip mt-2 grid gap-2 rounded-full p-1.5 [-webkit-app-region:no-drag]"
       >
         <span className="hf-strip-count" data-tone="warn">
           {needsYou}
@@ -134,33 +129,7 @@ function FoldedFeed({
           {upNext}
         </span>
       </button>
-      <div className="mt-auto flex flex-col items-center gap-1">{headerEnd}</div>
     </div>
-  );
-}
-
-function IconButton({
-  label,
-  dir,
-  onClick,
-  children,
-}: {
-  label: string;
-  dir: 'left' | 'right';
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      data-dir={dir}
-      onClick={onClick}
-      className="hf-nudge grid size-7 place-items-center rounded-control text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
-    >
-      {children}
-    </button>
   );
 }
 

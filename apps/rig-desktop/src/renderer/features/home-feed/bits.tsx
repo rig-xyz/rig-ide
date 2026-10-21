@@ -78,10 +78,28 @@ export function Face({
   size = 18,
   className,
 }: {
-  person: Pick<Person, 'name' | 'hue' | 'note'>;
-  size?: 18 | 20 | 28;
+  person: Pick<Person, 'name' | 'hue' | 'note' | 'avatarUrl'>;
+  size?: 18 | 20 | 24 | 28;
   className?: string;
 }) {
+  const box = cn(
+    'shrink-0 rounded-full',
+    size === 18 && 'size-[18px]',
+    size === 20 && 'size-5',
+    size === 24 && 'size-6',
+    size === 28 && 'size-7',
+    className
+  );
+  if (person.avatarUrl) {
+    return (
+      <img
+        src={person.avatarUrl}
+        alt=""
+        title={person.note ?? person.name}
+        className={cn(box, 'object-cover')}
+      />
+    );
+  }
   return (
     <span
       title={person.note ?? person.name}
@@ -90,6 +108,7 @@ export function Face({
         'text-face-ink grid shrink-0 place-items-center rounded-full font-semibold',
         size === 18 && 'size-[18px] text-face',
         size === 20 && 'size-5 text-face',
+        size === 24 && 'size-6 text-face',
         size === 28 && 'size-7 text-2xs',
         className
       )}
@@ -170,5 +189,40 @@ export function StatusWord({
     >
       {text}
     </span>
+  );
+}
+
+/**
+ * An icon-only button, the one both panel toggles use (the rail's and the
+ * Feed's), so folding either side works the same way. Its icon nudges the
+ * way it points. Never a drag handle, even inside the window's drag strip.
+ */
+export function IconButton({
+  label,
+  dir,
+  onClick,
+  children,
+  className,
+}: {
+  label: string;
+  dir?: 'left' | 'right';
+  onClick: () => void;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      data-dir={dir}
+      onClick={onClick}
+      className={cn(
+        'hf-nudge relative grid size-7 shrink-0 place-items-center rounded-control text-text-secondary transition-colors [-webkit-app-region:no-drag] hover:bg-bg-2 hover:text-text-primary',
+        className
+      )}
+    >
+      {children}
+    </button>
   );
 }

@@ -1344,8 +1344,8 @@ export function App() {
 
   const chrome = topbarChrome(rigView ? { isSpace: rigViewIsSpace, layout } : null);
   // The new Home (Settings › Advanced) owns the whole window, its own top
-  // strip included, so the bar steps aside and its Activity and Settings
-  // buttons move to the top of the Feed.
+  // strip included, so the bar steps aside; Settings and your account move
+  // to the foot of its rail.
   const showNewHome = newHomeEnabled && !rigView && folder.status === 'empty';
 
   return (
@@ -1641,31 +1641,8 @@ export function App() {
               <NewHome
                 onOpenPath={openPath}
                 onContinueSession={continueSession}
-                headerEnd={
-                  <>
-                    <ActivityBell onOpenPath={openPath} onOpenTarget={(target) => void openSpaceAt(target)} />
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            onClick={() => openSettings(isUpdateReady(updateStatus.state) ? 'about' : undefined)}
-                            aria-label="Settings"
-                            className="relative flex size-7 items-center justify-center rounded-control text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
-                          >
-                            <SettingsIcon size={15} strokeWidth={1.5} />
-                            {isUpdateReady(updateStatus.state) && (
-                              <span className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-accent" />
-                            )}
-                          </button>
-                        }
-                      />
-                      <TooltipContent side="bottom">
-                        {isUpdateReady(updateStatus.state) ? 'Update ready' : 'Settings'}
-                      </TooltipContent>
-                    </Tooltip>
-                  </>
-                }
+                onOpenSettings={(page) => openSettings(page)}
+                updateReady={isUpdateReady(updateStatus.state)}
               />
             </RecoveryBoundary>
           </div>

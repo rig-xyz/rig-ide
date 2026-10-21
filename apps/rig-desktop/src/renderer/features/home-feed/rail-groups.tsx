@@ -74,57 +74,65 @@ export function SpaceGroups({
     setRenaming(id);
   };
 
+  // Folded to icons, the rail lists every space in your order, with no headers to fold.
+  if (collapsed) {
+    return (
+      <>
+        {[...sections.flatMap((section) => section.rows), ...view.folded].map((row) =>
+          renderSpace(row.space)
+        )}
+      </>
+    );
+  }
+
   return (
     <>
-      {sections.map((section, i) => (
+      {sections.map((section) => (
         <Fragment key={section.key}>
-          {section.title &&
-            (collapsed ? (
-              i > 0 && <div aria-hidden className="mx-2 my-1.5 h-px bg-border-hairline" />
-            ) : (
-              <GroupHeader
-                title={section.title}
-                count={section.rows.length}
-                folded={section.collapsed}
-                renaming={renaming === section.groupId}
-                dropping={dropOn === section.key}
-                onToggle={() =>
-                  section.groupId
-                    ? dispatch({
-                        type: 'setGroupCollapsed',
-                        id: section.groupId,
-                        collapsed: !section.collapsed,
-                      })
-                    : dispatch({
-                        type: 'setSectionCollapsed',
-                        key: section.key,
-                        collapsed: !section.collapsed,
-                      })
-                }
-                onRename={section.groupId ? () => setRenaming(section.groupId!) : undefined}
-                onRenamed={(name) => {
-                  if (section.groupId && name)
-                    dispatch({ type: 'renameGroup', id: section.groupId, name });
-                  setRenaming(null);
-                }}
-                onDelete={
-                  section.groupId
-                    ? () => dispatch({ type: 'deleteGroup', id: section.groupId! })
-                    : undefined
-                }
-                canDrop={section.kind === 'group' || section.kind === 'ungrouped'}
-                onDragState={(over) => setDropOn(over ? section.key : null)}
-                onDropSpace={(bindingId) => {
-                  setDropOn(null);
-                  dispatch({ type: 'moveSpace', bindingId, groupId: section.groupId ?? null });
-                }}
-              />
-            ))}
+          {section.title && (
+            <GroupHeader
+              title={section.title}
+              count={section.rows.length}
+              folded={section.collapsed}
+              renaming={renaming === section.groupId}
+              dropping={dropOn === section.key}
+              onToggle={() =>
+                section.groupId
+                  ? dispatch({
+                      type: 'setGroupCollapsed',
+                      id: section.groupId,
+                      collapsed: !section.collapsed,
+                    })
+                  : dispatch({
+                      type: 'setSectionCollapsed',
+                      key: section.key,
+                      collapsed: !section.collapsed,
+                    })
+              }
+              onRename={section.groupId ? () => setRenaming(section.groupId!) : undefined}
+              onRenamed={(name) => {
+                if (section.groupId && name)
+                  dispatch({ type: 'renameGroup', id: section.groupId, name });
+                setRenaming(null);
+              }}
+              onDelete={
+                section.groupId
+                  ? () => dispatch({ type: 'deleteGroup', id: section.groupId! })
+                  : undefined
+              }
+              canDrop={section.kind === 'group' || section.kind === 'ungrouped'}
+              onDragState={(over) => setDropOn(over ? section.key : null)}
+              onDropSpace={(bindingId) => {
+                setDropOn(null);
+                dispatch({ type: 'moveSpace', bindingId, groupId: section.groupId ?? null });
+              }}
+            />
+          )}
           {!section.collapsed && section.rows.map((row) => renderSpace(row.space))}
         </Fragment>
       ))}
       {view.folded.map((row) => renderSpace(row.space))}
-      {!collapsed && canGroup(layout) && (
+      {canGroup(layout) && (
         <button
           type="button"
           onClick={createGroup}

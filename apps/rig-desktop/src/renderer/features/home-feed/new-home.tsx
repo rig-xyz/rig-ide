@@ -1,10 +1,10 @@
 import { useReducedMotion } from 'motion/react';
-import { type ReactNode, useCallback, useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import { Feed } from './feed';
 import { FlyLayer } from './fly-layer';
 import { HomeProvider, useHome } from './home-context';
 import { Middle } from './middle';
-import { Rail } from './rail';
+import { Rail, type RailYou } from './rail';
 import { useRealSpaces } from './use-real-spaces';
 import './home-feed.css';
 
@@ -12,19 +12,21 @@ import './home-feed.css';
  * The new Home (rig README §2, "Two screens: Home and Inbox"), behind
  * Settings › Advanced › Preview the new Home. Three zones: the rail (what's being done),
  * the middle (talk to Rig, or see what's open), and the Feed (what to do
- * next). It owns the whole window, traffic-light strip included; `headerEnd`
- * is the app's Activity and Settings buttons, which sit at the Feed's top.
+ * next). It owns the whole window, traffic-light strip included; the app's
+ * top bar steps aside, and you and Settings sit at the foot of the rail.
  */
 export function NewHome({
   onOpenPath,
   onContinueSession,
-  headerEnd,
+  onOpenSettings,
+  updateReady,
 }: {
   onOpenPath: (path: string, opts?: { kind?: 'space' }) => void;
   onContinueSession: (path: string, sessionId: string) => void;
-  headerEnd?: ReactNode;
+  onOpenSettings: (page?: 'account' | 'about') => void;
+  updateReady: boolean;
 }) {
-  const { spaces, selfName } = useRealSpaces();
+  const { spaces, selfName, selfAvatarUrl } = useRealSpaces();
   const reducedMotion = useReducedMotion() ?? false;
   return (
     <HomeProvider
@@ -34,7 +36,11 @@ export function NewHome({
       onOpenPath={onOpenPath}
       onContinueSession={onContinueSession}
     >
-      <HomeLayout headerEnd={headerEnd} />
+      <HomeLayout
+        you={{ name: selfName, avatarUrl: selfAvatarUrl }}
+        updateReady={updateReady}
+        onOpenSettings={onOpenSettings}
+      />
     </HomeProvider>
   );
 }
@@ -60,7 +66,15 @@ function useFoldBelow(px: number, fold: () => void) {
  * over them, its rounded corners showing they're behind it, like a drawer
  * under the page.
  */
-function HomeLayout({ headerEnd }: { headerEnd?: ReactNode }) {
+function HomeLayout({
+  you,
+  updateReady,
+  onOpenSettings,
+}: {
+  you: RailYou;
+  updateReady: boolean;
+  onOpenSettings: (page?: 'account' | 'about') => void;
+}) {
   const { dispatch } = useHome();
   useFoldBelow(
     FOLD_RAIL_BELOW_PX,
@@ -73,13 +87,13 @@ function HomeLayout({ headerEnd }: { headerEnd?: ReactNode }) {
 
   return (
     <div className="relative grid h-full min-h-0 grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[minmax(0,1fr)] overflow-hidden bg-bg-0 text-chat text-text-primary">
-      <Rail />
+      <Rail you={you} updateReady={updateReady} onOpenSettings={onOpenSettings} />
       <div className="min-w-0 py-2 [-webkit-app-region:drag]">
         <div className="hf-sheet relative flex h-full min-h-0 flex-col overflow-hidden rounded-[20px] border border-border-hairline bg-bg-1 [-webkit-app-region:no-drag]">
           <Middle />
         </div>
       </div>
-      <Feed headerEnd={headerEnd} />
+      <Feed />
       <GooFilter />
       <FlyLayer />
     </div>
