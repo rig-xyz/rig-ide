@@ -8,7 +8,7 @@ import { cn } from '@renderer/lib/utils';
 import { CONNECTORS } from '@shared/spaces/connectors';
 import { ActionButton } from './action-button';
 import { Kicker, SourceLogo } from './bits';
-import { ClassifyLine, DropLayer, type Flight, useClassifyFlights } from './classify-flight';
+import { ClassifyQueue, JoinLayer, useClassifyFlights } from './classify-flight';
 import { agoShort, resultLine, type Topic, type WatchedConnector } from './connectors-model';
 import { useHome } from './home-context';
 
@@ -39,10 +39,10 @@ export function ConnectorsView({
 }) {
   const { connectors, state, reducedMotion } = useHome();
   const now = useNow(15_000);
-  const { flights, flying, land } = useClassifyFlights(connectors.cells, reducedMotion);
-  const checking = connectors.connectors.find((c) => c.checking);
-  const lastCheck = Math.max(...connectors.connectors.map((c) => c.lastCheckAt));
-  const inFeed = connectors.topics.filter((t) => t.state === 'feed').length;
+  const { flights, hidden, popping, unborn, land } = useClassifyFlights(
+    connectors.cells,
+    reducedMotion
+  );
 
   const openTopicInFeed = (topicId: string) => {
     const entry = state.feed.find((e) => e.item.topicId === topicId);
@@ -51,24 +51,6 @@ export function ConnectorsView({
 
   return (
     <div className="grid gap-5 px-5 pt-1 pb-6">
-      {/* What Rig is doing right now, in one line. */}
-      <p className="flex items-start gap-2.5 text-meta leading-[1.5] text-text-secondary">
-        <span className="mt-[5px]">
-          <DotMatrix state={checking ? 'searching' : 'idle'} size="sm" />
-        </span>
-        {checking ? (
-          <span>
-            Claude is checking <b className="font-medium text-text-primary">{checking.name}</b> for
-            you…
-          </span>
-        ) : (
-          <span>
-            Rig checked your connectors {agoShort(lastCheck, now)}: {connectors.cells.length} items
-            today, sorted into {connectors.topics.length} topics, {inFeed} in your Feed.
-          </span>
-        )}
-      </p>
-
       <section>
         <div className="mb-1 flex items-center">
           <Kicker>Connectors</Kicker>
@@ -76,36 +58,30 @@ export function ConnectorsView({
         </div>
         <div className="grid gap-px">
           {connectors.connectors.map((c) => (
-            <WatchedRow key={c.id} connector={c} now={now} flights={flights} />
+            <WatchedRow key={c.id} connector={c} now={now} />
           ))}
           <OtherConnected />
         </div>
+        {/* What the checks bring back waits here while Claude sorts it. */}
+        <ClassifyQueue flights={flights} topics={connectors.topics} />
       </section>
 
       <section>
         <Kicker className="mb-2">Today · {connectors.cells.length}</Kicker>
-        <TodayGrid flying={flying} />
-        <DropLayer flights={flights} topics={connectors.topics} onLand={land} />
+        <TodayGrid hidden={hidden} popping={popping} />
       </section>
 
       <section>
         <Kicker className="mb-2">Topics</Kicker>
-        <TopicPills onOpenInFeed={openTopicInFeed} />
+        <TopicPills onOpenInFeed={openTopicInFeed} unborn={unborn} />
+        <JoinLayer flights={flights} topics={connectors.topics} onLand={land} />
       </section>
     </div>
   );
 }
 
-function WatchedRow({
-  connector: c,
-  now,
-  flights,
-}: {
-  connector: WatchedConnector;
-  now: number;
-  flights: readonly Flight[];
-}) {
-  const { checkNow, connectors } = useHome();
+function WatchedRow({ connector: c, now }: { connector: WatchedConnector; now: number }) {
+  const { checkNow } = useHome();
   return (
     <div
       data-connector-row={c.connector}
@@ -149,8 +125,6 @@ function WatchedRow({
           </span>
         </span>
       </div>
-      {/* An item from this connector being classified opens here, under its status. */}
-      <ClassifyLine connector={c.connector} flights={flights} topics={connectors.topics} />
     </div>
   );
 }
@@ -272,7 +246,13 @@ function ConnectMenu() {
 }
 
 /** Today's items as cells, colored by topic; new ones pulse in. Focusing a topic dims the rest. */
-function TodayGrid({ flying }: { flying: ReadonlySet<string> }) {
+function TodayGrid({
+  hidden,
+  popping,
+}: {
+  hidden: ReadonlySet<string>;
+  popping: ReadonlySet<string>;
+}) {
   const { connectors, connectorsDispatch } = useHome();
   const byId = new Map(connectors.topics.map((t) => [t.id, t]));
   const checking = connectors.connectors.some((c) => c.checking);
@@ -280,7 +260,6 @@ function TodayGrid({ flying }: { flying: ReadonlySet<string> }) {
     <div className="grid grid-cols-[repeat(24,minmax(0,1fr))] gap-[3px]">
       {connectors.cells.map((cell) => {
         const topic = byId.get(cell.topic);
-        const inFlight = flying.has(cell.id);
         const dim = connectors.focus !== null && connectors.focus !== cell.topic;
         return (
           <button
@@ -298,8 +277,10 @@ function TodayGrid({ flying }: { flying: ReadonlySet<string> }) {
             style={{ '--hue': `var(--theme-${topic?.hue ?? 4})` } as CSSProperties}
             className={cn(
               'hf-cell aspect-square rounded-[3px]',
-              // Hidden until its flight lands; then it pulses.
-              inFlight ? 'invisible' : cell.fresh && 'hf-cell-fresh',
+              // Hidden while it waits to be sorted; it pops in as it joins its topic.
+              hidden.has(cell.id)
+                ? 'invisible'
+                : (popping.has(cell.id) || cell.fresh) && 'hf-cell-fresh',
               dim && 'opacity-20'
             )}
           />
@@ -319,7 +300,14 @@ function order(topics: readonly Topic[]): Topic[] {
 }
 
 /** The topics as the Room's pills; the focused one opens a card with its items and where it stands. */
-function TopicPills({ onOpenInFeed }: { onOpenInFeed: (topicId: string) => void }) {
+function TopicPills({
+  onOpenInFeed,
+  unborn,
+}: {
+  onOpenInFeed: (topicId: string) => void;
+  /** Topics an item still being sorted starts: their pill holds its place, unseen, until it joins. */
+  unborn: ReadonlySet<string>;
+}) {
   const { connectors, connectorsDispatch } = useHome();
   const [all, setAll] = useState(false);
   // While a topic is open, the order holds still: it stays where you clicked it and its
@@ -344,6 +332,7 @@ function TopicPills({ onOpenInFeed }: { onOpenInFeed: (topicId: string) => void 
         <div key={t.id} className="contents">
           <TopicPill
             topic={t}
+            unborn={unborn.has(t.id)}
             focused={connectors.focus === t.id}
             onClick={() =>
               connectorsDispatch({ type: 'focus', topic: connectors.focus === t.id ? null : t.id })
@@ -358,6 +347,7 @@ function TopicPills({ onOpenInFeed }: { onOpenInFeed: (topicId: string) => void 
         <button
           type="button"
           onClick={() => setAll(true)}
+          data-topic-more
           className="hf-topic-pill h-[30px] rounded-full px-3 text-xs text-text-secondary hover:text-text-primary"
         >
           +{more}
@@ -369,10 +359,12 @@ function TopicPills({ onOpenInFeed }: { onOpenInFeed: (topicId: string) => void 
 
 function TopicPill({
   topic,
+  unborn,
   focused,
   onClick,
 }: {
   topic: Topic;
+  unborn: boolean;
   focused: boolean;
   onClick: () => void;
 }) {
@@ -385,6 +377,7 @@ function TopicPill({
       className={cn(
         'hf-topic-pill flex h-[30px] max-w-full items-center gap-2 rounded-full pr-3 pl-2.5 text-xs whitespace-nowrap',
         topic.state === 'held' ? 'text-text-secondary' : 'text-text-primary',
+        unborn && 'invisible',
         focused && 'shadow-[inset_0_0_0_1.5px_var(--accent)]'
       )}
     >

@@ -555,12 +555,6 @@
   background: color-mix(in oklab, var(--pill-fill) 60%, transparent);
 }
 
-/* A new item's square on its way into the grid (`classify-flight.tsx`). */
-.hf-drop {
-  background: var(--hue);
-  box-shadow: 0 0 12px 1px color-mix(in oklab, var(--hue) 55%, transparent);
-}
-
 /* Where the next item lands while Claude checks. */
 .hf-cell-next {
   border: 1px dashed color-mix(in oklab, var(--accent) 60%, transparent);
@@ -574,4 +568,10 @@
   .hf-cell-next {
     animation: hf-cell-wait 1.2s ease-in-out infinite;
   }
+}
+
+/* An item joining its topic's pill (`classify-flight.tsx`). */
+.hf-join {
+  background: var(--pill-fill);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--hue) 45%, transparent);
 }
