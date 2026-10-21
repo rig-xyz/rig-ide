@@ -61,18 +61,19 @@ export interface HomeState {
   feed: FeedEntry[];
   selection: Selection;
   collapsed: boolean;
-  inboxUnseen: number;
+  /** The Feed folded to its strip (by you, or because the window is narrow). */
+  feedCollapsed: boolean;
   messages: ChatMessage[];
   /** Brief and routine buttons already pressed, by `messageId:blockIndex`. */
   used: string[];
   flights: Flight[];
   /** The rail entry that just landed, and a counter so the same one can pulse twice. */
   landed: { id: string; n: number } | null;
-  toast: { text: string; n: number } | null;
 }
 
 export type HomeAction =
   | { type: 'collapse'; value: boolean }
+  | { type: 'collapse-feed'; value: boolean }
   | { type: 'select'; selection: Selection }
   | { type: 'pick'; itemId: string; choiceId: string; slide: 'left' | 'right' }
   | { type: 'edit'; itemId: string; text: string | null }
@@ -95,9 +96,7 @@ export type HomeAction =
   | { type: 'flight-done'; id: string }
   | { type: 'message'; message: ChatMessage }
   | { type: 'message-blocks'; id: string; blocks: ReplyBlock[] }
-  | { type: 'use'; key: string }
-  | { type: 'inbox'; add: number }
-  | { type: 'toast'; text: string };
+  | { type: 'use'; key: string };
 
 export function initialHomeState(): HomeState {
   return {
@@ -113,12 +112,11 @@ export function initialHomeState(): HomeState {
     })),
     selection: { kind: 'home' },
     collapsed: false,
-    inboxUnseen: 0,
+    feedCollapsed: false,
     messages: [],
     used: [],
     flights: [],
     landed: null,
-    toast: null,
   };
 }
 
@@ -138,6 +136,8 @@ export function homeReducer(state: HomeState, action: HomeAction): HomeState {
   switch (action.type) {
     case 'collapse':
       return { ...state, collapsed: action.value };
+    case 'collapse-feed':
+      return { ...state, feedCollapsed: action.value };
     case 'select':
       return { ...state, selection: action.selection };
     case 'pick':
@@ -276,10 +276,6 @@ export function homeReducer(state: HomeState, action: HomeAction): HomeState {
       return state.used.includes(action.key)
         ? state
         : { ...state, used: [...state.used, action.key] };
-    case 'inbox':
-      return { ...state, inboxUnseen: state.inboxUnseen + action.add };
-    case 'toast':
-      return { ...state, toast: { text: action.text, n: (state.toast?.n ?? 0) + 1 } };
   }
 }
 

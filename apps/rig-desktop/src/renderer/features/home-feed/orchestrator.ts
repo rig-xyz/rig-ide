@@ -103,9 +103,7 @@ export const scriptedOrchestrator: HomeOrchestrator = {
         runs.push({ kind: 'source', connector: c }, t(` ${SOURCES[c].name}`));
         if (i < connectors.length - 1) runs.push(t(', '));
       });
-      runs.push(
-        t('. I promoted 3 to your Feed and held back 3 topics. The Inbox comes in a later build.')
-      );
+      runs.push(t('. I promoted 3 to your Feed and held back 3 topics.'));
       return [{ kind: 'text', runs }];
     }
     if (/^every|weekly|daily/.test(low)) {

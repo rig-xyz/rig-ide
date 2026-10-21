@@ -1,7 +1,5 @@
-import { CircleCheck } from 'lucide-react';
 import { useReducedMotion } from 'motion/react';
-import { type ReactNode, useEffect, useState } from 'react';
-import { cn } from '@renderer/lib/utils';
+import { type ReactNode, useCallback, useEffect } from 'react';
 import { Feed } from './feed';
 import { FlyLayer } from './fly-layer';
 import { HomeProvider, useHome } from './home-context';
@@ -41,29 +39,49 @@ export function NewHome({
   );
 }
 
-/** Below this width the rail folds to its icons, so the middle keeps room to read. */
+/** Below these widths the rail, then the Feed, fold away, so the middle keeps room to read. */
 const FOLD_RAIL_BELOW_PX = 1180;
+const FOLD_FEED_BELOW_PX = 1060;
 
-function HomeLayout({ headerEnd }: { headerEnd?: ReactNode }) {
-  const { state, dispatch } = useHome();
+function useFoldBelow(px: number, fold: () => void) {
   useEffect(() => {
-    const media = window.matchMedia(`(max-width: ${FOLD_RAIL_BELOW_PX - 1}px)`);
+    const media = window.matchMedia(`(max-width: ${px - 1}px)`);
     const apply = () => {
-      if (media.matches) dispatch({ type: 'collapse', value: true });
+      if (media.matches) fold();
     };
     apply();
     media.addEventListener('change', apply);
     return () => media.removeEventListener('change', apply);
-  }, [dispatch]);
+  }, [px, fold]);
+}
+
+/**
+ * The rail and the Feed sit on the window's floor; the middle is a sheet laid
+ * over them, its rounded corners showing they're behind it, like a drawer
+ * under the page.
+ */
+function HomeLayout({ headerEnd }: { headerEnd?: ReactNode }) {
+  const { dispatch } = useHome();
+  useFoldBelow(
+    FOLD_RAIL_BELOW_PX,
+    useCallback(() => dispatch({ type: 'collapse', value: true }), [dispatch])
+  );
+  useFoldBelow(
+    FOLD_FEED_BELOW_PX,
+    useCallback(() => dispatch({ type: 'collapse-feed', value: true }), [dispatch])
+  );
 
   return (
-    <div className="relative grid h-full min-h-0 grid-cols-[auto_minmax(0,1fr)_448px] grid-rows-[minmax(0,1fr)] overflow-hidden bg-bg-0 text-chat text-text-primary">
+    <div className="relative grid h-full min-h-0 grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[minmax(0,1fr)] overflow-hidden bg-bg-0 text-chat text-text-primary">
       <Rail />
-      <Middle />
+      <div className="min-w-0 py-2 [-webkit-app-region:drag]">
+        <div className="hf-sheet relative flex h-full min-h-0 flex-col overflow-hidden rounded-[20px] border border-border-hairline bg-bg-1 [-webkit-app-region:no-drag]">
+          <Middle />
+        </div>
+      </div>
       <Feed headerEnd={headerEnd} />
       <GooFilter />
       <FlyLayer />
-      <Toast toast={state.toast} />
     </div>
   );
 }
@@ -90,31 +108,5 @@ function GooFilter() {
         <feComposite in="SourceGraphic" in2="goo" operator="atop" />
       </filter>
     </svg>
-  );
-}
-
-const TOAST_MS = 2600;
-
-function Toast({ toast }: { toast: { text: string; n: number } | null }) {
-  const [shown, setShown] = useState<{ text: string; n: number } | null>(null);
-  const [visible, setVisible] = useState(false);
-  useEffect(() => {
-    if (!toast) return;
-    setShown(toast);
-    setVisible(true);
-    const t = setTimeout(() => setVisible(false), TOAST_MS);
-    return () => clearTimeout(t);
-  }, [toast]);
-  return (
-    <div
-      role="status"
-      className={cn(
-        'pointer-events-none absolute bottom-[18px] left-1/2 z-30 flex max-w-[calc(100%-32px)] -translate-x-1/2 items-center gap-2 rounded-[10px] bg-text-primary py-2 pr-3.5 pl-3 text-sm text-bg-1 shadow-float transition-[opacity,transform] duration-300 ease-[cubic-bezier(.3,1.4,.5,1)] motion-reduce:transition-none',
-        visible ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-3.5 scale-95 opacity-0'
-      )}
-    >
-      <CircleCheck aria-hidden className="size-4 shrink-0 text-status-ok" strokeWidth={2.2} />
-      {shown?.text}
-    </div>
   );
 }

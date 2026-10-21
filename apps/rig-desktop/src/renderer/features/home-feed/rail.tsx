@@ -1,5 +1,7 @@
-import { ArrowLeftToLine, ArrowRightToLine, Home as HomeIcon, Inbox, Lock } from 'lucide-react';
-import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from 'react';
+import { ArrowLeftToLine, ArrowRightToLine, Home as HomeIcon, Lock } from 'lucide-react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { MAX_NEW_MESSAGES, type SpaceAttention } from '@renderer/features/home/space-status-state';
+import { SpaceStatusTile } from '@renderer/features/home/space-status-tile';
 import { cn } from '@renderer/lib/utils';
 import { Count, Face, SessionMatrix, StatusWord } from './bits';
 import { useHome } from './home-context';
@@ -17,7 +19,7 @@ import { needsYouPhrase } from './say';
 type Peek = { el: HTMLElement; body: ReactNode };
 
 export function Rail() {
-  const { state, dispatch, spaces, counts, open, toast } = useHome();
+  const { state, dispatch, spaces, counts, open, openInApp } = useHome();
   const collapsed = state.collapsed;
   const [peek, setPeek] = useState<Peek | null>(null);
   const selected =
@@ -48,7 +50,7 @@ export function Rail() {
     <nav
       aria-label="Navigation"
       className={cn(
-        'hf-rail border-border-hairline bg-bg-1 relative grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden border-r',
+        'hf-rail relative grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden',
         collapsed ? 'w-[68px]' : 'w-[264px]'
       )}
       onMouseLeave={() => setPeek(null)}
@@ -57,7 +59,7 @@ export function Rail() {
     >
       {/* The traffic lights sit here; the strip moves the window. */}
       <div aria-hidden className="h-[38px] [-webkit-app-region:drag]" />
-      <div className="grid gap-0.5 border-b border-border-hairline px-3 pt-1 pb-2">
+      <div className="grid gap-0.5 px-3 pt-1 pb-1">
         <RailItem
           collapsed={collapsed}
           current={homeCurrent}
@@ -72,23 +74,6 @@ export function Rail() {
               <PeekBody
                 title="Home"
                 text={`${needsYouPhrase(counts.needsYou)}, ${counts.upNext} up next.`}
-              />
-            )
-          }
-        />
-        <RailItem
-          collapsed={collapsed}
-          icon={<Inbox className="size-[15px] text-text-secondary" strokeWidth={1.6} />}
-          name="Inbox"
-          label={state.inboxUnseen ? `Inbox, ${state.inboxUnseen} new` : 'Inbox'}
-          end={state.inboxUnseen ? <Count n={state.inboxUnseen} /> : null}
-          onClick={() => toast("The Inbox isn't in this preview yet")}
-          onPeek={(el) =>
-            showPeek(
-              el,
-              <PeekBody
-                title="Inbox"
-                text={`${state.inboxUnseen ? `${state.inboxUnseen} new since you last looked.` : 'Up to date.'} Items from Linear, GitHub and Granola, sorted into topics.`}
               />
             )
           }
@@ -117,15 +102,22 @@ export function Rail() {
               collapsed={collapsed}
               selected={selected}
               landed={state.landed}
-              onOpen={(id, kind) =>
-                open(kind === 'space' ? { kind: 'space', id } : { kind: 'session', id })
-              }
+              // A space opens in the app, its Room; a session of yours opens its chat.
+              // What exists only in this preview (no folder on disk) opens its context here.
+              onOpen={(target) => {
+                if (space.root && (target.kind === 'space' || target.session.origin === 'real')) {
+                  openInApp(
+                    target.kind === 'space' ? { space } : { space, session: target.session }
+                  );
+                } else if (target.kind === 'space') open({ kind: 'space', id: space.id });
+                else open({ kind: 'session', id: target.session.id });
+              }}
               onPeek={showPeek}
             />
           )}
         />
       </div>
-      <div className="border-t border-border-hairline px-3 py-2">
+      <div className="px-3 py-2">
         <RailItem
           collapsed={collapsed}
           icon={
@@ -158,21 +150,20 @@ function SpaceEntry({
   collapsed: boolean;
   selected: string | null;
   landed: { id: string; n: number } | null;
-  onOpen: (id: string, kind: 'space' | 'session') => void;
+  onOpen: (target: { kind: 'space' } | { kind: 'session'; session: RailSession }) => void;
   onPeek: (el: HTMLElement, body: ReactNode) => void;
 }) {
-  // One thing at the right: unread first (it's news), else a lock or the faces.
-  const end = space.unread ? (
-    <Count n={space.unread} />
-  ) : space.visibility === 'private' ? (
-    <Lock aria-label="Only you" className="size-[11px] text-text-muted" strokeWidth={2} />
-  ) : space.faces.length ? (
-    <span className="hf-stack flex">
-      {space.faces.slice(0, 2).map((p) => (
-        <Face key={p.id} person={p} />
-      ))}
-    </span>
-  ) : null;
+  // Unread shows on the tile; at the right, a lock or the faces.
+  const end =
+    space.visibility === 'private' ? (
+      <Lock aria-label="Only you" className="size-[11px] text-text-muted" strokeWidth={2} />
+    ) : space.faces.length ? (
+      <span className="hf-stack flex">
+        {space.faces.slice(0, 2).map((p) => (
+          <Face key={p.id} person={p} />
+        ))}
+      </span>
+    ) : null;
   return (
     <>
       <RailItem
@@ -192,7 +183,7 @@ function SpaceEntry({
         }
         bold
         end={end}
-        onClick={() => onOpen(space.id, 'space')}
+        onClick={() => onOpen({ kind: 'space' })}
         onPeek={(el) => onPeek(el, <PeekBody title={`# ${space.name}`} text={space.summary} />)}
       />
       {space.sessions.map((session) => (
@@ -204,7 +195,7 @@ function SpaceEntry({
           collapsed={collapsed}
           current={selected === session.id}
           landedKey={landed?.id === session.id ? landed.n : undefined}
-          onOpen={() => onOpen(session.id, 'session')}
+          onOpen={() => onOpen({ kind: 'session', session })}
           onPeek={onPeek}
         />
       ))}
@@ -400,20 +391,29 @@ function HoverCard({ anchor, children }: { anchor: HTMLElement; children: ReactN
   );
 }
 
-/** A space's first letter on a tile tinted with its own theme color, so spaces tell apart at a glance. */
+/**
+ * A space's tile, the Spaces card's own (`SpaceStatusTile`): the motion of
+ * whatever runs in it, new messages as dice, else its faint pattern; a dot
+ * when something there is for you (accent) or unread (grey).
+ */
 function SpaceTile({ space }: { space: RailSpace }) {
+  const live = space.sessions.find((s) => s.state === 'running' || s.state === 'needs_you');
+  const attention: SpaceAttention = live
+    ? {
+        kind: 'live',
+        state: live.state === 'needs_you' ? 'waiting' : (live.activity ?? 'thinking'),
+      }
+    : space.unread
+      ? { kind: 'messages', count: Math.min(space.unread, MAX_NEW_MESSAGES), exact: true }
+      : { kind: 'idle', lastActivityAt: null };
+  const needsYou = space.sessions.some((s) => s.state === 'needs_you');
   return (
-    <span
-      style={{ '--hue': `var(--theme-${spaceHue(space.bindingId ?? space.id)})` } as CSSProperties}
-      className="hf-space-tile grid size-[22px] place-items-center rounded-[6px] border font-mono text-kicker font-semibold"
-    >
-      {space.name.slice(0, 1).toUpperCase()}
-    </span>
+    <SpaceStatusTile
+      attention={attention}
+      seed={space.bindingId ?? space.id}
+      size="sm"
+      dot={needsYou ? 'forYou' : space.unread ? 'unread' : null}
+      className="rounded-[7px]"
+    />
   );
-}
-
-function spaceHue(id: string): number {
-  let h = 0;
-  for (const ch of id) h = (h * 33 + ch.charCodeAt(0)) >>> 0;
-  return (h % 8) + 1;
 }

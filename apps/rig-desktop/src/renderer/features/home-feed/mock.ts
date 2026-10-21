@@ -390,7 +390,6 @@ export function demoFeed(): FeedItem[] {
 /** The item a watch session promotes into the Feed while you're on Home, and when. */
 export const ARRIVAL = {
   afterMs: 14_000,
-  inboxBump: 3,
   item: (): FeedItem => ({
     id: 'prp_claims',
     kind: 'session',

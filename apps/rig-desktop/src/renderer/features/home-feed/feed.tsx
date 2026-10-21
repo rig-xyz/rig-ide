@@ -6,7 +6,7 @@ import {
   Eye,
   EyeOff,
   FilePen,
-  Inbox,
+  PanelRightClose,
   PanelRightOpen,
   Play,
   Plus,
@@ -55,43 +55,112 @@ import { type FeedEntry, findSession } from './store';
  */
 
 export function Feed({ headerEnd }: { headerEnd?: ReactNode }) {
-  const { state, counts, toast } = useHome();
+  const { state, dispatch, counts } = useHome();
   const needs = state.feed.filter((e) => e.item.group === 'needs_you');
   const next = state.feed.filter((e) => e.item.group === 'up_next');
+  const folded = state.feedCollapsed;
+  const setFolded = (value: boolean) => dispatch({ type: 'collapse-feed', value });
   return (
     <aside
       aria-label="Feed"
-      className="flex min-h-0 min-w-0 flex-col border-l border-border-hairline bg-bg-1"
+      // Sized to the window: wide enough to read a proposal, never more than 448px.
+      style={{ width: folded ? 60 : 'clamp(360px, 31vw, 448px)' }}
+      className="hf-rail flex min-h-0 min-w-0 flex-col overflow-hidden"
     >
-      <div className="flex h-[52px] shrink-0 items-center gap-2.5 pr-3 pl-5 [-webkit-app-region:drag]">
-        <h2 className="m-0 font-display text-title font-medium">Feed</h2>
-        <span className="ml-auto text-meta text-text-muted">
-          {counts.needsYou} {counts.needsYou === 1 ? 'needs' : 'need'} you · {counts.upNext} up next
-        </span>
-        {headerEnd && (
-          <div className="flex items-center gap-1 [-webkit-app-region:no-drag]">{headerEnd}</div>
-        )}
-      </div>
-      <div className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-5">
-        <Group title="Needs you" tone="warn" entries={needs} />
-        <Group title="Up next" tone="accent" entries={next} />
-        {!needs.length && !next.length && (
-          <p className="px-5 py-2.5 text-sm text-text-muted">Nothing waiting on you.</p>
-        )}
-      </div>
-      <div className="flex items-center justify-between gap-2.5 border-t border-border-hairline px-5 py-2.5 text-meta text-text-muted">
-        <span>3 topics held back</span>
-        <ActionButton
-          variant="quiet"
-          size="sm"
-          icon={Inbox}
-          className="-my-1 -mr-2.5 text-accent hover:text-accent"
-          onClick={() => toast("The Inbox isn't in this preview yet")}
-        >
-          See in Inbox
-        </ActionButton>
-      </div>
+      {folded ? (
+        <FoldedFeed
+          needsYou={counts.needsYou}
+          upNext={counts.upNext}
+          headerEnd={headerEnd}
+          onOpen={() => setFolded(false)}
+        />
+      ) : (
+        <>
+          <div className="flex h-[52px] shrink-0 items-center gap-2.5 pr-3 pl-5 [-webkit-app-region:drag]">
+            <h2 className="m-0 font-display text-title font-medium">Feed</h2>
+            <span className="ml-auto truncate text-meta text-text-muted">
+              {counts.needsYou} {counts.needsYou === 1 ? 'needs' : 'need'} you · {counts.upNext} up
+              next
+            </span>
+            <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+              {headerEnd}
+              <IconButton label="Fold the Feed" dir="right" onClick={() => setFolded(true)}>
+                <PanelRightClose className="size-[15px]" strokeWidth={1.6} />
+              </IconButton>
+            </div>
+          </div>
+          <div className="relative min-h-0 min-w-[360px] flex-1 overflow-x-hidden overflow-y-auto pb-5">
+            <Group title="Needs you" tone="warn" entries={needs} />
+            <Group title="Up next" tone="accent" entries={next} />
+            {!needs.length && !next.length && (
+              <p className="px-5 py-2.5 text-sm text-text-muted">Nothing waiting on you.</p>
+            )}
+          </div>
+        </>
+      )}
     </aside>
+  );
+}
+
+/** The Feed folded: what's waiting as two counts, and the app's buttons, in a strip. */
+function FoldedFeed({
+  needsYou,
+  upNext,
+  headerEnd,
+  onOpen,
+}: {
+  needsYou: number;
+  upNext: number;
+  headerEnd?: ReactNode;
+  onOpen: () => void;
+}) {
+  return (
+    <div className="flex h-full flex-col items-center pb-3">
+      <div className="grid h-[52px] w-full place-items-center [-webkit-app-region:drag]">
+        <IconButton label="Open the Feed" dir="left" onClick={onOpen}>
+          <PanelRightOpen className="size-[15px]" strokeWidth={1.6} />
+        </IconButton>
+      </div>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Open the Feed: ${needsYou} need you, ${upNext} up next`}
+        className="hf-feed-strip mt-2 grid gap-2 rounded-full p-1.5"
+      >
+        <span className="hf-strip-count" data-tone="warn">
+          {needsYou}
+        </span>
+        <span className="hf-strip-count" data-tone="accent">
+          {upNext}
+        </span>
+      </button>
+      <div className="mt-auto flex flex-col items-center gap-1">{headerEnd}</div>
+    </div>
+  );
+}
+
+function IconButton({
+  label,
+  dir,
+  onClick,
+  children,
+}: {
+  label: string;
+  dir: 'left' | 'right';
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      data-dir={dir}
+      onClick={onClick}
+      className="hf-nudge grid size-7 place-items-center rounded-control text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
+    >
+      {children}
+    </button>
   );
 }
 
@@ -144,7 +213,7 @@ const VERB_ICON: Record<FeedVerb, typeof Play> = {
 };
 
 function FeedRow({ entry }: { entry: FeedEntry }) {
-  const { spaces, dispatch, runItem, open } = useHome();
+  const { spaces, dispatch, runItem, open, toast } = useHome();
   const { item } = entry;
   const choice = chosen(item, entry.pick);
   const articleRef = useRef<HTMLElement>(null);
@@ -234,10 +303,7 @@ function FeedRow({ entry }: { entry: FeedEntry }) {
               else if (key === 'brief') open({ kind: 'brief', itemId: item.id });
               else if (key === 'later') {
                 dispatch({ type: 'remove', itemId: item.id });
-                dispatch({
-                  type: 'toast',
-                  text: needs ? 'Reminder set for an hour' : 'Hidden until tomorrow',
-                });
+                toast(needs ? 'Reminder set for an hour' : 'Hidden until tomorrow');
               } else if (key === 'ignore')
                 dispatch({ type: 'ignore', itemId: item.id, value: true });
             }}
@@ -583,21 +649,21 @@ function Action({
 
 /** An ignored item: one slim row, an optional why, and Undo. */
 function IgnoredRow({ entry }: { entry: FeedEntry }) {
-  const { dispatch } = useHome();
+  const { dispatch, toast } = useHome();
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     inputRef.current?.focus({ preventScroll: true });
   }, []);
   const done = (why: string) => {
     dispatch({ type: 'remove', itemId: entry.item.id });
-    dispatch({ type: 'toast', text: why ? `Thanks. Rig noted: “${why}”` : 'Ignored' });
+    toast(why ? `Thanks. Rig noted: “${why}”` : 'Ignored');
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
     done(inputRef.current?.value.trim() ?? '');
   };
   return (
-    <div className="grid gap-2 border-b border-border-hairline bg-bg-0 px-5 pt-2.5 pb-3">
+    <div className="grid gap-2 border-b border-border-hairline bg-bg-2/40 px-5 pt-2.5 pb-3">
       <div className="flex items-center gap-2 text-sm text-text-muted">
         <span className="min-w-0 truncate">
           Ignored <b className="font-medium text-text-secondary">{entry.item.title}</b>

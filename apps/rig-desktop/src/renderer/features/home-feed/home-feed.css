@@ -118,10 +118,10 @@
   margin-left: -6px;
 }
 .hf-stack > * {
-  box-shadow: 0 0 0 2px var(--bg-1);
+  box-shadow: 0 0 0 2px var(--bg-0);
 }
 .hf-row[data-needs='true'] .hf-stack > * {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-warn) 6%, var(--bg-1));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-warn) 6%, var(--bg-0));
 }
 
 /* The proposal: plain text you can edit, its action first in bold. */
@@ -382,13 +382,6 @@
 
 /* ── color and touch ───────────────────────────────────────────────────── */
 
-/* Each space wears its own theme color on its tile (`--hue`, one of `--theme-1`…`--theme-8`). */
-.hf-space-tile {
-  background: color-mix(in oklab, var(--hue) 20%, var(--bg-1));
-  border-color: color-mix(in oklab, var(--hue) 40%, transparent);
-  color: color-mix(in oklab, var(--hue) 78%, var(--text-primary));
-}
-
 /* Rail rows answer the press; the open one carries a lit top edge. */
 .hf-rail-item {
   transition:
@@ -461,26 +454,6 @@
   box-shadow: 0 0 0 3px var(--accent-subtle);
 }
 
-/* The greeting's one wash of color, the same as the current Home's (`.hero-glow`). */
-.hf-glow {
-  position: relative;
-}
-.hf-glow::before {
-  content: '';
-  position: absolute;
-  inset: -22px -26px auto;
-  height: 260px;
-  background: radial-gradient(
-    ellipse 46% 90% at 24% 0%,
-    color-mix(in oklab, var(--accent) 12%, transparent),
-    transparent 72%
-  );
-  pointer-events: none;
-}
-.hf-glow > * {
-  position: relative;
-}
-
 /* Rig's tile lights up while it thinks. */
 .hf-rig-tile {
   transition:
@@ -490,4 +463,42 @@
 .hf-rig-tile[data-thinking='true'] {
   background: var(--accent-subtle);
   border-color: color-mix(in oklab, var(--accent) 35%, transparent);
+}
+
+/* ── layers ────────────────────────────────────────────────────────────── */
+
+/* The middle sheet, laid over the rail and the Feed: a lit top edge and a soft drop onto the floor. */
+.hf-sheet {
+  box-shadow:
+    inset 0 1px 0 light-dark(rgb(255 255 255 / 0.9), rgb(255 255 255 / 0.04)),
+    0 1px 2px light-dark(rgb(22 24 29 / 0.05), rgb(0 0 0 / 0.3)),
+    0 12px 36px -12px light-dark(rgb(22 24 29 / 0.14), rgb(0 0 0 / 0.6));
+}
+
+/* The folded Feed: its two counts in one pill, the shape the Room's dock uses. */
+.hf-feed-strip {
+  background: var(--pill-fill);
+  transition: transform 0.2s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .hf-feed-strip:hover {
+    transform: scale(1.06);
+  }
+}
+.hf-strip-count {
+  display: grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  font-size: var(--text-meta);
+  font-weight: 600;
+}
+.hf-strip-count[data-tone='warn'] {
+  background: color-mix(in oklab, var(--status-warn) 22%, transparent);
+  color: color-mix(in oklab, var(--status-warn) 80%, var(--text-primary));
+}
+.hf-strip-count[data-tone='accent'] {
+  background: var(--accent-subtle);
+  color: var(--accent);
 }

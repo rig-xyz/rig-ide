@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { page } from 'vitest/browser';
 
 /**
  * The new Home (Settings › Advanced › Preview the new Home): the rail merges
@@ -112,10 +113,12 @@ vi.mock('@renderer/lib/ipc', () => ({
 
 import { NewHome } from '@renderer/features/home-feed/new-home';
 
-beforeAll(() => {
+beforeAll(async () => {
   (
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = true;
+  // Wide enough that the Feed stays open (it folds below 1060px); the rail still folds below 1180px.
+  await page.viewport(1100, 900);
 });
 
 async function flush(): Promise<void> {
@@ -189,8 +192,11 @@ describe('NewHome', () => {
     expect(ids.slice(2, 5)).toEqual(['ulys-backlog', 's-triage', 's-stale']);
     expect(ids.filter((id) => id === 'rig-ops')).toHaveLength(1);
     expect(ids.at(-1)).toBe('b-launch');
-    // The real unread count shows on the merged space.
-    expect(rail().querySelector('[data-rail-id="rig-ops"]')!.textContent).toContain('4');
+    // The merged space's tile, as on the Spaces card: its running session's motion, and a grey
+    // dot for its real unread messages.
+    const opsTile = rail().querySelector('[data-rail-id="rig-ops"] [data-tile]')!;
+    expect(opsTile.getAttribute('data-tile')).toBe('live');
+    expect(opsTile.querySelector('[data-dot="unread"]')).toBeTruthy();
   });
 
   it('shows your groups: a group folds under its header, and a space dragged onto it moves there', async () => {
@@ -272,9 +278,19 @@ describe('NewHome', () => {
     expect(host.querySelector('textarea[aria-label="Message Rig"]')).toBeTruthy();
   });
 
-  it('a real space on disk opens in the app from its context', async () => {
+  it('a space on disk opens straight into its Room from the rail', async () => {
     await click(rail().querySelector('[data-rail-id="b-launch"]'));
-    await click(button(host.querySelector('section')!, 'Open space'));
     expect(opened).toEqual([['/Users/me/Rig/launch', { kind: 'space' }]]);
+  });
+
+  it('the Feed folds to a strip of counts and opens again', async () => {
+    const feed = () => host.querySelector('aside')!;
+    await click(button(feed(), 'Fold the Feed'));
+    expect(button(feed(), /Open the Feed: 2 need you, 4 up next/)).toBeFalsy();
+    expect(
+      feed().querySelector('[aria-label="Open the Feed: 2 need you, 4 up next"]')
+    ).toBeTruthy();
+    await click(button(feed(), 'Open the Feed'));
+    expect(feed().textContent).toContain('Decide on the A7A5 restriction');
   });
 });

@@ -49,7 +49,7 @@ export function Middle() {
   const { state } = useHome();
   const sel = state.selection;
   return (
-    <section aria-label="Talk to Rig" className="flex min-h-0 min-w-0 flex-col">
+    <section aria-label="Talk to Rig" className="flex min-h-0 min-w-0 flex-1 flex-col">
       {sel.kind === 'home' ? <HomeChat /> : <ContextView />}
     </section>
   );
@@ -110,7 +110,7 @@ function HomeChat() {
         aria-live="polite"
         className="grid min-h-0 flex-1 content-start gap-4 overflow-y-auto px-[26px] pt-[22px] pb-2"
       >
-        <Column className="hf-glow">
+        <Column>
           <Kicker className="text-2xs">{DATE.format(now)}</Kicker>
           <div className="mt-1.5 font-display text-2xl leading-[1.15] font-medium tracking-[-0.01em]">
             {greetingWord(now)}, {firstName}.
@@ -160,7 +160,7 @@ function HomeChat() {
         <Column>
           <form
             onSubmit={submit}
-            className="hf-composer grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 rounded-[12px] border border-border-hairline bg-bg-1 py-2 pr-2 pl-3.5"
+            className="hf-composer grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 rounded-[16px] border border-border-hairline bg-bg-0/60 py-2 pr-2 pl-4"
           >
             <textarea
               ref={inputRef}
@@ -304,7 +304,7 @@ function Run({ run }: { run: Inline }) {
         <button
           type="button"
           onClick={() => open({ kind: 'session', id: run.sessionId })}
-          className="inline-flex items-center gap-1.5 rounded-full border border-border-hairline bg-bg-1 py-px pr-[9px] pl-[7px] align-[1px] text-sm transition-colors hover:border-border-strong"
+          className="hf-chip inline-flex items-center gap-1.5 rounded-full border border-border-hairline bg-bg-1 py-0 pr-[9px] pl-[7px] align-middle text-sm leading-[18px] hover:border-border-strong"
         >
           {found ? (
             <SessionMatrix session={found.session} size="sm" />

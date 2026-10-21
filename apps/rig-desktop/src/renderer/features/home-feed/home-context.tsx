@@ -9,6 +9,7 @@ import {
   useReducer,
   useRef,
 } from 'react';
+import { toast as appToast } from '@renderer/lib/hooks/use-toast';
 import { ARRIVAL, PEOPLE } from './mock';
 import type { FeedChoice, RailSession, RailSpace, SourceRef } from './model';
 import {
@@ -147,7 +148,10 @@ export function HomeProvider({
     [firstName, counts.needsYou, counts.upNext, spaces]
   );
 
-  const toast = useCallback((text: string) => dispatch({ type: 'toast', text }), []);
+  // The app's own alert cards (sonner, `lib/hooks/use-toast`).
+  const toast = useCallback((text: string) => {
+    appToast({ title: text });
+  }, []);
 
   const open = useCallback((selection: Selection) => {
     dispatch({ type: 'select', selection });
@@ -461,14 +465,13 @@ export function HomeProvider({
   useEffect(() => {
     if (!arrivals) return;
     const t = setTimeout(() => {
-      dispatch({ type: 'inbox', add: ARRIVAL.inboxBump });
       const item = ARRIVAL.item();
       if (stateRef.current.feed.some((e) => e.item.id === item.id)) return;
       dispatch({ type: 'add-item', item });
-      dispatch({ type: 'toast', text: `New in your Feed: ${item.title}` });
+      toast(`New in your Feed: ${item.title}`);
     }, ARRIVAL.afterMs);
     return () => clearTimeout(t);
-  }, [arrivals]);
+  }, [arrivals, toast]);
 
   const api = useMemo<HomeApi>(
     () => ({
