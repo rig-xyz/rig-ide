@@ -1,6 +1,9 @@
 import {
   Activity,
   ArrowLeft,
+  AtSign,
+  CornerDownLeft,
+  Hash,
   CalendarClock,
   DoorOpen,
   Inbox,
@@ -9,7 +12,6 @@ import {
   Play,
   Repeat,
   Reply,
-  Send,
   Undo2,
   UserPlus,
 } from 'lucide-react';
@@ -86,12 +88,16 @@ function HomeChat() {
     if (log) log.scrollTop = log.scrollHeight;
   }, [state.messages]);
 
-  useLayoutEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
-  }, [draft]);
+  const [focused, setFocused] = useState(false);
+
+  const insert = (mark: string) => {
+    setDraft((v) => `${v}${v && !v.endsWith(' ') ? ' ' : ''}${mark}`);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      el?.focus();
+      el?.setSelectionRange(el.value.length, el.value.length);
+    });
+  };
 
   const submit = (e?: FormEvent) => {
     e?.preventDefault();
@@ -101,14 +107,12 @@ function HomeChat() {
 
   return (
     <>
-      <Bar>
-        <b className="text-chat font-semibold">Home</b>
-        <span className="text-sm text-text-muted">dispatch work, ask for status, see context</span>
-      </Bar>
+      {/* No title: the greeting says where you are. The sheet's top edge still moves the window. */}
+      <div aria-hidden className="h-3 shrink-0 [-webkit-app-region:drag]" />
       <div
         ref={logRef}
         aria-live="polite"
-        className="grid min-h-0 flex-1 content-start gap-4 overflow-y-auto px-[26px] pt-[22px] pb-2"
+        className="grid min-h-0 flex-1 content-start gap-4 overflow-y-auto pt-[22px] pr-[max(26px,var(--hf-gutter,0px))] pb-2 pl-[26px]"
       >
         <Column>
           <Kicker className="text-2xs">{DATE.format(now)}</Kicker>
@@ -130,7 +134,7 @@ function HomeChat() {
           )
         )}
       </div>
-      <div className="grid shrink-0 gap-2 px-[26px] pt-2.5 pb-[18px]">
+      <div className="grid shrink-0 gap-2 pt-2.5 pr-[max(26px,var(--hf-gutter,0px))] pb-[18px] pl-[26px]">
         <Column className="flex flex-wrap gap-1.5">
           {QUICK.map((q) => (
             <button
@@ -158,15 +162,21 @@ function HomeChat() {
           ))}
         </Column>
         <Column>
+          {/* The Room's composer, the same box: the words on top, small tools and the send underneath. */}
           <form
             onSubmit={submit}
-            className="hf-composer grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 rounded-[16px] border border-border-hairline bg-bg-0/60 py-2 pr-2 pl-4"
+            className={cn(
+              'hf-composer rounded-card border border-border-hairline bg-[light-dark(var(--bg-1),var(--bg-2))]',
+              focused && 'border-accent shadow-[0_0_0_3px_var(--accent-subtle)]'
+            )}
           >
             <textarea
               ref={inputRef}
               rows={1}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
@@ -175,22 +185,56 @@ function HomeChat() {
               }}
               placeholder="Ask Rig, or tell it what to start"
               aria-label="Message Rig"
-              className="max-h-[120px] min-h-6 resize-none border-0 bg-transparent py-1 text-chat leading-[1.5] text-text-primary outline-none placeholder:text-text-muted"
+              // Grows with what you type, up to 40% of the window, then scrolls.
+              className="[field-sizing:content] max-h-[40vh] min-h-[40px] w-full resize-none overflow-y-auto bg-transparent px-3.5 py-2.5 text-sm text-text-primary outline-none placeholder:text-text-muted"
             />
-            <ActionButton
-              type="submit"
-              icon={Send}
-              motion="send"
-              variant={draft.trim() ? 'primary' : 'secondary'}
-              aria-disabled={!draft.trim()}
-              className={cn(!draft.trim() && 'text-text-muted')}
-            >
-              Ask
-            </ActionButton>
+            <div className="flex items-center gap-0.5 px-2 pb-2">
+              <ComposerTool label="Mention someone" onClick={() => insert('@')}>
+                <AtSign className="size-3.5" strokeWidth={1.5} />
+              </ComposerTool>
+              <ComposerTool label="Name a space" onClick={() => insert('#')}>
+                <Hash className="size-3.5" strokeWidth={1.5} />
+              </ComposerTool>
+              <button
+                type="submit"
+                disabled={!draft.trim()}
+                className={cn(
+                  'hf-send ml-auto flex h-6.5 items-center gap-1.5 rounded-control px-2.5 text-xs transition-colors disabled:opacity-60',
+                  draft.trim() ? 'bg-accent text-accent-ink' : 'bg-bg-2 text-text-secondary'
+                )}
+              >
+                Ask
+                <CornerDownLeft className="size-3" strokeWidth={1.5} />
+              </button>
+            </div>
           </form>
         </Column>
       </div>
     </>
+  );
+}
+
+/** A small tool under the composer's words, as in the Room's composer. */
+function ComposerTool({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick}
+      className="flex size-7 items-center justify-center rounded-control text-text-muted transition-colors hover:bg-bg-2"
+    >
+      {children}
+    </button>
   );
 }
 

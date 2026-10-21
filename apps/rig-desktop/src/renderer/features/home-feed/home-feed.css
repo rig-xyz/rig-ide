@@ -443,17 +443,6 @@
   }
 }
 
-/* The composer glows in the accent while you type. */
-.hf-composer {
-  transition:
-    border-color 0.15s ease-out,
-    box-shadow 0.2s ease-out;
-}
-.hf-composer:focus-within {
-  border-color: color-mix(in oklab, var(--accent) 60%, var(--border-hairline));
-  box-shadow: 0 0 0 3px var(--accent-subtle);
-}
-
 /* Rig's tile lights up while it thinks. */
 .hf-rig-tile {
   transition:
@@ -475,30 +464,30 @@
     0 12px 36px -12px light-dark(rgb(22 24 29 / 0.14), rgb(0 0 0 / 0.6));
 }
 
-/* The folded Feed: its two counts in one pill, the shape the Room's dock uses. */
-.hf-feed-strip {
-  background: var(--pill-fill);
-  transition: transform 0.2s cubic-bezier(0.3, 1.5, 0.5, 1);
+/* The composer's send, pressed. */
+.hf-send {
+  transition:
+    background-color 0.15s ease-out,
+    color 0.15s ease-out,
+    transform 0.18s cubic-bezier(0.3, 1.5, 0.5, 1);
 }
 @media (prefers-reduced-motion: no-preference) {
-  .hf-feed-strip:hover {
-    transform: scale(1.06);
+  .hf-send:not(:disabled):active {
+    transform: scale(0.95);
   }
 }
-.hf-strip-count {
-  display: grid;
-  place-items: center;
-  min-width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  font-size: var(--text-meta);
-  font-weight: 600;
+
+/* An item opened from the folded dock flashes once where it sits. */
+@keyframes hf-flash {
+  0% {
+    box-shadow: inset 0 0 0 999px color-mix(in oklab, var(--accent) 14%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 999px transparent;
+  }
 }
-.hf-strip-count[data-tone='warn'] {
-  background: color-mix(in oklab, var(--status-warn) 22%, transparent);
-  color: color-mix(in oklab, var(--status-warn) 80%, var(--text-primary));
-}
-.hf-strip-count[data-tone='accent'] {
-  background: var(--accent-subtle);
-  color: var(--accent);
+@media (prefers-reduced-motion: no-preference) {
+  .hf-flash {
+    animation: hf-flash 1.2s ease-out;
+  }
 }

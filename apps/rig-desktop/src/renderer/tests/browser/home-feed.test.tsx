@@ -302,14 +302,17 @@ describe('NewHome', () => {
     expect(settingsOpened).toEqual(['account', undefined]);
   });
 
-  it('the Feed folds to a strip of counts and opens again', async () => {
+  it("the Feed folds into a dock of pills, like the Room's topics, and a pill opens it on its item", async () => {
     const feed = () => host.querySelector('aside')!;
     await click(button(feed(), 'Fold the Feed'));
-    expect(button(feed(), /Open the Feed: 2 need you, 4 up next/)).toBeFalsy();
-    expect(
-      feed().querySelector('[aria-label="Open the Feed: 2 need you, 4 up next"]')
-    ).toBeTruthy();
-    await click(button(feed(), 'Open the Feed'));
-    expect(feed().textContent).toContain('Decide on the A7A5 restriction');
+    expect(feed().textContent).toBe('');
+    const dock = host.querySelector('[data-testid="theme-dock"]')!;
+    expect(dock.textContent).toContain('Feed');
+    expect(dock.querySelector('[data-feed-pill="ask_429"]')!.textContent).toContain(
+      'Decide on the A7A5 restriction'
+    );
+    await click(dock.querySelector('[data-feed-pill="prp_hugo"]'));
+    expect(host.querySelector('[data-testid="theme-dock"]')).toBeNull();
+    expect(feed().querySelector('[data-feed-id="prp_hugo"]')).toBeTruthy();
   });
 });

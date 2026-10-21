@@ -53,26 +53,42 @@ import { type FeedEntry, findSession } from './store';
  * on one moves it into the rail.
  */
 
-export function Feed() {
+export function Feed({
+  focusId,
+  onFocused,
+}: {
+  /** An item to bring into view as the Feed opens (a pill clicked in the folded dock). */
+  focusId?: string | null;
+  onFocused?: () => void;
+}) {
   const { state, dispatch, counts } = useHome();
   const needs = state.feed.filter((e) => e.item.group === 'needs_you');
   const next = state.feed.filter((e) => e.item.group === 'up_next');
   const folded = state.feedCollapsed;
-  const setFolded = (value: boolean) => dispatch({ type: 'collapse-feed', value });
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (folded || !focusId) return;
+    const row = listRef.current?.querySelector<HTMLElement>(
+      `[data-feed-id="${CSS.escape(focusId)}"]`
+    );
+    row?.scrollIntoView({ block: 'center' });
+    row?.classList.remove('hf-flash');
+    void row?.offsetWidth;
+    row?.classList.add('hf-flash');
+    onFocused?.();
+  }, [folded, focusId, onFocused]);
+
   return (
     <aside
       aria-label="Feed"
-      // Sized to the window: wide enough to read a proposal, never more than 448px.
-      style={{ width: folded ? 60 : 'clamp(360px, 31vw, 448px)' }}
+      aria-hidden={folded || undefined}
+      // Sized to the window: wide enough to read a proposal, never more than 448px. Folded, it
+      // becomes the dock over the sheet (`feed-dock.tsx`) and gives the sheet its width.
+      style={{ width: folded ? 0 : 'clamp(360px, 31vw, 448px)' }}
       className="hf-rail flex min-h-0 min-w-0 flex-col overflow-hidden"
     >
-      {folded ? (
-        <FoldedFeed
-          needsYou={counts.needsYou}
-          upNext={counts.upNext}
-          onOpen={() => setFolded(false)}
-        />
-      ) : (
+      {!folded && (
         <>
           <div className="flex h-[52px] shrink-0 items-center gap-2.5 pr-3 pl-5 [-webkit-app-region:drag]">
             <h2 className="m-0 font-display text-title font-medium">Feed</h2>
@@ -80,13 +96,18 @@ export function Feed() {
               {counts.needsYou} {counts.needsYou === 1 ? 'needs' : 'need'} you · {counts.upNext} up
               next
             </span>
-            <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
-              <IconButton label="Fold the Feed" dir="right" onClick={() => setFolded(true)}>
-                <PanelRightClose className="size-[15px]" strokeWidth={1.6} />
-              </IconButton>
-            </div>
+            <IconButton
+              label="Fold the Feed"
+              dir="right"
+              onClick={() => dispatch({ type: 'collapse-feed', value: true })}
+            >
+              <PanelRightClose className="size-[15px]" strokeWidth={1.6} />
+            </IconButton>
           </div>
-          <div className="relative min-h-0 min-w-[360px] flex-1 overflow-x-hidden overflow-y-auto pb-5">
+          <div
+            ref={listRef}
+            className="relative min-h-0 min-w-[360px] flex-1 overflow-x-hidden overflow-y-auto pb-5"
+          >
             <Group title="Needs you" tone="warn" entries={needs} />
             <Group title="Up next" tone="accent" entries={next} />
             {!needs.length && !next.length && (
@@ -96,40 +117,6 @@ export function Feed() {
         </>
       )}
     </aside>
-  );
-}
-
-/** The Feed folded: what's waiting as two counts in a strip; either opens it again. */
-function FoldedFeed({
-  needsYou,
-  upNext,
-  onOpen,
-}: {
-  needsYou: number;
-  upNext: number;
-  onOpen: () => void;
-}) {
-  return (
-    <div className="flex h-full flex-col items-center pb-3">
-      <div className="grid h-[52px] w-full place-items-center [-webkit-app-region:drag]">
-        <IconButton label="Open the Feed" dir="left" onClick={onOpen}>
-          <PanelRightOpen className="size-[15px]" strokeWidth={1.6} />
-        </IconButton>
-      </div>
-      <button
-        type="button"
-        onClick={onOpen}
-        aria-label={`Open the Feed: ${needsYou} need you, ${upNext} up next`}
-        className="hf-feed-strip mt-2 grid gap-2 rounded-full p-1.5 [-webkit-app-region:no-drag]"
-      >
-        <span className="hf-strip-count" data-tone="warn">
-          {needsYou}
-        </span>
-        <span className="hf-strip-count" data-tone="accent">
-          {upNext}
-        </span>
-      </button>
-    </div>
   );
 }
 
