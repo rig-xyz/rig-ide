@@ -1,10 +1,9 @@
 import { Home as HomeIcon, Lock, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { cn } from '@renderer/lib/utils';
 import { Count, Face, IconButton, SessionMatrix, StatusWord } from './bits';
 import { useHome } from './home-context';
 import { type RailSession, type RailSpace, sessionLabelTone, sessionStatusWord } from './model';
-import { shortSpaceNames } from './rail-data';
 import { SPACE_DRAG_TYPE, SpaceGroups } from './rail-groups';
 import { needsYouPhrase } from './say';
 
@@ -14,7 +13,7 @@ import { needsYouPhrase } from './say';
  * few words); a space is its name, bold while something in it is unread, and
  * a lock or faces. Folds from the toggle at the top (the same toggle the
  * Feed has on the right) to a strip where each busy space is a small group
- * of its sessions under its short name, the quiet ones behind "+N";
+ * of its sessions under a quiet #, the quiet spaces behind "+N";
  * hovering shows a card. You and Settings sit at the bottom.
  */
 
@@ -52,7 +51,6 @@ export function Rail({
       ?.scrollIntoView({ block: 'nearest' });
   }, [state.landed]);
 
-  const shortNames = useMemo(() => shortSpaceNames(spaces.map((s) => s.name)), [spaces]);
   const quietCount = spaces.filter(isQuietSpace).length;
 
   const showPeek = (el: HTMLElement, body: ReactNode) => {
@@ -161,7 +159,6 @@ export function Rail({
               onOpenSpace={() => openSpace(space)}
               onOpenSession={(session) => openSession(space, session)}
               onPeek={showPeek}
-              short={shortNames.get(space.name) ?? space.name}
             />
           )}
         />
@@ -253,7 +250,6 @@ function SpaceEntry({
   onOpenSpace,
   onOpenSession,
   onPeek,
-  short,
 }: {
   space: RailSpace;
   collapsed: boolean;
@@ -262,8 +258,6 @@ function SpaceEntry({
   onOpenSpace: () => void;
   onOpenSession: (session: RailSession) => void;
   onPeek: (el: HTMLElement, body: ReactNode) => void;
-  /** Its name as the folded rail shows it (`shortSpaceNames`). */
-  short: string;
 }) {
   const sessions = space.sessions.map((session) => (
     <SessionEntry
@@ -279,7 +273,8 @@ function SpaceEntry({
     />
   ));
   if (collapsed) {
-    // Folded, a space is a small group: its short name, then its sessions inside it.
+    // Folded, a space is a small group holding its sessions, topped by a quiet # that
+    // opens it (its name is in the hover card).
     // A space with nothing going on folds into the "+N" at the end of the list.
     if (isQuietSpace(space)) return null;
     return (
@@ -296,21 +291,22 @@ function SpaceEntry({
           label={`# ${space.name}${space.unread ? `, ${space.unread} unread` : ''}`}
           onClick={onOpenSpace}
           onPeek={(el) => onPeek(el, <PeekBody title={`# ${space.name}`} text={space.summary} />)}
-          className="h-6 w-full min-w-0 justify-center gap-1 rounded-full px-1.5"
+          className="h-6 w-full min-w-0 justify-center rounded-full"
         >
           <span
             className={cn(
-              'min-w-0 truncate text-kicker',
-              space.unread > 0
-                ? 'font-semibold text-text-primary'
-                : 'font-medium text-text-secondary'
+              'relative font-mono text-meta',
+              space.unread > 0 ? 'text-text-primary' : 'text-text-muted'
             )}
           >
-            {short}
+            #
+            {space.unread > 0 && (
+              <span
+                aria-hidden
+                className="absolute -top-px -right-2 size-1.5 rounded-full bg-accent"
+              />
+            )}
           </span>
-          {space.unread > 0 && (
-            <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-accent" />
-          )}
         </RailButton>
         {sessions}
       </div>

@@ -289,8 +289,10 @@ describe('NewHome', () => {
   it('folded, each busy space is a small group of its sessions; quiet ones wait behind +N', () => {
     const groups = [...rail().querySelectorAll('.hf-fold-space')];
     const ops = groups.find((g) => g.querySelector('[data-rail-id="rig-ops"]'))!;
-    // Its short name ("rig-" is shared), then its session, inside the same group.
-    expect(ops.querySelector('[data-rail-id="rig-ops"]')!.textContent).toBe('ops');
+    // Its marker (named for screen readers and in the hover card), then its session, together.
+    expect(ops.querySelector('[data-rail-id="rig-ops"]')!.getAttribute('aria-label')).toBe(
+      '# rig-ops, 4 unread'
+    );
     expect(ops.querySelector('[data-rail-id="s-domains"]')).toBeTruthy();
     // launch has nothing going on: it isn't drawn, and counts in "+N".
     expect(rail().querySelector('[data-rail-id="b-launch"]')).toBeNull();

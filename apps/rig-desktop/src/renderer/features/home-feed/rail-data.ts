@@ -166,24 +166,3 @@ export function mergeRail(
     return added?.length ? { ...s, sessions: [...added, ...s.sessions] } : s;
   });
 }
-
-/**
- * Space names short enough for the folded rail: a leading `word-` that two or
- * more of your spaces share is dropped ("rig-ops" → "ops", "ulys-backlog" →
- * "backlog"), as long as something meaningful is left.
- */
-export function shortSpaceNames(names: readonly string[]): Map<string, string> {
-  const prefixOf = (name: string) => /^([^-\s]+-)/.exec(name)?.[1] ?? null;
-  const shared = new Map<string, number>();
-  for (const name of names) {
-    const p = prefixOf(name);
-    if (p) shared.set(p, (shared.get(p) ?? 0) + 1);
-  }
-  return new Map(
-    names.map((name) => {
-      const p = prefixOf(name);
-      const rest = p ? name.slice(p.length) : name;
-      return [name, p && (shared.get(p) ?? 0) >= 2 && rest.length >= 3 ? rest : name];
-    })
-  );
-}
