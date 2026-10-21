@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
  */
 
 const SRC = join(__dirname, '..', '..');
-const DIRS = ['renderer/features/home', 'renderer/features/onboarding', 'renderer/features/deep-link', 'renderer/features/rig-share'];
+const DIRS = ['renderer/features/home', 'renderer/features/home-feed', 'renderer/features/onboarding', 'renderer/features/deep-link', 'renderer/features/rig-share'];
 const FILES = ['main/rig/rig-share.ts', 'main/rig/comment-agent.ts'];
 /** Rows of the plain-rigs list, shown only when Settings shows plain rigs: there, rigs is the right word. */
 const SKIP_FILES = new Set(['renderer/features/home/rigs-rail.tsx']);

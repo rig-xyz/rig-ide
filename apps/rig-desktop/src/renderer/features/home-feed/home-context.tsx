@@ -1,0 +1,520 @@
+import {
+  createContext,
+  type Dispatch,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+} from 'react';
+import { ARRIVAL, PEOPLE } from './mock';
+import type { FeedChoice, RailSession, RailSpace, SourceRef } from './model';
+import {
+  type HomeOrchestrator,
+  type OrchestratorContext,
+  scriptedOrchestrator,
+} from './orchestrator';
+import { mergeRail } from './rail-data';
+import { chosen, normalizeText, sayPlain } from './say';
+import {
+  feedCounts,
+  findSession,
+  type FlightLabel,
+  type HomeAction,
+  homeReducer,
+  type HomeState,
+  initialHomeState,
+  type Rect,
+  type Selection,
+} from './store';
+
+/**
+ * Home's state and the moves people make on it. Components read `useHome()`;
+ * the scripted parts (what a started session does next, the arrival of a new
+ * item) live here, behind the same actions a relay-backed Home would call.
+ */
+
+export interface HomeApi {
+  state: HomeState;
+  dispatch: Dispatch<HomeAction>;
+  /** Real spaces merged with the demo ones, as the rail shows them. */
+  spaces: RailSpace[];
+  counts: { needsYou: number; upNext: number };
+  firstName: string;
+  reducedMotion: boolean;
+  orchestrator: HomeOrchestrator;
+  orchestratorContext: OrchestratorContext;
+  open: (selection: Selection) => void;
+  runItem: (itemId: string, from: Rect | null) => void;
+  startSession: (spaceId: string, name: string, from: Rect | null, opts?: StartOptions) => void;
+  bringIn: (sessionId: string, from: Rect | null) => void;
+  addRoutine: (name: string, from: Rect | null) => void;
+  send: (text: string) => void;
+  toast: (text: string) => void;
+  /** Opens a real space or session in the app (its Room or its chat). */
+  openInApp: (target: { space: RailSpace; session?: RailSession }) => void;
+}
+
+interface StartOptions {
+  source?: SourceRef;
+  background?: boolean;
+  note?: string;
+}
+
+const HomeContext = createContext<HomeApi | null>(null);
+
+export function useHome(): HomeApi {
+  const api = useContext(HomeContext);
+  if (!api) throw new Error('useHome outside HomeProvider');
+  return api;
+}
+
+function wait(ms: number, reduced: boolean): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, reduced ? 0 : ms));
+}
+
+export function rectOf(el: Element | null | undefined): Rect | null {
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { left: r.left, top: r.top, width: r.width, height: r.height };
+}
+
+export function HomeProvider({
+  realSpaces,
+  selfName,
+  reducedMotion,
+  orchestrator = scriptedOrchestrator,
+  onOpenPath,
+  onContinueSession,
+  arrivals = true,
+  children,
+}: {
+  realSpaces: RailSpace[];
+  selfName: string | null;
+  reducedMotion: boolean;
+  orchestrator?: HomeOrchestrator;
+  onOpenPath: (path: string, opts?: { kind?: 'space' }) => void;
+  onContinueSession: (path: string, sessionId: string) => void;
+  /** The scripted arrival of a new Feed item; off in tests. */
+  arrivals?: boolean;
+  children: ReactNode;
+}) {
+  const [state, dispatch] = useReducer(homeReducer, undefined, initialHomeState);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const later = useCallback(
+    (ms: number, fn: () => void) => {
+      const t = setTimeout(
+        () => {
+          timers.current.delete(t);
+          fn();
+        },
+        reducedMotion ? Math.min(ms, 400) : ms
+      );
+      timers.current.add(t);
+    },
+    [reducedMotion]
+  );
+  useEffect(() => {
+    const set = timers.current;
+    return () => {
+      for (const t of set) clearTimeout(t);
+      set.clear();
+    };
+  }, []);
+
+  const spaces = useMemo(
+    () => mergeRail(realSpaces, state.demo, new Map(Object.entries(state.extra))),
+    [realSpaces, state.demo, state.extra]
+  );
+  const spacesRef = useRef(spaces);
+  spacesRef.current = spaces;
+  const counts = feedCounts(state.feed);
+  const firstName = (selfName ?? 'there').split(/\s+/)[0] ?? 'there';
+
+  const orchestratorContext = useMemo<OrchestratorContext>(
+    () => ({
+      firstName,
+      needsYou: counts.needsYou,
+      upNext: counts.upNext,
+      defaultSpaceId: spaces[0]?.id ?? 'ulys-backlog',
+      spaceIds: spaces.map((s) => s.id),
+    }),
+    [firstName, counts.needsYou, counts.upNext, spaces]
+  );
+
+  const toast = useCallback((text: string) => dispatch({ type: 'toast', text }), []);
+
+  const open = useCallback((selection: Selection) => {
+    dispatch({ type: 'select', selection });
+    if (selection.kind === 'session' || selection.kind === 'space')
+      dispatch({ type: 'land', id: selection.id });
+  }, []);
+
+  const nextId = useRef(0);
+  const landings = useRef(new Map<string, () => void>());
+  const fly = useCallback(
+    (from: Rect | null, targetId: string, label: FlightLabel, onLand?: () => void) => {
+      const id = `f${++nextId.current}`;
+      if (!from || reducedMotion || stateRef.current.collapsed) {
+        // Nothing to fly from, or no room to show it: land at once, still with the pulse.
+        requestAnimationFrame(() => {
+          dispatch({ type: 'land', id: targetId });
+          onLand?.();
+        });
+        return;
+      }
+      landings.current.set(id, () => {
+        dispatch({ type: 'land', id: targetId });
+        onLand?.();
+      });
+      dispatch({ type: 'fly', flight: { id, from, targetId, label } });
+    },
+    [reducedMotion]
+  );
+
+  const startSession = useCallback(
+    (spaceId: string, name: string, from: Rect | null, opts: StartOptions = {}) => {
+      const id = `s-new${++nextId.current}`;
+      const bg = !!opts.background;
+      const session: RailSession = {
+        id,
+        spaceId,
+        name,
+        state: 'starting',
+        fresh: true,
+        source: opts.source,
+        short: bg ? 'In the background' : 'Starting',
+        summary: bg ? 'Running in the background; reports when done.' : 'Just started from Home.',
+        last: { who: 'Claude', text: 'Reading the brief', ago: 'now' },
+        steps: [
+          { text: 'Read the brief' },
+          ...(opts.note ? [{ text: `Your instructions: ${opts.note}` }] : []),
+        ],
+        origin: 'mock',
+      };
+      dispatch({ type: 'add-session', spaceId, session });
+      fly(from, id, { kind: 'session', name }, () => {
+        later(1600, () =>
+          dispatch({
+            type: 'update-session',
+            id,
+            patch: {
+              state: 'running',
+              activity: 'reading',
+              short: bg ? 'In the background' : 'Opening the items',
+              last: { who: 'Claude', text: 'Opening the items in the brief', ago: 'now' },
+            },
+            step: 'Opening the items in the brief',
+          })
+        );
+        later(4200, () =>
+          dispatch({
+            type: 'update-session',
+            id,
+            patch: {
+              state: 'running',
+              activity: bg ? 'running' : 'editing',
+              short: bg ? 'In the background · 1 of 3' : 'Working on item 1',
+              last: { who: 'Claude', text: 'Working through the first item', ago: 'now' },
+            },
+            step: 'Working through the first item',
+          })
+        );
+      });
+    },
+    [fly, later]
+  );
+
+  const bringIn = useCallback(
+    (sessionId: string, from: Rect | null) => {
+      const found = findSession(spacesRef.current, sessionId);
+      if (!found || found.space.id === 'urgent-triage') {
+        toast('Riyad is already in #urgent-triage');
+        return;
+      }
+      const space: RailSpace = {
+        id: 'urgent-triage',
+        name: 'urgent-triage',
+        visibility: 'shared',
+        faces: [PEOPLE.riyad!],
+        unread: 0,
+        summary:
+          "Cut from your triage session: the brief, Claude's findings and 3 tickets. Riyad is invited.",
+        sessions: [],
+        origin: 'mock',
+        fresh: true,
+      };
+      dispatch({
+        type: 'move-session',
+        sessionId,
+        space,
+        patch: {
+          state: 'waiting_on_person',
+          short: 'Waiting for Riyad',
+          summary: 'Waiting for Riyad on ULY-429. The other two are done.',
+          last: { who: 'Claude', text: 'Waiting for Riyad on ULY-429', ago: 'now' },
+        },
+        steps: ['Moved to #urgent-triage and invited Riyad', 'Waiting for Riyad on ULY-429'],
+      });
+      const ask = stateRef.current.feed.find(
+        (e) => e.item.sessionId === sessionId && e.item.kind === 'ask'
+      );
+      if (ask) dispatch({ type: 'remove', itemId: ask.item.id });
+      fly(from, space.id, { kind: 'space', name: space.name, people: ['riyad'] }, () =>
+        toast('Made #urgent-triage and invited Riyad')
+      );
+    },
+    [fly, toast]
+  );
+
+  const createSpace = useCallback(
+    (choice: FeedChoice, source: SourceRef | undefined, from: Rect | null) => {
+      if (choice.target.kind !== 'new-space') return;
+      const { name, people } = choice.target;
+      const sessionId = `${name}-daily`;
+      const space: RailSpace = {
+        id: name,
+        name,
+        visibility: 'shared',
+        faces: people.map((p) => PEOPLE[p]).filter((p): p is NonNullable<typeof p> => !!p),
+        unread: 0,
+        summary:
+          'Season 1 Loyalty Launch: 42 items. Anthony, Natalie and Harold invited; Claude posts a daily status.',
+        origin: 'mock',
+        fresh: true,
+        sessions: [
+          {
+            id: sessionId,
+            spaceId: name,
+            name: 'Daily launch status',
+            state: 'starting',
+            source,
+            short: 'Starting',
+            summary:
+              'Posts what moved, what stalled and who is blocked, every morning until launch.',
+            last: { who: 'Claude', text: 'Reading the items', ago: 'now' },
+            steps: [{ text: 'Read the brief' }],
+            origin: 'mock',
+          },
+        ],
+      };
+      dispatch({ type: 'add-space', space, index: 1 });
+      fly(from, space.id, { kind: 'space', name, people }, () =>
+        later(1600, () =>
+          dispatch({
+            type: 'update-session',
+            id: sessionId,
+            patch: { state: 'running', activity: 'reading', short: 'Reading 42 tickets' },
+            step: 'Reading 42 tickets',
+          })
+        )
+      );
+    },
+    [fly, later]
+  );
+
+  const runItem = useCallback(
+    (itemId: string, from: Rect | null) => {
+      const entry = stateRef.current.feed.find((e) => e.item.id === itemId);
+      if (!entry) return;
+      const { item } = entry;
+      const choice = chosen(item, entry.pick);
+      const text = normalizeText(entry.edited ?? sayPlain(item, choice));
+      const target = choice.target;
+      switch (choice.verb) {
+        case 'reply': {
+          if (target.kind === 'session') {
+            dispatch({
+              type: 'update-session',
+              id: target.sessionId,
+              patch: {
+                state: 'running',
+                activity: 'editing',
+                short: 'Working on your reply',
+                last: { who: 'Claude', text: 'Working on your reply', ago: 'now' },
+              },
+              step: `You: ${text}`,
+            });
+          }
+          dispatch({ type: 'remove', itemId });
+          toast('Replied. Claude picks it up now.');
+          return;
+        }
+        case 'open': {
+          if (target.kind === 'session') open({ kind: 'session', id: target.sessionId });
+          else if (target.kind === 'space') open({ kind: 'space', id: target.spaceId });
+          return;
+        }
+        case 'space': {
+          if (target.kind !== 'new-space') return;
+          if (target.fromSessionId) {
+            dispatch({
+              type: 'update-session',
+              id: target.fromSessionId,
+              patch: {},
+              step: `You: ${text}`,
+            });
+            bringIn(target.fromSessionId, from);
+          } else {
+            createSpace(choice, item.source, from);
+            dispatch({ type: 'remove', itemId });
+          }
+          return;
+        }
+        case 'start': {
+          const spaceId = target.kind === 'new-session' ? target.spaceId : item.spaceId;
+          dispatch({ type: 'remove', itemId });
+          startSession(spaceId, item.title, from, {
+            source: item.source,
+            background: target.kind === 'new-session' && !!target.background,
+            note: entry.edited ? text : undefined,
+          });
+          return;
+        }
+      }
+    },
+    [bringIn, createSpace, open, startSession, toast]
+  );
+
+  const addRoutine = useCallback(
+    (name: string, from: Rect | null) => {
+      const id = `s-routine${++nextId.current}`;
+      const spaceId = spacesRef.current[0]?.id ?? 'ulys-backlog';
+      dispatch({
+        type: 'add-session',
+        spaceId,
+        atEnd: true,
+        session: {
+          id,
+          spaceId,
+          name: `Routine: ${name}`,
+          state: 'queued',
+          fresh: true,
+          source: { connector: 'linear', scope: 'Ulys', ref: 'Earn tickets' },
+          short: 'Next run Monday 9:00',
+          summary:
+            'Runs Mondays at 9:00 as a background session. Saved as .rig/routines/clear-stale-earn.md.',
+          last: { who: 'Rig', text: 'Next run Monday 9:00', ago: 'Mon' },
+          steps: [
+            { text: 'Saved .rig/routines/clear-stale-earn.md' },
+            { text: 'Next run Monday 9:00', ago: 'Mon' },
+          ],
+          origin: 'mock',
+        },
+      });
+      fly(from, id, { kind: 'session', name: 'Routine', queued: true }, () => {
+        const msg = `m${++nextId.current}`;
+        dispatch({ type: 'message', message: { id: msg, who: 'rig', blocks: null } });
+        later(250, () =>
+          dispatch({
+            type: 'message-blocks',
+            id: msg,
+            blocks: [
+              {
+                kind: 'text',
+                runs: [
+                  {
+                    kind: 'text',
+                    text: `Saved. It sits in the rail under ${spacesRef.current[0]?.name ?? 'your space'} with its next run.`,
+                  },
+                ],
+              },
+            ],
+          })
+        );
+      });
+    },
+    [fly, later]
+  );
+
+  const send = useCallback(
+    (raw: string) => {
+      const text = raw.trim();
+      if (!text) return;
+      dispatch({ type: 'message', message: { id: `m${++nextId.current}`, who: 'me', text } });
+      const id = `m${++nextId.current}`;
+      dispatch({ type: 'message', message: { id, who: 'rig', blocks: null } });
+      void Promise.all([
+        orchestrator.respond(text, orchestratorContext),
+        wait(600, reducedMotion),
+      ]).then(([blocks]) => dispatch({ type: 'message-blocks', id, blocks }));
+    },
+    [orchestrator, orchestratorContext, reducedMotion]
+  );
+
+  const openInApp = useCallback(
+    ({ space, session }: { space: RailSpace; session?: RailSession }) => {
+      if (!space.root) return;
+      if (session?.id.startsWith('chat:'))
+        onContinueSession(space.root, session.id.slice('chat:'.length));
+      else onOpenPath(space.root, { kind: 'space' });
+    },
+    [onContinueSession, onOpenPath]
+  );
+
+  // A watch session promotes something into the Feed while you're on Home.
+  useEffect(() => {
+    if (!arrivals) return;
+    const t = setTimeout(() => {
+      dispatch({ type: 'inbox', add: ARRIVAL.inboxBump });
+      const item = ARRIVAL.item();
+      if (stateRef.current.feed.some((e) => e.item.id === item.id)) return;
+      dispatch({ type: 'add-item', item });
+      dispatch({ type: 'toast', text: `New in your Feed: ${item.title}` });
+    }, ARRIVAL.afterMs);
+    return () => clearTimeout(t);
+  }, [arrivals]);
+
+  const api = useMemo<HomeApi>(
+    () => ({
+      state,
+      dispatch,
+      spaces,
+      counts,
+      firstName,
+      reducedMotion,
+      orchestrator,
+      orchestratorContext,
+      open,
+      runItem,
+      startSession,
+      bringIn,
+      addRoutine,
+      send,
+      toast,
+      openInApp,
+    }),
+    // `counts` is derived from `state.feed`.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+    [
+      state,
+      spaces,
+      firstName,
+      reducedMotion,
+      orchestrator,
+      orchestratorContext,
+      open,
+      runItem,
+      startSession,
+      bringIn,
+      addRoutine,
+      send,
+      toast,
+      openInApp,
+    ]
+  );
+
+  return (
+    <HomeContext.Provider value={api}>
+      <LandingsContext.Provider value={landings.current}>{children}</LandingsContext.Provider>
+    </HomeContext.Provider>
+  );
+}
+
+/** What to run when a flight lands, by flight id (read by the fly layer). */
+export const LandingsContext = createContext<Map<string, () => void>>(new Map());

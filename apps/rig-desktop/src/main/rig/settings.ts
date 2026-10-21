@@ -185,6 +185,7 @@ function normalizeSettings(parsed: unknown): RigSettings {
     hiddenByRig: isBooleanRecord(raw.hiddenByRig) ? raw.hiddenByRig : {},
     showSystemFiles: raw.showSystemFiles === true,
     showPlainRigs: raw.showPlainRigs === true,
+    newHomeEnabled: raw.newHomeEnabled === true,
     pinnedPathsByRig: isStringArrayRecord(raw.pinnedPathsByRig) ? raw.pinnedPathsByRig : {},
     fileTreeViewByRig: normalizeFileTreeViewRecord(raw.fileTreeViewByRig),
     autoApproveAgentActions: raw.autoApproveAgentActions === true,

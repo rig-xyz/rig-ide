@@ -1,0 +1,261 @@
+/*
+ * The new Home's few pieces Tailwind can't say cleanly: the goo action pill,
+ * the carousel's dots, the proposal's tokens, the row tints and the motion.
+ * Colors come from tokens.css only. Every animation sits behind
+ * `prefers-reduced-motion: no-preference`.
+ */
+
+/* ── rail ─────────────────────────────────────────────────────────────── */
+
+.hf-rail {
+  transition: width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* The thread from a space down to its sessions. */
+.hf-stem {
+  position: absolute;
+  left: 21px;
+  top: -6px;
+  bottom: 50%;
+  width: 1px;
+  background: var(--border-hairline);
+}
+
+@keyframes hf-land {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent);
+  }
+  40% {
+    box-shadow: 0 0 0 6px var(--accent-subtle);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.hf-landed {
+  border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hf-landed {
+    animation: hf-land 1.2s ease;
+  }
+}
+
+/* ── chat ─────────────────────────────────────────────────────────────── */
+
+@keyframes hf-rise {
+  from {
+    transform: translateY(6px);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes hf-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.hf-typing i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hf-rise {
+    animation: hf-rise 0.35s ease both;
+  }
+  .hf-menu-in {
+    animation: hf-rise 0.15s ease both;
+  }
+  .hf-typing i {
+    animation: hf-blink 1s infinite;
+  }
+  .hf-typing i:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+  .hf-typing i:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+}
+
+/* ── feed rows ────────────────────────────────────────────────────────── */
+
+.hf-row {
+  transition: background-color 0.15s ease-out;
+}
+.hf-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 2%, transparent);
+}
+.hf-row[data-needs='true'] {
+  background: color-mix(in srgb, var(--status-warn) 6%, transparent);
+}
+.hf-row[data-needs='true']:hover {
+  background: color-mix(in srgb, var(--status-warn) 8%, transparent);
+}
+
+@keyframes hf-arrive {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hf-arrive {
+    animation: hf-arrive 0.7s cubic-bezier(0.3, 1.4, 0.5, 1);
+  }
+}
+
+/* The faces and the source logo overlap, each ringed in the row's own color. */
+.hf-stack > * + * {
+  margin-left: -6px;
+}
+.hf-stack > * {
+  box-shadow: 0 0 0 2px var(--bg-1);
+}
+.hf-row[data-needs='true'] .hf-stack > * {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-warn) 6%, var(--bg-1));
+}
+
+/* The proposal: plain text you can edit, its action first in bold. */
+.hf-say-wrap {
+  border-radius: 10px;
+  transition: background-color 0.15s ease-out;
+}
+.hf-say-wrap:hover {
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+.hf-say {
+  border: 1px solid transparent;
+  outline: none;
+  cursor: text;
+  color: var(--text-secondary);
+  transition:
+    background-color 0.15s ease-out,
+    border-color 0.15s ease-out;
+}
+.hf-say:focus {
+  background: var(--bg-1);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+.hf-say-wrap[data-edited='true'] .hf-say {
+  color: var(--text-primary);
+}
+
+@keyframes hf-slide-left {
+  from {
+    transform: translateX(14px);
+    opacity: 0.2;
+  }
+}
+@keyframes hf-slide-right {
+  from {
+    transform: translateX(-14px);
+    opacity: 0.2;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hf-say[data-slide='left'] {
+    animation: hf-slide-left 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .hf-say[data-slide='right'] {
+    animation: hf-slide-right 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+}
+
+.hf-tok {
+  display: inline-flex;
+  align-items: baseline;
+  padding: 0 5px;
+  border-radius: 5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: help;
+}
+.hf-tok[data-kind='person'] {
+  background: color-mix(in srgb, var(--theme-1) 18%, transparent);
+  color: color-mix(in srgb, var(--theme-1) 70%, var(--text-primary));
+}
+.hf-tok[data-kind='space'] {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+.hf-tok[data-kind='ref'] {
+  background: var(--bg-3);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  font-weight: 400;
+}
+.hf-tok[data-kind='new-space'] {
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+/* The options carousel: arrows, and a dot per option; the one showing is a short bar. */
+.hf-dot::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  transition:
+    width 0.2s,
+    background-color 0.2s;
+}
+.hf-dot:hover::before {
+  background: var(--text-secondary);
+}
+.hf-dot[aria-current='true']::before {
+  width: 16px;
+  border-radius: 3px;
+  background: var(--text-primary);
+}
+
+/* The action: a strong pill and a round menu button, joined like a drop by the goo filter. */
+.hf-goo {
+  filter: url(#hf-goo);
+}
+.hf-goo-part {
+  transition:
+    transform 0.2s cubic-bezier(0.3, 1.6, 0.5, 1),
+    filter 0.15s;
+}
+.hf-goo-part:hover {
+  filter: brightness(1.08);
+}
+/* The menu button pulls away on hover; 2px keeps a thin neck between the two (at 3px it snaps). */
+.hf-goo:hover .hf-goo-caret {
+  transform: translateX(2px);
+}
+.hf-goo-main:active {
+  transform: scale(0.97);
+}
+
+.hf-chev {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translateY(-2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hf-rail,
+  .hf-goo-part,
+  .hf-dot::before {
+    transition: none;
+  }
+}

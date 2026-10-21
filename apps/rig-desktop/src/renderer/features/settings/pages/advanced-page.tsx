@@ -10,10 +10,38 @@ import { SettingsRow, SettingsRows, SettingsSwitch } from '../settings-row';
 export function AdvancedPage() {
   return (
     <SettingsRows>
+      <NewHomeRow />
       <RoomThemesRow />
       <SpacesDiskCacheRow />
       <RigHomeRow />
     </SettingsRows>
+  );
+}
+
+/** `newHomeEnabled`: swaps Home for the preview of the new one. Read live (`useNewHomeEnabled`). */
+function NewHomeRow() {
+  const row = settingsRow('new-home')!;
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['rig', 'settings', 'newHomeEnabled'],
+    queryFn: () => rpc.rig.settings.get(),
+  });
+  const enabled = data?.newHomeEnabled ?? false;
+
+  const toggle = () => {
+    void rpc.rig.settings.set({ newHomeEnabled: !enabled }).then(() => {
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'settings', 'newHomeEnabled'] });
+    });
+  };
+
+  return (
+    <SettingsRow
+      id={row.id}
+      label={row.label}
+      description={row.description}
+      htmlFor="new-home-enabled"
+      control={<SettingsSwitch id="new-home-enabled" label={row.label} checked={enabled} onToggle={toggle} />}
+    />
   );
 }
 

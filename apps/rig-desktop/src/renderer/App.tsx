@@ -24,8 +24,8 @@ import { DeepLinkJoinDialog } from '@renderer/features/deep-link/deep-link-join-
 import { ReportProblemDialogHost } from '@renderer/features/shell/report-problem-dialog';
 import { markBindingDeleted } from '@renderer/features/home/deleted-rig-store';
 import { Home } from '@renderer/features/home/home';
-import { stripRigPrefix } from '@renderer/features/home/summary-segments';
-import { usePulseBriefing } from '@renderer/features/home/use-pulse-briefing';
+import { NewHome } from '@renderer/features/home-feed/new-home';
+import { useNewHomeEnabled } from '@renderer/features/home-feed/use-new-home-enabled';
 import { Onboarding } from '@renderer/features/onboarding/onboarding';
 import { deriveOnboardingSteps } from '@renderer/features/onboarding/onboarding-state';
 import { onOpenSpaceRequest } from '@renderer/features/people/open-space-request';
@@ -419,6 +419,7 @@ export function App() {
   // Per-window, deliberately not persisted; closes back to whatever layout
   // was already showing rather than replacing it.
   const spacesEnabled = useSpacesEnabled();
+  const newHomeEnabled = useNewHomeEnabled();
   const [roomPreviewOpen, setRoomPreviewOpen] = useState(false);
   const chatNativeCloseRef = useRef<(() => void) | null>(null);
   const [canCloseChatTab, setCanCloseChatTab] = useState(false);
@@ -1342,9 +1343,14 @@ export function App() {
   }
 
   const chrome = topbarChrome(rigView ? { isSpace: rigViewIsSpace, layout } : null);
+  // The new Home (Settings › Advanced) owns the whole window, its own top
+  // strip included, so the bar steps aside and its Activity and Settings
+  // buttons move to the top of the Feed.
+  const showNewHome = newHomeEnabled && !rigView && folder.status === 'empty';
 
   return (
     <div className="relative flex h-full flex-col">
+      {!showNewHome && (
       <Topbar
         context={deriveTopbarContext(
           rigView ? { name: rigView.name, bindingId: rigView.bindingId, path: rigView.root } : null
@@ -1423,6 +1429,7 @@ export function App() {
           ) : undefined
         }
       />
+      )}
       {bound && spacesEnabled && !boundIsSpace && roomPreviewOpen && (
         // Dev entry point only (Spaces lane 2): the Room UI over a recorded
         // feed, no relay dependency. Overlays the whole rig pane instead of
@@ -1628,6 +1635,41 @@ export function App() {
         // own comment) — `ref`/`onScroll` feed `mainScrolled` above, and
         // `pt-10` replaces the clearance the old normal-flow topbar used to
         // give it for free.
+        showNewHome ? (
+          <div className="min-h-0 flex-1">
+            <RecoveryBoundary scope="Home">
+              <NewHome
+                onOpenPath={openPath}
+                onContinueSession={continueSession}
+                headerEnd={
+                  <>
+                    <ActivityBell onOpenPath={openPath} onOpenTarget={(target) => void openSpaceAt(target)} />
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            onClick={() => openSettings(isUpdateReady(updateStatus.state) ? 'about' : undefined)}
+                            aria-label="Settings"
+                            className="relative flex size-7 items-center justify-center rounded-control text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
+                          >
+                            <SettingsIcon size={15} strokeWidth={1.5} />
+                            {isUpdateReady(updateStatus.state) && (
+                              <span className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-accent" />
+                            )}
+                          </button>
+                        }
+                      />
+                      <TooltipContent side="bottom">
+                        {isUpdateReady(updateStatus.state) ? 'Update ready' : 'Settings'}
+                      </TooltipContent>
+                    </Tooltip>
+                  </>
+                }
+              />
+            </RecoveryBoundary>
+          </div>
+        ) : (
         <main
           onScroll={(event) => setMainScrolled(event.currentTarget.scrollTop > 4)}
           className="min-h-0 flex-1 overflow-y-auto pt-10"
@@ -1650,6 +1692,7 @@ export function App() {
             </div>
           )}
         </main>
+        )
       )}
     </div>
   );

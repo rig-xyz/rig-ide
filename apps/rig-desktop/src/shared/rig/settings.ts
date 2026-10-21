@@ -249,6 +249,12 @@ export type RigSettings = {
    */
   roomThemesEnabled: boolean;
   /**
+   * The new Home (rig README §2: the rail of what's being done, the chat with
+   * Rig, and the Feed of what to do next). A preview, off by default; read
+   * live, so toggling it swaps Home without a reload.
+   */
+  newHomeEnabled: boolean;
+  /**
    * Set once the 0.4.9 "disk cache and Room themes on by default" switch has
    * been applied to this settings file. Earlier builds saved `false` for both
    * for everyone who never touched them, so `normalizeSettings` turns both on
@@ -300,6 +306,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   spacesRoomSeesDefault: DEFAULT_ROOM_SEES,
   spacesChatView: 'flow',
   spacesRoomDiskCache: true,
+  newHomeEnabled: false,
   roomThemesEnabled: true,
   cacheAndThemesDefaultOnApplied: true,
   pageSignIns: DEFAULT_PAGE_SIGN_INS,

@@ -147,6 +147,12 @@ export const SETTINGS_ROWS: readonly SettingsRowEntry[] = [
   { id: 'privacy-policy', page: 'privacy', label: 'Privacy policy', description: 'What Rig Labs collects and why.' },
   { id: 'terms', page: 'privacy', label: 'Terms of service', description: 'The agreement for using Rig.' },
   {
+    id: 'new-home',
+    page: 'advanced',
+    label: 'Preview the new Home',
+    description: "Home as a rail of what's being done, a chat with Rig, and a feed of what to do next.",
+  },
+  {
     id: 'topics',
     page: 'advanced',
     label: 'Topics',

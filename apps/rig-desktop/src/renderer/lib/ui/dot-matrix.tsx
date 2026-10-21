@@ -11,7 +11,11 @@ import { cn } from '@renderer/lib/utils';
  * searching hops between cells, editing fills in reading order, running
  * moves like a level meter, planning spirals in and out, and waiting
  * breathes in the center only. End glyphs: done (check), failed (cross),
- * stopped (block), queued (bar).
+ * stopped (block), queued (bar), idle (a dim cross: nothing running) and
+ * quiet (one dim dot: a suggestion, not a session yet).
+ *
+ * `tone` recolors a matrix where color carries meaning: amber when an agent
+ * waits on you, green when it finished, muted while it waits on someone else.
  *
  * With reduced motion the clock never ticks, so each state shows its first
  * frame, which still differs from the others.
@@ -26,7 +30,8 @@ export type DotMatrixActivity =
   | 'running'
   | 'planning'
   | 'waiting';
-export type DotMatrixEnd = 'done' | 'failed' | 'stopped' | 'queued';
+export type DotMatrixEnd = 'done' | 'failed' | 'stopped' | 'queued' | 'idle' | 'quiet';
+export type DotMatrixTone = 'accent' | 'warn' | 'ok' | 'mute';
 export type DotMatrixState = DotMatrixActivity | DotMatrixEnd;
 
 const TICK_MS = 110;
@@ -147,11 +152,22 @@ const ENDS: Record<DotMatrixEnd, { frame: number[]; tone: string }> = {
   failed: { frame: glyph([0, 2, 4, 6, 8]), tone: 'bg-danger' },
   stopped: { frame: glyph([0, 1, 2, 3, 4, 5, 6, 7, 8], 0.55), tone: 'bg-text-muted' },
   queued: { frame: glyph([3, 4, 5], 0.7), tone: 'bg-text-muted' },
+  idle: { frame: glyph([0, 2, 4, 6, 8], 0.32), tone: 'bg-accent' },
+  quiet: { frame: glyph([4], 0.45), tone: 'bg-text-muted' },
+};
+
+const TONES: Record<DotMatrixTone, string> = {
+  accent: 'bg-accent',
+  warn: 'bg-status-warn',
+  ok: 'bg-status-ok',
+  mute: 'bg-text-muted',
 };
 
 const SIZES = {
   sm: { cell: 'size-[3px]', gap: 'gap-px' },
   md: { cell: 'size-1', gap: 'gap-0.5' },
+  /** The context view's header tile. */
+  xl: { cell: 'size-1.5', gap: 'gap-[3px]' },
   lg: { cell: 'size-2', gap: 'gap-1' },
 } as const;
 
@@ -159,9 +175,17 @@ function isEnd(state: DotMatrixState): state is DotMatrixEnd {
   return state in ENDS;
 }
 
-function LiveMatrix({ state, cell }: { state: DotMatrixActivity; cell: string }) {
+function LiveMatrix({
+  state,
+  cell,
+  tone,
+}: {
+  state: DotMatrixActivity;
+  cell: string;
+  tone: string;
+}) {
   const t = useSyncExternalStore(subscribe, getTick, getTick);
-  return <Cells frame={FRAMES[state](t)} tone="bg-accent" cell={cell} />;
+  return <Cells frame={FRAMES[state](t)} tone={tone} cell={cell} />;
 }
 
 function Cells({ frame, tone, cell }: { frame: number[]; tone: string; cell: string }) {
@@ -183,10 +207,13 @@ export function DotMatrix({
   size = 'md',
   className,
   label,
+  tone,
 }: {
   state: DotMatrixState;
   size?: keyof typeof SIZES;
   className?: string;
+  /** Overrides the state's own color; live states default to the accent. */
+  tone?: DotMatrixTone;
   /** Spoken name for the state; the matrix is decorative without one. */
   label?: string;
 }) {
@@ -200,9 +227,9 @@ export function DotMatrix({
       data-state={state}
     >
       {isEnd(state) ? (
-        <Cells frame={ENDS[state].frame} tone={ENDS[state].tone} cell={cell} />
+        <Cells frame={ENDS[state].frame} tone={tone ? TONES[tone] : ENDS[state].tone} cell={cell} />
       ) : (
-        <LiveMatrix state={state} cell={cell} />
+        <LiveMatrix state={state} cell={cell} tone={TONES[tone ?? 'accent']} />
       )}
     </span>
   );
