@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { demoSpaces } from './mock';
 import { sessionMatrix } from './model';
-import { mergeRail, realSpaceToRail, runToSession } from './rail-data';
+import { mergeRail, realSpaceToRail, runToSession, shortSpaceNames } from './rail-data';
 
 const NOW = Date.parse('2026-10-21T09:00:00Z');
 
@@ -121,5 +121,27 @@ describe('mergeRail', () => {
     expect(ops.sessions.map((s) => s.id)).toEqual(['s-domains']);
     expect(merged.at(-1)!.id).toBe('bind-x');
     expect(merged.filter((s) => s.name === 'rig-ops')).toHaveLength(1);
+  });
+});
+
+describe('shortSpaceNames', () => {
+  it('drops a prefix your spaces share, and only that', () => {
+    const short = shortSpaceNames([
+      'rig-ops',
+      'rig-marketing',
+      'ulys-backlog',
+      'ulys-ideas-simulator',
+      'warm-island',
+      'proactivity',
+      'rig-qa',
+    ]);
+    expect(short.get('rig-ops')).toBe('ops');
+    expect(short.get('rig-marketing')).toBe('marketing');
+    expect(short.get('ulys-backlog')).toBe('backlog');
+    expect(short.get('ulys-ideas-simulator')).toBe('ideas-simulator');
+    expect(short.get('warm-island')).toBe('warm-island');
+    expect(short.get('proactivity')).toBe('proactivity');
+    // "qa" is too short to stand alone.
+    expect(short.get('rig-qa')).toBe('rig-qa');
   });
 });

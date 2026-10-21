@@ -187,7 +187,8 @@ describe('NewHome', () => {
     expect(host.querySelector('aside')!.textContent).toContain('2 need you · 4 up next');
   });
 
-  it('merges real spaces into the rail: a demo space takes the real one with its name, in your groups', () => {
+  it('merges real spaces into the rail: a demo space takes the real one with its name, in your groups', async () => {
+    await click(button(rail(), 'Open the sidebar'));
     const ids = [...rail().querySelectorAll('[data-rail-id]')].map((e) =>
       e.getAttribute('data-rail-id')
     );
@@ -196,10 +197,8 @@ describe('NewHome', () => {
     expect(ids.slice(2, 5)).toEqual(['ulys-backlog', 's-triage', 's-stale']);
     expect(ids.filter((id) => id === 'rig-ops')).toHaveLength(1);
     expect(ids.at(-1)).toBe('b-launch');
-    // The merged space keeps its real unread, named for screen readers in the folded rail.
-    expect(rail().querySelector('[data-rail-id="rig-ops"]')!.getAttribute('aria-label')).toBe(
-      '# rig-ops, 4 unread'
-    );
+    // The merged space keeps its real unread: bold, with its dot.
+    expect(rail().querySelector('[data-rail-id="rig-ops"] .bg-accent')).toBeTruthy();
   });
 
   it('shows your groups: a group folds under its header, and a space dragged onto it moves there', async () => {
@@ -282,8 +281,20 @@ describe('NewHome', () => {
   });
 
   it('a space on disk opens straight into its Room from the rail', async () => {
+    await click(button(rail(), 'Open the sidebar'));
     await click(rail().querySelector('[data-rail-id="b-launch"]'));
     expect(opened).toEqual([['/Users/me/Rig/launch', { kind: 'space' }]]);
+  });
+
+  it('folded, each busy space is a small group of its sessions; quiet ones wait behind +N', () => {
+    const groups = [...rail().querySelectorAll('.hf-fold-space')];
+    const ops = groups.find((g) => g.querySelector('[data-rail-id="rig-ops"]'))!;
+    // Its short name ("rig-" is shared), then its session, inside the same group.
+    expect(ops.querySelector('[data-rail-id="rig-ops"]')!.textContent).toBe('ops');
+    expect(ops.querySelector('[data-rail-id="s-domains"]')).toBeTruthy();
+    // launch has nothing going on: it isn't drawn, and counts in "+N".
+    expect(rail().querySelector('[data-rail-id="b-launch"]')).toBeNull();
+    expect(rail().querySelector('[aria-label$="more spaces: open the sidebar"]')).toBeTruthy();
   });
 
   it('a space is bold only while something in it is unread, and shows member photos', async () => {

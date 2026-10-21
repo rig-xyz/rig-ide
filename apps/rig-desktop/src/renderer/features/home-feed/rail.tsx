@@ -1,9 +1,10 @@
 import { Home as HomeIcon, Lock, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@renderer/lib/utils';
 import { Count, Face, IconButton, SessionMatrix, StatusWord } from './bits';
 import { useHome } from './home-context';
 import { type RailSession, type RailSpace, sessionLabelTone, sessionStatusWord } from './model';
+import { shortSpaceNames } from './rail-data';
 import { SPACE_DRAG_TYPE, SpaceGroups } from './rail-groups';
 import { needsYouPhrase } from './say';
 
@@ -11,9 +12,10 @@ import { needsYouPhrase } from './say';
  * Left: what's being done. Home, then your spaces in your groups, each with
  * its sessions indented under it. State lives on sessions (a dot matrix and a
  * few words); a space is its name, bold while something in it is unread, and
- * a lock or faces. Folds to an icon strip from the toggle at the top, the
- * same toggle the Feed has on the right; hovering an icon shows a card. You
- * and Settings sit at the bottom.
+ * a lock or faces. Folds from the toggle at the top (the same toggle the
+ * Feed has on the right) to a strip where each busy space is a small group
+ * of its sessions under its short name, the quiet ones behind "+N";
+ * hovering shows a card. You and Settings sit at the bottom.
  */
 
 type Peek = { el: HTMLElement; body: ReactNode };
@@ -49,6 +51,9 @@ export function Rail({
       ?.querySelector(`[data-rail-id="${CSS.escape(state.landed.id)}"]`)
       ?.scrollIntoView({ block: 'nearest' });
   }, [state.landed]);
+
+  const shortNames = useMemo(() => shortSpaceNames(spaces.map((s) => s.name)), [spaces]);
+  const quietCount = spaces.filter(isQuietSpace).length;
 
   const showPeek = (el: HTMLElement, body: ReactNode) => {
     if (collapsed) setPeek({ el, body });
@@ -134,7 +139,7 @@ export function Rail({
         ref={listRef}
         className={cn(
           'grid min-h-0 content-start gap-px overflow-x-hidden overflow-y-auto pt-2 pb-3',
-          collapsed ? 'justify-items-center px-[22px]' : 'px-3'
+          collapsed ? 'justify-items-center px-2.5' : 'px-3'
         )}
       >
         {!collapsed && (
@@ -156,9 +161,21 @@ export function Rail({
               onOpenSpace={() => openSpace(space)}
               onOpenSession={(session) => openSession(space, session)}
               onPeek={showPeek}
+              short={shortNames.get(space.name) ?? space.name}
             />
           )}
         />
+        {collapsed && quietCount > 0 && (
+          <button
+            type="button"
+            onClick={() => dispatch({ type: 'collapse', value: false })}
+            aria-label={`${quietCount} more spaces: open the sidebar`}
+            title={`${quietCount} more spaces`}
+            className="hf-rail-item mt-1.5 h-7 rounded-full px-2.5 text-kicker font-medium text-text-muted hover:bg-bg-2 hover:text-text-primary"
+          >
+            +{quietCount}
+          </button>
+        )}
       </div>
       <You
         you={you}
@@ -236,6 +253,7 @@ function SpaceEntry({
   onOpenSpace,
   onOpenSession,
   onPeek,
+  short,
 }: {
   space: RailSpace;
   collapsed: boolean;
@@ -244,7 +262,60 @@ function SpaceEntry({
   onOpenSpace: () => void;
   onOpenSession: (session: RailSession) => void;
   onPeek: (el: HTMLElement, body: ReactNode) => void;
+  /** Its name as the folded rail shows it (`shortSpaceNames`). */
+  short: string;
 }) {
+  const sessions = space.sessions.map((session) => (
+    <SessionEntry
+      key={session.id}
+      space={space}
+      session={session}
+      ghost={space.fresh || session.fresh}
+      collapsed={collapsed}
+      current={selected === session.id}
+      landedKey={landed?.id === session.id ? landed.n : undefined}
+      onOpen={() => onOpenSession(session)}
+      onPeek={onPeek}
+    />
+  ));
+  if (collapsed) {
+    // Folded, a space is a small group: its short name, then its sessions inside it.
+    // A space with nothing going on folds into the "+N" at the end of the list.
+    if (isQuietSpace(space)) return null;
+    return (
+      <div
+        className={cn(
+          'hf-fold-space mt-1.5 grid w-[60px] grid-cols-[minmax(0,1fr)] justify-items-center gap-0.5 rounded-[16px] px-1 py-1',
+          space.fresh && 'invisible'
+        )}
+      >
+        <RailButton
+          railId={space.id}
+          collapsed
+          landedKey={landed?.id === space.id ? landed.n : undefined}
+          label={`# ${space.name}${space.unread ? `, ${space.unread} unread` : ''}`}
+          onClick={onOpenSpace}
+          onPeek={(el) => onPeek(el, <PeekBody title={`# ${space.name}`} text={space.summary} />)}
+          className="h-6 w-full min-w-0 justify-center gap-1 rounded-full px-1.5"
+        >
+          <span
+            className={cn(
+              'min-w-0 truncate text-kicker',
+              space.unread > 0
+                ? 'font-semibold text-text-primary'
+                : 'font-medium text-text-secondary'
+            )}
+          >
+            {short}
+          </span>
+          {space.unread > 0 && (
+            <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-accent" />
+          )}
+        </RailButton>
+        {sessions}
+      </div>
+    );
+  }
   // Bold while something in it is unread or waits on you, like the Spaces card.
   const loud = space.unread > 0 || space.sessions.some((s) => s.state === 'needs_you');
   const unreadDot = space.unread > 0 && (
@@ -271,47 +342,21 @@ function SpaceEntry({
         dragId={space.bindingId}
         onClick={onOpenSpace}
         onPeek={(el) => onPeek(el, <PeekBody title={`# ${space.name}`} text={space.summary} />)}
-        className={collapsed ? 'mt-1 size-9 justify-center' : 'mt-1 h-8 gap-2 pr-2 pl-2'}
+        className="mt-1 h-8 gap-2 pr-2 pl-2"
       >
-        {collapsed ? (
-          <span className="relative font-mono text-sm text-text-muted">
-            #
-            {space.unread > 0 && (
-              <span
-                aria-hidden
-                className="absolute -top-0.5 -right-1.5 size-1.5 rounded-full bg-accent"
-              />
-            )}
-          </span>
-        ) : (
-          <>
-            <span
-              className={cn(
-                'min-w-0 flex-1 truncate text-ui',
-                loud ? 'font-semibold text-text-primary' : 'text-text-secondary'
-              )}
-            >
-              <span className="mr-1 text-text-muted">#</span>
-              {space.name}
-            </span>
-            {unreadDot}
-            {people}
-          </>
-        )}
+        <span
+          className={cn(
+            'min-w-0 flex-1 truncate text-ui',
+            loud ? 'font-semibold text-text-primary' : 'text-text-secondary'
+          )}
+        >
+          <span className="mr-1 text-text-muted">#</span>
+          {space.name}
+        </span>
+        {unreadDot}
+        {people}
       </RailButton>
-      {space.sessions.map((session) => (
-        <SessionEntry
-          key={session.id}
-          space={space}
-          session={session}
-          ghost={space.fresh || session.fresh}
-          collapsed={collapsed}
-          current={selected === session.id}
-          landedKey={landed?.id === session.id ? landed.n : undefined}
-          onOpen={() => onOpenSession(session)}
-          onPeek={onPeek}
-        />
-      ))}
+      {sessions}
     </>
   );
 }
@@ -395,6 +440,11 @@ function SessionEntry({
       )}
     </RailButton>
   );
+}
+
+/** Nothing going on in it: no sessions, nothing unread. Folded, it waits behind "+N". */
+function isQuietSpace(space: RailSpace): boolean {
+  return space.sessions.length === 0 && space.unread === 0 && !space.fresh;
 }
 
 /** One rail row: the open and press states, the hover card, dragging a space, the landing pulse. */
