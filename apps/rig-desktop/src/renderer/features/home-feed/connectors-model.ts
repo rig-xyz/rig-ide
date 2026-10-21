@@ -61,6 +61,10 @@ export interface Cell {
   connector: SourceConnector;
   /** Just arrived: it pulses in. */
   fresh: boolean;
+  /** How sure the sorting was that it belongs in its topic, 0 to 1. */
+  score?: number;
+  /** It started its topic. */
+  newTopic?: boolean;
 }
 
 export interface ConnectorsState {
@@ -80,6 +84,8 @@ export interface Arrival {
   /** A topic this item starts. */
   born?: { name: string; hue: number };
   flag?: string;
+  /** How sure the sorting is that it belongs in its topic, 0 to 1. */
+  score?: number;
   /** It needs you: it goes to the Feed. */
   toFeed?: boolean;
   /** Rig keeps it out of your way. */
@@ -109,7 +115,8 @@ export function connectorsReducer(
       let topics = state.topics;
       const cells = [...state.cells];
       for (const a of action.arrivals) {
-        if (!topics.some((t) => t.id === a.topic) && a.born) {
+        const born = !topics.some((t) => t.id === a.topic) && !!a.born;
+        if (born && a.born) {
           topics = [
             ...topics,
             {
@@ -146,6 +153,8 @@ export function connectorsReducer(
           title: a.title,
           connector: a.connector,
           fresh: true,
+          score: a.score,
+          newTopic: born,
         });
       }
       const result = {

@@ -503,7 +503,8 @@ export function HomeProvider({
             toast(`New in your Feed: ${item.title}`);
           }
         }
-        schedule(1600, () => connectorsDispatch({ type: 'settle' }));
+        // Long enough for a new item's flight into the grid to land and pulse.
+        schedule(4200, () => connectorsDispatch({ type: 'settle' }));
       });
     },
     [toast]

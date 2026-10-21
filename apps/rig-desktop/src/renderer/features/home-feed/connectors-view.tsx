@@ -8,6 +8,7 @@ import { cn } from '@renderer/lib/utils';
 import { CONNECTORS } from '@shared/spaces/connectors';
 import { ActionButton } from './action-button';
 import { Kicker, SourceLogo } from './bits';
+import { ClassifyFlights, useClassifyFlights } from './classify-flight';
 import { agoShort, resultLine, type Topic, type WatchedConnector } from './connectors-model';
 import { useHome } from './home-context';
 
@@ -96,7 +97,10 @@ export function ConnectorsView({
 function WatchedRow({ connector: c, now }: { connector: WatchedConnector; now: number }) {
   const { checkNow } = useHome();
   return (
-    <div className="group grid grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-[10px] px-1.5 py-2 transition-colors hover:bg-bg-2/60">
+    <div
+      data-connector-row={c.connector}
+      className="group grid grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-[10px] px-1.5 py-2 transition-colors hover:bg-bg-2/60"
+    >
       <span className="grid place-items-center">
         <SourceLogo connector={c.connector} size={18} />
       </span>
@@ -255,16 +259,15 @@ function ConnectMenu() {
 
 /** Today's items as cells, colored by topic; new ones pulse in. Focusing a topic dims the rest. */
 function TodayGrid() {
-  const { connectors, connectorsDispatch } = useHome();
+  const { connectors, connectorsDispatch, reducedMotion } = useHome();
   const byId = new Map(connectors.topics.map((t) => [t.id, t]));
-  const slots = Math.max(72, Math.ceil(connectors.cells.length / 24) * 24);
+  const { flights, flying, land } = useClassifyFlights(connectors.cells, reducedMotion);
+  const checking = connectors.connectors.some((c) => c.checking);
   return (
     <div className="grid grid-cols-[repeat(24,minmax(0,1fr))] gap-[3px]">
-      {Array.from({ length: slots }, (_, i) => {
-        const cell = connectors.cells[i];
-        if (!cell)
-          return <span key={`empty-${i}`} className="aspect-square rounded-[3px] bg-bg-2" />;
+      {connectors.cells.map((cell) => {
         const topic = byId.get(cell.topic);
+        const inFlight = flying.has(cell.id);
         const dim = connectors.focus !== null && connectors.focus !== cell.topic;
         return (
           <button
@@ -278,15 +281,20 @@ function TodayGrid() {
                 topic: connectors.focus === cell.topic ? null : cell.topic,
               })
             }
+            data-cell-id={cell.id}
             style={{ '--hue': `var(--theme-${topic?.hue ?? 4})` } as CSSProperties}
             className={cn(
               'hf-cell aspect-square rounded-[3px]',
-              cell.fresh && 'hf-cell-fresh',
+              // Hidden until its flight lands; then it pulses.
+              inFlight ? 'invisible' : cell.fresh && 'hf-cell-fresh',
               dim && 'opacity-20'
             )}
           />
         );
       })}
+      {/* Where the next item will land, while Claude is checking. */}
+      {checking && <span aria-hidden className="hf-cell-next aspect-square rounded-[3px]" />}
+      <ClassifyFlights flights={flights} topics={connectors.topics} onLand={land} />
     </div>
   );
 }
@@ -306,11 +314,10 @@ function TopicPills({ onOpenInFeed }: { onOpenInFeed: (topicId: string) => void 
   const shown = all ? sorted : sorted.slice(0, MAX_PILLS);
   const more = sorted.length - shown.length;
   return (
-    <div className="flex flex-col items-start gap-1.5">
+    <div className="flex flex-wrap items-start gap-1.5">
       {shown.map((t) => (
         <div key={t.id} className="contents">
           <TopicPill
-            key={`${t.id}:${t.bump}`}
             topic={t}
             focused={connectors.focus === t.id}
             onClick={() =>
@@ -352,7 +359,6 @@ function TopicPill({
       data-topic-pill={topic.id}
       className={cn(
         'hf-topic-pill flex h-[30px] max-w-full items-center gap-2 rounded-full pr-3 pl-2.5 text-xs whitespace-nowrap',
-        topic.bump > 0 && 'hf-pill-bump',
         topic.state === 'held' ? 'text-text-secondary' : 'text-text-primary',
         focused && 'shadow-[inset_0_0_0_1.5px_var(--accent)]'
       )}

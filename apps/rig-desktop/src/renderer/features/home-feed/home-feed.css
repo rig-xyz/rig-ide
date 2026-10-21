@@ -554,13 +554,38 @@
 .hf-topic-card {
   background: color-mix(in oklab, var(--pill-fill) 60%, transparent);
 }
-@keyframes hf-pill-bump {
+
+/* A new item being classified (`classify-flight.tsx`): as it drops, the chip
+   becomes a square of its topic's color and its words fade. */
+.hf-classify {
+  transition:
+    background-color 0.3s ease-out,
+    border-color 0.3s ease-out,
+    box-shadow 0.3s ease-out;
+}
+.hf-classify-body {
+  transition: opacity 0.15s ease-out;
+}
+.hf-classify[data-phase='dropping'] {
+  background: var(--hue);
+  border-color: transparent;
+  box-shadow: 0 0 12px 1px color-mix(in oklab, var(--hue) 55%, transparent);
+}
+.hf-classify[data-phase='dropping'] .hf-classify-body {
+  opacity: 0;
+}
+
+/* Where the next item lands while Claude checks. */
+.hf-cell-next {
+  border: 1px dashed color-mix(in oklab, var(--accent) 60%, transparent);
+}
+@keyframes hf-cell-wait {
   50% {
-    transform: scale(1.08);
+    opacity: 0.35;
   }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .hf-pill-bump {
-    animation: hf-pill-bump 0.42s cubic-bezier(0.3, 1.5, 0.5, 1);
+  .hf-cell-next {
+    animation: hf-cell-wait 1.2s ease-in-out infinite;
   }
 }
