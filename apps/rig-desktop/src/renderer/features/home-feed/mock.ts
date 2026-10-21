@@ -279,7 +279,8 @@ export function demoFeed(): FeedItem[] {
       title: 'Triage the new Earn bugs',
       why: 'Two Earn bugs arrived since Friday, and {ULY-523} looks like {ULY-245}.',
       spaceId: 'ulys-backlog',
-      source: { connector: 'linear', scope: 'Ulys', ref: 'Inbox · Earn Vault Bugs' },
+      source: { connector: 'linear', scope: 'Ulys', ref: 'Earn Vault Bugs' },
+      topicId: 'earn',
       people: [],
       tokenNotes: {},
       hasBrief: true,
@@ -295,7 +296,8 @@ export function demoFeed(): FeedItem[] {
       title: 'Finish the 0.4.15 release',
       why: 'The 0.4.15 release has been a draft for 7 days and its tag was never pushed.',
       spaceId: 'rig-feedback',
-      source: { connector: 'github', scope: 'rig-xyz/rig-ide', ref: 'Inbox · Desktop Release' },
+      source: { connector: 'github', scope: 'rig-xyz/rig-ide', ref: 'Desktop Release' },
+      topicId: 'release',
       people: [],
       tokenNotes: {},
       hasBrief: true,
@@ -351,7 +353,8 @@ export function demoFeed(): FeedItem[] {
       title: 'Give Season 1 Loyalty its own space',
       why: '42 launch tickets across {@Anthony}, {@Natalie} and {@Harold}, launching Oct 25.',
       spaceId: 'ulys-backlog',
-      source: { connector: 'linear', scope: 'Ulys', ref: 'Inbox · Season 1 Loyalty Launch' },
+      source: { connector: 'linear', scope: 'Ulys', ref: 'Season 1 Loyalty Launch' },
+      topicId: 'loyalty',
       people: ['anthony', 'natalie', 'harold'],
       tokenNotes: {
         '@Anthony': PEOPLE.anthony!.note!,
@@ -387,9 +390,8 @@ export function demoFeed(): FeedItem[] {
   ];
 }
 
-/** The item a watch session promotes into the Feed while you're on Home, and when. */
+/** The item a watch session promotes into the Feed while you're on Home (the Connectors script's last check). */
 export const ARRIVAL = {
-  afterMs: 14_000,
   item: (): FeedItem => ({
     id: 'prp_claims',
     kind: 'session',
@@ -398,7 +400,8 @@ export const ARRIVAL = {
     title: 'Look into requests stuck after sign-out',
     why: 'Two GitHub issues in an hour: {rig-ide#212} retries forever after a sign-in failure, and {rig-ide#213} stays queued when the only Mac signs out.',
     spaceId: 'rig-feedback',
-    source: { connector: 'github', scope: 'rig-xyz/rig-ide', ref: 'Inbox · Spaces Reliability' },
+    source: { connector: 'github', scope: 'rig-xyz/rig-ide', ref: 'Spaces Reliability' },
+    topicId: 'spaces',
     people: [],
     tokenNotes: { 'rig-ide#212': 'GitHub issue', 'rig-ide#213': 'GitHub issue' },
     hasBrief: true,
@@ -410,3 +413,31 @@ export const ARRIVAL = {
     ),
   }),
 };
+
+/** A suggestion Rig makes from a topic you asked to see in your Feed. */
+export function topicSuggestion(topic: {
+  id: string;
+  name: string;
+  count: number;
+  connector: SourceConnector;
+}): FeedItem {
+  const plan =
+    'Claude reads the items, finds what they have in common, and drafts a plan for you to review.';
+  return {
+    id: `prp_topic_${topic.id}`,
+    kind: 'session',
+    group: 'up_next',
+    status: 'shown',
+    title: `Look into ${topic.name}`,
+    why: `${topic.count} items from ${SOURCES[topic.connector].name} sorted into ${topic.name}.`,
+    spaceId: 'rig-feedback',
+    source: { connector: topic.connector, scope: SOURCES[topic.connector].scope, ref: topic.name },
+    topicId: topic.id,
+    people: [],
+    tokenNotes: {},
+    hasBrief: true,
+    age: 'just now',
+    plan,
+    choices: startChoices('rig-feedback', plan),
+  };
+}

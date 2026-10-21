@@ -158,6 +158,8 @@ export interface FeedItem {
   tokenNotes: Record<string, string>;
   /** A draft brief exists, so the menu offers "Edit the brief first". */
   hasBrief: boolean;
+  /** The topic it came from, when Rig promoted it from a connector's items. */
+  topicId?: string;
   /** "2m", "new", "8d". */
   age: string;
   /** The goal line the brief would carry, for the brief view. */

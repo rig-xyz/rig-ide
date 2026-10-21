@@ -61,8 +61,10 @@ export interface HomeState {
   feed: FeedEntry[];
   selection: Selection;
   collapsed: boolean;
-  /** The Feed folded to its strip (by you, or because the window is narrow). */
+  /** The Feed folded to its dock (by you, or because the window is narrow). */
   feedCollapsed: boolean;
+  /** What the right panel shows: the Feed, or your connectors at work. */
+  panel: 'feed' | 'connectors';
   messages: ChatMessage[];
   /** Brief and routine buttons already pressed, by `messageId:blockIndex`. */
   used: string[];
@@ -74,6 +76,7 @@ export interface HomeState {
 export type HomeAction =
   | { type: 'collapse'; value: boolean }
   | { type: 'collapse-feed'; value: boolean }
+  | { type: 'panel'; panel: 'feed' | 'connectors' }
   | { type: 'select'; selection: Selection }
   | { type: 'pick'; itemId: string; choiceId: string; slide: 'left' | 'right' }
   | { type: 'edit'; itemId: string; text: string | null }
@@ -113,6 +116,7 @@ export function initialHomeState(): HomeState {
     selection: { kind: 'home' },
     collapsed: false,
     feedCollapsed: false,
+    panel: 'feed',
     messages: [],
     used: [],
     flights: [],
@@ -138,6 +142,8 @@ export function homeReducer(state: HomeState, action: HomeAction): HomeState {
       return { ...state, collapsed: action.value };
     case 'collapse-feed':
       return { ...state, feedCollapsed: action.value };
+    case 'panel':
+      return { ...state, panel: action.panel };
     case 'select':
       return { ...state, selection: action.selection };
     case 'pick':

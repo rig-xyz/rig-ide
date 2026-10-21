@@ -21,6 +21,7 @@ import {
   type CSSProperties,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
   memo,
   type RefObject,
   useEffect,
@@ -31,6 +32,7 @@ import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { ActionButton } from './action-button';
 import { Face, IconButton, Kicker, SessionMatrix, SourceLogo, sourceName } from './bits';
+import { ConnectorsView } from './connectors-view';
 import { rectOf, useHome } from './home-context';
 import { PEOPLE } from './mock';
 import type { FeedChoice, FeedItem, FeedVerb } from './model';
@@ -56,19 +58,24 @@ import { type FeedEntry, findSession } from './store';
 export function Feed({
   focusId,
   onFocused,
+  onFocus,
 }: {
   /** An item to bring into view as the Feed opens (a pill clicked in the folded dock). */
   focusId?: string | null;
   onFocused?: () => void;
+  /** Brings an item into view (from the Connectors side). */
+  onFocus?: (itemId: string | null) => void;
 }) {
-  const { state, dispatch, counts } = useHome();
+  const { state, dispatch, counts, connectors } = useHome();
+  const panel = state.panel;
+  const checking = connectors.connectors.some((c) => c.checking);
   const needs = state.feed.filter((e) => e.item.group === 'needs_you');
   const next = state.feed.filter((e) => e.item.group === 'up_next');
   const folded = state.feedCollapsed;
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (folded || !focusId) return;
+    if (folded || panel !== 'feed' || !focusId) return;
     const row = listRef.current?.querySelector<HTMLElement>(
       `[data-feed-id="${CSS.escape(focusId)}"]`
     );
@@ -77,7 +84,7 @@ export function Feed({
     void row?.offsetWidth;
     row?.classList.add('hf-flash');
     onFocused?.();
-  }, [folded, focusId, onFocused]);
+  }, [folded, panel, focusId, onFocused]);
 
   return (
     <aside
@@ -91,11 +98,13 @@ export function Feed({
       {!folded && (
         <>
           <div className="flex h-[52px] shrink-0 items-center gap-2.5 pr-3 pl-5 [-webkit-app-region:drag]">
-            <h2 className="m-0 font-display text-title font-medium">Feed</h2>
-            <span className="ml-auto truncate text-meta text-text-muted">
-              {counts.needsYou} {counts.needsYou === 1 ? 'needs' : 'need'} you · {counts.upNext} up
-              next
-            </span>
+            <PanelSwitch
+              panel={panel}
+              needsYou={counts.needsYou}
+              checking={checking}
+              onChange={(next) => dispatch({ type: 'panel', panel: next })}
+            />
+            <span className="flex-1" />
             <IconButton
               label="Fold the Feed"
               dir="right"
@@ -104,19 +113,88 @@ export function Feed({
               <PanelRightClose className="size-[15px]" strokeWidth={1.6} />
             </IconButton>
           </div>
-          <div
-            ref={listRef}
-            className="relative min-h-0 min-w-[360px] flex-1 overflow-x-hidden overflow-y-auto pb-5"
-          >
-            <Group title="Needs you" tone="warn" entries={needs} />
-            <Group title="Up next" tone="accent" entries={next} />
-            {!needs.length && !next.length && (
-              <p className="px-5 py-2.5 text-sm text-text-muted">Nothing waiting on you.</p>
-            )}
-          </div>
+          {panel === 'connectors' ? (
+            <div className="relative min-h-0 min-w-[360px] flex-1 overflow-x-hidden overflow-y-auto">
+              <ConnectorsView
+                onOpenFeedItem={(itemId) => {
+                  dispatch({ type: 'panel', panel: 'feed' });
+                  onFocus?.(itemId);
+                }}
+              />
+            </div>
+          ) : (
+            <div
+              ref={listRef}
+              className="relative min-h-0 min-w-[360px] flex-1 overflow-x-hidden overflow-y-auto pb-5"
+            >
+              <Group title="Needs you" tone="warn" entries={needs} />
+              <Group title="Up next" tone="accent" entries={next} />
+              {!needs.length && !next.length && (
+                <p className="px-5 py-2.5 text-sm text-text-muted">Nothing waiting on you.</p>
+              )}
+            </div>
+          )}
         </>
       )}
     </aside>
+  );
+}
+
+/**
+ * Feed or Connectors: what needs to happen next, or your connectors at work.
+ * Feed carries an amber dot while something needs you; Connectors shows Claude
+ * searching while a check runs, so the background work shows from either side.
+ */
+function PanelSwitch({
+  panel,
+  needsYou,
+  checking,
+  onChange,
+}: {
+  panel: 'feed' | 'connectors';
+  needsYou: number;
+  checking: boolean;
+  onChange: (panel: 'feed' | 'connectors') => void;
+}) {
+  const tab = (id: 'feed' | 'connectors', label: string, mark: ReactNode) => (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={panel === id}
+      onClick={() => onChange(id)}
+      className={cn(
+        'flex h-7 items-center gap-1.5 rounded-full px-3 text-sm transition-[background-color,color,box-shadow]',
+        panel === id
+          ? 'hf-switch-on font-medium text-text-primary'
+          : 'text-text-secondary hover:text-text-primary'
+      )}
+    >
+      {label}
+      {mark}
+    </button>
+  );
+  return (
+    <div
+      role="tablist"
+      aria-label="Right panel"
+      className="hf-switch inline-flex items-center gap-0.5 rounded-full p-[3px] [-webkit-app-region:no-drag]"
+    >
+      {tab(
+        'feed',
+        'Feed',
+        needsYou > 0 && (
+          <span
+            aria-label={`${needsYou} need you`}
+            className="size-1.5 rounded-full bg-status-warn shadow-[0_0_0_2px_color-mix(in_oklab,var(--status-warn)_25%,transparent)]"
+          />
+        )
+      )}
+      {tab(
+        'connectors',
+        'Connectors',
+        checking && <DotMatrix state="searching" size="sm" label="Checking" />
+      )}
+    </div>
   );
 }
 

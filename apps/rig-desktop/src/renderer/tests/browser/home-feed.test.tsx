@@ -58,6 +58,13 @@ vi.mock('@renderer/lib/ipc', () => ({
           data: [space('b-ops', 'rig-ops'), space('b-launch', 'launch')],
         }),
       },
+      connectors: {
+        list: async () => [
+          { id: 'linear', state: 'connected' },
+          { id: 'notion', state: 'connected' },
+          { id: 'posthog', state: 'not_connected' },
+        ],
+      },
       recent: {
         recentRigs: async () => [],
         resolveLocalPaths: async () => ({ 'b-launch': '/Users/me/Rig/launch' }),
@@ -184,7 +191,9 @@ async function click(el: Element | undefined | null): Promise<void> {
 describe('NewHome', () => {
   it('greets you by first name and counts the Feed', () => {
     expect(host.textContent).toContain(', Dylan.');
-    expect(host.querySelector('aside')!.textContent).toContain('2 need you · 4 up next');
+    // The Feed tab carries what needs you; the Feed lists 2 + 4.
+    expect(host.querySelector('aside [aria-label="2 need you"]')).toBeTruthy();
+    expect(host.querySelectorAll('aside [data-feed-id]')).toHaveLength(6);
   });
 
   it('merges real spaces into the rail: a demo space takes the real one with its name, in your groups', async () => {
@@ -252,7 +261,7 @@ describe('NewHome', () => {
     );
     expect(feedRow('prp_hugo')).toBeNull();
     expect(host.textContent).toContain('Ignored Reply to Hugo on manifesto v2');
-    expect(host.querySelector('aside')!.textContent).toContain('3 up next');
+    expect(host.querySelectorAll('aside [data-feed-id]')).toHaveLength(5);
     await click(button(host.querySelector('aside')!, 'Undo'));
     expect(feedRow('prp_hugo')).toBeTruthy();
   });

@@ -103,7 +103,7 @@ function HomeLayout({
           <Middle />
         </div>
       </div>
-      <Feed focusId={focusId} onFocused={clearFocus} />
+      <Feed focusId={focusId} onFocused={clearFocus} onFocus={setFocusId} />
       {folded && (
         <FeedDock
           onLayout={setDockWidth}

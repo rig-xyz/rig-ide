@@ -10,8 +10,15 @@ import {
   useRef,
 } from 'react';
 import { toast as appToast } from '@renderer/lib/hooks/use-toast';
-import { ARRIVAL, PEOPLE } from './mock';
-import type { FeedChoice, RailSession, RailSpace, SourceRef } from './model';
+import {
+  type Arrival,
+  type ConnectorsAction,
+  connectorsReducer,
+  type ConnectorsState,
+} from './connectors-model';
+import { CHECKS, initialConnectorsState, TIMING } from './connectors-script';
+import { ARRIVAL, PEOPLE, topicSuggestion } from './mock';
+import type { FeedChoice, RailSession, RailSpace, SourceConnector, SourceRef } from './model';
 import {
   type HomeOrchestrator,
   type OrchestratorContext,
@@ -56,6 +63,13 @@ export interface HomeApi {
   toast: (text: string) => void;
   /** Opens a real space or session in the app (its Room or its chat). */
   openInApp: (target: { space: RailSpace; session?: RailSession }) => void;
+  /** Your connectors at work: what each watch session brought back and how it was sorted. */
+  connectors: ConnectorsState;
+  connectorsDispatch: Dispatch<ConnectorsAction>;
+  /** Has Claude check a connector now, out of its schedule. */
+  checkNow: (connector: SourceConnector) => void;
+  /** Puts a topic in your Feed as a suggestion. */
+  promoteTopic: (topicId: string) => void;
 }
 
 interface StartOptions {
@@ -103,6 +117,11 @@ export function HomeProvider({
   children: ReactNode;
 }) {
   const [state, dispatch] = useReducer(homeReducer, undefined, initialHomeState);
+  const [connectors, connectorsDispatch] = useReducer(connectorsReducer, undefined, () =>
+    initialConnectorsState(Date.now())
+  );
+  const connectorsRef = useRef(connectors);
+  connectorsRef.current = connectors;
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -461,17 +480,93 @@ export function HomeProvider({
     [onContinueSession, onOpenPath]
   );
 
-  // A watch session promotes something into the Feed while you're on Home.
+  // Rig at work in the background: each connector's watch session checks on its schedule,
+  // what it brings back is sorted into topics, and what needs you is promoted into the Feed.
+  const runCheck = useCallback(
+    (
+      connector: SourceConnector,
+      arrivalsOfCheck: Arrival[],
+      schedule: (ms: number, fn: () => void) => void
+    ) => {
+      connectorsDispatch({ type: 'check-start', connector });
+      schedule(TIMING.checkMs, () => {
+        connectorsDispatch({
+          type: 'check-done',
+          connector,
+          at: Date.now(),
+          arrivals: arrivalsOfCheck,
+        });
+        if (arrivalsOfCheck.some((a) => a.toFeed)) {
+          const item = ARRIVAL.item();
+          if (!stateRef.current.feed.some((e) => e.item.id === item.id)) {
+            dispatch({ type: 'add-item', item });
+            toast(`New in your Feed: ${item.title}`);
+          }
+        }
+        schedule(1600, () => connectorsDispatch({ type: 'settle' }));
+      });
+    },
+    [toast]
+  );
+
   useEffect(() => {
     if (!arrivals) return;
-    const t = setTimeout(() => {
-      const item = ARRIVAL.item();
-      if (stateRef.current.feed.some((e) => e.item.id === item.id)) return;
-      dispatch({ type: 'add-item', item });
-      toast(`New in your Feed: ${item.title}`);
-    }, ARRIVAL.afterMs);
-    return () => clearTimeout(t);
-  }, [arrivals, toast]);
+    let cancelled = false;
+    const pending = new Set<ReturnType<typeof setTimeout>>();
+    const schedule = (ms: number, fn: () => void) => {
+      if (cancelled) return;
+      const t = setTimeout(() => {
+        pending.delete(t);
+        if (!cancelled) fn();
+      }, ms);
+      pending.add(t);
+    };
+    CHECKS.forEach((check, i) =>
+      schedule(TIMING.firstMs + i * TIMING.gapMs, () =>
+        runCheck(check.connector, check.arrivals, schedule)
+      )
+    );
+    // Then quiet checks keep going round, most of them with nothing new.
+    let turn = 0;
+    const quiet = () => {
+      const list = connectorsRef.current.connectors;
+      const next = list[turn++ % list.length];
+      if (next && !next.checking) runCheck(next.connector, [], schedule);
+      schedule(TIMING.quietGapMs, quiet);
+    };
+    schedule(TIMING.firstMs + CHECKS.length * TIMING.gapMs + TIMING.quietGapMs, quiet);
+    return () => {
+      cancelled = true;
+      for (const t of pending) clearTimeout(t);
+    };
+  }, [arrivals, runCheck]);
+
+  const checkNow = useCallback(
+    (connector: SourceConnector) => {
+      if (connectorsRef.current.connectors.find((c) => c.connector === connector)?.checking) return;
+      runCheck(connector, [], later);
+    },
+    [runCheck, later]
+  );
+
+  const promoteTopic = useCallback(
+    (topicId: string) => {
+      const topic = connectorsRef.current.topics.find((t) => t.id === topicId);
+      if (!topic) return;
+      connectorsDispatch({ type: 'topic-state', topic: topicId, state: 'feed' });
+      dispatch({
+        type: 'add-item',
+        item: topicSuggestion({
+          id: topic.id,
+          name: topic.name,
+          count: topic.count,
+          connector: topic.items[0]?.connector ?? 'linear',
+        }),
+      });
+      toast(`${topic.name} is in your Feed`);
+    },
+    [toast]
+  );
 
   const api = useMemo<HomeApi>(
     () => ({
@@ -491,6 +586,10 @@ export function HomeProvider({
       send,
       toast,
       openInApp,
+      connectors,
+      connectorsDispatch,
+      checkNow,
+      promoteTopic,
     }),
     // `counts` is derived from `state.feed`.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
@@ -509,6 +608,9 @@ export function HomeProvider({
       send,
       toast,
       openInApp,
+      connectors,
+      checkNow,
+      promoteTopic,
     ]
   );
 
