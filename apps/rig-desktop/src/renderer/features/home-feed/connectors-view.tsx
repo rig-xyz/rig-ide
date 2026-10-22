@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Eye, Plus, RefreshCw, ThumbsUp } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { connectorsApi } from '@renderer/features/spaces/connectors-api';
 import { ConnectorLogo } from '@renderer/features/spaces/logos';
@@ -39,7 +40,7 @@ export function ConnectorsView({
 }) {
   const { connectors, state, reducedMotion } = useHome();
   const now = useNow(15_000);
-  const { flights, hidden, popping, unborn, land } = useClassifyFlights(
+  const { flights, busy, hidden, popping, pending, unborn, land } = useClassifyFlights(
     connectors.cells,
     reducedMotion
   );
@@ -67,13 +68,13 @@ export function ConnectorsView({
       </section>
 
       <section>
-        <Kicker className="mb-2">Today · {connectors.cells.length}</Kicker>
+        <Kicker className="mb-2">Today · {connectors.cells.length - hidden.size}</Kicker>
         <TodayGrid hidden={hidden} popping={popping} />
       </section>
 
       <section>
         <Kicker className="mb-2">Topics</Kicker>
-        <TopicPills onOpenInFeed={openTopicInFeed} unborn={unborn} />
+        <TopicPills onOpenInFeed={openTopicInFeed} pending={pending} unborn={unborn} busy={busy} />
         <JoinLayer flights={flights} topics={connectors.topics} onLand={land} />
       </section>
     </div>
@@ -302,69 +303,110 @@ function order(topics: readonly Topic[]): Topic[] {
 /** The topics as the Room's pills; the focused one opens a card with its items and where it stands. */
 function TopicPills({
   onOpenInFeed,
+  pending,
   unborn,
+  busy,
 }: {
   onOpenInFeed: (topicId: string) => void;
-  /** Topics an item still being sorted starts: their pill holds its place, unseen, until it joins. */
+  /** Items per topic still on their way: a pill counts them only once they've joined it. */
+  pending: ReadonlyMap<string, number>;
+  /** Topics an item still on its way starts: their pill waits, unseen, at the end. */
   unborn: ReadonlySet<string>;
+  /** Items are being sorted: the order holds still until they've all joined. */
+  busy: boolean;
 }) {
-  const { connectors, connectorsDispatch } = useHome();
+  const { connectors, connectorsDispatch, reducedMotion } = useHome();
   const [all, setAll] = useState(false);
-  // While a topic is open, the order holds still: it stays where you clicked it and its
-  // card pushes the pills after it down. New topics join at the end until you close it.
+  // A pill shows its topic as it was before the items still on their way.
+  const topics = connectors.topics.map((t) => {
+    const n = pending.get(t.id) ?? 0;
+    return n ? { ...t, count: t.count - n, fresh: Math.max(0, t.fresh - n) } : t;
+  });
+  // While a topic is open, or items are joining theirs, the order holds still: what you
+  // clicked stays put, and an item's pill is where it was when the item set off. Once
+  // things are quiet, the pills slide into their new order.
   const held = useRef<string[]>([]);
-  const byId = new Map(connectors.topics.map((t) => [t.id, t]));
-  const live = order(connectors.topics).map((t) => t.id);
-  if (connectors.focus === null) held.current = live;
-  const ids =
-    connectors.focus === null
-      ? live
-      : [
-          ...held.current.filter((id) => byId.has(id)),
-          ...live.filter((id) => !held.current.includes(id)),
-        ];
-  const sorted = ids.map((id) => byId.get(id)!);
-  const shown = all ? sorted : sorted.slice(0, MAX_PILLS);
-  const more = sorted.length - shown.length;
+  const byId = new Map(topics.map((t) => [t.id, t]));
+  const live = order(topics.filter((t) => !unborn.has(t.id))).map((t) => t.id);
+  const hold = connectors.focus !== null || busy;
+  if (!hold) held.current = live;
+  // Topics started while the order holds go last, after "+N", where they appeared; so does
+  // a folded topic an item is on its way to, so the item has a pill to join.
+  const called = useRef(new Set<string>());
+  if (!hold) called.current.clear();
+  const ids = hold ? held.current.filter((id) => byId.has(id) && !unborn.has(id)) : live;
+  const folded = all ? [] : ids.slice(MAX_PILLS);
+  for (const id of folded) if (pending.has(id)) called.current.add(id);
+  const born = hold ? live.filter((id) => !held.current.includes(id)) : [];
+  const extra = [...folded.filter((id) => called.current.has(id)), ...born];
+  const shown = (all ? ids : ids.slice(0, MAX_PILLS)).map((id) => byId.get(id)!);
+  const more = folded.filter((id) => !called.current.has(id)).length;
+  const layout = reducedMotion ? false : ('position' as const);
+  const pill = (t: Topic) => [
+    <motion.div
+      key={t.id}
+      layout={layout}
+      transition={SLIDE}
+      // A pill coming into view (from "+N", or a topic just started) grows in; one folding
+      // away into "+N" shrinks out.
+      initial={reducedMotion ? false : { opacity: 0, scale: 0.85 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={reducedMotion ? undefined : { opacity: 0, scale: 0.85, transition: { duration: 0.15 } }}
+      className="max-w-full"
+    >
+      <TopicPill
+        topic={t}
+        focused={connectors.focus === t.id}
+        onClick={() =>
+          connectorsDispatch({ type: 'focus', topic: connectors.focus === t.id ? null : t.id })
+        }
+      />
+    </motion.div>,
+    connectors.focus === t.id && (
+      <TopicCard key={`card:${t.id}`} topic={t} onOpenInFeed={() => onOpenInFeed(t.id)} />
+    ),
+  ];
   return (
     <div className="flex flex-wrap items-start gap-1.5">
-      {shown.map((t) => (
-        <div key={t.id} className="contents">
-          <TopicPill
-            topic={t}
-            unborn={unborn.has(t.id)}
-            focused={connectors.focus === t.id}
-            onClick={() =>
-              connectorsDispatch({ type: 'focus', topic: connectors.focus === t.id ? null : t.id })
-            }
-          />
-          {connectors.focus === t.id && (
-            <TopicCard topic={t} onOpenInFeed={() => onOpenInFeed(t.id)} />
-          )}
-        </div>
-      ))}
-      {more > 0 && (
-        <button
-          type="button"
-          onClick={() => setAll(true)}
-          data-topic-more
-          className="hf-topic-pill h-[30px] rounded-full px-3 text-xs text-text-secondary hover:text-text-primary"
-        >
-          +{more}
-        </button>
-      )}
+      <AnimatePresence initial={false}>
+        {shown.flatMap(pill)}
+        {more > 0 && (
+          <motion.button
+            key="more"
+            layout={layout}
+            transition={SLIDE}
+            type="button"
+            onClick={() => setAll(true)}
+            data-topic-more
+            className="hf-topic-pill h-[30px] rounded-full px-3 text-xs text-text-secondary hover:text-text-primary"
+          >
+            +{more}
+          </motion.button>
+        )}
+        {extra.flatMap((id) => pill(byId.get(id)!))}
+      </AnimatePresence>
+      {/* A topic being started holds its spot there too, so nothing shifts when it appears. */}
+      {[...unborn].map((id) => {
+        const t = byId.get(id);
+        return t ? (
+          <div key={id} className="invisible">
+            <TopicPill topic={t} focused={false} onClick={() => {}} />
+          </div>
+        ) : null;
+      })}
     </div>
   );
 }
 
+/** How pills slide when they reorder. */
+const SLIDE = { type: 'spring', duration: 0.55, bounce: 0.12 } as const;
+
 function TopicPill({
   topic,
-  unborn,
   focused,
   onClick,
 }: {
   topic: Topic;
-  unborn: boolean;
   focused: boolean;
   onClick: () => void;
 }) {
@@ -377,7 +419,6 @@ function TopicPill({
       className={cn(
         'hf-topic-pill flex h-[30px] max-w-full items-center gap-2 rounded-full pr-3 pl-2.5 text-xs whitespace-nowrap',
         topic.state === 'held' ? 'text-text-secondary' : 'text-text-primary',
-        unborn && 'invisible',
         focused && 'shadow-[inset_0_0_0_1.5px_var(--accent)]'
       )}
     >

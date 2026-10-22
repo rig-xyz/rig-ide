@@ -103,15 +103,29 @@ export function useClassifyFlights(cells: readonly Cell[], reduced: boolean) {
 
   const queued = (f: Flight) =>
     f.phase === 'waiting' || f.phase === 'reading' || f.phase === 'sorted';
+  // Cells that just arrived get their flight in an effect; until then, they already count
+  // as waiting, so nothing shows them early for a frame.
+  const arriving: Flight[] = reduced
+    ? []
+    : cells.filter((c) => !seen.current!.has(c.id)).map((cell) => ({ cell, phase: 'waiting' }));
+  const all = [...flights, ...arriving];
+  const pending = new Map<string, number>();
+  for (const f of all) {
+    if (f.phase !== 'landed') pending.set(f.cell.topic, (pending.get(f.cell.topic) ?? 0) + 1);
+  }
   return {
     flights,
+    /** Items are on their way. */
+    busy: all.length > 0,
     /** Squares not in the grid yet. */
-    hidden: new Set(flights.filter(queued).map((f) => f.cell.id)),
+    hidden: new Set(all.filter(queued).map((f) => f.cell.id)),
     /** Squares popping in right now. */
     popping: new Set(flights.filter((f) => !queued(f)).map((f) => f.cell.id)),
+    /** Items per topic that haven't joined it yet: its pill doesn't count them until they do. */
+    pending,
     /** Topics an item in flight starts: their pill appears when it joins. */
     unborn: new Set(
-      flights.filter((f) => f.cell.newTopic && f.phase !== 'landed').map((f) => f.cell.topic)
+      all.filter((f) => f.cell.newTopic && f.phase !== 'landed').map((f) => f.cell.topic)
     ),
     land,
   };
@@ -236,54 +250,48 @@ function Join({
   useLayoutEffect(() => {
     const el = ref.current;
     // Its pill, or "+N" when the pill is folded away.
-    const pill =
+    const target = () =>
       document.querySelector<HTMLElement>(`[data-topic-pill="${CSS.escape(cell.topic)}"]`) ??
       document.querySelector<HTMLElement>('[data-topic-more]');
-    if (!el || !pill || !from) {
+    if (!el || !target() || !from) {
       onLand(cell.id);
       return;
     }
-    const b = pill.getBoundingClientRect();
-    const anim = el.animate(
-      [
-        {
-          transform: `translate(${from.left}px, ${from.top}px)`,
-          width: `${from.width}px`,
-          height: `${from.height}px`,
-          opacity: 1,
-        },
-        {
-          transform: `translate(${b.left}px, ${b.top}px)`,
-          width: `${b.width}px`,
-          height: `${b.height}px`,
-          opacity: 1,
-          offset: 0.8,
-        },
-        {
-          transform: `translate(${b.left}px, ${b.top}px)`,
-          width: `${b.width}px`,
-          height: `${b.height}px`,
-          opacity: 0,
-        },
-      ],
-      { duration: BEATS.joinMs, easing: 'cubic-bezier(.45,0,.2,1)', fill: 'forwards' }
-    );
-    anim.onfinish = () => {
+    // The pills move while it travels (the queue folds, the grid may grow a row, pills
+    // slide), so it follows where its pill is on every frame instead of where it was.
+    const start = performance.now();
+    const ease = (t: number) => 1 - Math.pow(1 - t, 3);
+    let frame = 0;
+    const step = (now: number) => {
+      const pill = target();
+      if (!pill) {
+        onLand(cell.id);
+        return;
+      }
+      const t = Math.min(1, (now - start) / BEATS.joinMs);
+      const p = ease(t);
+      const b = pill.getBoundingClientRect();
+      const mix = (a: number, z: number) => a + (z - a) * p;
+      el.style.transform = `translate(${mix(from.left, b.left)}px, ${mix(from.top, b.top)}px)`;
+      el.style.width = `${mix(from.width, b.width)}px`;
+      el.style.height = `${mix(from.height, b.height)}px`;
+      // It melts into the pill over the last stretch.
+      el.style.opacity = String(t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3);
+      if (t < 1) {
+        frame = requestAnimationFrame(step);
+        return;
+      }
       onLand(cell.id);
-      pill.animate(
-        cell.newTopic
-          ? [
-              { transform: 'scale(0.6)', opacity: 0 },
-              { transform: 'scale(1.08)' },
-              { transform: 'scale(1)', opacity: 1 },
-            ]
-          : [{ transform: 'scale(1)' }, { transform: 'scale(1.1)' }, { transform: 'scale(1)' }],
-        { duration: 420, easing: 'cubic-bezier(.3,1.5,.5,1)' }
-      );
+      // A topic it started grows in on its own; an existing one bumps.
+      if (!cell.newTopic)
+        pill.animate(
+          [{ transform: 'scale(1)' }, { transform: 'scale(1.1)' }, { transform: 'scale(1)' }],
+          { duration: 420, easing: 'cubic-bezier(.3,1.5,.5,1)' }
+        );
     };
-    return () => {
-      anim.onfinish = null;
-    };
+    // The first frame now, so it never shows where it isn't.
+    step(start);
+    return () => cancelAnimationFrame(frame);
     // One join, one run.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, []);
