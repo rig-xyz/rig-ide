@@ -35,6 +35,7 @@ import { ActionButton } from './action-button';
 import { Face, IconButton, Kicker, SessionMatrix, SourceLogo, sourceName } from './bits';
 import { personFor } from './real-feed';
 import { ConnectorsView } from './connectors-view';
+import { FollowingView } from './following-view';
 import { rectOf, useHome } from './home-context';
 import { PEOPLE } from './mock';
 import type { FeedChoice, FeedItem, FeedVerb } from './model';
@@ -102,6 +103,7 @@ export function Feed({
           <div className="flex h-[52px] shrink-0 items-center gap-2.5 pr-3 pl-5 [-webkit-app-region:drag]">
             <PanelSwitch
               panel={panel}
+              other={state.fromRelay ? 'Following' : 'Connectors'}
               needsYou={counts.needsYou}
               checking={checking}
               onChange={(next) => dispatch({ type: 'panel', panel: next })}
@@ -117,12 +119,16 @@ export function Feed({
           </div>
           {panel === 'connectors' ? (
             <div className="relative min-h-0 min-w-[360px] flex-1 overflow-x-hidden overflow-y-auto">
-              <ConnectorsView
-                onOpenFeedItem={(itemId) => {
-                  dispatch({ type: 'panel', panel: 'feed' });
-                  onFocus?.(itemId);
-                }}
-              />
+              {state.fromRelay ? (
+                <FollowingView />
+              ) : (
+                <ConnectorsView
+                  onOpenFeedItem={(itemId) => {
+                    dispatch({ type: 'panel', panel: 'feed' });
+                    onFocus?.(itemId);
+                  }}
+                />
+              )}
             </div>
           ) : (
             <div
@@ -149,11 +155,14 @@ export function Feed({
  */
 function PanelSwitch({
   panel,
+  other,
   needsYou,
   checking,
   onChange,
 }: {
   panel: 'feed' | 'connectors';
+  /** The other side's name: Following with the real Feed, Connectors in the demo. */
+  other: string;
   needsYou: number;
   checking: boolean;
   onChange: (panel: 'feed' | 'connectors') => void;
@@ -193,7 +202,7 @@ function PanelSwitch({
       )}
       {tab(
         'connectors',
-        'Connectors',
+        other,
         checking && <DotMatrix state="searching" size="sm" label="Checking" />
       )}
     </div>

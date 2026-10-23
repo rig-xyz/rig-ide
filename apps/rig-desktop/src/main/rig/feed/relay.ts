@@ -299,7 +299,7 @@ export type OrchAgentState = {
   cursors: Record<string, string>;
   due: { ref: string; title: string; at: string; why: string }[];
   events: { ref: string; source: string; kind: string; line: string; for: string | null; at: string }[];
-  counts: { open: number; visible: number; queued: number };
+  counts: { open: number; visible: number; queued: number; following: number; untopiced: number };
   /** Visible situations with no card written yet. */
   bare: { ref: string; title: string }[];
 };
@@ -319,7 +319,7 @@ export async function orchAgentState(): Promise<Result<OrchAgentState, FeedRelay
       const e = rec(x);
       return { ref: str(e.ref), source: str(e.source), kind: str(e.kind), line: str(e.line), for: str(e.for) || null, at: str(e.at) };
     }),
-    counts: { open: Number(rec(r.counts).open) || 0, visible: Number(rec(r.counts).visible) || 0, queued: Number(rec(r.counts).queued) || 0 },
+    counts: { open: Number(rec(r.counts).open) || 0, visible: Number(rec(r.counts).visible) || 0, queued: Number(rec(r.counts).queued) || 0, following: Number(rec(r.counts).following) || 0, untopiced: Number(rec(r.counts).untopiced) || 0 },
     bare: (Array.isArray(r.bare) ? r.bare : []).map((x) => ({ ref: str(rec(x).ref), title: str(rec(x).title) })),
   });
 }

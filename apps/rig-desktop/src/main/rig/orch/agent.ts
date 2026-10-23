@@ -20,7 +20,7 @@ import { orchestratorSkill } from './skill';
 /** The tools the orchestrator may call without asking; anything else of Rig's is refused. */
 export const AGENT_TOOLS: ReadonlySet<string> = new Set(['rig_query', 'rig_get', 'rig_situation', 'rig_feed', 'rig_check', 'rig_remember', 'rig_start', 'rig_run_note']);
 
-export const AGENT_BUDGET = { lookups: 20, starts: 3 };
+export const AGENT_BUDGET = { lookups: 20, firstRead: 40, starts: 3 };
 
 /** Rig's own tools from the list above; connectors' read tools and `gh` reads (checks.ts); nothing else. */
 export function agentPermission(request: AcpPermissionRequest): string | null {
@@ -54,9 +54,13 @@ export function buildPacket(p: PacketInput): string {
   const firstSince = iso(p.now - 3 * 86_400_000);
   // Each source by the name the run note uses for its cursor.
   const named = p.sources.length ? p.sources.map((s) => ({ name: s.connector.toLowerCase(), what: s.what })) : DEFAULT_SOURCES;
-  const sourceLines = named.map((s) => `${s.name}: ${s.what}, since ${state.cursors[s.name] ?? state.lastRun?.at ?? firstSince}`);
+  // A source with no cursor hasn't been read yet: read its last three days, not just since the last run.
+  const fresh = named.filter((s) => !state.cursors[s.name]);
+  const sourceLines = named.map((s) => (state.cursors[s.name] ? `${s.name}: ${s.what}, since ${state.cursors[s.name]}` : `${s.name}: ${s.what}, never read: read since ${firstSince}`));
+  const firstRead = fresh.length > 0;
+  const lookups = firstRead ? AGENT_BUDGET.firstRead : AGENT_BUDGET.lookups;
   return [
-    `<run id="${p.runId}" now="${iso(p.now)}" trigger="${p.trigger}" budget="${AGENT_BUDGET.lookups} lookups, ${AGENT_BUDGET.starts} starts"/>`,
+    `<run id="${p.runId}" now="${iso(p.now)}" trigger="${p.trigger}" budget="${lookups} lookups, ${AGENT_BUDGET.starts} starts"/>`,
     `<rig_turn user_turn_id="${p.turnId}" />`,
     '',
     '## Who you are',
@@ -65,11 +69,15 @@ export function buildPacket(p: PacketInput): string {
     '## Your rules',
     ...(state.rules.length ? state.rules.map((r) => `${r.ref} "${r.text}"`) : ['None yet.']),
     '',
-    `## Since last run (${state.lastRun ? state.lastRun.at : 'none: this is the first run'})`,
+    `## What to read (last run: ${state.lastRun ? state.lastRun.at : 'none, this is the first'})`,
     ...sourceLines,
+    ...(firstRead
+      ? [`First read of ${fresh.map((s) => s.name).join(' and ')}: search the connector itself for the last three days (Rig's own items don't cover it), and put on the Feed what needs ${state.me || 'them'} now.`]
+      : []),
     state.events.length ? `Rig events: ${state.events.map((e) => `${e.ref} ${e.source}${e.for ? ` for ${e.for}` : ''}: ${e.line}`).join(' · ')}` : 'Rig events: none',
     state.due.length ? `Due now: ${state.due.map((d) => `${d.ref} "${d.title}"`).join(' · ')}` : 'Due now: nothing',
     `Open: ${state.counts.open} situations, ${state.counts.visible} cards visible, ${state.counts.queued} queued (rig_query to list them)`,
+    `Following: ${state.counts.following} situations, ${state.counts.untopiced} open with no topic: look them over (rig_query situations, filter {"feed":"following"})`,
     ...(state.bare.length ? [`Visible with no card written (your owner sees nothing there): ${state.bare.map((b) => `${b.ref} "${b.title}"`).join(' · ')}`] : []),
     '',
     `End the run with rig_run_note (run_id "${p.runId}"), even when nothing changed. In read, name each source exactly as above (${named.map((s) => s.name).join(', ')}).`,

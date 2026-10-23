@@ -17,7 +17,7 @@ const state = (over: Partial<OrchAgentState> = {}): OrchAgentState => ({
   cursors: { slack: '2026-10-23T11:58:00Z' },
   due: [{ ref: 'sit_1', title: 'Christopher asks for approval on #343', at: '2026-10-23T12:30:00Z', why: 'date' }],
   events: [{ ref: 'oev_9', source: 'session', kind: 'result', line: 'Traced ULY-523', for: 'sit_2', at: '2026-10-23T12:40:00Z' }],
-  counts: { open: 12, visible: 6, queued: 9 },
+  counts: { open: 12, visible: 6, queued: 9, following: 20, untopiced: 4 },
   bare: [{ ref: 'sit_3', title: 'Old pipeline card' }],
   ...over,
 });
@@ -25,13 +25,16 @@ const state = (over: Partial<OrchAgentState> = {}): OrchAgentState => ({
 describe('the background orchestrator', () => {
   it('builds a short packet: who, rules, and where to look', () => {
     const packet = buildPacket({ runId: 'run_x', now: NOW, trigger: 'schedule', turnId: 'turn_1', state: state(), sources: [{ connector: 'Slack', what: 'your DMs' }, { connector: 'Linear', what: 'Ulys issues' }] });
-    expect(packet).toContain('<run id="run_x" now="2026-10-23T13:00:00.000Z" trigger="schedule" budget="20 lookups, 3 starts"/>');
+    expect(packet).toContain('<run id="run_x" now="2026-10-23T13:00:00.000Z" trigger="schedule" budget="40 lookups, 3 starts"/>');
     expect(packet).toContain('<rig_turn user_turn_id="turn_1" />');
     expect(packet).toContain('CTO of Ulys');
     expect(packet).toContain('rule_1 "Investors come to me first."');
     expect(packet).toContain('slack: your DMs, since 2026-10-23T11:58:00Z');
-    // A source with no cursor yet reads from the last run.
-    expect(packet).toContain('linear: Ulys issues, since 2026-10-23T12:00:00Z');
+    // A source with no cursor yet reads its last three days, with a bigger budget.
+    expect(packet).toContain('linear: Ulys issues, never read: read since 2026-10-20T13:00:00.000Z');
+    expect(packet).toContain('First read of linear: search the connector itself for the last three days');
+    expect(packet).toContain('Following: 20 situations, 4 open with no topic: look them over');
+    expect(packet).toContain('budget="40 lookups, 3 starts"');
     expect(packet).toContain('Visible with no card written (your owner sees nothing there): sit_3 "Old pipeline card"');
     expect(packet).toContain('name each source exactly as above (slack, linear)');
     expect(packet).toContain('Due now: sit_1 "Christopher asks for approval on #343"');

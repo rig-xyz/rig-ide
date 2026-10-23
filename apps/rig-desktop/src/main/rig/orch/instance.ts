@@ -274,6 +274,8 @@ export const rigOrchController = createRPCController({
     if (r.success) changed();
     return r.success ? ok(r.data) : err({ message: r.error });
   },
+  /** Whether the background orchestrator is on, and running right now. */
+  agentStatus: async () => ok({ on: agentMode, running: agentMode && orchestrator.running() }),
   /** Check the due cards now (checks.ts); resolves with how many ran. */
   checkNow: async () => ok(await runDueChecks()),
   addSource: async (input: { connector: string; what: string; everyMin?: number }) => {

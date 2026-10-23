@@ -1372,7 +1372,7 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
         'Refer back to rows by number; "these two" means the last rows you showed.',
       inputSchema: {
         kind: z.string().describe(`One of: ${kinds}.`),
-        filter: z.record(z.string(), z.unknown()).optional().describe('Per kind, e.g. {"needs":"me"} for feed, {"source":"linear"} for items, {"state":"running"} for sessions.'),
+        filter: z.record(z.string(), z.unknown()).optional().describe('Per kind, e.g. {"needs":"me"} for feed, {"source":"linear"} for items, {"feed":"following"} for situations, {"state":"running"} for sessions.'),
         since: z.string().optional().describe('How far back: 1d, 3h, 30m, or an ISO time.'),
         limit: z.number().optional(),
       },
@@ -1495,6 +1495,7 @@ export function createAgentRigTools(backend: RigToolsBackend): RigTool[] {
         into: z.string().optional().describe('merge: the situation to keep.'),
         title: z.string().optional(),
         description: z.string().optional(),
+        topic: z.string().optional().describe('A short, specific topic it shares with related situations ("Earn vault bugs"); reuse existing ones.'),
         refs: z.array(z.string()).optional().describe('Refs to add: msg:slack:<channel>:<ts>, item:ULY-523, github:<owner>/<repo>#<n>, or a link.'),
         people: z.array(z.string()).optional().describe('Full names.'),
         do: z.enum(['ask_you', 'do_it', 'bring_in', 'keep_watching', 'nothing']).optional().describe('What it needs now.'),
@@ -1505,7 +1506,7 @@ export function createAgentRigTools(backend: RigToolsBackend): RigTool[] {
       run: async (scope, input) => {
         if (scope.bindingId !== ORCHESTRATOR_BINDING) return failed(ONLY_ORCHESTRATOR);
         const op = String(input.op);
-        const args = { title: str(input.title), description: str(input.description), refs: input.refs, people: input.people, do: str(input.do), due: str(input.due), reason: str(input.reason), into: str(input.into) };
+        const args = { title: str(input.title), description: str(input.description), topic: str(input.topic), refs: input.refs, people: input.people, do: str(input.do), due: str(input.due), reason: str(input.reason), into: str(input.into) };
         if (op === 'open') return act(scope, [], 'open', args);
         if (!str(input.ref)) return failed('Give the situation (ref).');
         if (op === 'merge') return act(scope, [str(input.into) ?? '', String(input.ref)].filter(Boolean), 'merge', args);

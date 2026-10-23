@@ -49,7 +49,7 @@ export type ActionsDeps = {
   runWaitMs?: number;
 };
 
-const RELAY_KINDS = new Set(['feed', 'held', 'items', 'rules', 'changes', 'situations', 'facts']);
+const RELAY_KINDS = new Set(['feed', 'held', 'items', 'rules', 'changes', 'situations', 'facts', 'runs']);
 const NOT_YET: Record<string, string> = {
   people: "Rig can't list people from here yet.",
   usage: "Rig can't read your plan's usage windows yet.",
