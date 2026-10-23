@@ -15,7 +15,7 @@ import type { TurnGate } from './turns';
 export type QueryInput = { kind: string; filter?: Record<string, unknown>; since?: string; limit?: number };
 export type ActInput = { refs: string[]; action: string; args?: Record<string, unknown>; actor: string };
 export type StartInput = { task?: string; ref?: string; space?: string; mode?: 'foreground' | 'background'; userTurnId?: string | null };
-export type StartOutcome = { runId: string; space: { ref: string; name: string }; brief: string };
+export type StartOutcome = { runId: string; space: { ref: string; name: string }; brief: string; briefPath: string };
 
 type Fail = { message: string };
 type SpaceRow = { bindingId: string; name: string; root: string | null };
@@ -37,6 +37,8 @@ export type ActionsDeps = {
     run(ref: string): Promise<RunOutcome | null>;
   };
   runLocal(spec: { bindingId: string; prompt: string }): Promise<Result<{ runId: string }, Fail>>;
+  /** Writes a file in a space's folder (the brief); `relPath` is inside it. */
+  writeFile(root: string, relPath: string, text: string): Promise<void>;
   turns: TurnGate;
   now: () => number;
   /** How long run_now waits for a source's run before answering "checking now". */
@@ -162,7 +164,11 @@ export function createActions(deps: ActionsDeps) {
   /** Starts work that writes: only with a fresh desktop-issued turn id. */
   async function start(input: StartInput): Promise<Result<StartOutcome, Fail>> {
     if (!deps.turns.fresh(input.userTurnId)) return err({ message: 'Starting work needs the person to ask for it in this conversation (no recent user_turn_id).' });
-    let brief = (input.task ?? '').trim();
+    const task = (input.task ?? '').trim();
+    let title = task.split(/[.\n]/)[0]!.slice(0, 80) || 'Task';
+    let goal = task;
+    let why = 'You asked for it in Home.';
+    let evidence: string[] = [];
     let situationId: string | null = null;
     let fromSpace: string | null = null;
     if (input.ref) {
@@ -172,19 +178,13 @@ export function createActions(deps: ActionsDeps) {
       situationId = typeof s.id === 'string' ? s.id : null;
       const events = Array.isArray(got.data.events) ? (got.data.events as Record<string, unknown>[]) : [];
       fromSpace = (events.map((e) => e.binding_id).find((b) => typeof b === 'string') as string | undefined) ?? null;
-      const card = (got.data.feed as { card?: { action?: string } } | null)?.card;
-      brief = [
-        `# ${String(s.title ?? 'Task')}`,
-        brief ? `Goal: ${brief}` : card?.action ? `Goal: ${card.action.replace(/\*\*/g, '')}` : '',
-        `Why Rig suggested this: ${String(s.description ?? '')}`,
-        'Evidence:',
-        ...events.slice(-8).map((e) => `- ${String(e.ref)}: ${String(e.title || e.excerpt).slice(0, 160)}`),
-        'Report what you did and what still needs the person when you finish.',
-      ]
-        .filter(Boolean)
-        .join('\n');
+      const card = (got.data.feed as { card?: { action?: string; title?: string } } | null)?.card;
+      title = String(card?.title ?? s.title ?? title).slice(0, 80);
+      goal = task || (card?.action ?? String(s.title ?? '')).replace(/\*\*/g, '');
+      why = String(s.description ?? why);
+      evidence = events.slice(-8).map((e) => `- ${String(e.ref)}: ${String(e.title || e.excerpt).slice(0, 160)}`);
     }
-    if (!brief) return err({ message: 'Give the task in words, or the ref of a Feed card.' });
+    if (!goal) return err({ message: 'Give the task in words, or the ref of a Feed card.' });
     const spaces = await deps.spaces();
     if (!spaces.success) return spaces;
     const onMac = spaces.data.filter((x) => x.root);
@@ -195,13 +195,46 @@ export function createActions(deps: ActionsDeps) {
       (onMac.length === 1 ? onMac[0] : undefined);
     if (!space)
       return err({ message: onMac.length ? `Which space? On this Mac: ${onMac.map((x) => `#${x.name}`).join(', ')}.` : 'No space is on this Mac yet, so there is nowhere to run it.' });
-    const run = await deps.runLocal({ bindingId: space.bindingId, prompt: brief });
+    // The brief is a file in the space (design §9): the session works from it, and people can read and edit it.
+    const day = new Date(deps.now()).toISOString().slice(0, 10);
+    const slug = `${day}-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'task'}`;
+    const briefPath = `sessions/${slug}/brief.md`;
+    const brief = [
+      '---',
+      `title: ${JSON.stringify(title)}`,
+      `source: ${situationId ? situationId : 'chat'}`,
+      `mode: ${input.mode ?? 'foreground'}`,
+      `created: ${new Date(deps.now()).toISOString()}`,
+      'version: 1',
+      '---',
+      '',
+      `# ${title}`,
+      '',
+      '## Goal',
+      goal,
+      '',
+      '## Done when',
+      'The goal is met, or you have found what blocks it and who can unblock it.',
+      '',
+      '## Why Rig suggested this',
+      why,
+      ...(evidence.length ? ['', '## Evidence', ...evidence] : []),
+      '',
+      '## Limits',
+      "Don't send messages, comment, close or assign anything outside this space without asking. Ask when a decision is the person's.",
+      '',
+      '## When you finish',
+      'Say what you did, what changed, and what still needs the person.',
+      '',
+    ].join('\n');
+    await deps.writeFile(space.root!, briefPath, brief);
+    const run = await deps.runLocal({ bindingId: space.bindingId, prompt: `Work through ${briefPath}.` });
     if (!run.success) return run;
     if (situationId) {
       await deps.relay.linkSession(run.data.runId, situationId, space.bindingId);
       await deps.relay.act([situationId], 'follow', { reason: 'a session was started for it' }, 'person');
     }
-    return ok({ runId: run.data.runId, space: { ref: `space_${space.bindingId}`, name: space.name }, brief });
+    return ok({ runId: run.data.runId, space: { ref: `space_${space.bindingId}`, name: space.name }, brief, briefPath });
   }
 
   /** Runs every source that is due; the scheduler's tick. */

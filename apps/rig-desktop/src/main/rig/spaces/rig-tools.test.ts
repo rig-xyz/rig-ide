@@ -1393,7 +1393,7 @@ describe('the four primitives', () => {
   });
 
   it('rig_start passes the turn id and reports where it started', async () => {
-    const start = vi.fn(async () => ok({ runId: 'run_1', space: { ref: 'space_b1', name: 'ops' }, brief: 'x' }));
+    const start = vi.fn(async () => ok({ runId: 'run_1', space: { ref: 'space_b1', name: 'ops' }, brief: 'x', briefPath: 'sessions/x/brief.md' }));
     const backend = fakeBackend({ orch: orch({ start }) });
     const res = await call(backend, 'rig_start', { task: 'triage the Earn bugs', user_turn_id: 'turn_1' });
     expect(start).toHaveBeenCalledWith({ task: 'triage the Earn bugs', ref: undefined, space: undefined, mode: 'foreground', userTurnId: 'turn_1' });

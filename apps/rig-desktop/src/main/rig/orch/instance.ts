@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { app } from 'electron';
 import { err, ok } from '@emdash/shared';
 import { getAcpRuntimeClient } from '@main/core/acp/controller';
@@ -132,6 +132,12 @@ export const orchActions = createActions({
     const started = await spacesDispatchController.runLocal({ bindingId, ownerUserId: me.data.id, agent: 'claude', prompt });
     if (!started) return err({ message: "Spaces aren't running on this Mac, so Rig can't start a session." });
     return started.success ? ok({ runId: started.data.runId }) : err({ message: started.error });
+  },
+  writeFile: async (root, relPath, text) => {
+    const file = join(root, relPath);
+    if (!file.startsWith(join(root, 'sessions') + '/')) throw new Error('brief path outside the space');
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, text);
   },
   turns: turnGate,
   now: () => Date.now(),

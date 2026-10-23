@@ -1458,7 +1458,7 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
           userTurnId: typeof input.user_turn_id === 'string' ? input.user_turn_id : null,
         });
         if (!res.success) return failed(res.error.message);
-        return { text: `Started in #${res.data.space.name} [ses_${res.data.runId}]. It reports back when it ends.` };
+        return { text: `Started in #${res.data.space.name} [ses_${res.data.runId}], working from ${res.data.briefPath}. It reports back when it ends.` };
       },
     },
   ];

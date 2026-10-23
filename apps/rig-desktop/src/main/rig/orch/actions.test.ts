@@ -28,6 +28,7 @@ function deps(over: Partial<ActionsDeps> = {}): ActionsDeps & { turns: ReturnTyp
       run: vi.fn(async () => ({ status: 'ok' as const, listed: 5, added: 2, cursor: '2026-10-23T11:59:00Z' })),
     },
     runLocal: vi.fn(async () => ok({ runId: 'run_9' })),
+    writeFile: vi.fn(async () => {}),
     turns,
     now: () => NOW,
     ...over,
@@ -68,7 +69,8 @@ describe('the control plane', () => {
     const turn = d.turns.issue('chat');
     const started = await a.start({ ref: 'sit_1', userTurnId: turn });
     expect(started.success && started.data).toMatchObject({ runId: 'run_9', space: { name: 'deletion' } });
-    expect(d.runLocal).toHaveBeenCalledWith({ bindingId: 'b2', prompt: expect.stringContaining('Goal: Pick the list. The 8.') });
+    expect(d.writeFile).toHaveBeenCalledWith('/r/deletion', expect.stringMatching(/^sessions\/2026-10-23-vendor-list\/brief\.md$/), expect.stringContaining('## Goal\nPick the list. The 8.'));
+    expect(d.runLocal).toHaveBeenCalledWith({ bindingId: 'b2', prompt: 'Work through sessions/2026-10-23-vendor-list/brief.md.' });
     expect(d.relay.linkSession).toHaveBeenCalledWith('run_9', 'sit_1', 'b2');
     expect(d.relay.act).toHaveBeenCalledWith(['sit_1'], 'follow', { reason: 'a session was started for it' }, 'person');
   });

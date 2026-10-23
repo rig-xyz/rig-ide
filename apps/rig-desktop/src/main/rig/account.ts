@@ -63,8 +63,12 @@ export function resolveRelayUrl(envUrl: string | undefined = process.env.RIG_REL
  */
 export async function resolveCliAccountEnv(): Promise<Record<string, string>> {
   const token = await readRelayToken();
+  const relay = resolveRelayUrl();
   return {
-    RIG_RELAY_URL: resolveRelayUrl(),
+    RIG_RELAY_URL: relay,
+    // The CLI picks the relay for new spaces and syncs from RIG_RELAY (RIG_RELAY_URL
+    // only lets its host through), so a dev app on a local relay creates its spaces there.
+    RIG_RELAY: relay,
     ...(token ? { RIG_RELAY_TOKEN: token } : {}),
   };
 }
