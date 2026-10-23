@@ -27,12 +27,14 @@ export type FeedRelayError =
   | { kind: 'busy'; message: string };
 
 const REQUEST_TIMEOUT_MS = 15_000;
+const ACT_TIMEOUT_MS = 90_000;
 
 async function call(
   method: 'GET' | 'POST',
   path: string,
   action: string,
-  body?: unknown
+  body?: unknown,
+  timeoutMs = REQUEST_TIMEOUT_MS
 ): Promise<Result<unknown, FeedRelayError>> {
   const ctx = await resolveContext();
   if (isError(ctx)) return err(ctx);
@@ -46,7 +48,7 @@ async function call(
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     log.warn('feed: relay request failed', { action, error: String(error) });
@@ -220,4 +222,57 @@ export async function moveEvent(
     { to, reason, actor }
   );
   return res.success ? ok({ situationId: str(rec(res.data).situationId) }) : res;
+}
+
+// ────────── the four primitives' relay half (rig docs/orchestrator-design.md §10.3) ──────────
+
+export type OrchRow = { ref: string; title: string } & Record<string, unknown>;
+export type OrchQuery = { kind: string; rows: OrchRow[] } | { kind: string; unavailable: true; message: string };
+
+export async function orchQuery(
+  kind: string,
+  opts: { since?: string; limit?: number; filter?: Record<string, unknown> } = {}
+): Promise<Result<OrchQuery, FeedRelayError>> {
+  const params = new URLSearchParams({ kind });
+  if (opts.since) params.set('since', opts.since);
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.filter && Object.keys(opts.filter).length) params.set('filter', JSON.stringify(opts.filter));
+  const res = await call('GET', `/v1/me/orch/query?${params}`, `list ${kind}`);
+  return res.success ? ok(res.data as OrchQuery) : res;
+}
+
+export async function orchGet(ref: string): Promise<Result<Record<string, unknown>, FeedRelayError>> {
+  const res = await call('GET', `/v1/me/orch/get?ref=${encodeURIComponent(ref)}`, 'read that');
+  return res.success ? ok(rec(res.data)) : res;
+}
+
+export type OrchActResult = {
+  ref: string;
+  ok: boolean;
+  message: string;
+  changeId?: string;
+  card?: { action: string; title: string; detail: string; refs: string[] };
+};
+
+export async function orchAct(
+  refs: string[],
+  action: string,
+  args: Record<string, unknown>,
+  actor: string
+): Promise<Result<OrchActResult[], FeedRelayError>> {
+  // The relay may wait up to a minute for a worker pass to let go of the person's lease.
+  const res = await call('POST', '/v1/me/orch/act', action, { refs, action, args, actor }, ACT_TIMEOUT_MS);
+  if (!res.success) return res;
+  const results = rec(res.data).results;
+  return ok(Array.isArray(results) ? (results as OrchActResult[]) : []);
+}
+
+export async function orchEvents(events: unknown[]): Promise<Result<{ added: number }, FeedRelayError>> {
+  const res = await call('POST', '/v1/me/orch/events', 'send what came in', { events });
+  return res.success ? ok({ added: Number(rec(res.data).added) || 0 }) : res;
+}
+
+export async function linkSession(runId: string, situationId: string, bindingId: string): Promise<Result<null, FeedRelayError>> {
+  const res = await call('POST', '/v1/me/orch/sessions', 'link the session to its card', { runId, situationId, bindingId });
+  return res.success ? ok(null) : res;
 }

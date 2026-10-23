@@ -9,7 +9,7 @@ import { CONNECTORS, connectorById, isConnectorId, RIG_TOOLS_SERVER } from '@sha
 import { opensBesideChat } from '@shared/spaces/links';
 import { isHtmlPath, isRigFileUrl, parseRigFileUrl } from '@shared/spaces/rig-file';
 import type { RigShowRequest } from '@shared/spaces/show';
-import type { RigFeed, RigFeedItem, RigSituation } from '@shared/rig/feed';
+import type { OrchActions } from '../orch/actions';
 import { ROOM_SEES_LEVELS, type RoomSees } from '@shared/spaces/room-sees';
 import {
   canonicalEmoji,
@@ -77,9 +77,9 @@ export const PRE_APPROVED_RIG_TOOLS: ReadonlySet<string> = new Set([
   // Only move the view of the person who asked, on their own Mac.
   'rig_browser_open',
   'rig_topic_show',
-  // Read your owner's Feed and why a card is there.
-  'rig_feed_list',
-  'rig_situation_explain',
+  // Read what Rig knows: lists and single refs.
+  'rig_query',
+  'rig_get',
 ]);
 
 /**
@@ -158,6 +158,9 @@ export const ownerApprovals = createOwnerApprovals();
 
 type Failure = { message: string };
 
+/** The control plane, as the rig tools see it. */
+export type OrchPrimitives = Pick<OrchActions, 'query' | 'get' | 'act' | 'start'>;
+
 export interface RigToolsBackend {
   /** The signed-in account's relay user id. */
   whoami(): Promise<Result<{ id: string }, Failure>>;
@@ -229,14 +232,8 @@ export interface RigToolsBackend {
   listTopics?(bindingId: string): Promise<Result<{ enabled: boolean; topics: { id: string; name: string }[] } | null, Failure>>;
   /** Whether the person signed in here sees topics: their Topics setting, which shows the topic dock above the chat. */
   topicsOnHere?(): boolean;
-  /** The owner's Feed from the orchestrator (GET /v1/me/feed); absent when this version has none. */
-  feedList?(): Promise<Result<RigFeed, Failure>>;
-  /** One situation: its record, events and "why is this here?". */
-  situationGet?(id: string): Promise<Result<RigSituation, Failure>>;
-  /** Corrections to the owner's Feed, logged on the relay with `actor` and `reason`, each undoable there. */
-  feedHide?(situationId: string, reason: string, actor: string): Promise<Result<null, Failure>>;
-  situationMerge?(keep: string, absorb: string[], reason: string, actor: string): Promise<Result<unknown, Failure>>;
-  eventMove?(eventId: string, to: string, reason: string, actor: string): Promise<Result<{ situationId: string }, Failure>>;
+  /** The control plane's four primitives (orch/actions.ts); absent when this version has none. */
+  orch?: OrchPrimitives;
 }
 
 export type RigToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: 'image/png' };
@@ -1283,7 +1280,7 @@ export function createRigTools(
       },
     },
     ...showTools(backend),
-    ...feedTools(backend),
+    ...orchestratorTools(backend),
   ];
   return tools;
 }
@@ -1341,178 +1338,127 @@ async function openTarget(
   return ok({ kind: 'file', relPath: file.data.relPath });
 }
 
-/** How a correction names the agent that made it, in the owner's change log. */
-const agentActor = (scope: RigToolScope) =>
-  `${scope.agent === 'codex' ? 'Codex' : 'Claude'} (agent)`;
-const NO_FEED = "This version of Rig doesn't have the Feed.";
+/** How a change names the agent that made it, in the owner's change log. */
+const agentActor = (scope: RigToolScope) => `${scope.agent === 'codex' ? 'Codex' : 'Claude'} (agent)`;
+const NO_ORCH = "This version of Rig doesn't have the orchestrator's tools.";
 
-function feedLine(x: RigFeedItem, i?: number): string {
-  const d = x.decision;
-  const head = `${i === undefined ? '-' : `${i + 1}.`} ${x.card?.title ?? x.title} [${x.situationId}]`;
-  return `${head}${d ? ` · Rig decided ${d.do} (${d.conf.toFixed(2)})` : ''}`;
+/** A row as one numbered line: its title, its ref, then its other fields. */
+function rowLine(row: Record<string, unknown>, i: number): string {
+  const { ref, title, ...rest } = row;
+  const extra = Object.entries(rest)
+    .filter(([, v]) => v !== null && v !== undefined && v !== '' && typeof v !== 'object')
+    .map(([k, v]) => `${k}: ${String(v)}`)
+    .join(' · ');
+  return `${i + 1}. ${String(title ?? ref)} [${String(ref)}]${extra ? ` · ${extra}` : ''}`;
 }
 
 /**
- * The correction loop (rig docs/orchestrator-architecture.md §5): read the
- * owner's Feed and why a card is there, and fix what Rig got wrong. Hide,
- * merge and move are logged with the agent and reason on the relay, and Rig
- * re-decides what they touch. Reads are pre-approved; corrections ask.
+ * The four primitives over refs (rig docs/orchestrator-design.md §10.3):
+ * list anything, read one thing, change Rig's state, start work. Tiers are
+ * enforced by the control plane, not here: what speaks for the owner comes
+ * back as a card, and `rig_start` needs the owner's fresh `user_turn_id`.
  */
-function feedTools(backend: RigToolsBackend): RigTool[] {
-  const reasonField = z
-    .string()
-    .describe(
-      'Why, in a few words, as your owner would say it. It is kept with the change and Rig learns from it.'
-    );
+function orchestratorTools(backend: RigToolsBackend): RigTool[] {
+  const kinds = 'feed, held, items, topics, sources, connectors, spaces, sessions, rules, changes, people, usage, runners';
   return [
     {
-      name: 'rig_feed_list',
+      name: 'rig_query',
       description:
-        "List your owner's Feed: the cards Rig shows them (things that need them or that their Claude could do), the queue behind those, and the situations Rig follows for them. " +
-        'Use it when they ask what is on their plate or in their Feed, or before correcting a card. Each line has the situation id the other Feed tools take.',
-      inputSchema: {},
-      annotations: { title: 'List the Feed', readOnlyHint: true },
-      run: async () => {
-        if (!backend.feedList) return failed(NO_FEED);
-        const res = await backend.feedList();
-        if (!res.success) return failed(res.error.message);
-        const f = res.data;
-        const lines = [
-          `Shown (${f.visible.length}):`,
-          ...f.visible.map((x, i) => feedLine(x, i)),
-          ...(f.queued.length
-            ? [
-                '',
-                `Queued (${f.queued.length}):`,
-                ...f.queued.map((x, i) => feedLine(x, i + f.visible.length)),
-              ]
-            : []),
-          ...(f.following.length
-            ? ['', `Following (${f.following.length}):`, ...f.following.map((x) => feedLine(x))]
-            : []),
-          ...(f.snoozed.length
-            ? ['', `Snoozed (${f.snoozed.length}):`, ...f.snoozed.map((x) => feedLine(x))]
-            : []),
-        ];
-        return {
-          text:
-            f.visible.length + f.queued.length + f.following.length
-              ? lines.join('\n')
-              : 'The Feed is empty.',
-        };
+        `List what Rig knows for your owner as numbered rows, each with its ref: ${kinds}. ` +
+        'Use it when they ask what needs them (feed with filter {"needs":"me"}), what Rig held back (held), what came in (items, with since), the latest topics, their connectors or sources, their spaces or sessions, their rules, or what changed (changes, for undo). ' +
+        'Refer back to rows by number; "these two" means the last rows you showed.',
+      inputSchema: {
+        kind: z.string().describe(`One of: ${kinds}.`),
+        filter: z.record(z.string(), z.unknown()).optional().describe('Per kind, e.g. {"needs":"me"} for feed, {"source":"linear"} for items, {"state":"running"} for sessions.'),
+        since: z.string().optional().describe('How far back: 1d, 3h, 30m, or an ISO time.'),
+        limit: z.number().optional(),
       },
-    },
-    {
-      name: 'rig_situation_explain',
-      description:
-        "Explain why a card is in your owner's Feed: the situation's record, the events Rig put in it and how each got there, and Rig's latest decision in plain words. " +
-        'Use it when they ask why something is in their Feed, or before you merge, move or hide anything.',
-      inputSchema: { situation: z.string().describe('The situation id, from rig_feed_list.') },
-      annotations: { title: 'Explain a card', readOnlyHint: true },
+      annotations: { title: 'List from Rig', readOnlyHint: true },
       run: async (_scope, input) => {
-        if (!backend.situationGet) return failed(NO_FEED);
-        const id = String(input.situation ?? '').trim();
-        if (!id) return failed('Give a situation id from rig_feed_list.');
-        const res = await backend.situationGet(id);
+        if (!backend.orch) return failed(NO_ORCH);
+        const res = await backend.orch.query({
+          kind: String(input.kind ?? ''),
+          filter: input.filter && typeof input.filter === 'object' ? (input.filter as Record<string, unknown>) : undefined,
+          since: typeof input.since === 'string' ? input.since : undefined,
+          limit: typeof input.limit === 'number' ? input.limit : undefined,
+        });
         if (!res.success) return failed(res.error.message);
-        const s = res.data;
-        return {
-          text: [
-            `${s.title} (${s.status})`,
-            s.description,
-            `People: ${s.participants.join(', ')}`,
-            '',
-            'Events:',
-            ...s.events.map(
-              (e) =>
-                `- [${e.id}] ${e.at.slice(0, 16)} ${e.source} ${e.from ?? ''}: ${(e.title || e.excerpt).slice(0, 160)} (put here ${e.attachedBy === 'new' ? 'as a new situation' : `by ${e.attachedBy}`})`
-            ),
-            '',
-            `Why it's here: ${s.explain ?? 'Rig has not decided yet.'}`,
-          ].join('\n'),
-        };
+        if ('unavailable' in res.data) return { text: `Not available yet: ${res.data.message}` };
+        const rows = res.data.rows;
+        return { text: rows.length ? [`${res.data.kind} (${rows.length}):`, ...rows.map(rowLine)].join('\n') : `No ${res.data.kind} right now.` };
       },
     },
     {
-      name: 'rig_feed_hide',
+      name: 'rig_get',
       description:
-        "Hide a card from your owner's Feed until something new happens in its situation. " +
-        "Use it when they say a card doesn't need them, or you know it's handled. It isn't closed: a new event brings it back.",
-      inputSchema: {
-        situation: z.string().describe('The situation id, from rig_feed_list.'),
-        reason: reasonField,
-      },
-      annotations: { title: 'Hide a card', readOnlyHint: false, destructiveHint: false },
-      run: async (scope, input) => {
-        if (!backend.feedHide) return failed(NO_FEED);
-        const id = String(input.situation ?? '').trim();
-        if (!id) return failed('Give a situation id from rig_feed_list.');
-        const res = await backend.feedHide(id, String(input.reason ?? ''), agentActor(scope));
-        return res.success
-          ? { text: 'Hidden until something new happens in it.' }
-          : failed(res.error.message);
+        'Read one thing in full by its ref: a Feed card or situation (sit_…, with its events and why it is there), an item (item:…, msg:…, oev_…, with why Rig did or did not propose it), a source, a space, a rule or a change. ' +
+        'Use it when they ask why something is (or is not) in their Feed, or before you change it.',
+      inputSchema: { ref: z.string().describe('A ref from rig_query, or an item ref like item:ULY-429.') },
+      annotations: { title: 'Read from Rig', readOnlyHint: true },
+      run: async (_scope, input) => {
+        if (!backend.orch) return failed(NO_ORCH);
+        const ref = String(input.ref ?? '').trim();
+        if (!ref) return failed('Give a ref.');
+        const res = await backend.orch.get(ref);
+        if (!res.success) return failed(res.error.message);
+        const text = JSON.stringify(res.data, null, 1);
+        return { text: text.length > 8000 ? `${text.slice(0, 8000)}…` : text };
       },
     },
     {
-      name: 'rig_situation_merge',
+      name: 'rig_act',
       description:
-        "Merge situations in your owner's Feed that are really one open loop, keeping one and folding the others into it; Rig then decides again what it means for them. " +
-        'Use it when two cards or situations are the same question, problem or piece of work.',
+        "Change Rig's state for your owner, on one or more refs: done, hide, snooze, ignore, show, follow, right_call or merge (args.into) on Feed refs; move (args.to) on events; run_now, pause or resume on sources; rule_add (args.text) or rule_remove; undo on a change ref (chg_…). " +
+        'Use it when they tell you a card is handled, wrong, the same as another, or should come back, or to run a source again. Pass their reason in args.reason. ' +
+        "What speaks for them, involves people or can't be undone (reply, bring_in, create_space, watch, cancel) comes back as a card for them to click; nothing happens until they do.",
       inputSchema: {
-        keep: z.string().describe('The situation id to keep.'),
-        absorb: z.array(z.string()).describe('The situation ids to fold into it.'),
-        reason: reasonField,
+        refs: z.array(z.string()).describe('The refs to act on.'),
+        action: z.string().describe('The action.'),
+        args: z.record(z.string(), z.unknown()).optional().describe('reason, into, to, text, until.'),
       },
-      annotations: { title: 'Merge situations', readOnlyHint: false, destructiveHint: false },
+      annotations: { title: "Change Rig's state", readOnlyHint: false, destructiveHint: false },
       run: async (scope, input) => {
-        if (!backend.situationMerge) return failed(NO_FEED);
-        const keep = String(input.keep ?? '').trim();
-        const absorb = Array.isArray(input.absorb)
-          ? input.absorb.map((x) => String(x).trim()).filter((x) => x && x !== keep)
-          : [];
-        if (!keep || !absorb.length)
-          return failed('Give one situation to keep and at least one other to fold into it.');
-        const res = await backend.situationMerge(
-          keep,
-          absorb,
-          String(input.reason ?? ''),
-          agentActor(scope)
+        if (!backend.orch) return failed(NO_ORCH);
+        const refs = Array.isArray(input.refs) ? input.refs.map((x) => String(x).trim()).filter(Boolean) : [];
+        const res = await backend.orch.act({
+          refs,
+          action: String(input.action ?? ''),
+          args: input.args && typeof input.args === 'object' ? (input.args as Record<string, unknown>) : {},
+          actor: agentActor(scope),
+        });
+        if (!res.success) return failed(res.error.message);
+        const lines = res.data.map((r) =>
+          r.card
+            ? `${r.ref}: needs your owner's click: ${r.card.title}${r.card.detail ? ` (${r.card.detail})` : ''}`
+            : `${r.ref}: ${r.ok ? 'done' : 'not done'}. ${r.message}${r.changeId ? ` Undo with ${r.changeId}.` : ''}`
         );
-        return res.success
-          ? {
-              text: `Merged ${absorb.length} into ${keep}; Rig decided again what it means for your owner.`,
-            }
-          : failed(res.error.message);
+        return { text: lines.join('\n') || 'Nothing to do.', ...(res.data.length && res.data.every((r) => !r.ok) ? { isError: true } : {}) };
       },
     },
     {
-      name: 'rig_event_move',
+      name: 'rig_start',
       description:
-        'Move an event Rig put in the wrong situation to the one it belongs to, or to a new situation of its own; Rig then decides again about both. ' +
-        'Use it when rig_situation_explain shows an event that is about something else.',
+        'Start a session that does work: from a task in words, or from a Feed card (ref), in one of their spaces on this Mac. The only tool that starts work that writes. ' +
+        'Use it when your owner asks you to start, do or work on something. Pass the user_turn_id from this turn; without a fresh one Rig refuses.',
       inputSchema: {
-        event: z.string().describe('The event id, from rig_situation_explain.'),
-        to: z
-          .string()
-          .describe('The situation id it belongs to, or "new" for a situation of its own.'),
-        reason: reasonField,
+        task: z.string().optional().describe('What to do, in their words.'),
+        ref: z.string().optional().describe('A Feed card (sit_…) to start from.'),
+        space: z.string().optional().describe('The space, by #name or ref; Rig picks the card\'s own space or asks.'),
+        mode: z.enum(['foreground', 'background']).optional(),
+        user_turn_id: z.string().describe("This turn's user_turn_id, from the <rig_turn> line."),
       },
-      annotations: { title: 'Move an event', readOnlyHint: false, destructiveHint: false },
-      run: async (scope, input) => {
-        if (!backend.eventMove) return failed(NO_FEED);
-        const event = String(input.event ?? '').trim();
-        const to = String(input.to ?? '').trim();
-        if (!event || !to)
-          return failed('Give the event id and where it goes (a situation id, or "new").');
-        const res = await backend.eventMove(
-          event,
-          to,
-          String(input.reason ?? ''),
-          agentActor(scope)
-        );
-        return res.success
-          ? { text: `Moved. It is now in ${res.data.situationId}.` }
-          : failed(res.error.message);
+      annotations: { title: 'Start a session', readOnlyHint: false, destructiveHint: false },
+      run: async (_scope, input) => {
+        if (!backend.orch) return failed(NO_ORCH);
+        const res = await backend.orch.start({
+          task: typeof input.task === 'string' ? input.task : undefined,
+          ref: typeof input.ref === 'string' ? input.ref : undefined,
+          space: typeof input.space === 'string' ? input.space : undefined,
+          mode: input.mode === 'background' ? 'background' : 'foreground',
+          userTurnId: typeof input.user_turn_id === 'string' ? input.user_turn_id : null,
+        });
+        if (!res.success) return failed(res.error.message);
+        return { text: `Started in #${res.data.space.name} [ses_${res.data.runId}]. It reports back when it ends.` };
       },
     },
   ];

@@ -10,6 +10,7 @@ import { resolveSelfUserId } from '../account';
 import { createRuntimeAcpSessions } from '../spaces/dispatch';
 import { rigToolsServer } from '../spaces/rig-tools-instance';
 import { createHomeChat } from './chat';
+import { turnGate } from '../orch/turns';
 
 /**
  * `rpc.rig.homeChat`: Home's chat with the person's own Claude on this Mac
@@ -28,6 +29,7 @@ const homeChat = createHomeChat({
     return dir;
   },
   newConversationId: () => `home-${randomUUID()}`,
+  issueTurn: () => turnGate.issue('chat'),
   log,
 });
 

@@ -54,6 +54,7 @@ function deps(acp: HomeChatDeps['acp'], over: Partial<HomeChatDeps> = {}): HomeC
     whoami: async () => ok({ id: 'usr_me' }),
     cwd: async () => '/tmp/home-chat',
     newConversationId: () => `home-${++n}`,
+    issueTurn: () => `turn_${n}`,
     ...over,
   };
 }
@@ -72,6 +73,13 @@ describe('Home chat', () => {
     expect(d.rigTools).toHaveBeenCalledWith({ bindingId: 'home', ownerUserId: 'usr_me', agent: 'claude', cwd: '/tmp/home-chat' });
   });
 
+  it("gives each of the person's messages a fresh user_turn_id, out of sight", async () => {
+    const { acp } = fakeAcp(() => 'ok');
+    const chat = createHomeChat(deps(acp));
+    await chat.send('start a session with task x');
+    expect(acp.queuePrompt).toHaveBeenCalledWith('home-1', 'start a session with task x', '<rig_turn user_turn_id="turn_1" />', expect.any(Function));
+  });
+
   it('runs turns one at a time', async () => {
     const order: string[] = [];
     const { acp } = fakeAcp((text) => {
@@ -85,14 +93,15 @@ describe('Home chat', () => {
   });
 
   it('allows the Feed tools once and refuses everything else', async () => {
-    expect(homeChatPermission(request('mcp__rig__rig_feed_hide'))).toBe('allow');
-    expect(homeChatPermission(request('mcp__rig__rig_situation_merge'))).toBe('allow');
+    expect(homeChatPermission(request('mcp__rig__rig_act'))).toBe('allow');
+    expect(homeChatPermission(request('mcp__rig__rig_start'))).toBe('allow');
+    expect(homeChatPermission(request('mcp__rig__rig_query'))).toBe('allow');
     expect(homeChatPermission(request('mcp__rig__rig_chat_read'))).toBe('no');
     expect(homeChatPermission(request('Bash'))).toBe('no');
     const { acp, askPermission } = fakeAcp(() => 'x');
     const chat = createHomeChat(deps(acp));
     await chat.send('hi');
-    askPermission(request('mcp__rig__rig_feed_list'));
+    askPermission(request('mcp__rig__rig_get'));
     expect(acp.resolvePermission).toHaveBeenCalledWith('home-1', 'r1', 'allow');
   });
 

@@ -26,7 +26,6 @@ import {
   type RigToolScope,
   type RigToolsBackend,
 } from './rig-tools';
-import type { RigDecisionDo, RigFeedItem } from '@shared/rig/feed';
 
 const SCOPE: RigToolScope = { bindingId: 'b1', ownerUserId: 'u-dylan', agent: 'claude', cwd: '/rigs/space' };
 const NOW = Date.parse('2026-09-25T12:00:00Z');
@@ -195,7 +194,7 @@ async function call(backend: RigToolsBackend, name: string, input: Record<string
 }
 
 describe('rig tools', () => {
-  it('are the eighteen tools, each saying when to use it', () => {
+  it('are the seventeen tools, each saying when to use it', () => {
     const tools = createRigTools(fakeBackend());
     expect(tools.map((t) => t.name)).toEqual([
       'rig_space_describe',
@@ -211,11 +210,10 @@ describe('rig tools', () => {
       'rig_settings_update',
       'rig_browser_open',
       'rig_topic_show',
-      'rig_feed_list',
-      'rig_situation_explain',
-      'rig_feed_hide',
-      'rig_situation_merge',
-      'rig_event_move',
+      'rig_query',
+      'rig_get',
+      'rig_act',
+      'rig_start',
     ]);
     for (const t of tools) expect(t.description).toMatch(/Use it when|Use it whenever/);
     expect(tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name)).toEqual([
@@ -227,15 +225,15 @@ describe('rig tools', () => {
       'rig_settings_read',
       'rig_browser_open',
       'rig_topic_show',
-      'rig_feed_list',
-      'rig_situation_explain',
+      'rig_query',
+      'rig_get',
     ]);
   });
 
   it('each say what they do up front, so a truncated listing still tells them apart', () => {
     const openings = createRigTools(fakeBackend()).map((t) => t.description.slice(0, 60));
     expect(new Set(openings).size).toBe(openings.length);
-    for (const opening of openings) expect(opening).toMatch(/^(Describe|Invite|List|Read|Add|Acknowledge|Rename|Change|Show|Filter|Explain|Hide|Merge|Move)[ ,]/);
+    for (const opening of openings) expect(opening).toMatch(/^(Describe|Invite|List|Read|Add|Acknowledge|Rename|Change|Show|Filter|Start)[ ,]/);
   });
 
   it('pre-approve only tools that are read-only, and rig_chat_react (an emoji, a few per turn)', () => {
@@ -1354,97 +1352,55 @@ describe('parseSpaceManifest', () => {
   });
 });
 
-describe('the Feed tools', () => {
-  const feedItem = (id: string, title: string, d: RigDecisionDo, conf: number): RigFeedItem => ({
-    situationId: id,
-    title,
-    description: '',
-    participants: [],
-    decision: { do: d, conf, who: 'Dylan', look: 'next_event', trigger: 'new event' },
-    card: null,
-    updatedAt: '2026-10-19T10:00:00Z',
+describe('the four primitives', () => {
+  const orch = (over: Partial<NonNullable<RigToolsBackend['orch']>> = {}): NonNullable<RigToolsBackend['orch']> => ({
+    query: vi.fn(async () => ok({ kind: 'feed', rows: [] })),
+    get: vi.fn(async () => ok({})),
+    act: vi.fn(async () => ok([])),
+    start: vi.fn(async () => err({ message: 'no' })),
+    ...over,
   });
 
-  it('rig_feed_list lists shown, queued and followed situations with their ids', async () => {
-    const backend = fakeBackend({
-      feedList: vi.fn(async () =>
-        ok({
-          visible: [feedItem('sit_1', 'Choose the vendor list', 'ask_you', 0.92)],
-          queued: [feedItem('sit_2', 'Send Maya the usage data', 'do_it', 0.46)],
-          following: [feedItem('sit_3', 'Erasure registry', 'do_it', 0.2)],
-          snoozed: [],
-          digest: [],
-        })
-      ),
-    });
-    const res = await call(backend, 'rig_feed_list');
-    expect(res.isError).toBeUndefined();
-    expect(res.text).toContain('1. Choose the vendor list [sit_1] · Rig decided ask_you (0.92)');
-    expect(res.text).toContain('2. Send Maya the usage data [sit_2]');
-    expect(res.text).toContain('Following (1):');
-  });
-
-  it('rig_situation_explain shows the events, how they got there, and why', async () => {
-    const backend = fakeBackend({
-      situationGet: vi.fn(async () =>
-        ok({
-          id: 'sit_1',
-          title: 'Vendor list',
-          description: 'Riyad is waiting on the vendor list [ev:i04].',
-          status: 'open' as const,
-          participants: ['Riyad Hasanov', 'Dylan'],
-          decision: null,
-          events: [
-            {
-              id: 'oev_1',
-              ref: 'ev:i04',
-              source: 'slack',
-              from: 'Riyad Hasanov',
-              title: 'Which vendor list?',
-              excerpt: '',
-              at: '2026-10-19T10:20:00Z',
-              attachedBy: 'fact',
-            },
-          ],
-          explain: 'Rig decided "ask_you" (0.92).',
-        })
-      ),
-    });
-    const res = await call(backend, 'rig_situation_explain', { situation: 'sit_1' });
-    expect(res.text).toContain('[oev_1]');
-    expect(res.text).toContain('put here by fact');
-    expect(res.text).toContain('Why it\'s here: Rig decided "ask_you" (0.92).');
-  });
-
-  it('corrections pass the agent and the reason, and say what changed', async () => {
-    const feedHide = vi.fn(async () => ok(null));
-    const situationMerge = vi.fn(async () => ok({}));
-    const eventMove = vi.fn(async () => ok({ situationId: 'sit_9' }));
-    const backend = fakeBackend({ feedHide, situationMerge, eventMove });
-    expect(
-      (await call(backend, 'rig_feed_hide', { situation: 'sit_1', reason: 'handled' })).text
-    ).toContain('Hidden');
-    expect(feedHide).toHaveBeenCalledWith('sit_1', 'handled', 'Claude (agent)');
-    await call(backend, 'rig_situation_merge', {
-      keep: 'sit_1',
-      absorb: ['sit_2', 'sit_1'],
-      reason: 'same thing',
-    });
-    expect(situationMerge).toHaveBeenCalledWith('sit_1', ['sit_2'], 'same thing', 'Claude (agent)');
-    expect(
-      (await call(backend, 'rig_event_move', { event: 'oev_1', to: 'new', reason: 'separate' }))
-        .text
-    ).toContain('sit_9');
-  });
-
-  it('say so when this version has no Feed, and refuse a merge with nothing to fold in', async () => {
-    const backend = fakeBackend();
-    expect((await call(backend, 'rig_feed_list')).isError).toBe(true);
-    const merge = await call(
-      fakeBackend({ situationMerge: vi.fn(async () => ok({})) }),
-      'rig_situation_merge',
-      { keep: 'sit_1', absorb: [] }
+  it('rig_query numbers rows with their refs, and says when a kind is not available yet', async () => {
+    const query = vi.fn(async (input: { kind: string }) =>
+      input.kind === 'usage'
+        ? ok({ kind: 'usage', unavailable: true as const, message: "Rig can't read your plan's usage windows yet." })
+        : ok({ kind: 'feed', rows: [{ ref: 'sit_1', title: 'Choose the vendor list', decision: 'ask_you 0.92' }, { ref: 'sit_2', title: 'Send Maya the data' }] })
     );
-    expect(merge.isError).toBe(true);
+    const backend = fakeBackend({ orch: orch({ query }) });
+    const res = await call(backend, 'rig_query', { kind: 'feed', filter: { needs: 'me' } });
+    expect(res.text).toBe('feed (2):\n1. Choose the vendor list [sit_1] · decision: ask_you 0.92\n2. Send Maya the data [sit_2]');
+    expect(query).toHaveBeenCalledWith({ kind: 'feed', filter: { needs: 'me' }, since: undefined, limit: undefined });
+    expect((await call(backend, 'rig_query', { kind: 'usage' })).text).toMatch(/^Not available yet/);
+  });
+
+  it('rig_act passes the refs, the agent and the reason, and says how to undo or that a click is needed', async () => {
+    const act = vi.fn(async (input: { action: string }) =>
+      ok(
+        input.action === 'reply'
+          ? [{ ref: 'sit_1', ok: true, message: 'needs your click', card: { action: 'reply', title: 'reply: Vendor', detail: 'Go with the 8', refs: ['sit_1'] } }]
+          : [
+              { ref: 'sit_1', ok: true, message: 'Ignored; Rig notes why.', changeId: 'chg_7' },
+              { ref: 'sit_2', ok: true, message: 'Ignored; Rig notes why.', changeId: 'chg_8' },
+            ]
+      )
+    );
+    const backend = fakeBackend({ orch: orch({ act }) });
+    const res = await call(backend, 'rig_act', { refs: ['sit_1', 'sit_2'], action: 'ignore', args: { reason: 'not mine' } });
+    expect(act).toHaveBeenCalledWith({ refs: ['sit_1', 'sit_2'], action: 'ignore', args: { reason: 'not mine' }, actor: 'Claude (agent)' });
+    expect(res.text).toContain('Undo with chg_7');
+    expect((await call(backend, 'rig_act', { refs: ['sit_1'], action: 'reply', args: { text: 'Go with the 8' } })).text).toMatch(/needs your owner's click/);
+  });
+
+  it('rig_start passes the turn id and reports where it started', async () => {
+    const start = vi.fn(async () => ok({ runId: 'run_1', space: { ref: 'space_b1', name: 'ops' }, brief: 'x' }));
+    const backend = fakeBackend({ orch: orch({ start }) });
+    const res = await call(backend, 'rig_start', { task: 'triage the Earn bugs', user_turn_id: 'turn_1' });
+    expect(start).toHaveBeenCalledWith({ task: 'triage the Earn bugs', ref: undefined, space: undefined, mode: 'foreground', userTurnId: 'turn_1' });
+    expect(res.text).toContain('Started in #ops [ses_run_1]');
+  });
+
+  it('say so when this version has no orchestrator', async () => {
+    expect((await call(fakeBackend(), 'rig_query', { kind: 'feed' })).isError).toBe(true);
   });
 });

@@ -57,6 +57,7 @@ import { rigPulseController } from './rig/pulse';
 import { rigRecentThemesController } from './rig/recent-themes';
 import { rigFeedController } from './rig/feed/controller';
 import { rigHomeChatController } from './rig/home-chat/controller';
+import { rigOrchController } from './rig/orch/instance';
 import { rigSpaceStatusController } from './rig/space-status';
 import { rigNotificationsController } from './rig/notifications/electron';
 import { rigRecentController } from './rig/recent-rigs';
@@ -247,6 +248,8 @@ export const rpcRouter = createRPCRouter({
     feed: rigFeedController,
     // Home's chat with the person's own Claude, which can read and correct the Feed.
     homeChat: rigHomeChatController,
+    // The control plane's four primitives for the person's own clicks (query, get, act, start).
+    orch: rigOrchController,
     // Settings → About's rig/tapd version rows — package.json reads only,
     // see `bundled-cli.ts`'s own header comment for why this never spawns
     // either binary.

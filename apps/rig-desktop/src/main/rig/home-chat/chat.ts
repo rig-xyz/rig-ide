@@ -12,22 +12,18 @@ import { rigToolOf, type RigToolScope } from '../spaces/rig-tools';
  * Home isn't a space and has nothing to work on yet.
  */
 
-/** The rig tools Home's Claude may use, without asking again: the Feed's. */
-export const HOME_CHAT_TOOLS: ReadonlySet<string> = new Set([
-  'rig_feed_list',
-  'rig_situation_explain',
-  'rig_feed_hide',
-  'rig_situation_merge',
-  'rig_event_move',
-]);
+/** The rig tools Home's Claude may use without asking again: the four primitives (design §10.3). */
+export const HOME_CHAT_TOOLS: ReadonlySet<string> = new Set(['rig_query', 'rig_get', 'rig_act', 'rig_start']);
 
 export const HOME_CHAT_RULES = [
-  "You are Rig, talking with the person in their Home: the place they ask Rig about their work across their spaces. Rig's Feed is what Rig puts in front of them: cards for things that need them or that their Claude could do, and situations Rig follows for them.",
-  'Answer in a few plain sentences. Name cards by their title, never by an id.',
-  'When they ask what needs them, what is in their Feed or what came in, read it with rig_feed_list.',
-  "When they ask why something is there, read it with rig_situation_explain and say why in their terms.",
-  "When they say a card is wrong because it doesn't need them, is already handled, is the same thing as another card, or holds an event about something else, read it with rig_situation_explain first, then fix it with rig_feed_hide, rig_situation_merge or rig_event_move. Give the reason in their words, then say what you changed.",
-  "Use only those tools. You can't start sessions, open files or change anything else from Home yet; say so if they ask.",
+  "You are Rig, talking with the person in their Home: the place they ask Rig about their work across their spaces and tell it what to do. Rig's Feed is what Rig puts in front of them: cards for things that need them or that their Claude could do; what Rig held back stays out of sight until they ask.",
+  'You have four tools. rig_query lists anything as numbered rows with refs (feed, held, items, topics, sources, connectors, spaces, sessions, rules, changes). rig_get reads one ref in full, including why it is or is not in the Feed. rig_act changes Rig\'s state. rig_start starts a session that does work.',
+  'Compose them: "what needs me" is rig_query feed with filter {"needs":"me"}; "what\'s in my inbox" is items since a day plus topics, grouped for them; "my connectors" is connectors plus sources; "run the sync again" is sources, then rig_act run_now on the right one (ask first if "sync" could mean file sync); "dismiss these two" is rig_act ignore on the two rows they mean.',
+  'Number every list you show. "These two", "the first one" and the like mean rows of the last list you showed; if it is ambiguous, ask.',
+  "Pass the person's reason, in their words, as args.reason. After a change, say what changed and give its change ref so they can undo it with rig_act undo.",
+  "Actions that speak for them, involve other people or can't be undone come back as a card: say it needs their click; nothing has happened.",
+  'To start work, call rig_start with the task or a card ref and the user_turn_id from this turn\'s <rig_turn> line. If Rig asks which space, ask them.',
+  'Answer in a few plain sentences. Name cards by their title, never by an id alone. You have no shell and no files here.',
 ].join('\n');
 
 export type HomeChatDeps = {
@@ -41,6 +37,8 @@ export type HomeChatDeps = {
   /** Home's own empty folder, where the session runs. */
   cwd: () => Promise<string>;
   newConversationId: () => string;
+  /** A fresh user_turn_id for the person's message (orch/turns.ts); rig_start checks it. */
+  issueTurn: () => string;
   turnTimeoutMs?: number;
   log?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
 };
@@ -111,7 +109,8 @@ export function createHomeChat(deps: HomeChatDeps): HomeChat {
     });
     const timer = setTimeout(() => finish(err('Claude took too long to answer.')), deps.turnTimeoutMs ?? TURN_TIMEOUT_MS);
     try {
-      const queued = await deps.acp.queuePrompt(conversationId, text, undefined, (reason) => finish(err(reason)));
+      const hidden = `<rig_turn user_turn_id="${deps.issueTurn()}" />`;
+      const queued = await deps.acp.queuePrompt(conversationId, text, hidden, (reason) => finish(err(reason)));
       if (!queued.success) return err(queued.error);
       return await done;
     } finally {

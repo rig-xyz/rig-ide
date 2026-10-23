@@ -375,9 +375,18 @@ export function HomeProvider({
       const entry = stateRef.current.feed.find((e) => e.item.id === itemId);
       if (!entry) return;
       const { item } = entry;
-      // A real card: the person takes it from here. Starting the session it
-      // proposes comes with the session protocol; for now Rig hears it's handled.
+      // A real card: Start runs the session it proposes; the other verbs tell Rig it's handled.
       if (item.situationId) {
+        const situationId = item.situationId;
+        if (chosen(item, entry.pick).verb === 'start') {
+          // Start the session the card proposes, in the card's own space; its result comes back to the card.
+          void rpc.rig.feed.start({ situationId }).then((r) => {
+            if (!r.success) return toast(r.error.message);
+            dispatch({ type: 'remove', itemId });
+            toast(`Started in #${r.data.space.name}. It reports back when it ends.`);
+          });
+          return;
+        }
         dispatch({ type: 'remove', itemId });
         answerCard(itemId, 'act', { choice: chosen(item, entry.pick).label });
         toast('Done. Rig will bring it back if something new happens.');
