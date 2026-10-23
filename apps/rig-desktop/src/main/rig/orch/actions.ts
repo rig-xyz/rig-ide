@@ -26,6 +26,10 @@ export type ActionsDeps = {
     get(ref: string): Promise<Result<Record<string, unknown>, Fail>>;
     act(refs: string[], action: string, args: Record<string, unknown>, actor: string): Promise<Result<OrchActResult[], Fail>>;
     linkSession(runId: string, situationId: string, bindingId: string): Promise<Result<null, Fail>>;
+    /** The background orchestrator's: a Jev check, a fact, a run's note. Absent on an older relay. */
+    check?(check: string, subject: string): Promise<Result<{ question: string; answer: number }, Fail>>;
+    remember?(fact: { about: string; fact: string; refs: string[]; until?: string; actor: string }): Promise<Result<{ id: string }, Fail>>;
+    runNote?(runId: string, note: Record<string, unknown>): Promise<Result<null, Fail>>;
   };
   spaces(): Promise<Result<SpaceRow[], Fail>>;
   topics(): Promise<{ name: string; space: string; description: string; messages: number; people: string[] }[] | null>;
@@ -45,7 +49,7 @@ export type ActionsDeps = {
   runWaitMs?: number;
 };
 
-const RELAY_KINDS = new Set(['feed', 'held', 'items', 'rules', 'changes']);
+const RELAY_KINDS = new Set(['feed', 'held', 'items', 'rules', 'changes', 'situations', 'facts']);
 const NOT_YET: Record<string, string> = {
   people: "Rig can't list people from here yet.",
   usage: "Rig can't read your plan's usage windows yet.",
@@ -161,8 +165,21 @@ export function createActions(deps: ActionsDeps) {
     return deps.relay.act(input.refs, input.action, args, input.actor);
   }
 
-  /** Starts work that writes: only with a fresh desktop-issued turn id. */
-  async function start(input: StartInput): Promise<Result<StartOutcome, Fail>> {
+  // A card's start in flight: a second click joins it rather than starting the same work twice.
+  const starting = new Map<string, Promise<Result<StartOutcome, Fail>>>();
+
+  /** Starts work that writes: only with a fresh desktop-issued turn id. One start per card at a time. */
+  function start(input: StartInput): Promise<Result<StartOutcome, Fail>> {
+    if (!input.ref) return startNow(input);
+    const key = input.ref;
+    const inFlight = starting.get(key);
+    if (inFlight) return inFlight;
+    const p = startNow(input).finally(() => starting.delete(key));
+    starting.set(key, p);
+    return p;
+  }
+
+  async function startNow(input: StartInput): Promise<Result<StartOutcome, Fail>> {
     if (!deps.turns.fresh(input.userTurnId)) return err({ message: 'Starting work needs the person to ask for it in this conversation (no recent user_turn_id).' });
     const task = (input.task ?? '').trim();
     let title = task.split(/[.\n]/)[0]!.slice(0, 80) || 'Task';
@@ -178,10 +195,11 @@ export function createActions(deps: ActionsDeps) {
       situationId = typeof s.id === 'string' ? s.id : null;
       const events = Array.isArray(got.data.events) ? (got.data.events as Record<string, unknown>[]) : [];
       fromSpace = (events.map((e) => e.binding_id).find((b) => typeof b === 'string') as string | undefined) ?? null;
-      const card = (got.data.feed as { card?: { action?: string; title?: string } } | null)?.card;
-      title = String(card?.title ?? s.title ?? title).slice(0, 80);
+      // The card the person clicked says what to do; the situation behind it says why.
+      const card = (got.data.feed as { card?: { action?: string; title?: string; why?: string } } | null)?.card;
+      title = String(card?.title || s.title || title).slice(0, 80);
       goal = task || (card?.action ?? String(s.title ?? '')).replace(/\*\*/g, '');
-      why = String(s.description ?? why);
+      why = [card?.why?.replace(/\{@([^}]+)\}/g, '$1'), String(s.description ?? '')].filter(Boolean).join('\n\n') || why;
       evidence = events.slice(-8).map((e) => `- ${String(e.ref)}: ${String(e.title || e.excerpt).slice(0, 160)}`);
     }
     if (!goal) return err({ message: 'Give the task in words, or the ref of a Feed card.' });
@@ -242,7 +260,25 @@ export function createActions(deps: ActionsDeps) {
     for (const s of dueSources(await deps.sources.list(), deps.now())) await deps.sources.run(s.ref);
   }
 
-  return { query, get, act, start, runDue };
+  const unsupported = err({ message: "This relay doesn't support the background orchestrator yet." });
+
+  /** A yes/no question Jev answers: a rule (by ref), "noise", "mine", or any question in words. */
+  async function check(input: { check: string; subject: string }): Promise<Result<{ question: string; answer: number }, Fail>> {
+    if (!deps.relay.check) return unsupported;
+    return deps.relay.check(input.check, input.subject);
+  }
+
+  async function remember(input: { about: string; fact: string; refs: string[]; until?: string; actor: string }): Promise<Result<{ id: string }, Fail>> {
+    if (!deps.relay.remember) return unsupported;
+    return deps.relay.remember(input);
+  }
+
+  async function runNote(runId: string, note: Record<string, unknown>): Promise<Result<null, Fail>> {
+    if (!deps.relay.runNote) return unsupported;
+    return deps.relay.runNote(runId, note);
+  }
+
+  return { query, get, act, start, runDue, check, remember, runNote };
 }
 
 export type OrchActions = ReturnType<typeof createActions>;

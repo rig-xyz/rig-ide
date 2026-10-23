@@ -75,6 +75,23 @@ describe('the control plane', () => {
     expect(d.relay.act).toHaveBeenCalledWith(['sit_1'], 'follow', { reason: 'a session was started for it' }, 'person');
   });
 
+  it('builds the brief from the card the person clicked, and starts it once however often they click', async () => {
+    const get = vi.fn(async (ref: string) =>
+      ok({ ref, situation: { id: 'sit_1', title: 'ULY-349: Loyalty landing page', description: 'Anthony owns ULY-349.' }, events: [{ ref: 'ev:i04', title: 'Can you review?', binding_id: 'b2' }], feed: { card: { title: "Review Riyad's payout-claims PRs", why: '{@Riyad Hasanov} is waiting on four reviews.', action: '**Tell Riyad when.** It lands today.' } } })
+    );
+    const d = deps();
+    d.relay.get = get;
+    const a = createActions(d);
+    const turn = d.turns.issue('click');
+    const [one, two] = await Promise.all([a.start({ ref: 'sit_1', task: 'Review the four PRs: Claude drafts review notes.', userTurnId: turn }), a.start({ ref: 'sit_1', task: 'Review the four PRs.', userTurnId: turn })]);
+    expect(one).toEqual(two);
+    expect(d.runLocal).toHaveBeenCalledTimes(1);
+    const brief = (d.writeFile as ReturnType<typeof vi.fn>).mock.calls[0]![2] as string;
+    expect(brief).toContain("# Review Riyad's payout-claims PRs");
+    expect(brief).toContain('## Goal\nReview the four PRs: Claude drafts review notes.');
+    expect(brief).toContain('Riyad Hasanov is waiting on four reviews.');
+  });
+
   it('asks which space when a task could go in several, and finds one by name', async () => {
     const a = createActions(deps());
     const d2 = deps();

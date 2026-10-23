@@ -159,7 +159,10 @@ export const ownerApprovals = createOwnerApprovals();
 type Failure = { message: string };
 
 /** The control plane, as the rig tools see it. */
-export type OrchPrimitives = Pick<OrchActions, 'query' | 'get' | 'act' | 'start'>;
+export type OrchPrimitives = Pick<OrchActions, 'query' | 'get' | 'act' | 'start'> & Partial<Pick<OrchActions, 'check' | 'remember' | 'runNote'>>;
+
+/** The background orchestrator's scope (orch/agent.ts): the only one its write tools answer. */
+export const ORCHESTRATOR_BINDING = 'orchestrator';
 
 export interface RigToolsBackend {
   /** The signed-in account's relay user id. */
@@ -1359,7 +1362,7 @@ function rowLine(row: Record<string, unknown>, i: number): string {
  * back as a card, and `rig_start` needs the owner's fresh `user_turn_id`.
  */
 function orchestratorTools(backend: RigToolsBackend): RigTool[] {
-  const kinds = 'feed, held, items, topics, sources, connectors, spaces, sessions, rules, changes, people, usage, runners';
+  const kinds = 'feed, held, items, situations, facts, topics, sources, connectors, spaces, sessions, rules, changes, people, usage, runners';
   return [
     {
       name: 'rig_query',
@@ -1459,6 +1462,127 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
         });
         if (!res.success) return failed(res.error.message);
         return { text: `Started in #${res.data.space.name} [ses_${res.data.runId}], working from ${res.data.briefPath}. It reports back when it ends.` };
+      },
+    },
+  ];
+}
+
+const ONLY_ORCHESTRATOR = "Only Rig's background orchestrator can use this tool.";
+
+/**
+ * The background orchestrator's own tools (rig "background orchestrator"
+ * design): it decides the Feed; Rig keeps the state. Listed only in its own
+ * session (`ORCHESTRATOR_BINDING`), and each refuses any other scope too.
+ */
+export function createAgentRigTools(backend: RigToolsBackend): RigTool[] {
+  const act = async (scope: RigToolScope, refs: string[], action: string, args: Record<string, unknown>): Promise<RigToolResult> => {
+    if (!backend.orch) return failed(NO_ORCH);
+    const res = await backend.orch.act({ refs, action, args, actor: agentActor(scope) });
+    if (!res.success) return failed(res.error.message);
+    const lines = res.data.map((r) => `${r.ref}: ${r.ok ? 'done' : 'not done'}. ${r.message}${r.changeId ? ` (undo: ${r.changeId})` : ''}`);
+    return { text: lines.join('\n') || 'Nothing to do.', ...(res.data.length && res.data.every((r) => !r.ok) ? { isError: true } : {}) };
+  };
+  const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+  return [
+    {
+      name: 'rig_situation',
+      description:
+        'Open, update, close or merge one of your owner\'s situations: the open loops Rig keeps between runs. Open needs a title, a description of facts with refs, the refs it rests on and the people involved. ' +
+        'An open fails when another open situation already holds one of its refs; update that one instead. Close and merge need a reason.',
+      inputSchema: {
+        op: z.enum(['open', 'update', 'close', 'merge']),
+        ref: z.string().optional().describe('The situation (sit_…); not for open.'),
+        into: z.string().optional().describe('merge: the situation to keep.'),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        refs: z.array(z.string()).optional().describe('Refs to add: msg:slack:<channel>:<ts>, item:ULY-523, github:<owner>/<repo>#<n>, or a link.'),
+        people: z.array(z.string()).optional().describe('Full names.'),
+        do: z.enum(['ask_you', 'do_it', 'bring_in', 'keep_watching', 'nothing']).optional().describe('What it needs now.'),
+        due: z.string().optional().describe('When to look again (ISO time), if it should be checked at a set time.'),
+        reason: z.string().optional(),
+      },
+      annotations: { title: 'Keep a situation', readOnlyHint: false, destructiveHint: false },
+      run: async (scope, input) => {
+        if (scope.bindingId !== ORCHESTRATOR_BINDING) return failed(ONLY_ORCHESTRATOR);
+        const op = String(input.op);
+        const args = { title: str(input.title), description: str(input.description), refs: input.refs, people: input.people, do: str(input.do), due: str(input.due), reason: str(input.reason), into: str(input.into) };
+        if (op === 'open') return act(scope, [], 'open', args);
+        if (!str(input.ref)) return failed('Give the situation (ref).');
+        if (op === 'merge') return act(scope, [str(input.into) ?? '', String(input.ref)].filter(Boolean), 'merge', args);
+        return act(scope, [String(input.ref)], op, args);
+      },
+    },
+    {
+      name: 'rig_feed',
+      description:
+        "Put a card for a situation on your owner's Feed, move it, or take it off. A card is checked before it lands (refs the situation holds, names, length, no he or she) and you get every problem back to fix. " +
+        'Title: what to do and about what, at most 8 words, no ticket ids. Why: the one fact that matters, at most 25 words, citing refs in [brackets]. Choices: one to three, each a verb (reply, start, space, open), a short lead and a tail starting with ":" saying what happens.',
+      inputSchema: {
+        op: z.enum(['put', 'move', 'retire']),
+        ref: z.string().describe('The situation (sit_…).'),
+        card: z
+          .object({
+            title: z.string(),
+            why: z.string(),
+            choices: z.array(z.object({ verb: z.enum(['reply', 'start', 'space', 'open']), lead: z.string(), tail: z.string() })),
+            people: z.array(z.string()),
+          })
+          .optional()
+          .describe('put: the card.'),
+        position: z.number().optional().describe('put or move: 1 = top. The first six are visible.'),
+        state: z.enum(['following', 'hidden', 'done', 'digest']).optional().describe('retire: where it goes (default following).'),
+        reason: z.string().optional(),
+      },
+      annotations: { title: 'Change the Feed', readOnlyHint: false, destructiveHint: false },
+      run: async (scope, input) => {
+        if (scope.bindingId !== ORCHESTRATOR_BINDING) return failed(ONLY_ORCHESTRATOR);
+        const ref = String(input.ref ?? '');
+        if (input.op === 'retire') return act(scope, [ref], 'retire_card', { state: str(input.state), reason: str(input.reason) });
+        return act(scope, [ref], 'put_card', { ...(input.op === 'put' ? { card: input.card } : {}), position: input.position, reason: str(input.reason) });
+      },
+    },
+    {
+      name: 'rig_check',
+      description:
+        'Ask a fast classifier a yes/no question about something you read or a card you drafted: one of your owner\'s rules (by its ref from the packet), "noise" (bot or automated?), "mine" (does it ask your owner to act?), or any question in words. Answers 0 to 1. Use it instead of guessing.',
+      inputSchema: { check: z.string(), subject: z.string().describe('The text to judge: the message, ticket or card.') },
+      annotations: { title: 'Check an assumption', readOnlyHint: true },
+      run: async (scope, input) => {
+        if (scope.bindingId !== ORCHESTRATOR_BINDING) return failed(ONLY_ORCHESTRATOR);
+        if (!backend.orch?.check) return failed(NO_ORCH);
+        const res = await backend.orch.check({ check: String(input.check ?? ''), subject: String(input.subject ?? '') });
+        return res.success ? { text: `${res.data.question} → ${res.data.answer.toFixed(2)} (1 = yes)` } : failed(res.error.message);
+      },
+    },
+    {
+      name: 'rig_remember',
+      description: 'Record a lasting fact about your owner or someone they work with (who owns what, a role, a date that matters), with the refs it rests on. Never secrets or ids.',
+      inputSchema: { about: z.string(), fact: z.string(), refs: z.array(z.string()), until: z.string().optional().describe('ISO date when it stops being true.') },
+      annotations: { title: 'Remember a fact', readOnlyHint: false, destructiveHint: false },
+      run: async (scope, input) => {
+        if (scope.bindingId !== ORCHESTRATOR_BINDING) return failed(ONLY_ORCHESTRATOR);
+        if (!backend.orch?.remember) return failed(NO_ORCH);
+        const refs = Array.isArray(input.refs) ? input.refs.map(String) : [];
+        const res = await backend.orch.remember({ about: String(input.about ?? ''), fact: String(input.fact ?? ''), refs, until: str(input.until), actor: agentActor(scope) });
+        return res.success ? { text: `Remembered (${res.data.id}).` } : failed(res.error.message);
+      },
+    },
+    {
+      name: 'rig_run_note',
+      description: 'End the run: what you read (each source and up to when), what changed and why, what you left alone and why, in under 150 words. The next run starts reading from your times.',
+      inputSchema: {
+        run_id: z.string().describe('The run id from the packet.'),
+        read: z.array(z.object({ source: z.string(), until: z.string().describe('ISO time') })),
+        changed: z.array(z.string()),
+        left: z.array(z.string()),
+        summary: z.string(),
+      },
+      annotations: { title: 'End the run', readOnlyHint: false, destructiveHint: false },
+      run: async (scope, input) => {
+        if (scope.bindingId !== ORCHESTRATOR_BINDING) return failed(ONLY_ORCHESTRATOR);
+        if (!backend.orch?.runNote) return failed(NO_ORCH);
+        const res = await backend.orch.runNote(String(input.run_id ?? ''), { read: input.read, changed: input.changed, left: input.left, summary: input.summary });
+        return res.success ? { text: 'Run noted.' } : failed(res.error.message);
       },
     },
   ];

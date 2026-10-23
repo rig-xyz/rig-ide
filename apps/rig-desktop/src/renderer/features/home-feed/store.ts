@@ -28,6 +28,8 @@ export interface FeedEntry {
   ignored: boolean;
   /** Just promoted into the Feed: it arrives from the side. */
   fresh: boolean;
+  /** Its Start is setting up a session: the button says so until it's running. */
+  starting?: boolean;
 }
 
 export type ChatMessage =
@@ -84,6 +86,7 @@ export type HomeAction =
   | { type: 'edit'; itemId: string; text: string | null }
   | { type: 'reset'; itemId: string }
   | { type: 'ignore'; itemId: string; value: boolean }
+  | { type: 'starting'; itemId: string; value: boolean }
   | { type: 'remove'; itemId: string }
   | { type: 'add-item'; item: FeedItem }
   | { type: 'add-session'; spaceId: string; session: RailSession; atEnd?: boolean }
@@ -168,6 +171,8 @@ export function homeReducer(state: HomeState, action: HomeAction): HomeState {
         resetKey: e.resetKey + 1,
         slide: null,
       }));
+    case 'starting':
+      return mapEntry(state, action.itemId, (e) => ({ ...e, starting: action.value }));
     case 'ignore':
       return mapEntry(state, action.itemId, (e) => ({ ...e, ignored: action.value }));
     case 'replace-feed': {

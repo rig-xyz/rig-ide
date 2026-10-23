@@ -287,3 +287,55 @@ export async function linkSession(runId: string, situationId: string, bindingId:
   const res = await call('POST', '/v1/me/orch/sessions', 'link the session to its card', { runId, situationId, bindingId });
   return res.success ? ok(null) : res;
 }
+
+// ────────── the background orchestrator (orch/agent.ts) ──────────
+
+/** Where a run should look: the last run's cursors, what is due, Rig's own new events, the person and their rules. */
+export type OrchAgentState = {
+  me: string | null;
+  profile: string;
+  rules: { ref: string; text: string }[];
+  lastRun: { id: string; at: string } | null;
+  cursors: Record<string, string>;
+  due: { ref: string; title: string; at: string; why: string }[];
+  events: { ref: string; source: string; kind: string; line: string; for: string | null; at: string }[];
+  counts: { open: number; visible: number; queued: number };
+  /** Visible situations with no card written yet. */
+  bare: { ref: string; title: string }[];
+};
+
+export async function orchAgentState(): Promise<Result<OrchAgentState, FeedRelayError>> {
+  const res = await call('GET', '/v1/me/orch/agent', "read where Rig's run should look");
+  if (!res.success) return res;
+  const r = rec(res.data);
+  return ok({
+    me: str(r.me) || null,
+    profile: str(r.profile),
+    rules: (Array.isArray(r.rules) ? r.rules : []).map((x) => ({ ref: str(rec(x).ref), text: str(rec(x).text) })),
+    lastRun: r.lastRun ? { id: str(rec(r.lastRun).id), at: str(rec(r.lastRun).at) } : null,
+    cursors: Object.fromEntries(Object.entries(rec(r.cursors)).map(([k, v]) => [k, str(v)])),
+    due: (Array.isArray(r.due) ? r.due : []).map((x) => ({ ref: str(rec(x).ref), title: str(rec(x).title), at: str(rec(x).at), why: str(rec(x).why) })),
+    events: (Array.isArray(r.events) ? r.events : []).map((x) => {
+      const e = rec(x);
+      return { ref: str(e.ref), source: str(e.source), kind: str(e.kind), line: str(e.line), for: str(e.for) || null, at: str(e.at) };
+    }),
+    counts: { open: Number(rec(r.counts).open) || 0, visible: Number(rec(r.counts).visible) || 0, queued: Number(rec(r.counts).queued) || 0 },
+    bare: (Array.isArray(r.bare) ? r.bare : []).map((x) => ({ ref: str(rec(x).ref), title: str(rec(x).title) })),
+  });
+}
+
+export async function orchCheck(check: string, subject: string): Promise<Result<{ question: string; answer: number }, FeedRelayError>> {
+  const res = await call('POST', '/v1/me/orch/check', 'run the check', { check, subject });
+  if (!res.success) return res;
+  return ok({ question: str(rec(res.data).question), answer: Number(rec(res.data).answer) || 0 });
+}
+
+export async function orchFact(fact: { about: string; fact: string; refs: string[]; until?: string; source?: string; actor: string }): Promise<Result<{ id: string }, FeedRelayError>> {
+  const res = await call('POST', '/v1/me/orch/facts', 'remember that', fact);
+  return res.success ? ok({ id: str(rec(res.data).id) }) : res;
+}
+
+export async function orchRun(id: string, trigger: string, note?: Record<string, unknown>): Promise<Result<null, FeedRelayError>> {
+  const res = await call('POST', '/v1/me/orch/runs', 'record the run', { id, trigger, ...(note ? { note } : {}) });
+  return res.success ? ok(null) : res;
+}

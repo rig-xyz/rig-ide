@@ -29,6 +29,7 @@ export const rigFeedController = createRPCController({
   merge: (input: { keep: string; absorb: string[]; reason: string }) => one([input.keep, ...input.absorb], 'merge', { into: input.keep, reason: input.reason }),
   move: (input: { eventId: string; to: string; reason: string }) => one([input.eventId], 'move', { to: input.to, reason: input.reason }),
   /** The card's Start button: the person's click, so it gets a fresh turn id. */
-  start: (input: { situationId: string; space?: string }) =>
-    orchActions.start({ ref: input.situationId, space: input.space, userTurnId: turnGate.issue('click') }),
+  /** `task`: the choice the person clicked, in the card's words; the brief's goal. */
+  start: (input: { situationId: string; space?: string; task?: string }) =>
+    orchActions.start({ ref: input.situationId, space: input.space, task: input.task, userTurnId: turnGate.issue('click') }),
 });

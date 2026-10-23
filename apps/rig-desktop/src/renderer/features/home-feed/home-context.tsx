@@ -147,6 +147,8 @@ export function HomeProvider({
   const connectorsRef = useRef(connectors);
   connectorsRef.current = connectors;
   const stateRef = useRef(state);
+  /** Cards whose Start is setting up a session right now. */
+  const startingRef = useRef(new Set<string>());
   stateRef.current = state;
 
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
@@ -393,11 +395,22 @@ export function HomeProvider({
         }
         if (chosen(item, entry.pick).verb === 'start') {
           // Start the session the card proposes, in the card's own space; its result comes back to the card.
-          void rpc.rig.feed.start({ situationId }).then((r) => {
-            if (!r.success) return toast(r.error.message);
-            dispatch({ type: 'remove', itemId });
-            toast(`Started in #${r.data.space.name}. It reports back when it ends.`);
-          });
+          // Setting it up takes a few seconds: say so at once, and ignore more clicks meanwhile.
+          if (startingRef.current.has(situationId)) return;
+          startingRef.current.add(situationId);
+          const choice = chosen(item, entry.pick);
+          // The card's button says "Starting…" until the session runs; then the card leaves and the session shows in the rail.
+          dispatch({ type: 'starting', itemId, value: true });
+          void rpc.rig.feed
+            .start({ situationId, task: `${choice.lead}${choice.tail}`.replace(/[{}@]/g, '') })
+            .then((r) => {
+              if (!r.success) {
+                dispatch({ type: 'starting', itemId, value: false });
+                return toast(r.error.message);
+              }
+              dispatch({ type: 'remove', itemId });
+            })
+            .finally(() => startingRef.current.delete(situationId));
           return;
         }
         dispatch({ type: 'remove', itemId });

@@ -50,7 +50,8 @@ describe('checks', () => {
 
   it('ask about the situation with its links', () => {
     const prompt = checkPrompt(situation, 'Dylan Bourgeois');
-    expect(prompt).toContain('Rig is about to ask Dylan Bourgeois about this');
+    expect(prompt).toContain('Rig is about to show Dylan Bourgeois this card');
+    expect(prompt).toContain('a reply they sent counts');
     expect(prompt).toContain('(https://x.slack.com/archives/C1/p11)');
   });
 
@@ -68,6 +69,9 @@ describe('checks', () => {
       sessionFor: 'sit_1',
     });
     expect(toCheckEvent('sit_1', { source: 'slack', ref: 'C1:2.2', fact: 'Still open.', at: 'tomorrow' }, NOW)?.at).toBe(new Date(NOW).toISOString());
+    expect(toCheckEvent('sit_1', { source: 'slack', ref: 'C1:3.3', fact: 'The cs question was answered.', still_open: 'the sync and docs', settles: false }, NOW)?.summary).toBe(
+      'Rig checked: still open for the person: the sync and docs'
+    );
     expect(toCheckEvent('sit_1', { source: 'slack', fact: 'no ref' }, NOW)).toBeNull();
   });
 

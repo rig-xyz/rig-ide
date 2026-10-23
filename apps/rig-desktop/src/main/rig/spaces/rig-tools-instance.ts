@@ -169,6 +169,9 @@ const backend: RigToolsBackend = {
     get: async (ref) => (await import('../orch/instance')).orchActions.get(ref),
     act: async (input) => (await import('../orch/instance')).orchActions.act(input),
     start: async (input) => (await import('../orch/instance')).orchActions.start(input),
+    check: async (input) => (await import('../orch/instance')).orchActions.check(input),
+    remember: async (input) => (await import('../orch/instance')).orchActions.remember(input),
+    runNote: async (runId, note) => (await import('../orch/instance')).orchActions.runNote(runId, note),
   },
   listTopics: async (bindingId) => {
     if (!api.getThemes) return ok(null);

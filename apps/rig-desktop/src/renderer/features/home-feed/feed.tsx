@@ -12,6 +12,7 @@ import {
   Plus,
   Reply,
   Send,
+  Loader2,
   Undo2,
   X,
 } from 'lucide-react';
@@ -328,6 +329,7 @@ function FeedRow({ entry }: { entry: FeedEntry }) {
           <Carousel item={item} choice={choice} onPick={pick} onStep={step} />
           <Action
             verb={choice.verb}
+            busy={entry.starting ? 'Starting…' : undefined}
             onRun={run}
             menuOpen={menuOpen}
             setMenuOpen={setMenuOpen}
@@ -579,6 +581,7 @@ function menuItems(
 /** The strong accent pill, joined like a drop to its round ▾ menu (the goo filter in `new-home.tsx`). */
 function Action({
   verb,
+  busy,
   onRun,
   menuOpen,
   setMenuOpen,
@@ -586,6 +589,8 @@ function Action({
   onMenu,
 }: {
   verb: FeedVerb;
+  /** Working on it: the button says this, spins, and can't be pressed again. */
+  busy?: string;
   onRun: () => void;
   menuOpen: boolean;
   setMenuOpen: (open: boolean) => void;
@@ -629,14 +634,16 @@ function Action({
         <button
           type="button"
           onClick={onRun}
+          disabled={!!busy}
+          aria-busy={!!busy}
           data-motion="slide"
           style={{ '--hf-px': '15px' } as CSSProperties}
-          className={cn(part, 'hf-btn hf-goo-main rounded-[18px] border-0')}
+          className={cn(part, 'hf-btn hf-goo-main rounded-[18px] border-0', busy && 'cursor-progress')}
         >
           <span aria-hidden className="hf-btn-lead">
-            <Icon className="size-[15px]" strokeWidth={2.4} />
+            {busy ? <Loader2 className="size-[15px] animate-spin" strokeWidth={2.4} /> : <Icon className="size-[15px]" strokeWidth={2.4} />}
           </span>
-          <span>{VERB_LABEL[verb]}</span>
+          <span>{busy ?? VERB_LABEL[verb]}</span>
           <span aria-hidden className="hf-btn-trail">
             <ArrowRight className="size-[15px]" strokeWidth={2.6} />
           </span>

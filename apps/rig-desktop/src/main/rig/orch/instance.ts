@@ -18,6 +18,8 @@ import { createRuntimeAcpSessions } from '../spaces/dispatch';
 import { spacesDispatchController } from '../spaces/dispatch-controller-instance';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
 import { createActions, type StartInput } from './actions';
+import { resolveSelfUserId } from '../account';
+import { createOrchestrator } from './agent';
 import { dueChecks, runCheck, type CheckRecord } from './checks';
 import { onRelayFeedChanged } from './feed-signal';
 import { runSource, type Source } from './sources';
@@ -81,6 +83,7 @@ let checking: Promise<number> | null = null;
  * resolves with how many ran. One pass at a time; a call during a pass joins it.
  */
 export function runDueChecks(): Promise<number> {
+  if (agentMode) return Promise.resolve(0);
   checking ??= (async () => {
     const feed = await feedRelay.getFeed();
     if (!feed.success) return 0;
@@ -122,6 +125,9 @@ export const orchActions = createActions({
       return r;
     },
     linkSession: (runId, situationId, bindingId) => feedRelay.linkSession(runId, situationId, bindingId),
+    check: (check, subject) => feedRelay.orchCheck(check, subject),
+    remember: (fact) => feedRelay.orchFact(fact),
+    runNote: (runId, note) => feedRelay.orchRun(runId, '', note),
   },
   spaces: async () => {
     const ws = await rigAccountController.workspaces();
@@ -196,6 +202,45 @@ export const orchActions = createActions({
   now: () => Date.now(),
 });
 
+/**
+ * The background orchestrator (agent.ts), when the relay runs in agent mode:
+ * it decides the Feed itself, so the card checks below stay off. Dev opt-in
+ * for now: RIG_ORCH_AGENT=1.
+ */
+export const agentMode = process.env.RIG_ORCH_AGENT === '1';
+export const orchestrator = createOrchestrator({
+  acp,
+  rigTools: async (scope) => (await import('../spaces/rig-tools-instance')).rigToolsServer.serverFor(scope),
+  whoami: async () => {
+    const id = await resolveSelfUserId();
+    return id.success ? ok({ id: id.data }) : err({ message: id.error.message });
+  },
+  cwd: async () => {
+    const dir = join(app.getPath('userData'), 'rig-orchestrator');
+    await mkdir(dir, { recursive: true });
+    return dir;
+  },
+  newConversationId: () => `orchestrator-${randomUUID()}`,
+  state: async () => {
+    const r = await feedRelay.orchAgentState();
+    return r.success ? r : err({ message: r.error.message });
+  },
+  sources: async () => (await readSources()).filter((x) => !x.paused).map((x) => ({ connector: x.connector, what: x.what })),
+  recordRun: (id, trigger, note) => feedRelay.orchRun(id, trigger, note),
+  issueTurn: () => turnGate.issue('run'),
+  now: () => Date.now(),
+  log,
+});
+const runAgent = (trigger: string) =>
+  void orchestrator.run(trigger).then((r) => {
+    if (!r.success) log.warn('Rig orchestrator: run failed', { trigger, error: r.error });
+    else changed();
+  });
+if (agentMode) {
+  setTimeout(() => runAgent('app start'), 60_000).unref?.();
+  setInterval(() => runAgent('schedule'), 60 * 60_000).unref?.();
+}
+
 // Sources check on their own schedule while the app runs, and visible cards get checked.
 const checkDue = () => void runDueChecks().catch((error: unknown) => log.warn('Rig checks: pass failed', { error: String(error) }));
 const tick = setInterval(() => {
@@ -222,6 +267,13 @@ export const rigOrchController = createRPCController({
   get: (input: { ref: string }) => orchActions.get(input.ref),
   act: (input: { refs: string[]; action: string; args?: Record<string, unknown> }) => orchActions.act({ ...input, actor: 'person' }),
   start: (input: Omit<StartInput, 'userTurnId'>) => orchActions.start({ ...input, userTurnId: turnGate.issue('click') }),
+  /** A background orchestrator run now (agent.ts), in agent mode. */
+  runNow: async () => {
+    if (!agentMode) return err({ message: 'The background orchestrator is off (RIG_ORCH_AGENT=1 turns it on).' });
+    const r = await orchestrator.run('asked');
+    if (r.success) changed();
+    return r.success ? ok(r.data) : err({ message: r.error });
+  },
   /** Check the due cards now (checks.ts); resolves with how many ran. */
   checkNow: async () => ok(await runDueChecks()),
   addSource: async (input: { connector: string; what: string; everyMin?: number }) => {

@@ -7,8 +7,8 @@ import { randomUUID } from 'node:crypto';
  * code, not left to the model.
  */
 export type TurnGate = {
-  /** A fresh id for the person's own message or click. */
-  issue(origin: 'chat' | 'click'): string;
+  /** A fresh id for the person's own message or click, or for a background run (`run`: its few starts). */
+  issue(origin: 'chat' | 'click' | 'run'): string;
   /** Whether `id` was issued here in the last `ttlMs`. */
   fresh(id: string | undefined | null): boolean;
 };

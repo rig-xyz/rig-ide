@@ -942,6 +942,8 @@ export function createSpacesDispatcher(deps: {
   resolvePermission: (runId: string, requestId: string, optionId: string) => Promise<boolean>;
   /** The run the owner's session with this agent is on right now (or about to start), for per-turn limits on rig tools; null when idle. */
   currentRunId: (bindingId: string, ownerUserId: string, agent: SessionAgent) => string | null;
+  /** Runs on this device with an approval waiting on their owner right now. */
+  waitingRuns: () => string[];
   /** Who asked for that run (their relay user id); null when idle. */
   currentAsker: (bindingId: string, ownerUserId: string, agent: SessionAgent) => string | null;
   /** A reaction a run's agent made (rig_chat_react), for its card when the turn ends without words. */
@@ -2068,6 +2070,11 @@ export function createSpacesDispatcher(deps: {
     }
   }
 
+  /** Runs on this Mac with an approval waiting on their owner right now. */
+  function waitingRuns(): string[] {
+    return [...new Set([...sessions.values()].flatMap((s) => [...s.heldPermissions.values()].map((held) => held.turn.runId)))];
+  }
+
   return {
     dispatch,
     runLocal,
@@ -2078,6 +2085,7 @@ export function createSpacesDispatcher(deps: {
     agentConfig,
     setAgentConfig,
     currentRunId,
+    waitingRuns,
     currentAsker,
     noteReaction,
     reportStalled,

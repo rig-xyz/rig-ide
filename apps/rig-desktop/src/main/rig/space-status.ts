@@ -304,7 +304,13 @@ export const rigSpaceStatusController = createRPCController({
       const statuses = Array.isArray(raw)
         ? raw.map(toStatus).filter((s): s is RigSpaceStatus => s !== null)
         : [];
-      return ok(withOwnerNames(statuses, await ownerNamesFor(ctx)(statuses)));
+      // This Mac knows for sure which of its runs wait on an approval; the relay
+      // only guesses from the run's latest event, which a line of text can follow.
+      const waiting = new Set((await import('./spaces/dispatch-controller-instance')).spacesDispatchController.waitingRuns());
+      const marked = waiting.size
+        ? statuses.map((s) => ({ ...s, running: s.running.map((r) => (waiting.has(r.runId) ? { ...r, activity: 'waiting' as const } : r)) }))
+        : statuses;
+      return ok(withOwnerNames(marked, await ownerNamesFor(ctx)(marked)));
     } catch (error) {
       return err(transportError('load your spaces’ status', error));
     }

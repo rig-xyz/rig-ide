@@ -5,7 +5,7 @@ import type { AcpHttpMcpServerWire } from '@emdash/core/acp';
 import { log } from '@main/lib/logger';
 import { z } from 'zod';
 import { RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
-import { createRigTools, runRigTool, type RigTool, type RigToolScope, type RigToolsBackend } from './rig-tools';
+import { createAgentRigTools, createRigTools, ORCHESTRATOR_BINDING, runRigTool, type RigTool, type RigToolScope, type RigToolsBackend } from './rig-tools';
 
 /**
  * The desktop's own MCP server for rig tools (`rig-tools.ts`), handed to each
@@ -84,6 +84,8 @@ function reply(res: ServerResponse, status: number, body?: Record<string, unknow
 export function createRigToolsServer(deps: { backend: RigToolsBackend; now?: () => number; extraTools?: RigTool[] }): RigToolsServer {
   // rig_space_describe lists them all, the browser tools included.
   const tools: RigTool[] = [...createRigTools(deps.backend, deps.now, () => tools), ...(deps.extraTools ?? [])];
+  // The background orchestrator's own tools, listed only in its session.
+  const agentTools = createAgentRigTools(deps.backend);
   /** Session key → its token, so the same session always gets the same one. */
   const tokenByKey = new Map<string, string>();
   /** Token hash → who and where it acts for. */
@@ -114,7 +116,7 @@ export function createRigToolsServer(deps: { backend: RigToolsBackend; now?: () 
       import('@modelcontextprotocol/sdk/server/streamableHttp.js'),
     ]);
     const mcp = new McpServer({ name: RIG_TOOLS_SERVER, version: '1.0.0' }, { instructions: INSTRUCTIONS });
-    for (const tool of tools) {
+    for (const tool of scope.bindingId === ORCHESTRATOR_BINDING ? [...tools, ...agentTools] : tools) {
       mcp.registerTool(
         tool.name,
         {
