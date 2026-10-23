@@ -157,6 +157,11 @@ describe('rig tools server', () => {
       'rig_settings_update',
       'rig_browser_open',
       'rig_topic_show',
+      'rig_feed_list',
+      'rig_situation_explain',
+      'rig_feed_hide',
+      'rig_situation_merge',
+      'rig_event_move',
     ]);
     // Every rig tool is always loaded, so tool search never hides one from the model.
     expect(tools.every((t) => t._meta?.['anthropic/alwaysLoad'] === true)).toBe(true);

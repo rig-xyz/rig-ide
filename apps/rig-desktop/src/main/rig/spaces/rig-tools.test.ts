@@ -26,6 +26,7 @@ import {
   type RigToolScope,
   type RigToolsBackend,
 } from './rig-tools';
+import type { RigDecisionDo, RigFeedItem } from '@shared/rig/feed';
 
 const SCOPE: RigToolScope = { bindingId: 'b1', ownerUserId: 'u-dylan', agent: 'claude', cwd: '/rigs/space' };
 const NOW = Date.parse('2026-09-25T12:00:00Z');
@@ -194,7 +195,7 @@ async function call(backend: RigToolsBackend, name: string, input: Record<string
 }
 
 describe('rig tools', () => {
-  it('are the thirteen tools, each saying when to use it', () => {
+  it('are the eighteen tools, each saying when to use it', () => {
     const tools = createRigTools(fakeBackend());
     expect(tools.map((t) => t.name)).toEqual([
       'rig_space_describe',
@@ -210,6 +211,11 @@ describe('rig tools', () => {
       'rig_settings_update',
       'rig_browser_open',
       'rig_topic_show',
+      'rig_feed_list',
+      'rig_situation_explain',
+      'rig_feed_hide',
+      'rig_situation_merge',
+      'rig_event_move',
     ]);
     for (const t of tools) expect(t.description).toMatch(/Use it when|Use it whenever/);
     expect(tools.filter((t) => t.annotations.readOnlyHint).map((t) => t.name)).toEqual([
@@ -221,13 +227,15 @@ describe('rig tools', () => {
       'rig_settings_read',
       'rig_browser_open',
       'rig_topic_show',
+      'rig_feed_list',
+      'rig_situation_explain',
     ]);
   });
 
   it('each say what they do up front, so a truncated listing still tells them apart', () => {
     const openings = createRigTools(fakeBackend()).map((t) => t.description.slice(0, 60));
     expect(new Set(openings).size).toBe(openings.length);
-    for (const opening of openings) expect(opening).toMatch(/^(Describe|Invite|List|Read|Add|Acknowledge|Rename|Change|Show|Filter)[ ,]/);
+    for (const opening of openings) expect(opening).toMatch(/^(Describe|Invite|List|Read|Add|Acknowledge|Rename|Change|Show|Filter|Explain|Hide|Merge|Move)[ ,]/);
   });
 
   it('pre-approve only tools that are read-only, and rig_chat_react (an emoji, a few per turn)', () => {
@@ -1343,5 +1351,100 @@ describe('parseSpaceManifest', () => {
     expect(parseSpaceManifest('[rig]\nname = "launch"\ndescription = ""\n')).toEqual({ name: 'launch', description: null });
     expect(parseSpaceManifest('not = [toml')).toEqual({ name: null, description: null });
     expect(parseSpaceManifest(null)).toEqual({ name: null, description: null });
+  });
+});
+
+describe('the Feed tools', () => {
+  const feedItem = (id: string, title: string, d: RigDecisionDo, conf: number): RigFeedItem => ({
+    situationId: id,
+    title,
+    description: '',
+    participants: [],
+    decision: { do: d, conf, who: 'Dylan', look: 'next_event', trigger: 'new event' },
+    card: null,
+    updatedAt: '2026-10-19T10:00:00Z',
+  });
+
+  it('rig_feed_list lists shown, queued and followed situations with their ids', async () => {
+    const backend = fakeBackend({
+      feedList: vi.fn(async () =>
+        ok({
+          visible: [feedItem('sit_1', 'Choose the vendor list', 'ask_you', 0.92)],
+          queued: [feedItem('sit_2', 'Send Maya the usage data', 'do_it', 0.46)],
+          following: [feedItem('sit_3', 'Erasure registry', 'do_it', 0.2)],
+          snoozed: [],
+          digest: [],
+        })
+      ),
+    });
+    const res = await call(backend, 'rig_feed_list');
+    expect(res.isError).toBeUndefined();
+    expect(res.text).toContain('1. Choose the vendor list [sit_1] · Rig decided ask_you (0.92)');
+    expect(res.text).toContain('2. Send Maya the usage data [sit_2]');
+    expect(res.text).toContain('Following (1):');
+  });
+
+  it('rig_situation_explain shows the events, how they got there, and why', async () => {
+    const backend = fakeBackend({
+      situationGet: vi.fn(async () =>
+        ok({
+          id: 'sit_1',
+          title: 'Vendor list',
+          description: 'Riyad is waiting on the vendor list [ev:i04].',
+          status: 'open' as const,
+          participants: ['Riyad Hasanov', 'Dylan'],
+          decision: null,
+          events: [
+            {
+              id: 'oev_1',
+              ref: 'ev:i04',
+              source: 'slack',
+              from: 'Riyad Hasanov',
+              title: 'Which vendor list?',
+              excerpt: '',
+              at: '2026-10-19T10:20:00Z',
+              attachedBy: 'fact',
+            },
+          ],
+          explain: 'Rig decided "ask_you" (0.92).',
+        })
+      ),
+    });
+    const res = await call(backend, 'rig_situation_explain', { situation: 'sit_1' });
+    expect(res.text).toContain('[oev_1]');
+    expect(res.text).toContain('put here by fact');
+    expect(res.text).toContain('Why it\'s here: Rig decided "ask_you" (0.92).');
+  });
+
+  it('corrections pass the agent and the reason, and say what changed', async () => {
+    const feedHide = vi.fn(async () => ok(null));
+    const situationMerge = vi.fn(async () => ok({}));
+    const eventMove = vi.fn(async () => ok({ situationId: 'sit_9' }));
+    const backend = fakeBackend({ feedHide, situationMerge, eventMove });
+    expect(
+      (await call(backend, 'rig_feed_hide', { situation: 'sit_1', reason: 'handled' })).text
+    ).toContain('Hidden');
+    expect(feedHide).toHaveBeenCalledWith('sit_1', 'handled', 'Claude (agent)');
+    await call(backend, 'rig_situation_merge', {
+      keep: 'sit_1',
+      absorb: ['sit_2', 'sit_1'],
+      reason: 'same thing',
+    });
+    expect(situationMerge).toHaveBeenCalledWith('sit_1', ['sit_2'], 'same thing', 'Claude (agent)');
+    expect(
+      (await call(backend, 'rig_event_move', { event: 'oev_1', to: 'new', reason: 'separate' }))
+        .text
+    ).toContain('sit_9');
+  });
+
+  it('say so when this version has no Feed, and refuse a merge with nothing to fold in', async () => {
+    const backend = fakeBackend();
+    expect((await call(backend, 'rig_feed_list')).isError).toBe(true);
+    const merge = await call(
+      fakeBackend({ situationMerge: vi.fn(async () => ok({})) }),
+      'rig_situation_merge',
+      { keep: 'sit_1', absorb: [] }
+    );
+    expect(merge.isError).toBe(true);
   });
 });

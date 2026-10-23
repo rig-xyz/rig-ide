@@ -52,6 +52,8 @@ export type NotificationServiceDeps = {
   now: () => number;
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   log: { warn: (msg: string, meta?: Record<string, unknown>) => void };
+  /** The orchestrator's Feed changed on the relay (`feed_changed`); absent: ignored. */
+  onFeedChanged?: () => void;
 };
 
 const PAGE = 100;
@@ -206,6 +208,8 @@ export class NotificationService {
       this.scheduleSummary();
     } else if (e.event === 'prefs') {
       this.scheduleSummary();
+    } else if (e.event === 'feed_changed') {
+      this.deps.onFeedChanged?.();
     }
   }
 

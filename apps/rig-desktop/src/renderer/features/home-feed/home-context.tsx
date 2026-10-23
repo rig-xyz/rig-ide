@@ -10,6 +10,8 @@ import {
   useRef,
 } from 'react';
 import { toast as appToast } from '@renderer/lib/hooks/use-toast';
+import { rpc } from '@renderer/lib/ipc';
+import type { RigFeedSignal } from '@shared/rig/feed';
 import {
   type Arrival,
   type ConnectorsAction,
@@ -25,6 +27,8 @@ import {
   scriptedOrchestrator,
 } from './orchestrator';
 import { mergeRail } from './rail-data';
+import { useRealFeed } from './use-real-feed';
+import { claudeOrchestrator } from './claude-orchestrator';
 import { chosen, normalizeText, sayPlain } from './say';
 import {
   feedCounts,
@@ -70,6 +74,8 @@ export interface HomeApi {
   checkNow: (connector: SourceConnector) => void;
   /** Puts a topic in your Feed as a suggestion. */
   promoteTopic: (topicId: string) => void;
+  /** Tells Rig how the person answered a real card (`item.situationId`); a no-op on demo items. */
+  answerCard: (itemId: string, signal: RigFeedSignal, detail?: { choice?: string; reason?: string }) => void;
 }
 
 interface StartOptions {
@@ -100,7 +106,7 @@ export function HomeProvider({
   realSpaces,
   selfName,
   reducedMotion,
-  orchestrator = scriptedOrchestrator,
+  orchestrator: givenOrchestrator = scriptedOrchestrator,
   onOpenPath,
   onContinueSession,
   arrivals = true,
@@ -117,6 +123,16 @@ export function HomeProvider({
   children: ReactNode;
 }) {
   const [state, dispatch] = useReducer(homeReducer, undefined, initialHomeState);
+  // The orchestrator's Feed replaces the demo one as soon as the relay has it.
+  const realFeed = useRealFeed();
+  const realFeedOn = useRef(false);
+  useEffect(() => {
+    if (!realFeed) return;
+    realFeedOn.current = true;
+    dispatch({ type: 'replace-feed', items: realFeed });
+  }, [realFeed]);
+  // With the real Feed, the chat is the person's own Claude, which can correct it.
+  const orchestrator = realFeed ? claudeOrchestrator : givenOrchestrator;
   const [connectors, connectorsDispatch] = useReducer(connectorsReducer, undefined, () =>
     initialConnectorsState(Date.now())
   );
@@ -341,11 +357,32 @@ export function HomeProvider({
     [fly, later]
   );
 
+  const answerCard = useCallback(
+    (itemId: string, signal: RigFeedSignal, detail: { choice?: string; reason?: string } = {}) => {
+      const item = stateRef.current.feed.find((e) => e.item.id === itemId)?.item;
+      if (!item?.situationId) return;
+      void rpc.rig.feed
+        .answer({ situationId: item.situationId, signal, choice: detail.choice ?? detail.reason })
+        .then((r) => {
+          if (!r.success) toast(r.error.message);
+        });
+    },
+    [toast]
+  );
+
   const runItem = useCallback(
     (itemId: string, from: Rect | null) => {
       const entry = stateRef.current.feed.find((e) => e.item.id === itemId);
       if (!entry) return;
       const { item } = entry;
+      // A real card: the person takes it from here. Starting the session it
+      // proposes comes with the session protocol; for now Rig hears it's handled.
+      if (item.situationId) {
+        dispatch({ type: 'remove', itemId });
+        answerCard(itemId, 'act', { choice: chosen(item, entry.pick).label });
+        toast('Done. Rig will bring it back if something new happens.');
+        return;
+      }
       const choice = chosen(item, entry.pick);
       const text = normalizeText(entry.edited ?? sayPlain(item, choice));
       const target = choice.target;
@@ -401,7 +438,7 @@ export function HomeProvider({
         }
       }
     },
-    [bringIn, createSpace, open, startSession, toast]
+    [answerCard, bringIn, createSpace, open, startSession, toast]
   );
 
   const addRoutine = useCallback(
@@ -496,7 +533,7 @@ export function HomeProvider({
           at: Date.now(),
           arrivals: arrivalsOfCheck,
         });
-        if (arrivalsOfCheck.some((a) => a.toFeed)) {
+        if (arrivalsOfCheck.some((a) => a.toFeed) && !realFeedOn.current) {
           const item = ARRIVAL.item();
           if (!stateRef.current.feed.some((e) => e.item.id === item.id)) {
             dispatch({ type: 'add-item', item });
@@ -591,6 +628,7 @@ export function HomeProvider({
       connectorsDispatch,
       checkNow,
       promoteTopic,
+      answerCard,
     }),
     // `counts` is derived from `state.feed`.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
@@ -612,6 +650,7 @@ export function HomeProvider({
       connectors,
       checkNow,
       promoteTopic,
+      answerCard,
     ]
   );
 

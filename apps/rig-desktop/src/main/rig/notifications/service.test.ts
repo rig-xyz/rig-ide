@@ -20,6 +20,7 @@ function setup(
     summary?: RigNotificationSummary;
     /** The bell's page (`tier: 'direct'`); absent, the relay can't answer it. */
     bellRows?: RigNotification[];
+    onFeedChanged?: () => void;
   } = {}
 ) {
   let rows = opts.rows ?? [];
@@ -78,6 +79,7 @@ function setup(
     now: () => Date.now(),
     sleep: () => new Promise((r) => setTimeout(r, 0)),
     log: { warn: () => {} },
+    onFeedChanged: opts.onFeedChanged,
   };
   const service = new NotificationService(deps);
   return {
@@ -231,6 +233,17 @@ describe('NotificationService', () => {
     expect(t.closeIds).toHaveBeenCalledWith(['7', '8']);
     t.push({ event: 'read', data: '{"all":true}' });
     expect(t.closeAll).toHaveBeenCalled();
+  });
+
+  it("passes the orchestrator's feed_changed on, and nothing else", async () => {
+    const onFeedChanged = vi.fn();
+    const t = setup({ cursor: '0', onFeedChanged });
+    current = t;
+    t.service.start();
+    await t.connected();
+    t.push({ event: 'feed_changed', data: '{}' });
+    expect(onFeedChanged).toHaveBeenCalledTimes(1);
+    expect(t.presented).toEqual([]);
   });
 
   it('pages through a long backlog', async () => {

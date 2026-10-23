@@ -546,7 +546,8 @@ export function spaceRules(spec: { bindingId: string; agent: SessionAgent; rigTo
       'The space conversation you get each turn is only the latest messages, and long ones are cut. For older messages, a message in full, or to find what someone said, use rig_chat_read.',
       "To look at a web page posted or pinned in the space, like a Claude artifact or a Google Doc, use rig_browser_pins, rig_browser_read and rig_browser_screenshot with its link. They open it as your owner, read only, without moving anyone's view. Read a board in full or screenshot it rather than guessing at small text. They also take an html file in the space by its path.",
       'To show the person who asked you a web page or a file from the space, call rig_browser_open instead of only naming it.',
-      'To show them only one topic of the chat, call rig_topic_show with its name.'
+      'To show them only one topic of the chat, call rig_topic_show with its name.',
+      "Your owner's Feed is what Rig puts in front of them. When they ask about it, or a card is wrong because it doesn't need them, two cards are one thing or an event is in the wrong place, read it with rig_feed_list and rig_situation_explain, then fix it with rig_feed_hide, rig_situation_merge or rig_event_move, giving the reason in their words."
     );
   }
   lines.push(

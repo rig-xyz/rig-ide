@@ -99,3 +99,19 @@ describe('homeReducer', () => {
     expect(triage.steps.filter((x) => x.ago)).toEqual([{ text: 'You: block it', ago: 'now' }]);
   });
 });
+
+describe('replace-feed', () => {
+  it("replaces the demo Feed with the orchestrator's, keeping a card's local state", () => {
+    const start = initialHomeState();
+    const real = { ...start.feed[0]!.item, id: 'sit:s1', situationId: 's1', title: 'Real' };
+    let state = homeReducer(start, { type: 'replace-feed', items: [real] });
+    expect(state.feed.map((e) => e.item.id)).toEqual(['sit:s1']);
+    state = homeReducer(state, { type: 'edit', itemId: 'sit:s1', text: 'my words' });
+    state = homeReducer(state, {
+      type: 'replace-feed',
+      items: [{ ...real, title: 'Real, updated' }],
+    });
+    expect(state.feed[0]!.item.title).toBe('Real, updated');
+    expect(state.feed[0]!.edited).toBe('my words');
+  });
+});

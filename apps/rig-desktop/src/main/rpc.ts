@@ -55,6 +55,8 @@ import { rigImportController } from './rig/import-doc';
 import { rigJoinController } from './rig/join';
 import { rigPulseController } from './rig/pulse';
 import { rigRecentThemesController } from './rig/recent-themes';
+import { rigFeedController } from './rig/feed/controller';
+import { rigHomeChatController } from './rig/home-chat/controller';
 import { rigSpaceStatusController } from './rig/space-status';
 import { rigNotificationsController } from './rig/notifications/electron';
 import { rigRecentController } from './rig/recent-rigs';
@@ -241,6 +243,10 @@ export const rpcRouter = createRPCRouter({
     // (`GET /v1/me/themes/recent`), kept per account for offline. See
     // `recent-themes.ts`.
     recentThemes: rigRecentThemesController,
+    // Home's Feed from the orchestrator (GET /v1/me/feed): read, answer cards, correct.
+    feed: rigFeedController,
+    // Home's chat with the person's own Claude, which can read and correct the Feed.
+    homeChat: rigHomeChatController,
     // Settings → About's rig/tapd version rows — package.json reads only,
     // see `bundled-cli.ts`'s own header comment for why this never spawns
     // either binary.

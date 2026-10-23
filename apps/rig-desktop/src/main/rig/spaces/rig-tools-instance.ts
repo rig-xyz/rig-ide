@@ -18,6 +18,8 @@ import { finalAnswerFromEvents } from './dispatch';
 import { createHttpSpacesRelayApi } from './relay-api';
 import { ownerApprovals, rigToolScopeKey, type RigToolsBackend } from './rig-tools';
 import { createRigToolsServer } from './rig-tools-server';
+import * as feedRelay from '../feed/relay';
+import { rigFeedChangedChannel } from '@shared/rig/feed';
 
 /**
  * Boot-only wiring for the rig tools server: the real backends, each the one
@@ -33,6 +35,13 @@ import { createRigToolsServer } from './rig-tools-server';
 const MAX_TEXT_BYTES = 5 * 1024 * 1024;
 
 const api = createHttpSpacesRelayApi();
+
+/** An agent's correction to the Feed: tell Home straight away, as the Feed routes do for the person's own. */
+async function changedFeed<T extends { success: boolean }>(p: Promise<T>): Promise<T> {
+  const r = await p;
+  if (r.success) events.emit(rigFeedChangedChannel, { reason: 'local' });
+  return r;
+}
 
 /** Runs `fn` with `root` registered as a file root, and always lets it go again. */
 async function withRoot<T>(root: string, fn: (rootId: string) => Promise<T>, fallback: T): Promise<T> {
@@ -162,6 +171,11 @@ const backend: RigToolsBackend = {
   },
   // The asker is the one signed in here (checked first): their Topics setting decides whether the dock shows.
   topicsOnHere: () => rigSettingsStore.get().roomThemesEnabled === true,
+  feedList: () => feedRelay.getFeed(),
+  situationGet: (id) => feedRelay.getSituation(id),
+  feedHide: (id, reason, actor) => changedFeed(feedRelay.hideCard(id, reason, actor)),
+  situationMerge: (keep, absorb, reason, actor) => changedFeed(feedRelay.mergeSituations(keep, absorb, reason, actor)),
+  eventMove: (eventId, to, reason, actor) => changedFeed(feedRelay.moveEvent(eventId, to, reason, actor)),
   listTopics: async (bindingId) => {
     if (!api.getThemes) return ok(null);
     const fetched = await api.getThemes(bindingId);

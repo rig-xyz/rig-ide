@@ -162,6 +162,8 @@ export interface FeedItem {
   topicId?: string;
   /** "2m", "new", "8d". */
   age: string;
+  /** The orchestrator's situation behind a real card (`real-feed.ts`); absent on demo items. */
+  situationId?: string;
   /** The goal line the brief would carry, for the brief view. */
   plan?: string;
 }

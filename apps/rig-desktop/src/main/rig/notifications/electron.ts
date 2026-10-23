@@ -16,6 +16,7 @@ import {
   type RigNotification,
   type RigNotificationSummary,
 } from '@shared/rig/notifications';
+import { rigFeedChangedChannel } from '@shared/rig/feed';
 import { resolveSelfUserId } from '../account';
 import { activeMac } from '../active-mac-instance';
 import { notificationPermission, openNotificationSettings, requestNotificationPermission } from './permission';
@@ -166,6 +167,7 @@ export const notificationService = new NotificationService({
   presenter,
   setBadge,
   emitChanged: (reason) => events.emit(rigNotificationsChangedChannel, { reason }),
+  onFeedChanged: () => events.emit(rigFeedChangedChannel, { reason: 'relay' }),
   prefs: () => rigSettingsStore.get().notifications,
   cursor: {
     get: (account) => rigSettingsStore.get().notificationCursorByAccount[account] ?? null,

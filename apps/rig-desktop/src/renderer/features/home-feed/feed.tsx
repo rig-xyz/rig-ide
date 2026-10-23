@@ -247,7 +247,7 @@ const VERB_ICON: Record<FeedVerb, typeof Play> = {
 };
 
 function FeedRow({ entry }: { entry: FeedEntry }) {
-  const { spaces, dispatch, runItem, open, toast } = useHome();
+  const { spaces, dispatch, runItem, open, toast, answerCard } = useHome();
   const { item } = entry;
   const choice = chosen(item, entry.pick);
   const articleRef = useRef<HTMLElement>(null);
@@ -336,6 +336,7 @@ function FeedRow({ entry }: { entry: FeedEntry }) {
               if (key === 'open' && session) open({ kind: 'session', id: session.id });
               else if (key === 'brief') open({ kind: 'brief', itemId: item.id });
               else if (key === 'later') {
+                answerCard(item.id, 'snooze');
                 dispatch({ type: 'remove', itemId: item.id });
                 toast(needs ? 'Reminder set for an hour' : 'Hidden until tomorrow');
               } else if (key === 'ignore')
@@ -683,12 +684,13 @@ function Action({
 
 /** An ignored item: one slim row, an optional why, and Undo. */
 function IgnoredRow({ entry }: { entry: FeedEntry }) {
-  const { dispatch, toast } = useHome();
+  const { dispatch, toast, answerCard } = useHome();
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     inputRef.current?.focus({ preventScroll: true });
   }, []);
   const done = (why: string) => {
+    answerCard(entry.item.id, 'ignore', { reason: why });
     dispatch({ type: 'remove', itemId: entry.item.id });
     toast(why ? `Thanks. Rig noted: “${why}”` : 'Ignored');
   };

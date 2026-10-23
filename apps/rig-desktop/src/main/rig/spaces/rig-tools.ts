@@ -9,6 +9,7 @@ import { CONNECTORS, connectorById, isConnectorId, RIG_TOOLS_SERVER } from '@sha
 import { opensBesideChat } from '@shared/spaces/links';
 import { isHtmlPath, isRigFileUrl, parseRigFileUrl } from '@shared/spaces/rig-file';
 import type { RigShowRequest } from '@shared/spaces/show';
+import type { RigFeed, RigFeedItem, RigSituation } from '@shared/rig/feed';
 import { ROOM_SEES_LEVELS, type RoomSees } from '@shared/spaces/room-sees';
 import {
   canonicalEmoji,
@@ -76,6 +77,9 @@ export const PRE_APPROVED_RIG_TOOLS: ReadonlySet<string> = new Set([
   // Only move the view of the person who asked, on their own Mac.
   'rig_browser_open',
   'rig_topic_show',
+  // Read your owner's Feed and why a card is there.
+  'rig_feed_list',
+  'rig_situation_explain',
 ]);
 
 /**
@@ -225,6 +229,14 @@ export interface RigToolsBackend {
   listTopics?(bindingId: string): Promise<Result<{ enabled: boolean; topics: { id: string; name: string }[] } | null, Failure>>;
   /** Whether the person signed in here sees topics: their Topics setting, which shows the topic dock above the chat. */
   topicsOnHere?(): boolean;
+  /** The owner's Feed from the orchestrator (GET /v1/me/feed); absent when this version has none. */
+  feedList?(): Promise<Result<RigFeed, Failure>>;
+  /** One situation: its record, events and "why is this here?". */
+  situationGet?(id: string): Promise<Result<RigSituation, Failure>>;
+  /** Corrections to the owner's Feed, logged on the relay with `actor` and `reason`, each undoable there. */
+  feedHide?(situationId: string, reason: string, actor: string): Promise<Result<null, Failure>>;
+  situationMerge?(keep: string, absorb: string[], reason: string, actor: string): Promise<Result<unknown, Failure>>;
+  eventMove?(eventId: string, to: string, reason: string, actor: string): Promise<Result<{ situationId: string }, Failure>>;
 }
 
 export type RigToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: 'image/png' };
@@ -1271,6 +1283,7 @@ export function createRigTools(
       },
     },
     ...showTools(backend),
+    ...feedTools(backend),
   ];
   return tools;
 }
@@ -1326,6 +1339,183 @@ async function openTarget(
   }
   if (kind !== 'file') return err(`${file.data.relPath} isn't on this Mac.`);
   return ok({ kind: 'file', relPath: file.data.relPath });
+}
+
+/** How a correction names the agent that made it, in the owner's change log. */
+const agentActor = (scope: RigToolScope) =>
+  `${scope.agent === 'codex' ? 'Codex' : 'Claude'} (agent)`;
+const NO_FEED = "This version of Rig doesn't have the Feed.";
+
+function feedLine(x: RigFeedItem, i?: number): string {
+  const d = x.decision;
+  const head = `${i === undefined ? '-' : `${i + 1}.`} ${x.card?.title ?? x.title} [${x.situationId}]`;
+  return `${head}${d ? ` · Rig decided ${d.do} (${d.conf.toFixed(2)})` : ''}`;
+}
+
+/**
+ * The correction loop (rig docs/orchestrator-architecture.md §5): read the
+ * owner's Feed and why a card is there, and fix what Rig got wrong. Hide,
+ * merge and move are logged with the agent and reason on the relay, and Rig
+ * re-decides what they touch. Reads are pre-approved; corrections ask.
+ */
+function feedTools(backend: RigToolsBackend): RigTool[] {
+  const reasonField = z
+    .string()
+    .describe(
+      'Why, in a few words, as your owner would say it. It is kept with the change and Rig learns from it.'
+    );
+  return [
+    {
+      name: 'rig_feed_list',
+      description:
+        "List your owner's Feed: the cards Rig shows them (things that need them or that their Claude could do), the queue behind those, and the situations Rig follows for them. " +
+        'Use it when they ask what is on their plate or in their Feed, or before correcting a card. Each line has the situation id the other Feed tools take.',
+      inputSchema: {},
+      annotations: { title: 'List the Feed', readOnlyHint: true },
+      run: async () => {
+        if (!backend.feedList) return failed(NO_FEED);
+        const res = await backend.feedList();
+        if (!res.success) return failed(res.error.message);
+        const f = res.data;
+        const lines = [
+          `Shown (${f.visible.length}):`,
+          ...f.visible.map((x, i) => feedLine(x, i)),
+          ...(f.queued.length
+            ? [
+                '',
+                `Queued (${f.queued.length}):`,
+                ...f.queued.map((x, i) => feedLine(x, i + f.visible.length)),
+              ]
+            : []),
+          ...(f.following.length
+            ? ['', `Following (${f.following.length}):`, ...f.following.map((x) => feedLine(x))]
+            : []),
+          ...(f.snoozed.length
+            ? ['', `Snoozed (${f.snoozed.length}):`, ...f.snoozed.map((x) => feedLine(x))]
+            : []),
+        ];
+        return {
+          text:
+            f.visible.length + f.queued.length + f.following.length
+              ? lines.join('\n')
+              : 'The Feed is empty.',
+        };
+      },
+    },
+    {
+      name: 'rig_situation_explain',
+      description:
+        "Explain why a card is in your owner's Feed: the situation's record, the events Rig put in it and how each got there, and Rig's latest decision in plain words. " +
+        'Use it when they ask why something is in their Feed, or before you merge, move or hide anything.',
+      inputSchema: { situation: z.string().describe('The situation id, from rig_feed_list.') },
+      annotations: { title: 'Explain a card', readOnlyHint: true },
+      run: async (_scope, input) => {
+        if (!backend.situationGet) return failed(NO_FEED);
+        const id = String(input.situation ?? '').trim();
+        if (!id) return failed('Give a situation id from rig_feed_list.');
+        const res = await backend.situationGet(id);
+        if (!res.success) return failed(res.error.message);
+        const s = res.data;
+        return {
+          text: [
+            `${s.title} (${s.status})`,
+            s.description,
+            `People: ${s.participants.join(', ')}`,
+            '',
+            'Events:',
+            ...s.events.map(
+              (e) =>
+                `- [${e.id}] ${e.at.slice(0, 16)} ${e.source} ${e.from ?? ''}: ${(e.title || e.excerpt).slice(0, 160)} (put here ${e.attachedBy === 'new' ? 'as a new situation' : `by ${e.attachedBy}`})`
+            ),
+            '',
+            `Why it's here: ${s.explain ?? 'Rig has not decided yet.'}`,
+          ].join('\n'),
+        };
+      },
+    },
+    {
+      name: 'rig_feed_hide',
+      description:
+        "Hide a card from your owner's Feed until something new happens in its situation. " +
+        "Use it when they say a card doesn't need them, or you know it's handled. It isn't closed: a new event brings it back.",
+      inputSchema: {
+        situation: z.string().describe('The situation id, from rig_feed_list.'),
+        reason: reasonField,
+      },
+      annotations: { title: 'Hide a card', readOnlyHint: false, destructiveHint: false },
+      run: async (scope, input) => {
+        if (!backend.feedHide) return failed(NO_FEED);
+        const id = String(input.situation ?? '').trim();
+        if (!id) return failed('Give a situation id from rig_feed_list.');
+        const res = await backend.feedHide(id, String(input.reason ?? ''), agentActor(scope));
+        return res.success
+          ? { text: 'Hidden until something new happens in it.' }
+          : failed(res.error.message);
+      },
+    },
+    {
+      name: 'rig_situation_merge',
+      description:
+        "Merge situations in your owner's Feed that are really one open loop, keeping one and folding the others into it; Rig then decides again what it means for them. " +
+        'Use it when two cards or situations are the same question, problem or piece of work.',
+      inputSchema: {
+        keep: z.string().describe('The situation id to keep.'),
+        absorb: z.array(z.string()).describe('The situation ids to fold into it.'),
+        reason: reasonField,
+      },
+      annotations: { title: 'Merge situations', readOnlyHint: false, destructiveHint: false },
+      run: async (scope, input) => {
+        if (!backend.situationMerge) return failed(NO_FEED);
+        const keep = String(input.keep ?? '').trim();
+        const absorb = Array.isArray(input.absorb)
+          ? input.absorb.map((x) => String(x).trim()).filter((x) => x && x !== keep)
+          : [];
+        if (!keep || !absorb.length)
+          return failed('Give one situation to keep and at least one other to fold into it.');
+        const res = await backend.situationMerge(
+          keep,
+          absorb,
+          String(input.reason ?? ''),
+          agentActor(scope)
+        );
+        return res.success
+          ? {
+              text: `Merged ${absorb.length} into ${keep}; Rig decided again what it means for your owner.`,
+            }
+          : failed(res.error.message);
+      },
+    },
+    {
+      name: 'rig_event_move',
+      description:
+        'Move an event Rig put in the wrong situation to the one it belongs to, or to a new situation of its own; Rig then decides again about both. ' +
+        'Use it when rig_situation_explain shows an event that is about something else.',
+      inputSchema: {
+        event: z.string().describe('The event id, from rig_situation_explain.'),
+        to: z
+          .string()
+          .describe('The situation id it belongs to, or "new" for a situation of its own.'),
+        reason: reasonField,
+      },
+      annotations: { title: 'Move an event', readOnlyHint: false, destructiveHint: false },
+      run: async (scope, input) => {
+        if (!backend.eventMove) return failed(NO_FEED);
+        const event = String(input.event ?? '').trim();
+        const to = String(input.to ?? '').trim();
+        if (!event || !to)
+          return failed('Give the event id and where it goes (a situation id, or "new").');
+        const res = await backend.eventMove(
+          event,
+          to,
+          String(input.reason ?? ''),
+          agentActor(scope)
+        );
+        return res.success
+          ? { text: `Moved. It is now in ${res.data.situationId}.` }
+          : failed(res.error.message);
+      },
+    },
+  ];
 }
 
 /** The tools that move the asker's own view: open a page or file, show a topic. */

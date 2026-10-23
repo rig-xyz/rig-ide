@@ -99,7 +99,9 @@ export type HomeAction =
   | { type: 'flight-done'; id: string }
   | { type: 'message'; message: ChatMessage }
   | { type: 'message-blocks'; id: string; blocks: ReplyBlock[] }
-  | { type: 'use'; key: string };
+  | { type: 'use'; key: string }
+  /** The orchestrator's Feed arrived: it replaces the Feed, keeping each card's local state. */
+  | { type: 'replace-feed'; items: FeedItem[] };
 
 export function initialHomeState(): HomeState {
   return {
@@ -165,6 +167,19 @@ export function homeReducer(state: HomeState, action: HomeAction): HomeState {
       }));
     case 'ignore':
       return mapEntry(state, action.itemId, (e) => ({ ...e, ignored: action.value }));
+    case 'replace-feed': {
+      const prior = new Map(state.feed.map((e) => [e.item.id, e]));
+      const feed = action.items.map((item): FeedEntry => {
+        const was = prior.get(item.id);
+        return was ? { ...was, item } : { item, edited: null, resetKey: 0, slide: null, ignored: false, fresh: state.feed.length > 0 };
+      });
+      const sel = state.selection;
+      return {
+        ...state,
+        feed,
+        selection: sel.kind === 'brief' && !feed.some((e) => e.item.id === sel.itemId) ? { kind: 'home' } : sel,
+      };
+    }
     case 'remove':
       return {
         ...state,
