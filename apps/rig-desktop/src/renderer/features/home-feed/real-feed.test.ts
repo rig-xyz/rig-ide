@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { RigFeedItem } from '@shared/rig/feed';
-import { age, refsToTokens, splitAction, toFeedItems } from './real-feed';
+import { age, firstNames, personFor, refsToTokens, splitAction, toFeedItem, toFeedItems } from './real-feed';
 
 const NOW = Date.parse('2026-10-20T19:00:00Z');
 
 const item = (id: string, d: 'ask_you' | 'do_it' | 'bring_in', card = true): RigFeedItem => ({
   situationId: id,
+  sources: ['slack', 'linear'],
+  bindingId: null,
   title: `Situation ${id}`,
   description: `About ${id} [item:ULY-1].`,
   participants: ['Riyad Hasanov'],
@@ -15,6 +17,8 @@ const item = (id: string, d: 'ask_you' | 'do_it' | 'bring_in', card = true): Rig
         title: `Card ${id}`,
         why: 'Riyad asked [ev:i04] about the registry [item:ULY-229].',
         action: '**Reply to Riyad.** Answer the vendor question.',
+        choices: [],
+        people: [],
         refsOk: true,
       }
     : null,
@@ -36,30 +40,57 @@ describe('the orchestrator Feed as Home cards', () => {
     expect(splitAction('Check the numbers')).toEqual({ lead: 'Check the numbers', tail: '' });
   });
 
-  it('puts asks first, keeps Rig ids, and falls back to the situation when no card is drafted yet', () => {
+  it('puts asks first, keeps Rig ids, and holds back a card not drafted yet', () => {
     const items = toFeedItems(
-      {
-        visible: [item('a', 'do_it'), item('b', 'ask_you', false), item('c', 'bring_in')],
-        queued: [],
-        following: [],
-        snoozed: [],
-        digest: [],
-      },
+      { me: null, visible: [item('a', 'do_it'), item('b', 'ask_you', false), item('c', 'bring_in')], queued: [], following: [], snoozed: [], digest: [] },
       NOW
     );
     expect(items.map((i) => [i.id, i.group, i.choices[0]!.verb])).toEqual([
-      ['sit:b', 'needs_you', 'reply'],
       ['sit:c', 'needs_you', 'space'],
       ['sit:a', 'up_next', 'start'],
     ]);
-    expect(items[0]!.title).toBe('Situation b');
-    expect(items[0]!.why).toBe('About b {ULY-1}.');
-    expect(items[1]!.situationId).toBe('c');
-    expect(items[2]!.age).toBe('30m');
+    expect(items[0]!.situationId).toBe('c');
+    expect(items[1]!.age).toBe('30m');
+  });
+
+  it('falls back to the situation for a single card with no draft', () => {
+    const card = toFeedItem(item('b', 'ask_you', false), NOW);
+    expect(card.title).toBe('Situation b');
+    expect(card.why).toBe('About b {ULY-1}.');
   });
 
   it('says how old a card is', () => {
     expect(age('2026-10-20T18:59:30Z', NOW)).toBe('new');
     expect(age('2026-10-19T19:00:00Z', NOW)).toBe('1d');
+  });
+});
+
+describe('drafted cards look like the prototype', () => {
+  it("carry the drafted choices, the people as faces and tokens, and the source's logo", () => {
+    const x: RigFeedItem = {
+      ...item('d', 'ask_you'),
+      card: {
+        title: 'Pick the vendor list',
+        why: '{@Riyad Hasanov} is blocked on the registry [item:ULY-229].',
+        action: '**Answer {@Riyad Hasanov}**: pick 11 or 8.',
+        choices: [
+          { verb: 'reply', label: 'Pick the 8', lead: 'Go with the 8 vendors', tail: ': Rig tells {@Riyad Hasanov}.' },
+          { verb: 'space', label: 'Ask Riyad', lead: 'Ask {@Riyad Hasanov} to decide', tail: 'in a new space' },
+        ],
+        people: ['Riyad Hasanov'],
+        refsOk: true,
+      },
+    };
+    const card = toFeedItem(x, NOW);
+    expect(card.choices.map((c) => [c.verb, c.label, c.lead, c.tail])).toEqual([
+      ['reply', 'Pick the 8', 'Go with the 8 vendors', ': Rig tells {@Riyad}.'],
+      ['space', 'Ask Riyad', 'Ask {@Riyad} to decide', ': in a new space'],
+    ]);
+    expect(card.people).toEqual(['Riyad Hasanov']);
+    expect(card.source).toMatchObject({ connector: 'linear' });
+    expect(card.why).toBe('{@Riyad} is blocked on the registry {ULY-229}.');
+    expect(card.tokenNotes).toEqual({ '@Riyad': 'Riyad Hasanov' });
+    expect(firstNames(['Riyad Hasanov', 'Riyad Ali']).short('{@Riyad Ali} and {@Riyad Hasanov}')).toBe('{@Riyad Ali} and {@Riyad Hasanov}');
+    expect(personFor('Riyad Hasanov')).toMatchObject({ name: 'Riyad Hasanov', hue: expect.any(Number) });
   });
 });

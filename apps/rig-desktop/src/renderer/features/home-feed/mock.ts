@@ -12,6 +12,8 @@ export const SOURCES: Record<SourceConnector, { name: string; scope: string }> =
   linear: { name: 'Linear', scope: 'Ulys' },
   github: { name: 'GitHub', scope: 'rig-xyz/rig-ide' },
   granola: { name: 'Granola', scope: 'your meetings' },
+  slack: { name: 'Slack', scope: 'your workspace' },
+  gmail: { name: 'Gmail', scope: 'your inbox' },
 };
 
 /** Faces use `--face-1`…`--face-7`. */

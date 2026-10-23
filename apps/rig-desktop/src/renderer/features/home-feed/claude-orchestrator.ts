@@ -41,7 +41,7 @@ export const claudeOrchestrator: HomeOrchestrator = {
         runs: [
           {
             kind: 'text',
-            text: `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)} and ${ctx.upNext} ${ctx.upNext === 1 ? 'is' : 'are'} up next, on the right. Ask me why any of them is there, or tell me when one is wrong and I'll fix it.`,
+            text: `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}${ctx.upNext ? ` and ${ctx.upNext} ${ctx.upNext === 1 ? 'is' : 'are'} up next` : ''}, on the right. Ask me why any of them is there, or tell me when one is wrong and I'll fix it.`,
           },
         ],
       },

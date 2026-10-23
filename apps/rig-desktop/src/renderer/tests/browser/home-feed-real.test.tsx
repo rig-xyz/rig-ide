@@ -35,6 +35,8 @@ const realFeed = vi.hoisted(() => {
     visible: [
       {
         situationId: 's_send',
+        sources: ['gmail'],
+        bindingId: null,
         title: 'Usage by email domain',
         description: '',
         participants: ['Maya Chen'],
@@ -49,6 +51,8 @@ const realFeed = vi.hoisted(() => {
       },
       {
         situationId: 's_vendor',
+        sources: ['linear'],
+        bindingId: null,
         title: 'Vendor list',
         description: '',
         participants: ['Riyad Hasanov'],
@@ -150,6 +154,8 @@ vi.mock('@renderer/lib/ipc', () => ({
                 ],
         }),
       },
+      // No live Claude here: Home's chat falls back to its own messages.
+      homeChat: { open: async () => ({ success: false, error: 'no Claude in tests' }) },
       feed: {
         get: async () => ({ success: true, data: realFeed }),
         answer: async (input: unknown) => {

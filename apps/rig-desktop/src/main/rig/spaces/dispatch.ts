@@ -92,6 +92,8 @@ export interface SpacesAcpSessions {
     disabledProjectServers?: string[];
     /** The session's own instructions: the space's rules (and for Claude, its AGENTS.md). Claude gets them after its system prompt, Codex as its developer instructions. */
     systemPromptAppend?: string;
+    /** A model for this session (an id or an alias like "haiku"); the person's default when unset. */
+    model?: string;
   }): Promise<Result<{ sessionId: string }, string>>;
   /** Reopens an earlier ACP session by its agent session id (ACP `session/load`), with its context intact. */
   resumeSession(input: {
@@ -2156,7 +2158,7 @@ export function createRuntimeAcpSessions(
     return file ? { claudeDebugFile: file } : {};
   };
   return {
-    async startSession({ conversationId, providerId, cwd, mcpServers, disabledProjectServers, systemPromptAppend }) {
+    async startSession({ conversationId, providerId, cwd, mcpServers, disabledProjectServers, systemPromptAppend, model }) {
       const client = await getClient();
       const result = await client.startSession({
         input: {
@@ -2167,7 +2169,7 @@ export function createRuntimeAcpSessions(
           workspaceId: cwd,
           cwd,
           sessionId: null,
-          model: null,
+          model: model ?? null,
           ...(mcpServers?.length ? { mcpServers } : {}),
           ...(disabledProjectServers?.length ? { disabledProjectMcpServers: disabledProjectServers } : {}),
           ...(systemPromptAppend ? { systemPromptAppend } : {}),

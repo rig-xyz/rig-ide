@@ -23,6 +23,7 @@ import { notificationPermission, openNotificationSettings, requestNotificationPe
 import { DeepLinkInbox } from '../deep-link-inbox';
 import { rigSettingsStore } from '../settings-instance';
 import { BannerPresenter, type BannerFactory } from './presenter';
+import { relayFeedChanged } from '../orch/feed-signal';
 import * as relay from './relay';
 import { NotificationService } from './service';
 import { readSse } from './sse';
@@ -167,7 +168,10 @@ export const notificationService = new NotificationService({
   presenter,
   setBadge,
   emitChanged: (reason) => events.emit(rigNotificationsChangedChannel, { reason }),
-  onFeedChanged: () => events.emit(rigFeedChangedChannel, { reason: 'relay' }),
+  onFeedChanged: () => {
+    events.emit(rigFeedChangedChannel, { reason: 'relay' });
+    relayFeedChanged();
+  },
   prefs: () => rigSettingsStore.get().notifications,
   cursor: {
     get: (account) => rigSettingsStore.get().notificationCursorByAccount[account] ?? null,

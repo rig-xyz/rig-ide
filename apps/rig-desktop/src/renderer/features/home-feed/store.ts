@@ -59,6 +59,8 @@ export interface HomeState {
   /** Sessions started from Home in a space that isn't one of the demo ones. */
   extra: Record<string, RailSession[]>;
   feed: FeedEntry[];
+  /** The Feed is the orchestrator's, not the demo's. */
+  fromRelay: boolean;
   selection: Selection;
   collapsed: boolean;
   /** The Feed folded to its dock (by you, or because the window is narrow). */
@@ -115,6 +117,7 @@ export function initialHomeState(): HomeState {
       ignored: false,
       fresh: false,
     })),
+    fromRelay: false,
     selection: { kind: 'home' },
     collapsed: false,
     feedCollapsed: false,
@@ -171,12 +174,13 @@ export function homeReducer(state: HomeState, action: HomeAction): HomeState {
       const prior = new Map(state.feed.map((e) => [e.item.id, e]));
       const feed = action.items.map((item): FeedEntry => {
         const was = prior.get(item.id);
-        return was ? { ...was, item } : { item, edited: null, resetKey: 0, slide: null, ignored: false, fresh: state.feed.length > 0 };
+        return was ? { ...was, item } : { item, edited: null, resetKey: 0, slide: null, ignored: false, fresh: state.fromRelay };
       });
       const sel = state.selection;
       return {
         ...state,
         feed,
+        fromRelay: true,
         selection: sel.kind === 'brief' && !feed.some((e) => e.item.id === sel.itemId) ? { kind: 'home' } : sel,
       };
     }

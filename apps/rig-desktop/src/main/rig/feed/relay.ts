@@ -92,10 +92,16 @@ function shapeDecision(v: unknown): RigDecision | null {
   };
 }
 
+const VERBS = new Set(['reply', 'start', 'space', 'open']);
+
 function shapeCard(v: unknown): RigFeedCard | null {
   const c = rec(v);
   if (!str(c.title)) return null;
-  return { title: str(c.title), why: str(c.why), action: str(c.action), refsOk: c.refsOk === true };
+  const choices = (Array.isArray(c.choices) ? c.choices : [])
+    .map(rec)
+    .filter((x) => VERBS.has(str(x.verb)) && str(x.lead))
+    .map((x) => ({ verb: str(x.verb) as RigFeedCard['choices'][number]['verb'], label: str(x.label), lead: str(x.lead), tail: str(x.tail) }));
+  return { title: str(c.title), why: str(c.why), action: str(c.action), choices, people: strs(c.people), refsOk: c.refsOk === true };
 }
 
 function shapeItem(v: unknown): RigFeedItem | null {
@@ -103,6 +109,8 @@ function shapeItem(v: unknown): RigFeedItem | null {
   if (!str(x.situationId)) return null;
   return {
     situationId: str(x.situationId),
+    sources: strs(x.sources),
+    bindingId: str(x.bindingId) || null,
     title: str(x.title),
     description: str(x.description),
     participants: strs(x.participants),
@@ -120,6 +128,7 @@ export async function getFeed(): Promise<Result<RigFeed, FeedRelayError>> {
   if (!res.success) return res;
   const r = rec(res.data);
   return ok({
+    me: str(r.me) || null,
     visible: items(r.visible),
     queued: items(r.queued),
     following: items(r.following),
@@ -149,7 +158,9 @@ export async function getSituation(id: string): Promise<Result<RigSituation, Fee
       source: str(x.source),
       from: str(x.from_person) || null,
       title: str(x.title),
+      summary: str(x.summary),
       excerpt: str(x.excerpt),
+      url: str(rec(x.meta).url) || null,
       at: str(x.occurred_at),
       attachedBy: str(x.attached_by),
     };

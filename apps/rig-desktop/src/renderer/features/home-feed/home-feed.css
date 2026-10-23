@@ -126,6 +126,7 @@
 
 /* The proposal: plain text you can edit, its action first in bold. */
 .hf-say-wrap {
+  min-width: 0;
   border-radius: 10px;
   transition: background-color 0.15s ease-out;
 }
@@ -133,6 +134,7 @@
   background: color-mix(in srgb, var(--text-primary) 3%, transparent);
 }
 .hf-say {
+  overflow-wrap: anywhere;
   border: 1px solid transparent;
   outline: none;
   cursor: text;

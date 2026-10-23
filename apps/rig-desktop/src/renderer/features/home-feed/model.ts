@@ -37,7 +37,7 @@ export type SessionActivity =
   | 'planning';
 
 /** The connectors a source can come from in this preview. */
-export type SourceConnector = 'linear' | 'github' | 'granola';
+export type SourceConnector = 'linear' | 'github' | 'granola' | 'slack' | 'gmail';
 
 export interface SourceRef {
   connector: SourceConnector;

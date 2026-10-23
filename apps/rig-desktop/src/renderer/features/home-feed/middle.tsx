@@ -27,6 +27,7 @@ import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { ActionButton } from './action-button';
 import { Face, Kicker, SessionMatrix, SourceLogo, sourceName, StatusWord } from './bits';
+import { HomeComposer, HomeRuns } from './home-claude';
 import { rectOf, useHome } from './home-context';
 import { SOURCES } from './mock';
 import { type RailSession, type RailSpace, sessionStatusWord } from './model';
@@ -77,7 +78,7 @@ function greetingWord(now: Date): string {
 }
 
 function HomeChat() {
-  const { state, firstName, orchestrator, orchestratorContext, send } = useHome();
+  const { state, firstName, orchestrator, orchestratorContext, send, homeRuns } = useHome();
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState('');
@@ -109,6 +110,26 @@ function HomeChat() {
     <>
       {/* No title: the greeting says where you are. The sheet's top edge still moves the window. */}
       <div aria-hidden className="h-3 shrink-0 [-webkit-app-region:drag]" />
+      {homeRuns ? (
+        // Home's Claude, live: the greeting, then each message and Claude's run, the way a space's Room shows them.
+        <div className="flex min-h-0 flex-1 flex-col pr-[var(--hf-gutter,0px)]">
+          <HomeRuns
+            runs={homeRuns}
+            name={firstName}
+            header={
+              <div className="grid content-start gap-4">
+                <div>
+                  <Kicker className="text-2xs">{DATE.format(now)}</Kicker>
+                  <div className="mt-1.5 font-display text-2xl leading-[1.15] font-medium tracking-[-0.01em]">
+                    {greetingWord(now)}, {firstName}.
+                  </div>
+                </div>
+                <RigMessage blocks={orchestrator.greeting(orchestratorContext)} />
+              </div>
+            }
+          />
+        </div>
+      ) : (
       <div
         ref={logRef}
         aria-live="polite"
@@ -134,6 +155,7 @@ function HomeChat() {
           )
         )}
       </div>
+      )}
       <div className="grid shrink-0 gap-2 pt-2.5 pr-[max(26px,var(--hf-gutter,0px))] pb-[18px] pl-[26px]">
         <Column className="flex flex-wrap gap-1.5">
           {QUICK.map((q) => (
@@ -161,6 +183,11 @@ function HomeChat() {
             </button>
           ))}
         </Column>
+        {homeRuns ? (
+          <div className="mx-auto w-full max-w-[44rem] px-3">
+            <HomeComposer name={firstName} busy={homeRuns.some((r) => r.status === 'running')} onSend={send} />
+          </div>
+        ) : (
         <Column>
           {/* The Room's composer, the same box: the words on top, small tools and the send underneath. */}
           <form
@@ -209,6 +236,7 @@ function HomeChat() {
             </div>
           </form>
         </Column>
+        )}
       </div>
     </>
   );

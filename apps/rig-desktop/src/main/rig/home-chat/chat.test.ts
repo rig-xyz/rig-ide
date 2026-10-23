@@ -2,7 +2,8 @@ import type { AcpPermissionRequest } from '@emdash/core/acp';
 import { err, ok } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { RawSessionEvent } from '../spaces/dispatch';
-import { createHomeChat, HOME_CHAT_RULES, homeChatPermission, type HomeChatDeps } from './chat';
+import type { HomeChatRun } from '@shared/rig/home-chat';
+import { createHomeChat, HOME_CHAT_RULES, homeChatPermission, homeChatSelf, type HomeChatDeps } from './chat';
 
 const request = (title: string): AcpPermissionRequest =>
   ({
@@ -17,15 +18,19 @@ const request = (title: string): AcpPermissionRequest =>
 
 /** A fake ACP runtime whose turns answer with `reply(text)`. */
 function fakeAcp(reply: (text: string) => string) {
-  const listeners = new Map<string, (e: RawSessionEvent) => void>();
+  const listeners = new Map<string, Set<(e: RawSessionEvent) => void>>();
   let permissions: ((r: AcpPermissionRequest) => void) | null = null;
   const acp = {
     startSession: vi.fn(async () => ok({ sessionId: 's1' })),
     stopSession: vi.fn(async () => {}),
     subscribeRaw: vi.fn(async (id: string, on: (e: RawSessionEvent) => void) => {
-      listeners.set(id, on);
-      return () => listeners.delete(id);
+      const set = listeners.get(id) ?? new Set();
+      set.add(on);
+      listeners.set(id, set);
+      return () => set.delete(on);
     }),
+    cancelTurn: vi.fn(async () => {}),
+    readModel: vi.fn(async () => 'claude-opus-5-5'),
     subscribePendingPermissions: vi.fn(async (_id: string, on: (r: AcpPermissionRequest) => void) => {
       permissions = on;
       return () => (permissions = null);
@@ -33,7 +38,7 @@ function fakeAcp(reply: (text: string) => string) {
     resolvePermission: vi.fn(async () => {}),
     queuePrompt: vi.fn(async (id: string, text: string) => {
       setTimeout(() => {
-        const emit = listeners.get(id)!;
+        const emit = (e: RawSessionEvent) => listeners.get(id)?.forEach((on) => on(e));
         emit({ kind: 'turn_start', turnId: 't' });
         const answer = reply(text);
         for (const part of [answer.slice(0, 5), answer.slice(5)])
@@ -55,6 +60,7 @@ function deps(acp: HomeChatDeps['acp'], over: Partial<HomeChatDeps> = {}): HomeC
     cwd: async () => '/tmp/home-chat',
     newConversationId: () => `home-${++n}`,
     issueTurn: () => `turn_${n}`,
+    selfNames: async () => ['Dylan Bourgeois'],
     ...over,
   };
 }
@@ -68,7 +74,7 @@ describe('Home chat', () => {
     expect(await chat.send('and now?')).toEqual(ok({ text: 'You asked: and now?' }));
     expect(acp.startSession).toHaveBeenCalledTimes(1);
     expect(acp.startSession).toHaveBeenCalledWith(
-      expect.objectContaining({ providerId: 'claude', cwd: '/tmp/home-chat', systemPromptAppend: HOME_CHAT_RULES })
+      expect.objectContaining({ providerId: 'claude', cwd: '/tmp/home-chat', systemPromptAppend: `${HOME_CHAT_RULES}\n${homeChatSelf(['Dylan Bourgeois'])}` })
     );
     expect(d.rigTools).toHaveBeenCalledWith({ bindingId: 'home', ownerUserId: 'usr_me', agent: 'claude', cwd: '/tmp/home-chat' });
   });
@@ -78,6 +84,37 @@ describe('Home chat', () => {
     const chat = createHomeChat(deps(acp));
     await chat.send('start a session with task x');
     expect(acp.queuePrompt).toHaveBeenCalledWith('home-1', 'start a session with task x', '<rig_turn user_turn_id="turn_1" />', expect.any(Function));
+  });
+
+  it('opens one session for the renderer to show, however many ask at once', async () => {
+    const { acp } = fakeAcp(() => 'x');
+    const chat = createHomeChat(deps(acp));
+    const [a, b] = await Promise.all([chat.open(), chat.open()]);
+    expect(a).toEqual(ok({ conversationId: 'home-1', cwd: '/tmp/home-chat' }));
+    expect(b).toEqual(a);
+    expect(acp.startSession).toHaveBeenCalledTimes(1);
+    expect(chat.turnContext()).toMatch(/^<rig_turn user_turn_id="turn_\d+" \/>$/);
+  });
+
+  it('records each message as a run, with the session updates the Room card draws', async () => {
+    const { acp } = fakeAcp(() => 'Two things need you.');
+    const runs: HomeChatRun[] = [];
+    const chat = createHomeChat(deps(acp, { onRun: (r) => runs.push(r) }));
+    expect(await chat.ask('what needs me?')).toEqual(ok({ runId: expect.any(String) }));
+    await vi.waitFor(() => expect(chat.runs()[0]?.status).toBe('done'));
+    const [run] = chat.runs();
+    expect(run).toMatchObject({ prompt: 'what needs me?', model: 'claude-opus-5-5' });
+    expect(run!.events.map((e) => e.kind)).toEqual(['run_model', 'agent_message_chunk', 'agent_message_chunk', 'turn_ended']);
+    expect(runs.at(-1)?.status).toBe('done');
+    expect(acp.queuePrompt).toHaveBeenCalledWith('home-1', 'what needs me?', expect.stringMatching(/^<rig_turn /), expect.any(Function));
+  });
+
+  it('knows which name in Rig\'s data is the person, and starts on their own model', async () => {
+    expect(homeChatSelf(['Dylan Bourgeois', 'Dylan Bourgeois', ''])).toContain('In Rig\'s data (cards, messages, tickets, PRs) they appear as Dylan Bourgeois, or by first name: that is them');
+    expect(homeChatSelf([])).toBe('');
+    const { acp } = fakeAcp(() => 'x');
+    await createHomeChat(deps(acp)).open();
+    expect((acp.startSession.mock.calls as unknown as [Record<string, unknown>][])[0]![0]).not.toHaveProperty('model');
   });
 
   it('runs turns one at a time', async () => {

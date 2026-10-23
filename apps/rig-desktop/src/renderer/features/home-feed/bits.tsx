@@ -38,6 +38,22 @@ export function SourceLogo({
       </svg>
     );
   }
+  if (connector === 'slack') {
+    return (
+      <svg {...common}>
+        <rect x="1.5" y="1.5" width="21" height="21" rx="6" fill="#4a154b" />
+        <path d="M9 6.5v6M15 11.5v6M6.5 15h6M11.5 9h6" stroke="#ffffff" strokeWidth="2.2" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (connector === 'gmail') {
+    return (
+      <svg {...common}>
+        <rect x="1.5" y="4" width="21" height="16" rx="3" fill="#ffffff" stroke="#d6dae0" />
+        <path d="M3 6.5l9 7 9-7" stroke="#ea4335" strokeWidth="2" fill="none" strokeLinejoin="round" />
+      </svg>
+    );
+  }
   if (connector === 'granola') {
     return (
       <svg {...common}>

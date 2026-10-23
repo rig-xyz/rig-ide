@@ -1,3 +1,4 @@
+import { SOURCES } from './mock';
 import type { FeedChoice, FeedItem, FeedVerb, RailSpace } from './model';
 
 /**
@@ -74,7 +75,7 @@ export function normalizeText(text: string): string {
 
 /** Where the item happens, in one word: `#ulys-backlog`, or "New space". */
 export function spaceLabel(
-  item: Pick<FeedItem, 'spaceId'>,
+  item: Pick<FeedItem, 'spaceId' | 'source'>,
   choice: FeedChoice,
   spaces: readonly RailSpace[]
 ): string {
@@ -83,8 +84,11 @@ export function spaceLabel(
     choice.target.kind === 'new-session' || choice.target.kind === 'space'
       ? choice.target.spaceId
       : item.spaceId;
-  const space = spaces.find((s) => s.id === id);
-  return `#${space?.name ?? id}`;
+  const space = spaces.find((s) => s.id === id || s.bindingId === id);
+  if (space) return `#${space.name}`;
+  // A card from your own tools, not from a space: say where it came from.
+  if (!id) return item.source ? SOURCES[item.source.connector].name : 'Rig';
+  return `#${id}`;
 }
 
 export const VERB_LABEL: Record<FeedVerb, string> = {

@@ -4,9 +4,12 @@ import { join } from 'node:path';
 import { app } from 'electron';
 import { ok } from '@emdash/shared';
 import { getAcpRuntimeClient } from '@main/core/acp/controller';
+import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
-import { resolveSelfUserId } from '../account';
+import { homeChatRunChannel } from '@shared/rig/home-chat';
+import { resolveSelfUserId, rigAccountController } from '../account';
+import { getFeed } from '../feed/relay';
 import { createRuntimeAcpSessions } from '../spaces/dispatch';
 import { rigToolsServer } from '../spaces/rig-tools-instance';
 import { createHomeChat } from './chat';
@@ -30,10 +33,20 @@ const homeChat = createHomeChat({
   },
   newConversationId: () => `home-${randomUUID()}`,
   issueTurn: () => turnGate.issue('chat'),
+  selfNames: async () => {
+    const [account, feed] = await Promise.all([rigAccountController.me().catch(() => null), getFeed().catch(() => null)]);
+    return [account?.success ? account.data.name : null, feed?.success ? feed.data.me : null].filter((n): n is string => !!n);
+  },
+  onRun: (run) => events.emit(homeChatRunChannel, { run }),
   log,
 });
 
 export const rigHomeChatController = createRPCController({
+  open: () => homeChat.open(),
+  ask: (input: { text: string }) => homeChat.ask(input.text),
+  stop: () => homeChat.stop(),
+  runs: async () => homeChat.runs(),
+  turnContext: async () => homeChat.turnContext(),
   send: (input: { text: string }) => homeChat.send(input.text),
   reset: () => homeChat.reset(),
 });

@@ -8,6 +8,7 @@ import { HomeProvider, useHome } from './home-context';
 import { Middle } from './middle';
 import { Rail, type RailYou } from './rail';
 import { useRealSpaces } from './use-real-spaces';
+import { useRealFeed } from './use-real-feed';
 import './home-feed.css';
 
 /**
@@ -28,7 +29,10 @@ export function NewHome({
   onOpenSettings: (page?: 'account' | 'about') => void;
   updateReady: boolean;
 }) {
-  const { spaces, selfName, selfAvatarUrl } = useRealSpaces();
+  const { spaces, selfName: accountName, selfAvatarUrl } = useRealSpaces();
+  // Rig's name for you when the account has none (a dev relay without profiles).
+  const feed = useRealFeed();
+  const selfName = accountName ?? feed?.me ?? null;
   const reducedMotion = useReducedMotion() ?? false;
   return (
     <HomeProvider

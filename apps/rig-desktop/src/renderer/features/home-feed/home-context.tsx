@@ -26,9 +26,11 @@ import {
   type OrchestratorContext,
   scriptedOrchestrator,
 } from './orchestrator';
+import type { HomeChatRun } from '@shared/rig/home-chat';
 import { mergeRail } from './rail-data';
 import { useRealFeed } from './use-real-feed';
 import { claudeOrchestrator } from './claude-orchestrator';
+import { sendToHomeClaude, useHomeRuns } from './home-claude';
 import { chosen, normalizeText, sayPlain } from './say';
 import {
   feedCounts,
@@ -64,6 +66,8 @@ export interface HomeApi {
   bringIn: (sessionId: string, from: Rect | null) => void;
   addRoutine: (name: string, from: Rect | null) => void;
   send: (text: string) => void;
+  /** Home's own Claude, live, once the real Feed is on: the chat shows its runs like a Room and `send` goes to it. */
+  homeRuns: HomeChatRun[] | null;
   toast: (text: string) => void;
   /** Opens a real space or session in the app (its Room or its chat). */
   openInApp: (target: { space: RailSpace; session?: RailSession }) => void;
@@ -123,16 +127,20 @@ export function HomeProvider({
   children: ReactNode;
 }) {
   const [state, dispatch] = useReducer(homeReducer, undefined, initialHomeState);
-  // The orchestrator's Feed replaces the demo one as soon as the relay has it.
+  // The orchestrator's Feed replaces the demo one as soon as the relay has it;
+  // until then, unless the relay has none, the Feed stays empty rather than
+  // flash the demo.
   const realFeed = useRealFeed();
   const realFeedOn = useRef(false);
   useEffect(() => {
     if (!realFeed) return;
     realFeedOn.current = true;
-    dispatch({ type: 'replace-feed', items: realFeed });
+    dispatch({ type: 'replace-feed', items: realFeed.items });
   }, [realFeed]);
+  const shown = useMemo(() => (realFeed !== null && !state.fromRelay ? { ...state, feed: [] } : state), [realFeed, state]);
   // With the real Feed, the chat is the person's own Claude, which can correct it.
   const orchestrator = realFeed ? claudeOrchestrator : givenOrchestrator;
+  const homeRuns = useHomeRuns(Boolean(realFeed));
   const [connectors, connectorsDispatch] = useReducer(connectorsReducer, undefined, () =>
     initialConnectorsState(Date.now())
   );
@@ -164,13 +172,14 @@ export function HomeProvider({
   }, []);
 
   const spaces = useMemo(
-    () => mergeRail(realSpaces, state.demo, new Map(Object.entries(state.extra))),
-    [realSpaces, state.demo, state.extra]
+    // With the real Feed on, the rail shows only your real spaces, not the demo's.
+    () => mergeRail(realSpaces, realFeed !== null ? [] : state.demo, new Map(Object.entries(state.extra))),
+    [realSpaces, state.demo, state.extra, realFeed]
   );
   const spacesRef = useRef(spaces);
   spacesRef.current = spaces;
-  const counts = feedCounts(state.feed);
-  const firstName = (selfName ?? 'there').split(/\s+/)[0] ?? 'there';
+  const counts = feedCounts(shown.feed);
+  const firstName = (selfName ?? realFeed?.me ?? 'there').split(/\s+/)[0] ?? 'there';
 
   const orchestratorContext = useMemo<OrchestratorContext>(
     () => ({
@@ -378,6 +387,10 @@ export function HomeProvider({
       // A real card: Start runs the session it proposes; the other verbs tell Rig it's handled.
       if (item.situationId) {
         const situationId = item.situationId;
+        if (chosen(item, entry.pick).verb === 'space') {
+          toast('Bringing people in from a card comes next. Ask in the chat for now.');
+          return;
+        }
         if (chosen(item, entry.pick).verb === 'start') {
           // Start the session the card proposes, in the card's own space; its result comes back to the card.
           void rpc.rig.feed.start({ situationId }).then((r) => {
@@ -505,6 +518,10 @@ export function HomeProvider({
     (raw: string) => {
       const text = raw.trim();
       if (!text) return;
+      if (homeRuns) {
+        sendToHomeClaude(text);
+        return;
+      }
       dispatch({ type: 'message', message: { id: `m${++nextId.current}`, who: 'me', text } });
       const id = `m${++nextId.current}`;
       dispatch({ type: 'message', message: { id, who: 'rig', blocks: null } });
@@ -513,7 +530,7 @@ export function HomeProvider({
         wait(600, reducedMotion),
       ]).then(([blocks]) => dispatch({ type: 'message-blocks', id, blocks }));
     },
-    [orchestrator, orchestratorContext, reducedMotion]
+    [orchestrator, orchestratorContext, reducedMotion, homeRuns]
   );
 
   const openInApp = useCallback(
@@ -617,7 +634,7 @@ export function HomeProvider({
 
   const api = useMemo<HomeApi>(
     () => ({
-      state,
+      state: shown,
       dispatch,
       spaces,
       counts,
@@ -631,6 +648,7 @@ export function HomeProvider({
       bringIn,
       addRoutine,
       send,
+      homeRuns,
       toast,
       openInApp,
       connectors,
@@ -639,10 +657,10 @@ export function HomeProvider({
       promoteTopic,
       answerCard,
     }),
-    // `counts` is derived from `state.feed`.
+    // `counts` is derived from `shown.feed`.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
     [
-      state,
+      shown,
       spaces,
       firstName,
       reducedMotion,
@@ -654,6 +672,7 @@ export function HomeProvider({
       bringIn,
       addRoutine,
       send,
+      homeRuns,
       toast,
       openInApp,
       connectors,

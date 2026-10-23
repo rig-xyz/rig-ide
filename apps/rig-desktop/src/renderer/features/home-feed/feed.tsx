@@ -32,6 +32,7 @@ import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { ActionButton } from './action-button';
 import { Face, IconButton, Kicker, SessionMatrix, SourceLogo, sourceName } from './bits';
+import { personFor } from './real-feed';
 import { ConnectorsView } from './connectors-view';
 import { rectOf, useHome } from './home-context';
 import { PEOPLE } from './mock';
@@ -351,13 +352,14 @@ function FeedRow({ entry }: { entry: FeedEntry }) {
 
 /** The source's logo, then the people involved, overlapping. */
 function Stack({ item }: { item: FeedItem }) {
-  const people = item.people.map((id) => PEOPLE[id]).filter((p): p is NonNullable<typeof p> => !!p);
+  // Demo people by key; anyone else Rig names gets a face from their name.
+  const people = item.people.map((id) => PEOPLE[id] ?? (item.situationId ? personFor(id) : undefined)).filter((p): p is NonNullable<typeof p> => !!p);
   if (!item.source && !people.length) return <span />;
   return (
     <span className="hf-stack inline-flex items-center">
       {item.source && (
         <span
-          title={`From ${sourceName(item.source.connector)} · ${item.source.scope} · ${item.source.ref}`}
+          title={['From ' + sourceName(item.source.connector), item.source.scope, item.source.ref].filter(Boolean).join(' · ')}
           className="grid size-5 place-items-center rounded-full bg-bg-1"
         >
           <SourceLogo connector={item.source.connector} size={20} />
@@ -400,7 +402,8 @@ function Say({
   return (
     <div data-edited={entry.edited !== null} className="hf-say-wrap mt-1.5 ml-5">
       <EditableSay
-        renderKey={`${choice.id}:${entry.resetKey}`}
+        // A redrafted card (new words, same choice id) is drawn again.
+        renderKey={`${choice.id}:${entry.resetKey}:${choice.lead}${choice.tail}${item.why}`}
         slide={entry.slide}
         item={item}
         choice={choice}

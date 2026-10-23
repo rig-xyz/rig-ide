@@ -26,7 +26,13 @@ export type RigDecision = {
   trigger: string;
 };
 
+export type RigFeedChoice = { verb: 'reply' | 'start' | 'space' | 'open'; label: string; lead: string; tail: string };
+
 export type RigFeedCard = {
+  /** Up to three options, best first; `lead` and `why` may hold {@Full Name} tokens. */
+  choices: RigFeedChoice[];
+  /** The people the card is about. */
+  people: string[];
   title: string;
   /** One or two sentences citing refs in square brackets: `[item:ULY-280]`, `[msg:…]`. */
   why: string;
@@ -37,6 +43,10 @@ export type RigFeedCard = {
 
 export type RigFeedItem = {
   situationId: string;
+  /** Where its events came from: linear, slack, gmail, room, session… */
+  sources: string[];
+  /** The Space its events came from, when any did. */
+  bindingId: string | null;
   title: string;
   description: string;
   participants: string[];
@@ -46,6 +56,8 @@ export type RigFeedItem = {
 };
 
 export type RigFeed = {
+  /** How Rig names the person (their preference card), for when the account has no name. */
+  me: string | null;
   visible: RigFeedItem[];
   queued: RigFeedItem[];
   following: RigFeedItem[];
@@ -59,7 +71,10 @@ export type RigSituationEvent = {
   source: string;
   from: string | null;
   title: string;
+  summary: string;
   excerpt: string;
+  /** Where the event lives (a permalink, a PR or ticket URL), when its source gave one. */
+  url: string | null;
   at: string;
   /** How the event got here: by fact, by Jev, a new situation, the gardener, or a correction. */
   attachedBy: string;

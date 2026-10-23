@@ -46,6 +46,8 @@ export type ImportEvent = {
   excerpt?: string;
   at: string;
   meta?: Record<string, unknown>;
+  /** The situation this event is about, when Rig went looking for it (a check, a session's result). */
+  sessionFor?: string;
 };
 
 export type SourceRunnerDeps = {
@@ -158,13 +160,22 @@ export function toImportEvent(source: Source, line: Record<string, unknown>): Im
 
 export type RunOutcome = { status: SourceStatus; listed: number; added: number; cursor: string | null; error?: string };
 
-/** One run of one source: list, map, send. Never throws. */
-export async function runSource(deps: SourceRunnerDeps, source: Source): Promise<RunOutcome> {
-  const since = source.cursor ?? new Date(deps.now() - 3 * 86_400_000).toISOString();
+/** A headless session's dependencies: the ACP sessions and a folder to run in. */
+export type HeadlessDeps = Pick<SourceRunnerDeps, 'acp' | 'cwd' | 'newConversationId' | 'timeoutMs'>;
+
+/**
+ * One short headless Claude session on this Mac: one prompt, its permission
+ * requests answered by `permission` (anything it doesn't allow is refused),
+ * and the final answer's text. Always stopped afterwards. Never throws.
+ */
+export async function askHeadless(
+  deps: HeadlessDeps,
+  input: { rules: string; prompt: string; permission: (request: AcpPermissionRequest) => string | null }
+): Promise<Result<string, string>> {
   const conversationId = deps.newConversationId();
   const cwd = await deps.cwd();
-  const started = await deps.acp.startSession({ conversationId, providerId: 'claude', cwd, systemPromptAppend: SOURCE_RULES });
-  if (!started.success) return { status: 'failed', listed: 0, added: 0, cursor: source.cursor, error: started.error };
+  const started = await deps.acp.startSession({ conversationId, providerId: 'claude', cwd, systemPromptAppend: input.rules });
+  if (!started.success) return err(started.error);
   const events: { kind: string; payload: Record<string, unknown> }[] = [];
   let finish!: (r: Result<string, string>) => void;
   const done = new Promise<Result<string, string>>((resolve) => (finish = resolve));
@@ -175,32 +186,42 @@ export async function runSource(deps: SourceRunnerDeps, source: Source): Promise
     else if (raw.kind === 'turn_end' && begun) finish(ok(finalAnswerFromEvents(events)));
   });
   const offPerm = await deps.acp.subscribePendingPermissions(conversationId, (request) => {
-    const optionId = sourcePermission(source.connector, request);
+    const optionId = input.permission(request);
     if (optionId) void deps.acp.resolvePermission(conversationId, request.requestId, optionId).catch(() => undefined);
   });
   const timer = setTimeout(() => finish(err('The run took too long.')), deps.timeoutMs ?? 4 * 60_000);
   try {
-    const queued = await deps.acp.queuePrompt(conversationId, sourcePrompt(source, since), undefined, (reason) => finish(err(reason)));
-    if (!queued.success) return { status: 'failed', listed: 0, added: 0, cursor: source.cursor, error: queued.error };
-    const answer = await done;
-    if (!answer.success) return { status: 'failed', listed: 0, added: 0, cursor: source.cursor, error: answer.error };
-    const lines = parseJsonArray(answer.data);
-    if (!lines) {
-      const needsAuth = /auth|connect|not available|don't have access/i.test(answer.data);
-      return { status: needsAuth ? 'needs_auth' : 'failed', listed: 0, added: 0, cursor: source.cursor, error: answer.data.slice(0, 300) };
-    }
-    const mapped = lines.map((l) => toImportEvent(source, l)).filter((e): e is ImportEvent => e !== null);
-    const cursor = mapped.reduce<string | null>((max, e) => (!max || e.at > max ? e.at : max), source.cursor);
-    if (!mapped.length) return { status: 'ok', listed: lines.length, added: 0, cursor };
-    const sent = await deps.postEvents(mapped);
-    if (!sent.success) return { status: 'failed', listed: lines.length, added: 0, cursor: source.cursor, error: sent.error.message };
-    return { status: 'ok', listed: lines.length, added: sent.data.added, cursor };
+    const queued = await deps.acp.queuePrompt(conversationId, input.prompt, undefined, (reason) => finish(err(reason)));
+    if (!queued.success) return err(queued.error);
+    return await done;
   } finally {
     clearTimeout(timer);
     offRaw();
     offPerm();
     await deps.acp.stopSession?.(conversationId).catch(() => undefined);
   }
+}
+
+/** One run of one source: list, map, send. Never throws. */
+export async function runSource(deps: SourceRunnerDeps, source: Source): Promise<RunOutcome> {
+  const since = source.cursor ?? new Date(deps.now() - 3 * 86_400_000).toISOString();
+  const answer = await askHeadless(deps, {
+    rules: SOURCE_RULES,
+    prompt: sourcePrompt(source, since),
+    permission: (request) => sourcePermission(source.connector, request),
+  });
+  if (!answer.success) return { status: 'failed', listed: 0, added: 0, cursor: source.cursor, error: answer.error };
+  const lines = parseJsonArray(answer.data);
+  if (!lines) {
+    const needsAuth = /auth|connect|not available|don't have access/i.test(answer.data);
+    return { status: needsAuth ? 'needs_auth' : 'failed', listed: 0, added: 0, cursor: source.cursor, error: answer.data.slice(0, 300) };
+  }
+  const mapped = lines.map((l) => toImportEvent(source, l)).filter((e): e is ImportEvent => e !== null);
+  const cursor = mapped.reduce<string | null>((max, e) => (!max || e.at > max ? e.at : max), source.cursor);
+  if (!mapped.length) return { status: 'ok', listed: lines.length, added: 0, cursor };
+  const sent = await deps.postEvents(mapped);
+  if (!sent.success) return { status: 'failed', listed: lines.length, added: 0, cursor: source.cursor, error: sent.error.message };
+  return { status: 'ok', listed: lines.length, added: sent.data.added, cursor };
 }
 
 /** Sources due for a run now. */

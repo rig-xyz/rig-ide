@@ -18,6 +18,8 @@ import { createRuntimeAcpSessions } from '../spaces/dispatch';
 import { spacesDispatchController } from '../spaces/dispatch-controller-instance';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
 import { createActions, type StartInput } from './actions';
+import { dueChecks, runCheck, type CheckRecord } from './checks';
+import { onRelayFeedChanged } from './feed-signal';
 import { runSource, type Source } from './sources';
 import { turnGate } from './turns';
 
@@ -52,6 +54,63 @@ async function updateSource(ref: string, patch: Partial<Source>): Promise<Source
 }
 
 const changed = () => events.emit(rigFeedChangedChannel, { reason: 'local' });
+
+const checksFile = () => join(app.getPath('userData'), 'orch-checks.json');
+async function readChecks(): Promise<Record<string, CheckRecord>> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(checksFile(), 'utf8'));
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, CheckRecord>) : {};
+  } catch {
+    return {};
+  }
+}
+
+const headless = {
+  acp,
+  cwd: async () => {
+    const dir = join(app.getPath('userData'), 'rig-watch');
+    await mkdir(dir, { recursive: true });
+    return dir;
+  },
+  newConversationId: () => `watch-${randomUUID()}`,
+};
+
+let checking: Promise<number> | null = null;
+/**
+ * Checks the visible cards that are due (checks.ts), one at a time, and
+ * resolves with how many ran. One pass at a time; a call during a pass joins it.
+ */
+export function runDueChecks(): Promise<number> {
+  checking ??= (async () => {
+    const feed = await feedRelay.getFeed();
+    if (!feed.success) return 0;
+    const records = await readChecks();
+    const due = dueChecks(feed.data.visible, records, Date.now());
+    for (const item of due) {
+      const outcome = await runCheck(
+        {
+          ...headless,
+          me: feed.data.me,
+          situation: async (id) => {
+            const r = await feedRelay.getSituation(id);
+            return r.success ? r : err({ message: r.error.message });
+          },
+          postEvents: async (evs) => {
+            const r = await feedRelay.orchEvents(evs);
+            return r.success ? r : err({ message: r.error.message });
+          },
+        },
+        item.situationId,
+        Date.now()
+      );
+      records[item.situationId] = { at: new Date().toISOString(), seen: item.updatedAt, status: outcome.status, found: outcome.found, ...(outcome.error ? { error: outcome.error.slice(0, 300) } : {}) };
+      await writeFile(checksFile(), JSON.stringify(records, null, 2));
+      log.info('Rig checks: checked a card', { situationId: item.situationId, status: outcome.status, found: outcome.found, added: outcome.added });
+    }
+    return due.length;
+  })().finally(() => (checking = null));
+  return checking;
+}
 
 export const orchActions = createActions({
   relay: {
@@ -99,13 +158,7 @@ export const orchActions = createActions({
       await updateSource(ref, { lastStatus: 'running' });
       const outcome = await runSource(
         {
-          acp,
-          cwd: async () => {
-            const dir = join(app.getPath('userData'), 'rig-watch');
-            await mkdir(dir, { recursive: true });
-            return dir;
-          },
-          newConversationId: () => `watch-${randomUUID()}`,
+          ...headless,
           postEvents: async (evs) => {
             const r = await feedRelay.orchEvents(evs);
             return r.success ? r : err({ message: r.error.message });
@@ -143,9 +196,22 @@ export const orchActions = createActions({
   now: () => Date.now(),
 });
 
-// Sources check on their own schedule while the app runs.
-const tick = setInterval(() => void orchActions.runDue().catch((error: unknown) => log.warn('Rig sources: tick failed', { error: String(error) })), 5 * 60_000);
+// Sources check on their own schedule while the app runs, and visible cards get checked.
+const checkDue = () => void runDueChecks().catch((error: unknown) => log.warn('Rig checks: pass failed', { error: String(error) }));
+const tick = setInterval(() => {
+  void orchActions.runDue().catch((error: unknown) => log.warn('Rig sources: tick failed', { error: String(error) }));
+  checkDue();
+}, 5 * 60_000);
 tick.unref?.();
+// And once shortly after start, so the cards you open the app to are checked.
+setTimeout(checkDue, 60_000).unref?.();
+// A Feed change may bring a new card: check it soon, once things settle.
+let soon: ReturnType<typeof setTimeout> | null = null;
+onRelayFeedChanged(() => {
+  if (soon) clearTimeout(soon);
+  soon = setTimeout(checkDue, 20_000);
+  soon.unref?.();
+});
 
 /**
  * `rpc.rig.orch`: the person's own clicks. A start from the renderer is the
@@ -156,6 +222,8 @@ export const rigOrchController = createRPCController({
   get: (input: { ref: string }) => orchActions.get(input.ref),
   act: (input: { refs: string[]; action: string; args?: Record<string, unknown> }) => orchActions.act({ ...input, actor: 'person' }),
   start: (input: Omit<StartInput, 'userTurnId'>) => orchActions.start({ ...input, userTurnId: turnGate.issue('click') }),
+  /** Check the due cards now (checks.ts); resolves with how many ran. */
+  checkNow: async () => ok(await runDueChecks()),
   addSource: async (input: { connector: string; what: string; everyMin?: number }) => {
     const list = await readSources();
     const ref = `src_${input.connector.toLowerCase().replace(/[^a-z0-9]+/g, '-')}${list.some((x) => x.ref.startsWith(`src_${input.connector.toLowerCase()}`)) ? `-${list.length + 1}` : ''}`;
