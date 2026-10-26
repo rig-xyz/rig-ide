@@ -77,9 +77,7 @@ export const PRE_APPROVED_RIG_TOOLS: ReadonlySet<string> = new Set([
   // Only move the view of the person who asked, on their own Mac.
   'rig_browser_open',
   'rig_topic_show',
-  // Read what Rig knows: lists and single refs.
-  'rig_query',
-  'rig_get',
+  // Not rig_query or rig_get: they read your private Feed, so in a space they ask (and only answer your own requests).
 ]);
 
 /**
@@ -163,6 +161,9 @@ export type OrchPrimitives = Pick<OrchActions, 'query' | 'get' | 'act' | 'start'
   /** One `gh` read for the orchestrator (orch/github.ts): checked, and run with no shell. */
   github?(command: string): Promise<Result<string, Failure>>;
 };
+
+/** Home's own Claude (home-chat/chat.ts): the owner's private chat with Rig. */
+export const HOME_BINDING = 'home';
 
 /** The background orchestrator's scope (orch/agent.ts): the only one its write tools answer. */
 export const ORCHESTRATOR_BINDING = 'orchestrator';
@@ -1381,6 +1382,21 @@ function rowLine(row: Record<string, unknown>, i: number): string {
  * enforced by the control plane, not here: what speaks for the owner comes
  * back as a card, and `rig_start` needs the owner's fresh `user_turn_id`.
  */
+/** What a space agent is told when someone other than its owner asked about the owner's Feed. */
+const FEED_IS_PRIVATE = "Your owner's Feed is private to them: only their own requests can read or change it. Say so, and that they can ask you themselves.";
+
+/**
+ * Whether this call may touch the owner's Feed: always in Home and the
+ * background orchestrator, and in a space only on a turn the owner asked for.
+ * A teammate's request in a shared space never reads or changes it.
+ */
+async function ownersOwnFeed(backend: RigToolsBackend, scope: RigToolScope): Promise<boolean> {
+  if (scope.bindingId === HOME_BINDING || scope.bindingId === ORCHESTRATOR_BINDING) return true;
+  if (!backend.currentAsker) return false;
+  const asker = await backend.currentAsker(scope).catch(() => null);
+  return asker !== null && asker === scope.ownerUserId;
+}
+
 function orchestratorTools(backend: RigToolsBackend): RigTool[] {
   const kinds = 'feed, held, items, situations, facts, set_aside, working, runs, topics, sources, connectors, spaces, sessions, rules, changes, people, usage, runners';
   return [
@@ -1397,8 +1413,9 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
         limit: z.number().optional(),
       },
       annotations: { title: 'List from Rig', readOnlyHint: true },
-      run: async (_scope, input) => {
+      run: async (scope, input) => {
         if (!backend.orch) return failed(NO_ORCH);
+        if (!(await ownersOwnFeed(backend, scope))) return failed(FEED_IS_PRIVATE);
         const res = await backend.orch.query({
           kind: String(input.kind ?? ''),
           filter: input.filter && typeof input.filter === 'object' ? (input.filter as Record<string, unknown>) : undefined,
@@ -1418,8 +1435,9 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
         'Use it when they ask why something is (or is not) in their Feed, or before you change it.',
       inputSchema: { ref: z.string().describe('A ref from rig_query, or an item ref like item:ULY-429.') },
       annotations: { title: 'Read from Rig', readOnlyHint: true },
-      run: async (_scope, input) => {
+      run: async (scope, input) => {
         if (!backend.orch) return failed(NO_ORCH);
+        if (!(await ownersOwnFeed(backend, scope))) return failed(FEED_IS_PRIVATE);
         const ref = String(input.ref ?? '').trim();
         if (!ref) return failed('Give a ref.');
         const res = await backend.orch.get(ref);
@@ -1442,6 +1460,7 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
       annotations: { title: "Change Rig's state", readOnlyHint: false, destructiveHint: false },
       run: async (scope, input) => {
         if (!backend.orch) return failed(NO_ORCH);
+        if (!(await ownersOwnFeed(backend, scope))) return failed(FEED_IS_PRIVATE);
         const refs = Array.isArray(input.refs) ? input.refs.map((x) => String(x).trim()).filter(Boolean) : [];
         const res = await backend.orch.act({
           refs,
@@ -1471,8 +1490,9 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
         user_turn_id: z.string().describe("This turn's user_turn_id, from the <rig_turn> line."),
       },
       annotations: { title: 'Start a session', readOnlyHint: false, destructiveHint: false },
-      run: async (_scope, input) => {
+      run: async (scope, input) => {
         if (!backend.orch) return failed(NO_ORCH);
+        if (!(await ownersOwnFeed(backend, scope))) return failed(FEED_IS_PRIVATE);
         const res = await backend.orch.start({
           task: typeof input.task === 'string' ? input.task : undefined,
           ref: typeof input.ref === 'string' ? input.ref : undefined,

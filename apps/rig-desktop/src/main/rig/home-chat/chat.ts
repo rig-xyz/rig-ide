@@ -2,7 +2,7 @@ import type { AcpHttpMcpServerWire, AcpPermissionRequest } from '@emdash/core/ac
 import { err, ok, type Result } from '@emdash/shared';
 import { finalAnswerFromEvents, type RawSessionEvent, type SpacesAcpSessions } from '../spaces/dispatch';
 import type { HomeChatRun } from '@shared/rig/home-chat';
-import { rigToolOf, type RigToolScope } from '../spaces/rig-tools';
+import { HOME_BINDING, rigToolOf, type RigToolScope } from '../spaces/rig-tools';
 
 /**
  * Home's chat with a real Claude (rig docs/orchestrator-architecture.md §5):
@@ -102,7 +102,7 @@ export function createHomeChat(deps: HomeChatDeps): HomeChat {
     if (live) await reset();
     const cwd = await deps.cwd();
     const conversationId = deps.newConversationId();
-    const scope: RigToolScope = { bindingId: 'home', ownerUserId: me.data.id, agent: 'claude', cwd };
+    const scope: RigToolScope = { bindingId: HOME_BINDING, ownerUserId: me.data.id, agent: 'claude', cwd };
     const rig = await deps.rigTools(scope);
     const started = await deps.acp.startSession({
       conversationId,

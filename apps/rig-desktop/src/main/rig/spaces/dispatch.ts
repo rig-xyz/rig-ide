@@ -553,7 +553,7 @@ export function spaceRules(spec: { bindingId: string; agent: SessionAgent; rigTo
       "To look at a web page posted or pinned in the space, like a Claude artifact or a Google Doc, use rig_browser_pins, rig_browser_read and rig_browser_screenshot with its link. They open it as your owner, read only, without moving anyone's view. Read a board in full or screenshot it rather than guessing at small text. They also take an html file in the space by its path.",
       'To show the person who asked you a web page or a file from the space, call rig_browser_open instead of only naming it.',
       'To show them only one topic of the chat, call rig_topic_show with its name.',
-      "Your owner's Feed is what Rig puts in front of them. When they ask about it, or a card is wrong because it doesn't need them, two cards are one thing or an event is in the wrong place, read it with rig_feed_list and rig_situation_explain, then fix it with rig_feed_hide, rig_situation_merge or rig_event_move, giving the reason in their words."
+      "Your owner's Feed is what Rig puts in front of them, and it's private to them. Only their own requests may read or change it: when anyone else asks about it, say it's private and change nothing (Rig refuses it too). When your owner asks about it, or says a card is wrong because it doesn't need them, two cards are one thing or an event is in the wrong place, read it with rig_query and rig_get, then fix it with rig_act to hide, merge or move, giving the reason in their words. Remember that your answer shows in this space's chat, where everyone in it can read it."
     );
   }
   lines.push(

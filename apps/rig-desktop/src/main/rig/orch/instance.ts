@@ -15,7 +15,6 @@ import { getRecentThemes } from '../recent-themes';
 import { resolveLocalPathsImpl } from '../recent-rigs';
 import { rigSpaceStatusController } from '../space-status';
 import { createRuntimeAcpSessions } from '../spaces/dispatch';
-import { spacesDispatchController } from '../spaces/dispatch-controller-instance';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
 import { createActions, type StartInput } from './actions';
 import { resolveSelfUserId } from '../account';

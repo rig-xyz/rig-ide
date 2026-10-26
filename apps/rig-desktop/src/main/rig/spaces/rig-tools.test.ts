@@ -17,6 +17,7 @@ import {
   DESCRIBE_MAX_CHARS,
   DESCRIBE_SKILLS_MAX,
   formatSpaceOverview,
+  HOME_BINDING,
   ORCHESTRATOR_BINDING,
   parseSpaceManifest,
   preApprovedRigToolOption,
@@ -1369,7 +1370,7 @@ describe('the four primitives', () => {
         ? ok({ kind: 'usage', unavailable: true as const, message: "Rig can't read your plan's usage windows yet." })
         : ok({ kind: 'feed', rows: [{ ref: 'sit_1', title: 'Choose the vendor list', decision: 'ask_you 0.92' }, { ref: 'sit_2', title: 'Send Maya the data' }] })
     );
-    const backend = fakeBackend({ orch: orch({ query }) });
+    const backend = fakeBackend({ orch: orch({ query }), currentAsker: async () => 'u-dylan' });
     const res = await call(backend, 'rig_query', { kind: 'feed', filter: { needs: 'me' } });
     expect(res.text).toBe('feed (2):\n1. Choose the vendor list [sit_1] · decision: ask_you 0.92\n2. Send Maya the data [sit_2]');
     expect(query).toHaveBeenCalledWith({ kind: 'feed', filter: { needs: 'me' }, since: undefined, limit: undefined });
@@ -1387,7 +1388,7 @@ describe('the four primitives', () => {
             ]
       )
     );
-    const backend = fakeBackend({ orch: orch({ act }) });
+    const backend = fakeBackend({ orch: orch({ act }), currentAsker: async () => 'u-dylan' });
     const res = await call(backend, 'rig_act', { refs: ['sit_1', 'sit_2'], action: 'ignore', args: { reason: 'not mine' } });
     expect(act).toHaveBeenCalledWith({ refs: ['sit_1', 'sit_2'], action: 'ignore', args: { reason: 'not mine' }, actor: 'Claude (agent)' });
     expect(res.text).toContain('Undo with chg_7');
@@ -1396,10 +1397,43 @@ describe('the four primitives', () => {
 
   it('rig_start passes the turn id and reports where it started', async () => {
     const start = vi.fn(async () => ok({ runId: 'run_1', space: { ref: 'space_b1', name: 'ops' }, brief: 'x', briefPath: 'sessions/x/brief.md', continued: false }));
-    const backend = fakeBackend({ orch: orch({ start }) });
+    const backend = fakeBackend({ orch: orch({ start }), currentAsker: async () => 'u-dylan' });
     const res = await call(backend, 'rig_start', { task: 'triage the Earn bugs', user_turn_id: 'turn_1' });
     expect(start).toHaveBeenCalledWith({ task: 'triage the Earn bugs', ref: undefined, space: undefined, mode: 'foreground', userTurnId: 'turn_1' });
     expect(res.text).toContain('Started a session in #ops [ses_run_1]');
+  });
+
+  it("never reads or changes the owner's Feed for a teammate's request in a space", async () => {
+    const query = vi.fn(async () => ok({ kind: 'feed', rows: [] }));
+    const get = vi.fn(async () => ok({}));
+    const act = vi.fn(async () => ok([]));
+    const start = vi.fn(async () => err({ message: 'no' }));
+    const teammate = fakeBackend({ orch: orch({ query, get, act, start }), currentAsker: async () => 'u-teammate' });
+    for (const [tool, input] of [
+      ['rig_query', { kind: 'feed' }],
+      ['rig_get', { ref: 'sit_1' }],
+      ['rig_act', { refs: ['sit_1'], action: 'hide' }],
+      ['rig_start', { task: 'x', user_turn_id: 'turn_1' }],
+    ] as const) {
+      const res = await call(teammate, tool, input);
+      expect(res.isError).toBe(true);
+      expect(res.text).toMatch(/private to them/);
+    }
+    // No way to tell who asked: refused too.
+    expect((await call(fakeBackend({ orch: orch({ query }) }), 'rig_query', { kind: 'feed' })).text).toMatch(/private to them/);
+    expect(query).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
+    expect(act).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+    // Home is the owner's own chat with Rig.
+    const homeBackend = fakeBackend({ orch: orch({ query }) });
+    const home = await runRigTool(homeBackend, tool(homeBackend, 'rig_query'), { ...SCOPE, bindingId: HOME_BINDING }, { kind: 'feed' });
+    expect(home.isError).toBeFalsy();
+  });
+
+  it("doesn't pre-approve reads of the Feed in a space: the owner is asked", () => {
+    expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_query');
+    expect([...PRE_APPROVED_RIG_TOOLS]).not.toContain('rig_get');
   });
 
   it('say so when this version has no orchestrator', async () => {
