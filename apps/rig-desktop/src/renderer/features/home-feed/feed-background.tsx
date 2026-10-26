@@ -385,7 +385,6 @@ export function RunFooter() {
   const runs = data?.success && 'rows' in data.data ? (data.data.rows as unknown as Run[]) : [];
   // The latest run that ended with a note: a run in progress has read nothing yet.
   const last = runs.find((r) => r.ended && r.read.length) ?? runs[0] ?? null;
-  if (status?.success && !status.data.on) return null;
 
   const checkNow = async () => {
     setAsked(true);
