@@ -3,7 +3,8 @@ import { err, ok } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { OrchAgentState } from '../feed/relay';
 import type { RawSessionEvent } from '../spaces/dispatch';
-import { AGENT_DENIED_TOOLS, agentPermission, buildPacket, createOrchestrator } from './agent';
+import type { OrchProgressEvent } from '@shared/rig/orch-progress';
+import { AGENT_DENIED_TOOLS, agentPermission, buildPacket, createOrchestrator, FIRST_RUN } from './agent';
 import { createTurnGate } from './turns';
 
 const NOW = Date.parse('2026-10-23T13:00:00Z');
@@ -125,6 +126,93 @@ describe('the background orchestrator', () => {
     expect(r.success).toBe(false);
     expect(acp.queuePrompt).not.toHaveBeenCalled();
     expect(acp.stopSession).toHaveBeenCalledWith('orchestrator-1');
+  });
+});
+
+describe('the first run', () => {
+  /** A session whose turns run the given tool calls, one script per turn. */
+  function harness(turns: Array<Array<{ id: string; name: string; input: Record<string, unknown> }>>) {
+    let emit: (e: RawSessionEvent) => void = () => {};
+    let turn = 0;
+    const prompts: string[] = [];
+    const acp = {
+      startSession: vi.fn(async () => ok({ sessionId: 's' })),
+      setConfig: vi.fn(async () => ok(undefined)),
+      stopSession: vi.fn(async () => {}),
+      subscribeRaw: vi.fn(async (_id: string, on: (e: RawSessionEvent) => void) => ((emit = on), () => {})),
+      subscribePendingPermissions: vi.fn(async () => () => {}),
+      resolvePermission: vi.fn(async () => {}),
+      queuePrompt: vi.fn(async (_id: string, prompt: string) => {
+        prompts.push(prompt);
+        const calls = turns[turn++] ?? [];
+        setTimeout(() => {
+          emit({ kind: 'turn_start', turnId: 't' });
+          for (const c of calls) {
+            emit({ kind: 'acp_update', update: { sessionUpdate: 'tool_call', toolCallId: c.id, name: c.name, status: 'pending', rawInput: c.input } } as never);
+            emit({ kind: 'acp_update', update: { sessionUpdate: 'tool_call_update', toolCallId: c.id, status: 'completed' } } as never);
+          }
+          emit({ kind: 'turn_end', turnId: 't', stopReason: 'end_turn' });
+        }, 0);
+        return ok({ turnId: null });
+      }),
+    };
+    const progress: OrchProgressEvent[] = [];
+    const recordRun = vi.fn(async () => ok(null));
+    const o = createOrchestrator({
+      acp,
+      rigTools: async () => ({ type: 'http', name: 'rig', url: 'http://127.0.0.1/mcp', headers: [] }) as never,
+      whoami: async () => ok({ id: 'usr_me' }),
+      cwd: async () => '/tmp/orch',
+      newConversationId: () => 'orchestrator-1',
+      state: async () => ok(state()),
+      sources: async () => [],
+      recordRun,
+      now: () => NOW,
+      onProgress: (e) => progress.push(e),
+    });
+    return { o, prompts, progress, recordRun };
+  }
+  const put = (id: string) => ({ id, name: 'mcp__rig__rig_feed', input: { op: 'put', ref: `sit_${id}` } });
+  const read = (id: string) => ({ id, name: 'mcp__claude_ai_Slack__slack_read_channel', input: { channel_name: 'eng' } });
+
+  it('reads in two passes, the first card first, and says so as it goes', async () => {
+    const h = harness([[read('a'), put('p1')], [read('b')]]);
+    const r = await h.o.run('first', FIRST_RUN);
+    expect(r.success && r.data.cards).toBe(1);
+    expect(h.prompts).toHaveLength(2);
+    expect(h.prompts[0]).toContain('Pass 1 of 2, 12 lookups');
+    expect(h.prompts[0]).toContain('Put its card the moment you have it');
+    expect(h.prompts[0]).toContain('budget="12 lookups"');
+    expect(h.prompts[1]).toContain('Pass 2 of 2, 40 lookups');
+    // Each pass is its own run row, recorded with its pass.
+    expect(h.recordRun).toHaveBeenCalledWith(expect.stringMatching(/^run_/), 'first', undefined, 1);
+    expect(h.recordRun).toHaveBeenCalledWith(expect.stringMatching(/^run_/), 'first', undefined, 2);
+    // A line at once, before the session is even up; then the reads, the card, the end.
+    const kinds = h.progress.map((e) => (e.kind === 'line' ? `line:${e.line.label}:${e.line.status}` : e.kind));
+    expect(kinds[0]).toBe('start');
+    expect(kinds[1]).toBe('line:Looking up what Rig already knows:running');
+    expect(kinds).toContain('card');
+    expect(kinds).toContain('line:Reading #eng:done');
+    expect(kinds.at(-1)).toBe('end');
+    expect(new Set(h.progress.map((e) => e.run)).size).toBe(1);
+  });
+
+  it('widens to two weeks once when the first pass finds nothing', async () => {
+    const h = harness([[read('a')], [read('b'), put('p1')], [read('c')]]);
+    const r = await h.o.run('first', FIRST_RUN);
+    expect(r.success && r.data.cards).toBe(1);
+    expect(h.prompts).toHaveLength(3);
+    expect(h.prompts[1]).toContain('read the last 14 days once instead');
+    expect(h.prompts[2]).toContain('keep reading the rest of the last 14 days');
+    expect(h.progress.filter((e) => e.kind === 'pass').map((e) => (e.kind === 'pass' ? e.lookbackDays : 0))).toEqual([3, 14, 14]);
+  });
+
+  it('a regular run reads in one pass with the usual budget', async () => {
+    const h = harness([[read('a')]]);
+    await h.o.run('schedule');
+    expect(h.prompts).toHaveLength(1);
+    expect(h.prompts[0]).not.toContain('## First read');
+    expect(h.recordRun).toHaveBeenCalledWith(expect.stringMatching(/^run_/), 'schedule', undefined, undefined);
   });
 });
 

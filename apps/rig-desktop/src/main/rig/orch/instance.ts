@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { app } from 'electron';
 import { err, ok } from '@emdash/shared';
@@ -8,6 +8,7 @@ import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { rigFeedChangedChannel, rigStartSessionChannel } from '@shared/rig/feed';
+import { rigOrchProgressChannel, type OrchProgressEvent } from '@shared/rig/orch-progress';
 import { rigAccountController } from '../account';
 import { globalSetup } from '../connectors/connections-instance';
 import * as feedRelay from '../feed/relay';
@@ -18,7 +19,7 @@ import { createRuntimeAcpSessions } from '../spaces/dispatch';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
 import { createActions, type StartInput } from './actions';
 import { resolveSelfUserId } from '../account';
-import { createOrchestrator } from './agent';
+import { createOrchestrator, FIRST_RUN } from './agent';
 import { runSource, type Source } from './sources';
 import { turnGate } from './turns';
 
@@ -151,6 +152,18 @@ export const orchActions = createActions({
 });
 
 /**
+ * Dev only: with RIG_ORCH_RECORD=<file>, every run's progress goes to that
+ * file, one JSON event per line, to make the Read step's replay fixture from
+ * a real run (renderer/features/first-run/read/fixtures). Scrub it before
+ * committing: it holds the person's own channel names and outcome lines.
+ */
+const recordFile = process.env.RIG_ORCH_RECORD && !app.isPackaged ? process.env.RIG_ORCH_RECORD : null;
+function recordProgress(event: OrchProgressEvent): void {
+  if (!recordFile) return;
+  void appendFile(recordFile, `${JSON.stringify(event)}\n`).catch(() => undefined);
+}
+
+/**
  * The background orchestrator (agent.ts): it decides the Feed. It reads a
  * minute after the app starts, then every hour, and when you ask.
  */
@@ -172,7 +185,11 @@ export const orchestrator = createOrchestrator({
     return r.success ? r : err({ message: r.error.message });
   },
   sources: async () => (await readSources()).filter((x) => !x.paused).map((x) => ({ connector: x.connector, what: x.what })),
-  recordRun: (id, trigger, note) => feedRelay.orchRun(id, trigger, note),
+  recordRun: (id, trigger, note, pass) => feedRelay.orchRun(id, trigger, note, pass),
+  onProgress: (event) => {
+    events.emit(rigOrchProgressChannel, event);
+    recordProgress(event);
+  },
   now: () => Date.now(),
   log,
 });
@@ -193,6 +210,17 @@ export const rigOrchController = createRPCController({
   get: (input: { ref: string }) => orchActions.get(input.ref),
   act: (input: { refs: string[]; action: string; args?: Record<string, unknown> }) => orchActions.act({ ...input, actor: 'person' }),
   start: (input: Omit<StartInput, 'userTurnId'>) => orchActions.start({ ...input, userTurnId: turnGate.issue('click') }),
+  /**
+   * The first run (onboarding's Read step): starts it and answers at once;
+   * its progress comes on `rigOrchProgressChannel`, ending with `end`.
+   */
+  firstRun: async () => {
+    void orchestrator.run('first', FIRST_RUN).then((r) => {
+      if (!r.success) log.warn('Rig orchestrator: first run failed', { error: r.error });
+      else changed();
+    });
+    return ok({ started: true });
+  },
   /** A background orchestrator run now (agent.ts). */
   runNow: async () => {
     const r = await orchestrator.run('asked');

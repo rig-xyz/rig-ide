@@ -335,7 +335,8 @@ export async function orchFact(fact: { about: string; fact: string; refs: string
   return res.success ? ok({ id: str(rec(res.data).id) }) : res;
 }
 
-export async function orchRun(id: string, trigger: string, note?: Record<string, unknown>): Promise<Result<null, FeedRelayError>> {
-  const res = await call('POST', '/v1/me/orch/runs', 'record the run', { id, trigger, ...(note ? { note } : {}) });
+/** `pass`: which pass of a run in passes (the first run) this row is. */
+export async function orchRun(id: string, trigger: string, note?: Record<string, unknown>, pass?: number): Promise<Result<null, FeedRelayError>> {
+  const res = await call('POST', '/v1/me/orch/runs', 'record the run', { id, trigger, ...(note ? { note } : {}), ...(pass ? { pass } : {}) });
   return res.success ? ok(null) : res;
 }

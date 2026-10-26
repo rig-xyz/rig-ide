@@ -24,6 +24,7 @@ import type { RigFileNode } from '@shared/rig/files';
 import type { RigInviteMinted, RigInviteRole, RigPeopleList } from '@shared/rig/rig-share';
 import type { AgentConfig, AgentConfigChoice } from './dispatch';
 import type { RoomInviteRow, RoomMemberRow, RoomMessageRow, SessionAgent } from './relay-api';
+import { OUTCOME_KINDS } from '@shared/rig/orch-progress';
 
 /**
  * Rig tools: first-class tools a room agent calls directly (invite someone,
@@ -1626,23 +1627,42 @@ export function createAgentRigTools(backend: RigToolsBackend): RigTool[] {
     },
     {
       name: 'rig_run_note',
-      description: 'End the run: what you read (each source and up to when), what changed and why, what you left alone and why, in under 150 words. The next run starts reading from your times.',
+      description:
+        'Two uses. While you read: report each thing you settle, as you settle it, with outcome alone: handled (already done or answered), not_yours (someone else has it, or noise) or for_you (it needs your owner: put its card too). Your owner sees each one as a line while you read. ' +
+        'At the end: what you read (each source and up to when), what changed and why, what you left alone and why, in under 150 words. The next run starts reading from your times.',
       inputSchema: {
         run_id: z.string().describe('The run id from the packet.'),
-        read: z.array(z.object({ source: z.string(), until: z.string().describe('ISO time') })),
-        changed: z.array(z.string()),
-        left: z.array(z.string()),
-        summary: z.string(),
+        outcome: z
+          .object({
+            kind: z.enum(OUTCOME_KINDS),
+            ref: z.string().describe('What it is about: a situation, item or message ref.'),
+            text: z.string().describe('One short line to your owner about the thing, e.g. "Payout delay: Sam resolved it Tuesday". No Rig ids.'),
+          })
+          .optional()
+          .describe('While you read: one thing you settled. Give it alone, without the end-of-run fields.'),
+        read: z.array(z.object({ source: z.string(), until: z.string().describe('ISO time') })).optional().describe('At the end.'),
+        changed: z.array(z.string()).optional().describe('At the end.'),
+        left: z.array(z.string()).optional().describe('At the end.'),
+        summary: z.string().optional().describe('At the end: under 150 words.'),
         quieted: z
           .string()
           .optional()
           .describe('One or two sentences to your owner, as "you", naming the main things set aside lately and why; shown above them ("I quieted the Twilio threads: you added Riyad this morning."). Never a count alone.'),
       },
-      annotations: { title: 'End the run', readOnlyHint: false, destructiveHint: false },
+      annotations: { title: 'Note the run', readOnlyHint: false, destructiveHint: false },
       run: async (scope, input) => {
         if (scope.bindingId !== ORCHESTRATOR_BINDING) return failed(ONLY_ORCHESTRATOR);
+        // An outcome while reading: the person sees it as a line (main reads it from the call itself).
+        if (input.outcome && typeof input.summary !== 'string') return { text: 'Noted. Keep reading.' };
+        if (typeof input.summary !== 'string') return failed('Give an outcome while you read, or the run\'s note (read, changed, left, summary) to end it.');
         if (!backend.orch?.runNote) return failed(NO_ORCH);
-        const res = await backend.orch.runNote(String(input.run_id ?? ''), { read: input.read, changed: input.changed, left: input.left, summary: input.summary, ...(input.quieted ? { quieted: input.quieted } : {}) });
+        const res = await backend.orch.runNote(String(input.run_id ?? ''), {
+          read: input.read ?? [],
+          changed: input.changed ?? [],
+          left: input.left ?? [],
+          summary: input.summary,
+          ...(input.quieted ? { quieted: input.quieted } : {}),
+        });
         return res.success ? { text: 'Run noted.' } : failed(res.error.message);
       },
     },
