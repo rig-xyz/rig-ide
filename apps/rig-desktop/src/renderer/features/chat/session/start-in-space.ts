@@ -22,6 +22,7 @@ export async function startInSpace(start: RigSessionStart): Promise<void> {
   if (start.continue) {
     const live = rigSessionRegistry.get(start.sessionId);
     if (live instanceof RigChatStore && !live.disposed) {
+      if (start.askFirst && !live.startInMode(ASK_FIRST)) return couldNotAskFirst(start);
       live.submitPrompt(start.prompt);
       return;
     }
@@ -53,14 +54,23 @@ export async function startInSpace(start: RigSessionStart): Promise<void> {
   await run(fresh, start, true);
 }
 
+/** Claude Code's "Ask first": every tool call that writes or runs asks you. */
+const ASK_FIRST = 'default';
+
+/** A Reply that can't ask first doesn't run: better nothing than a draft that sends itself. */
+function couldNotAskFirst(start: RigSessionStart): void {
+  toast({ title: `Couldn't start "${start.title}" in Ask first, so it didn't run` });
+}
+
 async function run(store: RigChatStore, start: RigSessionStart, named: boolean): Promise<void> {
   await store.bootstrap();
   if (store.loadError) {
     toast({ title: `Couldn't start "${start.title}"` });
     return;
   }
-  // Claude's auto mode: reads and safe steps go ahead, anything risky still asks you.
-  store.startInMode('auto');
+  // The space's own mode, as any chat started there would get (a resumed one keeps its own);
+  // a card's Reply asks first, before anything it does.
+  if (start.askFirst && !store.startInMode(ASK_FIRST)) return couldNotAskFirst(start);
   store.submitPrompt(start.prompt);
   // Named after the card, not after "Work through sessions/…/brief.md"; after
   // the prompt, so the name lands once the prompt has created the session's row.

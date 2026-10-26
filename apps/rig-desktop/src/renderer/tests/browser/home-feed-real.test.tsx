@@ -293,6 +293,8 @@ describe('NewHome with the orchestrator Feed', () => {
       {
         situationId: 's_vendor',
         task: "Draft this reply: Reply to Riyad: choose the 11 or the 8. Show me the draft here; don't send or post anything until I say so.",
+        // In Ask first, so nothing it does goes ahead without you.
+        reply: true,
       },
     ]);
   });

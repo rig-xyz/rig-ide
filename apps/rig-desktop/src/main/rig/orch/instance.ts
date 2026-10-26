@@ -137,6 +137,10 @@ export const orchActions = createActions({
   },
   startSession: (start) => events.emit(rigStartSessionChannel, start),
   newSessionId: () => randomUUID(),
+  members: async (bindingId) => {
+    const r = await relayApi.listMembers(bindingId);
+    return r.success ? r.data.length : null;
+  },
   writeFile: async (root, relPath, text) => {
     const file = join(root, relPath);
     if (!file.startsWith(join(root, 'sessions') + '/')) throw new Error('brief path outside the space');

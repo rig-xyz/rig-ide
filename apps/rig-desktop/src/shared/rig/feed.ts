@@ -114,6 +114,8 @@ export type RigSessionStart = {
   prompt: string;
   title: string;
   situationId: string | null;
+  /** Ask first: the session asks before anything it does (a card's Reply). Otherwise the space's own mode. */
+  askFirst?: boolean;
 };
 
 /** Main asks the window to start or continue a space session: chat sessions live in the window (rig-session-registry.ts). */

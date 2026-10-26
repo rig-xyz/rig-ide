@@ -466,7 +466,7 @@ export function HomeProvider({
         // The card's button says "Starting…" until the session runs; then the card leaves and the session shows in the rail.
         dispatch({ type: 'starting', itemId, value: true });
         void rpc.rig.feed
-          .start({ situationId, task })
+          .start({ situationId, task, ...(choice.verb === 'reply' ? { reply: true } : {}) })
           .then((r) => {
             if (!r.success) {
               dispatch({ type: 'starting', itemId, value: false });
