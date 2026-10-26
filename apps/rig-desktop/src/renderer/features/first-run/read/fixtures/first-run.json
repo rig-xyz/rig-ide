@@ -1,0 +1,1339 @@
+[
+ {
+  "run": "run_demo",
+  "kind": "start",
+  "trigger": "first",
+  "passes": 2,
+  "t": 0,
+  "lookups": 52,
+  "lookbackDays": 3
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "step:state",
+   "connector": null,
+   "label": "Looking up what Rig already knows",
+   "status": "running",
+   "t": 1
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "step:state",
+   "connector": null,
+   "label": "Looking up what Rig already knows",
+   "status": "done",
+   "t": 19
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "step:session",
+   "connector": null,
+   "label": "Waking your Claude",
+   "status": "running",
+   "t": 19
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "step:session",
+   "connector": null,
+   "label": "Waking your Claude",
+   "status": "done",
+   "t": 1014
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "pass",
+  "pass": 1,
+  "lookups": 12,
+  "goal": "first card",
+  "lookbackDays": 3,
+  "t": 1014
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t1",
+   "connector": "rig",
+   "label": "Looking at what Rig knows",
+   "status": "running",
+   "t": 6655
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t1",
+   "connector": "rig",
+   "label": "Looking at what Rig knows: feed",
+   "status": "running",
+   "t": 6850
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t2",
+   "connector": "rig",
+   "label": "Looking at what Rig knows",
+   "status": "running",
+   "t": 6862
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t1",
+   "connector": "rig",
+   "label": "Looking at what Rig knows: feed",
+   "status": "done",
+   "t": 6904
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t2",
+   "connector": "rig",
+   "label": "Looking at what Rig knows: items",
+   "status": "running",
+   "t": 7333
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t2",
+   "connector": "rig",
+   "label": "Looking at what Rig knows: items",
+   "status": "done",
+   "t": 7368
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t3",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 9531
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t4",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 9937
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t3",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 9968
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t5",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 10389
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t4",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 10416
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t5",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 10817
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t6",
+   "connector": "rig",
+   "label": "Looking at what Rig knows",
+   "status": "running",
+   "t": 15029
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t6",
+   "connector": "rig",
+   "label": "Looking at what Rig knows: situations",
+   "status": "running",
+   "t": 15222
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t6",
+   "connector": "rig",
+   "label": "Looking at what Rig knows: situations",
+   "status": "done",
+   "t": 15332
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t7",
+   "connector": "slack",
+   "label": "Reading a Slack channel",
+   "status": "running",
+   "t": 18169
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t7",
+   "connector": "slack",
+   "label": "Reading a Slack channel",
+   "status": "done",
+   "t": 19292
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t8",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 24067
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "outcome:t9",
+   "connector": "slack",
+   "label": "Payout delay: Sam resolved it Tuesday",
+   "status": "handled",
+   "t": 24084,
+   "ref": "sit_demo_1"
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t10",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 24530
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t8",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 24565
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t10",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 24852
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t11",
+   "connector": "github",
+   "label": "Reading GitHub",
+   "status": "running",
+   "t": 27093
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t11",
+   "connector": "github",
+   "label": "Opening #212",
+   "status": "running",
+   "t": 27605
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t11",
+   "connector": "github",
+   "label": "Opening #212",
+   "status": "failed",
+   "t": 27766
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t12",
+   "connector": "slack",
+   "label": "Reading a Slack channel",
+   "status": "running",
+   "t": 30224
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t12",
+   "connector": "slack",
+   "label": "Reading a Slack channel",
+   "status": "done",
+   "t": 31554
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t13",
+   "connector": "rig",
+   "label": "Keeping track of an open loop",
+   "status": "running",
+   "t": 33677
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t13",
+   "connector": "rig",
+   "label": "Keeping track of an open loop",
+   "status": "done",
+   "t": 36225
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t14",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "running",
+   "t": 37744
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "card",
+  "ref": "sit_demo_2",
+  "t": 40243
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t14",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "done",
+   "t": 40243
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "outcome:t15",
+   "connector": "slack",
+   "label": "Tom asked for your review of #212 two days ago",
+   "status": "for_you",
+   "t": 42823,
+   "ref": "sit_demo_3"
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "pass",
+  "pass": 2,
+  "lookups": 40,
+  "goal": null,
+  "lookbackDays": 3,
+  "t": 53162
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t16",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 57801
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t17",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 58308
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t16",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 58346
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t18",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 58762
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t17",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 58790
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t19",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 59363
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t18",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 59395
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t19",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 59919
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t20",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 64291
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t21",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 64751
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t20",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 64779
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t22",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 65261
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t21",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 65293
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t23",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 65899
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t22",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 65925
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t23",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 66318
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t24",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 74186
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t25",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 74733
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t24",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 74755
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t26",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 75186
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t25",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 75207
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t26",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 75548
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t27",
+   "connector": "rig",
+   "label": "Keeping track of an open loop",
+   "status": "running",
+   "t": 79995
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "outcome:t28",
+   "connector": "linear",
+   "label": "5 Dependabot PRs: the platform team merges these",
+   "status": "not_yours",
+   "t": 80011,
+   "ref": "sit_demo_4"
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t29",
+   "connector": "rig",
+   "label": "Keeping track of an open loop",
+   "status": "running",
+   "t": 82749
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t27",
+   "connector": "rig",
+   "label": "Keeping track of an open loop",
+   "status": "done",
+   "t": 82794
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t29",
+   "connector": "rig",
+   "label": "Keeping track of an open loop",
+   "status": "done",
+   "t": 85713
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t30",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "running",
+   "t": 87244
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t31",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "running",
+   "t": 89514
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t30",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "failed",
+   "t": 89546
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t31",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "failed",
+   "t": 92004
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t32",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "running",
+   "t": 93740
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t33",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "running",
+   "t": 95768
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "card",
+  "ref": "sit_demo_5",
+  "t": 95807
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t32",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "done",
+   "t": 95807
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t33",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "done",
+   "t": 97783
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "card",
+  "ref": "sit_demo_6",
+  "t": 97783
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "outcome:t34",
+   "connector": "linear",
+   "label": "Priya asked if you can join Thursday’s pilot review",
+   "status": "for_you",
+   "t": 101693,
+   "ref": "sit_demo_7"
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t35",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 102571
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "outcome:t36",
+   "connector": "linear",
+   "label": "LAR-91: checkout timeout, High, nobody on it",
+   "status": "for_you",
+   "t": 102587,
+   "ref": "sit_demo_8"
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t37",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 103072
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t35",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 103105
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t38",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 103525
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t37",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 103555
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t38",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 103942
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t39",
+   "connector": "slack",
+   "label": "Reading a Slack channel",
+   "status": "running",
+   "t": 107045
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t39",
+   "connector": "slack",
+   "label": "Reading a Slack channel",
+   "status": "done",
+   "t": 108655
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t40",
+   "connector": "rig",
+   "label": "Keeping track of an open loop",
+   "status": "running",
+   "t": 112184
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t41",
+   "connector": "rig",
+   "label": "Keeping track of an open loop",
+   "status": "running",
+   "t": 115354
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t40",
+   "connector": "rig",
+   "label": "Keeping track of an open loop",
+   "status": "done",
+   "t": 115401
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t41",
+   "connector": "rig",
+   "label": "Keeping track of an open loop",
+   "status": "done",
+   "t": 118286
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t42",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "running",
+   "t": 119935
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "card",
+  "ref": "sit_demo_2",
+  "t": 122849
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t42",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "done",
+   "t": 122849
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "outcome:t43",
+   "connector": "slack",
+   "label": "Léa asked for the SOC 2 evidence list",
+   "status": "for_you",
+   "t": 124040,
+   "ref": "sit_demo_9"
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "outcome:t44",
+   "connector": "slack",
+   "label": "AWS invoice: you forwarded it last month",
+   "status": "handled",
+   "t": 125101,
+   "ref": "sit_demo_10"
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t45",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 127541
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t46",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 128144
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t45",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 128175
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t47",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 128884
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t46",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 128911
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t48",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "running",
+   "t": 129535
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t47",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 129567
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t48",
+   "connector": "rig",
+   "label": "Opening one of your open loops",
+   "status": "done",
+   "t": 130092
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t49",
+   "connector": "slack",
+   "label": "Reading a Slack channel",
+   "status": "running",
+   "t": 132484
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t49",
+   "connector": "slack",
+   "label": "Reading a Slack channel",
+   "status": "done",
+   "t": 133751
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t50",
+   "connector": "slack",
+   "label": "Reading a Slack channel",
+   "status": "running",
+   "t": 141098
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t50",
+   "connector": "slack",
+   "label": "Reading a Slack channel",
+   "status": "done",
+   "t": 142408
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t51",
+   "connector": "slack",
+   "label": "Reading a thread in Slack",
+   "status": "running",
+   "t": 144057
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t51",
+   "connector": "slack",
+   "label": "Reading a thread in Slack",
+   "status": "done",
+   "t": 145109
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t52",
+   "connector": "rig",
+   "label": "Keeping track of an open loop",
+   "status": "running",
+   "t": 148624
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t52",
+   "connector": "rig",
+   "label": "Keeping track of an open loop",
+   "status": "done",
+   "t": 152070
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t53",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "running",
+   "t": 153667
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "card",
+  "ref": "sit_demo_11",
+  "t": 156311
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t53",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "done",
+   "t": 156311
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "outcome:t54",
+   "connector": "slack",
+   "label": "Sam is waiting on a go for the staging deploy",
+   "status": "for_you",
+   "t": 157582,
+   "ref": "sit_demo_12"
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "outcome:t55",
+   "connector": "slack",
+   "label": "Checkout copy (LAR-74) is Priya’s, and she’s on it",
+   "status": "not_yours",
+   "t": 158815,
+   "ref": "sit_demo_13"
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t56",
+   "connector": "rig",
+   "label": "Putting a card on your Feed",
+   "status": "running",
+   "t": 163287
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t56",
+   "connector": "rig",
+   "label": "Taking a card off your Feed",
+   "status": "running",
+   "t": 163539
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t57",
+   "connector": "rig",
+   "label": "Looking at what Rig knows",
+   "status": "running",
+   "t": 165241
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t56",
+   "connector": "rig",
+   "label": "Taking a card off your Feed",
+   "status": "done",
+   "t": 165274
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t57",
+   "connector": "rig",
+   "label": "Looking at what Rig knows: set_aside",
+   "status": "running",
+   "t": 165453
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "line",
+  "line": {
+   "id": "t57",
+   "connector": "rig",
+   "label": "Looking at what Rig knows: set_aside",
+   "status": "done",
+   "t": 165596
+  }
+ },
+ {
+  "run": "run_demo",
+  "kind": "end",
+  "ok": true,
+  "t": 183103
+ }
+]

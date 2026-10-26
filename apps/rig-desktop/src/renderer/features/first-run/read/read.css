@@ -1,0 +1,15 @@
+/* The Read step's ticker: each line rises in with a small spring, as in the prototype. */
+@keyframes rig-read-line-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+}
+.rig-read-line {
+  animation: rig-read-line-in 0.45s cubic-bezier(0.3, 1.4, 0.5, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rig-read-line {
+    animation: none;
+  }
+}
