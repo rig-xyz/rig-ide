@@ -17,7 +17,7 @@ import { rpc } from '@renderer/lib/ipc';
 import { formatRigContextHiddenContext } from '@shared/rig/context';
 import type { RigSessionTitleSource } from '@shared/rig/sessions';
 import { deriveAutoApplyOption } from './model-preference';
-import { shouldPersistMode } from './permission-mode';
+import { initialModeFor, shouldPersistMode } from './permission-mode';
 import { canResumeSession } from './resume-capability';
 import { decideSubmitDisposition, type SubmitDisposition } from './resume-presentation';
 import { noteSessionOutput } from './session-attention-store';
@@ -78,6 +78,10 @@ export class RigChatStore {
   readonly createdAt = Date.now();
 
   session: AcpLiveSession | null = null;
+  /** The committed turns, as the transcript has them: for views drawn outside chat-ui (a space session beside the Room). */
+  turns: readonly TranscriptTurn[] = [];
+  /** The turn in progress, if any. */
+  liveTurn: TranscriptTurn | null = null;
   historyLoading = true;
   loadError: RigChatLoadError | null = null;
   draftText = '';
@@ -265,6 +269,7 @@ export class RigChatStore {
           this.chatState.transcript.history.seed(
             withTurnTimestamps(this.chatState.transcript.history.get(), this._turnTimestamps)
           );
+          this.turns = this.chatState.transcript.history.get();
         });
       },
       onStatusChange: (status) => {
@@ -277,6 +282,8 @@ export class RigChatStore {
 
     makeObservable<this, '_resolvingPermission' | '_heldPrompts'>(this, {
       session: observable.ref,
+      turns: observable.ref,
+      liveTurn: observable.ref,
       historyLoading: observable,
       loadError: observable,
       titleSource: observable,
@@ -389,13 +396,26 @@ export class RigChatStore {
   private _tryApplyRememberedMode(): void {
     if (this._disposed) return;
     const id = deriveAutoApplyOption(
-      this._rememberedModeId,
+      initialModeFor(this.providerId, this._rememberedModeId, this.permissionMode),
       this.permissionModeOptions,
       this._appliedRememberedMode
     );
     if (!id) return;
     this._appliedRememberedMode = true;
-    this.setMode(id);
+    // The harness default is not a pick of yours: only a remembered pick is remembered again.
+    this.setMode(id, { remember: id === this._rememberedModeId });
+  }
+
+  /**
+   * Starts this session in `modeId` when its adapter offers it, ahead of any
+   * remembered pick (Rig starting work for you: `start-in-space.ts`). Call
+   * once bootstrapped, before the first prompt. False when it isn't offered.
+   */
+  startInMode(modeId: string): boolean {
+    if (this._disposed || !this.permissionModeOptions.some((o) => o.id === modeId)) return false;
+    this._appliedRememberedMode = true;
+    if (this.permissionMode !== modeId) this.setMode(modeId, { remember: false });
+    return true;
   }
 
   private _tryApplyRememberedEffort(): void {
@@ -724,8 +744,9 @@ export class RigChatStore {
     if (!trimmed) return;
     this.title = trimmed;
     this.titleSource = 'manual';
-    void rpc.rig.sessions
-      .rename({ sessionId: this.conversationId, title: trimmed })
+    // A row still being created (the first prompt just went out) takes the name once it exists.
+    void (this._ensureSessionRowPromise ?? Promise.resolve())
+      .then(() => rpc.rig.sessions.rename({ sessionId: this.conversationId, title: trimmed }))
       .catch((error: unknown) => this._toastError('Failed to rename the session', error));
   }
 
@@ -774,9 +795,9 @@ export class RigChatStore {
    * without asking" from a past pick. A session with nothing safe
    * persisted still starts at the adapter's own default, unchanged.
    */
-  setMode(modeId: string): void {
+  setMode(modeId: string, { remember = true }: { remember?: boolean } = {}): void {
     if (this._disposed) return;
-    if (shouldPersistMode(modeId)) {
+    if (remember && shouldPersistMode(modeId)) {
       void rpc.rig.settings
         .set({ lastModeByHarness: { [this.providerId]: modeId } })
         .catch(() => {});
@@ -933,6 +954,7 @@ export class RigChatStore {
           this.chatState.transcript.history.seed(
             withTurnTimestamps(storedTurns, this._turnTimestamps)
           );
+          this.turns = this.chatState.transcript.history.get();
           this.hasSeededHistory = true;
         });
       }
@@ -1087,6 +1109,9 @@ export class RigChatStore {
       }
     );
     this._unsubs.push(disconnectChatSession);
+    const syncLiveTurn = () => runInAction(() => (this.liveTurn = session.activeTurn.current()));
+    syncLiveTurn();
+    this._unsubs.push(session.activeTurn.onChange(syncLiveTurn));
   }
 
   private async _refreshHistory(): Promise<void> {
@@ -1134,6 +1159,7 @@ export class RigChatStore {
     runInAction(() => {
       if (!this._isCurrent(generation)) return;
       this.chatState.transcript.history.seed(withTurnTimestamps(turns, this._turnTimestamps));
+      this.turns = this.chatState.transcript.history.get();
       if (turns.length > 0) this.hasSeededHistory = true;
     });
   }

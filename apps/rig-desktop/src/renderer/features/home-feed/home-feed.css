@@ -418,6 +418,9 @@
   background: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-subtle);
 }
+.hf-group-dot[data-tone='muted'] {
+  background: var(--text-muted);
+}
 
 /* Quick chips lift toward the pointer; their icon picks up the accent. */
 .hf-chip {

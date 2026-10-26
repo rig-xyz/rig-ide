@@ -1362,7 +1362,7 @@ function rowLine(row: Record<string, unknown>, i: number): string {
  * back as a card, and `rig_start` needs the owner's fresh `user_turn_id`.
  */
 function orchestratorTools(backend: RigToolsBackend): RigTool[] {
-  const kinds = 'feed, held, items, situations, facts, topics, sources, connectors, spaces, sessions, rules, changes, people, usage, runners';
+  const kinds = 'feed, held, items, situations, facts, set_aside, working, runs, topics, sources, connectors, spaces, sessions, rules, changes, people, usage, runners';
   return [
     {
       name: 'rig_query',
@@ -1461,7 +1461,7 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
           userTurnId: typeof input.user_turn_id === 'string' ? input.user_turn_id : null,
         });
         if (!res.success) return failed(res.error.message);
-        return { text: `Started in #${res.data.space.name} [ses_${res.data.runId}], working from ${res.data.briefPath}. It reports back when it ends.` };
+        return { text: `${res.data.continued ? 'Continued its session' : 'Started a session'} in #${res.data.space.name} [ses_${res.data.runId}], working from ${res.data.briefPath}. It reports back when it ends.` };
       },
     },
   ];
@@ -1530,7 +1530,8 @@ export function createAgentRigTools(backend: RigToolsBackend): RigTool[] {
           })
           .optional()
           .describe('put: the card.'),
-        position: z.number().optional().describe('put or move: 1 = top. The first six are visible.'),
+        section: z.enum(['needs_you', 'claude']).optional().describe('put: "needs_you" when only your owner can act; "claude" when their Claude can do the work.'),
+        position: z.number().optional().describe('put or move: 1 = top.'),
         state: z.enum(['following', 'hidden', 'done', 'digest']).optional().describe('retire: where it goes (default following).'),
         reason: z.string().optional(),
       },
@@ -1539,7 +1540,8 @@ export function createAgentRigTools(backend: RigToolsBackend): RigTool[] {
         if (scope.bindingId !== ORCHESTRATOR_BINDING) return failed(ONLY_ORCHESTRATOR);
         const ref = String(input.ref ?? '');
         if (input.op === 'retire') return act(scope, [ref], 'retire_card', { state: str(input.state), reason: str(input.reason) });
-        return act(scope, [ref], 'put_card', { ...(input.op === 'put' ? { card: input.card } : {}), position: input.position, reason: str(input.reason) });
+        const section = input.section === 'needs_you' ? 'ask_you' : input.section === 'claude' ? 'do_it' : '';
+        return act(scope, [ref], 'put_card', { ...(input.op === 'put' ? { card: input.card, ...(section ? { do: section } : {}) } : {}), position: input.position, reason: str(input.reason) });
       },
     },
     {
@@ -1577,12 +1579,16 @@ export function createAgentRigTools(backend: RigToolsBackend): RigTool[] {
         changed: z.array(z.string()),
         left: z.array(z.string()),
         summary: z.string(),
+        quieted: z
+          .string()
+          .optional()
+          .describe('One or two sentences to your owner, as "you", naming the main things set aside lately and why; shown above them ("I quieted the Twilio threads: you added Riyad this morning."). Never a count alone.'),
       },
       annotations: { title: 'End the run', readOnlyHint: false, destructiveHint: false },
       run: async (scope, input) => {
         if (scope.bindingId !== ORCHESTRATOR_BINDING) return failed(ONLY_ORCHESTRATOR);
         if (!backend.orch?.runNote) return failed(NO_ORCH);
-        const res = await backend.orch.runNote(String(input.run_id ?? ''), { read: input.read, changed: input.changed, left: input.left, summary: input.summary });
+        const res = await backend.orch.runNote(String(input.run_id ?? ''), { read: input.read, changed: input.changed, left: input.left, summary: input.summary, ...(input.quieted ? { quieted: input.quieted } : {}) });
         return res.success ? { text: 'Run noted.' } : failed(res.error.message);
       },
     },

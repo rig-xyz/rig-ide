@@ -17,10 +17,14 @@ import { orchestratorSkill } from './skill';
  * is the memory that outlives it.
  */
 
-/** The tools the orchestrator may call without asking; anything else of Rig's is refused. */
-export const AGENT_TOOLS: ReadonlySet<string> = new Set(['rig_query', 'rig_get', 'rig_situation', 'rig_feed', 'rig_check', 'rig_remember', 'rig_start', 'rig_run_note']);
+/**
+ * The tools the orchestrator may call without asking; anything else of Rig's
+ * is refused. Not rig_start: work starts on the person's click, while they
+ * are still learning to trust what it offers.
+ */
+export const AGENT_TOOLS: ReadonlySet<string> = new Set(['rig_query', 'rig_get', 'rig_situation', 'rig_feed', 'rig_check', 'rig_remember', 'rig_run_note']);
 
-export const AGENT_BUDGET = { lookups: 20, firstRead: 40, starts: 3 };
+export const AGENT_BUDGET = { lookups: 20, firstRead: 40 };
 
 /** Rig's own tools from the list above; connectors' read tools and `gh` reads (checks.ts); nothing else. */
 export function agentPermission(request: AcpPermissionRequest): string | null {
@@ -60,7 +64,7 @@ export function buildPacket(p: PacketInput): string {
   const firstRead = fresh.length > 0;
   const lookups = firstRead ? AGENT_BUDGET.firstRead : AGENT_BUDGET.lookups;
   return [
-    `<run id="${p.runId}" now="${iso(p.now)}" trigger="${p.trigger}" budget="${lookups} lookups, ${AGENT_BUDGET.starts} starts"/>`,
+    `<run id="${p.runId}" now="${iso(p.now)}" trigger="${p.trigger}" budget="${lookups} lookups"/>`,
     `<rig_turn user_turn_id="${p.turnId}" />`,
     '',
     '## Who you are',

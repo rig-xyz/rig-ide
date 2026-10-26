@@ -77,6 +77,7 @@
     "@fontsource-variable/space-grotesk": "^5.3.0",
     "@gitbeaker/rest": "^43.8.0",
     "@hocuspocus/provider": "^4",
+    "@iconify-icons/logos": "2.0.2",
     "@lezer/highlight": "^1.2.3",
     "@linear/sdk": "^77.0.0",
     "@llamaduck/forgejo-ts": "^14.0.3",

@@ -434,6 +434,9 @@ importers:
       '@hocuspocus/provider':
         specifier: ^4
         version: 4.7.0(y-protocols@1.0.7(yjs@13.6.33))(yjs@13.6.33)
+      '@iconify-icons/logos':
+        specifier: 2.0.2
+        version: 2.0.2
       '@lezer/highlight':
         specifier: ^1.2.3
         version: 1.2.3
@@ -2432,6 +2435,9 @@ packages:
     engines: {node: '>=18.14.1'}
     peerDependencies:
       hono: ^4
+
+  '@iconify-icons/logos@2.0.2':
+    resolution: {integrity: sha512-bVfod57xTnEeELNdgIT8wshsjIv5UjTbX55463X2VJphs4N+Vzv1KzavnLpOnwe4cQIJNwbm4u5D1KAbM6jfkA==}
 
   '@iconify/types@2.0.0':
     resolution: {integrity: sha512-+wluvCrRhXrhyOmRDJ3q8mux9JkKy5SJ/v8ol2tu4FVjyYvtEzkc/3pK15ET6RKg4b4w4BmTk1+gsCUhf21Ykg==}
@@ -11270,6 +11276,10 @@ snapshots:
   '@hono/node-server@1.19.14(hono@4.12.27)':
     dependencies:
       hono: 4.12.27
+
+  '@iconify-icons/logos@2.0.2':
+    dependencies:
+      '@iconify/types': 2.0.0
 
   '@iconify/types@2.0.0': {}
 

@@ -28,6 +28,8 @@ const ACTIVITY_WORD: Record<string, string> = {
 
 /** How many of a space's own chats the rail lists, and how recent they must be. */
 export const CHATS_PER_SPACE = 2;
+/** Chats the space's own page lists, finished ones included: the work Rig started there stays findable. */
+export const CHATS_ON_SPACE_PAGE = 8;
 export const CHAT_RECENT_MS = 3 * 24 * 60 * 60 * 1000;
 
 function isRecent(at: number, now: number): boolean {
@@ -112,10 +114,9 @@ export function realSpaceToRail(
   const runs = (input.status?.running ?? []).map((run) =>
     runToSession(input.bindingId, run, selfUserId, now)
   );
-  const chats = input.chats
-    .filter((c) => isRecent(c.updatedAt, now))
-    .slice(0, CHATS_PER_SPACE)
-    .map((c) => chatToSession(input.bindingId, c, now));
+  const recent = input.chats.filter((c) => isRecent(c.updatedAt, now));
+  const chats = recent.slice(0, CHATS_PER_SPACE).map((c) => chatToSession(input.bindingId, c, now));
+  const history = recent.slice(0, CHATS_ON_SPACE_PAGE).map((c) => chatToSession(input.bindingId, c, now));
   const shared = input.members ? others.length > 0 : true;
   return {
     id: input.bindingId,
@@ -127,6 +128,7 @@ export function realSpaceToRail(
       ? `With ${others.map((m) => (m.name ?? 'a member').split(' ')[0]).join(', ') || 'your team'}.`
       : 'Only you.',
     sessions: [...runs, ...chats],
+    history: [...runs, ...history],
     root: input.path ?? undefined,
     bindingId: input.bindingId,
     origin: 'real',

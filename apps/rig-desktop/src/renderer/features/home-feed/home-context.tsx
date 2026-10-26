@@ -70,7 +70,8 @@ export interface HomeApi {
   homeRuns: HomeChatRun[] | null;
   toast: (text: string) => void;
   /** Opens a real space or session in the app (its Room or its chat). */
-  openInApp: (target: { space: RailSpace; session?: RailSession }) => void;
+  /** Opens a space in the app; with a session (a rail one, or a chat by id), that session. */
+  openInApp: (target: { space: RailSpace; session?: RailSession; sessionId?: string }) => void;
   /** Your connectors at work: what each watch session brought back and how it was sorted. */
   connectors: ConnectorsState;
   connectorsDispatch: Dispatch<ConnectorsAction>;
@@ -547,9 +548,10 @@ export function HomeProvider({
   );
 
   const openInApp = useCallback(
-    ({ space, session }: { space: RailSpace; session?: RailSession }) => {
+    ({ space, session, sessionId }: { space: RailSpace; session?: RailSession; sessionId?: string }) => {
       if (!space.root) return;
-      if (session?.id.startsWith('chat:'))
+      if (sessionId) onContinueSession(space.root, sessionId);
+      else if (session?.id.startsWith('chat:'))
         onContinueSession(space.root, session.id.slice('chat:'.length));
       else onOpenPath(space.root, { kind: 'space' });
     },

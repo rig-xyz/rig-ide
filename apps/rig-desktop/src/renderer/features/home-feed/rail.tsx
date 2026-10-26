@@ -137,11 +137,12 @@ export function Rail({
         ref={listRef}
         className={cn(
           'grid min-h-0 content-start gap-px overflow-x-hidden overflow-y-auto pt-2 pb-3',
-          collapsed ? 'justify-items-center px-2.5' : 'px-3'
+          // One column that can shrink: a long title ends in "…" rather than being cut off.
+          collapsed ? 'justify-items-center px-2.5' : 'grid-cols-[minmax(0,1fr)] px-3'
         )}
       >
         {!collapsed && (
-          <div className="flex h-[22px] items-center gap-1.5 py-1 pl-2 font-mono text-kicker font-medium tracking-[0.1em] whitespace-nowrap text-text-muted uppercase">
+          <div className="flex h-[22px] items-center gap-1.5 py-1 pl-2.5 font-mono text-kicker font-medium tracking-[0.1em] whitespace-nowrap text-text-muted uppercase">
             Spaces
             <span className="tracking-normal text-text-muted/70">{spaces.length}</span>
           </div>
@@ -338,15 +339,20 @@ function SpaceEntry({
         dragId={space.bindingId}
         onClick={onOpenSpace}
         onPeek={(el) => onPeek(el, <PeekBody title={`# ${space.name}`} text={space.summary} />)}
-        className="mt-1 h-8 gap-2 pr-2 pl-2"
+        className={collapsed ? 'mt-1 h-8 gap-2 pr-2 pl-2' : 'mt-1 h-8 gap-2.5 pr-2 pl-2.5'}
       >
+        {!collapsed && (
+          <span aria-hidden className="grid w-[15px] shrink-0 place-items-center text-ui text-text-muted">
+            #
+          </span>
+        )}
         <span
           className={cn(
             'min-w-0 flex-1 truncate text-ui',
             loud ? 'font-semibold text-text-primary' : 'text-text-secondary'
           )}
         >
-          <span className="mr-1 text-text-muted">#</span>
+          {collapsed && <span className="mr-1 text-text-muted">#</span>}
           {space.name}
         </span>
         {unreadDot}
@@ -490,7 +496,7 @@ function RailButton({
       onMouseEnter={(e) => onPeek?.(e.currentTarget)}
       onFocus={(e) => onPeek?.(e.currentTarget)}
       className={cn(
-        'hf-rail-item relative flex w-full items-center rounded-[9px] text-left',
+        'hf-rail-item relative flex w-full min-w-0 items-center rounded-[9px] text-left',
         collapsed && 'w-9 rounded-full',
         current ? 'hf-rail-current bg-accent-subtle' : 'hover:bg-bg-2',
         ghost && 'invisible',

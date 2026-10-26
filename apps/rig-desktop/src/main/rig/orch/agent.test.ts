@@ -25,7 +25,7 @@ const state = (over: Partial<OrchAgentState> = {}): OrchAgentState => ({
 describe('the background orchestrator', () => {
   it('builds a short packet: who, rules, and where to look', () => {
     const packet = buildPacket({ runId: 'run_x', now: NOW, trigger: 'schedule', turnId: 'turn_1', state: state(), sources: [{ connector: 'Slack', what: 'your DMs' }, { connector: 'Linear', what: 'Ulys issues' }] });
-    expect(packet).toContain('<run id="run_x" now="2026-10-23T13:00:00.000Z" trigger="schedule" budget="40 lookups, 3 starts"/>');
+    expect(packet).toContain('<run id="run_x" now="2026-10-23T13:00:00.000Z" trigger="schedule" budget="40 lookups"/>');
     expect(packet).toContain('<rig_turn user_turn_id="turn_1" />');
     expect(packet).toContain('CTO of Ulys');
     expect(packet).toContain('rule_1 "Investors come to me first."');
@@ -34,7 +34,7 @@ describe('the background orchestrator', () => {
     expect(packet).toContain('linear: Ulys issues, never read: read since 2026-10-20T13:00:00.000Z');
     expect(packet).toContain('First read of linear: search the connector itself for the last three days');
     expect(packet).toContain('Following: 20 situations, 4 open with no topic: look them over');
-    expect(packet).toContain('budget="40 lookups, 3 starts"');
+    expect(packet).toContain('budget="40 lookups"');
     expect(packet).toContain('Visible with no card written (your owner sees nothing there): sit_3 "Old pipeline card"');
     expect(packet).toContain('name each source exactly as above (slack, linear)');
     expect(packet).toContain('Due now: sit_1 "Christopher asks for approval on #343"');
@@ -44,7 +44,7 @@ describe('the background orchestrator', () => {
 
   it("allows its own Rig tools and read-only lookups, and refuses everything else", () => {
     expect(agentPermission(perm('mcp__rig__rig_feed'))).toBe('yes');
-    expect(agentPermission(perm('mcp__rig__rig_start'))).toBe('yes');
+    expect(agentPermission(perm('mcp__rig__rig_start'))).toBe('no');
     expect(agentPermission(perm('mcp__rig__rig_chat_read'))).toBe('no');
     expect(agentPermission(perm('mcp__claude_ai_Slack__slack_read_thread'))).toBe('yes');
     expect(agentPermission(perm('mcp__claude_ai_Slack__slack_send_message'))).toBe('no');

@@ -45,6 +45,9 @@ describe('checks', () => {
     expect(checkPermission(sh('gh pr merge 555'))).toBe('no');
     expect(checkPermission(sh('gh pr view 555; rm -rf ~'))).toBe('no');
     expect(checkPermission(sh('gh pr view $(cat x)'))).toBe('no');
+    expect(checkPermission(sh("gh pr view 22 --repo acme/idea --json state,reviews --jq '{state,reviews:[.reviews[]|{a:.author.login,s:.state}]}'"))).toBe('yes');
+    expect(checkPermission(sh("gh pr view 22 --jq '.state' ; rm -rf ~"))).toBe('no');
+    expect(checkPermission(sh("gh pr view 22 --jq '.state'' $(id)'"))).toBe('no');
     expect(checkPermission(sh('gh api -X POST repos/a/b/issues'))).toBe('no');
   });
 

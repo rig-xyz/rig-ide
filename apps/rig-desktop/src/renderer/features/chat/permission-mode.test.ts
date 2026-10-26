@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideModeSelect, isDangerousMode, shouldPersistMode } from './permission-mode';
+import { decideModeSelect, initialModeFor, isDangerousMode, shouldPersistMode } from './permission-mode';
 
 describe('isDangerousMode', () => {
   it('flags the two confirmed-dangerous ids from the real adapters', () => {
@@ -76,5 +76,23 @@ describe('shouldPersistMode', () => {
 
   it('an unrecognized id persists too — same "unknown is not dangerous" stance isDangerousMode already takes', () => {
     expect(shouldPersistMode('some-future-mode')).toBe(true);
+  });
+});
+
+describe('initialModeFor', () => {
+  it('uses the remembered pick for the harness first', () => {
+    expect(initialModeFor('claude', 'plan', 'default')).toBe('plan');
+  });
+
+  it("starts Claude in auto while it sits in the adapter's plain default", () => {
+    expect(initialModeFor('claude', null, 'default')).toBe('auto');
+  });
+
+  it("leaves a mode your Claude settings started it in", () => {
+    expect(initialModeFor('claude', null, 'acceptEdits')).toBeNull();
+  });
+
+  it('has no default for other harnesses', () => {
+    expect(initialModeFor('codex', null, 'default')).toBeNull();
   });
 });

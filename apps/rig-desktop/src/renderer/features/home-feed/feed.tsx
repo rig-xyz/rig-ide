@@ -35,7 +35,7 @@ import { ActionButton } from './action-button';
 import { Face, IconButton, Kicker, SessionMatrix, SourceLogo, sourceName } from './bits';
 import { personFor } from './real-feed';
 import { ConnectorsView } from './connectors-view';
-import { FollowingView } from './following-view';
+import { ClaudeOnIt, RunFooter, SetAside } from './feed-background';
 import { rectOf, useHome } from './home-context';
 import { PEOPLE } from './mock';
 import type { FeedChoice, FeedItem, FeedVerb } from './model';
@@ -103,7 +103,7 @@ export function Feed({
           <div className="flex h-[52px] shrink-0 items-center gap-2.5 pr-3 pl-5 [-webkit-app-region:drag]">
             <PanelSwitch
               panel={panel}
-              other={state.fromRelay ? 'Following' : 'Connectors'}
+              other={state.fromRelay ? null : 'Connectors'}
               needsYou={counts.needsYou}
               checking={checking}
               onChange={(next) => dispatch({ type: 'panel', panel: next })}
@@ -117,18 +117,14 @@ export function Feed({
               <PanelRightClose className="size-[15px]" strokeWidth={1.6} />
             </IconButton>
           </div>
-          {panel === 'connectors' ? (
+          {panel === 'connectors' && !state.fromRelay ? (
             <div className="relative min-h-0 min-w-[360px] flex-1 overflow-x-hidden overflow-y-auto">
-              {state.fromRelay ? (
-                <FollowingView />
-              ) : (
-                <ConnectorsView
-                  onOpenFeedItem={(itemId) => {
-                    dispatch({ type: 'panel', panel: 'feed' });
-                    onFocus?.(itemId);
-                  }}
-                />
-              )}
+              <ConnectorsView
+                onOpenFeedItem={(itemId) => {
+                  dispatch({ type: 'panel', panel: 'feed' });
+                  onFocus?.(itemId);
+                }}
+              />
             </div>
           ) : (
             <div
@@ -136,12 +132,15 @@ export function Feed({
               className="relative min-h-0 min-w-[360px] flex-1 overflow-x-hidden overflow-y-auto pb-5"
             >
               <Group title="Needs you" tone="warn" entries={needs} />
-              <Group title="Up next" tone="accent" entries={next} />
+              <Group title={state.fromRelay ? 'Claude can take' : 'Up next'} tone="accent" entries={next} />
+              {state.fromRelay && <ClaudeOnIt withHead={!next.length} />}
               {!needs.length && !next.length && (
                 <p className="px-5 py-2.5 text-sm text-text-muted">Nothing waiting on you.</p>
               )}
+              {state.fromRelay && <SetAside />}
             </div>
           )}
+          {state.fromRelay && <RunFooter />}
         </>
       )}
     </aside>
@@ -161,8 +160,8 @@ function PanelSwitch({
   onChange,
 }: {
   panel: 'feed' | 'connectors';
-  /** The other side's name: Following with the real Feed, Connectors in the demo. */
-  other: string;
+  /** The other side: Connectors in the demo; none with the real Feed, whose background work shows at its foot. */
+  other: string | null;
   needsYou: number;
   checking: boolean;
   onChange: (panel: 'feed' | 'connectors') => void;
@@ -200,11 +199,8 @@ function PanelSwitch({
           />
         )
       )}
-      {tab(
-        'connectors',
-        other,
-        checking && <DotMatrix state="searching" size="sm" label="Checking" />
-      )}
+      {other !== null &&
+        tab('connectors', other, checking && <DotMatrix state="searching" size="sm" label="Checking" />)}
     </div>
   );
 }

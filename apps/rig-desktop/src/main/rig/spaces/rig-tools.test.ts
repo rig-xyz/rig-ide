@@ -9,6 +9,7 @@ import {
   ALWAYS_ASK_RIG_TOOLS,
   anchorFor,
   CHAT_HISTORY_MAX_CHARS,
+  createAgentRigTools,
   createOwnerApprovals,
   createRigTools,
   dedupeSkills,
@@ -16,6 +17,7 @@ import {
   DESCRIBE_MAX_CHARS,
   DESCRIBE_SKILLS_MAX,
   formatSpaceOverview,
+  ORCHESTRATOR_BINDING,
   parseSpaceManifest,
   preApprovedRigToolOption,
   PRE_APPROVED_RIG_TOOLS,
@@ -1393,14 +1395,26 @@ describe('the four primitives', () => {
   });
 
   it('rig_start passes the turn id and reports where it started', async () => {
-    const start = vi.fn(async () => ok({ runId: 'run_1', space: { ref: 'space_b1', name: 'ops' }, brief: 'x', briefPath: 'sessions/x/brief.md' }));
+    const start = vi.fn(async () => ok({ runId: 'run_1', space: { ref: 'space_b1', name: 'ops' }, brief: 'x', briefPath: 'sessions/x/brief.md', continued: false }));
     const backend = fakeBackend({ orch: orch({ start }) });
     const res = await call(backend, 'rig_start', { task: 'triage the Earn bugs', user_turn_id: 'turn_1' });
     expect(start).toHaveBeenCalledWith({ task: 'triage the Earn bugs', ref: undefined, space: undefined, mode: 'foreground', userTurnId: 'turn_1' });
-    expect(res.text).toContain('Started in #ops [ses_run_1]');
+    expect(res.text).toContain('Started a session in #ops [ses_run_1]');
   });
 
   it('say so when this version has no orchestrator', async () => {
     expect((await call(fakeBackend(), 'rig_query', { kind: 'feed' })).isError).toBe(true);
+  });
+});
+
+describe("the background orchestrator's rig_feed", () => {
+  it('puts a card in the section it names: needs you, or Claude can take', async () => {
+    const act = vi.fn(async () => ok([{ ref: 'sit_1', ok: true, message: 'On the Feed.' }]));
+    const feed = createAgentRigTools({ orch: { act } } as unknown as RigToolsBackend).find((t) => t.name === 'rig_feed')!;
+    const card = { title: 'Investigate the KYC loop', why: 'You filed it [item:ULY-514].', choices: [], people: [] };
+    await feed.run({ ...SCOPE, bindingId: ORCHESTRATOR_BINDING }, { op: 'put', ref: 'sit_1', section: 'claude', card });
+    expect(act).toHaveBeenLastCalledWith(expect.objectContaining({ refs: ['sit_1'], action: 'put_card', args: expect.objectContaining({ card, do: 'do_it' }) }));
+    await feed.run({ ...SCOPE, bindingId: ORCHESTRATOR_BINDING }, { op: 'put', ref: 'sit_1', section: 'needs_you', card });
+    expect(act).toHaveBeenLastCalledWith(expect.objectContaining({ args: expect.objectContaining({ do: 'ask_you' }) }));
   });
 });

@@ -1,5 +1,6 @@
 import { err, ok } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
+import { startPrompt } from '@shared/rig/start-prompt';
 import { createActions, sinceToIso, type ActionsDeps } from './actions';
 import type { Source } from './sources';
 import { createTurnGate } from './turns';
@@ -27,7 +28,8 @@ function deps(over: Partial<ActionsDeps> = {}): ActionsDeps & { turns: ReturnTyp
       update: vi.fn(async (ref: string) => source({ ref, paused: true })),
       run: vi.fn(async () => ({ status: 'ok' as const, listed: 5, added: 2, cursor: '2026-10-23T11:59:00Z' })),
     },
-    runLocal: vi.fn(async () => ok({ runId: 'run_9' })),
+    startSession: vi.fn(),
+    newSessionId: () => 'ses_9',
     writeFile: vi.fn(async () => {}),
     turns,
     now: () => NOW,
@@ -68,11 +70,23 @@ describe('the control plane', () => {
     expect((await a.start({ task: 'x', userTurnId: 'made_up' })).success).toBe(false);
     const turn = d.turns.issue('chat');
     const started = await a.start({ ref: 'sit_1', userTurnId: turn });
-    expect(started.success && started.data).toMatchObject({ runId: 'run_9', space: { name: 'deletion' } });
+    expect(started.success && started.data).toMatchObject({ runId: 'ses_9', space: { name: 'deletion' }, continued: false });
     expect(d.writeFile).toHaveBeenCalledWith('/r/deletion', expect.stringMatching(/^sessions\/2026-10-23-vendor-list\/brief\.md$/), expect.stringContaining('## Goal\nPick the list. The 8.'));
-    expect(d.runLocal).toHaveBeenCalledWith({ bindingId: 'b2', prompt: 'Work through sessions/2026-10-23-vendor-list/brief.md.' });
-    expect(d.relay.linkSession).toHaveBeenCalledWith('run_9', 'sit_1', 'b2');
+    expect(d.startSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'ses_9', continue: false, bindingId: 'b2', root: '/r/deletion', prompt: expect.stringMatching(/^\*\*Vendor list\*\*\n\nPick the list\. The 8\.\n\n[\s\S]*\[`brief\.md`\]\(sessions\/2026-10-23-vendor-list\/brief\.md\)$/) }));
+    expect(d.relay.linkSession).toHaveBeenCalledWith('ses_9', 'sit_1', 'b2');
     expect(d.relay.act).toHaveBeenCalledWith(['sit_1'], 'follow', { reason: 'a session was started for it' }, 'person');
+  });
+
+  it("continues the situation's latest session in that space for a follow-up", async () => {
+    const d = deps();
+    d.relay.query = vi.fn(async (kind: string) =>
+      ok(kind === 'working' ? { kind, rows: [{ ref: 'sit_1', title: 'Vendor list', run: 'ses_old', local: true, space: 'b2' }] } : { kind, rows: [] })
+    );
+    const a = createActions(d);
+    const started = await a.start({ ref: 'sit_1', userTurnId: d.turns.issue('click') });
+    expect(started.success && started.data).toMatchObject({ runId: 'ses_old', continued: true });
+    expect(d.startSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'ses_old', continue: true, bindingId: 'b2' }));
+    expect(d.relay.linkSession).toHaveBeenCalledWith('ses_old', 'sit_1', 'b2');
   });
 
   it('builds the brief from the card the person clicked, and starts it once however often they click', async () => {
@@ -85,7 +99,7 @@ describe('the control plane', () => {
     const turn = d.turns.issue('click');
     const [one, two] = await Promise.all([a.start({ ref: 'sit_1', task: 'Review the four PRs: Claude drafts review notes.', userTurnId: turn }), a.start({ ref: 'sit_1', task: 'Review the four PRs.', userTurnId: turn })]);
     expect(one).toEqual(two);
-    expect(d.runLocal).toHaveBeenCalledTimes(1);
+    expect(d.startSession).toHaveBeenCalledTimes(1);
     const brief = (d.writeFile as ReturnType<typeof vi.fn>).mock.calls[0]![2] as string;
     expect(brief).toContain("# Review Riyad's payout-claims PRs");
     expect(brief).toContain('## Goal\nReview the four PRs: Claude drafts review notes.');
@@ -120,5 +134,27 @@ describe('run_now on a slow source', () => {
     d.sources.run = vi.fn(() => new Promise<never>(() => {}));
     const r = await createActions(d).act({ refs: ['src_linear'], action: 'run_now', actor: 'person' });
     expect(r.success && r.data[0]).toMatchObject({ ok: true, message: expect.stringMatching(/^Checking now/) });
+  });
+});
+
+describe('startPrompt', () => {
+  it('hands the work over like a brief: what, why, what came in, done when, and the brief as a link', () => {
+    const prompt = startPrompt({
+      title: 'Draft your take on the SLA doc',
+      goal: 'Review the doc and draft your reply.',
+      why: 'Riyad asked for thoughts; no replies yet.\n\nOlder context.',
+      seen: ['Riyad shared the SLA doc', 'Peter reacted'],
+      briefPath: 'sessions/2026-10-26-sla/brief.md',
+    });
+    expect(prompt).toBe(
+      [
+        '**Draft your take on the SLA doc**',
+        'Review the doc and draft your reply.',
+        '**Why now:** Riyad asked for thoughts; no replies yet.',
+        '**What came in:**\n- Riyad shared the SLA doc\n- Peter reacted',
+        "**Done when** the goal is met, or you've found what blocks it and who can unblock it. Don't send, post or change anything outside this space without asking me first.",
+        'Everything else, with the evidence and limits, is in the brief: [`brief.md`](sessions/2026-10-26-sla/brief.md)',
+      ].join('\n\n')
+    );
   });
 });

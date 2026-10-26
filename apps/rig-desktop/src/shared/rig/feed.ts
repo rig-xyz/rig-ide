@@ -100,3 +100,21 @@ export type RigFeedActor = string;
 
 /** The Feed changed on the relay (`feed_changed` on the notification stream, or a local answer). */
 export const rigFeedChangedChannel = defineEvent<{ reason: 'relay' | 'local' }>('rig:feed-changed');
+
+/**
+ * A session in a space's folder (its own conversation, listed under the
+ * space's Sessions) that Rig starts for the person: a new one, or a
+ * situation's latest continued for a follow-up.
+ */
+export type RigSessionStart = {
+  sessionId: string;
+  continue: boolean;
+  bindingId: string;
+  root: string;
+  prompt: string;
+  title: string;
+  situationId: string | null;
+};
+
+/** Main asks the window to start or continue a space session: chat sessions live in the window (rig-session-registry.ts). */
+export const rigStartSessionChannel = defineEvent<RigSessionStart>('rig:start-session');

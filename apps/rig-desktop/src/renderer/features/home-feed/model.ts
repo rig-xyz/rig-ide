@@ -95,6 +95,8 @@ export interface RailSpace {
   unread: number;
   summary: string;
   sessions: RailSession[];
+  /** The space's page lists more of its finished chats than the rail does; absent: same as `sessions`. */
+  history?: RailSession[];
   /** Where the space lives on disk, when it is one of the app's real spaces. */
   root?: string;
   bindingId?: string;

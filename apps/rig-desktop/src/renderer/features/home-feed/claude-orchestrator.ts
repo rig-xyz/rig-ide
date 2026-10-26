@@ -41,7 +41,9 @@ export const claudeOrchestrator: HomeOrchestrator = {
         runs: [
           {
             kind: 'text',
-            text: `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}${ctx.upNext ? ` and ${ctx.upNext} ${ctx.upNext === 1 ? 'is' : 'are'} up next` : ''}, on the right. Ask me why any of them is there, or tell me when one is wrong and I'll fix it.`,
+            text: ctx.needsYou
+              ? `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}${ctx.upNext ? `, and Claude can take ${ctx.upNext} more` : ''}, on the right. Ask me why any of them is there, or tell me when one is wrong and I'll fix it.`
+              : `Nothing needs you right now${ctx.upNext ? `; Claude can take ${ctx.upNext} ${ctx.upNext === 1 ? 'thing' : 'things'}, on the right` : ''}. Ask me about anything you're following, or tell me what to start.`,
           },
         ],
       },

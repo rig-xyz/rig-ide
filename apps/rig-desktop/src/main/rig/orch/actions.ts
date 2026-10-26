@@ -1,4 +1,6 @@
 import { err, ok, type Result } from '@emdash/shared';
+import type { RigSessionStart } from '@shared/rig/feed';
+import { startPrompt } from '@shared/rig/start-prompt';
 import type { OrchActResult, OrchQuery, OrchRow } from '../feed/relay';
 import { dueSources, type RunOutcome, type Source } from './sources';
 import type { TurnGate } from './turns';
@@ -15,7 +17,7 @@ import type { TurnGate } from './turns';
 export type QueryInput = { kind: string; filter?: Record<string, unknown>; since?: string; limit?: number };
 export type ActInput = { refs: string[]; action: string; args?: Record<string, unknown>; actor: string };
 export type StartInput = { task?: string; ref?: string; space?: string; mode?: 'foreground' | 'background'; userTurnId?: string | null };
-export type StartOutcome = { runId: string; space: { ref: string; name: string }; brief: string; briefPath: string };
+export type StartOutcome = { runId: string; space: { ref: string; name: string }; brief: string; briefPath: string; continued: boolean };
 
 type Fail = { message: string };
 type SpaceRow = { bindingId: string; name: string; root: string | null };
@@ -40,7 +42,9 @@ export type ActionsDeps = {
     update(ref: string, patch: Partial<Source>): Promise<Source | null>;
     run(ref: string): Promise<RunOutcome | null>;
   };
-  runLocal(spec: { bindingId: string; prompt: string }): Promise<Result<{ runId: string }, Fail>>;
+  /** Starts or continues the session; the app's window owns chat sessions, so this hands it there. */
+  startSession(start: RigSessionStart): void;
+  newSessionId(): string;
   /** Writes a file in a space's folder (the brief); `relPath` is inside it. */
   writeFile(root: string, relPath: string, text: string): Promise<void>;
   turns: TurnGate;
@@ -49,7 +53,7 @@ export type ActionsDeps = {
   runWaitMs?: number;
 };
 
-const RELAY_KINDS = new Set(['feed', 'held', 'items', 'rules', 'changes', 'situations', 'facts', 'runs']);
+const RELAY_KINDS = new Set(['feed', 'held', 'items', 'rules', 'changes', 'situations', 'facts', 'runs', 'set_aside', 'working']);
 const NOT_YET: Record<string, string> = {
   people: "Rig can't list people from here yet.",
   usage: "Rig can't read your plan's usage windows yet.",
@@ -186,6 +190,7 @@ export function createActions(deps: ActionsDeps) {
     let goal = task;
     let why = 'You asked for it in Home.';
     let evidence: string[] = [];
+    let seen: string[] = [];
     let situationId: string | null = null;
     let fromSpace: string | null = null;
     if (input.ref) {
@@ -201,6 +206,7 @@ export function createActions(deps: ActionsDeps) {
       goal = task || (card?.action ?? String(s.title ?? '')).replace(/\*\*/g, '');
       why = [card?.why?.replace(/\{@([^}]+)\}/g, '$1'), String(s.description ?? '')].filter(Boolean).join('\n\n') || why;
       evidence = events.slice(-8).map((e) => `- ${String(e.ref)}: ${String(e.title || e.excerpt).slice(0, 160)}`);
+      seen = events.slice(-3).map((e) => String(e.title || e.excerpt || '').slice(0, 140)).filter(Boolean);
     }
     if (!goal) return err({ message: 'Give the task in words, or the ref of a Feed card.' });
     const spaces = await deps.spaces();
@@ -246,13 +252,20 @@ export function createActions(deps: ActionsDeps) {
       '',
     ].join('\n');
     await deps.writeFile(space.root!, briefPath, brief);
-    const run = await deps.runLocal({ bindingId: space.bindingId, prompt: `Work through ${briefPath}.` });
-    if (!run.success) return run;
+    // A follow-up continues the situation's latest session in this space; anything else gets a session of its own.
+    let continueId: string | null = null;
     if (situationId) {
-      await deps.relay.linkSession(run.data.runId, situationId, space.bindingId);
+      const prev = await deps.relay.query('working', { filter: { situation: situationId }, limit: 1 });
+      const row = prev.success && 'rows' in prev.data ? prev.data.rows[0] : undefined;
+      if (row && row.local === true && row.space === space.bindingId && typeof row.run === 'string') continueId = row.run;
+    }
+    const sessionId = continueId ?? deps.newSessionId();
+    deps.startSession({ sessionId, continue: continueId !== null, bindingId: space.bindingId, root: space.root!, prompt: startPrompt({ title, goal, why, seen, briefPath }), title, situationId });
+    if (situationId) {
+      await deps.relay.linkSession(sessionId, situationId, space.bindingId);
       await deps.relay.act([situationId], 'follow', { reason: 'a session was started for it' }, 'person');
     }
-    return ok({ runId: run.data.runId, space: { ref: `space_${space.bindingId}`, name: space.name }, brief, briefPath });
+    return ok({ runId: sessionId, space: { ref: `space_${space.bindingId}`, name: space.name }, brief, briefPath, continued: continueId !== null });
   }
 
   /** Runs every source that is due; the scheduler's tick. */

@@ -54,7 +54,8 @@ const READ_VERB = /(^|_)(list|get|search|read|fetch|query|find|view)/i;
  * GitHub's read-only commands, with no way to chain another: claude.ai has no
  * GitHub connector, and a PR's state is what a check most often needs.
  */
-const GH_READ = /^gh (pr (view|list|status|checks|diff)|issue (view|list|status)|search (prs|issues)|run (view|list)|repo view)( [^;&|<>`$\\\n]*)?$/;
+// A trailing `--jq '…'` filter is allowed: inside single quotes the shell interprets nothing but the closing quote.
+const GH_READ = /^gh (pr (view|list|status|checks|diff)|issue (view|list|status)|search (prs|issues)|run (view|list)|repo view)( [^;&|<>`$\\\n']*)?( --jq '[^'\n]*')?$/;
 
 /** Any claude.ai connector's read tools and `gh` reads, once; everything else is refused. */
 export function checkPermission(request: AcpPermissionRequest): string | null {

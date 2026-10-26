@@ -7,7 +7,7 @@ import { getAcpRuntimeClient } from '@main/core/acp/controller';
 import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
-import { rigFeedChangedChannel } from '@shared/rig/feed';
+import { rigFeedChangedChannel, rigStartSessionChannel } from '@shared/rig/feed';
 import { rigAccountController } from '../account';
 import { globalSetup } from '../connectors/connections-instance';
 import * as feedRelay from '../feed/relay';
@@ -185,13 +185,8 @@ export const orchActions = createActions({
       return outcome;
     },
   },
-  runLocal: async ({ bindingId, prompt }) => {
-    const me = await relayApi.whoami();
-    if (!me.success) return err({ message: me.error.message });
-    const started = await spacesDispatchController.runLocal({ bindingId, ownerUserId: me.data.id, agent: 'claude', prompt });
-    if (!started) return err({ message: "Spaces aren't running on this Mac, so Rig can't start a session." });
-    return started.success ? ok({ runId: started.data.runId }) : err({ message: started.error });
-  },
+  startSession: (start) => events.emit(rigStartSessionChannel, start),
+  newSessionId: () => randomUUID(),
   writeFile: async (root, relPath, text) => {
     const file = join(root, relPath);
     if (!file.startsWith(join(root, 'sessions') + '/')) throw new Error('brief path outside the space');
@@ -274,6 +269,9 @@ export const rigOrchController = createRPCController({
     if (r.success) changed();
     return r.success ? ok(r.data) : err({ message: r.error });
   },
+  /** A space session started for a situation, linked to it (start-in-space.ts, when a follow-up couldn't continue). */
+  linkSession: (input: { sessionId: string; situationId: string; bindingId: string }) =>
+    feedRelay.linkSession(input.sessionId, input.situationId, input.bindingId),
   /** Whether the background orchestrator is on, and running right now. */
   agentStatus: async () => ok({ on: agentMode, running: agentMode && orchestrator.running() }),
   /** Check the due cards now (checks.ts); resolves with how many ran. */

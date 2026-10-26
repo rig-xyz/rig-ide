@@ -587,6 +587,7 @@ function spaceContext(space: RailSpace): { bar: ReactNode; body: ReactNode } {
 
 function SpaceBody({ space }: { space: RailSpace }) {
   const { open, openInApp } = useHome();
+  const listed = space.history ?? space.sessions;
   return (
     <>
       <ContextHead
@@ -605,10 +606,10 @@ function SpaceBody({ space }: { space: RailSpace }) {
           </ActionButton>
         </div>
       )}
-      <Kicker className="text-2xs">Sessions · {space.sessions.length}</Kicker>
+      <Kicker className="text-2xs">Sessions · {listed.length}</Kicker>
       <div className="-mt-2 overflow-hidden rounded-[12px] border border-border-hairline bg-bg-1">
-        {space.sessions.length ? (
-          space.sessions.map((session) => (
+        {listed.length ? (
+          listed.map((session) => (
             <SessionRow
               key={session.id}
               session={session}

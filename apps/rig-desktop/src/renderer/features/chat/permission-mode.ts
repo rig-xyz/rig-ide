@@ -70,3 +70,23 @@ export function decideModeSelect(pickedModeId: string, pendingConfirmId: string 
 export function shouldPersistMode(modeId: string): boolean {
   return !isDangerousMode(modeId);
 }
+
+/** A harness's starting mode in Rig when nothing else picks one: Claude starts in `auto`, as Claude Code does. */
+const HARNESS_DEFAULT_MODE: Readonly<Record<string, string>> = { claude: 'auto' };
+
+/**
+ * The mode a new session switches to once its modes are known: the
+ * remembered pick for its harness, else the harness's default while the
+ * session still sits in the adapter's plain `default` (a
+ * `permissions.defaultMode` in your Claude settings starts it elsewhere,
+ * and that wins). Null: leave it as it is.
+ */
+export function initialModeFor(
+  providerId: string,
+  remembered: string | null,
+  current: string | null
+): string | null {
+  if (remembered) return remembered;
+  if (current !== 'default') return null;
+  return HARNESS_DEFAULT_MODE[providerId] ?? null;
+}
