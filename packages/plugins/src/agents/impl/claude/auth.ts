@@ -1,4 +1,8 @@
-import type { AgentAuthContext, AgentAuthStatus } from '@emdash/core/agents/plugins';
+import type {
+  AgentAuthContext,
+  AgentAuthCredential,
+  AgentAuthStatus,
+} from '@emdash/core/agents/plugins';
 import { authenticatedFromEnv } from '../../helpers/auth';
 
 const AUTH_STATUS_TIMEOUT_MS = 5_000;
@@ -11,15 +15,21 @@ type ExecErrorWithOutput = {
   message?: unknown;
 };
 
+/**
+ * A key in the environment Rig launches Claude with wins over a login, so it
+ * reads as `api-key` without asking the CLI. Otherwise `claude auth status`
+ * says how: an account (or a claude.ai/OAuth method) is a Claude login.
+ */
 export async function claudeAuthStatus(ctx: AgentAuthContext): Promise<AgentAuthStatus> {
   const envStatus = authenticatedFromEnv(ctx, ['ANTHROPIC_API_KEY']);
-  if (envStatus.kind === 'authenticated') return envStatus;
+  if (envStatus.kind === 'authenticated') return { ...envStatus, method: 'api-key' };
 
   try {
     const { stdout } = await ctx.exec(ctx.cli, ['auth', 'status'], {
       timeout: AUTH_STATUS_TIMEOUT_MS,
     });
-    return { kind: 'authenticated', account: accountFromAuthStatus(stdout) };
+    const account = accountFromAuthStatus(stdout);
+    return { kind: 'authenticated', account, method: methodFromAuthStatus(stdout, account) };
   } catch (error) {
     const output = outputFromExecError(error);
     if (isExitCode(error, 1) && isAuthStatusResponse(output)) {
@@ -50,6 +60,18 @@ function accountFromAuthStatus(output: string): string | undefined {
     oauthAccount?.emailAddress,
     oauthAccount?.email
   );
+}
+
+function methodFromAuthStatus(output: string, account: string | undefined): AgentAuthCredential {
+  const status = parseAuthStatus(output);
+  const method = typeof status?.authMethod === 'string' ? status.authMethod : '';
+  if (/api[\s_-]?key/i.test(method) || isKeySource(status?.apiKeySource)) return 'api-key';
+  if (account || /claude\.ai|oauth/i.test(method)) return 'claude-ai';
+  return 'unknown';
+}
+
+function isKeySource(value: unknown): boolean {
+  return typeof value === 'string' && value.length > 0 && value !== 'none';
 }
 
 function parseAuthStatus(output: string): Record<string, unknown> | null {
