@@ -28,7 +28,7 @@ import {
 } from './orchestrator';
 import type { HomeChatRun } from '@shared/rig/home-chat';
 import { mergeRail } from './rail-data';
-import { useRealFeed } from './use-real-feed';
+import { type RealFeed, useRealFeed } from './use-real-feed';
 import { claudeOrchestrator } from './claude-orchestrator';
 import { sendToHomeClaude, useHomeRuns } from './home-claude';
 import { chosen, normalizeText, sayPlain } from './say';
@@ -53,7 +53,11 @@ import {
 export interface HomeApi {
   state: HomeState;
   dispatch: Dispatch<HomeAction>;
-  /** Real spaces merged with the demo ones, as the rail shows them. */
+  /** Where the Feed stands: its cards, or why there are none (signed out, can't reach, unsupported). */
+  feedStatus: RealFeed;
+  /** The scripted demo is showing (dev builds that ask for it, with no real Feed). */
+  demo: boolean;
+  /** Real spaces, and the demo's while it shows, as the rail shows them. */
   spaces: RailSpace[];
   counts: { needsYou: number; upNext: number };
   firstName: string;
@@ -115,6 +119,7 @@ export function HomeProvider({
   onOpenPath,
   onContinueSession,
   arrivals = true,
+  demo = false,
   children,
 }: {
   realSpaces: RailSpace[];
@@ -123,25 +128,38 @@ export function HomeProvider({
   orchestrator?: HomeOrchestrator;
   onOpenPath: (path: string, opts?: { kind?: 'space' }) => void;
   onContinueSession: (path: string, sessionId: string) => void;
-  /** The scripted arrival of a new Feed item; off in tests. */
+  /** The scripted arrival of a new Feed item, in the demo; off in tests. */
   arrivals?: boolean;
+  /**
+   * Show the scripted demo while there is no real Feed. Dev builds only
+   * (`new-home.tsx`): a real install shows why its Feed is empty instead.
+   */
+  demo?: boolean;
   children: ReactNode;
 }) {
   const [state, dispatch] = useReducer(homeReducer, undefined, initialHomeState);
-  // The orchestrator's Feed replaces the demo one as soon as the relay has it;
-  // until then, unless the relay has none, the Feed stays empty rather than
-  // flash the demo.
+  // The orchestrator's Feed, as soon as the relay has it. Without one, Home
+  // says why (signed out, can't reach); only a dev build that asks for it
+  // shows the scripted demo instead.
   const realFeed = useRealFeed();
+  const ready = realFeed.kind === 'ready' ? realFeed : null;
+  const demoOn = demo && !ready && realFeed.kind !== 'loading';
   const realFeedOn = useRef(false);
   useEffect(() => {
-    if (!realFeed) return;
+    if (!ready) return;
     realFeedOn.current = true;
-    dispatch({ type: 'replace-feed', items: realFeed.items });
-  }, [realFeed]);
-  const shown = useMemo(() => (realFeed !== null && !state.fromRelay ? { ...state, feed: [] } : state), [realFeed, state]);
-  // With the real Feed, the chat is the person's own Claude, which can correct it.
-  const orchestrator = realFeed ? claudeOrchestrator : givenOrchestrator;
-  const homeRuns = useHomeRuns(Boolean(realFeed));
+    dispatch({ type: 'replace-feed', items: ready.items });
+  }, [ready]);
+  const shown = useMemo(() => {
+    if (demoOn) return state;
+    // A Feed already shown stays while the relay is briefly out of reach; signed out, it goes.
+    const keep = state.fromRelay && (ready !== null || realFeed.kind === 'unreachable');
+    return { ...state, fromRelay: true, feed: keep ? state.feed : [] };
+  }, [demoOn, ready, realFeed.kind, state]);
+  // Outside the demo, the chat is the person's own Claude, which can correct the Feed.
+  const orchestrator = demoOn ? givenOrchestrator : claudeOrchestrator;
+  // (A dev build showing the demo opens it only once a real Feed comes.)
+  const homeRuns = useHomeRuns(!demo || ready !== null);
   const [connectors, connectorsDispatch] = useReducer(connectorsReducer, undefined, () =>
     initialConnectorsState(Date.now())
   );
@@ -175,14 +193,14 @@ export function HomeProvider({
   }, []);
 
   const spaces = useMemo(
-    // With the real Feed on, the rail shows only your real spaces, not the demo's.
-    () => mergeRail(realSpaces, realFeed !== null ? [] : state.demo, new Map(Object.entries(state.extra))),
-    [realSpaces, state.demo, state.extra, realFeed]
+    // Outside the demo, the rail shows only your real spaces.
+    () => mergeRail(realSpaces, demoOn ? state.demo : [], new Map(Object.entries(state.extra))),
+    [realSpaces, state.demo, state.extra, demoOn]
   );
   const spacesRef = useRef(spaces);
   spacesRef.current = spaces;
   const counts = feedCounts(shown.feed);
-  const firstName = (selfName ?? realFeed?.me ?? 'there').split(/\s+/)[0] ?? 'there';
+  const firstName = (selfName ?? ready?.me ?? 'there').split(/\s+/)[0] ?? 'there';
 
   const orchestratorContext = useMemo<OrchestratorContext>(
     () => ({
@@ -589,7 +607,7 @@ export function HomeProvider({
   );
 
   useEffect(() => {
-    if (!arrivals) return;
+    if (!arrivals || !demoOn) return;
     let cancelled = false;
     const pending = new Set<ReturnType<typeof setTimeout>>();
     const schedule = (ms: number, fn: () => void) => {
@@ -618,7 +636,7 @@ export function HomeProvider({
       cancelled = true;
       for (const t of pending) clearTimeout(t);
     };
-  }, [arrivals, runCheck]);
+  }, [arrivals, demoOn, runCheck]);
 
   const checkNow = useCallback(
     (connector: SourceConnector) => {
@@ -651,6 +669,8 @@ export function HomeProvider({
     () => ({
       state: shown,
       dispatch,
+      feedStatus: realFeed,
+      demo: demoOn,
       spaces,
       counts,
       firstName,
@@ -676,6 +696,8 @@ export function HomeProvider({
     // oxlint-disable-next-line react-hooks/exhaustive-deps
     [
       shown,
+      realFeed,
+      demoOn,
       spaces,
       firstName,
       reducedMotion,

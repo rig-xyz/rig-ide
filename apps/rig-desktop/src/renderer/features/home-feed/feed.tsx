@@ -36,6 +36,7 @@ import { Face, IconButton, Kicker, SessionMatrix, SourceLogo, sourceName } from 
 import { personFor } from './real-feed';
 import { ConnectorsView } from './connectors-view';
 import { ClaudeOnIt, RunFooter, SetAside } from './feed-background';
+import { FeedNotice, FeedStale } from './feed-notice';
 import { rectOf, useHome } from './home-context';
 import { PEOPLE } from './mock';
 import type { FeedChoice, FeedItem, FeedVerb } from './model';
@@ -69,8 +70,15 @@ export function Feed({
   /** Brings an item into view (from the Connectors side). */
   onFocus?: (itemId: string | null) => void;
 }) {
-  const { state, dispatch, counts, connectors } = useHome();
+  const { state, dispatch, counts, connectors, feedStatus, demo } = useHome();
   const panel = state.panel;
+  // Outside the demo: why there are no cards (signed out, can't reach), or a shown Feed gone stale.
+  const notice =
+    demo || feedStatus.kind === 'ready' || feedStatus.kind === 'loading' || (feedStatus.kind === 'unreachable' && state.feed.length)
+      ? null
+      : feedStatus;
+  const stale = !demo && feedStatus.kind === 'unreachable' && state.feed.length > 0;
+  const live = state.fromRelay && !notice;
   const checking = connectors.connectors.some((c) => c.checking);
   const needs = state.feed.filter((e) => e.item.group === 'needs_you');
   const next = state.feed.filter((e) => e.item.group === 'up_next');
@@ -131,16 +139,23 @@ export function Feed({
               ref={listRef}
               className="relative min-h-0 min-w-[360px] flex-1 overflow-x-hidden overflow-y-auto pb-5"
             >
-              <Group title="Needs you" tone="warn" entries={needs} />
-              <Group title={state.fromRelay ? 'Claude can take' : 'Up next'} tone="accent" entries={next} />
-              {state.fromRelay && <ClaudeOnIt withHead={!next.length} />}
-              {!needs.length && !next.length && (
-                <p className="px-5 py-2.5 text-sm text-text-muted">Nothing waiting on you.</p>
+              {notice ? (
+                <FeedNotice status={notice} />
+              ) : (
+                <>
+                  {stale && <FeedStale />}
+                  <Group title="Needs you" tone="warn" entries={needs} />
+                  <Group title={state.fromRelay ? 'Claude can take' : 'Up next'} tone="accent" entries={next} />
+                  {live && <ClaudeOnIt withHead={!next.length} />}
+                  {!needs.length && !next.length && feedStatus.kind !== 'loading' && (
+                    <p className="px-5 py-2.5 text-sm text-text-muted">Nothing waiting on you.</p>
+                  )}
+                  {live && <SetAside />}
+                </>
               )}
-              {state.fromRelay && <SetAside />}
             </div>
           )}
-          {state.fromRelay && <RunFooter />}
+          {live && feedStatus.kind === 'ready' && <RunFooter />}
         </>
       )}
     </aside>

@@ -22,6 +22,8 @@ const space = (id: string, name: string) => ({
 const layoutActions = vi.hoisted(() => [] as unknown[]);
 
 const answers = vi.hoisted(() => [] as unknown[]);
+/** What `rpc.rig.feed.get` answers; each test may swap it. */
+const feedGet = vi.hoisted(() => ({ current: null as null | (() => unknown) }));
 const realFeed = vi.hoisted(() => {
   const at = new Date(Date.now() - 5 * 60_000).toISOString();
   const decision = (d: string) => ({
@@ -157,7 +159,7 @@ vi.mock('@renderer/lib/ipc', () => ({
       // No live Claude here: Home's chat falls back to its own messages.
       homeChat: { open: async () => ({ success: false, error: 'no Claude in tests' }) },
       feed: {
-        get: async () => ({ success: true, data: realFeed }),
+        get: async () => feedGet.current?.() ?? { success: true, data: realFeed },
         answer: async (input: unknown) => {
           answers.push(input);
           return { success: true, data: null };
@@ -176,6 +178,13 @@ vi.mock('@renderer/lib/ipc', () => ({
 }));
 
 import { NewHome } from '@renderer/features/home-feed/new-home';
+
+const SIGNED_OUT = "signed out, it says so and offers sign-in, never the demo";
+const UNREACHABLE = "can't reach Rig, it says so and Try again brings the cards";
+const feedAnswers: Record<string, () => unknown> = {
+  [SIGNED_OUT]: () => ({ success: false, error: { kind: 'notSignedIn', message: 'Not signed in to Rig.' } }),
+  [UNREACHABLE]: () => ({ success: false, error: { kind: 'relay', message: "Could not load your Feed. Rig can't reach the server right now." } }),
+};
 
 beforeAll(async () => {
   (
@@ -198,7 +207,8 @@ let root: Root;
 const opened: Array<[string, unknown]> = [];
 const settingsOpened: Array<string | undefined> = [];
 
-beforeEach(async () => {
+beforeEach(async (ctx) => {
+  feedGet.current = feedAnswers[ctx.task.name] ?? null;
   opened.length = 0;
   settingsOpened.length = 0;
   layoutActions.length = 0;
@@ -262,5 +272,22 @@ describe('NewHome with the orchestrator Feed', () => {
     await click(button(feedRow('sit:s_vendor')!, /Reply/));
     await vi.waitFor(() => expect(feedRow('sit:s_vendor')).toBeNull());
     expect(answers).toEqual([{ situationId: 's_vendor', signal: 'act', choice: 'Reply to Riyad' }]);
+  });
+
+  it(SIGNED_OUT, async () => {
+    await vi.waitFor(() => expect(host.querySelector('[data-feed-notice="signed-out"]')).not.toBeNull());
+    expect(host.querySelectorAll('[data-feed-id]')).toHaveLength(0);
+    expect(button(host, 'Sign in to Rig')).toBeTruthy();
+    // No demo spaces on the rail either: only the account's own.
+    expect(host.querySelector('nav')!.textContent).not.toContain('ulys-backlog');
+  });
+
+  it(UNREACHABLE, async () => {
+    await vi.waitFor(() => expect(host.querySelector('[data-feed-notice="unreachable"]')).not.toBeNull());
+    expect(host.querySelectorAll('[data-feed-id]')).toHaveLength(0);
+    feedGet.current = null;
+    await click(button(host, 'Try again'));
+    await vi.waitFor(() => expect(feedRow('sit:s_vendor')).not.toBeNull());
+    expect(host.querySelector('[data-feed-notice]')).toBeNull();
   });
 });

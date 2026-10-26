@@ -113,6 +113,8 @@ export function UserPill({ compact = false }: { compact?: boolean }) {
     setConfirmingSignOut(false);
     void queryClient.invalidateQueries({ queryKey: ['rig', 'auth', 'status'] });
     void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
+    // Home's Feed is the account's too.
+    void queryClient.invalidateQueries({ queryKey: ['rig', 'feed'] });
   };
 
   const triggerButton = (

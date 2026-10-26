@@ -18,21 +18,27 @@ import './home-feed.css';
  * next). It owns the whole window, traffic-light strip included; the app's
  * top bar steps aside, and you and Settings sit at the foot of the rail.
  */
+/** The scripted demo Home, for a dev build started with `VITE_RIG_DEMO_HOME=1`. */
+const DEMO_HOME = import.meta.env.DEV && import.meta.env.VITE_RIG_DEMO_HOME === '1';
+
 export function NewHome({
   onOpenPath,
   onContinueSession,
   onOpenSettings,
   updateReady,
+  demo = DEMO_HOME,
 }: {
   onOpenPath: (path: string, opts?: { kind?: 'space' }) => void;
   onContinueSession: (path: string, sessionId: string) => void;
   onOpenSettings: (page?: 'account' | 'about') => void;
   updateReady: boolean;
+  /** Show the scripted demo while there is no real Feed (dev only; tests). */
+  demo?: boolean;
 }) {
   const { spaces, selfName: accountName, selfAvatarUrl } = useRealSpaces();
   // Rig's name for you when the account has none (a dev relay without profiles).
   const feed = useRealFeed();
-  const selfName = accountName ?? feed?.me ?? null;
+  const selfName = accountName ?? (feed.kind === 'ready' ? feed.me : null);
   const reducedMotion = useReducedMotion() ?? false;
   return (
     <HomeProvider
@@ -41,6 +47,7 @@ export function NewHome({
       reducedMotion={reducedMotion}
       onOpenPath={onOpenPath}
       onContinueSession={onContinueSession}
+      demo={demo}
     >
       <HomeLayout
         you={{ name: selfName, avatarUrl: selfAvatarUrl }}

@@ -5,7 +5,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { page } from 'vitest/browser';
 
 /**
- * The new Home (Settings › Advanced › Preview the new Home): the rail merges
+ * The new Home's scripted demo (dev builds only, `demo`): the rail merges
  * the account's real spaces with the Feed's demo ones, the Feed's options
  * swap the text and the verb, Ignore leaves a slim row with Undo, acting on
  * an item moves its work into the rail, and the middle swaps the chat for
@@ -159,6 +159,7 @@ beforeEach(async () => {
           onContinueSession={() => {}}
           onOpenSettings={(page) => settingsOpened.push(page)}
           updateReady={false}
+          demo
         />
       </QueryClientProvider>
     );

@@ -50,6 +50,8 @@ export function useRigSignIn(onSuccess?: () => void) {
 
       void queryClient.invalidateQueries({ queryKey: ['rig', 'auth', 'status'] });
       void queryClient.invalidateQueries({ queryKey: ['rig', 'account'] });
+      // Home's Feed is the account's too.
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'feed'] });
       onSuccess?.();
     } catch {
       if (!skippedRef.current) setError("Couldn't complete sign-in. Try again.");

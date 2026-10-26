@@ -18,7 +18,7 @@ import { fetchRelay } from '../relay-request';
  * routes/orchestrator.ts): read the Feed and a situation, answer a card, and
  * the corrections any agent may make (hide, merge, move an event). All are
  * account-scoped (`/v1/me/…`). A relay without the routes answers 404, which
- * reads as `unsupported`, so Home falls back to its demo Feed.
+ * reads as `unsupported`, which Home says plainly (`feed-notice.tsx`).
  */
 
 export type FeedRelayError =
