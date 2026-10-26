@@ -22,6 +22,8 @@ const space = (id: string, name: string) => ({
 const layoutActions = vi.hoisted(() => [] as unknown[]);
 
 const answers = vi.hoisted(() => [] as unknown[]);
+const starts = vi.hoisted(() => [] as unknown[]);
+const externals = vi.hoisted(() => [] as string[]);
 /** What `rpc.rig.feed.get` answers; each test may swap it. */
 const feedGet = vi.hoisted(() => ({ current: null as null | (() => unknown) }));
 const realFeed = vi.hoisted(() => {
@@ -47,6 +49,10 @@ const realFeed = vi.hoisted(() => {
           title: 'Send Maya the usage data',
           why: 'Maya asked before the Halcyon meeting [ev:i09].',
           action: '**Send the numbers.** Pull usage by email domain.',
+          choices: [
+            { verb: 'start', label: 'Pull the numbers', lead: 'Pull usage by email domain', tail: '' },
+            { verb: 'open', label: 'Open the email', lead: 'Open the email from Maya', tail: '' },
+          ],
           refsOk: true,
         },
         updatedAt: at,
@@ -164,7 +170,16 @@ vi.mock('@renderer/lib/ipc', () => ({
           answers.push(input);
           return { success: true, data: null };
         },
+        start: async (input: unknown) => {
+          starts.push(input);
+          return { success: true, data: { runId: 'r1' } };
+        },
+        situation: async () => ({
+          success: true,
+          data: { id: 's_send', events: [{ id: 'e1', url: 'https://mail.example/thread/1' }, { id: 'e2', url: null }] },
+        }),
       },
+      orch: { query: async () => ({ success: true, data: { kind: 'working', rows: [] } }) },
       notifications: {
         summary: async () => ({
           spaces: [{ bindingId: 'b-ops', spaceUnread: 4 }],
@@ -175,6 +190,9 @@ vi.mock('@renderer/lib/ipc', () => ({
     },
   },
   events: { on: vi.fn(() => () => {}) },
+}));
+vi.mock('@renderer/lib/open-external-link', () => ({
+  confirmOpenExternalLink: (url: string) => externals.push(url),
 }));
 
 import { NewHome } from '@renderer/features/home-feed/new-home';
@@ -266,12 +284,28 @@ describe('NewHome with the orchestrator Feed', () => {
     expect(feedRow('sit:s_vendor')!.textContent).not.toContain('ev:');
   });
 
-  it('acting on a card takes it out of the Feed and tells Rig', async () => {
-    answers.length = 0;
+  it('Reply starts a session that drafts the reply and sends nothing, and the card leaves', async () => {
+    starts.length = 0;
     await vi.waitFor(() => expect(feedRow('sit:s_vendor')).not.toBeNull());
     await click(button(feedRow('sit:s_vendor')!, /Reply/));
     await vi.waitFor(() => expect(feedRow('sit:s_vendor')).toBeNull());
-    expect(answers).toEqual([{ situationId: 's_vendor', signal: 'act', choice: 'Reply to Riyad' }]);
+    expect(starts).toEqual([
+      {
+        situationId: 's_vendor',
+        task: "Draft this reply: Reply to Riyad: choose the 11 or the 8. Show me the draft here; don't send or post anything until I say so.",
+      },
+    ]);
+  });
+
+  it("Open opens the card's source and leaves the card where it is", async () => {
+    externals.length = 0;
+    await vi.waitFor(() => expect(feedRow('sit:s_send')).not.toBeNull());
+    // Step to the card's second choice, Open.
+    await click(button(feedRow('sit:s_send')!, 'Next option'));
+    const open = button(feedRow('sit:s_send')!, /^Open/);
+    await click(open);
+    await vi.waitFor(() => expect(externals).toEqual(['https://mail.example/thread/1']));
+    expect(feedRow('sit:s_send')).not.toBeNull();
   });
 
   it(SIGNED_OUT, async () => {

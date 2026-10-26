@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { toast as appToast } from '@renderer/lib/hooks/use-toast';
 import { rpc } from '@renderer/lib/ipc';
+import { confirmOpenExternalLink } from '@renderer/lib/open-external-link';
 import type { RigFeedSignal } from '@shared/rig/feed';
 import {
   type Arrival,
@@ -109,6 +110,11 @@ export function rectOf(el: Element | null | undefined): Rect | null {
   if (!el) return null;
   const r = el.getBoundingClientRect();
   return { left: r.left, top: r.top, width: r.width, height: r.height };
+}
+
+/** What a real card's Reply asks its session: draft it, and send nothing until the person says so. */
+export function replyTask(said: string): string {
+  return `Draft this reply: ${said.replace(/[.\s]+$/, '')}. Show me the draft here; don't send or post anything until I say so.`;
 }
 
 export function HomeProvider({
@@ -400,41 +406,75 @@ export function HomeProvider({
     [toast]
   );
 
+  const openInApp = useCallback(
+    ({ space, session, sessionId }: { space: RailSpace; session?: RailSession; sessionId?: string }) => {
+      if (!space.root) return;
+      if (sessionId) onContinueSession(space.root, sessionId);
+      else if (session?.id.startsWith('chat:'))
+        onContinueSession(space.root, session.id.slice('chat:'.length));
+      else onOpenPath(space.root, { kind: 'space' });
+    },
+    [onContinueSession, onOpenPath]
+  );
+
+  /**
+   * A real card's Open: the newest link its events carry (the PR, ticket or
+   * thread), else the session already working on it, else say there is none.
+   */
+  const openCard = useCallback(
+    async (situationId: string) => {
+      const situation = await rpc.rig.feed.situation({ id: situationId });
+      // Only web links: an event's URL comes from a connector, not from this app.
+      const url = situation.success
+        ? [...situation.data.events].reverse().find((e) => e.url && /^https?:\/\//i.test(e.url))?.url
+        : null;
+      if (url) return confirmOpenExternalLink(url);
+      const working = await rpc.rig.orch.query({ kind: 'working', filter: { situation: situationId }, limit: 1 });
+      const row = working.success && 'rows' in working.data ? working.data.rows[0] : undefined;
+      const space = row ? spacesRef.current.find((sp) => sp.id === row.space) : undefined;
+      if (row && space?.root && row.local === true && typeof row.run === 'string')
+        return openInApp({ space, sessionId: row.run });
+      toast("Rig has no link for this one yet. Reply or Start to work on it.");
+    },
+    [openInApp, toast]
+  );
+
   const runItem = useCallback(
     (itemId: string, from: Rect | null) => {
       const entry = stateRef.current.feed.find((e) => e.item.id === itemId);
       if (!entry) return;
       const { item } = entry;
-      // A real card: Start runs the session it proposes; the other verbs tell Rig it's handled.
+      // A real card. Start runs the session it proposes; Reply runs one that drafts the reply and
+      // asks before sending; Open opens where it came from (or the session already on it).
       if (item.situationId) {
         const situationId = item.situationId;
-        if (chosen(item, entry.pick).verb === 'space') {
+        const choice = chosen(item, entry.pick);
+        if (choice.verb === 'space') {
           toast('Bringing people in from a card comes next. Ask in the chat for now.');
           return;
         }
-        if (chosen(item, entry.pick).verb === 'start') {
-          // Start the session the card proposes, in the card's own space; its result comes back to the card.
-          // Setting it up takes a few seconds: say so at once, and ignore more clicks meanwhile.
-          if (startingRef.current.has(situationId)) return;
-          startingRef.current.add(situationId);
-          const choice = chosen(item, entry.pick);
-          // The card's button says "Starting…" until the session runs; then the card leaves and the session shows in the rail.
-          dispatch({ type: 'starting', itemId, value: true });
-          void rpc.rig.feed
-            .start({ situationId, task: `${choice.lead}${choice.tail}`.replace(/[{}@]/g, '') })
-            .then((r) => {
-              if (!r.success) {
-                dispatch({ type: 'starting', itemId, value: false });
-                return toast(r.error.message);
-              }
-              dispatch({ type: 'remove', itemId });
-            })
-            .finally(() => startingRef.current.delete(situationId));
+        if (choice.verb === 'open') {
+          void openCard(situationId);
           return;
         }
-        dispatch({ type: 'remove', itemId });
-        answerCard(itemId, 'act', { choice: chosen(item, entry.pick).label });
-        toast('Done. Rig will bring it back if something new happens.');
+        // Start (or Reply) in the card's own space; its result comes back to the card.
+        // Setting it up takes a few seconds: say so at once, and ignore more clicks meanwhile.
+        if (startingRef.current.has(situationId)) return;
+        startingRef.current.add(situationId);
+        const said = `${choice.lead}${choice.tail}`.replace(/[{}@]/g, '');
+        const task = choice.verb === 'reply' ? replyTask(said) : said;
+        // The card's button says "Starting…" until the session runs; then the card leaves and the session shows in the rail.
+        dispatch({ type: 'starting', itemId, value: true });
+        void rpc.rig.feed
+          .start({ situationId, task })
+          .then((r) => {
+            if (!r.success) {
+              dispatch({ type: 'starting', itemId, value: false });
+              return toast(r.error.message);
+            }
+            dispatch({ type: 'remove', itemId });
+          })
+          .finally(() => startingRef.current.delete(situationId));
         return;
       }
       const choice = chosen(item, entry.pick);
@@ -492,7 +532,7 @@ export function HomeProvider({
         }
       }
     },
-    [answerCard, bringIn, createSpace, open, startSession, toast]
+    [bringIn, createSpace, open, openCard, startSession, toast]
   );
 
   const addRoutine = useCallback(
@@ -563,17 +603,6 @@ export function HomeProvider({
       ]).then(([blocks]) => dispatch({ type: 'message-blocks', id, blocks }));
     },
     [orchestrator, orchestratorContext, reducedMotion, homeRuns]
-  );
-
-  const openInApp = useCallback(
-    ({ space, session, sessionId }: { space: RailSpace; session?: RailSession; sessionId?: string }) => {
-      if (!space.root) return;
-      if (sessionId) onContinueSession(space.root, sessionId);
-      else if (session?.id.startsWith('chat:'))
-        onContinueSession(space.root, session.id.slice('chat:'.length));
-      else onOpenPath(space.root, { kind: 'space' });
-    },
-    [onContinueSession, onOpenPath]
   );
 
   // Rig at work in the background: each connector's watch session checks on its schedule,

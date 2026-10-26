@@ -6,10 +6,11 @@ import type { FeedChoice, FeedItem, FeedVerb, Person, SourceConnector } from './
  * shape as the prototype's: a source and the people involved on top, the
  * drafted choices in the carousel, ticket refs as chips and people as
  * {@Name} tokens. Pure. Running a choice is in `home-context.tsx`: Start
- * starts a session; the other verbs tell Rig it's handled.
+ * and Reply start a session, Open opens the card's source. Bringing people
+ * in from a card isn't built yet, so those choices aren't offered.
  */
 
-const VERB: Record<string, FeedVerb> = { ask_you: 'reply', bring_in: 'space', do_it: 'start' };
+const VERB: Record<string, FeedVerb> = { ask_you: 'reply', bring_in: 'reply', do_it: 'start' };
 /** The connector a card shows when its events came from several. */
 const SOURCE_ORDER: SourceConnector[] = ['linear', 'github', 'slack', 'gmail', 'granola'];
 
@@ -64,7 +65,7 @@ const tail = (t: string) => (!t ? '' : /^[:,.]/.test(t.trim()) ? t.trim().replac
 export function toFeedItem(x: RigFeedItem, now: number): FeedItem {
   const d = x.decision;
   const needs = d?.do === 'ask_you' || d?.do === 'bring_in';
-  const drafted = x.card?.choices ?? [];
+  const drafted = (x.card?.choices ?? []).filter((c) => c.verb !== 'space');
   const fallback = splitAction(x.card?.action || x.title);
   const people = x.card?.people?.length ? x.card.people : [];
   const names = firstNames(people);

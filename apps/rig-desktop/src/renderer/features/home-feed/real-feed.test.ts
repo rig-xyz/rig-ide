@@ -46,7 +46,8 @@ describe('the orchestrator Feed as Home cards', () => {
       NOW
     );
     expect(items.map((i) => [i.id, i.group, i.choices[0]!.verb])).toEqual([
-      ['sit:c', 'needs_you', 'space'],
+      // Bringing people in isn't built yet: a bring-in card is offered as a reply.
+      ['sit:c', 'needs_you', 'reply'],
       ['sit:a', 'up_next', 'start'],
     ]);
     expect(items[0]!.situationId).toBe('c');
@@ -82,9 +83,9 @@ describe('drafted cards look like the prototype', () => {
       },
     };
     const card = toFeedItem(x, NOW);
+    // The bring-in choice isn't offered: it couldn't do what it says yet.
     expect(card.choices.map((c) => [c.verb, c.label, c.lead, c.tail])).toEqual([
       ['reply', 'Pick the 8', 'Go with the 8 vendors', ': Rig tells {@Riyad}.'],
-      ['space', 'Ask Riyad', 'Ask {@Riyad} to decide', ': in a new space'],
     ]);
     expect(card.people).toEqual(['Riyad Hasanov']);
     expect(card.source).toMatchObject({ connector: 'linear' });
