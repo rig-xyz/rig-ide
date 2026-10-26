@@ -14,6 +14,8 @@ import {
 import { EMPTY_FOR_YOU } from '../for-you';
 import type { AgentKind, RoomSnapshot } from '../types';
 import type { DockFocusState } from '../use-dock-focus';
+import { useMySessions } from '../my-sessions';
+import type { MySessions } from '../my-sessions-model';
 import { useDockSignals } from '../use-dock-signals';
 import type { ForYouState } from '../use-for-you';
 import { ApprovalsPanel, useDismissOutside } from './dock-approvals';
@@ -51,7 +53,28 @@ const GAP_TO_TRANSCRIPT_PX = 12;
 
 const NO_ARRIVALS: ForYouState['arrivals'] = [];
 
+type ThemeDockProps = Parameters<typeof ThemeDockView>[0];
+
+/** The dock; with `mine`, your own sessions in the space too (read here, so a dock without them needs no query client). */
 export function ThemeDock({
+  mine,
+  ...props
+}: Omit<ThemeDockProps, 'mySessions'> & {
+  /** Your own sessions in this space: "Just you" and the Sessions list. Absent: neither shows. */
+  mine?: { bindingId: string; onOpen: (sessionId: string) => void };
+}) {
+  return mine ? <ThemeDockWithMine mine={mine} {...props} /> : <ThemeDockView {...props} />;
+}
+
+function ThemeDockWithMine({
+  mine,
+  ...props
+}: Omit<ThemeDockProps, 'mySessions'> & { mine: { bindingId: string; onOpen: (sessionId: string) => void } }) {
+  const sessions = useMySessions(mine.bindingId);
+  return <ThemeDockView {...props} mySessions={{ ...sessions, onOpen: mine.onOpen }} />;
+}
+
+function ThemeDockView({
   snapshot,
   selfUserId,
   forYouState,
@@ -64,6 +87,7 @@ export function ThemeDock({
   onTrailChange,
   onJumpToRun,
   readKey,
+  mySessions,
   className,
 }: {
   /** The Room's snapshot with your pending sends in it. */
@@ -106,6 +130,8 @@ export function ThemeDock({
   onJumpToRun?: (runId: string) => void;
   /** The space's binding, for which finished runs were seen before this launch (`run-seen.ts`). */
   readKey?: string;
+  /** Your own sessions in this space, read by `ThemeDockWithMine`. */
+  mySessions?: MySessions & { onOpen: (sessionId: string) => void };
   /** Where the dock sits in its parent. */
   className?: string;
 }) {
@@ -141,6 +167,7 @@ export function ThemeDock({
 
   const column = usePillColumn({
     snapshot,
+    mine: mySessions,
     themes,
     forYou,
     selfUserId,

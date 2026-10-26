@@ -9,6 +9,7 @@ import {
   openFileTab,
   openFocusTab,
   openPageTab,
+  openSessionTab,
   renamePageTab,
   moveFileTabs,
   closeFileTabs,
@@ -126,6 +127,21 @@ describe('openPageTab', () => {
     ]);
     state = activateTab(state, 0);
     state = openPageTab(state, 'https://claude.ai/artifact/abc', 'Claude artifact');
+    expect(state).toMatchObject({ active: 1 });
+    expect(state.tabs).toHaveLength(2);
+  });
+});
+
+describe('openSessionTab', () => {
+  it('opens one tab per session beside the others, and re-activates it when opened again', () => {
+    let state = openFileTab(NO_TABS, '/rigs/one/plan.md');
+    state = openSessionTab(state, 'ses-1');
+    expect(state.tabs).toEqual([
+      { kind: 'file', path: '/rigs/one/plan.md' },
+      { kind: 'session', sessionId: 'ses-1' },
+    ]);
+    expect(state.active).toBe(1);
+    state = openSessionTab(activateTab(state, 0), 'ses-1');
     expect(state).toMatchObject({ active: 1 });
     expect(state.tabs).toHaveLength(2);
   });

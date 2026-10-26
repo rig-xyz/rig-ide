@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { MessagesSquare, X } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -9,7 +9,9 @@ import {
   useRef,
   useState,
 } from 'react';
-import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
+import { PermissionPrompt } from '@renderer/features/chat/permission-prompt';
+import { DotMatrix, type DotMatrixState } from '@renderer/lib/ui/dot-matrix';
+import { formatElapsed } from '@renderer/lib/time-format';
 import { cn } from '@renderer/lib/utils';
 import {
   activeThemes,
@@ -27,6 +29,7 @@ import {
   type DockWho,
 } from '../dock-model';
 import type { Phase } from '../dock-layout';
+import type { MySession, MySessions } from '../my-sessions-model';
 import { themesWithForYou, type ForYou } from '../for-you';
 import type { RoomTheme, RoomThemes } from '../themes';
 import { personOf } from '../person-identity';
@@ -66,6 +69,13 @@ import { AgentAvatar, PersonAvatar } from './identity';
  * Hovering a row peeks its live step; clicking it jumps to the run's card.
  * Hovering an agent's face lights its rows.
  *
+ * Your own sessions (`my-sessions.ts`) are not Room messages and have no
+ * topic: the ones that need a look hang together under "Just you", after For
+ * you, as rows like the runs'. Hovering one peeks it, and the peek takes the
+ * pointer: an approval it waits on is answered there. Clicking opens it
+ * beside the Room. "Sessions N" at the end of the column lists them all,
+ * finished ones included.
+ *
  * By keyboard: Tab reaches every pill (with a ring), Enter or Space focuses it
  * and the keyboard goes to the card's ×; the × (or Esc) lets go and the keyboard
  * goes back to the pill. A list of themes takes the keyboard in when it opens,
@@ -79,6 +89,11 @@ const TASK_PREFIX = 'task:';
 const MORE_ID = 'more';
 const WHO_ID = 'who';
 const UNSORTED_ID = 'unsorted';
+const MINE_ID = 'mine';
+const MINE_PREFIX = 'mine:';
+const SESSIONS_ID = 'sessions';
+/** How long a "Just you" row's peek waits for the pointer to cross into it. */
+const PEEK_HOLD_MS = 220;
 /** Task rows sit this far in from the column's left edge, under their topic. */
 const TASK_INDENT = 14;
 
@@ -622,6 +637,229 @@ function TaskPeek({ task, snapshot, topic }: { task: DockTask; snapshot: RoomSna
   );
 }
 
+/** A person struck through: only you see what's under it. */
+function JustYouIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className={cn('size-3.5 shrink-0', className)} aria-hidden>
+      <circle cx="12" cy="8" r="3.5" />
+      <path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5" />
+      <path d="M3.5 3.5l17 17" />
+    </svg>
+  );
+}
+
+/** "Just you": the heading over your own sessions. Not a filter. */
+function JustYouHeading({ count }: { count: number }) {
+  return (
+    <span
+      className="flex h-[30px] items-center gap-2 rounded-full pr-3 pl-2.5 text-xs whitespace-nowrap text-text-secondary"
+      data-testid="dock-just-you"
+    >
+      <JustYouIcon className="text-text-muted" />
+      Just you
+      <Count n={count} />
+    </span>
+  );
+}
+
+const MINE_MATRIX: Record<MySession['state'], DotMatrixState> = {
+  waiting: 'waiting',
+  working: 'thinking',
+  done: 'done',
+  idle: 'idle',
+};
+
+function mineStatus(session: MySession, now: number): string {
+  if (session.state === 'waiting') return 'Waiting on you';
+  if (session.state === 'working') return formatElapsed(now - session.at);
+  return 'Done';
+}
+
+/** One of your sessions under "Just you": Claude, its dot matrix, its title and its state. */
+function MineRow({
+  session,
+  now,
+  onOpen,
+  compact = false,
+}: {
+  session: MySession;
+  now: number;
+  onOpen: () => void;
+  compact?: boolean;
+}) {
+  const status = mineStatus(session, now);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={`${session.title}. ${status}. Only you see this session.`}
+      data-testid="dock-mine"
+      data-session-id={session.id}
+      data-state={session.state}
+      className={cn(
+        'flex h-[26px] max-w-full items-center gap-[7px] rounded-full pr-2.5 pl-1 text-xs whitespace-nowrap transition-colors hover:text-accent',
+        FOCUS_RING,
+        session.state === 'done' ? 'text-text-secondary' : 'text-text-primary'
+      )}
+    >
+      <AgentAvatar agent="claude" owner={null} size="sm" title={null} />
+      <DotMatrix state={MINE_MATRIX[session.state]} size="sm" />
+      {!compact && <span className="max-w-[120px] min-w-0 truncate">{session.title}</span>}
+      <span
+        className={cn(
+          'shrink-0 text-2xs tabular-nums',
+          session.state === 'waiting' ? 'text-warning' : 'text-text-muted'
+        )}
+      >
+        {session.state === 'waiting' ? 'waiting' : status}
+      </span>
+    </button>
+  );
+}
+
+/** A session's peek: what it is, and the approval it waits on, answered right here. */
+function MinePeek({
+  session,
+  onOpen,
+  onResolve,
+  hold,
+}: {
+  session: MySession;
+  onOpen: () => void;
+  onResolve: (optionId: string) => void;
+  /** Keeps the peek while the pointer is on it. */
+  hold: StageEntry['wrapperProps'];
+}) {
+  return (
+    <div className="flex w-[280px] flex-col gap-2 text-xs" data-testid="dock-mine-peek" {...hold}>
+      <span className="flex items-center gap-1.5 text-text-muted">
+        <JustYouIcon className="size-3" />
+        Just you
+        <span className="flex-1" />
+        <button
+          type="button"
+          onClick={onOpen}
+          className={cn('rounded-full px-1.5 text-text-secondary hover:text-accent', FOCUS_RING)}
+        >
+          Open
+        </button>
+      </span>
+      <p className="line-clamp-2 leading-snug font-semibold text-text-primary">{session.title}</p>
+      {session.approval ? (
+        <PermissionPrompt
+          title={session.approval.title}
+          options={session.approval.options}
+          resolvingOptionId={session.approval.resolvingOptionId}
+          onResolve={onResolve}
+        />
+      ) : (
+        <span className="flex items-center gap-2 text-text-secondary">
+          <DotMatrix state={MINE_MATRIX[session.state]} size="sm" />
+          <span className={cn('min-w-0 truncate', session.state === 'working' && 'active-shimmer-muted')}>
+            {session.state === 'working' ? 'Working' : 'Done: open it to read what came of it'}
+          </span>
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** "Sessions N": every one of your sessions in this space, the ones going now first, then the finished. */
+function SessionsPill({
+  sessions,
+  onOpen,
+}: {
+  sessions: readonly MySession[];
+  onOpen: (sessionId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  useDismissOutside(rootRef, open, () => setOpen(false), () => triggerRef.current);
+  const reduced = useReducedMotion();
+  useEffect(() => {
+    if (open) listRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus({ preventScroll: true });
+  }, [open]);
+  const now = sessions.filter((s) => s.state === 'waiting' || s.state === 'working');
+  const finished = sessions.filter((s) => s.state === 'done' || s.state === 'idle');
+  const item = (session: MySession) => (
+    <button
+      key={session.id}
+      type="button"
+      role="menuitem"
+      onClick={() => {
+        setOpen(false);
+        onOpen(session.id);
+      }}
+      className={cn(
+        'grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 rounded-control px-2 py-1.5 text-left text-xs hover:bg-bg-2 focus-visible:bg-bg-2',
+        'outline-none'
+      )}
+    >
+      <DotMatrix state={MINE_MATRIX[session.state]} size="sm" />
+      <span className={cn('truncate', session.state === 'idle' ? 'text-text-secondary' : 'text-text-primary')}>
+        {session.title}
+      </span>
+      <span />
+      <span className={cn('text-2xs', session.state === 'waiting' ? 'text-warning' : 'text-text-muted')}>
+        {session.state === 'waiting'
+          ? 'Waiting on you'
+          : session.state === 'working'
+            ? 'Working'
+            : new Date(session.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+      </span>
+    </button>
+  );
+  const heading = (text: string) => (
+    <span className="px-2 pt-1.5 pb-0.5 font-mono text-2xs tracking-wider text-text-muted uppercase">{text}</span>
+  );
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={`Your sessions in this space: ${sessions.length}`}
+        data-testid="dock-sessions"
+        className={cn(
+          'relative flex h-[30px] items-center gap-1.5 rounded-full px-3 text-xs text-text-secondary transition-colors hover:text-text-primary',
+          FOCUS_RING
+        )}
+      >
+        <MessagesSquare className="size-3 text-text-muted" strokeWidth={1.75} aria-hidden />
+        Sessions
+        <Count n={sessions.length} />
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            ref={listRef}
+            role="menu"
+            aria-label="Your sessions"
+            data-testid="dock-sessions-list"
+            className="absolute top-0 right-full mr-3 flex max-h-[360px] w-[280px] origin-top-right flex-col gap-0.5 overflow-y-auto rounded-card border border-border-hairline bg-bg-1 p-1.5 shadow-float"
+            initial={reduced ? false : { opacity: 0, scale: 0.96, x: 8 }}
+            animate={{ opacity: 1, scale: 1, x: 0 }}
+            exit={{ opacity: 0, scale: 0.96, x: 8 }}
+            transition={reduced ? { duration: 0 } : SPRING}
+          >
+            {now.length > 0 && heading('Now')}
+            {now.map(item)}
+            {finished.length > 0 && heading('Finished')}
+            {finished.map(item)}
+            <span className="px-2 pt-1.5 pb-1 text-2xs leading-snug text-text-muted">
+              Only you see these. The Room sees what you post to it.
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 /** The clock for the task rows' times: ticks once a second while there are tasks to show. */
 function useTaskClock(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -732,6 +970,8 @@ export type PillColumnInput = {
   onJumpToRun?: (runId: string) => void;
   /** The space's binding: its read markers say which runs ended before this launch were already seen. */
   readKey?: string;
+  /** Your own sessions in the space: "Just you" and the Sessions list. */
+  mine?: MySessions & { onOpen: (sessionId: string) => void };
 };
 
 export type PillColumn = {
@@ -760,6 +1000,7 @@ export function usePillColumn({
   onClearWho,
   onJumpToRun,
   readKey,
+  mine,
 }: PillColumnInput): PillColumn {
   const reduced = useReducedMotion() ?? false;
   const [hovered, setHovered] = useState<string | null>(null);
@@ -795,7 +1036,9 @@ export function usePillColumn({
       who.kind === 'person' ? t.owner === who.userId : t.owner === who.owner && t.agent === who.agent
     );
   }, [snapshot, themes, selfUserId, now, who, readKey, seenVersion]);
-  if (hasTasks !== tasks.length > 0) setHasTasks(tasks.length > 0);
+  const mineRows = mine?.rows ?? [];
+  const ticking = tasks.length > 0 || mineRows.some((m) => m.state === 'working');
+  if (hasTasks !== ticking) setHasTasks(ticking);
 
   // While a face is spotlit, each pill counts its messages.
   const themeOfMap = themes?.themeOf;
@@ -823,8 +1066,36 @@ export function usePillColumn({
   });
   const swellTicks = useKeyTicks(swell?.key ?? null);
 
+  // A "Just you" peek takes the pointer: leaving its row waits a moment for the pointer to reach it.
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelLetGo = () => {
+    if (holdTimer.current) clearTimeout(holdTimer.current);
+    holdTimer.current = null;
+  };
+  useEffect(() => cancelLetGo, []);
+  const held = (id: string): StageEntry['wrapperProps'] => ({
+    onMouseEnter: () => {
+      cancelLetGo();
+      setHovered(id);
+    },
+    onMouseLeave: () => {
+      cancelLetGo();
+      holdTimer.current = setTimeout(
+        () => setHovered((current) => (current === id ? null : current)),
+        PEEK_HOLD_MS
+      );
+    },
+    onFocus: () => {
+      cancelLetGo();
+      setHovered(id);
+    },
+    onBlur: () => setHovered((current) => (current === id ? null : current)),
+  });
   const hover = (id: string): StageEntry['wrapperProps'] => ({
-    onMouseEnter: () => setHovered(id),
+    onMouseEnter: () => {
+      cancelLetGo();
+      setHovered(id);
+    },
     onMouseLeave: () => setHovered((current) => (current === id ? null : current)),
     onFocus: () => setHovered(id),
     onBlur: () => setHovered((current) => (current === id ? null : current)),
@@ -835,7 +1106,7 @@ export function usePillColumn({
   const dimOthers = focus !== null;
   const line = forYouLine(forYou);
   const entries: StageEntry[] = [];
-  const peeks = new Map<string, { anchor: string; peek: ReactNode }>();
+  const peeks = new Map<string, { anchor: string; peek: ReactNode; live?: boolean }>();
 
   if (who && whoIds && onClearWho) {
     entries.push({
@@ -935,6 +1206,44 @@ export function usePillColumn({
       peeks.set(FOR_YOU_ID, {
         anchor: FOR_YOU_ID,
         peek: <Peek color="var(--accent)" title="For you" body={line} foot="Click to focus." />,
+      });
+    }
+  }
+
+  if (mine && mineRows.length > 0) {
+    entries.push({
+      id: MINE_ID,
+      card: false,
+      fit: true,
+      phase: 'placed',
+      content: <JustYouHeading count={mineRows.length} />,
+    });
+    for (const session of mineRows) {
+      const id = MINE_PREFIX + session.id;
+      const open = () => {
+        setHovered(null);
+        mine.onOpen(session.id);
+      };
+      entries.push({
+        id,
+        card: false,
+        fit: true,
+        indent: TASK_INDENT,
+        phase: 'placed',
+        wrapperProps: held(id),
+        content: <MineRow session={session} now={now} onOpen={open} compact={narrow} />,
+      });
+      peeks.set(id, {
+        anchor: id,
+        live: true,
+        peek: (
+          <MinePeek
+            session={session}
+            onOpen={open}
+            onResolve={(optionId) => mine.resolve(session.id, optionId)}
+            hold={held(id)}
+          />
+        ),
       });
     }
   }
@@ -1042,6 +1351,16 @@ export function usePillColumn({
   // Tasks whose topic is folded behind "+N" (or "Topics N"): under it, each with its topic's dot.
   taskEntries(placed.folded, true);
 
+  if (mine && mine.all.length > 0) {
+    entries.push({
+      id: SESSIONS_ID,
+      card: false,
+      fit: true,
+      phase: 'placed',
+      content: <SessionsPill sessions={mine.all} onOpen={mine.onOpen} />,
+    });
+  }
+
   // A pill that is still on its way (the bead, the drop) is not hovered yet.
   const hoveredEntry = hovered ? entries.find((e) => e.id === hovered) : undefined;
   const peekOf = hoveredEntry && hoveredEntry.phase === 'placed' ? peeks.get(hoveredEntry.id) : undefined;
@@ -1067,7 +1386,7 @@ export function usePillColumn({
 
   return {
     entries,
-    peek: peekOf ? { anchor: peekOf.anchor, content: peekOf.peek } : null,
+    peek: peekOf ? { anchor: peekOf.anchor, content: peekOf.peek, live: peekOf.live } : null,
     previewIds,
   };
 }

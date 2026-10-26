@@ -2,6 +2,7 @@ import { createChatState, type ChatContext, type ChatState } from '@emdash/chat-
 import { action, makeObservable, observable, runInAction } from 'mobx';
 import { getSharedChatContext } from '@renderer/lib/chat/shared-chat-context';
 import { rpc } from '@renderer/lib/ipc';
+import type { TranscriptTurn } from '@emdash/core/acp/client';
 import type { RigStoredSession } from '@shared/rig/sessions';
 import { loadAllSessionEvents, parseStoredEvents, withTurnTimestamps } from './session-writer';
 
@@ -27,6 +28,8 @@ export class ReplayStore {
   /** Null once `session` loads; a plain message on failure (deleted row, read error). */
   error: string | null = null;
   session: RigStoredSession | null = null;
+  /** The stored turns, for views drawn outside chat-ui. */
+  turns: readonly TranscriptTurn[] = [];
   private _disposed = false;
   private _generation = 0;
 
@@ -42,6 +45,7 @@ export class ReplayStore {
       loading: observable,
       error: observable,
       session: observable.ref,
+      turns: observable.ref,
       load: action,
       rename: action,
     });
@@ -70,6 +74,7 @@ export class ReplayStore {
         if (!this._isCurrent(generation)) return;
         this.session = session;
         this.chatState.transcript.history.seed(withTurnTimestamps(turns, atBySeq));
+        this.turns = this.chatState.transcript.history.get();
         this.loading = false;
       });
     } catch (error) {

@@ -33,6 +33,8 @@ import { deriveComposerDensity, type ComposerDensity } from './composer-density'
 import { deriveDefaultHarness } from './default-harness';
 import { HarnessPicker } from './harness-picker';
 import { buildFileMentionIndex, linkFileMentions as matchFileMentions } from './link-file-mentions';
+import { Composer as RoomComposer } from '@renderer/features/spaces/components/composer';
+import { SessionTurnsView } from '@renderer/features/spaces/components/session-turns-view';
 import { MetaOptionPicker } from './meta-option-picker';
 import { PermissionModePicker } from './permission-mode-picker';
 import { ReplayStore } from './replay-store';
@@ -1693,6 +1695,149 @@ const Composer = observer(function Composer({
         <span className="font-mono text-xs text-text-muted">
           {live.pendingResumeSubmitCount} will send when resumed
         </span>
+      )}
+    </div>
+  );
+});
+
+/**
+ * One of a space's own sessions, alone: the transcript and composer the
+ * panel above draws for it, without the tab strip. Opened beside the Room
+ * (`artefact-pane.tsx`), from the dock's "Just you" rows, its Sessions list
+ * or the Feed. A session still running here is its live store; one that
+ * ended is its stored replay, which the composer resumes in place (or,
+ * where the agent can't resume, follows up with a new session).
+ */
+export const SessionPane = observer(function SessionPane({
+  root,
+  rootId,
+  bindingId,
+  sessionId,
+  onOpenFile,
+}: {
+  root: string;
+  /** The space's open root, for reading its files (an older session's brief). */
+  rootId: string;
+  bindingId: string;
+  sessionId: string;
+  onOpenFile?: (absPath: string) => void;
+}) {
+  const [store, setStore] = useState<RigSession | null>(null);
+  const [followUp, setFollowUp] = useState(false);
+
+  useEffect(() => {
+    const held = rigSessionRegistry.get<RigSession>(sessionId);
+    const live = held instanceof RigChatStore && held.disposed ? null : held;
+    setStore(live ?? rigSessionRegistry.attach<RigSession>(sessionId, () => new ReplayStore(sessionId)));
+    setFollowUp(false);
+  }, [sessionId]);
+
+  // On screen is seen: when it opens, and whenever a turn ends while it's open (the dock's "Done" row goes).
+  const shownId = store?.conversationId ?? null;
+  const working = store?.kind === 'live' && store.affordances.isWorking;
+  useEffect(() => {
+    if (shownId && !working) noteSessionSeen(shownId);
+  }, [shownId, working]);
+
+  // What `Transcript` does for the chat panel: connect a live store, load a stored one.
+  useEffect(() => {
+    if (!store) return;
+    if (store.kind === 'live') void store.bootstrap();
+    else void store.load();
+  }, [store]);
+
+  const resume = useCallback(
+    (replay: ReplayStore, text?: string) => {
+      const stored = replay.session;
+      if (!stored) return;
+      void rigSessionRegistry.stop(stored.id);
+      if (canResumeSession(stored.providerId, stored.acpSessionId)) {
+        const live = rigSessionRegistry.attach<RigChatStore>(
+          stored.id,
+          () =>
+            new RigChatStore(stored.id, bindingId, root, stored.providerId, {
+              acpSessionId: stored.acpSessionId!,
+              title: stored.title,
+              titleSource: stored.titleSource,
+            })
+        );
+        setStore(live);
+        void live.bootstrap().then(() => {
+          if (!live.loadError && text) live.submitPrompt(text);
+        });
+        return;
+      }
+      if (!text) return;
+      const id = crypto.randomUUID();
+      const next = rigSessionRegistry.attach<RigChatStore>(
+        id,
+        () => new RigChatStore(id, bindingId, root, stored.providerId)
+      );
+      setStore(next);
+      setFollowUp(true);
+      void next.bootstrap().then(() => {
+        if (next.loadError) return;
+        if (stored.title) next.rename(stored.title);
+        next.submitPrompt(text);
+      });
+    },
+    [bindingId, root]
+  );
+
+  return (
+    // A surface a step up from the Room's page: the same pieces, but clearly apart from the shared chat.
+    <div className="flex h-full min-w-0 flex-col bg-bg-1" data-testid="session-pane">
+      <div className="min-h-0 flex-1">
+        {store && (
+          <SessionTurnsView
+            key={store.conversationId}
+            store={store}
+            root={root}
+            rootId={rootId}
+            onOpenFile={onOpenFile}
+          />
+        )}
+        {followUp && (
+          <p className="px-3 pb-2 text-center text-xs text-text-muted">
+            The earlier session couldn't be resumed, so this one follows up on it.
+          </p>
+        )}
+      </div>
+      {/* The Room's own composer: a session reads as part of the space. Nobody to tag in it. */}
+      <div className="mx-auto w-full max-w-[44rem] px-3 pb-3">
+        <RoomComposer
+          key={store?.conversationId ?? 'loading'}
+          spaceName="this session"
+          draftKey={store ? `session:${store.conversationId}` : undefined}
+          members={[]}
+          agents={[]}
+          skills={[]}
+          placeholder="Message this session…"
+          onSend={(text) => {
+            if (store?.kind === 'live') store.submitPrompt(text);
+            else if (store?.kind === 'replay') resume(store, text);
+          }}
+          footer={<SessionComposerFooter store={store} />}
+        />
+      </div>
+    </div>
+  );
+});
+
+/** Under a session's composer: that it's yours alone, and its permission mode. */
+const SessionComposerFooter = observer(function SessionComposerFooter({ store }: { store: RigSession | null }) {
+  const live = store?.kind === 'live' ? store : null;
+  return (
+    <div className="flex items-center gap-2 px-1 pt-1.5 text-xs text-text-muted" data-testid="session-composer-footer">
+      <span className="min-w-0 flex-1 truncate">
+        {store?.kind === 'replay' ? 'Only you see this session. Sending picks it back up.' : 'Only you see this session.'}
+      </span>
+      {live && live.permissionModeOptions.length > 0 && (
+        <PermissionModePicker
+          options={live.permissionModeOptions}
+          selectedId={live.permissionMode}
+          onChange={(id) => live.setMode(id)}
+        />
       )}
     </div>
   );

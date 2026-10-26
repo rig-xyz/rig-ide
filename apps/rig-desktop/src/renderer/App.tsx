@@ -11,6 +11,7 @@ import {
   NO_TABS,
   openFileTab,
   openPageTab,
+  openSessionTab,
   renamePageTab,
   moveFileTabs,
   closeFileTabs,
@@ -20,6 +21,7 @@ import {
 import { useAgentMinimumAlert } from '@renderer/features/agents/use-agent-minimum-alert';
 import { ChatPanel } from '@renderer/features/chat/chat-panel';
 import { relativeTime } from '@renderer/features/chat/session-history';
+import { useRigSessionStarts } from '@renderer/features/chat/session/start-in-space';
 import { DeepLinkJoinDialog } from '@renderer/features/deep-link/deep-link-join-dialog';
 import { ReportProblemDialogHost } from '@renderer/features/shell/report-problem-dialog';
 import { markBindingDeleted } from '@renderer/features/home/deleted-rig-store';
@@ -258,6 +260,7 @@ type FolderState =
   | { status: 'error'; path: string; message: string };
 
 export function App() {
+  useRigSessionStarts();
   const [, themePreference, setThemePreference, applyThemeFromSettings] = useTheme();
   // Notifications: refetch counts when main says they changed, and catch
   // this computer's read markers up to the relay's (read elsewhere = read).
@@ -941,6 +944,20 @@ export function App() {
     setFocusedRigPane('artifact');
     setArtefact((current) => openPageTab(current, url, title));
   }, []);
+  /** One of a space's own sessions (yours alone), as a tab beside the Room. */
+  const openSession = useCallback((sessionId: string) => {
+    setRigLayout((current) => (current === 'chat' ? 'split' : current));
+    setFocusedRigPane('artifact');
+    setArtefact((current) => openSessionTab(current, sessionId));
+  }, []);
+
+  // A space has no session panel: a session asked for on the way in (the
+  // Feed's row, Home's rail) opens beside the Room once the space is bound.
+  useEffect(() => {
+    if (!boundIsSpace || !pendingActiveSessionId) return;
+    openSession(pendingActiveSessionId);
+    setPendingActiveSessionId(null);
+  }, [boundIsSpace, pendingActiveSessionId, openSession]);
   // Dev builds only: lets the sandbox open any page (e.g. a local stand-in canvas) as a page tab.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -1095,6 +1112,7 @@ export function App() {
    * files open beside it and the pinned card shows only full-width, like a
    * rig. As the preview overlay on a plain rig, opening a file closes it.
    */
+  const sessionTabActive = activeTab(artefact)?.kind === 'session';
   /** The file open beside the Room, as a path inside the space (for the composer's context pill). */
   const openDocIn = (root: string): string | null => {
     const tab = activeTab(artefact);
@@ -1162,6 +1180,7 @@ export function App() {
             }
           : undefined
       }
+      onOpenSession={inSpace ? openSession : undefined}
       // The space panel IS the rig's pinned card (a space is a rig binding),
       // plus the Room's agent rows. Full-width layout only, as for rigs.
       renderPanel={
@@ -1605,6 +1624,9 @@ export function App() {
                   className={cn(
                     'flex min-h-0 min-w-0 flex-1 flex-col',
                     chrome.panesUnderBar && 'pt-10',
+                    // A session's surface runs to the pane's edges, tab strip included, and
+                    // under the divider's right half, so it (and the strip's rule) meets the line.
+                    sessionTabActive && '-ml-1 bg-bg-1',
                     paneRevealClassName(paneEntered)
                   )}
                 >

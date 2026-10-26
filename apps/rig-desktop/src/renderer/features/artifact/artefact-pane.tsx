@@ -1,5 +1,7 @@
 import { FolderTree, Globe, Plus, Rows3, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { SessionPane } from '@renderer/features/chat/chat-panel';
+import { SessionTabLabel } from '@renderer/features/chat/session/session-tab-label';
 import { PageView } from '@renderer/features/pages/page-view';
 import { BrandLogo } from '@renderer/features/spaces/logos';
 import { iconFor } from '@renderer/features/workspace/file-tree';
@@ -15,7 +17,7 @@ import { NavigatorPopover } from './navigator-popover';
 /**
  * Session-first viewer: the artefact pane — the right half of the split,
  * which exists only while it has tabs (`App.tsx` collapses the split
- * entirely at zero). One tab per open file plus at most one focus view;
+ * entirely at zero). One tab per open file, page or space session, plus at most one focus view;
  * the (+) carries the choice between them, and "Open file…" drops the
  * navigator popover (the tree's new home). Same tab grammar as the chat
  * panel's session strip — bg-2 + text shift marks active, close on hover,
@@ -125,6 +127,26 @@ export function ArtefactPane({
           className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 py-1.5 [mask-image:linear-gradient(to_right,transparent,black_12px,black_calc(100%-12px),transparent)]"
         >
           {state.tabs.map((tab, index) => {
+            if (tab.kind === 'session') {
+              return (
+                <PaneTab
+                  key={`session:${tab.sessionId}`}
+                  active={index === state.active}
+                  dragging={dragIndex === index}
+                  onSelect={() => onActivateTab(index)}
+                  onClose={() => onCloseTab(index)}
+                  onDragStart={() => setDragIndex(index)}
+                  onDragOverTab={() => {
+                    if (dragIndex === null || dragIndex === index) return;
+                    onMoveTab(dragIndex, index);
+                    setDragIndex(index);
+                  }}
+                  onDragEnd={() => setDragIndex(null)}
+                >
+                  <SessionTabLabel sessionId={tab.sessionId} />
+                </PaneTab>
+              );
+            }
             if (tab.kind === 'page') {
               return (
                 <PaneTab
@@ -233,6 +255,15 @@ export function ArtefactPane({
       <div className="min-h-0 flex-1">
         {active === null ? null : active.kind === 'focus' ? (
           <FocusView root={root} rootId={rootId} bindingId={bindingId} onOpenFile={onOpenFile} />
+        ) : active.kind === 'session' ? (
+          <SessionPane
+            key={active.sessionId}
+            root={root}
+            rootId={rootId}
+            bindingId={bindingId}
+            sessionId={active.sessionId}
+            onOpenFile={(absPath) => onOpenFile(absPath, absPath)}
+          />
         ) : active.kind === 'page' ? (
           <PageView
             key={active.url}

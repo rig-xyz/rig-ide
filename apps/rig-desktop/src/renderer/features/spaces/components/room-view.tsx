@@ -374,6 +374,7 @@ export function RoomView({
   spaceName,
   onOpenFile,
   onOpenPage,
+  onOpenSession,
   openDoc = null,
   renderPanel,
   collapsed = false,
@@ -391,6 +392,8 @@ export function RoomView({
   onOpenFile?: (relPath: string) => void;
   /** Opens a web page (a Claude artifact, a Google Doc) beside the Room. */
   onOpenPage?: (url: string, title: string) => void;
+  /** Opens one of your own sessions in this space beside the Room; the dock lists them under "Just you". */
+  onOpenSession?: (sessionId: string) => void;
   /** The doc open beside the Room (its path in the space), if any. */
   openDoc?: string | null;
   /** Renders the live space panel (the rig's pinned card), given the Room's own rows to add to it. */
@@ -1936,12 +1939,32 @@ export function RoomView({
                       onTrailChange={setDockTrail}
                       onJumpToRun={jumpToRun}
                       readKey={source instanceof RelayRoomSource ? bindingId : undefined}
+                      mine={live && onOpenSession ? { bindingId, onOpen: onOpenSession } : undefined}
                       className="absolute top-[52px] right-4"
                     />
                   )
                 : undefined,
             }
-          ) ?? null)
+          ) ??
+            // Something open beside the Room (no space panel then): the dock stands alone,
+            // so your sessions stay in reach while one is open.
+            (dockOn ? (
+              <ThemeDock
+                key={bindingId}
+                snapshot={shownSnapshot ?? room}
+                selfUserId={selfUserId}
+                forYouState={dockForYou}
+                focus={dockFocus}
+                narrow={narrow}
+                onGutterChange={onDockGutter}
+                onPreviewChange={setDockPreview}
+                onTrailChange={setDockTrail}
+                onJumpToRun={jumpToRun}
+                readKey={bindingId}
+                mine={onOpenSession ? { bindingId, onOpen: onOpenSession } : undefined}
+                className="absolute top-[52px] right-4"
+              />
+            ) : null))
         ) : dockOn ? (
           // The scripted demo has no pinned panel to open: the dock stands alone.
           <ThemeDock

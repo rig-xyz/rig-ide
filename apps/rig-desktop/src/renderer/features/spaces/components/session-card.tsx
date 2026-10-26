@@ -687,7 +687,8 @@ export function SessionCard({
   summary?: RunSummary;
   /** Fetches this run's log (a summary-only card being expanded). */
   onLoadLog?: () => void;
-  owner: RoomMember | undefined;
+  /** Null: no owner badge (your own session, alone beside the Room). */
+  owner: RoomMember | null | undefined;
   /** The viewer owns this agent: its name reads "yours" instead of "Sam's". Defaults to whether approvals were passed. */
   viewerIsOwner?: boolean;
   /** A follow-up turn from the same agent a moment later: no avatar or header. */

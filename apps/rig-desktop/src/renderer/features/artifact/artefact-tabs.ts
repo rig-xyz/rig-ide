@@ -5,9 +5,9 @@
  * real state (the session owns the window and the pinned card floats over
  * it), not an empty pane.
  *
- * Three tab kinds: a web page (one per link), a file (one per path — re-opening an open file activates
- * its existing tab, browser convention) and the focus view (at most one —
- * it is a lens over the whole working set, so a second copy could only
+ * Four tab kinds: a web page (one per link), a file (one per path — re-opening an open file activates
+ * its existing tab, browser convention), one of the space's own chat sessions (one per session) and the
+ * focus view (at most one — it is a lens over the whole working set, so a second copy could only
  * disagree with the first).
  *
  * Pure data + transitions, no React: `App.tsx` holds one of these in
@@ -19,7 +19,9 @@ export type ArtefactTab =
   | { kind: 'file'; path: string }
   | { kind: 'focus' }
   /** A web page (a Claude artifact, a Google Doc) opened beside the Room, one per link. */
-  | { kind: 'page'; url: string; title: string };
+  | { kind: 'page'; url: string; title: string }
+  /** One of the space's own chat sessions (yours alone), opened beside the Room. */
+  | { kind: 'session'; sessionId: string };
 
 export type ArtefactTabsState = {
   tabs: readonly ArtefactTab[];
@@ -73,6 +75,13 @@ export function openPageTab(state: ArtefactTabsState, url: string, title: string
   const existing = state.tabs.findIndex((tab) => tab.kind === 'page' && tab.url === url);
   if (existing !== -1) return { tabs: state.tabs, active: existing };
   return { tabs: [...state.tabs, { kind: 'page', url, title }], active: state.tabs.length };
+}
+
+/** Open (or re-activate) the tab for one of the space's sessions. */
+export function openSessionTab(state: ArtefactTabsState, sessionId: string): ArtefactTabsState {
+  const existing = state.tabs.findIndex((tab) => tab.kind === 'session' && tab.sessionId === sessionId);
+  if (existing !== -1) return { tabs: state.tabs, active: existing };
+  return { tabs: [...state.tabs, { kind: 'session', sessionId }], active: state.tabs.length };
 }
 
 /** A page's tab takes the page's own title once it loads. */
