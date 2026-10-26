@@ -1,0 +1,123 @@
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useAgentIdentities } from '@renderer/features/chat/use-runnable-agents';
+import { rpc } from '@renderer/lib/ipc';
+import { FIRST_RUN_VERSION, type FirstRunProgress } from '@shared/rig/first-run';
+import { agentRoute, ROUTED_AGENT_ID } from './agent-route';
+import type { FirstRunSimulation } from './debug/first-run-debug';
+import {
+  FIRST_RUN_CONNECTORS,
+  type AgentState,
+  type FirstRunEnv,
+  type RigAccountState,
+  type RigSignInState,
+} from './env';
+
+/** How long a simulated browser hop, install or sign-in takes, so the waiting states show. */
+const SIGN_IN_MS = 1800;
+const INSTALL_MS = 2200;
+const PREFLIGHT_MS = 600;
+const SIM_EMAIL = 'alex@larkspur.com';
+const SIM_NAME = 'Alex Rivera';
+const INSTALL_COMMAND = 'curl -fsSL https://claude.ai/install.sh | bash';
+
+function initialRig(simulation: FirstRunSimulation): RigAccountState {
+  return simulation.rig === 'signedIn'
+    ? { kind: 'signedIn', email: SIM_EMAIL, name: SIM_NAME, unverified: false }
+    : { kind: simulation.rig };
+}
+
+function initialAgent(simulation: FirstRunSimulation): AgentState {
+  switch (simulation.agent) {
+    case 'missing':
+      return { kind: 'missing', installCommand: INSTALL_COMMAND };
+    case 'signedOut':
+      return { kind: 'signedOut' };
+    case 'apiKey':
+      return { kind: 'apiKey', account: null };
+    case 'ready':
+      return { kind: 'ready', account: SIM_EMAIL };
+  }
+}
+
+/**
+ * The first run against a made-up account and agent (the debug harness).
+ * Its sign-ins and install succeed after a short wait; nothing real is read
+ * or changed, apart from marking the first run seen when it's finished.
+ */
+export function SimulatedFirstRunEnv({
+  simulation,
+  children,
+}: {
+  simulation: FirstRunSimulation;
+  children: (env: FirstRunEnv) => ReactNode;
+}) {
+  const identities = useAgentIdentities();
+  const route = agentRoute(ROUTED_AGENT_ID);
+  const [rig, setRig] = useState<RigAccountState>(() => initialRig(simulation));
+  const [agent, setAgent] = useState<AgentState>(() => initialAgent(simulation));
+  const [rigSignIn, setRigSignIn] = useState<RigSignInState>({
+    phase: 'idle',
+    url: null,
+    error: null,
+  });
+  const [progress, setProgress] = useState<FirstRunProgress | null>(null);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  useEffect(() => {
+    const pending = timers.current;
+    return () => pending.forEach(clearTimeout);
+  }, []);
+  const later = (ms: number, fn: () => void) => {
+    timers.current.push(setTimeout(fn, ms));
+  };
+
+  const env: FirstRunEnv = {
+    user: { firstRunSeen: 0, hasSeenOnboarding: simulation.user === 'existing', progress },
+    rig,
+    rigSignIn,
+    agent,
+    agentInfo: {
+      name: identities.get(route.id)?.name ?? 'Claude Code',
+      icon: identities.get(route.id)?.icon ?? null,
+      route,
+    },
+    recheck: () => {},
+    startRigSignIn: () => {
+      setRigSignIn({
+        phase: 'waiting',
+        url: 'https://userig.xyz/auth/device?code=SIMULATED',
+        error: null,
+      });
+      later(SIGN_IN_MS, () => {
+        setRigSignIn({ phase: 'idle', url: null, error: null });
+        setRig({ kind: 'signedIn', email: SIM_EMAIL, name: SIM_NAME, unverified: false });
+      });
+    },
+    cancelRigSignIn: () => setRigSignIn({ phase: 'idle', url: null, error: null }),
+    installAgent: () => {
+      setAgent({ kind: 'installing' });
+      later(INSTALL_MS, () => setAgent({ kind: 'signedOut' }));
+    },
+    signInAgent: () => {
+      setAgent({ kind: 'signingIn' });
+      later(SIGN_IN_MS, () => setAgent({ kind: 'ready', account: SIM_EMAIL }));
+    },
+    preflight: () =>
+      new Promise((resolve) =>
+        later(PREFLIGHT_MS, () =>
+          resolve(
+            FIRST_RUN_CONNECTORS.map((connector) => ({
+              connector,
+              state: simulation.connectors.includes(connector) ? 'connected' : 'missing',
+            }))
+          )
+        )
+      ),
+    saveProgress: setProgress,
+    finish: () =>
+      void rpc.rig.settings.set({ firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null }),
+    overlay: null,
+  };
+
+  return <>{children(env)}</>;
+}

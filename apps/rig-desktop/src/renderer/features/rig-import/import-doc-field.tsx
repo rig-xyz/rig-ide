@@ -71,7 +71,7 @@ export function ImportDocField({
             // `@layer base`, regardless of selector specificity) — silently
             // dropping keyboard focus visibility on this field. Re-added
             // via `focus-visible:` utilities, same convention buttons
-            // already use elsewhere (e.g. `agents-step.tsx`'s userig.xyz link).
+            // already use elsewhere (e.g. the userig.xyz links).
             className="border-border-hairline bg-bg-1 text-text-primary placeholder:text-text-muted focus-visible:outline-accent rounded-control border px-2 py-1.5 text-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2"
           />
           {state.urlError && <p className="text-danger text-xs">{state.urlError}</p>}

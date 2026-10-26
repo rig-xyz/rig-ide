@@ -128,8 +128,7 @@ function notAvailableLabel(status: DependencyStatus | undefined): string {
  * and `AgentSignInDialog` flow — this only changes what it looks like),
  * as a plain "Signed in"/"Sign in" pill instead of that component's mono
  * uppercase "SIGNED IN" text. Kept local to Settings rather than changed
- * in `agent-auth-trailing.tsx` itself, which onboarding's agents-step.tsx
- * also renders and isn't part of this round.
+ * in `agent-auth-trailing.tsx` itself, which other rows also render.
  */
 function PrimaryAgentStatus({ agent }: { agent: AgentPayload }) {
   const { loginMethod, state, markSignedIn } = useAgentAuthProbe(agent);

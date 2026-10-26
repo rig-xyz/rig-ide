@@ -1,9 +1,8 @@
 /**
  * Pure state for the agent sign-in row (three honest states: probing →
- * signed in → not signed in) — shared by the onboarding agents step
- * (`agents-step.tsx`) and the Settings modal's Agents section
- * (`settings/pages/agents-page.tsx`), the two places that render an installed agent's
- * row. Kept side-effect free so the state derivation is testable without
+ * signed in → not signed in) — shared by the Settings modal's Agents
+ * section (`settings/pages/agents-page.tsx`) and the other places that
+ * render an installed agent's row. Kept side-effect free so the state derivation is testable without
  * mocking the agent-config runtime client.
  *
  * `cliLoginMethod` is ported near-verbatim from emdash-desktop's

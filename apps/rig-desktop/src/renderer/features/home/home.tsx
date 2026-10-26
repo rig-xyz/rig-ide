@@ -7,7 +7,7 @@ import { useActivity, useNotificationSummary } from '@renderer/features/notifica
 import { usePeople } from '@renderer/features/people/use-people';
 import { deriveSignedIn } from '@renderer/features/rig-account/auth-state';
 import { useRigSignIn, type RigSignInPhase } from '@renderer/features/rig-account/use-rig-sign-in';
-import { ManualLink } from '@renderer/features/onboarding/sign-in-step';
+import { ManualLink } from '@renderer/features/rig-account/manual-link';
 import { Button } from '@renderer/lib/ui/button';
 import { ConnectionBanner } from '@renderer/features/shell/connection-banner';
 import {

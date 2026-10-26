@@ -1,6 +1,7 @@
 import { defineEvent } from '../lib/ipc/events';
 import { DEFAULT_PAGE_SIGN_INS, type PageSignInsState } from '../pages/sign-in-sites';
 import { DEFAULT_ROOM_SEES, type RoomSees } from '../spaces/room-sees';
+import type { FirstRunProgress } from './first-run';
 import { DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from './notifications';
 
 /**
@@ -139,6 +140,20 @@ export type RigSettings = {
    * just because this field didn't exist in their file yet.
    */
   hasSeenOnboarding: boolean;
+  /**
+   * The first run's version this install has finished (`FIRST_RUN_VERSION`),
+   * 0 before any. Separate from `hasSeenOnboarding`, the old wizard's flag:
+   * someone who saw that one still gets the new first run once, as a
+   * returning user ("Welcome back, meet your new Home").
+   */
+  firstRunSeen: number;
+  /** Where an unfinished first run stopped, so a quit resumes there. `null` when none is under way. */
+  firstRunProgress: FirstRunProgress | null;
+  /**
+   * Settings › Advanced › Debug mode: tools for testing Rig itself, such as
+   * replaying the first run and simulating accounts. Dev builds have them anyway.
+   */
+  debugMode: boolean;
   /** The rigs rail's own filter/sort choice — global, not per-rig (same "a plain preference" shape as `theme`, replaced wholesale on `set()`, not merged at a key level). */
   rigsRailView: RigsRailView;
   /**
@@ -292,6 +307,9 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   lastModeByHarness: {},
   lastOpenTabsByRig: {},
   hasSeenOnboarding: false,
+  firstRunSeen: 0,
+  firstRunProgress: null,
+  debugMode: false,
   rigsRailView: DEFAULT_RIGS_RAIL_VIEW,
   updateLastCheckedAt: null,
   updateAnnouncedVersion: null,

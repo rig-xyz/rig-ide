@@ -1,6 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
+import {
+  FIRST_RUN_CASES,
+  firstRunDebugAvailable,
+  replayFirstRun,
+} from '@renderer/features/first-run/debug/first-run-debug';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { settingsRow } from '../settings-pages';
@@ -8,13 +13,67 @@ import { SettingsRow, SettingsRows, SettingsSwitch } from '../settings-row';
 
 /** Settings › Advanced: settings still settling, and the Rig folder, which few should change. Replaces the old Experimental section. */
 export function AdvancedPage() {
+  const { data } = useQuery({ queryKey: ['rig', 'settings', 'debugMode'], queryFn: () => rpc.rig.settings.get() });
   return (
     <SettingsRows>
       <NewHomeRow />
       <RoomThemesRow />
       <SpacesDiskCacheRow />
       <RigHomeRow />
+      <DebugModeRow enabled={data?.debugMode ?? false} />
+      {firstRunDebugAvailable(data?.debugMode ?? false) && <FirstRunRow />}
     </SettingsRows>
+  );
+}
+
+/** `debugMode`: offers the testing tools below (dev builds always have them). */
+function DebugModeRow({ enabled }: { enabled: boolean }) {
+  const row = settingsRow('debug-mode')!;
+  const queryClient = useQueryClient();
+  const toggle = () => {
+    void rpc.rig.settings.set({ debugMode: !enabled }).then(() => {
+      void queryClient.invalidateQueries({ queryKey: ['rig', 'settings', 'debugMode'] });
+    });
+  };
+  return (
+    <SettingsRow
+      id={row.id}
+      label={row.label}
+      description={row.description}
+      htmlFor="debug-mode"
+      control={<SettingsSwitch id="debug-mode" label={row.label} checked={enabled} onToggle={toggle} />}
+    />
+  );
+}
+
+/**
+ * Replay the first run against this Mac as it is, or simulate a new account
+ * (the first run's own debug panel then switches between every case and
+ * Set up state). Neither signs you out nor touches your agent.
+ */
+function FirstRunRow() {
+  const row = settingsRow('first-run')!;
+  return (
+    <SettingsRow
+      id={row.id}
+      label={row.label}
+      description={row.description}
+      control={
+        <div className="flex gap-1.5">
+          <Button variant="outline" size="xs" onClick={() => void replayFirstRun()} data-testid="first-run-replay">
+            Replay
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={() => void replayFirstRun(FIRST_RUN_CASES[0]!.simulation)}
+            data-testid="first-run-simulate"
+          >
+            Simulate
+          </Button>
+        </div>
+      }
+    />
   );
 }
 
