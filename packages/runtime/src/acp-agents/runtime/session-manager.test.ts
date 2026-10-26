@@ -293,6 +293,17 @@ describe('AcpRuntime session manager', () => {
     expect(JSON.stringify(vi.mocked(h.agent.newSession).mock.calls)).not.toContain('"append":"x"');
   });
 
+  it("narrows a Claude session with deny rules and no bypass mode when asked, and only then", async () => {
+    const h = makeAcpHarness();
+    const rt = new AcpRuntime(h.deps);
+    await rt.startSession({ ...makeStartInput({ conversationId: 'conv-locked' }), disallowedTools: ['Bash', 'Write'], noBypassPermissions: true });
+    expect(h.agent.newSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({ _meta: { claudeCode: { options: { disallowedTools: ['Bash', 'Write'], allowDangerouslySkipPermissions: false } } } })
+    );
+    await rt.startSession(makeStartInput({ conversationId: 'conv-open' }));
+    expect(JSON.stringify(vi.mocked(h.agent.newSession).mock.lastCall)).not.toContain('disallowedTools');
+  });
+
   it("writes a Claude session's debug log to the file it was given, on new and load, and only then", async () => {
     const h = makeAcpHarness();
     const rt = new AcpRuntime(h.deps);

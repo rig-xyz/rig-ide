@@ -75,6 +75,14 @@ export const acpStartInputSchema = z.object({
    */
   systemPromptAppend: z.string().max(64_000).optional(),
   /**
+   * Claude only: tools this session can never use, whatever the person's own
+   * settings allow (the adapter's `disallowedTools`, as deny rules). It only
+   * ever narrows what the session can do.
+   */
+  disallowedTools: z.array(z.string().max(200)).max(100).optional(),
+  /** Claude only: no bypass-permissions mode in this session, even if the person's settings allow it. */
+  noBypassPermissions: z.boolean().optional(),
+  /**
    * Claude only: Claude Code's debug log for this session goes to this file
    * (the adapter's `debug` and `debugFile` options). Set by the app for a
    * space session when it runs with RIG_CLAUDE_DEBUG=1; off otherwise.

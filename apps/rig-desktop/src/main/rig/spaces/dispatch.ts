@@ -94,6 +94,10 @@ export interface SpacesAcpSessions {
     systemPromptAppend?: string;
     /** A model for this session (an id or an alias like "haiku"); the person's default when unset. */
     model?: string;
+    /** Claude only: tools this session can never use, whatever the person's settings allow. */
+    disallowedTools?: string[];
+    /** Claude only: no bypass-permissions mode, even if the person's settings allow it. */
+    noBypassPermissions?: boolean;
   }): Promise<Result<{ sessionId: string }, string>>;
   /** Reopens an earlier ACP session by its agent session id (ACP `session/load`), with its context intact. */
   resumeSession(input: {
@@ -2166,7 +2170,7 @@ export function createRuntimeAcpSessions(
     return file ? { claudeDebugFile: file } : {};
   };
   return {
-    async startSession({ conversationId, providerId, cwd, mcpServers, disabledProjectServers, systemPromptAppend, model }) {
+    async startSession({ conversationId, providerId, cwd, mcpServers, disabledProjectServers, systemPromptAppend, model, disallowedTools, noBypassPermissions }) {
       const client = await getClient();
       const result = await client.startSession({
         input: {
@@ -2181,6 +2185,8 @@ export function createRuntimeAcpSessions(
           ...(mcpServers?.length ? { mcpServers } : {}),
           ...(disabledProjectServers?.length ? { disabledProjectMcpServers: disabledProjectServers } : {}),
           ...(systemPromptAppend ? { systemPromptAppend } : {}),
+          ...(disallowedTools?.length ? { disallowedTools } : {}),
+          ...(noBypassPermissions ? { noBypassPermissions } : {}),
           ...debugFor(conversationId, providerId),
         },
       });

@@ -826,6 +826,10 @@ export class SessionManager implements InboundRouter {
  * session. Headless Claude loads every unrejected `.mcp.json` server without
  * asking, so this is the only way to hold one back.
  *
+ * `disallowedTools` and `allowDangerouslySkipPermissions: false` only narrow
+ * a session (the background orchestrator's): deny rules beat any allow rule
+ * in the person's settings, and bypass mode isn't offered.
+ *
  * And `_meta.systemPrompt.append`: extra instructions after Claude Code's own
  * system prompt. The adapter keeps its `claude_code` preset and only adds
  * this, on a new session and on a load alike.
@@ -843,7 +847,9 @@ function sessionMeta(input: AcpStartInput): { _meta?: Record<string, unknown> } 
   const disabled = input.disabledProjectMcpServers ?? [];
   const append = input.systemPromptAppend ?? '';
   const debugFile = input.claudeDebugFile ?? '';
-  if (disabled.length === 0 && !append && !debugFile) return {};
+  const denied = input.disallowedTools ?? [];
+  const noBypass = input.noBypassPermissions === true;
+  if (disabled.length === 0 && !append && !debugFile && denied.length === 0 && !noBypass) return {};
   // Tool search on, said outright for a space session (the only kind with an
   // append), new or loaded: with it off, every tool of the owner's own MCP
   // servers went in every call, about 285,000 tokens. Rig's own tools skip
@@ -853,6 +859,8 @@ function sessionMeta(input: AcpStartInput): { _meta?: Record<string, unknown> } 
     ...(disabled.length > 0 ? { settings: { disabledMcpjsonServers: disabled } } : {}),
     ...(append ? { env: { ENABLE_TOOL_SEARCH: 'true' } } : {}),
     ...(debugFile ? { debug: true, debugFile } : {}),
+    ...(denied.length > 0 ? { disallowedTools: denied } : {}),
+    ...(noBypass ? { allowDangerouslySkipPermissions: false } : {}),
   };
   return {
     _meta: {
