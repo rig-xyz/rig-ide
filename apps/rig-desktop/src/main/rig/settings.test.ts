@@ -243,6 +243,34 @@ describe('RigSettingsStore', () => {
     });
   });
 
+  describe('newHomeEnabled: on for new installs only', () => {
+    it('a brand-new install (no file at all) gets the new Home', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().newHomeEnabled).toBe(true);
+    });
+
+    it('an existing settings.json without the field keeps the current Home', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(settingsPath, JSON.stringify({ version: 1, theme: 'dark' }));
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().newHomeEnabled).toBe(false);
+    });
+
+    it('a saved value is honored either way', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(settingsPath, JSON.stringify({ ...DEFAULT_RIG_SETTINGS, newHomeEnabled: false }));
+      const off = new RigSettingsStore(settingsPath);
+      off.initialize();
+      expect(off.get().newHomeEnabled).toBe(false);
+      writeFileSync(settingsPath, JSON.stringify({ ...DEFAULT_RIG_SETTINGS, newHomeEnabled: true }));
+      const on = new RigSettingsStore(settingsPath);
+      on.initialize();
+      expect(on.get().newHomeEnabled).toBe(true);
+    });
+  });
+
   describe('rigsRailView (round 2 — filter/sort persistence)', () => {
     it('defaults to all/recent before anything is ever set', () => {
       const store = new RigSettingsStore(settingsPath);

@@ -12,8 +12,8 @@ import { useRealFeed } from './use-real-feed';
 import './home-feed.css';
 
 /**
- * The new Home (rig README §2, "Two screens: Home and Inbox"), behind
- * Settings › Advanced › Preview the new Home. Three zones: the rail (what's being done),
+ * The new Home (rig README §2, "Two screens: Home and Inbox"), on for new
+ * installs and behind Settings › Advanced › Preview the new Home for others. Three zones: the rail (what's being done),
  * the middle (talk to Rig, or see what's open), and the Feed (what to do
  * next). It owns the whole window, traffic-light strip included; the app's
  * top bar steps aside, and you and Settings sit at the foot of the rail.

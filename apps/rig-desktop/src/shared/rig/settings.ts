@@ -250,8 +250,10 @@ export type RigSettings = {
   roomThemesEnabled: boolean;
   /**
    * The new Home (rig README §2: the rail of what's being done, the chat with
-   * Rig, and the Feed of what to do next). A preview, off by default; read
-   * live, so toggling it swaps Home without a reload.
+   * Rig, and the Feed of what to do next). On for a fresh install; a settings
+   * file from before keeps what it saved, and one without the field keeps the
+   * current Home (`normalizeSettings`). Read live, so toggling it swaps Home
+   * without a reload.
    */
   newHomeEnabled: boolean;
   /**
@@ -306,7 +308,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   spacesRoomSeesDefault: DEFAULT_ROOM_SEES,
   spacesChatView: 'flow',
   spacesRoomDiskCache: true,
-  newHomeEnabled: false,
+  newHomeEnabled: true,
   roomThemesEnabled: true,
   cacheAndThemesDefaultOnApplied: true,
   pageSignIns: DEFAULT_PAGE_SIGN_INS,
