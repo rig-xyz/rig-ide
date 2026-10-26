@@ -27,7 +27,8 @@ export type RunProgress = {
 };
 
 export type OrchProgressEvent =
-  | { run: string; kind: 'start'; trigger: string; passes: number; lookbackDays: number; t: number }
+  /** `lookups`: every planned pass's budget together; a widened pass adds its own when it starts. */
+  | { run: string; kind: 'start'; trigger: string; passes: number; lookups: number; lookbackDays: number; t: number }
   | { run: string; kind: 'pass'; pass: number; lookups: number; goal: string | null; lookbackDays: number; t: number }
   | { run: string; kind: 'line'; line: RunProgress }
   /** A card went on the Feed (`rig_feed` put). */

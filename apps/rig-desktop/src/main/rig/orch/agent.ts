@@ -213,7 +213,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       emit({ kind: 'line', line: { id: `step:${id}`, connector: null, label, status, t: t() } });
     const passes = first ? (opts.passes ?? FIRST_RUN.passes!) : [{ lookups: 0 }];
     const lookbackDays = opts.lookbackDays ?? 3;
-    emit({ kind: 'start', trigger, passes: passes.length, lookbackDays, t: 0 });
+    emit({ kind: 'start', trigger, passes: passes.length, lookups: passes.reduce((n, p) => n + p.lookups, 0), lookbackDays, t: 0 });
     // Said at once, so the person sees it working while the session wakes up.
     step('state', 'Looking up what Rig already knows', 'running');
     const state = await deps.state();
@@ -291,6 +291,10 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       if (raw.kind === 'turn_start') begun = true;
       else if (raw.kind === 'acp_update' && begun) {
         events.push({ kind: raw.update.sessionUpdate, payload: raw.update });
+        // A lookup that failed says why in the log (the person sees "Couldn't read").
+        if (raw.update.sessionUpdate === 'tool_call_update' && (raw.update as { status?: string }).status === 'failed') {
+          deps.log?.warn('Rig orchestrator: a lookup failed', { pass: passNo, call: JSON.stringify(raw.update).slice(0, 800) });
+        }
         for (const e of mapper.push(raw.update as AcpToolUpdate)) {
           if (e.kind === 'card') cards += 1;
           emit(e);
