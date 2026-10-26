@@ -170,7 +170,6 @@ export const orchestrator = createOrchestrator({
   },
   sources: async () => (await readSources()).filter((x) => !x.paused).map((x) => ({ connector: x.connector, what: x.what })),
   recordRun: (id, trigger, note) => feedRelay.orchRun(id, trigger, note),
-  issueTurn: () => turnGate.issue('run'),
   now: () => Date.now(),
   log,
 });

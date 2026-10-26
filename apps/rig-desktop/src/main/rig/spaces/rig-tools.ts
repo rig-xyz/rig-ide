@@ -159,10 +159,30 @@ export const ownerApprovals = createOwnerApprovals();
 type Failure = { message: string };
 
 /** The control plane, as the rig tools see it. */
-export type OrchPrimitives = Pick<OrchActions, 'query' | 'get' | 'act' | 'start'> & Partial<Pick<OrchActions, 'check' | 'remember' | 'runNote'>>;
+export type OrchPrimitives = Pick<OrchActions, 'query' | 'get' | 'act' | 'start'> & Partial<Pick<OrchActions, 'check' | 'remember' | 'runNote'>> & {
+  /** One `gh` read for the orchestrator (orch/github.ts): checked, and run with no shell. */
+  github?(command: string): Promise<Result<string, Failure>>;
+};
 
 /** The background orchestrator's scope (orch/agent.ts): the only one its write tools answer. */
 export const ORCHESTRATOR_BINDING = 'orchestrator';
+
+/**
+ * Every Rig tool the background orchestrator's session has: the only ones
+ * registered on its server (rig-tools-server.ts), and the ones it may call
+ * without asking (orch/agent.ts). Not rig_start: work starts on the person's
+ * click, while they are still learning to trust what it offers.
+ */
+export const ORCHESTRATOR_RIG_TOOLS: ReadonlySet<string> = new Set([
+  'rig_query',
+  'rig_get',
+  'rig_situation',
+  'rig_feed',
+  'rig_check',
+  'rig_remember',
+  'rig_run_note',
+  'rig_github',
+]);
 
 export interface RigToolsBackend {
   /** The signed-in account's relay user id. */
@@ -1568,6 +1588,20 @@ export function createAgentRigTools(backend: RigToolsBackend): RigTool[] {
         const refs = Array.isArray(input.refs) ? input.refs.map(String) : [];
         const res = await backend.orch.remember({ about: String(input.about ?? ''), fact: String(input.fact ?? ''), refs, until: str(input.until), actor: agentActor(scope) });
         return res.success ? { text: `Remembered (${res.data.id}).` } : failed(res.error.message);
+      },
+    },
+    {
+      name: 'rig_github',
+      description:
+        'Read GitHub with one gh read command, as you would type it: gh pr view/list/status/checks/diff, gh issue view/list/status, gh search prs/issues, gh run view/list or gh repo view, with an optional trailing --jq \'…\' filter. ' +
+        'Nothing else runs, and it never goes through a shell. Example: gh pr view 342 --repo ulys/mobile-ios --json state,reviews,mergedAt',
+      inputSchema: { command: z.string().describe('The gh command, starting with "gh ".') },
+      annotations: { title: 'Read GitHub', readOnlyHint: true, openWorldHint: true },
+      run: async (scope, input) => {
+        if (scope.bindingId !== ORCHESTRATOR_BINDING) return failed(ONLY_ORCHESTRATOR);
+        if (!backend.orch?.github) return failed(NO_ORCH);
+        const res = await backend.orch.github(String(input.command ?? ''));
+        return res.success ? { text: res.data.trim() || '(no output)' } : failed(res.error.message);
       },
     },
     {

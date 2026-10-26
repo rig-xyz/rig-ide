@@ -1,6 +1,7 @@
 import type { AcpPermissionRequest } from '@emdash/core/acp';
 import type { Result } from '@emdash/shared';
 import type { RigFeedItem, RigSituation } from '@shared/rig/feed';
+import { GH_READ } from './github';
 import { askHeadless, parseJsonArray, type HeadlessDeps, type ImportEvent } from './sources';
 
 /**
@@ -49,13 +50,6 @@ export function dueChecks(visible: RigFeedItem[], records: Record<string, CheckR
 }
 
 const READ_VERB = /(^|_)(list|get|search|read|fetch|query|find|view)/i;
-
-/**
- * GitHub's read-only commands, with no way to chain another: claude.ai has no
- * GitHub connector, and a PR's state is what a check most often needs.
- */
-// A trailing `--jq '…'` filter is allowed: inside single quotes the shell interprets nothing but the closing quote.
-const GH_READ = /^gh (pr (view|list|status|checks|diff)|issue (view|list|status)|search (prs|issues)|run (view|list)|repo view)( [^;&|<>`$\\\n']*)?( --jq '[^'\n]*')?$/;
 
 /** Any claude.ai connector's read tools and `gh` reads, once; everything else is refused. */
 export function checkPermission(request: AcpPermissionRequest): string | null {

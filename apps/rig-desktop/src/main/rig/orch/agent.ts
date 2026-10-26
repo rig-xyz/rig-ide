@@ -2,7 +2,8 @@ import type { AcpHttpMcpServerWire, AcpPermissionRequest } from '@emdash/core/ac
 import { err, ok, type Result } from '@emdash/shared';
 import type { OrchAgentState } from '../feed/relay';
 import { finalAnswerFromEvents, type RawSessionEvent, type SpacesAcpSessions } from '../spaces/dispatch';
-import { ORCHESTRATOR_BINDING, rigToolOf, type RigToolScope } from '../spaces/rig-tools';
+import { RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
+import { ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, rigToolOf, type RigToolScope } from '../spaces/rig-tools';
 import { checkPermission } from './checks';
 import { orchestratorSkill } from './skill';
 
@@ -18,11 +19,15 @@ import { orchestratorSkill } from './skill';
  */
 
 /**
- * The tools the orchestrator may call without asking; anything else of Rig's
- * is refused. Not rig_start: work starts on the person's click, while they
- * are still learning to trust what it offers.
+ * Tools the session can never use, whatever the person's own Claude settings
+ * allow: no shell (GitHub reads go through rig_github), no file writes, and
+ * no starting work. Deny rules beat allow rules, so this holds in code even
+ * when nothing prompts.
  */
-export const AGENT_TOOLS: ReadonlySet<string> = new Set(['rig_query', 'rig_get', 'rig_situation', 'rig_feed', 'rig_check', 'rig_remember', 'rig_run_note']);
+export const AGENT_DENIED_TOOLS = ['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', `mcp__${RIG_TOOLS_SERVER}__rig_start`];
+
+/** The mode the session runs in: Claude Code's "Ask first", so every call the rules above don't settle comes to `agentPermission`. */
+export const AGENT_MODE = 'default';
 
 export const AGENT_BUDGET = { lookups: 20, firstRead: 40 };
 
@@ -30,7 +35,7 @@ export const AGENT_BUDGET = { lookups: 20, firstRead: 40 };
 export function agentPermission(request: AcpPermissionRequest): string | null {
   const tool = rigToolOf(request.toolCall.title);
   if (!tool) return checkPermission(request);
-  const want = AGENT_TOOLS.has(tool) ? 'allow_once' : 'reject_once';
+  const want = ORCHESTRATOR_RIG_TOOLS.has(tool) ? 'allow_once' : 'reject_once';
   return request.options.find((o) => o.kind === want)?.optionId ?? null;
 }
 
@@ -44,7 +49,6 @@ export type PacketInput = {
   runId: string;
   now: number;
   trigger: string;
-  turnId: string;
   state: OrchAgentState;
   /** What each of the person's sources watches: "Slack: your DMs and #eng-general". */
   sources: { connector: string; what: string }[];
@@ -64,8 +68,8 @@ export function buildPacket(p: PacketInput): string {
   const firstRead = fresh.length > 0;
   const lookups = firstRead ? AGENT_BUDGET.firstRead : AGENT_BUDGET.lookups;
   return [
+    // No user_turn_id: a run is never the person asking, so it can never pass rig_start's gate.
     `<run id="${p.runId}" now="${iso(p.now)}" trigger="${p.trigger}" budget="${lookups} lookups"/>`,
-    `<rig_turn user_turn_id="${p.turnId}" />`,
     '',
     '## Who you are',
     state.profile || state.me || 'Unknown: ask nothing, and note it in the run note.',
@@ -89,7 +93,7 @@ export function buildPacket(p: PacketInput): string {
 }
 
 export type OrchestratorDeps = {
-  acp: Pick<SpacesAcpSessions, 'startSession' | 'queuePrompt' | 'subscribeRaw' | 'subscribePendingPermissions' | 'resolvePermission' | 'stopSession'>;
+  acp: Pick<SpacesAcpSessions, 'startSession' | 'setConfig' | 'queuePrompt' | 'subscribeRaw' | 'subscribePendingPermissions' | 'resolvePermission' | 'stopSession'>;
   rigTools: (scope: RigToolScope) => Promise<AcpHttpMcpServerWire>;
   whoami: () => Promise<Result<{ id: string }, { message: string }>>;
   cwd: () => Promise<string>;
@@ -97,7 +101,6 @@ export type OrchestratorDeps = {
   state: () => Promise<Result<OrchAgentState, { message: string }>>;
   sources: () => Promise<{ connector: string; what: string }[]>;
   recordRun: (id: string, trigger: string, note?: Record<string, unknown>) => Promise<unknown>;
-  issueTurn: () => string;
   now: () => number;
   turnTimeoutMs?: number;
   log?: { info: (msg: string, meta?: Record<string, unknown>) => void; warn: (msg: string, meta?: Record<string, unknown>) => void };
@@ -117,9 +120,23 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     const cwd = await deps.cwd();
     const conversationId = deps.newConversationId();
     const rig = await deps.rigTools({ bindingId: ORCHESTRATOR_BINDING, ownerUserId: me.data.id, agent: 'claude', cwd });
-    // The person's own default model, as in their other sessions.
-    const started = await deps.acp.startSession({ conversationId, providerId: 'claude', cwd, mcpServers: [rig], systemPromptAppend: orchestratorSkill(name) });
+    // The person's own default model, as in their other sessions; never their permission mode or allow rules.
+    const started = await deps.acp.startSession({
+      conversationId,
+      providerId: 'claude',
+      cwd,
+      mcpServers: [rig],
+      systemPromptAppend: orchestratorSkill(name),
+      disallowedTools: AGENT_DENIED_TOOLS,
+      noBypassPermissions: true,
+    });
     if (!started.success) return err(started.error);
+    // Ask first, whatever the person's defaultMode: if it can't be set, no run.
+    const moded = deps.acp.setConfig ? await deps.acp.setConfig(conversationId, { mode: AGENT_MODE }) : err('This build cannot set the session mode.');
+    if (!moded.success) {
+      await deps.acp.stopSession?.(conversationId).catch(() => undefined);
+      return err(`Could not put the orchestrator in Ask first: ${moded.error}`);
+    }
     const off = await deps.acp.subscribePendingPermissions(conversationId, (request) => {
       const optionId = agentPermission(request);
       // What it was refused shows what it couldn't check: log it.
@@ -140,7 +157,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     const { conversationId } = session.data;
     const runId = `run_${new Date(startedAt).toISOString().replace(/\D/g, '').slice(0, 12)}_${Math.random().toString(36).slice(2, 6)}`;
     await deps.recordRun(runId, trigger);
-    const packet = buildPacket({ runId, now: startedAt, trigger, turnId: deps.issueTurn(), state: state.data, sources: await deps.sources() });
+    const packet = buildPacket({ runId, now: startedAt, trigger, state: state.data, sources: await deps.sources() });
     let finish!: (r: Result<null, string>) => void;
     const done = new Promise<Result<null, string>>((resolve) => (finish = resolve));
     let begun = false;

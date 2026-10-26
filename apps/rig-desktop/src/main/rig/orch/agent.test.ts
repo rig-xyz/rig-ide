@@ -1,9 +1,10 @@
 import type { AcpPermissionRequest } from '@emdash/core/acp';
-import { ok } from '@emdash/shared';
+import { err, ok } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { OrchAgentState } from '../feed/relay';
 import type { RawSessionEvent } from '../spaces/dispatch';
-import { agentPermission, buildPacket, createOrchestrator } from './agent';
+import { AGENT_DENIED_TOOLS, agentPermission, buildPacket, createOrchestrator } from './agent';
+import { createTurnGate } from './turns';
 
 const NOW = Date.parse('2026-10-23T13:00:00Z');
 const perm = (title: string, extra: Record<string, unknown> = {}) =>
@@ -24,9 +25,10 @@ const state = (over: Partial<OrchAgentState> = {}): OrchAgentState => ({
 
 describe('the background orchestrator', () => {
   it('builds a short packet: who, rules, and where to look', () => {
-    const packet = buildPacket({ runId: 'run_x', now: NOW, trigger: 'schedule', turnId: 'turn_1', state: state(), sources: [{ connector: 'Slack', what: 'your DMs' }, { connector: 'Linear', what: 'Ulys issues' }] });
+    const packet = buildPacket({ runId: 'run_x', now: NOW, trigger: 'schedule', state: state(), sources: [{ connector: 'Slack', what: 'your DMs' }, { connector: 'Linear', what: 'Ulys issues' }] });
     expect(packet).toContain('<run id="run_x" now="2026-10-23T13:00:00.000Z" trigger="schedule" budget="40 lookups"/>');
-    expect(packet).toContain('<rig_turn user_turn_id="turn_1" />');
+    // A run is never the person asking: no user_turn_id for rig_start's gate.
+    expect(packet).not.toContain('user_turn_id');
     expect(packet).toContain('CTO of Ulys');
     expect(packet).toContain('rule_1 "Investors come to me first."');
     expect(packet).toContain('slack: your DMs, since 2026-10-23T11:58:00Z');
@@ -44,6 +46,7 @@ describe('the background orchestrator', () => {
 
   it("allows its own Rig tools and read-only lookups, and refuses everything else", () => {
     expect(agentPermission(perm('mcp__rig__rig_feed'))).toBe('yes');
+    expect(agentPermission(perm('mcp__rig__rig_github'))).toBe('yes');
     expect(agentPermission(perm('mcp__rig__rig_start'))).toBe('no');
     expect(agentPermission(perm('mcp__rig__rig_chat_read'))).toBe('no');
     expect(agentPermission(perm('mcp__claude_ai_Slack__slack_read_thread'))).toBe('yes');
@@ -56,6 +59,7 @@ describe('the background orchestrator', () => {
     let emit: (e: RawSessionEvent) => void = () => {};
     const acp = {
       startSession: vi.fn(async () => ok({ sessionId: 's' })),
+      setConfig: vi.fn(async () => ok(undefined)),
       stopSession: vi.fn(async () => {}),
       subscribeRaw: vi.fn(async (_id: string, on: (e: RawSessionEvent) => void) => ((emit = on), () => {})),
       subscribePendingPermissions: vi.fn(async () => () => {}),
@@ -78,7 +82,6 @@ describe('the background orchestrator', () => {
       state: async () => ok(state()),
       sources: async () => [],
       recordRun,
-      issueTurn: () => 'turn_1',
       now: () => NOW,
     });
     const [a, b] = await Promise.all([o.run('schedule'), o.run('asked')]);
@@ -88,8 +91,54 @@ describe('the background orchestrator', () => {
     expect(acp.startSession).toHaveBeenCalledTimes(1);
     expect(acp.startSession).toHaveBeenCalledWith(expect.objectContaining({ systemPromptAppend: expect.stringContaining('You are Rig, working in the background for Dylan Bourgeois.') }));
     expect((acp.startSession.mock.calls as unknown as [Record<string, unknown>][])[0]![0]).not.toHaveProperty('model');
+    // Locked down in code: no shell, no file writes, no rig_start, no bypass, and Ask first.
+    expect(acp.startSession).toHaveBeenCalledWith(expect.objectContaining({ disallowedTools: AGENT_DENIED_TOOLS, noBypassPermissions: true }));
+    expect(AGENT_DENIED_TOOLS).toEqual(expect.arrayContaining(['Bash', 'Write', 'Edit', 'NotebookEdit', 'mcp__rig__rig_start']));
+    expect(acp.setConfig).toHaveBeenCalledWith('orchestrator-1', { mode: 'default' });
     expect(acp.queuePrompt).toHaveBeenCalledTimes(2);
     // Started, then ended without a note: the cursors stay where they were.
     expect(recordRun).toHaveBeenCalledWith(expect.stringMatching(/^run_/), 'schedule', expect.objectContaining({ read: [{ source: 'slack', until: '2026-10-23T11:58:00Z' }], summary: expect.stringMatching(/^The run ended without a note\./) }));
+  });
+
+  it("doesn't run when its session can't be put in Ask first", async () => {
+    const acp = {
+      startSession: vi.fn(async () => ok({ sessionId: 's' })),
+      setConfig: vi.fn(async () => err('no such mode')),
+      stopSession: vi.fn(async () => {}),
+      subscribeRaw: vi.fn(async () => () => {}),
+      subscribePendingPermissions: vi.fn(async () => () => {}),
+      resolvePermission: vi.fn(async () => {}),
+      queuePrompt: vi.fn(async () => ok({ turnId: null })),
+    };
+    const o = createOrchestrator({
+      acp,
+      rigTools: async () => ({ type: 'http', name: 'rig', url: 'http://127.0.0.1/mcp', headers: [] }) as never,
+      whoami: async () => ok({ id: 'usr_me' }),
+      cwd: async () => '/tmp/orch',
+      newConversationId: () => 'orchestrator-1',
+      state: async () => ok(state()),
+      sources: async () => [],
+      recordRun: async () => ok(null),
+      now: () => NOW,
+    });
+    const r = await o.run('schedule');
+    expect(r.success).toBe(false);
+    expect(acp.queuePrompt).not.toHaveBeenCalled();
+    expect(acp.stopSession).toHaveBeenCalledWith('orchestrator-1');
+  });
+});
+
+describe('the user_turn_id gate', () => {
+  it("passes the person's own message or click, and nothing else", () => {
+    let t = 0;
+    const gate = createTurnGate({ now: () => t, ttlMs: 1000 });
+    expect(gate.fresh(gate.issue('click'))).toBe(true);
+    expect(gate.fresh(gate.issue('chat'))).toBe(true);
+    // An origin that isn't the person's (a background run) never passes, even if one were issued.
+    expect(gate.fresh(gate.issue('run' as never))).toBe(false);
+    expect(gate.fresh('turn_made_up')).toBe(false);
+    const old = gate.issue('click');
+    t = 2000;
+    expect(gate.fresh(old)).toBe(false);
   });
 });

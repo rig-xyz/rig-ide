@@ -3,7 +3,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ok } from '@emdash/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AcpHttpMcpServerWire } from '@emdash/core/acp';
-import type { RigToolScope, RigToolsBackend } from './rig-tools';
+import { ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, type RigToolScope, type RigToolsBackend } from './rig-tools';
 import { createRigToolsServer, type RigToolsServer } from './rig-tools-server';
 
 const DYLAN: RigToolScope = { bindingId: 'b1', ownerUserId: 'u-dylan', agent: 'claude', cwd: '/rigs/one' };
@@ -187,6 +187,15 @@ describe('rig tools server', () => {
     await other.callTool({ name: 'rig_chat_read', arguments: {} });
     expect(backend.listMessages).toHaveBeenLastCalledWith('b2', { latest: 30 });
     await other.close();
+  });
+
+  it("gives the background orchestrator's session its own tools only: no rig_start, no space writes", async () => {
+    server = createRigToolsServer({ backend: fakeBackend() });
+    const client = await connect(await server.serverFor({ ...DYLAN, bindingId: ORCHESTRATOR_BINDING }));
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name).sort()).toEqual([...ORCHESTRATOR_RIG_TOOLS].sort());
+    expect(tools.map((t) => t.name)).not.toContain('rig_start');
+    await client.close();
   });
 
   it('serves extra tools next to the rig ones, passing an image result through, still only for the session owner', async () => {
