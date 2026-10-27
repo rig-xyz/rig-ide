@@ -67,6 +67,7 @@ import { rigProblemReportController } from './rig/problem-report-instance';
 import { rigShareController } from './rig/rig-share';
 import { rigSeenStateController } from './rig/seen-state';
 import { rigSessionsController } from './rig/sessions';
+import { rigFirstRunController } from './rig/first-run/controller';
 import { rigSettingsController } from './rig/settings-instance';
 import { rigConnectorsController } from './rig/connectors/connections-instance';
 import { rigPagesController } from './rig/pages/pages-controller';
@@ -154,6 +155,8 @@ export const rpcRouter = createRPCRouter({
     // from the `appSettings` surface above, which is Emdash's inherited
     // SQLite-backed store.
     settings: rigSettingsController,
+    // The first run's checks of this Mac (Connect's pre-flight).
+    firstRun: rigFirstRunController,
     // File-navigator redesign: `rig_seen_files` — per-user, per-rig,
     // LOCAL-ONLY last-viewed timestamps behind the tree's unseen dots. Own
     // key, own table: this is reading state, not a preference, so it's

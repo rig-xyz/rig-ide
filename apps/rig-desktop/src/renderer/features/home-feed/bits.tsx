@@ -1,6 +1,8 @@
 import githubIcon from '@iconify-icons/logos/github-icon';
+import calendarIcon from '@iconify-icons/logos/google-calendar';
 import gmailIcon from '@iconify-icons/logos/google-gmail';
 import linearIcon from '@iconify-icons/logos/linear-icon';
+import notionIcon from '@iconify-icons/logos/notion-icon';
 import slackIcon from '@iconify-icons/logos/slack-icon';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
@@ -12,14 +14,16 @@ import { type Person, type RailSession, sessionMatrix, type SourceConnector } fr
 /**
  * The source marks: real brand logos from svg-logos (`@iconify-icons/logos`,
  * CC0), one module per logo. Linear and GitHub ship in dark ink, so Linear
- * takes its indigo and GitHub the theme's ink. Granola isn't in any logo set:
- * its leaf stays drawn by hand.
+ * takes its indigo and GitHub the theme's ink; Notion keeps its own black on
+ * white. Granola isn't in any logo set: its leaf stays drawn by hand.
  */
 const MARKS = {
   slack: slackIcon,
   gmail: gmailIcon,
   linear: { ...linearIcon, body: linearIcon.body.replaceAll('fill="#222326"', 'fill="#5e6ad2"') },
   github: { ...githubIcon, body: githubIcon.body.replaceAll('fill="#161614"', 'fill="currentColor"') },
+  calendar: calendarIcon,
+  notion: notionIcon,
 } as const;
 const GRANOLA = { tile: '#2f7d4f', ink: '#ffffff' };
 

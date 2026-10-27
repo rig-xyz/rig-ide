@@ -19,6 +19,8 @@ export type AgentRoute = {
   account: string;
   /** Where its connectors live: "claude.ai". */
   connectorsHome: string;
+  /** The page where the person connects a tool to it. */
+  connectorsUrl: string;
   /** Whether a signed-in status can reach the person's connectors. */
   reachesConnectors: (auth: Extract<AgentAuthStatus, { kind: 'authenticated' }>) => boolean;
 };
@@ -30,6 +32,7 @@ const ROUTES: Record<string, AgentRoute> = {
     yours: 'your Claude',
     account: 'Claude account',
     connectorsHome: 'claude.ai',
+    connectorsUrl: 'https://claude.ai/settings/connectors',
     // A key runs sessions but has no claude.ai connectors. A login the CLI
     // doesn't describe (`unknown`, an older CLI) gets the benefit of the doubt.
     reachesConnectors: (auth) => auth.method !== 'api-key',
@@ -44,6 +47,7 @@ export function agentRoute(id: string = ROUTED_AGENT_ID): AgentRoute {
       yours: 'your agent',
       account: 'account',
       connectorsHome: id,
+      connectorsUrl: '',
       reachesConnectors: () => true,
     }
   );

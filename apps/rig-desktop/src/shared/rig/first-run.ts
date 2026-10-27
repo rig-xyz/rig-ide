@@ -40,3 +40,23 @@ export function normalizeFirstRunProgress(value: unknown): FirstRunProgress | nu
   if (!isFirstRunStepId(raw.step)) return null;
   return { step: raw.step, readStarted: raw.readStarted === true };
 }
+
+/** The tools Connect looks for, in the order it lists them. */
+export const FIRST_RUN_CONNECTORS = [
+  'slack',
+  'linear',
+  'github',
+  'gmail',
+  'calendar',
+  'notion',
+] as const;
+export type FirstRunConnector = (typeof FIRST_RUN_CONNECTORS)[number];
+
+/**
+ * Where one tool stands for the person's agent (`rpc.rig.firstRun.preflight`):
+ * reachable, there but needing the person to sign in again, or not there.
+ */
+export type ConnectorCheck = {
+  connector: FirstRunConnector;
+  state: 'connected' | 'needs_auth' | 'missing';
+};

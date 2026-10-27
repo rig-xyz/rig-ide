@@ -97,7 +97,10 @@ export const scriptedOrchestrator: HomeOrchestrator = {
       ];
     }
     if (/came in|inbox|new today/.test(low)) {
-      const connectors = Object.keys(SOURCES) as SourceConnector[];
+      // The demo's own five; Calendar and Notion came later, for the first run.
+      const connectors = (Object.keys(SOURCES) as SourceConnector[]).filter(
+        (c) => c !== 'calendar' && c !== 'notion'
+      );
       const runs: Inline[] = [t('24 items since 8:00 from ')];
       connectors.forEach((c, i) => {
         runs.push({ kind: 'source', connector: c }, t(` ${SOURCES[c].name}`));

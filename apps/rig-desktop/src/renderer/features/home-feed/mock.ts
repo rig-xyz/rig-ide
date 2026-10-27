@@ -14,6 +14,8 @@ export const SOURCES: Record<SourceConnector, { name: string; scope: string }> =
   granola: { name: 'Granola', scope: 'your meetings' },
   slack: { name: 'Slack', scope: 'your workspace' },
   gmail: { name: 'Gmail', scope: 'your inbox' },
+  calendar: { name: 'Calendar', scope: 'your calendar' },
+  notion: { name: 'Notion', scope: 'your workspace' },
 };
 
 /** Faces use `--face-1`…`--face-7`. */

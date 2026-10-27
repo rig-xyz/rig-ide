@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { AgentIconAsset } from '@shared/core/agents/agent-payload';
-import type { FirstRunProgress } from '@shared/rig/first-run';
+import type { ConnectorCheck, FirstRunConnector, FirstRunProgress } from '@shared/rig/first-run';
 import type { AgentRoute } from './agent-route';
 import type { Result } from '@emdash/shared';
 import type { FeedChoice, FeedItem } from '@renderer/features/home-feed/model';
@@ -32,8 +32,14 @@ export interface FirstRunEnv {
   cancelRigSignIn(): void;
   installAgent(): void;
   signInAgent(): void;
-  /** Which of the person's tools their agent reaches. `null` until Connect's pre-flight is built (M2). */
-  preflight(): Promise<ConnectorCheck[] | null>;
+  /** Which of the person's tools their agent reaches, read fresh each time (Connect's pre-flight). */
+  preflight(): Promise<ConnectorCheck[]>;
+  /** Which tools Rig already watches (true) or was told to leave out (false); a tool with neither is absent. */
+  readWatching(): Promise<Partial<Record<FirstRunConnector, boolean>>>;
+  /** Watch a tool or leave it out: what the first read, and every read after it, goes through. */
+  setWatching(connector: FirstRunConnector, on: boolean): Promise<void>;
+  /** Opens where the agent's tools are connected (claude.ai's connector settings), or how to, for GitHub. */
+  openConnect(connector: FirstRunConnector): void;
   /** Where the Read step's progress comes from: the real first run, or a recorded one in a simulation. */
   readSource: ProgressSource;
   /** Makes the private Home space if there's none yet (Send and unbound Starts run there). Fire and forget. */
@@ -89,18 +95,3 @@ export type AgentState =
   | { kind: 'ready'; account: string | null };
 
 export type AgentInfo = { name: string; icon: AgentIconAsset | null; route: AgentRoute };
-
-export const FIRST_RUN_CONNECTORS = [
-  'slack',
-  'linear',
-  'github',
-  'gmail',
-  'calendar',
-  'notion',
-] as const;
-export type FirstRunConnector = (typeof FIRST_RUN_CONNECTORS)[number];
-
-export type ConnectorCheck = {
-  connector: FirstRunConnector;
-  state: 'connected' | 'needs_auth' | 'missing';
-};

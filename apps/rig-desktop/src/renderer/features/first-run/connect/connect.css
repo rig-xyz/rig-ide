@@ -1,0 +1,11 @@
+/* A tool's pin on the Connect stage: a glass pill over its tiles, as in the prototype. */
+.fr-pin {
+  display: flex;
+  align-items: center;
+  background: color-mix(in srgb, var(--pill-fill) 88%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 12%, transparent),
+    0 0 0 1px color-mix(in srgb, white 7%, transparent),
+    0 10px 30px -12px rgb(0 0 0 / 0.6);
+}
