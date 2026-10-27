@@ -83,3 +83,111 @@
     animation: none;
   }
 }
+
+/* Rolling digits (`rolling-number.tsx`), after SwiftUI's numericText transition. */
+.rig-num {
+  display: inline-flex;
+  font-variant-numeric: tabular-nums;
+}
+.rig-num-cell {
+  display: inline-grid;
+  overflow: hidden;
+}
+.rig-num-cell > span {
+  grid-area: 1 / 1;
+}
+@keyframes rig-num-in-up {
+  from {
+    transform: translateY(60%);
+    filter: blur(3px);
+    opacity: 0;
+  }
+}
+@keyframes rig-num-in-down {
+  from {
+    transform: translateY(-60%);
+    filter: blur(3px);
+    opacity: 0;
+  }
+}
+@keyframes rig-num-out-up {
+  to {
+    transform: translateY(-60%);
+    filter: blur(3px);
+    opacity: 0;
+  }
+}
+@keyframes rig-num-out-down {
+  to {
+    transform: translateY(60%);
+    filter: blur(3px);
+    opacity: 0;
+  }
+}
+.rig-num-in-up {
+  animation: rig-num-in-up 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.rig-num-in-down {
+  animation: rig-num-in-down 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.rig-num-out-up {
+  animation: rig-num-out-up 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.rig-num-out-down {
+  animation: rig-num-out-down 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* All caught up: the ticker steps back, and the stage breathes out once. */
+.rig-read-settled {
+  opacity: 0.45;
+  transition: opacity 1.4s ease;
+}
+@keyframes rig-caught-breath {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  35% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+.rig-caught-breath {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--status-ok) 34%, transparent),
+    transparent 70%
+  );
+  animation: rig-caught-breath 2.4s cubic-bezier(0.2, 0.8, 0.2, 1) 0.2s both;
+  pointer-events: none;
+}
+@keyframes rig-caught-rise {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+    filter: blur(4px);
+  }
+}
+.rig-caught-rise {
+  animation: rig-caught-rise 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rig-num-in-up,
+  .rig-num-in-down,
+  .rig-num-out-up,
+  .rig-num-out-down,
+  .rig-caught-breath,
+  .rig-caught-rise {
+    animation: none;
+  }
+  .rig-num-out-up,
+  .rig-num-out-down {
+    display: none;
+  }
+}

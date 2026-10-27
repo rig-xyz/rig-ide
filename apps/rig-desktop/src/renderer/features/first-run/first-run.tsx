@@ -34,7 +34,8 @@ import '@renderer/features/home-feed/home-feed.css';
 import './first-run.css';
 
 /** How the field behind the stage looks for a step. */
-export type FieldLook = 'hero' | 'dim' | 'plain';
+/** `rest`: the field goes still and fades nearly out, for a moment of calm (All caught up). */
+export type FieldLook = 'hero' | 'dim' | 'plain' | 'rest';
 
 export type StepProps = {
   env: FirstRunEnv;
@@ -226,7 +227,10 @@ function FirstRunShell({
       <div className="border-r border-border-hairline bg-bg-1" />
       <div className="fr-stage relative overflow-hidden">
         <div className="fr-field absolute inset-0" data-look={fieldLook}>
-          <AgentField ref={field} mode={fieldLook === 'plain' ? 'idle' : 'ambient'} />
+          <AgentField
+            ref={field}
+            mode={fieldLook === 'plain' || fieldLook === 'rest' ? 'idle' : 'ambient'}
+          />
         </div>
       </div>
       <div className="absolute inset-0 z-10 grid grid-cols-[minmax(0,370px)_minmax(0,1fr)]">

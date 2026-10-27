@@ -77,8 +77,9 @@ afterEach(() => {
   host.remove();
 });
 
+// The rolling digits keep the old one for a moment; the label is the number.
 const counters = () =>
-  [...host.querySelectorAll('[aria-label="So far"] b')].map((b) => b.textContent);
+  [...host.querySelectorAll('[aria-label="So far"] b')].map((b) => b.getAttribute('aria-label'));
 
 describe('ReadStep', () => {
   it('shows each line checking, then what it found, and offers the first card', async () => {

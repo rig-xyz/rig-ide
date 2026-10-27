@@ -19,8 +19,23 @@ const { liveFirstRun } = await import('./progress-source');
 
 const run = 'run_1';
 const ev = (seq: number, extra: Partial<OrchProgressEvent> = {}): OrchProgressEvent =>
-  ({ run, kind: 'line', line: { id: `l${seq}`, connector: 'slack', label: `line ${seq}`, status: 'done', t: seq }, seq, ...extra }) as OrchProgressEvent;
-const start: OrchProgressEvent = { run, kind: 'start', trigger: 'first', passes: 2, lookups: 52, lookbackDays: 3, t: 0, seq: 0 };
+  ({
+    run,
+    kind: 'line',
+    line: { id: `l${seq}`, connector: 'slack', label: `line ${seq}`, status: 'done', t: seq },
+    seq,
+    ...extra,
+  }) as OrchProgressEvent;
+const start: OrchProgressEvent = {
+  run,
+  kind: 'start',
+  trigger: 'first',
+  passes: 2,
+  lookups: 52,
+  lookbackDays: 3,
+  t: 0,
+  seq: 0,
+};
 const emit = (e: OrchProgressEvent) => ipc.listeners.forEach((l) => l(e));
 
 beforeEach(() => ipc.listeners.clear());
@@ -44,7 +59,10 @@ describe('liveFirstRun', () => {
   });
 
   it('is safe to start twice, as a remount does: the stopped one hears nothing more', async () => {
-    ipc.answer = async () => ({ success: true, data: { started: true, joined: false, events: [] } });
+    ipc.answer = async () => ({
+      success: true,
+      data: { started: true, joined: false, events: [] },
+    });
     const first: number[] = [];
     const second: number[] = [];
     const stop = liveFirstRun.start((e) => first.push(e.seq ?? -1));

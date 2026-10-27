@@ -33,7 +33,9 @@ export const liveFirstRun: ProgressSource = {
     };
     // Live events that come before the answer wait for it: the answer may hold earlier ones.
     let held: OrchProgressEvent[] | null = [];
-    const off = events.on(rigOrchProgressChannel, (event) => (held ? held.push(event) : deliver(event)));
+    const off = events.on(rigOrchProgressChannel, (event) =>
+      held ? held.push(event) : deliver(event)
+    );
     void rpc.rig.orch
       .firstRun()
       .then((r) => {
@@ -45,7 +47,14 @@ export const liveFirstRun: ProgressSource = {
       })
       .catch(() => {
         held = null;
-        if (!stopped) onEvent({ run: run ?? 'first', kind: 'end', ok: false, error: "Rig couldn't start reading.", t: 0 });
+        if (!stopped)
+          onEvent({
+            run: run ?? 'first',
+            kind: 'end',
+            ok: false,
+            error: "Rig couldn't start reading.",
+            t: 0,
+          });
       });
     return () => {
       stopped = true;

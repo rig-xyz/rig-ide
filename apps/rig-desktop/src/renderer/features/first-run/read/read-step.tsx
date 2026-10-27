@@ -8,28 +8,27 @@ import { cn } from '@renderer/lib/utils';
 import type { OrchProgressEvent } from '@shared/rig/orch-progress';
 import { liveFirstRun, type ProgressSource } from './progress-source';
 import {
-  checkedByConnector,
   currentLine,
   firstForYou,
   initialRead,
-  progressOf,
   readReducer,
   type ReadLine,
   type ReadState,
   tickerLines,
 } from './read-model';
+import { RollingNumber } from './rolling-number';
 import './read.css';
 
 /**
  * Onboarding's Read step (onboarding spec, Step 5): Rig reading the person's
  * last few days while they watch. A header that says what it's doing right
- * now and for how long, three counters that say what they count (lookups in
- * which tools, things already handled, cards for you), a bar for how far
- * through its lookups it is, and a ticker where each line starts as
- * "Checking…" and settles to what it found. Between lookups, while Claude
- * decides what to check next, a line says so: it should never look stuck.
- * Self-contained: the first-run shell mounts it with `onDone`, and its stage
- * field maps the same progress to tiles through `onProgress`.
+ * now, three counters that say what they count and roll when they change,
+ * and a ticker where each line starts as "Checking…" and settles to what it
+ * found. Between lookups, while Claude decides what to check next, a line
+ * says so: it should never look stuck. Self-contained: the first-run shell
+ * mounts it with `onDone`, and its stage field maps the same progress to
+ * tiles through `onProgress`. With `doneInStage`, the stage carries the
+ * finish (All caught up) and this pane just steps back.
  */
 
 export type ReadSummary = {
@@ -50,20 +49,12 @@ const KNOWN_LOGOS: ReadonlySet<string> = new Set<SourceConnector>([
   'gmail',
   'granola',
 ]);
-const TOOL_NAME: Record<string, string> = {
-  slack: 'Slack',
-  linear: 'Linear',
-  github: 'GitHub',
-  gmail: 'Gmail',
-  calendar: 'Calendar',
-  notion: 'Notion',
-  granola: 'Granola',
-};
 
 export function ReadStep({
   onDone,
   source = liveFirstRun,
   onProgress,
+  doneInStage = false,
 }: {
   /** Leaves the step: to the first card when one is ready, else to Home. */
   onDone: (summary: ReadSummary) => void;
@@ -71,6 +62,8 @@ export function ReadStep({
   source?: ProgressSource;
   /** Every event as it comes, for the stage's field (one tile per line). */
   onProgress?: (event: OrchProgressEvent) => void;
+  /** The stage shows the finish; this pane fades back and leaves the way on to the stage. */
+  doneInStage?: boolean;
 }) {
   const [state, dispatch] = useReducer(readReducer, initialRead);
   const onProgressRef = useRef(onProgress);
@@ -88,8 +81,6 @@ export function ReadStep({
   // The run's own clock, so a line's "Checking…" moment is measured the same way as its times.
   const now = useRunClock(state);
   const wall = useWallClock(!state.ended);
-  const startedAt = useRef(Date.now());
-  const elapsed = (state.ended ? state.ended.t : wall - startedAt.current) / 1000;
 
   const firstCard = state.cards.length > 0;
   const ended = state.ended;
@@ -101,7 +92,7 @@ export function ReadStep({
   });
   const current = currentLine(state);
   const thinking = !ended && !current && wall - lastEventAt.current > THINKING_AFTER_MS;
-  const by = checkedByConnector(state);
+  const settled = doneInStage && ended?.ok;
 
   return (
     <section
@@ -111,12 +102,7 @@ export function ReadStep({
     >
       <header className="flex flex-col gap-1.5" data-testid="read-header">
         <div className="flex items-center gap-3">
-          <span
-            className={cn(
-              'grid size-9 shrink-0 place-items-center rounded-[11px] bg-bg-2',
-              !ended && 'rig-read-pulse'
-            )}
-          >
+          <span className="grid size-9 shrink-0 place-items-center rounded-[11px] bg-bg-2">
             <DotMatrix
               state={ended ? (ended.ok ? 'done' : 'failed') : current ? 'reading' : 'thinking'}
               tone={ended && ended.ok ? 'ok' : 'accent'}
@@ -126,19 +112,13 @@ export function ReadStep({
           <h2 className="m-0 font-display text-[22px] leading-tight font-semibold tracking-[-0.015em] text-text-primary">
             {ended ? (ended.ok ? 'All caught up' : 'Rig stopped reading') : 'Catching you up'}
           </h2>
-          <span
-            className="ml-auto font-mono text-xs text-text-muted tabular-nums"
-            aria-label="Time so far"
-          >
-            {clock(elapsed)}
-          </span>
         </div>
         <p
           className="m-0 min-h-[1.4em] truncate text-[13px] text-text-secondary"
           aria-live="polite"
           data-testid="read-now"
         >
-          {status(state, current, thinking, elapsed)}
+          {status(state, current, thinking)}
         </p>
       </header>
       <div className="grid grid-cols-3 gap-2" role="group" aria-label="So far">
@@ -150,45 +130,12 @@ export function ReadStep({
         />
         <Counter value={state.counts.forYou} label="cards for your Feed" className="text-accent" />
       </div>
-      {by.length > 0 && (
-        <div
-          className="-mt-1 flex flex-wrap gap-1.5"
-          aria-label="Lookups by tool"
-          data-testid="read-by-tool"
-        >
-          {by.map(({ connector, count }) => (
-            <span
-              key={connector}
-              className="rig-read-chip inline-flex items-center gap-1.5 rounded-full bg-bg-2 py-[3px] pr-2.5 pl-1.5 text-xs text-text-secondary"
-            >
-              {KNOWN_LOGOS.has(connector) ? (
-                <SourceLogo connector={connector as SourceConnector} size={13} />
-              ) : (
-                <DotMatrix state="quiet" size="sm" tone="mute" />
-              )}
-              {TOOL_NAME[connector] ?? connector}
-              <b className="font-mono font-medium text-text-primary tabular-nums">{count}</b>
-            </span>
-          ))}
-        </div>
-      )}
       <div
-        className="h-[3px] shrink-0 overflow-hidden rounded-full bg-bg-3"
-        role="progressbar"
-        aria-label="Reading"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(progressOf(state) * 100)}
+        className={cn(
+          'flex min-h-0 flex-1 flex-col justify-end gap-1 overflow-hidden [mask-image:linear-gradient(transparent,#000_22%)]',
+          settled && 'rig-read-settled'
+        )}
       >
-        <i
-          className={cn(
-            'block h-full rounded-full bg-[linear-gradient(90deg,var(--accent),color-mix(in_srgb,var(--accent)_50%,var(--status-ok)))] transition-[width] duration-500 ease-linear',
-            !ended && 'rig-read-bar'
-          )}
-          style={{ width: `${progressOf(state) * 100}%` }}
-        />
-      </div>
-      <div className="flex min-h-0 flex-1 flex-col justify-end gap-1 overflow-hidden [mask-image:linear-gradient(transparent,#000_22%)]">
         <ol
           className="m-0 flex list-none flex-col gap-1 p-0"
           aria-live="polite"
@@ -217,41 +164,39 @@ export function ReadStep({
           </div>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-2.5">
-        {firstCard ? (
-          <ActionButton variant="primary" icon={ArrowRight} onClick={() => onDone(summary())}>
-            See it on your Feed
-          </ActionButton>
-        ) : ended ? (
-          <ActionButton variant="primary" icon={Home} onClick={() => onDone(summary())}>
-            Open my Feed
-          </ActionButton>
-        ) : null}
-        <span className="min-w-0 text-xs text-text-muted" data-testid="read-hint">
-          {hint(state)}
-        </span>
-      </div>
+      {!settled && (
+        <div className="flex flex-wrap items-center gap-2.5">
+          {firstCard ? (
+            <ActionButton variant="primary" icon={ArrowRight} onClick={() => onDone(summary())}>
+              See it on your Feed
+            </ActionButton>
+          ) : ended ? (
+            <ActionButton variant="primary" icon={Home} onClick={() => onDone(summary())}>
+              Open my Feed
+            </ActionButton>
+          ) : null}
+          <span className="min-w-0 text-xs text-text-muted" data-testid="read-hint">
+            {hint(state)}
+          </span>
+        </div>
+      )}
     </section>
   );
 }
 
 /** One line under the title: what it's doing this moment, or how it went. */
-function status(
-  state: ReadState,
-  current: ReadLine | null,
-  thinking: boolean,
-  elapsed: number
-): string {
+function status(state: ReadState, current: ReadLine | null, thinking: boolean): string {
   const { ended } = state;
   const checked = state.counts.read;
   if (ended && !ended.ok) return ended.error ?? 'Something went wrong while reading.';
-  if (ended)
-    return `Checked ${checked} ${checked === 1 ? 'place' : 'places'} in your tools in ${clock(elapsed)}. ${state.counts.forYou} ${state.counts.forYou === 1 ? 'card is' : 'cards are'} on your Feed.`;
+  if (ended) return `Checked ${checked} ${checked === 1 ? 'place' : 'places'} in your tools.`;
   if (current) return `${current.label}…`;
   if (!state.lines.length) return 'Starting to read your last 3 days…';
   if (thinking) {
     // The ticker already says it's deciding; up here, what it has done so far.
-    const done = state.lines.filter((l) => l.status !== 'running' && l.connector !== 'rig').at(-1);
+    const done = state.lines
+      .filter((l) => l.status !== 'running' && !!l.connector && l.connector !== 'rig')
+      .at(-1);
     return done ? `${checked} so far · last: ${done.label}` : 'Reading your last 3 days…';
   }
   const last = state.lines.at(-1);
@@ -270,11 +215,6 @@ function hint(state: ReadState): string {
   return 'Skipping anything already handled';
 }
 
-function clock(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
-
 function Counter({
   value,
   label,
@@ -286,15 +226,10 @@ function Counter({
 }) {
   return (
     <div className="rounded-xl bg-bg-2 px-[11px] py-2.5">
-      <b
-        key={value}
-        className={cn(
-          'rig-read-count block font-display text-[22px] leading-[1.1] font-semibold tabular-nums',
-          className
-        )}
-      >
-        {value}
-      </b>
+      <RollingNumber
+        value={value}
+        className={cn('font-display text-[22px] leading-[1.1] font-semibold', className)}
+      />
       <span className="block text-[11.5px] leading-tight text-text-muted">{label}</span>
     </div>
   );
@@ -390,7 +325,7 @@ function useRunClock(state: ReadState): number {
   return now;
 }
 
-/** Wall time, ticking twice a second while the run goes: the elapsed clock and the "deciding" line. */
+/** Wall time, ticking twice a second while the run goes: it tells when to show the "deciding" line. */
 function useWallClock(running: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {

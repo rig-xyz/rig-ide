@@ -36,6 +36,12 @@
 .fr-field[data-look='dim'] {
   opacity: 0.4;
 }
+.fr-field[data-look='rest'] {
+  opacity: 0.12;
+  transition:
+    opacity 2.4s ease,
+    filter 2.4s ease;
+}
 
 /* A mark on glass, floating over the field. */
 .fr-glass {
