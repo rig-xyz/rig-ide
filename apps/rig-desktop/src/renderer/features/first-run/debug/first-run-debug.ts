@@ -1,7 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { rpc } from '@renderer/lib/ipc';
-import type { FirstRunStepId } from '@shared/rig/first-run';
-import type { FirstRunConnector } from '../env';
+import type { ConnectorCheck, FirstRunConnector, FirstRunStepId } from '@shared/rig/first-run';
 import type { AgentReadiness, RigAccountKind } from '../first-run-state';
 
 /**
@@ -16,9 +15,31 @@ export type FirstRunSimulation = {
   agent: AgentReadiness;
   /** `existing` has seen the old onboarding: the returning path. */
   user: 'new' | 'existing';
-  /** The tools the simulated agent reaches. */
-  connectors: FirstRunConnector[];
+  /** What the simulated agent reaches: a tool that's absent is not connected. */
+  connectors: SimulatedConnectors;
 };
+
+export type SimulatedConnectors = Partial<
+  Record<FirstRunConnector, Exclude<ConnectorCheck['state'], 'missing'>>
+>;
+
+/** What the presets' agent reaches: the prototype's Slack, Linear and GitHub. */
+const USUAL_TOOLS: SimulatedConnectors = {
+  slack: 'connected',
+  linear: 'connected',
+  github: 'connected',
+};
+
+/** A connector chip's next state: connected, then needing re-auth, then not there. */
+export function nextConnectorState(
+  connectors: SimulatedConnectors,
+  connector: FirstRunConnector
+): SimulatedConnectors {
+  const { [connector]: now, ...rest } = connectors;
+  if (now === undefined) return { ...rest, [connector]: 'connected' };
+  if (now === 'connected') return { ...rest, [connector]: 'needs_auth' };
+  return rest;
+}
 
 /** The four kinds of arrival `deriveFirstRun` tells apart, one click each. */
 export const FIRST_RUN_CASES: { id: string; label: string; simulation: FirstRunSimulation }[] = [
@@ -29,7 +50,7 @@ export const FIRST_RUN_CASES: { id: string; label: string; simulation: FirstRunS
       rig: 'new',
       agent: 'missing',
       user: 'new',
-      connectors: ['slack', 'linear', 'github'],
+      connectors: USUAL_TOOLS,
     },
   },
   {
@@ -39,7 +60,7 @@ export const FIRST_RUN_CASES: { id: string; label: string; simulation: FirstRunS
       rig: 'signedOut',
       agent: 'ready',
       user: 'existing',
-      connectors: ['slack', 'linear', 'github'],
+      connectors: USUAL_TOOLS,
     },
   },
   {
@@ -49,7 +70,7 @@ export const FIRST_RUN_CASES: { id: string; label: string; simulation: FirstRunS
       rig: 'signedIn',
       agent: 'ready',
       user: 'new',
-      connectors: ['slack', 'linear', 'github'],
+      connectors: USUAL_TOOLS,
     },
   },
   {
@@ -59,7 +80,7 @@ export const FIRST_RUN_CASES: { id: string; label: string; simulation: FirstRunS
       rig: 'signedIn',
       agent: 'ready',
       user: 'existing',
-      connectors: ['slack', 'linear', 'github'],
+      connectors: USUAL_TOOLS,
     },
   },
 ];

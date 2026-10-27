@@ -50,7 +50,8 @@ export type AgentFieldHandle = {
    */
   gather(target: { x: number; y: number }, ms?: number): void;
   wake(region: AgentFieldRegion, color: AgentFieldColor): void;
-  tile(id: string): AgentFieldTile;
+  /** One tile, held by `id` until released; first claimed near the middle, or anywhere in `near`. */
+  tile(id: string, near?: AgentFieldRegion): AgentFieldTile;
 };
 
 const ACTIVITIES: DotMatrixActivity[] = [
@@ -115,10 +116,27 @@ export const AgentField = forwardRef<
 
   useImperativeHandle(ref, () => {
     const f = field.current;
-    const claim = (id: string): number => {
+    const claim = (id: string, region?: AgentFieldRegion): number => {
       const existing = f.claims.get(id);
       if (existing) return existing.index;
       const taken = new Set([...f.claims.values()].map((c) => c.index));
+      if (region) {
+        const inside = f.tiles
+          .map((tile, index) => ({ tile, index }))
+          .filter(
+            ({ tile, index }) =>
+              !taken.has(index) &&
+              Math.hypot(
+                (tile.x + TILE / 2) / f.width - region.x,
+                (tile.y + TILE / 2) / f.height - region.y
+              ) <= region.radius
+          );
+        if (inside.length > 0) {
+          const index = pick(inside).index;
+          f.claims.set(id, { index, run: null });
+          return index;
+        }
+      }
       const free = f.tiles
         .map((tile, index) => ({
           index,
@@ -166,10 +184,10 @@ export const AgentField = forwardRef<
         });
         f.draw();
       },
-      tile(id) {
+      tile(id, near) {
         return {
           set(state, color) {
-            const index = claim(id);
+            const index = claim(id, near);
             const run: Fixed = { kind: 'fixed', state, color: color ?? null };
             f.claims.set(id, { index, run });
             const tile = f.tiles[index];
@@ -224,6 +242,13 @@ export const AgentField = forwardRef<
       const rows = Math.floor(height / PITCH);
       const ox = (width - (cols - 1) * PITCH - TILE) / 2;
       const oy = (height - (rows - 1) * PITCH - TILE) / 2;
+      // Where each claimed tile stood, as fractions of the old field, to find it again below.
+      const spots = new Map(
+        [...f.claims.entries()].map(([id, c]) => {
+          const tile = f.tiles[c.index];
+          return [id, tile ? { x: tile.x / f.width, y: tile.y / f.height } : { x: 0.5, y: 0.5 }];
+        })
+      );
       f.width = width;
       f.height = height;
       f.tiles = [];
@@ -235,13 +260,21 @@ export const AgentField = forwardRef<
             offset: Math.floor(Math.random() * 200),
             run: null,
           });
-      // Claimed tiles keep their state, on whichever tile now sits nearest the middle.
+      // Claimed tiles keep their state, on the free tile nearest where they stood.
       const held = [...f.claims.entries()];
       f.claims.clear();
       for (const [id, { run }] of held) {
-        const free = f.tiles.findIndex(
-          (tile, index) => !tile.run && ![...f.claims.values()].some((c) => c.index === index)
-        );
+        const spot = spots.get(id)!;
+        let free = -1;
+        let nearest = Infinity;
+        f.tiles.forEach((tile, index) => {
+          if (tile.run) return;
+          const d = Math.hypot(tile.x / width - spot.x, tile.y / height - spot.y);
+          if (d < nearest) {
+            nearest = d;
+            free = index;
+          }
+        });
         if (free < 0) break;
         f.claims.set(id, { index: free, run });
         f.tiles[free]!.run = run;

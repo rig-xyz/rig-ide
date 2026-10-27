@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useAgentIdentities } from '@renderer/features/chat/use-runnable-agents';
 import { rpc } from '@renderer/lib/ipc';
-import { FIRST_RUN_VERSION, type FirstRunProgress } from '@shared/rig/first-run';
+import {
+  FIRST_RUN_CONNECTORS,
+  FIRST_RUN_VERSION,
+  type FirstRunConnector,
+  type FirstRunProgress,
+} from '@shared/rig/first-run';
 import type { OrchProgressEvent } from '@shared/rig/orch-progress';
 import { agentRoute, ROUTED_AGENT_ID } from './agent-route';
 import type { FirstRunSimulation } from './debug/first-run-debug';
 import {
-  FIRST_RUN_CONNECTORS,
   type AgentState,
   type FirstRunEnv,
   type RigAccountState,
@@ -19,6 +23,7 @@ import { replaySource } from './read/progress-source';
 const SIGN_IN_MS = 1800;
 const INSTALL_MS = 2200;
 const PREFLIGHT_MS = 600;
+const CONNECT_MS = 1500;
 const SIM_EMAIL = 'alex@larkspur.com';
 const SIM_NAME = 'Alex Rivera';
 const INSTALL_COMMAND = 'curl -fsSL https://claude.ai/install.sh | bash';
@@ -65,6 +70,9 @@ export function SimulatedFirstRunEnv({
   });
   const [progress, setProgress] = useState<FirstRunProgress | null>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  // What the simulated agent reaches, and what the person chose to watch.
+  const connectors = useRef(simulation.connectors);
+  const watching = useRef<Partial<Record<FirstRunConnector, boolean>>>({});
   // The recorded first run, played back: a simulation never starts a real one.
   const readSource = useMemo(() => replaySource(recorded as OrchProgressEvent[]), []);
 
@@ -113,11 +121,22 @@ export function SimulatedFirstRunEnv({
           resolve(
             FIRST_RUN_CONNECTORS.map((connector) => ({
               connector,
-              state: simulation.connectors.includes(connector) ? 'connected' : 'missing',
+              state: connectors.current[connector] ?? 'missing',
             }))
           )
         )
       ),
+    readWatching: () => Promise.resolve({ ...watching.current }),
+    setWatching: (connector, on) => {
+      watching.current = { ...watching.current, [connector]: on };
+      return Promise.resolve();
+    },
+    // As if the person connected it in claude.ai and came back to the window.
+    openConnect: (connector) =>
+      later(CONNECT_MS, () => {
+        connectors.current = { ...connectors.current, [connector]: 'connected' };
+        window.dispatchEvent(new Event('focus'));
+      }),
     readSource,
     saveProgress: setProgress,
     finish: () =>

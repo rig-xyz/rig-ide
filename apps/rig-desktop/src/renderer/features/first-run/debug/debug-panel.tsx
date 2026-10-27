@@ -1,12 +1,12 @@
 import { Bug, ChevronDown } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { cn } from '@renderer/lib/utils';
-import type { FirstRunStepId } from '@shared/rig/first-run';
-import { FIRST_RUN_CONNECTORS } from '../env';
+import { FIRST_RUN_CONNECTORS, type FirstRunStepId } from '@shared/rig/first-run';
 import type { FirstRunPlan } from '../first-run-state';
 import {
   AGENT_STATES,
   FIRST_RUN_CASES,
+  nextConnectorState,
   RIG_STATES,
   replayFirstRun,
   stopSimulating,
@@ -114,27 +114,30 @@ export function FirstRunDebugPanel({
           </Group>
           <Group label="Connectors">
             {FIRST_RUN_CONNECTORS.map((connector) => {
-              const on = base.connectors.includes(connector);
+              const state = base.connectors[connector];
               return (
                 <Chip
                   key={connector}
-                  on={simulation !== null && on}
+                  on={simulation !== null && state !== undefined}
                   onClick={() =>
                     void replayFirstRun(
-                      {
-                        ...base,
-                        connectors: on
-                          ? base.connectors.filter((c) => c !== connector)
-                          : [...base.connectors, connector],
-                      },
-                      step
+                      { ...base, connectors: nextConnectorState(base.connectors, connector) },
+                      'connect'
                     )
                   }
+                  testId={`first-run-debug-connector-${connector}`}
                 >
                   {connector}
+                  {state === 'needs_auth' ? ' · re-auth' : ''}
                 </Chip>
               );
             })}
+            <Chip
+              onClick={() => void replayFirstRun({ ...base, connectors: {} }, 'connect')}
+              testId="first-run-debug-connectors-none"
+            >
+              none
+            </Chip>
           </Group>
           <div className="flex gap-1.5 pt-0.5">
             <Chip on={!simulation} onClick={stopSimulating} testId="first-run-debug-real">

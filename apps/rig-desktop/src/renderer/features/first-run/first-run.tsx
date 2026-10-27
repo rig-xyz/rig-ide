@@ -13,6 +13,7 @@ import {
   type FirstRunProgress,
   type FirstRunStepId,
 } from '@shared/rig/first-run';
+import { ConnectStep } from './connect/connect-step';
 import { FirstRunDebugPanel } from './debug/debug-panel';
 import { clearFirstRunDebug, useFirstRunDebug } from './debug/first-run-debug';
 import type { AgentState, FirstRunEnv, RigAccountState } from './env';
@@ -248,10 +249,11 @@ function StepView({ step, props }: { step: FirstRunStepId; props: StepProps }): 
       return <WelcomeStep {...props} />;
     case 'setup':
       return <SetupStep {...props} />;
+    case 'connect':
+      return <ConnectStep {...props} />;
     case 'read':
       return <ReadStepView {...props} />;
     // Not built yet (`steps.ts`): the shell moves past these, so they never show.
-    case 'connect':
     case 'you':
     case 'firstWin':
       return null;

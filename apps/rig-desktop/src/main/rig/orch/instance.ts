@@ -246,4 +246,11 @@ export const rigOrchController = createRPCController({
     await writeSources([...list, source]);
     return ok(source);
   },
+  /** What Rig watches for the person (Connect's switches read and write these). */
+  sources: async () => ok(await readSources()),
+  /** Stops or resumes watching one source; a paused one leaves the packet. */
+  pauseSource: async (input: { ref: string; paused: boolean }) => {
+    const source = await updateSource(input.ref, { paused: input.paused });
+    return source ? ok(source) : err({ message: `No source ${input.ref}.` });
+  },
 });

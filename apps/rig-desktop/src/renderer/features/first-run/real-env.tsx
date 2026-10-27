@@ -8,14 +8,17 @@ import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/u
 import { preferredInstallOptions } from '@renderer/features/onboarding/onboarding-state';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { rpc } from '@renderer/lib/ipc';
+import { confirmOpenExternalLink } from '@renderer/lib/open-external-link';
 import { FIRST_RUN_VERSION, type FirstRunProgress } from '@shared/rig/first-run';
 import { agentRoute, ROUTED_AGENT_ID } from './agent-route';
+import { watchingFrom, watchWrites } from './connect/sources';
 import type { AgentState, FirstRunEnv, RigAccountState } from './env';
 import { liveFirstRun } from './read/progress-source';
 
 const AUTH_STATUS_KEY = ['rig', 'auth', 'status'];
 const ME_KEY = ['rig', 'account', 'me'];
 const AGENTS_KEY = ['rig', 'agents', 'list'];
+const GH_LOGIN_URL = 'https://cli.github.com/manual/gh_auth_login';
 
 /**
  * The first run against the real world: the Rig token on disk and what the
@@ -134,8 +137,21 @@ export function RealFirstRunEnv({
       if (payload && option) void install(payload, option.method);
     },
     signInAgent: () => setSigningIn(true),
-    // Connect's pre-flight (`rig.firstRun.preflight`) is M2.
-    preflight: () => Promise.resolve(null),
+    preflight: () => rpc.rig.firstRun.preflight(),
+    readWatching: async () => {
+      const sources = await rpc.rig.orch.sources();
+      return sources.success ? watchingFrom(sources.data) : {};
+    },
+    setWatching: async (connector, on) => {
+      const sources = await rpc.rig.orch.sources();
+      if (!sources.success) return;
+      const writes = watchWrites(sources.data, connector, on);
+      if (writes.add) await rpc.rig.orch.addSource(writes.add);
+      for (const pause of writes.pause) await rpc.rig.orch.pauseSource(pause);
+    },
+    // GitHub comes through `gh`, not claude.ai: its way in is `gh auth login`.
+    openConnect: (connector) =>
+      confirmOpenExternalLink(connector === 'github' ? GH_LOGIN_URL : route.connectorsUrl),
     readSource: liveFirstRun,
     saveProgress: (next) => void rpc.rig.settings.set({ firstRunProgress: next }),
     finish: () =>
