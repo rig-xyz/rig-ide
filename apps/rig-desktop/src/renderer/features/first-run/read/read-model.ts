@@ -14,6 +14,8 @@ export type ReadLine = RunProgress & {
 
 export type ReadState = {
   run: string | null;
+  /** What started it: `first` (the first run), `catch-up`, or a background run's own. */
+  trigger: string | null;
   lines: ReadLine[];
   counts: { read: number; handled: number; forYou: number };
   /** Lookups so far, against every pass's budget known yet. */
@@ -34,6 +36,7 @@ export type ReadState = {
 
 export const initialRead: ReadState = {
   run: null,
+  trigger: null,
   lines: [],
   counts: { read: 0, handled: 0, forYou: 0 },
   lookups: { used: 0, budget: 0 },
@@ -77,6 +80,7 @@ export function readReducer(state: ReadState, e: OrchProgressEvent): ReadState {
     return {
       ...initialRead,
       run: e.run,
+      trigger: e.trigger,
       passes: e.passes,
       lookups: { used: 0, budget: e.lookups ?? 0 },
       since: e.since ?? null,

@@ -1,11 +1,11 @@
 import { ArrowRight } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { ActionButton } from '@renderer/features/home-feed/action-button';
-import { cn } from '@renderer/lib/utils';
 import type { DotMatrixState } from '@renderer/lib/ui/dot-matrix';
 import { FIRST_RUN_CONNECTORS, type FirstRunConnector } from '@shared/rig/first-run';
 import type { OrchProgressEvent, RunProgress } from '@shared/rig/orch-progress';
 import { StepFrame, type StepProps } from './first-run';
+import { captionOf, FieldCaptions, useFieldCaptions } from './read/field-captions';
 import { initialRead, readReducer, type ReadState } from './read/read-model';
 import { ReadStep, windowWords, type ReadFix } from './read/read-step';
 
@@ -59,14 +59,21 @@ function tileFor(line: RunProgress): { state: DotMatrixState; color: string } | 
 }
 
 const ACTIVITY: DotMatrixState[] = ['reading', 'searching', 'thinking'];
+/**
+ * Once the first card is on the Feed, a beat, then on to it (First win): the read goes on in the
+ * background, and Home's catch-up strip shows the rest of it and its All caught up.
+ */
+export const FIRST_CARD_BEAT_MS = 1400;
 
 /**
  * Step 5: the Read step (`./read/`) in the guide pane, and its progress on
  * the stage's field. Each lookup lights a few single tiles, scattered at
- * random in its tool's color, that settle after a moment into heavier grey:
- * the field fills up with what has been read. What it finds (done, not
- * yours, for you) keeps its own glyph. When the read is done, all of it
- * gathers into one green check: All caught up.
+ * random in its tool's color, one of them captioned with what it reads, that
+ * settle after a moment into heavier grey: the field fills up with what has
+ * been read. What it finds (done, not yours, for you) keeps its own glyph.
+ * As soon as the first card is ready it moves on to it, while the read goes
+ * on; a read that ends with no card gathers into one green check: All
+ * caught up.
  */
 export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
   // Set up is done by now: make the private Home space while Rig reads, so the first Send has a place to run.
@@ -128,10 +135,23 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
   const live = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const lastAt = useRef(Date.now());
   const ended = read.ended?.ok ?? false;
+  const firstCard = read.cards.length > 0;
+  // All caught up on the stage only for a read that ended with nothing to show; with a card it moves on.
+  const caughtUp = ended && !firstCard;
+  const captions = useFieldCaptions();
+
+  // The first card: a beat, then on to it. Leaving doesn't stop the read (main runs it).
+  const next = useRef(onNext);
+  next.current = onNext;
+  useEffect(() => {
+    if (!firstCard) return;
+    const timer = setTimeout(() => next.current(), FIRST_CARD_BEAT_MS);
+    return () => clearTimeout(timer);
+  }, [firstCard]);
   // The grey grid while it reads, every run (a replay starts again from a finished one).
   useEffect(() => {
-    if (!ended) setFieldLook('plain');
-  }, [ended, setFieldLook]);
+    if (!caughtUp) setFieldLook('plain');
+  }, [caughtUp, setFieldLook]);
 
   const light = useCallback(
     (color: string, ms = SPARK_MS, keep = true) => {
@@ -139,6 +159,7 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
       const tile = field.current?.tile(id);
       if (!tile) return;
       tile.set(ACTIVITY[Math.floor(Math.random() * ACTIVITY.length)]!, color);
+      const lit = tile;
       live.current.set(
         id,
         setTimeout(() => {
@@ -148,6 +169,7 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
           else tile.release();
         }, ms)
       );
+      return lit;
     },
     [field]
   );
@@ -155,20 +177,21 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
   useEffect(() => {
     const sparks = live.current;
     const timer = setInterval(() => {
-      if (ended || Date.now() - lastAt.current < HEARTBEAT_MS) return;
+      if (caughtUp || Date.now() - lastAt.current < HEARTBEAT_MS) return;
       light('--accent', 1400, false);
     }, HEARTBEAT_MS);
     return () => {
       clearInterval(timer);
       sparks.forEach(clearTimeout);
     };
-  }, [ended, light]);
+  }, [caughtUp, light]);
 
   // All caught up: drop the sparks, and gather the whole field into the check (`CaughtUp` says where).
   const gatherInto = useCallback(
     (check: DOMRect) => {
       live.current.forEach(clearTimeout);
       live.current.clear();
+      captions.clear();
       const box = document.querySelector('.fr-stage')?.getBoundingClientRect();
       if (!box) return;
       field.current?.gather({
@@ -176,7 +199,7 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
         y: (check.top + check.height / 2 - box.top) / box.height,
       });
     },
-    [field]
+    [field, captions]
   );
 
   const onProgress = useCallback(
@@ -187,15 +210,21 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
       const connector = line.connector ?? 'rig';
       if (line.status === 'running') {
         lastAt.current = Date.now();
-        for (let i = 0; i < SPARKS_PER_LOOKUP; i++)
-          light(CONNECTOR_COLOR[connector] ?? '--text-muted');
+        for (let i = 0; i < SPARKS_PER_LOOKUP; i++) {
+          const lit = light(CONNECTOR_COLOR[connector] ?? '--text-muted');
+          // One spark per lookup in the person's tools says what it reads; Rig's own lookups stay quiet.
+          if (i > 0 || connector === 'rig') continue;
+          const at = lit?.at();
+          if (at) captions.show({ id: line.id, at, connector, text: captionOf(line.label) }, SPARK_MS);
+        }
+        captions.rename(line.id, captionOf(line.label));
       }
       const tile = field.current?.tile(line.id);
       const next = tileFor(line);
       if (next) tile?.set(next.state, next.color);
       else tile?.release();
     },
-    [field, light]
+    [field, light, captions]
   );
 
   // Read starts only on a Rig sign-in the relay took just now (the shell sends any other to Set up).
@@ -226,7 +255,12 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
           connectorsHome={env.agentInfo.route.connectorsHome}
         />
       }
-      stage={<div>{ended && <CaughtUp read={read} onOpen={onNext} onPlaced={gatherInto} />}</div>}
+      stage={
+        <div>
+          {!caughtUp && <FieldCaptions captions={captions.captions} />}
+          {caughtUp && <CaughtUp read={read} onOpen={onNext} onPlaced={gatherInto} />}
+        </div>
+      }
     />
   );
 }
@@ -245,12 +279,6 @@ const CHECK_PATH: [number, number][] = [
 /** How long the field takes to gather before the check lights, and how long each dot of its stroke takes. */
 const GATHER_MS = 1500;
 const STROKE_DOT_MS = 55;
-/**
- * With a card to show, the finish rolls straight into it: the words stay this long after the last
- * one rises, then step aside while the first card comes in (First win), with no click.
- */
-export const CAUGHT_UP_HOLD_MS = 1800;
-export const CAUGHT_UP_LEAVE_MS = 450;
 
 /**
  * The finish. The field breathes in and gathers into the middle (`gather`),
@@ -269,11 +297,6 @@ function CaughtUp({
 }) {
   const mark = useRef<HTMLDivElement>(null);
   const [lit, setLit] = useState(false);
-  // A card to show: no button to find, the first one comes in on its own.
-  const toCard = read.cards.length > 0;
-  const [leaving, setLeaving] = useState(false);
-  const open = useRef(onOpen);
-  open.current = onOpen;
   // Once, when it shows: the field gathers to where the check sits, then the check lights.
   const placed = useRef(onPlaced);
   useLayoutEffect(() => {
@@ -292,27 +315,12 @@ function CaughtUp({
   const { read: checked, handled, forYou } = read.counts;
   const strokeEnd = GATHER_MS + CHECK_PATH.length * STROKE_DOT_MS;
   const after = (ms: number) => ({ animationDelay: `${(strokeEnd + ms) / 1000}s` });
-  useEffect(() => {
-    if (!toCard) return;
-    const wordsIn = strokeEnd + 900 + CAUGHT_UP_HOLD_MS;
-    const leave = setTimeout(() => setLeaving(true), wordsIn);
-    const go = setTimeout(() => open.current(), wordsIn + CAUGHT_UP_LEAVE_MS);
-    return () => {
-      clearTimeout(leave);
-      clearTimeout(go);
-    };
-  }, [toCard, strokeEnd]);
   const onPath = new Map(CHECK_PATH.map(([x, y], i) => [`${x},${y}`, i]));
 
   return (
     <div
-      className={cn(
-        'flex max-w-[460px] flex-col items-center gap-5 text-center',
-        leaving && 'rig-caught-leave'
-      )}
-      style={{ ['--leave-ms' as string]: `${CAUGHT_UP_LEAVE_MS}ms` }}
+      className="flex max-w-[460px] flex-col items-center gap-5 text-center"
       data-testid="read-caught-up"
-      data-leaving={leaving || undefined}
     >
       <div
         ref={mark}
@@ -362,21 +370,9 @@ function CaughtUp({
             : 'Nothing needs you right now. Rig keeps an eye out from here.'}
       </p>
       <div className="rig-caught-rise" style={after(900)}>
-        {toCard ? (
-          // It comes in on its own; this says what's coming, and a click doesn't wait.
-          <button
-            type="button"
-            onClick={onOpen}
-            className="text-[13px] text-text-muted transition-colors hover:text-text-secondary"
-            data-testid="read-to-card"
-          >
-            Bringing in your first card…
-          </button>
-        ) : (
-          <ActionButton variant="primary" icon={ArrowRight} onClick={onOpen}>
-            Open my Home
-          </ActionButton>
-        )}
+        <ActionButton variant="primary" icon={ArrowRight} onClick={onOpen}>
+          Open my Home
+        </ActionButton>
       </div>
     </div>
   );

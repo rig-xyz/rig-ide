@@ -103,4 +103,15 @@ describe('createCatchUp', () => {
     advance(3 * 60_000);
     expect(catchUp.status()).toBeNull();
   });
+
+  it('keeps the first run too, which First win leaves reading, long enough for Home to show its All caught up', () => {
+    const { catchUp, advance } = setUp();
+    catchUp.record({ run: 'f1', kind: 'start', trigger: 'first', passes: 2, lookups: 52, lookbackDays: 3, t: 0 });
+    catchUp.record({ run: 'f1', kind: 'card', ref: 'sit_a', fresh: true, t: 9 });
+    catchUp.record({ run: 'f1', kind: 'end', ok: true, t: 90 });
+    advance(10 * 60_000);
+    expect(catchUp.status()).toEqual({ events: [expect.objectContaining({ trigger: 'first' }), expect.objectContaining({ ref: 'sit_a' }), expect.objectContaining({ kind: 'end' })], ended: true });
+    advance(30 * 60_000);
+    expect(catchUp.status()).toBeNull();
+  });
 });

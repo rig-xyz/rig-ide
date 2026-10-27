@@ -32,6 +32,9 @@ import '@renderer/features/first-run/read/read.css';
  * its one fix.
  */
 
+/** Runs whose summary has shown and faded: a Home that mounts again doesn't show it twice. */
+const summed = new Set<string>();
+
 /** How long While you were away stays before the strip fades. */
 const SUMMARY_MS = 9000;
 const FADE_MS = 700;
@@ -64,17 +67,25 @@ export function CatchUpStrip({
   );
   const wall = useWallClock(state.run !== null && !state.ended);
 
-  // While you were away, a moment, then it fades and goes.
+  // While you were away, a moment, then it fades and goes, for good.
   const okEnd = state.ended?.ok === true;
+  const run = state.run;
   useEffect(() => {
-    if (!okEnd) return;
+    if (!okEnd || !run) return;
+    if (summed.has(run)) {
+      setPhase('gone');
+      return;
+    }
     const fade = setTimeout(() => setPhase('fading'), SUMMARY_MS);
-    const gone = setTimeout(() => setPhase('gone'), SUMMARY_MS + FADE_MS);
+    const gone = setTimeout(() => {
+      summed.add(run);
+      setPhase('gone');
+    }, SUMMARY_MS + FADE_MS);
     return () => {
       clearTimeout(fade);
       clearTimeout(gone);
     };
-  }, [okEnd]);
+  }, [okEnd, run]);
 
   if (state.run === null || phase === 'gone') return null;
 
@@ -104,7 +115,14 @@ export function CatchUpStrip({
           size="sm"
         />
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text-primary">
-          {stopped ? stopped.title : okEnd ? 'While you were away' : `Catching you up${span ? ` ${span}` : ''}`}
+          {stopped
+            ? stopped.title
+            : okEnd
+              ? // The first run's rest, read while First win was on screen: its finish, not an absence.
+                state.trigger === 'first'
+                ? 'All caught up'
+                : 'While you were away'
+              : `Catching you up${span ? ` ${span}` : ''}`}
         </span>
         {/* While it reads; at the end the summary line says it. */}
         {!state.ended && (
@@ -119,7 +137,10 @@ export function CatchUpStrip({
             type="button"
             aria-label="Dismiss"
             className="grid size-5 shrink-0 place-items-center rounded text-text-muted hover:text-text-secondary"
-            onClick={() => setPhase('gone')}
+            onClick={() => {
+              if (okEnd && run) summed.add(run);
+              setPhase('gone');
+            }}
           >
             <X className="size-3.5" strokeWidth={1.8} />
           </button>
