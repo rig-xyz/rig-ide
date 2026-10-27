@@ -457,6 +457,23 @@ export function HomeProvider({
           void openCard(situationId);
           return;
         }
+        // Send or post: the words as they stand go where the card's draft says; the click is the go-ahead.
+        if (choice.verb === 'send' || choice.verb === 'post') {
+          if (startingRef.current.has(situationId)) return;
+          startingRef.current.add(situationId);
+          dispatch({ type: 'starting', itemId, value: true });
+          const text = entry.draftEdit ?? choice.draft?.text ?? '';
+          void rpc.rig.feed
+            .send({ situationId, choice: choice.cardIndex ?? item.choices.indexOf(choice), text })
+            .then((r) =>
+              r.success
+                ? dispatch({ type: 'sent', itemId, result: r.data })
+                : dispatch({ type: 'send-failed', itemId, error: r.error.message })
+            )
+            .catch(() => dispatch({ type: 'send-failed', itemId, error: "Rig couldn't reach your Claude." }))
+            .finally(() => startingRef.current.delete(situationId));
+          return;
+        }
         // Start (or Reply) in the card's own space; its result comes back to the card.
         // Setting it up takes a few seconds: say so at once, and ignore more clicks meanwhile.
         if (startingRef.current.has(situationId)) return;

@@ -139,6 +139,8 @@ export interface FeedChoice {
   target: ChoiceTarget;
   /** A send or post: the exact words it sends, editable, and where they go. */
   draft?: { label: string; text: string; target: string };
+  /** Its place on Rig's card (a real card), which Send names: the Feed may not show every choice. */
+  cardIndex?: number;
 }
 
 export interface FeedItem {

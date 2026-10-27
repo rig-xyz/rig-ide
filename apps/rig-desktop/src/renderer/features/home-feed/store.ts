@@ -30,7 +30,16 @@ export interface FeedEntry {
   fresh: boolean;
   /** Its Start is setting up a session: the button says so until it's running. */
   starting?: boolean;
+  /** The person's own words for the showing choice's draft, or null while they're Claude's. */
+  draftEdit?: string | null;
+  /** Its send or post didn't go: why, said on the row with a Retry. */
+  failed?: string | null;
+  /** Its send or post went: the row becomes a done card ("Sent in #product · Open"). */
+  sent?: SentResult | null;
 }
+
+/** What a send or post did: where it went, in words, and a link to it when there is one. */
+export type SentResult = { said: string; link: string | null };
 
 export type ChatMessage =
   | { id: string; who: 'me'; text: string }
@@ -87,6 +96,9 @@ export type HomeAction =
   | { type: 'reset'; itemId: string }
   | { type: 'ignore'; itemId: string; value: boolean }
   | { type: 'starting'; itemId: string; value: boolean }
+  | { type: 'edit-draft'; itemId: string; text: string | null }
+  | { type: 'send-failed'; itemId: string; error: string | null }
+  | { type: 'sent'; itemId: string; result: SentResult }
   | { type: 'remove'; itemId: string }
   | { type: 'add-item'; item: FeedItem }
   | { type: 'add-session'; spaceId: string; session: RailSession; atEnd?: boolean }
@@ -159,6 +171,8 @@ export function homeReducer(state: HomeState, action: HomeAction): HomeState {
         ...e,
         pick: action.choiceId,
         edited: null,
+        draftEdit: null,
+        failed: null,
         resetKey: e.resetKey + 1,
         slide: action.slide,
       }));
@@ -168,11 +182,18 @@ export function homeReducer(state: HomeState, action: HomeAction): HomeState {
       return mapEntry(state, action.itemId, (e) => ({
         ...e,
         edited: null,
+        draftEdit: null,
         resetKey: e.resetKey + 1,
         slide: null,
       }));
     case 'starting':
       return mapEntry(state, action.itemId, (e) => ({ ...e, starting: action.value }));
+    case 'edit-draft':
+      return mapEntry(state, action.itemId, (e) => ({ ...e, draftEdit: action.text }));
+    case 'send-failed':
+      return mapEntry(state, action.itemId, (e) => ({ ...e, starting: false, failed: action.error }));
+    case 'sent':
+      return mapEntry(state, action.itemId, (e) => ({ ...e, starting: false, failed: null, sent: action.result }));
     case 'ignore':
       return mapEntry(state, action.itemId, (e) => ({ ...e, ignored: action.value }));
     case 'replace-feed': {
@@ -181,6 +202,9 @@ export function homeReducer(state: HomeState, action: HomeAction): HomeState {
         const was = prior.get(item.id);
         return was ? { ...was, item } : { item, edited: null, resetKey: 0, slide: null, ignored: false, fresh: state.fromRelay };
       });
+      // A row that was just sent stays as its done card, though Rig has taken its card off the Feed.
+      const ids = new Set(feed.map((e) => e.item.id));
+      for (const e of state.feed) if (e.sent && !ids.has(e.item.id)) feed.push(e);
       const sel = state.selection;
       return {
         ...state,

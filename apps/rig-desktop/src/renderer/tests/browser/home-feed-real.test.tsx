@@ -22,6 +22,7 @@ const space = (id: string, name: string) => ({
 const layoutActions = vi.hoisted(() => [] as unknown[]);
 
 const answers = vi.hoisted(() => [] as unknown[]);
+const sends = vi.hoisted(() => ({ calls: [] as unknown[], answer: null as null | (() => unknown) }));
 const starts = vi.hoisted(() => [] as unknown[]);
 const externals = vi.hoisted(() => [] as string[]);
 /** What `rpc.rig.feed.get` answers; each test may swap it. */
@@ -52,6 +53,27 @@ const realFeed = vi.hoisted(() => {
           choices: [
             { verb: 'start', label: 'Pull the numbers', lead: 'Pull usage by email domain', tail: '' },
             { verb: 'open', label: 'Open the email', lead: 'Open the email from Maya', tail: '' },
+          ],
+          refsOk: true,
+        },
+        updatedAt: at,
+      },
+      {
+        situationId: 's_reply',
+        sources: ['slack'],
+        bindingId: null,
+        title: 'Pilot review',
+        description: '',
+        participants: ['Priya Nair'],
+        decision: decision('ask_you'),
+        card: {
+          title: 'Reply to Priya about the pilot review',
+          why: 'Priya asked in #product two days ago [msg:slack:C0P:1.2].',
+          action: '**Say yes.**',
+          choices: [
+            { verb: 'space', label: 'Bring in Tom', lead: 'Bring in Tom', tail: '' },
+            { verb: 'send', label: 'Say yes', lead: 'Say yes, and ask for the numbers', tail: ': nobody replied.', draft: { label: 'Your reply', text: 'Yes, I’ll be there. Could you share the numbers before?', target: 'msg:slack:C0P:1.2' } },
+            { verb: 'send', label: 'Offer Friday', lead: 'Offer Friday instead', tail: ': Thursday is tight.', draft: { label: 'Your reply', text: 'Thursday’s tight. Does Friday morning work?', target: 'msg:slack:C0P:1.2' } },
           ],
           refsOk: true,
         },
@@ -170,6 +192,10 @@ vi.mock('@renderer/lib/ipc', () => ({
           answers.push(input);
           return { success: true, data: null };
         },
+        send: async (input: unknown) => {
+          sends.calls.push(input);
+          return sends.answer?.() ?? { success: true, data: { said: 'Sent in the Slack thread', link: 'https://acme.slack.com/archives/C0P/p1' } };
+        },
         start: async (input: unknown) => {
           starts.push(input);
           return { success: true, data: { runId: 'r1' } };
@@ -278,7 +304,7 @@ describe('NewHome with the orchestrator Feed', () => {
     const rows = [...host.querySelectorAll<HTMLElement>('[data-feed-id]')].map(
       (r) => r.dataset.feedId
     );
-    expect(rows).toEqual(['sit:s_vendor', 'sit:s_send']);
+    expect(rows).toEqual(['sit:s_reply', 'sit:s_vendor', 'sit:s_send']);
     expect(feedRow('sit:s_vendor')!.textContent).toContain('Pick the vendor list for Riyad');
     expect(feedRow('sit:s_vendor')!.textContent).toContain('ULY-229');
     expect(feedRow('sit:s_vendor')!.textContent).not.toContain('ev:');
@@ -325,5 +351,36 @@ describe('NewHome with the orchestrator Feed', () => {
     await click(button(host, 'Try again'));
     await vi.waitFor(() => expect(feedRow('sit:s_vendor')).not.toBeNull());
     expect(host.querySelector('[data-feed-notice]')).toBeNull();
+  });
+
+  it('shows the drafted answer inline, swaps it with the carousel, and sends the words as edited', async () => {
+    sends.calls.length = 0;
+    await vi.waitFor(() => expect(feedRow('sit:s_reply')).not.toBeNull());
+    const row = () => feedRow('sit:s_reply')!;
+    const draft = () => row().querySelector('[data-feed-draft] [role="textbox"]') as HTMLElement;
+    expect(draft().textContent).toBe('Yes, I’ll be there. Could you share the numbers before?');
+    expect(button(row(), /^Send/)).toBeTruthy();
+    await click(button(row(), 'Next option'));
+    expect(draft().textContent).toBe('Thursday’s tight. Does Friday morning work?');
+    // Edit the words, then send.
+    await act(async () => {
+      draft().textContent = 'Thursday’s tight. Friday at 10?';
+      draft().dispatchEvent(new InputEvent('input', { bubbles: true }));
+    });
+    await click(button(row(), /^Send/));
+    await vi.waitFor(() => expect(row().hasAttribute('data-feed-sent')).toBe(true));
+    // The card's own place for that choice (Bring in Tom isn't shown), and the edited words.
+    expect(sends.calls).toEqual([{ situationId: 's_reply', choice: 2, text: 'Thursday’s tight. Friday at 10?' }]);
+    expect(row().textContent).toContain('Sent in the Slack thread.');
+    expect(button(row(), /Open/)).toBeTruthy();
+  });
+
+  it('keeps the card with the reason and a Retry when the send fails', async () => {
+    sends.answer = () => ({ success: false, error: { message: 'Slack said no' } });
+    await vi.waitFor(() => expect(feedRow('sit:s_reply')).not.toBeNull());
+    await click(button(feedRow('sit:s_reply')!, /^Send/));
+    await vi.waitFor(() => expect(feedRow('sit:s_reply')!.querySelector('[data-feed-failed]')?.textContent).toContain('Slack said no'));
+    expect(button(feedRow('sit:s_reply')!, /Retry/)).toBeTruthy();
+    sends.answer = null;
   });
 });

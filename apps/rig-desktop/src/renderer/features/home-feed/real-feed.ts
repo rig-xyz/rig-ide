@@ -65,7 +65,7 @@ const tail = (t: string) => (!t ? '' : /^[:,.]/.test(t.trim()) ? t.trim().replac
 export function toFeedItem(x: RigFeedItem, now: number): FeedItem {
   const d = x.decision;
   const needs = d?.do === 'ask_you' || d?.do === 'bring_in';
-  const drafted = (x.card?.choices ?? []).filter((c) => c.verb !== 'space');
+  const drafted = (x.card?.choices ?? []).map((c, cardIndex) => ({ ...c, cardIndex })).filter((c) => c.verb !== 'space');
   const fallback = splitAction(x.card?.action || x.title);
   const people = x.card?.people?.length ? x.card.people : [];
   const names = firstNames(people);
@@ -78,6 +78,7 @@ export function toFeedItem(x: RigFeedItem, now: number): FeedItem {
     tail: tail(names.short(refsToTokens(c.tail))),
     target: { kind: 'space', spaceId: x.bindingId ?? '' },
     ...('draft' in c && c.draft ? { draft: c.draft } : {}),
+    ...('cardIndex' in c ? { cardIndex: c.cardIndex } : {}),
   }));
   const connector = SOURCE_ORDER.find((s) => (x.sources ?? []).includes(s));
   return {
