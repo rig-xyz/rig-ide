@@ -61,6 +61,7 @@ describe('the background orchestrator', () => {
     const acp = {
       startSession: vi.fn(async () => ok({ sessionId: 's' })),
       setConfig: vi.fn(async () => ok(undefined)),
+      cancelTurn: vi.fn(async () => {}),
       stopSession: vi.fn(async () => {}),
       subscribeRaw: vi.fn(async (_id: string, on: (e: RawSessionEvent) => void) => ((emit = on), () => {})),
       subscribePendingPermissions: vi.fn(async () => () => {}),
@@ -105,6 +106,7 @@ describe('the background orchestrator', () => {
     const acp = {
       startSession: vi.fn(async () => ok({ sessionId: 's' })),
       setConfig: vi.fn(async () => err('no such mode')),
+      cancelTurn: vi.fn(async () => {}),
       stopSession: vi.fn(async () => {}),
       subscribeRaw: vi.fn(async () => () => {}),
       subscribePendingPermissions: vi.fn(async () => () => {}),
@@ -131,13 +133,15 @@ describe('the background orchestrator', () => {
 
 describe('the first run', () => {
   /** A session whose turns run the given tool calls, one script per turn. */
-  function harness(turns: Array<Array<{ id: string; name: string; input: Record<string, unknown> }>>) {
+  function harness(turns: Array<Array<{ id: string; name: string; input: Record<string, unknown> }>>, extra: { snapshot?: () => Promise<{ feed: string[]; situations: string[]; github?: string[] | null } | null> } = {}) {
     let emit: (e: RawSessionEvent) => void = () => {};
     let turn = 0;
     const prompts: string[] = [];
     const acp = {
       startSession: vi.fn(async () => ok({ sessionId: 's' })),
       setConfig: vi.fn(async () => ok(undefined)),
+      cancelTurn: vi.fn(async () => {}),
+      readConfig: vi.fn(async () => ({ model: { selected: 'default', options: [] }, effort: { selected: 'default', options: [] }, mode: null })),
       stopSession: vi.fn(async () => {}),
       subscribeRaw: vi.fn(async (_id: string, on: (e: RawSessionEvent) => void) => ((emit = on), () => {})),
       subscribePendingPermissions: vi.fn(async () => () => {}),
@@ -169,8 +173,9 @@ describe('the first run', () => {
       recordRun,
       now: () => NOW,
       onProgress: (e) => progress.push(e),
+      ...extra,
     });
-    return { o, prompts, progress, recordRun };
+    return { o, prompts, progress, recordRun, acp };
   }
   const put = (id: string) => ({ id, name: 'mcp__rig__rig_feed', input: { op: 'put', ref: `sit_${id}` } });
   const read = (id: string) => ({ id, name: 'mcp__claude_ai_Slack__slack_read_channel', input: { channel_name: 'eng' } });
@@ -181,7 +186,7 @@ describe('the first run', () => {
     expect(r.success && r.data.cards).toBe(1);
     expect(h.prompts).toHaveLength(2);
     expect(h.prompts[0]).toContain('Pass 1 of 2, 12 lookups');
-    expect(h.prompts[0]).toContain('Put its card the moment you have it');
+    expect(h.prompts[0]).toContain('Step 3: put the card for the most pressing thing');
     expect(h.prompts[0]).toContain('budget="12 lookups"');
     expect(h.prompts[1]).toContain('Pass 2 of 2, 40 lookups');
     // Each pass is its own run row, recorded with its pass.
@@ -205,6 +210,29 @@ describe('the first run', () => {
     expect(h.prompts[1]).toContain('read the last 14 days once instead');
     expect(h.prompts[2]).toContain('keep reading the rest of the last 14 days');
     expect(h.progress.filter((e) => e.kind === 'pass').map((e) => (e.kind === 'pass' ? e.lookbackDays : 0))).toEqual([3, 14, 14]);
+  });
+
+  it('runs a pass on another model when asked, then goes back to the session\'s own', async () => {
+    const h = harness([[put('p1')], [read('b')]]);
+    await h.o.run('first', { ...FIRST_RUN, passes: [{ lookups: 12, goal: 'first card', model: 'sonnet' }, { lookups: 40 }] });
+    const changes = (h.acp.setConfig.mock.calls as unknown as [string, Record<string, string>][]).map((c) => c[1]).filter((c) => c.model || c.effort);
+    expect(changes).toEqual([{ model: 'sonnet', effort: 'default' }, { model: 'default' }]);
+  });
+
+  it('ends a pass as soon as its note is in, without waiting for a closing message', async () => {
+    const note = { id: 'n1', name: 'mcp__rig__rig_run_note', input: { run_id: 'x', summary: 'done', read: [], changed: [], left: [] } };
+    const h = harness([[put('p1'), note], [note]]);
+    await h.o.run('first', FIRST_RUN);
+    await vi.waitFor(() => expect(h.acp.cancelTurn).toHaveBeenCalledTimes(2));
+  });
+
+  it("puts what Rig holds in the packet: the Feed, open situations and GitHub's asks", async () => {
+    const snapshot = async () => ({ feed: ['sit_1 [visible] "Review #212"'], situations: ['sit_1 "Rate limits PR" · feed visible'], github: ['github:acme/api#212 "Rate limits" by tom'] });
+    const h = harness([[put('p1')], []], { snapshot });
+    await h.o.run('first', FIRST_RUN);
+    expect(h.prompts[0]).toContain('## Your Feed now (1)\nsit_1 [visible] "Review #212"');
+    expect(h.prompts[0]).toContain('## Open situations, newest first (1 of 12)');
+    expect(h.prompts[0]).toContain('github:acme/api#212 "Rate limits" by tom');
   });
 
   it('a regular run reads in one pass with the usual budget', async () => {

@@ -50,14 +50,22 @@ const DEFAULT_SOURCES = [
 /** How a run reads: in one pass with the usual budget, or (the first run) in passes. */
 export type RunOptions = {
   kind?: 'regular' | 'first';
-  /** Each pass is one turn and one run row; `goal` says what it's for ("first card"). */
-  passes?: { lookups: number; goal?: string }[];
+  /**
+   * Each pass is one turn and one run row; `goal` says what it's for ("first card").
+   * `model` and `effort` run that pass on another model or effort; later passes go back to the session's own.
+   */
+  passes?: { lookups: number; goal?: string; model?: string; effort?: string }[];
   /** How far back a first read goes. */
   lookbackDays?: number;
 };
 
-/** The first run (onboarding Step 5): a quick pass for the first card while they watch, then the rest. */
-export const FIRST_RUN: RunOptions = { kind: 'first', passes: [{ lookups: 12, goal: 'first card' }, { lookups: 40 }], lookbackDays: 3 };
+/**
+ * The first run (onboarding Step 5): a quick pass for the first card while they watch, then the rest.
+ * Pass 1 runs on Sonnet: measured against Opus on the same data, the first card came 1.5–2.5× sooner
+ * (16–25 s against 28–42 s) and was the same pick; the rest stays on the person's own model, which
+ * reads further and leaves more cards (first-run-speed notes).
+ */
+export const FIRST_RUN: RunOptions = { kind: 'first', passes: [{ lookups: 12, goal: 'first card', model: 'sonnet' }, { lookups: 40 }], lookbackDays: 3 };
 
 /** When the first pass finds nothing in its lookback, it widens once to this. */
 export const WIDENED_LOOKBACK_DAYS = 14;
@@ -74,7 +82,12 @@ export type PacketInput = {
   sources: { connector: string; what: string }[];
   /** The first run's pass, when this is one. */
   first?: FirstPass;
+  /** What Rig holds now (`OrchestratorDeps.snapshot`), so the run needn't look it up call by call. */
+  snapshot?: Snapshot | null;
 };
+
+/** The Feed and the open situations as the packet lists them: one line each; GitHub's open asks, read before the run. */
+export type Snapshot = { feed: string[]; situations: string[]; github?: string[] | null };
 
 const iso = (t: number) => new Date(t).toISOString();
 
@@ -104,7 +117,21 @@ export function buildPacket(p: PacketInput): string {
     '## Your rules',
     ...(state.rules.length ? state.rules.map((r) => `${r.ref} "${r.text}"`) : ['None yet.']),
     '',
-    ...(first ? ['## First read', ...firstReadLines(first, state.me || 'them'), ''] : []),
+    ...(first ? ['## First read', ...firstReadLines(first, state.me || 'them', since), ''] : []),
+    ...(p.snapshot
+      ? [
+          `## Your Feed now (${p.snapshot.feed.length})`,
+          ...(p.snapshot.feed.length ? p.snapshot.feed : ['Empty.']),
+          '',
+          `## Open situations, newest first (${p.snapshot.situations.length}${state.counts.open > p.snapshot.situations.length ? ` of ${state.counts.open}` : ''})`,
+          ...(p.snapshot.situations.length ? p.snapshot.situations : ['None yet.']),
+          'These are current as of now: match what you read against them here, and open one with rig_get only when you need its events.',
+          '',
+          ...(p.snapshot.github
+            ? [`## GitHub: open pull requests that ask for ${state.me || 'their'} review, read just now (${p.snapshot.github.length})`, ...(p.snapshot.github.length ? p.snapshot.github : ['None.']), '']
+            : []),
+        ]
+      : []),
     `## What to read (last run: ${state.lastRun ? state.lastRun.at : 'none, this is the first'})`,
     ...sourceLines,
     ...(firstRead
@@ -122,15 +149,17 @@ export function buildPacket(p: PacketInput): string {
 }
 
 /** The first run's own instructions, per pass: the first card fast, then the rest. */
-function firstReadLines(f: FirstPass, me: string): string[] {
-  const watching = `This is ${me}'s first run, and they are watching it: each lookup and each outcome you report shows as a line on their screen.`;
+function firstReadLines(f: FirstPass, me: string, since: string): string[] {
+  const watching = `This is ${me}'s first run, and they are watching it: each lookup and each outcome you report shows as a line on their screen. Speed matters most now.`;
   if (f.pass === 1 || f.widened) {
     return [
       watching,
       f.widened
         ? `Pass ${f.pass} of ${f.of}, ${f.lookups} lookups. The last pass found nothing that needs ${me}: read the last ${f.lookbackDays} days once instead, the same way.`
-        : `Pass ${f.pass} of ${f.of}, ${f.lookups} lookups: read the last ${f.lookbackDays} days across the sources below and find the one thing that most needs ${me} now.`,
-      'Put its card the moment you have it (rig_feed put), with your best choices, before you read on; then end this pass. Never pad: no card is better than a weak one.',
+        : `Pass ${f.pass} of ${f.of}, ${f.lookups} lookups: find the one thing in the last ${f.lookbackDays} days that most needs ${me} now.`,
+      'Step 1: load the read tools you need in a single ToolSearch call (for example select:mcp__claude_ai_Slack__slack_search_public_and_private,mcp__claude_ai_Slack__slack_read_thread,mcp__claude_ai_Linear__list_issues).',
+      `Step 2, all in one step: search Slack for what was sent to ${me} since ${since} (their DMs and mentions), and list the Linear issues assigned to them or mentioning them, updated since then. GitHub's asks are listed below already.`,
+      `Step 3: put the card for the most pressing thing (rig_feed put, with open for something new, choices in its limits), in the same step as any outcomes you report. Then end the pass at once with its run note and no closing message. Never pad: no card is better than a weak one.`,
     ];
   }
   return [
@@ -140,7 +169,7 @@ function firstReadLines(f: FirstPass, me: string): string[] {
 }
 
 export type OrchestratorDeps = {
-  acp: Pick<SpacesAcpSessions, 'startSession' | 'setConfig' | 'queuePrompt' | 'subscribeRaw' | 'subscribePendingPermissions' | 'resolvePermission' | 'stopSession'>;
+  acp: Pick<SpacesAcpSessions, 'startSession' | 'setConfig' | 'readConfig' | 'queuePrompt' | 'cancelTurn' | 'subscribeRaw' | 'subscribePendingPermissions' | 'resolvePermission' | 'stopSession'>;
   rigTools: (scope: RigToolScope) => Promise<AcpHttpMcpServerWire>;
   whoami: () => Promise<Result<{ id: string }, { message: string }>>;
   cwd: () => Promise<string>;
@@ -148,6 +177,8 @@ export type OrchestratorDeps = {
   state: () => Promise<Result<OrchAgentState, { message: string }>>;
   sources: () => Promise<{ connector: string; what: string }[]>;
   recordRun: (id: string, trigger: string, note?: Record<string, unknown>, pass?: number) => Promise<unknown>;
+  /** The Feed and open situations for the packet; null when they can't be read (the run looks them up). */
+  snapshot?: () => Promise<Snapshot | null>;
   now: () => number;
   /** Each step of a run as it happens (`ProgressMapper`): the Read step and its field show them. */
   onProgress?: (event: OrchProgressEvent) => void;
@@ -235,9 +266,21 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     let noted = true;
     let cards = 0;
     let widened = false;
-    const plan: { lookups: number; goal?: string; lookbackDays: number; widened?: boolean }[] = passes.map((p) => ({ ...p, lookbackDays }));
+    const plan: { lookups: number; goal?: string; model?: string; effort?: string; lookbackDays: number; widened?: boolean }[] = passes.map((p) => ({ ...p, lookbackDays }));
+    // The session's own model and effort, to go back to after a pass that ran on others.
+    const own = plan.some((p) => p.model || p.effort) ? await deps.acp.readConfig?.(session.data.conversationId) : null;
+    let current: { model?: string; effort?: string } = {};
     for (let i = 0; i < plan.length; i++) {
       const pass = plan[i]!;
+      const want = { model: pass.model ?? own?.model?.selected ?? undefined, effort: pass.effort ?? own?.effort?.selected ?? undefined };
+      if (own && (want.model !== current.model || want.effort !== current.effort)) {
+        const change = { ...(want.model && want.model !== current.model ? { model: want.model } : {}), ...(want.effort && want.effort !== current.effort ? { effort: want.effort } : {}) };
+        if (Object.keys(change).length) {
+          const set = await deps.acp.setConfig?.(session.data.conversationId, change);
+          if (set && !set.success) deps.log?.warn('Rig orchestrator: could not set the pass model', { change, error: set.error });
+        }
+        current = want;
+      }
       const fp: FirstPass | undefined = first
         ? { pass: i + 1, of: plan.length, lookups: pass.lookups, goal: pass.goal ?? null, lookbackDays: pass.lookbackDays, widened: pass.widened === true }
         : undefined;
@@ -280,16 +323,31 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       state = fetched.data;
     }
     const runId = newRunId(startedAt);
-    await deps.recordRun(runId, trigger, undefined, passNo);
-    const packet = buildPacket({ runId, now: startedAt, trigger, state, sources: await deps.sources(), ...(firstPass ? { first: firstPass } : {}) });
+    const [, sources, snapshot] = await Promise.all([deps.recordRun(runId, trigger, undefined, passNo), deps.sources(), deps.snapshot?.() ?? null]);
+    const packet = buildPacket({ runId, now: startedAt, trigger, state, sources, snapshot, ...(firstPass ? { first: firstPass } : {}) });
     let finish!: (r: Result<null, string>) => void;
     const done = new Promise<Result<null, string>>((resolve) => (finish = resolve));
     let begun = false;
     let cards = 0;
     const events: { kind: string; payload: Record<string, unknown> }[] = [];
+    // Each call's tool and input, to know when the pass's own note is in.
+    const calls = new Map<string, { name: string; input: Record<string, unknown> }>();
+    let closing = false;
     const offRaw = await deps.acp.subscribeRaw(conversationId, (raw: RawSessionEvent) => {
       if (raw.kind === 'turn_start') begun = true;
       else if (raw.kind === 'acp_update' && begun) {
+        const u = raw.update as AcpToolUpdate;
+        if (u.toolCallId && (u.sessionUpdate === 'tool_call' || u.sessionUpdate === 'tool_call_update')) {
+          const was = calls.get(u.toolCallId);
+          const input = u.rawInput && typeof u.rawInput === 'object' ? (u.rawInput as Record<string, unknown>) : (was?.input ?? {});
+          calls.set(u.toolCallId, { name: u.name ?? was?.name ?? '', input });
+          // The pass's note is in: what Claude would write after it nobody reads, so the turn ends here.
+          const call = calls.get(u.toolCallId)!;
+          if (!closing && u.status === 'completed' && call.name === `mcp__${RIG_TOOLS_SERVER}__rig_run_note` && typeof call.input.summary === 'string') {
+            closing = true;
+            setTimeout(() => void deps.acp.cancelTurn(conversationId).catch(() => undefined), 250);
+          }
+        }
         events.push({ kind: raw.update.sessionUpdate, payload: raw.update });
         // A lookup that failed says why in the log (the person sees "Couldn't read").
         if (raw.update.sessionUpdate === 'tool_call_update' && (raw.update as { status?: string }).status === 'failed') {

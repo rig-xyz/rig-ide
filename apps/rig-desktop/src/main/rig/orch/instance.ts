@@ -20,6 +20,8 @@ import { createHttpSpacesRelayApi } from '../spaces/relay-api';
 import { createActions, type StartInput } from './actions';
 import { resolveSelfUserId } from '../account';
 import { createOrchestrator, FIRST_RUN } from './agent';
+import { runGhRead } from './github';
+import { readSnapshot } from './snapshot';
 import { runSource, type Source } from './sources';
 import { turnGate } from './turns';
 
@@ -186,6 +188,7 @@ export const orchestrator = createOrchestrator({
   },
   sources: async () => (await readSources()).filter((x) => !x.paused).map((x) => ({ connector: x.connector, what: x.what })),
   recordRun: (id, trigger, note, pass) => feedRelay.orchRun(id, trigger, note, pass),
+  snapshot: () => readSnapshot((kind, opts) => feedRelay.orchQuery(kind, opts), runGhRead),
   onProgress: (event) => {
     events.emit(rigOrchProgressChannel, event);
     recordProgress(event);
