@@ -103,3 +103,19 @@ describe('the Read step model', () => {
     expect(s.run).toBe('run_2');
   });
 });
+
+describe('a catch-up', () => {
+  it('counts as new only the cards it put that were not on the Feed, whatever its outcomes name', () => {
+    const run = 'r';
+    const events: OrchProgressEvent[] = [
+      { run, kind: 'start', trigger: 'catch-up', passes: 1, lookups: 20, lookbackDays: 3, since: '2026-10-27T04:53:04.000Z', t: 0 },
+      { run, kind: 'line', line: { id: 'o1', connector: 'slack', label: 'Natalie still waits; card stays', status: 'for_you', ref: 'msg:slack:C0:1.2', t: 1 } },
+      { run, kind: 'line', line: { id: 'o2', connector: null, label: 'Riyad waits on your review', status: 'for_you', ref: 'sit_new', t: 2 } },
+      { run, kind: 'card', ref: 'sit_new', fresh: true, t: 3 },
+      { run, kind: 'card', ref: 'sit_old', fresh: false, t: 4 },
+    ];
+    const state = events.reduce(readReducer, initialRead);
+    expect(state.counts.forYou).toBe(1);
+    expect(state.since).toBe('2026-10-27T04:53:04.000Z');
+  });
+});

@@ -51,7 +51,12 @@ export const initialRead: ReadState = {
 const isOutcome = (l: Pick<RunProgress, 'status'>) =>
   l.status === 'handled' || l.status === 'not_yours' || l.status === 'for_you';
 
-function counts(lines: ReadLine[], cards: string[], knownCards: string[] = []): ReadState['counts'] {
+/**
+ * The counters. A catch-up (`since`) counts as new only the cards it put that weren't on the Feed
+ * before: an outcome about one already there may name its message rather than its card, so
+ * outcomes can't tell old from new. A first read counts both.
+ */
+function counts(lines: ReadLine[], cards: string[], knownCards: string[] = [], since: string | null = null): ReadState['counts'] {
   const known = new Set(knownCards);
   const forYou = new Set(cards.filter((c) => !known.has(c)));
   let read = 0;
@@ -61,7 +66,7 @@ function counts(lines: ReadLine[], cards: string[], knownCards: string[] = []): 
     if (l.connector !== null && l.connector !== 'rig' && l.status === 'done') read += 1;
     if (l.status === 'handled' || l.status === 'not_yours') handled += 1;
     // Something already on the Feed isn't a new card for them.
-    if (l.status === 'for_you' && !l.known && !(l.ref && known.has(l.ref))) forYou.add(l.ref ?? l.id);
+    if (!since && l.status === 'for_you' && !l.known && !(l.ref && known.has(l.ref))) forYou.add(l.ref ?? l.id);
   }
   return { read, handled, forYou: forYou.size };
 }
@@ -101,7 +106,7 @@ export function readReducer(state: ReadState, e: OrchProgressEvent): ReadState {
         run,
         cards,
         knownCards,
-        counts: counts(state.lines, cards, knownCards),
+        counts: counts(state.lines, cards, knownCards, state.since),
         firstCardAt: state.firstCardAt ?? e.t,
       };
     }
@@ -128,7 +133,7 @@ export function readReducer(state: ReadState, e: OrchProgressEvent): ReadState {
         ...state,
         run,
         lines,
-        counts: counts(lines, state.cards, state.knownCards),
+        counts: counts(lines, state.cards, state.knownCards, state.since),
         lookups: { ...state.lookups, used },
         firstLineAt: state.firstLineAt ?? e.line.t,
       };
