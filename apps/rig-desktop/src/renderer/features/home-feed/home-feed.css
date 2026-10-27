@@ -272,6 +272,7 @@
   transition:
     transform 0.22s cubic-bezier(0.3, 1.5, 0.5, 1),
     padding 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
+    margin 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
     background-color 0.18s ease-out,
     border-color 0.18s ease-out,
     color 0.18s ease-out,
@@ -334,9 +335,12 @@
     transform: scale(0.97);
     transition-duration: 0.08s;
   }
+  /* It opens up by 3px a side and takes them back in margin: its place in the row stays the same, so
+     nothing next to it reflows (a hint that wrapped would move the button out from under the cursor). */
   .hf-btn[data-motion='slide']:hover,
   .hf-btn[data-motion='slide']:focus-visible {
     padding-inline: calc(var(--hf-px) + 3px);
+    margin-inline: -3px;
   }
   .hf-btn[data-motion='slide']:hover .hf-btn-lead,
   .hf-btn[data-motion='slide']:focus-visible .hf-btn-lead {
