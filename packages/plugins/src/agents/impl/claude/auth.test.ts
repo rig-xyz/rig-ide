@@ -24,7 +24,7 @@ describe('claudeAuthStatus', () => {
 
     await expect(
       claudeAuthStatus(ctx({ env: { ANTHROPIC_API_KEY: 'test-key' }, exec }))
-    ).resolves.toEqual({ kind: 'authenticated' });
+    ).resolves.toEqual({ kind: 'authenticated', method: 'api-key' });
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -41,8 +41,43 @@ describe('claudeAuthStatus', () => {
     await expect(claudeAuthStatus(ctx({ exec }))).resolves.toEqual({
       kind: 'authenticated',
       account: 'user@example.com',
+      method: 'claude-ai',
     });
     expect(exec).toHaveBeenCalledWith('claude', ['auth', 'status'], { timeout: 5000 });
+  });
+
+  it('reads a claude.ai login without an email as a Claude login', async () => {
+    const exec = vi.fn().mockResolvedValue({
+      stdout: JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' }),
+      stderr: '',
+    });
+
+    await expect(claudeAuthStatus(ctx({ exec }))).resolves.toEqual({
+      kind: 'authenticated',
+      account: undefined,
+      method: 'claude-ai',
+    });
+  });
+
+  it('reads a key the CLI reports, even with no key in the environment, as an API key', async () => {
+    const exec = vi.fn().mockResolvedValue({
+      stdout: JSON.stringify({ loggedIn: true, authMethod: 'api_key', apiKeySource: 'settings' }),
+      stderr: '',
+    });
+
+    await expect(claudeAuthStatus(ctx({ exec }))).resolves.toMatchObject({
+      kind: 'authenticated',
+      method: 'api-key',
+    });
+  });
+
+  it('says unknown when an older CLI prints no status JSON', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: 'Logged in', stderr: '' });
+
+    await expect(claudeAuthStatus(ctx({ exec }))).resolves.toMatchObject({
+      kind: 'authenticated',
+      method: 'unknown',
+    });
   });
 
   it('reports unauthenticated when claude auth status exits 1 with status JSON', async () => {

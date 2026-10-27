@@ -1,0 +1,357 @@
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { cn } from '@renderer/lib/utils';
+import {
+  DOT_MATRIX_ENDS,
+  DOT_MATRIX_FRAMES,
+  getMatrixTick,
+  isDotMatrixEnd,
+  subscribeMatrixClock,
+  type DotMatrixActivity,
+  type DotMatrixState,
+} from './dot-matrix';
+
+/**
+ * A field of the app's 3×3 dot matrices, like a room of agents at work: the
+ * website's agent field (hub/web `homepage/agent-field.tsx`), drawn from this
+ * app's own `dot-matrix.tsx` frames and clock rather than a copy of them.
+ *
+ * `ambient`: each tile plays an activity, now and then finishes, rests and
+ * starts again. `idle`: every tile rests, dim, until something wakes it.
+ * The first run drives it through a ref: `wake` lights a patch in a color
+ * (a connector found), and `tile(id)` claims one tile for one thing being
+ * read, then settles it to an end glyph.
+ *
+ * One canvas, drawn only on the matrix clock and only while on screen and
+ * the window is visible. With reduced motion the clock never ticks, so it
+ * draws one still frame, again after each change.
+ */
+
+export type AgentFieldMode = 'ambient' | 'idle';
+
+/** A circle on the field: center and radius as fractions of its width and height. */
+export type AgentFieldRegion = { x: number; y: number; radius: number };
+
+/** A color: a CSS custom property (`--theme-3`) read off the page, or any canvas color. */
+export type AgentFieldColor = string;
+
+export type AgentFieldTile = {
+  set(state: DotMatrixState, color?: AgentFieldColor): void;
+  /** Back to whatever the field is doing. */
+  release(): void;
+};
+
+export type AgentFieldHandle = {
+  setMode(mode: AgentFieldMode): void;
+  wake(region: AgentFieldRegion, color: AgentFieldColor): void;
+  tile(id: string): AgentFieldTile;
+};
+
+const ACTIVITIES: DotMatrixActivity[] = [
+  'thinking',
+  'reading',
+  'searching',
+  'editing',
+  'running',
+  'planning',
+  'waiting',
+];
+const CELL = 3;
+const GAP = 2;
+const PITCH = 34;
+const TILE = CELL * 3 + GAP * 2;
+/** An idle tile: every dot faintly there. The field's own rest, quieter than any glyph. */
+const REST_FRAME = Array<number>(9).fill(0.1);
+
+type Ambient = { kind: 'ambient'; state: DotMatrixActivity | 'done' | 'starting'; until: number };
+type Fixed = { kind: 'fixed'; state: DotMatrixState; color: AgentFieldColor | null };
+type Tile = { x: number; y: number; offset: number; run: Ambient | Fixed | null };
+
+function pick<T>(xs: readonly T[]): T {
+  return xs[Math.floor(Math.random() * xs.length)]!;
+}
+
+/** Woken patches and ambient runs end with a mode change; claimed tiles keep their state. */
+function clearUnclaimed(f: { tiles: Tile[]; claims: Map<string, { index: number }> }): void {
+  const claimed = new Set([...f.claims.values()].map((c) => c.index));
+  f.tiles.forEach((tile, index) => {
+    if (!claimed.has(index)) tile.run = null;
+  });
+}
+
+function prefersReducedMotion(): boolean {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch {
+    return false;
+  }
+}
+
+export const AgentField = forwardRef<
+  AgentFieldHandle,
+  { mode?: AgentFieldMode; className?: string }
+>(function AgentField({ mode = 'ambient', className }, ref) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const field = useRef<{
+    tiles: Tile[];
+    width: number;
+    height: number;
+    mode: AgentFieldMode;
+    claims: Map<string, { index: number; run: Fixed | null }>;
+    draw: () => void;
+  }>({ tiles: [], width: 0, height: 0, mode, claims: new Map(), draw: () => {} });
+
+  useImperativeHandle(ref, () => {
+    const f = field.current;
+    const claim = (id: string): number => {
+      const existing = f.claims.get(id);
+      if (existing) return existing.index;
+      const taken = new Set([...f.claims.values()].map((c) => c.index));
+      const free = f.tiles
+        .map((tile, index) => ({
+          index,
+          d: Math.hypot(tile.x / f.width - 0.5, tile.y / f.height - 0.5),
+        }))
+        .filter((t) => !taken.has(t.index))
+        .sort((a, b) => a.d - b.d);
+      // Near the middle, where the mask leaves the field brightest, but not in a ring.
+      const near = free.slice(0, Math.max(1, Math.ceil(free.length * 0.4)));
+      const index = near.length > 0 ? pick(near).index : 0;
+      f.claims.set(id, { index, run: null });
+      return index;
+    };
+    return {
+      setMode(next) {
+        f.mode = next;
+        clearUnclaimed(f);
+        f.draw();
+      },
+      wake(region, color) {
+        const claimed = new Set([...f.claims.values()].map((c) => c.index));
+        f.tiles.forEach((tile, index) => {
+          if (claimed.has(index)) return;
+          const dx = (tile.x + TILE / 2) / f.width - region.x;
+          const dy = (tile.y + TILE / 2) / f.height - region.y;
+          if (Math.hypot(dx, dy) <= region.radius) {
+            tile.run = { kind: 'fixed', state: pick(ACTIVITIES), color };
+          }
+        });
+        f.draw();
+      },
+      tile(id) {
+        return {
+          set(state, color) {
+            const index = claim(id);
+            const run: Fixed = { kind: 'fixed', state, color: color ?? null };
+            f.claims.set(id, { index, run });
+            const tile = f.tiles[index];
+            if (tile) tile.run = run;
+            f.draw();
+          },
+          release() {
+            const held = f.claims.get(id);
+            f.claims.delete(id);
+            const tile = held ? f.tiles[held.index] : undefined;
+            if (tile) tile.run = null;
+            f.draw();
+          },
+        };
+      },
+    };
+  }, []);
+
+  useEffect(() => {
+    field.current.mode = mode;
+    clearUnclaimed(field.current);
+    field.current.draw();
+  }, [mode]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    const f = field.current;
+    const still = prefersReducedMotion();
+    const colors = { accent: '', rest: '', ok: '' };
+
+    const resolve = (color: AgentFieldColor | null, fallback: string) => {
+      if (!color) return fallback;
+      if (!color.startsWith('--')) return color;
+      return getComputedStyle(canvas).getPropertyValue(color).trim() || fallback;
+    };
+    const readColors = () => {
+      colors.accent = resolve('--accent', '#62a4f5');
+      colors.rest = resolve('--text-muted', '#6b7480');
+      colors.ok = resolve('--status-ok', '#4ade80');
+    };
+
+    const layout = () => {
+      const { width, height } = canvas.getBoundingClientRect();
+      if (width === 0 || height === 0) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const cols = Math.floor(width / PITCH);
+      const rows = Math.floor(height / PITCH);
+      const ox = (width - (cols - 1) * PITCH - TILE) / 2;
+      const oy = (height - (rows - 1) * PITCH - TILE) / 2;
+      f.width = width;
+      f.height = height;
+      f.tiles = [];
+      for (let r = 0; r < rows; r++)
+        for (let c = 0; c < cols; c++)
+          f.tiles.push({
+            x: ox + c * PITCH,
+            y: oy + r * PITCH,
+            offset: Math.floor(Math.random() * 200),
+            run: null,
+          });
+      // Claimed tiles keep their state, on whichever tile now sits nearest the middle.
+      const held = [...f.claims.entries()];
+      f.claims.clear();
+      for (const [id, { run }] of held) {
+        const free = f.tiles.findIndex(
+          (tile, index) => !tile.run && ![...f.claims.values()].some((c) => c.index === index)
+        );
+        if (free < 0) break;
+        f.claims.set(id, { index: free, run });
+        f.tiles[free]!.run = run;
+      }
+    };
+
+    const ambient = (tile: Tile, t: number): Ambient => {
+      if (tile.run?.kind === 'ambient') {
+        const run = tile.run;
+        if (still || t < run.until) return run;
+        if (run.state === 'done') return { kind: 'ambient', state: 'starting', until: t + 12 };
+        if (run.state === 'starting')
+          return {
+            kind: 'ambient',
+            state: pick(ACTIVITIES),
+            until: t + 60 + Math.floor(Math.random() * 300),
+          };
+        return { kind: 'ambient', state: 'done', until: t + 40 + Math.floor(Math.random() * 120) };
+      }
+      const done = Math.random() < 0.18;
+      return {
+        kind: 'ambient',
+        state: done ? 'done' : pick(ACTIVITIES),
+        until: t + 30 + Math.floor(Math.random() * 260),
+      };
+    };
+
+    const draw = () => {
+      const t = getMatrixTick();
+      ctx.clearRect(0, 0, f.width, f.height);
+      for (const tile of f.tiles) {
+        let frame: number[];
+        let color: string;
+        let glow = false;
+        if (tile.run?.kind === 'fixed') {
+          const { state } = tile.run;
+          frame = isDotMatrixEnd(state)
+            ? DOT_MATRIX_ENDS[state].frame
+            : DOT_MATRIX_FRAMES[state](t + tile.offset);
+          const fallback =
+            state === 'done' ? colors.ok : isDotMatrixEnd(state) ? colors.rest : colors.accent;
+          color = resolve(tile.run.color, fallback);
+          glow = state === 'waiting';
+        } else if (f.mode === 'ambient') {
+          const run = ambient(tile, t);
+          tile.run = run;
+          frame =
+            run.state === 'done'
+              ? DOT_MATRIX_ENDS.done.frame
+              : DOT_MATRIX_FRAMES[run.state](t + tile.offset);
+          color = run.state === 'done' ? colors.rest : colors.accent;
+        } else {
+          frame = REST_FRAME;
+          color = colors.rest;
+        }
+        if (glow) {
+          const cx = tile.x + TILE / 2;
+          const cy = tile.y + TILE / 2;
+          const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, 20);
+          g.addColorStop(0, color);
+          g.addColorStop(1, 'transparent');
+          ctx.globalAlpha = 0.35;
+          ctx.fillStyle = g;
+          ctx.fillRect(cx - 20, cy - 20, 40, 40);
+        }
+        ctx.fillStyle = color;
+        for (let k = 0; k < 9; k++) {
+          ctx.globalAlpha = Math.min(1, frame[k]!);
+          ctx.beginPath();
+          ctx.arc(
+            tile.x + (k % 3) * (CELL + GAP) + CELL / 2,
+            tile.y + Math.floor(k / 3) * (CELL + GAP) + CELL / 2,
+            CELL / 2,
+            0,
+            Math.PI * 2
+          );
+          ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1;
+    };
+    f.draw = draw;
+
+    readColors();
+    layout();
+    draw();
+
+    // Ticks only while the field is on screen and the window is showing.
+    let onScreen = false;
+    let unsubscribe: (() => void) | null = null;
+    const sync = () => {
+      const run = onScreen && document.visibilityState === 'visible' && !still;
+      if (run && !unsubscribe) unsubscribe = subscribeMatrixClock(draw);
+      else if (!run && unsubscribe) {
+        unsubscribe();
+        unsubscribe = null;
+      }
+    };
+    const io = new IntersectionObserver(([entry]) => {
+      onScreen = entry?.isIntersecting ?? false;
+      sync();
+    });
+    io.observe(canvas);
+    document.addEventListener('visibilitychange', sync);
+
+    const ro = new ResizeObserver(() => {
+      layout();
+      draw();
+    });
+    ro.observe(canvas);
+
+    const recolor = () => {
+      readColors();
+      draw();
+    };
+    const mo = new MutationObserver(recolor);
+    mo.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme', 'class'],
+    });
+    const scheme = window.matchMedia('(prefers-color-scheme: light)');
+    scheme.addEventListener('change', recolor);
+
+    return () => {
+      unsubscribe?.();
+      io.disconnect();
+      ro.disconnect();
+      mo.disconnect();
+      scheme.removeEventListener('change', recolor);
+      document.removeEventListener('visibilitychange', sync);
+      f.draw = () => {};
+    };
+  }, []);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      aria-hidden
+      className={cn('pointer-events-none absolute inset-0 size-full', className)}
+    />
+  );
+});

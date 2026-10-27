@@ -13,6 +13,7 @@ import {
   type RigsRailView,
 } from '@shared/rig/settings';
 import { normalizePageSignIns } from '@shared/pages/sign-in-sites';
+import { normalizeFirstRunProgress } from '@shared/rig/first-run';
 import { normalizeNotificationPrefs } from '@shared/rig/notifications';
 import { DEFAULT_ROOM_SEES, isRoomSees, type RoomSees } from '@shared/spaces/room-sees';
 
@@ -179,6 +180,11 @@ function normalizeSettings(parsed: unknown): RigSettings {
     // first run. An explicit boolean already in the file is always honored
     // either way.
     hasSeenOnboarding: typeof raw.hasSeenOnboarding === 'boolean' ? raw.hasSeenOnboarding : true,
+    // Unlike `hasSeenOnboarding`, a file without it is 0: everyone sees the
+    // new first run once, existing users on its returning path.
+    firstRunSeen: typeof raw.firstRunSeen === 'number' && Number.isFinite(raw.firstRunSeen) ? raw.firstRunSeen : 0,
+    firstRunProgress: normalizeFirstRunProgress(raw.firstRunProgress),
+    debugMode: raw.debugMode === true,
     rigsRailView: isRigsRailView(raw.rigsRailView) ? raw.rigsRailView : DEFAULT_RIGS_RAIL_VIEW,
     updateLastCheckedAt: typeof raw.updateLastCheckedAt === 'number' ? raw.updateLastCheckedAt : null,
     updateAnnouncedVersion: typeof raw.updateAnnouncedVersion === 'string' ? raw.updateAnnouncedVersion : null,

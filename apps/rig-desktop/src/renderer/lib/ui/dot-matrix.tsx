@@ -49,7 +49,8 @@ function prefersReducedMotion(): boolean {
   }
 }
 
-function subscribe(listener: () => void): () => void {
+/** Ticks every 110 ms while anyone listens; never with reduced motion. `AgentField` draws off it too. */
+export function subscribeMatrixClock(listener: () => void): () => void {
   listeners.add(listener);
   if (!timer && !prefersReducedMotion()) {
     timer = setInterval(() => {
@@ -66,7 +67,7 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-const getTick = () => tick;
+export const getMatrixTick = () => tick;
 
 // ── frames ──────────────────────────────────────────────────────────────────
 const LO = 0.14;
@@ -75,7 +76,8 @@ const EDGE = [0, 1, 2, 5, 8, 7, 6, 3];
 const SPIRAL = [0, 1, 2, 5, 8, 7, 6, 3, 4];
 const HOPS = [4, 0, 5, 2, 7, 3, 8, 1, 6, 4, 2, 6, 1, 8, 3, 5, 0, 7];
 
-const FRAMES: Record<DotMatrixActivity, (t: number) => number[]> = {
+/** Each activity's frame at clock tick `t`: nine opacities, row by row. */
+export const DOT_MATRIX_FRAMES: Record<DotMatrixActivity, (t: number) => number[]> = {
   starting(t) {
     const phase = Math.floor(t / 2) % 5;
     const f = blank();
@@ -147,7 +149,8 @@ const glyph = (on: number[], v = 1) => {
   return f;
 };
 
-const ENDS: Record<DotMatrixEnd, { frame: number[]; tone: string }> = {
+/** Each end glyph's one frame and its default color class. */
+export const DOT_MATRIX_ENDS: Record<DotMatrixEnd, { frame: number[]; tone: string }> = {
   done: { frame: glyph([3, 7, 5, 1]), tone: 'bg-success' },
   failed: { frame: glyph([0, 2, 4, 6, 8]), tone: 'bg-danger' },
   stopped: { frame: glyph([0, 1, 2, 3, 4, 5, 6, 7, 8], 0.55), tone: 'bg-text-muted' },
@@ -171,8 +174,8 @@ const SIZES = {
   lg: { cell: 'size-2', gap: 'gap-1' },
 } as const;
 
-function isEnd(state: DotMatrixState): state is DotMatrixEnd {
-  return state in ENDS;
+export function isDotMatrixEnd(state: DotMatrixState): state is DotMatrixEnd {
+  return state in DOT_MATRIX_ENDS;
 }
 
 function LiveMatrix({
@@ -184,8 +187,8 @@ function LiveMatrix({
   cell: string;
   tone: string;
 }) {
-  const t = useSyncExternalStore(subscribe, getTick, getTick);
-  return <Cells frame={FRAMES[state](t)} tone={tone} cell={cell} />;
+  const t = useSyncExternalStore(subscribeMatrixClock, getMatrixTick, getMatrixTick);
+  return <Cells frame={DOT_MATRIX_FRAMES[state](t)} tone={tone} cell={cell} />;
 }
 
 function Cells({ frame, tone, cell }: { frame: number[]; tone: string; cell: string }) {
@@ -226,8 +229,12 @@ export function DotMatrix({
       aria-hidden={label ? undefined : true}
       data-state={state}
     >
-      {isEnd(state) ? (
-        <Cells frame={ENDS[state].frame} tone={tone ? TONES[tone] : ENDS[state].tone} cell={cell} />
+      {isDotMatrixEnd(state) ? (
+        <Cells
+          frame={DOT_MATRIX_ENDS[state].frame}
+          tone={tone ? TONES[tone] : DOT_MATRIX_ENDS[state].tone}
+          cell={cell}
+        />
       ) : (
         <LiveMatrix state={state} cell={cell} tone={TONES[tone ?? 'accent']} />
       )}

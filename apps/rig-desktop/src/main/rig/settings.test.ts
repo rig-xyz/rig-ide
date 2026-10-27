@@ -271,6 +271,42 @@ describe('RigSettingsStore', () => {
     });
   });
 
+  describe('firstRunSeen and firstRunProgress', () => {
+    it('a brand-new install has seen no first run and has none under way', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get()).toMatchObject({ firstRunSeen: 0, firstRunProgress: null, debugMode: false });
+    });
+
+    it('an existing settings.json without the field gets the first run once, unlike hasSeenOnboarding', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(settingsPath, JSON.stringify({ version: 1, theme: 'dark' }));
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get()).toMatchObject({ firstRunSeen: 0, hasSeenOnboarding: true });
+    });
+
+    it('progress round-trips, and a malformed one reads as none', () => {
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      store.set({ firstRunSeen: 1, firstRunProgress: { step: 'setup', readStarted: false } });
+      const second = new RigSettingsStore(settingsPath);
+      second.initialize();
+      expect(second.get()).toMatchObject({
+        firstRunSeen: 1,
+        firstRunProgress: { step: 'setup', readStarted: false },
+      });
+
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({ ...DEFAULT_RIG_SETTINGS, firstRunProgress: { step: 'nowhere' } })
+      );
+      const third = new RigSettingsStore(settingsPath);
+      third.initialize();
+      expect(third.get().firstRunProgress).toBeNull();
+    });
+  });
+
   describe('rigsRailView (round 2 — filter/sort persistence)', () => {
     it('defaults to all/recent before anything is ever set', () => {
       const store = new RigSettingsStore(settingsPath);

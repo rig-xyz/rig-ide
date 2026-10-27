@@ -1,0 +1,131 @@
+/*
+ * The first run's few pieces Tailwind can't say cleanly: the field's masks,
+ * the stage's glow, the glass tiles, and the entrance motion. Colors come
+ * from tokens.css only.
+ */
+
+.fr-stage::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  height: 60%;
+  pointer-events: none;
+  background: radial-gradient(
+    50% 60% at 50% 100%,
+    color-mix(in srgb, var(--accent) 9%, transparent),
+    transparent 72%
+  );
+}
+
+/* The field fades out toward the stage's edges. */
+.fr-field {
+  transition:
+    opacity 0.7s,
+    filter 0.7s;
+  mask-image: radial-gradient(ellipse 70% 72% at 50% 50%, #000 30%, transparent 82%);
+}
+/* Welcome: a quiet hole in the middle for the hero, as on the website. */
+.fr-field[data-look='hero'] {
+  mask-image: radial-gradient(
+    ellipse 62% 72% at 50% 50%,
+    transparent 16%,
+    #000 44%,
+    transparent 82%
+  );
+}
+.fr-field[data-look='dim'] {
+  opacity: 0.4;
+}
+
+/* A mark on glass, floating over the field. */
+.fr-glass {
+  display: grid;
+  place-items: center;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--pill-fill) 85%, transparent);
+  backdrop-filter: blur(8px);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 12%, transparent),
+    0 0 0 1px color-mix(in srgb, white 7%, transparent);
+}
+.fr-hero-mark {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 12%, transparent),
+    0 0 0 1px color-mix(in srgb, white 7%, transparent),
+    0 18px 50px -14px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.fr-hero-fade {
+  background: linear-gradient(
+    90deg,
+    var(--text-secondary),
+    color-mix(in srgb, var(--text-secondary) 55%, var(--accent))
+  );
+  background-clip: text;
+  color: transparent;
+}
+
+/* Set up's two tiles: dim until their side is ready. */
+.fr-pair-tile {
+  opacity: 0.45;
+  filter: grayscale(1);
+  transition:
+    opacity 0.5s,
+    filter 0.5s,
+    box-shadow 0.6s,
+    transform 0.6s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.fr-pair-tile[data-on='true'] {
+  opacity: 1;
+  filter: none;
+  transform: scale(1.04);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 12%, transparent),
+    0 0 0 1px color-mix(in srgb, white 7%, transparent),
+    0 18px 44px -14px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+/* A Set up row that needs something; `ok` once done, `warn` when it works but not for this. */
+.fr-need {
+  background: var(--bg-2);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 7%, transparent);
+}
+.fr-need[data-tone='ok'] {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--border-hairline);
+}
+.fr-need[data-tone='warn'] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--status-warn) 45%, transparent);
+}
+
+.fr-in {
+  animation: fr-in 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes fr-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.fr-tick path {
+  stroke-dasharray: 14;
+  stroke-dashoffset: 14;
+  animation: fr-draw 0.4s 0.05s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+@keyframes fr-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fr-in,
+  .fr-tick path {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  .fr-field,
+  .fr-pair-tile {
+    transition: none;
+  }
+}

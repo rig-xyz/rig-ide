@@ -28,8 +28,9 @@ import { markBindingDeleted } from '@renderer/features/home/deleted-rig-store';
 import { Home } from '@renderer/features/home/home';
 import { NewHome } from '@renderer/features/home-feed/new-home';
 import { useNewHomeEnabled } from '@renderer/features/home-feed/use-new-home-enabled';
-import { Onboarding } from '@renderer/features/onboarding/onboarding';
-import { deriveOnboardingSteps } from '@renderer/features/onboarding/onboarding-state';
+import { firstRunDebugAvailable } from '@renderer/features/first-run/debug/first-run-debug';
+import { FirstRun } from '@renderer/features/first-run/first-run';
+import { shouldShowFirstRun } from '@renderer/features/first-run/first-run-state';
 import { onOpenSpaceRequest } from '@renderer/features/people/open-space-request';
 import {
   deriveRendererBootState,
@@ -96,6 +97,7 @@ import {
   type RigSettingsLegacyImport,
   rigSettingsChangedChannel,
 } from '@shared/rig/settings';
+import { FIRST_RUN_VERSION } from '@shared/rig/first-run';
 import {
   rigOpenRecentChannel,
   type RigOpenSource,
@@ -433,11 +435,13 @@ export function App() {
   const [chatWidth, setChatWidth] = useState<number>(readStoredChatWidth);
   const chatWidthRef = useRef(chatWidth);
   chatWidthRef.current = chatWidth;
-  // Round H2's onboarding gate — null until the settings handshake below
-  // resolves at least once; App renders NOTHING (not the wizard, not the
-  // normal shell) while this is null, so a fresh boot never flashes the
-  // wrong one before the real value is known.
-  const [hasSeenOnboarding, setHasSeenOnboarding] = useState<boolean | null>(null);
+  // The first run's gate (`features/first-run`), from the settings handshake
+  // below. `firstRun` is null until that resolves, so a fresh boot never
+  // flashes the shell before the first run, or the reverse.
+  const [firstRun, setFirstRun] = useState<Pick<
+    RigSettings,
+    'firstRunSeen' | 'firstRunProgress' | 'hasSeenOnboarding' | 'debugMode'
+  > | null>(null);
   const [settingsBootState, setSettingsBootState] = useState<BootDependencyState>('pending');
   const [bootAttempt, setBootAttempt] = useState(0);
   const [bootOverride, setBootOverride] = useState(false);
@@ -483,7 +487,12 @@ export function App() {
       if (settings.chatPanelWidth !== null) {
         setChatWidth(clamp(settings.chatPanelWidth, CHAT_WIDTH_MIN, CHAT_WIDTH_MAX));
       }
-      setHasSeenOnboarding(settings.hasSeenOnboarding);
+      setFirstRun({
+        firstRunSeen: settings.firstRunSeen,
+        firstRunProgress: settings.firstRunProgress,
+        hasSeenOnboarding: settings.hasSeenOnboarding,
+        debugMode: settings.debugMode,
+      });
       setSettingsBootState('ready');
     };
 
@@ -1284,16 +1293,18 @@ export function App() {
     persistChatWidth(width);
   }, [persistChatWidth]);
 
-  const onOnboardingComplete = useCallback(() => {
-    setHasSeenOnboarding(true);
-    void rpc.rig.settings.set({ hasSeenOnboarding: true });
+  // The first run writes `firstRunSeen` itself; this only closes it at once,
+  // ahead of the settings change that follows.
+  const onFirstRunDone = useCallback(() => {
+    setFirstRun((current) => current && { ...current, firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null });
   }, []);
+  const firstRunOpen = firstRun !== null && shouldShowFirstRun(firstRun.firstRunSeen);
+  // Replaying the first run from Settings closes Settings behind it.
+  useEffect(() => {
+    if (firstRunOpen) setSettingsOpen(false);
+  }, [firstRunOpen]);
 
-  const onboardingSteps = deriveOnboardingSteps({
-    hasSeenOnboarding: hasSeenOnboarding ?? true,
-    signedIn: authStatusQuery.data?.signedIn ?? false,
-  });
-  const canOpenNativeSettings = rendererBootState === 'ready' && onboardingSteps.length === 0;
+  const canOpenNativeSettings = rendererBootState === 'ready' && !firstRunOpen;
   const nativeCloseTarget = deriveNativeCloseTarget({
     settingsOpen,
     hasRig: bound !== null,
@@ -1357,8 +1368,16 @@ export function App() {
     );
   }
 
-  if (onboardingSteps.length > 0) {
-    return <Onboarding steps={onboardingSteps} onComplete={onOnboardingComplete} />;
+  if (firstRun && firstRunOpen) {
+    return (
+      <FirstRun
+        firstRunSeen={firstRun.firstRunSeen}
+        hasSeenOnboarding={firstRun.hasSeenOnboarding}
+        progress={firstRun.firstRunProgress}
+        debug={firstRunDebugAvailable(firstRun.debugMode)}
+        onDone={onFirstRunDone}
+      />
+    );
   }
 
   const chrome = topbarChrome(rigView ? { isSpace: rigViewIsSpace, layout } : null);

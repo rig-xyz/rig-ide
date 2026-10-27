@@ -38,10 +38,20 @@ export const agentAuthDescriptorSchema = z.discriminatedUnion('kind', [
 export type AgentAuthMethod = z.infer<typeof authMethodSchema>;
 export type AgentAuthDescriptor = z.infer<typeof agentAuthDescriptorSchema>;
 
+/**
+ * How a signed-in agent is signed in. `claude-ai` is a Claude account login,
+ * which is what reaches the account's claude.ai connectors; `api-key` is a key
+ * from the environment, which runs sessions but reaches no connectors.
+ * `unknown` when the agent doesn't say.
+ */
+export const agentAuthCredentialSchema = z.enum(['claude-ai', 'api-key', 'unknown']);
+export type AgentAuthCredential = z.infer<typeof agentAuthCredentialSchema>;
+
 export const agentAuthStatusSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('authenticated'),
     account: z.string().optional(),
+    method: agentAuthCredentialSchema.optional(),
   }),
   z.object({
     kind: z.literal('unauthenticated'),
@@ -54,7 +64,7 @@ export const agentAuthStatusSchema = z.discriminatedUnion('kind', [
 ]);
 
 export type AgentAuthStatus =
-  | { kind: 'authenticated'; account?: string }
+  | { kind: 'authenticated'; account?: string; method?: AgentAuthCredential }
   | { kind: 'unauthenticated'; message?: string }
   | { kind: 'unknown'; message?: string };
 

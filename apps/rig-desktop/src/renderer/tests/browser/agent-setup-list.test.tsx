@@ -4,9 +4,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * The first-run Agent step on a clean Mac: Codex is offered through OpenAI's
- * own installer (no npm), with the ChatGPT app hint, and an install that
- * finishes but can't be found says why in the toast.
+ * Setting up Codex on a clean Mac (`AgentSetupList`, as Home and a space's
+ * agent list show it): offered through OpenAI's own installer (no npm), with
+ * the ChatGPT app hint, and an install that finishes but can't be found says
+ * why in the toast.
  */
 
 const ICON = { kind: 'svg' as const, variants: [{ minSize: 0, light: '<svg></svg>' }] };
@@ -43,13 +44,13 @@ vi.mock('@renderer/lib/ipc', () => ({
   events: { on: () => () => {} },
 }));
 
-import { AgentsStep } from '@renderer/features/onboarding/agents-step';
+import { AgentSetupList } from '@renderer/features/agents/agent-install';
 
 beforeAll(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
-describe('AgentsStep on a Mac without Node', () => {
+describe('AgentSetupList on a Mac without Node', () => {
   let host: HTMLDivElement;
   let root: Root;
 
@@ -70,7 +71,7 @@ describe('AgentsStep on a Mac without Node', () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-          <AgentsStep onComplete={() => {}} />
+          <AgentSetupList only="codex" />
         </QueryClientProvider>
       );
     });

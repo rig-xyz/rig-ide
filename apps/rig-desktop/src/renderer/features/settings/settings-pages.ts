@@ -170,6 +170,18 @@ export const SETTINGS_ROWS: readonly SettingsRowEntry[] = [
     label: 'Rig folder',
     description: 'New rigs are created here. Rigs you already have stay where they are.',
   },
+  {
+    id: 'debug-mode',
+    page: 'advanced',
+    label: 'Debug mode',
+    description: 'Tools for testing Rig itself, such as replaying the first run.',
+  },
+  {
+    id: 'first-run',
+    page: 'advanced',
+    label: 'First run',
+    description: 'Go through the first run again, as you are or as a simulated new account.',
+  },
   { id: 'app-version', page: 'about', label: 'Rig', description: 'The version of this app.' },
   {
     id: 'updates',

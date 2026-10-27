@@ -102,6 +102,7 @@ export type {
 } from './capabilities/acp';
 export type {
   AgentAuthContext,
+  AgentAuthCredential,
   AgentAuthDescriptor,
   AgentAuthMethod,
   AgentAuthStatus,
