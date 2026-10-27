@@ -248,8 +248,12 @@ function status(
   if (ended)
     return `Checked ${checked} ${checked === 1 ? 'place' : 'places'} in your tools in ${clock(elapsed)}. ${state.counts.forYou} ${state.counts.forYou === 1 ? 'card is' : 'cards are'} on your Feed.`;
   if (current) return `${current.label}…`;
-  if (thinking || !state.lines.length)
-    return state.lines.length ? 'Deciding what to check next…' : 'Waking your Claude…';
+  if (!state.lines.length) return 'Starting to read your last 3 days…';
+  if (thinking) {
+    // The ticker already says it's deciding; up here, what it has done so far.
+    const done = state.lines.filter((l) => l.status !== 'running' && l.connector !== 'rig').at(-1);
+    return done ? `${checked} so far · last: ${done.label}` : 'Reading your last 3 days…';
+  }
   const last = state.lines.at(-1);
   return last ? last.label : 'Reading your last 3 days…';
 }
