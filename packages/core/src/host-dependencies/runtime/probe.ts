@@ -1,4 +1,6 @@
+import { access } from 'node:fs/promises';
 import os from 'node:os';
+import { isAbsolute, posix } from 'node:path';
 import type { IExecutionContext } from '../../exec/execution-context';
 import type { Platform } from '../capability';
 import { toPlatform } from './install-options';
@@ -41,6 +43,41 @@ export async function resolveExtraLocationPath(
     return expanded;
   } catch {
     return null;
+  }
+}
+
+/**
+ * True when a CLI path resolved earlier has since disappeared — e.g. the
+ * Claude desktop app replaced its bundled Claude Code with a newer version
+ * and deleted the old `claude-code/<version>/` folder while this app kept
+ * the old path. Only an absolute path can go missing this way (a bare
+ * command name is looked up on PATH at spawn time), and only a definite
+ * "no such file" counts: a check that can't run says nothing, so callers
+ * keep using what they have instead of re-resolving on every spawn.
+ */
+export async function cliPathIsGone(path: string, ctx: IExecutionContext): Promise<boolean> {
+  if (!isAbsolute(path) && !posix.isAbsolute(path)) return false;
+  if (ctx.supportsLocalSpawn) {
+    try {
+      await access(path);
+      return false;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      return code === 'ENOENT' || code === 'ENOTDIR';
+    }
+  }
+  // The answer is printed rather than read from the exit code: a remote
+  // context's rejection doesn't say why, and a timeout or a host without
+  // `sh` is not evidence the file is gone.
+  try {
+    const { stdout } = await ctx.exec(
+      'sh',
+      ['-c', 'if [ -e "$1" ]; then echo present; else echo gone; fi', 'sh', path],
+      { timeout: EXTRA_LOCATION_PROBE_TIMEOUT_MS }
+    );
+    return stdout.trim() === 'gone';
+  } catch {
+    return false;
   }
 }
 

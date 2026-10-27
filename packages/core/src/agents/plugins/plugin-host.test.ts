@@ -216,6 +216,49 @@ describe('AgentPluginHost', () => {
     expect(buildSpawn).toHaveBeenCalledWith(expect.objectContaining({ cli: '/opt/homebrew/bin/test' }));
   });
 
+  it('finds the CLI again once the one it resolved has been deleted', async () => {
+    const oldCli = '/claude-code/2.1.295/claude';
+    const newCli = '/claude-code/2.1.304/claude';
+    const gone = new Set<string>();
+    const exec: IExecutionContext = {
+      ...fakeExec(),
+      async exec(_command, args = []) {
+        return { stdout: gone.has(args.at(-1) ?? '') ? 'gone\n' : 'present\n', stderr: '' };
+      },
+    };
+    const buildSpawn = vi.fn(({ cli }: { cli: string }) => ({ command: cli, args: [], env: {} }));
+    const host = createHost(
+      [
+        plugin({
+          acp: { kind: 'supported' },
+          behavior: { acp: { buildSpawn } as unknown as IAcpBehavior },
+        }),
+      ],
+      exec
+    );
+    const state = {
+      id: 'test',
+      category: 'agent',
+      status: 'available',
+      version: '1',
+      checkedAt: 0,
+    } as const;
+    vi.spyOn(host.dependencies, 'get').mockReturnValue({ ...state, path: oldCli });
+    const probe = vi
+      .spyOn(host.dependencies, 'probe')
+      .mockResolvedValue({ ...state, path: newCli });
+
+    await host.buildAcpSpawn('test', { cwd: '/work' });
+    expect(buildSpawn).toHaveBeenLastCalledWith(expect.objectContaining({ cli: oldCli }));
+    expect(probe).not.toHaveBeenCalled();
+
+    // The Claude desktop app updated its bundled copy and deleted the old one.
+    gone.add(oldCli);
+    await host.buildAcpSpawn('test', { cwd: '/work' });
+    expect(buildSpawn).toHaveBeenLastCalledWith(expect.objectContaining({ cli: newCli }));
+    expect(probe).toHaveBeenCalledTimes(1);
+  });
+
   it('binds machine dependencies for auth status checks', async () => {
     const checkStatus = vi.fn(async () => ({ kind: 'authenticated' as const, account: 'ada' }));
     const host = createHost([
@@ -271,13 +314,16 @@ describe('AgentPluginHost', () => {
   });
 });
 
-function createHost(plugins: CLIAgentPluginProvider[]): AgentPluginHost {
+function createHost(
+  plugins: CLIAgentPluginProvider[],
+  exec: IExecutionContext = fakeExec()
+): AgentPluginHost {
   const registry = createPluginRegistry<CLIAgentPluginProvider>();
   for (const item of plugins) registry.register(item);
   return new AgentPluginHost({
     scope: createScope({ label: 'test' }),
     registry,
-    exec: fakeExec(),
+    exec,
     fs: memoryFs(),
     env: { HOME: '/home/test', PATH: '/bin', UNSAFE_ENV: 'nope' },
     homeDir: '/home/test',

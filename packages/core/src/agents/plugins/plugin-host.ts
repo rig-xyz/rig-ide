@@ -3,7 +3,11 @@ import type { PluginRegistry } from '@emdash/shared/plugins';
 import { deduplicateRequests, type Scope } from '@emdash/wire/util';
 import type { IExecutionContext } from '../../exec';
 import { buildDescriptorFromProvider } from '../../host-dependencies/descriptor-from-provider';
-import { HostDependencyManager, type Platform } from '../../host-dependencies/runtime';
+import {
+  cliPathIsGone,
+  HostDependencyManager,
+  type Platform,
+} from '../../host-dependencies/runtime';
 import type { PluginFs } from '../runtime/fs';
 import {
   CliUnrunnableError,
@@ -86,6 +90,7 @@ export class AgentPluginHost {
     this.scope.use(deps.exec);
     this.spawnContext = createSpawnContextResolver({
       resolveCli: (providerId) => this.resolveCli(providerId),
+      isCliGone: (cli) => cliPathIsGone(cli, deps.exec),
       hasProvider: (providerId) => this.registry.get(providerId) !== undefined,
       env: deps.env,
       homeDir: deps.homeDir,
@@ -279,8 +284,11 @@ export class AgentPluginHost {
 
     let state = this.dependencies.get(providerId);
     // A CLI that couldn't run here last time is looked up again, in case it
-    // has been reinstalled since.
-    if (!state?.path || state.errorKind) state = await this.dependencies.probe(providerId);
+    // has been reinstalled since; so is one whose file has disappeared (an
+    // app-bundled copy replaced by a newer version, for instance).
+    if (!state?.path || state.errorKind || (await cliPathIsGone(state.path, this.deps.exec))) {
+      state = await this.dependencies.probe(providerId);
+    }
     if (state.path && state.errorKind === 'incompatible-arch') {
       // Spawning it would only fail deep inside the agent adapter with an
       // opaque error; stop here with the reason people can act on.
