@@ -96,6 +96,8 @@ export const VERB_LABEL: Record<FeedVerb, string> = {
   start: 'Start session',
   space: 'Create space',
   open: 'Open',
+  send: 'Send',
+  post: 'Post',
 };
 
 /** The choice that's showing: the picked one, else the first. */

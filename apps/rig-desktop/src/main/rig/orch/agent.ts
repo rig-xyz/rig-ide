@@ -159,7 +159,7 @@ function firstReadLines(f: FirstPass, me: string, since: string): string[] {
         : `Pass ${f.pass} of ${f.of}, ${f.lookups} lookups: find the one thing in the last ${f.lookbackDays} days that most needs ${me} now.`,
       'Step 1: load the read tools you need in a single ToolSearch call (for example select:mcp__claude_ai_Slack__slack_search_public_and_private,mcp__claude_ai_Slack__slack_read_thread,mcp__claude_ai_Linear__list_issues).',
       `Step 2, all in one step: search Slack for what was sent to ${me} since ${since} (their DMs and mentions), and list the Linear issues assigned to them or mentioning them, updated since then. GitHub's asks are listed below already.`,
-      `Step 3: put the card for the most pressing thing (rig_feed put, with open for something new, choices in its limits), in the same step as any outcomes you report. A card already on the Feed counts: if one is still the most pressing, put it again with its ref, so it comes first. Then end the pass at once with its run note and no closing message. Never pad: no card is better than a weak one.`,
+      `Step 3: put the card for the most pressing thing (rig_feed put, with open for something new, choices in its limits), in the same step as any outcomes you report. If the answer is a message or a review comment, its choices are drafted answers (send or post, each with its draft). A card already on the Feed counts: if one is still the most pressing, put it again with its ref, so it comes first. Then end the pass at once with its run note and no closing message. Never pad: no card is better than a weak one.`,
     ];
   }
   return [

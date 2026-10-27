@@ -92,7 +92,7 @@ function shapeDecision(v: unknown): RigDecision | null {
   };
 }
 
-const VERBS = new Set(['reply', 'start', 'space', 'open']);
+const VERBS = new Set(['reply', 'start', 'space', 'open', 'send', 'post']);
 
 function shapeCard(v: unknown): RigFeedCard | null {
   const c = rec(v);
@@ -100,7 +100,14 @@ function shapeCard(v: unknown): RigFeedCard | null {
   const choices = (Array.isArray(c.choices) ? c.choices : [])
     .map(rec)
     .filter((x) => VERBS.has(str(x.verb)) && str(x.lead))
-    .map((x) => ({ verb: str(x.verb) as RigFeedCard['choices'][number]['verb'], label: str(x.label), lead: str(x.lead), tail: str(x.tail) }));
+    .map((x) => {
+      const d = rec(x.draft);
+      const draft = str(d.text) && str(d.target) ? { label: str(d.label), text: str(d.text), target: str(d.target) } : null;
+      // A send or post with no words to send can't be done: it's dropped, like an unknown verb.
+      if ((x.verb === 'send' || x.verb === 'post') && !draft) return null;
+      return { verb: str(x.verb) as RigFeedCard['choices'][number]['verb'], label: str(x.label), lead: str(x.lead), tail: str(x.tail), ...(draft ? { draft } : {}) };
+    })
+    .filter((x): x is RigFeedCard['choices'][number] => x !== null);
   return { title: str(c.title), why: str(c.why), action: str(c.action), choices, people: strs(c.people), refsOk: c.refsOk === true };
 }
 

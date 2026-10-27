@@ -1585,7 +1585,8 @@ export function createAgentRigTools(backend: RigToolsBackend): RigTool[] {
       description:
         "Put a card for a situation on your owner's Feed, move it, or take it off. For something new, put opens its situation in the same call (give open instead of ref). A card is checked before it lands (refs the situation holds, names, length, no he or she) and you get every problem back to fix. " +
         'Title: what to do and about what, at most 8 words, no ticket ids. Why: the one fact that matters, at most 25 words, citing at least one ref the situation holds in [brackets]. Choices: one to three, each a verb (reply, start, space, open), a short lead and a tail of at most 12 words starting with ":" saying what happens. ' +
-        'Write ticket ids only inside [brackets], never he, she, his or her, and {@Name} only for someone on the people line (never your owner).',
+        'Write ticket ids only inside [brackets], never he, she, his or her, and {@Name} only for someone on the people line (never your owner). ' +
+        'When the answer is a message or a comment, make each choice send or post with its draft: the exact words, and the thread or PR they go to. Nothing goes until your owner clicks.',
       inputSchema: {
         op: z.enum(['put', 'move', 'retire']),
         ref: z.string().optional().describe('The situation (sit_…); for put on something new, give open instead.'),
@@ -1603,7 +1604,21 @@ export function createAgentRigTools(backend: RigToolsBackend): RigTool[] {
           .object({
             title: z.string(),
             why: z.string(),
-            choices: z.array(z.object({ verb: z.enum(['reply', 'start', 'space', 'open']), lead: z.string(), tail: z.string() })),
+            choices: z.array(
+              z.object({
+                verb: z.enum(['reply', 'start', 'space', 'open', 'send', 'post']),
+                lead: z.string(),
+                tail: z.string(),
+                draft: z
+                  .object({
+                    label: z.string().optional().describe('What it is, in two or three words: "Your reply", "Review comment".'),
+                    text: z.string().describe('The exact words, in your owner\'s voice, ready to send as they stand. At most 2000 characters.'),
+                    target: z.string().describe('Where it goes, one of the situation\'s refs: msg:slack:<channel>:<ts> for a thread (send), github:<owner>/<repo>#<n> (post).'),
+                  })
+                  .optional()
+                  .describe('send and post only, and required there: what clicking sends.'),
+              })
+            ),
             people: z.array(z.string()),
           })
           .optional()

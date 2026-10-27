@@ -26,7 +26,16 @@ export type RigDecision = {
   trigger: string;
 };
 
-export type RigFeedChoice = { verb: 'reply' | 'start' | 'space' | 'open'; label: string; lead: string; tail: string };
+/**
+ * The words a send or post choice would send, in the person's voice, and
+ * where they go: a Slack message or channel (`msg:slack:<channel>:<ts>`), or
+ * a GitHub pull request or issue (`github:<owner>/<repo>#<n>`).
+ */
+export type RigFeedDraft = { label: string; text: string; target: string };
+
+export type RigFeedVerb = 'reply' | 'start' | 'space' | 'open' | 'send' | 'post';
+
+export type RigFeedChoice = { verb: RigFeedVerb; label: string; lead: string; tail: string; draft?: RigFeedDraft };
 
 export type RigFeedCard = {
   /** Up to three options, best first; `lead` and `why` may hold {@Full Name} tokens. */

@@ -107,7 +107,7 @@ export interface RailSpace {
 // ── proposals and Feed items (§6.2, §11.4b) ─────────────────────────────────
 
 /** Every Feed item resolves to one of these, so the button says what really happens. */
-export type FeedVerb = 'reply' | 'start' | 'space' | 'open';
+export type FeedVerb = 'reply' | 'start' | 'space' | 'open' | 'send' | 'post';
 
 export type ProposalKind = 'session' | 'background' | 'space' | 'reply' | 'ask' | 'extension';
 
@@ -137,6 +137,8 @@ export interface FeedChoice {
   /** What the choice means, said after the item's context. */
   tail: string;
   target: ChoiceTarget;
+  /** A send or post: the exact words it sends, editable, and where they go. */
+  draft?: { label: string; text: string; target: string };
 }
 
 export interface FeedItem {

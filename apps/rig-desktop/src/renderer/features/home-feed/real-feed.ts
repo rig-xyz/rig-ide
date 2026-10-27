@@ -77,6 +77,7 @@ export function toFeedItem(x: RigFeedItem, now: number): FeedItem {
     lead: names.short(refsToTokens(c.lead)),
     tail: tail(names.short(refsToTokens(c.tail))),
     target: { kind: 'space', spaceId: x.bindingId ?? '' },
+    ...('draft' in c && c.draft ? { draft: c.draft } : {}),
   }));
   const connector = SOURCE_ORDER.find((s) => (x.sources ?? []).includes(s));
   return {
