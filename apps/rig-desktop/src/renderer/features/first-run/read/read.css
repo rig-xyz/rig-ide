@@ -297,17 +297,40 @@
   }
 }
 
-/* The finish steps aside for the first card (First win), which rises in after it. */
-.rig-caught-leave {
+
+/* A lit tile's caption (`field-captions.tsx`): its tool's logo and a short label, beside the tile,
+   on a little glass so it reads over the grid; it rises in, and fades as the tile settles to grey. */
+.fr-caption {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 200px;
+  padding: 2px 8px 2px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-1) 82%, transparent);
+  box-shadow: 0 0 0 1px var(--border-hairline);
+  backdrop-filter: blur(6px);
+  transform: translateY(-50%);
+  white-space: nowrap;
+  animation: fr-caption-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  transition: opacity 0.35s ease-out;
+}
+.fr-caption-leaving {
   opacity: 0;
-  transform: translateY(-14px) scale(0.97);
-  transition:
-    opacity var(--leave-ms, 450ms) ease-in,
-    transform var(--leave-ms, 450ms) cubic-bezier(0.4, 0, 0.6, 1);
+}
+@keyframes fr-caption-in {
+  from {
+    opacity: 0;
+    transform: translate(-4px, -50%);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .rig-caught-leave {
-    transform: none;
-    transition: opacity 0.15s linear;
+  .fr-caption {
+    animation: none;
+    transition: none;
   }
 }

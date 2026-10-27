@@ -38,6 +38,11 @@ export type AgentFieldTile = {
   set(state: DotMatrixState, color?: AgentFieldColor): void;
   /** Back to whatever the field is doing. */
   release(): void;
+  /**
+   * Where the tile sits once `set` has claimed it: its center as fractions of the field's width and
+   * height, for something drawn next to it over the field (a caption). Null while unclaimed.
+   */
+  at(): { x: number; y: number } | null;
 };
 
 export type AgentFieldHandle = {
@@ -200,6 +205,12 @@ export const AgentField = forwardRef<
             const tile = held ? f.tiles[held.index] : undefined;
             if (tile) tile.run = null;
             f.draw();
+          },
+          at() {
+            const held = f.claims.get(id);
+            const tile = held ? f.tiles[held.index] : undefined;
+            if (!tile || !f.width || !f.height) return null;
+            return { x: (tile.x + TILE / 2) / f.width, y: (tile.y + TILE / 2) / f.height };
           },
         };
       },
