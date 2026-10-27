@@ -116,3 +116,18 @@ describe('readRelayToken precedence', () => {
     expect(log.warn).not.toHaveBeenCalled();
   });
 });
+
+describe('a profile of its own', () => {
+  it("signed out when the profile's config is gone, never the account in ~/.config/rig", async () => {
+    mkdirSync(join(process.env.XDG_CONFIG_HOME!, 'rig'), { recursive: true });
+    writeConfigToken(join(process.env.HOME!, '.config'), 'rpat_someone_else');
+    const { readRelayToken } = await import('./config');
+    expect(await readRelayToken()).toBeNull();
+  });
+
+  it('with no rig folder in XDG_CONFIG_HOME, the CLI’s own ~/.config/rig still counts', async () => {
+    writeConfigToken(join(process.env.HOME!, '.config'), 'rpat_cli_login');
+    const { readRelayToken } = await import('./config');
+    expect(await readRelayToken()).toBe('rpat_cli_login');
+  });
+});

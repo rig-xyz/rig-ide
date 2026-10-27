@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -17,8 +18,15 @@ import { log } from '@main/lib/logger';
  * unknown keys.
  */
 
+/**
+ * Where the token is read from. A profile of its own (`XDG_CONFIG_HOME` with a
+ * `rig` folder in it, as the dev profile has) is the only place looked: with
+ * its config gone it is signed out, never quietly signed in as whoever
+ * `~/.config/rig` belongs to. Without one, the CLI's own `~/.config/rig`.
+ */
 export function rigConfigPaths(): string[] {
   const xdg = process.env.XDG_CONFIG_HOME?.trim();
+  if (xdg && existsSync(join(xdg, 'rig'))) return [join(xdg, 'rig', 'config.json')];
   const paths = xdg ? [join(xdg, 'rig', 'config.json')] : [];
   paths.push(join(homedir(), '.config', 'rig', 'config.json'));
   return paths;
