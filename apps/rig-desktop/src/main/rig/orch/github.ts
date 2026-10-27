@@ -15,7 +15,9 @@ export function ghReadArgs(command: string): string[] | null {
   if (!GH_READ.test(text)) return null;
   const jq = / --jq '([^'\n]*)'$/.exec(text);
   const head = jq ? text.slice(0, jq.index) : text;
-  return [...head.split(/\s+/).slice(1), ...(jq ? ['--jq', jq[1]!] : [])];
+  // Words, with a double-quoted value kept whole (--search "is:open review-requested:@me").
+  const words = [...head.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]!);
+  return [...words.slice(1), ...(jq ? ['--jq', jq[1]!] : [])];
 }
 
 const MAX_OUTPUT = 20_000;

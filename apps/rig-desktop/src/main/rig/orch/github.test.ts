@@ -7,6 +7,10 @@ describe('rig_github: gh reads only, as arguments', () => {
     expect(ghReadArgs("gh pr list --repo o/r --json number --jq '.[] | .number'")).toEqual(['pr', 'list', '--repo', 'o/r', '--json', 'number', '--jq', '.[] | .number']);
   });
 
+  it('keeps a double-quoted value whole', () => {
+    expect(ghReadArgs('gh pr list --repo o/r --search "is:open 346 OR 353"')).toEqual(['pr', 'list', '--repo', 'o/r', '--search', 'is:open 346 OR 353']);
+  });
+
   it('refuses writes, chains and anything that is not gh', () => {
     expect(ghReadArgs('gh pr merge 343')).toBeNull();
     expect(ghReadArgs('gh pr view 1; rm -rf ~')).toBeNull();
