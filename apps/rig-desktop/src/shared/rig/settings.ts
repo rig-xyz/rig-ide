@@ -150,6 +150,12 @@ export type RigSettings = {
   /** Where an unfinished first run stopped, so a quit resumes there. `null` when none is under way. */
   firstRunProgress: FirstRunProgress | null;
   /**
+   * The person's private Home space (its binding id): where Rig runs work
+   * that has no space of its own, such as a Feed card's Send or an unbound
+   * Start. Made once, after Set up (`orch/home-space.ts`); `null` until then.
+   */
+  homeSpaceId: string | null;
+  /**
    * Settings › Advanced › Debug mode: tools for testing Rig itself, such as
    * replaying the first run and simulating accounts. Dev builds have them anyway.
    */
@@ -309,6 +315,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   hasSeenOnboarding: false,
   firstRunSeen: 0,
   firstRunProgress: null,
+  homeSpaceId: null,
   debugMode: false,
   rigsRailView: DEFAULT_RIGS_RAIL_VIEW,
   updateLastCheckedAt: null,

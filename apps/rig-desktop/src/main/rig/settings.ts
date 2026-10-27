@@ -184,6 +184,7 @@ function normalizeSettings(parsed: unknown): RigSettings {
     // new first run once, existing users on its returning path.
     firstRunSeen: typeof raw.firstRunSeen === 'number' && Number.isFinite(raw.firstRunSeen) ? raw.firstRunSeen : 0,
     firstRunProgress: normalizeFirstRunProgress(raw.firstRunProgress),
+    homeSpaceId: typeof raw.homeSpaceId === 'string' && raw.homeSpaceId ? raw.homeSpaceId : null,
     debugMode: raw.debugMode === true,
     rigsRailView: isRigsRailView(raw.rigsRailView) ? raw.rigsRailView : DEFAULT_RIGS_RAIL_VIEW,
     updateLastCheckedAt: typeof raw.updateLastCheckedAt === 'number' ? raw.updateLastCheckedAt : null,

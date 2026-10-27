@@ -53,6 +53,8 @@ export type ActionsDeps = {
   /** Starts or continues the session; the app's window owns chat sessions, so this hands it there. */
   startSession(start: RigSessionStart): void;
   newSessionId(): string;
+  /** The person's private Home space, made if there's none yet: where unbound work runs. */
+  homeSpace?(): Promise<Result<{ bindingId: string; root: string }, string>>;
   /** How many people are in a space, the owner included; null when Rig can't tell (taken as shared). */
   members(bindingId: string): Promise<number | null>;
   /** Writes a file in a space's folder (the brief); `relPath` is inside it. */
@@ -221,10 +223,16 @@ export function createActions(deps: ActionsDeps) {
     if (!spaces.success) return spaces;
     const onMac = spaces.data.filter((x) => x.root);
     const wanted = input.space?.replace(/^#/, '').replace(/^space_/, '').toLowerCase();
-    const space =
+    let space =
       (wanted && onMac.find((x) => x.bindingId.toLowerCase() === wanted || x.name.toLowerCase() === wanted)) ||
       (fromSpace && onMac.find((x) => x.bindingId === fromSpace)) ||
-      (onMac.length === 1 ? onMac[0] : undefined);
+      undefined;
+    // Work with no space of its own runs in the person's Home space, never a "Which space?" dead end.
+    if (!space && !wanted && deps.homeSpace) {
+      const home = await deps.homeSpace();
+      if (home.success) space = { bindingId: home.data.bindingId, name: 'home', root: home.data.root };
+    }
+    space ??= onMac.length === 1 ? onMac[0] : undefined;
     if (!space)
       return err({ message: onMac.length ? `Which space? On this Mac: ${onMac.map((x) => `#${x.name}`).join(', ')}.` : 'No space is on this Mac yet, so there is nowhere to run it.' });
     // In a space with anyone else in it, the brief (a synced file) keeps the refs only: what came

@@ -38,3 +38,17 @@ export function runGhRead(command: string, timeoutMs = 30_000): Promise<Result<s
     });
   });
 }
+
+/**
+ * One `gh` write for a card's Post (orch/send.ts): the person clicked it, and
+ * the words go on stdin, never through a shell or the command line.
+ */
+export function runGhWrite(args: string[], stdin: string, timeoutMs = 30_000): Promise<Result<string, { message: string }>> {
+  return new Promise((resolve) => {
+    const child = execFile('gh', args, { timeout: timeoutMs, maxBuffer: 1024 * 1024, env: { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' } }, (error, stdout, stderr) => {
+      if (error) return resolve(err({ message: (String(stderr).trim() || error.message).slice(0, 600) }));
+      resolve(ok(String(stdout)));
+    });
+    child.stdin?.end(stdin);
+  });
+}

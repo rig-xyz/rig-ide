@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { app } from 'electron';
-import { err, ok } from '@emdash/shared';
+import { err, ok, type Result } from '@emdash/shared';
 import { getAcpRuntimeClient } from '@main/core/acp/controller';
 import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
@@ -18,9 +18,13 @@ import { rigSpaceStatusController } from '../space-status';
 import { createRuntimeAcpSessions } from '../spaces/dispatch';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
 import { createActions, type StartInput } from './actions';
+import { createSender } from './send';
+import { rigSpaceSetupController } from '../space-setup';
+import { rigSettingsStore } from '../settings-instance';
+import { createHomeSpace } from './home-space';
 import { resolveSelfUserId } from '../account';
 import { createOrchestrator, FIRST_RUN } from './agent';
-import { runGhRead } from './github';
+import { runGhRead, runGhWrite } from './github';
 import { readSnapshot } from './snapshot';
 import { runSource, type Source } from './sources';
 import { turnGate } from './turns';
@@ -67,6 +71,38 @@ const headless = {
   newConversationId: () => `watch-${randomUUID()}`,
 };
 
+/** The account's spaces, with their folder on this Mac when they have one. */
+async function listSpaces() {
+  const ws = await rigAccountController.workspaces();
+  if (!ws.success) return ws;
+  const spaces = ws.data.filter((b) => b.kind === 'space');
+  const roots = await resolveLocalPathsImpl(spaces.map((b) => b.id)).catch(() => ({}) as Record<string, string>);
+  return ok(spaces.map((b) => ({ bindingId: b.id, name: b.name, root: roots[b.id] ?? null })));
+}
+
+/** Makes a space the way the app's own New space does, and waits until it's live (or failed). */
+async function makeSpace(name: string): Promise<Result<{ bindingId: string; root: string }, string>> {
+  const started = await rigSpaceSetupController.start({ name });
+  if (!started.success) return err(started.error.message);
+  const id = started.data.id;
+  for (let waited = 0; waited < 180_000; waited += 1000) {
+    const setup = (await rigSpaceSetupController.list()).find((x) => x.id === id);
+    if (setup?.status === 'live' && setup.bindingId) return ok({ bindingId: setup.bindingId, root: setup.path });
+    if (!setup || setup.status === 'failed') return err(setup?.error?.message ?? 'Setting up the space failed.');
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return err('Setting up the space took too long.');
+}
+
+/** The person's private Home space (home-space.ts): Send and unbound Starts run there. */
+export const homeSpace = createHomeSpace({
+  homeSpaceId: () => rigSettingsStore.get().homeSpaceId,
+  setHomeSpaceId: (id) => rigSettingsStore.set({ homeSpaceId: id }),
+  spaces: listSpaces,
+  create: makeSpace,
+  log,
+});
+
 export const orchActions = createActions({
   relay: {
     query: (kind, opts) => feedRelay.orchQuery(kind, opts),
@@ -81,13 +117,8 @@ export const orchActions = createActions({
     remember: (fact) => feedRelay.orchFact(fact),
     runNote: (runId, note) => feedRelay.orchRun(runId, '', note),
   },
-  spaces: async () => {
-    const ws = await rigAccountController.workspaces();
-    if (!ws.success) return ws;
-    const spaces = ws.data.filter((b) => b.kind === 'space');
-    const roots = await resolveLocalPathsImpl(spaces.map((b) => b.id)).catch(() => ({}) as Record<string, string>);
-    return ok(spaces.map((b) => ({ bindingId: b.id, name: b.name, root: roots[b.id] ?? null })));
-  },
+  spaces: listSpaces,
+  homeSpace: () => homeSpace.ensure(),
   topics: async () => {
     const t = await getRecentThemes();
     return t.kind === 'none' ? null : t.themes.map((x) => ({ name: x.name, space: x.spaceName, description: x.description, messages: x.messageCount, people: x.people }));
@@ -152,6 +183,39 @@ export const orchActions = createActions({
   turns: turnGate,
   now: () => Date.now(),
 });
+
+/**
+ * A card's Send or Post (send.ts): the words go where the card's draft says,
+ * through the person's own Slack connector or `gh`, from their Home space.
+ */
+export const sender = createSender({
+  card: async (situationId) => {
+    const feed = await feedRelay.getFeed();
+    if (!feed.success) return err({ message: feed.error.message });
+    const item = [...feed.data.visible, ...feed.data.queued].find((x) => x.situationId === situationId);
+    return ok(item?.card ?? null);
+  },
+  gh: runGhWrite,
+  acp,
+  cwd: async () => {
+    const home = await homeSpace.ensure();
+    if (home.success) return home.data.root;
+    const dir = join(app.getPath('userData'), 'rig-send');
+    await mkdir(dir, { recursive: true });
+    return dir;
+  },
+  newConversationId: () => `send-${randomUUID()}`,
+  answered: (situationId, choice) => orchActions.act({ refs: [situationId], action: 'done', args: { choice, reason: choice }, actor: 'person' }),
+  turns: turnGate,
+  log,
+});
+
+// An account with no Home space yet gets one, once, a little after start (the first run makes it after Set up).
+setTimeout(() => {
+  void resolveSelfUserId().then((me) => {
+    if (me.success && !rigSettingsStore.get().homeSpaceId) void homeSpace.ensure();
+  });
+}, 30_000).unref?.();
 
 /**
  * Dev only: with RIG_ORCH_RECORD=<file>, every run's progress goes to that
@@ -227,6 +291,11 @@ export const rigOrchController = createRPCController({
       });
     }
     return ok({ started: true, joined: first.joined, events: first.events });
+  },
+  /** The person's Home space, made if there's none yet: the first run asks once Set up is done. */
+  ensureHome: async () => {
+    const home = await homeSpace.ensure();
+    return home.success ? ok(home.data) : err({ message: home.error });
   },
   /** A background orchestrator run now (agent.ts). */
   runNow: async () => {

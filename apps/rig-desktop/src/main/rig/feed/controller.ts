@@ -1,7 +1,8 @@
 import { err, ok } from '@emdash/shared';
+import { events } from '@main/lib/events';
 import { createRPCController } from '@shared/lib/ipc/rpc';
-import type { RigFeedSignal } from '@shared/rig/feed';
-import { orchActions } from '../orch/instance';
+import { rigFeedChangedChannel, type RigFeedSignal } from '@shared/rig/feed';
+import { orchActions, sender } from '../orch/instance';
 import { turnGate } from '../orch/turns';
 import { getFeed, getSituation } from './relay';
 
@@ -29,6 +30,16 @@ export const rigFeedController = createRPCController({
   merge: (input: { keep: string; absorb: string[]; reason: string }) => one([input.keep, ...input.absorb], 'merge', { into: input.keep, reason: input.reason }),
   move: (input: { eventId: string; to: string; reason: string }) => one([input.eventId], 'move', { to: input.to, reason: input.reason }),
   /** The card's Start button: the person's click, so it gets a fresh turn id. */
+  /**
+   * A card's Send or Post: the person's click, so it gets a fresh turn id.
+   * `choice` is its index on the card; `text` the words as they stand,
+   * edited or not. Where they go is the card's own draft, read from Rig.
+   */
+  send: async (input: { situationId: string; choice: number; text: string }) => {
+    const r = await sender.send(input, turnGate.issue('click'));
+    if (r.success) events.emit(rigFeedChangedChannel, { reason: 'local' });
+    return r.success ? ok(r.data) : err({ message: r.error });
+  },
   /** `task`: the choice the person clicked, in the card's words; the brief's goal. `reply`: a card's Reply, which runs in Ask first. */
   start: (input: { situationId: string; space?: string; task?: string; reply?: boolean }) =>
     orchActions.start({ ref: input.situationId, space: input.space, task: input.task, askFirst: input.reply === true, userTurnId: turnGate.issue('click') }),
