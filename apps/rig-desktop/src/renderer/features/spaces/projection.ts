@@ -65,6 +65,7 @@ export function newSessionCard(): SessionCard {
     detailsHidden: false,
     reacted: [],
     retriedAfterSignIn: false,
+    newConversation: false,
   };
 }
 
@@ -326,8 +327,9 @@ export function applySessionEvent(card: SessionCard, event: SessionEvent): void 
       break;
     }
     case RUN_RETRIED_EVENT: {
-      // The first try failed on the agent's sign-in and the prompt went again: what it printed is no answer.
-      state.retriedAfterSignIn = true;
+      // The prompt went again (after a failed sign-in, or into a new conversation): what it printed is no answer.
+      if (p.reason === 'new_conversation') state.newConversation = true;
+      else state.retriedAfterSignIn = true;
       state.finalAnswer = '';
       state._lastMessageId = undefined;
       break;
