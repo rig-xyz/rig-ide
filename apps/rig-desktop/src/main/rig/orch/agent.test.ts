@@ -235,6 +235,49 @@ describe('the first run', () => {
     expect(h.prompts[0]).toContain('github:acme/api#212 "Rate limits" by tom');
   });
 
+  it('starts one first run however often it is asked, and hands a late caller its events so far', async () => {
+    const h = harness([[read('a'), put('p1')], [read('b')]]);
+    // Asked again while it runs: right away, and once its first pass has begun.
+    let late: ReturnType<typeof h.o.startFirst> | null = null;
+    const push = h.progress.push.bind(h.progress);
+    h.progress.push = (...e: OrchProgressEvent[]) => {
+      const n = push(...e);
+      if (!late && e[0]?.kind === 'pass') late = h.o.startFirst(FIRST_RUN);
+      return n;
+    };
+    const one = h.o.startFirst(FIRST_RUN);
+    const two = h.o.startFirst(FIRST_RUN);
+    expect(one.joined).toBe(false);
+    expect(two.joined).toBe(true);
+    await one.done;
+    expect(late!.joined).toBe(true);
+    expect(late!.events[0]).toMatchObject({ kind: 'start', trigger: 'first', seq: 0 });
+    expect(late!.events.map((e) => e.seq)).toEqual(late!.events.map((_, i) => i));
+    // One run's worth of prompts, not two.
+    expect(h.prompts).toHaveLength(2);
+    expect(new Set(h.progress.map((e) => e.run)).size).toBe(1);
+    // Once it has ended, asking again starts a new one.
+    expect(h.o.startFirst(FIRST_RUN).joined).toBe(false);
+  });
+
+  it("shows a card already on the Feed as the first one when pass 1 puts none, and doesn't widen", async () => {
+    const snapshot = async () => ({ feed: ['sit_q [queued] "Later"', 'sit_top [visible] "Review #212"'], situations: [] });
+    const h = harness([[read('a')], [read('b')]], { snapshot });
+    const r = await h.o.run('first', FIRST_RUN);
+    expect(r.success && r.data.cards).toBe(1);
+    expect(h.prompts).toHaveLength(2);
+    expect(h.progress.filter((e) => e.kind === 'card')).toEqual([expect.objectContaining({ kind: 'card', ref: 'sit_top' })]);
+    expect(h.prompts[1]).toContain('Pass 2 of 2, 40 lookups');
+  });
+
+  it('gives the first run a session of its own, so earlier runs never make it skip the reading', async () => {
+    const h = harness([[read('a')], [read('b'), put('p1')], [read('c')]]);
+    await h.o.run('schedule');
+    await h.o.startFirst(FIRST_RUN).done;
+    expect(h.acp.startSession).toHaveBeenCalledTimes(2);
+    expect(h.acp.stopSession).toHaveBeenCalledTimes(1);
+  });
+
   it('a regular run reads in one pass with the usual budget', async () => {
     const h = harness([[read('a')]]);
     await h.o.run('schedule');

@@ -159,7 +159,7 @@ function firstReadLines(f: FirstPass, me: string, since: string): string[] {
         : `Pass ${f.pass} of ${f.of}, ${f.lookups} lookups: find the one thing in the last ${f.lookbackDays} days that most needs ${me} now.`,
       'Step 1: load the read tools you need in a single ToolSearch call (for example select:mcp__claude_ai_Slack__slack_search_public_and_private,mcp__claude_ai_Slack__slack_read_thread,mcp__claude_ai_Linear__list_issues).',
       `Step 2, all in one step: search Slack for what was sent to ${me} since ${since} (their DMs and mentions), and list the Linear issues assigned to them or mentioning them, updated since then. GitHub's asks are listed below already.`,
-      `Step 3: put the card for the most pressing thing (rig_feed put, with open for something new, choices in its limits), in the same step as any outcomes you report. Then end the pass at once with its run note and no closing message. Never pad: no card is better than a weak one.`,
+      `Step 3: put the card for the most pressing thing (rig_feed put, with open for something new, choices in its limits), in the same step as any outcomes you report. A card already on the Feed counts: if one is still the most pressing, put it again with its ref, so it comes first. Then end the pass at once with its run note and no closing message. Never pad: no card is better than a weak one.`,
     ];
   }
   return [
@@ -194,11 +194,18 @@ export type RunResult = { runId: string; noted: boolean; ms: number; cards: numb
 export function createOrchestrator(deps: OrchestratorDeps) {
   let live: { conversationId: string; ownerUserId: string; off: () => void } | null = null;
   let running: Promise<Result<RunResult, string>> | null = null;
+  /** The first run going (or waiting for its turn), and its events so far, for a window that asks again. */
+  let firstGoing: { events: OrchProgressEvent[] } | null = null;
 
-  async function ensure(name: string): Promise<Result<{ conversationId: string }, string>> {
+  /**
+   * The session runs go to: the person's long-lived one, or (`fresh`, the
+   * first run) a new one, since a session that already read the same days
+   * concludes there is nothing new and ends without reading.
+   */
+  async function ensure(name: string, fresh = false): Promise<Result<{ conversationId: string }, string>> {
     const me = await deps.whoami();
     if (!me.success) return err(me.error.message);
-    if (live && live.ownerUserId === me.data.id) return ok({ conversationId: live.conversationId });
+    if (!fresh && live && live.ownerUserId === me.data.id) return ok({ conversationId: live.conversationId });
     await stop();
     const cwd = await deps.cwd();
     const conversationId = deps.newConversationId();
@@ -239,7 +246,12 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     const first = opts.kind === 'first';
     const group = newRunId(startedAt);
     const t = () => deps.now() - startedAt;
-    const emit = (e: ProgressBody) => deps.onProgress?.({ run: group, ...e } as OrchProgressEvent);
+    let seq = 0;
+    const emit = (e: ProgressBody) => {
+      const event = { run: group, ...e, seq: seq++ } as OrchProgressEvent;
+      if (first) firstGoing?.events.push(event);
+      deps.onProgress?.(event);
+    };
     const step = (id: string, label: string, status: 'running' | 'done' | 'failed') =>
       emit({ kind: 'line', line: { id: `step:${id}`, connector: null, label, status, t: t() } });
     const passes = first ? (opts.passes ?? FIRST_RUN.passes!) : [{ lookups: 0 }];
@@ -255,7 +267,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     }
     step('state', 'Looking up what Rig already knows', 'done');
     step('session', 'Waking your Claude', 'running');
-    const session = await ensure(state.data.me || 'the person');
+    const session = await ensure(state.data.me || 'the person', first);
     step('session', 'Waking your Claude', session.success ? 'done' : 'failed');
     if (!session.success) {
       emit({ kind: 'end', ok: false, error: session.error, t: t() });
@@ -293,6 +305,16 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       firstRunId ??= ran.data.runId;
       noted &&= ran.data.noted;
       cards += ran.data.cards;
+      // Pass 1 put nothing new, but the Feed already holds cards (an earlier run's): its top one is
+      // the first one to show, and there is something here, so no need to read further back.
+      if (first && i === 0 && ran.data.cards === 0) {
+        const top = (await deps.snapshot?.())?.feed.find((line) => line.includes(' [visible] '))?.split(' ')[0];
+        if (top) {
+          emit({ kind: 'card', ref: top, t: t() });
+          cards += 1;
+          continue;
+        }
+      }
       // Nothing for them in the first pass's days: read further back, once, before the rest.
       if (first && i === 0 && ran.data.cards === 0 && !widened && lookbackDays < WIDENED_LOOKBACK_DAYS) {
         widened = true;
@@ -408,7 +430,22 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     await deps.acp.stopSession?.(was.conversationId).catch(() => undefined);
   }
 
-  return { run, stop, running: () => running !== null };
+  /**
+   * The first run, once: a call while one is going (or queued) joins it and
+   * gets its events so far, rather than queueing another run in the same
+   * session. A window that mounts its Read step twice sees one run.
+   */
+  function startFirst(opts: RunOptions = FIRST_RUN): { joined: boolean; events: OrchProgressEvent[]; done: Promise<Result<RunResult, string>> } {
+    if (firstGoing) return { joined: true, events: [...firstGoing.events], done: running ?? Promise.resolve(err('The first run ended.')) };
+    const going = { events: [] as OrchProgressEvent[] };
+    firstGoing = going;
+    const done = run('first', { ...opts, kind: 'first' }).finally(() => {
+      if (firstGoing === going) firstGoing = null;
+    });
+    return { joined: false, events: [], done };
+  }
+
+  return { run, startFirst, stop, running: () => running !== null };
 }
 
 export type Orchestrator = ReturnType<typeof createOrchestrator>;

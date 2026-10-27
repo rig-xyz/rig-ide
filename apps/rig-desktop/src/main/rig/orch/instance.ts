@@ -218,11 +218,15 @@ export const rigOrchController = createRPCController({
    * its progress comes on `rigOrchProgressChannel`, ending with `end`.
    */
   firstRun: async () => {
-    void orchestrator.run('first', FIRST_RUN).then((r) => {
-      if (!r.success) log.warn('Rig orchestrator: first run failed', { error: r.error });
-      else changed();
-    });
-    return ok({ started: true });
+    // One first run at a time: asking again (a Read step mounted twice) joins it, with its events so far.
+    const first = orchestrator.startFirst(FIRST_RUN);
+    if (!first.joined) {
+      void first.done.then((r) => {
+        if (!r.success) log.warn('Rig orchestrator: first run failed', { error: r.error });
+        else changed();
+      });
+    }
+    return ok({ started: true, joined: first.joined, events: first.events });
   },
   /** A background orchestrator run now (agent.ts). */
   runNow: async () => {

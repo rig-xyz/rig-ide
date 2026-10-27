@@ -26,14 +26,18 @@ export type RunProgress = {
   t: number;
 };
 
-export type OrchProgressEvent =
+export type OrchProgressEvent = (
   /** `lookups`: every planned pass's budget together; a widened pass adds its own when it starts. */
   | { run: string; kind: 'start'; trigger: string; passes: number; lookups: number; lookbackDays: number; t: number }
   | { run: string; kind: 'pass'; pass: number; lookups: number; goal: string | null; lookbackDays: number; t: number }
   | { run: string; kind: 'line'; line: RunProgress }
   /** A card went on the Feed (`rig_feed` put). */
   | { run: string; kind: 'card'; ref: string; t: number }
-  | { run: string; kind: 'end'; ok: boolean; error?: string; t: number };
+  | { run: string; kind: 'end'; ok: boolean; error?: string; t: number }
+) & {
+  /** Its place in the run, from 0: a listener that joined late, or got the run's events so far, skips what it has. */
+  seq?: number;
+};
 
 /** Main → window: a run's progress, as it happens. */
 export const rigOrchProgressChannel = defineEvent<OrchProgressEvent>('rig:orch-progress');
