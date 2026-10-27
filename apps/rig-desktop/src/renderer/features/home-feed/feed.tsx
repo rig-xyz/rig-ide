@@ -4,6 +4,7 @@ import { type ReactNode, useEffect, useRef } from 'react';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { IconButton, Kicker } from './bits';
+import { CatchUpStrip } from './catch-up-strip';
 import { ConnectorsView } from './connectors-view';
 import { ClaudeOnIt, RunFooter, SetAside } from './feed-background';
 import { FeedNotice, FeedStale } from './feed-notice';
@@ -103,6 +104,7 @@ export function Feed({
               ) : (
                 <>
                   {stale && <FeedStale />}
+                  {live && <CatchUpStrip needsYou={counts.needsYou} />}
                   <Group title="Needs you" tone="warn" entries={needs} />
                   <Group title={state.fromRelay ? 'Claude can take' : 'Up next'} tone="accent" entries={next} />
                   {live && <ClaudeOnIt withHead={!next.length} />}

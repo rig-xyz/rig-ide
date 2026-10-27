@@ -64,6 +64,54 @@ export const liveFirstRun: ProgressSource = {
 };
 
 /**
+ * The morning catch-up (main's catch-up.ts), for Home's strip: the one going
+ * or just ended, from its events so far, then live; and any catch-up that
+ * starts while Home is open (the Mac woke). Never starts one itself.
+ */
+export const liveCatchUp: ProgressSource = {
+  start(onEvent) {
+    let run: string | null = null;
+    let next = 0;
+    let stopped = false;
+    const deliver = (event: OrchProgressEvent) => {
+      if (stopped) return;
+      // A new catch-up begins again from its own start.
+      if (event.kind === 'start' && event.trigger === 'catch-up' && event.run !== run) {
+        run = event.run;
+        next = 0;
+      }
+      if (run === null || event.run !== run) return;
+      if (event.seq !== undefined) {
+        if (event.seq < next) return;
+        next = event.seq + 1;
+      }
+      onEvent(event);
+    };
+    let held: OrchProgressEvent[] | null = [];
+    const flush = () => {
+      const waiting = held ?? [];
+      held = null;
+      for (const event of waiting) deliver(event);
+    };
+    const off = events.on(rigOrchProgressChannel, (event) =>
+      held ? held.push(event) : deliver(event)
+    );
+    // Asked after the listener is up; a failure to ask leaves the live events.
+    void Promise.resolve()
+      .then(() => rpc.rig.orch.catchUp())
+      .then((r) => {
+        for (const event of r.success && r.data ? r.data.events : []) deliver(event);
+        flush();
+      })
+      .catch(flush);
+    return () => {
+      stopped = true;
+      off();
+    };
+  },
+};
+
+/**
  * A recorded run played back on its own clock (`t`), `speed` times faster.
  * Dev and tests: the Read step without a live orchestrator pass.
  */

@@ -55,8 +55,8 @@ export function createCatchUp(deps: CatchUpDeps) {
   let current: { run: string | null; events: OrchProgressEvent[]; endedAt: number | null } | null = null;
   let deciding = false;
 
-  /** Runs a catch-up if one is due; says why not otherwise. */
-  async function maybe(why: string): Promise<'started' | 'not_due' | 'skipped'> {
+  /** Runs a catch-up if one is due (`force`: Try again, due or not); says why not otherwise. */
+  async function maybe(why: string, force = false): Promise<'started' | 'not_due' | 'skipped'> {
     if (deciding || deps.running() || !deps.firstRunDone()) return 'skipped';
     deciding = true;
     try {
@@ -65,7 +65,7 @@ export function createCatchUp(deps: CatchUpDeps) {
       const window = readWindow(state.data, deps.now());
       // Never read for: that's the first run's to do, not a catch-up's.
       if (window.lastRead === null || !window.since) return 'skipped';
-      if (deps.now() - window.lastRead < CATCH_UP_AFTER_MS) return 'not_due';
+      if (!force && deps.now() - window.lastRead < CATCH_UP_AFTER_MS) return 'not_due';
       deps.log?.info('Rig catch-up: starting', { why, since: window.since });
       current = { run: null, events: [], endedAt: null };
       void deps.run(CATCH_UP_TRIGGER, { since: window.since });

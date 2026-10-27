@@ -358,6 +358,8 @@ export const rigOrchController = createRPCController({
   since: async () => ok({ since: await catchUpSince() }),
   /** The morning catch-up going now, or just ended, with its events so far (Home's strip); null when there's none. */
   catchUp: async () => ok(catchUp.status()),
+  /** The catch-up again, now (its Try again after it stopped). */
+  catchUpNow: async () => ok({ outcome: await catchUp.maybe('asked', true) }),
   /** The person's Home space, made if there's none yet: the first run asks once Set up is done. */
   ensureHome: async () => {
     const home = await homeSpace.ensure();
