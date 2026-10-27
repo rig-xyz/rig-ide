@@ -13,3 +13,73 @@
     animation: none;
   }
 }
+
+/* Never still while it reads: the header's matrix breathes, the bar's sheen moves, numbers pop when they change. */
+@keyframes rig-read-pulse {
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+}
+.rig-read-pulse {
+  animation: rig-read-pulse 2s ease-in-out infinite;
+}
+@keyframes rig-read-sheen {
+  from {
+    background-position: -120% 0;
+  }
+  to {
+    background-position: 220% 0;
+  }
+}
+.rig-read-bar {
+  background-image:
+    linear-gradient(90deg, transparent, color-mix(in srgb, white 45%, transparent), transparent),
+    linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 50%, var(--status-ok)));
+  background-size:
+    40% 100%,
+    100% 100%;
+  background-repeat: no-repeat;
+  animation: rig-read-sheen 1.6s linear infinite;
+}
+@keyframes rig-read-pop {
+  0% {
+    transform: scale(1.25);
+    color: var(--text-primary);
+  }
+}
+.rig-read-count,
+.rig-read-chip {
+  display: inline-block;
+  animation: rig-read-pop 0.45s cubic-bezier(0.3, 1.4, 0.5, 1) both;
+}
+.rig-read-count {
+  display: block;
+  transform-origin: left center;
+}
+@keyframes rig-read-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+.rig-read-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--text-muted) 0%,
+    var(--text-primary) 50%,
+    var(--text-muted) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: rig-read-shimmer 1.6s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rig-read-pulse,
+  .rig-read-bar,
+  .rig-read-count,
+  .rig-read-chip,
+  .rig-read-shimmer {
+    animation: none;
+  }
+}

@@ -13,7 +13,10 @@ import { ReadStep } from './read-step';
  */
 let open: { root: Root; el: HTMLElement } | null = null;
 
-export function previewReadStep({ speed = 1, live = false }: { speed?: number; live?: boolean } = {}): void {
+export function previewReadStep({
+  speed = 1,
+  live = false,
+}: { speed?: number; live?: boolean } = {}): void {
   if (!import.meta.env.DEV) return;
   if (open) {
     open.root.unmount();
@@ -29,5 +32,7 @@ export function previewReadStep({ speed = 1, live = false }: { speed?: number; l
   const root = createRoot(el);
   open = { root, el };
   const source = live ? liveFirstRun : replaySource(recorded as OrchProgressEvent[], { speed });
-  root.render(<ReadStep source={source} onDone={(summary) => console.info('Read step done', summary)} />);
+  root.render(
+    <ReadStep source={source} onDone={(summary) => console.info('Read step done', summary)} />
+  );
 }

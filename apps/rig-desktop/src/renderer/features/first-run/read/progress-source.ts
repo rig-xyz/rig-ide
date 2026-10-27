@@ -22,7 +22,13 @@ export const liveFirstRun: ProgressSource = {
       if (run !== null && event.run === run) onEvent(event);
     });
     void rpc.rig.orch.firstRun().catch(() => {
-      onEvent({ run: run ?? 'first', kind: 'end', ok: false, error: "Rig couldn't start reading.", t: 0 });
+      onEvent({
+        run: run ?? 'first',
+        kind: 'end',
+        ok: false,
+        error: "Rig couldn't start reading.",
+        t: 0,
+      });
     });
     return off;
   },
@@ -32,7 +38,10 @@ export const liveFirstRun: ProgressSource = {
  * A recorded run played back on its own clock (`t`), `speed` times faster.
  * Dev and tests: the Read step without a live orchestrator pass.
  */
-export function replaySource(recorded: readonly OrchProgressEvent[], { speed = 1 }: { speed?: number } = {}): ProgressSource {
+export function replaySource(
+  recorded: readonly OrchProgressEvent[],
+  { speed = 1 }: { speed?: number } = {}
+): ProgressSource {
   return {
     start(onEvent) {
       const timers = recorded.map((event) => {

@@ -4,19 +4,35 @@
 // Then read the fixture through before committing it: nothing real may be left.
 import { readFileSync, writeFileSync } from 'node:fs';
 const [, , input, output] = process.argv;
-const events = readFileSync(input, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+const events = readFileSync(input, 'utf8')
+  .trim()
+  .split('\n')
+  .map((l) => JSON.parse(l));
 // Invented outcomes, by connector and kind (the prototype's people and tickets), so each made-up
 // line still reads like its connector: a Slack line is a message, a Linear one a ticket.
 const OUTCOMES = {
   slack: {
-    handled: ['Payout delay: Sam resolved it Tuesday in #incidents', 'Office badges: Léa sorted them in #ops'],
-    not_yours: ['Design review notes in #product: an FYI for the whole team', '#ops snapshot link: Priya is collecting feedback'],
-    for_you: ['Priya asked if you can join Thursday’s pilot review', 'Sam is waiting on a go for the staging deploy', 'Tom asked in #eng who owns the rate limits'],
+    handled: [
+      'Payout delay: Sam resolved it Tuesday in #incidents',
+      'Office badges: Léa sorted them in #ops',
+    ],
+    not_yours: [
+      'Design review notes in #product: an FYI for the whole team',
+      '#ops snapshot link: Priya is collecting feedback',
+    ],
+    for_you: [
+      'Priya asked if you can join Thursday’s pilot review',
+      'Sam is waiting on a go for the staging deploy',
+      'Tom asked in #eng who owns the rate limits',
+    ],
   },
   linear: {
     handled: ['LAR-88: the checkout copy fix merged yesterday'],
     not_yours: ['LAR-74: checkout copy is Priya’s, and she’s on it'],
-    for_you: ['LAR-91: checkout timeout, High, nobody on it', 'LAR-95: the export fails for large teams'],
+    for_you: [
+      'LAR-91: checkout timeout, High, nobody on it',
+      'LAR-95: the export fails for large teams',
+    ],
   },
   github: {
     handled: ['#207: you approved it Monday'],
@@ -35,7 +51,12 @@ const OUTCOMES = {
   },
 };
 /** A made-up ref shaped like the connector's own, so the line keeps its connector. */
-const FAKE_REF = { slack: (n) => `msg:slack:CDEMO${n}:1`, linear: (n) => `item:LAR-${90 + n}`, github: (n) => `github:acme/api#${210 + n}`, gmail: (n) => `msg:gmail:demo${n}` };
+const FAKE_REF = {
+  slack: (n) => `msg:slack:CDEMO${n}:1`,
+  linear: (n) => `item:LAR-${90 + n}`,
+  github: (n) => `github:acme/api#${210 + n}`,
+  gmail: (n) => `msg:gmail:demo${n}`,
+};
 const used = {};
 const ids = new Map();
 const idOf = (id) => {
@@ -45,7 +66,8 @@ const idOf = (id) => {
 };
 const refs = new Map();
 const refOf = (ref, connector) => {
-  if (!refs.has(ref)) refs.set(ref, FAKE_REF[connector]?.(refs.size + 1) ?? `sit_demo_${refs.size + 1}`);
+  if (!refs.has(ref))
+    refs.set(ref, FAKE_REF[connector]?.(refs.size + 1) ?? `sit_demo_${refs.size + 1}`);
   return refs.get(ref);
 };
 const outcomeText = new Map();
@@ -72,13 +94,23 @@ const label = (l) => {
 // A recording from before the start event carried the run's budget: fill it in from its planned passes.
 const start = events.find((e) => e.kind === 'start');
 if (start && start.lookups === undefined) {
-  start.lookups = events.filter((e) => e.kind === 'pass' && e.pass <= start.passes).reduce((n, e) => n + e.lookups, 0);
+  start.lookups = events
+    .filter((e) => e.kind === 'pass' && e.pass <= start.passes)
+    .reduce((n, e) => n + e.lookups, 0);
 }
 const out = events.map((e) => {
   const base = { ...e, run: 'run_demo' };
   if (e.kind === 'line') {
     const { ref, ...line } = e.line;
-    return { ...base, line: { ...line, id: idOf(e.line.id), label: label(e.line), ...(ref ? { ref: refOf(ref, e.line.connector) } : {}) } };
+    return {
+      ...base,
+      line: {
+        ...line,
+        id: idOf(e.line.id),
+        label: label(e.line),
+        ...(ref ? { ref: refOf(ref, e.line.connector) } : {}),
+      },
+    };
   }
   if (e.kind === 'card') return { ...base, ref: refOf(e.ref, null) };
   if (e.kind === 'end' && e.error) return { ...base, error: 'Rig stopped reading.' };
