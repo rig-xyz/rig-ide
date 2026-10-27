@@ -252,6 +252,18 @@ describe('projectSessionCard — against real exported fixtures', () => {
     expect(newSessionCard().retriedAfterSignIn).toBe(false);
   });
 
+  it('a run continued in a new conversation says so, not that it signed in again', () => {
+    const card = projectSessionCard([
+      { seq: 1, kind: 'run_retried', payload: { reason: 'new_conversation' } },
+      { seq: 2, kind: 'agent_message_chunk', payload: { content: { type: 'text', text: 'Here.' } } },
+      { seq: 3, kind: 'turn_ended', payload: { status: 'done' } },
+    ]);
+    expect(card.newConversation).toBe(true);
+    expect(card.retriedAfterSignIn).toBe(false);
+    expect(card.finalAnswer).toBe('Here.');
+    expect(newSessionCard().newConversation).toBe(false);
+  });
+
   it('an empty event log projects to the fresh-card defaults', () => {
     const card = projectSessionCard([]);
     expect(card).toEqual(newSessionCard());

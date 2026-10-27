@@ -196,10 +196,10 @@ async function otherMacsAgentsNow(): Promise<SessionAgent[] | null> {
 
 export const spacesDispatchController = new SpacesDispatchController(realDeps());
 
-/** How often running turns are checked for a 30-minute silence (`reportStalled`). */
+/** How often running turns are checked for a long silence (`reportStalled`). */
 const STALL_CHECK_MS = 60_000;
 
-/** Counts runs that never finish as failures (`agent_run_failed` with reason `stalled`). */
+/** Ends runs that went quiet as failed, with a Retry in a new conversation (`agent_run_failed` with reason `stalled`). */
 export function wireStalledRunCheck(): void {
   setInterval(() => spacesDispatchController.reportStalledRuns(), STALL_CHECK_MS).unref?.();
 }

@@ -194,6 +194,8 @@ export type StoredSpaceSession = {
   contextEstimated?: boolean;
   /** The tool search setup it was started under; unset for one started before Rig kept it (`startsFreshForToolSearch`). */
   toolSearch?: 'on';
+  /** It stopped responding, or the runtime lost it (`retireSession`): the next turn starts a new conversation instead of resuming it. */
+  retired?: 'stalled' | 'lost';
 };
 
 /** Where persistent space sessions are remembered across restarts (a small file in the app's data folder). */
@@ -239,17 +241,41 @@ type QueuedTurn = {
   /** Which agent runs it, and on what model (when the session said), for a failure report. */
   agent: SessionAgent;
   model: string | null;
-  /** When the runtime last told us anything about this turn; a long silence counts it as stalled once (`reportStalled`). */
+  /** When the runtime last told us anything about this turn; a long silence ends it as stalled (`reportStalled`). */
   lastEventAt: number;
+  /** The agent has said anything at all in this turn (an `acp_update`), not only the runtime's `turn_start`. */
+  heardFromAgent?: boolean;
   stallReported?: boolean;
   /** Sends its prompt again in the same run (`retryAfterSignIn`); `failure` is what the first try said, used if the prompt can't go. */
   resend?: (failure: string) => Promise<void>;
   /** It already had its one more try after a sign-in failure. */
   signInRetried?: boolean;
+  /** Sends its prompt, never started, into a new conversation in the same run, its session having been retired (`retireSession`). */
+  moveToNewSession?: (reason: string) => Promise<Result<{ runId: string }, string>>;
+  /** It already went to a new conversation once. */
+  movedToNewSession?: boolean;
 };
 
-/** How long a run can go with no events before it counts as stalled. */
+/** How long a run can go with no events, once its agent has said something, before it ends as stalled. */
 export const RUN_STALL_MS = 30 * 60_000;
+
+/**
+ * How long a run can wait for its agent's first word before it ends as
+ * stalled: a prompt that never reached the agent (its session wedged, the
+ * runtime idle) or one the agent never answered. Shorter than
+ * `RUN_STALL_MS`, which allows for a long tool call mid-turn.
+ */
+export const RUN_NO_REPLY_MS = 10 * 60_000;
+
+/** A prompt refused because the runtime no longer has the session (its agent process ended): `conversation_not_found`. */
+const LOST_SESSION = /conversation_not_found/;
+
+/** The card's reason for a run ended as stalled; the next turn starts a new conversation. */
+export function stalledReason(heardFromAgent: boolean): string {
+  return heardFromAgent
+    ? `Nothing new for ${RUN_STALL_MS / 60_000} minutes, so Rig stopped waiting. Retry starts a new conversation.`
+    : `No reply for ${RUN_NO_REPLY_MS / 60_000} minutes, so Rig stopped waiting. Retry starts a new conversation.`;
+}
 
 /**
  * A space session idle longer than this, and larger than
@@ -321,6 +347,8 @@ type PersistentSession = {
   freshAfterIdle?: boolean;
   /** The tool search setup it was started under, as stored (`StoredSpaceSession.toolSearch`). */
   toolSearch?: 'on';
+  /** Given up on (`retireSession`): a turn about to send its prompt here goes to a new conversation instead. */
+  retired?: 'stalled' | 'lost';
   /** Undoes the raw-event and permission subscriptions, for a reload. */
   unsubscribes: Array<() => void>;
 };
@@ -947,6 +975,8 @@ export function createSpacesDispatcher(deps: {
   reportStalled: (now?: number) => void;
 } {
   const sessions = new Map<PersistentKey, PersistentSession>();
+  /** Sessions given up on (`retireSession`) whose next one hasn't started yet: it starts fresh, told so. */
+  const retiredKeys = new Map<PersistentKey, 'stalled' | 'lost'>();
   const now = () => deps.now?.() ?? Date.now();
   /** Runs this process has started and not yet finalized: the only ones truly running here. */
   const liveRunIds = new Set<string>();
@@ -1026,6 +1056,7 @@ export function createSpacesDispatcher(deps: {
         const turn = session.current;
         if (!turn || turn.finalized) return;
         turn.lastEventAt = Date.now();
+        turn.heardFromAgent = true;
         turn.publisher.record(raw.update.sessionUpdate, raw.update);
         if (raw.update.sessionUpdate === 'agent_message_chunk') collectAnswer(turn, raw.update);
         return;
@@ -1060,11 +1091,17 @@ export function createSpacesDispatcher(deps: {
     turn.answer = { messageId: null, text: '' };
     turn.turnId = null;
     turn.lastEventAt = Date.now();
+    turn.heardFromAgent = false;
     void turn.resend(failureText);
     return true;
   }
 
-  async function finalizeTurn(turn: QueuedTurn, status: SessionStatus, reason?: string): Promise<void> {
+  async function finalizeTurn(
+    turn: QueuedTurn,
+    status: SessionStatus,
+    reason?: string,
+    phase: 'run' | 'stalled' = 'run'
+  ): Promise<void> {
     if (turn.finalized) return;
     turn.finalized = true;
     const failureText = status === 'failed' ? [reason, turn.answer.text].filter(Boolean).join('\n') : '';
@@ -1081,7 +1118,7 @@ export function createSpacesDispatcher(deps: {
       deps.onRunFailed?.({
         agent: turn.agent,
         text: failureText,
-        phase: 'run',
+        phase,
         model: turn.model,
       });
     }
@@ -1357,7 +1394,17 @@ export function createSpacesDispatcher(deps: {
     // agent's own session (same cwd) rather than starting from nothing.
     const stored = deps.store?.get(key) ?? null;
     const sameSession = stored && stored.providerId === providerId && stored.cwd === cwd ? stored : null;
-    if (!existing && sameSession && forTurn) {
+    const retired = retiredKeys.get(key) ?? sameSession?.retired;
+    if (retired) {
+      // It stopped responding, or the runtime lost it: never resumed, so a
+      // Retry (or a restart) doesn't send the prompt into it again.
+      freshAfterIdle = true;
+      carried = sameSession?.config;
+      log.info('Rig spaces dispatch: the last space session was given up on, starting a fresh one', {
+        conversationId: sameSession?.conversationId,
+        retired,
+      });
+    } else if (!existing && sameSession && forTurn) {
       // Saved before Rig kept the last turn's time: when it was last opened.
       const lastTurnAt = sameSession.lastTurnAt ?? sameSession.updatedAt;
       const last = {
@@ -1439,6 +1486,7 @@ export function createSpacesDispatcher(deps: {
       systemPromptAppend: append,
     });
     if (!started.success) return err(started.error);
+    retiredKeys.delete(key);
     // A resumed session has the room messages it was sent, and its last known
     // size; a new one gets the whole recent window, and starts at the size of its rules.
     if (!fresh && resumable) {
@@ -1643,162 +1691,216 @@ export function createSpacesDispatcher(deps: {
       void finalizeTurn(turn, 'stopped');
       return ok({ runId: created.data.id });
     }
-    session.pending.push(turn);
-
-    const contextRequest = { bindingId: spec.bindingId, sourceMessageId: spec.sourceMessageId };
-    const roomSeqBefore = session.roomSeqSent;
-    const room = await roomContextLines(deps.api, contextRequest, created.data.id, roomSeqBefore ?? null).catch(
-      (error: unknown): RoomContext => {
-        log.warn('Rig spaces dispatch: could not load room context', { error: String(error) });
-        return { lines: [], askingSeq: null, delta: roomSeqBefore !== undefined, messages: 0, seenThrough: null, repliesTo: null };
-      }
-    );
-    // Its first turn after starting fresh says so; a later one doesn't.
-    const freshAfterIdle = session.freshAfterIdle === true;
-    session.freshAfterIdle = false;
-    const spaceContext = spacesHiddenContext(contextRequest, room.lines, session.rigTools, roomSees, room.askingSeq, {
-      ...room,
-      ...(freshAfterIdle ? { freshAfterIdle: { messages: room.messages } } : {}),
-    });
-    // Counted as sent now, so a turn queued behind this one doesn't send the same messages again.
-    if (room.seenThrough !== null && room.seenThrough > (session.roomSeqSent ?? -Infinity)) {
-      session.roomSeqSent = room.seenThrough;
-    }
-    const roomSeqAfter = session.roomSeqSent;
-    const connectorsContext = connectorsHiddenContext(
-      connectors.servers.map((server) => server.name),
-      connectors.gaps,
-      connectors.global,
-      roomSees,
-      connectors.project?.pending
-    );
-    const { images, spacePaths } = await promptImages(
-      imageCandidates(attachments, located, spec.agent),
-      deps.prepareImage
-    );
-    const filesContext = attachedFilesContext(attachments, located, {
-      askedOnThisComputer: spec.askedByOwner ?? false,
-      asImages: spacePaths,
-      mentioned,
-    });
-    // Once per session, not every turn: which space this is (again after a
-    // rename), and for Codex the CLAUDE.md it doesn't read (again when it changes).
-    const introBefore = { name: session.introducedName, claudeMd: session.claudeMdSent };
-    const spaceName = parseSpaceManifest(await readSpaceFile(cwd, 'rig.toml').catch(() => null)).name;
-    let introContext: string | null = null;
-    if (session.introducedName === undefined || session.introducedName !== spaceName) {
-      introContext = spaceIntroContext(spaceName, session.rigTools);
-      session.introducedName = spaceName;
-    }
-    let claudeMdContext: string | null = null;
-    if (spec.agent === 'codex') {
-      const text = claudeMdForCodex(await readInstructions(cwd));
-      const hash = text ? createHash('sha256').update(text).digest('hex') : '';
-      if (hash !== (session.claudeMdSent ?? '')) {
-        claudeMdContext = text;
-        session.claudeMdSent = hash;
-      }
-    }
-    // A prompt that never reached the agent didn't tell it either: the next turn does.
-    const introAfter = { name: session.introducedName, claudeMd: session.claudeMdSent };
-    const forgetIntro = () => {
-      // Unless a later turn has told it since.
-      if (session.introducedName === introAfter.name) session.introducedName = introBefore.name;
-      if (session.claudeMdSent === introAfter.claudeMd) session.claudeMdSent = introBefore.claudeMd;
-      if (freshAfterIdle) session.freshAfterIdle = true;
-      if (session.roomSeqSent === roomSeqAfter) {
-        session.roomSeqSent = roomSeqBefore;
-        rememberSessionState(session);
-      }
-    };
-    const hiddenContext = [introContext, spaceContext, claudeMdContext, connectorsContext, filesContext, spec.extraHiddenContext]
-      .filter(Boolean)
-      .join('\n\n');
-    // Only pass images when there are some (keeps the call as it always was otherwise).
-    const queue = (onRejectedCb: (reason: string) => void) =>
-      images.length > 0
-        ? deps.acp.queuePrompt(session.conversationId, spec.prompt, hiddenContext, onRejectedCb, images)
-        : deps.acp.queuePrompt(session.conversationId, spec.prompt, hiddenContext, onRejectedCb);
-    // Agents echo their prompt back (Codex titles the session with all of
-    // it): the publisher strips this block from anything it uploads.
-    publisher.setHiddenContext(hiddenContext);
-    const fail = (reason: string) => {
-      const idx = session.pending.indexOf(turn);
-      if (idx === -1) return; // already started (its turn_end settles it), or stopped
-      session.pending.splice(idx, 1);
-      if (turn.finalized) return; // stopped while queued: nothing left to run
-      forgetIntro();
-      log.warn('Rig spaces dispatch: the runtime rejected a prompt', { runId: turn.runId, reason });
-      void finalizeTurn(turn, 'failed', `the agent refused the prompt (${reason})`);
-    };
-    let retried = false;
-    const onRejected = (reason: string) => {
-      if (session.pending.indexOf(turn) === -1) return;
-      // Not ready yet (still starting or loading its history): once, wait
-      // for the session to be ready and send the prompt again.
-      if (reason !== 'invalid_state' || retried || turn.finalized) return fail(reason);
-      retried = true;
-      log.info('Rig spaces dispatch: the agent session wasn’t ready for the prompt, retrying once it is', {
-        runId: turn.runId,
-      });
-      void (async () => {
-        const ready = await (deps.acp.waitUntilReady?.(session.conversationId) ?? Promise.resolve(true)).catch(() => false);
-        if (session.pending.indexOf(turn) === -1) return;
-        if (!ready || turn.finalized) return fail(reason);
-        const again = await queue(onRejected);
-        if (!again.success) fail(again.error);
-      })();
-    };
-    // After a sign-in failure: the same prompt once more, in this run.
-    turn.resend = async (failure) => {
+    /** Sends this turn's prompt into `session`, with what that session has yet to be told. */
+    const sendInto = async (session: PersistentSession): Promise<Result<{ runId: string }, string>> => {
       session.pending.push(turn);
-      const again = await queue(onRejected);
-      if (again.success) {
-        if (again.data.turnId) turn.turnId = again.data.turnId;
-        return;
-      }
-      const idx = session.pending.indexOf(turn);
-      if (idx !== -1) session.pending.splice(idx, 1);
-      void finalizeTurn(turn, 'failed', failure);
-    };
-    // Stopped while its context was gathered (`stopLocal` took it off the queue): don't send it.
-    if (session.pending.indexOf(turn) === -1) {
-      forgetIntro();
-      return ok({ runId: created.data.id });
-    }
-    turn.promptSent = true;
-    const queued = await queue(onRejected);
-    if (!queued.success) {
-      forgetIntro();
-      const idx = session.pending.indexOf(turn);
-      if (idx !== -1) session.pending.splice(idx, 1);
-      void finalizeTurn(turn, 'failed', queued.error);
-      return err(queued.error);
-    }
-    // Stamp the turnId even if a fast `turn_start` already claimed this
-    // entry (see `claimTurn`'s own doc comment) — same value either way,
-    // and a no-op in the common case where `queuePrompt` resolves first.
-    if (queued.data.turnId) turn.turnId = queued.data.turnId;
-    // The size it had going into this turn: what the agent last reported, or Rig's estimate.
-    const contextTokens = session.contextTokens ?? null;
-    const contextSource = contextTokens === null ? 'unknown' : session.contextEstimated ? 'estimated' : 'reported';
-    if (session.contextEstimated || session.contextTokens === undefined) {
-      addEstimate(session, spec.prompt.length + hiddenContext.length);
-    }
-    rememberSessionState(session);
-    log.info('Rig spaces dispatch: turn context', {
-      runId: created.data.id,
-      agent: spec.agent,
-      conversationId: session.conversationId,
-      contextTokens,
-      contextSource,
-      roomMessages: room.messages,
-      roomDelta: room.delta,
-      freshAfterIdle,
-      hiddenContextChars: hiddenContext.length,
-    });
 
-    return ok({ runId: created.data.id });
+      const contextRequest = { bindingId: spec.bindingId, sourceMessageId: spec.sourceMessageId };
+      const roomSeqBefore = session.roomSeqSent;
+      const room = await roomContextLines(deps.api, contextRequest, created.data.id, roomSeqBefore ?? null).catch(
+        (error: unknown): RoomContext => {
+          log.warn('Rig spaces dispatch: could not load room context', { error: String(error) });
+          return { lines: [], askingSeq: null, delta: roomSeqBefore !== undefined, messages: 0, seenThrough: null, repliesTo: null };
+        }
+      );
+      // Its first turn after starting fresh says so; a later one doesn't.
+      const freshAfterIdle = session.freshAfterIdle === true;
+      session.freshAfterIdle = false;
+      const spaceContext = spacesHiddenContext(contextRequest, room.lines, session.rigTools, roomSees, room.askingSeq, {
+        ...room,
+        ...(freshAfterIdle ? { freshAfterIdle: { messages: room.messages } } : {}),
+      });
+      // Counted as sent now, so a turn queued behind this one doesn't send the same messages again.
+      if (room.seenThrough !== null && room.seenThrough > (session.roomSeqSent ?? -Infinity)) {
+        session.roomSeqSent = room.seenThrough;
+      }
+      const roomSeqAfter = session.roomSeqSent;
+      const connectorsContext = connectorsHiddenContext(
+        connectors.servers.map((server) => server.name),
+        connectors.gaps,
+        connectors.global,
+        roomSees,
+        connectors.project?.pending
+      );
+      const { images, spacePaths } = await promptImages(
+        imageCandidates(attachments, located, spec.agent),
+        deps.prepareImage
+      );
+      const filesContext = attachedFilesContext(attachments, located, {
+        askedOnThisComputer: spec.askedByOwner ?? false,
+        asImages: spacePaths,
+        mentioned,
+      });
+      // Once per session, not every turn: which space this is (again after a
+      // rename), and for Codex the CLAUDE.md it doesn't read (again when it changes).
+      const introBefore = { name: session.introducedName, claudeMd: session.claudeMdSent };
+      const spaceName = parseSpaceManifest(await readSpaceFile(cwd, 'rig.toml').catch(() => null)).name;
+      let introContext: string | null = null;
+      if (session.introducedName === undefined || session.introducedName !== spaceName) {
+        introContext = spaceIntroContext(spaceName, session.rigTools);
+        session.introducedName = spaceName;
+      }
+      let claudeMdContext: string | null = null;
+      if (spec.agent === 'codex') {
+        const text = claudeMdForCodex(await readInstructions(cwd));
+        const hash = text ? createHash('sha256').update(text).digest('hex') : '';
+        if (hash !== (session.claudeMdSent ?? '')) {
+          claudeMdContext = text;
+          session.claudeMdSent = hash;
+        }
+      }
+      // A prompt that never reached the agent didn't tell it either: the next turn does.
+      const introAfter = { name: session.introducedName, claudeMd: session.claudeMdSent };
+      const forgetIntro = () => {
+        // Unless a later turn has told it since.
+        if (session.introducedName === introAfter.name) session.introducedName = introBefore.name;
+        if (session.claudeMdSent === introAfter.claudeMd) session.claudeMdSent = introBefore.claudeMd;
+        if (freshAfterIdle) session.freshAfterIdle = true;
+        if (session.roomSeqSent === roomSeqAfter) {
+          session.roomSeqSent = roomSeqBefore;
+          rememberSessionState(session);
+        }
+      };
+      const hiddenContext = [introContext, spaceContext, claudeMdContext, connectorsContext, filesContext, spec.extraHiddenContext]
+        .filter(Boolean)
+        .join('\n\n');
+      // Only pass images when there are some (keeps the call as it always was otherwise).
+      const queue = (onRejectedCb: (reason: string) => void) =>
+        images.length > 0
+          ? deps.acp.queuePrompt(session.conversationId, spec.prompt, hiddenContext, onRejectedCb, images)
+          : deps.acp.queuePrompt(session.conversationId, spec.prompt, hiddenContext, onRejectedCb);
+      // Agents echo their prompt back (Codex titles the session with all of
+      // it): the publisher strips this block from anything it uploads.
+      publisher.setHiddenContext(hiddenContext);
+      const fail = (reason: string) => {
+        const idx = session.pending.indexOf(turn);
+        if (idx === -1) return; // already started (its turn_end settles it), or stopped
+        session.pending.splice(idx, 1);
+        if (turn.finalized) return; // stopped while queued: nothing left to run
+        forgetIntro();
+        log.warn('Rig spaces dispatch: the runtime rejected a prompt', { runId: turn.runId, reason });
+        void finalizeTurn(turn, 'failed', `the agent refused the prompt (${reason})`);
+      };
+      // The runtime no longer has the session (its agent process ended): it is
+      // given up on, and the prompt goes to a new conversation in this run.
+      const lost = (reason: string): Promise<Result<{ runId: string }, string>> | null => {
+        const idx = session.pending.indexOf(turn);
+        if (idx === -1 || turn.finalized) return null;
+        session.pending.splice(idx, 1);
+        forgetIntro();
+        retireSession(session, 'lost');
+        return moveToNewSession(reason);
+      };
+      let retried = false;
+      const onRejected = (reason: string) => {
+        if (session.pending.indexOf(turn) === -1) return;
+        if (LOST_SESSION.test(reason) && !turn.movedToNewSession) return void lost(reason);
+        // Not ready yet (still starting or loading its history): once, wait
+        // for the session to be ready and send the prompt again.
+        if (reason !== 'invalid_state' || retried || turn.finalized) return fail(reason);
+        retried = true;
+        log.info('Rig spaces dispatch: the agent session wasn’t ready for the prompt, retrying once it is', {
+          runId: turn.runId,
+        });
+        void (async () => {
+          const ready = await (deps.acp.waitUntilReady?.(session.conversationId) ?? Promise.resolve(true)).catch(() => false);
+          if (session.pending.indexOf(turn) === -1) return;
+          if (!ready || turn.finalized) return fail(reason);
+          const again = await queue(onRejected);
+          if (!again.success) fail(again.error);
+        })();
+      };
+      // After a sign-in failure: the same prompt once more, in this run.
+      turn.resend = async (failure) => {
+        session.pending.push(turn);
+        const again = await queue(onRejected);
+        if (again.success) {
+          if (again.data.turnId) turn.turnId = again.data.turnId;
+          return;
+        }
+        const idx = session.pending.indexOf(turn);
+        if (idx !== -1) session.pending.splice(idx, 1);
+        void finalizeTurn(turn, 'failed', failure);
+      };
+      // Stopped while its context was gathered (`stopLocal` took it off the queue): don't send it.
+      if (session.pending.indexOf(turn) === -1) {
+        forgetIntro();
+        return ok({ runId: created.data.id });
+      }
+      // Given up on while its context was gathered (`reportStalled`): a new conversation takes it.
+      if (session.retired) return lost(`the session ${session.retired}`) ?? ok({ runId: created.data.id });
+      turn.promptSent = true;
+      // The wait for the agent's first word starts now (`RUN_NO_REPLY_MS`).
+      turn.lastEventAt = Date.now();
+      const queued = await queue(onRejected);
+      if (!queued.success) {
+        const moved = LOST_SESSION.test(queued.error) && !turn.movedToNewSession ? lost(queued.error) : null;
+        if (moved) return moved;
+        forgetIntro();
+        const idx = session.pending.indexOf(turn);
+        if (idx !== -1) session.pending.splice(idx, 1);
+        void finalizeTurn(turn, 'failed', queued.error);
+        return err(queued.error);
+      }
+      // Stamp the turnId even if a fast `turn_start` already claimed this
+      // entry (see `claimTurn`'s own doc comment) — same value either way,
+      // and a no-op in the common case where `queuePrompt` resolves first.
+      if (queued.data.turnId) turn.turnId = queued.data.turnId;
+      // The size it had going into this turn: what the agent last reported, or Rig's estimate.
+      const contextTokens = session.contextTokens ?? null;
+      const contextSource = contextTokens === null ? 'unknown' : session.contextEstimated ? 'estimated' : 'reported';
+      if (session.contextEstimated || session.contextTokens === undefined) {
+        addEstimate(session, spec.prompt.length + hiddenContext.length);
+      }
+      rememberSessionState(session);
+      log.info('Rig spaces dispatch: turn context', {
+        runId: created.data.id,
+        agent: spec.agent,
+        conversationId: session.conversationId,
+        contextTokens,
+        contextSource,
+        roomMessages: room.messages,
+        roomDelta: room.delta,
+        freshAfterIdle,
+        hiddenContextChars: hiddenContext.length,
+      });
+
+      return ok({ runId: created.data.id });
+    };
+
+    /**
+     * Sends the prompt, never started, into a new conversation in this run,
+     * once: its session stopped responding or was lost (`retireSession`), so
+     * `ensureSession` starts a fresh one. The card says so (`run_retried`).
+     */
+    const moveToNewSession = async (reason: string): Promise<Result<{ runId: string }, string>> => {
+      if (turn.finalized) return ok({ runId });
+      if (turn.movedToNewSession) {
+        void finalizeTurn(turn, 'failed', `the agent refused the prompt (${reason})`);
+        return err(reason);
+      }
+      turn.movedToNewSession = true;
+      log.info('Rig spaces dispatch: sending the prompt to a new conversation', { runId, reason });
+      turn.publisher.record(RUN_RETRIED_EVENT, { reason: 'new_conversation' });
+      turn.answer = { messageId: null, text: '' };
+      turn.turnId = null;
+      turn.promptSent = false;
+      turn.heardFromAgent = false;
+      turn.lastEventAt = Date.now();
+      const next = await ensureSession(key, spec.bindingId, spec.ownerUserId, spec.agent, cwd, connectors, true);
+      if (!next.success) {
+        void finalizeTurn(turn, 'failed', `couldn't start a new conversation: ${next.error}`);
+        return err(next.error);
+      }
+      // Stopped while the new conversation started.
+      if (stopRequested.delete(runId)) {
+        void finalizeTurn(turn, 'stopped');
+        return ok({ runId });
+      }
+      return sendInto(next.data);
+    };
+    turn.moveToNewSession = moveToNewSession;
+    return sendInto(session);
   }
 
   /**
@@ -2051,18 +2153,72 @@ export function createSpacesDispatcher(deps: {
     }
   }
 
+  /**
+   * Ends each running turn that has gone quiet too long: no word from its
+   * agent `RUN_NO_REPLY_MS` after its prompt went, or nothing new for
+   * `RUN_STALL_MS` once it had said something. Not while it waits on an
+   * approval. The run fails in the chat with a plain reason and a Retry, and
+   * its session is given up on (`retireSession`), so that Retry, and the
+   * prompts queued behind it, go to a new conversation, not the stuck one.
+   */
   function reportStalled(now = Date.now()): void {
-    for (const session of sessions.values()) {
+    for (const session of [...sessions.values()]) {
       // The turn the runtime is on, or the first one it was sent and never started.
       const turn = session.current ?? (session.pending[0]?.promptSent ? session.pending[0] : null);
       if (!turn || turn.finalized || turn.stallReported) continue;
-      if (now - turn.lastEventAt < RUN_STALL_MS) continue;
+      const heard = turn.heardFromAgent === true;
+      if (now - turn.lastEventAt < (heard ? RUN_STALL_MS : RUN_NO_REPLY_MS)) continue;
       // Waiting on its owner's approval isn't stalled.
       if ([...session.heldPermissions.values()].some((held) => held.turn === turn)) continue;
       turn.stallReported = true;
-      log.warn('Rig spaces dispatch: a run has had no events for 30 minutes', { runId: turn.runId });
-      deps.onRunFailed?.({ agent: turn.agent, text: '', phase: 'stalled', model: turn.model });
+      log.warn('Rig spaces dispatch: a run has had no events, ending it and starting a new conversation next time', {
+        runId: turn.runId,
+        conversationId: session.conversationId,
+        quietMs: now - turn.lastEventAt,
+        started: session.current === turn,
+        heardFromAgent: heard,
+      });
+      // Prompts queued behind it never started: they go to the new conversation.
+      const queued = session.pending.filter((t) => t !== turn && t.promptSent && !t.finalized);
+      session.pending = session.pending.filter((t) => t !== turn && !queued.includes(t));
+      if (session.current === turn) session.current = null;
+      releaseHeldPermissions(session, turn);
+      retireSession(session, 'stalled');
+      void finalizeTurn(turn, 'failed', stalledReason(heard), 'stalled');
+      for (const next of queued) void next.moveToNewSession?.('the session stalled');
     }
+  }
+
+  /**
+   * Gives up on a session that stopped responding or that the runtime lost:
+   * it leaves the dispatcher, the store marks it so even a restart won't
+   * resume it (`ensureSessionNow` starts a fresh one), and it is closed, which
+   * ends a wedged agent process. Turns still preparing their prompt for it
+   * notice `retired` and go to the new conversation instead.
+   */
+  function retireSession(session: PersistentSession, why: 'stalled' | 'lost'): void {
+    if (session.retired) return;
+    session.retired = why;
+    retiredKeys.set(session.key, why);
+    if (sessions.get(session.key) === session) sessions.delete(session.key);
+    for (const unsubscribe of session.unsubscribes.splice(0)) unsubscribe();
+    const stored = deps.store?.get(session.key);
+    if (stored?.conversationId === session.conversationId) {
+      deps.store?.set(session.key, { ...stored, retired: why, updatedAt: Date.now() });
+    }
+    log.warn('Rig spaces dispatch: gave up on a space session', { conversationId: session.conversationId, why });
+    // A turn it was running can't end now: it fails, with a Retry.
+    const running = session.current;
+    if (running && !running.finalized) {
+      session.current = null;
+      releaseHeldPermissions(session, running);
+      void finalizeTurn(running, 'failed', 'Its conversation was lost. Retry starts a new conversation.');
+    }
+    // Nothing waits on it: a wedged runtime may never answer.
+    const close = deps.acp.stopSession
+      ? deps.acp.stopSession(session.conversationId)
+      : deps.acp.cancelTurn(session.conversationId);
+    close.catch(() => {});
   }
 
   return {
