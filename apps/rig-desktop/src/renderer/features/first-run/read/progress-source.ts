@@ -11,26 +11,46 @@ export type ProgressSource = {
 
 /**
  * The real first run: starts it (`rpc.rig.orch.firstRun`) and passes on its
- * events. Only the first-run's own: events of a scheduled run going at the
- * same time are left out.
+ * events. Only the first run's own: events of a scheduled run going at the
+ * same time are left out. Safe to start twice (a remount): main runs one
+ * first run and hands a late caller its events so far, and each event is
+ * passed on once, in order (`seq`).
  */
 export const liveFirstRun: ProgressSource = {
   start(onEvent) {
     let run: string | null = null;
-    const off = events.on(rigOrchProgressChannel, (event) => {
-      if (event.kind === 'start' && event.trigger === 'first') run = event.run;
-      if (run !== null && event.run === run) onEvent(event);
-    });
-    void rpc.rig.orch.firstRun().catch(() => {
-      onEvent({
-        run: run ?? 'first',
-        kind: 'end',
-        ok: false,
-        error: "Rig couldn't start reading.",
-        t: 0,
+    let next = 0;
+    let stopped = false;
+    const deliver = (event: OrchProgressEvent) => {
+      if (stopped) return;
+      if (event.kind === 'start' && event.trigger === 'first' && run === null) run = event.run;
+      if (run === null || event.run !== run) return;
+      if (event.seq !== undefined) {
+        if (event.seq < next) return;
+        next = event.seq + 1;
+      }
+      onEvent(event);
+    };
+    // Live events that come before the answer wait for it: the answer may hold earlier ones.
+    let held: OrchProgressEvent[] | null = [];
+    const off = events.on(rigOrchProgressChannel, (event) => (held ? held.push(event) : deliver(event)));
+    void rpc.rig.orch
+      .firstRun()
+      .then((r) => {
+        const sofar = r.success && 'events' in r.data ? r.data.events : [];
+        for (const event of sofar) deliver(event);
+        const waiting = held ?? [];
+        held = null;
+        for (const event of waiting) deliver(event);
+      })
+      .catch(() => {
+        held = null;
+        if (!stopped) onEvent({ run: run ?? 'first', kind: 'end', ok: false, error: "Rig couldn't start reading.", t: 0 });
       });
-    });
-    return off;
+    return () => {
+      stopped = true;
+      off();
+    };
   },
 };
 
