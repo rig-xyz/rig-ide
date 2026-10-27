@@ -370,7 +370,7 @@ function WaitingRow({
         const accepted = await rpc.rig.share.acceptMyInvite({ id: item.inviteId });
         if (!accepted.success) return accepted.error.message;
         onInvitesChanged();
-        const attached = await rpc.rig.join.attach({ bindingId: item.bindingId });
+        const attached = await rpc.rig.join.attach({ bindingId: item.bindingId, name: item.spaceName });
         if (attached.success) markJustAttachedSyncing(attached.data.localPath, attached.data.syncing);
         return null;
       });

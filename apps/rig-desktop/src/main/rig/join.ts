@@ -6,7 +6,7 @@ import { err, ok, type Result } from '@emdash/shared';
 import { log } from '@main/lib/logger';
 import { cliMissingMessage } from './cli-advice';
 import { createRPCController } from '@shared/lib/ipc/rpc';
-import { rigSlug } from '@shared/rig/create';
+import { rigFolderSlug } from '@shared/rig/create';
 import type { RigAttachError, RigJoinResult, RigLocateError } from '@shared/rig/join';
 import { resolveCliAccountEnv } from './account';
 import { commandFailureMessage } from './auth-output';
@@ -322,7 +322,8 @@ async function existingCopyInHome(bindingId: string, name: string): Promise<stri
 
 /** `existingCopyInHome` against a given home folder (exported for tests). */
 export function existingCopyAt(home: string, bindingId: string, name: string): string | null {
-  const candidate = join(home, rigSlug(name));
+  // Where `rig attach` itself puts it (the CLI's slug rule, not the create form's).
+  const candidate = join(home, rigFolderSlug(name));
   if (!existsSync(candidate)) return null;
   const binding = findBindingConfig(candidate);
   return binding && binding.workspaceRoot === candidate && binding.config.bindingId === bindingId

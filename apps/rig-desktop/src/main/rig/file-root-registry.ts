@@ -57,6 +57,12 @@ export class RigFileRootRegistry {
     return this.roots.get(rootId);
   }
 
+  /** Whether a window has this folder open (compared by real path). */
+  async isOpen(rootPath: string): Promise<boolean> {
+    const canonical = await realpath(rootPath).catch(() => rootPath);
+    return [...this.roots.values()].includes(canonical);
+  }
+
   async getVerified(rootId: string): Promise<RigFileRootResult<string>> {
     return this.verifiedRootFor(rootId);
   }

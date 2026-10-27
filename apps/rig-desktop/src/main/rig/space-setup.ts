@@ -23,6 +23,7 @@ import {
   type SpawnOutcome,
 } from './create';
 import { ensureRigHomeDir, resolveHomeLandingDir } from './home';
+import { renameRig } from './rig-controls';
 
 /**
  * Instant new space (see `shared/rig/space-setup.ts`). `start` makes the
@@ -71,6 +72,12 @@ export type SpaceSetupDeps = {
   now: () => number;
   newId: () => string;
   onCreated?: () => void;
+  /**
+   * Names the live space: `rig init` names it after its folder, so a folder
+   * that took a clash suffix (`clear-harbor-2`, an old folder already having
+   * the name) would otherwise make that the space's name too.
+   */
+  nameSpace?: (bindingId: string, dir: string, name: string) => Promise<void>;
 };
 
 export type SpaceSetups = ReturnType<typeof createSpaceSetups>;
@@ -148,6 +155,13 @@ export function createSpaceSetups(deps: SpaceSetupDeps) {
       await timed('markSpaceMs', () => deps.flagAsSpace(dir));
     }
     const bindingId = live.data.bindingId ?? null;
+    if (bindingId && deps.nameSpace && basename(dir) !== setup.name) {
+      await timed('nameMs', () => deps.nameSpace!(bindingId, dir, setup.name)).catch((error: unknown) => {
+        deps.log('Rig create: the space kept its folder name', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
     update(id, { status: 'live', step: 'live', bindingId, homeUrl: live.data.homeUrl, error: null, removable: false });
     deps.log('Rig create: space setup timings', { path, totalMs: deps.now() - started, ...ms });
   };
@@ -233,6 +247,10 @@ const spaceSetups = createSpaceSetups({
   now: () => Date.now(),
   newId: () => randomUUID(),
   onCreated: () => telemetryService.capture('rig_created', {}),
+  nameSpace: async (bindingId, dir, name) => {
+    const renamed = await renameRig(bindingId, dir, name);
+    if (!renamed.success) throw new Error(renamed.error.message);
+  },
 });
 
 /** `start` when the Rig home folder can't be made (say, `~/Rig` is a file). */
@@ -264,7 +282,9 @@ export const rigSpaceSetupController = createRPCController({
         message: `Could not create the folder: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
-    return ok(spaceSetups.start(basename(targetDir), targetDir));
+    // The space's name is the slug the folder was meant to have, even when
+    // the folder took a clash suffix (`nameSpace` puts it back once live).
+    return ok(spaceSetups.start(rigSlug(name), targetDir));
   },
   /** Setups this app session started: running, failed, or live. */
   list: async (): Promise<SpaceSetup[]> => spaceSetups.list(),

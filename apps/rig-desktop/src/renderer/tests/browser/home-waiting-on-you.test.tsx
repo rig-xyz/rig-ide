@@ -298,7 +298,7 @@ describe('Home: Waiting on you', () => {
     await act(async () => buttonNamed('Accept')!.click());
     await flush();
     expect(mocks.accept).toHaveBeenCalledWith({ id: 'inv1' });
-    expect(mocks.attach).toHaveBeenCalledWith({ bindingId: 'b-warm' });
+    expect(mocks.attach).toHaveBeenCalledWith({ bindingId: 'b-warm', name: 'warm-island' });
     expect(items()[0]!.querySelector('[data-testid="waiting-done"]')?.textContent).toBe('You joined #warm-island.');
     expect(opened).toEqual([]);
   });
