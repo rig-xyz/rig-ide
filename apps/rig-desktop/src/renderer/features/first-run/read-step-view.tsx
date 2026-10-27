@@ -329,7 +329,7 @@ function CaughtUp({
         style={after(650)}
       >
         {forYou > 0
-          ? `${forYou} ${read.since ? 'new ' : ''}${forYou === 1 ? 'thing needs' : 'things need'} you. ${forYou === 1 ? "It's" : "They're"} on your Feed, ready to go.`
+          ? `${forYou} ${read.since ? 'new ' : ''}${forYou === 1 ? 'card needs' : 'cards need'} you. ${forYou === 1 ? "It's" : "They're"} on your Feed, ready to go.`
           : read.since
             ? `Nothing new needs you ${windowWords(read)}. Rig keeps an eye out from here.`
             : 'Nothing needs you right now. Rig keeps an eye out from here.'}

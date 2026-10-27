@@ -20,7 +20,7 @@ describe('scriptedOrchestrator', () => {
     if (block?.kind !== 'text') return;
     expect(block.runs[0]).toEqual({
       kind: 'text',
-      text: expect.stringContaining('2 things need you and 4 are up next'),
+      text: expect.stringContaining('2 cards need you and 4 are up next'),
     });
     expect(block.runs.some((r) => r.kind === 'session' && r.sessionId === 's-stale')).toBe(true);
   });

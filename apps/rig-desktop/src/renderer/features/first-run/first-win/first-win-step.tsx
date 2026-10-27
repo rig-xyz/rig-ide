@@ -55,7 +55,7 @@ export function FirstWinStep({ env, position, onNext, setFieldLook }: StepProps)
   };
 
   const heading = !queue
-    ? 'Getting your first one…'
+    ? 'Getting your first card…'
     : !front
       ? sentOnce
         ? 'Done. One click.'
@@ -63,8 +63,8 @@ export function FirstWinStep({ env, position, onNext, setFieldLook }: StepProps)
       : sentOnce
         ? 'Done. One click.'
         : state.front === 'another'
-          ? 'Here’s another one.'
-          : 'Your first one is ready.';
+          ? 'Here’s another card.'
+          : 'Your first card is ready.';
   const lead = !queue
     ? 'Reading your Feed.'
     : !front
@@ -84,7 +84,7 @@ export function FirstWinStep({ env, position, onNext, setFieldLook }: StepProps)
       guide={
         <>
           <span className="font-mono text-[11px] tracking-[0.09em] text-text-muted uppercase">
-            {position ? `${position} · ` : ''}Your first one
+            {position ? `${position} · ` : ''}Your first card
           </span>
           <h2 className="m-0 font-display text-[25px] leading-[1.18] font-semibold tracking-[-0.015em] text-balance text-text-primary">
             {heading}

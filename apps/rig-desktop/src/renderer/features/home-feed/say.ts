@@ -119,7 +119,7 @@ export function stepChoice(
   return list[(from + by + list.length) % list.length]!;
 }
 
-/** "1 thing needs you", "2 things need you". */
+/** "1 card needs you", "2 cards need you": what's on the Feed, by the name the Feed gives it. */
 export function needsYouPhrase(n: number): string {
-  return n === 1 ? '1 thing needs you' : `${n} things need you`;
+  return n === 1 ? '1 card needs you' : `${n} cards need you`;
 }

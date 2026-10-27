@@ -61,7 +61,7 @@ async function click(el: Element | undefined | null) {
 describe('First win', () => {
   it('shows the first card with its drafted answer, sends it, and brings the next one forward', async () => {
     await vi.waitFor(() => expect(q('[data-feed-id="sim:reply"]')).not.toBeNull());
-    expect(host.textContent).toContain('Your first one is ready.');
+    expect(host.textContent).toContain('Your first card is ready.');
     expect(q('[data-feed-draft]')!.textContent).toContain('Yes, I’ll be there.');
     expect(q('[data-testid="first-win-more"]')!.textContent).toContain('2 more ready');
     await click(button(q('[data-feed-id="sim:reply"]')!, /Next option/));
@@ -81,7 +81,7 @@ describe('First win', () => {
     await click(button(q('[data-feed-id="sim:reply"]')!, /More/));
     await click(button(host, /Show me another/));
     expect(q('[data-feed-id="sim:review"]')).not.toBeNull();
-    expect(host.textContent).toContain('Here’s another one.');
+    expect(host.textContent).toContain('Here’s another card.');
     expect(button(q('[data-feed-id="sim:review"]')!, /^Post/)).toBeTruthy();
   });
 });
