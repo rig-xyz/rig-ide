@@ -24,6 +24,7 @@ import { useRoomThemesEnabled } from '@renderer/features/spaces/use-room-themes-
 import { useSpacesEnabled } from '@renderer/features/spaces/use-spaces-enabled';
 import { rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
+import type { OpenSpaceAt } from '@shared/rig/notifications';
 import { AcrossYourSpacesToday } from './across-your-spaces-today';
 import { BriefingSpine, loadPulse, PULSE_QUERY_KEY } from './briefing-spine';
 import { FloatingCard } from './floating-card';
@@ -99,6 +100,7 @@ export function Home({
   onOpenPath,
   onContinueSession,
   onRigCreated,
+  onOpenSpaceAt,
 }: {
   onOpenFolder: () => void;
   onOpenPath: (path: string, opts?: { openFilePath?: string; kind?: 'space' }) => void;
@@ -110,6 +112,8 @@ export function Home({
    * inline auto-rename and the landing-doc open.
    */
   onRigCreated: (path: string, docPath: string | null, kind?: 'space') => void;
+  /** Opens a space at a message, the way a notification does (App's `openSpaceAt`). */
+  onOpenSpaceAt?: (target: OpenSpaceAt) => void;
 }) {
   const { agents, isLoading: agentsLoading } = useRunnableAgents();
   const identities = useAgentIdentities();
@@ -744,6 +748,7 @@ export function Home({
                   avatarOf(name)
                 }
                 onOpenPath={(path) => onOpenPath(path, { kind: 'space' })}
+                onOpenSpaceAt={onOpenSpaceAt}
               />
               {spacesEnabled && (
                 <AcrossYourSpacesToday

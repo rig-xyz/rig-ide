@@ -287,4 +287,16 @@ describe('Threads view', () => {
     await vi.waitFor(() => expect(panel()).not.toBeNull());
     expect(panel()!.textContent).toContain('Tuesday works');
   });
+
+  it('a jump to a message that starts a thread opens it only when it asks for the conversation', async () => {
+    await open({ jump: { messageId: 'm1', messageSeq: 1, nonce: 1 } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(panel()).toBeNull();
+
+    // Home's Waiting-on-you card: the question and the answers to it.
+    await open({ jump: { messageId: 'm1', messageSeq: 1, expandThread: true, nonce: 2 } });
+    await vi.waitFor(() => expect(panel()).not.toBeNull());
+    expect(panel()!.textContent).toContain('Which launch date?');
+    expect(panel()!.textContent).toContain('Tuesday works');
+  });
 });

@@ -8,7 +8,7 @@
  * Pure; the section draws it.
  */
 
-import type { RigNotification } from '@shared/rig/notifications';
+import type { OpenSpaceAt, RigNotification } from '@shared/rig/notifications';
 import type { RigSpaceAgent, RigSpaceStatus } from '@shared/rig/space-status';
 import type { LocalRunEvent } from '@shared/spaces/room-sees';
 import { agentLabel } from './space-status-state';
@@ -261,4 +261,34 @@ export function contextLine(prev: { authorName: string | null; body: string } | 
   if (!flat) return null;
   const excerpt = flat.length > 140 ? `${flat.slice(0, 139)}…` : flat;
   return `${prev.authorName?.trim().split(/\s+/)[0] || 'Someone'}: ${excerpt}`;
+}
+
+/**
+ * Where clicking a card takes you: the message (its thread open, so an
+ * agent's reply shows too) or the approval's run card. An invite or a
+ * connector has no conversation to show.
+ */
+export function openTargetOfItem(item: WaitingItem): OpenSpaceAt | null {
+  if (item.kind === 'reply') {
+    if (!item.messageId && !item.path) return null;
+    return {
+      bindingId: item.bindingId,
+      spaceName: item.spaceName,
+      messageId: item.messageId,
+      messageSeq: item.messageSeq,
+      preview: excerpt(item.quote),
+      path: item.path,
+      expandThread: true,
+    };
+  }
+  if (item.kind === 'approval') {
+    return { bindingId: item.bindingId, spaceName: item.spaceName, runId: item.runId };
+  }
+  return null;
+}
+
+/** A message cut to one line, for a reply's quote or a jump's preview. */
+export function excerpt(text: string, max = 90): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }

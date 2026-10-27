@@ -586,6 +586,8 @@ export type RoomJumpRequest = {
   /** Lets a jump to a message older than the loaded window give up at once, and say so. */
   messageSeq?: number | null;
   runId?: string | null;
+  /** Open the message's thread even when it's the root (see `OpenSpaceAt.expandThread`). */
+  expandThread?: boolean;
   nonce: number;
 };
 

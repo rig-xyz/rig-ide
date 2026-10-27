@@ -20,6 +20,7 @@ import { Button } from '@renderer/lib/ui/button';
 import { IdentityAvatar } from '@renderer/lib/ui/identity-avatar';
 import { cn } from '@renderer/lib/utils';
 import { connectorById, type ConnectorId } from '@shared/spaces/connectors';
+import type { OpenSpaceAt } from '@shared/rig/notifications';
 import type { RigSpaceStatus } from '@shared/rig/space-status';
 import type { HomeRigRow } from './home-sections';
 import { HomeFeedLabel } from './home-feed-label';
@@ -28,6 +29,8 @@ import {
   contextLine,
   deriveWaitingItems,
   doneLine,
+  excerpt,
+  openTargetOfItem,
   pendingRequestOf,
   usedInLabel,
   waitingAction,
@@ -61,7 +64,8 @@ type AvatarOf = (who: { userId: string | null; name: string }) => string | null;
  * send (`roomTextMessage`), Accept an invite, Approve your own agent's
  * request from this computer's copy of the run, or Open the space. A done
  * item fades with a line saying so, then folds away. With nothing waiting,
- * one line says so.
+ * one line says so. Clicking a message or approval card (or its space name)
+ * opens the space at it, with its thread open, to read before answering.
  */
 export function WaitingOnYouSection({
   spaceRows,
@@ -70,6 +74,7 @@ export function WaitingOnYouSection({
   self = null,
   avatarOf,
   onOpenPath,
+  onOpenSpaceAt,
 }: {
   spaceRows: readonly HomeRigRow[];
   statusByBinding: ReadonlyMap<string, RigSpaceStatus>;
@@ -78,6 +83,8 @@ export function WaitingOnYouSection({
   self?: { name: string | null; avatarUrl: string | null } | null;
   avatarOf?: AvatarOf;
   onOpenPath: (path: string) => void;
+  /** Opens a space at a message or run (App's `openSpaceAt`); without it a card opens the space's folder. */
+  onOpenSpaceAt?: (target: OpenSpaceAt) => void;
 }) {
   const queryClient = useQueryClient();
   const activity = useActivity(selfUserId !== null);
@@ -208,6 +215,7 @@ export function WaitingOnYouSection({
             collapsing={collapsing.has(doneKeyOf(item))}
             spacePath={pathOf(item.bindingId)}
             onOpenPath={onOpenPath}
+            onOpenSpaceAt={onOpenSpaceAt}
             onMarkRead={markRead}
             onDone={() => finish(item)}
             onInvitesChanged={() => {
@@ -256,6 +264,11 @@ function useExpiredConnectors(spaceRows: readonly HomeRigRow[]): ExpiredConnecto
   });
 }
 
+/** A click that landed on one of the card's own controls, not the card. */
+function onControl(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('button, input, textarea, a, form') !== null;
+}
+
 /** A person's first name; an email or a single word stays whole. */
 function firstName(name: string): string {
   return name.includes('@') ? name : (name.trim().split(/\s+/)[0] ?? name);
@@ -279,6 +292,7 @@ function WaitingRow({
   collapsing,
   spacePath,
   onOpenPath,
+  onOpenSpaceAt,
   onMarkRead,
   onDone,
   onInvitesChanged,
@@ -298,6 +312,7 @@ function WaitingRow({
   collapsing: boolean;
   spacePath: string | null;
   onOpenPath: (path: string) => void;
+  onOpenSpaceAt?: (target: OpenSpaceAt) => void;
   onMarkRead: (notificationId: string) => Promise<void>;
   onDone: () => void;
   onInvitesChanged: () => void;
@@ -352,6 +367,16 @@ function WaitingRow({
       await onMarkRead(item.notificationId);
       return null;
     });
+  };
+
+  // The card itself opens the conversation; the action stays for a quick answer.
+  const openTarget = done ? null : openTargetOfItem(item);
+  const canOpen = openTarget !== null && (!!onOpenSpaceAt || spacePath !== null);
+  const openConversation = () => {
+    if (!openTarget) return;
+    if (item.kind === 'reply') void onMarkRead(item.notificationId);
+    if (onOpenSpaceAt) onOpenSpaceAt(openTarget);
+    else if (spacePath) onOpenPath(spacePath);
   };
 
   const onAction = () => {
@@ -482,15 +507,35 @@ function WaitingRow({
         <div
           className={cn(
             'flex gap-3 rounded-[12px] px-3 py-2.5 leading-normal transition-colors',
-            !done && 'bg-accent/[.05] hover:bg-accent/[.09]'
+            !done && 'bg-accent/[.05] hover:bg-accent/[.09]',
+            canOpen && 'cursor-pointer'
           )}
+          data-testid="waiting-card"
+          onClick={(event) => {
+            if (!canOpen || onControl(event.target)) return;
+            // Selecting text to copy it isn't a click to open.
+            if (window.getSelection()?.toString()) return;
+            openConversation();
+          }}
         >
           <span className="mt-px flex shrink-0">{avatar}</span>
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <div className="flex min-w-0 items-start gap-3">
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <p className="truncate text-xs text-text-muted" data-testid="waiting-meta">
-                  <span className="font-medium text-text-primary">{who}</span> {verb} · {where}
+                  <span className="font-medium text-text-primary">{who}</span> {verb} ·{' '}
+                  {canOpen ? (
+                    <button
+                      type="button"
+                      onClick={openConversation}
+                      className="cursor-pointer rounded-control hover:text-text-primary hover:underline focus-visible:text-text-primary focus-visible:underline focus-visible:outline-none"
+                      data-testid="waiting-open"
+                    >
+                      {where}
+                    </button>
+                  ) : (
+                    where
+                  )}
                   {age && <> · {age}</>}
                 </p>
                 <p
@@ -609,9 +654,4 @@ function workingLabel(action: WaitingAction): string {
       : action === 'Reconnect'
         ? 'Waiting for your browser…'
         : 'Working…';
-}
-
-function excerpt(text: string, max = 90): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
