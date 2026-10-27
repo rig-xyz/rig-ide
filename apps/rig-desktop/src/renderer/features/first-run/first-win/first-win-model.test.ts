@@ -10,7 +10,7 @@ describe('First win', () => {
     expect(firstWinOrder([fix!, undrafted, reply!]).map((i) => i.id)).toEqual(['sim:reply', 'plain', 'sim:fix']);
   });
 
-  it('moves a sent card above, done, and brings the next one forward', () => {
+  it('a sent card is the win: done, and no next card comes forward', () => {
     let s = firstWinReducer(initialFirstWin, { type: 'loaded', items: [reply!, review!, fix!] });
     s = firstWinReducer(s, { type: 'pick', choiceId: 'c1', slide: 'left' });
     s = firstWinReducer(s, { type: 'edit-draft', text: 'Friday at 10?' });
@@ -20,9 +20,9 @@ describe('First win', () => {
     expect(s.queue![0]).toMatchObject({ starting: false, failed: 'Slack said no' });
     s = firstWinReducer(s, { type: 'sent', result: { said: 'Sent in #product', link: null } });
     expect(s.done.map((e) => [e.item.id, e.sent?.said])).toEqual([['sim:reply', 'Sent in #product']]);
-    expect(s.queue!.map((e) => e.item.id)).toEqual(['sim:review', 'sim:fix']);
-    expect(s.queue![0]!.fresh).toBe(true);
-    expect(s.front).toBe('next');
+    expect(s.won).toBe(true);
+    // The rest wait on the Feed, not forward here.
+    expect(s.queue![0]!.fresh).toBe(false);
   });
 
   it('Show me another sends the front card to the back; Not now drops it; a new choice drops the edits', () => {

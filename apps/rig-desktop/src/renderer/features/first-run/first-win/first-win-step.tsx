@@ -24,6 +24,9 @@ const MENU: MenuItem[] = [
   { key: 'ignore', label: 'Ignore', hint: 'Hide it; Rig learns from it' },
 ];
 
+/** How long the done card stays after the win, before the first run ends on Home. */
+export const WIN_HOLD_MS = 1200;
+
 const where = (e: FeedEntry) => (e.item.source ? sourceName(e.item.source.connector) : 'Rig');
 
 export function FirstWinStep({ env, position, onNext, setFieldLook, openSession }: StepProps) {
@@ -38,10 +41,19 @@ export function FirstWinStep({ env, position, onNext, setFieldLook, openSession 
     };
   }, []);
 
+  // The win: the done card a moment, then Home, as Open my Home does.
+  const next = useRef(onNext);
+  next.current = onNext;
+  useEffect(() => {
+    if (!state.won) return;
+    const timer = setTimeout(() => next.current(), WIN_HOLD_MS);
+    return () => clearTimeout(timer);
+  }, [state.won]);
+
   const queue = state.queue;
-  const front = queue?.[0];
-  const rest = queue?.slice(1) ?? [];
-  const sentOnce = state.done.length > 0;
+  const front = state.won ? undefined : queue?.[0];
+  const rest = state.won ? [] : (queue?.slice(1) ?? []);
+  const sentOnce = state.won;
   const choice = front ? chosen(front.item, front.pick) : null;
 
   const run = () => {
@@ -67,12 +79,10 @@ export function FirstWinStep({ env, position, onNext, setFieldLook, openSession 
           : 'Your first card is ready.';
   const lead = !queue
     ? 'Reading your Feed.'
-    : !front
-      ? sentOnce
-        ? 'That’s everything for now. Your Home is ready.'
-        : 'Rig keeps an eye out from here, and your Feed fills as things come in.'
-      : sentOnce
-        ? 'I’ll keep going in the background. Here’s what’s next.'
+    : sentOnce
+      ? 'Taking you to your Home. The rest of your Feed is there, and Rig keeps reading.'
+      : !front
+        ? 'Rig keeps an eye out from here, and new cards land on your Feed as they come in.'
         : choice?.draft
           ? front.item.choices.length > 1
             ? 'Send it, or use the arrows to see the other answers I drafted. ▾ has more.'

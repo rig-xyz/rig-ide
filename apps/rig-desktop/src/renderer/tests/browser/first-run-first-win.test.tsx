@@ -13,7 +13,7 @@ vi.mock('@renderer/lib/ipc', () => ({ rpc: { app: { openExternal: vi.fn() } }, e
 
 import { ok } from '@emdash/shared';
 import type { FirstRunEnv } from '@renderer/features/first-run/env';
-import { FirstWinStep } from '@renderer/features/first-run/first-win/first-win-step';
+import { FirstWinStep, WIN_HOLD_MS } from '@renderer/features/first-run/first-win/first-win-step';
 import { simulatedFirstWin } from '@renderer/features/first-run/first-win/fixtures';
 
 beforeAll(() => {
@@ -73,7 +73,7 @@ async function click(el: Element | undefined | null) {
 }
 
 describe('First win', () => {
-  it('shows the first card with its drafted answer, sends it, and brings the next one forward', async () => {
+  it('shows the first card with its drafted answer, sends it, and that win ends the first run on Home', async () => {
     await vi.waitFor(() => expect(q('[data-feed-id="sim:reply"]')).not.toBeNull());
     expect(host.textContent).toContain('Your first card is ready.');
     // Its amber edge and tint follow the card's rounded corners, not square ones poking out.
@@ -89,9 +89,16 @@ describe('First win', () => {
     expect(sent).toEqual(['Thursday’s tight for me. Does Friday morning work? Happy to go through the numbers async before.']);
     expect(q('[data-feed-sent]')!.textContent).toContain('Sent in #product.');
     expect(host.textContent).toContain('Done. One click.');
-    expect(q('[data-feed-id="sim:review"]')).not.toBeNull();
+    // No next card comes forward: the win holds a moment, then Home.
+    expect(q('[data-feed-id="sim:review"]')).toBeNull();
+    expect(next).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(next).toHaveBeenCalledTimes(1), { timeout: WIN_HOLD_MS + 1000 });
+  });
+
+  it('Open my Home still ends it at once', async () => {
+    await vi.waitFor(() => expect(q('[data-feed-id="sim:reply"]')).not.toBeNull());
     await click(button(host, /Open my Home/));
-    expect(next).toHaveBeenCalled();
+    expect(next).toHaveBeenCalledTimes(1);
   });
 
   it('▾ Show me another flips to the next card', async () => {
@@ -114,5 +121,17 @@ describe('First win', () => {
     await vi.waitFor(() => expect(q('[data-feed-sent]')?.textContent).toContain('Started in #home'));
     await click(button(q('[data-feed-sent]')!, /Open/));
     expect(opened).toEqual([['/Rig/home', 'ses_started']]);
+  });
+
+  it('a started card is the win too: a moment, then Home', async () => {
+    await vi.waitFor(() => expect(q('[data-feed-id="sim:reply"]')).not.toBeNull());
+    for (const id of ['sim:reply', 'sim:review']) {
+      await click(button(q(`[data-feed-id="${id}"]`)!, /More/));
+      await click(button(host, /Show me another/));
+    }
+    await vi.waitFor(() => expect(q('[data-feed-id="sim:fix"]')).not.toBeNull());
+    await click(button(q('[data-feed-id="sim:fix"]')!, /Start/));
+    await vi.waitFor(() => expect(q('[data-feed-sent]')).not.toBeNull());
+    await vi.waitFor(() => expect(next).toHaveBeenCalledTimes(1), { timeout: WIN_HOLD_MS + 1000 });
   });
 });

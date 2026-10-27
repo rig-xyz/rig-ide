@@ -24,6 +24,8 @@ export type FirstWinState = {
   done: FeedEntry[];
   /** What the guide says about the card in front. */
   front: 'first' | 'another' | 'next';
+  /** One went (sent, posted or started): that's the win, and the first run ends on Home. */
+  won: boolean;
 };
 
 export type FirstWinAction =
@@ -40,7 +42,7 @@ export type FirstWinAction =
   /** Not now, or Ignore: the front card leaves. */
   | { type: 'drop' };
 
-export const initialFirstWin: FirstWinState = { queue: null, done: [], front: 'first' };
+export const initialFirstWin: FirstWinState = { queue: null, done: [], front: 'first', won: false };
 
 const entry = (item: FeedItem): FeedEntry => ({ item, edited: null, resetKey: 0, slide: null, ignored: false, fresh: false });
 
@@ -63,8 +65,9 @@ export function firstWinReducer(state: FirstWinState, action: FirstWinAction): F
       return withFront({ ...front, starting: true, failed: null });
     case 'failed':
       return withFront({ ...front, starting: false, failed: action.error });
+    // The win: its done card stays a moment, then the first run ends; no next card comes forward.
     case 'sent':
-      return { queue: queue.slice(1).map((e) => ({ ...e, fresh: true })), done: [...state.done, { ...front, starting: false, sent: action.result }], front: 'next' };
+      return { ...state, queue: queue.slice(1), done: [...state.done, { ...front, starting: false, sent: action.result }], won: true };
     case 'another':
       return queue.length < 2 ? state : { ...state, queue: [...queue.slice(1).map((e, i) => (i === 0 ? { ...e, fresh: true } : e)), { ...front, fresh: false }], front: 'another' };
     case 'drop':
