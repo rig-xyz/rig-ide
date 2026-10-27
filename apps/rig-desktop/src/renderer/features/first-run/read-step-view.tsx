@@ -31,8 +31,11 @@ const SPARKS_PER_LOOKUP = 3;
 const SPARK_MS = 2200;
 /** While Claude decides what to check next, one tile lights this often, so the field never stands still. */
 const HEARTBEAT_MS = 700;
-/** A lookup's own tile rests this long after it reads, then lets go: only what it found stays. */
-const SETTLE_MS = 1400;
+/** What has been read stays on the field as a heavier grey tile, so the field fills up as Rig reads. */
+const READ_TILE: { state: DotMatrixState; color: string } = {
+  state: 'stopped',
+  color: '--text-muted',
+};
 
 /** What a line's tile shows while it reads, then the glyph for what it found (null: let it go). */
 function tileFor(line: RunProgress): { state: DotMatrixState; color: string } | null {
@@ -41,6 +44,7 @@ function tileFor(line: RunProgress): { state: DotMatrixState; color: string } | 
     case 'running':
       return { state: line.connector === 'rig' ? 'thinking' : 'reading', color };
     case 'done':
+      return READ_TILE;
     case 'failed':
       return null;
     case 'handled':
@@ -57,9 +61,10 @@ const ACTIVITY: DotMatrixState[] = ['reading', 'searching', 'thinking'];
 /**
  * Step 5: the Read step (`./read/`) in the guide pane, and its progress on
  * the stage's field. Each lookup lights a few single tiles, scattered at
- * random in its tool's color, that fade after a moment; what it finds (done,
- * not yours, for you) keeps a tile. When the read is done, the field goes
- * still and fades nearly out, and the stage breathes out once: All caught up.
+ * random in its tool's color, that settle after a moment into heavier grey:
+ * the field fills up with what has been read. What it finds (done, not
+ * yours, for you) keeps its own glyph. When the read is done, all of it
+ * gathers into one green check: All caught up.
  */
 export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
   // Mark the read as started, so a quit mid-read resumes here.
@@ -82,7 +87,7 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
   }, [ended, setFieldLook]);
 
   const light = useCallback(
-    (color: string, ms = SPARK_MS) => {
+    (color: string, ms = SPARK_MS, keep = true) => {
       const id = `spark:${spark.current++}`;
       const tile = field.current?.tile(id);
       if (!tile) return;
@@ -91,7 +96,9 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
         id,
         setTimeout(() => {
           live.current.delete(id);
-          tile.release();
+          // A read leaves its mark; a heartbeat (Claude thinking) leaves nothing.
+          if (keep) tile.set(READ_TILE.state, READ_TILE.color);
+          else tile.release();
         }, ms)
       );
     },
@@ -102,7 +109,7 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
     const sparks = live.current;
     const timer = setInterval(() => {
       if (ended || Date.now() - lastAt.current < HEARTBEAT_MS) return;
-      light('--accent', 1400);
+      light('--accent', 1400, false);
     }, HEARTBEAT_MS);
     return () => {
       clearInterval(timer);
@@ -139,7 +146,7 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
       const tile = field.current?.tile(line.id);
       const next = tileFor(line);
       if (next) tile?.set(next.state, next.color);
-      else setTimeout(() => tile?.release(), SETTLE_MS);
+      else tile?.release();
     },
     [field, light]
   );
