@@ -41,6 +41,7 @@ export {
   type InstallCommandRunner,
 } from './host-dependency-manager';
 export {
+  cliPathIsGone,
   resolveAllCommandPaths,
   resolveCommandPath,
   resolveExtraLocationPath,

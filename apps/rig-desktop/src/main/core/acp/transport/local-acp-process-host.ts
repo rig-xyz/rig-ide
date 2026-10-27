@@ -172,6 +172,7 @@ export async function resolveLocalAcpSpawnContext(
     ctx: new LocalExecutionContext(),
     hostDependencyStore,
     cachedStatePath,
+    reprobeStatePath: async () => (await localDependencyManager.probe(providerId as never)).path,
   });
 
   return { cli, agentEnv: filteredEnv };

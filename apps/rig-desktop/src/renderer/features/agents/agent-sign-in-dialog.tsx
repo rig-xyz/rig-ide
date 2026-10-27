@@ -3,7 +3,11 @@ import { Terminal, type ITerminalOptions } from '@xterm/xterm';
 import { Check, Copy, ExternalLink, Loader2 } from 'lucide-react';
 import { reaction } from 'mobx';
 import { useEffect, useRef, useState } from 'react';
-import { AcpAuthLoginBinding } from '@renderer/lib/acp/auth-login-binding';
+import {
+  AcpAuthLoginBinding,
+  LoginExitedError,
+  type LoginExit,
+} from '@renderer/lib/acp/auth-login-binding';
 import { rpc } from '@renderer/lib/ipc';
 import { computeGridDimensions, measureTerminalCell } from '@renderer/lib/pty/pty-dimensions';
 import { buildTerminalFontFamily } from '@renderer/lib/pty/terminal-font';
@@ -77,13 +81,15 @@ function seedGridDimensions(): { cols: number; rows: number } {
 }
 
 /**
- * Wraps the real xterm `Terminal` so the FIRST `write`/`reset` call (i.e.
- * the first byte of real CLI output, whether from the login replica's
- * initial snapshot or a live append) flips the dialog out of its "Starting
+ * Wraps the real xterm `Terminal` so the FIRST non-empty `write` (i.e. the
+ * first byte of real CLI output, whether from the login replica's initial
+ * snapshot or a live append) flips the dialog out of its "Starting
  * {agent}…" state — never the mere existence of a binding, which can be
- * ready before the CLI has actually printed anything. Only `reset`/`write`
- * are forwarded, matching exactly what `createXtermLogSink` (inside
- * `AcpAuthLoginBinding`) ever calls on the object it's given.
+ * ready before the CLI has actually printed anything, nor the `reset` that
+ * seeds an empty snapshot (that left a blank black terminal when the CLI
+ * exited without printing). Only `reset`/`write` are forwarded, matching
+ * exactly what `createXtermLogSink` (inside `AcpAuthLoginBinding`) ever
+ * calls on the object it's given.
  */
 function trackFirstOutput(terminal: Terminal, onOutput: () => void): Pick<Terminal, 'reset' | 'write'> {
   let seen = false;
@@ -93,15 +99,33 @@ function trackFirstOutput(terminal: Terminal, onOutput: () => void): Pick<Termin
     onOutput();
   };
   return {
-    reset: () => {
-      mark();
-      terminal.reset();
-    },
+    reset: () => terminal.reset(),
     write: (data, callback) => {
-      mark();
+      if (data.length > 0) mark();
       terminal.write(data, callback);
     },
   };
+}
+
+/**
+ * The sign-in CLI ended without signing in — typically it couldn't start at
+ * all. Formatted for `SignInErrorMessage`, which mutes the trailing code.
+ */
+export function loginExitMessage(providerName: string, exit: LoginExit | null): string {
+  const message = `${providerName} stopped before sign-in finished. Close this and try again.`;
+  if (exit?.signal) return `${message} (${exit.signal})`;
+  if (exit?.exitCode !== null && exit?.exitCode !== undefined) {
+    return `${message} (exit code ${exit.exitCode})`;
+  }
+  return message;
+}
+
+/**
+ * An exit that can't be a finished sign-in: a non-zero code or a signal. A
+ * clean exit waits for the auth status refresh instead.
+ */
+function isFailedExit(exit: LoginExit | null | undefined): exit is LoginExit {
+  return !!exit && (exit.signal !== null || (exit.exitCode !== null && exit.exitCode !== 0));
 }
 
 /** `event.button` is `undefined` for a synthetic/keyboard activation, `0` for the primary mouse button — anything else (right/middle click) should not trigger a link open. */
@@ -298,7 +322,9 @@ function AgentSignInDialogBody({
         scheduleResize();
       },
       (err: unknown) => {
-        if (!disposed) setError(err instanceof Error ? err.message : String(err));
+        if (disposed) return;
+        if (err instanceof LoginExitedError) setError(loginExitMessage(providerName, err.exit));
+        else setError(err instanceof Error ? err.message : String(err));
       }
     );
 
@@ -311,7 +337,7 @@ function AgentSignInDialogBody({
       bindingRef.current = null;
       terminal.dispose();
     };
-  }, [methodId, providerId]);
+  }, [methodId, providerId, providerName]);
 
   useEffect(() => {
     const binding = bindingRef.current;
@@ -326,6 +352,12 @@ function AgentSignInDialogBody({
           return;
         }
 
+        const exit = state.login?.exit;
+        if (isFailedExit(exit)) {
+          setError(loginExitMessage(providerName, exit));
+          return;
+        }
+
         const nextUrl = state.login?.pendingUrl;
         if (!nextUrl || handledUrlsRef.current.has(nextUrl.id)) return;
         handledUrlsRef.current.add(nextUrl.id);
@@ -334,7 +366,7 @@ function AgentSignInDialogBody({
       },
       { fireImmediately: true }
     );
-  }, [onSuccess, ready]);
+  }, [onSuccess, providerName, ready]);
 
   return (
     <>

@@ -1,6 +1,7 @@
 import type { DependencyId } from '@emdash/core/deps/runtime';
 import {
   checkLocalBinaryCompat,
+  cliPathIsGone,
   resolveAllCommandPaths,
   resolveCommandPath,
 } from '@emdash/core/deps/runtime';
@@ -44,10 +45,15 @@ async function firstRunnableOnPath(binaryName: string, ctx: IExecutionContext): 
  * 3. selection.kind === 'cli': return selection.command as-is (PTY resolves on PATH).
  * 4. selection.kind === 'method' or 'auto' (no override): fall through to cachedStatePath.
  * 5. auto:
- *    a. In-memory cached path from dependency probe (cachedStatePath).
+ *    a. In-memory cached path from dependency probe (cachedStatePath), or a
+ *       fresh probe (reprobeStatePath) when that path's file has disappeared.
  *    b. Probe via ctx (resolveCommandPath).
  *    c. Bare binaryName.
  *    d. providerId as last resort.
+ *
+ * A cached path whose file is gone (the Claude desktop app deletes its old
+ * bundled Claude Code when it updates) is dropped and resolved again, so a
+ * long-running app doesn't keep spawning a binary that no longer exists.
  */
 export async function resolveAgentExecutable({
   providerId,
@@ -55,6 +61,7 @@ export async function resolveAgentExecutable({
   ctx,
   hostDependencyStore,
   cachedStatePath,
+  reprobeStatePath,
   connectionId,
 }: {
   providerId: string;
@@ -64,6 +71,8 @@ export async function resolveAgentExecutable({
   hostDependencyStore: IHostDependencyStore;
   /** The absolute path the dependency manager resolved during its last probe, if available. */
   cachedStatePath?: string | null;
+  /** Probes the dependency again, for when `cachedStatePath`'s file has disappeared. */
+  reprobeStatePath?: () => Promise<string | null>;
   connectionId?: string;
 }): Promise<string> {
   const hostId = connectionId ?? 'local';
@@ -92,12 +101,22 @@ export async function resolveAgentExecutable({
   // Auto-resolution with in-memory cache
   const key = cacheKey(providerId, connectionId);
   const cached = resolvedPathCache.get(key);
-  if (cached) return cached;
+  if (cached && !(await cliPathIsGone(cached, ctx))) return cached;
+  if (cached) {
+    log.warn(
+      `[resolveAgentExecutable] Cached path "${cached}" for ${providerId} is gone — resolving again`
+    );
+    resolvedPathCache.delete(key);
+  }
 
   // Use the dependency manager's in-memory probe result if available
-  if (cachedStatePath && (await canRunHere(cachedStatePath, ctx))) {
-    resolvedPathCache.set(key, cachedStatePath);
-    return cachedStatePath;
+  let statePath = cachedStatePath;
+  if (statePath && (await cliPathIsGone(statePath, ctx))) {
+    statePath = (await reprobeStatePath?.().catch(() => null)) ?? null;
+  }
+  if (statePath && (await canRunHere(statePath, ctx))) {
+    resolvedPathCache.set(key, statePath);
+    return statePath;
   }
 
   // Live resolution via execution context

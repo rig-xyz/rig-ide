@@ -2,10 +2,11 @@ import {
   agentConfigListSchema,
   type AgentConfigError,
   type AgentConfigList,
+  type AuthLoginState,
   type AuthStatusModelState,
 } from '@emdash/core/workspace-server/agent-config';
 import type { Result } from '@emdash/shared';
-import { ReplicaLog, ReplicaState } from '@emdash/wire';
+import { ReplicaLog, ReplicaState, WireError } from '@emdash/wire';
 import { createImmutableMobxStore } from '@emdash/wire/util/mobx';
 import type { Terminal } from '@xterm/xterm';
 import {
@@ -24,6 +25,22 @@ import { createXtermLogSink } from '@renderer/lib/pty/xterm-log-sink';
  * reactive `AuthStatusModelState` the sign-in dialog watches for
  * `'authenticated'`.
  */
+
+/** How a sign-in CLI ended, as the runtime reported it. */
+export type LoginExit = NonNullable<AuthLoginState['exit']>;
+
+/**
+ * The sign-in CLI ended before its output could be shown: one that can't
+ * start at all (a binary that has disappeared, say) exits at once, and its
+ * output is gone with it. `exit` is null when the runtime hadn't reported how
+ * it ended yet.
+ */
+export class LoginExitedError extends Error {
+  constructor(readonly exit: LoginExit | null) {
+    super('The sign-in command ended before it could start');
+    this.name = 'LoginExitedError';
+  }
+}
 
 type AuthStatusHandle = {
   readonly ready: Promise<void>;
@@ -62,7 +79,21 @@ export class AcpAuthLoginBinding {
     const output = new ReplicaLog(client.loginOutput.handle(key), {
       store: createXtermLogSink(args.terminal),
     });
-    await Promise.all([status.ready, output.ready]);
+    await status.ready;
+    try {
+      await output.ready;
+    } catch (error) {
+      // The output topic only exists while the login runs: a CLI that exited
+      // before we got here says so, not "Unknown live topic".
+      const exit = status.current().login?.exit ?? null;
+      void output.dispose();
+      status.dispose();
+      void client.cancelLogin({ providerId: args.providerId });
+      if (exit || (error instanceof WireError && error.code === 'NOT_FOUND')) {
+        throw new LoginExitedError(exit);
+      }
+      throw error;
+    }
     return new AcpAuthLoginBinding(client, args.providerId, status, output);
   }
 
