@@ -225,7 +225,8 @@ function GroupHeader({
           onClick={onToggle}
           onDoubleClick={onRename}
           title={onRename ? 'Double-click to rename' : undefined}
-          className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-[8px] pl-1.5 text-left text-ui font-medium text-text-secondary transition-colors hover:text-text-primary"
+          // Its chevron and name line up with New group's plus and label below.
+          className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-[8px] pl-2.5 text-left text-ui font-medium text-text-secondary transition-colors hover:text-text-primary"
         >
           <ChevronDown
             className={cn(

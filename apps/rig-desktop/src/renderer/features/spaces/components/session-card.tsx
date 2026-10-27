@@ -611,6 +611,7 @@ function RetryButton({
           <PopoverMenuItem
             key={other}
             label={`With ${AGENT_NAME[other]}`}
+            iconGutter
             onSelect={() => {
               setOpen(false);
               onRerun(other);

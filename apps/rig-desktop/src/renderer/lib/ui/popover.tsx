@@ -205,9 +205,12 @@ export function PopoverMenuItem({
   disabled = false,
   role = 'menuitem',
   selected,
+  iconGutter = false,
 }: {
   label: string;
   icon?: LucideIcon;
+  /** No icon of its own, but its label lines up with rows that have one. */
+  iconGutter?: boolean;
   onSelect: () => void;
   danger?: boolean;
   disabled?: boolean;
@@ -230,7 +233,11 @@ export function PopoverMenuItem({
         disabled && 'text-text-muted pointer-events-none'
       )}
     >
-      {Icon && <Icon className="size-3.5 shrink-0" strokeWidth={1.5} />}
+      {Icon ? (
+        <Icon className="size-3.5 shrink-0" strokeWidth={1.5} />
+      ) : (
+        iconGutter && <span aria-hidden className="size-3.5 shrink-0" data-icon-gutter />
+      )}
       {label}
     </button>
   );

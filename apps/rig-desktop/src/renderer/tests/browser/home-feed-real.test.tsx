@@ -299,6 +299,31 @@ async function click(el: Element | undefined | null): Promise<void> {
 }
 
 describe('NewHome with the orchestrator Feed', () => {
+  it("a group's header lines up with New group below it: the same inset and gap", async () => {
+    // Wide enough that the rail is open: it decides as it mounts, so Home mounts again at this width.
+    await page.viewport(1400, 900);
+    act(() => root.unmount());
+    root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <NewHome onOpenPath={() => {}} onContinueSession={() => {}} onOpenSettings={() => {}} updateReady={false} />
+        </QueryClientProvider>
+      );
+    });
+    await flush();
+    await vi.waitFor(() => expect(button(host, /New group/)).toBeTruthy());
+    const header = [...host.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')].find((b) => b.textContent?.includes('Internal'))!;
+    const newGroup = button(host, /New group/)!;
+    // (The tests' browser has no Tailwind, so this checks the classes rather than measuring them.)
+    for (const cls of ['pl-2.5', 'gap-2']) {
+      expect(header.classList.contains(cls)).toBe(true);
+      expect(newGroup.classList.contains(cls)).toBe(true);
+    }
+    // The rest of the file runs at its own width.
+    await page.viewport(1100, 900);
+  });
+
   it("shows Rig's cards instead of the demo ones, asks first, with ticket chips", async () => {
     await vi.waitFor(() => expect(feedRow('prp_earn')).toBeNull());
     const rows = [...host.querySelectorAll<HTMLElement>('[data-feed-id]')].map(
