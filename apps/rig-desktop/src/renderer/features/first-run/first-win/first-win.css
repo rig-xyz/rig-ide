@@ -43,9 +43,11 @@
   background: var(--bg-1);
   box-shadow: 0 4px 16px rgb(0 0 0 / 0.35);
 }
-/* The row inside draws its own bottom rule on Home; in a card it has none. */
+/* The row inside draws its own bottom rule on Home; in a card it has none, and its tint and amber
+   edge follow the card's rounded corners instead of poking out of them. */
 .fw-card > [data-feed-id] {
   border-bottom: 0;
+  border-radius: inherit;
 }
 .fw-done {
   box-shadow: none;

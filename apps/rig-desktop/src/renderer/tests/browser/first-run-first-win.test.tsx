@@ -62,6 +62,10 @@ describe('First win', () => {
   it('shows the first card with its drafted answer, sends it, and brings the next one forward', async () => {
     await vi.waitFor(() => expect(q('[data-feed-id="sim:reply"]')).not.toBeNull());
     expect(host.textContent).toContain('Your first card is ready.');
+    // Its amber edge and tint follow the card's rounded corners, not square ones poking out.
+    const row = q('.fw-front > [data-feed-id]')!;
+    expect(getComputedStyle(row).borderTopLeftRadius).toBe(getComputedStyle(row.parentElement!).borderTopLeftRadius);
+    expect(getComputedStyle(row).borderTopLeftRadius).not.toBe('0px');
     expect(q('[data-feed-draft]')!.textContent).toContain('Yes, I’ll be there.');
     expect(q('[data-testid="first-win-more"]')!.textContent).toContain('2 more ready');
     await click(button(q('[data-feed-id="sim:reply"]')!, /Next option/));
