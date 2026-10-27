@@ -1,7 +1,7 @@
 import { ArrowRight } from 'lucide-react';
-import { useCallback, useEffect, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { ActionButton } from '@renderer/features/home-feed/action-button';
-import { DotMatrix, type DotMatrixState } from '@renderer/lib/ui/dot-matrix';
+import type { DotMatrixState } from '@renderer/lib/ui/dot-matrix';
 import type { OrchProgressEvent, RunProgress } from '@shared/rig/orch-progress';
 import { StepFrame, type StepProps } from './first-run';
 import { initialRead, readReducer, type ReadState } from './read/read-model';
@@ -62,8 +62,6 @@ const ACTIVITY: DotMatrixState[] = ['reading', 'searching', 'thinking'];
  * still and fades nearly out, and the stage breathes out once: All caught up.
  */
 export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
-  useEffect(() => setFieldLook('plain'), [setFieldLook]);
-
   // Mark the read as started, so a quit mid-read resumes here.
   const saved = useRef(false);
   useEffect(() => {
@@ -78,6 +76,10 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
   const live = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const lastAt = useRef(Date.now());
   const ended = read.ended?.ok ?? false;
+  // The grey grid while it reads, every run (a replay starts again from a finished one).
+  useEffect(() => {
+    if (!ended) setFieldLook('plain');
+  }, [ended, setFieldLook]);
 
   const light = useCallback(
     (color: string, ms = SPARK_MS) => {
@@ -108,17 +110,20 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
     };
   }, [ended, light]);
 
-  // All caught up: let every spark go, and let the field go still and fade nearly out.
-  useEffect(() => {
-    if (!ended) return;
-    live.current.forEach((timer, id) => {
-      clearTimeout(timer);
-      field.current?.tile(id).release();
-    });
-    live.current.clear();
-    field.current?.setMode('idle');
-    setFieldLook('rest');
-  }, [ended, field, setFieldLook]);
+  // All caught up: drop the sparks, and gather the whole field into the check (`CaughtUp` says where).
+  const gatherInto = useCallback(
+    (check: DOMRect) => {
+      live.current.forEach(clearTimeout);
+      live.current.clear();
+      const box = document.querySelector('.fr-stage')?.getBoundingClientRect();
+      if (!box) return;
+      field.current?.gather({
+        x: (check.left + check.width / 2 - box.left) / box.width,
+        y: (check.top + check.height / 2 - box.top) / box.height,
+      });
+    },
+    [field]
+  );
 
   const onProgress = useCallback(
     (event: OrchProgressEvent) => {
@@ -144,13 +149,51 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
       guide={
         <ReadStep source={env.readSource} onDone={onNext} onProgress={onProgress} doneInStage />
       }
-      stage={ended ? <CaughtUp read={read} onOpen={onNext} /> : null}
+      stage={<div>{ended && <CaughtUp read={read} onOpen={onNext} onPlaced={gatherInto} />}</div>}
     />
   );
 }
 
-/** The finish: one slow breath of light, then what Rig did and what's left for the person. */
-function CaughtUp({ read, onOpen }: { read: ReadState; onOpen: () => void }) {
+/** The check, as an LED matrix: 9×9 dots, the mark's own dots lighting along its stroke. */
+const CHECK_PATH: [number, number][] = [
+  [1, 4],
+  [2, 5],
+  [3, 6],
+  [4, 5],
+  [5, 4],
+  [6, 3],
+  [7, 2],
+  [8, 1],
+];
+/** How long the field takes to gather before the check lights, and how long each dot of its stroke takes. */
+const GATHER_MS = 1500;
+const STROKE_DOT_MS = 55;
+
+/**
+ * The finish. The field breathes in and gathers into the middle (`gather`),
+ * the gathered light becomes one large LED check that draws its stroke and
+ * bounces with a soft green breath, and then the words rise in: what Rig
+ * checked and let go, and what needs the person.
+ */
+function CaughtUp({
+  read,
+  onOpen,
+  onPlaced,
+}: {
+  read: ReadState;
+  onOpen: () => void;
+  onPlaced: (check: DOMRect) => void;
+}) {
+  const mark = useRef<HTMLDivElement>(null);
+  const [lit, setLit] = useState(false);
+  // Once, when it shows: the field gathers to where the check sits, then the check lights.
+  const placed = useRef(onPlaced);
+  useLayoutEffect(() => {
+    if (mark.current) placed.current(mark.current.getBoundingClientRect());
+    const timer = setTimeout(() => setLit(true), GATHER_MS - 150);
+    return () => clearTimeout(timer);
+  }, []);
+
   const tools = [
     ...new Set(read.lines.map((l) => l.connector).filter((c): c is string => !!c && c !== 'rig')),
   ].map((c) => TOOL_NAME[c] ?? c);
@@ -159,26 +202,46 @@ function CaughtUp({ read, onOpen }: { read: ReadState; onOpen: () => void }) {
       ? `${tools.slice(0, -1).join(', ')} and ${tools.at(-1)}`
       : (tools[0] ?? 'your tools');
   const { read: checked, handled, forYou } = read.counts;
+  const strokeEnd = GATHER_MS + CHECK_PATH.length * STROKE_DOT_MS;
+  const after = (ms: number) => ({ animationDelay: `${(strokeEnd + ms) / 1000}s` });
+  const onPath = new Map(CHECK_PATH.map(([x, y], i) => [`${x},${y}`, i]));
+
   return (
     <div
       className="flex max-w-[460px] flex-col items-center gap-5 text-center"
       data-testid="read-caught-up"
     >
-      <div className="relative grid size-[88px] place-items-center">
-        <span className="rig-caught-breath" aria-hidden />
-        <span className="fr-glass rig-caught-rise grid size-[72px] place-items-center rounded-[22px]">
-          <DotMatrix state="done" tone="ok" size="lg" />
+      <div
+        ref={mark}
+        className={lit ? 'rig-check rig-check-lit' : 'rig-check'}
+        style={{ ['--stroke-end' as string]: `${strokeEnd}ms` }}
+        aria-hidden
+      >
+        <span className="rig-check-breath" />
+        <span className="rig-check-grid">
+          {Array.from({ length: 81 }, (_, i) => {
+            const x = i % 9;
+            const y = Math.floor(i / 9);
+            const at = onPath.get(`${x},${y}`);
+            return (
+              <i
+                key={i}
+                className={at === undefined ? undefined : 'on'}
+                style={at === undefined ? undefined : { animationDelay: `${at * STROKE_DOT_MS}ms` }}
+              />
+            );
+          })}
         </span>
       </div>
       <h3
         className="rig-caught-rise m-0 font-display text-[40px] leading-[1.08] font-semibold tracking-[-0.025em] text-text-primary"
-        style={{ animationDelay: '0.35s' }}
+        style={after(250)}
       >
         All caught up.
       </h3>
       <p
         className="rig-caught-rise m-0 text-[15px] leading-relaxed text-text-secondary"
-        style={{ animationDelay: '0.6s' }}
+        style={after(450)}
       >
         Rig checked {checked} {checked === 1 ? 'place' : 'places'} across {across}.
         {handled > 0 &&
@@ -186,13 +249,13 @@ function CaughtUp({ read, onOpen }: { read: ReadState; onOpen: () => void }) {
       </p>
       <p
         className="rig-caught-rise m-0 text-[15px] leading-relaxed text-text-primary"
-        style={{ animationDelay: '0.8s' }}
+        style={after(650)}
       >
         {forYou > 0
           ? `${forYou} ${forYou === 1 ? 'thing needs' : 'things need'} you. ${forYou === 1 ? "It's" : "They're"} on your Feed, ready to go.`
           : 'Nothing needs you right now. Rig keeps an eye out from here.'}
       </p>
-      <div className="rig-caught-rise" style={{ animationDelay: '1.05s' }}>
+      <div className="rig-caught-rise" style={after(900)}>
         <ActionButton variant="primary" icon={ArrowRight} onClick={onOpen}>
           {forYou > 0 ? 'See your Feed' : 'Open my Home'}
         </ActionButton>

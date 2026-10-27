@@ -191,3 +191,108 @@
     display: none;
   }
 }
+
+/* The finish's check (`CaughtUp`): an LED matrix the gathered field becomes. Its stroke lights dot by dot,
+   then the whole mark bounces once with a soft green breath. */
+.rig-check {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 136px;
+  height: 136px;
+}
+.rig-check-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(9, 8px);
+  gap: 5px;
+  opacity: 0;
+}
+.rig-check-grid i {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--status-ok);
+  opacity: 0.06;
+}
+.rig-check-grid i.on {
+  opacity: 0;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--status-ok) 70%, transparent);
+}
+.rig-check-lit .rig-check-grid {
+  opacity: 1;
+  transition: opacity 0.3s ease;
+  animation: rig-check-bounce 0.9s cubic-bezier(0.3, 1.5, 0.5, 1) 0.45s both;
+}
+.rig-check-lit .rig-check-grid i.on {
+  animation: rig-check-dot 0.5s cubic-bezier(0.3, 1.6, 0.5, 1) both;
+}
+@keyframes rig-check-dot {
+  0% {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.45);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes rig-check-bounce {
+  0% {
+    transform: scale(1);
+  }
+  30% {
+    transform: scale(1.18);
+  }
+  55% {
+    transform: scale(0.94);
+  }
+  75% {
+    transform: scale(1.04);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.rig-check-breath {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--status-ok) 30%, transparent),
+    transparent 68%
+  );
+  opacity: 0;
+  pointer-events: none;
+}
+.rig-check-lit .rig-check-breath {
+  animation: rig-check-breath 2.6s cubic-bezier(0.2, 0.8, 0.2, 1) 0.4s both;
+}
+@keyframes rig-check-breath {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.35;
+    transform: scale(2.2);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rig-check-lit .rig-check-grid,
+  .rig-check-lit .rig-check-grid i.on,
+  .rig-check-lit .rig-check-breath {
+    animation: none;
+  }
+  .rig-check-lit .rig-check-grid i.on {
+    opacity: 1;
+  }
+}

@@ -42,6 +42,13 @@ export type AgentFieldTile = {
 
 export type AgentFieldHandle = {
   setMode(mode: AgentFieldMode): void;
+  /**
+   * The finish: every tile sweeps in toward a point (fractions of the field),
+   * outer ones first, brightening and turning green as it goes and fading as
+   * it arrives, like a breath out. Then the field is empty and its rest grid
+   * fades softly back. Any mode change ends it.
+   */
+  gather(target: { x: number; y: number }, ms?: number): void;
   wake(region: AgentFieldRegion, color: AgentFieldColor): void;
   tile(id: string): AgentFieldTile;
 };
@@ -61,6 +68,11 @@ const PITCH = 34;
 const TILE = CELL * 3 + GAP * 2;
 /** An idle tile: every dot faintly there. The field's own rest, quieter than any glyph. */
 const REST_FRAME = Array<number>(9).fill(0.1);
+/** After a gather, how long the empty field takes to let its rest grid back in. */
+const GATHER_REST_MS = 1600;
+
+const easeInOut = (p: number) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
 type Ambient = { kind: 'ambient'; state: DotMatrixActivity | 'done' | 'starting'; until: number };
 type Fixed = { kind: 'fixed'; state: DotMatrixState; color: AgentFieldColor | null };
@@ -97,8 +109,9 @@ export const AgentField = forwardRef<
     height: number;
     mode: AgentFieldMode;
     claims: Map<string, { index: number; run: Fixed | null }>;
+    gather: { start: number; ms: number; x: number; y: number } | null;
     draw: () => void;
-  }>({ tiles: [], width: 0, height: 0, mode, claims: new Map(), draw: () => {} });
+  }>({ tiles: [], width: 0, height: 0, mode, claims: new Map(), gather: null, draw: () => {} });
 
   useImperativeHandle(ref, () => {
     const f = field.current;
@@ -122,8 +135,24 @@ export const AgentField = forwardRef<
     return {
       setMode(next) {
         f.mode = next;
+        f.gather = null;
         clearUnclaimed(f);
         f.draw();
+      },
+      gather(target, ms = 1700) {
+        f.claims.clear();
+        f.tiles.forEach((tile) => {
+          if (tile.run?.kind === 'fixed') tile.run = { ...tile.run };
+        });
+        const start = performance.now();
+        f.gather = { start, ms: prefersReducedMotion() ? 0 : ms, x: target.x, y: target.y };
+        // Frame by frame while it moves, then a little longer for the grid to fade back.
+        const step = () => {
+          if (!f.gather || f.gather.start !== start) return;
+          f.draw();
+          if (performance.now() < start + f.gather.ms + GATHER_REST_MS) requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
       },
       wake(region, color) {
         const claimed = new Set([...f.claims.values()].map((c) => c.index));
@@ -243,6 +272,40 @@ export const AgentField = forwardRef<
     const draw = () => {
       const t = getMatrixTick();
       ctx.clearRect(0, 0, f.width, f.height);
+      const g = f.gather;
+      const now = performance.now();
+      const G = g ? (g.ms ? (now - g.start) / g.ms : 1) : 0;
+      if (g && G >= 1) {
+        // Gathered: an empty field, its rest grid coming softly back.
+        const back = clamp01((now - g.start - g.ms) / GATHER_REST_MS) * 0.6;
+        ctx.fillStyle = colors.rest;
+        for (const tile of f.tiles) {
+          for (let k = 0; k < 9; k++) {
+            ctx.globalAlpha = REST_FRAME[k]! * back;
+            ctx.beginPath();
+            ctx.arc(
+              tile.x + (k % 3) * (CELL + GAP) + CELL / 2,
+              tile.y + Math.floor(k / 3) * (CELL + GAP) + CELL / 2,
+              CELL / 2,
+              0,
+              Math.PI * 2
+            );
+            ctx.fill();
+          }
+        }
+        ctx.globalAlpha = 1;
+        return;
+      }
+      const tx = g ? g.x * f.width : 0;
+      const ty = g ? g.y * f.height : 0;
+      const far = g
+        ? Math.max(
+            Math.hypot(tx, ty),
+            Math.hypot(f.width - tx, ty),
+            Math.hypot(tx, f.height - ty),
+            Math.hypot(f.width - tx, f.height - ty)
+          )
+        : 1;
       for (const tile of f.tiles) {
         let frame: number[];
         let color: string;
@@ -268,6 +331,27 @@ export const AgentField = forwardRef<
           frame = REST_FRAME;
           color = colors.rest;
         }
+        // Gathering: sweep toward the point, outer tiles first; brighten, go green, and fade on arrival.
+        let dx = 0;
+        let dy = 0;
+        let fade = 1;
+        let boost = 0;
+        let radius = CELL / 2;
+        if (g) {
+          const cx0 = tile.x + TILE / 2;
+          const cy0 = tile.y + TILE / 2;
+          const d = Math.hypot(tx - cx0, ty - cy0) / far;
+          const p = clamp01((G - (1 - d) * 0.45) / 0.55);
+          if (p >= 1) continue;
+          const e = easeInOut(p);
+          dx = (tx - cx0) * e;
+          dy = (ty - cy0) * e;
+          fade = 1 - e * e;
+          boost = Math.sin(Math.PI * Math.min(1, p * 1.25)) * 0.75;
+          radius = (CELL / 2) * (1 - 0.35 * e);
+          if (p > 0.08) color = colors.ok;
+          glow = false;
+        }
         if (glow) {
           const cx = tile.x + TILE / 2;
           const cy = tile.y + TILE / 2;
@@ -280,12 +364,12 @@ export const AgentField = forwardRef<
         }
         ctx.fillStyle = color;
         for (let k = 0; k < 9; k++) {
-          ctx.globalAlpha = Math.min(1, frame[k]!);
+          ctx.globalAlpha = Math.min(1, frame[k]! + boost) * fade;
           ctx.beginPath();
           ctx.arc(
-            tile.x + (k % 3) * (CELL + GAP) + CELL / 2,
-            tile.y + Math.floor(k / 3) * (CELL + GAP) + CELL / 2,
-            CELL / 2,
+            tile.x + dx + (k % 3) * (CELL + GAP) + CELL / 2,
+            tile.y + dy + Math.floor(k / 3) * (CELL + GAP) + CELL / 2,
+            radius,
             0,
             Math.PI * 2
           );
