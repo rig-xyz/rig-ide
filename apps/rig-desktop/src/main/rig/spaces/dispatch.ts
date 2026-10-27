@@ -1347,6 +1347,9 @@ export function createSpacesDispatcher(deps: {
     if (existing) {
       const unchanged = !wanted || connectorsFingerprint(wanted, held, appendFor(wanted)) === existing.connectorsFingerprint;
       const busy = existing.current !== null || existing.pending.length > 0 || existing.heldPermissions.size > 0;
+      // The space's folder moved (renamed to match the space): an idle
+      // session still works in the old one, so it starts again in the new one.
+      const moved = existing.cwd !== cwd;
       if (forTurn && !busy && deps.acp.stopSession) {
         const stored = deps.store?.get(key);
         const sessionId = stored?.conversationId === existing.conversationId ? stored.acpSessionId : undefined;
@@ -1361,13 +1364,15 @@ export function createSpacesDispatcher(deps: {
           freshReason = 'tool search';
         }
       }
-      if (!freshAfterIdle && (unchanged || busy || !deps.acp.stopSession)) {
+      if (!freshAfterIdle && (!moved || busy) && (unchanged || busy || !deps.acp.stopSession)) {
         // A turn is on its way: it isn't idle anymore, so a second turn right behind doesn't start it fresh.
         if (forTurn) existing.lastTurnAt = at;
         return ok(existing);
       }
       log.info(
-        !freshAfterIdle
+        !freshAfterIdle && moved
+          ? 'Rig spaces dispatch: the space folder moved, reloading the space session'
+          : !freshAfterIdle
           ? 'Rig spaces dispatch: connectors changed, reloading the space session'
           : freshReason === 'tool search'
             ? 'Rig spaces dispatch: created with tool search off, starting a fresh space session'

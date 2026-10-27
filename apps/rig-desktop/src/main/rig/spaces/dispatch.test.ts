@@ -2305,6 +2305,28 @@ describe('connectors', () => {
     expect(fake.started[0]).toMatchObject({ mcpServers: [] });
   });
 
+  it('starts an idle session again in the new folder once its space folder moved', async () => {
+    const fake = makeFakeAcp();
+    let folder = '/Rig/clear-harbor';
+    const { dispatch } = createSpacesDispatcher({
+      api: makeFakeApi().api,
+      acp: fake.acp,
+      resolveWorkspace: async () => folder,
+      store: memoryStore(),
+    });
+
+    await dispatch(makeRequest());
+    const conversationId = fake.started[0]!.conversationId;
+    fake.emitTurnStart(conversationId, 'turn-1');
+    fake.emitTurnEnd(conversationId, 'turn-1', 'end_turn');
+
+    // Renamed to #rig-feedback, its folder followed.
+    folder = '/Rig/rig-feedback';
+    await dispatch(makeRequest({ id: 'req2' }));
+    expect(fake.stopped).toEqual([conversationId]);
+    expect(fake.started.map((s) => s.cwd)).toEqual(['/Rig/clear-harbor', '/Rig/rig-feedback']);
+  });
+
   it('reloads an idle session, keeping its context, when its connectors change', async () => {
     const fake = makeFakeAcp();
     let current = { servers: [] as (typeof LINEAR)[], gaps: [] as never[] };

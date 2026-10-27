@@ -201,5 +201,14 @@ describe('existingCopyAt — Download notices the copy already at its destinatio
     expect(existingCopyAt(home, 'bnd_1', 'growth')).toBeNull();
     expect(existingCopyAt(home, 'bnd_1', 'nothing-here')).toBeNull();
   });
+
+  it('looks where `rig attach` puts it: the CLI drops dots and underscores', () => {
+    bind(joinPath(home, 'growth-v1-2'), 'bnd_1');
+    try {
+      expect(existingCopyAt(home, 'bnd_1', 'growth_v1.2')).toBe(joinPath(home, 'growth-v1-2'));
+    } finally {
+      rmSync(joinPath(home, 'growth-v1-2'), { recursive: true, force: true });
+    }
+  });
 });
 

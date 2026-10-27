@@ -40,7 +40,7 @@ import { createHttpSpacesRelayApi, otherMacsAgents, type SessionAgent } from './
 import { RequestClaimPoller, unrunnableRequestLine } from './request-claim';
 import { rigToolsServer } from './rig-tools-instance';
 import { readAgentSessionSize } from './session-size';
-import { createFileSpaceSessionStore } from './session-store';
+import { spaceSessionStore } from './session-store-instance';
 
 /**
  * Boot-only wiring for `SpacesDispatchController` — real settings store,
@@ -94,7 +94,7 @@ function realDeps(): SpacesDispatchControllerDeps {
         sessionSize: readAgentSessionSize,
         resolveWorkspace: async (bindingId) =>
           (await resolveLocalPathsImpl([bindingId]))[bindingId] ?? null,
-        store: createFileSpaceSessionStore(join(app.getPath('userData'), 'spaces-sessions.json')),
+        store: spaceSessionStore(),
         connectors: async (bindingId, agent) => {
           const spaceConnectors = async () => {
             const listed = await api.listConnectors?.(bindingId);

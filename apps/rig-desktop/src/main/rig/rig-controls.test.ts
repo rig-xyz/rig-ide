@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as Home from './home';
 import type * as RecentRigs from './recent-rigs';
 
 /**
@@ -18,13 +19,33 @@ const mocks = vi.hoisted(() => ({
   runRig: vi.fn(),
   rows: [] as RigRow[],
   home: '',
+  open: new Set<string>(),
+  inFlight: new Set<string>(),
+  movedTo: [] as Array<{ bindingId: string; path: string }>,
 }));
 
 vi.mock('@main/lib/logger', () => ({ log: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
 vi.mock('@main/lib/events', () => ({ events: { emit: vi.fn() } }));
 vi.mock('@main/db/client', () => ({ db: {} }));
 vi.mock('./create', () => ({ runRig: mocks.runRig }));
-vi.mock('./join', () => ({ extractJsonObjects: () => [], parseJsonErrorEnvelope: () => null }));
+vi.mock('./join', () => ({
+  extractJsonObjects: (text: string) =>
+    text
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>),
+  parseJsonErrorEnvelope: () => null,
+}));
+vi.mock('./home', async (importOriginal) => ({
+  ...(await importOriginal<typeof Home>()),
+  readRigHomeDir: async () => mocks.home,
+}));
+vi.mock('./file-root-registry', () => ({
+  rigFileRootRegistry: { isOpen: async (path: string) => mocks.open.has(path) },
+}));
+vi.mock('./spaces/session-store-instance', () => ({
+  spaceHasRunInFlight: (bindingId: string) => mocks.inFlight.has(bindingId),
+}));
 vi.mock('./relay-name-sync-instance', () => ({ relayNameSync: { pushRename: async () => undefined } }));
 vi.mock('./spaces/rig-tools', () => ({ SPACE_NAME_MAX: 80 }));
 vi.mock('./recent-rigs', async (importOriginal) => {
@@ -32,6 +53,9 @@ vi.mock('./recent-rigs', async (importOriginal) => {
   return {
     ...actual,
     updateRigName: async () => undefined,
+    updateRigPath: async (bindingId: string, path: string) => {
+      mocks.movedTo.push({ bindingId, path });
+    },
     getLinkedPathsForAccount: async (accountId: string, ids: ReadonlySet<string> | null) =>
       actual.selectLinkedPathsForAccount(mocks.rows, await actual.listHomeFolderBindings(mocks.home), accountId, ids),
   };
@@ -53,6 +77,9 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'rig-controls-'));
   mocks.home = join(root, 'Rig');
   mocks.rows = [];
+  mocks.open.clear();
+  mocks.inFlight.clear();
+  mocks.movedTo = [];
   // `rig pause` writes `{paused, pausedAt}` (no reason); `rig resume` lifts it.
   mocks.runRig.mockReset().mockImplementation(async ([verb]: string[], cwd: string) => {
     if (verb === 'pause') await writeFile(pauseFile(cwd), JSON.stringify({ paused: true, pausedAt: '2026-10-02T09:00:00Z' }));
@@ -133,8 +160,67 @@ describe('rename', () => {
 
     const result = await renameRig('bnd_1', dir, 'rig-jay');
 
-    expect(result).toEqual({ success: true, data: { name: 'rig-jay' } });
+    // Outside the Rig home: a folder someone put there is theirs to name.
+    expect(result).toEqual({ success: true, data: { name: 'rig-jay', folder: { moved: false, reason: 'outside-home' } } });
     expect(await readFile(join(dir, 'rig.toml'), 'utf8')).toContain('name = "rig-jay"');
     expect(mocks.runRig).toHaveBeenCalledWith(['rename', 'rig-jay', '--json'], dir, expect.any(Number));
+  });
+
+  describe('the folder follows the name', () => {
+    async function space(folder: string, name: string): Promise<string> {
+      const dir = join(mocks.home, folder);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'rig.toml'), `[rig]\nname = "${name}"\n`);
+      return dir;
+    }
+
+    beforeEach(() => {
+      // `rig move --to <dest>` moves the folder and says where.
+      mocks.runRig.mockReset().mockImplementation(async (args: string[]) => {
+        if (args[0] !== 'move') return { kind: 'ran', exitCode: 0, stdout: '', stderr: '' };
+        const { rename } = await import('node:fs/promises');
+        await rename(args[1]!, args[3]!);
+        return { kind: 'ran', exitCode: 0, stdout: `${JSON.stringify({ from: args[1], to: args[3] })}\n`, stderr: '' };
+      });
+    });
+
+    it('moves clear-harbor to rig-feedback through rig move, and records the new path', async () => {
+      const dir = await space('clear-harbor', 'clear-harbor');
+      const result = await renameRig('bnd_1', dir, 'rig-feedback');
+
+      const to = join(mocks.home, 'rig-feedback');
+      expect(mocks.runRig).toHaveBeenCalledWith(['move', dir, '--to', to, '--json'], dir, expect.any(Number));
+      expect(result).toMatchObject({ success: true, data: { folder: { moved: true, path: to } } });
+      expect(await readFile(join(to, 'rig.toml'), 'utf8')).toContain('name = "rig-feedback"');
+      expect(mocks.movedTo).toEqual([{ bindingId: 'bnd_1', path: to }]);
+    });
+
+    it('takes a suffix only on a real clash, and leaves a folder already named for it', async () => {
+      await mkdir(join(mocks.home, 'rig-feedback'), { recursive: true });
+      const dir = await space('clear-harbor', 'clear-harbor');
+      const moved = await renameRig('bnd_1', dir, 'rig-feedback');
+      expect(moved).toMatchObject({ data: { folder: { moved: true, path: join(mocks.home, 'rig-feedback-2') } } });
+
+      mocks.runRig.mockClear();
+      const again = await renameRig('bnd_1', join(mocks.home, 'rig-feedback-2'), 'rig-feedback');
+      expect(again).toMatchObject({ data: { folder: { moved: false, reason: 'matches' } } });
+      expect(mocks.runRig).not.toHaveBeenCalledWith(expect.arrayContaining(['move']), expect.anything(), expect.anything());
+    });
+
+    it('never moves a folder open in a window or with a run in flight; it says why', async () => {
+      const open = await space('calm-trail', 'calm-trail');
+      mocks.open.add(open);
+      expect(await renameRig('bnd_open', open, 'mktg-emails')).toMatchObject({
+        data: { name: 'mktg-emails', folder: { moved: false, reason: 'open' } },
+      });
+
+      const busy = await space('gentle-canyon', 'gentle-canyon');
+      mocks.inFlight.add('bnd_busy');
+      expect(await renameRig('bnd_busy', busy, 'playdrop-rig')).toMatchObject({
+        data: { folder: { moved: false, reason: 'busy' } },
+      });
+      expect(mocks.runRig).not.toHaveBeenCalledWith(expect.arrayContaining(['move']), expect.anything(), expect.anything());
+      expect(mocks.movedTo).toEqual([]);
+    });
   });
 });
