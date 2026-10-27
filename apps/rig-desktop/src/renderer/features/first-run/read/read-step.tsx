@@ -141,8 +141,10 @@ function TickerLine({ line, checking }: { line: ReadLine; checking: boolean }) {
         settled && line.status === 'handled' && 'bg-[color-mix(in_srgb,var(--status-ok)_12%,transparent)]'
       )}
       data-status={checking ? 'checking' : line.status}
+      data-connector={line.connector ?? 'none'}
     >
       <span className="grid place-items-center">
+        {/* Its own connector's mark, or a neutral one: never another connector's. */}
         {line.connector && KNOWN_LOGOS.has(line.connector) ? (
           <SourceLogo connector={line.connector as SourceConnector} size={15} />
         ) : (

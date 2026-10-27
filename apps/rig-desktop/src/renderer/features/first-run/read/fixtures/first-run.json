@@ -4,9 +4,9 @@
   "kind": "start",
   "trigger": "first",
   "passes": 2,
+  "lookbackDays": 3,
   "t": 0,
-  "lookups": 52,
-  "lookbackDays": 3
+  "lookups": 52
  },
  {
   "run": "run_demo",
@@ -265,10 +265,10 @@
   "line": {
    "id": "outcome:t9",
    "connector": "slack",
-   "label": "Payout delay: Sam resolved it Tuesday",
+   "label": "Payout delay: Sam resolved it Tuesday in #incidents",
    "status": "handled",
    "t": 24084,
-   "ref": "sit_demo_1"
+   "ref": "msg:slack:CDEMO1:1"
   }
  },
  {
@@ -415,10 +415,10 @@
   "line": {
    "id": "outcome:t15",
    "connector": "slack",
-   "label": "Tom asked for your review of #212 two days ago",
+   "label": "Priya asked if you can join Thursday’s pilot review",
    "status": "for_you",
    "t": 42823,
-   "ref": "sit_demo_3"
+   "ref": "msg:slack:CDEMO3:1"
   }
  },
  {
@@ -689,10 +689,10 @@
   "line": {
    "id": "outcome:t28",
    "connector": "linear",
-   "label": "5 Dependabot PRs: the platform team merges these",
+   "label": "LAR-74: checkout copy is Priya’s, and she’s on it",
    "status": "not_yours",
    "t": 80011,
-   "ref": "sit_demo_4"
+   "ref": "item:LAR-94"
   }
  },
  {
@@ -834,10 +834,10 @@
   "line": {
    "id": "outcome:t34",
    "connector": "linear",
-   "label": "Priya asked if you can join Thursday’s pilot review",
+   "label": "LAR-91: checkout timeout, High, nobody on it",
    "status": "for_you",
    "t": 101693,
-   "ref": "sit_demo_7"
+   "ref": "item:LAR-97"
   }
  },
  {
@@ -857,10 +857,10 @@
   "line": {
    "id": "outcome:t36",
    "connector": "linear",
-   "label": "LAR-91: checkout timeout, High, nobody on it",
+   "label": "LAR-95: the export fails for large teams",
    "status": "for_you",
    "t": 102587,
-   "ref": "sit_demo_8"
+   "ref": "item:LAR-98"
   }
  },
  {
@@ -1018,10 +1018,10 @@
   "line": {
    "id": "outcome:t43",
    "connector": "slack",
-   "label": "Léa asked for the SOC 2 evidence list",
+   "label": "Sam is waiting on a go for the staging deploy",
    "status": "for_you",
    "t": 124040,
-   "ref": "sit_demo_9"
+   "ref": "msg:slack:CDEMO9:1"
   }
  },
  {
@@ -1030,10 +1030,10 @@
   "line": {
    "id": "outcome:t44",
    "connector": "slack",
-   "label": "AWS invoice: you forwarded it last month",
+   "label": "Office badges: Léa sorted them in #ops",
    "status": "handled",
    "t": 125101,
-   "ref": "sit_demo_10"
+   "ref": "msg:slack:CDEMO10:1"
   }
  },
  {
@@ -1246,10 +1246,10 @@
   "line": {
    "id": "outcome:t54",
    "connector": "slack",
-   "label": "Sam is waiting on a go for the staging deploy",
+   "label": "Tom asked in #eng who owns the rate limits",
    "status": "for_you",
    "t": 157582,
-   "ref": "sit_demo_12"
+   "ref": "msg:slack:CDEMO12:1"
   }
  },
  {
@@ -1258,10 +1258,10 @@
   "line": {
    "id": "outcome:t55",
    "connector": "slack",
-   "label": "Checkout copy (LAR-74) is Priya’s, and she’s on it",
+   "label": "Design review notes in #product: an FYI for the whole team",
    "status": "not_yours",
    "t": 158815,
-   "ref": "sit_demo_13"
+   "ref": "msg:slack:CDEMO13:1"
   }
  },
  {

@@ -69,6 +69,44 @@ describe('ReadStep', () => {
     expect(done[0]).toMatchObject({ cards: ['sit_9'], ended: false });
   });
 
+  it("keeps each line's own connector, and shows a neutral mark when there is none", async () => {
+    const mixed: OrchProgressEvent[] = [
+      { run, kind: 'start', trigger: 'first', passes: 1, lookups: 12, lookbackDays: 3, t: 0 },
+      ...(
+        [
+          ['l1', 'slack', 'Reading #eng', 'done'],
+          ['l2', 'linear', 'Opening LAR-91', 'done'],
+          ['l3', 'github', 'Opening #212', 'done'],
+          ['outcome:o1', 'gmail', 'AWS invoice: you forwarded it last month', 'handled'],
+          ['outcome:o2', null, 'Team offsite poll: Sam is running it', 'not_yours'],
+          ['l4', 'notion', 'Opening a Notion page', 'done'],
+        ] as const
+      ).map(([id, connector, label, status], i): OrchProgressEvent => ({ run, kind: 'line', line: { id, connector, label, status, t: 10 + i } })),
+    ];
+    await act(async () => {
+      root.render(<ReadStep onDone={() => {}} source={replaySource(mixed)} />);
+    });
+    const rows = () => [...host.querySelectorAll<HTMLElement>('[data-testid="read-ticker"] li')];
+    await vi.waitFor(() => expect(rows()).toHaveLength(6));
+    expect(rows().map((li) => li.dataset.connector)).toEqual(['slack', 'linear', 'github', 'gmail', 'none', 'notion']);
+    // A logo only for a connector Rig has one for; the rest get the neutral mark, never Slack's.
+    const marks = rows().map((li) => (li.firstElementChild!.querySelector('svg') ? 'logo' : 'neutral'));
+    expect(marks).toEqual(['logo', 'logo', 'logo', 'logo', 'neutral', 'neutral']);
+    const svgOf = (i: number) => rows()[i]!.firstElementChild!.querySelector('svg')!.innerHTML;
+    expect(new Set([0, 1, 2, 3].map(svgOf)).size).toBe(4);
+  });
+
+  it("keeps the recorded run's connectors as recorded", () => {
+    const fixture = recorded as OrchProgressEvent[];
+    const outcomes = fixture.flatMap((e) => (e.kind === 'line' && ['handled', 'not_yours', 'for_you'].includes(e.line.status) ? [e.line] : []));
+    // Each made-up ref is shaped like its own connector's.
+    for (const l of outcomes) {
+      if (l.connector === 'slack') expect(l.ref).toMatch(/^msg:slack:/);
+      if (l.connector === 'linear') expect(l.ref).toMatch(/^item:LAR-/);
+    }
+    expect(new Set(outcomes.map((l) => l.connector))).toEqual(new Set(['slack', 'linear']));
+  });
+
   it('plays the recorded first run back', async () => {
     const fixture = recorded as OrchProgressEvent[];
     await act(async () => {
