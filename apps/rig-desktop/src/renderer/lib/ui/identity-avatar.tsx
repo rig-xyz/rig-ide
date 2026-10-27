@@ -41,8 +41,20 @@ export function IdentityAvatar({
     );
   }
   // No name to draw initials from — a monogram of a placeholder label would
-  // read as someone else's initials.
-  if (!name) return <UserRound className={cn('shrink-0', sizeClassName, className)} />;
+  // read as someone else's initials. The glyph sits in the same disc as a
+  // monogram, so it reads as an avatar and not a stray icon.
+  if (!name)
+    return (
+      <span
+        className={cn(
+          'bg-bg-2 text-text-muted flex shrink-0 items-center justify-center rounded-full',
+          sizeClassName,
+          className
+        )}
+      >
+        <UserRound className="size-[62%]" strokeWidth={1.75} />
+      </span>
+    );
   return (
     <span
       className={cn(
