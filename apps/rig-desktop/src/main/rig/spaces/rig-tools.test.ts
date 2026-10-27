@@ -20,6 +20,7 @@ import {
   HOME_BINDING,
   ORCHESTRATOR_BINDING,
   parseSpaceManifest,
+  repairCard,
   preApprovedRigToolOption,
   PRE_APPROVED_RIG_TOOLS,
   runRigTool,
@@ -1450,5 +1451,25 @@ describe("the background orchestrator's rig_feed", () => {
     expect(act).toHaveBeenLastCalledWith(expect.objectContaining({ refs: ['sit_1'], action: 'put_card', args: expect.objectContaining({ card, do: 'do_it' }) }));
     await feed.run({ ...SCOPE, bindingId: ORCHESTRATOR_BINDING }, { op: 'put', ref: 'sit_1', section: 'needs_you', card });
     expect(act).toHaveBeenLastCalledWith(expect.objectContaining({ args: expect.objectContaining({ do: 'ask_you' }) }));
+  });
+
+  it('opens the situation and puts its card in one call, fixing a missing ref and a bare ticket id', async () => {
+    const act = vi.fn(async (input: { action: string }) =>
+      ok(input.action === 'open' ? [{ ref: 'sit_new', ok: true, message: 'Opened.' }] : [{ ref: 'sit_new', ok: true, message: 'On the Feed.' }])
+    );
+    const feed = createAgentRigTools({ orch: { act } } as unknown as RigToolsBackend).find((t) => t.name === 'rig_feed')!;
+    const card = { title: 'Fix the ULY-544 export', why: 'Chris asked about ULY-544 twice.', choices: [{ verb: 'start', lead: 'Draft the fix', tail: ': Claude opens a PR.' }], people: ['Chris Sybico'] };
+    const open = { title: 'Export fails for large teams', description: 'The export fails [item:ULY-544].', refs: ['item:ULY-544'], people: ['Chris Sybico'] };
+    const res = await feed.run({ ...SCOPE, bindingId: ORCHESTRATOR_BINDING }, { op: 'put', open, section: 'needs_you', card });
+    expect(res.isError).toBeFalsy();
+    expect(act).toHaveBeenNthCalledWith(1, expect.objectContaining({ refs: [], action: 'open', args: expect.objectContaining({ title: 'Export fails for large teams', refs: ['item:ULY-544'], do: 'ask_you' }) }));
+    expect(act).toHaveBeenNthCalledWith(2, expect.objectContaining({ refs: ['sit_new'], action: 'put_card', args: expect.objectContaining({ card: expect.objectContaining({ title: 'Fix the export', why: 'Chris asked about [item:ULY-544] twice.' }) }) }));
+  });
+
+  it('cites the situation\'s first ref when a new card cites none, and leaves ids it does not hold alone', () => {
+    expect(repairCard({ title: 'Review it', why: 'Waiting two days.', choices: [], people: [] }, ['github:acme/api#212']).why).toBe('Waiting two days. [github:acme/api#212]');
+    expect(repairCard({ title: 'T', why: 'See ABC-1 [item:ULY-1].', choices: [], people: [] }, ['item:ULY-1']).why).toBe('See ABC-1 [item:ULY-1].');
+    expect(repairCard({ title: 'Confirm prod analysis recovered (ULY-481)', why: 'x [item:ULY-481]', choices: [], people: [] }, ['item:ULY-481']).title).toBe('Confirm prod analysis recovered');
+    expect(repairCard({ title: 'ULY-524: fix the Ideas copy', why: 'x [item:ULY-524]', choices: [], people: [] }, ['item:ULY-524']).title).toBe('fix the Ideas copy');
   });
 });

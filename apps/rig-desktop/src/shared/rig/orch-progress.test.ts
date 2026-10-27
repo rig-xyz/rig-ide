@@ -58,5 +58,8 @@ describe('ProgressMapper', () => {
     const put = m.push({ sessionUpdate: 'tool_call_update', toolCallId: 'f1', status: 'completed' });
     expect(put[0]).toEqual({ kind: 'card', ref: 'sit_9', t: 5 });
     expect(put[1]).toMatchObject({ kind: 'line', line: { label: 'Putting a card on your Feed', status: 'done' } });
+    // A put that opens its situation in the same call counts as a card too.
+    m.push({ sessionUpdate: 'tool_call', toolCallId: 'f2', name: 'mcp__rig__rig_feed', rawInput: { op: 'put', open: { title: 'New thing' } } });
+    expect(m.push({ sessionUpdate: 'tool_call_update', toolCallId: 'f2', status: 'completed' })[0]).toEqual({ kind: 'card', ref: 'new:f2', t: 5 });
   });
 });

@@ -1510,6 +1510,32 @@ function orchestratorTools(backend: RigToolsBackend): RigTool[] {
 
 const ONLY_ORCHESTRATOR = "Only Rig's background orchestrator can use this tool.";
 
+type CardIn = { title: string; why: string; choices: { verb: string; lead: string; tail: string }[]; people: string[] };
+
+/**
+ * The two card mistakes that are safe to fix rather than send back, for a card
+ * whose situation opens in the same call (its refs are known): a why with no
+ * ref cites the situation's first, and a ticket id the situation holds goes in
+ * brackets. Each rewrite of a refused card is seconds of the person waiting.
+ */
+export function repairCard(card: CardIn, refs: unknown): CardIn {
+  const held = Array.isArray(refs) ? refs.filter((r): r is string => typeof r === 'string') : [];
+  if (!held.length || typeof card?.why !== 'string') return card;
+  const bracket = (text: string) =>
+    text.replace(/(\[[^\]]*\])|\b([A-Z][A-Z0-9]+-\d+)\b/g, (m, inBrackets: string | undefined, id: string | undefined) =>
+      inBrackets ? m : held.includes(`item:${id}`) ? `[item:${id}]` : m
+    );
+  let why = bracket(card.why);
+  if (!/\[[a-z]+:[^\]\s]+\]/.test(why)) why = `${why.trim()} [${held[0]}]`;
+  // A title names the thing in words: its ticket id goes, with any brackets or colon it leaves bare.
+  const title = card.title
+    .replace(/\s*[([]?\b[A-Z][A-Z0-9]+-\d+\b[)\]]?:?/g, '')
+    .replace(/\(\s*\)|\[\s*\]/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return { ...card, why, title: title || card.title };
+}
+
 /**
  * The background orchestrator's own tools (rig "background orchestrator"
  * design): it decides the Feed; Rig keeps the state. Listed only in its own
@@ -1557,11 +1583,22 @@ export function createAgentRigTools(backend: RigToolsBackend): RigTool[] {
     {
       name: 'rig_feed',
       description:
-        "Put a card for a situation on your owner's Feed, move it, or take it off. A card is checked before it lands (refs the situation holds, names, length, no he or she) and you get every problem back to fix. " +
-        'Title: what to do and about what, at most 8 words, no ticket ids. Why: the one fact that matters, at most 25 words, citing refs in [brackets]. Choices: one to three, each a verb (reply, start, space, open), a short lead and a tail starting with ":" saying what happens.',
+        "Put a card for a situation on your owner's Feed, move it, or take it off. For something new, put opens its situation in the same call (give open instead of ref). A card is checked before it lands (refs the situation holds, names, length, no he or she) and you get every problem back to fix. " +
+        'Title: what to do and about what, at most 8 words, no ticket ids. Why: the one fact that matters, at most 25 words, citing at least one ref the situation holds in [brackets]. Choices: one to three, each a verb (reply, start, space, open), a short lead and a tail of at most 12 words starting with ":" saying what happens. ' +
+        'Write ticket ids only inside [brackets], never he, she, his or her, and {@Name} only for someone on the people line (never your owner).',
       inputSchema: {
         op: z.enum(['put', 'move', 'retire']),
-        ref: z.string().describe('The situation (sit_…).'),
+        ref: z.string().optional().describe('The situation (sit_…); for put on something new, give open instead.'),
+        open: z
+          .object({
+            title: z.string(),
+            description: z.string().describe('Facts with refs; the first sentence says where it stands.'),
+            refs: z.array(z.string()),
+            people: z.array(z.string()),
+            topic: z.string().optional(),
+          })
+          .optional()
+          .describe('put only: open a new situation for this card in the same call.'),
         card: z
           .object({
             title: z.string(),
@@ -1579,10 +1616,22 @@ export function createAgentRigTools(backend: RigToolsBackend): RigTool[] {
       annotations: { title: 'Change the Feed', readOnlyHint: false, destructiveHint: false },
       run: async (scope, input) => {
         if (scope.bindingId !== ORCHESTRATOR_BINDING) return failed(ONLY_ORCHESTRATOR);
-        const ref = String(input.ref ?? '');
+        let ref = String(input.ref ?? '');
         if (input.op === 'retire') return act(scope, [ref], 'retire_card', { state: str(input.state), reason: str(input.reason) });
         const section = input.section === 'needs_you' ? 'ask_you' : input.section === 'claude' ? 'do_it' : '';
-        return act(scope, [ref], 'put_card', { ...(input.op === 'put' ? { card: input.card, ...(section ? { do: section } : {}) } : {}), position: input.position, reason: str(input.reason) });
+        // Something new: its situation and its card in one call, so the first card needs one step.
+        if (!ref && input.op === 'put' && input.open && typeof input.open === 'object') {
+          if (!backend.orch) return failed(NO_ORCH);
+          const o = input.open as Record<string, unknown>;
+          const opened = await backend.orch.act({ refs: [], action: 'open', args: { title: str(o.title), description: str(o.description), refs: o.refs, people: o.people, topic: str(o.topic), ...(section ? { do: section } : {}) }, actor: agentActor(scope) });
+          if (!opened.success) return failed(opened.error.message);
+          const first = opened.data[0];
+          if (!first?.ok) return failed(first?.message ?? 'Could not open the situation.');
+          ref = first.ref;
+        }
+        if (!ref) return failed('Give the situation (ref), or open for something new.');
+        const card = input.op === 'put' && input.open && input.card ? repairCard(input.card as CardIn, (input.open as { refs?: unknown }).refs) : input.card;
+        return act(scope, [ref], 'put_card', { ...(input.op === 'put' ? { card, ...(section ? { do: section } : {}) } : {}), position: input.position, reason: str(input.reason) });
       },
     },
     {

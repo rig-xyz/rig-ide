@@ -183,8 +183,9 @@ export class ProgressMapper {
       }
       return out;
     }
-    if (tool?.tool === 'rig_feed' && ended === 'done' && input.op === 'put' && typeof input.ref === 'string') {
-      out.push({ kind: 'card', ref: input.ref, t });
+    // A card that went up: on its situation, or (put with open) on the one it opened in the same call.
+    if (tool?.tool === 'rig_feed' && ended === 'done' && input.op === 'put') {
+      out.push({ kind: 'card', ref: typeof input.ref === 'string' && input.ref ? input.ref : `new:${id}`, t });
     }
     const line = lineFor(name, input);
     if (!line) return out;
