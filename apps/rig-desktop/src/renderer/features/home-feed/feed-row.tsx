@@ -39,7 +39,7 @@ import { PEOPLE } from './mock';
 import type { FeedChoice, FeedItem, FeedVerb, RailSession } from './model';
 import { personFor } from './real-feed';
 import { chosen, normalizeText, parseSay, sayParts, sayPlain, spaceLabel, stepChoice, VERB_LABEL } from './say';
-import { type FeedEntry, findSession, type Rect } from './store';
+import { type FeedEntry, findSession, type Rect, type SentResult } from './store';
 
 /**
  * A Feed row and its parts: what's going on, what the choice does and (a send
@@ -89,7 +89,9 @@ export function FeedRow({ entry }: { entry: FeedEntry }) {
           toast(needs ? 'Reminder set for an hour' : 'Hidden until tomorrow');
         } else if (key === 'ignore') dispatch({ type: 'ignore', itemId: item.id, value: true });
       }}
-      onOpenSent={(link) => void rpc.app.openExternal(link)}
+      onOpenSent={(sent) => {
+        if (sent.link) void rpc.app.openExternal(sent.link);
+      }}
     />
   );
 }
@@ -128,7 +130,8 @@ export function FeedRowView({
   onOpenTitle?: () => void;
   menu: MenuItem[];
   onMenu: (key: MenuKey) => void;
-  onOpenSent?: (link: string) => void;
+  /** A done card's Open: the message it sent, or the session it started. */
+  onOpenSent?: (sent: SentResult) => void;
 }) {
   const { item } = entry;
   const choice = chosen(item, entry.pick);
@@ -262,7 +265,7 @@ const DraftText = memo(
 );
 
 /** A send or post that went: what it did, where, and Open. */
-function SentRow({ entry, onOpen }: { entry: FeedEntry; onOpen?: (link: string) => void }) {
+function SentRow({ entry, onOpen }: { entry: FeedEntry; onOpen?: (sent: SentResult) => void }) {
   const sent = entry.sent!;
   return (
     <div className="hf-arrive border-b border-border-hairline px-5 py-3" data-feed-id={entry.item.id} data-feed-sent>
@@ -274,8 +277,8 @@ function SentRow({ entry, onOpen }: { entry: FeedEntry; onOpen?: (link: string) 
       <h4 className="mt-1 ml-7 text-ui font-semibold text-text-primary">{entry.item.title}</h4>
       <div className="mt-1 ml-7 flex items-center gap-2.5">
         <p className="min-w-0 flex-1 text-sm text-text-secondary">{sent.said}.</p>
-        {sent.link && onOpen && (
-          <ActionButton variant="secondary" size="sm" icon={PanelRightOpen} onClick={() => onOpen(sent.link!)}>
+        {(sent.link || sent.session) && onOpen && (
+          <ActionButton variant="secondary" size="sm" icon={PanelRightOpen} onClick={() => onOpen(sent)}>
             Open
           </ActionButton>
         )}

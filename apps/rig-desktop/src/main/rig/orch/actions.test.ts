@@ -122,7 +122,7 @@ describe('the control plane', () => {
   it("runs work with no space of its own in the Home space, never asking which space", async () => {
     const d = deps({ homeSpace: async () => ok({ bindingId: 'b_home', root: '/r/home' }) });
     const r = await createActions(d).start({ task: 'triage the Earn bugs', userTurnId: d.turns.issue('chat') });
-    expect(r.success && r.data.space).toEqual({ ref: 'space_b_home', name: 'home' });
+    expect(r.success && r.data.space).toEqual({ ref: 'space_b_home', name: 'home', root: '/r/home' });
     expect(d.startSession).toHaveBeenCalledWith(expect.objectContaining({ bindingId: 'b_home', root: '/r/home' }));
     // A card's own space still wins.
     const own = await createActions(d).start({ ref: 'sit_1', userTurnId: d.turns.issue('click') });

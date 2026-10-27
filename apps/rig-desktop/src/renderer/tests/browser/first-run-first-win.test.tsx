@@ -11,6 +11,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 vi.mock('@renderer/lib/ipc', () => ({ rpc: { app: { openExternal: vi.fn() } }, events: { on: () => () => {} } }));
 
+import { ok } from '@emdash/shared';
 import type { FirstRunEnv } from '@renderer/features/first-run/env';
 import { FirstWinStep } from '@renderer/features/first-run/first-win/first-win-step';
 import { simulatedFirstWin } from '@renderer/features/first-run/first-win/fixtures';
@@ -23,6 +24,7 @@ let host: HTMLDivElement;
 let root: Root;
 let next: ReturnType<typeof vi.fn<() => void>>;
 let sent: string[];
+let opened: [string, string][];
 beforeEach(async () => {
   host = document.createElement('div');
   host.style.cssText = 'height:800px;width:1100px;display:grid;grid-template-columns:370px 1fr';
@@ -30,6 +32,7 @@ beforeEach(async () => {
   root = createRoot(host);
   next = vi.fn<() => void>();
   sent = [];
+  opened = [];
   const firstWin = simulatedFirstWin((ms, fn) => setTimeout(fn, 20));
   const env = {
     firstWin: {
@@ -38,11 +41,22 @@ beforeEach(async () => {
         sent.push(text);
         return firstWin.send(item, choice, text);
       },
+      // A real start says which session it started, and in which space's folder.
+      start: () => Promise.resolve(ok({ said: 'Started in #home', link: null, session: { root: '/Rig/home', sessionId: 'ses_started' } })),
     },
   } as Partial<FirstRunEnv> as FirstRunEnv;
   await act(async () => {
     root.render(
-      <FirstWinStep env={env} plan={null} position="Step 4 of 5" onNext={next} advancing={false} setFieldLook={() => {}} field={{ current: null }} />
+      <FirstWinStep
+        env={env}
+        plan={null}
+        position="Step 4 of 5"
+        onNext={next}
+        advancing={false}
+        setFieldLook={() => {}}
+        field={{ current: null }}
+        openSession={(root, sessionId) => opened.push([root, sessionId])}
+      />
     );
   });
 });
@@ -87,5 +101,18 @@ describe('First win', () => {
     expect(q('[data-feed-id="sim:review"]')).not.toBeNull();
     expect(host.textContent).toContain('Here’s another card.');
     expect(button(q('[data-feed-id="sim:review"]')!, /^Post/)).toBeTruthy();
+  });
+
+  it('Start session leaves a done card whose Open goes to the session it started, in its space', async () => {
+    await vi.waitFor(() => expect(q('[data-feed-id="sim:reply"]')).not.toBeNull());
+    for (const id of ['sim:reply', 'sim:review']) {
+      await click(button(q(`[data-feed-id="${id}"]`)!, /More/));
+      await click(button(host, /Show me another/));
+    }
+    await vi.waitFor(() => expect(q('[data-feed-id="sim:fix"]')).not.toBeNull());
+    await click(button(q('[data-feed-id="sim:fix"]')!, /Start/));
+    await vi.waitFor(() => expect(q('[data-feed-sent]')?.textContent).toContain('Started in #home'));
+    await click(button(q('[data-feed-sent]')!, /Open/));
+    expect(opened).toEqual([['/Rig/home', 'ses_started']]);
   });
 });

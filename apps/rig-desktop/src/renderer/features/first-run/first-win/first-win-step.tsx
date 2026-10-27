@@ -26,7 +26,7 @@ const MENU: MenuItem[] = [
 
 const where = (e: FeedEntry) => (e.item.source ? sourceName(e.item.source.connector) : 'Rig');
 
-export function FirstWinStep({ env, position, onNext, setFieldLook }: StepProps) {
+export function FirstWinStep({ env, position, onNext, setFieldLook, openSession }: StepProps) {
   const [state, dispatch] = useReducer(firstWinReducer, initialFirstWin);
   const firstWin = useRef(env.firstWin);
   useEffect(() => setFieldLook('dim'), [setFieldLook]);
@@ -104,7 +104,16 @@ export function FirstWinStep({ env, position, onNext, setFieldLook }: StepProps)
           <span className="fw-tab self-start rounded-full px-[13px] py-1.5 text-[13.5px] font-semibold text-text-primary">Feed</span>
           {state.done.map((e) => (
             <div key={e.item.id} className="fw-card fw-done">
-              <FeedRowView entry={e} where={where(e)} {...noop} onOpenSent={(link) => void rpc.app.openExternal(link)} />
+              <FeedRowView
+                entry={e}
+                where={where(e)}
+                {...noop}
+                onOpenSent={(sent) => {
+                  // The message it sent, or the session it started, in its space (which ends the first run).
+                  if (sent.link) void rpc.app.openExternal(sent.link);
+                  else if (sent.session && openSession) openSession(sent.session.root, sent.session.sessionId);
+                }}
+              />
             </div>
           ))}
           {front && choice && (

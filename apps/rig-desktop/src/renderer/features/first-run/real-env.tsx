@@ -237,7 +237,11 @@ const realFirstWin: FirstWinEnv = {
       .catch(() => null);
     if (!r) return err("Rig couldn't start it.");
     return r.success
-      ? ok({ said: `Started in #${r.data.space.name}`, link: null })
+      ? ok({
+          said: `Started in #${r.data.space.name}`,
+          link: null,
+          session: { root: r.data.space.root, sessionId: r.data.runId },
+        })
       : err(r.error.message);
   },
   answer: (item, signal) => {

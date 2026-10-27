@@ -25,7 +25,8 @@ export type StartInput = {
   /** A card's Reply: the session asks before anything it does (Ask first), whatever the space's own mode. */
   askFirst?: boolean;
 };
-export type StartOutcome = { runId: string; space: { ref: string; name: string }; brief: string; briefPath: string; continued: boolean };
+/** `runId` is the session started (or continued); `space.root` is its folder on this Mac, where the window opens it. */
+export type StartOutcome = { runId: string; space: { ref: string; name: string; root: string }; brief: string; briefPath: string; continued: boolean };
 
 type Fail = { message: string };
 type SpaceRow = { bindingId: string; name: string; root: string | null };
@@ -295,7 +296,7 @@ export function createActions(deps: ActionsDeps) {
       await deps.relay.linkSession(sessionId, situationId, space.bindingId);
       await deps.relay.act([situationId], 'follow', { reason: 'a session was started for it' }, 'person');
     }
-    return ok({ runId: sessionId, space: { ref: `space_${space.bindingId}`, name: space.name }, brief, briefPath, continued: continueId !== null });
+    return ok({ runId: sessionId, space: { ref: `space_${space.bindingId}`, name: space.name, root: space.root! }, brief, briefPath, continued: continueId !== null });
   }
 
   /** Runs every source that is due; the scheduler's tick. */

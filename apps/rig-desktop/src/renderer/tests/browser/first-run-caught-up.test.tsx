@@ -69,6 +69,7 @@ const render = async (events: OrchProgressEvent[], onNext: () => void) => {
         advancing={false}
         setFieldLook={() => {}}
         field={field}
+        openSession={null}
       />
     );
   });

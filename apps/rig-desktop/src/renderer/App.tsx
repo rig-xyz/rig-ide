@@ -1376,6 +1376,7 @@ export function App() {
         progress={firstRun.firstRunProgress}
         debug={firstRunDebugAvailable(firstRun.debugMode)}
         onDone={onFirstRunDone}
+        onOpenSession={continueSession}
       />
     );
   }

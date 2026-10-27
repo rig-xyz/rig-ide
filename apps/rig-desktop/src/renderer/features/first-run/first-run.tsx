@@ -51,6 +51,8 @@ export type StepProps = {
   advancing: boolean;
   setFieldLook: (look: FieldLook) => void;
   field: RefObject<AgentFieldHandle | null>;
+  /** Ends the first run and opens a session in its space (a started card's Open). Null in a simulation. */
+  openSession: ((root: string, sessionId: string) => void) | null;
 };
 
 /**
@@ -69,6 +71,7 @@ export function FirstRun({
   progress,
   debug,
   onDone,
+  onOpenSession,
 }: {
   firstRunSeen: number;
   hasSeenOnboarding: boolean;
@@ -76,12 +79,21 @@ export function FirstRun({
   /** The debug harness is offered (dev builds, or Debug mode). */
   debug: boolean;
   onDone: () => void;
+  /** After the first run ends: open this session in its space. */
+  onOpenSession?: (root: string, sessionId: string) => void;
 }) {
   const harness = useFirstRunDebug();
   const simulation = debug ? harness.simulation : null;
   const startAt = debug ? harness.startAt : null;
   const render = (env: FirstRunEnv) => (
-    <FirstRunShell env={env} startAt={startAt} debug={debug} onDone={onDone} />
+    <FirstRunShell
+      env={env}
+      startAt={startAt}
+      debug={debug}
+      onDone={onDone}
+      // A simulation's sessions aren't real: nothing to open.
+      onOpenSession={simulation ? null : (onOpenSession ?? null)}
+    />
   );
 
   return simulation ? (
@@ -126,12 +138,14 @@ function FirstRunShell({
   startAt,
   debug,
   onDone,
+  onOpenSession,
 }: {
   env: FirstRunEnv;
   /** A step the debug harness asked for: shown even when the plan would skip it. */
   startAt: FirstRunStepId | null;
   debug: boolean;
   onDone: () => void;
+  onOpenSession: ((root: string, sessionId: string) => void) | null;
 }) {
   const field = useRef<AgentFieldHandle | null>(null);
   const [fieldLook, setFieldLook] = useState<FieldLook>('hero');
@@ -178,6 +192,17 @@ function FirstRunShell({
     clearFirstRunDebug();
     onDone();
   }, [env, onDone]);
+  // Done, straight into the session a card just started, in its space.
+  const openSession = useMemo(
+    () =>
+      onOpenSession
+        ? (root: string, sessionId: string) => {
+            done();
+            onOpenSession(root, sessionId);
+          }
+        : null,
+    [done, onOpenSession]
+  );
 
   const go = useCallback(
     (target: FirstRunStepId, list: readonly FirstRunStepId[]) => {
@@ -246,6 +271,7 @@ function FirstRunShell({
     advancing: pendingNext,
     setFieldLook,
     field,
+    openSession,
   };
 
   return (

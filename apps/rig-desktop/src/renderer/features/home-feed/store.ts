@@ -39,7 +39,8 @@ export interface FeedEntry {
 }
 
 /** What a send or post did: where it went, in words, and a link to it when there is one. */
-export type SentResult = { said: string; link: string | null };
+/** What went: its words for the done card, and where Open goes (the message sent, or the session started). */
+export type SentResult = { said: string; link: string | null; session?: { root: string; sessionId: string } };
 
 export type ChatMessage =
   | { id: string; who: 'me'; text: string }
