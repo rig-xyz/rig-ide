@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { SOURCE_FOR, watchingFrom, watchWrites, type SourceRow } from './sources';
+import {
+  readingNow,
+  readsNow,
+  SOURCE_FOR,
+  watchingFrom,
+  watchWrites,
+  type SourceRow,
+} from './sources';
 
 const slack: SourceRow = { ref: 'src_slack', connector: 'Slack', paused: false };
 const calendar: SourceRow = {
@@ -47,5 +54,20 @@ describe('watchWrites', () => {
 
   it('turning on a tool that already runs writes nothing', () => {
     expect(watchWrites([slack], 'slack', true)).toEqual({ add: null, pause: [] });
+  });
+});
+
+describe('readsNow', () => {
+  it('what runs now for someone Rig reads for: their sources, or the defaults with none', () => {
+    expect(readsNow({}, 'slack')).toBe(true);
+    expect(readsNow({}, 'gmail')).toBe(false);
+    expect(readsNow({ gmail: true, slack: false }, 'gmail')).toBe(true);
+    expect(readsNow({ gmail: true, slack: false }, 'slack')).toBe(false);
+    expect(readsNow({ gmail: true }, 'linear')).toBe(false);
+  });
+
+  it('flipping one switch keeps the defaults that were on', () => {
+    expect(readingNow({})).toEqual({ slack: true, linear: true, github: true });
+    expect(readingNow({ gmail: true })).toEqual({ gmail: true });
   });
 });

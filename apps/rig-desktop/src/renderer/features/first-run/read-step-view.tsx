@@ -2,10 +2,11 @@ import { ArrowRight } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { ActionButton } from '@renderer/features/home-feed/action-button';
 import type { DotMatrixState } from '@renderer/lib/ui/dot-matrix';
+import { FIRST_RUN_CONNECTORS, type FirstRunConnector } from '@shared/rig/first-run';
 import type { OrchProgressEvent, RunProgress } from '@shared/rig/orch-progress';
 import { StepFrame, type StepProps } from './first-run';
 import { initialRead, readReducer, type ReadState } from './read/read-model';
-import { ReadStep } from './read/read-step';
+import { ReadStep, windowWords, type ReadFix } from './read/read-step';
 
 /** Each connector's color on the field, from the app's own tokens. Unknown ones stay neutral. */
 const CONNECTOR_COLOR: Record<string, string> = {
@@ -77,6 +78,48 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
     saved.current = true;
     env.saveProgress({ step: 'read', readStarted: true });
   }, [env]);
+
+  // A stopped read starts again after its fix: each try is a new run, from a fresh Read.
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  // A fix that takes a sign-in waits for it to finish, then reads again.
+  const [waitingFor, setWaitingFor] = useState<'rig' | 'agent' | null>(null);
+  const sawSignIn = useRef(false);
+  useEffect(() => {
+    if (waitingFor === 'rig') {
+      if (env.rigSignIn.phase !== 'idle') sawSignIn.current = true;
+      else if (sawSignIn.current) {
+        sawSignIn.current = false;
+        setWaitingFor(null);
+        if (!env.rigSignIn.error) {
+          env.recheck();
+          retry();
+        }
+      }
+    } else if (waitingFor === 'agent') {
+      if (env.agent.kind === 'signingIn') sawSignIn.current = true;
+      else if (sawSignIn.current) {
+        sawSignIn.current = false;
+        setWaitingFor(null);
+        if (env.agent.kind === 'ready') retry();
+      }
+    }
+  }, [waitingFor, env, retry]);
+  const fix = useCallback(
+    ({ problem, connector }: ReadFix) => {
+      if (problem === 'connector_auth' && connector) {
+        const known = (FIRST_RUN_CONNECTORS as readonly string[]).includes(connector);
+        env.openConnect((known ? connector : 'slack') as FirstRunConnector);
+      } else if (problem === 'rig_signed_out') {
+        setWaitingFor('rig');
+        env.startRigSignIn();
+      } else if (problem === 'agent_signed_out') {
+        setWaitingFor('agent');
+        env.signInAgent();
+      } else retry();
+    },
+    [env, retry]
+  );
 
   // The same reading of the run as the guide pane, for the finish on the stage.
   const [read, dispatch] = useReducer(readReducer, initialRead);
@@ -154,10 +197,33 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
     [field, light]
   );
 
+  // Read starts only on a Rig sign-in the relay took just now (the shell sends any other to Set up).
+  if (env.rig.kind !== 'signedIn') {
+    return (
+      <StepFrame
+        guide={
+          <p className="m-0 text-[13px] text-text-secondary" data-testid="read-checking">
+            Checking your Rig sign-in…
+          </p>
+        }
+        stage={<div />}
+      />
+    );
+  }
+
   return (
     <StepFrame
       guide={
-        <ReadStep source={env.readSource} onDone={onNext} onProgress={onProgress} doneInStage />
+        <ReadStep
+          key={attempt}
+          source={env.readSource}
+          onDone={onNext}
+          onProgress={onProgress}
+          doneInStage
+          onFix={fix}
+          fixing={waitingFor !== null}
+          connectorsHome={env.agentInfo.route.connectorsHome}
+        />
       }
       stage={<div>{ended && <CaughtUp read={read} onOpen={onNext} onPlaced={gatherInto} />}</div>}
     />
@@ -253,7 +319,8 @@ function CaughtUp({
         className="rig-caught-rise m-0 text-[15px] leading-relaxed text-text-secondary"
         style={after(450)}
       >
-        Rig checked {checked} {checked === 1 ? 'place' : 'places'} across {across}.
+        Rig checked {checked} {checked === 1 ? 'place' : 'places'} across {across}
+        {read.since ? ` ${windowWords(read)}` : ''}.
         {handled > 0 &&
           ` ${handled} ${handled === 1 ? 'was' : 'were'} already handled, so you can let ${handled === 1 ? 'it' : 'them'} go.`}
       </p>
@@ -262,12 +329,14 @@ function CaughtUp({
         style={after(650)}
       >
         {forYou > 0
-          ? `${forYou} ${forYou === 1 ? 'thing needs' : 'things need'} you. ${forYou === 1 ? "It's" : "They're"} on your Feed, ready to go.`
-          : 'Nothing needs you right now. Rig keeps an eye out from here.'}
+          ? `${forYou} ${read.since ? 'new ' : ''}${forYou === 1 ? 'thing needs' : 'things need'} you. ${forYou === 1 ? "It's" : "They're"} on your Feed, ready to go.`
+          : read.since
+            ? `Nothing new needs you ${windowWords(read)}. Rig keeps an eye out from here.`
+            : 'Nothing needs you right now. Rig keeps an eye out from here.'}
       </p>
       <div className="rig-caught-rise" style={after(900)}>
         <ActionButton variant="primary" icon={ArrowRight} onClick={onOpen}>
-          {forYou > 0 ? 'See your Feed' : 'Open my Home'}
+          {forYou > 0 || read.cards.length > 0 ? 'See your Feed' : 'Open my Home'}
         </ActionButton>
       </div>
     </div>

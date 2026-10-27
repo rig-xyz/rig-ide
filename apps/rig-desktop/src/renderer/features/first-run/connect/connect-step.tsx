@@ -12,6 +12,8 @@ import {
   type FirstRunConnector,
 } from '@shared/rig/first-run';
 import { StepFrame, type StepProps } from '../first-run';
+import { sinceWords } from '../read/read-model';
+import { readingNow, readsNow } from './sources';
 import './connect.css';
 
 const NAME: Record<FirstRunConnector, string> = {
@@ -66,6 +68,10 @@ export function ConnectStep({ env, position, onNext, setFieldLook, field }: Step
   const [checks, setChecks] = useState<Checks | null>(null);
   const [watching, setWatching] = useState<Partial<Record<FirstRunConnector, boolean>>>({});
   const [starting, setStarting] = useState(false);
+  // Someone Rig already reads for: the switches start from what it reads now, and Continue changes
+  // nothing unless they flip one. undefined while it's asked; null for someone new.
+  const [since, setSince] = useState<string | null | undefined>(undefined);
+  const flipped = useRef(false);
 
   // The pre-flight, now and on every return to the window. The newest answer wins.
   const envRef = useRef(env);
@@ -84,11 +90,14 @@ export function ConnectStep({ env, position, onNext, setFieldLook, field }: Step
   useEffect(() => {
     check();
     void envRef.current.readWatching().then(setWatching, () => undefined);
+    void envRef.current.catchUpSince().then(setSince, () => setSince(null));
     window.addEventListener('focus', check);
     return () => window.removeEventListener('focus', check);
   }, [check]);
 
-  const isOn = (c: FirstRunConnector) => checks?.[c] === 'connected' && watching[c] !== false;
+  const existing = typeof since === 'string';
+  const isOn = (c: FirstRunConnector) =>
+    checks?.[c] === 'connected' && (existing ? readsNow(watching, c) : watching[c] !== false);
   const on = FIRST_RUN_CONNECTORS.filter(isOn);
   const anyConnected =
     checks !== null && FIRST_RUN_CONNECTORS.some((c) => checks[c] === 'connected');
@@ -130,12 +139,19 @@ export function ConnectStep({ env, position, onNext, setFieldLook, field }: Step
   );
 
   const toggle = (c: FirstRunConnector) => {
+    flipped.current = true;
     const next = !isOn(c);
-    setWatching((w) => ({ ...w, [c]: next }));
+    // Someone read with the defaults: those stay on when they flip another.
+    setWatching((w) => ({ ...(existing ? readingNow(w) : {}), ...w, [c]: next }));
     void env.setWatching(c, next).catch(() => undefined);
   };
 
   const catchUp = async () => {
+    // As Rig reads now, untouched: nothing to write.
+    if (existing && !flipped.current) {
+      onNext();
+      return;
+    }
     setStarting(true);
     try {
       // The whole choice: with no sources the read falls back to its defaults.
@@ -203,7 +219,9 @@ export function ConnectStep({ env, position, onNext, setFieldLook, field }: Step
                 ? ''
                 : on.length === 0
                   ? 'Connect one tool to begin'
-                  : `Reads the last 3 days of ${on.length} tool${on.length > 1 ? 's' : ''}`}
+                  : existing
+                    ? `Catches you up ${sinceWords(since) ?? 'since your last read'} from ${on.length} tool${on.length > 1 ? 's' : ''}`
+                    : `Reads the last 3 days of ${on.length} tool${on.length > 1 ? 's' : ''}`}
             </span>
           </div>
         </>

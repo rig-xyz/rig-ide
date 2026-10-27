@@ -42,6 +42,11 @@ export interface FirstRunEnv {
   openConnect(connector: FirstRunConnector): void;
   /** Where the Read step's progress comes from: the real first run, or a recorded one in a simulation. */
   readSource: ProgressSource;
+  /**
+   * Where a catch-up reads from for someone Rig has read for before (their last read, ISO), or
+   * null for someone new, whose first read covers the last few days.
+   */
+  catchUpSince(): Promise<string | null>;
   /** Makes the private Home space if there's none yet (Send and unbound Starts run there). Fire and forget. */
   ensureHome(): void;
   /** The First win step's cards, and what their buttons do. */

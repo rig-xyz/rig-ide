@@ -74,8 +74,19 @@ export function SimulatedFirstRunEnv({
   // What the simulated agent reaches, and what the person chose to watch.
   const connectors = useRef(simulation.connectors);
   const watching = useRef<Partial<Record<FirstRunConnector, boolean>>>({});
+  // Someone Rig has read for: caught up since two days ago, not a first read of the last three days.
+  const since = useMemo(
+    () => (simulation.user === 'existing' ? new Date(Date.now() - 2 * 86_400_000).toISOString() : null),
+    [simulation.user]
+  );
   // The recorded first run, played back: a simulation never starts a real one.
-  const readSource = useMemo(() => replaySource(recorded as OrchProgressEvent[]), []);
+  const readSource = useMemo(
+    () =>
+      replaySource(
+        (recorded as OrchProgressEvent[]).map((e) => (e.kind === 'start' && since ? { ...e, since } : e))
+      ),
+    [since]
+  );
 
   useEffect(() => {
     const pending = timers.current;
@@ -139,6 +150,7 @@ export function SimulatedFirstRunEnv({
         window.dispatchEvent(new Event('focus'));
       }),
     readSource,
+    catchUpSince: () => Promise.resolve(since),
     ensureHome: () => {},
     firstWin: simulatedFirstWin(later),
     saveProgress: setProgress,

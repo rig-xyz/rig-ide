@@ -21,6 +21,7 @@ import {
   deriveFirstRun,
   nextStep,
   resumeStep,
+  withSetup,
   type AgentReadiness,
   type FirstRunPlan,
   type RigAccountKind,
@@ -188,10 +189,26 @@ function FirstRunShell({
     if (!steps || settled.current) return;
     settled.current = true;
     if (steps.includes(step) && isBuiltStep(step)) return;
-    const target = resumeStep(steps, env.user.progress ?? { step, readStarted: false });
+    const target = resumeStep(steps, env.user.progress ?? { step, readStarted: false }, rig === 'signedIn');
     if (target) go(target, steps);
     else done();
-  }, [steps, step, env.user.progress, go, done]);
+  }, [steps, step, rig, env.user.progress, go, done]);
+
+  // Read, and First win after it, need a Rig sign-in the relay takes, asked again on the way in
+  // (a resume too): one that lapsed goes to Set up's Sign in again, never to a read that can't start.
+  const signInChecked = useRef<FirstRunStepId | null>(null);
+  useEffect(() => {
+    if (step !== 'read' && step !== 'firstWin') {
+      signInChecked.current = null;
+      return;
+    }
+    if (!plan || !rig || signInChecked.current === step) return;
+    signInChecked.current = step;
+    if (rig === 'signedIn') return;
+    const list = withSetup(plan.steps);
+    setPlan({ ...plan, steps: list });
+    go('setup', list);
+  }, [step, rig, plan, go]);
 
   const advance = useCallback(() => {
     if (!steps) {

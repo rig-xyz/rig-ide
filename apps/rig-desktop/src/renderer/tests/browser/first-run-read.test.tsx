@@ -16,7 +16,7 @@ vi.mock('@renderer/lib/ipc', () => ({
 
 import recorded from '@renderer/features/first-run/read/fixtures/first-run.json';
 import { replaySource } from '@renderer/features/first-run/read/progress-source';
-import { ReadStep, type ReadSummary } from '@renderer/features/first-run/read/read-step';
+import { ReadStep, type ReadFix, type ReadSummary } from '@renderer/features/first-run/read/read-step';
 
 const run = 'run_t';
 const events: OrchProgressEvent[] = [
@@ -190,5 +190,88 @@ describe('ReadStep', () => {
       { timeout: 5000 }
     );
     expect(Number(counters()[0])).toBeGreaterThan(0);
+  });
+
+  it('catches someone up since their last read, and a card already on the Feed is not new', async () => {
+    const since = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    const catchUp: OrchProgressEvent[] = [
+      { run, kind: 'start', trigger: 'first', passes: 2, lookups: 52, lookbackDays: 3, since, t: 0 },
+      {
+        run,
+        kind: 'line',
+        line: { id: 'o1', connector: 'slack', label: 'Priya still waits on you', status: 'for_you', ref: 'sit_old', known: true, t: 10 },
+      },
+      { run, kind: 'card', ref: 'sit_old', fresh: false, t: 20 },
+      { run, kind: 'end', ok: true, t: 30 },
+    ];
+    await act(async () => {
+      root.render(<ReadStep onDone={() => {}} source={replaySource(catchUp)} />);
+    });
+    await vi.waitFor(() =>
+      expect(host.querySelector('[data-testid="read-hint"]')!.textContent).toContain('first card')
+    );
+    // Nothing new for the Feed: the one card was there before.
+    expect(counters()[2]).toBe('0');
+    expect(host.textContent).toContain('new for your Feed');
+  });
+
+  it('says the window while it starts', async () => {
+    const since = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    await act(async () => {
+      root.render(
+        <ReadStep
+          onDone={() => {}}
+          source={replaySource([{ run, kind: 'start', trigger: 'first', passes: 2, lookups: 52, lookbackDays: 3, since, t: 0 }])}
+        />
+      );
+    });
+    await vi.waitFor(() =>
+      expect(host.querySelector('[data-testid="read-now"]')!.textContent).toMatch(/^Catching you up since /)
+    );
+  });
+
+  it('a read that stopped says why and offers its one fix, never a dead end', async () => {
+    const fixes: ReadFix[] = [];
+    await act(async () => {
+      root.render(
+        <ReadStep
+          onDone={() => {}}
+          onFix={(f) => fixes.push(f)}
+          source={replaySource([
+            { run, kind: 'start', trigger: 'first', passes: 2, lookups: 52, lookbackDays: 3, t: 0 },
+            { run, kind: 'end', ok: false, error: 'Your Rig session expired.', problem: 'rig_signed_out', t: 5 },
+          ])}
+        />
+      );
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain('Your Rig sign-in lapsed'));
+    const fix = host.querySelector<HTMLButtonElement>('[data-testid="read-fix"]')!;
+    expect(fix.textContent).toContain('Sign in again');
+    await act(async () => fix.click());
+    expect(fixes).toEqual([{ problem: 'rig_signed_out' }]);
+    // The Feed is still a way out.
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent?.includes('Open my Feed'))).toBe(true);
+  });
+
+  it('a connector that needs reconnecting is said once, with its link, while reading goes on', async () => {
+    const fixes: ReadFix[] = [];
+    await act(async () => {
+      root.render(
+        <ReadStep
+          onDone={() => {}}
+          onFix={(f) => fixes.push(f)}
+          source={replaySource([
+            { run, kind: 'start', trigger: 'first', passes: 2, lookups: 52, lookbackDays: 3, t: 0 },
+            { run, kind: 'problem', problem: 'connector_auth', connector: 'slack', t: 5 },
+            { run, kind: 'problem', problem: 'connector_auth', connector: 'slack', t: 6 },
+          ])}
+        />
+      );
+    });
+    await vi.waitFor(() => expect(host.querySelectorAll('[data-testid="read-reconnect"]')).toHaveLength(1));
+    const row = host.querySelector('[data-testid="read-reconnect"]')!;
+    expect(row.textContent).toContain('Slack needs reconnecting');
+    await act(async () => row.querySelector('button')!.click());
+    expect(fixes).toEqual([{ problem: 'connector_auth', connector: 'slack' }]);
   });
 });

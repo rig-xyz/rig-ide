@@ -56,23 +56,36 @@ export function deriveFirstRun(input: {
 }
 
 /**
- * Where to pick up a first run that was quit part way. Once the first read
- * has started it goes back to Read; a saved step the plan no longer has
- * (Set up, finished elsewhere since) moves on to the next one it does.
+ * Where to pick up a first run that was quit part way: the step it was on.
+ * A read that had started goes back to Read, never to a step before it; a
+ * step after Read (First win) stays where it was. With the Rig account no
+ * longer usable (signed out, or a token the relay turned down), Set up comes
+ * first, so Read never starts on a dead token. A saved step the plan no
+ * longer has (Set up, finished elsewhere since) moves on to the next one it
+ * does.
  */
 export function resumeStep(
   steps: readonly FirstRunStepId[],
-  progress: FirstRunProgress | null
+  progress: FirstRunProgress | null,
+  accountReady = true
 ): FirstRunStepId | null {
   if (steps.length === 0) return null;
+  if (!accountReady && steps.includes('setup')) return 'setup';
   if (!progress) return steps[0]!;
-  const target = progress.readStarted && steps.includes('read') ? 'read' : progress.step;
+  const beforeRead =
+    FIRST_RUN_STEP_IDS.indexOf(progress.step) < FIRST_RUN_STEP_IDS.indexOf('read');
+  const target = progress.readStarted && beforeRead && steps.includes('read') ? 'read' : progress.step;
   if (steps.includes(target)) return target;
   const after = FIRST_RUN_STEP_IDS.slice(FIRST_RUN_STEP_IDS.indexOf(target) + 1);
   return after.find((step) => steps.includes(step)) ?? steps[0]!;
 }
 
 /** The next step after `current` that `built` can show, or `null` for Home. */
+/** The plan with Set up back in it, for a Rig account that stopped working after the plan was made. */
+export function withSetup(steps: readonly FirstRunStepId[]): FirstRunStepId[] {
+  return FIRST_RUN_STEP_IDS.filter((step) => step === 'setup' || steps.includes(step));
+}
+
 export function nextStep(
   steps: readonly FirstRunStepId[],
   current: FirstRunStepId,

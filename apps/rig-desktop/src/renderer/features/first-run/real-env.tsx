@@ -42,19 +42,26 @@ export function RealFirstRunEnv({
   const route = agentRoute(ROUTED_AGENT_ID);
 
   // ── Rig: a token on disk, then `GET /v1/me` to see the relay still takes it.
-  const authStatus = useQuery({ queryKey: AUTH_STATUS_KEY, queryFn: () => rpc.rig.auth.status() });
+  // Asked again whenever the first run opens (a resume too): a token that was fine yesterday may not be now.
+  const authStatus = useQuery({
+    queryKey: AUTH_STATUS_KEY,
+    queryFn: () => rpc.rig.auth.status(),
+    refetchOnMount: 'always',
+  });
   const tokenOnDisk = authStatus.data?.signedIn === true;
   const me = useQuery({
     queryKey: ME_KEY,
     queryFn: () => rpc.rig.account.me(),
     enabled: tokenOnDisk,
+    refetchOnMount: 'always',
   });
   const signIn = useRigSignIn();
 
   const rig = useMemo((): RigAccountState => {
-    if (authStatus.isPending) return { kind: 'checking' };
+    // Only an answer from this mount counts: a cached one may be from before the token lapsed.
+    if (authStatus.isPending || !authStatus.isFetchedAfterMount) return { kind: 'checking' };
     if (!tokenOnDisk) return { kind: hasSeenOnboarding ? 'signedOut' : 'new' };
-    if (me.isPending || !me.data) return { kind: 'checking' };
+    if (me.isPending || !me.data || !me.isFetchedAfterMount) return { kind: 'checking' };
     if (me.data.success) {
       return {
         kind: 'signedIn',
@@ -68,7 +75,15 @@ export function RealFirstRunEnv({
     if (error.kind === 'notSignedIn') return { kind: hasSeenOnboarding ? 'signedOut' : 'new' };
     // Can't reach the relay: the token on disk is all there is to go on.
     return { kind: 'signedIn', email: null, name: null, unverified: true };
-  }, [authStatus.isPending, tokenOnDisk, hasSeenOnboarding, me.isPending, me.data]);
+  }, [
+    authStatus.isPending,
+    authStatus.isFetchedAfterMount,
+    tokenOnDisk,
+    hasSeenOnboarding,
+    me.isPending,
+    me.isFetchedAfterMount,
+    me.data,
+  ]);
 
   // ── The routed agent: installed, and signed in how.
   const agents = useRunnableAgents();
@@ -156,6 +171,10 @@ export function RealFirstRunEnv({
     openConnect: (connector) =>
       confirmOpenExternalLink(connector === 'github' ? GH_LOGIN_URL : route.connectorsUrl),
     readSource: liveFirstRun,
+    catchUpSince: async () => {
+      const r = await rpc.rig.orch.since().catch(() => null);
+      return r?.success ? r.data.since : null;
+    },
     ensureHome: () => void rpc.rig.orch.ensureHome().catch(() => undefined),
     firstWin: realFirstWin,
     saveProgress: (next) => void rpc.rig.settings.set({ firstRunProgress: next }),

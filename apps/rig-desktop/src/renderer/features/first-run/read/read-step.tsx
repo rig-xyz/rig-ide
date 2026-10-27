@@ -1,21 +1,23 @@
-import { ArrowRight, Check, Home } from 'lucide-react';
+import { ArrowRight, Check, Home, RefreshCw } from 'lucide-react';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { ActionButton } from '@renderer/features/home-feed/action-button';
 import { SourceLogo } from '@renderer/features/home-feed/bits';
 import type { SourceConnector } from '@renderer/features/home-feed/model';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
-import type { OrchProgressEvent } from '@shared/rig/orch-progress';
+import type { OrchProgressEvent, RunProblem } from '@shared/rig/orch-progress';
 import { liveFirstRun, type ProgressSource } from './progress-source';
 import {
   currentLine,
   firstForYou,
   initialRead,
   readReducer,
+  sinceWords,
   type ReadLine,
   type ReadState,
   tickerLines,
 } from './read-model';
+import { reconnectCopy, stoppedCopy } from './problems';
 import { RollingNumber } from './rolling-number';
 import './read.css';
 
@@ -30,6 +32,9 @@ import './read.css';
  * tiles through `onProgress`. With `doneInStage`, the stage carries the
  * finish (All caught up) and this pane just steps back.
  */
+
+/** What a fix button asks for: the run's stop reason, or a connector to reconnect. */
+export type ReadFix = { problem?: RunProblem; connector?: string };
 
 export type ReadSummary = {
   cards: string[];
@@ -55,6 +60,9 @@ export function ReadStep({
   source = liveFirstRun,
   onProgress,
   doneInStage = false,
+  onFix,
+  connectorsHome = 'claude.ai',
+  fixing = false,
 }: {
   /** Leaves the step: to the first card when one is ready, else to Home. */
   onDone: (summary: ReadSummary) => void;
@@ -64,6 +72,12 @@ export function ReadStep({
   onProgress?: (event: OrchProgressEvent) => void;
   /** The stage shows the finish; this pane fades back and leaves the way on to the stage. */
   doneInStage?: boolean;
+  /** A stopped read's fix, or a connector's reconnect: with it, each problem gets its one button. */
+  onFix?: (fix: ReadFix) => void;
+  /** Where the agent's connectors are reconnected ("claude.ai"), for the reconnect button. */
+  connectorsHome?: string;
+  /** A fix is under way (signing in): its button waits. */
+  fixing?: boolean;
 }) {
   const [state, dispatch] = useReducer(readReducer, initialRead);
   const onProgressRef = useRef(onProgress);
@@ -93,6 +107,7 @@ export function ReadStep({
   const current = currentLine(state);
   const thinking = !ended && !current && wall - lastEventAt.current > THINKING_AFTER_MS;
   const settled = doneInStage && ended?.ok;
+  const stopped = ended && !ended.ok ? stoppedCopy(ended.problem, ended.error) : null;
 
   return (
     <section
@@ -110,7 +125,7 @@ export function ReadStep({
             />
           </span>
           <h2 className="m-0 font-display text-[22px] leading-tight font-semibold tracking-[-0.015em] text-text-primary">
-            {ended ? (ended.ok ? 'All caught up' : 'Rig stopped reading') : 'Catching you up'}
+            {ended ? (ended.ok ? 'All caught up' : stopped!.title) : 'Catching you up'}
           </h2>
         </div>
         <p
@@ -128,7 +143,11 @@ export function ReadStep({
           label="already handled, skipped"
           className="text-status-ok"
         />
-        <Counter value={state.counts.forYou} label="cards for your Feed" className="text-accent" />
+        <Counter
+          value={state.counts.forYou}
+          label={state.since ? 'new for your Feed' : 'cards for your Feed'}
+          className="text-accent"
+        />
       </div>
       <div
         className={cn(
@@ -164,9 +183,49 @@ export function ReadStep({
           </div>
         )}
       </div>
+      {onFix &&
+        state.problems
+          .filter((p) => p.problem === 'connector_auth' && p.connector)
+          .map((p) => {
+            const copy = reconnectCopy(p.connector!, connectorsHome);
+            return (
+              <div
+                key={p.connector}
+                className="flex items-center gap-2.5 rounded-[10px] bg-bg-2 px-2.5 py-2 text-[13px]"
+                data-testid="read-reconnect"
+              >
+                <DotMatrix state="waiting" size="sm" tone="mute" />
+                <span className="min-w-0 flex-1 text-text-secondary">
+                  <b className="font-medium text-text-primary">{copy.title}.</b> {copy.detail}
+                </span>
+                <button
+                  type="button"
+                  className="shrink-0 text-meta text-accent hover:opacity-80"
+                  onClick={() => onFix({ problem: 'connector_auth', connector: p.connector })}
+                >
+                  {copy.fix}
+                </button>
+              </div>
+            );
+          })}
       {!settled && (
         <div className="flex flex-wrap items-center gap-2.5">
-          {firstCard ? (
+          {stopped && onFix ? (
+            <>
+              <ActionButton
+                variant="primary"
+                icon={RefreshCw}
+                disabled={fixing}
+                onClick={() => onFix({ problem: ended?.problem })}
+                data-testid="read-fix"
+              >
+                {fixing ? 'Waiting…' : stopped.fix}
+              </ActionButton>
+              <ActionButton variant="quiet" icon={Home} onClick={() => onDone(summary())}>
+                Open my Feed
+              </ActionButton>
+            </>
+          ) : firstCard ? (
             <ActionButton variant="primary" icon={ArrowRight} onClick={() => onDone(summary())}>
               See it on your Feed
             </ActionButton>
@@ -184,23 +243,30 @@ export function ReadStep({
   );
 }
 
+/** How far back it reads, in words: "since Tuesday" for a catch-up, else the last 3 days. */
+export function windowWords(state: Pick<ReadState, 'since'>): string {
+  return sinceWords(state.since) ?? 'from your last 3 days';
+}
+
 /** One line under the title: what it's doing this moment, or how it went. */
 function status(state: ReadState, current: ReadLine | null, thinking: boolean): string {
   const { ended } = state;
   const checked = state.counts.read;
-  if (ended && !ended.ok) return ended.error ?? 'Something went wrong while reading.';
+  const reading = state.since ? `Catching you up ${windowWords(state)}…` : 'Reading your last 3 days…';
+  if (ended && !ended.ok) return stoppedCopy(ended.problem, ended.error).detail;
   if (ended) return `Checked ${checked} ${checked === 1 ? 'place' : 'places'} in your tools.`;
   if (current) return `${current.label}…`;
-  if (!state.lines.length) return 'Starting to read your last 3 days…';
+  if (!state.lines.length)
+    return state.since ? `Catching you up ${windowWords(state)}…` : 'Starting to read your last 3 days…';
   if (thinking) {
     // The ticker already says it's deciding; up here, what it has done so far.
     const done = state.lines
       .filter((l) => l.status !== 'running' && !!l.connector && l.connector !== 'rig')
       .at(-1);
-    return done ? `${checked} so far · last: ${done.label}` : 'Reading your last 3 days…';
+    return done ? `${checked} so far · last: ${done.label}` : reading;
   }
   const last = state.lines.at(-1);
-  return last ? last.label : 'Reading your last 3 days…';
+  return last ? last.label : reading;
 }
 
 function hint(state: ReadState): string {
@@ -211,7 +277,10 @@ function hint(state: ReadState): string {
     const what = found ? `Your first card: ${found.label}.` : 'Your first card is ready.';
     return ended ? what : `${what} Rig keeps reading the rest.`;
   }
-  if (ended) return 'Nothing needs you yet. Rig keeps an eye out from here.';
+  if (ended)
+    return state.since
+      ? `Nothing new needs you ${windowWords(state)}. Rig keeps an eye out from here.`
+      : 'Nothing needs you yet. Rig keeps an eye out from here.';
   return 'Skipping anything already handled';
 }
 

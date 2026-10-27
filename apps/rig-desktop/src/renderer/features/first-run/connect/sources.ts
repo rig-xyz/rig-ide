@@ -62,3 +62,28 @@ export function watchWrites(
     pause: mine.filter((row) => !row.paused).map((row) => ({ ref: row.ref, paused: true })),
   };
 }
+
+/** The tools a run reads when no source is set up (the packet's defaults). */
+export const DEFAULT_READS: readonly FirstRunConnector[] = ['slack', 'linear', 'github'];
+
+/**
+ * Whether Rig reads a tool now, for someone it already reads for: a running
+ * source for it, or (with no sources set up) one of the defaults.
+ */
+export function readsNow(
+  watching: Partial<Record<FirstRunConnector, boolean>>,
+  connector: FirstRunConnector
+): boolean {
+  return Object.keys(watching).length > 0
+    ? watching[connector] === true
+    : DEFAULT_READS.includes(connector);
+}
+
+/** What Rig reads now as switches: the sources as they are, or the defaults when there are none. */
+export function readingNow(
+  watching: Partial<Record<FirstRunConnector, boolean>>
+): Partial<Record<FirstRunConnector, boolean>> {
+  return Object.keys(watching).length > 0
+    ? watching
+    : Object.fromEntries(DEFAULT_READS.map((c) => [c, true]));
+}

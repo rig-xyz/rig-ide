@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { FIRST_RUN_VERSION } from '@shared/rig/first-run';
-import { deriveFirstRun, nextStep, resumeStep, shouldShowFirstRun } from './first-run-state';
+import {
+  deriveFirstRun,
+  nextStep,
+  resumeStep,
+  shouldShowFirstRun,
+  withSetup,
+} from './first-run-state';
 
 const ALL = ['welcome', 'setup', 'connect', 'you', 'read', 'firstWin'];
 const NO_SETUP = ['welcome', 'connect', 'you', 'read', 'firstWin'];
@@ -94,6 +100,20 @@ describe('resumeStep', () => {
 
   it('goes back to Read once the first read has started', () => {
     expect(resumeStep(ALL as never, { step: 'you', readStarted: true })).toBe('read');
+  });
+
+  it('comes back to First win, not Read, when it was quit on First win', () => {
+    expect(resumeStep(ALL as never, { step: 'firstWin', readStarted: true })).toBe('firstWin');
+    expect(resumeStep(ALL as never, { step: 'read', readStarted: true })).toBe('read');
+  });
+
+  it('goes to Set up first when the Rig account stopped working, so Read never starts on a dead token', () => {
+    expect(resumeStep(ALL as never, { step: 'read', readStarted: true }, false)).toBe('setup');
+    expect(resumeStep(ALL as never, { step: 'firstWin', readStarted: true }, false)).toBe('setup');
+  });
+
+  it('puts Set up back in a plan made before the account stopped working', () => {
+    expect(withSetup(NO_SETUP as never)).toEqual(ALL);
   });
 
   it('moves past a saved Set up the plan no longer has', () => {
