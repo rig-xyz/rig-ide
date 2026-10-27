@@ -67,6 +67,7 @@ import { rigProblemReportController } from './rig/problem-report-instance';
 import { rigShareController } from './rig/rig-share';
 import { rigSeenStateController } from './rig/seen-state';
 import { rigSessionsController } from './rig/sessions';
+import { rigDevController } from './rig/dev-sign-in';
 import { rigFirstRunController } from './rig/first-run/controller';
 import { rigSettingsController } from './rig/settings-instance';
 import { rigConnectorsController } from './rig/connectors/connections-instance';
@@ -157,6 +158,8 @@ export const rpcRouter = createRPCRouter({
     settings: rigSettingsController,
     // The first run's checks of this Mac (Connect's pre-flight).
     firstRun: rigFirstRunController,
+    // Dev only: sign this profile in to a local relay (the first-run debug panel). Refused in a packaged build.
+    dev: rigDevController,
     // File-navigator redesign: `rig_seen_files` — per-user, per-rig,
     // LOCAL-ONLY last-viewed timestamps behind the tree's unseen dots. Own
     // key, own table: this is reading state, not a preference, so it's

@@ -1,5 +1,7 @@
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bug, ChevronDown } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
+import { rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
 import { FIRST_RUN_CONNECTORS, type FirstRunStepId } from '@shared/rig/first-run';
 import type { FirstRunPlan } from '../first-run-state';
@@ -147,9 +149,83 @@ export function FirstRunDebugPanel({
               Replay
             </Chip>
           </div>
+          <LocalSignIn />
         </div>
       )}
     </div>
+  );
+}
+
+const LAST_DEV_USER = 'rig.firstRun.devUser';
+
+/**
+ * Dev builds against a local relay only (main refuses anything else): sign
+ * this profile in as one of the local database's people, in one click, so
+ * nobody mints tokens by hand.
+ */
+function LocalSignIn() {
+  const queryClient = useQueryClient();
+  const available = useQuery({ queryKey: ['rig', 'dev', 'available'], queryFn: () => rpc.rig.dev.available() });
+  const relay = available.data?.success ? available.data.data.relay : null;
+  const users = useQuery({
+    queryKey: ['rig', 'dev', 'users'],
+    queryFn: () => rpc.rig.dev.users(),
+    enabled: relay !== null,
+  });
+  const [picked, setPicked] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(LAST_DEV_USER);
+    } catch {
+      return null;
+    }
+  });
+  const [said, setSaid] = useState<string | null>(null);
+  if (relay === null) return null;
+  const list = users.data?.success ? users.data.data : [];
+  const userId = picked && list.some((u) => u.id === picked) ? picked : (list[0]?.id ?? '');
+
+  const signIn = async () => {
+    setSaid('Signing in…');
+    const r = await rpc.rig.dev.signIn({ userId }).catch(() => null);
+    if (!r?.success) {
+      setSaid(r ? r.error.message : "Couldn't sign in.");
+      return;
+    }
+    try {
+      localStorage.setItem(LAST_DEV_USER, userId);
+    } catch {
+      // Remembering the pick is a convenience.
+    }
+    setSaid(`Signed in as ${list.find((u) => u.id === userId)?.label ?? userId}.`);
+    // Everything Rig shows is someone else's now: ask it all again.
+    void queryClient.invalidateQueries({ queryKey: ['rig'] });
+  };
+
+  return (
+    <Group label={`Local relay · ${relay.replace(/^https?:\/\//, '')}`}>
+      {users.data && !users.data.success ? (
+        <span className="text-text-muted">{users.data.error.message}</span>
+      ) : (
+        <div className="flex w-full items-center gap-1.5">
+          <select
+            className="min-w-0 flex-1 rounded-chip border border-border-hairline bg-bg-1 px-1.5 py-0.5 text-text-secondary"
+            value={userId}
+            onChange={(e) => setPicked(e.target.value)}
+            aria-label="Local user"
+          >
+            {list.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.label} · {u.id}
+              </option>
+            ))}
+          </select>
+          <Chip onClick={() => void signIn()} testId="first-run-debug-local-sign-in">
+            Sign in to local relay
+          </Chip>
+        </div>
+      )}
+      {said && <span className="w-full text-text-muted">{said}</span>}
+    </Group>
   );
 }
 
