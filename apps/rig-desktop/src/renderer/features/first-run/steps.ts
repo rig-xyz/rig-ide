@@ -13,7 +13,7 @@ export const FIRST_RUN_STEPS: Record<FirstRunStepId, { label: string; built: boo
   // M5: the profile pass 1 writes (`rig_profile`), shown and edited.
   you: { label: 'You', built: false },
   // M3: the live log of the first orchestrator pass, in `./read/`.
-  read: { label: 'Read', built: false },
+  read: { label: 'Read', built: true },
   // M4: a real Feed card with a draft and Send.
   firstWin: { label: 'First win', built: false },
 };

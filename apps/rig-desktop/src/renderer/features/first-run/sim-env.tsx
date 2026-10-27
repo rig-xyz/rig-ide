@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useAgentIdentities } from '@renderer/features/chat/use-runnable-agents';
 import { rpc } from '@renderer/lib/ipc';
 import { FIRST_RUN_VERSION, type FirstRunProgress } from '@shared/rig/first-run';
+import type { OrchProgressEvent } from '@shared/rig/orch-progress';
 import { agentRoute, ROUTED_AGENT_ID } from './agent-route';
 import type { FirstRunSimulation } from './debug/first-run-debug';
 import {
@@ -11,6 +12,8 @@ import {
   type RigAccountState,
   type RigSignInState,
 } from './env';
+import recorded from './read/fixtures/first-run.json';
+import { replaySource } from './read/progress-source';
 
 /** How long a simulated browser hop, install or sign-in takes, so the waiting states show. */
 const SIGN_IN_MS = 1800;
@@ -62,6 +65,8 @@ export function SimulatedFirstRunEnv({
   });
   const [progress, setProgress] = useState<FirstRunProgress | null>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  // The recorded first run, played back: a simulation never starts a real one.
+  const readSource = useMemo(() => replaySource(recorded as OrchProgressEvent[]), []);
 
   useEffect(() => {
     const pending = timers.current;
@@ -113,6 +118,7 @@ export function SimulatedFirstRunEnv({
           )
         )
       ),
+    readSource,
     saveProgress: setProgress,
     finish: () =>
       void rpc.rig.settings.set({ firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null }),

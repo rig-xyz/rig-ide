@@ -11,6 +11,7 @@ import { rpc } from '@renderer/lib/ipc';
 import { FIRST_RUN_VERSION, type FirstRunProgress } from '@shared/rig/first-run';
 import { agentRoute, ROUTED_AGENT_ID } from './agent-route';
 import type { AgentState, FirstRunEnv, RigAccountState } from './env';
+import { liveFirstRun } from './read/progress-source';
 
 const AUTH_STATUS_KEY = ['rig', 'auth', 'status'];
 const ME_KEY = ['rig', 'account', 'me'];
@@ -135,6 +136,7 @@ export function RealFirstRunEnv({
     signInAgent: () => setSigningIn(true),
     // Connect's pre-flight (`rig.firstRun.preflight`) is M2.
     preflight: () => Promise.resolve(null),
+    readSource: liveFirstRun,
     saveProgress: (next) => void rpc.rig.settings.set({ firstRunProgress: next }),
     finish: () =>
       void rpc.rig.settings.set({

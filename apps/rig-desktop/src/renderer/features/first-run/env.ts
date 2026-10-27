@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { AgentIconAsset } from '@shared/core/agents/agent-payload';
 import type { FirstRunProgress } from '@shared/rig/first-run';
 import type { AgentRoute } from './agent-route';
+import type { ProgressSource } from './read/progress-source';
 
 /**
  * Everything the first run sees of the world and can do to it, in one place.
@@ -30,6 +31,8 @@ export interface FirstRunEnv {
   signInAgent(): void;
   /** Which of the person's tools their agent reaches. `null` until Connect's pre-flight is built (M2). */
   preflight(): Promise<ConnectorCheck[] | null>;
+  /** Where the Read step's progress comes from: the real first run, or a recorded one in a simulation. */
+  readSource: ProgressSource;
   saveProgress(progress: FirstRunProgress): void;
   /** Done: don't show this first run again. */
   finish(): void;
