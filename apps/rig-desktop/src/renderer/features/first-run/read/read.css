@@ -296,3 +296,18 @@
     opacity: 1;
   }
 }
+
+/* The finish steps aside for the first card (First win), which rises in after it. */
+.rig-caught-leave {
+  opacity: 0;
+  transform: translateY(-14px) scale(0.97);
+  transition:
+    opacity var(--leave-ms, 450ms) ease-in,
+    transform var(--leave-ms, 450ms) cubic-bezier(0.4, 0, 0.6, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rig-caught-leave {
+    transform: none;
+    transition: opacity 0.15s linear;
+  }
+}

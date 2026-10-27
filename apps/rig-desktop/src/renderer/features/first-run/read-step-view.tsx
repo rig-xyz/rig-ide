@@ -1,6 +1,7 @@
 import { ArrowRight } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { ActionButton } from '@renderer/features/home-feed/action-button';
+import { cn } from '@renderer/lib/utils';
 import type { DotMatrixState } from '@renderer/lib/ui/dot-matrix';
 import { FIRST_RUN_CONNECTORS, type FirstRunConnector } from '@shared/rig/first-run';
 import type { OrchProgressEvent, RunProgress } from '@shared/rig/orch-progress';
@@ -244,6 +245,12 @@ const CHECK_PATH: [number, number][] = [
 /** How long the field takes to gather before the check lights, and how long each dot of its stroke takes. */
 const GATHER_MS = 1500;
 const STROKE_DOT_MS = 55;
+/**
+ * With a card to show, the finish rolls straight into it: the words stay this long after the last
+ * one rises, then step aside while the first card comes in (First win), with no click.
+ */
+export const CAUGHT_UP_HOLD_MS = 1800;
+export const CAUGHT_UP_LEAVE_MS = 450;
 
 /**
  * The finish. The field breathes in and gathers into the middle (`gather`),
@@ -262,6 +269,11 @@ function CaughtUp({
 }) {
   const mark = useRef<HTMLDivElement>(null);
   const [lit, setLit] = useState(false);
+  // A card to show: no button to find, the first one comes in on its own.
+  const toCard = read.cards.length > 0;
+  const [leaving, setLeaving] = useState(false);
+  const open = useRef(onOpen);
+  open.current = onOpen;
   // Once, when it shows: the field gathers to where the check sits, then the check lights.
   const placed = useRef(onPlaced);
   useLayoutEffect(() => {
@@ -280,12 +292,27 @@ function CaughtUp({
   const { read: checked, handled, forYou } = read.counts;
   const strokeEnd = GATHER_MS + CHECK_PATH.length * STROKE_DOT_MS;
   const after = (ms: number) => ({ animationDelay: `${(strokeEnd + ms) / 1000}s` });
+  useEffect(() => {
+    if (!toCard) return;
+    const wordsIn = strokeEnd + 900 + CAUGHT_UP_HOLD_MS;
+    const leave = setTimeout(() => setLeaving(true), wordsIn);
+    const go = setTimeout(() => open.current(), wordsIn + CAUGHT_UP_LEAVE_MS);
+    return () => {
+      clearTimeout(leave);
+      clearTimeout(go);
+    };
+  }, [toCard, strokeEnd]);
   const onPath = new Map(CHECK_PATH.map(([x, y], i) => [`${x},${y}`, i]));
 
   return (
     <div
-      className="flex max-w-[460px] flex-col items-center gap-5 text-center"
+      className={cn(
+        'flex max-w-[460px] flex-col items-center gap-5 text-center',
+        leaving && 'rig-caught-leave'
+      )}
+      style={{ ['--leave-ms' as string]: `${CAUGHT_UP_LEAVE_MS}ms` }}
       data-testid="read-caught-up"
+      data-leaving={leaving || undefined}
     >
       <div
         ref={mark}
@@ -335,9 +362,21 @@ function CaughtUp({
             : 'Nothing needs you right now. Rig keeps an eye out from here.'}
       </p>
       <div className="rig-caught-rise" style={after(900)}>
-        <ActionButton variant="primary" icon={ArrowRight} onClick={onOpen}>
-          {forYou > 0 || read.cards.length > 0 ? 'See your Feed' : 'Open my Home'}
-        </ActionButton>
+        {toCard ? (
+          // It comes in on its own; this says what's coming, and a click doesn't wait.
+          <button
+            type="button"
+            onClick={onOpen}
+            className="text-[13px] text-text-muted transition-colors hover:text-text-secondary"
+            data-testid="read-to-card"
+          >
+            Bringing in your first card…
+          </button>
+        ) : (
+          <ActionButton variant="primary" icon={ArrowRight} onClick={onOpen}>
+            Open my Home
+          </ActionButton>
+        )}
       </div>
     </div>
   );
