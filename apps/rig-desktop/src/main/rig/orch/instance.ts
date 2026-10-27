@@ -6,6 +6,7 @@ import { err, ok, type Result } from '@emdash/shared';
 import { getAcpRuntimeClient } from '@main/core/acp/controller';
 import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
+import { telemetryService } from '@main/lib/telemetry';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { rigFeedChangedChannel, rigStartSessionChannel } from '@shared/rig/feed';
 import { FIRST_RUN_VERSION } from '@shared/rig/first-run';
@@ -210,6 +211,7 @@ export const sender = createSender({
   newConversationId: () => `send-${randomUUID()}`,
   answered: (situationId, choice) => orchActions.act({ refs: [situationId], action: 'done', args: { choice, reason: choice }, actor: 'person' }),
   turns: turnGate,
+  sent: ({ type, edited }) => telemetryService.capture('feed_answer_sent', { type, state: edited ? 'edited' : 'as_drafted' }),
   log,
 });
 
@@ -286,6 +288,7 @@ export const orchestrator = createOrchestrator({
     recordProgress(event);
     catchUp.record(event);
     if (event.kind === 'end' && event.problem) log.warn('Rig orchestrator: run stopped', { problem: event.problem });
+    measure(event);
   },
   now: () => Date.now(),
   log,
@@ -295,6 +298,30 @@ const runAgent = (trigger: string) =>
     if (!r.success) log.warn('Rig orchestrator: run failed', { trigger, error: r.error });
     else changed();
   });
+
+/**
+ * Telemetry, counts and timings only (never what was read): how long until a first run's or a
+ * catch-up's first card, and which problems runs hit. Off with the person's telemetry setting.
+ */
+const runTriggers = new Map<string, 'first' | 'catch-up' | 'other'>();
+const carded = new Set<string>();
+function measure(event: OrchProgressEvent): void {
+  if (event.kind === 'start') {
+    runTriggers.set(event.run, event.trigger === 'first' || event.trigger === 'catch-up' ? event.trigger : 'other');
+    return;
+  }
+  const trigger = runTriggers.get(event.run) ?? 'other';
+  if (event.kind === 'card' && trigger !== 'other' && !carded.has(event.run)) {
+    carded.add(event.run);
+    telemetryService.capture('rig_run_first_card', { trigger, duration_ms: event.t });
+  } else if (event.kind === 'problem') {
+    telemetryService.capture('rig_run_problem', { reason: event.problem, trigger });
+  } else if (event.kind === 'end') {
+    if (event.problem) telemetryService.capture('rig_run_problem', { reason: event.problem, trigger });
+    runTriggers.delete(event.run);
+    carded.delete(event.run);
+  }
+}
 
 /** The morning catch-up (catch-up.ts): a short run Home shows, when Rig last read hours ago. */
 const catchUp = createCatchUp({

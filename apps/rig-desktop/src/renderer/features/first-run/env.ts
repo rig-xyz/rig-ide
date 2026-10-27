@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { AgentIconAsset } from '@shared/core/agents/agent-payload';
 import type { ConnectorCheck, FirstRunConnector, FirstRunProgress } from '@shared/rig/first-run';
+import type { FirstRunTelemetryStep } from '@shared/telemetry';
 import type { AgentRoute } from './agent-route';
 import type { Result } from '@emdash/shared';
 import type { FeedChoice, FeedItem } from '@renderer/features/home-feed/model';
@@ -52,6 +53,8 @@ export interface FirstRunEnv {
   /** The First win step's cards, and what their buttons do. */
   firstWin: FirstWinEnv;
   saveProgress(progress: FirstRunProgress): void;
+  /** A step showed (`home`: the first run ended), for step drop-off. The real one counts it; a simulation doesn't. */
+  trackStep(step: FirstRunTelemetryStep): void;
   /** Done: don't show this first run again. */
   finish(): void;
   /** What the environment shows over the flow, such as the agent's sign-in terminal. */

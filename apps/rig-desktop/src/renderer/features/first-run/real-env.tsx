@@ -178,6 +178,10 @@ export function RealFirstRunEnv({
     ensureHome: () => void rpc.rig.orch.ensureHome().catch(() => undefined),
     firstWin: realFirstWin,
     saveProgress: (next) => void rpc.rig.settings.set({ firstRunProgress: next }),
+    trackStep: (step) =>
+      void rpc.telemetry
+        .capture({ event: 'first_run_step_viewed', properties: { state: step } })
+        .catch(() => undefined),
     finish: () =>
       void rpc.rig.settings.set({
         firstRunSeen: FIRST_RUN_VERSION,

@@ -33,6 +33,8 @@ export type SendDeps = {
   /** Tells Rig the card is acted on, so it leaves the Feed. */
   answered(situationId: string, choice: string): Promise<unknown>;
   turns: TurnGate;
+  /** It went: sent or posted, and whether the words were changed from the draft (telemetry; never the words). */
+  sent?: (what: { type: 'send' | 'post'; edited: boolean }) => void;
   timeoutMs?: number;
   log?: { info: (msg: string, meta?: Record<string, unknown>) => void; warn: (msg: string, meta?: Record<string, unknown>) => void };
 };
@@ -91,6 +93,7 @@ export function createSender(deps: SendDeps) {
     }
     await Promise.resolve(deps.answered(input.situationId, choice.label || choice.lead)).catch(() => undefined);
     deps.log?.info('Rig send: sent', { situationId: input.situationId, kind: target.kind });
+    deps.sent?.({ type: choice.verb, edited: !same(text, choice.draft.text) });
     return sent;
   }
 

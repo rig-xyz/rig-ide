@@ -189,6 +189,14 @@ export type TelemetryEventProperties = {
   agent_run_failed: AgentRunFailedProps;
   sync_problem: SyncProblemProps;
   rig_opened: { source: 'recent' | 'create' | 'join' | 'deeplink' | 'other' };
+  /** The first run: each step as it shows (drop-off), and `home` at its end. Counts only. */
+  first_run_step_viewed: { state: FirstRunTelemetryStep };
+  /** A first run or a catch-up put its first card up, this long after it started. */
+  rig_run_first_card: { trigger: RunTelemetryTrigger; duration_ms: number };
+  /** What stopped a run, or got in its way (a connector to reconnect): which error states are hit. */
+  rig_run_problem: { reason: RunTelemetryProblem; trigger: RunTelemetryTrigger };
+  /** A drafted answer went out from a card: sent or posted, and whether its words were changed first. */
+  feed_answer_sent: { type: 'send' | 'post'; state: 'edited' | 'as_drafted' };
   rig_created: EmptyProps;
   agent_dispatched: { provider: string };
   comment_posted: { author_kind: 'user' | 'agent' };
@@ -246,3 +254,14 @@ export type DailyActiveAgentProps = {
 export type TelemetryEvent = keyof TelemetryEventProperties;
 export type TelemetryProperties<E extends TelemetryEvent> = TelemetryEventProperties[E] &
   TelemetryEnvelope;
+
+/** The first run's steps, and `home` once it ends. */
+export type FirstRunTelemetryStep = 'welcome' | 'setup' | 'connect' | 'you' | 'read' | 'firstWin' | 'home';
+/** Which run: the first run, a morning catch-up, or another background run. */
+export type RunTelemetryTrigger = 'first' | 'catch-up' | 'other';
+export type RunTelemetryProblem =
+  | 'rig_signed_out'
+  | 'relay_unreachable'
+  | 'agent_signed_out'
+  | 'connector_auth'
+  | 'timeout';

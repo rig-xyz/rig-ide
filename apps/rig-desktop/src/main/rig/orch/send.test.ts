@@ -93,18 +93,23 @@ describe('Send and Post', () => {
   });
 
   it('posts on GitHub with gh, the words on stdin, and tells Rig the card is done', async () => {
-    const { d, turns } = deps({ card: vi.fn(async () => ok(card({ text: 'Is the 429 path covered?', target: 'github:acme/api#212' }, 'post'))) });
+    const sent = vi.fn();
+    const { d, turns } = deps({ card: vi.fn(async () => ok(card({ text: 'Is the 429 path covered?', target: 'github:acme/api#212' }, 'post'))), sent });
     const r = await createSender(d).send({ situationId: 'sit_1', choice: 0, text: 'Is the 429 path covered? (edited)' }, turns.issue('click'));
     expect(r).toEqual(ok({ said: 'Posted on api#212', link: 'https://github.com/acme/api/pull/212#issuecomment-1' }));
     expect(d.gh).toHaveBeenCalledWith(['issue', 'comment', '212', '--repo', 'acme/api', '--body-file', '-'], 'Is the 429 path covered? (edited)');
     expect(d.answered).toHaveBeenCalledWith('sit_1', 'Say yes');
+    // Counted, never the words: posted, and changed from the draft.
+    expect(sent).toHaveBeenCalledWith({ type: 'post', edited: true });
   });
 
   it('sends in Slack through a locked-down session, and counts it only when the send completes', async () => {
     const asked: string[] = [];
     const { acp } = fakeAcp([{ name: SEND, input: { channel_id: 'C0P', thread_ts: '1.2', message: 'Yes, I’ll be there.' } }], (r) => asked.push(String(r.toolCall.title)));
-    const { d, turns } = deps({ acp });
+    const sent = vi.fn();
+    const { d, turns } = deps({ acp, sent });
     const r = await createSender(d).send({ situationId: 'sit_1', choice: 0, text: 'Yes, I’ll be there.' }, turns.issue('click'));
+    expect(sent).toHaveBeenCalledWith({ type: 'send', edited: false });
     expect(r).toEqual(ok({ said: 'Sent in the Slack thread', link: 'https://acme.slack.com/archives/C0P/p123' }));
     expect(acp.startSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/Rig/home', noBypassPermissions: true, disallowedTools: expect.arrayContaining(['Bash', 'Write']) }));
     expect(acp.setConfig).toHaveBeenCalledWith('send-1', { mode: 'default' });

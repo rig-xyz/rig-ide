@@ -154,6 +154,7 @@ export function SimulatedFirstRunEnv({
     ensureHome: () => {},
     firstWin: simulatedFirstWin(later),
     saveProgress: setProgress,
+    trackStep: () => {},
     finish: () =>
       void rpc.rig.settings.set({ firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null }),
     overlay: null,

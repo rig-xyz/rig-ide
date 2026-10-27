@@ -164,7 +164,16 @@ function FirstRunShell({
       : plan.steps;
   }, [plan, startAt]);
 
+  // Each step once as it shows, and Home at the end: where people stop.
+  const tracked = useRef<string | null>(null);
+  useEffect(() => {
+    if (tracked.current === step) return;
+    tracked.current = step;
+    env.trackStep(step);
+  }, [env, step]);
+
   const done = useCallback(() => {
+    env.trackStep('home');
     env.finish();
     clearFirstRunDebug();
     onDone();
