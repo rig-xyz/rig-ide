@@ -272,6 +272,12 @@ export type OpenSpaceAt = {
   preview?: string | null;
   runId?: string | null;
   path?: string | null;
+  /**
+   * Open the message's thread even when the message starts it, so its
+   * replies (an agent's answer, say) show beside it: for a card that wants
+   * the conversation, not just the line.
+   */
+  expandThread?: boolean;
 };
 
 export function openTargetOf(n: RigNotification): OpenSpaceAt | null {
