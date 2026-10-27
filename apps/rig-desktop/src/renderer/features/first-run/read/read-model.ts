@@ -1,4 +1,4 @@
-import type { OrchProgressEvent, RunProgress } from '@shared/rig/orch-progress';
+import type { OrchProgressEvent, RunProblem, RunProgress } from '@shared/rig/orch-progress';
 
 /**
  * The Read step's picture of the first run, from its progress events
@@ -19,11 +19,17 @@ export type ReadState = {
   /** Lookups so far, against every pass's budget known yet. */
   lookups: { used: number; budget: number };
   cards: string[];
+  /** Cards that were on the Feed before the run: they lead to the first card, but aren't new. */
+  knownCards: string[];
+  /** A catch-up reads from here (the last read); null for a first read of the last few days. */
+  since: string | null;
+  /** What got in the way while it read (a connector to reconnect), each once. */
+  problems: { problem: RunProblem; connector?: string }[];
   pass: number;
   passes: number;
   firstLineAt: number | null;
   firstCardAt: number | null;
-  ended: { ok: boolean; error?: string; t: number } | null;
+  ended: { ok: boolean; error?: string; problem?: RunProblem; t: number } | null;
 };
 
 export const initialRead: ReadState = {
@@ -32,6 +38,9 @@ export const initialRead: ReadState = {
   counts: { read: 0, handled: 0, forYou: 0 },
   lookups: { used: 0, budget: 0 },
   cards: [],
+  knownCards: [],
+  since: null,
+  problems: [],
   pass: 0,
   passes: 0,
   firstLineAt: null,
@@ -42,15 +51,17 @@ export const initialRead: ReadState = {
 const isOutcome = (l: Pick<RunProgress, 'status'>) =>
   l.status === 'handled' || l.status === 'not_yours' || l.status === 'for_you';
 
-function counts(lines: ReadLine[], cards: string[]): ReadState['counts'] {
-  const forYou = new Set(cards);
+function counts(lines: ReadLine[], cards: string[], knownCards: string[] = []): ReadState['counts'] {
+  const known = new Set(knownCards);
+  const forYou = new Set(cards.filter((c) => !known.has(c)));
   let read = 0;
   let handled = 0;
   for (const l of lines) {
     // Lookups in the person's tools; Rig's own records are its memory, not a read, so they don't count.
     if (l.connector !== null && l.connector !== 'rig' && l.status === 'done') read += 1;
     if (l.status === 'handled' || l.status === 'not_yours') handled += 1;
-    if (l.status === 'for_you') forYou.add(l.ref ?? l.id);
+    // Something already on the Feed isn't a new card for them.
+    if (l.status === 'for_you' && !l.known && !(l.ref && known.has(l.ref))) forYou.add(l.ref ?? l.id);
   }
   return { read, handled, forYou: forYou.size };
 }
@@ -63,6 +74,7 @@ export function readReducer(state: ReadState, e: OrchProgressEvent): ReadState {
       run: e.run,
       passes: e.passes,
       lookups: { used: 0, budget: e.lookups ?? 0 },
+      since: e.since ?? null,
     };
   if (state.run !== null && e.run !== state.run) return state;
   const run = state.run ?? e.run;
@@ -83,16 +95,25 @@ export function readReducer(state: ReadState, e: OrchProgressEvent): ReadState {
     case 'card': {
       if (state.cards.includes(e.ref)) return state;
       const cards = [...state.cards, e.ref];
+      const knownCards = e.fresh === false ? [...state.knownCards, e.ref] : state.knownCards;
       return {
         ...state,
         run,
         cards,
-        counts: counts(state.lines, cards),
+        knownCards,
+        counts: counts(state.lines, cards, knownCards),
         firstCardAt: state.firstCardAt ?? e.t,
       };
     }
+    case 'problem':
+      if (state.problems.some((p) => p.problem === e.problem && p.connector === e.connector)) return state;
+      return { ...state, run, problems: [...state.problems, { problem: e.problem, ...(e.connector ? { connector: e.connector } : {}) }] };
     case 'end':
-      return { ...state, run, ended: { ok: e.ok, ...(e.error ? { error: e.error } : {}), t: e.t } };
+      return {
+        ...state,
+        run,
+        ended: { ok: e.ok, ...(e.error ? { error: e.error } : {}), ...(e.problem ? { problem: e.problem } : {}), t: e.t },
+      };
     case 'line': {
       const at = state.lines.findIndex((l) => l.id === e.line.id);
       const isNew = at < 0;
@@ -107,7 +128,7 @@ export function readReducer(state: ReadState, e: OrchProgressEvent): ReadState {
         ...state,
         run,
         lines,
-        counts: counts(lines, state.cards),
+        counts: counts(lines, state.cards, state.knownCards),
         lookups: { ...state.lookups, used },
         firstLineAt: state.firstLineAt ?? e.line.t,
       };
@@ -149,4 +170,24 @@ export function firstForYou(state: ReadState): ReadLine | null {
 export function tickerLines(state: ReadState, max = 8): ReadLine[] {
   const shown = state.lines.filter((l) => l.connector !== 'rig');
   return shown.slice(-max);
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * The catch-up's window in words, from `since` to now: "since 9:40" today,
+ * "since yesterday", "since Tuesday" this week, else "since 14 Oct".
+ */
+export function sinceWords(since: string | null, now = Date.now()): string | null {
+  if (!since) return null;
+  const at = new Date(since);
+  if (Number.isNaN(at.getTime())) return null;
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  if (at.getTime() >= today.getTime())
+    return `since ${at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+  if (at.getTime() >= today.getTime() - DAY_MS) return 'since yesterday';
+  if (at.getTime() >= today.getTime() - 6 * DAY_MS)
+    return `since ${at.toLocaleDateString(undefined, { weekday: 'long' })}`;
+  return `since ${at.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
 }

@@ -133,7 +133,7 @@ describe('the background orchestrator', () => {
 
 describe('the first run', () => {
   /** A session whose turns run the given tool calls, one script per turn. */
-  function harness(turns: Array<Array<{ id: string; name: string; input: Record<string, unknown> }>>, extra: { snapshot?: () => Promise<{ feed: string[]; situations: string[]; github?: string[] | null } | null> } = {}) {
+  function harness(turns: Array<Array<{ id: string; name: string; input: Record<string, unknown>; fail?: string }>>, extra: Partial<Parameters<typeof createOrchestrator>[0]> = {}) {
     let emit: (e: RawSessionEvent) => void = () => {};
     let turn = 0;
     const prompts: string[] = [];
@@ -153,7 +153,7 @@ describe('the first run', () => {
           emit({ kind: 'turn_start', turnId: 't' });
           for (const c of calls) {
             emit({ kind: 'acp_update', update: { sessionUpdate: 'tool_call', toolCallId: c.id, name: c.name, status: 'pending', rawInput: c.input } } as never);
-            emit({ kind: 'acp_update', update: { sessionUpdate: 'tool_call_update', toolCallId: c.id, status: 'completed' } } as never);
+            emit({ kind: 'acp_update', update: { sessionUpdate: 'tool_call_update', toolCallId: c.id, ...(c.fail ? { status: 'failed', content: [{ type: 'content', content: { type: 'text', text: c.fail } }] } : { status: 'completed' }) } } as never);
           }
           emit({ kind: 'turn_end', turnId: 't', stopReason: 'end_turn' });
         }, 0);
@@ -284,6 +284,134 @@ describe('the first run', () => {
     expect(h.prompts).toHaveLength(1);
     expect(h.prompts[0]).not.toContain('## First read');
     expect(h.recordRun).toHaveBeenCalledWith(expect.stringMatching(/^run_/), 'schedule', undefined, undefined);
+  });
+});
+
+describe('a catch-up for someone Rig has read for', () => {
+  function harness(turns: Array<Array<{ id: string; name: string; input: Record<string, unknown>; fail?: string }>>, extra: Partial<Parameters<typeof createOrchestrator>[0]> = {}) {
+    let emit: (e: RawSessionEvent) => void = () => {};
+    let turn = 0;
+    const prompts: string[] = [];
+    const acp = {
+      startSession: vi.fn(async () => ok({ sessionId: 's' })),
+      setConfig: vi.fn(async () => ok(undefined)),
+      cancelTurn: vi.fn(async () => {}),
+      readConfig: vi.fn(async () => ({ model: { selected: 'default', options: [] }, effort: { selected: 'default', options: [] }, mode: null })),
+      stopSession: vi.fn(async () => {}),
+      subscribeRaw: vi.fn(async (_id: string, on: (e: RawSessionEvent) => void) => ((emit = on), () => {})),
+      subscribePendingPermissions: vi.fn(async () => () => {}),
+      resolvePermission: vi.fn(async () => {}),
+      queuePrompt: vi.fn(async (_id: string, prompt: string) => {
+        prompts.push(prompt);
+        const calls = turns[turn++] ?? [];
+        setTimeout(() => {
+          emit({ kind: 'turn_start', turnId: 't' });
+          for (const c of calls) {
+            emit({ kind: 'acp_update', update: { sessionUpdate: 'tool_call', toolCallId: c.id, name: c.name, status: 'pending', rawInput: c.input } } as never);
+            emit({ kind: 'acp_update', update: { sessionUpdate: 'tool_call_update', toolCallId: c.id, ...(c.fail ? { status: 'failed', content: [{ type: 'content', content: { type: 'text', text: c.fail } }] } : { status: 'completed' }) } } as never);
+          }
+          emit({ kind: 'turn_end', turnId: 't', stopReason: 'end_turn' });
+        }, 0);
+        return ok({ turnId: null });
+      }),
+    };
+    const progress: OrchProgressEvent[] = [];
+    const o = createOrchestrator({
+      acp,
+      rigTools: async () => ({ type: 'http', name: 'rig', url: 'http://127.0.0.1/mcp', headers: [] }) as never,
+      whoami: async () => ok({ id: 'usr_me' }),
+      cwd: async () => '/tmp/orch',
+      newConversationId: () => 'orchestrator-1',
+      state: async () => ok(state()),
+      sources: async () => [],
+      recordRun: vi.fn(async () => ok(null)),
+      feedRefs: async () => ['sit_old'],
+      now: () => NOW,
+      onProgress: (e) => progress.push(e),
+      ...extra,
+    });
+    return { o, prompts, progress };
+  }
+  const since = '2026-10-21T09:00:00.000Z';
+  const put = (id: string, ref: string) => ({ id, name: 'mcp__rig__rig_feed', input: { op: 'put', ref } });
+  const outcome = (id: string, ref: string) => ({ id, name: 'mcp__rig__rig_run_note', input: { run_id: 'x', outcome: { kind: 'for_you', ref, line: 'Still waiting on you' } } });
+
+  it('reads since the last read, says so, never re-proposes what is on the Feed, and never widens', async () => {
+    const h = harness([[], []]);
+    await h.o.run('first', { ...FIRST_RUN, since });
+    expect(h.progress[0]).toMatchObject({ kind: 'start', since });
+    expect(h.prompts[0]).toContain(`find the one new thing since ${since}`);
+    expect(h.prompts[0]).toContain('never put one of them again');
+    expect(h.prompts[0]).not.toContain('A card already on the Feed counts');
+    // Nothing new in pass 1 is a fine answer: no 14-day widening for a catch-up.
+    expect(h.prompts).toHaveLength(2);
+    expect(h.prompts[1]).toContain(`keep reading what came in since ${since}`);
+  });
+
+  it('marks cards and outcomes that were on the Feed before the run as not new', async () => {
+    const h = harness([[put('a', 'sit_old'), put('b', 'sit_new'), outcome('c', 'sit_old')], []]);
+    await h.o.run('first', { ...FIRST_RUN, since });
+    const cards = h.progress.filter((e) => e.kind === 'card');
+    expect(cards).toEqual([expect.objectContaining({ ref: 'sit_old', fresh: false }), expect.objectContaining({ ref: 'sit_new', fresh: true })]);
+  });
+
+  it('stops with the fix it needs: Rig signed out, or the relay out of reach', async () => {
+    const signedOut = harness([[]], { state: async () => err({ message: 'Your Rig session expired.', problem: 'rig_signed_out' }) });
+    await signedOut.o.run('schedule');
+    expect(signedOut.progress.at(-1)).toMatchObject({ kind: 'end', ok: false, problem: 'rig_signed_out' });
+    const away = harness([[]], { state: async () => err({ message: "Rig can't reach the server.", problem: 'relay_unreachable' }) });
+    await away.o.run('schedule');
+    expect(away.progress.at(-1)).toMatchObject({ kind: 'end', ok: false, problem: 'relay_unreachable' });
+  });
+
+  /** An orchestrator on a session whose ACP calls are these, and the progress it reports. */
+  function onSession(acp: Record<string, unknown>, extra: Partial<Parameters<typeof createOrchestrator>[0]> = {}) {
+    const progress: OrchProgressEvent[] = [];
+    const o = createOrchestrator({
+      acp: {
+        startSession: vi.fn(async () => ok({ sessionId: 's' })),
+        setConfig: vi.fn(async () => ok(undefined)),
+        cancelTurn: vi.fn(async () => {}),
+        stopSession: vi.fn(async () => {}),
+        subscribeRaw: vi.fn(async () => () => {}),
+        subscribePendingPermissions: vi.fn(async () => () => {}),
+        resolvePermission: vi.fn(async () => {}),
+        queuePrompt: vi.fn(async () => ok({ turnId: null })),
+        ...acp,
+      } as never,
+      rigTools: async () => ({ type: 'http', name: 'rig', url: 'http://127.0.0.1/mcp', headers: [] }) as never,
+      whoami: async () => ok({ id: 'usr_me' }),
+      cwd: async () => '/tmp/orch',
+      newConversationId: () => 'orchestrator-x',
+      state: async () => ok(state()),
+      sources: async () => [],
+      recordRun: vi.fn(async () => ok(null)),
+      now: () => NOW,
+      onProgress: (e) => progress.push(e),
+      ...extra,
+    });
+    return { o, progress };
+  }
+
+  it('says Claude needs signing in when its session won’t start for want of a sign-in', async () => {
+    const h = onSession({ startSession: vi.fn(async () => err('Invalid API key · Please run /login')) });
+    await h.o.run('schedule');
+    expect(h.progress.at(-1)).toMatchObject({ kind: 'end', ok: false, problem: 'agent_signed_out' });
+  });
+
+  it('says once when a connector needs reconnecting, and keeps reading', async () => {
+    const lapsed = { id: 'x', name: 'mcp__claude_ai_Slack__slack_read_channel', input: { channel_name: 'eng' }, fail: 'Slack: invalid_auth, reconnect the connector' };
+    const h = harness([[lapsed, { ...lapsed, id: 'y' }, { id: 'z', name: 'mcp__claude_ai_Linear__list_issues', input: {} }]]);
+    const r = await h.o.run('schedule');
+    expect(r.success).toBe(true);
+    expect(h.progress.filter((e) => e.kind === 'problem')).toEqual([expect.objectContaining({ problem: 'connector_auth', connector: 'slack' })]);
+  });
+
+  it('a run that takes too long stops with Try again', async () => {
+    // A turn that never ends.
+    const h = onSession({}, { turnTimeoutMs: 5 });
+    await h.o.run('schedule');
+    expect(h.progress.at(-1)).toMatchObject({ kind: 'end', ok: false, problem: 'timeout' });
   });
 });
 

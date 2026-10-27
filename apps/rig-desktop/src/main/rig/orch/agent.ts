@@ -4,7 +4,7 @@ import type { OrchAgentState } from '../feed/relay';
 import { finalAnswerFromEvents, type RawSessionEvent, type SpacesAcpSessions } from '../spaces/dispatch';
 import { RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
 import { ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, rigToolOf, type RigToolScope } from '../spaces/rig-tools';
-import { ProgressMapper, type AcpToolUpdate, type OrchProgressEvent } from '@shared/rig/orch-progress';
+import { agentProblemOf, connectorNeedsAuth, ProgressMapper, toolOf, type AcpToolUpdate, type OrchProgressEvent, type RunProblem } from '@shared/rig/orch-progress';
 import { checkPermission } from './checks';
 import { orchestratorSkill } from './skill';
 
@@ -57,6 +57,11 @@ export type RunOptions = {
   passes?: { lookups: number; goal?: string; model?: string; effort?: string }[];
   /** How far back a first read goes. */
   lookbackDays?: number;
+  /**
+   * A catch-up for someone Rig has read for before: the first read goes back to here (their last
+   * read), never wider, and proposes nothing that's already on their Feed.
+   */
+  since?: string;
 };
 
 /**
@@ -71,7 +76,7 @@ export const FIRST_RUN: RunOptions = { kind: 'first', passes: [{ lookups: 12, go
 export const WIDENED_LOOKBACK_DAYS = 14;
 
 /** Which pass of a first run a packet is for. */
-export type FirstPass = { pass: number; of: number; lookups: number; goal: string | null; lookbackDays: number; widened: boolean };
+export type FirstPass = { pass: number; of: number; lookups: number; goal: string | null; lookbackDays: number; widened: boolean; since?: string };
 
 export type PacketInput = {
   runId: string;
@@ -100,8 +105,8 @@ export function buildPacket(p: PacketInput): string {
   // A source with no cursor hasn't been read yet: read its last three days, not just since the last run.
   const fresh = named.filter((s) => !state.cursors[s.name]);
   const first = p.first;
-  // The first run reads every source from its lookback, whatever cursors an earlier try left.
-  const since = first ? iso(p.now - first.lookbackDays * 86_400_000) : firstSince;
+  // The first run reads every source from its lookback (a catch-up: from the last read), whatever cursors an earlier try left.
+  const since = first ? (first.since ?? iso(p.now - first.lookbackDays * 86_400_000)) : firstSince;
   const sourceLines = named.map((s) =>
     !first && state.cursors[s.name] ? `${s.name}: ${s.what}, since ${state.cursors[s.name]}` : `${s.name}: ${s.what}, ${first ? '' : 'never read: '}read since ${since}`
   );
@@ -150,6 +155,7 @@ export function buildPacket(p: PacketInput): string {
 
 /** The first run's own instructions, per pass: the first card fast, then the rest. */
 function firstReadLines(f: FirstPass, me: string, since: string): string[] {
+  if (f.since) return catchUpLines(f, me, since);
   const watching = `This is ${me}'s first run, and they are watching it: each lookup and each outcome you report shows as a line on their screen. Speed matters most now.`;
   if (f.pass === 1 || f.widened) {
     return [
@@ -168,13 +174,38 @@ function firstReadLines(f: FirstPass, me: string, since: string): string[] {
   ];
 }
 
+/**
+ * A catch-up for someone Rig has read for before: only what came in since their last read, and
+ * nothing that's on their Feed already (the app shows those itself).
+ */
+function catchUpLines(f: FirstPass, me: string, since: string): string[] {
+  const watching = `${me} has used Rig before and is watching this catch-up: each lookup and each outcome you report shows as a line on their screen. Speed matters most now.`;
+  const notAgain = `The cards on the Feed below are already there: never put one of them again, and never open a new situation for something one of them covers. Report what you read about them as outcomes only.`;
+  if (f.pass === 1) {
+    return [
+      watching,
+      `Pass ${f.pass} of ${f.of}, ${f.lookups} lookups: find the one new thing since ${since} that most needs ${me} now.`,
+      notAgain,
+      'Step 1: load the read tools you need in a single ToolSearch call (for example select:mcp__claude_ai_Slack__slack_search_public_and_private,mcp__claude_ai_Slack__slack_read_thread,mcp__claude_ai_Linear__list_issues).',
+      `Step 2, all in one step: search Slack for what was sent to ${me} since ${since} (their DMs and mentions), and list the Linear issues assigned to them or mentioning them, updated since then. GitHub's asks are listed below already.`,
+      `Step 3: put the card for the most pressing new thing (rig_feed put, with open), in the same step as any outcomes you report. If the answer is a message or a review comment, its choices are drafted answers (send or post, each with its draft). Then end the pass at once with its run note and no closing message. Nothing new is a fine answer: never pad.`,
+    ];
+  }
+  return [watching, `Pass ${f.pass} of ${f.of}, ${f.lookups} lookups: keep reading what came in since ${since}. Put the other new cards that need ${me} or that Claude can take, and end the pass.`, notAgain];
+}
+
+/** Why something failed, and (when it's one with a fix) which. */
+export type RunFail = { message: string; problem?: RunProblem };
+
 export type OrchestratorDeps = {
   acp: Pick<SpacesAcpSessions, 'startSession' | 'setConfig' | 'readConfig' | 'queuePrompt' | 'cancelTurn' | 'subscribeRaw' | 'subscribePendingPermissions' | 'resolvePermission' | 'stopSession'>;
   rigTools: (scope: RigToolScope) => Promise<AcpHttpMcpServerWire>;
-  whoami: () => Promise<Result<{ id: string }, { message: string }>>;
+  whoami: () => Promise<Result<{ id: string }, RunFail>>;
   cwd: () => Promise<string>;
   newConversationId: () => string;
-  state: () => Promise<Result<OrchAgentState, { message: string }>>;
+  state: () => Promise<Result<OrchAgentState, RunFail>>;
+  /** The situations with a card on the Feed now: a catch-up's new cards are the ones not among them. */
+  feedRefs?: () => Promise<string[]>;
   sources: () => Promise<{ connector: string; what: string }[]>;
   recordRun: (id: string, trigger: string, note?: Record<string, unknown>, pass?: number) => Promise<unknown>;
   /** The Feed and open situations for the packet; null when they can't be read (the run looks them up). */
@@ -202,9 +233,9 @@ export function createOrchestrator(deps: OrchestratorDeps) {
    * first run) a new one, since a session that already read the same days
    * concludes there is nothing new and ends without reading.
    */
-  async function ensure(name: string, fresh = false): Promise<Result<{ conversationId: string }, string>> {
+  async function ensure(name: string, fresh = false): Promise<Result<{ conversationId: string }, RunFail>> {
     const me = await deps.whoami();
-    if (!me.success) return err(me.error.message);
+    if (!me.success) return err(me.error);
     if (!fresh && live && live.ownerUserId === me.data.id) return ok({ conversationId: live.conversationId });
     await stop();
     const cwd = await deps.cwd();
@@ -220,12 +251,12 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       disallowedTools: AGENT_DENIED_TOOLS,
       noBypassPermissions: true,
     });
-    if (!started.success) return err(started.error);
+    if (!started.success) return err(failOf(started.error));
     // Ask first, whatever the person's defaultMode: if it can't be set, no run.
     const moded = deps.acp.setConfig ? await deps.acp.setConfig(conversationId, { mode: AGENT_MODE }) : err('This build cannot set the session mode.');
     if (!moded.success) {
       await deps.acp.stopSession?.(conversationId).catch(() => undefined);
-      return err(`Could not put the orchestrator in Ask first: ${moded.error}`);
+      return err({ message: `Could not put the orchestrator in Ask first: ${moded.error}` });
     }
     const off = await deps.acp.subscribePendingPermissions(conversationId, (request) => {
       const optionId = agentPermission(request);
@@ -254,25 +285,28 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     };
     const step = (id: string, label: string, status: 'running' | 'done' | 'failed') =>
       emit({ kind: 'line', line: { id: `step:${id}`, connector: null, label, status, t: t() } });
-    const passes = first ? (opts.passes ?? FIRST_RUN.passes!) : [{ lookups: 0 }];
+    const passes = first ? (opts.passes ?? FIRST_RUN.passes!) : [{ lookups: AGENT_BUDGET.lookups }];
     const lookbackDays = opts.lookbackDays ?? 3;
-    emit({ kind: 'start', trigger, passes: passes.length, lookups: passes.reduce((n, p) => n + p.lookups, 0), lookbackDays, t: 0 });
+    // A catch-up's window: a first read reads from it; a regular run reads from its cursors, which it names.
+    const since = opts.since;
+    emit({ kind: 'start', trigger, passes: passes.length, lookups: passes.reduce((n, p) => n + p.lookups, 0), lookbackDays, ...(since ? { since } : {}), t: 0 });
+    const fail = (f: RunFail): Result<RunResult, string> => {
+      emit({ kind: 'end', ok: false, error: f.message, ...(f.problem ? { problem: f.problem } : {}), t: t() });
+      return err(f.message);
+    };
     // Said at once, so the person sees it working while the session wakes up.
     step('state', 'Looking up what Rig already knows', 'running');
-    const state = await deps.state();
+    const [state, known] = await Promise.all([deps.state(), deps.feedRefs?.().catch(() => []) ?? Promise.resolve([])]);
     if (!state.success) {
       step('state', 'Looking up what Rig already knows', 'failed');
-      emit({ kind: 'end', ok: false, error: state.error.message, t: t() });
-      return err(state.error.message);
+      return fail(state.error);
     }
+    const before = new Set(known);
     step('state', 'Looking up what Rig already knows', 'done');
     step('session', 'Waking your Claude', 'running');
     const session = await ensure(state.data.me || 'the person', first);
     step('session', 'Waking your Claude', session.success ? 'done' : 'failed');
-    if (!session.success) {
-      emit({ kind: 'end', ok: false, error: session.error, t: t() });
-      return session;
-    }
+    if (!session.success) return fail(session.error);
     const mapper = new ProgressMapper(t);
     let firstRunId: string | null = null;
     let noted = true;
@@ -294,14 +328,11 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         current = want;
       }
       const fp: FirstPass | undefined = first
-        ? { pass: i + 1, of: plan.length, lookups: pass.lookups, goal: pass.goal ?? null, lookbackDays: pass.lookbackDays, widened: pass.widened === true }
+        ? { pass: i + 1, of: plan.length, lookups: pass.lookups, goal: pass.goal ?? null, lookbackDays: pass.lookbackDays, widened: pass.widened === true, ...(since ? { since } : {}) }
         : undefined;
       if (first) emit({ kind: 'pass', pass: i + 1, lookups: pass.lookups, goal: pass.goal ?? null, lookbackDays: pass.lookbackDays, t: t() });
-      const ran = await onePass(session.data.conversationId, trigger, i === 0 ? state.data : null, fp, first ? i + 1 : undefined, mapper, emit);
-      if (!ran.success) {
-        emit({ kind: 'end', ok: false, error: ran.error, t: t() });
-        return err(ran.error);
-      }
+      const ran = await onePass(session.data.conversationId, trigger, i === 0 ? state.data : null, fp, first ? i + 1 : undefined, mapper, emit, before);
+      if (!ran.success) return fail(ran.error);
       firstRunId ??= ran.data.runId;
       noted &&= ran.data.noted;
       cards += ran.data.cards;
@@ -310,13 +341,13 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       if (first && i === 0 && ran.data.cards === 0) {
         const top = (await deps.snapshot?.())?.feed.find((line) => line.includes(' [visible] '))?.split(' ')[0];
         if (top) {
-          emit({ kind: 'card', ref: top, t: t() });
+          emit({ kind: 'card', ref: top, fresh: !before.has(top), t: t() });
           cards += 1;
           continue;
         }
       }
-      // Nothing for them in the first pass's days: read further back, once, before the rest.
-      if (first && i === 0 && ran.data.cards === 0 && !widened && lookbackDays < WIDENED_LOOKBACK_DAYS) {
+      // Nothing for them in the first pass's days: read further back, once, before the rest. A catch-up reads since the last read, never wider.
+      if (first && !since && i === 0 && ran.data.cards === 0 && !widened && lookbackDays < WIDENED_LOOKBACK_DAYS) {
         widened = true;
         plan.splice(1, 0, { lookups: pass.lookups, goal: pass.goal, lookbackDays: WIDENED_LOOKBACK_DAYS, widened: true });
         for (const later of plan.slice(2)) later.lookbackDays = WIDENED_LOOKBACK_DAYS;
@@ -335,20 +366,23 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     firstPass: FirstPass | undefined,
     passNo: number | undefined,
     mapper: ProgressMapper,
-    emit: (e: ProgressBody) => void
-  ): Promise<Result<RunResult, string>> {
+    emit: (e: ProgressBody) => void,
+    onFeed: ReadonlySet<string>
+  ): Promise<Result<RunResult, RunFail>> {
     const startedAt = deps.now();
     let state = known;
     if (!state) {
       const fetched = await deps.state();
-      if (!fetched.success) return err(fetched.error.message);
+      if (!fetched.success) return err(fetched.error);
       state = fetched.data;
     }
     const runId = newRunId(startedAt);
     const [, sources, snapshot] = await Promise.all([deps.recordRun(runId, trigger, undefined, passNo), deps.sources(), deps.snapshot?.() ?? null]);
     const packet = buildPacket({ runId, now: startedAt, trigger, state, sources, snapshot, ...(firstPass ? { first: firstPass } : {}) });
-    let finish!: (r: Result<null, string>) => void;
-    const done = new Promise<Result<null, string>>((resolve) => (finish = resolve));
+    let finish!: (r: Result<null, RunFail>) => void;
+    const done = new Promise<Result<null, RunFail>>((resolve) => (finish = resolve));
+    // A connector that needs signing in again, said once per connector.
+    const lapsed = new Set<string>();
     let begun = false;
     let cards = 0;
     const events: { kind: string; payload: Record<string, unknown> }[] = [];
@@ -373,30 +407,43 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         events.push({ kind: raw.update.sessionUpdate, payload: raw.update });
         // A lookup that failed says why in the log (the person sees "Couldn't read").
         if (raw.update.sessionUpdate === 'tool_call_update' && (raw.update as { status?: string }).status === 'failed') {
-          deps.log?.warn('Rig orchestrator: a lookup failed', { pass: passNo, call: JSON.stringify(raw.update).slice(0, 800) });
+          const said = JSON.stringify(raw.update);
+          deps.log?.warn('Rig orchestrator: a lookup failed', { pass: passNo, call: said.slice(0, 800) });
+          const connector = toolOf(calls.get(u.toolCallId ?? '')?.name ?? '')?.connector;
+          if (connector && connector !== 'rig' && !lapsed.has(connector) && connectorNeedsAuth(said)) {
+            lapsed.add(connector);
+            emit({ kind: 'problem', problem: 'connector_auth', connector, t: deps.now() - startedAt });
+          }
         }
         for (const e of mapper.push(raw.update as AcpToolUpdate)) {
-          if (e.kind === 'card') cards += 1;
-          emit(e);
+          if (e.kind === 'card') {
+            cards += 1;
+            emit({ ...e, fresh: !onFeed.has(e.ref) });
+          } else if (e.line.status === 'for_you' && e.line.ref && onFeed.has(e.line.ref)) emit({ ...e, line: { ...e.line, known: true } });
+          else emit(e);
         }
       } else if (raw.kind === 'turn_end' && begun) finish(ok(null));
     });
-    const timer = setTimeout(() => finish(err('The run took too long.')), deps.turnTimeoutMs ?? 10 * 60_000);
+    const timer = setTimeout(() => finish(err({ message: 'The run took too long.', problem: 'timeout' })), deps.turnTimeoutMs ?? 10 * 60_000);
     try {
-      const queued = await deps.acp.queuePrompt(conversationId, packet, undefined, (reason) => finish(err(reason)));
-      if (!queued.success) return err(queued.error);
+      const queued = await deps.acp.queuePrompt(conversationId, packet, undefined, (reason) => finish(err(failOf(reason))));
+      if (!queued.success) return err(failOf(queued.error));
       const ended = await done;
       // The relay's latest noted run is this one only if the pass ended with rig_run_note.
       const after = await deps.state();
       const noted = after.success && after.data.lastRun?.id === runId;
       const said = finalAnswerFromEvents(events).trim();
+      // Signed out of Rig while it read, or Claude said it can't: the run stops with that, not as a run with nothing found.
+      if (!after.success && after.error.problem === 'rig_signed_out') return err(after.error);
+      const agentOut = !noted ? agentProblemOf(said) : undefined;
+      if (agentOut) return err({ message: said.slice(0, 300), problem: agentOut });
       if (!noted) {
         // No note: keep the cursors where they were, so the next run reads from the same place.
         await deps.recordRun(runId, trigger, {
           read: Object.entries(state.cursors).map(([source, until]) => ({ source, until })),
           changed: [],
           left: [],
-          summary: ended.success ? `The run ended without a note. Claude's last words: ${said.slice(0, 600) || '(none)'}` : `The run failed: ${ended.error}`,
+          summary: ended.success ? `The run ended without a note. Claude's last words: ${said.slice(0, 600) || '(none)'}` : `The run failed: ${ended.error.message}`,
         });
       }
       deps.log?.info('Rig orchestrator: pass ended', { runId, trigger, pass: passNo, noted, cards, ms: deps.now() - startedAt, ok: ended.success, said: said.slice(0, 600) });
@@ -449,3 +496,9 @@ export function createOrchestrator(deps: OrchestratorDeps) {
 }
 
 export type Orchestrator = ReturnType<typeof createOrchestrator>;
+
+/** A runtime or Claude error as a failure, with its fix when it has one. */
+function failOf(message: string): RunFail {
+  const problem = agentProblemOf(message);
+  return problem ? { message, problem } : { message };
+}

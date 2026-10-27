@@ -22,18 +22,34 @@ export type RunProgress = {
   status: RunProgressStatus;
   /** The thing an outcome is about (a ref the run gave), when it gave one. */
   ref?: string;
+  /** An outcome about a card already on the Feed before the run: not new to the person. */
+  known?: boolean;
   /** Milliseconds since the run started. */
   t: number;
 };
 
+/**
+ * Why a run couldn't read, each with its one fix: sign in to Rig again, retry
+ * when the relay is back, sign Claude in again (signed out, or on an API key
+ * that can't reach the connectors), reconnect a connector in claude.ai, or
+ * try a run that took too long again.
+ */
+export const RUN_PROBLEMS = ['rig_signed_out', 'relay_unreachable', 'agent_signed_out', 'connector_auth', 'timeout'] as const;
+export type RunProblem = (typeof RUN_PROBLEMS)[number];
+
 export type OrchProgressEvent = (
-  /** `lookups`: every planned pass's budget together; a widened pass adds its own when it starts. */
-  | { run: string; kind: 'start'; trigger: string; passes: number; lookups: number; lookbackDays: number; t: number }
+  /**
+   * `lookups`: every planned pass's budget together; a widened pass adds its own when it starts.
+   * `since`: a catch-up reads from here (the person's last read), not `lookbackDays` back.
+   */
+  | { run: string; kind: 'start'; trigger: string; passes: number; lookups: number; lookbackDays: number; since?: string; t: number }
   | { run: string; kind: 'pass'; pass: number; lookups: number; goal: string | null; lookbackDays: number; t: number }
   | { run: string; kind: 'line'; line: RunProgress }
-  /** A card went on the Feed (`rig_feed` put). */
-  | { run: string; kind: 'card'; ref: string; t: number }
-  | { run: string; kind: 'end'; ok: boolean; error?: string; t: number }
+  /** A card went on the Feed (`rig_feed` put). `fresh: false`: it was on the Feed before the run, so it isn't new. */
+  | { run: string; kind: 'card'; ref: string; fresh?: boolean; t: number }
+  /** Something stands in the way of reading, mid-run (a connector that needs reconnecting); the run goes on. */
+  | { run: string; kind: 'problem'; problem: RunProblem; connector?: string; t: number }
+  | { run: string; kind: 'end'; ok: boolean; error?: string; problem?: RunProblem; t: number }
 ) & {
   /** Its place in the run, from 0: a listener that joined late, or got the run's events so far, skips what it has. */
   seq?: number;
@@ -211,4 +227,19 @@ export function connectorOfRef(ref: string | null): string | null {
   if (/^item:[A-Z][A-Z0-9]*-\d+/.test(ref)) return 'linear';
   if (/#\d+$/.test(ref)) return 'github';
   return null;
+}
+
+/** Claude's own words when it is signed out, or on a key that can't reach the person's connectors. */
+const AGENT_SIGNED_OUT = /not logged in|please run \/login|invalid api key|authentication_error|oauth token (?:has )?expired|no such tool available: mcp__claude_ai_/i;
+/** A connector's own words when its sign-in lapsed. */
+const CONNECTOR_AUTH = /needs? (?:re-?)?auth|re-?authenticat|unauthori[sz]ed|invalid_auth|not_authed|token_(?:revoked|expired)|\b401\b|reconnect/i;
+
+/** Why a run stopped, from what Claude or the runtime said, when it says. */
+export function agentProblemOf(text: string): RunProblem | undefined {
+  return AGENT_SIGNED_OUT.test(text) ? 'agent_signed_out' : undefined;
+}
+
+/** Whether a failed lookup in one of the person's connectors failed for want of a sign-in. */
+export function connectorNeedsAuth(text: string): boolean {
+  return CONNECTOR_AUTH.test(text);
 }

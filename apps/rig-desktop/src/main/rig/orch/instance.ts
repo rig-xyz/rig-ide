@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { app } from 'electron';
+import { app, powerMonitor } from 'electron';
 import { err, ok, type Result } from '@emdash/shared';
 import { getAcpRuntimeClient } from '@main/core/acp/controller';
 import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
 import { createRPCController } from '@shared/lib/ipc/rpc';
 import { rigFeedChangedChannel, rigStartSessionChannel } from '@shared/rig/feed';
-import { rigOrchProgressChannel, type OrchProgressEvent } from '@shared/rig/orch-progress';
+import { FIRST_RUN_VERSION } from '@shared/rig/first-run';
+import { rigOrchProgressChannel, type OrchProgressEvent, type RunProblem } from '@shared/rig/orch-progress';
+import type { RigAccountError } from '@shared/rig/account';
 import { rigAccountController } from '../account';
 import { globalSetup } from '../connectors/connections-instance';
 import * as feedRelay from '../feed/relay';
@@ -23,7 +25,8 @@ import { rigSpaceSetupController } from '../space-setup';
 import { rigSettingsStore } from '../settings-instance';
 import { createHomeSpace } from './home-space';
 import { resolveSelfUserId } from '../account';
-import { createOrchestrator, FIRST_RUN } from './agent';
+import { createOrchestrator, FIRST_RUN, type RunFail } from './agent';
+import { createCatchUp, readWindow } from './catch-up';
 import { runGhRead, runGhWrite } from './github';
 import { readSnapshot } from './snapshot';
 import { runSource, type Source } from './sources';
@@ -229,16 +232,40 @@ function recordProgress(event: OrchProgressEvent): void {
   void appendFile(recordFile, `${JSON.stringify(event)}\n`).catch(() => undefined);
 }
 
+/** A relay or account error as a run failure, with its fix: sign in again, or retry when the relay is back. */
+function relayFail(error: RigAccountError | { kind: string; message: string; status?: number }): RunFail {
+  const problem: RunProblem | undefined =
+    error.kind === 'invalidToken' || error.kind === 'notSignedIn'
+      ? 'rig_signed_out'
+      : error.kind === 'relay' && error.status === undefined
+        ? 'relay_unreachable'
+        : undefined;
+  return problem ? { message: error.message, problem } : { message: error.message };
+}
+
+/** The situations with a card on the Feed now (visible or queued). */
+async function feedRefs(): Promise<string[]> {
+  const feed = await feedRelay.getFeed();
+  return feed.success ? [...feed.data.visible, ...feed.data.queued].map((x) => x.situationId) : [];
+}
+
+/** Where a first run for someone Rig has read for before catches up from: their last read. Null for someone new. */
+async function catchUpSince(): Promise<string | null> {
+  const state = await feedRelay.orchAgentState();
+  return state.success ? readWindow(state.data, Date.now()).since : null;
+}
+
 /**
  * The background orchestrator (agent.ts): it decides the Feed. It reads a
- * minute after the app starts, then every hour, and when you ask.
+ * minute after the app starts, then every hour, and when you ask; and it
+ * catches up (catch-up.ts) when the app opens or the Mac wakes after hours away.
  */
 export const orchestrator = createOrchestrator({
   acp,
   rigTools: async (scope) => (await import('../spaces/rig-tools-instance')).rigToolsServer.serverFor(scope),
   whoami: async () => {
     const id = await resolveSelfUserId();
-    return id.success ? ok({ id: id.data }) : err({ message: id.error.message });
+    return id.success ? ok({ id: id.data }) : err(relayFail(id.error));
   },
   cwd: async () => {
     const dir = join(app.getPath('userData'), 'rig-orchestrator');
@@ -248,14 +275,17 @@ export const orchestrator = createOrchestrator({
   newConversationId: () => `orchestrator-${randomUUID()}`,
   state: async () => {
     const r = await feedRelay.orchAgentState();
-    return r.success ? r : err({ message: r.error.message });
+    return r.success ? r : err(relayFail(r.error));
   },
+  feedRefs,
   sources: async () => (await readSources()).filter((x) => !x.paused).map((x) => ({ connector: x.connector, what: x.what })),
   recordRun: (id, trigger, note, pass) => feedRelay.orchRun(id, trigger, note, pass),
   snapshot: () => readSnapshot((kind, opts) => feedRelay.orchQuery(kind, opts), runGhRead),
   onProgress: (event) => {
     events.emit(rigOrchProgressChannel, event);
     recordProgress(event);
+    catchUp.record(event);
+    if (event.kind === 'end' && event.problem) log.warn('Rig orchestrator: run stopped', { problem: event.problem });
   },
   now: () => Date.now(),
   log,
@@ -265,8 +295,38 @@ const runAgent = (trigger: string) =>
     if (!r.success) log.warn('Rig orchestrator: run failed', { trigger, error: r.error });
     else changed();
   });
-setTimeout(() => runAgent('app start'), 60_000).unref?.();
+
+/** The morning catch-up (catch-up.ts): a short run Home shows, when Rig last read hours ago. */
+const catchUp = createCatchUp({
+  state: async () => {
+    const r = await feedRelay.orchAgentState();
+    return r.success ? r : err({ message: r.error.message });
+  },
+  firstRunDone: () => rigSettingsStore.get().firstRunSeen >= FIRST_RUN_VERSION,
+  running: () => orchestrator.running(),
+  run: (trigger, opts) =>
+    orchestrator.run(trigger, opts).then((r) => {
+      if (r.success) changed();
+      else log.warn('Rig catch-up: failed', { error: r.error });
+      return r;
+    }),
+  now: () => Date.now(),
+  log,
+});
+
+// On open: a catch-up if Rig last read hours ago, else the usual quiet run a minute in. Then every hour.
+setTimeout(() => {
+  void catchUp.maybe('app start').then((r) => {
+    if (r !== 'started') setTimeout(() => runAgent('app start'), 50_000).unref?.();
+  });
+}, 10_000).unref?.();
 setInterval(() => runAgent('schedule'), 60 * 60_000).unref?.();
+// Back from sleep: the hours away are the ones to catch up on.
+app.whenReady().then(() => {
+  const woke = () => void catchUp.maybe('wake');
+  powerMonitor.on('resume', woke);
+  powerMonitor.on('unlock-screen', woke);
+}, () => undefined);
 
 /**
  * `rpc.rig.orch`: the person's own clicks. A start from the renderer is the
@@ -282,8 +342,10 @@ export const rigOrchController = createRPCController({
    * its progress comes on `rigOrchProgressChannel`, ending with `end`.
    */
   firstRun: async () => {
+    // Someone Rig has read for before is caught up since their last read, not read the last 3 days again.
+    const since = await catchUpSince();
     // One first run at a time: asking again (a Read step mounted twice) joins it, with its events so far.
-    const first = orchestrator.startFirst(FIRST_RUN);
+    const first = orchestrator.startFirst(since ? { ...FIRST_RUN, since } : FIRST_RUN);
     if (!first.joined) {
       void first.done.then((r) => {
         if (!r.success) log.warn('Rig orchestrator: first run failed', { error: r.error });
@@ -292,6 +354,10 @@ export const rigOrchController = createRPCController({
     }
     return ok({ started: true, joined: first.joined, events: first.events });
   },
+  /** Where a catch-up would read from (the last read), or null for someone Rig hasn't read for yet. */
+  since: async () => ok({ since: await catchUpSince() }),
+  /** The morning catch-up going now, or just ended, with its events so far (Home's strip); null when there's none. */
+  catchUp: async () => ok(catchUp.status()),
   /** The person's Home space, made if there's none yet: the first run asks once Set up is done. */
   ensureHome: async () => {
     const home = await homeSpace.ensure();
