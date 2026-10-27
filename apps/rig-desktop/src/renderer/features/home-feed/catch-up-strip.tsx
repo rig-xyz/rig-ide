@@ -106,7 +106,8 @@ export function CatchUpStrip({
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text-primary">
           {stopped ? stopped.title : okEnd ? 'While you were away' : `Catching you up${span ? ` ${span}` : ''}`}
         </span>
-        {!stopped && (
+        {/* While it reads; at the end the summary line says it. */}
+        {!state.ended && (
           <span className="flex shrink-0 items-baseline gap-2 text-[11.5px] text-text-muted" role="group" aria-label="So far">
             <Count value={read} label="read" />
             <Count value={handled} label="handled" className="text-status-ok" />
