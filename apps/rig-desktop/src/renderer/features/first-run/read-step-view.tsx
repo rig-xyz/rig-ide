@@ -67,6 +67,9 @@ const ACTIVITY: DotMatrixState[] = ['reading', 'searching', 'thinking'];
  * gathers into one green check: All caught up.
  */
 export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
+  // Set up is done by now: make the private Home space while Rig reads, so the first Send has a place to run.
+  const ensureHome = useRef(env.ensureHome);
+  useEffect(() => ensureHome.current(), []);
   // Mark the read as started, so a quit mid-read resumes here.
   const saved = useRef(false);
   useEffect(() => {

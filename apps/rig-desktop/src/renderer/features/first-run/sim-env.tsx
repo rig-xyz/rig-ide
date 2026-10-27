@@ -13,6 +13,7 @@ import {
   type RigSignInState,
 } from './env';
 import recorded from './read/fixtures/first-run.json';
+import { simulatedFirstWin } from './first-win/fixtures';
 import { replaySource } from './read/progress-source';
 
 /** How long a simulated browser hop, install or sign-in takes, so the waiting states show. */
@@ -119,6 +120,8 @@ export function SimulatedFirstRunEnv({
         )
       ),
     readSource,
+    ensureHome: () => {},
+    firstWin: simulatedFirstWin(later),
     saveProgress: setProgress,
     finish: () =>
       void rpc.rig.settings.set({ firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null }),

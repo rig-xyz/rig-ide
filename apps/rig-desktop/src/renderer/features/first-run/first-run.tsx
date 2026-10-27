@@ -24,6 +24,7 @@ import {
   type FirstRunPlan,
   type RigAccountKind,
 } from './first-run-state';
+import { FirstWinStep } from './first-win/first-win-step';
 import { ReadStepView } from './read-step-view';
 import { RealFirstRunEnv } from './real-env';
 import { SetupStep } from './setup-step';
@@ -250,10 +251,11 @@ function StepView({ step, props }: { step: FirstRunStepId; props: StepProps }): 
       return <SetupStep {...props} />;
     case 'read':
       return <ReadStepView {...props} />;
+    case 'firstWin':
+      return <FirstWinStep {...props} />;
     // Not built yet (`steps.ts`): the shell moves past these, so they never show.
     case 'connect':
     case 'you':
-    case 'firstWin':
       return null;
   }
 }

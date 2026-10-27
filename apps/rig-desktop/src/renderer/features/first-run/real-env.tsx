@@ -1,3 +1,4 @@
+import { err, ok } from '@emdash/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { cliLoginMethod } from '@renderer/features/agents/agent-auth-state';
@@ -6,11 +7,13 @@ import { AgentSignInDialog } from '@renderer/features/agents/agent-sign-in-dialo
 import { afterAgentSignIn, agentAuthQuery } from '@renderer/features/agents/use-agent-auth-probe';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
 import { preferredInstallOptions } from '@renderer/features/onboarding/onboarding-state';
+import { toFeedItems } from '@renderer/features/home-feed/real-feed';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { rpc } from '@renderer/lib/ipc';
 import { FIRST_RUN_VERSION, type FirstRunProgress } from '@shared/rig/first-run';
 import { agentRoute, ROUTED_AGENT_ID } from './agent-route';
-import type { AgentState, FirstRunEnv, RigAccountState } from './env';
+import type { AgentState, FirstRunEnv, FirstWinEnv, RigAccountState } from './env';
+import { firstWinOrder } from './first-win/first-win-model';
 import { liveFirstRun } from './read/progress-source';
 
 const AUTH_STATUS_KEY = ['rig', 'auth', 'status'];
@@ -137,6 +140,8 @@ export function RealFirstRunEnv({
     // Connect's pre-flight (`rig.firstRun.preflight`) is M2.
     preflight: () => Promise.resolve(null),
     readSource: liveFirstRun,
+    ensureHome: () => void rpc.rig.orch.ensureHome().catch(() => undefined),
+    firstWin: realFirstWin,
     saveProgress: (next) => void rpc.rig.settings.set({ firstRunProgress: next }),
     finish: () =>
       void rpc.rig.settings.set({
@@ -164,3 +169,30 @@ export function RealFirstRunEnv({
 
   return <>{children(env)}</>;
 }
+
+/** The First win step against the real Feed: the orchestrator's cards, and Send, Start and answers through Rig. */
+const realFirstWin: FirstWinEnv = {
+  cards: async () => {
+    const feed = await rpc.rig.feed.get().catch(() => null);
+    return feed?.success ? firstWinOrder(toFeedItems(feed.data, Date.now())) : null;
+  },
+  send: async (item, choice, text) => {
+    if (!item.situationId) return err('This card has nothing to send.');
+    const r = await rpc.rig.feed
+      .send({ situationId: item.situationId, choice: choice.cardIndex ?? item.choices.indexOf(choice), text })
+      .catch(() => null);
+    if (!r) return err("Rig couldn't reach your Claude.");
+    return r.success ? ok(r.data) : err(r.error.message);
+  },
+  start: async (item, choice) => {
+    if (!item.situationId) return err('This card has nothing to start.');
+    const r = await rpc.rig.feed
+      .start({ situationId: item.situationId, task: `${choice.lead}${choice.tail}`.replace(/[{}@]/g, '') })
+      .catch(() => null);
+    if (!r) return err("Rig couldn't start it.");
+    return r.success ? ok({ said: `Started in #${r.data.space.name}`, link: null }) : err(r.error.message);
+  },
+  answer: (item, signal) => {
+    if (item.situationId) void rpc.rig.feed.answer({ situationId: item.situationId, signal }).catch(() => undefined);
+  },
+};

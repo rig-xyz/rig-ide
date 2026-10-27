@@ -2,6 +2,9 @@ import type { ReactNode } from 'react';
 import type { AgentIconAsset } from '@shared/core/agents/agent-payload';
 import type { FirstRunProgress } from '@shared/rig/first-run';
 import type { AgentRoute } from './agent-route';
+import type { Result } from '@emdash/shared';
+import type { FeedChoice, FeedItem } from '@renderer/features/home-feed/model';
+import type { SentResult } from '@renderer/features/home-feed/store';
 import type { ProgressSource } from './read/progress-source';
 
 /**
@@ -33,11 +36,27 @@ export interface FirstRunEnv {
   preflight(): Promise<ConnectorCheck[] | null>;
   /** Where the Read step's progress comes from: the real first run, or a recorded one in a simulation. */
   readSource: ProgressSource;
+  /** Makes the private Home space if there's none yet (Send and unbound Starts run there). Fire and forget. */
+  ensureHome(): void;
+  /** The First win step's cards, and what their buttons do. */
+  firstWin: FirstWinEnv;
   saveProgress(progress: FirstRunProgress): void;
   /** Done: don't show this first run again. */
   finish(): void;
   /** What the environment shows over the flow, such as the agent's sign-in terminal. */
   overlay: ReactNode;
+}
+
+/** The First win step's world: the Feed's cards, and Send, Start and the ▾ answers on them. */
+export interface FirstWinEnv {
+  /** The cards to show, drafted answers first; null when the Feed can't be read. */
+  cards(): Promise<FeedItem[] | null>;
+  /** Sends or posts `text` for this choice. A simulation pretends, after a moment. */
+  send(item: FeedItem, choice: FeedChoice, text: string): Promise<Result<SentResult, string>>;
+  /** Starts the session a start choice proposes. */
+  start(item: FeedItem, choice: FeedChoice): Promise<Result<SentResult, string>>;
+  /** Not now, or ignore. */
+  answer(item: FeedItem, signal: 'snooze' | 'ignore'): void;
 }
 
 export type RigAccountState =
