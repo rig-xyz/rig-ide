@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import {
   createContext,
   type Dispatch,
@@ -20,6 +21,7 @@ import {
   type ConnectorsState,
 } from './connectors-model';
 import { CHECKS, initialConnectorsState, TIMING } from './connectors-script';
+import { RECENT_CHATS_KEY } from './use-real-spaces';
 import { ARRIVAL, PEOPLE, topicSuggestion } from './mock';
 import type { FeedChoice, RailSession, RailSpace, SourceConnector, SourceRef } from './model';
 import {
@@ -144,6 +146,7 @@ export function HomeProvider({
   children: ReactNode;
 }) {
   const [state, dispatch] = useReducer(homeReducer, undefined, initialHomeState);
+  const queryClient = useQueryClient();
   // The orchestrator's Feed, as soon as the relay has it. Without one, Home
   // says why (signed out, can't reach); only a dev build that asks for it
   // shows the scripted demo instead.
@@ -490,6 +493,8 @@ export function HomeProvider({
               return toast(r.error.message);
             }
             dispatch({ type: 'remove', itemId });
+            // Its session shows in the rail at once (and again once its row is written).
+            void queryClient.invalidateQueries({ queryKey: RECENT_CHATS_KEY });
           })
           .finally(() => startingRef.current.delete(situationId));
         return;
@@ -549,7 +554,7 @@ export function HomeProvider({
         }
       }
     },
-    [bringIn, createSpace, open, openCard, startSession, toast]
+    [bringIn, createSpace, open, openCard, queryClient, startSession, toast]
   );
 
   const addRoutine = useCallback(

@@ -41,6 +41,10 @@ export const rigFeedController = createRPCController({
     return r.success ? ok(r.data) : err({ message: r.error });
   },
   /** `task`: the choice the person clicked, in the card's words; the brief's goal. `reply`: a card's Reply, which runs in Ask first. */
-  start: (input: { situationId: string; space?: string; task?: string; reply?: boolean }) =>
-    orchActions.start({ ref: input.situationId, space: input.space, task: input.task, askFirst: input.reply === true, userTurnId: turnGate.issue('click') }),
+  start: async (input: { situationId: string; space?: string; task?: string; reply?: boolean }) => {
+    const r = await orchActions.start({ ref: input.situationId, space: input.space, task: input.task, askFirst: input.reply === true, userTurnId: turnGate.issue('click') });
+    // What's working changed, as a send changes the Feed: Home reads it again at once.
+    if (r.success) events.emit(rigFeedChangedChannel, { reason: 'local' });
+    return r;
+  },
 });

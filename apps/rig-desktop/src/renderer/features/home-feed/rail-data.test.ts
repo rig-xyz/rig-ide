@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { demoSpaces } from './mock';
 import { sessionMatrix } from './model';
-import { mergeRail, realSpaceToRail, runToSession } from './rail-data';
+import { mergeRail, orderSpacesByActivity, realSpaceToRail, runToSession } from './rail-data';
 
 const NOW = Date.parse('2026-10-21T09:00:00Z');
 
@@ -80,6 +80,64 @@ describe('real spaces in the rail', () => {
     );
     expect(space.sessions.map((s) => s.name)).toEqual(['One', 'Untitled session']);
   });
+
+  it('a chat still running shows as running, first, never "idle · Last active"; newest first after it', () => {
+    const space = realSpaceToRail(
+      {
+        bindingId: 'b1',
+        name: 'home',
+        path: '/x',
+        unread: 0,
+        status: undefined,
+        members: null,
+        chats: [
+          { id: 'c1', title: 'Older', updatedAt: NOW - 60_000 },
+          { id: 'c2', title: 'Newer', updatedAt: NOW - 1000 },
+          { id: 'c3', title: 'Draft the fix', updatedAt: NOW - 5 * 60_000, live: 'running' },
+        ],
+      },
+      'me',
+      NOW
+    );
+    expect(space.sessions.map((s) => s.name)).toEqual(['Draft the fix', 'Newer']);
+    expect(space.sessions[0]).toMatchObject({ state: 'running', short: 'Working' });
+    expect(space.lastActivityAt).toBe(NOW);
+  });
+
+  it('a chat that is also a run shows once, as the run; runs go newest first; activity is the newest', () => {
+    const run = (runId: string, minutesAgo: number) => ({
+      runId,
+      agent: 'claude' as const,
+      ownerUserId: 'me',
+      startedAt: new Date(NOW - minutesAgo * 60_000).toISOString(),
+      activity: 'reading' as const,
+      title: runId,
+    });
+    const space = realSpaceToRail(
+      {
+        bindingId: 'b1',
+        name: 'ops',
+        path: '/x',
+        unread: 0,
+        status: { bindingId: 'b1', running: [run('r_old', 30), run('r_new', 2)] } as never,
+        members: null,
+        chats: [{ id: 'r_new', title: 'Same session', updatedAt: NOW - 2 * 60_000 }],
+      },
+      'me',
+      NOW
+    );
+    expect(space.sessions.map((s) => s.id)).toEqual(['run:r_new', 'run:r_old']);
+    expect(space.lastActivityAt).toBe(NOW - 2 * 60_000);
+  });
+
+  it('a space where nothing happened has no last activity', () => {
+    const space = realSpaceToRail(
+      { bindingId: 'b1', name: 'quiet', path: '/x', unread: 0, status: undefined, members: null, chats: [] },
+      'me',
+      NOW
+    );
+    expect(space.lastActivityAt).toBeNull();
+  });
 });
 
 describe('mergeRail', () => {
@@ -121,5 +179,17 @@ describe('mergeRail', () => {
     expect(ops.sessions.map((s) => s.id)).toEqual(['s-domains']);
     expect(merged.at(-1)!.id).toBe('bind-x');
     expect(merged.filter((s) => s.name === 'rig-ops')).toHaveLength(1);
+  });
+});
+
+describe('orderSpacesByActivity', () => {
+  it('puts the space with the newest session first, whenever the spaces were made', () => {
+    const space = (id: string, lastActivityAt: number | null) => ({ id, lastActivityAt }) as unknown as Parameters<typeof orderSpacesByActivity>[0][number]['space'];
+    const order = orderSpacesByActivity([
+      { space: space('made-recently', null), madeAt: NOW - 60_000 },
+      { space: space('worked-an-hour-ago', NOW - 3_600_000), madeAt: NOW - 30 * 86_400_000 },
+      { space: space('just-started', NOW - 1000), madeAt: NOW - 60 * 86_400_000 },
+    ]);
+    expect(order.map((s) => s.id)).toEqual(['just-started', 'made-recently', 'worked-an-hour-ago']);
   });
 });

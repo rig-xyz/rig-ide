@@ -7,7 +7,7 @@ import { rigSessionRegistry } from '@renderer/features/chat/session/rig-session-
 import { events, rpc } from '@renderer/lib/ipc';
 import { rigStartSessionChannel } from '@shared/rig/feed';
 import type { RigStoredSession } from '@shared/rig/sessions';
-import { mySessionOf, type MySession, type MySessions, type MySessionState } from './my-sessions-model';
+import { mySessionOf, newestFirst, type MySession, type MySessions, type MySessionState } from './my-sessions-model';
 
 /**
  * Your own sessions in a space: the chats Rig started for you (a Feed
@@ -64,7 +64,8 @@ export function useMySessions(bindingId: string | undefined): MySessions {
     return autorun(() => setAll(list.map((s) => mySessionOf(s, liveStore(s.id)))));
   }, [stored, attention]);
 
-  const rows = all.filter((s) => SHOWN.has(s.state)).sort((a, b) => a.at - b.at);
+  const newest = newestFirst(all);
+  const rows = newest.filter((s) => SHOWN.has(s.state));
   const resolve = (sessionId: string, optionId: string) => liveStore(sessionId)?.resolvePermission(optionId);
-  return { rows, all, resolve };
+  return { rows, all: newest, resolve };
 }

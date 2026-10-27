@@ -49,7 +49,7 @@ export function SpaceGroups({
         {
           needsYou: space.sessions.some((s) => s.state === 'needs_you'),
           live: space.sessions.some((s) => s.state === 'running' || s.state === 'starting'),
-          lastActivityAt: null,
+          lastActivityAt: space.lastActivityAt ?? null,
           known: false,
         },
       ])

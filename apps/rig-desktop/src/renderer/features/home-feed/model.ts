@@ -107,6 +107,8 @@ export interface RailSpace {
   /** Where the space lives on disk, when it is one of the app's real spaces. */
   root?: string;
   bindingId?: string;
+  /** When anything last happened in it (a session or a run), for ordering the rail; null when nothing has. */
+  lastActivityAt?: number | null;
   origin: 'real' | 'mock';
   fresh?: boolean;
 }

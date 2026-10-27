@@ -64,3 +64,8 @@ export function mySessionOf(stored: RigStoredSession, live: RigChatStore | null)
     at: unseen ? live.createdAt : stored.updatedAt,
   };
 }
+
+/** Newest first, as every session list reads: the dock's rows and the Sessions pill alike. */
+export function newestFirst(sessions: readonly MySession[]): MySession[] {
+  return [...sessions].sort((a, b) => b.at - a.at);
+}

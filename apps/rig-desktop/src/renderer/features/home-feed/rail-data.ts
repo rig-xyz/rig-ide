@@ -14,7 +14,8 @@ export interface RealSpaceInput {
   members: readonly { userId: string; name: string | null; avatarUrl?: string | null }[] | null;
   unread: number;
   status: RigSpaceStatus | undefined;
-  chats: readonly { id: string; title: string | null; updatedAt: number }[];
+  /** `live`: the chat is running in this window right now (working, or waiting on the person). */
+  chats: readonly { id: string; title: string | null; updatedAt: number; live?: 'running' | 'needs_you' }[];
 }
 
 const ACTIVITY_WORD: Record<string, string> = {
@@ -86,10 +87,26 @@ export function chatToSession(
   now: number
 ): RailSession {
   const ago = relativeTime(chat.updatedAt, now);
+  const name = chat.title?.trim() || 'Untitled session';
+  // Still running here: say so, never "idle · Last active".
+  if (chat.live) {
+    const working = chat.live === 'running';
+    return {
+      id: `chat:${chat.id}`,
+      spaceId,
+      name,
+      state: chat.live,
+      short: working ? 'Working' : 'Needs you',
+      summary: working ? 'Your agent is working in this space.' : 'Your agent is waiting for you.',
+      last: { who: 'You', text: working ? 'Working' : 'Needs you', ago: 'now' },
+      steps: [{ text: working ? 'Working' : 'Needs you', ago: 'now' }],
+      origin: 'real',
+    };
+  }
   return {
     id: `chat:${chat.id}`,
     spaceId,
-    name: chat.title?.trim() || 'Untitled session',
+    name,
     state: 'idle',
     short: `Last active ${ago}`,
     summary: 'A chat with your agent in this space.',
@@ -111,10 +128,20 @@ export function realSpaceToRail(
     hue: hueFor(m.userId),
     avatarUrl: m.avatarUrl ?? null,
   }));
-  const runs = (input.status?.running ?? []).map((run) =>
-    runToSession(input.bindingId, run, selfUserId, now)
+  // Runs newest first; a chat that is one of them shows once, as the run.
+  const running = [...(input.status?.running ?? [])].sort(
+    (a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0)
   );
-  const recent = input.chats.filter((c) => isRecent(c.updatedAt, now));
+  const runIds = new Set(running.map((r) => r.runId));
+  const runs = running.map((run) => runToSession(input.bindingId, run, selfUserId, now));
+  // The space's own chats: what still runs first, then newest first.
+  const recent = input.chats
+    .filter((c) => !runIds.has(c.id) && (c.live || isRecent(c.updatedAt, now)))
+    .sort((a, b) => Number(!!b.live) - Number(!!a.live) || b.updatedAt - a.updatedAt);
+  const activity = [
+    ...running.map((r) => Date.parse(r.startedAt) || 0),
+    ...input.chats.map((c) => (c.live ? now : c.updatedAt)),
+  ].filter((t) => t > 0);
   const chats = recent.slice(0, CHATS_PER_SPACE).map((c) => chatToSession(input.bindingId, c, now));
   const history = recent.slice(0, CHATS_ON_SPACE_PAGE).map((c) => chatToSession(input.bindingId, c, now));
   const shared = input.members ? others.length > 0 : true;
@@ -131,8 +158,18 @@ export function realSpaceToRail(
     history: [...runs, ...history],
     root: input.path ?? undefined,
     bindingId: input.bindingId,
+    lastActivityAt: activity.length ? Math.max(...activity) : null,
     origin: 'real',
   };
+}
+
+/**
+ * The rail's spaces, newest work first: by a space's latest session or run, or by when it was made
+ * when nothing ever happened in it.
+ */
+export function orderSpacesByActivity(entries: readonly { space: RailSpace; madeAt: number }[]): RailSpace[] {
+  const at = (e: { space: RailSpace; madeAt: number }) => e.space.lastActivityAt ?? e.madeAt;
+  return [...entries].sort((a, b) => at(b) - at(a)).map((e) => e.space);
 }
 
 /**
