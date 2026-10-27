@@ -260,12 +260,11 @@ function SpaceEntry({
   onOpenSession: (session: RailSession) => void;
   onPeek: (el: HTMLElement, body: ReactNode) => void;
 }) {
-  const sessions = space.sessions.map((session, i) => (
+  const sessions = space.sessions.map((session) => (
     <SessionEntry
       key={session.id}
       space={space}
       session={session}
-      last={i === space.sessions.length - 1}
       ghost={space.fresh || session.fresh}
       collapsed={collapsed}
       current={selected === session.id}
@@ -367,7 +366,6 @@ function SpaceEntry({
 function SessionEntry({
   space,
   session,
-  last,
   ghost,
   collapsed,
   current,
@@ -377,8 +375,6 @@ function SessionEntry({
 }: {
   space: RailSpace;
   session: RailSession;
-  /** The space's last session: the thread down from its name ends here. */
-  last: boolean;
   /** Hidden until its copy lands (it, or the new space it's in). */
   ghost?: boolean;
   collapsed: boolean;
@@ -428,7 +424,6 @@ function SessionEntry({
       }
       className={collapsed ? 'size-9 justify-center' : 'min-h-10 gap-2 pr-2 pl-4'}
     >
-      {!collapsed && <span aria-hidden className="hf-stem" data-last={last || undefined} />}
       {matrix}
       {!collapsed && (
         <span className="min-w-0 flex-1 whitespace-nowrap">
