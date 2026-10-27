@@ -124,13 +124,15 @@ export function createSender(deps: SendDeps) {
       const offRaw = await deps.acp.subscribeRaw(conversationId, (raw: RawSessionEvent) => {
         if (raw.kind === 'turn_start') begun = true;
         else if (raw.kind === 'acp_update') {
-          const u = raw.update as { sessionUpdate: string; toolCallId?: string; name?: string; title?: string; status?: string; content?: unknown };
+          const u = raw.update as { sessionUpdate: string; toolCallId?: string; name?: string; title?: string; status?: string; content?: unknown; rawOutput?: unknown };
           if (u.toolCallId && (u.name || u.title)) calls.set(u.toolCallId, u.name ?? u.title ?? '');
           if (u.sessionUpdate === 'tool_call_update' && u.toolCallId && SLACK_SEND.test(calls.get(u.toolCallId) ?? '')) {
             if (u.status === 'completed') {
-              link = /https:\/\/[\w.-]*slack\.com\/archives\/[^\s"')\]]+/.exec(JSON.stringify(u.content ?? ''))?.[0] ?? null;
+              // Slack's reply ({"message_link": …}) comes back in rawOutput, its slashes escaped.
+              const said = JSON.stringify([u.content, u.rawOutput]).replace(/\\+\//g, '/');
+              link = /https:\/\/[\w.-]*slack\.com\/archives\/[^\s"'\\)\]]+/.exec(said)?.[0] ?? null;
               finish(ok({ said: target.thread ? 'Sent in the Slack thread' : 'Sent in Slack', link }));
-            } else if (u.status === 'failed') finish(err(`Slack said no: ${JSON.stringify(u.content ?? '').slice(0, 300)}`));
+            } else if (u.status === 'failed') finish(err(`Slack said no: ${JSON.stringify(u.content ?? u.rawOutput ?? '').slice(0, 300)}`));
           }
         } else if (raw.kind === 'turn_end' && begun) finish(err("Claude didn't send it."));
       });

@@ -44,7 +44,7 @@ function fakeAcp(calls: { name: string; input: Record<string, unknown>; ok?: boo
           onPermission(request);
           perms(request);
           const allowed = resolved.at(-1) === 'yes';
-          emit({ kind: 'acp_update', update: { sessionUpdate: 'tool_call_update', toolCallId: id, status: allowed && c.ok !== false ? 'completed' : 'failed', content: [{ type: 'content', content: { type: 'text', text: allowed ? 'Sent: https://acme.slack.com/archives/C0P/p123' : 'refused' } }] } } as never);
+          emit({ kind: 'acp_update', update: { sessionUpdate: 'tool_call_update', toolCallId: id, status: allowed && c.ok !== false ? 'completed' : 'failed', rawOutput: [{ type: 'text', text: allowed ? '{"message_link":"https:\\/\\/acme.slack.com\\/archives\\/C0P\\/p123"}' : 'refused' }] } } as never);
         });
         emit({ kind: 'turn_end', turnId: 't', stopReason: 'end_turn' });
       }, 0);
