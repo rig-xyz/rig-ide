@@ -11,14 +11,18 @@
   transition: width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-/* The thread from a space down to its sessions. */
+/* The thread from a space down to its sessions: one line, each row's stem
+   meeting the next, ending at the last session. */
 .hf-stem {
   position: absolute;
   left: 12px;
   top: -6px;
-  bottom: 50%;
+  bottom: 0;
   width: 1px;
   background: var(--border-hairline);
+}
+.hf-stem[data-last] {
+  bottom: 50%;
 }
 
 @keyframes hf-land {
