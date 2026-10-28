@@ -6,7 +6,7 @@ import { RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
 import { ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, rigToolOf, type RigToolScope } from '../spaces/rig-tools';
 import { agentProblemOf, connectorNeedsAuth, ProgressMapper, toolOf, type AcpToolUpdate, type OrchProgressEvent, type RunProblem } from '@shared/rig/orch-progress';
 import { checkPermission } from './checks';
-import { askFirst, LOCKED_MODE, lockedSession } from './lockdown';
+import { askFirst, LOCKED_MODE, lockedSession, rigTool } from './lockdown';
 import { orchestratorSkill } from './skill';
 
 /**
@@ -257,7 +257,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       cwd,
       mcpServers: [rig],
       systemPromptAppend: orchestratorSkill(name),
-      ...lockedSession(),
+      ...lockedSession({ policy: { allow: [...ORCHESTRATOR_RIG_TOOLS].map(rigTool) } }),
     });
     if (!started.success) return err(failOf(started.error));
     // Ask first, whatever the person's defaultMode: if it can't be set, no run.

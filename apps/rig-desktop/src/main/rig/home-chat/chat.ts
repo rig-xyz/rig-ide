@@ -3,7 +3,7 @@ import { err, ok, type Result } from '@emdash/shared';
 import { finalAnswerFromEvents, type RawSessionEvent, type SpacesAcpSessions } from '../spaces/dispatch';
 import type { HomeChatRun } from '@shared/rig/home-chat';
 import { HOME_BINDING, rigToolOf, type RigToolScope } from '../spaces/rig-tools';
-import { askFirst, lockedSession } from '../orch/lockdown';
+import { askFirst, lockedSession, rigTool } from '../orch/lockdown';
 
 /**
  * Home's chat with a real Claude (rig docs/orchestrator-architecture.md §5):
@@ -115,7 +115,7 @@ export function createHomeChat(deps: HomeChatDeps): HomeChat {
       mcpServers: [rig],
       // The person's own default model, as in their other Claude sessions.
       systemPromptAppend: [HOME_CHAT_RULES, homeChatSelf((await deps.selfNames?.().catch(() => [])) ?? [])].filter(Boolean).join('\n'),
-      ...lockedSession({ rigStart: true }),
+      ...lockedSession({ rigStart: true, policy: { allow: [...HOME_CHAT_TOOLS].map(rigTool) } }),
     });
     if (!started.success) return err(started.error);
     // Ask first, whatever the person's default mode: if it can't be set, no chat.

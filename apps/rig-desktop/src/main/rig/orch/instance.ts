@@ -20,6 +20,7 @@ import { resolveLocalPathsImpl } from '../recent-rigs';
 import { rigSpaceStatusController } from '../space-status';
 import { createRuntimeAcpSessions } from '../spaces/dispatch';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
+import { READER_BINDING } from '../spaces/rig-tools';
 import { createActions, type StartInput } from './actions';
 import { alphaOnly, mayAskRelay, readsOnItsOwn } from './alpha';
 import { createSender } from './send';
@@ -77,6 +78,9 @@ const headless = {
     return dir;
   },
   newConversationId: () => `watch-${randomUUID()}`,
+  // rig_github and nothing else (rig-tools READER_BINDING): GitHub reads without a shell.
+  readerTools: async (cwd: string) =>
+    (await import('../spaces/rig-tools-instance')).rigToolsServer.serverFor({ bindingId: READER_BINDING, ownerUserId: 'rig-reader', agent: 'claude', cwd }),
 };
 
 /** The account's spaces, with their folder on this Mac when they have one. */

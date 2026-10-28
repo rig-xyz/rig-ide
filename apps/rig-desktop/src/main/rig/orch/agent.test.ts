@@ -52,7 +52,8 @@ describe('the background orchestrator', () => {
     expect(agentPermission(perm('mcp__rig__rig_chat_read'))).toBe('no');
     expect(agentPermission(perm('mcp__claude_ai_Slack__slack_read_thread'))).toBe('yes');
     expect(agentPermission(perm('mcp__claude_ai_Slack__slack_send_message'))).toBe('no');
-    expect(agentPermission(perm('gh pr view 343 --repo Ulysholdings/mobile-ios-v2', { kind: 'execute-tool-call', command: 'gh pr view 343 --repo Ulysholdings/mobile-ios-v2' }))).toBe('yes');
+    // GitHub goes through rig_github: no shell, even for a gh read.
+    expect(agentPermission(perm('gh pr view 343 --repo Ulysholdings/mobile-ios-v2', { kind: 'execute-tool-call', command: 'gh pr view 343 --repo Ulysholdings/mobile-ios-v2' }))).toBe('no');
     expect(agentPermission(perm('gh pr merge 343', { kind: 'execute-tool-call', command: 'gh pr merge 343' }))).toBe('no');
     // A read verb inside a write isn't a read.
     expect(agentPermission(perm('mcp__claude_ai_Slack__slack_mark_read'))).toBe('no');

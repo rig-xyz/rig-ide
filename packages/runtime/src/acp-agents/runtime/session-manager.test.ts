@@ -304,19 +304,25 @@ describe('AcpRuntime session manager', () => {
     expect(JSON.stringify(vi.mocked(h.agent.newSession).mock.lastCall)).not.toContain('disallowedTools');
   });
 
-  it("keeps the person's settings files from allowing calls or running hooks in a session that asks, and only then", async () => {
+  it("keeps the person's settings files from allowing calls in a session that asks, and only then, and runs its guard before every call", async () => {
     const h = makeAcpHarness();
     const rt = new AcpRuntime(h.deps);
-    await rt.startSession({ ...makeStartInput({ conversationId: 'conv-app-only' }), noBypassPermissions: true, appPermissionsOnly: true });
+    await rt.startSession({
+      ...makeStartInput({ conversationId: 'conv-app-only' }),
+      noBypassPermissions: true,
+      appPermissionsOnly: true,
+      toolGuardCommand: 'guard --policy x || exit 2',
+    });
     expect(h.agent.newSession).toHaveBeenLastCalledWith(
       expect.objectContaining({
         _meta: {
           claudeCode: {
             options: {
+              settings: { hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: 'guard --policy x || exit 2', timeout: 30 }] }] } },
               allowDangerouslySkipPermissions: false,
+              // Not allowManagedHooksOnly: it would switch the guard off.
               managedSettings: {
                 allowManagedPermissionRulesOnly: true,
-                allowManagedHooksOnly: true,
                 permissions: { disableBypassPermissionsMode: 'disable' },
               },
             },

@@ -1,7 +1,8 @@
-import type { AcpPermissionRequest } from '@emdash/core/acp';
+import type { AcpHttpMcpServerWire, AcpPermissionRequest } from '@emdash/core/acp';
 import { err, ok, type Result } from '@emdash/shared';
 import { finalAnswerFromEvents, type RawSessionEvent, type SpacesAcpSessions } from '../spaces/dispatch';
-import { askFirst, isReadTool, lockedSession } from './lockdown';
+import { rigToolOf } from '../spaces/rig-tools';
+import { askFirst, isReadTool, lockedSession, rigTool, type GuardPolicy } from './lockdown';
 
 /**
  * Sources: what Rig watches for the person, through their own Claude's
@@ -59,21 +60,37 @@ export type SourceRunnerDeps = {
   now: () => number;
   timeoutMs?: number;
   log?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
+  /**
+   * Rig's own tools for a reading session (the reader scope, rig-tools.ts):
+   * rig_github, GitHub reads with no shell. Absent: no GitHub.
+   */
+  readerTools?: (cwd: string) => Promise<AcpHttpMcpServerWire>;
 };
+
+/** The one Rig tool a reading session may call: GitHub reads, checked and run with no shell (orch/github.ts). */
+export const RIG_GITHUB = 'rig_github';
+
+/** Whether a permission request is for rig_github. */
+export const isRigGithub = (request: AcpPermissionRequest) => rigToolOf(request.toolCall.title ?? '') === RIG_GITHUB;
 
 const slug = (connector: string) => connector.replace(/[^A-Za-z0-9]+/g, '_');
 
-/** Allow the source connector's read tools once; refuse everything else. */
+/** The guard's policy for a source run: the source connector's reads, and rig_github. */
+export function sourcePolicy(connector: string): Partial<GuardPolicy> {
+  return { allow: [rigTool(RIG_GITHUB)], readServers: `^claude_ai_${slug(connector)}$` };
+}
+
+/** Allow the source connector's read tools, and rig_github, once; refuse everything else. */
 export function sourcePermission(connector: string, request: AcpPermissionRequest): string | null {
   const title = request.toolCall.title ?? '';
   const prefix = `mcp__claude_ai_${slug(connector)}__`;
-  const allowed = title.startsWith(prefix) && isReadTool(title.slice(prefix.length));
+  const allowed = (title.startsWith(prefix) && isReadTool(title.slice(prefix.length))) || isRigGithub(request);
   const want = allowed ? 'allow_once' : 'reject_once';
   return request.options.find((o) => o.kind === want)?.optionId ?? null;
 }
 
 export const SOURCE_RULES =
-  "You list what changed in one of the person's tools for Rig, read-only. Use only that tool's list, search and get calls. Never write, comment, send or change anything. Reply with JSON only, no prose: a JSON array, [] when nothing changed.";
+  "You list what changed in one of the person's tools for Rig, read-only. Use only that tool's list, search and get calls, and for GitHub rig_github with gh read commands (gh pr list, gh search prs …). Never write, comment, send or change anything. Reply with JSON only, no prose: a JSON array, [] when nothing changed.";
 
 /** What a run asks for, per connector: the fields Rig maps into events. */
 export function sourcePrompt(source: Source, since: string): string {
@@ -161,7 +178,7 @@ export function toImportEvent(source: Source, line: Record<string, unknown>): Im
 export type RunOutcome = { status: SourceStatus; listed: number; added: number; cursor: string | null; error?: string };
 
 /** A headless session's dependencies: the ACP sessions and a folder to run in. */
-export type HeadlessDeps = Pick<SourceRunnerDeps, 'acp' | 'cwd' | 'newConversationId' | 'timeoutMs'>;
+export type HeadlessDeps = Pick<SourceRunnerDeps, 'acp' | 'cwd' | 'newConversationId' | 'timeoutMs' | 'readerTools'>;
 
 /**
  * One short headless Claude session on this Mac: one prompt, its permission
@@ -172,11 +189,25 @@ export type HeadlessDeps = Pick<SourceRunnerDeps, 'acp' | 'cwd' | 'newConversati
  */
 export async function askHeadless(
   deps: HeadlessDeps,
-  input: { rules: string; prompt: string; permission: (request: AcpPermissionRequest) => string | null }
+  input: {
+    rules: string;
+    prompt: string;
+    permission: (request: AcpPermissionRequest) => string | null;
+    /** What the guard lets through (lockdown.ts); the person's connectors' reads when absent. */
+    policy?: Partial<GuardPolicy>;
+  }
 ): Promise<Result<string, string>> {
   const conversationId = deps.newConversationId();
   const cwd = await deps.cwd();
-  const started = await deps.acp.startSession({ conversationId, providerId: 'claude', cwd, systemPromptAppend: input.rules, ...lockedSession() });
+  const reader = deps.readerTools ? await deps.readerTools(cwd).catch(() => null) : null;
+  const started = await deps.acp.startSession({
+    conversationId,
+    providerId: 'claude',
+    cwd,
+    ...(reader ? { mcpServers: [reader] } : {}),
+    systemPromptAppend: input.rules,
+    ...lockedSession({ policy: input.policy ?? { allow: [rigTool(RIG_GITHUB)] } }),
+  });
   if (!started.success) return err(started.error);
   // Ask first, whatever the person's default mode: if it can't be set, it doesn't run.
   const moded = await askFirst(deps.acp, conversationId);
@@ -217,6 +248,7 @@ export async function runSource(deps: SourceRunnerDeps, source: Source): Promise
     rules: SOURCE_RULES,
     prompt: sourcePrompt(source, since),
     permission: (request) => sourcePermission(source.connector, request),
+    policy: sourcePolicy(source.connector),
   });
   if (!answer.success) return { status: 'failed', listed: 0, added: 0, cursor: source.cursor, error: answer.error };
   const lines = parseJsonArray(answer.data);

@@ -842,12 +842,20 @@ export class SessionManager implements InboundRouter {
  * load and resume). Per thread, never the adapter's process-wide config: one
  * adapter serves every Codex session in a folder.
  */
-/** `appPermissionsOnly`'s policy-tier settings: no allow rules or hooks from settings files, no bypass mode. */
+/**
+ * `appPermissionsOnly`'s policy-tier settings: no allow rules from settings
+ * files, no bypass mode. Not `allowManagedHooksOnly`: it would also switch
+ * off the session's own `toolGuardCommand`, which sits in the flag tier.
+ */
 export const APP_PERMISSIONS_ONLY = {
   allowManagedPermissionRulesOnly: true,
-  allowManagedHooksOnly: true,
   permissions: { disableBypassPermissionsMode: 'disable' },
 } as const;
+
+/** The flag-tier hooks that run `toolGuardCommand` before every tool call. */
+export function toolGuardHooks(command: string) {
+  return { PreToolUse: [{ hooks: [{ type: 'command', command, timeout: 30 }] }] };
+}
 
 function sessionMeta(input: AcpStartInput): { _meta?: Record<string, unknown> } {
   if (input.providerId === 'codex') {
@@ -860,14 +868,22 @@ function sessionMeta(input: AcpStartInput): { _meta?: Record<string, unknown> } 
   const denied = input.disallowedTools ?? [];
   const noBypass = input.noBypassPermissions === true;
   const appOnly = input.appPermissionsOnly === true;
-  if (disabled.length === 0 && !append && !debugFile && denied.length === 0 && !noBypass && !appOnly) return {};
+  const guard = input.toolGuardCommand ?? '';
+  if (disabled.length === 0 && !append && !debugFile && denied.length === 0 && !noBypass && !appOnly && !guard) return {};
   // Tool search on, said outright for a space session (the only kind with an
   // append), new or loaded: with it off, every tool of the owner's own MCP
   // servers went in every call, about 285,000 tokens. Rig's own tools skip
   // the search by marking themselves always loaded (`anthropic/alwaysLoad`
   // in each tool's `_meta`, rig-tools-server.ts).
   const options = {
-    ...(disabled.length > 0 ? { settings: { disabledMcpjsonServers: disabled } } : {}),
+    ...(disabled.length > 0 || guard
+      ? {
+          settings: {
+            ...(disabled.length > 0 ? { disabledMcpjsonServers: disabled } : {}),
+            ...(guard ? { hooks: toolGuardHooks(guard) } : {}),
+          },
+        }
+      : {}),
     ...(append ? { env: { ENABLE_TOOL_SEARCH: 'true' } } : {}),
     ...(debugFile ? { debug: true, debugFile } : {}),
     ...(denied.length > 0 ? { disallowedTools: denied } : {}),

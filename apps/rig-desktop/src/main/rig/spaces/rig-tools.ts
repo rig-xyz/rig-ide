@@ -186,6 +186,15 @@ export const ORCHESTRATOR_RIG_TOOLS: ReadonlySet<string> = new Set([
   'rig_github',
 ]);
 
+/**
+ * Rig's short reading sessions (orch/sources.ts, orch/checks.ts): a source
+ * run or a card's check. Their server lists only `READER_RIG_TOOLS`.
+ */
+export const READER_BINDING = 'reader';
+
+/** A reading session's Rig tools: GitHub reads, checked and run with no shell. */
+export const READER_RIG_TOOLS: ReadonlySet<string> = new Set(['rig_github']);
+
 /** The Feed's tools a space session gets (`orchestratorTools`): listed only with Rig Alpha on. */
 export const FEED_RIG_TOOLS: ReadonlySet<string> = new Set(['rig_query', 'rig_get', 'rig_act', 'rig_start']);
 
@@ -1688,7 +1697,7 @@ export function createAgentRigTools(backend: RigToolsBackend): RigTool[] {
       inputSchema: { command: z.string().describe('The gh command, starting with "gh ".') },
       annotations: { title: 'Read GitHub', readOnlyHint: true, openWorldHint: true },
       run: async (scope, input) => {
-        if (scope.bindingId !== ORCHESTRATOR_BINDING) return failed(ONLY_ORCHESTRATOR);
+        if (scope.bindingId !== ORCHESTRATOR_BINDING && scope.bindingId !== READER_BINDING) return failed(ONLY_ORCHESTRATOR);
         if (!backend.orch?.github) return failed(NO_ORCH);
         const res = await backend.orch.github(String(input.command ?? ''));
         return res.success ? { text: res.data.trim() || '(no output)' } : failed(res.error.message);

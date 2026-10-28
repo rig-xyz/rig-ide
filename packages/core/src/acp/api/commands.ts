@@ -83,13 +83,22 @@ export const acpStartInputSchema = z.object({
   /** Claude only: no bypass-permissions mode in this session, even if the person's settings allow it. */
   noBypassPermissions: z.boolean().optional(),
   /**
-   * Claude only: the permission rules and hooks in the person's own settings
-   * files don't apply to this session (Claude Code's managed-tier
-   * `allowManagedPermissionRulesOnly` and `allowManagedHooksOnly`). Their allow
-   * rules can't approve a call, so every call the deny rules don't settle comes
-   * to the app's permission handler. It only ever narrows the session.
+   * Claude only: the permission rules in the person's own settings files
+   * don't apply to this session (Claude Code's managed-tier
+   * `allowManagedPermissionRulesOnly`). Their allow rules can't approve a
+   * call, so every call the deny rules don't settle comes to the app's
+   * permission handler. It only ever narrows the session. An IT-managed tier
+   * on the Mac drops it, so a session that must stay narrow also has a
+   * `toolGuardCommand`.
    */
   appPermissionsOnly: z.boolean().optional(),
+  /**
+   * Claude only: a shell command Claude Code runs before every tool call (a
+   * PreToolUse command hook in the session's own settings tier). It gets the
+   * call on stdin and may deny it; a hook's deny beats any allow rule and any
+   * other hook's allow. Set by the app for its own background sessions.
+   */
+  toolGuardCommand: z.string().max(65_536).optional(),
   /**
    * Claude only: Claude Code's debug log for this session goes to this file
    * (the adapter's `debug` and `debugFile` options). Set by the app for a

@@ -12,6 +12,10 @@ describe('sources', () => {
   it("allow only the source connector's read tools", () => {
     expect(sourcePermission('Linear', perm('mcp__claude_ai_Linear__list_issues'))).toBe('yes');
     expect(sourcePermission('Linear', perm('mcp__claude_ai_Linear__save_issue'))).toBe('no');
+    // GitHub through rig_github (no shell); another connector's reads stay refused.
+    expect(sourcePermission('Linear', perm('mcp__rig__rig_github'))).toBe('yes');
+    expect(sourcePermission('Linear', perm('mcp__rig__rig_feed'))).toBe('no');
+    expect(sourcePermission('Linear', perm('mcp__claude_ai_Slack__slack_read_thread'))).toBe('no');
     expect(sourcePermission('Linear', perm('mcp__claude_ai_Slack__list_messages'))).toBe('no');
     expect(sourcePermission('Linear', perm('Bash'))).toBe('no');
     expect(sourcePermission('Linear', perm('mcp__claude_ai_Linear__get_or_create_label'))).toBe('no');

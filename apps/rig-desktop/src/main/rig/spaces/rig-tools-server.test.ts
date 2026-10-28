@@ -3,7 +3,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ok } from '@emdash/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AcpHttpMcpServerWire } from '@emdash/core/acp';
-import { FEED_RIG_TOOLS, ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, type RigToolScope, type RigToolsBackend } from './rig-tools';
+import { FEED_RIG_TOOLS, ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, READER_BINDING, type RigToolScope, type RigToolsBackend } from './rig-tools';
 import { createRigToolsServer, type RigToolsServer } from './rig-tools-server';
 
 const DYLAN: RigToolScope = { bindingId: 'b1', ownerUserId: 'u-dylan', agent: 'claude', cwd: '/rigs/one' };
@@ -207,6 +207,17 @@ describe('rig tools server', () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([...ORCHESTRATOR_RIG_TOOLS].sort());
     expect(tools.map((t) => t.name)).not.toContain('rig_start');
+    await client.close();
+  });
+
+  it('gives a reading session (a source run, a check) rig_github only, and runs it there', async () => {
+    const github = vi.fn(async () => ok('{"state":"MERGED"}'));
+    server = createRigToolsServer({ backend: { ...fakeBackend(), orch: { github } as unknown as RigToolsBackend['orch'] } });
+    const client = await connect(await server.serverFor({ ...DYLAN, bindingId: READER_BINDING }));
+    expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['rig_github']);
+    const res = await client.callTool({ name: 'rig_github', arguments: { command: 'gh pr view 555 --repo acme/ramps --json state' } });
+    expect(github).toHaveBeenCalledWith('gh pr view 555 --repo acme/ramps --json state');
+    expect(JSON.stringify(res.content)).toContain('MERGED');
     await client.close();
   });
 

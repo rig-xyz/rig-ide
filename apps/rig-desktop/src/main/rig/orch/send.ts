@@ -1,3 +1,6 @@
+import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { AcpPermissionRequest } from '@emdash/core/acp';
 import { err, ok, type Result } from '@emdash/shared';
 import type { RigFeedCard } from '@shared/rig/feed';
@@ -38,6 +41,8 @@ export type SendDeps = {
   /** It went: sent or posted, and whether the words were changed from the draft (telemetry; never the words). */
   sent?: (what: { type: 'send' | 'post'; edited: boolean }) => void;
   timeoutMs?: number;
+  /** Where the guard keeps its "sent once" mark (tests); the system's temp folder otherwise. */
+  onceDir?: () => string;
   log?: { info: (msg: string, meta?: Record<string, unknown>) => void; warn: (msg: string, meta?: Record<string, unknown>) => void };
 };
 
@@ -110,12 +115,14 @@ export function createSender(deps: SendDeps) {
   async function sendInSlack(target: { channel: string; thread: string | null }, text: string): Promise<Result<SendOutcome, string>> {
     const conversationId = deps.newConversationId();
     const cwd = await deps.cwd();
+    // The guard lets through this one message, once (it claims this file), and nothing else: no reads either.
+    const once = join(deps.onceDir?.() ?? tmpdir(), `rig-send-${conversationId.replace(/[^\w-]/g, '')}.once`);
     const started = await deps.acp.startSession({
       conversationId,
       providerId: 'claude',
       cwd,
       systemPromptAppend: 'You send one Slack message, word for word, for the person who clicked Send in Rig. Nothing else: no searching, reading, reacting or other messages.',
-      ...lockedSession(),
+      ...lockedSession({ policy: { readServers: null, send: { channel: target.channel, thread: target.thread, text, once } } }),
     });
     if (!started.success) return err(started.error);
     try {
@@ -166,6 +173,7 @@ export function createSender(deps: SendDeps) {
       }
     } finally {
       await deps.acp.stopSession?.(conversationId).catch(() => undefined);
+      await rm(once, { force: true }).catch(() => undefined);
     }
   }
 

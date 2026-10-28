@@ -100,6 +100,8 @@ export interface SpacesAcpSessions {
     noBypassPermissions?: boolean;
     /** Claude only: the person's settings files can't allow a call or run a hook here; every call the deny rules don't settle asks the app. */
     appPermissionsOnly?: boolean;
+    /** Claude only: a command run before every tool call that may deny it (orch/lockdown.ts's guard). */
+    toolGuardCommand?: string;
   }): Promise<Result<{ sessionId: string }, string>>;
   /** Reopens an earlier ACP session by its agent session id (ACP `session/load`), with its context intact. */
   resumeSession(input: {
@@ -2345,7 +2347,7 @@ export function createRuntimeAcpSessions(
     return file ? { claudeDebugFile: file } : {};
   };
   return {
-    async startSession({ conversationId, providerId, cwd, mcpServers, disabledProjectServers, systemPromptAppend, model, disallowedTools, noBypassPermissions, appPermissionsOnly }) {
+    async startSession({ conversationId, providerId, cwd, mcpServers, disabledProjectServers, systemPromptAppend, model, disallowedTools, noBypassPermissions, appPermissionsOnly, toolGuardCommand }) {
       const client = await getClient();
       const result = await client.startSession({
         input: {
@@ -2363,6 +2365,7 @@ export function createRuntimeAcpSessions(
           ...(disallowedTools?.length ? { disallowedTools } : {}),
           ...(noBypassPermissions ? { noBypassPermissions } : {}),
           ...(appPermissionsOnly ? { appPermissionsOnly } : {}),
+          ...(toolGuardCommand ? { toolGuardCommand } : {}),
           ...debugFor(conversationId, providerId),
         },
       });
