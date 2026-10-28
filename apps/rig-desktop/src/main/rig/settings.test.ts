@@ -271,6 +271,27 @@ describe('RigSettingsStore', () => {
     });
   });
 
+  describe('alphaEnabled: off unless turned on', () => {
+    it('a brand-new install and an existing file without it are both off', () => {
+      const fresh = new RigSettingsStore(settingsPath);
+      fresh.initialize();
+      expect(fresh.get().alphaEnabled).toBe(false);
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(settingsPath, JSON.stringify({ version: 1, theme: 'dark' }));
+      const existing = new RigSettingsStore(settingsPath);
+      existing.initialize();
+      expect(existing.get().alphaEnabled).toBe(false);
+    });
+
+    it('a saved on stays on', () => {
+      mkdirSync(join(dir, 'nested'), { recursive: true });
+      writeFileSync(settingsPath, JSON.stringify({ ...DEFAULT_RIG_SETTINGS, alphaEnabled: true }));
+      const store = new RigSettingsStore(settingsPath);
+      store.initialize();
+      expect(store.get().alphaEnabled).toBe(true);
+    });
+  });
+
   describe('firstRunSeen and firstRunProgress', () => {
     it('a brand-new install has seen no first run and has none under way', () => {
       const store = new RigSettingsStore(settingsPath);

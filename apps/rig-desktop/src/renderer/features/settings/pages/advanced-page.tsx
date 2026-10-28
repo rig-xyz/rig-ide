@@ -6,6 +6,7 @@ import {
   firstRunDebugAvailable,
   replayFirstRun,
 } from '@renderer/features/first-run/debug/first-run-debug';
+import { useAlphaEnabled } from '@renderer/features/home-feed/use-new-home-enabled';
 import { rpc } from '@renderer/lib/ipc';
 import { Button } from '@renderer/lib/ui/button';
 import { settingsRow } from '../settings-pages';
@@ -14,9 +15,11 @@ import { SettingsRow, SettingsRows, SettingsSwitch } from '../settings-row';
 /** Settings › Advanced: settings still settling, and the Rig folder, which few should change. Replaces the old Experimental section. */
 export function AdvancedPage() {
   const { data } = useQuery({ queryKey: ['rig', 'settings', 'debugMode'], queryFn: () => rpc.rig.settings.get() });
+  const alpha = useAlphaEnabled();
   return (
     <SettingsRows>
-      <NewHomeRow />
+      <AlphaRow enabled={alpha} />
+      {alpha && <NewHomeRow />}
       <RoomThemesRow />
       <SpacesDiskCacheRow />
       <RigHomeRow />
@@ -73,6 +76,26 @@ function FirstRunRow() {
           </Button>
         </div>
       }
+    />
+  );
+}
+
+/**
+ * `alphaEnabled`: Rig Alpha. Turning it on brings the new Home and, on a
+ * computer that hasn't had it, the first run; turning it off is the current
+ * release again, background reads included.
+ */
+function AlphaRow({ enabled }: { enabled: boolean }) {
+  const row = settingsRow('alpha')!;
+  const toggle = () =>
+    void rpc.rig.settings.set(enabled ? { alphaEnabled: false } : { alphaEnabled: true, newHomeEnabled: true });
+  return (
+    <SettingsRow
+      id={row.id}
+      label={row.label}
+      description={row.description}
+      htmlFor="alpha-enabled"
+      control={<SettingsSwitch id="alpha-enabled" label={row.label} checked={enabled} onToggle={toggle} />}
     />
   );
 }

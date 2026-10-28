@@ -270,6 +270,13 @@ export type RigSettings = {
    */
   roomThemesEnabled: boolean;
   /**
+   * Settings › Advanced › Rig Alpha: the new Home and its Feed, the first run,
+   * and Rig reading the person's tools in the background with their Claude
+   * (on open, every hour, on wake). Off by default: with it off the app is
+   * the current release. `newHomeEnabled` only counts while this is on.
+   */
+  alphaEnabled: boolean;
+  /**
    * The new Home (rig README §2: the rail of what's being done, the chat with
    * Rig, and the Feed of what to do next). On for a fresh install; a settings
    * file from before keeps what it saved, and one without the field keeps the
@@ -333,6 +340,7 @@ export const DEFAULT_RIG_SETTINGS: RigSettings = {
   spacesRoomSeesDefault: DEFAULT_ROOM_SEES,
   spacesChatView: 'flow',
   spacesRoomDiskCache: true,
+  alphaEnabled: false,
   newHomeEnabled: true,
   roomThemesEnabled: true,
   cacheAndThemesDefaultOnApplied: true,

@@ -341,16 +341,20 @@ const catchUp = createCatchUp({
   log,
 });
 
+/** Rig reads on its own only with Rig Alpha on (Settings › Advanced); the person's own clicks always run. */
+const alpha = () => rigSettingsStore.get().alphaEnabled;
+
 // On open: a catch-up if Rig last read hours ago, else the usual quiet run a minute in. Then every hour.
 setTimeout(() => {
+  if (!alpha()) return;
   void catchUp.maybe('app start').then((r) => {
-    if (r !== 'started') setTimeout(() => runAgent('app start'), 50_000).unref?.();
+    if (r !== 'started') setTimeout(() => alpha() && runAgent('app start'), 50_000).unref?.();
   });
 }, 10_000).unref?.();
-setInterval(() => runAgent('schedule'), 60 * 60_000).unref?.();
+setInterval(() => alpha() && runAgent('schedule'), 60 * 60_000).unref?.();
 // Back from sleep: the hours away are the ones to catch up on.
 app.whenReady().then(() => {
-  const woke = () => void catchUp.maybe('wake');
+  const woke = () => void (alpha() && catchUp.maybe('wake'));
   powerMonitor.on('resume', woke);
   powerMonitor.on('unlock-screen', woke);
 }, () => undefined);

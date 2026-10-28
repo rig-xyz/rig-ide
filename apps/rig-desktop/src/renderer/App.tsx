@@ -27,8 +27,8 @@ import { ReportProblemDialogHost } from '@renderer/features/shell/report-problem
 import { markBindingDeleted } from '@renderer/features/home/deleted-rig-store';
 import { Home } from '@renderer/features/home/home';
 import { NewHome } from '@renderer/features/home-feed/new-home';
-import { useNewHomeEnabled } from '@renderer/features/home-feed/use-new-home-enabled';
-import { firstRunDebugAvailable } from '@renderer/features/first-run/debug/first-run-debug';
+import { useAlphaEnabled, useNewHomeEnabled } from '@renderer/features/home-feed/use-new-home-enabled';
+import { firstRunDebugAvailable, useFirstRunDebug } from '@renderer/features/first-run/debug/first-run-debug';
 import { FirstRun } from '@renderer/features/first-run/first-run';
 import { shouldShowFirstRun } from '@renderer/features/first-run/first-run-state';
 import { onOpenSpaceRequest } from '@renderer/features/people/open-space-request';
@@ -425,6 +425,8 @@ export function App() {
   // was already showing rather than replacing it.
   const spacesEnabled = useSpacesEnabled();
   const newHomeEnabled = useNewHomeEnabled();
+  const alphaEnabled = useAlphaEnabled();
+  const firstRunDebug = useFirstRunDebug();
   const [roomPreviewOpen, setRoomPreviewOpen] = useState(false);
   const chatNativeCloseRef = useRef<(() => void) | null>(null);
   const [canCloseChatTab, setCanCloseChatTab] = useState(false);
@@ -1301,7 +1303,9 @@ export function App() {
     setFirstRun((current) => current && { ...current, firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null });
     setArrivedFromFirstRun(true);
   }, []);
-  const firstRunOpen = firstRun !== null && shouldShowFirstRun(firstRun.firstRunSeen);
+  // Rig Alpha's (Settings › Advanced), or replayed from the debug harness in this window.
+  const firstRunOpen =
+    firstRun !== null && shouldShowFirstRun(firstRun.firstRunSeen) && (alphaEnabled || firstRunDebug.run > 0);
   // Replaying the first run from Settings closes Settings behind it.
   useEffect(() => {
     if (firstRunOpen) setSettingsOpen(false);
