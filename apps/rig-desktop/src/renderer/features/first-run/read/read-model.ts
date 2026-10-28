@@ -14,8 +14,6 @@ export type ReadLine = RunProgress & {
 
 export type ReadState = {
   run: string | null;
-  /** What started it: `first` (the first run), `catch-up`, or a background run's own. */
-  trigger: string | null;
   lines: ReadLine[];
   counts: { read: number; handled: number; forYou: number };
   /** Lookups so far, against every pass's budget known yet. */
@@ -27,6 +25,8 @@ export type ReadState = {
   since: string | null;
   /** What got in the way while it read (a connector to reconnect), each once. */
   problems: { problem: RunProblem; connector?: string }[];
+  /** What Claude last said it's thinking, until its next lookup starts. */
+  thought: string | null;
   pass: number;
   passes: number;
   firstLineAt: number | null;
@@ -36,7 +36,6 @@ export type ReadState = {
 
 export const initialRead: ReadState = {
   run: null,
-  trigger: null,
   lines: [],
   counts: { read: 0, handled: 0, forYou: 0 },
   lookups: { used: 0, budget: 0 },
@@ -44,6 +43,7 @@ export const initialRead: ReadState = {
   knownCards: [],
   since: null,
   problems: [],
+  thought: null,
   pass: 0,
   passes: 0,
   firstLineAt: null,
@@ -80,7 +80,6 @@ export function readReducer(state: ReadState, e: OrchProgressEvent): ReadState {
     return {
       ...initialRead,
       run: e.run,
-      trigger: e.trigger,
       passes: e.passes,
       lookups: { used: 0, budget: e.lookups ?? 0 },
       since: e.since ?? null,
@@ -114,6 +113,8 @@ export function readReducer(state: ReadState, e: OrchProgressEvent): ReadState {
         firstCardAt: state.firstCardAt ?? e.t,
       };
     }
+    case 'thought':
+      return { ...state, run, thought: e.text };
     case 'problem':
       if (state.problems.some((p) => p.problem === e.problem && p.connector === e.connector)) return state;
       return { ...state, run, problems: [...state.problems, { problem: e.problem, ...(e.connector ? { connector: e.connector } : {}) }] };
@@ -139,6 +140,8 @@ export function readReducer(state: ReadState, e: OrchProgressEvent): ReadState {
         lines,
         counts: counts(lines, state.cards, state.knownCards, state.since),
         lookups: { ...state.lookups, used },
+        // A lookup starting ends the thought before it.
+        thought: e.line.status === 'running' && e.line.connector !== null ? null : state.thought,
         firstLineAt: state.firstLineAt ?? e.line.t,
       };
     }

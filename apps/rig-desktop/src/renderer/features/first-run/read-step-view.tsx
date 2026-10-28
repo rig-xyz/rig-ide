@@ -1,12 +1,15 @@
 import { ArrowRight } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ActionButton } from '@renderer/features/home-feed/action-button';
+import { arriveHome } from '@renderer/features/home-feed/arrival';
+import type { SentResult } from '@renderer/features/home-feed/store';
 import type { DotMatrixState } from '@renderer/lib/ui/dot-matrix';
 import type { OrchProgressEvent, RunProgress } from '@shared/rig/orch-progress';
 import { StepFrame, type StepProps } from './first-run';
+import { CardStack } from './first-win/card-stack';
 import { captionOf, FieldCaptions, useFieldCaptions } from './read/field-captions';
-import { initialRead, readReducer, type ReadState } from './read/read-model';
-import { ReadStep, windowWords, type ReadFix } from './read/read-step';
+import type { ReadState } from './read/read-model';
+import { ReadHeader, ReadTicker, useReadRun, windowWords, type ReadFix } from './read/read-step';
 
 /** Each connector's color on the field, from the app's own tokens. Unknown ones stay neutral. */
 const CONNECTOR_COLOR: Record<string, string> = {
@@ -16,6 +19,7 @@ const CONNECTOR_COLOR: Record<string, string> = {
   gmail: '--theme-8',
   calendar: '--theme-5',
   notion: '--text-secondary',
+  granola: '--theme-4',
   rig: '--accent',
 };
 const TOOL_NAME: Record<string, string> = {
@@ -25,6 +29,7 @@ const TOOL_NAME: Record<string, string> = {
   gmail: 'Gmail',
   calendar: 'Calendar',
   notion: 'Notion',
+  granola: 'Granola',
 };
 
 /** A lookup lights this many single tiles, scattered, each for a moment. */
@@ -58,23 +63,26 @@ function tileFor(line: RunProgress): { state: DotMatrixState; color: string } | 
 }
 
 const ACTIVITY: DotMatrixState[] = ['reading', 'searching', 'thinking'];
-/**
- * Once the first card is on the Feed, a beat, then on to it (First win): the read goes on in the
- * background, and Home's catch-up strip shows the rest of it and its All caught up.
- */
-export const FIRST_CARD_BEAT_MS = 1400;
+/** A thought's caption stays this long on its tile. */
+const THOUGHT_MS = 2600;
+/** Once the read ends with a card up, its tiles go back to the grid over this long, at random. */
+const SETTLE_MS = 2200;
 
 /**
- * Step 5: the Read step (`./read/`) in the guide pane, and its progress on
- * the stage's field. Each lookup lights a few single tiles, scattered at
- * random in its tool's color, one of them captioned with what it reads, that
+ * Step 5, the first run's one stage: Rig reading the person's tools, and
+ * the first cards it finds. The header, counters and status sit on the
+ * stage over the field (`ReadHeader`); the guide pane keeps only the ticker
+ * of what it read. Each lookup lights a few single tiles, scattered at
+ * random in its tool's color, one captioned with what it reads, and they
  * settle after a moment into heavier grey: the field fills up with what has
- * been read. What it finds (done, not yours, for you) keeps its own glyph.
- * As soon as the first card is ready it moves on to it, while the read goes
- * on; a read that ends with no card gathers into one green check: All
- * caught up.
+ * been read. Between lookups, Claude's own thinking captions a tile. As soon
+ * as a card is ready it rises over the field, which keeps reading behind
+ * it: the person can act on it, cycle the others, or watch. When the read
+ * ends the sparks stop and the field settles into a slow breath. A read
+ * that ends with no card gathers into one green check: All caught up.
  */
-export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
+export function ReadStepView(props: StepProps) {
+  const { env } = props;
   // Set up is done by now: make the private Home space while Rig reads, so the first Send has a place to run.
   const ensureHome = useRef(env.ensureHome);
   useEffect(() => ensureHome.current(), []);
@@ -127,62 +135,143 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
     [env, retry]
   );
 
-  // The same reading of the run as the guide pane, for the finish on the stage.
-  const [read, dispatch] = useReducer(readReducer, initialRead);
+  // Read starts only on a Rig sign-in the relay took just now (the shell sends any other to Set up).
+  if (env.rig.kind !== 'signedIn') {
+    return (
+      <StepFrame
+        guide={
+          <p className="m-0 text-[13px] text-text-secondary" data-testid="read-checking">
+            Checking your Rig sign-in…
+          </p>
+        }
+        stage={<div />}
+      />
+    );
+  }
+  return <ReadStage key={attempt} {...props} onFix={fix} fixing={waitingFor !== null} />;
+}
+
+function ReadStage({
+  env,
+  position,
+  onNext,
+  setFieldLook,
+  field,
+  openSession,
+  onFix,
+  fixing,
+}: StepProps & { onFix: (fix: ReadFix) => void; fixing: boolean }) {
   const spark = useRef(0);
   const live = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  /** Every tile the read lit, to let them go when it settles. */
+  const claimed = useRef(new Set<string>());
   const lastAt = useRef(Date.now());
-  const ended = read.ended?.ok ?? false;
-  const firstCard = read.cards.length > 0;
-  // All caught up on the stage only for a read that ended with nothing to show; with a card it moves on.
-  const caughtUp = ended && !firstCard;
   const captions = useFieldCaptions();
-
-  // The first card: a beat, then on to it. Leaving doesn't stop the read (main runs it).
-  const next = useRef(onNext);
-  next.current = onNext;
-  useEffect(() => {
-    if (!firstCard) return;
-    const timer = setTimeout(() => next.current(), FIRST_CARD_BEAT_MS);
-    return () => clearTimeout(timer);
-  }, [firstCard]);
-  // The grey grid while it reads, every run (a replay starts again from a finished one).
-  useEffect(() => {
-    if (!caughtUp) setFieldLook('plain');
-  }, [caughtUp, setFieldLook]);
+  const endedRef = useRef(false);
 
   const light = useCallback(
     (color: string, ms = SPARK_MS, keep = true) => {
+      if (endedRef.current) return;
       const id = `spark:${spark.current++}`;
       const tile = field.current?.tile(id);
       if (!tile) return;
+      claimed.current.add(id);
       tile.set(ACTIVITY[Math.floor(Math.random() * ACTIVITY.length)]!, color);
-      const lit = tile;
       live.current.set(
         id,
         setTimeout(() => {
           live.current.delete(id);
           // A read leaves its mark; a heartbeat (Claude thinking) leaves nothing.
           if (keep) tile.set(READ_TILE.state, READ_TILE.color);
-          else tile.release();
+          else {
+            tile.release();
+            claimed.current.delete(id);
+          }
         }, ms)
       );
-      return lit;
+      return tile;
     },
     [field]
   );
 
+  const onProgress = useCallback(
+    (event: OrchProgressEvent) => {
+      if (event.kind === 'thought') {
+        // Claude thinking between lookups: a tile in the accent says what about.
+        lastAt.current = Date.now();
+        const at = light('--accent', THOUGHT_MS, false)?.at();
+        if (at) captions.show({ id: `thought:${event.t}`, at, connector: 'rig', text: captionOf(event.text) }, THOUGHT_MS);
+        return;
+      }
+      if (event.kind !== 'line') return;
+      const { line } = event;
+      const connector = line.connector ?? 'rig';
+      if (line.status === 'running') {
+        lastAt.current = Date.now();
+        for (let i = 0; i < SPARKS_PER_LOOKUP; i++) {
+          const lit = light(CONNECTOR_COLOR[connector] ?? '--text-muted');
+          // One spark per lookup in the person's tools says what it reads; Rig's own lookups stay quiet.
+          if (i > 0 || connector === 'rig') continue;
+          const at = lit?.at();
+          if (at) captions.show({ id: line.id, at, connector, text: captionOf(line.label) }, SPARK_MS);
+        }
+        captions.rename(line.id, captionOf(line.label));
+      }
+      if (endedRef.current) return;
+      const tile = field.current?.tile(line.id);
+      const next = tileFor(line);
+      if (next) {
+        claimed.current.add(line.id);
+        tile?.set(next.state, next.color);
+      } else tile?.release();
+    },
+    [field, light, captions]
+  );
+
+  const run = useReadRun(env.readSource, onProgress);
+  const { state } = run;
+  const ended = state.ended?.ok ?? false;
+  const stopped = state.ended !== null && !state.ended.ok;
+  const hasCards = state.cards.length > 0;
+  // All caught up on the stage only for a read that ended with nothing to show.
+  const caughtUp = ended && !hasCards;
+  // With a card up, the read ending is quiet: the field settles and breathes.
+  const settled = ended && hasCards;
+  endedRef.current = state.ended !== null;
+
+  // The grey grid while it reads, every run (a replay starts again from a finished one).
   useEffect(() => {
-    const sparks = live.current;
+    if (!state.ended) setFieldLook('plain');
+  }, [state.ended, setFieldLook]);
+
+  // While Claude decides what to check next, a tile lights now and then, so the field never stands still.
+  useEffect(() => {
+    if (state.ended) return;
     const timer = setInterval(() => {
-      if (caughtUp || Date.now() - lastAt.current < HEARTBEAT_MS) return;
+      if (Date.now() - lastAt.current < HEARTBEAT_MS) return;
       light('--accent', 1400, false);
     }, HEARTBEAT_MS);
-    return () => {
-      clearInterval(timer);
-      sparks.forEach(clearTimeout);
-    };
-  }, [caughtUp, light]);
+    return () => clearInterval(timer);
+  }, [state.ended, light]);
+  useEffect(() => {
+    const sparks = live.current;
+    return () => sparks.forEach(clearTimeout);
+  }, []);
+
+  // The read ended with a card up: the sparks stop, the tiles go back to the grid, and the field breathes.
+  const clearCaptions = captions.clear;
+  useEffect(() => {
+    if (!settled) return;
+    live.current.forEach(clearTimeout);
+    live.current.clear();
+    clearCaptions();
+    const timers = [...claimed.current].map((id) =>
+      setTimeout(() => field.current?.tile(id).release(), Math.random() * SETTLE_MS)
+    );
+    claimed.current.clear();
+    setFieldLook('calm');
+    return () => timers.forEach(clearTimeout);
+  }, [settled, field, setFieldLook, clearCaptions]);
 
   // All caught up: drop the sparks, and gather the whole field into the check (`CaughtUp` says where).
   const gatherInto = useCallback(
@@ -200,63 +289,70 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
     [field, captions]
   );
 
-  const onProgress = useCallback(
-    (event: OrchProgressEvent) => {
-      dispatch(event);
-      if (event.kind !== 'line') return;
-      const { line } = event;
-      const connector = line.connector ?? 'rig';
-      if (line.status === 'running') {
-        lastAt.current = Date.now();
-        for (let i = 0; i < SPARKS_PER_LOOKUP; i++) {
-          const lit = light(CONNECTOR_COLOR[connector] ?? '--text-muted');
-          // One spark per lookup in the person's tools says what it reads; Rig's own lookups stay quiet.
-          if (i > 0 || connector === 'rig') continue;
-          const at = lit?.at();
-          if (at) captions.show({ id: line.id, at, connector, text: captionOf(line.label) }, SPARK_MS);
-        }
-        captions.rename(line.id, captionOf(line.label));
-      }
-      const tile = field.current?.tile(line.id);
-      const next = tileFor(line);
-      if (next) tile?.set(next.state, next.color);
-      else tile?.release();
+  // A sent or started card is the win: on to Home, the session it started landing in the rail.
+  const won = useCallback(
+    (result: SentResult) => {
+      arriveHome(result.session ? { sessionId: result.session.sessionId } : {});
+      onNext();
     },
-    [field, light, captions]
+    [onNext]
   );
-
-  // Read starts only on a Rig sign-in the relay took just now (the shell sends any other to Set up).
-  if (env.rig.kind !== 'signedIn') {
-    return (
-      <StepFrame
-        guide={
-          <p className="m-0 text-[13px] text-text-secondary" data-testid="read-checking">
-            Checking your Rig sign-in…
-          </p>
-        }
-        stage={<div />}
-      />
-    );
-  }
+  const trackStep = useRef(env.trackStep);
+  trackStep.current = env.trackStep;
 
   return (
     <StepFrame
       guide={
-        <ReadStep
-          key={attempt}
-          source={env.readSource}
-          onDone={onNext}
-          onProgress={onProgress}
-          doneInStage
-          onFix={fix}
-          fixing={waitingFor !== null}
-          connectorsHome={env.agentInfo.route.connectorsHome}
-        />
+        <>
+          <span className="font-mono text-2xs tracking-[0.09em] text-text-muted uppercase">
+            {position ? `${position} · Catch up` : 'Catch up'}
+          </span>
+          <p className="m-0 text-[13.5px] leading-[1.55] text-text-secondary">
+            {hasCards
+              ? 'Act on a card as soon as it’s ready, or watch Rig read the rest.'
+              : 'Rig reads through your tools. Cards land here as soon as they’re ready.'}
+          </p>
+          <ReadTicker run={run} className={state.ended ? 'rig-read-settled' : undefined} />
+          <div className="flex flex-wrap items-center gap-2.5">
+            <ActionButton
+              variant={state.ended ? 'primary' : 'quiet'}
+              icon={ArrowRight}
+              onClick={onNext}
+            >
+              Open my Home
+            </ActionButton>
+          </div>
+        </>
       }
       stage={
-        <div>
-          {!caughtUp && <FieldCaptions captions={captions.captions} />}
-          {caughtUp && <CaughtUp read={read} onOpen={onNext} onPlaced={gatherInto} />}
+        <div className="relative flex min-h-0 flex-col items-center gap-6 self-stretch justify-self-stretch pt-8" data-testid="read-stage">
+          {!caughtUp && (
+            <ReadHeader
+              run={run}
+              onFix={onFix}
+              onLeave={stopped ? onNext : undefined}
+              connectorsHome={env.agentInfo.route.connectorsHome}
+              fixing={fixing}
+              className="fr-read-head relative z-10 w-[min(520px,100%)] rounded-[18px] px-5 py-4"
+            />
+          )}
+          <div className="relative z-10 flex min-h-0 w-full flex-1 items-start justify-center">
+            {hasCards && (
+              <CardStack
+                firstWin={env.firstWin}
+                landed={state.cards.length}
+                onShown={() => trackStep.current('firstWin')}
+                onWon={won}
+                openSession={openSession}
+              />
+            )}
+            {caughtUp && (
+              <div className="self-center">
+                <CaughtUp read={state} onOpen={onNext} onPlaced={gatherInto} />
+              </div>
+            )}
+          </div>
+          {!caughtUp && !settled && <FieldCaptions captions={captions.captions} />}
         </div>
       }
     />

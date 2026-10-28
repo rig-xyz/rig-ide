@@ -61,6 +61,7 @@ beforeEach(async () => {
         advancing={false}
         setFieldLook={() => {}}
         field={{ current: null }}
+        openSession={null}
       />
     );
   });

@@ -42,6 +42,22 @@
     opacity 2.4s ease,
     filter 2.4s ease;
 }
+/* The read is done and a card is up: the field settles into a slow, light breath, an inbox at zero. */
+.fr-field[data-look='calm'] {
+  opacity: 0.32;
+  transition: opacity 2.4s ease;
+  animation: fr-calm 7s ease-in-out 2.4s infinite;
+}
+@keyframes fr-calm {
+  50% {
+    opacity: 0.5;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fr-field[data-look='calm'] {
+    animation: none;
+  }
+}
 
 /* A mark on glass, floating over the field. */
 .fr-glass {
@@ -133,5 +149,41 @@
   .fr-field,
   .fr-pair-tile {
     transition: none;
+  }
+}
+
+/* The end of the first run: the stage dissolves, and the card in front carries on toward Home's
+   Feed, which sits on the right; then Home fades in where the stage was (`fr-home-arrive`). */
+.fr-leaving {
+  pointer-events: none;
+  animation: fr-leave 0.65s ease-in both;
+}
+@keyframes fr-leave {
+  to {
+    opacity: 0;
+  }
+}
+.fr-leaving .fw-panel {
+  animation: fr-carry 0.6s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+@keyframes fr-carry {
+  to {
+    transform: translateX(min(24vw, 320px)) scale(0.94);
+  }
+}
+.fr-home-arrive {
+  animation: fr-home-arrive 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes fr-home-arrive {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fr-leaving,
+  .fr-leaving .fw-panel,
+  .fr-home-arrive {
+    animation: none;
   }
 }

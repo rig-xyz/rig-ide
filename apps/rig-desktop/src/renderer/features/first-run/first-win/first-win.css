@@ -1,6 +1,6 @@
-/* First win: the Feed column on the stage, as in the prototype (#wow). The card in front is a real
-   Feed row in a card; the next ready ones peek from behind; done cards sit above. */
-/* Arriving from All caught up: the Feed column rises in where the check stood. */
+/* The first run's cards on the Read stage, as in the prototype (#wow): the card in front is a real
+   Feed row in a card; the next ready ones peek from behind; done cards sit above. It rises in over
+   the field that's still reading. */
 .fw-panel {
   animation: fw-arrive 0.7s cubic-bezier(0.25, 1.15, 0.4, 1) both;
 }
@@ -9,27 +9,6 @@
     transform: translateY(24px) scale(0.97);
     opacity: 0;
   }
-}
-.fw-tab {
-  background: var(--bg-2);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
-}
-.fw-section {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.fw-section::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
-}
-.fw-section[data-needs='true']::before {
-  background: var(--status-warn);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-warn) 25%, transparent);
 }
 .fw-stack > * {
   grid-area: 1 / 1;
@@ -43,11 +22,15 @@
   background: var(--bg-1);
   box-shadow: 0 4px 16px rgb(0 0 0 / 0.35);
 }
-/* The row inside draws its own bottom rule on Home; in a card it has none, and its tint and amber
-   edge follow the card's rounded corners instead of poking out of them. */
-.fw-card > [data-feed-id] {
+/* A plain Feed card: the row's own bottom rule, its needs-you tint and amber edge belong to Home's
+   list, not to a card on its own. */
+.fw-card > [data-feed-id],
+.fw-card > [data-feed-id][data-needs='true'],
+.fw-card > [data-feed-id][data-needs='true']:hover {
   border-bottom: 0;
   border-radius: inherit;
+  background: none;
+  box-shadow: none;
 }
 .fw-done {
   box-shadow: none;

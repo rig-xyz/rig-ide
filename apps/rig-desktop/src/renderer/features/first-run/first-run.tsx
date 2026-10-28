@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from 'react';
 import { AgentField, type AgentFieldHandle } from '@renderer/lib/ui/agent-field';
+import { cn } from '@renderer/lib/utils';
 import {
   FIRST_RUN_STEP_IDS,
   type FirstRunProgress,
@@ -26,7 +27,6 @@ import {
   type FirstRunPlan,
   type RigAccountKind,
 } from './first-run-state';
-import { FirstWinStep } from './first-win/first-win-step';
 import { ReadStepView } from './read-step-view';
 import { RealFirstRunEnv } from './real-env';
 import { SetupStep } from './setup-step';
@@ -36,9 +36,19 @@ import { WelcomeStep } from './welcome-step';
 import '@renderer/features/home-feed/home-feed.css';
 import './first-run.css';
 
+/** How long the stage takes to dissolve into Home. */
+export const LEAVE_MS = 650;
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+}
+
 /** How the field behind the stage looks for a step. */
-/** `rest`: the field goes still and fades nearly out, for a moment of calm (All caught up). */
-export type FieldLook = 'hero' | 'dim' | 'plain' | 'rest';
+/**
+ * `rest`: the field goes still and fades nearly out, for a moment of calm (All caught up).
+ * `calm`: the read is done and a card is up; the grid breathes, slow and light.
+ */
+export type FieldLook = 'hero' | 'dim' | 'plain' | 'rest' | 'calm';
 
 export type StepProps = {
   env: FirstRunEnv;
@@ -186,11 +196,25 @@ function FirstRunShell({
     env.trackStep(step);
   }, [env, step]);
 
+  // The end: the stage dissolves, the card going on toward Home's Feed, then Home fades in under it.
+  const [leaving, setLeaving] = useState(false);
+  const left = useRef(false);
   const done = useCallback(() => {
+    if (left.current) return;
+    left.current = true;
     env.trackStep('home');
-    env.finish();
-    clearFirstRunDebug();
-    onDone();
+    setLeaving(true);
+    setFieldLook('rest');
+    // Marked seen only once the stage has gone: App closes the first run as soon as it's seen, and
+    // ending a simulation swaps the environment under the shell.
+    setTimeout(
+      () => {
+        env.finish();
+        clearFirstRunDebug();
+        onDone();
+      },
+      prefersReducedMotion() ? 0 : LEAVE_MS
+    );
   }, [env, onDone]);
   // Done, straight into the session a card just started, in its space.
   const openSession = useMemo(
@@ -228,11 +252,11 @@ function FirstRunShell({
     else done();
   }, [steps, step, rig, env.user.progress, go, done]);
 
-  // Read, and First win after it, need a Rig sign-in the relay takes, asked again on the way in
-  // (a resume too): one that lapsed goes to Set up's Sign in again, never to a read that can't start.
+  // Read needs a Rig sign-in the relay takes, asked again on the way in (a resume too): one that
+  // lapsed goes to Set up's Sign in again, never to a read that can't start.
   const signInChecked = useRef<FirstRunStepId | null>(null);
   useEffect(() => {
-    if (step !== 'read' && step !== 'firstWin') {
+    if (step !== 'read') {
       signInChecked.current = null;
       return;
     }
@@ -261,12 +285,14 @@ function FirstRunShell({
     }
   }, [pendingNext, steps, advance]);
 
-  const index = steps ? steps.indexOf(step) : -1;
+  // Counted over the steps that show, and Home.
+  const shown = steps?.filter(isBuiltStep) ?? null;
+  const index = shown ? shown.indexOf(step) : -1;
   const props: StepProps = {
     env,
     plan,
     position:
-      step === 'welcome' || !steps || index < 0 ? null : `Step ${index + 1} of ${steps.length + 1}`,
+      step === 'welcome' || !shown || index < 0 ? null : `Step ${index + 1} of ${shown.length + 1}`,
     onNext: advance,
     advancing: pendingNext,
     setFieldLook,
@@ -275,7 +301,12 @@ function FirstRunShell({
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid grid-cols-[minmax(0,370px)_minmax(0,1fr)] bg-bg-0">
+    <div
+      className={cn(
+        'fixed inset-0 z-50 grid grid-cols-[minmax(0,370px)_minmax(0,1fr)] bg-bg-0',
+        leaving && 'fr-leaving'
+      )}
+    >
       {/* The window's own drag strip: the guide and stage stay clickable below it. */}
       <div className="absolute inset-x-0 top-0 z-20 h-10 [-webkit-app-region:drag]" />
       <div className="border-r border-border-hairline bg-bg-1" />
@@ -283,7 +314,7 @@ function FirstRunShell({
         <div className="fr-field absolute inset-0" data-look={fieldLook}>
           <AgentField
             ref={field}
-            mode={fieldLook === 'plain' || fieldLook === 'rest' ? 'idle' : 'ambient'}
+            mode={fieldLook === 'hero' || fieldLook === 'dim' ? 'ambient' : 'idle'}
           />
         </div>
       </div>
@@ -306,10 +337,10 @@ function StepView({ step, props }: { step: FirstRunStepId; props: StepProps }): 
       return <ConnectStep {...props} />;
     case 'read':
       return <ReadStepView {...props} />;
-    case 'firstWin':
-      return <FirstWinStep {...props} />;
-    // Not built yet (`steps.ts`): the shell moves past these, so they never show.
+    // Not built (`steps.ts`): the shell moves past these, so they never show. First win's cards
+    // are on the Read stage.
     case 'you':
+    case 'firstWin':
       return null;
   }
 }

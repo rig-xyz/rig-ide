@@ -5,8 +5,8 @@ import { cn } from '@renderer/lib/utils';
 
 /**
  * Captions on the Read step's field: a lit tile says what it's reading, its
- * tool's logo and a short label ("#eng-standup") beside it, and fades as the
- * tile settles to grey. A few at a time, so the field reads as work being
+ * tool's logo and its line ("Checking #eng-standup") beside it, or what
+ * Claude is thinking between lookups, and fades as the tile settles. A few at a time, so the field reads as work being
  * done, not a wall of text. Drawn as DOM over the stage, at the tile's place
  * (`AgentFieldTile.at`, fractions of the field).
  */
@@ -24,13 +24,13 @@ export type FieldCaption = {
 export const MAX_CAPTIONS = 3;
 /** How long a caption takes to fade out. */
 const FADE_MS = 350;
-const MAX_CHARS = 28;
-const KNOWN_LOGOS: ReadonlySet<string> = new Set<SourceConnector>(['slack', 'linear', 'github', 'gmail', 'granola']);
+const MAX_CHARS = 40;
+const KNOWN_LOGOS: ReadonlySet<string> = new Set<SourceConnector>(['slack', 'linear', 'github', 'gmail', 'granola', 'calendar', 'notion']);
 
-/** A lookup's line as a caption: the channel it reads, else what it searches for, else the line, short. */
+/** A lookup's line, or a thought, as a caption: its own words ("Checking #eng-standup"), short. */
 export function captionOf(label: string): string {
-  const text = /#[\w.-]+/.exec(label)?.[0] ?? /"([^"]+)"/.exec(label)?.[1] ?? label;
-  return text.length > MAX_CHARS ? `${text.slice(0, MAX_CHARS - 1)}…` : text;
+  const text = label.trim();
+  return text.length > MAX_CHARS ? `${text.slice(0, MAX_CHARS - 1).trimEnd()}…` : text;
 }
 
 /**
@@ -103,8 +103,13 @@ export function FieldCaptions({ captions }: { captions: FieldCaption[] }) {
           style={{ left: box.left + c.at.x * box.width + 11, top: box.top + c.at.y * box.height }}
           data-caption={c.id}
         >
-          {KNOWN_LOGOS.has(c.connector) && <SourceLogo connector={c.connector as SourceConnector} size={11} />}
-          <span className="max-w-[170px] truncate">{c.text}</span>
+          {KNOWN_LOGOS.has(c.connector) ? (
+            <SourceLogo connector={c.connector as SourceConnector} size={11} />
+          ) : (
+            // Claude thinking, or a tool with no logo: a quiet dot in the accent.
+            c.connector === 'rig' && <span aria-hidden className="fr-caption-think" />
+          )}
+          <span className="max-w-[240px] truncate">{c.text}</span>
         </span>
       ))}
     </div>

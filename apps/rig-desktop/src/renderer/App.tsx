@@ -1295,8 +1295,11 @@ export function App() {
 
   // The first run writes `firstRunSeen` itself; this only closes it at once,
   // ahead of the settings change that follows.
+  // Home fades in where the first run's stage dissolved, once.
+  const [arrivedFromFirstRun, setArrivedFromFirstRun] = useState(false);
   const onFirstRunDone = useCallback(() => {
     setFirstRun((current) => current && { ...current, firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null });
+    setArrivedFromFirstRun(true);
   }, []);
   const firstRunOpen = firstRun !== null && shouldShowFirstRun(firstRun.firstRunSeen);
   // Replaying the first run from Settings closes Settings behind it.
@@ -1388,7 +1391,12 @@ export function App() {
   const showNewHome = newHomeEnabled && !rigView && folder.status === 'empty';
 
   return (
-    <div className="relative flex h-full flex-col">
+    <div
+      className={cn('relative flex h-full flex-col', arrivedFromFirstRun && 'fr-home-arrive')}
+      onAnimationEnd={(e) => {
+        if (e.target === e.currentTarget) setArrivedFromFirstRun(false);
+      }}
+    >
       {!showNewHome && (
       <Topbar
         context={deriveTopbarContext(

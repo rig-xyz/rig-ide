@@ -23,6 +23,7 @@ import {
 import { CHECKS, initialConnectorsState, TIMING } from './connectors-script';
 import { RECENT_CHATS_KEY } from './use-real-spaces';
 import { ARRIVAL, PEOPLE, topicSuggestion } from './mock';
+import { clearHomeArrival, homeArrival, railIdFor } from './arrival';
 import type { FeedChoice, RailSession, RailSpace, SourceConnector, SourceRef } from './model';
 import {
   type HomeOrchestrator,
@@ -208,6 +209,15 @@ export function HomeProvider({
   );
   const spacesRef = useRef(spaces);
   spacesRef.current = spaces;
+  // Arriving from the first run with a session a card started: it lands in its place once the rail has it.
+  useEffect(() => {
+    const sessionId = homeArrival()?.sessionId;
+    if (!sessionId) return;
+    const id = railIdFor(sessionId, spaces.flatMap((sp) => sp.sessions.map((se) => se.id)));
+    if (!id) return;
+    clearHomeArrival();
+    dispatch({ type: 'land', id });
+  }, [spaces]);
   const counts = feedCounts(shown.feed);
   const firstName = (selfName ?? ready?.me ?? 'there').split(/\s+/)[0] ?? 'there';
 

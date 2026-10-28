@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Home, RefreshCw } from 'lucide-react';
+import { Check, Home, RefreshCw } from 'lucide-react';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { ActionButton } from '@renderer/features/home-feed/action-button';
 import { SourceLogo } from '@renderer/features/home-feed/bits';
@@ -23,14 +23,13 @@ import './read.css';
 
 /**
  * Onboarding's Read step (onboarding spec, Step 5): Rig reading the person's
- * last few days while they watch. A header that says what it's doing right
- * now, three counters that say what they count and roll when they change,
- * and a ticker where each line starts as "Checking…" and settles to what it
- * found. Between lookups, while Claude decides what to check next, a line
- * says so: it should never look stuck. Self-contained: the first-run shell
- * mounts it with `onDone`, and its stage field maps the same progress to
- * tiles through `onProgress`. With `doneInStage`, the stage carries the
- * finish (All caught up) and this pane just steps back.
+ * last few days while they watch. Three pieces over one reading of the run
+ * (`useReadRun`): a header that says what it's doing right now, with three
+ * counters that say what they count and roll when they change (`ReadHeader`,
+ * on the stage); and a ticker where each line starts as "Checking…" and
+ * settles to what it found (`ReadTicker`, in the guide pane). Between
+ * lookups, a line says what Claude is thinking: it should never look stuck.
+ * `ReadStep` puts them in one column, for the dev preview.
  */
 
 /** What a fix button asks for: the run's stop reason, or a connector to reconnect. */
@@ -55,30 +54,22 @@ const KNOWN_LOGOS: ReadonlySet<string> = new Set<SourceConnector>([
   'granola',
 ]);
 
-export function ReadStep({
-  onDone,
-  source = liveFirstRun,
-  onProgress,
-  doneInStage = false,
-  onFix,
-  connectorsHome = 'claude.ai',
-  fixing = false,
-}: {
-  /** Leaves the step: to the first card when one is ready, else to Home. */
-  onDone: (summary: ReadSummary) => void;
-  /** Where the progress comes from; the real first run when unset. */
-  source?: ProgressSource;
-  /** Every event as it comes, for the stage's field (one tile per line). */
-  onProgress?: (event: OrchProgressEvent) => void;
-  /** The stage shows the finish; this pane fades back and leaves the way on to the stage. */
-  doneInStage?: boolean;
-  /** A stopped read's fix, or a connector's reconnect: with it, each problem gets its one button. */
-  onFix?: (fix: ReadFix) => void;
-  /** Where the agent's connectors are reconnected ("claude.ai"), for the reconnect button. */
-  connectorsHome?: string;
-  /** A fix is under way (signing in): its button waits. */
-  fixing?: boolean;
-}) {
+/** One reading of the run, shared by the header, the ticker and the stage. */
+export type ReadRun = {
+  state: ReadState;
+  /** The run's own clock, for each line's "Checking…" moment. */
+  now: number;
+  /** The newest lookup still running. */
+  current: ReadLine | null;
+  /** Nothing running for a moment: Claude is deciding what to check next. */
+  thinking: boolean;
+};
+
+/** Reads the run from `source`, passing every event on to `onProgress` as it comes. */
+export function useReadRun(
+  source: ProgressSource = liveFirstRun,
+  onProgress?: (event: OrchProgressEvent) => void
+): ReadRun {
   const [state, dispatch] = useReducer(readReducer, initialRead);
   const onProgressRef = useRef(onProgress);
   onProgressRef.current = onProgress;
@@ -92,30 +83,56 @@ export function ReadStep({
       }),
     [source]
   );
-  // The run's own clock, so a line's "Checking…" moment is measured the same way as its times.
   const now = useRunClock(state);
   const wall = useWallClock(!state.ended);
+  const current = currentLine(state);
+  const thinking = !state.ended && !current && wall - lastEventAt.current > THINKING_AFTER_MS;
+  return { state, now, current, thinking };
+}
 
-  const firstCard = state.cards.length > 0;
-  const ended = state.ended;
-  const summary = (): ReadSummary => ({
+export function summaryOf(state: ReadState): ReadSummary {
+  return {
     cards: state.cards,
     counts: state.counts,
-    ended: ended !== null,
-    ok: ended?.ok ?? false,
-  });
-  const current = currentLine(state);
-  const thinking = !ended && !current && wall - lastEventAt.current > THINKING_AFTER_MS;
-  const settled = doneInStage && ended?.ok;
-  const stopped = ended && !ended.ok ? stoppedCopy(ended.problem, ended.error) : null;
+    ended: state.ended !== null,
+    ok: state.ended?.ok ?? false,
+  };
+}
 
+/**
+ * What the read is doing: its title and the line under it, the three
+ * counters, a reconnect for each connector that needs one, and, when it
+ * stopped, its one fix.
+ */
+export function ReadHeader({
+  run,
+  onFix,
+  onLeave,
+  connectorsHome = 'claude.ai',
+  fixing = false,
+  className,
+}: {
+  run: ReadRun;
+  /** A stopped read's fix, or a connector's reconnect: with it, each problem gets its one button. */
+  onFix?: (fix: ReadFix) => void;
+  /** A stopped read's way out: to the Feed, with what it found so far. */
+  onLeave?: () => void;
+  /** Where the agent's connectors are reconnected ("claude.ai"), for the reconnect button. */
+  connectorsHome?: string;
+  /** A fix is under way (signing in): its button waits. */
+  fixing?: boolean;
+  className?: string;
+}) {
+  const { state, current, thinking } = run;
+  const ended = state.ended;
+  const stopped = ended && !ended.ok ? stoppedCopy(ended.problem, ended.error) : null;
   return (
     <section
       aria-label="Catching you up"
-      className="flex min-h-0 flex-1 flex-col gap-3.5"
-      data-testid="read-step"
+      className={cn('flex flex-col gap-3', className)}
+      data-testid="read-header"
     >
-      <header className="flex flex-col gap-1.5" data-testid="read-header">
+      <div className="flex flex-col gap-1.5">
         <div className="flex items-center gap-3">
           <span className="grid size-9 shrink-0 place-items-center rounded-[11px] bg-bg-2">
             <DotMatrix
@@ -135,7 +152,7 @@ export function ReadStep({
         >
           {status(state, current, thinking)}
         </p>
-      </header>
+      </div>
       <div className="grid grid-cols-3 gap-2" role="group" aria-label="So far">
         <Counter value={state.counts.read} label="lookups in your tools" />
         <Counter
@@ -148,40 +165,6 @@ export function ReadStep({
           label={state.since ? 'new for your Feed' : 'cards for your Feed'}
           className="text-accent"
         />
-      </div>
-      <div
-        className={cn(
-          'flex min-h-0 flex-1 flex-col justify-end gap-1 overflow-hidden [mask-image:linear-gradient(transparent,#000_22%)]',
-          settled && 'rig-read-settled'
-        )}
-      >
-        <ol
-          className="m-0 flex list-none flex-col gap-1 p-0"
-          aria-live="polite"
-          aria-label="What Rig is reading"
-          data-testid="read-ticker"
-        >
-          {tickerLines(state).map((line) => (
-            <TickerLine
-              key={line.id}
-              line={line}
-              checking={line.status === 'running' || now - line.since < MIN_CHECKING_MS}
-            />
-          ))}
-        </ol>
-        {!ended && (thinking || state.lines.length === 0) && (
-          <div
-            className="grid grid-cols-[20px_minmax(0,1fr)] items-center gap-2.5 px-2.5 py-[7px] text-[13px]"
-            data-testid="read-thinking"
-          >
-            <span className="grid place-items-center">
-              <DotMatrix state="thinking" size="sm" />
-            </span>
-            <span className="rig-read-shimmer">
-              {state.lines.length === 0 ? 'Waking your Claude…' : 'Deciding what to check next…'}
-            </span>
-          </div>
-        )}
       </div>
       {onFix &&
         state.problems
@@ -208,32 +191,114 @@ export function ReadStep({
               </div>
             );
           })}
-      {!settled && (
+      {stopped && onFix && (
         <div className="flex flex-wrap items-center gap-2.5">
-          {stopped && onFix ? (
-            <>
-              <ActionButton
-                variant="primary"
-                icon={RefreshCw}
-                disabled={fixing}
-                onClick={() => onFix({ problem: ended?.problem })}
-                data-testid="read-fix"
-              >
-                {fixing ? 'Waiting…' : stopped.fix}
-              </ActionButton>
-              <ActionButton variant="quiet" icon={Home} onClick={() => onDone(summary())}>
-                Open my Feed
-              </ActionButton>
-            </>
-          ) : firstCard ? (
-            <ActionButton variant="primary" icon={ArrowRight} onClick={() => onDone(summary())}>
-              See it on your Feed
-            </ActionButton>
-          ) : ended ? (
-            <ActionButton variant="primary" icon={Home} onClick={() => onDone(summary())}>
+          <ActionButton
+            variant="primary"
+            icon={RefreshCw}
+            disabled={fixing}
+            onClick={() => onFix({ problem: ended?.problem })}
+            data-testid="read-fix"
+          >
+            {fixing ? 'Waiting…' : stopped.fix}
+          </ActionButton>
+          {onLeave && (
+            <ActionButton variant="quiet" icon={Home} onClick={onLeave}>
               Open my Feed
             </ActionButton>
-          ) : null}
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** The lines it read, newest last, settling to what each found; and what Claude thinks between them. */
+export function ReadTicker({ run, className }: { run: ReadRun; className?: string }) {
+  const { state, now, thinking } = run;
+  const ended = state.ended;
+  return (
+    <div
+      className={cn(
+        'flex min-h-0 flex-1 flex-col justify-end gap-1 overflow-hidden [mask-image:linear-gradient(transparent,#000_22%)]',
+        className
+      )}
+    >
+      <ol
+        className="m-0 flex list-none flex-col gap-1 p-0"
+        aria-live="polite"
+        aria-label="What Rig is reading"
+        data-testid="read-ticker"
+      >
+        {tickerLines(state).map((line) => (
+          <TickerLine
+            key={line.id}
+            line={line}
+            checking={line.status === 'running' || now - line.since < MIN_CHECKING_MS}
+          />
+        ))}
+      </ol>
+      {!ended && (thinking || state.lines.length === 0) && (
+        <div
+          className="grid grid-cols-[20px_minmax(0,1fr)] items-center gap-2.5 px-2.5 py-[7px] text-[13px]"
+          data-testid="read-thinking"
+        >
+          <span className="grid place-items-center">
+            <DotMatrix state="thinking" size="sm" />
+          </span>
+          <span className="rig-read-shimmer truncate">
+            {state.lines.length === 0
+              ? 'Waking your Claude…'
+              : state.thought
+                ? `${state.thought}…`
+                : 'Deciding what to check next…'}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The whole read in one column: the header, the ticker, and the way on once it ends. */
+export function ReadStep({
+  onDone,
+  source = liveFirstRun,
+  onProgress,
+  onFix,
+  connectorsHome = 'claude.ai',
+  fixing = false,
+}: {
+  /** Leaves the step, to the Feed. */
+  onDone: (summary: ReadSummary) => void;
+  /** Where the progress comes from; the real first run when unset. */
+  source?: ProgressSource;
+  /** Every event as it comes. */
+  onProgress?: (event: OrchProgressEvent) => void;
+  onFix?: (fix: ReadFix) => void;
+  connectorsHome?: string;
+  fixing?: boolean;
+}) {
+  const run = useReadRun(source, onProgress);
+  const { state } = run;
+  const leave = () => onDone(summaryOf(state));
+  const stopped = state.ended && !state.ended.ok;
+  return (
+    <section className="flex min-h-0 flex-1 flex-col gap-3.5" data-testid="read-step">
+      <ReadHeader
+        run={run}
+        onFix={onFix}
+        onLeave={leave}
+        connectorsHome={connectorsHome}
+        fixing={fixing}
+      />
+      <ReadTicker run={run} />
+      {!(stopped && onFix) && (
+        <div className="flex flex-wrap items-center gap-2.5">
+          {state.ended && (
+            <ActionButton variant="primary" icon={Home} onClick={leave}>
+              Open my Feed
+            </ActionButton>
+          )}
           <span className="min-w-0 text-xs text-text-muted" data-testid="read-hint">
             {hint(state)}
           </span>
@@ -259,7 +324,8 @@ function status(state: ReadState, current: ReadLine | null, thinking: boolean): 
   if (!state.lines.length)
     return state.since ? `Catching you up ${windowWords(state)}…` : 'Starting to read your last 3 days…';
   if (thinking) {
-    // The ticker already says it's deciding; up here, what it has done so far.
+    // What Claude says it's thinking, when it says; else what it has done so far.
+    if (state.thought) return `${state.thought}…`;
     const done = state.lines
       .filter((l) => l.status !== 'running' && !!l.connector && l.connector !== 'rig')
       .at(-1);

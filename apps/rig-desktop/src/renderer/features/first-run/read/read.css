@@ -305,7 +305,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  max-width: 200px;
+  max-width: 280px;
   padding: 2px 8px 2px 6px;
   border-radius: 999px;
   font-size: 11px;
@@ -322,6 +322,14 @@
 .fr-caption-leaving {
   opacity: 0;
 }
+/* Claude thinking between lookups: no tool's logo, a small dot in the accent. */
+.fr-caption-think {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
 @keyframes fr-caption-in {
   from {
     opacity: 0;
@@ -333,4 +341,14 @@
     animation: none;
     transition: none;
   }
+}
+
+/* The read's header on the stage: on glass over the field, as the Connect pins are. */
+.fr-read-head {
+  background: color-mix(in srgb, var(--pill-fill) 86%, transparent);
+  backdrop-filter: blur(12px);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 10%, transparent),
+    0 0 0 1px color-mix(in srgb, white 6%, transparent),
+    0 18px 40px -20px rgb(0 0 0 / 0.55);
 }

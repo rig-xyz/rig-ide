@@ -82,7 +82,7 @@ const counters = () =>
   [...host.querySelectorAll('[aria-label="So far"] b')].map((b) => b.getAttribute('aria-label'));
 
 describe('ReadStep', () => {
-  it('shows each line checking, then what it found, and offers the first card', async () => {
+  it('shows each line checking, then what it found, and names the first card while it reads on', async () => {
     const done: ReadSummary[] = [];
     const seen: string[] = [];
     await act(async () => {
@@ -112,12 +112,9 @@ describe('ReadStep', () => {
     );
     expect(counters()).toEqual(['1', '0', '1']);
     expect(seen).toContain('card');
-    const see = [...host.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('See it on your Feed')
-    );
-    expect(see).toBeTruthy();
-    await act(async () => see!.click());
-    expect(done[0]).toMatchObject({ cards: ['sit_9'], ended: false });
+    // The card itself rises on the stage (first-run-one-stage.test.tsx); here the hint names it.
+    expect(host.querySelector('[data-testid="read-hint"]')!.textContent).toContain('Rig keeps reading the rest');
+    expect(done).toEqual([]);
   });
 
   it("keeps each line's own connector, and shows a neutral mark when there is none", async () => {
