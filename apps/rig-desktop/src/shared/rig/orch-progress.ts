@@ -47,6 +47,8 @@ export type OrchProgressEvent = (
   | { run: string; kind: 'line'; line: RunProgress }
   /** A card went on the Feed (`rig_feed` put). `fresh: false`: it was on the Feed before the run, so it isn't new. */
   | { run: string; kind: 'card'; ref: string; fresh?: boolean; t: number }
+  /** What Claude is thinking between lookups, in a few words of its own ("Most of #eng is already resolved"). */
+  | { run: string; kind: 'thought'; text: string; t: number }
   /** Something stands in the way of reading, mid-run (a connector that needs reconnecting); the run goes on. */
   | { run: string; kind: 'problem'; problem: RunProblem; connector?: string; t: number }
   | { run: string; kind: 'end'; ok: boolean; error?: string; problem?: RunProblem; t: number }
@@ -104,7 +106,7 @@ const quoted = (v: unknown) => {
 const LINES: Record<string, (tool: string, input: Input) => string | null> = {
   slack: (tool, input) => {
     if (tool.includes('read_thread')) return `Reading a thread${channel(input) ? ` in ${channel(input)}` : ' in Slack'}`;
-    if (tool.includes('read_channel')) return `Reading ${channel(input) ?? 'a Slack channel'}`;
+    if (tool.includes('read_channel')) return `Checking ${channel(input) ?? 'a Slack channel'}`;
     if (tool.includes('search_channels')) return 'Finding your Slack channels';
     if (tool.includes('search_users') || tool.includes('read_user_profile')) return 'Looking up someone on Slack';
     if (tool.includes('search')) return `Searching Slack${quoted(input.query)}`;
@@ -113,7 +115,7 @@ const LINES: Record<string, (tool: string, input: Input) => string | null> = {
   },
   linear: (tool, input) => {
     if (tool === 'list_issues') return input.assignee === 'me' ? 'Listing issues you own' : 'Listing issues';
-    if (tool === 'get_issue') return `Opening ${text(input.id, 20) ?? 'an issue'}`;
+    if (tool === 'get_issue') return text(input.id, 20) ? `Analyzing Linear ${text(input.id, 20)}` : 'Opening a Linear issue';
     if (tool === 'list_comments') return `Reading the comments on ${text(input.issueId, 20) ?? 'an issue'}`;
     if (tool.includes('project')) return 'Looking at a Linear project';
     if (tool.includes('cycle')) return 'Looking at the current cycle';
@@ -123,7 +125,7 @@ const LINES: Record<string, (tool: string, input: Input) => string | null> = {
   github: (tool, input) => {
     const cmd = text(input.command, 200) ?? '';
     const pr = /\bpr (view|diff|checks) (\d+)/.exec(cmd);
-    if (pr) return pr[1] === 'view' ? `Opening #${pr[2]}` : `Checking #${pr[2]}`;
+    if (pr) return pr[1] === 'view' ? `Reading PR #${pr[2]}` : `Checking PR #${pr[2]}`;
     if (/\bsearch prs\b/.test(cmd) || /\bpr list\b/.test(cmd)) return 'Listing pull requests that wait on you';
     if (/\bissue (view|list)\b/.test(cmd)) return 'Reading GitHub issues';
     return tool === 'rig_github' ? 'Reading GitHub' : null;
@@ -159,9 +161,35 @@ export type AcpToolUpdate = {
   title?: string;
   status?: string;
   rawInput?: unknown;
+  /** A thought chunk's words (`agent_thought_chunk`). */
+  content?: { type?: string; text?: unknown } | null;
 };
 
 const STATUS: Record<string, RunProgressStatus> = { completed: 'done', failed: 'failed' };
+
+/** A thought's words shown at most this often, so the field reads as thinking, not as a transcript. */
+const THOUGHT_EVERY_MS = 1500;
+const THOUGHT_MAX = 64;
+
+/**
+ * One sentence of Claude's thinking as a short label: its first sentence, without markdown, cut to
+ * a few words; null when there's too little to say or it's about the run's own instructions.
+ */
+export function thoughtLabel(sentence: string): string | null {
+  const t = sentence
+    .replace(/[*_`>]+/g, '')
+    .replace(/^#+\s*/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.:;,]+$/, '');
+  if (t.length < 12 || /\b(packet|rig_run_note|instructions?|system prompt|tool ?calls?)\b/i.test(t)) return null;
+  return t.length > THOUGHT_MAX ? `${t.slice(0, THOUGHT_MAX - 1).replace(/\s+\S*$/, '')}…` : t;
+}
+
+type Mapped =
+  | { kind: 'line'; line: RunProgress }
+  | { kind: 'card'; ref: string; t: number }
+  | { kind: 'thought'; text: string; t: number };
 
 /**
  * Turns a run's ACP tool calls into progress, one call at a time: a line when
@@ -171,11 +199,17 @@ const STATUS: Record<string, RunProgressStatus> = { completed: 'done', failed: '
  */
 export class ProgressMapper {
   private calls = new Map<string, { name: string; input: Input; label: string | null; status: RunProgressStatus | null; reported: boolean }>();
+  /** The thought being written, since the last lookup; and when one was last said. */
+  private thinking = '';
+  private saidAt = -Infinity;
 
   constructor(private readonly now: () => number) {}
 
-  push(update: AcpToolUpdate): Array<{ kind: 'line'; line: RunProgress } | { kind: 'card'; ref: string; t: number }> {
+  push(update: AcpToolUpdate): Mapped[] {
+    if (update.sessionUpdate === 'agent_thought_chunk') return this.thought(update.content);
     if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return [];
+    // A lookup starts: what Claude thinks next is a new thought.
+    if (update.sessionUpdate === 'tool_call') this.thinking = '';
     const id = update.toolCallId;
     if (!id) return [];
     const was = this.calls.get(id);
@@ -185,7 +219,7 @@ export class ProgressMapper {
     call.name = name;
     call.input = input;
     this.calls.set(id, call);
-    const out: Array<{ kind: 'line'; line: RunProgress } | { kind: 'card'; ref: string; t: number }> = [];
+    const out: Mapped[] = [];
     const t = this.now();
     const ended = update.status ? STATUS[update.status] : undefined;
 
@@ -216,6 +250,22 @@ export class ProgressMapper {
       out.push({ kind: 'line', line: { id, connector: line.connector, label: line.label, status, t } });
     }
     return out;
+  }
+
+  /** A chunk of Claude's thinking: each sentence it finishes may be said, a few seconds apart. */
+  private thought(content: AcpToolUpdate['content']): Mapped[] {
+    const chunk = content && typeof content === 'object' && 'text' in content && typeof content.text === 'string' ? content.text : '';
+    if (!chunk) return [];
+    this.thinking += chunk;
+    const end = /[.!?\n]\s/.exec(this.thinking);
+    if (!end) return [];
+    const sentence = this.thinking.slice(0, end.index + 1);
+    this.thinking = this.thinking.slice(end.index + end[0].length);
+    const t = this.now();
+    const text = thoughtLabel(sentence);
+    if (!text || t - this.saidAt < THOUGHT_EVERY_MS) return [];
+    this.saidAt = t;
+    return [{ kind: 'thought', text, t }];
   }
 }
 

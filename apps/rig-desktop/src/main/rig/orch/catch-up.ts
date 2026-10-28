@@ -17,14 +17,7 @@ export const CATCH_UP_AFTER_MS = 3 * 60 * 60_000;
 export const CATCH_UP_MAX_DAYS = 14;
 /** How long an ended catch-up's events are kept for a Home that mounts late (its "While you were away"). */
 const KEEP_ENDED_MS = 2 * 60_000;
-/**
- * The first run's, longer: First win moves on as soon as the first card is ready and the read
- * carries on, so its All caught up plays on Home, whenever the person gets there.
- */
-const KEEP_FIRST_ENDED_MS = 30 * 60_000;
 export const CATCH_UP_TRIGGER = 'catch-up';
-/** The runs Home's strip shows: a catch-up, and the first run once First win has moved on from it. */
-const SHOWN_TRIGGERS: readonly string[] = [CATCH_UP_TRIGGER, 'first'];
 
 const DAY_MS = 86_400_000;
 
@@ -59,7 +52,7 @@ export type CatchUpDeps = {
 };
 
 export function createCatchUp(deps: CatchUpDeps) {
-  let current: { run: string; trigger: string; events: OrchProgressEvent[]; endedAt: number | null } | null = null;
+  let current: { run: string | null; events: OrchProgressEvent[]; endedAt: number | null } | null = null;
   let deciding = false;
 
   /** Runs a catch-up if one is due (`force`: Try again, due or not); says why not otherwise. */
@@ -74,6 +67,7 @@ export function createCatchUp(deps: CatchUpDeps) {
       if (window.lastRead === null || !window.since) return 'skipped';
       if (!force && deps.now() - window.lastRead < CATCH_UP_AFTER_MS) return 'not_due';
       deps.log?.info('Rig catch-up: starting', { why, since: window.since });
+      current = { run: null, events: [], endedAt: null };
       void deps.run(CATCH_UP_TRIGGER, { since: window.since });
       return 'started';
     } finally {
@@ -81,21 +75,22 @@ export function createCatchUp(deps: CatchUpDeps) {
     }
   }
 
-  /** Every run's progress passes here; a catch-up's or the first run's own is kept, the newest. */
+  /** Every run's progress passes here; the catch-up's own is kept. */
   function record(event: OrchProgressEvent): void {
-    if (event.kind === 'start' && SHOWN_TRIGGERS.includes(event.trigger)) {
-      current = { run: event.run, trigger: event.trigger, events: [], endedAt: null };
+    if (!current) return;
+    if (event.kind === 'start') {
+      if (event.trigger !== CATCH_UP_TRIGGER || current.run) return;
+      current.run = event.run;
     }
-    if (!current || event.run !== current.run) return;
+    if (event.run !== current.run) return;
     current.events.push(event);
     if (event.kind === 'end') current.endedAt = deps.now();
   }
 
-  /** The catch-up (or first run) going now, or ended a little while ago, with its events so far; null when there's none to show. */
+  /** The catch-up going now, or just ended, with its events so far; null when there's none to show. */
   function status(): { events: OrchProgressEvent[]; ended: boolean } | null {
-    if (!current) return null;
-    const keep = current.trigger === CATCH_UP_TRIGGER ? KEEP_ENDED_MS : KEEP_FIRST_ENDED_MS;
-    if (current.endedAt !== null && deps.now() - current.endedAt > keep) return null;
+    if (!current || !current.run) return null;
+    if (current.endedAt !== null && deps.now() - current.endedAt > KEEP_ENDED_MS) return null;
     return { events: [...current.events], ended: current.endedAt !== null };
   }
 

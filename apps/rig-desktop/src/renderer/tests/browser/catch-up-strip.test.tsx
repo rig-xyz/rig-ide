@@ -115,24 +115,4 @@ describe('CatchUpStrip', () => {
     await render([start, line('a', 'slack', 'Reading #eng', 'running', 10), { run, kind: 'problem', problem: 'connector_auth', connector: 'gmail', t: 12 }]);
     await vi.waitFor(() => expect(host.querySelector('[data-testid="catch-up-reconnect"]')?.textContent).toContain('Gmail needs reconnecting'));
   });
-
-  it('the first run, read on after First win moved on, ends in All caught up here, once', async () => {
-    const first: OrchProgressEvent[] = [
-      { run: 'run_first', kind: 'start', trigger: 'first', passes: 2, lookups: 52, lookbackDays: 3, t: 0 },
-      { run: 'run_first', kind: 'card', ref: 'sit_peter', fresh: true, t: 9 },
-      { run: 'run_first', kind: 'end', ok: true, t: 50 },
-    ];
-    await render(first);
-    await vi.waitFor(() => expect(host.querySelector('[data-testid="catch-up-summary"]')).not.toBeNull());
-    expect(strip()!.textContent).toContain('All caught up');
-    expect(strip()!.textContent).not.toContain('While you were away');
-    // Dismissed: a Home that mounts again doesn't show it twice.
-    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Dismiss"]')!.click());
-    expect(strip()).toBeNull();
-    await act(async () => root.unmount());
-    root = createRoot(host);
-    await render(first);
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(strip()).toBeNull();
-  });
 });

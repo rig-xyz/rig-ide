@@ -197,7 +197,7 @@ describe('the first run', () => {
     expect(kinds[0]).toBe('start');
     expect(kinds[1]).toBe('line:Looking up what Rig already knows:running');
     expect(kinds).toContain('card');
-    expect(kinds).toContain('line:Reading #eng:done');
+    expect(kinds).toContain('line:Checking #eng:done');
     expect(kinds.at(-1)).toBe('end');
     expect(new Set(h.progress.map((e) => e.run)).size).toBe(1);
   });

@@ -419,7 +419,8 @@ export function createOrchestrator(deps: OrchestratorDeps) {
           if (e.kind === 'card') {
             cards += 1;
             emit({ ...e, fresh: !onFeed.has(e.ref) });
-          } else if (e.line.status === 'for_you' && e.line.ref && onFeed.has(e.line.ref)) emit({ ...e, line: { ...e.line, known: true } });
+          } else if (e.kind === 'thought') emit(e);
+          else if (e.line.status === 'for_you' && e.line.ref && onFeed.has(e.line.ref)) emit({ ...e, line: { ...e.line, known: true } });
           else emit(e);
         }
       } else if (raw.kind === 'turn_end' && begun) finish(ok(null));

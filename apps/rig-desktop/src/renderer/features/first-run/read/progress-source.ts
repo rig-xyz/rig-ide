@@ -63,15 +63,10 @@ export const liveFirstRun: ProgressSource = {
   },
 };
 
-/** The runs Home's strip shows: a catch-up, and the first run, which First win leaves reading. */
-const STRIP_TRIGGERS: readonly string[] = ['catch-up', 'first'];
-
 /**
  * The morning catch-up (main's catch-up.ts), for Home's strip: the one going
  * or just ended, from its events so far, then live; and any catch-up that
- * starts while Home is open (the Mac woke). The first run too: First win
- * moves on at the first card, and the rest of the read plays here. Never
- * starts one itself.
+ * starts while Home is open (the Mac woke). Never starts one itself.
  */
 export const liveCatchUp: ProgressSource = {
   start(onEvent) {
@@ -81,7 +76,7 @@ export const liveCatchUp: ProgressSource = {
     const deliver = (event: OrchProgressEvent) => {
       if (stopped) return;
       // A new catch-up begins again from its own start.
-      if (event.kind === 'start' && STRIP_TRIGGERS.includes(event.trigger) && event.run !== run) {
+      if (event.kind === 'start' && event.trigger === 'catch-up' && event.run !== run) {
         run = event.run;
         next = 0;
       }
