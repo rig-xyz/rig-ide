@@ -132,9 +132,11 @@ type DebugState = {
   startAt: FirstRunStepId | null;
   /** Bumped on every start, so the flow remounts fresh. */
   run: number;
+  /** A replay is open in this window (App shows the first run for it, seen or not), until it ends. */
+  replaying: boolean;
 };
 
-let state: DebugState = { simulation: null, startAt: null, run: 0 };
+let state: DebugState = { simulation: null, startAt: null, run: 0, replaying: false };
 const listeners = new Set<() => void>();
 
 function emit(next: DebugState): void {
@@ -161,24 +163,26 @@ export function firstRunDebugAvailable(debugMode: boolean): boolean {
 }
 
 /**
- * Starts the first run again: clears that it was seen and where it stopped,
- * so App opens it. With a simulation, the flow sees that instead of the real
- * account and agent.
+ * Starts the first run again, and App opens it. With a simulation, the flow
+ * sees that instead of the real account and agent, and nothing is written:
+ * the real first run's seen and progress stay as they were. A real replay
+ * clears them, as the real first run would start.
  */
 export function replayFirstRun(
   simulation: FirstRunSimulation | null = null,
   startAt: FirstRunStepId | null = null
 ): Promise<unknown> {
-  emit({ simulation, startAt, run: state.run + 1 });
-  return rpc.rig.settings.set({ firstRunSeen: 0, firstRunProgress: null });
+  emit({ simulation, startAt, run: state.run + 1, replaying: true });
+  return simulation ? Promise.resolve() : rpc.rig.settings.set({ firstRunSeen: 0, firstRunProgress: null });
 }
 
-/** Back to the real account and agent, from the start. */
+/** Back to the real account and agent, from the start: a real replay. */
 export function stopSimulating(): void {
-  emit({ simulation: null, startAt: null, run: state.run + 1 });
+  void replayFirstRun(null);
 }
 
 /** Called when a first run finishes, so the next replay starts clean. */
 export function clearFirstRunDebug(): void {
-  if (state.simulation || state.startAt) emit({ simulation: null, startAt: null, run: state.run });
+  if (state.simulation || state.startAt || state.replaying)
+    emit({ simulation: null, startAt: null, run: state.run, replaying: false });
 }

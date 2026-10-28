@@ -1310,14 +1310,18 @@ export function App() {
   // ahead of the settings change that follows.
   // Home fades in where the first run's stage dissolved, once.
   const [arrivedFromFirstRun, setArrivedFromFirstRun] = useState(false);
+  // A simulated replay (always, with Alpha off: `FirstRun`) wrote nothing, so the real gate stays.
+  const simulatedReplay = useRef(false);
+  simulatedReplay.current = firstRunDebug.replaying && (firstRunDebug.simulation !== null || !alphaEnabled);
   const onFirstRunDone = useCallback(() => {
-    setGate((current) => current && { ...current, firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null });
+    if (!simulatedReplay.current)
+      setGate((current) => current && { ...current, firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null });
     setArrivedFromFirstRun(true);
   }, []);
-  // Rig Alpha's (Settings › Advanced), or replayed from the debug harness in this window (only
-  // simulated with Alpha off: `FirstRun`).
+  // Rig Alpha's (Settings › Advanced) until it's seen, or replayed from the debug harness in this
+  // window until the replay ends (only simulated with Alpha off: `FirstRun`).
   const firstRunOpen =
-    gate !== null && shouldShowFirstRun(gate.firstRunSeen) && (alphaEnabled || firstRunDebug.run > 0);
+    gate !== null && ((alphaEnabled && shouldShowFirstRun(gate.firstRunSeen)) || firstRunDebug.replaying);
   // Replaying the first run from Settings closes Settings behind it. It can open again over the
   // first run (its gear, or ⌘,), so Rig Alpha can always be turned off.
   useEffect(() => {

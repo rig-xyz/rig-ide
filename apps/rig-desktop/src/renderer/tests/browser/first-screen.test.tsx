@@ -57,7 +57,7 @@ vi.mock('@renderer/lib/ipc', () => {
 });
 
 import { App } from '@renderer/App';
-import { replayFirstRun, stopSimulating } from '@renderer/features/first-run/debug/first-run-debug';
+import { FIRST_RUN_CASES, replayFirstRun } from '@renderer/features/first-run/debug/first-run-debug';
 
 beforeAll(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -135,20 +135,36 @@ describe('the first run with Rig Alpha on', () => {
   });
 });
 
-// Last: a replay is this window's for good (`useFirstRunDebug`).
-describe('a replay with Rig Alpha off', () => {
-  it('a replay from the debug harness only simulates: nothing real is read or made', async () => {
+// Last: a replay is this window's (`useFirstRunDebug`).
+describe('a simulated replay', () => {
+  it('with Rig Alpha off, only simulates: nothing real is read, made or written', async () => {
     await mount({ alphaEnabled: false, hasSeenOnboarding: true, firstRunSeen: 1, debugMode: true });
     await vi.waitFor(() => expect(mocks.calls).toContain('rig.auth.status'));
     mocks.calls = [];
-    // A real replay, as Settings' Replay asked for it.
-    await act(async () => void replayFirstRun(null));
+    await act(async () => void replayFirstRun(FIRST_RUN_CASES[0]!.simulation));
     await vi.waitFor(() => expect(q('[data-testid="first-run-get-started"]')).not.toBeNull());
     expect(q('[data-testid="first-run-debug"]')!.textContent).toContain('simulated');
     expect(q('[data-testid="first-run-debug-real"]')).toBeNull();
     await act(async () => q('[data-testid="first-run-get-started"]')!.click());
     await vi.waitFor(() => expect(q('[data-testid="first-run-setup-rows"]')).not.toBeNull());
     expect(mocks.calls.filter((c) => /^rig\.(orch|firstRun|feed|account|auth)\b|^agents\./.test(c))).toEqual([]);
-    await act(async () => stopSimulating());
+    // Left with Not now: it closes, and the real settings were never written.
+    await act(async () => q('[data-testid="first-run-not-now"]')?.click());
+    await vi.waitFor(() => expect(q('[data-testid="first-run-setup-rows"]')).toBeNull(), { timeout: 3000 });
+    expect(mocks.calls).not.toContain('rig.settings.set');
+    expect(mocks.settings.firstRunSeen).toBe(1);
+  });
+
+  it('with Rig Alpha on, over a first run not yet seen, still writes nothing', async () => {
+    await mount({ alphaEnabled: true, hasSeenOnboarding: true, firstRunSeen: 0, debugMode: true });
+    await vi.waitFor(() => expect(q('[data-testid="first-run-get-started"]')).not.toBeNull());
+    mocks.calls = [];
+    await act(async () => void replayFirstRun(FIRST_RUN_CASES[0]!.simulation, 'setup'));
+    await vi.waitFor(() => expect(q('[data-testid="first-run-not-now"]')).not.toBeNull());
+    await act(async () => q('[data-testid="first-run-not-now"]')!.click());
+    // The real first run, still unseen, comes back.
+    await vi.waitFor(() => expect(q('[data-testid="first-run-get-started"]')).not.toBeNull(), { timeout: 3000 });
+    expect(mocks.calls).not.toContain('rig.settings.set');
+    expect(mocks.settings.firstRunSeen).toBe(0);
   });
 });

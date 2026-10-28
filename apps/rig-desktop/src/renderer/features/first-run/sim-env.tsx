@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useAgentIdentities } from '@renderer/features/chat/use-runnable-agents';
-import { rpc } from '@renderer/lib/ipc';
-import { FIRST_RUN_VERSION, type FirstRunProgress } from '@shared/rig/first-run';
+import type { FirstRunProgress } from '@shared/rig/first-run';
 import type { OrchProgressEvent } from '@shared/rig/orch-progress';
 import { agentRoute, ROUTED_AGENT_ID } from './agent-route';
 import { withWatched, type Watching } from './connect/sources';
@@ -151,10 +150,9 @@ export function SimulatedFirstRunEnv({
     firstWin: simulatedFirstWin(later),
     saveProgress: setProgress,
     trackStep: () => {},
-    finish: () =>
-      void rpc.rig.settings.set({ firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null }),
-    skip: () =>
-      void rpc.rig.settings.set({ firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null }),
+    // A simulation writes nothing: the real first run's seen and progress stay as they were.
+    finish: () => {},
+    skip: () => {},
     overlay: null,
   };
 
