@@ -5,7 +5,7 @@ import type { AcpHttpMcpServerWire } from '@emdash/core/acp';
 import { log } from '@main/lib/logger';
 import { z } from 'zod';
 import { RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
-import { createAgentRigTools, createRigTools, ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, runRigTool, type RigTool, type RigToolScope, type RigToolsBackend } from './rig-tools';
+import { createAgentRigTools, createRigTools, FEED_RIG_TOOLS, ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, runRigTool, type RigTool, type RigToolScope, type RigToolsBackend } from './rig-tools';
 
 /**
  * The desktop's own MCP server for rig tools (`rig-tools.ts`), handed to each
@@ -83,7 +83,9 @@ function reply(res: ServerResponse, status: number, body?: Record<string, unknow
 
 export function createRigToolsServer(deps: { backend: RigToolsBackend; now?: () => number; extraTools?: RigTool[] }): RigToolsServer {
   // rig_space_describe lists them all, the browser tools included.
-  const tools: RigTool[] = [...createRigTools(deps.backend, deps.now, () => tools), ...(deps.extraTools ?? [])];
+  const tools: RigTool[] = [...createRigTools(deps.backend, deps.now, () => spaceTools()), ...(deps.extraTools ?? [])];
+  /** A space session's tools: the Feed's only while Rig Alpha is on, read per request so turning it off takes them away. */
+  const spaceTools = () => (deps.backend.alphaOn?.() === false ? tools.filter((t) => !FEED_RIG_TOOLS.has(t.name)) : tools);
   // The background orchestrator's own tools, listed only in its session.
   const agentTools = createAgentRigTools(deps.backend);
   /** Session key → its token, so the same session always gets the same one. */
@@ -117,7 +119,7 @@ export function createRigToolsServer(deps: { backend: RigToolsBackend; now?: () 
     ]);
     const mcp = new McpServer({ name: RIG_TOOLS_SERVER, version: '1.0.0' }, { instructions: INSTRUCTIONS });
     // The background orchestrator's session gets its own tools and no others (no rig_start, no space writes).
-    const listed = scope.bindingId === ORCHESTRATOR_BINDING ? [...tools, ...agentTools].filter((t) => ORCHESTRATOR_RIG_TOOLS.has(t.name)) : tools;
+    const listed = scope.bindingId === ORCHESTRATOR_BINDING ? [...tools, ...agentTools].filter((t) => ORCHESTRATOR_RIG_TOOLS.has(t.name)) : spaceTools();
     for (const tool of listed) {
       mcp.registerTool(
         tool.name,

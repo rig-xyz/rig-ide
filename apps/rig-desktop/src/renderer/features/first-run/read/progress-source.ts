@@ -39,7 +39,13 @@ export const liveFirstRun: ProgressSource = {
     void rpc.rig.orch
       .firstRun()
       .then((r) => {
-        const sofar = r.success && 'events' in r.data ? r.data.events : [];
+        // Refused (Rig Alpha off): it ends here, rather than waiting on a run that never starts.
+        if (!r.success) {
+          held = null;
+          if (!stopped) onEvent({ run: run ?? 'first', kind: 'end', ok: false, error: r.error.message, t: 0 });
+          return;
+        }
+        const sofar = 'events' in r.data ? r.data.events : [];
         for (const event of sofar) deliver(event);
         const waiting = held ?? [];
         held = null;

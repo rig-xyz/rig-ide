@@ -25,6 +25,14 @@ describe('the Home space', () => {
     expect(d.saved()).toBe('b_new');
   });
 
+  it('neither looks one up nor makes one with Rig Alpha off', async () => {
+    const d = deps([]);
+    const home = createHomeSpace({ ...d, alphaOn: () => false });
+    expect(await home.ensure()).toEqual(err('Rig Alpha is off (Settings › Advanced).'));
+    expect(d.spaces).not.toHaveBeenCalled();
+    expect(d.create).not.toHaveBeenCalled();
+  });
+
   it('uses the one it remembers, or adopts a space called home already on this Mac', async () => {
     const remembered = deps([{ bindingId: 'b_h', name: 'home', root: '/Rig/home' }], 'b_h');
     expect(await createHomeSpace(remembered).ensure()).toEqual(ok({ bindingId: 'b_h', root: '/Rig/home' }));

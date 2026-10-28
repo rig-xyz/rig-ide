@@ -186,6 +186,9 @@ export const ORCHESTRATOR_RIG_TOOLS: ReadonlySet<string> = new Set([
   'rig_github',
 ]);
 
+/** The Feed's tools a space session gets (`orchestratorTools`): listed only with Rig Alpha on. */
+export const FEED_RIG_TOOLS: ReadonlySet<string> = new Set(['rig_query', 'rig_get', 'rig_act', 'rig_start']);
+
 export interface RigToolsBackend {
   /** The signed-in account's relay user id. */
   whoami(): Promise<Result<{ id: string }, Failure>>;
@@ -259,6 +262,8 @@ export interface RigToolsBackend {
   topicsOnHere?(): boolean;
   /** The control plane's four primitives (orch/actions.ts); absent when this version has none. */
   orch?: OrchPrimitives;
+  /** Rig Alpha (Settings › Advanced): with it off, space sessions get none of the Feed's tools. Omitted: on. */
+  alphaOn?(): boolean;
 }
 
 export type RigToolContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: 'image/png' };

@@ -41,6 +41,14 @@ const emit = (e: OrchProgressEvent) => ipc.listeners.forEach((l) => l(e));
 beforeEach(() => ipc.listeners.clear());
 
 describe('liveFirstRun', () => {
+  it('ends at once when the first run is refused (Rig Alpha off), rather than spinning', async () => {
+    ipc.answer = async () => ({ success: false, error: { message: 'Rig Alpha is off (Settings › Advanced).' } });
+    const got: OrchProgressEvent[] = [];
+    liveFirstRun.start((e) => got.push(e));
+    await vi.waitFor(() => expect(got.map((e) => e.kind)).toEqual(['end']));
+    expect(got[0]).toMatchObject({ ok: false, error: 'Rig Alpha is off (Settings › Advanced).' });
+  });
+
   it('joins a first run already going: its events so far, then the live ones, each once and in order', async () => {
     let answer!: (v: unknown) => void;
     ipc.answer = () => new Promise((r) => (answer = r));

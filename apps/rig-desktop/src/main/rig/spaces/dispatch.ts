@@ -541,7 +541,13 @@ const ROOM_SEES_CONTEXT: Record<RoomSees, string> = {
  * channel (Claude's system prompt, Codex's developer instructions), never
  * with every turn; a change reloads the session (`connectorsFingerprint`).
  */
-export function spaceRules(spec: { bindingId: string; agent: SessionAgent; rigTools: boolean }): string {
+export function spaceRules(spec: {
+  bindingId: string;
+  agent: SessionAgent;
+  rigTools: boolean;
+  /** Rig Alpha on: the owner's Feed, and the tools that read and correct it. */
+  feed?: boolean;
+}): string {
   const { rigTools } = spec;
   const lines = [
     '<rig_space_rules>',
@@ -582,7 +588,11 @@ export function spaceRules(spec: { bindingId: string; agent: SessionAgent; rigTo
       'The space conversation you get each turn is only the latest messages, and long ones are cut. For older messages, a message in full, or to find what someone said, use rig_chat_read.',
       "To look at a web page posted or pinned in the space, like a Claude artifact or a Google Doc, use rig_browser_pins, rig_browser_read and rig_browser_screenshot with its link. They open it as your owner, read only, without moving anyone's view. Read a board in full or screenshot it rather than guessing at small text. They also take an html file in the space by its path.",
       'To show the person who asked you a web page or a file from the space, call rig_browser_open instead of only naming it.',
-      'To show them only one topic of the chat, call rig_topic_show with its name.',
+      'To show them only one topic of the chat, call rig_topic_show with its name.'
+    );
+  }
+  if (rigTools && spec.feed) {
+    lines.push(
       "Your owner's Feed is what Rig puts in front of them, and it's private to them. Only their own requests may read or change it: when anyone else asks about it, say it's private and change nothing (Rig refuses it too). When your owner asks about it, or says a card is wrong because it doesn't need them, two cards are one thing or an event is in the wrong place, read it with rig_query and rig_get, then fix it with rig_act to hide, merge or move, giving the reason in their words. Remember that your answer shows in this space's chat, where everyone in it can read it."
     );
   }
@@ -924,6 +934,8 @@ export function createSpacesDispatcher(deps: {
   connectors?: (bindingId: string, agent: SessionAgent) => Promise<SessionConnectors>;
   /** Rig's own tools for the owner's session in this space: the local `rig` MCP server, with that session's token (see `rig-tools-server.ts`). */
   rigTools?: (scope: RigToolScope) => Promise<AcpMcpServerWire | null>;
+  /** Rig Alpha (Settings › Advanced): sessions are told about the owner's Feed only while it's on. Omitted: off. */
+  feed?: () => boolean;
   /** How much of a run in this space the room sees (read once per run). Omitted: everything. */
   roomSees?: (bindingId: string) => RoomSees;
   /** The owner overlay: every event of a run, before the Room-sees filter (see `local-runs.ts`). */
@@ -1346,7 +1358,7 @@ export function createSpacesDispatcher(deps: {
     // to either reloads an idle session, like a connector change.
     const agentsMd = providerId === 'claude' ? agentsMdForClaude(await readInstructions(cwd)) : null;
     const appendFor = (list: readonly AcpMcpServerWire[]) =>
-      [spaceRules({ bindingId, agent: providerId, rigTools: hasRigTools(list) }), agentsMd].filter(Boolean).join('\n\n');
+      [spaceRules({ bindingId, agent: providerId, rigTools: hasRigTools(list), feed: deps.feed?.() === true }), agentsMd].filter(Boolean).join('\n\n');
     /** The settings a reloaded session had, re-applied after the reload (some agents reset them on load). */
     let carried: AgentConfigChange | undefined;
     // A turn after a long idle, on a large session: a new session instead of

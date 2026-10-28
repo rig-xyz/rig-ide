@@ -163,6 +163,7 @@ const backend: RigToolsBackend = {
   },
   // The asker is the one signed in here (checked first): their Topics setting decides whether the dock shows.
   topicsOnHere: () => rigSettingsStore.get().roomThemesEnabled === true,
+  alphaOn: () => rigSettingsStore.get().alphaEnabled,
   // The control plane; imported lazily, since it reaches the dispatcher, which imports this module.
   orch: {
     query: async (input) => (await import('../orch/instance')).orchActions.query(input),

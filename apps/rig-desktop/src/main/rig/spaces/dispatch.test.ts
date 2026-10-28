@@ -2695,6 +2695,13 @@ describe('rig tools', () => {
     expect(rules(false)).not.toContain('rig_topic_show');
   });
 
+  it("tells the session about its owner's Feed only with Rig Alpha on", () => {
+    const feedLine = "Your owner's Feed is what Rig puts in front of them";
+    expect(spaceRules({ bindingId: 'b', agent: 'claude', rigTools: true })).not.toContain(feedLine);
+    expect(spaceRules({ bindingId: 'b', agent: 'claude', rigTools: true, feed: true })).toContain(feedLine);
+    expect(spaceRules({ bindingId: 'b', agent: 'claude', rigTools: false, feed: true })).not.toContain(feedLine);
+  });
+
   it('sends older or full chat messages to rig_chat_read, not the skill, when the agent has the tools', () => {
     const withTools = spaceRules({ bindingId: 'b', agent: 'claude', rigTools: true });
     expect(withTools).toContain('For older messages, a message in full, or to find what someone said, use rig_chat_read.');

@@ -21,6 +21,7 @@ import { rigSpaceStatusController } from '../space-status';
 import { createRuntimeAcpSessions } from '../spaces/dispatch';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
 import { createActions, type StartInput } from './actions';
+import { alphaOnly, readsOnItsOwn } from './alpha';
 import { createSender } from './send';
 import { rigSpaceSetupController } from '../space-setup';
 import { rigSettingsStore } from '../settings-instance';
@@ -65,6 +66,9 @@ async function updateSource(ref: string, patch: Partial<Source>): Promise<Source
 
 const changed = () => events.emit(rigFeedChangedChannel, { reason: 'local' });
 
+/** Rig Alpha (Settings › Advanced, alpha.ts): with it off, nothing here runs. */
+const alpha = () => rigSettingsStore.get().alphaEnabled;
+
 const headless = {
   acp,
   cwd: async () => {
@@ -104,6 +108,7 @@ export const homeSpace = createHomeSpace({
   setHomeSpaceId: (id) => rigSettingsStore.set({ homeSpaceId: id }),
   spaces: listSpaces,
   create: makeSpace,
+  alphaOn: alpha,
   log,
 });
 
@@ -215,11 +220,15 @@ export const sender = createSender({
   log,
 });
 
-// An account with no Home space yet gets one, once, a little after start (the first run makes it after Set up).
+// An account with no Home space yet gets one, once, a little after start (the first run makes it after Set up). Only with Rig Alpha on.
 setTimeout(() => {
-  void resolveSelfUserId().then((me) => {
-    if (me.success && !rigSettingsStore.get().homeSpaceId) void homeSpace.ensure();
-  });
+  if (!alpha()) return;
+  void resolveSelfUserId().then(
+    (me) => {
+      if (me.success && !rigSettingsStore.get().homeSpaceId) void homeSpace.ensure();
+    },
+    () => undefined
+  );
 }, 30_000).unref?.();
 
 /**
@@ -294,10 +303,13 @@ export const orchestrator = createOrchestrator({
   log,
 });
 const runAgent = (trigger: string) =>
-  void orchestrator.run(trigger).then((r) => {
-    if (!r.success) log.warn('Rig orchestrator: run failed', { trigger, error: r.error });
-    else changed();
-  });
+  void orchestrator.run(trigger).then(
+    (r) => {
+      if (!r.success) log.warn('Rig orchestrator: run failed', { trigger, errorLength: r.error.length });
+      else changed();
+    },
+    (error: unknown) => log.warn('Rig orchestrator: run threw', { trigger, error: String(error) })
+  );
 
 /**
  * Telemetry, counts and timings only (never what was read): how long until a first run's or a
@@ -332,29 +344,38 @@ const catchUp = createCatchUp({
   firstRunDone: () => rigSettingsStore.get().firstRunSeen >= FIRST_RUN_VERSION,
   running: () => orchestrator.running(),
   run: (trigger, opts) =>
-    orchestrator.run(trigger, opts).then((r) => {
-      if (r.success) changed();
-      else log.warn('Rig catch-up: failed', { error: r.error });
-      return r;
-    }),
+    orchestrator.run(trigger, opts).then(
+      (r) => {
+        if (r.success) changed();
+        else log.warn('Rig catch-up: failed', { errorLength: r.error.length });
+        return r;
+      },
+      (error: unknown) => {
+        log.warn('Rig catch-up: threw', { error: String(error) });
+        return err(String(error));
+      }
+    ),
   now: () => Date.now(),
   log,
 });
 
-/** Rig reads on its own only with Rig Alpha on (Settings › Advanced); the person's own clicks always run. */
-const alpha = () => rigSettingsStore.get().alphaEnabled;
+/** Rig reads on its own only with Rig Alpha on and the first run done (alpha.ts); before it, the first run's Read step reads. */
+const onItsOwn = () => readsOnItsOwn(rigSettingsStore.get());
 
 // On open: a catch-up if Rig last read hours ago, else the usual quiet run a minute in. Then every hour.
 setTimeout(() => {
-  if (!alpha()) return;
-  void catchUp.maybe('app start').then((r) => {
-    if (r !== 'started') setTimeout(() => alpha() && runAgent('app start'), 50_000).unref?.();
-  });
+  if (!onItsOwn()) return;
+  void catchUp.maybe('app start').then(
+    (r) => {
+      if (r !== 'started') setTimeout(() => onItsOwn() && runAgent('app start'), 50_000).unref?.();
+    },
+    () => undefined
+  );
 }, 10_000).unref?.();
-setInterval(() => alpha() && runAgent('schedule'), 60 * 60_000).unref?.();
+setInterval(() => onItsOwn() && runAgent('schedule'), 60 * 60_000).unref?.();
 // Back from sleep: the hours away are the ones to catch up on.
 app.whenReady().then(() => {
-  const woke = () => void (alpha() && catchUp.maybe('wake'));
+  const woke = () => void (onItsOwn() && catchUp.maybe('wake').catch(() => undefined));
   powerMonitor.on('resume', woke);
   powerMonitor.on('unlock-screen', woke);
 }, () => undefined);
@@ -367,58 +388,61 @@ export const rigOrchController = createRPCController({
   query: (input: { kind: string; filter?: Record<string, unknown>; since?: string; limit?: number }) => orchActions.query(input),
   get: (input: { ref: string }) => orchActions.get(input.ref),
   act: (input: { refs: string[]; action: string; args?: Record<string, unknown> }) => orchActions.act({ ...input, actor: 'person' }),
-  start: (input: Omit<StartInput, 'userTurnId'>) => orchActions.start({ ...input, userTurnId: turnGate.issue('click') }),
+  start: alphaOnly(alpha, (input: Omit<StartInput, 'userTurnId'>) => orchActions.start({ ...input, userTurnId: turnGate.issue('click') })),
   /**
    * The first run (onboarding's Read step): starts it and answers at once;
    * its progress comes on `rigOrchProgressChannel`, ending with `end`.
    */
-  firstRun: async () => {
+  firstRun: alphaOnly(alpha, async () => {
     // Someone Rig has read for before is caught up since their last read, not read the last 3 days again.
     const since = await catchUpSince();
     // One first run at a time: asking again (a Read step mounted twice) joins it, with its events so far.
     const first = orchestrator.startFirst(since ? { ...FIRST_RUN, since } : FIRST_RUN);
     if (!first.joined) {
-      void first.done.then((r) => {
-        if (!r.success) log.warn('Rig orchestrator: first run failed', { error: r.error });
-        else changed();
-      });
+      void first.done.then(
+        (r) => {
+          if (!r.success) log.warn('Rig orchestrator: first run failed', { errorLength: r.error.length });
+          else changed();
+        },
+        (error: unknown) => log.warn('Rig orchestrator: first run threw', { error: String(error) })
+      );
     }
     return ok({ started: true, joined: first.joined, events: first.events });
-  },
+  }),
   /** Where a catch-up would read from (the last read), or null for someone Rig hasn't read for yet. */
   since: async () => ok({ since: await catchUpSince() }),
   /** The morning catch-up going now, or just ended, with its events so far (Home's strip); null when there's none. */
   catchUp: async () => ok(catchUp.status()),
   /** The catch-up again, now (its Try again after it stopped). */
-  catchUpNow: async () => ok({ outcome: await catchUp.maybe('asked', true) }),
+  catchUpNow: alphaOnly(alpha, async () => ok({ outcome: await catchUp.maybe('asked', true) })),
   /** The person's Home space, made if there's none yet: the first run asks once Set up is done. */
-  ensureHome: async () => {
+  ensureHome: alphaOnly(alpha, async () => {
     const home = await homeSpace.ensure();
     return home.success ? ok(home.data) : err({ message: home.error });
-  },
+  }),
   /** A background orchestrator run now (agent.ts). */
-  runNow: async () => {
+  runNow: alphaOnly(alpha, async () => {
     const r = await orchestrator.run('asked');
     if (r.success) changed();
     return r.success ? ok(r.data) : err({ message: r.error });
-  },
+  }),
   /** A space session started for a situation, linked to it (start-in-space.ts, when a follow-up couldn't continue). */
   linkSession: (input: { sessionId: string; situationId: string; bindingId: string }) =>
     feedRelay.linkSession(input.sessionId, input.situationId, input.bindingId),
   /** Whether the background orchestrator is running right now. */
   agentStatus: async () => ok({ running: orchestrator.running() }),
-  addSource: async (input: { connector: string; what: string; everyMin?: number }) => {
+  addSource: alphaOnly(alpha, async (input: { connector: string; what: string; everyMin?: number }) => {
     const list = await readSources();
     const ref = `src_${input.connector.toLowerCase().replace(/[^a-z0-9]+/g, '-')}${list.some((x) => x.ref.startsWith(`src_${input.connector.toLowerCase()}`)) ? `-${list.length + 1}` : ''}`;
     const source: Source = { ref, connector: input.connector, what: input.what, everyMin: input.everyMin ?? 30, paused: false, cursor: null, lastRun: null, lastStatus: null, lastCount: 0 };
     await writeSources([...list, source]);
     return ok(source);
-  },
+  }),
   /** What Rig watches for the person (Connect's switches read and write these). */
   sources: async () => ok(await readSources()),
   /** Stops or resumes watching one source; a paused one leaves the packet. */
-  pauseSource: async (input: { ref: string; paused: boolean }) => {
+  pauseSource: alphaOnly(alpha, async (input: { ref: string; paused: boolean }) => {
     const source = await updateSource(input.ref, { paused: input.paused });
     return source ? ok(source) : err({ message: `No source ${input.ref}.` });
-  },
+  }),
 });

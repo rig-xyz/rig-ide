@@ -12,6 +12,7 @@ import type {
 } from '@shared/rig/feed';
 import { isError, resolveContext } from '../account';
 import { fetchRelay } from '../relay-request';
+import { rigSettingsStore } from '../settings-instance';
 
 /**
  * The orchestrator's Feed routes on the relay (tap relay
@@ -24,7 +25,8 @@ import { fetchRelay } from '../relay-request';
 export type FeedRelayError =
   | RigAccountError
   | { kind: 'unsupported'; message: string }
-  | { kind: 'busy'; message: string };
+  | { kind: 'busy'; message: string }
+  | { kind: 'alphaOff'; message: string };
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const ACT_TIMEOUT_MS = 90_000;
@@ -36,6 +38,9 @@ async function call(
   body?: unknown,
   timeoutMs = REQUEST_TIMEOUT_MS
 ): Promise<Result<unknown, FeedRelayError>> {
+  // The Feed and the orchestrator are Rig Alpha's: with it off, nothing here reaches the relay.
+  if (!rigSettingsStore.get().alphaEnabled)
+    return err({ kind: 'alphaOff', message: `Could not ${action}: Rig Alpha is off (Settings › Advanced).` });
   const ctx = await resolveContext();
   if (isError(ctx)) return err(ctx);
   let response: Response;

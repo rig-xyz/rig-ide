@@ -3,7 +3,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ok } from '@emdash/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AcpHttpMcpServerWire } from '@emdash/core/acp';
-import { ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, type RigToolScope, type RigToolsBackend } from './rig-tools';
+import { FEED_RIG_TOOLS, ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, type RigToolScope, type RigToolsBackend } from './rig-tools';
 import { createRigToolsServer, type RigToolsServer } from './rig-tools-server';
 
 const DYLAN: RigToolScope = { bindingId: 'b1', ownerUserId: 'u-dylan', agent: 'claude', cwd: '/rigs/one' };
@@ -135,6 +135,18 @@ describe('rig tools server', () => {
       req.end(JSON.stringify(INITIALIZE));
     });
     expect(status).toBe(403);
+  });
+
+  it('lists the Feed’s tools to space sessions only while Rig Alpha is on', async () => {
+    let alpha = false;
+    server = createRigToolsServer({ backend: { ...fakeBackend(), orch: {} as RigToolsBackend['orch'], alphaOn: () => alpha } });
+    const client = await connect(await server.serverFor(DYLAN));
+    const names = async () => (await client.listTools()).tools.map((t) => t.name);
+    expect((await names()).filter((n) => FEED_RIG_TOOLS.has(n))).toEqual([]);
+    expect(await names()).toContain('rig_people_list');
+    alpha = true;
+    expect((await names()).filter((n) => FEED_RIG_TOOLS.has(n)).sort()).toEqual([...FEED_RIG_TOOLS].sort());
+    await client.close();
   });
 
   it('lists the rig tools and runs them for the token’s own space and member only', async () => {

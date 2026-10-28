@@ -1,4 +1,5 @@
 import { err, ok, type Result } from '@emdash/shared';
+import { ALPHA_OFF } from './alpha';
 
 /**
  * The person's private Home space (onboarding Step 7): where Rig runs work
@@ -18,6 +19,8 @@ export type HomeSpaceDeps = {
   spaces(): Promise<Result<{ bindingId: string; name: string; root: string | null }[], { message: string }>>;
   /** Makes a space called `name` and waits until it's live. */
   create(name: string): Promise<Result<HomeSpace, string>>;
+  /** Rig Alpha (Settings › Advanced): with it off, no Home space is looked up or made. Omitted: on. */
+  alphaOn?(): boolean;
   log?: { info: (msg: string, meta?: Record<string, unknown>) => void; warn: (msg: string, meta?: Record<string, unknown>) => void };
 };
 
@@ -51,6 +54,7 @@ export function createHomeSpace(deps: HomeSpaceDeps) {
 
   /** The Home space, made if there's none yet. Calls while it's being made join that. */
   function ensure(): Promise<Result<HomeSpace, string>> {
+    if (deps.alphaOn?.() === false) return Promise.resolve(err(ALPHA_OFF));
     ensuring ??= ensureNow().finally(() => (ensuring = null));
     return ensuring;
   }
