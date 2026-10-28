@@ -6,6 +6,7 @@ import { RIG_TOOLS_SERVER } from '@shared/spaces/connectors';
 import { ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, rigToolOf, type RigToolScope } from '../spaces/rig-tools';
 import { agentProblemOf, connectorNeedsAuth, ProgressMapper, toolOf, type AcpToolUpdate, type OrchProgressEvent, type RunProblem } from '@shared/rig/orch-progress';
 import { checkPermission } from './checks';
+import { askFirst, LOCKED_MODE, lockedSession } from './lockdown';
 import { orchestratorSkill } from './skill';
 
 /**
@@ -21,14 +22,18 @@ import { orchestratorSkill } from './skill';
 
 /**
  * Tools the session can never use, whatever the person's own Claude settings
- * allow: no shell (GitHub reads go through rig_github), no file writes, and
- * no starting work. Deny rules beat allow rules, so this holds in code even
- * when nothing prompts.
+ * allow (lockdown.ts): no shell (GitHub reads go through rig_github), no file
+ * writes, no web, no subagents, and no starting work.
  */
-export const AGENT_DENIED_TOOLS = ['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', `mcp__${RIG_TOOLS_SERVER}__rig_start`];
+export const AGENT_DENIED_TOOLS = lockedSession().disallowedTools;
 
 /** The mode the session runs in: Claude Code's "Ask first", so every call the rules above don't settle comes to `agentPermission`. */
-export const AGENT_MODE = 'default';
+export const AGENT_MODE = LOCKED_MODE;
+
+/** A tool call as the log may name it: the MCP tool's name, or the kind of built-in call, never its title or input. */
+export function toolNameOf(call: { title?: string | null; kind?: string | null }): string {
+  return /^mcp__[A-Za-z0-9_-]+$/.exec(call.title ?? '')?.[0] ?? call.kind ?? 'tool';
+}
 
 export const AGENT_BUDGET = { lookups: 20, firstRead: 40 };
 
@@ -252,21 +257,20 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       cwd,
       mcpServers: [rig],
       systemPromptAppend: orchestratorSkill(name),
-      disallowedTools: AGENT_DENIED_TOOLS,
-      noBypassPermissions: true,
+      ...lockedSession(),
     });
     if (!started.success) return err(failOf(started.error));
     // Ask first, whatever the person's defaultMode: if it can't be set, no run.
-    const moded = deps.acp.setConfig ? await deps.acp.setConfig(conversationId, { mode: AGENT_MODE }) : err('This build cannot set the session mode.');
+    const moded = await askFirst(deps.acp, conversationId);
     if (!moded.success) {
       await deps.acp.stopSession?.(conversationId).catch(() => undefined);
       return err({ message: `Could not put the orchestrator in Ask first: ${moded.error}` });
     }
     const off = await deps.acp.subscribePendingPermissions(conversationId, (request) => {
       const optionId = agentPermission(request);
-      // What it was refused shows what it couldn't check: log it.
+      // What it was refused shows what it couldn't check: log which tool (never its title or input, which can quote what it read).
       const refused = request.options.find((o) => o.optionId === optionId)?.kind !== 'allow_once';
-      if (refused) deps.log?.info('Rig orchestrator: refused a tool call', { title: String(request.toolCall.title ?? '').slice(0, 300) });
+      if (refused) deps.log?.info('Rig orchestrator: refused a tool call', { tool: toolNameOf(request.toolCall as { title?: string; kind?: string }) });
       if (optionId) void deps.acp.resolvePermission(conversationId, request.requestId, optionId).catch(() => undefined);
     });
     live = { conversationId, ownerUserId: me.data.id, off };
@@ -298,68 +302,94 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       emit({ kind: 'end', ok: false, error: f.message, ...(f.problem ? { problem: f.problem } : {}), t: t() });
       return err(f.message);
     };
-    // Said at once, so the person sees it working while the session wakes up.
-    step('state', 'Looking up what Rig already knows', 'running');
-    const [state, known] = await Promise.all([deps.state(), deps.feedRefs?.().catch(() => []) ?? Promise.resolve([])]);
-    if (!state.success) {
-      step('state', 'Looking up what Rig already knows', 'failed');
-      return fail(state.error);
-    }
-    const before = new Set(known);
-    step('state', 'Looking up what Rig already knows', 'done');
-    step('session', 'Waking your Claude', 'running');
-    const session = await ensure(state.data.me || 'the person', first);
-    step('session', 'Waking your Claude', session.success ? 'done' : 'failed');
-    if (!session.success) return fail(session.error);
-    const mapper = new ProgressMapper(t);
-    let firstRunId: string | null = null;
-    let noted = true;
-    let cards = 0;
-    let widened = false;
-    const plan: { lookups: number; goal?: string; model?: string; effort?: string; lookbackDays: number; widened?: boolean }[] = passes.map((p) => ({ ...p, lookbackDays }));
-    // The session's own model and effort, to go back to after a pass that ran on others.
-    const own = plan.some((p) => p.model || p.effort) ? await deps.acp.readConfig?.(session.data.conversationId) : null;
-    let current: { model?: string; effort?: string } = {};
-    for (let i = 0; i < plan.length; i++) {
-      const pass = plan[i]!;
-      const want = { model: pass.model ?? own?.model?.selected ?? undefined, effort: pass.effort ?? own?.effort?.selected ?? undefined };
-      if (own && (want.model !== current.model || want.effort !== current.effort)) {
-        const change = { ...(want.model && want.model !== current.model ? { model: want.model } : {}), ...(want.effort && want.effort !== current.effort ? { effort: want.effort } : {}) };
-        if (Object.keys(change).length) {
-          const set = await deps.acp.setConfig?.(session.data.conversationId, change);
-          if (set && !set.success) deps.log?.warn('Rig orchestrator: could not set the pass model', { change, error: set.error });
+    // Whatever goes wrong after the start, the run ends with an `end`: the Read step and the catch-up strip never wait forever.
+    const go = async (): Promise<Result<RunResult, string>> => {
+      // Said at once, so the person sees it working while the session wakes up.
+      step('state', 'Looking up what Rig already knows', 'running');
+      const [state, known] = await Promise.all([deps.state(), deps.feedRefs?.().catch(() => []) ?? Promise.resolve([])]);
+      if (!state.success) {
+        step('state', 'Looking up what Rig already knows', 'failed');
+        return fail(state.error);
+      }
+      const before = new Set(known);
+      step('state', 'Looking up what Rig already knows', 'done');
+      step('session', 'Waking your Claude', 'running');
+      const session = await ensure(state.data.me || 'the person', first);
+      step('session', 'Waking your Claude', session.success ? 'done' : 'failed');
+      if (!session.success) return fail(session.error);
+      const mapper = new ProgressMapper(t);
+      let firstRunId: string | null = null;
+      let noted = true;
+      let cards = 0;
+      let widened = false;
+      const plan: { lookups: number; goal?: string; model?: string; effort?: string; lookbackDays: number; widened?: boolean }[] = passes.map((p) => ({ ...p, lookbackDays }));
+      // The session's own model and effort, to go back to after a pass that ran on others.
+      const own = plan.some((p) => p.model || p.effort) ? await deps.acp.readConfig?.(session.data.conversationId) : null;
+      let current: { model?: string; effort?: string } = {};
+      // Back to the session's own model and effort.
+      const restore = async () => {
+        if (!own) return;
+        const back = { model: own.model?.selected ?? undefined, effort: own.effort?.selected ?? undefined };
+        const change = { ...(back.model && back.model !== current.model ? { model: back.model } : {}), ...(back.effort && back.effort !== current.effort ? { effort: back.effort } : {}) };
+        if (!Object.keys(change).length) return;
+        const set = await deps.acp.setConfig?.(session.data.conversationId, change).catch((e: unknown) => err(String(e)));
+        if (set && !set.success) deps.log?.warn('Rig orchestrator: could not restore the session model', { change });
+        current = back;
+      };
+      // A pass that stops (or throws) on another model doesn't leave the session on it.
+      let through = false;
+      try {
+        for (let i = 0; i < plan.length; i++) {
+          const pass = plan[i]!;
+          const want = { model: pass.model ?? own?.model?.selected ?? undefined, effort: pass.effort ?? own?.effort?.selected ?? undefined };
+          if (own && (want.model !== current.model || want.effort !== current.effort)) {
+            const change = { ...(want.model && want.model !== current.model ? { model: want.model } : {}), ...(want.effort && want.effort !== current.effort ? { effort: want.effort } : {}) };
+            if (Object.keys(change).length) {
+              const set = await deps.acp.setConfig?.(session.data.conversationId, change);
+              if (set && !set.success) deps.log?.warn('Rig orchestrator: could not set the pass model', { change, error: set.error });
+            }
+            current = want;
+          }
+          const fp: FirstPass | undefined = first
+            ? { pass: i + 1, of: plan.length, lookups: pass.lookups, goal: pass.goal ?? null, lookbackDays: pass.lookbackDays, widened: pass.widened === true, ...(since ? { since } : {}) }
+            : undefined;
+          if (first) emit({ kind: 'pass', pass: i + 1, lookups: pass.lookups, goal: pass.goal ?? null, lookbackDays: pass.lookbackDays, t: t() });
+          const ran = await onePass(session.data.conversationId, trigger, i === 0 ? state.data : null, fp, first ? i + 1 : undefined, mapper, emit, before);
+          if (!ran.success) return fail(ran.error);
+          firstRunId ??= ran.data.runId;
+          noted &&= ran.data.noted;
+          cards += ran.data.cards;
+          // Pass 1 put nothing new, but the Feed already holds cards (an earlier run's): its top one is
+          // the first one to show, and there is something here, so no need to read further back.
+          if (first && i === 0 && ran.data.cards === 0) {
+            const top = (await deps.snapshot?.())?.feed.find((line) => line.includes(' [visible] '))?.split(' ')[0];
+            if (top) {
+              emit({ kind: 'card', ref: top, fresh: !before.has(top), t: t() });
+              cards += 1;
+              continue;
+            }
+          }
+          // Nothing for them in the first pass's days: read further back, once, before the rest. A catch-up reads since the last read, never wider.
+          if (first && !since && i === 0 && ran.data.cards === 0 && !widened && lookbackDays < WIDENED_LOOKBACK_DAYS) {
+            widened = true;
+            plan.splice(1, 0, { lookups: pass.lookups, goal: pass.goal, lookbackDays: WIDENED_LOOKBACK_DAYS, widened: true });
+            for (const later of plan.slice(2)) later.lookbackDays = WIDENED_LOOKBACK_DAYS;
+          }
         }
-        current = want;
+        through = true;
+      } finally {
+        if (!through) await restore().catch(() => undefined);
       }
-      const fp: FirstPass | undefined = first
-        ? { pass: i + 1, of: plan.length, lookups: pass.lookups, goal: pass.goal ?? null, lookbackDays: pass.lookbackDays, widened: pass.widened === true, ...(since ? { since } : {}) }
-        : undefined;
-      if (first) emit({ kind: 'pass', pass: i + 1, lookups: pass.lookups, goal: pass.goal ?? null, lookbackDays: pass.lookbackDays, t: t() });
-      const ran = await onePass(session.data.conversationId, trigger, i === 0 ? state.data : null, fp, first ? i + 1 : undefined, mapper, emit, before);
-      if (!ran.success) return fail(ran.error);
-      firstRunId ??= ran.data.runId;
-      noted &&= ran.data.noted;
-      cards += ran.data.cards;
-      // Pass 1 put nothing new, but the Feed already holds cards (an earlier run's): its top one is
-      // the first one to show, and there is something here, so no need to read further back.
-      if (first && i === 0 && ran.data.cards === 0) {
-        const top = (await deps.snapshot?.())?.feed.find((line) => line.includes(' [visible] '))?.split(' ')[0];
-        if (top) {
-          emit({ kind: 'card', ref: top, fresh: !before.has(top), t: t() });
-          cards += 1;
-          continue;
-        }
-      }
-      // Nothing for them in the first pass's days: read further back, once, before the rest. A catch-up reads since the last read, never wider.
-      if (first && !since && i === 0 && ran.data.cards === 0 && !widened && lookbackDays < WIDENED_LOOKBACK_DAYS) {
-        widened = true;
-        plan.splice(1, 0, { lookups: pass.lookups, goal: pass.goal, lookbackDays: WIDENED_LOOKBACK_DAYS, widened: true });
-        for (const later of plan.slice(2)) later.lookbackDays = WIDENED_LOOKBACK_DAYS;
-      }
+      emit({ kind: 'end', ok: true, t: t() });
+      deps.log?.info('Rig orchestrator: run ended', { trigger, passes: plan.length, widened, cards, ms: t() });
+      return ok({ runId: firstRunId!, noted, ms: t(), cards });
+    };
+    try {
+      return await go();
+    } catch (e) {
+      deps.log?.warn('Rig orchestrator: run threw', { trigger, error: e instanceof Error ? e.name : 'error' });
+      return fail(failOf(e instanceof Error ? e.message : String(e)));
     }
-    emit({ kind: 'end', ok: true, t: t() });
-    deps.log?.info('Rig orchestrator: run ended', { trigger, passes: plan.length, widened, cards, ms: t() });
-    return ok({ runId: firstRunId!, noted, ms: t(), cards });
   }
 
   /** One turn of a run: its packet, its tool calls as progress, and its note (or one written for it). */
@@ -409,10 +439,10 @@ export function createOrchestrator(deps: OrchestratorDeps) {
           }
         }
         events.push({ kind: raw.update.sessionUpdate, payload: raw.update });
-        // A lookup that failed says why in the log (the person sees "Couldn't read").
+        // A lookup that failed goes in the log by its tool and size, never its payload, which can quote what it read (the person sees "Couldn't read").
         if (raw.update.sessionUpdate === 'tool_call_update' && (raw.update as { status?: string }).status === 'failed') {
           const said = JSON.stringify(raw.update);
-          deps.log?.warn('Rig orchestrator: a lookup failed', { pass: passNo, call: said.slice(0, 800) });
+          deps.log?.warn('Rig orchestrator: a lookup failed', { pass: passNo, id: u.toolCallId, tool: toolNameOf({ title: calls.get(u.toolCallId ?? '')?.name }), length: said.length });
           const connector = toolOf(calls.get(u.toolCallId ?? '')?.name ?? '')?.connector;
           if (connector && connector !== 'rig' && !lapsed.has(connector) && connectorNeedsAuth(said)) {
             lapsed.add(connector);
@@ -429,7 +459,11 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         }
       } else if (raw.kind === 'turn_end' && begun) finish(ok(null));
     });
-    const timer = setTimeout(() => finish(err({ message: 'The run took too long.', problem: 'timeout' })), deps.turnTimeoutMs ?? 10 * 60_000);
+    // Too long: the turn is stopped too, so it doesn't keep reading (and holding the session) after the run gave up on it.
+    const timer = setTimeout(() => {
+      finish(err({ message: 'The run took too long.', problem: 'timeout' }));
+      void deps.acp.cancelTurn(conversationId).catch(() => undefined);
+    }, deps.turnTimeoutMs ?? 10 * 60_000);
     try {
       const queued = await deps.acp.queuePrompt(conversationId, packet, undefined, (reason) => finish(err(failOf(reason))));
       if (!queued.success) return err(failOf(queued.error));
@@ -451,7 +485,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
           summary: ended.success ? `The run ended without a note. Claude's last words: ${said.slice(0, 600) || '(none)'}` : `The run failed: ${ended.error.message}`,
         });
       }
-      deps.log?.info('Rig orchestrator: pass ended', { runId, trigger, pass: passNo, noted, cards, ms: deps.now() - startedAt, ok: ended.success, said: said.slice(0, 600) });
+      deps.log?.info('Rig orchestrator: pass ended', { runId, trigger, pass: passNo, noted, cards, ms: deps.now() - startedAt, ok: ended.success, saidLength: said.length });
       return ended.success ? ok({ runId, noted, ms: deps.now() - startedAt, cards }) : err(ended.error);
     } finally {
       clearTimeout(timer);

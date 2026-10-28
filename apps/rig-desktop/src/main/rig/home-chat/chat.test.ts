@@ -21,7 +21,8 @@ function fakeAcp(reply: (text: string) => string) {
   const listeners = new Map<string, Set<(e: RawSessionEvent) => void>>();
   let permissions: ((r: AcpPermissionRequest) => void) | null = null;
   const acp = {
-    startSession: vi.fn(async () => ok({ sessionId: 's1' })),
+    startSession: vi.fn(async (_input: Record<string, unknown>) => ok({ sessionId: 's1' })),
+    setConfig: vi.fn(async (_id: string, _change: Record<string, unknown>) => ok(undefined)),
     stopSession: vi.fn(async () => {}),
     subscribeRaw: vi.fn(async (id: string, on: (e: RawSessionEvent) => void) => {
       const set = listeners.get(id) ?? new Set();
@@ -149,6 +150,25 @@ describe('Home chat', () => {
     );
     acp.startSession.mockResolvedValueOnce(err('Claude is not installed') as never);
     expect(await createHomeChat(deps(acp)).send('hi')).toEqual(err('Claude is not installed'));
+  });
+
+  it("is locked down whatever the person's own Claude settings allow: deny rules, no bypass, no settings allow rules, Ask first", async () => {
+    const { acp } = fakeAcp(() => 'x');
+    await createHomeChat(deps(acp)).send('hi');
+    const input = acp.startSession.mock.calls[0]![0];
+    expect(input).toMatchObject({ noBypassPermissions: true, appPermissionsOnly: true });
+    expect(input.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Write', 'Edit', 'WebFetch', 'WebSearch', 'Task']));
+    // rig_start stays: it checks the person's own turn.
+    expect(input.disallowedTools).not.toContain('mcp__rig__rig_start');
+    expect(acp.setConfig).toHaveBeenCalledWith('home-1', { mode: 'default' });
+  });
+
+  it("doesn't chat when the session can't be put in Ask first", async () => {
+    const { acp } = fakeAcp(() => 'x');
+    acp.setConfig.mockResolvedValueOnce(err('no modes') as never);
+    expect(await createHomeChat(deps(acp)).send('hi')).toEqual(err("Couldn't start a safe session for Home: no modes"));
+    expect(acp.queuePrompt).not.toHaveBeenCalled();
+    expect(acp.stopSession).toHaveBeenCalledWith('home-1');
   });
 
   it('reset closes the session, and the next message starts a new one', async () => {

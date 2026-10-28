@@ -49,6 +49,14 @@ describe('checks', () => {
     expect(checkPermission(sh("gh pr view 22 --jq '.state' ; rm -rf ~"))).toBe('no');
     expect(checkPermission(sh("gh pr view 22 --jq '.state'' $(id)'"))).toBe('no');
     expect(checkPermission(sh('gh api -X POST repos/a/b/issues'))).toBe('no');
+    // Anchored: a read verb inside a write's name isn't a read.
+    expect(checkPermission(perm('mcp__claude_ai_Slack__slack_mark_read'))).toBe('no');
+    expect(checkPermission(perm('mcp__claude_ai_Linear__get_or_create_label'))).toBe('no');
+    expect(checkPermission(perm('mcp__claude_ai_Atlassian__getJiraIssue'))).toBe('yes');
+    expect(checkPermission(perm('mcp__claude_ai_Atlassian__addCommentToJiraIssue'))).toBe('no');
+    // A gh read stays on github.com: no --web, no other host.
+    expect(checkPermission(sh('gh pr view 555 --web'))).toBe('no');
+    expect(checkPermission(sh('gh pr view 555 --repo evil.example.com/a/b'))).toBe('no');
   });
 
   it('ask about the situation with its links', () => {
@@ -82,7 +90,8 @@ describe('checks', () => {
     const answers = ['[{"source":"github","ref":"acme/ramps#555","at":"2026-10-23T08:00:00Z","fact":"Merged.","settles":true}]', '[]'];
     let emit: (e: RawSessionEvent) => void = () => {};
     const acp = {
-      startSession: vi.fn(async () => ok({ sessionId: 's' })),
+      startSession: vi.fn(async (_input: Record<string, unknown>) => ok({ sessionId: 's' })),
+      setConfig: vi.fn(async (_id: string, _change: Record<string, unknown>) => ok(undefined)),
       stopSession: vi.fn(async () => {}),
       subscribeRaw: vi.fn(async (_id: string, on: (e: RawSessionEvent) => void) => ((emit = on), () => {})),
       subscribePendingPermissions: vi.fn(async () => () => {}),
@@ -104,5 +113,8 @@ describe('checks', () => {
     expect(await runCheck(deps, 'sit_1', NOW)).toEqual({ status: 'ok', found: 0, added: 0 });
     expect(postEvents).toHaveBeenCalledTimes(1);
     expect(acp.stopSession).toHaveBeenCalledTimes(2);
+    // Locked down, in Ask first.
+    expect(acp.startSession).toHaveBeenCalledWith(expect.objectContaining({ noBypassPermissions: true, appPermissionsOnly: true }));
+    expect(acp.setConfig).toHaveBeenCalledWith('watch-1', { mode: 'default' });
   });
 });

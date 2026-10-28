@@ -828,7 +828,10 @@ export class SessionManager implements InboundRouter {
  *
  * `disallowedTools` and `allowDangerouslySkipPermissions: false` only narrow
  * a session (the background orchestrator's): deny rules beat any allow rule
- * in the person's settings, and bypass mode isn't offered.
+ * in the person's settings, and bypass mode isn't offered. `appPermissionsOnly`
+ * goes further, as the SDK's `managedSettings` (the policy tier, which only
+ * ever restricts): the person's settings files can't allow a call or run a
+ * hook in this session, so whatever the deny rules don't settle asks the app.
  *
  * And `_meta.systemPrompt.append`: extra instructions after Claude Code's own
  * system prompt. The adapter keeps its `claude_code` preset and only adds
@@ -839,6 +842,13 @@ export class SessionManager implements InboundRouter {
  * load and resume). Per thread, never the adapter's process-wide config: one
  * adapter serves every Codex session in a folder.
  */
+/** `appPermissionsOnly`'s policy-tier settings: no allow rules or hooks from settings files, no bypass mode. */
+export const APP_PERMISSIONS_ONLY = {
+  allowManagedPermissionRulesOnly: true,
+  allowManagedHooksOnly: true,
+  permissions: { disableBypassPermissionsMode: 'disable' },
+} as const;
+
 function sessionMeta(input: AcpStartInput): { _meta?: Record<string, unknown> } {
   if (input.providerId === 'codex') {
     return input.systemPromptAppend ? { _meta: { developerInstructions: input.systemPromptAppend } } : {};
@@ -849,7 +859,8 @@ function sessionMeta(input: AcpStartInput): { _meta?: Record<string, unknown> } 
   const debugFile = input.claudeDebugFile ?? '';
   const denied = input.disallowedTools ?? [];
   const noBypass = input.noBypassPermissions === true;
-  if (disabled.length === 0 && !append && !debugFile && denied.length === 0 && !noBypass) return {};
+  const appOnly = input.appPermissionsOnly === true;
+  if (disabled.length === 0 && !append && !debugFile && denied.length === 0 && !noBypass && !appOnly) return {};
   // Tool search on, said outright for a space session (the only kind with an
   // append), new or loaded: with it off, every tool of the owner's own MCP
   // servers went in every call, about 285,000 tokens. Rig's own tools skip
@@ -861,6 +872,7 @@ function sessionMeta(input: AcpStartInput): { _meta?: Record<string, unknown> } 
     ...(debugFile ? { debug: true, debugFile } : {}),
     ...(denied.length > 0 ? { disallowedTools: denied } : {}),
     ...(noBypass ? { allowDangerouslySkipPermissions: false } : {}),
+    ...(appOnly ? { managedSettings: APP_PERMISSIONS_ONLY } : {}),
   };
   return {
     _meta: {

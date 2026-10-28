@@ -18,4 +18,16 @@ describe('rig_github: gh reads only, as arguments', () => {
     expect(ghReadArgs('gh api -X DELETE repos/o/r')).toBeNull();
     expect(ghReadArgs('curl https://example.com')).toBeNull();
   });
+
+  it('stays on github.com: no --web, and --repo only as owner/repo', () => {
+    expect(ghReadArgs('gh pr view 343 --web')).toBeNull();
+    expect(ghReadArgs('gh pr view 343 -w')).toBeNull();
+    expect(ghReadArgs('gh pr view 343 --repo evil.example.com/o/r')).toBeNull();
+    expect(ghReadArgs('gh pr view 343 -R evil.example.com/o/r')).toBeNull();
+    expect(ghReadArgs('gh pr view 343 --repo=evil.example.com/o/r')).toBeNull();
+    expect(ghReadArgs('gh pr view 343 -Revil.example.com/o/r')).toBeNull();
+    expect(ghReadArgs('gh pr view https://evil.example.com/o/r/pull/1')).toBeNull();
+    expect(ghReadArgs('gh pr view 343 -R o/r')).toEqual(['pr', 'view', '343', '-R', 'o/r']);
+    expect(ghReadArgs('gh pr view https://github.com/o/r/pull/1')).toEqual(['pr', 'view', 'https://github.com/o/r/pull/1']);
+  });
 });

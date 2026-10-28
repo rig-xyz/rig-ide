@@ -2,7 +2,7 @@ import type { AcpPermissionRequest } from '@emdash/core/acp';
 import { err, ok, type Result } from '@emdash/shared';
 import type { RigFeedCard } from '@shared/rig/feed';
 import type { RawSessionEvent, SpacesAcpSessions } from '../spaces/dispatch';
-import { AGENT_DENIED_TOOLS, AGENT_MODE } from './agent';
+import { askFirst, lockedSession } from './lockdown';
 import type { TurnGate } from './turns';
 
 /**
@@ -13,8 +13,10 @@ import type { TurnGate } from './turns';
  * - Post (a GitHub pull request or issue): Rig comments itself with `gh`, the
  *   words on stdin. No model in the way.
  * - Send (Slack): a short session of the person's Claude, locked down like
- *   the orchestrator's, whose one permission allows `slack_send_message`
- *   once, and only with this channel, this thread and these exact words.
+ *   the orchestrator's (lockdown.ts), whose one permission allows
+ *   `slack_send_message` once, and only with this channel, this thread and
+ *   these exact words. The person's own allow rules don't apply in it, so
+ *   even an allow rule for `slack_send_message` can't skip that check.
  *   It counts as sent only when that call completes.
  */
 
@@ -88,7 +90,8 @@ export function createSender(deps: SendDeps) {
     if (!target) return err("Rig can't send there yet.");
     const sent = target.kind === 'github' ? await postOnGitHub(target, text) : await sendInSlack(target, text);
     if (!sent.success) {
-      deps.log?.warn('Rig send: did not go', { situationId: input.situationId, kind: target.kind, error: sent.error });
+      // Not the error itself: Slack's or gh's answer can quote the words.
+      deps.log?.warn('Rig send: did not go', { situationId: input.situationId, kind: target.kind, errorLength: sent.error.length });
       return sent;
     }
     await Promise.resolve(deps.answered(input.situationId, choice.label || choice.lead)).catch(() => undefined);
@@ -112,12 +115,11 @@ export function createSender(deps: SendDeps) {
       providerId: 'claude',
       cwd,
       systemPromptAppend: 'You send one Slack message, word for word, for the person who clicked Send in Rig. Nothing else: no searching, reading, reacting or other messages.',
-      disallowedTools: AGENT_DENIED_TOOLS,
-      noBypassPermissions: true,
+      ...lockedSession(),
     });
     if (!started.success) return err(started.error);
     try {
-      const moded = deps.acp.setConfig ? await deps.acp.setConfig(conversationId, { mode: AGENT_MODE }) : err('no mode');
+      const moded = await askFirst(deps.acp, conversationId);
       if (!moded.success) return err("Couldn't start a safe session to send it.");
       let finish!: (r: Result<SendOutcome, string>) => void;
       const done = new Promise<Result<SendOutcome, string>>((resolve) => (finish = resolve));

@@ -1,7 +1,8 @@
 import type { AcpPermissionRequest } from '@emdash/core/acp';
 import type { Result } from '@emdash/shared';
 import type { RigFeedItem, RigSituation } from '@shared/rig/feed';
-import { GH_READ } from './github';
+import { ghReadArgs } from './github';
+import { isReadTool } from './lockdown';
 import { askHeadless, parseJsonArray, type HeadlessDeps, type ImportEvent } from './sources';
 
 /**
@@ -49,13 +50,11 @@ export function dueChecks(visible: RigFeedItem[], records: Record<string, CheckR
     .slice(0, CHECKS_PER_PASS);
 }
 
-const READ_VERB = /(^|_)(list|get|search|read|fetch|query|find|view)/i;
-
 /** Any claude.ai connector's read tools and `gh` reads, once; everything else is refused. */
 export function checkPermission(request: AcpPermissionRequest): string | null {
   const call = request.toolCall as { kind?: string; title?: string; command?: string };
   const m = /^mcp__claude_ai_[A-Za-z0-9_]+?__(.+)$/.exec(call.title ?? '');
-  const read = m ? READ_VERB.test(m[1]!) : call.kind === 'execute-tool-call' && GH_READ.test((call.command ?? '').trim());
+  const read = m ? isReadTool(m[1]!) : call.kind === 'execute-tool-call' && ghReadArgs(call.command ?? '') !== null;
   const want = read ? 'allow_once' : 'reject_once';
   return request.options.find((o) => o.kind === want)?.optionId ?? null;
 }

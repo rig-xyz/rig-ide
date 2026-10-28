@@ -111,7 +111,10 @@ describe('Send and Post', () => {
     const r = await createSender(d).send({ situationId: 'sit_1', choice: 0, text: 'Yes, I’ll be there.' }, turns.issue('click'));
     expect(sent).toHaveBeenCalledWith({ type: 'send', edited: false });
     expect(r).toEqual(ok({ said: 'Sent in the Slack thread', link: 'https://acme.slack.com/archives/C0P/p123' }));
-    expect(acp.startSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/Rig/home', noBypassPermissions: true, disallowedTools: expect.arrayContaining(['Bash', 'Write']) }));
+    expect(acp.startSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/Rig/home', noBypassPermissions: true, disallowedTools: expect.arrayContaining(['Bash', 'Write', 'WebFetch']) }));
+    // The person's own allow rules (even one for slack_send_message) don't apply in it: the send always asks `sendPermission`.
+    expect(acp.startSession).toHaveBeenCalledWith(expect.objectContaining({ appPermissionsOnly: true }));
+    expect(asked).toEqual([SEND]);
     expect(acp.setConfig).toHaveBeenCalledWith('send-1', { mode: 'default' });
     expect(acp.stopSession).toHaveBeenCalledWith('send-1');
     expect(d.answered).toHaveBeenCalled();
@@ -119,10 +122,14 @@ describe('Send and Post', () => {
 
   it("doesn't count a session that changed the words, and leaves the card alone", async () => {
     const { acp } = fakeAcp([{ name: SEND, input: { channel_id: 'C0P', thread_ts: '1.2', message: 'Something else entirely.' } }]);
-    const { d, turns } = deps({ acp });
+    const warn = vi.fn();
+    const { d, turns } = deps({ acp, log: { info: vi.fn(), warn } });
     const r = await createSender(d).send({ situationId: 'sit_1', choice: 0, text: 'Yes, I’ll be there.' }, turns.issue('click'));
     expect(r.success).toBe(false);
     expect(d.answered).not.toHaveBeenCalled();
+    // The log says it didn't go, never what Slack answered (it can quote the words).
+    expect(warn).toHaveBeenCalledWith('Rig send: did not go', expect.objectContaining({ kind: 'slack', errorLength: expect.any(Number) }));
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('refused');
   });
 
   it('needs a fresh click, and a choice the card still has with words to send', async () => {

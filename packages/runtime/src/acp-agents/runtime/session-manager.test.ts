@@ -304,6 +304,30 @@ describe('AcpRuntime session manager', () => {
     expect(JSON.stringify(vi.mocked(h.agent.newSession).mock.lastCall)).not.toContain('disallowedTools');
   });
 
+  it("keeps the person's settings files from allowing calls or running hooks in a session that asks, and only then", async () => {
+    const h = makeAcpHarness();
+    const rt = new AcpRuntime(h.deps);
+    await rt.startSession({ ...makeStartInput({ conversationId: 'conv-app-only' }), noBypassPermissions: true, appPermissionsOnly: true });
+    expect(h.agent.newSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        _meta: {
+          claudeCode: {
+            options: {
+              allowDangerouslySkipPermissions: false,
+              managedSettings: {
+                allowManagedPermissionRulesOnly: true,
+                allowManagedHooksOnly: true,
+                permissions: { disableBypassPermissionsMode: 'disable' },
+              },
+            },
+          },
+        },
+      })
+    );
+    await rt.startSession(makeStartInput({ conversationId: 'conv-open-2' }));
+    expect(JSON.stringify(vi.mocked(h.agent.newSession).mock.lastCall)).not.toContain('managedSettings');
+  });
+
   it("writes a Claude session's debug log to the file it was given, on new and load, and only then", async () => {
     const h = makeAcpHarness();
     const rt = new AcpRuntime(h.deps);

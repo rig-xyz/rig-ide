@@ -83,6 +83,14 @@ export const acpStartInputSchema = z.object({
   /** Claude only: no bypass-permissions mode in this session, even if the person's settings allow it. */
   noBypassPermissions: z.boolean().optional(),
   /**
+   * Claude only: the permission rules and hooks in the person's own settings
+   * files don't apply to this session (Claude Code's managed-tier
+   * `allowManagedPermissionRulesOnly` and `allowManagedHooksOnly`). Their allow
+   * rules can't approve a call, so every call the deny rules don't settle comes
+   * to the app's permission handler. It only ever narrows the session.
+   */
+  appPermissionsOnly: z.boolean().optional(),
+  /**
    * Claude only: Claude Code's debug log for this session goes to this file
    * (the adapter's `debug` and `debugFile` options). Set by the app for a
    * space session when it runs with RIG_CLAUDE_DEBUG=1; off otherwise.

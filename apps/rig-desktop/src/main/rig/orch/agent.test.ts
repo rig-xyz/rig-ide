@@ -54,6 +54,45 @@ describe('the background orchestrator', () => {
     expect(agentPermission(perm('mcp__claude_ai_Slack__slack_send_message'))).toBe('no');
     expect(agentPermission(perm('gh pr view 343 --repo Ulysholdings/mobile-ios-v2', { kind: 'execute-tool-call', command: 'gh pr view 343 --repo Ulysholdings/mobile-ios-v2' }))).toBe('yes');
     expect(agentPermission(perm('gh pr merge 343', { kind: 'execute-tool-call', command: 'gh pr merge 343' }))).toBe('no');
+    // A read verb inside a write isn't a read.
+    expect(agentPermission(perm('mcp__claude_ai_Slack__slack_mark_read'))).toBe('no');
+    expect(agentPermission(perm('mcp__claude_ai_Linear__get_or_create_label'))).toBe('no');
+    // What its own settings would allow (the web, other servers) still comes here, and is refused.
+    expect(agentPermission(perm('WebFetch'))).toBe('no');
+    expect(agentPermission(perm('mcp__my_local_server__read_file'))).toBe('no');
+  });
+
+  it("logs which tool it refused, never the call's title or input", async () => {
+    let ask: (r: AcpPermissionRequest) => void = () => {};
+    const info = vi.fn();
+    const o = createOrchestrator({
+      acp: {
+        startSession: vi.fn(async () => ok({ sessionId: 's' })),
+        setConfig: vi.fn(async () => ok(undefined)),
+        cancelTurn: vi.fn(async () => {}),
+        stopSession: vi.fn(async () => {}),
+        subscribeRaw: vi.fn(async () => () => {}),
+        subscribePendingPermissions: vi.fn(async (_id: string, on: (r: AcpPermissionRequest) => void) => ((ask = on), () => {})),
+        resolvePermission: vi.fn(async () => {}),
+        queuePrompt: vi.fn(async () => ok({ turnId: null })),
+      },
+      rigTools: async () => ({ type: 'http', name: 'rig', url: 'http://127.0.0.1/mcp', headers: [] }) as never,
+      whoami: async () => ok({ id: 'usr_me' }),
+      cwd: async () => '/tmp/orch',
+      newConversationId: () => 'orchestrator-1',
+      state: async () => ok(state()),
+      sources: async () => [],
+      recordRun: async () => ok(null),
+      now: () => NOW,
+      turnTimeoutMs: 5,
+      log: { info, warn: vi.fn() },
+    });
+    await o.run('schedule');
+    ask(perm('mcp__claude_ai_Slack__slack_send_message', { rawInput: { message: 'the board deck is in /private' } }));
+    ask(perm('Fetch https://example.com/?q=salaries', { kind: 'fetch' }));
+    const refused = info.mock.calls.filter((c) => c[0] === 'Rig orchestrator: refused a tool call').map((c) => c[1]);
+    expect(refused).toEqual([{ tool: 'mcp__claude_ai_Slack__slack_send_message' }, { tool: 'fetch' }]);
+    expect(JSON.stringify(info.mock.calls)).not.toMatch(/board deck|salaries/);
   });
 
   it('runs one turn on a session it keeps, records the run, and writes a note when Claude left none', async () => {
@@ -93,9 +132,9 @@ describe('the background orchestrator', () => {
     expect(acp.startSession).toHaveBeenCalledTimes(1);
     expect(acp.startSession).toHaveBeenCalledWith(expect.objectContaining({ systemPromptAppend: expect.stringContaining('You are Rig, working in the background for Dylan Bourgeois.') }));
     expect((acp.startSession.mock.calls as unknown as [Record<string, unknown>][])[0]![0]).not.toHaveProperty('model');
-    // Locked down in code: no shell, no file writes, no rig_start, no bypass, and Ask first.
-    expect(acp.startSession).toHaveBeenCalledWith(expect.objectContaining({ disallowedTools: AGENT_DENIED_TOOLS, noBypassPermissions: true }));
-    expect(AGENT_DENIED_TOOLS).toEqual(expect.arrayContaining(['Bash', 'Write', 'Edit', 'NotebookEdit', 'mcp__rig__rig_start']));
+    // Locked down in code: no shell, file writes, web, subagents or rig_start, no bypass, none of the person's settings allow rules, and Ask first.
+    expect(acp.startSession).toHaveBeenCalledWith(expect.objectContaining({ disallowedTools: AGENT_DENIED_TOOLS, noBypassPermissions: true, appPermissionsOnly: true }));
+    expect(AGENT_DENIED_TOOLS).toEqual(expect.arrayContaining(['Bash', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task', 'mcp__rig__rig_start']));
     expect(acp.setConfig).toHaveBeenCalledWith('orchestrator-1', { mode: 'default' });
     expect(acp.queuePrompt).toHaveBeenCalledTimes(2);
     // Started, then ended without a note: the cursors stay where they were.
@@ -407,11 +446,51 @@ describe('a catch-up for someone Rig has read for', () => {
     expect(h.progress.filter((e) => e.kind === 'problem')).toEqual([expect.objectContaining({ problem: 'connector_auth', connector: 'slack' })]);
   });
 
-  it('a run that takes too long stops with Try again', async () => {
+  it('a run that takes too long stops with Try again, and stops the turn too', async () => {
     // A turn that never ends.
-    const h = onSession({}, { turnTimeoutMs: 5 });
+    const cancelTurn = vi.fn(async () => {});
+    const h = onSession({ cancelTurn }, { turnTimeoutMs: 5 });
     await h.o.run('schedule');
     expect(h.progress.at(-1)).toMatchObject({ kind: 'end', ok: false, problem: 'timeout' });
+    expect(cancelTurn).toHaveBeenCalledWith('orchestrator-x');
+  });
+
+  it('ends with an `end` whatever throws after the start, so nothing waits on it forever', async () => {
+    const thrown = onSession({}, { state: async () => Promise.reject(new Error('socket hang up')) });
+    const r = await thrown.o.run('schedule');
+    expect(r).toEqual(err('socket hang up'));
+    expect(thrown.progress[0]).toMatchObject({ kind: 'start' });
+    expect(thrown.progress.at(-1)).toMatchObject({ kind: 'end', ok: false, error: 'socket hang up' });
+    // A pass that throws mid-run, too.
+    const mid = onSession({ queuePrompt: vi.fn(async () => Promise.reject(new Error('runtime gone'))) });
+    expect(await mid.o.run('schedule')).toEqual(err('runtime gone'));
+    expect(mid.progress.filter((e) => e.kind === 'end')).toEqual([expect.objectContaining({ ok: false, error: 'runtime gone' })]);
+  });
+
+  it("goes back to the session's own model when a pass on another one fails", async () => {
+    const setConfig = vi.fn(async (_id: string, _change: Record<string, string>) => ok(undefined));
+    const h = onSession({
+      setConfig,
+      readConfig: vi.fn(async () => ({ model: { selected: 'opus', options: [] }, effort: { selected: 'high', options: [] }, mode: null })),
+      queuePrompt: vi.fn(async () => err('Claude is overloaded')),
+    });
+    const r = await h.o.run('first', FIRST_RUN);
+    expect(r.success).toBe(false);
+    const models = setConfig.mock.calls.map((c) => c[1]).filter((c) => c.model || c.effort);
+    expect(models).toEqual([{ model: 'sonnet', effort: 'high' }, { model: 'opus' }]);
+  });
+
+  it("logs a failed lookup and a pass by tool, ids and sizes: never what was read or Claude's words", async () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    const failing = { id: 'x', name: 'mcp__claude_ai_Slack__slack_read_channel', input: {}, fail: 'channel #board-comp: Peter earns 240k' };
+    const h = harness([[failing]], { log: { info, warn } });
+    await h.o.run('schedule');
+    const lookup = warn.mock.calls.find((c) => c[0] === 'Rig orchestrator: a lookup failed')![1];
+    expect(lookup).toEqual({ pass: undefined, id: 'x', tool: 'mcp__claude_ai_Slack__slack_read_channel', length: expect.any(Number) });
+    const pass = info.mock.calls.find((c) => c[0] === 'Rig orchestrator: pass ended')![1];
+    expect(pass).not.toHaveProperty('said');
+    expect(JSON.stringify([warn.mock.calls, info.mock.calls])).not.toContain('240k');
   });
 });
 

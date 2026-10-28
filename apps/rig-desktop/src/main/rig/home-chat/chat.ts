@@ -3,6 +3,7 @@ import { err, ok, type Result } from '@emdash/shared';
 import { finalAnswerFromEvents, type RawSessionEvent, type SpacesAcpSessions } from '../spaces/dispatch';
 import type { HomeChatRun } from '@shared/rig/home-chat';
 import { HOME_BINDING, rigToolOf, type RigToolScope } from '../spaces/rig-tools';
+import { askFirst, lockedSession } from '../orch/lockdown';
 
 /**
  * Home's chat with a real Claude (rig docs/orchestrator-architecture.md §5):
@@ -10,7 +11,10 @@ import { HOME_BINDING, rigToolOf, type RigToolScope } from '../spaces/rig-tools'
  * tools attached so it can read the person's Feed and correct it. The person
  * typed the request here, so the Feed tools are answered for them; anything
  * else Claude asks to run (files, shell, other rig tools) is refused, since
- * Home isn't a space and has nothing to work on yet.
+ * Home isn't a space and has nothing to work on yet. The Feed it reads holds
+ * other people's words, so the session is locked down like Rig's other ones
+ * (lockdown.ts): the person's own settings never widen it. rig_start stays,
+ * since it checks the person's own turn.
  */
 
 /** The rig tools Home's Claude may use without asking again: the four primitives (design §10.3). */
@@ -39,7 +43,7 @@ export function homeChatSelf(names: string[]): string {
 export type HomeChatDeps = {
   acp: Pick<
     SpacesAcpSessions,
-    'startSession' | 'queuePrompt' | 'subscribeRaw' | 'subscribePendingPermissions' | 'resolvePermission' | 'stopSession' | 'cancelTurn' | 'readModel'
+    'startSession' | 'setConfig' | 'queuePrompt' | 'subscribeRaw' | 'subscribePendingPermissions' | 'resolvePermission' | 'stopSession' | 'cancelTurn' | 'readModel'
   >;
   /** The names that mean the person: their account name, and how Rig names them. */
   selfNames?: () => Promise<string[]>;
@@ -111,8 +115,15 @@ export function createHomeChat(deps: HomeChatDeps): HomeChat {
       mcpServers: [rig],
       // The person's own default model, as in their other Claude sessions.
       systemPromptAppend: [HOME_CHAT_RULES, homeChatSelf((await deps.selfNames?.().catch(() => [])) ?? [])].filter(Boolean).join('\n'),
+      ...lockedSession({ rigStart: true }),
     });
     if (!started.success) return err(started.error);
+    // Ask first, whatever the person's default mode: if it can't be set, no chat.
+    const moded = await askFirst(deps.acp, conversationId);
+    if (!moded.success) {
+      await deps.acp.stopSession?.(conversationId).catch(() => undefined);
+      return err(`Couldn't start a safe session for Home: ${moded.error}`);
+    }
     const off = await deps.acp.subscribePendingPermissions(conversationId, (request) => {
       const optionId = homeChatPermission(request);
       if (!optionId) return;

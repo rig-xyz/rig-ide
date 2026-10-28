@@ -1,5 +1,5 @@
 import type { AcpPermissionRequest } from '@emdash/core/acp';
-import { ok } from '@emdash/shared';
+import { err, ok } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { RawSessionEvent } from '../spaces/dispatch';
 import { dueSources, parseJsonArray, runSource, sourcePermission, toImportEvent, type Source } from './sources';
@@ -14,6 +14,8 @@ describe('sources', () => {
     expect(sourcePermission('Linear', perm('mcp__claude_ai_Linear__save_issue'))).toBe('no');
     expect(sourcePermission('Linear', perm('mcp__claude_ai_Slack__list_messages'))).toBe('no');
     expect(sourcePermission('Linear', perm('Bash'))).toBe('no');
+    expect(sourcePermission('Linear', perm('mcp__claude_ai_Linear__get_or_create_label'))).toBe('no');
+    expect(sourcePermission('Slack', perm('mcp__claude_ai_Slack__slack_mark_read'))).toBe('no');
   });
 
   it('read the JSON array out of an answer, and map Linear and Slack lines to events', () => {
@@ -33,7 +35,8 @@ describe('sources', () => {
     const answer = '[{"id":"ULY-2","title":"A","updatedAt":"2026-10-23T09:00:00Z"},{"id":"ULY-3","title":"B","updatedAt":"2026-10-23T11:00:00Z"}]';
     let emit: (e: RawSessionEvent) => void = () => {};
     const acp = {
-      startSession: vi.fn(async () => ok({ sessionId: 's' })),
+      startSession: vi.fn(async (_input: Record<string, unknown>) => ok({ sessionId: 's' })),
+      setConfig: vi.fn(async (_id: string, _change: Record<string, unknown>) => ok(undefined)),
       stopSession: vi.fn(async () => {}),
       subscribeRaw: vi.fn(async (_id: string, on: (e: RawSessionEvent) => void) => ((emit = on), () => {})),
       subscribePendingPermissions: vi.fn(async () => () => {}),
@@ -52,6 +55,27 @@ describe('sources', () => {
     expect(out).toEqual({ status: 'ok', listed: 2, added: 2, cursor: '2026-10-23T11:00:00.000Z' });
     expect(acp.queuePrompt.mock.calls[0]![1]).toContain('updated after 2026-10-22T00:00:00Z');
     expect(acp.stopSession).toHaveBeenCalledWith('watch-1');
+    // Locked down whatever the person's own settings allow: deny rules, no bypass, no settings allow rules or hooks, Ask first.
+    const input = acp.startSession.mock.calls[0]![0];
+    expect(input).toMatchObject({ noBypassPermissions: true, appPermissionsOnly: true });
+    expect(input.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Write', 'WebFetch', 'WebSearch', 'Task', 'mcp__rig__rig_start']));
+    expect(acp.setConfig).toHaveBeenCalledWith('watch-1', { mode: 'default' });
+  });
+
+  it("doesn't read when the session can't be put in Ask first", async () => {
+    const acp = {
+      startSession: vi.fn(async () => ok({ sessionId: 's' })),
+      setConfig: vi.fn(async () => err('no modes')),
+      stopSession: vi.fn(async () => {}),
+      subscribeRaw: vi.fn(async () => () => {}),
+      subscribePendingPermissions: vi.fn(async () => () => {}),
+      resolvePermission: vi.fn(async () => {}),
+      queuePrompt: vi.fn(async () => ok({ turnId: null })),
+    };
+    const out = await runSource({ acp, cwd: async () => '/tmp/w', newConversationId: () => 'watch-2', postEvents: vi.fn(), now: () => Date.parse('2026-10-23T12:00:00Z') }, linear);
+    expect(out.status).toBe('failed');
+    expect(acp.queuePrompt).not.toHaveBeenCalled();
+    expect(acp.stopSession).toHaveBeenCalledWith('watch-2');
   });
 
   it('are due on their schedule unless paused or running', () => {

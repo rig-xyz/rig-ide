@@ -1,6 +1,7 @@
 import type { AcpPermissionRequest } from '@emdash/core/acp';
 import { err, ok, type Result } from '@emdash/shared';
 import { finalAnswerFromEvents, type RawSessionEvent, type SpacesAcpSessions } from '../spaces/dispatch';
+import { askFirst, isReadTool, lockedSession } from './lockdown';
 
 /**
  * Sources: what Rig watches for the person, through their own Claude's
@@ -51,7 +52,7 @@ export type ImportEvent = {
 };
 
 export type SourceRunnerDeps = {
-  acp: Pick<SpacesAcpSessions, 'startSession' | 'queuePrompt' | 'subscribeRaw' | 'subscribePendingPermissions' | 'resolvePermission' | 'stopSession'>;
+  acp: Pick<SpacesAcpSessions, 'startSession' | 'setConfig' | 'queuePrompt' | 'subscribeRaw' | 'subscribePendingPermissions' | 'resolvePermission' | 'stopSession'>;
   cwd: () => Promise<string>;
   newConversationId: () => string;
   postEvents: (events: ImportEvent[]) => Promise<Result<{ added: number }, { message: string }>>;
@@ -61,13 +62,12 @@ export type SourceRunnerDeps = {
 };
 
 const slug = (connector: string) => connector.replace(/[^A-Za-z0-9]+/g, '_');
-const READ_VERB = /(^|_)(list|get|search|read|fetch|query|find)/i;
 
 /** Allow the source connector's read tools once; refuse everything else. */
 export function sourcePermission(connector: string, request: AcpPermissionRequest): string | null {
   const title = request.toolCall.title ?? '';
   const prefix = `mcp__claude_ai_${slug(connector)}__`;
-  const allowed = title.startsWith(prefix) && READ_VERB.test(title.slice(prefix.length));
+  const allowed = title.startsWith(prefix) && isReadTool(title.slice(prefix.length));
   const want = allowed ? 'allow_once' : 'reject_once';
   return request.options.find((o) => o.kind === want)?.optionId ?? null;
 }
@@ -166,7 +166,9 @@ export type HeadlessDeps = Pick<SourceRunnerDeps, 'acp' | 'cwd' | 'newConversati
 /**
  * One short headless Claude session on this Mac: one prompt, its permission
  * requests answered by `permission` (anything it doesn't allow is refused),
- * and the final answer's text. Always stopped afterwards. Never throws.
+ * and the final answer's text. Locked down (lockdown.ts): what it reads is
+ * other people's words, so the person's own settings never widen it. Always
+ * stopped afterwards. Never throws.
  */
 export async function askHeadless(
   deps: HeadlessDeps,
@@ -174,8 +176,14 @@ export async function askHeadless(
 ): Promise<Result<string, string>> {
   const conversationId = deps.newConversationId();
   const cwd = await deps.cwd();
-  const started = await deps.acp.startSession({ conversationId, providerId: 'claude', cwd, systemPromptAppend: input.rules });
+  const started = await deps.acp.startSession({ conversationId, providerId: 'claude', cwd, systemPromptAppend: input.rules, ...lockedSession() });
   if (!started.success) return err(started.error);
+  // Ask first, whatever the person's default mode: if it can't be set, it doesn't run.
+  const moded = await askFirst(deps.acp, conversationId);
+  if (!moded.success) {
+    await deps.acp.stopSession?.(conversationId).catch(() => undefined);
+    return err(`Couldn't start a safe session: ${moded.error}`);
+  }
   const events: { kind: string; payload: Record<string, unknown> }[] = [];
   let finish!: (r: Result<string, string>) => void;
   const done = new Promise<Result<string, string>>((resolve) => (finish = resolve));
