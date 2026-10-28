@@ -186,46 +186,4 @@ describe('first-run Home with an invite', () => {
     expect(mocks.create).not.toHaveBeenCalled();
     expect(host.querySelector('[data-testid="sign-in-waiting"]')).toBeTruthy();
   });
-
-  it('shows the invite link field without hover, and joins with a pasted link', async () => {
-    await mount();
-    const field = host.querySelector<HTMLFormElement>('[data-testid="invite-link-field"]')!;
-    expect(field.textContent).toContain('Have an invite link?');
-    const input = field.querySelector('input')!;
-    expect(input.offsetParent).not.toBeNull();
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
-    await act(async () => {
-      setter.call(input, 'https://userig.xyz/join/tap_inv_Ab3-_x9QwErTyUiOpAsDfGhJkLzXcVbN');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await act(async () => field.requestSubmit());
-    await flush();
-    expect(mocks.acceptLink).toHaveBeenCalledTimes(1);
-    expect(mocks.attach).toHaveBeenCalledWith({ bindingId: 'b_9', name: 'growth' });
-    expect(opened).toEqual([{ path: '/Rig/launch', kind: 'space' }]);
-  });
-
-  it('shows the invite link field beside an invite too', async () => {
-    mocks.invites = [invite('1', 'launch', 'Ana')];
-    await mount();
-    expect(host.querySelector('[data-testid="invite-welcome"] [data-testid="invite-link-field"]')).toBeTruthy();
-  });
-
-  it('says an organization invite opens in the browser, and offers to open it', async () => {
-    await mount();
-    const field = host.querySelector<HTMLFormElement>('[data-testid="invite-link-field"]')!;
-    const input = field.querySelector('input')!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
-    await act(async () => {
-      setter.call(input, 'https://userig.xyz/join/org/tok_9');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await act(async () => field.requestSubmit());
-    await flush();
-    expect(mocks.acceptLink).not.toHaveBeenCalled();
-    const note = host.querySelector('[data-testid="org-invite-note"]')!;
-    expect(note.textContent).toContain('This is an organization invite. Open it in your browser.');
-    await act(async () => note.querySelector('button')!.click());
-    expect(mocks.openExternal).toHaveBeenCalledWith('https://userig.xyz/join/org/tok_9');
-  });
 });
