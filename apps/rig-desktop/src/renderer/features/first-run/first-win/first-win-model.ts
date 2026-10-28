@@ -35,12 +35,13 @@ export type FirstWinAction =
   | { type: 'edit'; text: string | null }
   | { type: 'edit-draft'; text: string | null }
   | { type: 'reset' }
-  | { type: 'starting' }
-  | { type: 'failed'; error: string }
-  | { type: 'sent'; result: SentResult }
-  /** ‹ › or ▾ Show me another: the card before or after comes to the front, round the end. */
+  /** A Send or Start, and how it went: each names its card, which may no longer be in front. */
+  | { type: 'starting'; id: string }
+  | { type: 'failed'; id: string; error: string }
+  | { type: 'sent'; id: string; result: SentResult }
+  /** ‹ › or ▾ Show me another: the card before or after comes to the front, round the end. Not while one is going. */
   | { type: 'step'; by: 1 | -1 }
-  /** Not now, or Ignore: the front card leaves. */
+  /** Not now, or Ignore: the front card leaves. Not while one is going. */
   | { type: 'drop' };
 
 export const initialFirstWin: FirstWinState = { cards: null, at: 0, done: [], won: false };
@@ -50,6 +51,11 @@ const entry = (item: FeedItem): FeedEntry => ({ item, edited: null, resetKey: 0,
 /** The card in front, if any. */
 export function frontOf(state: FirstWinState): FeedEntry | undefined {
   return state.cards?.[state.at];
+}
+
+/** A card's Send or Start is going: the cards stay put until it's back. */
+export function inFlight(state: FirstWinState): boolean {
+  return state.cards?.some((c) => c.starting) ?? false;
 }
 
 export function firstWinReducer(state: FirstWinState, action: FirstWinAction): FirstWinState {
@@ -63,11 +69,16 @@ export function firstWinReducer(state: FirstWinState, action: FirstWinAction): F
   const front = frontOf(state);
   if (!cards || !front || state.won) return state;
   const withFront = (e: FeedEntry): FirstWinState => ({ ...state, cards: cards.map((c, i) => (i === state.at ? e : c)) });
-  // The front card gone: the next one comes forward, sliding in.
-  const without = (): Pick<FirstWinState, 'cards' | 'at'> => {
-    const rest = cards.filter((_, i) => i !== state.at);
-    const at = rest.length ? state.at % rest.length : 0;
-    return { cards: rest.map((c, i) => (i === at ? { ...c, fresh: true } : c)), at };
+  const withCard = (id: string, fn: (e: FeedEntry) => FeedEntry): FirstWinState => ({
+    ...state,
+    cards: cards.map((c) => (c.item.id === id ? fn(c) : c)),
+  });
+  // A card gone (the front one unless named): the next one comes forward, sliding in.
+  const without = (gone = state.at): Pick<FirstWinState, 'cards' | 'at'> => {
+    const rest = cards.filter((_, i) => i !== gone);
+    const was = gone < state.at ? state.at - 1 : state.at;
+    const at = rest.length ? was % rest.length : 0;
+    return { cards: rest.map((c, i) => (i === at && gone === state.at ? { ...c, fresh: true } : c)), at };
   };
   switch (action.type) {
     case 'pick':
@@ -79,18 +90,21 @@ export function firstWinReducer(state: FirstWinState, action: FirstWinAction): F
     case 'reset':
       return withFront({ ...front, edited: null, draftEdit: null, resetKey: front.resetKey + 1, slide: null });
     case 'starting':
-      return withFront({ ...front, starting: true, failed: null });
+      return withCard(action.id, (e) => ({ ...e, starting: true, failed: null }));
     case 'failed':
-      return withFront({ ...front, starting: false, failed: action.error });
+      return withCard(action.id, (e) => ({ ...e, starting: false, failed: action.error }));
     // The win: its done card stays a moment, then the first run ends; no next card comes forward.
-    case 'sent':
-      return { ...state, ...without(), done: [...state.done, { ...front, starting: false, sent: action.result }], won: true };
+    case 'sent': {
+      const at = cards.findIndex((c) => c.item.id === action.id);
+      if (at < 0) return state;
+      return { ...state, ...without(at), done: [...state.done, { ...cards[at]!, starting: false, sent: action.result }], won: true };
+    }
     case 'step': {
-      if (cards.length < 2) return state;
+      if (cards.length < 2 || inFlight(state)) return state;
       const at = (state.at + action.by + cards.length) % cards.length;
       return { ...state, at, cards: cards.map((c, i) => (i === at ? { ...c, fresh: true } : { ...c, fresh: false })) };
     }
     case 'drop':
-      return { ...state, ...without() };
+      return inFlight(state) ? state : { ...state, ...without() };
   }
 }

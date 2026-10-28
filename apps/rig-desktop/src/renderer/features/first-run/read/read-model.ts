@@ -55,23 +55,21 @@ const isOutcome = (l: Pick<RunProgress, 'status'>) =>
   l.status === 'handled' || l.status === 'not_yours' || l.status === 'for_you';
 
 /**
- * The counters. A catch-up (`since`) counts as new only the cards it put that weren't on the Feed
- * before: an outcome about one already there may name its message rather than its card, so
- * outcomes can't tell old from new. A first read counts both.
+ * The counters. New for the Feed is the cards the run put that weren't on it before, never its
+ * outcomes: an outcome may name a message rather than its card, and several can be about one card,
+ * so counting them overstates (6 against 3 real cards).
  */
-function counts(lines: ReadLine[], cards: string[], knownCards: string[] = [], since: string | null = null): ReadState['counts'] {
+function counts(lines: ReadLine[], cards: string[], knownCards: string[] = []): ReadState['counts'] {
   const known = new Set(knownCards);
-  const forYou = new Set(cards.filter((c) => !known.has(c)));
+  const forYou = cards.filter((c) => !known.has(c)).length;
   let read = 0;
   let handled = 0;
   for (const l of lines) {
     // Lookups in the person's tools; Rig's own records are its memory, not a read, so they don't count.
     if (l.connector !== null && l.connector !== 'rig' && l.status === 'done') read += 1;
     if (l.status === 'handled' || l.status === 'not_yours') handled += 1;
-    // Something already on the Feed isn't a new card for them.
-    if (!since && l.status === 'for_you' && !l.known && !(l.ref && known.has(l.ref))) forYou.add(l.ref ?? l.id);
   }
-  return { read, handled, forYou: forYou.size };
+  return { read, handled, forYou };
 }
 
 export function readReducer(state: ReadState, e: OrchProgressEvent): ReadState {
@@ -109,7 +107,7 @@ export function readReducer(state: ReadState, e: OrchProgressEvent): ReadState {
         run,
         cards,
         knownCards,
-        counts: counts(state.lines, cards, knownCards, state.since),
+        counts: counts(state.lines, cards, knownCards),
         firstCardAt: state.firstCardAt ?? e.t,
       };
     }
@@ -138,7 +136,7 @@ export function readReducer(state: ReadState, e: OrchProgressEvent): ReadState {
         ...state,
         run,
         lines,
-        counts: counts(lines, state.cards, state.knownCards, state.since),
+        counts: counts(lines, state.cards, state.knownCards),
         lookups: { ...state.lookups, used },
         // A lookup starting ends the thought before it.
         thought: e.line.status === 'running' && e.line.connector !== null ? null : state.thought,

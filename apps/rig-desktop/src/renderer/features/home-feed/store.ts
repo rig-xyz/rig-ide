@@ -145,6 +145,11 @@ export function initialHomeState(): HomeState {
   };
 }
 
+/** What a card's choices say, in order: when it changes, they're different choices. */
+function choicesKey(item: FeedItem): string {
+  return JSON.stringify(item.choices.map((c) => [c.verb, c.lead, c.tail, c.cardIndex ?? null, c.draft?.text ?? null]));
+}
+
 function mapEntry(state: HomeState, itemId: string, fn: (e: FeedEntry) => FeedEntry): HomeState {
   return { ...state, feed: state.feed.map((e) => (e.item.id === itemId ? fn(e) : e)) };
 }
@@ -201,7 +206,11 @@ export function homeReducer(state: HomeState, action: HomeAction): HomeState {
       const prior = new Map(state.feed.map((e) => [e.item.id, e]));
       const feed = action.items.map((item): FeedEntry => {
         const was = prior.get(item.id);
-        return was ? { ...was, item } : { item, edited: null, resetKey: 0, slide: null, ignored: false, fresh: state.fromRelay };
+        if (!was) return { item, edited: null, resetKey: 0, slide: null, ignored: false, fresh: state.fromRelay };
+        // Choice ids are positions (`c0`, `c1`): once Rig redrafts the choices, a pick or edit
+        // made on the old ones would land on a different answer, so they go.
+        if (choicesKey(was.item) === choicesKey(item)) return { ...was, item };
+        return { ...was, item, pick: undefined, edited: null, draftEdit: null, slide: null, resetKey: was.resetKey + 1 };
       });
       // A row that was just sent stays as its done card, though Rig has taken its card off the Feed.
       const ids = new Set(feed.map((e) => e.item.id));

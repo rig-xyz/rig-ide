@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FIRST_WIN_CARDS } from './fixtures';
-import { firstWinOrder, firstWinReducer, frontOf, initialFirstWin } from './first-win-model';
+import { firstWinOrder, firstWinReducer, frontOf, inFlight, initialFirstWin } from './first-win-model';
 
 const [reply, review, fix] = FIRST_WIN_CARDS;
 
@@ -15,10 +15,10 @@ describe('First win', () => {
     s = firstWinReducer(s, { type: 'pick', choiceId: 'c1', slide: 'left' });
     s = firstWinReducer(s, { type: 'edit-draft', text: 'Friday at 10?' });
     expect(frontOf(s)).toMatchObject({ pick: 'c1', draftEdit: 'Friday at 10?' });
-    s = firstWinReducer(s, { type: 'starting' });
-    s = firstWinReducer(s, { type: 'failed', error: 'Slack said no' });
+    s = firstWinReducer(s, { type: 'starting', id: 'sim:reply' });
+    s = firstWinReducer(s, { type: 'failed', id: 'sim:reply', error: 'Slack said no' });
     expect(frontOf(s)).toMatchObject({ starting: false, failed: 'Slack said no' });
-    s = firstWinReducer(s, { type: 'sent', result: { said: 'Sent in #product', link: null } });
+    s = firstWinReducer(s, { type: 'sent', id: 'sim:reply', result: { said: 'Sent in #product', link: null } });
     expect(s.done.map((e) => [e.item.id, e.sent?.said])).toEqual([['sim:reply', 'Sent in #product']]);
     expect(s.won).toBe(true);
     // Won: the rest wait on the Feed, and the controls do nothing.
@@ -50,5 +50,24 @@ describe('First win', () => {
     expect([s.cards!.map((e) => e.item.id), s.at]).toEqual([['sim:review', 'sim:reply', 'sim:fix'], 0]);
     // Read again with nothing new: nothing changes.
     expect(firstWinReducer(s, { type: 'loaded', items: [reply!] })).toBe(s);
+  });
+
+  it('a Send or Start in flight holds the cards still, and its result goes to its own card', () => {
+    let s = firstWinReducer(initialFirstWin, { type: 'loaded', items: [reply!, review!, fix!] });
+    s = firstWinReducer(s, { type: 'starting', id: 'sim:reply' });
+    expect(inFlight(s)).toBe(true);
+    // No cycling and no Not now while it goes: the card in front stays the one going.
+    expect(firstWinReducer(s, { type: 'step', by: 1 })).toBe(s);
+    expect(firstWinReducer(s, { type: 'drop' })).toBe(s);
+    // A failure lands on its card, whichever is in front.
+    const moved = { ...s, at: 1 };
+    const failed = firstWinReducer(moved, { type: 'failed', id: 'sim:reply', error: 'Slack said no' });
+    expect(failed.cards!.find((e) => e.item.id === 'sim:reply')).toMatchObject({ starting: false, failed: 'Slack said no' });
+    expect(frontOf(failed)).toMatchObject({ item: { id: 'sim:review' } });
+    expect(frontOf(failed)!.failed).toBeUndefined();
+    // And a send that went is that card's win, not the front one's.
+    const sent = firstWinReducer(moved, { type: 'sent', id: 'sim:reply', result: { said: 'Sent in #product', link: null } });
+    expect(sent.done.map((e) => e.item.id)).toEqual(['sim:reply']);
+    expect(sent.cards!.map((e) => e.item.id)).toEqual(['sim:review', 'sim:fix']);
   });
 });

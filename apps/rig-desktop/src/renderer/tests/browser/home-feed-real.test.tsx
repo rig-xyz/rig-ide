@@ -350,6 +350,31 @@ describe('NewHome with the orchestrator Feed', () => {
     ]);
   });
 
+  it('Enter in the sentence never runs the card; ⌘↩ does, and Start uses the words as edited', async () => {
+    starts.length = 0;
+    await vi.waitFor(() => expect(feedRow('sit:s_send')).not.toBeNull());
+    const say = () => feedRow('sit:s_send')!.querySelector('[role="textbox"]') as HTMLElement;
+    await act(async () => {
+      say().textContent = 'Pull usage by email domain, last 30 days only.';
+      say().dispatchEvent(new InputEvent('input', { bubbles: true }));
+    });
+    const key = (init: KeyboardEventInit) => say().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...init }));
+    // Enter, Shift+Enter, and Enter while an input method composes: nothing runs.
+    await act(async () => {
+      key({});
+      key({ shiftKey: true });
+      key({ metaKey: true, isComposing: true });
+    });
+    await flush();
+    expect(starts).toEqual([]);
+    expect(feedRow('sit:s_send')).not.toBeNull();
+    await act(async () => {
+      key({ metaKey: true });
+    });
+    await vi.waitFor(() => expect(starts).toHaveLength(1));
+    expect(starts[0]).toEqual({ situationId: 's_send', task: 'Pull usage by email domain, last 30 days only.' });
+  });
+
   it("Open opens the card's source and leaves the card where it is", async () => {
     externals.length = 0;
     await vi.waitFor(() => expect(feedRow('sit:s_send')).not.toBeNull());

@@ -26,6 +26,7 @@ let host: HTMLDivElement;
 let root: Root;
 let won: ReturnType<typeof vi.fn<(r: SentResult) => void>>;
 let sent: string[];
+let started: (string | null | undefined)[];
 let opened: [string, string][];
 let shownCards: number;
 let firstWin: FirstWinEnv;
@@ -48,6 +49,7 @@ beforeEach(async () => {
   root = createRoot(host);
   won = vi.fn<(r: SentResult) => void>();
   sent = [];
+  started = [];
   opened = [];
   shownCards = FIRST_WIN_CARDS.length;
   const sim = simulatedFirstWin((_ms, fn) => setTimeout(fn, 20));
@@ -60,7 +62,10 @@ beforeEach(async () => {
       return sim.send(item, choice, text);
     },
     // A real start says which session it started, and in which space's folder.
-    start: () => Promise.resolve(ok({ said: 'Started in #home', link: null, session: { root: '/Rig/home', sessionId: 'ses_started' } })),
+    start: (_item, _choice, edited) => {
+      started.push(edited);
+      return Promise.resolve(ok({ said: 'Started in #home', link: null, session: { root: '/Rig/home', sessionId: 'ses_started' } }));
+    },
   };
   await mount(1);
 });
@@ -157,5 +162,35 @@ describe('the first run’s cards', () => {
     await click(button(host, /Not now/));
     expect(q('[data-feed-id="sim:review"]')).not.toBeNull();
     expect(count()).toBe('1 of 2');
+  });
+
+  it('Start uses the sentence as edited; Enter in it never runs the card', async () => {
+    await vi.waitFor(() => expect(count()).toBe('1 of 3'));
+    await click(button(host, /The card before/));
+    await vi.waitFor(() => expect(q('[data-feed-id="sim:fix"]')).not.toBeNull());
+    const say = q('[data-feed-id="sim:fix"] [role="textbox"]')!;
+    await act(async () => {
+      say.textContent = 'Find the cause, no PR yet.';
+      say.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      say.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    });
+    expect(started).toEqual([]);
+    await click(button(q('[data-feed-id="sim:fix"]')!, /Start/));
+    await vi.waitFor(() => expect(started).toEqual(['Find the cause, no PR yet.']));
+  });
+
+  it('while a Send is going, the cards hold still, and its result lands on that card', async () => {
+    let finish: (r: Awaited<ReturnType<FirstWinEnv['send']>>) => void = () => {};
+    firstWin = { ...firstWin, send: () => new Promise((resolve) => (finish = resolve)) };
+    await mount(1);
+    await vi.waitFor(() => expect(q('[data-feed-id="sim:reply"]')).not.toBeNull());
+    await click(button(q('[data-feed-id="sim:reply"]')!, /^Send/));
+    expect((button(host, /^Show me another$/) as HTMLButtonElement).disabled).toBe(true);
+    expect((button(host, /The card before/) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => (button(host, /^Show me another$/) as HTMLButtonElement).click());
+    expect(count()).toBe('1 of 3');
+    await act(async () => finish(ok({ said: 'Sent in #product', link: null })));
+    await vi.waitFor(() => expect(q('[data-feed-sent]')?.textContent).toContain('Sent in #product.'));
+    expect(q('[data-feed-sent]')!.getAttribute('data-feed-id')).toBe('sim:reply');
   });
 });

@@ -369,11 +369,12 @@ const EditableSay = memo(
     handlers: RefObject<SayHandlers>;
   }) {
     const { lead, context, tail } = sayParts(item, choice);
+    // Enter never runs the card (for Send or Post that would send): the sentence stays one line,
+    // and only ⌘↩ (or the button) runs it. Not while an input method is composing.
     const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        handlers.current?.onRun();
-      }
+      if (e.key !== 'Enter' || e.nativeEvent.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey) handlers.current?.onRun();
     };
     const onPaste = (e: ClipboardEvent<HTMLDivElement>) => {
       e.preventDefault();

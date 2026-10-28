@@ -120,6 +120,20 @@ describe('a catch-up', () => {
   });
 });
 
+describe('a first read', () => {
+  it('counts the cards it put, not its outcomes: several outcomes about one card are one card', () => {
+    const run = 'r';
+    const events: OrchProgressEvent[] = [
+      { run, kind: 'start', trigger: 'first', passes: 2, lookups: 52, lookbackDays: 3, t: 0 },
+      { run, kind: 'line', line: { id: 'o1', connector: 'slack', label: 'Natalie waits on you', status: 'for_you', ref: 'msg:slack:C0:1.2', t: 1 } },
+      { run, kind: 'line', line: { id: 'o2', connector: 'slack', label: 'And again in the thread', status: 'for_you', ref: 'msg:slack:C0:1.3', t: 2 } },
+      { run, kind: 'line', line: { id: 'o3', connector: null, label: 'Riyad waits on your review', status: 'for_you', ref: 'sit_a', t: 3 } },
+      { run, kind: 'card', ref: 'sit_a', fresh: true, t: 4 },
+    ];
+    expect(events.reduce(readReducer, initialRead).counts.forYou).toBe(1);
+  });
+});
+
 describe('lastCatchUpWords', () => {
   const now = new Date(2026, 9, 28, 13, 5).getTime();
   const at = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).toISOString();

@@ -16,6 +16,24 @@ describe('homeReducer', () => {
     expect(e).toMatchObject({ pick: 'block', edited: null, slide: 'left', resetKey: 1 });
   });
 
+  it("a redrafted card drops a pick or edit made on its old choices; an unchanged one keeps them", () => {
+    let s = initialHomeState();
+    s = homeReducer(s, { type: 'pick', itemId: 'ask_429', choiceId: 'block', slide: 'left' });
+    s = homeReducer(s, { type: 'edit', itemId: 'ask_429', text: 'My own words' });
+    s = homeReducer(s, { type: 'edit-draft', itemId: 'ask_429', text: 'My own draft' });
+    const items = s.feed.map((e) => e.item);
+    // Read again, the same choices: the person's pick and words stay.
+    const same = homeReducer(s, { type: 'replace-feed', items: items.map((i) => ({ ...i })) });
+    expect(same.feed.find((x) => x.item.id === 'ask_429')).toMatchObject({ pick: 'block', edited: 'My own words', draftEdit: 'My own draft' });
+    // Rig redrafted it: choice ids are positions, so the old pick would land on another answer.
+    const redrafted = items.map((i) =>
+      i.id === 'ask_429' ? { ...i, choices: i.choices.map((c, n) => (n === 0 ? { ...c, lead: 'Something else now' } : c)) } : i
+    );
+    const was = s.feed.find((x) => x.item.id === 'ask_429')!;
+    const e = homeReducer(s, { type: 'replace-feed', items: redrafted }).feed.find((x) => x.item.id === 'ask_429')!;
+    expect(e).toMatchObject({ pick: undefined, edited: null, draftEdit: null, resetKey: was.resetKey + 1 });
+  });
+
   it('an ignored item stays as a slim row, out of the counts, until it is removed', () => {
     let s = initialHomeState();
     s = homeReducer(s, { type: 'ignore', itemId: 'prp_hugo', value: true });

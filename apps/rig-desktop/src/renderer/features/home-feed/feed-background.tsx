@@ -396,10 +396,15 @@ export function RunStatus() {
 
   const checkNow = async () => {
     setAsked(true);
-    await rpc.rig.orch.runNow();
-    setAsked(false);
-    void queryClient.invalidateQueries({ queryKey: RUN_KEY });
-    void queryClient.invalidateQueries({ queryKey: SET_ASIDE_KEY });
+    try {
+      await rpc.rig.orch.runNow();
+    } catch {
+      // A run that couldn't start says so on its own next check; the status mustn't stay "reading".
+    } finally {
+      setAsked(false);
+      void queryClient.invalidateQueries({ queryKey: RUN_KEY });
+      void queryClient.invalidateQueries({ queryKey: SET_ASIDE_KEY });
+    }
   };
   const when = last ? agoShort(Date.parse(last.ended ?? last.at), now) : null;
   const said = running

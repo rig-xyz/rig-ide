@@ -7,7 +7,7 @@ import type { FeedEntry, SentResult } from '@renderer/features/home-feed/store';
 import { rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
 import type { FirstWinEnv } from '../env';
-import { firstWinReducer, frontOf, initialFirstWin } from './first-win-model';
+import { firstWinReducer, frontOf, inFlight, initialFirstWin } from './first-win-model';
 import './first-win.css';
 
 /**
@@ -84,16 +84,20 @@ export function CardStack({
   const choice = front ? chosen(front.item, front.pick) : null;
   const behind = Math.min(2, cards.length - 1);
 
+  // One at a time: while a card's Send or Start is going, the cards stay put, and its result
+  // goes to that card by its id.
+  const going = inFlight(state);
   const run = () => {
-    if (!front || !choice || front.starting) return;
-    dispatch({ type: 'starting' });
+    if (!front || !choice || going) return;
+    const id = front.item.id;
+    dispatch({ type: 'starting', id });
     const go =
       choice.verb === 'send' || choice.verb === 'post'
         ? env.current.send(front.item, choice, front.draftEdit ?? choice.draft?.text ?? '')
-        : env.current.start(front.item, choice);
-    void go.then((r) =>
-      dispatch(r.success ? { type: 'sent', result: r.data } : { type: 'failed', error: r.error })
-    );
+        : env.current.start(front.item, choice, front.edited);
+    void go
+      .then((r) => dispatch(r.success ? { type: 'sent', id, result: r.data } : { type: 'failed', id, error: r.error }))
+      .catch(() => dispatch({ type: 'failed', id, error: "Rig couldn't reach your Claude." }));
   };
 
   if (!front && !state.done.length) return null;
@@ -114,13 +118,13 @@ export function CardStack({
         </h3>
         {!state.won && cards.length > 1 && (
           <div className="flex items-center gap-0.5" data-testid="first-win-cycle">
-            <CycleButton label="The card before" onClick={() => dispatch({ type: 'step', by: -1 })}>
+            <CycleButton label="The card before" disabled={going} onClick={() => dispatch({ type: 'step', by: -1 })}>
               <ChevronLeft className="size-4" strokeWidth={1.8} />
             </CycleButton>
             <span className="min-w-[3.6em] text-center text-meta text-text-muted tabular-nums" data-testid="first-win-count">
               {state.at + 1} of {cards.length}
             </span>
-            <CycleButton label="Show me another" onClick={() => dispatch({ type: 'step', by: 1 })}>
+            <CycleButton label="Show me another" disabled={going} onClick={() => dispatch({ type: 'step', by: 1 })}>
               <ChevronRight className="size-4" strokeWidth={1.8} />
             </CycleButton>
           </div>
@@ -165,6 +169,7 @@ export function CardStack({
                 onReset={() => dispatch({ type: 'reset' })}
                 menu={cards.length > 1 ? MENU : MENU.filter((m) => m.key !== 'another')}
                 onMenu={(key) => {
+                  if (going) return;
                   if (key === 'another') dispatch({ type: 'step', by: 1 });
                   else if (key === 'later' || key === 'ignore') {
                     env.current.answer(front.item, key === 'later' ? 'snooze' : 'ignore');
@@ -185,10 +190,12 @@ export function CardStack({
 
 function CycleButton({
   label,
+  disabled,
   onClick,
   children,
 }: {
   label: string;
+  disabled: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -197,8 +204,9 @@ function CycleButton({
       type="button"
       aria-label={label}
       title={label}
+      disabled={disabled}
       onClick={onClick}
-      className="grid size-7 place-items-center rounded-full text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary"
+      className="grid size-7 place-items-center rounded-full text-text-secondary transition-colors hover:bg-bg-2 hover:text-text-primary disabled:pointer-events-none disabled:opacity-40"
     >
       {children}
     </button>

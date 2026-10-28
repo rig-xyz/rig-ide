@@ -493,7 +493,8 @@ export function HomeProvider({
         // Setting it up takes a few seconds: say so at once, and ignore more clicks meanwhile.
         if (startingRef.current.has(situationId)) return;
         startingRef.current.add(situationId);
-        const said = `${choice.lead}${choice.tail}`.replace(/[{}@]/g, '');
+        // The person's own words when they changed the sentence, else the card's.
+        const said = (entry.edited !== null ? normalizeText(entry.edited) : `${choice.lead}${choice.tail}`).replace(/[{}@]/g, '');
         const task = choice.verb === 'reply' ? replyTask(said) : said;
         // The card's button says "Starting…" until the session runs; then the card leaves and the session shows in the rail.
         dispatch({ type: 'starting', itemId, value: true });
