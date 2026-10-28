@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { noteSessionStart } from '@renderer/features/home-feed/home-notes';
 import { toast } from '@renderer/lib/hooks/use-toast';
 import { events, rpc } from '@renderer/lib/ipc';
 import { rigStartSessionChannel, type RigSessionStart } from '@shared/rig/feed';
@@ -24,6 +25,7 @@ export async function startInSpace(start: RigSessionStart): Promise<void> {
     if (live instanceof RigChatStore && !live.disposed) {
       if (start.askFirst && !live.startInMode(ASK_FIRST)) return couldNotAskFirst(start);
       live.submitPrompt(start.prompt);
+      reportInHome(start, live);
       return;
     }
     const stored = await rpc.rig.sessions.getSession({ sessionId: start.sessionId });
@@ -72,9 +74,15 @@ async function run(store: RigChatStore, start: RigSessionStart, named: boolean):
   // a card's Reply asks first, before anything it does.
   if (start.askFirst && !store.startInMode(ASK_FIRST)) return couldNotAskFirst(start);
   store.submitPrompt(start.prompt);
+  reportInHome(start, store);
   // Named after the card, not after "Work through sessions/…/brief.md"; after
   // the prompt, so the name lands once the prompt has created the session's row.
   if (named) store.rename(start.title);
+}
+
+/** Work a card started: Rig says so in Home's chat, and again when it's ready (home-notes.ts). */
+function reportInHome(start: RigSessionStart, store: RigChatStore): void {
+  if (start.situationId) noteSessionStart(start, store);
 }
 
 /** Mounted once for the app: starts what main asks for, wherever the person is. */

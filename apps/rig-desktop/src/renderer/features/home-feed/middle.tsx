@@ -28,6 +28,7 @@ import { cn } from '@renderer/lib/utils';
 import { ActionButton } from './action-button';
 import { Face, Kicker, SessionMatrix, SourceLogo, sourceName, StatusWord } from './bits';
 import { HomeComposer, HomeRuns } from './home-claude';
+import { useHomeNotes } from './home-notes';
 import { rectOf, useHome } from './home-context';
 import { SOURCES } from './mock';
 import { type RailSession, type RailSpace, sessionStatusWord } from './model';
@@ -78,7 +79,8 @@ function greetingWord(now: Date): string {
 }
 
 function HomeChat() {
-  const { state, firstName, orchestrator, orchestratorContext, send, homeRuns } = useHome();
+  const { state, firstName, orchestrator, orchestratorContext, send, homeRuns, continueSession } = useHome();
+  const notes = useHomeNotes();
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState('');
@@ -115,6 +117,8 @@ function HomeChat() {
         <div className="flex min-h-0 flex-1 flex-col pr-[var(--hf-gutter,0px)]">
           <HomeRuns
             runs={homeRuns}
+            notes={notes}
+            onOpenNote={(note) => continueSession(note.root, note.sessionId)}
             name={firstName}
             header={
               <div className="grid content-start gap-4">

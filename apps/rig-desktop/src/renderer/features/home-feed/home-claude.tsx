@@ -1,10 +1,13 @@
+import { ArrowUpRight } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Composer } from '@renderer/features/spaces/components/composer';
 import { SessionCard } from '@renderer/features/spaces/components/session-card';
 import { MessageRow } from '@renderer/features/spaces/components/transcript-items';
 import type { RoomAgent, RoomMember, RoomMessage, RoomSnapshot } from '@renderer/features/spaces/types';
 import { events, rpc } from '@renderer/lib/ipc';
+import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { homeChatRunChannel, type HomeChatRun } from '@shared/rig/home-chat';
+import { noteWords, type HomeNote } from './home-notes';
 
 /**
  * Home's chat with the person's own Claude, drawn like a space's Room: your
@@ -76,8 +79,32 @@ function askedMessage(run: HomeChatRun): RoomMessage {
   return { id: `${run.id}:ask`, seq: 0, authorId: ME, createdAt: run.at, time: TIME.format(new Date(run.at)), body: run.prompt, meta: { kind: 'text' } };
 }
 
-/** The conversation: each message and Claude's run card under it, kept scrolled to the newest. */
-export function HomeRuns({ runs, name, header }: { runs: HomeChatRun[]; name: string; header: React.ReactNode }) {
+/** The conversation, oldest first: each message with Claude's run card under it, and Rig's notes between them. */
+type Entry = { at: number; run: HomeChatRun; note?: never } | { at: number; note: HomeNote; run?: never };
+
+/** The conversation, kept scrolled to the newest. */
+export function HomeRuns({
+  runs,
+  notes = [],
+  onOpenNote,
+  name,
+  header,
+}: {
+  runs: HomeChatRun[];
+  /** Rig's own notes on the work it started (home-notes.ts), in among the runs by time. */
+  notes?: readonly HomeNote[];
+  onOpenNote?: (note: HomeNote) => void;
+  name: string;
+  header: React.ReactNode;
+}) {
+  const entries = useMemo<Entry[]>(
+    () =>
+      [
+        ...runs.map((run) => ({ at: Date.parse(run.at) || 0, run })),
+        ...notes.map((note) => ({ at: note.at, note })),
+      ].sort((a, b) => a.at - b.at),
+    [runs, notes]
+  );
   const me = useMemo(() => member(name), [name]);
   const busy = runs.some((r) => r.status === 'running');
   const agents = useMemo<RoomAgent[]>(() => [{ agent: 'claude', owner: ME, model: runs.at(-1)?.model ?? '', busy }], [runs, busy]);
@@ -86,12 +113,15 @@ export function HomeRuns({ runs, name, header }: { runs: HomeChatRun[]; name: st
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [runs]);
+  }, [entries]);
   return (
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]">
       <div className="mx-auto flex max-w-[44rem] flex-col gap-4 px-3 pt-[22px] pb-6">
         {header}
-        {runs.map((run) => (
+        {entries.map(({ run, note }) =>
+          note ? (
+            <RigNote key={note.id} note={note} onOpen={onOpenNote} />
+          ) : (
           <div key={run.id} className="flex flex-col gap-4">
             <MessageRow message={askedMessage(run)} snapshot={snapshot} ownId={ME} />
             <SessionCard
@@ -113,7 +143,38 @@ export function HomeRuns({ runs, name, header }: { runs: HomeChatRun[]; name: st
               ownId={ME}
             />
           </div>
-        ))}
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** One of Rig's notes: what it started for you, or that it's ready, and the way to it. */
+function RigNote({ note, onOpen }: { note: HomeNote; onOpen?: (note: HomeNote) => void }) {
+  const words = noteWords(note);
+  return (
+    <div className="hf-rise grid grid-cols-[28px_minmax(0,1fr)] gap-2.5" data-home-note={note.kind}>
+      <span className="hf-rig-tile grid size-7 place-items-center rounded-[8px] border border-border-hairline bg-bg-2">
+        <DotMatrix state={note.kind === 'started' ? 'reading' : note.kind === 'review' ? 'waiting' : 'done'} size="sm" />
+      </span>
+      <div className="min-w-0">
+        <div className="mb-0.5 text-meta text-text-muted">Rig · {TIME.format(new Date(note.at))}</div>
+        <p className="m-0 text-chat leading-[1.6] text-text-primary">
+          {words.before}
+          <b className="font-semibold">{note.title}</b>
+          {words.after}{' '}
+          {onOpen && (
+            <button
+              type="button"
+              onClick={() => onOpen(note)}
+              className="inline-flex items-center gap-0.5 align-baseline text-accent hover:opacity-80"
+            >
+              Open
+              <ArrowUpRight className="size-3.5" strokeWidth={2} />
+            </button>
+          )}
+        </p>
       </div>
     </div>
   );

@@ -80,6 +80,8 @@ export interface HomeApi {
   /** Opens a real space or session in the app (its Room or its chat). */
   /** Opens a space in the app; with a session (a rail one, or a chat by id), that session. */
   openInApp: (target: { space: RailSpace; session?: RailSession; sessionId?: string }) => void;
+  /** Opens a session by its space's folder (a Rig note's Open). */
+  continueSession: (root: string, sessionId: string) => void;
   /** Your connectors at work: what each watch session brought back and how it was sorted. */
   connectors: ConnectorsState;
   connectorsDispatch: Dispatch<ConnectorsAction>;
@@ -747,6 +749,7 @@ export function HomeProvider({
       homeRuns,
       toast,
       openInApp,
+      continueSession: onContinueSession,
       connectors,
       connectorsDispatch,
       checkNow,
@@ -773,6 +776,7 @@ export function HomeProvider({
       homeRuns,
       toast,
       openInApp,
+      onContinueSession,
       connectors,
       checkNow,
       promoteTopic,
