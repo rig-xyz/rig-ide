@@ -99,13 +99,34 @@ export function summaryOf(state: ReadState): ReadSummary {
   };
 }
 
+/** The read's title with its matrix: "Catching you up", then how it ended. */
+export function ReadTitle({ run, className }: { run: ReadRun; className?: string }) {
+  const { state, current } = run;
+  const ended = state.ended;
+  return (
+    <div className={cn('flex items-center gap-3', className)} data-testid="read-title">
+      <span className="grid size-9 shrink-0 place-items-center rounded-[11px] bg-bg-2">
+        <DotMatrix
+          state={ended ? (ended.ok ? 'done' : 'failed') : current ? 'reading' : 'thinking'}
+          tone={ended && ended.ok ? 'ok' : 'accent'}
+          size="md"
+        />
+      </span>
+      <h2 className="m-0 font-display text-[22px] leading-tight font-semibold tracking-[-0.015em] text-text-primary">
+        {ended ? (ended.ok ? 'All caught up' : stoppedCopy(ended.problem, ended.error).title) : 'Catching you up'}
+      </h2>
+    </div>
+  );
+}
+
 /**
- * What the read is doing: its title and the line under it, the three
- * counters, a reconnect for each connector that needs one, and, when it
- * stopped, its one fix.
+ * What the read is doing: its title (unless the stage shows it) and the line
+ * under it, the three counters, a reconnect for each connector that needs
+ * one, and, when it stopped, its one fix.
  */
 export function ReadHeader({
   run,
+  title = true,
   onFix,
   onLeave,
   connectorsHome = 'claude.ai',
@@ -113,6 +134,8 @@ export function ReadHeader({
   className,
 }: {
   run: ReadRun;
+  /** Shows the title here; the first run's stage shows it instead. */
+  title?: boolean;
   /** A stopped read's fix, or a connector's reconnect: with it, each problem gets its one button. */
   onFix?: (fix: ReadFix) => void;
   /** A stopped read's way out: to the Feed, with what it found so far. */
@@ -133,18 +156,7 @@ export function ReadHeader({
       data-testid="read-header"
     >
       <div className="flex flex-col gap-1.5">
-        <div className="flex items-center gap-3">
-          <span className="grid size-9 shrink-0 place-items-center rounded-[11px] bg-bg-2">
-            <DotMatrix
-              state={ended ? (ended.ok ? 'done' : 'failed') : current ? 'reading' : 'thinking'}
-              tone={ended && ended.ok ? 'ok' : 'accent'}
-              size="md"
-            />
-          </span>
-          <h2 className="m-0 font-display text-[22px] leading-tight font-semibold tracking-[-0.015em] text-text-primary">
-            {ended ? (ended.ok ? 'All caught up' : stopped!.title) : 'Catching you up'}
-          </h2>
-        </div>
+        {title && <ReadTitle run={run} />}
         <p
           className="m-0 min-h-[1.4em] truncate text-[13px] text-text-secondary"
           aria-live="polite"
@@ -300,7 +312,7 @@ export function ReadStep({
             </ActionButton>
           )}
           <span className="min-w-0 text-xs text-text-muted" data-testid="read-hint">
-            {hint(state)}
+            {readHint(state)}
           </span>
         </div>
       )}
@@ -335,7 +347,8 @@ function status(state: ReadState, current: ReadLine | null, thinking: boolean): 
   return last ? last.label : reading;
 }
 
-function hint(state: ReadState): string {
+/** The line beside the read's action: what it found first, or that nothing needs you. */
+export function readHint(state: ReadState): string {
   const { ended } = state;
   if (ended && !ended.ok) return 'What it found so far is on your Feed.';
   const found = firstForYou(state);

@@ -9,7 +9,15 @@ import { StepFrame, type StepProps } from './first-run';
 import { CardStack } from './first-win/card-stack';
 import { captionOf, FieldCaptions, useFieldCaptions } from './read/field-captions';
 import type { ReadState } from './read/read-model';
-import { ReadHeader, ReadTicker, useReadRun, windowWords, type ReadFix } from './read/read-step';
+import {
+  ReadHeader,
+  readHint,
+  ReadTicker,
+  ReadTitle,
+  useReadRun,
+  windowWords,
+  type ReadFix,
+} from './read/read-step';
 
 /** Each connector's color on the field, from the app's own tokens. Unknown ones stay neutral. */
 const CONNECTOR_COLOR: Record<string, string> = {
@@ -70,9 +78,10 @@ const SETTLE_MS = 2200;
 
 /**
  * Step 5, the first run's one stage: Rig reading the person's tools, and
- * the first cards it finds. The header, counters and status sit on the
- * stage over the field (`ReadHeader`); the guide pane keeps only the ticker
- * of what it read. Each lookup lights a few single tiles, scattered at
+ * the first cards it finds. The guide pane keeps what it's doing: the status
+ * line, the counters, the ticker and the actions (`ReadHeader`,
+ * `ReadTicker`); its title, with its matrix, stands at the top of the stage
+ * over the field (`ReadTitle`). Each lookup lights a few single tiles, scattered at
  * random in its tool's color, one captioned with what it reads, and they
  * settle after a moment into heavier grey: the field fills up with what has
  * been read. Between lookups, Claude's own thinking captions a tile. As soon
@@ -153,7 +162,6 @@ export function ReadStepView(props: StepProps) {
 
 function ReadStage({
   env,
-  position,
   onNext,
   setFieldLook,
   field,
@@ -303,38 +311,36 @@ function ReadStage({
   return (
     <StepFrame
       guide={
-        <>
-          <span className="font-mono text-2xs tracking-[0.09em] text-text-muted uppercase">
-            {position ? `${position} · Catch up` : 'Catch up'}
-          </span>
-          <p className="m-0 text-[13.5px] leading-[1.55] text-text-secondary">
-            {hasCards
-              ? 'Act on a card as soon as it’s ready, or watch Rig read the rest.'
-              : 'Rig reads through your tools. Cards land here as soon as they’re ready.'}
-          </p>
+        <section className="flex min-h-0 flex-1 flex-col gap-3.5" data-testid="read-step">
+          <ReadHeader
+            run={run}
+            title={false}
+            onFix={onFix}
+            onLeave={stopped ? onNext : undefined}
+            connectorsHome={env.agentInfo.route.connectorsHome}
+            fixing={fixing}
+          />
           <ReadTicker run={run} className={state.ended ? 'rig-read-settled' : undefined} />
-          <div className="flex flex-wrap items-center gap-2.5">
-            <ActionButton
-              variant={state.ended ? 'primary' : 'quiet'}
-              icon={ArrowRight}
-              onClick={onNext}
-            >
-              Open my Home
-            </ActionButton>
-          </div>
-        </>
+          {!stopped && (
+            <div className="flex flex-wrap items-center gap-2.5">
+              <ActionButton
+                variant={state.ended ? 'primary' : 'quiet'}
+                icon={ArrowRight}
+                onClick={onNext}
+              >
+                Open my Home
+              </ActionButton>
+              <span className="min-w-0 text-xs text-text-muted" data-testid="read-hint">
+                {readHint(state)}
+              </span>
+            </div>
+          )}
+        </section>
       }
       stage={
         <div className="relative flex min-h-0 flex-col items-center gap-6 self-stretch justify-self-stretch pt-8" data-testid="read-stage">
           {!caughtUp && (
-            <ReadHeader
-              run={run}
-              onFix={onFix}
-              onLeave={stopped ? onNext : undefined}
-              connectorsHome={env.agentInfo.route.connectorsHome}
-              fixing={fixing}
-              className="fr-read-head relative z-10 w-[min(520px,100%)] rounded-[18px] px-5 py-4"
-            />
+            <ReadTitle run={run} className="fr-read-head relative z-10 rounded-[16px] py-2.5 pr-5 pl-2.5" />
           )}
           <div className="relative z-10 flex min-h-0 w-full flex-1 items-start justify-center">
             {hasCards && (

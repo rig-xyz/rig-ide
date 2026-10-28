@@ -4,8 +4,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import type { OrchProgressEvent } from '@shared/rig/orch-progress';
 
 /**
- * The first run's one stage: the read's header and counters on the stage,
- * the ticker alone in the guide; the first card rising over the field while
+ * The first run's one stage: the read's title on the stage, its status,
+ * counters, ticker and actions in the guide; the first card rising over the field while
  * it keeps reading, with no step change; the field settling into a breath
  * when the read ends with a card up; All caught up only for a read with no
  * card; captions from what Claude reads and thinks; and a win that ends on
@@ -106,14 +106,17 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const shownCaptions = () => [...host.querySelectorAll('[data-caption]:not(.fr-caption-leaving)')].map((c) => c.textContent);
 
 describe('the first run’s one stage', () => {
-  it('has the header and counters on the stage, and only the ticker in the guide', async () => {
+  it('puts only the title on the stage; the status, counters, ticker and actions stay in the guide', async () => {
     await render([start, reading('a', 'Checking #eng-standup', 5)]);
-    await vi.waitFor(() => expect(q('[data-testid="read-stage"] [data-testid="read-header"]')).not.toBeNull());
-    expect(q('[data-testid="read-header"]')!.textContent).toContain('Catching you up');
-    expect(q('[data-testid="read-header"] [aria-label="So far"]')).not.toBeNull();
-    // Once: no second header in the guide.
-    expect(host.querySelectorAll('[data-testid="read-header"]').length).toBe(1);
-    expect(q('aside [data-testid="read-ticker"]')).not.toBeNull();
+    await vi.waitFor(() => expect(q('[data-testid="read-stage"] [data-testid="read-title"]')).not.toBeNull());
+    expect(q('[data-testid="read-title"]')!.textContent).toBe('Catching you up');
+    // Once: no second title in the guide.
+    expect(host.querySelectorAll('[data-testid="read-title"]').length).toBe(1);
+    for (const id of ['read-now', 'read-ticker', 'read-hint'])
+      expect(q(`aside [data-testid="${id}"]`), id).not.toBeNull();
+    expect(q('aside [aria-label="So far"]')).not.toBeNull();
+    expect([...host.querySelectorAll('aside button')].some((b) => b.textContent?.includes('Open my Home'))).toBe(true);
+    expect(q('[data-testid="read-stage"] [aria-label="So far"]')).toBeNull();
   });
 
   it('brings the first card up over the field while it keeps reading: no step change', async () => {
@@ -123,7 +126,7 @@ describe('the first run’s one stage', () => {
     await wait(1800);
     expect(onNext).not.toHaveBeenCalled();
     // Still reading behind it, and saying what.
-    expect(q('[data-testid="read-header"]')!.textContent).toContain('Catching you up');
+    expect(q('[data-testid="read-title"]')!.textContent).toBe('Catching you up');
     expect(shownCaptions()).toContain('Reading PR #412');
     expect(q('[data-testid="read-caught-up"]')).toBeNull();
   });
@@ -154,7 +157,7 @@ describe('the first run’s one stage', () => {
     const onNext = vi.fn();
     await render([start, reading('a', 'Checking #eng', 5), card('sit_peter', 8), end], onNext);
     await vi.waitFor(() => expect(looks).toContain('calm'));
-    expect(q('[data-testid="read-header"]')!.textContent).toContain('All caught up');
+    expect(q('[data-testid="read-title"]')!.textContent).toBe('All caught up');
     expect(q('[data-testid="read-caught-up"]')).toBeNull();
     expect(q('[data-testid="field-captions"]')).toBeNull();
     // Its tiles go back to the grid.
@@ -170,8 +173,8 @@ describe('the first run’s one stage', () => {
     await wait(1500);
     expect(onNext).not.toHaveBeenCalled();
     expect(q('[data-testid="read-caught-up"]')!.textContent).toContain('Open my Home');
-    // No header over it, and no captions during the gather.
-    expect(q('[data-testid="read-header"]')).toBeNull();
+    // No title over it (the check has its own), and no captions during the gather.
+    expect(q('[data-testid="read-title"]')).toBeNull();
     expect(q('[data-testid="field-captions"]')).toBeNull();
   });
 
