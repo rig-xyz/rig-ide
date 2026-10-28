@@ -191,7 +191,7 @@ describe('the first run’s one stage', () => {
     expect(shownCaptions()).toEqual(['Most of #eng is already resolved', 'Reading PR #412', 'Analyzing Linear ENG-311']);
     expect(q('[data-caption^="thought:"] .fr-caption-think')).not.toBeNull();
     // Gone once the tiles have settled.
-    await vi.waitFor(() => expect(host.querySelectorAll('[data-caption]').length).toBe(0), { timeout: 4000 });
+    await vi.waitFor(() => expect(host.querySelectorAll('[data-caption]').length).toBe(0), { timeout: 6000 });
   });
 
   it('a started card is the win: a moment, then Home, with the session to land there', async () => {

@@ -45,6 +45,18 @@ describe('ProgressMapper', () => {
     expect(think('Christopher asked for a review on Tuesday. ')).toEqual([{ kind: 'thought', text: 'Christopher asked for a review on Tuesday', t: 2500 }]);
   });
 
+  it('says the line it writes before a step, even with no space after it', () => {
+    let now = 0;
+    const m = new ProgressMapper(() => now);
+    const say = (text: string) => m.push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+    expect(say('Checking your Slack')).toEqual([]);
+    expect(say(' DMs since Tuesday.')).toEqual([]);
+    // The lookup starts: what it said is whole, and comes before the lookup's own line.
+    const out = m.push({ sessionUpdate: 'tool_call', toolCallId: 'c1', name: 'mcp__claude_ai_Slack__slack_search_public_and_private', rawInput: { query: 'to:me' } });
+    expect(out[0]).toEqual({ kind: 'thought', text: 'Checking your Slack DMs since Tuesday', t: 0 });
+    expect(out[1]).toMatchObject({ kind: 'line', line: { id: 'c1', connector: 'slack', status: 'running' } });
+  });
+
   it("keeps quiet about the run's own instructions and scraps of thought", () => {
     expect(thoughtLabel('Let me read the packet first.')).toBeNull();
     expect(thoughtLabel('Okay.')).toBeNull();

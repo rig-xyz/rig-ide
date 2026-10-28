@@ -71,8 +71,13 @@ function tileFor(line: RunProgress): { state: DotMatrixState; color: string } | 
 }
 
 const ACTIVITY: DotMatrixState[] = ['reading', 'searching', 'thinking'];
-/** A thought's caption stays this long on its tile. */
+/** A thought's tile stays lit this long. */
 const THOUGHT_MS = 2600;
+/**
+ * A caption stays this long, longer than its spark: a lookup takes under a second and Claude
+ * thinks for seconds between them, so the words stay up while it works on what it read.
+ */
+const CAPTION_MS = 4500;
 /** Once the read ends with a card up, its tiles go back to the grid over this long, at random. */
 const SETTLE_MS = 2200;
 
@@ -174,6 +179,8 @@ function ReadStage({
   /** Every tile the read lit, to let them go when it settles. */
   const claimed = useRef(new Set<string>());
   const lastAt = useRef(Date.now());
+  /** The lines heard of so far. */
+  const seen = useRef(new Set<string>());
   const captions = useFieldCaptions();
   const endedRef = useRef(false);
 
@@ -208,20 +215,23 @@ function ReadStage({
         // Claude thinking between lookups: a tile in the accent says what about.
         lastAt.current = Date.now();
         const at = light('--accent', THOUGHT_MS, false)?.at();
-        if (at) captions.show({ id: `thought:${event.t}`, at, connector: 'rig', text: captionOf(event.text) }, THOUGHT_MS);
+        if (at) captions.show({ id: `thought:${event.t}`, at, connector: 'rig', text: captionOf(event.text) }, CAPTION_MS);
         return;
       }
       if (event.kind !== 'line') return;
       const { line } = event;
       const connector = line.connector ?? 'rig';
-      if (line.status === 'running') {
+      // A lookup lights up when it starts, or when it's first heard of: a fast one may come already done.
+      const fresh = !seen.current.has(line.id);
+      seen.current.add(line.id);
+      if (line.status === 'running' || (fresh && line.status === 'done')) {
         lastAt.current = Date.now();
         for (let i = 0; i < SPARKS_PER_LOOKUP; i++) {
           const lit = light(CONNECTOR_COLOR[connector] ?? '--text-muted');
           // One spark per lookup in the person's tools says what it reads; Rig's own lookups stay quiet.
           if (i > 0 || connector === 'rig') continue;
           const at = lit?.at();
-          if (at) captions.show({ id: line.id, at, connector, text: captionOf(line.label) }, SPARK_MS);
+          if (at) captions.show({ id: line.id, at, connector, text: captionOf(line.label) }, CAPTION_MS);
         }
         captions.rename(line.id, captionOf(line.label));
       }

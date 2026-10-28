@@ -153,10 +153,14 @@ export function buildPacket(p: PacketInput): string {
   ].join('\n');
 }
 
+/** A watched read says what it's doing between lookups, where its thinking shows nothing: one short line before each step. */
+const SAY_EACH_STEP =
+  'Before each step, write one short plain line on what you are about to check, under 8 words, ending with a period (for example "Checking your Slack DMs since Tuesday."). No other prose.';
+
 /** The first run's own instructions, per pass: the first card fast, then the rest. */
 function firstReadLines(f: FirstPass, me: string, since: string): string[] {
   if (f.since) return catchUpLines(f, me, since);
-  const watching = `This is ${me}'s first run, and they are watching it: each lookup and each outcome you report shows as a line on their screen. Speed matters most now.`;
+  const watching = `This is ${me}'s first run, and they are watching it: each lookup and each outcome you report shows as a line on their screen. Speed matters most now. ${SAY_EACH_STEP}`;
   if (f.pass === 1 || f.widened) {
     return [
       watching,
@@ -179,7 +183,7 @@ function firstReadLines(f: FirstPass, me: string, since: string): string[] {
  * nothing that's on their Feed already (the app shows those itself).
  */
 function catchUpLines(f: FirstPass, me: string, since: string): string[] {
-  const watching = `${me} has used Rig before and is watching this catch-up: each lookup and each outcome you report shows as a line on their screen. Speed matters most now.`;
+  const watching = `${me} has used Rig before and is watching this catch-up: each lookup and each outcome you report shows as a line on their screen. Speed matters most now. ${SAY_EACH_STEP}`;
   const notAgain = `The cards on the Feed below are already there: never put one of them again, and never open a new situation for something one of them covers. Report what you read about them as outcomes only.`;
   if (f.pass === 1) {
     return [

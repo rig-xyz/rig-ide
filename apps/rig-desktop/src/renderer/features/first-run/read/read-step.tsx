@@ -158,7 +158,7 @@ export function ReadHeader({
       <div className="flex flex-col gap-1.5">
         {title && <ReadTitle run={run} />}
         <p
-          className="m-0 min-h-[1.4em] truncate text-[13px] text-text-secondary"
+          className="m-0 line-clamp-2 min-h-[2.8em] text-[13px] leading-[1.4] text-text-secondary"
           aria-live="polite"
           data-testid="read-now"
         >

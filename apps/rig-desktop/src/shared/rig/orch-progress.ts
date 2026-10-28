@@ -206,12 +206,13 @@ export class ProgressMapper {
   constructor(private readonly now: () => number) {}
 
   push(update: AcpToolUpdate): Mapped[] {
-    if (update.sessionUpdate === 'agent_thought_chunk') return this.thought(update.content);
+    // Its thinking, and the short line it says before each step ("Checking your Slack DMs."): both say what it's doing.
+    if (update.sessionUpdate === 'agent_thought_chunk' || update.sessionUpdate === 'agent_message_chunk') return this.thought(update.content);
     if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return [];
-    // A lookup starts: what Claude thinks next is a new thought.
-    if (update.sessionUpdate === 'tool_call') this.thinking = '';
+    // A lookup starts: what it said just before is whole now (it may end without a space), and what it thinks next is a new thought.
+    const said = update.sessionUpdate === 'tool_call' ? this.flush() : [];
     const id = update.toolCallId;
-    if (!id) return [];
+    if (!id) return said;
     const was = this.calls.get(id);
     const name = update.name ?? was?.name ?? update.title ?? '';
     const input = update.rawInput && typeof update.rawInput === 'object' ? (update.rawInput as Input) : (was?.input ?? {});
@@ -219,7 +220,7 @@ export class ProgressMapper {
     call.name = name;
     call.input = input;
     this.calls.set(id, call);
-    const out: Mapped[] = [];
+    const out: Mapped[] = [...said];
     const t = this.now();
     const ended = update.status ? STATUS[update.status] : undefined;
 
@@ -261,6 +262,17 @@ export class ProgressMapper {
     if (!end) return [];
     const sentence = this.thinking.slice(0, end.index + 1);
     this.thinking = this.thinking.slice(end.index + end[0].length);
+    return this.say(sentence);
+  }
+
+  /** What's left of what it was saying, said now: a lookup is starting. */
+  private flush(): Mapped[] {
+    const rest = this.thinking;
+    this.thinking = '';
+    return rest.trim() ? this.say(rest) : [];
+  }
+
+  private say(sentence: string): Mapped[] {
     const t = this.now();
     const text = thoughtLabel(sentence);
     if (!text || t - this.saidAt < THOUGHT_EVERY_MS) return [];
