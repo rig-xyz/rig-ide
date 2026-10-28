@@ -119,19 +119,29 @@ function withProviderEnv(client: AcpRuntimeClient): AcpRuntimeClient {
   };
 }
 
+/**
+ * A space session (`projectId: 'space'`) is no conversation row: the spaces
+ * dispatcher keeps its session id itself (`SpaceSessionStore`). Persisting it
+ * here could only fail, logging a `conversation-not-found` that reads like a
+ * lost session on every start.
+ */
+function persistsSessionId(input: { input: AcpStartInputWire }): boolean {
+  return input.input.projectId !== 'space';
+}
+
 function withSessionIdPersistence(client: AcpRuntimeClient): AcpRuntimeClient {
   return {
     ...client,
     startSession: async (input, meta) => {
       const result = await client.startSession(input, meta);
-      if (result.success) {
+      if (result.success && persistsSessionId(input)) {
         await persistReturnedSessionId(input.input.conversationId, result.data.sessionId);
       }
       return result;
     },
     resumeSession: async (input, meta) => {
       const result = await client.resumeSession(input, meta);
-      if (result.success) {
+      if (result.success && persistsSessionId(input)) {
         await persistReturnedSessionId(input.input.conversationId, result.data.sessionId);
       }
       return result;

@@ -1,18 +1,22 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { err, ok, type Result } from '@emdash/shared';
 import { events } from '@main/lib/events';
 import { log } from '@main/lib/logger';
 import { cliMissingMessage } from './cli-advice';
 import { createRPCController } from '@shared/lib/ipc/rpc';
+import { folderMatchesName, rigFolderSlug } from '@shared/rig/create';
 import { rigRenamedChannel } from '@shared/rig/workspace';
 import { commandFailureMessage } from './auth-output';
 import { runRig, type SpawnOutcome } from './create';
+import { rigFileRootRegistry } from './file-root-registry';
+import { isInsideHome, readRigHomeDir, resolveHomeLandingDir } from './home';
 import { extractJsonObjects, parseJsonErrorEnvelope } from './join';
 import { existsAsDirectory, getLinkedPathsForAccount, updateRigName, updateRigPath } from './recent-rigs';
 import { relayNameSync } from './relay-name-sync-instance';
 import { setTomlRigName } from './rig-toml';
 import { SPACE_NAME_MAX } from './spaces/rig-tools';
+import { spaceHasRunInFlight } from './spaces/session-store-instance';
 import { isRigSyncPaused, readSyncPausedReason, writeSyncPausedReason } from './sync-paused';
 
 /** The pause reason sign-out stamps: sign-in resumes only these, never a pause someone chose. */
@@ -67,9 +71,11 @@ function spawnOutcomeToMessage(command: string, outcome: SpawnOutcome): { messag
  */
 export async function moveRig(
   bindingId: string,
-  path: string
+  path: string,
+  /** Where to; the CLI's default (home, named for `rig.toml`'s name) when left out. */
+  to?: string
 ): Promise<Result<{ path: string }, { message: string }>> {
-  const outcome = await runRig(['move', path, '--json'], path, MOVE_TIMEOUT_MS);
+  const outcome = await runRig(['move', path, ...(to ? ['--to', to] : []), '--json'], path, MOVE_TIMEOUT_MS);
   const failure = spawnOutcomeToMessage('move', outcome);
   if (failure) return err(failure);
   // outcome.kind === 'ran' && exitCode === 0 here (spawnOutcomeToMessage
@@ -207,11 +213,44 @@ export function resumeRigsForAccount(accountId: string, accountBindingIds: Reado
  */
 const RENAME_BRIEF_TIMEOUT_MS = 15_000;
 
+/** Why a space's folder kept its name after a rename. */
+export type FolderKept = 'matches' | 'outside-home' | 'open' | 'busy' | 'failed';
+
+/**
+ * The folder follows the space's name (`#rig-feedback` lives in
+ * `rig-feedback`), through `rig move`, which stops and restarts the space's
+ * sync around the move; everything in `.rig/` travels with it. Only in the
+ * Rig home (a folder someone put elsewhere is theirs to name), only with a
+ * real clash suffix (`-2`), and never under someone: not while a window has
+ * it open (its files and comments would point at the old folder) or one of
+ * its runs is in flight (the agent works in it). A kept folder says why, so
+ * the rename can offer it again later.
+ */
+export async function matchFolderToName(
+  bindingId: string,
+  path: string,
+  name: string
+): Promise<{ moved: true; path: string } | { moved: false; reason: FolderKept; message?: string }> {
+  if (folderMatchesName(basename(path), name)) return { moved: false, reason: 'matches' };
+  if (!isInsideHome(path, await readRigHomeDir())) return { moved: false, reason: 'outside-home' };
+  if (await rigFileRootRegistry.isOpen(path)) return { moved: false, reason: 'open' };
+  if (spaceHasRunInFlight(bindingId)) return { moved: false, reason: 'busy' };
+  const to = resolveHomeLandingDir(dirname(path), rigFolderSlug(name));
+  const moved = await moveRig(bindingId, path, to);
+  if (!moved.success) {
+    log.warn('Rig: could not rename the space folder to match its name', { message: moved.error.message });
+    return { moved: false, reason: 'failed', message: moved.error.message };
+  }
+  return { moved: true, path: moved.data.path };
+}
+
 export async function renameRig(
   bindingId: string,
   path: string,
   newName: string
-): Promise<Result<{ name: string; relayWarning?: string }, { message: string }>> {
+): Promise<
+  Result<{ name: string; relayWarning?: string; folder: Awaited<ReturnType<typeof matchFolderToName>> }, { message: string }>
+> {
   const trimmed = newName.trim();
   if (!trimmed) return err({ message: 'Name cannot be empty.' });
   if (trimmed.length > SPACE_NAME_MAX) {
@@ -249,8 +288,9 @@ export async function renameRig(
 
   await updateRigName(bindingId, trimmed);
   const relayWarning = await relayNameSync.pushRename(bindingId, trimmed);
+  const folder = await matchFolderToName(bindingId, path, trimmed);
   events.emit(rigRenamedChannel, { bindingId, name: trimmed });
-  return ok(relayWarning ? { name: trimmed, relayWarning } : { name: trimmed });
+  return ok({ name: trimmed, folder, ...(relayWarning ? { relayWarning } : {}) });
 }
 
 export const rigControlController = createRPCController({
@@ -263,4 +303,7 @@ export const rigControlController = createRPCController({
   /** rigs-rail row menu's "Rename…". */
   rename: ({ bindingId, path, name }: { bindingId: string; path: string; name: string }) =>
     renameRig(bindingId, path, name),
+  /** "Rename folder to match": a rename that kept the folder (it was open, or busy), offered again. */
+  matchFolder: ({ bindingId, path, name }: { bindingId: string; path: string; name: string }) =>
+    matchFolderToName(bindingId, path, name),
 });

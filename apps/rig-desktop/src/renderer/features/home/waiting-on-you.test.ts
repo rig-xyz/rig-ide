@@ -5,6 +5,7 @@ import {
   contextLine,
   deriveWaitingItems,
   doneLine,
+  openTargetOfItem,
   pendingRequestOf,
   usedInLabel,
   waitingAction,
@@ -175,5 +176,64 @@ describe('contextLine', () => {
     expect(contextLine({ authorName: null, body: 'x'.repeat(200) })).toMatch(/^Someone: x{139}…$/);
     expect(contextLine(null)).toBeNull();
     expect(contextLine({ authorName: 'Hugo', body: '  ' })).toBeNull();
+  });
+});
+
+describe('openTargetOfItem', () => {
+  const reply: WaitingItem = {
+    kind: 'reply',
+    key: 'n:1',
+    notificationId: '1',
+    bindingId: 'b_data',
+    spaceName: 'mktg-data',
+    who: { userId: 'u_natalie', name: 'Natalie' },
+    verb: 'mentioned you',
+    quote: 'do you have preference on how you want to incorporate data?',
+    messageId: 'm_1',
+    messageSeq: 42,
+    path: null,
+    at: '2026-10-26T14:19:00Z',
+  };
+
+  it('opens a mention at its message with its thread open, quoting it in case it is far back', () => {
+    expect(openTargetOfItem(reply)).toEqual({
+      bindingId: 'b_data',
+      spaceName: 'mktg-data',
+      messageId: 'm_1',
+      messageSeq: 42,
+      preview: 'do you have preference on how you want to incorporate data?',
+      path: null,
+      expandThread: true,
+    });
+  });
+
+  it("opens an approval at its run's card", () => {
+    const approval = {
+      kind: 'approval',
+      key: 'run:r1',
+      runId: 'r1',
+      bindingId: 'b_ops',
+      spaceName: 'rig-ops',
+      agent: 'Claude',
+      agentKind: 'claude',
+      title: null,
+      at: '2026-10-26T14:19:00Z',
+    } as WaitingItem;
+    expect(openTargetOfItem(approval)).toEqual({ bindingId: 'b_ops', spaceName: 'rig-ops', runId: 'r1' });
+  });
+
+  it('has nowhere to open for a message it cannot point at, or an invite', () => {
+    expect(openTargetOfItem({ ...reply, messageId: null, path: null })).toBeNull();
+    const invite: WaitingItem = {
+      kind: 'invite',
+      key: 'invite:i1',
+      inviteId: 'i1',
+      bindingId: 'b_new',
+      spaceName: 'new',
+      label: '#new',
+      who: { userId: null, name: 'Hugo' },
+      at: '2026-10-26T14:19:00Z',
+    };
+    expect(openTargetOfItem(invite)).toBeNull();
   });
 });

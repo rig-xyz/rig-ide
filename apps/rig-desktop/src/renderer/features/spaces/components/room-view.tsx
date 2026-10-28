@@ -1358,7 +1358,14 @@ export function RoomView({
     if (!activeJump.runId) return null;
     return shownMessages.find((m) => m.meta.kind === 'session' && m.meta.runId === activeJump.runId)?.id ?? null;
   }, [activeJump, threadsLayout, shownMessages]);
-  const jumpRootId = jumpTargetId ? (threadsLayout?.rootOf.get(jumpTargetId) ?? null) : null;
+  // A reply opens its thread; a jump that asks for the conversation opens
+  // the thread a root message starts, too.
+  const jumpRootId =
+    jumpTargetId && threadsLayout
+      ? activeJump?.expandThread
+        ? threadRootFor(threadsLayout, jumpTargetId)
+        : (threadsLayout.rootOf.get(jumpTargetId) ?? null)
+      : null;
   const transcriptJump = useMemo(
     () => (activeJump && jumpRootId ? { ...activeJump, messageId: jumpRootId, runId: null } : activeJump),
     [activeJump, jumpRootId]

@@ -157,6 +157,8 @@ export interface SessionCard {
   reacted: string[];
   /** Its first try failed on the agent's sign-in and the prompt went again in this run (`run_retried`). */
   retriedAfterSignIn: boolean;
+  /** Its session was lost or stopped responding, and the prompt went to a new conversation in this run (`run_retried`). */
+  newConversation: boolean;
 }
 
 /**

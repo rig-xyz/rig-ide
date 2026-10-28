@@ -4,6 +4,7 @@ import type { SpaceSetupEvent } from '@shared/rig/space-setup';
 vi.mock('@main/lib/telemetry', () => ({ telemetryService: { capture: vi.fn() } }));
 vi.mock('@main/lib/events', () => ({ events: { emit: vi.fn(), on: vi.fn() } }));
 const ensureRigHomeDir = vi.hoisted(() => vi.fn(async () => '/home'));
+vi.mock('./rig-controls', () => ({ renameRig: vi.fn() }));
 vi.mock('./home', () => ({
   ensureRigHomeDir,
   resolveHomeLandingDir: (home: string, slug: string) => `${home}/${slug}`,
@@ -91,6 +92,23 @@ describe('space setup', () => {
     expect(h.logs).toEqual([
       { message: 'Rig create: space setup timings', extra: { path: 'oneStep', totalMs: 100, cliMs: 100 } },
     ]);
+  });
+
+  it("keeps the space's name when its folder had to take a clash suffix", async () => {
+    const nameSpace = vi.fn(async () => {});
+    const h = harness([LIVE_SPACE], { nameSpace });
+    // An old folder (a space since renamed) already has the name.
+    h.setups.start('bright-harbor', '/home/bright-harbor-2');
+    await h.setups.whenSettled('setup-1');
+    expect(nameSpace).toHaveBeenCalledWith('bnd_1', '/home/bright-harbor-2', 'bright-harbor');
+    expect(h.setups.list()[0]).toMatchObject({ status: 'live', name: 'bright-harbor' });
+
+    // A folder named for the space needs nothing.
+    const plain = harness([LIVE_SPACE], { nameSpace });
+    nameSpace.mockClear();
+    plain.setups.start('bright-harbor', '/home/bright-harbor');
+    await plain.setups.whenSettled('setup-1');
+    expect(nameSpace).not.toHaveBeenCalled();
   });
 
   it('marks the binding a space when the CLI made a plain rig (tapd before 0.6.7 ignores --kind)', async () => {

@@ -34,6 +34,11 @@ export interface SpawnContextResolver {
 
 export type CreateSpawnContextResolverOptions = {
   resolveCli: (providerId: string) => Promise<string>;
+  /**
+   * True when a CLI resolved earlier is no longer there, so the cached one is
+   * dropped and resolved again instead of every spawn failing until restart.
+   */
+  isCliGone?: (cli: string) => Promise<boolean>;
   env: Record<string, string | undefined>;
   homeDir: string;
   includeShellVar?: boolean;
@@ -79,21 +84,24 @@ export function createSpawnContextResolver(
     }
 
     const cachedCli = cliCache.get(providerId);
-    if (cachedCli) return ok({ cli: cachedCli, agentEnv: buildAgentEnv() });
+    if (cachedCli && !(await options.isCliGone?.(cachedCli))) {
+      return ok({ cli: cachedCli, agentEnv: buildAgentEnv() });
+    }
+    if (cachedCli) invalidate(providerId);
 
     const cliResult = await resolveCliOnce({ providerId, generation });
     if (!cliResult.success) return cliResult;
     return ok({ cli: cliResult.data, agentEnv: buildAgentEnv() });
   };
 
-  const invalidate = (providerId?: string): void => {
+  function invalidate(providerId?: string): void {
     generation++;
     if (providerId) {
       cliCache.delete(providerId);
       return;
     }
     cliCache.clear();
-  };
+  }
 
   return { resolve, invalidate };
 

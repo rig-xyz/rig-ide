@@ -79,6 +79,29 @@ export function rigSlug(name: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
+/**
+ * The folder a space lands in under the Rig home: the CLI's own rule
+ * (`slugifyRigName` in rig's `src/home.mjs`), which `rig attach`, `rig join`
+ * and `rig move` use. Stricter than `rigSlug` (only `[a-z0-9-]`, at most 60
+ * characters), so a check for "is this space already here" has to use this
+ * one to look where the CLI put it.
+ */
+export function rigFolderSlug(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+  return slug || 'shared-rig';
+}
+
+/** Whether a folder is named for `name`: its slug, or its slug with a clash suffix (`-2`). */
+export function folderMatchesName(folderName: string, name: string): boolean {
+  const slug = rigFolderSlug(name);
+  return folderName === slug || new RegExp(`^${slug}-\\d+$`).test(folderName);
+}
+
 /** Null when the name works; otherwise the message the form shows under the field. */
 export function validateRigName(name: string): string | null {
   if (!name.trim()) return 'Give the rig a name.';

@@ -1043,6 +1043,7 @@ export function App() {
             messageId: target.messageId ?? null,
             messageSeq: target.messageSeq ?? null,
             runId: target.runId ?? null,
+            expandThread: target.expandThread ?? false,
             nonce: Date.now(),
           },
         });
@@ -1709,6 +1710,7 @@ export function App() {
             <Home
               onOpenFolder={openFolder}
               onOpenPath={openPath}
+              onOpenSpaceAt={(target) => void openSpaceAt(target)}
               onContinueSession={continueSession}
               onRigCreated={openCreatedRig}
             />

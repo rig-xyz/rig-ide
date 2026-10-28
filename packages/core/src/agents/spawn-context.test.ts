@@ -141,4 +141,30 @@ describe('createSpawnContextResolver', () => {
     await resolver.resolve('test');
     expect(resolveCli).toHaveBeenCalledTimes(2);
   });
+
+  it('resolves again when the cached cli has disappeared', async () => {
+    const resolveCli = vi
+      .fn<(providerId: string) => Promise<string>>()
+      .mockResolvedValueOnce('/claude-code/2.1.295/claude')
+      .mockResolvedValueOnce('/claude-code/2.1.304/claude');
+    const gone = new Set<string>();
+    const resolver = createSpawnContextResolver({
+      resolveCli,
+      isCliGone: async (cli) => gone.has(cli),
+      env: { PATH: '/bin' },
+      homeDir: '/home/test',
+    });
+
+    await expect(resolver.resolve('test')).resolves.toMatchObject({
+      data: { cli: '/claude-code/2.1.295/claude' },
+    });
+    // The app that bundled it updated and deleted the old version.
+    gone.add('/claude-code/2.1.295/claude');
+
+    await expect(resolver.resolve('test')).resolves.toMatchObject({
+      data: { cli: '/claude-code/2.1.304/claude' },
+    });
+    await resolver.resolve('test');
+    expect(resolveCli).toHaveBeenCalledTimes(2);
+  });
 });

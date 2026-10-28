@@ -1,7 +1,14 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { IExecutionContext } from '../../exec/execution-context';
-import { resolveExtraLocationGlob, resolveExtraLocationPath, resolveExtraLocationPaths } from './probe';
+import {
+  cliPathIsGone,
+  resolveExtraLocationGlob,
+  resolveExtraLocationPath,
+  resolveExtraLocationPaths,
+} from './probe';
 
 function makeCtx(
   handler: (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }>
@@ -100,5 +107,41 @@ describe('resolveExtraLocationGlob', () => {
       throw new Error('no sh');
     });
     expect(await resolveExtraLocationPath(pattern, failing)).toBeNull();
+  });
+});
+
+describe('cliPathIsGone', () => {
+  it('is true for a local path whose file was deleted, false while it exists', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'cli-gone-'));
+    const cli = path.join(dir, 'claude');
+    await writeFile(cli, '');
+    const ctx = { ...makeCtx(async () => ({ stdout: '', stderr: '' })), supportsLocalSpawn: true };
+    try {
+      await expect(cliPathIsGone(cli, ctx)).resolves.toBe(false);
+      await rm(cli);
+      await expect(cliPathIsGone(cli, ctx)).resolves.toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('never calls a bare command name gone — PATH finds it at spawn time', async () => {
+    const ctx = makeCtx(async () => ({ stdout: 'gone\n', stderr: '' }));
+    await expect(cliPathIsGone('claude', ctx)).resolves.toBe(false);
+    expect(ctx.exec).not.toHaveBeenCalled();
+  });
+
+  it('asks a remote host and trusts only its answer, not a failed check', async () => {
+    const answers = makeCtx(async (_command, args) => ({
+      stdout: args.at(-1) === '/gone/claude' ? 'gone\n' : 'present\n',
+      stderr: '',
+    }));
+    await expect(cliPathIsGone('/gone/claude', answers)).resolves.toBe(true);
+    await expect(cliPathIsGone('/usr/bin/claude', answers)).resolves.toBe(false);
+
+    const failing = makeCtx(async () => {
+      throw new Error('timed out');
+    });
+    await expect(cliPathIsGone('/usr/bin/claude', failing)).resolves.toBe(false);
   });
 });

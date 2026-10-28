@@ -9,6 +9,9 @@ const resolveCommandPathMock = vi.hoisted(() =>
 const resolveAllCommandPathsMock = vi.hoisted(() =>
   vi.fn<() => Promise<string[]>>().mockResolvedValue([])
 );
+const cliPathIsGoneMock = vi.hoisted(() =>
+  vi.fn<(path: string) => Promise<boolean>>().mockResolvedValue(false)
+);
 const checkLocalBinaryCompatMock = vi.hoisted(() =>
   vi.fn<(path: string) => Promise<{ runnable: boolean }>>().mockResolvedValue({ runnable: true })
 );
@@ -17,6 +20,7 @@ vi.mock('@emdash/core/deps/runtime', () => ({
   resolveCommandPath: resolveCommandPathMock,
   resolveAllCommandPaths: resolveAllCommandPathsMock,
   checkLocalBinaryCompat: checkLocalBinaryCompatMock,
+  cliPathIsGone: cliPathIsGoneMock,
 }));
 
 vi.mock('@main/lib/logger', () => ({
@@ -37,6 +41,7 @@ function makeStore(selection: HostDependencySelection | null = null): IHostDepen
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cliPathIsGoneMock.mockResolvedValue(false);
   clearResolvedPathCache('claude');
   clearResolvedPathCache('codex');
   clearResolvedPathCache('unknown');
@@ -108,6 +113,44 @@ describe('resolveAgentExecutable', () => {
       });
       expect(result).toBe('/cached/claude');
       expect(resolveCommandPathMock).not.toHaveBeenCalled();
+    });
+
+    it('drops a cached path whose file is gone and probes again', async () => {
+      const oldCli = '/claude-code/2.1.295/claude';
+      const newCli = '/claude-code/2.1.304/claude';
+      const args = {
+        providerId: 'claude',
+        binaryName: 'claude',
+        ctx,
+        hostDependencyStore: makeStore(null),
+        cachedStatePath: oldCli,
+        reprobeStatePath: vi.fn().mockResolvedValue(newCli),
+      };
+      await expect(resolveAgentExecutable(args)).resolves.toBe(oldCli);
+
+      // The Claude desktop app updated and deleted the copy it bundled.
+      cliPathIsGoneMock.mockImplementation(async (path) => path === oldCli);
+      await expect(resolveAgentExecutable(args)).resolves.toBe(newCli);
+      expect(args.reprobeStatePath).toHaveBeenCalledTimes(1);
+
+      // The new path is what's cached now.
+      await expect(resolveAgentExecutable({ ...args, cachedStatePath: null })).resolves.toBe(
+        newCli
+      );
+      expect(args.reprobeStatePath).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to PATH when the dependency state path is gone and nothing re-probes it', async () => {
+      cliPathIsGoneMock.mockResolvedValue(true);
+      resolveCommandPathMock.mockResolvedValue('/opt/homebrew/bin/claude');
+      const result = await resolveAgentExecutable({
+        providerId: 'claude',
+        binaryName: 'claude',
+        ctx,
+        hostDependencyStore: makeStore(null),
+        cachedStatePath: '/gone/claude',
+      });
+      expect(result).toBe('/opt/homebrew/bin/claude');
     });
 
     it('resolves via ctx when no cache', async () => {

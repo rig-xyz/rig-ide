@@ -125,7 +125,7 @@ export class SpacesDispatchController {
     return this.dispatcher.settleIfNotLive(runId, bindingId);
   }
 
-  /** Reports runs that have gone 30 minutes with no events (see `reportStalled`); a no-op while the dispatcher isn't running. */
+  /** Ends runs that have gone quiet too long (see `reportStalled`); a no-op while the dispatcher isn't running. */
   reportStalledRuns(now?: number): void {
     this.dispatcher?.reportStalled(now);
   }

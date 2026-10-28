@@ -113,6 +113,7 @@ describe('Home: Waiting on you', () => {
   let host: HTMLDivElement;
   let root: Root;
   let opened: string[];
+  let openedAt: unknown[];
 
   async function mount(statusByBinding: ReadonlyMap<string, RigSpaceStatus> = new Map()): Promise<void> {
     await act(async () => {
@@ -125,6 +126,7 @@ describe('Home: Waiting on you', () => {
             self={{ name: 'Dylan Bourgeois', avatarUrl: 'https://img/dylan.png' }}
             avatarOf={({ userId }) => (userId === 'u-hugo' ? 'https://img/hugo.png' : null)}
             onOpenPath={(path) => opened.push(path)}
+            onOpenSpaceAt={(target) => openedAt.push(target)}
           />
         </QueryClientProvider>
       );
@@ -162,6 +164,7 @@ describe('Home: Waiting on you', () => {
       ],
     });
     opened = [];
+    openedAt = [];
     host = document.createElement('div');
     document.body.appendChild(host);
     root = createRoot(host);
@@ -170,6 +173,37 @@ describe('Home: Waiting on you', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     host.remove();
+  });
+
+  it('clicking the card or its space opens the space at the message, thread open; Reply stays inline', async () => {
+    mocks.activity = [hugoMention];
+    await mount();
+    const [item] = items();
+    const target = {
+      bindingId: 'b-mkt',
+      spaceName: 'rig-marketing',
+      messageId: 'msg-603',
+      messageSeq: 1334,
+      preview: '@Dylan Bourgeois wdyt',
+      path: null,
+      expandThread: true,
+    };
+
+    // Reply is still a quick answer right here: it doesn't leave Home.
+    await act(async () => buttonNamed('Reply')!.click());
+    expect(openedAt).toEqual([]);
+    expect(host.querySelector('input[aria-label="Reply"]')).not.toBeNull();
+    await act(async () => item!.querySelector<HTMLInputElement>('input[aria-label="Reply"]')!.click());
+    expect(openedAt).toEqual([]);
+
+    await act(async () => item!.querySelector<HTMLElement>('[data-testid="waiting-quote"]')!.click());
+    expect(openedAt).toEqual([target]);
+    expect(mocks.markRead).toHaveBeenCalledWith({ ids: ['603'] });
+
+    await act(async () => item!.querySelector<HTMLButtonElement>('[data-testid="waiting-open"]')!.click());
+    expect(openedAt).toEqual([target, target]);
+    expect(item!.querySelector('[data-testid="waiting-open"]')?.textContent).toBe('#rig-marketing');
+    expect(opened).toEqual([]);
   });
 
   it("hides the section when nothing's waiting", async () => {
@@ -298,7 +332,7 @@ describe('Home: Waiting on you', () => {
     await act(async () => buttonNamed('Accept')!.click());
     await flush();
     expect(mocks.accept).toHaveBeenCalledWith({ id: 'inv1' });
-    expect(mocks.attach).toHaveBeenCalledWith({ bindingId: 'b-warm' });
+    expect(mocks.attach).toHaveBeenCalledWith({ bindingId: 'b-warm', name: 'warm-island' });
     expect(items()[0]!.querySelector('[data-testid="waiting-done"]')?.textContent).toBe('You joined #warm-island.');
     expect(opened).toEqual([]);
   });

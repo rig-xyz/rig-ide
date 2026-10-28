@@ -40,7 +40,7 @@ import { createHttpSpacesRelayApi, otherMacsAgents, type SessionAgent } from './
 import { RequestClaimPoller, unrunnableRequestLine } from './request-claim';
 import { rigToolsServer } from './rig-tools-instance';
 import { readAgentSessionSize } from './session-size';
-import { createFileSpaceSessionStore } from './session-store';
+import { spaceSessionStore } from './session-store-instance';
 
 /**
  * Boot-only wiring for `SpacesDispatchController` — real settings store,
@@ -94,7 +94,7 @@ function realDeps(): SpacesDispatchControllerDeps {
         sessionSize: readAgentSessionSize,
         resolveWorkspace: async (bindingId) =>
           (await resolveLocalPathsImpl([bindingId]))[bindingId] ?? null,
-        store: createFileSpaceSessionStore(join(app.getPath('userData'), 'spaces-sessions.json')),
+        store: spaceSessionStore(),
         connectors: async (bindingId, agent) => {
           const spaceConnectors = async () => {
             const listed = await api.listConnectors?.(bindingId);
@@ -196,10 +196,10 @@ async function otherMacsAgentsNow(): Promise<SessionAgent[] | null> {
 
 export const spacesDispatchController = new SpacesDispatchController(realDeps());
 
-/** How often running turns are checked for a 30-minute silence (`reportStalled`). */
+/** How often running turns are checked for a long silence (`reportStalled`). */
 const STALL_CHECK_MS = 60_000;
 
-/** Counts runs that never finish as failures (`agent_run_failed` with reason `stalled`). */
+/** Ends runs that went quiet as failed, with a Retry in a new conversation (`agent_run_failed` with reason `stalled`). */
 export function wireStalledRunCheck(): void {
   setInterval(() => spacesDispatchController.reportStalledRuns(), STALL_CHECK_MS).unref?.();
 }

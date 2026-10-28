@@ -784,7 +784,9 @@ export function SessionCard({
       ? 'Signed in again and retried'
       : quietFailure
         ? 'Tried again and it worked'
-        : null;
+        : status === 'done' && card.newConversation
+          ? 'Continued in a new conversation'
+          : null;
   const elapsed = finished && !meta.endedAt ? '' : formatElapsed(elapsedMs(meta.startedAt, meta.endedAt, now));
   const model = card.model ?? (meta.model && meta.model !== 'unknown' ? meta.model : null);
   const agentName = AGENT_NAME[meta.agent];

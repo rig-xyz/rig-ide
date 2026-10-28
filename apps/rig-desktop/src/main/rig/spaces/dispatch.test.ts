@@ -19,8 +19,10 @@ import {
   startsFreshAfterIdle,
   leakedProviderError,
   roomContextLines,
+  RUN_NO_REPLY_MS,
   RUN_STALL_MS,
   type RunFailure,
+  stalledReason,
   signInFailureReason,
   spaceRules,
   spacesHiddenContext,
@@ -372,7 +374,7 @@ describe('createSpacesDispatcher', () => {
 
     const result = await dispatch(makeRequest());
     if ('failed' in result) throw new Error('expected success');
-    reject?.('conversation_not_found');
+    reject?.('prompt_failed');
 
     await vi.waitFor(() => expect(patchedRequests).toEqual([{ id: makeRequest().id, status: 'failed' }]));
   });
@@ -2303,6 +2305,28 @@ describe('connectors', () => {
     expect(fake.started[0]).toMatchObject({ mcpServers: [] });
   });
 
+  it('starts an idle session again in the new folder once its space folder moved', async () => {
+    const fake = makeFakeAcp();
+    let folder = '/Rig/clear-harbor';
+    const { dispatch } = createSpacesDispatcher({
+      api: makeFakeApi().api,
+      acp: fake.acp,
+      resolveWorkspace: async () => folder,
+      store: memoryStore(),
+    });
+
+    await dispatch(makeRequest());
+    const conversationId = fake.started[0]!.conversationId;
+    fake.emitTurnStart(conversationId, 'turn-1');
+    fake.emitTurnEnd(conversationId, 'turn-1', 'end_turn');
+
+    // Renamed to #rig-feedback, its folder followed.
+    folder = '/Rig/rig-feedback';
+    await dispatch(makeRequest({ id: 'req2' }));
+    expect(fake.stopped).toEqual([conversationId]);
+    expect(fake.started.map((s) => s.cwd)).toEqual(['/Rig/clear-harbor', '/Rig/rig-feedback']);
+  });
+
   it('reloads an idle session, keeping its context, when its connectors change', async () => {
     const fake = makeFakeAcp();
     let current = { servers: [] as (typeof LINEAR)[], gaps: [] as never[] };
@@ -3205,17 +3229,19 @@ describe('failed and stalled runs (the agent_run_failed report)', () => {
     expect(failures).toEqual([]);
   });
 
-  it('a run with no events for 30 minutes counts once as stalled', async () => {
+  it('a run with no events for 30 minutes after its agent spoke counts once as stalled', async () => {
     const { fake, failures, dispatcher } = setup();
     await dispatcher.dispatch(makeRequest());
     const conversationId = fake.started[0].conversationId;
     fake.emitTurnStart(conversationId, fake.queued[0]!.turnId);
+    fake.emitUpdate(conversationId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Hm.' } });
 
     dispatcher.reportStalled(Date.now() + RUN_STALL_MS - 60_000);
     expect(failures).toEqual([]);
     dispatcher.reportStalled(Date.now() + RUN_STALL_MS + 1_000);
     dispatcher.reportStalled(Date.now() + 2 * RUN_STALL_MS);
-    expect(failures).toEqual([{ agent: 'claude', text: '', phase: 'stalled', model: null }]);
+    await vi.waitFor(() => expect(failures).toHaveLength(1));
+    expect(failures).toEqual([{ agent: 'claude', text: stalledReason(true), phase: 'stalled', model: null }]);
   });
 
   it('a run waiting on its owner’s approval is not stalled', async () => {
@@ -3227,6 +3253,185 @@ describe('failed and stalled runs (the agent_run_failed report)', () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     dispatcher.reportStalled(Date.now() + RUN_STALL_MS + 1_000);
     expect(failures).toEqual([]);
+  });
+});
+
+describe('a session that stopped responding, or was lost', () => {
+  function memoryStore(): SpaceSessionStore & { entries: Map<string, StoredSpaceSession> } {
+    const entries = new Map<string, StoredSpaceSession>();
+    return { entries, get: (k) => entries.get(k) ?? null, set: (k, v) => void entries.set(k, v) };
+  }
+
+  function setup(store?: SpaceSessionStore) {
+    const relay = makeFakeApi({ listMessages: async () => ok([]) });
+    const fake = makeFakeAcp();
+    const failures: RunFailure[] = [];
+    const dispatcher = createSpacesDispatcher({
+      api: relay.api,
+      acp: fake.acp,
+      resolveWorkspace: async () => '/rigs/one',
+      onRunFailed: (failure) => failures.push(failure),
+      ...(store ? { store } : {}),
+    });
+    const eventsOf = (runId: string) => {
+      const posted = relay.postedEvents.filter((p) => p.runId === runId);
+      return posted.flatMap((p) => p.kinds.map((kind, i) => ({ kind, payload: p.payloads[i] })));
+    };
+    return { ...relay, fake, failures, dispatcher, eventsOf };
+  }
+
+  async function runId(result: ReturnType<ReturnType<typeof createSpacesDispatcher>['dispatch']>): Promise<string> {
+    const settled = await result;
+    if ('failed' in settled) throw new Error(`expected a run: ${settled.reason ?? 'no reason'}`);
+    return settled.runId;
+  }
+
+  it('a prompt the agent never answers fails in the chat after 10 minutes, with a Retry that starts a new conversation', async () => {
+    const ctx = setup();
+    const run = await runId(ctx.dispatcher.dispatch(makeRequest()));
+    const stuck = ctx.fake.started[0]!.conversationId;
+    // The runtime said the turn started, then nothing: the incident's "Thinking" for hours.
+    ctx.fake.emitTurnStart(stuck, ctx.fake.queued[0]!.turnId);
+
+    ctx.dispatcher.reportStalled(Date.now() + RUN_NO_REPLY_MS - 60_000);
+    expect(ctx.eventsOf(run).map((e) => e.kind)).not.toContain('turn_ended');
+    ctx.dispatcher.reportStalled(Date.now() + RUN_NO_REPLY_MS + 1_000);
+
+    await vi.waitFor(() => expect(ctx.patchedRequests).toEqual([{ id: 'req1', status: 'failed' }]));
+    expect(ctx.eventsOf(run).find((e) => e.kind === 'turn_ended')?.payload).toEqual({
+      status: 'failed',
+      reason: stalledReason(false),
+    });
+    expect(stalledReason(false)).toBe('No reply for 10 minutes, so Rig stopped waiting. Retry starts a new conversation.');
+    expect(ctx.failures).toEqual([expect.objectContaining({ phase: 'stalled' })]);
+    // The stuck session is closed (ending a wedged agent process), not left to take the next prompt.
+    expect(ctx.fake.stopped).toEqual([stuck]);
+
+    // Retry files the same ask again: it goes to a brand-new conversation, told it is one.
+    await runId(ctx.dispatcher.dispatch(makeRequest({ id: 'req2' })));
+    expect(ctx.fake.started).toHaveLength(2);
+    expect(ctx.fake.started[1]!.conversationId).not.toBe(stuck);
+    expect(ctx.fake.resumed).toEqual([]);
+    expect(ctx.fake.queued[1]!.conversationId).toBe(ctx.fake.started[1]!.conversationId);
+    expect(ctx.fake.queued[1]!.hiddenContext).toContain('This is a fresh session');
+  });
+
+  it('a prompt that never even started counts from when it was sent', async () => {
+    const ctx = setup();
+    const run = await runId(ctx.dispatcher.dispatch(makeRequest()));
+    // No turn_start at all: the prompt never reached the agent.
+    ctx.dispatcher.reportStalled(Date.now() + RUN_NO_REPLY_MS + 1_000);
+    await vi.waitFor(() => expect(ctx.eventsOf(run).map((e) => e.kind)).toContain('turn_ended'));
+    expect(ctx.eventsOf(run).find((e) => e.kind === 'turn_ended')?.payload).toMatchObject({ status: 'failed' });
+  });
+
+  it('a turn its agent is working on gets the longer limit', async () => {
+    const ctx = setup();
+    const run = await runId(ctx.dispatcher.dispatch(makeRequest()));
+    const conversationId = ctx.fake.started[0]!.conversationId;
+    ctx.fake.emitTurnStart(conversationId, ctx.fake.queued[0]!.turnId);
+    ctx.fake.emitUpdate(conversationId, { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'Run the tests' });
+    ctx.dispatcher.reportStalled(Date.now() + RUN_NO_REPLY_MS + 1_000);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(ctx.eventsOf(run).map((e) => e.kind)).not.toContain('turn_ended');
+    expect(ctx.fake.stopped).toEqual([]);
+  });
+
+  it('prompts queued behind a stalled run go to the new conversation instead of failing', async () => {
+    const ctx = setup();
+    const first = await runId(ctx.dispatcher.dispatch(makeRequest({ id: 'a' })));
+    const second = await runId(ctx.dispatcher.dispatch(makeRequest({ id: 'b', prompt: 'and this' })));
+    const stuck = ctx.fake.started[0]!.conversationId;
+    ctx.fake.emitTurnStart(stuck, ctx.fake.queued[0]!.turnId);
+
+    ctx.dispatcher.reportStalled(Date.now() + RUN_NO_REPLY_MS + 1_000);
+
+    await vi.waitFor(() => expect(ctx.fake.queued).toHaveLength(3));
+    const fresh = ctx.fake.started[1]!.conversationId;
+    expect(ctx.fake.queued[2]).toMatchObject({ conversationId: fresh, text: 'and this' });
+    await vi.waitFor(() =>
+      expect(ctx.eventsOf(second).find((e) => e.kind === 'run_retried')?.payload).toEqual({ reason: 'new_conversation' })
+    );
+    await vi.waitFor(() => expect(ctx.patchedRequests).toEqual([{ id: 'a', status: 'failed' }]));
+    expect(ctx.eventsOf(first).find((e) => e.kind === 'turn_ended')?.payload).toMatchObject({ status: 'failed' });
+
+    // It runs there and finishes like any other turn.
+    const turnId = ctx.fake.queued[2]!.turnId;
+    ctx.fake.emitTurnStart(fresh, turnId);
+    ctx.fake.emitUpdate(fresh, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Done.' } });
+    ctx.fake.emitTurnEnd(fresh, turnId, 'end_turn');
+    await vi.waitFor(() => expect(ctx.patchedRequests).toContainEqual({ id: 'b', status: 'done' }));
+  });
+
+  it('a restart does not resume a session that stopped responding', async () => {
+    const store = memoryStore();
+    const ctx = setup(store);
+    await runId(ctx.dispatcher.dispatch(makeRequest()));
+    const stuck = ctx.fake.started[0]!.conversationId;
+    ctx.dispatcher.reportStalled(Date.now() + RUN_NO_REPLY_MS + 1_000);
+    await vi.waitFor(() => expect(store.get('binding-1::owner-1::claude')?.retired).toBe('stalled'));
+
+    const after = setup(store);
+    await runId(after.dispatcher.dispatch(makeRequest({ id: 'req2' })));
+    expect(after.fake.resumed).toEqual([]);
+    expect(after.fake.started).toHaveLength(1);
+    expect(after.fake.started[0]!.conversationId).not.toBe(stuck);
+    // The new one is remembered, and resumed as usual from then on.
+    expect(store.get('binding-1::owner-1::claude')).toMatchObject({
+      conversationId: after.fake.started[0]!.conversationId,
+    });
+    expect(store.get('binding-1::owner-1::claude')?.retired).toBeUndefined();
+  });
+
+  it('a prompt refused because the runtime lost the session goes to a new conversation, and the next mention uses it', async () => {
+    const ctx = setup();
+    await runId(ctx.dispatcher.dispatch(makeRequest({ id: 'a' })));
+    const lost = ctx.fake.started[0]!.conversationId;
+    ctx.fake.emitTurnStart(lost, ctx.fake.queued[0]!.turnId);
+    ctx.fake.emitTurnEnd(lost, ctx.fake.queued[0]!.turnId, 'end_turn');
+    await vi.waitFor(() => expect(ctx.patchedRequests).toEqual([{ id: 'a', status: 'done' }]));
+
+    // The Claude process was killed: the runtime no longer knows the conversation.
+    ctx.fake.setQueuePromptImpl(async (conversationId, text, hiddenContext, onRejected) => {
+      if (conversationId === lost) {
+        queueMicrotask(() => onRejected?.('conversation_not_found'));
+        return ok({ turnId: null });
+      }
+      ctx.fake.queued.push({ conversationId, text, turnId: `turn-${ctx.fake.queued.length + 1}`, hiddenContext });
+      return ok({ turnId: `turn-${ctx.fake.queued.length}` });
+    });
+    const run = await runId(ctx.dispatcher.dispatch(makeRequest({ id: 'b', prompt: 'still there?' })));
+
+    await vi.waitFor(() => expect(ctx.fake.started).toHaveLength(2));
+    const fresh = ctx.fake.started[1]!.conversationId;
+    await vi.waitFor(() => expect(ctx.fake.queued.at(-1)).toMatchObject({ conversationId: fresh, text: 'still there?' }));
+    expect(ctx.fake.queued.at(-1)!.hiddenContext).toContain('This is a fresh session');
+    await vi.waitFor(() =>
+      expect(ctx.eventsOf(run).find((e) => e.kind === 'run_retried')?.payload).toEqual({ reason: 'new_conversation' })
+    );
+    expect(ctx.fake.stopped).toContain(lost);
+    expect(ctx.patchedRequests).toEqual([{ id: 'a', status: 'done' }]);
+    expect(ctx.failures).toEqual([]);
+
+    // The next mention goes straight to the new conversation: no new start, nothing refused.
+    await runId(ctx.dispatcher.dispatch(makeRequest({ id: 'c', prompt: 'and again' })));
+    expect(ctx.fake.started).toHaveLength(2);
+    expect(ctx.fake.queued.at(-1)).toMatchObject({ conversationId: fresh, text: 'and again' });
+  });
+
+  it('a new conversation that is lost too fails the run instead of trying forever', async () => {
+    const ctx = setup();
+    ctx.fake.setQueuePromptImpl(async (_conversationId, _text, _hidden, onRejected) => {
+      queueMicrotask(() => onRejected?.('conversation_not_found'));
+      return ok({ turnId: null });
+    });
+    const run = await runId(ctx.dispatcher.dispatch(makeRequest()));
+    await vi.waitFor(() => expect(ctx.patchedRequests).toEqual([{ id: 'req1', status: 'failed' }]));
+    expect(ctx.fake.started).toHaveLength(2);
+    expect(ctx.eventsOf(run).find((e) => e.kind === 'turn_ended')?.payload).toEqual({
+      status: 'failed',
+      reason: 'the agent refused the prompt (conversation_not_found)',
+    });
   });
 });
 

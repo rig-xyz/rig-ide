@@ -141,6 +141,8 @@ export class LocalConversationProvider implements ConversationProvider {
         ctx: this.ctx,
         hostDependencyStore,
         cachedStatePath,
+        reprobeStatePath: async () =>
+          (await localDependencyManager.probe(conversation.providerId as never)).path,
       });
 
       // Very large prompts (e.g. a full Linear issue + activity context) can blow

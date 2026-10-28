@@ -37,6 +37,7 @@ import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { Popover } from '@renderer/lib/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/lib/ui/tooltip';
 import { cn } from '@renderer/lib/utils';
+import { folderMatchesName } from '@shared/rig/create';
 import { deriveDeleteRigMode, deriveRigMenuLabel } from '@shared/rig/delete-rig';
 import {
   DEFAULT_RIGS_RAIL_VIEW,
@@ -663,6 +664,28 @@ function LocalRigRowMenu({
     }
   };
 
+  // A space whose folder kept an old name (renamed while it was open, or
+  // before folders followed names): offered here to catch up.
+  const folderName = row.path.split('/').filter(Boolean).pop() ?? '';
+  const folderBehind = !row.outsideHome && !!row.name && !folderMatchesName(folderName, row.name);
+  const matchFolder = async () => {
+    if (!row.name) return;
+    setOpen(false);
+    setBusy(true);
+    onError(null);
+    try {
+      const result = await rpc.rig.control.matchFolder({ bindingId: row.bindingId, path: row.path, name: row.name });
+      if (!result.moved && result.reason === 'open') onError(`Close ${row.name} first, then rename its folder.`);
+      else if (!result.moved && result.reason === 'busy') onError(`An agent is working in ${row.name}. Try again when it's done.`);
+      else if (!result.moved && result.reason === 'failed') onError(result.message ?? "Couldn't rename the folder. Try again.");
+      void refreshRail();
+    } catch {
+      onError("Couldn't rename the folder. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggleSync = async () => {
     setOpen(false);
     setBusy(true);
@@ -752,6 +775,19 @@ function LocalRigRowMenu({
           >
             <FolderInput className="size-3.5 shrink-0" strokeWidth={1.5} />
             Move to Rig folder
+          </button>
+        )}
+        {folderBehind && (
+          <button
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            onClick={() => void matchFolder()}
+            className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-text-primary hover:bg-bg-2"
+            title={`The folder is ${folderName}`}
+          >
+            <FolderInput className="size-3.5 shrink-0" strokeWidth={1.5} />
+            Rename folder to match
           </button>
         )}
         <button
