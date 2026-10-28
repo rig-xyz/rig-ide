@@ -6,7 +6,9 @@ import { useAgentInstaller } from '@renderer/features/agents/agent-install';
 import { AgentSignInDialog } from '@renderer/features/agents/agent-sign-in-dialog';
 import { afterAgentSignIn, agentAuthQuery } from '@renderer/features/agents/use-agent-auth-probe';
 import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
+import { replyTask } from '@renderer/features/home-feed/home-context';
 import { toFeedItems } from '@renderer/features/home-feed/real-feed';
+import { normalizeText } from '@renderer/features/home-feed/say';
 import { preferredInstallOptions } from '@renderer/features/onboarding/onboarding-state';
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { rpc } from '@renderer/lib/ipc';
@@ -192,6 +194,13 @@ export function RealFirstRunEnv({
         // The first run ends in the new Home, for those upgrading too.
         newHomeEnabled: true,
       }),
+    // Home as it was: the new Home comes with the catch-up, not before it.
+    skip: () =>
+      void rpc.rig.settings.set({
+        firstRunSeen: FIRST_RUN_VERSION,
+        firstRunProgress: null,
+        hasSeenOnboarding: true,
+      }),
     overlay:
       payload && loginMethod ? (
         <AgentSignInDialog
@@ -229,12 +238,15 @@ const realFirstWin: FirstWinEnv = {
     if (!r) return err("Rig couldn't reach your Claude.");
     return r.success ? ok(r.data) : err(r.error.message);
   },
-  start: async (item, choice) => {
+  start: async (item, choice, edited) => {
     if (!item.situationId) return err('This card has nothing to start.');
+    const said = (edited ? normalizeText(edited) : `${choice.lead}${choice.tail}`).replace(/[{}@]/g, '');
+    const reply = choice.verb === 'reply';
     const r = await rpc.rig.feed
       .start({
         situationId: item.situationId,
-        task: `${choice.lead}${choice.tail}`.replace(/[{}@]/g, ''),
+        task: reply ? replyTask(said) : said,
+        ...(reply ? { reply: true } : {}),
       })
       .catch(() => null);
     if (!r) return err("Rig couldn't start it.");

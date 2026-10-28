@@ -6,7 +6,7 @@ import { AgentIcon } from '@renderer/lib/ui/agent-icon';
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { RigMark } from '@renderer/lib/ui/rig-mark';
 import type { AgentInfo, AgentState, FirstRunEnv, RigAccountState, RigSignInState } from './env';
-import { StepFrame, type StepProps } from './first-run';
+import { NotNow, StepFrame, type StepProps } from './first-run';
 
 /**
  * Step 2: the two things the catch-up needs. A Rig account, which holds the
@@ -14,7 +14,7 @@ import { StepFrame, type StepProps } from './first-run';
  * reaches the person's connectors (for Claude, a Claude account login, not
  * an API key). Continue waits for both.
  */
-export function SetupStep({ env, position, onNext, setFieldLook }: StepProps) {
+export function SetupStep({ env, position, onNext, onSkip, setFieldLook }: StepProps) {
   useEffect(() => setFieldLook('dim'), [setFieldLook]);
 
   // Ask past every cache on the way in, and whenever the window comes back
@@ -71,6 +71,7 @@ export function SetupStep({ env, position, onNext, setFieldLook }: StepProps) {
             {!ready && (
               <span className="text-meta text-text-muted">Both are needed to catch you up</span>
             )}
+            {!ready && <NotNow onClick={onSkip} />}
           </div>
         </>
       }

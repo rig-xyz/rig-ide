@@ -32,6 +32,7 @@ let root: Root;
 let writes: [string, boolean][];
 let opened: (string | undefined)[];
 let next: ReturnType<typeof vi.fn<() => void>>;
+let skipped: ReturnType<typeof vi.fn<() => void>>;
 beforeEach(async () => {
   host = document.createElement('div');
   host.style.cssText = 'height:800px;width:1100px;display:grid;grid-template-columns:370px 1fr';
@@ -40,6 +41,7 @@ beforeEach(async () => {
   writes = [];
   opened = [];
   next = vi.fn<() => void>();
+  skipped = vi.fn<() => void>();
   const env = {
     agentInfo: { name: 'Claude Code', icon: null, route: { yours: 'your Claude', connectorsHome: 'claude.ai' } },
     preflight: () => Promise.resolve(TOOLS),
@@ -58,6 +60,7 @@ beforeEach(async () => {
         plan={null}
         position="Step 2 of 5"
         onNext={next}
+        onSkip={skipped}
         advancing={false}
         setFieldLook={() => {}}
         field={{ current: null }}
@@ -122,6 +125,14 @@ describe('Connect', () => {
     expect(q('[data-testid="connect-more"]')!.textContent).toBe('Connect more in claude.ai ↗');
     await click(q('[data-testid="connect-more"]'));
     expect(opened).toEqual([undefined]);
+  });
+
+  it('Not now leaves for Home without writing a choice or starting the read', async () => {
+    await vi.waitFor(() => expect(q('[data-testid="connect-row-slack"]')).not.toBeNull());
+    await click(q('[data-testid="first-run-not-now"]'));
+    expect(skipped).toHaveBeenCalledTimes(1);
+    expect(next).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
   });
 
   it('pins each connected tool on the stage', async () => {

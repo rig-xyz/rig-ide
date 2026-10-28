@@ -88,7 +88,6 @@ export function CatchUpStrip({
   return (
     <section
       aria-label="Catching you up"
-      aria-live="polite"
       data-testid="catch-up-strip"
       data-phase={phase}
       className={cn(
@@ -125,7 +124,8 @@ export function CatchUpStrip({
           </button>
         )}
       </div>
-      <p className="m-0 truncate text-xs text-text-secondary" data-testid="catch-up-line">
+      {/* The one line read out as it changes: the counters and title would only repeat it. */}
+      <p className="m-0 truncate text-xs text-text-secondary" role="status" aria-live="polite" data-testid="catch-up-line">
         {stopped ? (
           stopped.detail
         ) : okEnd ? (

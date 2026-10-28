@@ -10,7 +10,7 @@ import {
   type ConnectorCheck,
   type KnownTool,
 } from '@shared/rig/first-run';
-import { StepFrame, type StepProps } from '../first-run';
+import { NotNow, StepFrame, type StepProps } from '../first-run';
 import { lastCatchUpWords } from '../read/read-model';
 import { readingNow, readsNow, watched, withWatched, type Watching } from './sources';
 import { ToolMark } from './tool-mark';
@@ -56,7 +56,7 @@ const ACTIVITY: DotMatrixActivity[] = ['reading', 'searching', 'thinking', 'wait
  * tool says whether the catch-up reads it, written straight to the
  * orchestrator's sources; Catch me up writes the whole choice.
  */
-export function ConnectStep({ env, position, onNext, setFieldLook, field }: StepProps) {
+export function ConnectStep({ env, position, onNext, onSkip, setFieldLook, field }: StepProps) {
   useEffect(() => setFieldLook('plain'), [setFieldLook]);
   const { route } = env.agentInfo;
   const [checks, setChecks] = useState<ConnectorCheck[] | null>(null);
@@ -234,6 +234,7 @@ export function ConnectStep({ env, position, onNext, setFieldLook, field }: Step
                     ? `Reads ${on.length} tool${on.length > 1 ? 's' : ''} for what’s new since ${lastCatchUpWords(since) ?? 'your last catch-up'}`
                     : `Reads the last 3 days of ${on.length} tool${on.length > 1 ? 's' : ''}`}
             </span>
+            <NotNow onClick={onSkip} />
           </div>
         </>
       }

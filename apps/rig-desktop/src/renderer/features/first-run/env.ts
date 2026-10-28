@@ -61,6 +61,8 @@ export interface FirstRunEnv {
   trackStep(step: FirstRunTelemetryStep): void;
   /** Done: don't show this first run again. */
   finish(): void;
+  /** Not now: don't show this first run again, and leave Home as it was (no new Home turned on). */
+  skip(): void;
   /** What the environment shows over the flow, such as the agent's sign-in terminal. */
   overlay: ReactNode;
 }
@@ -71,8 +73,8 @@ export interface FirstWinEnv {
   cards(): Promise<FeedItem[] | null>;
   /** Sends or posts `text` for this choice. A simulation pretends, after a moment. */
   send(item: FeedItem, choice: FeedChoice, text: string): Promise<Result<SentResult, string>>;
-  /** Starts the session a start choice proposes. */
-  start(item: FeedItem, choice: FeedChoice): Promise<Result<SentResult, string>>;
+  /** Starts the session a start (or reply) choice proposes: in the person's own words when they changed the sentence. */
+  start(item: FeedItem, choice: FeedChoice, edited?: string | null): Promise<Result<SentResult, string>>;
   /** Not now, or ignore. */
   answer(item: FeedItem, signal: 'snooze' | 'ignore'): void;
 }

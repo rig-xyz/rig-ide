@@ -93,6 +93,7 @@ const render = async (events: OrchProgressEvent[], onNext: () => void = () => {}
         plan={null}
         position="Step 3 of 4"
         onNext={onNext}
+        onSkip={() => {}}
         advancing={false}
         setFieldLook={(look) => looks.push(look)}
         field={field}
@@ -143,6 +144,7 @@ describe('the first run’s one stage', () => {
           plan={null}
           position={null}
           onNext={() => {}}
+          onSkip={() => {}}
           advancing={false}
           setFieldLook={() => {}}
           field={field}

@@ -36,10 +36,23 @@ describe('deriveFirstRun', () => {
     ).toEqual({ steps: ALL, returning: true });
   });
 
-  it('a returning signed-in user with a ready agent skips Set up', () => {
+  it('a signed-in user with a ready agent skips Set up', () => {
+    expect(
+      deriveFirstRun({ firstRunSeen: 0, hasSeenOnboarding: true, rig: 'signedIn', agent: 'ready' })
+    ).toEqual({ steps: NO_SETUP, returning: true });
+  });
+
+  it('a brand-new account that is already signed in is new, not welcomed back', () => {
     expect(
       deriveFirstRun({ firstRunSeen: 0, hasSeenOnboarding: false, rig: 'signedIn', agent: 'ready' })
-    ).toEqual({ steps: NO_SETUP, returning: true });
+    ).toEqual({ steps: NO_SETUP, returning: false });
+  });
+
+  it('someone who finished an earlier first run is returning', () => {
+    expect(
+      deriveFirstRun({ firstRunSeen: 1, hasSeenOnboarding: false, rig: 'signedIn', agent: 'ready' })
+        .returning
+    ).toBe(true);
   });
 
   it('a signed-in user whose agent runs on an API key still sees Set up', () => {

@@ -36,12 +36,10 @@ function useSettingsFlag(read: (settings: RigSettings) => boolean): boolean {
   return enabled;
 }
 
-/** Rig Alpha (`alphaEnabled`, Settings › Advanced): the new Home, the first run and the background reads. */
+/**
+ * Rig Alpha (`alphaEnabled`, Settings › Advanced): the new Home, the first run and the background
+ * reads. For Settings; App reads it with the rest of its first screen's settings, in one go.
+ */
 export function useAlphaEnabled(): boolean {
   return useSettingsFlag((s) => s.alphaEnabled === true);
-}
-
-/** The new Home (`newHomeEnabled`, Settings › Advanced), which only counts with Rig Alpha on. */
-export function useNewHomeEnabled(): boolean {
-  return useSettingsFlag((s) => s.alphaEnabled === true && s.newHomeEnabled === true);
 }

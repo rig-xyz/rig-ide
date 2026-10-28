@@ -24,7 +24,7 @@ export function AdvancedPage() {
       <SpacesDiskCacheRow />
       <RigHomeRow />
       <DebugModeRow enabled={data?.debugMode ?? false} />
-      {firstRunDebugAvailable(data?.debugMode ?? false) && <FirstRunRow />}
+      {firstRunDebugAvailable(data?.debugMode ?? false) && <FirstRunRow alpha={alpha} />}
     </SettingsRows>
   );
 }
@@ -52,9 +52,11 @@ function DebugModeRow({ enabled }: { enabled: boolean }) {
 /**
  * Replay the first run against this Mac as it is, or simulate a new account
  * (the first run's own debug panel then switches between every case and
- * Set up state). Neither signs you out nor touches your agent.
+ * Set up state). Neither signs you out nor touches your agent. With Rig
+ * Alpha off there's only the simulation: a real replay would read your
+ * tools and make your Home space.
  */
-function FirstRunRow() {
+function FirstRunRow({ alpha }: { alpha: boolean }) {
   const row = settingsRow('first-run')!;
   return (
     <SettingsRow
@@ -63,9 +65,11 @@ function FirstRunRow() {
       description={row.description}
       control={
         <div className="flex gap-1.5">
-          <Button variant="outline" size="xs" onClick={() => void replayFirstRun()} data-testid="first-run-replay">
-            Replay
-          </Button>
+          {alpha && (
+            <Button variant="outline" size="xs" onClick={() => void replayFirstRun()} data-testid="first-run-replay">
+              Replay
+            </Button>
+          )}
           <Button
             variant="outline"
             size="xs"
@@ -100,7 +104,7 @@ function AlphaRow({ enabled }: { enabled: boolean }) {
   );
 }
 
-/** `newHomeEnabled`: swaps Home for the preview of the new one. Read live (`useNewHomeEnabled`). */
+/** `newHomeEnabled`: swaps Home for the preview of the new one. Read live (App's settings reconcile). */
 function NewHomeRow() {
   const row = settingsRow('new-home')!;
   const queryClient = useQueryClient();

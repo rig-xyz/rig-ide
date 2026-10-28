@@ -13,7 +13,6 @@ import {
   RIG_STATES,
   replayFirstRun,
   stopSimulating,
-  useFirstRunDebug,
   type FirstRunSimulation,
 } from './first-run-debug';
 
@@ -25,11 +24,16 @@ import {
 export function FirstRunDebugPanel({
   step,
   plan,
+  simulation,
+  real,
 }: {
   step: FirstRunStepId;
   plan: FirstRunPlan | null;
+  /** What the flow sees now: the harness's, or the one a replay with Rig Alpha off gets. */
+  simulation: FirstRunSimulation | null;
+  /** "Real" is offered: with Rig Alpha off, a replay only simulates. */
+  real: boolean;
 }) {
-  const { simulation } = useFirstRunDebug();
   const [open, setOpen] = useState(true);
   const base: FirstRunSimulation = simulation ?? FIRST_RUN_CASES[0]!.simulation;
   const setUp = (patch: Partial<FirstRunSimulation>) =>
@@ -143,9 +147,11 @@ export function FirstRunDebugPanel({
             </Chip>
           </Group>
           <div className="flex gap-1.5 pt-0.5">
-            <Chip on={!simulation} onClick={stopSimulating} testId="first-run-debug-real">
-              Real
-            </Chip>
+            {real && (
+              <Chip on={!simulation} onClick={stopSimulating} testId="first-run-debug-real">
+                Real
+              </Chip>
+            )}
             <Chip onClick={() => void replayFirstRun(simulation)} testId="first-run-debug-replay">
               Replay
             </Chip>

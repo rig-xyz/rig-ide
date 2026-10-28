@@ -238,7 +238,6 @@ export function ReadTicker({ run, className }: { run: ReadRun; className?: strin
     >
       <ol
         className="m-0 flex list-none flex-col gap-1 p-0"
-        aria-live="polite"
         aria-label="What Rig is reading"
         data-testid="read-ticker"
       >

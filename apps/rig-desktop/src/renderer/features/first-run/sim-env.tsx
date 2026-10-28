@@ -153,6 +153,8 @@ export function SimulatedFirstRunEnv({
     trackStep: () => {},
     finish: () =>
       void rpc.rig.settings.set({ firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null }),
+    skip: () =>
+      void rpc.rig.settings.set({ firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null }),
     overlay: null,
   };
 

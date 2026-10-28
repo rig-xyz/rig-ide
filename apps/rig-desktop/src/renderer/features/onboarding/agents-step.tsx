@@ -1,0 +1,207 @@
+import { useQueryClient } from '@tanstack/react-query';
+import { Loader2, RefreshCw } from 'lucide-react';
+import { useState } from 'react';
+import { rpc } from '@renderer/lib/ipc';
+import { AgentAuthTrailing } from '@renderer/features/agents/agent-auth-trailing';
+import { useAgentIdentities, useRunnableAgents } from '@renderer/features/chat/use-runnable-agents';
+import { toast } from '@renderer/lib/hooks/use-toast';
+import { confirmOpenExternalLink } from '@renderer/lib/open-external-link';
+import { AgentIcon } from '@renderer/lib/ui/agent-icon';
+import { Button } from '@renderer/lib/ui/button';
+import { RigMark } from '@renderer/lib/ui/rig-mark';
+import { cn } from '@renderer/lib/utils';
+import type { AgentPayload } from '@shared/core/agents/agent-payload';
+import { RIG_WEBSITE_URL } from '@shared/urls';
+import { CATALOG_FOOTNOTE_AGENT_IDS, deriveCatalogFootnote } from './catalog-footnote';
+import { AgentInstallRow, SPACE_AGENT_IDS, useAgentInstaller } from '@renderer/features/agents/agent-install';
+import { hasInstalledAgent, onboardingAgents, preferredInstallOptions } from './onboarding-state';
+
+/** Same query key `useRunnableAgents` already reads (`rpc.agents.list()`) — reusing its hook here means the harness picker and this step share one cache entry instead of two independent fetches of the same data. */
+const AGENTS_QUERY_KEY = ['rig', 'agents', 'list'];
+
+/**
+ * Step 1 — agents, always shown first (round H2's explicit order: "an
+ * agent can be dispatched to set up everything else"). Carries the whole
+ * brand moment in its own header (the mark + heading) — there's no
+ * separate welcome splash to port (see `onboarding.tsx`'s header comment).
+ *
+ * Found agents → a ready row per installed agent + Continue. None → guided
+ * install for claude/codex specifically (`onboardingAgents`'s recommended
+ * narrowing) with copyable commands and a real Install button
+ * (`rpc.agents.install`, the same call the Settings → Agents page would
+ * make — this app already has that main-process machinery, just no
+ * onboarding-facing renderer view over it before this). Skip is a real,
+ * equally-weighted button next to (disabled) Continue — "visible, not
+ * shameful," per the brief.
+ */
+export function AgentsStep({ onComplete }: { onComplete: () => void }) {
+  const queryClient = useQueryClient();
+  // D5 fix: `isLoading` gates the "no agents found" guided-install UI below
+  // — before this, `data` being `undefined` while the probe was still in
+  // flight collapsed to `agents = []`, which reads identically to a
+  // genuine "nothing found" and briefly flashed the install cards at
+  // someone who actually has agents, every time this step mounts.
+  const { data, isLoading: agentsLoading } = useRunnableAgents();
+  const agents: AgentPayload[] = data ?? [];
+  const ready = hasInstalledAgent(agents);
+  const installedAgents = agents.filter((agent) => agent.status === 'available');
+  const candidates = onboardingAgents(agents);
+  // Ready with one of Claude and Codex: the other is still offered, quietly.
+  const otherSpaceAgents = agents.filter(
+    (agent) =>
+      (SPACE_AGENT_IDS as readonly string[]).includes(agent.id) &&
+      agent.status !== 'available' &&
+      preferredInstallOptions(agent.installOptions).length > 0
+  );
+
+  // Catalog-breadth card (Dylan's concern): this step only ever shows a
+  // couple of rows, so someone whose harness isn't among them has no signal
+  // the ~35-plugin registry covers it too. `identities` is the same instant,
+  // unprobed metadata source `useAgentIdentities` already reads elsewhere —
+  // its size is the real registry count, not a guess. Gated on there being
+  // at least one genuine "other" to name, so the card never flashes "0 more
+  // agents" for the instant before the query resolves.
+  const identities = useAgentIdentities();
+  const showCatalogCard = identities.size > CATALOG_FOOTNOTE_AGENT_IDS.length;
+
+  const { installingId, install } = useAgentInstaller(() => void refetchAgents());
+  const [checking, setChecking] = useState(false);
+
+  const refetchAgents = () => queryClient.invalidateQueries({ queryKey: AGENTS_QUERY_KEY });
+
+  // C5 fix: both of these used to have no try/catch at all — a genuine
+  // rejection (an IPC transport failure, an unexpected main-process
+  // exception) skipped straight past the `setInstallingId(null)`/
+  // `setChecking(false)` that follows, leaving the button stuck on
+  // "Installing…"/"Checking…" forever with no explanation. `finally`
+  // guarantees the busy state always clears; the `catch` (and, for
+  // install, an in-band `!result.success`) surfaces what actually went
+  // wrong instead of silently doing nothing.
+  const checkAgain = async () => {
+    setChecking(true);
+    try {
+      await rpc.agents.probeAll();
+      void refetchAgents();
+    } catch (error) {
+      toast({
+        title: "Couldn't check for agents",
+        description: error instanceof Error ? error.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <div className="flex w-full flex-col items-center gap-6 text-center">
+      <button
+        type="button"
+        onClick={() => confirmOpenExternalLink(RIG_WEBSITE_URL)}
+        aria-label="Open userig.xyz"
+        className="text-text-primary hover:text-accent focus-visible:outline-accent rounded-control outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2"
+      >
+        <RigMark size={28} />
+      </button>
+      <div className="flex flex-col gap-1.5">
+        <h1 className="font-display text-text-primary text-xl">Set up your agent</h1>
+        <p className="text-text-muted max-w-xs text-sm">
+          Rig is where humans and agents work together. It works with the agents you already use.
+          Sign in and use any agent you want.
+        </p>
+      </div>
+
+      <div className="flex w-full flex-col gap-1.5 text-left">
+        {agentsLoading ? (
+          // D5 fix: the honest "still finding out" state — never the
+          // install-cards branch, which used to render here for the split
+          // second before the probe resolved, even for someone who
+          // actually has agents installed.
+          <div className="border-border-hairline text-text-muted flex items-center justify-center gap-2 rounded-control border px-3 py-6 text-sm">
+            <Loader2 className="size-4 animate-spin" strokeWidth={1.5} />
+            Checking installed agents…
+          </div>
+        ) : ready ? (
+          <>
+            {installedAgents.map((agent) => (
+              <div
+                key={agent.id}
+                className="border-border-hairline flex min-h-9 items-center gap-2 rounded-control border px-3 py-2"
+              >
+                <AgentIcon icon={agent.icon} size={16} />
+                <span className="text-text-primary min-w-0 flex-1 truncate text-sm">{agent.name}</span>
+                <AgentAuthTrailing agent={agent} />
+              </div>
+            ))}
+            {otherSpaceAgents.map((agent) => (
+              <div
+                key={agent.id}
+                className="flex min-h-9 items-center gap-2 px-3 py-1.5"
+                data-testid="agent-install-quiet"
+                data-agent-id={agent.id}
+              >
+                <AgentIcon icon={agent.icon} size={16} className="opacity-70" />
+                <span className="text-text-muted min-w-0 flex-1 truncate text-sm">{agent.name}</span>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabled={installingId !== null}
+                  onClick={() => void install(agent, preferredInstallOptions(agent.installOptions)[0]!.method)}
+                >
+                  {installingId === agent.id ? <Loader2 className="size-3 animate-spin" /> : 'Install'}
+                </Button>
+              </div>
+            ))}
+          </>
+        ) : (
+          candidates.map((agent) => (
+            <AgentInstallRow
+              key={agent.id}
+              agent={agent}
+              installing={installingId === agent.id}
+              onInstall={(method) => void install(agent, method)}
+            />
+          ))
+        )}
+
+        {showCatalogCard && (
+          // D9 fix: borderless, matching the MemberRow/InviteRow list-row convention.
+          <div className="flex items-center gap-2.5 px-1 py-2 opacity-70">
+            <div className="flex shrink-0 items-center gap-1">
+              {CATALOG_FOOTNOTE_AGENT_IDS.map((id) => {
+                const icon = identities.get(id)?.icon;
+                return icon ? <AgentIcon key={id} icon={icon} size={16} /> : null;
+              })}
+            </div>
+            <span className="text-text-muted text-xs">{deriveCatalogFootnote(identities.size)}</span>
+          </div>
+        )}
+      </div>
+
+      {!agentsLoading && !ready && (
+        <Button variant="outline" size="sm" onClick={() => void checkAgain()} disabled={checking}>
+          <RefreshCw className={cn('size-3.5', checking && 'animate-spin')} strokeWidth={1.5} />
+          {checking ? 'Checking…' : 'Check again'}
+        </Button>
+      )}
+
+      <div className="flex w-full flex-col items-center gap-3">
+        {!agentsLoading && !ready && (
+          <p className="text-text-muted text-xs">
+            You can read and comment without an agent, and add one anytime.
+          </p>
+        )}
+        <div className="flex w-full gap-2">
+          {!agentsLoading && !ready && (
+            <Button variant="outline" className="flex-1" onClick={onComplete}>
+              Skip for now
+            </Button>
+          )}
+          <Button className="flex-1" onClick={onComplete} disabled={!ready}>
+            Continue
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}

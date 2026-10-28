@@ -92,7 +92,7 @@ export const FIRST_RUN_CASES: { id: string; label: string; simulation: FirstRunS
   },
   {
     id: 'returning-signed-in',
-    label: 'Returning, signed in',
+    label: 'Signed in, new to Rig',
     simulation: {
       rig: 'signedIn',
       agent: 'ready',

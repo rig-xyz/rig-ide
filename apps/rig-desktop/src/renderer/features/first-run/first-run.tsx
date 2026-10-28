@@ -7,6 +7,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
+import { Settings as SettingsIcon } from 'lucide-react';
 import { AgentField, type AgentFieldHandle } from '@renderer/lib/ui/agent-field';
 import { cn } from '@renderer/lib/utils';
 import {
@@ -16,7 +17,12 @@ import {
 } from '@shared/rig/first-run';
 import { ConnectStep } from './connect/connect-step';
 import { FirstRunDebugPanel } from './debug/debug-panel';
-import { clearFirstRunDebug, useFirstRunDebug } from './debug/first-run-debug';
+import {
+  clearFirstRunDebug,
+  FIRST_RUN_CASES,
+  useFirstRunDebug,
+  type FirstRunSimulation,
+} from './debug/first-run-debug';
 import type { AgentState, FirstRunEnv, RigAccountState } from './env';
 import {
   deriveFirstRun,
@@ -57,6 +63,11 @@ export type StepProps = {
   position: string | null;
   /** On to the next step, or Home. Waits for the plan when it isn't known yet. */
   onNext: () => void;
+  /**
+   * Not now: Home without the catch-up, for someone whose Claude can't do it yet (an API key,
+   * another agent, no tools). The first run doesn't come back on its own.
+   */
+  onSkip: () => void;
   /** Waiting on the plan after `onNext`. */
   advancing: boolean;
   setFieldLook: (look: FieldLook) => void;
@@ -79,28 +90,40 @@ export function FirstRun({
   firstRunSeen,
   hasSeenOnboarding,
   progress,
+  alpha,
   debug,
   onDone,
   onOpenSession,
+  onOpenSettings,
 }: {
   firstRunSeen: number;
   hasSeenOnboarding: boolean;
   progress: FirstRunProgress | null;
+  /**
+   * Rig Alpha is on. Off, the first run shows only as a replay from the debug harness, and only
+   * simulated: nothing real is read, made or written.
+   */
+  alpha: boolean;
   /** The debug harness is offered (dev builds, or Debug mode). */
   debug: boolean;
   onDone: () => void;
   /** After the first run ends: open this session in its space. */
   onOpenSession?: (root: string, sessionId: string) => void;
+  /** Settings, over the first run: always reachable, so Rig Alpha can be turned off from it. */
+  onOpenSettings?: () => void;
 }) {
   const harness = useFirstRunDebug();
-  const simulation = debug ? harness.simulation : null;
+  const simulation = (debug ? harness.simulation : null) ?? (alpha ? null : FIRST_RUN_CASES[0]!.simulation);
   const startAt = debug ? harness.startAt : null;
   const render = (env: FirstRunEnv) => (
     <FirstRunShell
       env={env}
       startAt={startAt}
       debug={debug}
+      simulation={simulation}
+      real={alpha}
       onDone={onDone}
+      onOpenSettings={onOpenSettings}
       // A simulation's sessions aren't real: nothing to open.
       onOpenSession={simulation ? null : (onOpenSession ?? null)}
     />
@@ -147,15 +170,23 @@ function FirstRunShell({
   env,
   startAt,
   debug,
+  simulation,
+  real,
   onDone,
   onOpenSession,
+  onOpenSettings,
 }: {
   env: FirstRunEnv;
   /** A step the debug harness asked for: shown even when the plan would skip it. */
   startAt: FirstRunStepId | null;
   debug: boolean;
+  /** What the environment simulates, if it does. */
+  simulation: FirstRunSimulation | null;
+  /** The debug harness may go back to this Mac as it is (Rig Alpha on). */
+  real: boolean;
   onDone: () => void;
   onOpenSession: ((root: string, sessionId: string) => void) | null;
+  onOpenSettings?: () => void;
 }) {
   const field = useRef<AgentFieldHandle | null>(null);
   const [fieldLook, setFieldLook] = useState<FieldLook>('hero');
@@ -199,23 +230,29 @@ function FirstRunShell({
   // The end: the stage dissolves, the card going on toward Home's Feed, then Home fades in under it.
   const [leaving, setLeaving] = useState(false);
   const left = useRef(false);
-  const done = useCallback(() => {
-    if (left.current) return;
-    left.current = true;
-    env.trackStep('home');
-    setLeaving(true);
-    setFieldLook('rest');
-    // Marked seen only once the stage has gone: App closes the first run as soon as it's seen, and
-    // ending a simulation swaps the environment under the shell.
-    setTimeout(
-      () => {
-        env.finish();
-        clearFirstRunDebug();
-        onDone();
-      },
-      prefersReducedMotion() ? 0 : LEAVE_MS
-    );
-  }, [env, onDone]);
+  const done = useCallback(
+    (how: 'finished' | 'skipped' = 'finished') => {
+      if (left.current) return;
+      left.current = true;
+      // A skip isn't Home's count: drop-off shows where it was left.
+      if (how === 'finished') env.trackStep('home');
+      setLeaving(true);
+      setFieldLook('rest');
+      // Marked seen only once the stage has gone: App closes the first run as soon as it's seen,
+      // and ending a simulation swaps the environment under the shell.
+      setTimeout(
+        () => {
+          if (how === 'finished') env.finish();
+          else env.skip();
+          clearFirstRunDebug();
+          onDone();
+        },
+        prefersReducedMotion() ? 0 : LEAVE_MS
+      );
+    },
+    [env, onDone]
+  );
+  const skip = useCallback(() => done('skipped'), [done]);
   // Done, straight into the session a card just started, in its space.
   const openSession = useMemo(
     () =>
@@ -294,6 +331,7 @@ function FirstRunShell({
     position:
       step === 'welcome' || !shown || index < 0 ? null : `Step ${index + 1} of ${shown.length + 1}`,
     onNext: advance,
+    onSkip: skip,
     advancing: pendingNext,
     setFieldLook,
     field,
@@ -321,7 +359,19 @@ function FirstRunShell({
       <div className="absolute inset-0 z-10 grid grid-cols-[minmax(0,370px)_minmax(0,1fr)]">
         <StepView step={step} props={props} />
       </div>
-      {debug && <FirstRunDebugPanel step={step} plan={plan} />}
+      {onOpenSettings && (
+        <button
+          type="button"
+          aria-label="Settings"
+          title="Settings"
+          onClick={onOpenSettings}
+          className="absolute top-2.5 right-3 z-30 grid size-7 place-items-center rounded-full text-text-muted transition-colors [-webkit-app-region:no-drag] hover:bg-bg-2 hover:text-text-primary"
+          data-testid="first-run-settings"
+        >
+          <SettingsIcon className="size-4" strokeWidth={1.6} />
+        </button>
+      )}
+      {debug && <FirstRunDebugPanel step={step} plan={plan} simulation={simulation} real={real} />}
       {env.overlay}
     </div>
   );
@@ -350,12 +400,29 @@ export function StepFrame({ guide, stage }: { guide: ReactNode; stage: ReactNode
   return (
     <>
       <aside
-        aria-live="polite"
         className="flex min-w-0 flex-col gap-3.5 overflow-y-auto px-[26px] pt-14 pb-[22px]"
       >
         {guide}
       </aside>
       <div className="grid min-w-0 place-items-center overflow-hidden p-6">{stage}</div>
     </>
+  );
+}
+
+/**
+ * The way out of Set up and Connect when they can't be finished here (Claude on an API key,
+ * another agent, no tools): Home, without the catch-up. Settings › Advanced turns Rig Alpha off.
+ */
+export function NotNow({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Go to your Home without catching up"
+      className="ml-auto text-meta text-text-muted transition-colors hover:text-text-primary"
+      data-testid="first-run-not-now"
+    >
+      Not now
+    </button>
   );
 }

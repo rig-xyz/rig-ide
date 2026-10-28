@@ -27,7 +27,10 @@ export type AgentReadiness = 'missing' | 'signedOut' | 'apiKey' | 'ready';
 export type FirstRunPlan = {
   /** In order; empty when the first run has been seen. Home follows the last. */
   steps: FirstRunStepId[];
-  /** Has used Rig before: shorter copy, and a prefilled You step. */
+  /**
+   * Has used Rig before: shorter copy, and a prefilled You step. Used, not just signed in: a Rig
+   * token on its own (made in the browser a minute ago) is a new person.
+   */
   returning: boolean;
 };
 
@@ -46,7 +49,11 @@ export function deriveFirstRun(input: {
   rig: RigAccountKind;
   agent: AgentReadiness;
 }): FirstRunPlan {
-  const returning = input.hasSeenOnboarding || input.rig !== 'new';
+  const returning =
+    input.hasSeenOnboarding ||
+    input.firstRunSeen > 0 ||
+    input.rig === 'signedOut' ||
+    input.rig === 'expired';
   if (!shouldShowFirstRun(input.firstRunSeen)) return { steps: [], returning };
   const setUp = input.rig === 'signedIn' && input.agent === 'ready';
   return {

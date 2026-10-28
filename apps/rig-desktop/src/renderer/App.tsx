@@ -27,10 +27,11 @@ import { ReportProblemDialogHost } from '@renderer/features/shell/report-problem
 import { markBindingDeleted } from '@renderer/features/home/deleted-rig-store';
 import { Home } from '@renderer/features/home/home';
 import { NewHome } from '@renderer/features/home-feed/new-home';
-import { useAlphaEnabled, useNewHomeEnabled } from '@renderer/features/home-feed/use-new-home-enabled';
 import { firstRunDebugAvailable, useFirstRunDebug } from '@renderer/features/first-run/debug/first-run-debug';
 import { FirstRun } from '@renderer/features/first-run/first-run';
 import { shouldShowFirstRun } from '@renderer/features/first-run/first-run-state';
+import { Onboarding } from '@renderer/features/onboarding/onboarding';
+import { deriveOnboardingSteps } from '@renderer/features/onboarding/onboarding-state';
 import { onOpenSpaceRequest } from '@renderer/features/people/open-space-request';
 import {
   deriveRendererBootState,
@@ -424,8 +425,6 @@ export function App() {
   // Per-window, deliberately not persisted; closes back to whatever layout
   // was already showing rather than replacing it.
   const spacesEnabled = useSpacesEnabled();
-  const newHomeEnabled = useNewHomeEnabled();
-  const alphaEnabled = useAlphaEnabled();
   const firstRunDebug = useFirstRunDebug();
   const [roomPreviewOpen, setRoomPreviewOpen] = useState(false);
   const chatNativeCloseRef = useRef<(() => void) | null>(null);
@@ -437,13 +436,22 @@ export function App() {
   const [chatWidth, setChatWidth] = useState<number>(readStoredChatWidth);
   const chatWidthRef = useRef(chatWidth);
   chatWidthRef.current = chatWidth;
-  // The first run's gate (`features/first-run`), from the settings handshake
-  // below. `firstRun` is null until that resolves, so a fresh boot never
-  // flashes the shell before the first run, or the reverse.
-  const [firstRun, setFirstRun] = useState<Pick<
+  // What decides the window's first screen: the first run (Rig Alpha on,
+  // `features/first-run`), the round-H2 onboarding (Alpha off, as the current
+  // release), the new Home or the old one. All from the settings handshake
+  // below, in one read, so a fresh boot never flashes one before another.
+  const [gate, setGate] = useState<Pick<
     RigSettings,
-    'firstRunSeen' | 'firstRunProgress' | 'hasSeenOnboarding' | 'debugMode'
+    | 'firstRunSeen'
+    | 'firstRunProgress'
+    | 'hasSeenOnboarding'
+    | 'debugMode'
+    | 'alphaEnabled'
+    | 'newHomeEnabled'
   > | null>(null);
+  const alphaEnabled = gate?.alphaEnabled === true;
+  // The new Home only counts with Rig Alpha on.
+  const newHomeEnabled = alphaEnabled && gate?.newHomeEnabled === true;
   const [settingsBootState, setSettingsBootState] = useState<BootDependencyState>('pending');
   const [bootAttempt, setBootAttempt] = useState(0);
   const [bootOverride, setBootOverride] = useState(false);
@@ -489,11 +497,13 @@ export function App() {
       if (settings.chatPanelWidth !== null) {
         setChatWidth(clamp(settings.chatPanelWidth, CHAT_WIDTH_MIN, CHAT_WIDTH_MAX));
       }
-      setFirstRun({
+      setGate({
         firstRunSeen: settings.firstRunSeen,
         firstRunProgress: settings.firstRunProgress,
         hasSeenOnboarding: settings.hasSeenOnboarding,
         debugMode: settings.debugMode,
+        alphaEnabled: settings.alphaEnabled,
+        newHomeEnabled: settings.newHomeEnabled,
       });
       setSettingsBootState('ready');
     };
@@ -1301,18 +1311,32 @@ export function App() {
   // Home fades in where the first run's stage dissolved, once.
   const [arrivedFromFirstRun, setArrivedFromFirstRun] = useState(false);
   const onFirstRunDone = useCallback(() => {
-    setFirstRun((current) => current && { ...current, firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null });
+    setGate((current) => current && { ...current, firstRunSeen: FIRST_RUN_VERSION, firstRunProgress: null });
     setArrivedFromFirstRun(true);
   }, []);
-  // Rig Alpha's (Settings › Advanced), or replayed from the debug harness in this window.
+  // Rig Alpha's (Settings › Advanced), or replayed from the debug harness in this window (only
+  // simulated with Alpha off: `FirstRun`).
   const firstRunOpen =
-    firstRun !== null && shouldShowFirstRun(firstRun.firstRunSeen) && (alphaEnabled || firstRunDebug.run > 0);
-  // Replaying the first run from Settings closes Settings behind it.
+    gate !== null && shouldShowFirstRun(gate.firstRunSeen) && (alphaEnabled || firstRunDebug.run > 0);
+  // Replaying the first run from Settings closes Settings behind it. It can open again over the
+  // first run (its gear, or ⌘,), so Rig Alpha can always be turned off.
   useEffect(() => {
     if (firstRunOpen) setSettingsOpen(false);
   }, [firstRunOpen]);
 
-  const canOpenNativeSettings = rendererBootState === 'ready' && !firstRunOpen;
+  // With Rig Alpha off, a new install gets the current release's onboarding, as before Alpha.
+  const onOnboardingComplete = useCallback(() => {
+    setGate((current) => current && { ...current, hasSeenOnboarding: true });
+    void rpc.rig.settings.set({ hasSeenOnboarding: true });
+  }, []);
+  const onboardingSteps = firstRunOpen
+    ? []
+    : deriveOnboardingSteps({
+        hasSeenOnboarding: alphaEnabled || (gate?.hasSeenOnboarding ?? true),
+        signedIn: authStatusQuery.data?.signedIn ?? false,
+      });
+
+  const canOpenNativeSettings = rendererBootState === 'ready' && onboardingSteps.length === 0;
   const nativeCloseTarget = deriveNativeCloseTarget({
     settingsOpen,
     hasRig: bound !== null,
@@ -1376,17 +1400,32 @@ export function App() {
     );
   }
 
-  if (firstRun && firstRunOpen) {
+  if (gate && firstRunOpen) {
     return (
-      <FirstRun
-        firstRunSeen={firstRun.firstRunSeen}
-        hasSeenOnboarding={firstRun.hasSeenOnboarding}
-        progress={firstRun.firstRunProgress}
-        debug={firstRunDebugAvailable(firstRun.debugMode)}
-        onDone={onFirstRunDone}
-        onOpenSession={continueSession}
-      />
+      <>
+        <FirstRun
+          firstRunSeen={gate.firstRunSeen}
+          hasSeenOnboarding={gate.hasSeenOnboarding}
+          progress={gate.firstRunProgress}
+          alpha={alphaEnabled}
+          debug={firstRunDebugAvailable(gate.debugMode)}
+          onDone={onFirstRunDone}
+          onOpenSession={continueSession}
+          onOpenSettings={openNativeSettings}
+        />
+        <SettingsSheet
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          themePreference={themePreference}
+          onSetThemePreference={setThemePreference}
+          initialPage={settingsPage}
+        />
+      </>
     );
+  }
+
+  if (onboardingSteps.length > 0) {
+    return <Onboarding steps={onboardingSteps} onComplete={onOnboardingComplete} />;
   }
 
   const chrome = topbarChrome(rigView ? { isSpace: rigViewIsSpace, layout } : null);
