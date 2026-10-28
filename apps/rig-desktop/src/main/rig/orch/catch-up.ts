@@ -24,6 +24,8 @@ const KEEP_ENDED_MS = 2 * 60_000;
  */
 export const CATCH_UP_BACKOFF_MS = 15 * 60_000;
 export const CATCH_UP_TRIGGER = 'catch-up';
+/** Catch me up for someone Rig never read for (they left the first run with Not now): this many days back. */
+export const FIRST_CATCH_UP_DAYS = 3;
 
 const DAY_MS = 86_400_000;
 
@@ -77,12 +79,15 @@ export function createCatchUp(deps: CatchUpDeps) {
       const state = await deps.state();
       if (!state.success) return 'skipped';
       const window = readWindow(state.data, deps.now());
-      // Never read for: that's the first run's to do, not a catch-up's.
-      if (window.lastRead === null || !window.since) return 'skipped';
-      if (!force && deps.now() - window.lastRead < CATCH_UP_AFTER_MS) return 'not_due';
-      deps.log?.info('Rig catch-up: starting', { why, since: window.since });
+      // Never read for: on its own, that's the first run's to do; asked (Catch me up on Home, after
+      // Not now), it reads the last few days, as the first run would.
+      const never = window.lastRead === null || !window.since;
+      if (never && !force) return 'skipped';
+      if (!never && !force && deps.now() - window.lastRead! < CATCH_UP_AFTER_MS) return 'not_due';
+      const since = never ? new Date(deps.now() - FIRST_CATCH_UP_DAYS * DAY_MS).toISOString() : window.since!;
+      deps.log?.info('Rig catch-up: starting', { why, since });
       current = { run: null, events: [], endedAt: null };
-      void deps.run(CATCH_UP_TRIGGER, { since: window.since }).then(
+      void deps.run(CATCH_UP_TRIGGER, { since }).then(
         (r) => {
           if (r.success && r.data?.noted !== false) misses = 0;
           else missed();

@@ -21,7 +21,7 @@ import { rigSpaceStatusController } from '../space-status';
 import { createRuntimeAcpSessions } from '../spaces/dispatch';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
 import { createActions, type StartInput } from './actions';
-import { alphaOnly, readsOnItsOwn } from './alpha';
+import { alphaOnly, mayAskRelay, readsOnItsOwn } from './alpha';
 import { createSender } from './send';
 import { rigSpaceSetupController } from '../space-setup';
 import { rigSettingsStore } from '../settings-instance';
@@ -359,23 +359,42 @@ const catchUp = createCatchUp({
   log,
 });
 
-/** Rig reads on its own only with Rig Alpha on and the first run done (alpha.ts); before it, the first run's Read step reads. */
-const onItsOwn = () => readsOnItsOwn(rigSettingsStore.get());
+/** Rig has read for them at least once (a noted run: the first run's read, or Catch me up). Once seen, kept. */
+let readBefore = false;
+async function hasReadBefore(): Promise<boolean> {
+  if (readBefore) return true;
+  const state = await feedRelay.orchAgentState();
+  readBefore = state.success && readWindow(state.data, Date.now()).lastRead !== null;
+  return readBefore;
+}
+/**
+ * Rig reads on its own only with Rig Alpha on, the first run done, and a read they've had
+ * (alpha.ts): after Not now it waits for Catch me up on Home. The relay is asked only when
+ * the settings would let a read start.
+ */
+const onItsOwn = async (): Promise<boolean> => {
+  const settings = rigSettingsStore.get();
+  if (!mayAskRelay(settings)) return false;
+  return readsOnItsOwn(settings, await hasReadBefore().catch(() => false));
+};
 
 // On open: a catch-up if Rig last read hours ago, else the usual quiet run a minute in. Then every hour.
 setTimeout(() => {
-  if (!onItsOwn()) return;
-  void catchUp.maybe('app start').then(
-    (r) => {
-      if (r !== 'started') setTimeout(() => onItsOwn() && runAgent('app start'), 50_000).unref?.();
-    },
-    () => undefined
-  );
+  void onItsOwn().then(async (go) => {
+    if (!go) return;
+    const r = await catchUp.maybe('app start');
+    if (r !== 'started') setTimeout(() => void onItsOwn().then((again) => again && runAgent('app start')), 50_000).unref?.();
+  }).catch(() => undefined);
 }, 10_000).unref?.();
-setInterval(() => onItsOwn() && runAgent('schedule'), 60 * 60_000).unref?.();
+setInterval(() => void onItsOwn().then((go) => go && runAgent('schedule')).catch(() => undefined), 60 * 60_000).unref?.();
 // Back from sleep: the hours away are the ones to catch up on.
 app.whenReady().then(() => {
-  const woke = () => void (onItsOwn() && catchUp.maybe('wake').catch(() => undefined));
+  const woke = () =>
+    void onItsOwn()
+      .then(async (go) => {
+        if (go) await catchUp.maybe('wake');
+      })
+      .catch(() => undefined);
   powerMonitor.on('resume', woke);
   powerMonitor.on('unlock-screen', woke);
 }, () => undefined);

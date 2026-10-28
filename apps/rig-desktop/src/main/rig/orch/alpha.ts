@@ -17,7 +17,17 @@ export function alphaOnly<A extends unknown[], T>(
   return (...args) => (alphaOn() ? fn(...args) : Promise.resolve(err({ message: ALPHA_OFF })));
 }
 
-/** Rig reads on its own (app start, every hour, after sleep) only with Alpha on and the first run behind them. */
-export function readsOnItsOwn(settings: { alphaEnabled: boolean; firstRunSeen: number }): boolean {
+/**
+ * Rig reads on its own (app start, every hour, after sleep) only with Alpha
+ * on, the first run behind them, and a read they've had at least once: the
+ * first run's, or Catch me up on Home. Not now leaves the first run without
+ * one, and then Rig waits to be asked.
+ */
+export function readsOnItsOwn(settings: { alphaEnabled: boolean; firstRunSeen: number }, readBefore: boolean): boolean {
+  return mayAskRelay(settings) && readBefore;
+}
+
+/** Whether to ask the relay if Rig has read for them before (only when that could let a read start). */
+export function mayAskRelay(settings: { alphaEnabled: boolean; firstRunSeen: number }): boolean {
   return settings.alphaEnabled && settings.firstRunSeen >= FIRST_RUN_VERSION;
 }

@@ -14,9 +14,12 @@ describe('Rig Alpha', () => {
     expect(await gated({ ref: 'a' })).toEqual(ok('a'));
   });
 
-  it('reads on its own only with Alpha on and the first run done', () => {
-    expect(readsOnItsOwn({ alphaEnabled: false, firstRunSeen: FIRST_RUN_VERSION })).toBe(false);
-    expect(readsOnItsOwn({ alphaEnabled: true, firstRunSeen: 0 })).toBe(false);
-    expect(readsOnItsOwn({ alphaEnabled: true, firstRunSeen: FIRST_RUN_VERSION })).toBe(true);
+  it('reads on its own only with Alpha on, the first run done, and a read they have had', () => {
+    const done = { alphaEnabled: true, firstRunSeen: FIRST_RUN_VERSION };
+    expect(readsOnItsOwn({ ...done, alphaEnabled: false }, true)).toBe(false);
+    expect(readsOnItsOwn({ ...done, firstRunSeen: 0 }, true)).toBe(false);
+    // Not now: the first run is done, but nothing was ever read.
+    expect(readsOnItsOwn(done, false)).toBe(false);
+    expect(readsOnItsOwn(done, true)).toBe(true);
   });
 });

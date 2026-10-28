@@ -1,7 +1,7 @@
 import { err, ok, type Result } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { OrchAgentState } from '../feed/relay';
-import { CATCH_UP_AFTER_MS, CATCH_UP_BACKOFF_MS, createCatchUp, readWindow } from './catch-up';
+import { CATCH_UP_AFTER_MS, CATCH_UP_BACKOFF_MS, createCatchUp, FIRST_CATCH_UP_DAYS, readWindow } from './catch-up';
 
 const NOW = Date.parse('2026-10-27T09:00:00Z');
 const HOUR = 3_600_000;
@@ -110,6 +110,14 @@ describe('createCatchUp', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(await catchUp.maybe('unlock')).toBe('skipped');
+  });
+
+  it('Catch me up for someone never read for reads the last few days; on its own it never starts', async () => {
+    const { catchUp, run } = setUp({ lastRead: null });
+    expect(await catchUp.maybe('wake')).toBe('skipped');
+    expect(run).not.toHaveBeenCalled();
+    expect(await catchUp.maybe('asked', true)).toBe('started');
+    expect(run).toHaveBeenCalledWith('catch-up', { since: new Date(NOW - FIRST_CATCH_UP_DAYS * 24 * HOUR).toISOString() });
   });
 
   it('skips when Rig can’t be asked', async () => {

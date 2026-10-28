@@ -194,12 +194,13 @@ export function RealFirstRunEnv({
         // The first run ends in the new Home, for those upgrading too.
         newHomeEnabled: true,
       }),
-    // Home as it was: the new Home comes with the catch-up, not before it.
+    // Not now: the new Home, empty, offering Catch me up. Rig reads nothing on its own until they've had one.
     skip: () =>
       void rpc.rig.settings.set({
         firstRunSeen: FIRST_RUN_VERSION,
         firstRunProgress: null,
         hasSeenOnboarding: true,
+        newHomeEnabled: true,
       }),
     overlay:
       payload && loginMethod ? (

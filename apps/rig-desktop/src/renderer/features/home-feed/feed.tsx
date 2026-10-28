@@ -5,6 +5,7 @@ import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { IconButton, Kicker } from './bits';
 import { CatchUpStrip } from './catch-up-strip';
+import { FeedEmpty } from './catch-me-up';
 import { ConnectorsView } from './connectors-view';
 import { ClaudeOnIt, RunStatus, SetAside } from './feed-background';
 import { FeedNotice, FeedStale } from './feed-notice';
@@ -113,9 +114,7 @@ export function Feed({
                   <Group title="Needs you" tone="warn" entries={needs} />
                   <Group title={state.fromRelay ? 'Claude can take' : 'Up next'} tone="accent" entries={next} />
                   {live && <ClaudeOnIt withHead={!next.length} />}
-                  {!needs.length && !next.length && feedStatus.kind !== 'loading' && (
-                    <p className="px-5 py-2.5 text-sm text-text-muted">Nothing waiting on you.</p>
-                  )}
+                  {!needs.length && !next.length && feedStatus.kind !== 'loading' && <FeedEmpty live={live} />}
                   {live && <SetAside />}
                 </>
               )}
