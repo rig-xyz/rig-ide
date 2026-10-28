@@ -11,7 +11,7 @@ import { preferredInstallOptions } from '@renderer/features/onboarding/onboardin
 import { useRigSignIn } from '@renderer/features/rig-account/use-rig-sign-in';
 import { rpc } from '@renderer/lib/ipc';
 import { confirmOpenExternalLink } from '@renderer/lib/open-external-link';
-import { FIRST_RUN_VERSION, type FirstRunProgress } from '@shared/rig/first-run';
+import { FIRST_RUN_VERSION, knownTool, type FirstRunProgress } from '@shared/rig/first-run';
 import { agentRoute, ROUTED_AGENT_ID } from './agent-route';
 import { watchingFrom, watchWrites } from './connect/sources';
 import type { AgentState, FirstRunEnv, FirstWinEnv, RigAccountState } from './env';
@@ -169,7 +169,9 @@ export function RealFirstRunEnv({
     },
     // GitHub comes through `gh`, not claude.ai: its way in is `gh auth login`.
     openConnect: (connector) =>
-      confirmOpenExternalLink(connector === 'github' ? GH_LOGIN_URL : route.connectorsUrl),
+      confirmOpenExternalLink(
+        connector && knownTool(connector) === 'github' ? GH_LOGIN_URL : route.connectorsUrl
+      ),
     readSource: liveFirstRun,
     catchUpSince: async () => {
       const r = await rpc.rig.orch.since().catch(() => null);

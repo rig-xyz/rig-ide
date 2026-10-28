@@ -1,33 +1,21 @@
-import {
-  FIRST_RUN_CONNECTORS,
-  type ConnectorCheck,
-  type FirstRunConnector,
-} from '@shared/rig/first-run';
+import { KNOWN_NAME, knownTool, toolKey, type ConnectorCheck } from '@shared/rig/first-run';
 import type { ClaudeMcpEntry } from '../connectors/global-setup';
 
 /**
- * The first run's Connect pre-flight: which of the person's tools their
- * Claude reaches right now. It reads Claude's own `claude mcp list` (fresh,
- * past the 10-minute cache: the person may have just connected something in
- * claude.ai) and `gh auth status` for GitHub, which claude.ai has no
- * connector for. States only, no counts: a count would cost a model call per
- * tool, and the first read brings them anyway.
+ * The first run's Connect pre-flight: the tools the person's Claude reaches
+ * right now, as Claude itself lists them. It reads Claude's own `claude mcp
+ * list` (fresh, past the 10-minute cache: the person may have just connected
+ * something in claude.ai) and `gh auth status` for GitHub, which claude.ai
+ * has no connector for. Every server that's connected or asks to sign in
+ * again is a tool, by its own name; one that's off or refused isn't listed.
+ * States only, no counts: a count would cost a model call per tool, and the
+ * first read brings them anyway.
  */
-
-/** How a tool shows up in Claude's list: its name ("claude.ai Slack") or its server's host. */
-const MATCH: Record<FirstRunConnector, RegExp> = {
-  slack: /slack/i,
-  linear: /linear/i,
-  github: /github/i,
-  gmail: /gmail|google mail/i,
-  calendar: /calendar|gcal/i,
-  notion: /notion/i,
-};
 
 /** `gh auth status`'s answer, reduced: signed in, signed in with a token GitHub refuses, or not at all. */
 export type GhAuth = 'connected' | 'needs_auth' | 'missing';
 
-type State = ConnectorCheck['state'];
+type State = ConnectorCheck['state'] | 'missing';
 const RANK: Record<State, number> = { missing: 0, needs_auth: 1, connected: 2 };
 const best = (a: State, b: State): State => (RANK[b] > RANK[a] ? b : a);
 
@@ -47,19 +35,38 @@ function entryState(entry: ClaudeMcpEntry): State {
   }
 }
 
-/** Each tool's best state across Claude's servers, and `gh` for GitHub. Claude unreadable reads as nothing connected. */
+/** A server's name as the person knows the tool: claude.ai's connectors drop their "claude.ai " prefix. */
+export function toolName(entry: Pick<ClaudeMcpEntry, 'name'>): string {
+  return entry.name.replace(/^claude\.ai\s+/i, '').trim();
+}
+
+/**
+ * Claude's servers as tools, in Claude's order, each by its own name with its
+ * best state when it's listed twice, then GitHub from `gh` (or, when Claude
+ * has a GitHub server too, the better of the two). Claude unreadable lists
+ * GitHub alone, or nothing.
+ */
 export function connectorChecks(
   entries: readonly ClaudeMcpEntry[] | null,
   gh: GhAuth
 ): ConnectorCheck[] {
-  return FIRST_RUN_CONNECTORS.map((connector) => {
-    let state: State = connector === 'github' ? gh : 'missing';
-    for (const entry of entries ?? []) {
-      if (MATCH[connector].test(`${entry.name} ${entry.url ?? ''}`))
-        state = best(state, entryState(entry));
-    }
-    return { connector, state };
-  });
+  const tools = new Map<string, { connector: string; known: ConnectorCheck['known']; state: State }>();
+  for (const entry of entries ?? []) {
+    const connector = toolName(entry);
+    const known = knownTool(entry.name, entry.url);
+    // A known tool is one row, by its usual name, however many servers Claude has for it ("linear" and "linear-server").
+    const key = known ?? toolKey(connector);
+    const was = tools.get(key);
+    const state = entryState(entry);
+    if (was) was.state = best(was.state, state);
+    else tools.set(key, { connector: known ? KNOWN_NAME[known] : connector, known, state });
+  }
+  const github = tools.get('github');
+  if (github) github.state = best(github.state, gh);
+  else tools.set('github', { connector: KNOWN_NAME.github, known: 'github', state: gh });
+  return [...tools.values()].flatMap((t) =>
+    t.state === 'missing' ? [] : [{ connector: t.connector, known: t.known, state: t.state }]
+  );
 }
 
 /** `gh auth status`'s outcome as `GhAuth`: exit 0 is signed in; a refused token asks to sign in again. */

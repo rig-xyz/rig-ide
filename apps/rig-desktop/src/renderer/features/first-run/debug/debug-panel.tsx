@@ -3,12 +3,13 @@ import { Bug, ChevronDown } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { rpc } from '@renderer/lib/ipc';
 import { cn } from '@renderer/lib/utils';
-import { FIRST_RUN_CONNECTORS, type FirstRunStepId } from '@shared/rig/first-run';
+import type { FirstRunStepId } from '@shared/rig/first-run';
 import type { FirstRunPlan } from '../first-run-state';
 import {
   AGENT_STATES,
   FIRST_RUN_CASES,
   nextConnectorState,
+  SIM_TOOLS,
   RIG_STATES,
   replayFirstRun,
   stopSimulating,
@@ -115,7 +116,7 @@ export function FirstRunDebugPanel({
             ))}
           </Group>
           <Group label="Connectors">
-            {FIRST_RUN_CONNECTORS.map((connector) => {
+            {SIM_TOOLS.map(({ connector }) => {
               const state = base.connectors[connector];
               return (
                 <Chip

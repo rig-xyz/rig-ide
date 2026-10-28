@@ -6,6 +6,7 @@ import type { AgentRoute } from './agent-route';
 import type { Result } from '@emdash/shared';
 import type { FeedChoice, FeedItem } from '@renderer/features/home-feed/model';
 import type { SentResult } from '@renderer/features/home-feed/store';
+import type { Watching } from './connect/sources';
 import type { ProgressSource } from './read/progress-source';
 
 /**
@@ -36,11 +37,14 @@ export interface FirstRunEnv {
   /** Which of the person's tools their agent reaches, read fresh each time (Connect's pre-flight). */
   preflight(): Promise<ConnectorCheck[]>;
   /** Which tools Rig already watches (true) or was told to leave out (false); a tool with neither is absent. */
-  readWatching(): Promise<Partial<Record<FirstRunConnector, boolean>>>;
+  readWatching(): Promise<Watching>;
   /** Watch a tool or leave it out: what the first read, and every read after it, goes through. */
   setWatching(connector: FirstRunConnector, on: boolean): Promise<void>;
-  /** Opens where the agent's tools are connected (claude.ai's connector settings), or how to, for GitHub. */
-  openConnect(connector: FirstRunConnector): void;
+  /**
+   * Opens where the agent's tools are connected (claude.ai's connector settings), or how to sign
+   * in to `gh`, for GitHub. With no tool: where to connect more.
+   */
+  openConnect(connector?: FirstRunConnector): void;
   /** Where the Read step's progress comes from: the real first run, or a recorded one in a simulation. */
   readSource: ProgressSource;
   /**

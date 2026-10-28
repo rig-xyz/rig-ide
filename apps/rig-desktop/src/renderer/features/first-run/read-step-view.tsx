@@ -2,7 +2,6 @@ import { ArrowRight } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { ActionButton } from '@renderer/features/home-feed/action-button';
 import type { DotMatrixState } from '@renderer/lib/ui/dot-matrix';
-import { FIRST_RUN_CONNECTORS, type FirstRunConnector } from '@shared/rig/first-run';
 import type { OrchProgressEvent, RunProgress } from '@shared/rig/orch-progress';
 import { StepFrame, type StepProps } from './first-run';
 import { captionOf, FieldCaptions, useFieldCaptions } from './read/field-captions';
@@ -116,8 +115,7 @@ export function ReadStepView({ env, onNext, setFieldLook, field }: StepProps) {
   const fix = useCallback(
     ({ problem, connector }: ReadFix) => {
       if (problem === 'connector_auth' && connector) {
-        const known = (FIRST_RUN_CONNECTORS as readonly string[]).includes(connector);
-        env.openConnect((known ? connector : 'slack') as FirstRunConnector);
+        env.openConnect(connector);
       } else if (problem === 'rig_signed_out') {
         setWaitingFor('rig');
         env.startRigSignIn();

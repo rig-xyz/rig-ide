@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   readingNow,
   readsNow,
-  SOURCE_FOR,
+  sourceFor,
   watchingFrom,
   watchWrites,
   type SourceRow,
@@ -32,9 +32,30 @@ describe('watchingFrom', () => {
   });
 });
 
+describe('a tool Rig has no words for', () => {
+  it("is a source under Claude's own name, read for what waits on the person", () => {
+    expect(watchWrites([slack], 'Google Drive', true).add).toEqual({
+      connector: 'Google Drive',
+      what: 'what changed that involves you, and what waits on you',
+    });
+  });
+
+  it('keeps its choice under its name, whatever its case', () => {
+    const drive: SourceRow = { ref: 'src_drive', connector: 'Google Drive', paused: true };
+    expect(watchingFrom([drive])).toEqual({ 'google drive': false });
+    expect(watchWrites([drive], 'google drive', true).pause).toEqual([{ ref: 'src_drive', paused: false }]);
+  });
+
+  it("is the same switch as a known tool's source under another name", () => {
+    // Claude lists "Google Calendar"; an older source says "Calendar".
+    const old: SourceRow = { ref: 'src_cal', connector: 'Calendar', paused: false };
+    expect(watchWrites([old], 'Google Calendar', false).pause).toEqual([{ ref: 'src_cal', paused: true }]);
+  });
+});
+
 describe('watchWrites', () => {
   it('turning on a tool with no source adds one', () => {
-    expect(watchWrites([slack], 'linear', true)).toEqual({ add: SOURCE_FOR.linear, pause: [] });
+    expect(watchWrites([slack], 'Linear', true)).toEqual({ add: sourceFor('Linear'), pause: [] });
   });
 
   it('turning on a paused tool resumes it rather than adding a second', () => {

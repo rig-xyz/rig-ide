@@ -1,6 +1,11 @@
 import { useSyncExternalStore } from 'react';
 import { rpc } from '@renderer/lib/ipc';
-import type { ConnectorCheck, FirstRunConnector, FirstRunStepId } from '@shared/rig/first-run';
+import type {
+  ConnectorCheck,
+  FirstRunConnector,
+  FirstRunStepId,
+  KnownTool,
+} from '@shared/rig/first-run';
 import type { AgentReadiness, RigAccountKind } from '../first-run-state';
 
 /**
@@ -19,15 +24,37 @@ export type FirstRunSimulation = {
   connectors: SimulatedConnectors;
 };
 
-export type SimulatedConnectors = Partial<
-  Record<FirstRunConnector, Exclude<ConnectorCheck['state'], 'missing'>>
->;
+/** What the simulated agent reaches, by the tool's name in Claude's list; a tool that's absent isn't there. */
+export type SimulatedConnectors = Partial<Record<FirstRunConnector, ConnectorCheck['state']>>;
 
-/** What the presets' agent reaches: the prototype's Slack, Linear and GitHub. */
+/**
+ * The tools a simulated Claude can have, recorded from a real `claude mcp list` (and `gh`): a few
+ * Rig knows, and some it doesn't, which show a neutral mark. Notion is the one to connect more.
+ */
+export const SIM_TOOLS: readonly { connector: FirstRunConnector; known: KnownTool | null }[] = [
+  { connector: 'Slack', known: 'slack' },
+  { connector: 'Linear', known: 'linear' },
+  { connector: 'Granola', known: 'granola' },
+  { connector: 'Google Drive', known: null },
+  { connector: 'Google Calendar', known: 'calendar' },
+  { connector: 'Gmail', known: 'gmail' },
+  { connector: 'Atlassian Rovo', known: null },
+  { connector: 'Ramp', known: null },
+  { connector: 'GitHub', known: 'github' },
+  { connector: 'Notion', known: 'notion' },
+];
+
+/** What the presets' agent reaches, as recorded: Ramp asks to sign in again; Notion isn't there. */
 const USUAL_TOOLS: SimulatedConnectors = {
-  slack: 'connected',
-  linear: 'connected',
-  github: 'connected',
+  Slack: 'connected',
+  Linear: 'connected',
+  Granola: 'connected',
+  'Google Drive': 'connected',
+  'Google Calendar': 'connected',
+  Gmail: 'connected',
+  'Atlassian Rovo': 'connected',
+  Ramp: 'needs_auth',
+  GitHub: 'connected',
 };
 
 /** A connector chip's next state: connected, then needing re-auth, then not there. */

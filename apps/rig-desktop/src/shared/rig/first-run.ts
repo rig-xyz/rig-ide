@@ -41,22 +41,71 @@ export function normalizeFirstRunProgress(value: unknown): FirstRunProgress | nu
   return { step: raw.step, readStarted: raw.readStarted === true };
 }
 
-/** The tools Connect looks for, in the order it lists them. */
-export const FIRST_RUN_CONNECTORS = [
+/**
+ * The tools Rig has a logo and words for. Connect lists whatever the person's
+ * Claude has; one of these shows its own mark, any other a neutral one.
+ */
+export const KNOWN_TOOLS = [
   'slack',
   'linear',
   'github',
   'gmail',
   'calendar',
   'notion',
+  'granola',
 ] as const;
-export type FirstRunConnector = (typeof FIRST_RUN_CONNECTORS)[number];
+export type KnownTool = (typeof KNOWN_TOOLS)[number];
+
+/** How a known tool shows up in Claude's list: its name ("claude.ai Slack") or its server's host. */
+const KNOWN_MATCH: Record<KnownTool, RegExp> = {
+  slack: /slack/i,
+  linear: /linear/i,
+  github: /github/i,
+  gmail: /gmail|google mail/i,
+  calendar: /calendar|gcal/i,
+  notion: /notion/i,
+  granola: /granola/i,
+};
+
+/** A known tool's name, as claude.ai names its connector. */
+export const KNOWN_NAME: Record<KnownTool, string> = {
+  slack: 'Slack',
+  linear: 'Linear',
+  github: 'GitHub',
+  gmail: 'Gmail',
+  calendar: 'Google Calendar',
+  notion: 'Notion',
+  granola: 'Granola',
+};
+
+/** The known tool a server is, from its name and URL, or null for any other. */
+export function knownTool(name: string, url?: string | null): KnownTool | null {
+  const text = `${name} ${url ?? ''}`;
+  return KNOWN_TOOLS.find((t) => KNOWN_MATCH[t].test(text)) ?? null;
+}
 
 /**
- * Where one tool stands for the person's agent (`rpc.rig.firstRun.preflight`):
- * reachable, there but needing the person to sign in again, or not there.
+ * One tool Connect lists, by the name Claude gives its server ("Granola",
+ * "Google Drive"; claude.ai's own prefix dropped), or "GitHub" for `gh`.
+ */
+export type FirstRunConnector = string;
+
+/**
+ * The key a tool's choice is kept under: a known tool by its id, so "Google
+ * Calendar" and a source named "Calendar" are one; any other by its name.
+ */
+export function toolKey(connector: FirstRunConnector): string {
+  return knownTool(connector) ?? connector.trim().toLowerCase();
+}
+
+/**
+ * One of the person's tools as their agent has it (`rpc.rig.firstRun.preflight`):
+ * reachable, or there but needing the person to sign in again. Tools Claude
+ * doesn't have aren't listed.
  */
 export type ConnectorCheck = {
   connector: FirstRunConnector;
-  state: 'connected' | 'needs_auth' | 'missing';
+  /** Its logo and words, when Rig knows the tool. */
+  known: KnownTool | null;
+  state: 'connected' | 'needs_auth';
 };

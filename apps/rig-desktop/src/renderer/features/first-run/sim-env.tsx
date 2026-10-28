@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useAgentIdentities } from '@renderer/features/chat/use-runnable-agents';
 import { rpc } from '@renderer/lib/ipc';
-import {
-  FIRST_RUN_CONNECTORS,
-  FIRST_RUN_VERSION,
-  type FirstRunConnector,
-  type FirstRunProgress,
-} from '@shared/rig/first-run';
+import { FIRST_RUN_VERSION, type FirstRunProgress } from '@shared/rig/first-run';
 import type { OrchProgressEvent } from '@shared/rig/orch-progress';
 import { agentRoute, ROUTED_AGENT_ID } from './agent-route';
-import type { FirstRunSimulation } from './debug/first-run-debug';
+import { withWatched, type Watching } from './connect/sources';
+import { SIM_TOOLS, type FirstRunSimulation } from './debug/first-run-debug';
 import {
   type AgentState,
   type FirstRunEnv,
@@ -73,7 +69,7 @@ export function SimulatedFirstRunEnv({
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   // What the simulated agent reaches, and what the person chose to watch.
   const connectors = useRef(simulation.connectors);
-  const watching = useRef<Partial<Record<FirstRunConnector, boolean>>>({});
+  const watching = useRef<Watching>({});
   // Someone Rig has read for: caught up since two days ago, not a first read of the last three days.
   const since = useMemo(
     () => (simulation.user === 'existing' ? new Date(Date.now() - 2 * 86_400_000).toISOString() : null),
@@ -131,20 +127,20 @@ export function SimulatedFirstRunEnv({
       new Promise((resolve) =>
         later(PREFLIGHT_MS, () =>
           resolve(
-            FIRST_RUN_CONNECTORS.map((connector) => ({
-              connector,
-              state: connectors.current[connector] ?? 'missing',
-            }))
+            SIM_TOOLS.flatMap(({ connector, known }) => {
+              const state = connectors.current[connector];
+              return state ? [{ connector, known, state }] : [];
+            })
           )
         )
       ),
     readWatching: () => Promise.resolve({ ...watching.current }),
     setWatching: (connector, on) => {
-      watching.current = { ...watching.current, [connector]: on };
+      watching.current = withWatched(watching.current, connector, on);
       return Promise.resolve();
     },
-    // As if the person connected it in claude.ai and came back to the window.
-    openConnect: (connector) =>
+    // As if the person connected it (or, asked to connect more, Notion) in claude.ai and came back.
+    openConnect: (connector = 'Notion') =>
       later(CONNECT_MS, () => {
         connectors.current = { ...connectors.current, [connector]: 'connected' };
         window.dispatchEvent(new Event('focus'));

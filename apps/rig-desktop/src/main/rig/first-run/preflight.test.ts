@@ -4,47 +4,44 @@ import { connectorChecks, ghAuthFrom, runPreflight } from './preflight';
 
 const LIST = [
   'claude.ai Slack: https://mcp.slack.com/mcp (HTTP) - ✔ Connected',
-  'claude.ai Gmail: https://gmail.mcp.claude.com/mcp (HTTP) - ! Needs authentication',
-  'claude.ai Google Calendar: https://gcal.mcp.claude.com/mcp (HTTP) - ✔ Connected',
+  'claude.ai Granola: https://mcp.granola.ai/mcp (HTTP) - ✔ Connected',
+  'claude.ai Google Drive: https://drivemcp.googleapis.com/mcp (HTTP) - ✔ Connected',
+  'claude.ai Ramp: https://ramp-mcp-remote.ramp.com/mcp (HTTP) - ! Needs authentication',
   'claude.ai Notion: https://mcp.notion.com/mcp (HTTP) - Disabled',
   'linear-server: https://mcp.linear.app/mcp (HTTP) - ✗ Failed to connect',
   'linear: https://mcp.linear.app/sse (SSE) - ✔ Connected',
-  'playwright: npx @playwright/mcp - ✔ Connected',
+  'langfuse: https://cloud.langfuse.com/api/public/mcp (HTTP) - ✔ Connected',
 ].join('\n');
 
-const stateOf = (checks: ReturnType<typeof connectorChecks>) =>
-  Object.fromEntries(checks.map((c) => [c.connector, c.state]));
-
 describe('connectorChecks', () => {
-  it('reads each tool from Claude’s list by name or host, keeping its best state', () => {
-    expect(stateOf(connectorChecks(parseClaudeMcpStatuses(LIST), 'missing'))).toEqual({
-      slack: 'connected',
-      // One Linear server failed, another is connected: connected wins.
-      linear: 'connected',
-      github: 'missing',
-      gmail: 'needs_auth',
-      calendar: 'connected',
-      // Turned off in Claude: not there.
-      notion: 'missing',
-    });
+  it("lists every tool Claude has, by its own name, in Claude's order, then GitHub", () => {
+    expect(connectorChecks(parseClaudeMcpStatuses(LIST), 'connected')).toEqual([
+      { connector: 'Slack', known: 'slack', state: 'connected' },
+      { connector: 'Granola', known: 'granola', state: 'connected' },
+      // No logo for it: a neutral mark, under its own name.
+      { connector: 'Google Drive', known: null, state: 'connected' },
+      { connector: 'Ramp', known: null, state: 'needs_auth' },
+      // Two Linear servers, one failed, one connected: one row, connected.
+      { connector: 'Linear', known: 'linear', state: 'connected' },
+      { connector: 'langfuse', known: null, state: 'connected' },
+      { connector: 'GitHub', known: 'github', state: 'connected' },
+    ]);
+  });
+
+  it('leaves out a tool turned off in Claude, and GitHub when gh is not signed in', () => {
+    const names = connectorChecks(parseClaudeMcpStatuses(LIST), 'missing').map((c) => c.connector);
+    expect(names).not.toContain('Notion');
+    expect(names).not.toContain('GitHub');
   });
 
   it('takes GitHub from gh, which claude.ai has no connector for', () => {
-    expect(stateOf(connectorChecks([], 'connected')).github).toBe('connected');
-    expect(stateOf(connectorChecks([], 'needs_auth')).github).toBe('needs_auth');
+    expect(connectorChecks([], 'needs_auth')).toEqual([
+      { connector: 'GitHub', known: 'github', state: 'needs_auth' },
+    ]);
   });
 
-  it('lists all six tools, as not there, when Claude couldn’t be read', () => {
-    const checks = connectorChecks(null, 'missing');
-    expect(checks.map((c) => c.connector)).toEqual([
-      'slack',
-      'linear',
-      'github',
-      'gmail',
-      'calendar',
-      'notion',
-    ]);
-    expect(checks.every((c) => c.state === 'missing')).toBe(true);
+  it('lists nothing from Claude when it couldn’t be read', () => {
+    expect(connectorChecks(null, 'missing')).toEqual([]);
   });
 });
 
@@ -85,7 +82,7 @@ describe('runPreflight', () => {
       ghAuth: async () => 'connected',
     });
     expect(order).toEqual(['invalidate', 'read']);
-    expect(stateOf(checks).github).toBe('connected');
+    expect(checks.find((c) => c.known === 'github')?.state).toBe('connected');
   });
 
   it('a failing read is nothing connected, not an error', async () => {
@@ -94,6 +91,6 @@ describe('runPreflight', () => {
       claudeEntries: () => Promise.reject(new Error('no claude')),
       ghAuth: () => Promise.reject(new Error('no gh')),
     });
-    expect(checks.every((c) => c.state === 'missing')).toBe(true);
+    expect(checks).toEqual([]);
   });
 });

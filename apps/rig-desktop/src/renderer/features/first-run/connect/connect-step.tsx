@@ -1,49 +1,45 @@
 import { ArrowRight, Lock } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActionButton } from '@renderer/features/home-feed/action-button';
-import { SourceLogo } from '@renderer/features/home-feed/bits';
 import { SettingsSwitch } from '@renderer/features/settings/settings-row';
 import type { AgentFieldRegion } from '@renderer/lib/ui/agent-field';
 import type { DotMatrixActivity } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import {
-  FIRST_RUN_CONNECTORS,
+  toolKey,
   type ConnectorCheck,
-  type FirstRunConnector,
+  type KnownTool,
 } from '@shared/rig/first-run';
 import { StepFrame, type StepProps } from '../first-run';
 import { sinceWords } from '../read/read-model';
-import { readingNow, readsNow } from './sources';
+import { readingNow, readsNow, watched, withWatched, type Watching } from './sources';
+import { ToolMark } from './tool-mark';
 import './connect.css';
 
-const NAME: Record<FirstRunConnector, string> = {
-  slack: 'Slack',
-  linear: 'Linear',
-  github: 'GitHub',
-  gmail: 'Gmail',
-  calendar: 'Calendar',
-  notion: 'Notion',
-};
-
-/** Each tool's color on the field, from the app's own tokens (as the Read step colors them). */
-const COLOR: Record<FirstRunConnector, string> = {
+/** A known tool's color on the field, from the app's own tokens (as the Read step colors them). */
+const COLOR: Record<KnownTool, string> = {
   slack: '--theme-3',
   linear: '--theme-7',
   github: '--text-secondary',
   gmail: '--theme-8',
   calendar: '--theme-5',
   notion: '--text-secondary',
+  granola: '--theme-4',
 };
+/** Any other tool takes one of these, in turn. */
+const OTHER_COLORS = ['--theme-1', '--theme-2', '--theme-6', '--theme-4'];
 
-/** Where each tool's pin stands on the stage, as fractions of it: spread out, none on top of another. */
-const AT: Record<FirstRunConnector, { x: number; y: number }> = {
-  slack: { x: 0.3, y: 0.3 },
-  linear: { x: 0.7, y: 0.24 },
-  github: { x: 0.74, y: 0.66 },
-  gmail: { x: 0.28, y: 0.72 },
-  calendar: { x: 0.5, y: 0.5 },
-  notion: { x: 0.52, y: 0.86 },
-};
+/** At most this many pins on the stage; more tools still get their rows. */
+const MAX_PINS = 10;
+
+/**
+ * Where the i-th of n pins stands on the stage, as fractions of it: two
+ * staggered columns, spread evenly down it, none on top of another.
+ */
+export function pinSpot(i: number, n: number): { x: number; y: number } {
+  if (n === 1) return { x: 0.5, y: 0.5 };
+  return { x: i % 2 ? 0.68 : 0.32, y: 0.14 + (0.72 * (i + 0.5)) / n };
+}
 
 /** A tool that's on lights this many single tiles around its pin, scattered, in its color. */
 const TILES_PER_TOOL = 7;
@@ -52,8 +48,6 @@ const RING = { inner: 0.08, outer: 0.17, spot: 0.03 };
 /** Found tools wake one after another, not all at once. */
 const WAKE_STAGGER_MS = 220;
 const ACTIVITY: DotMatrixActivity[] = ['reading', 'searching', 'thinking', 'waiting'];
-
-type Checks = Record<FirstRunConnector, ConnectorCheck['state']>;
 
 /**
  * Step 3: the tools the person's Claude already reaches. The pre-flight
@@ -65,8 +59,8 @@ type Checks = Record<FirstRunConnector, ConnectorCheck['state']>;
 export function ConnectStep({ env, position, onNext, setFieldLook, field }: StepProps) {
   useEffect(() => setFieldLook('plain'), [setFieldLook]);
   const { route } = env.agentInfo;
-  const [checks, setChecks] = useState<Checks | null>(null);
-  const [watching, setWatching] = useState<Partial<Record<FirstRunConnector, boolean>>>({});
+  const [checks, setChecks] = useState<ConnectorCheck[] | null>(null);
+  const [watching, setWatching] = useState<Watching>({});
   const [starting, setStarting] = useState(false);
   // Someone Rig already reads for: the switches start from what it reads now, and Continue changes
   // nothing unless they flip one. undefined while it's asked; null for someone new.
@@ -83,7 +77,7 @@ export function ConnectStep({ env, position, onNext, setFieldLook, field }: Step
       .preflight()
       .then((list) => {
         if (ask !== asked.current) return;
-        setChecks(Object.fromEntries(list.map((c) => [c.connector, c.state])) as Checks);
+        setChecks(list);
       })
       .catch(() => undefined);
   }, []);
@@ -96,54 +90,63 @@ export function ConnectStep({ env, position, onNext, setFieldLook, field }: Step
   }, [check]);
 
   const existing = typeof since === 'string';
-  const isOn = (c: FirstRunConnector) =>
-    checks?.[c] === 'connected' && (existing ? readsNow(watching, c) : watching[c] !== false);
-  const on = FIRST_RUN_CONNECTORS.filter(isOn);
-  const anyConnected =
-    checks !== null && FIRST_RUN_CONNECTORS.some((c) => checks[c] === 'connected');
+  const tools = checks ?? [];
+  const connected = tools.filter((t) => t.state === 'connected');
+  // All on by default for someone new; as Rig reads now for someone it already reads for.
+  const isOn = (t: ConnectorCheck) =>
+    t.state === 'connected' &&
+    (existing ? readsNow(watching, t.connector) : watched(watching, t.connector) !== false);
+  const on = tools.filter(isOn);
+  const anyConnected = checks !== null && connected.length > 0;
 
   // The stage: each tool that's on wakes a few tiles around its pin; off lets them go.
-  const lit = useRef(new Set<FirstRunConnector>());
-  const onKey = on.join(',');
+  const pinned = connected.slice(0, MAX_PINS);
+  const lit = useRef(new Set<string>());
+  const onKey = on.map((t) => toolKey(t.connector)).join('\n');
+  const pinKey = pinned.map((t) => `${toolKey(t.connector)}:${t.known ?? ''}`).join('\n');
   useEffect(() => {
-    const now = new Set(onKey ? (onKey.split(',') as FirstRunConnector[]) : []);
+    const now = new Set(onKey ? onKey.split('\n') : []);
+    const spots = pinKey ? pinKey.split('\n').map((line) => line.split(':')) : [];
     const timers: ReturnType<typeof setTimeout>[] = [];
     let order = 0;
-    for (const c of FIRST_RUN_CONNECTORS) {
-      const was = lit.current.has(c);
-      if (now.has(c) && !was) {
-        lit.current.add(c);
+    spots.forEach(([key, known], k) => {
+      if (!key) return;
+      const was = lit.current.has(key);
+      if (now.has(key) && !was) {
+        lit.current.add(key);
+        const color = known ? COLOR[known as KnownTool] : OTHER_COLORS[k % OTHER_COLORS.length]!;
+        const at = pinSpot(k, spots.length);
         timers.push(
           setTimeout(() => {
             for (let i = 0; i < TILES_PER_TOOL; i++) {
               const activity = ACTIVITY[Math.floor(Math.random() * ACTIVITY.length)]!;
-              field.current?.tile(`connect:${c}:${i}`, ringSpot(AT[c], i)).set(activity, COLOR[c]);
+              field.current?.tile(`connect:${key}:${i}`, ringSpot(at, i)).set(activity, color);
             }
           }, order++ * WAKE_STAGGER_MS)
         );
-      } else if (!now.has(c) && was) {
-        lit.current.delete(c);
-        for (let i = 0; i < TILES_PER_TOOL; i++) field.current?.tile(`connect:${c}:${i}`).release();
+      } else if (!now.has(key) && was) {
+        lit.current.delete(key);
+        for (let i = 0; i < TILES_PER_TOOL; i++) field.current?.tile(`connect:${key}:${i}`).release();
       }
-    }
+    });
     return () => timers.forEach(clearTimeout);
-  }, [onKey, field]);
+  }, [onKey, pinKey, field]);
   // Leaving the step lets every tile go.
   useEffect(
     () => () => {
-      for (const c of lit.current)
-        for (let i = 0; i < TILES_PER_TOOL; i++) field.current?.tile(`connect:${c}:${i}`).release();
+      for (const key of lit.current)
+        for (let i = 0; i < TILES_PER_TOOL; i++) field.current?.tile(`connect:${key}:${i}`).release();
       lit.current.clear();
     },
     [field]
   );
 
-  const toggle = (c: FirstRunConnector) => {
+  const toggle = (t: ConnectorCheck) => {
     flipped.current = true;
-    const next = !isOn(c);
+    const next = !isOn(t);
     // Someone read with the defaults: those stay on when they flip another.
-    setWatching((w) => ({ ...(existing ? readingNow(w) : {}), ...w, [c]: next }));
-    void env.setWatching(c, next).catch(() => undefined);
+    setWatching((w) => withWatched({ ...(existing ? readingNow(w) : {}), ...w }, t.connector, next));
+    void env.setWatching(t.connector, next).catch(() => undefined);
   };
 
   const catchUp = async () => {
@@ -155,9 +158,7 @@ export function ConnectStep({ env, position, onNext, setFieldLook, field }: Step
     setStarting(true);
     try {
       // The whole choice: with no sources the read falls back to its defaults.
-      for (const c of FIRST_RUN_CONNECTORS) {
-        if (checks?.[c] === 'connected') await env.setWatching(c, isOn(c));
-      }
+      for (const t of connected) await env.setWatching(t.connector, isOn(t));
     } catch {
       // The read still runs; it falls back to its usual tools.
     } finally {
@@ -187,17 +188,27 @@ export function ConnectStep({ env, position, onNext, setFieldLook, field }: Step
             </p>
           )}
           <div className="flex flex-col gap-0.5" data-testid="connect-rows">
-            {FIRST_RUN_CONNECTORS.map((c) => (
+            {checks === null && <ConnectorRow tool={null} on={false} connectorsHome={route.connectorsHome} onToggle={() => {}} onConnect={() => {}} />}
+            {tools.map((t) => (
               <ConnectorRow
-                key={c}
-                connector={c}
-                state={checks?.[c] ?? null}
-                on={isOn(c)}
+                key={toolKey(t.connector)}
+                tool={t}
+                on={isOn(t)}
                 connectorsHome={route.connectorsHome}
-                onToggle={() => toggle(c)}
-                onConnect={() => env.openConnect(c)}
+                onToggle={() => toggle(t)}
+                onConnect={() => env.openConnect(t.connector)}
               />
             ))}
+            {checks !== null && (
+              <button
+                type="button"
+                onClick={() => env.openConnect()}
+                className="self-start px-2 pt-1.5 text-meta text-text-muted transition-colors hover:text-text-primary"
+                data-testid="connect-more"
+              >
+                Connect more in {route.connectorsHome} ↗
+              </button>
+            )}
           </div>
           <div className="flex-1" />
           <div className="flex items-start gap-2 border-t border-border-hairline pt-3 text-meta text-text-muted">
@@ -228,10 +239,15 @@ export function ConnectStep({ env, position, onNext, setFieldLook, field }: Step
       }
       stage={
         <div className="relative -m-6 self-stretch justify-self-stretch" aria-hidden>
-          {checks !== null &&
-            FIRST_RUN_CONNECTORS.filter((c) => checks[c] === 'connected').map((c, k) => (
-              <Pin key={c} connector={c} on={isOn(c)} delayMs={k * WAKE_STAGGER_MS} />
-            ))}
+          {pinned.map((t, k) => (
+            <Pin
+              key={toolKey(t.connector)}
+              tool={t}
+              at={pinSpot(k, pinned.length)}
+              on={isOn(t)}
+              delayMs={k * WAKE_STAGGER_MS}
+            />
+          ))}
         </div>
       }
     />
@@ -256,23 +272,22 @@ function capitalize(text: string): string {
 }
 
 function ConnectorRow({
-  connector,
-  state,
+  tool,
   on,
   connectorsHome,
   onToggle,
   onConnect,
 }: {
-  connector: FirstRunConnector;
-  /** null while the first pre-flight hasn't answered. */
-  state: ConnectorCheck['state'] | null;
+  /** null while the first pre-flight hasn't answered: one placeholder row. */
+  tool: ConnectorCheck | null;
   on: boolean;
   connectorsHome: string;
   onToggle: () => void;
   onConnect: () => void;
 }) {
-  const name = NAME[connector];
-  const github = connector === 'github';
+  const state = tool?.state ?? null;
+  const name = tool?.connector ?? 'Your tools';
+  const github = tool?.known === 'github';
   const status =
     state === null
       ? 'Looking…'
@@ -282,13 +297,9 @@ function ConnectorRow({
             ? 'Signed in through gh'
             : 'Connected'
           : 'Left out'
-        : state === 'needs_auth'
-          ? github
-            ? 'Sign in to gh again'
-            : `Reconnect in ${connectorsHome}`
-          : github
-            ? 'Not signed in to gh'
-            : 'Not connected yet';
+        : github
+          ? 'Sign in to gh again'
+          : `Reconnect in ${connectorsHome}`;
 
   return (
     <div
@@ -298,20 +309,20 @@ function ConnectorRow({
         state === 'connected' && on && 'bg-bg-2',
         state === 'connected' && !on && 'opacity-55'
       )}
-      data-testid={`connect-row-${connector}`}
+      data-testid={tool ? `connect-row-${toolKey(tool.connector)}` : 'connect-row-checking'}
       data-state={state ?? 'checking'}
     >
       <span
         className={cn(
           'grid size-7 place-items-center rounded-lg',
           state === 'connected' && on ? 'bg-bg-1' : 'bg-bg-2',
-          state !== 'connected' && state !== null && 'grayscale-[0.9]'
+          state === 'needs_auth' && 'grayscale-[0.9]'
         )}
       >
-        <SourceLogo connector={connector} size={16} />
+        {tool && <ToolMark known={tool.known} name={tool.connector} size={16} />}
       </span>
       <div className="min-w-0">
-        <span className="block text-ui font-medium text-text-primary">{name}</span>
+        <span className="block truncate text-ui font-medium text-text-primary">{name}</span>
         <span
           className={cn(
             'block text-xs',
@@ -328,20 +339,20 @@ function ConnectorRow({
       <span className="flex items-center">
         {state === 'connected' && (
           <SettingsSwitch
-            id={`connect-${connector}`}
+            id={`connect-${toolKey(name)}`}
             label={`Read ${name}`}
             checked={on}
             onToggle={onToggle}
           />
         )}
-        {(state === 'missing' || state === 'needs_auth') && (
+        {state === 'needs_auth' && (
           <button
             type="button"
             onClick={onConnect}
             className="text-meta text-accent hover:opacity-80"
-            data-testid={`connect-open-${connector}`}
+            data-testid={`connect-open-${toolKey(name)}`}
           >
-            {state === 'needs_auth' ? 'Reconnect ↗' : github ? 'How ↗' : 'Connect ↗'}
+            Reconnect ↗
           </button>
         )}
       </span>
@@ -349,22 +360,23 @@ function ConnectorRow({
   );
 }
 
-/** A tool on the stage: its real logo, name and whether Rig reads it, on glass over its tiles. */
+/** A tool on the stage: its mark, name and whether Rig reads it, on glass over its tiles. */
 function Pin({
-  connector,
+  tool,
+  at,
   on,
   delayMs,
 }: {
-  connector: FirstRunConnector;
+  tool: ConnectorCheck;
+  at: { x: number; y: number };
   on: boolean;
   delayMs: number;
 }) {
-  const at = AT[connector];
   return (
     <div
       className="absolute -translate-x-1/2 -translate-y-1/2"
       style={{ left: `${at.x * 100}%`, top: `${at.y * 100}%` }}
-      data-testid={`connect-pin-${connector}`}
+      data-testid={`connect-pin-${toolKey(tool.connector)}`}
     >
       <div
         className={cn(
@@ -374,11 +386,11 @@ function Pin({
         style={{ animationDelay: `${delayMs}ms` }}
       >
         <span className="grid size-[26px] place-items-center rounded-full bg-bg-1">
-          <SourceLogo connector={connector} size={15} />
+          <ToolMark known={tool.known} name={tool.connector} size={15} />
         </span>
         <span className="text-left">
-          <b className="block text-sm leading-tight font-medium text-text-primary">
-            {NAME[connector]}
+          <b className="block max-w-[160px] truncate text-sm leading-tight font-medium text-text-primary">
+            {tool.connector}
           </b>
           <span className="block text-xs leading-snug text-text-secondary">
             {on ? 'Connected' : 'Left out'}
