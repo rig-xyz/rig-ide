@@ -8,7 +8,7 @@ import { loadAllSessionEvents, parseStoredEvents } from '@renderer/features/chat
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { rigFeedChangedChannel } from '@shared/rig/feed';
-import { knownTool, toolKey } from '@shared/rig/first-run';
+import { knownTool, type KnownTool, toolKey } from '@shared/rig/first-run';
 import { ActionButton } from './action-button';
 import { Kicker, SourceLogo, sourceName } from './bits';
 import { agoShort } from './connectors-model';
@@ -367,8 +367,11 @@ function ResultCard({ row, ago, onOpen }: { row: Working; ago: string; onOpen: (
   );
 }
 
-/** The last background run in one line, Check now, and what Claude reads. */
-export function RunFooter() {
+/**
+ * Beside the Feed's title, in one quiet line: the tools Rig reads (their
+ * logos), when it last checked, and Check now. While it reads, it says so.
+ */
+export function RunStatus() {
   useRefreshOnFeedChange();
   const now = useNow(30_000);
   const queryClient = useQueryClient();
@@ -388,6 +391,8 @@ export function RunFooter() {
   const runs = data?.success && 'rows' in data.data ? (data.data.rows as unknown as Run[]) : [];
   // The latest run that ended with a note: a run in progress has read nothing yet.
   const last = runs.find((r) => r.ended && r.read.length) ?? runs[0] ?? null;
+  const checked = last?.read.map((r) => r.source).filter(Boolean) ?? [];
+  const tools = useReads();
 
   const checkNow = async () => {
     setAsked(true);
@@ -396,31 +401,42 @@ export function RunFooter() {
     void queryClient.invalidateQueries({ queryKey: RUN_KEY });
     void queryClient.invalidateQueries({ queryKey: SET_ASIDE_KEY });
   };
-  const sources = last?.read.map((r) => r.source).filter(Boolean) ?? [];
+  const when = last ? agoShort(Date.parse(last.ended ?? last.at), now) : null;
+  const said = running
+    ? 'Claude is reading your work'
+    : last
+      ? `Rig checked ${checked.length ? checked.map(nameOf).join(' and ') : 'your tools'} ${when}`
+      : "Rig hasn't checked yet";
 
   return (
-    <div className="min-w-[360px] shrink-0 border-t border-border-hairline px-5 pt-2.5 pb-3.5">
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1">
-          {running ? (
-            <span className="flex items-center gap-1.5 text-xs text-accent">
-              <DotMatrix state="searching" size="sm" />
-              Claude is reading your work…
-            </span>
-          ) : last ? (
-            <span className="block truncate text-xs text-text-secondary">
-              Rig checked {sources.length ? sources.map(nameOf).join(' and ') : 'your sources'}{' '}
-              {agoShort(Date.parse(last.ended ?? last.at), now)}
-            </span>
+    <div className="flex min-w-0 items-center gap-1.5 text-xs text-text-muted [-webkit-app-region:no-drag]" title={said}>
+      <span className="flex shrink-0 items-center gap-1" aria-label={`Reads ${tools.map((t) => t.name).join(', ')}, read only`}>
+        {tools.map((t) =>
+          t.known ? (
+            <SourceLogo key={t.key} connector={t.known} size={12} />
           ) : (
-            <span className="text-xs text-text-muted">Rig hasn't checked yet.</span>
-          )}
+            <Plug key={t.key} className="size-3" strokeWidth={1.75} aria-hidden />
+          )
+        )}
+      </span>
+      {running ? (
+        <span className="flex min-w-0 items-center gap-1.5 text-accent">
+          <DotMatrix state="searching" size="sm" />
+          <span className="truncate">Reading…</span>
         </span>
-        <ActionButton variant="quiet" size="sm" icon={RefreshCw} disabled={running} onClick={() => void checkNow()}>
-          Check now
-        </ActionButton>
-      </div>
-      <Reads />
+      ) : (
+        <span className="truncate">{when ?? 'Not checked yet'}</span>
+      )}
+      <button
+        type="button"
+        aria-label="Check now"
+        title="Check now"
+        disabled={running}
+        onClick={() => void checkNow()}
+        className="grid size-6 shrink-0 place-items-center rounded-control text-text-muted transition-colors hover:bg-bg-2 hover:text-text-primary disabled:opacity-40"
+      >
+        <RefreshCw className={cn('size-3', running && 'animate-spin')} strokeWidth={1.75} />
+      </button>
     </div>
   );
 }
@@ -436,7 +452,7 @@ const DEFAULT_READS = ['slack', 'linear', 'github'];
  * switches, or ones they added), one per tool, each by its own name; else
  * what a run falls back to.
  */
-function Reads() {
+function useReads(): { key: string; name: string; known: KnownTool | null }[] {
   const { data } = useQuery({
     queryKey: SOURCES_KEY,
     queryFn: () => rpc.rig.orch.sources(),
@@ -444,20 +460,8 @@ function Reads() {
   });
   const on = data?.success ? data.data.filter((row) => !row.paused).map((row) => row.connector) : [];
   const tools = [...new Map((on.length ? on : DEFAULT_READS).map((c) => [toolKey(c), c])).values()];
-  return (
-    <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-text-muted">
-      <span>Reads</span>
-      {tools.map((c) => {
-        const known = knownTool(c);
-        const name = known ? sourceName(known) : c;
-        return (
-          <span key={toolKey(c)} className="flex items-center gap-1" title={`${name}, read only`}>
-            {known ? <SourceLogo connector={known} size={12} /> : <Plug className="size-3" strokeWidth={1.75} />}
-            {name}
-          </span>
-        );
-      })}
-      <span className="ml-auto">read only</span>
-    </div>
-  );
+  return tools.map((c) => {
+    const known = knownTool(c);
+    return { key: toolKey(c), name: known ? sourceName(known) : c, known };
+  });
 }

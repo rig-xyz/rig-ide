@@ -6,7 +6,7 @@ import { cn } from '@renderer/lib/utils';
 import { IconButton, Kicker } from './bits';
 import { CatchUpStrip } from './catch-up-strip';
 import { ConnectorsView } from './connectors-view';
-import { ClaudeOnIt, RunFooter, SetAside } from './feed-background';
+import { ClaudeOnIt, RunStatus, SetAside } from './feed-background';
 import { FeedNotice, FeedStale } from './feed-notice';
 import { FeedRow, IgnoredRow } from './feed-row';
 import { useHome } from './home-context';
@@ -69,14 +69,19 @@ export function Feed({
       {!folded && (
         <>
           <div className="flex h-[52px] shrink-0 items-center gap-2.5 pr-3 pl-5 [-webkit-app-region:drag]">
-            <PanelSwitch
-              panel={panel}
-              other={state.fromRelay ? null : 'Connectors'}
-              needsYou={counts.needsYou}
-              checking={checking}
-              onChange={(next) => dispatch({ type: 'panel', panel: next })}
-            />
+            {state.fromRelay ? (
+              <FeedTitle needsYou={counts.needsYou} />
+            ) : (
+              <PanelSwitch
+                panel={panel}
+                other="Connectors"
+                needsYou={counts.needsYou}
+                checking={checking}
+                onChange={(next) => dispatch({ type: 'panel', panel: next })}
+              />
+            )}
             <span className="flex-1" />
+            {live && feedStatus.kind === 'ready' && <RunStatus />}
             <IconButton
               label="Fold the Feed"
               dir="right"
@@ -116,15 +121,33 @@ export function Feed({
               )}
             </div>
           )}
-          {live && feedStatus.kind === 'ready' && <RunFooter />}
         </>
       )}
     </aside>
   );
 }
 
+/** The real Feed's title: a heading, with the amber dot while something needs you. */
+function FeedTitle({ needsYou }: { needsYou: number }) {
+  return (
+    <h2 className="m-0 flex items-center gap-2 font-display text-[15px] font-semibold tracking-[-0.01em] text-text-primary">
+      Feed
+      {needsYou > 0 && <NeedsYouDot count={needsYou} />}
+    </h2>
+  );
+}
+
+function NeedsYouDot({ count }: { count: number }) {
+  return (
+    <span
+      aria-label={`${count} need you`}
+      className="size-1.5 rounded-full bg-status-warn shadow-[0_0_0_2px_color-mix(in_oklab,var(--status-warn)_25%,transparent)]"
+    />
+  );
+}
+
 /**
- * Feed or Connectors: what needs to happen next, or your connectors at work.
+ * Feed or Connectors (the demo): what needs to happen next, or your connectors at work.
  * Feed carries an amber dot while something needs you; Connectors shows Claude
  * searching while a check runs, so the background work shows from either side.
  */
@@ -168,12 +191,7 @@ function PanelSwitch({
       {tab(
         'feed',
         'Feed',
-        needsYou > 0 && (
-          <span
-            aria-label={`${needsYou} need you`}
-            className="size-1.5 rounded-full bg-status-warn shadow-[0_0_0_2px_color-mix(in_oklab,var(--status-warn)_25%,transparent)]"
-          />
-        )
+        needsYou > 0 && <NeedsYouDot count={needsYou} />
       )}
       {other !== null &&
         tab('connectors', other, checking && <DotMatrix state="searching" size="sm" label="Checking" />)}
