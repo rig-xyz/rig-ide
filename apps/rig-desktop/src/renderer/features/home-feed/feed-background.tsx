@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpRight, ChevronDown, Eye, MoonStar, PanelRightOpen, RefreshCw } from 'lucide-react';
+import { ArrowUpRight, ChevronDown, Eye, MoonStar, PanelRightOpen, Plug, RefreshCw } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { events, rpc } from '@renderer/lib/ipc';
 import { RigChatStore } from '@renderer/features/chat/rig-chat-store';
@@ -8,6 +8,7 @@ import { loadAllSessionEvents, parseStoredEvents } from '@renderer/features/chat
 import { DotMatrix } from '@renderer/lib/ui/dot-matrix';
 import { cn } from '@renderer/lib/utils';
 import { rigFeedChangedChannel } from '@shared/rig/feed';
+import { knownTool, toolKey } from '@shared/rig/first-run';
 import { ActionButton } from './action-button';
 import { Kicker, SourceLogo, sourceName } from './bits';
 import { agoShort } from './connectors-model';
@@ -26,6 +27,7 @@ type Run = { ref: string; title: string; quieted?: string; at: string; ended: st
 
 const SET_ASIDE_KEY = ['rig', 'orch', 'set-aside'] as const;
 const RUN_KEY = ['rig', 'orch', 'last-run'] as const;
+const SOURCES_KEY = ['rig', 'orch', 'sources'] as const;
 const WORKING_KEY = ['rig', 'orch', 'working'] as const;
 const QUIETED_KEY = ['rig', 'orch', 'quieted'] as const;
 const STATUS_KEY = ['rig', 'orch', 'agent-status'] as const;
@@ -47,6 +49,7 @@ function useRefreshOnFeedChange(): void {
       events.on(rigFeedChangedChannel, () => {
         void queryClient.invalidateQueries({ queryKey: SET_ASIDE_KEY });
         void queryClient.invalidateQueries({ queryKey: RUN_KEY });
+        void queryClient.invalidateQueries({ queryKey: SOURCES_KEY });
         void queryClient.invalidateQueries({ queryKey: WORKING_KEY });
         void queryClient.invalidateQueries({ queryKey: QUIETED_KEY });
       }),
@@ -417,7 +420,7 @@ export function RunFooter() {
           Check now
         </ActionButton>
       </div>
-      <Reads sources={sources} />
+      <Reads />
     </div>
   );
 }
@@ -425,18 +428,35 @@ export function RunFooter() {
 /** A source as its note names it, the way the person knows it. */
 const nameOf = (source: string) => source.charAt(0).toUpperCase() + source.slice(1);
 
-/** What the background run reads: the sources of its last note, and GitHub through gh. */
-function Reads({ sources }: { sources: string[] }) {
-  const known = (['slack', 'linear', 'granola', 'gmail', 'github'] as const).filter((c) => c === 'github' || sources.includes(c));
+/** What a run reads when the person has no sources of their own (`main/rig/orch/agent.ts`). */
+const DEFAULT_READS = ['slack', 'linear', 'github'];
+
+/**
+ * What the background run reads: the sources the person keeps on (Connect's
+ * switches, or ones they added), one per tool, each by its own name; else
+ * what a run falls back to.
+ */
+function Reads() {
+  const { data } = useQuery({
+    queryKey: SOURCES_KEY,
+    queryFn: () => rpc.rig.orch.sources(),
+    staleTime: 30_000,
+  });
+  const on = data?.success ? data.data.filter((row) => !row.paused).map((row) => row.connector) : [];
+  const tools = [...new Map((on.length ? on : DEFAULT_READS).map((c) => [toolKey(c), c])).values()];
   return (
-    <div className="mt-2 flex items-center gap-2 text-2xs text-text-muted">
+    <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-text-muted">
       <span>Reads</span>
-      {known.map((c) => (
-        <span key={c} className="flex items-center gap-1" title={`${sourceName(c)}, read only`}>
-          <SourceLogo connector={c} size={12} />
-          {sourceName(c)}
-        </span>
-      ))}
+      {tools.map((c) => {
+        const known = knownTool(c);
+        const name = known ? sourceName(known) : c;
+        return (
+          <span key={toolKey(c)} className="flex items-center gap-1" title={`${name}, read only`}>
+            {known ? <SourceLogo connector={known} size={12} /> : <Plug className="size-3" strokeWidth={1.75} />}
+            {name}
+          </span>
+        );
+      })}
       <span className="ml-auto">read only</span>
     </div>
   );
