@@ -1,7 +1,7 @@
-import { err, ok } from '@emdash/shared';
+import { err, ok, type Result } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { OrchAgentState } from '../feed/relay';
-import { CATCH_UP_AFTER_MS, createCatchUp, readWindow } from './catch-up';
+import { CATCH_UP_AFTER_MS, CATCH_UP_BACKOFF_MS, createCatchUp, readWindow } from './catch-up';
 
 const NOW = Date.parse('2026-10-27T09:00:00Z');
 const HOUR = 3_600_000;
@@ -45,10 +45,12 @@ describe('readWindow', () => {
   });
 });
 
-function setUp(over: { lastRead?: string | null; firstRunDone?: boolean; running?: boolean } = {}) {
+function setUp(
+  over: { lastRead?: string | null; firstRunDone?: boolean; running?: boolean; outcome?: () => Promise<Result<{ noted?: boolean }, string>> } = {}
+) {
   let now = NOW;
   const lastRead = over.lastRead === undefined ? new Date(NOW - 10 * HOUR).toISOString() : over.lastRead;
-  const run = vi.fn(async () => ok(null));
+  const run = vi.fn(over.outcome ?? (async (): Promise<Result<{ noted?: boolean }, string>> => ok({ noted: true })));
   const catchUp = createCatchUp({
     state: async () => ok(state(lastRead ? { lastRun: { id: 'r', at: lastRead }, cursors: { slack: lastRead } } : {})),
     firstRunDone: () => over.firstRunDone ?? true,
@@ -76,6 +78,38 @@ describe('createCatchUp', () => {
     expect(await setUp({ firstRunDone: false }).catchUp.maybe('app start')).toBe('skipped');
     expect(await setUp({ lastRead: null }).catchUp.maybe('app start')).toBe('skipped');
     expect(await setUp({ running: true }).catchUp.maybe('app start')).toBe('skipped');
+  });
+
+  it('backs off after catch-ups that fail or leave no note, so waking again doesn’t loop', async () => {
+    let outcome: Result<{ noted?: boolean }, string> = err('Claude is signed out');
+    const { catchUp, run, advance } = setUp({ outcome: async () => outcome });
+    expect(await catchUp.maybe('wake')).toBe('started');
+    await Promise.resolve();
+    expect(await catchUp.maybe('unlock')).toBe('skipped');
+    advance(CATCH_UP_BACKOFF_MS);
+    outcome = ok({ noted: false });
+    expect(await catchUp.maybe('unlock')).toBe('started');
+    await Promise.resolve();
+    // Twice now: it waits twice as long.
+    advance(CATCH_UP_BACKOFF_MS);
+    expect(await catchUp.maybe('unlock')).toBe('skipped');
+    // Try again goes regardless.
+    expect(await catchUp.maybe('asked', true)).toBe('started');
+    await Promise.resolve();
+    advance(CATCH_UP_AFTER_MS);
+    outcome = ok({ noted: true });
+    expect(await catchUp.maybe('unlock')).toBe('started');
+    await Promise.resolve();
+    expect(await catchUp.maybe('unlock')).toBe('started');
+    expect(run).toHaveBeenCalledTimes(5);
+  });
+
+  it('a catch-up that throws counts as a miss too', async () => {
+    const { catchUp } = setUp({ outcome: () => Promise.reject(new Error('boom')) });
+    expect(await catchUp.maybe('wake')).toBe('started');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(await catchUp.maybe('unlock')).toBe('skipped');
   });
 
   it('skips when Rig can’t be asked', async () => {

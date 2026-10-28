@@ -79,13 +79,12 @@ export class SpacesDispatchController {
     return this.dispatcher.stopRun(runId, bindingId);
   }
 
-  /** Your agent's settings in a space (model, effort, permission mode). */
-  /** The run the owner's session with this agent is on now (or about to start); null when idle or not running here. */
   /** Runs on this Mac waiting on their owner's approval. */
   waitingRuns(): string[] {
     return this.dispatcher?.waitingRuns() ?? [];
   }
 
+  /** The run the owner's session with this agent is on now (or about to start); null when idle or not running here. */
   currentRunId(bindingId: string, ownerUserId: string, agent: 'claude' | 'codex'): string | null {
     return this.dispatcher?.currentRunId(bindingId, ownerUserId, agent) ?? null;
   }
@@ -100,6 +99,7 @@ export class SpacesDispatchController {
     this.dispatcher?.noteReaction(runId, emoji);
   }
 
+  /** Your agent's settings in a space (model, effort, permission mode). */
   async agentConfig(
     bindingId: string,
     ownerUserId: string,

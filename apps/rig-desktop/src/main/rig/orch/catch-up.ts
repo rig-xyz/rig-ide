@@ -17,6 +17,12 @@ export const CATCH_UP_AFTER_MS = 3 * 60 * 60_000;
 export const CATCH_UP_MAX_DAYS = 14;
 /** How long an ended catch-up's events are kept for a Home that mounts late (its "While you were away"). */
 const KEEP_ENDED_MS = 2 * 60_000;
+/**
+ * After a catch-up that failed, or ended without a note (so the last read
+ * didn't move), the next one waits this long, doubling each time up to
+ * `CATCH_UP_AFTER_MS`: unlocking the screen again doesn't start another.
+ */
+export const CATCH_UP_BACKOFF_MS = 15 * 60_000;
 export const CATCH_UP_TRIGGER = 'catch-up';
 
 const DAY_MS = 86_400_000;
@@ -46,7 +52,7 @@ export type CatchUpDeps = {
   firstRunDone: () => boolean;
   /** A run going now (any kind): a catch-up doesn't stack on it. */
   running: () => boolean;
-  run: (trigger: string, opts: RunOptions) => Promise<Result<unknown, string>>;
+  run: (trigger: string, opts: RunOptions) => Promise<Result<{ noted?: boolean }, string>>;
   now: () => number;
   log?: { info: (msg: string, meta?: Record<string, unknown>) => void };
 };
@@ -54,10 +60,18 @@ export type CatchUpDeps = {
 export function createCatchUp(deps: CatchUpDeps) {
   let current: { run: string | null; events: OrchProgressEvent[]; endedAt: number | null } | null = null;
   let deciding = false;
+  /** Catch-ups in a row that failed or left no note, and when the next may start. */
+  let misses = 0;
+  let notBefore = 0;
+  const missed = () => {
+    misses += 1;
+    notBefore = deps.now() + Math.min(CATCH_UP_BACKOFF_MS * 2 ** (misses - 1), CATCH_UP_AFTER_MS);
+  };
 
   /** Runs a catch-up if one is due (`force`: Try again, due or not); says why not otherwise. */
   async function maybe(why: string, force = false): Promise<'started' | 'not_due' | 'skipped'> {
     if (deciding || deps.running() || !deps.firstRunDone()) return 'skipped';
+    if (!force && deps.now() < notBefore) return 'skipped';
     deciding = true;
     try {
       const state = await deps.state();
@@ -68,7 +82,13 @@ export function createCatchUp(deps: CatchUpDeps) {
       if (!force && deps.now() - window.lastRead < CATCH_UP_AFTER_MS) return 'not_due';
       deps.log?.info('Rig catch-up: starting', { why, since: window.since });
       current = { run: null, events: [], endedAt: null };
-      void deps.run(CATCH_UP_TRIGGER, { since: window.since });
+      void deps.run(CATCH_UP_TRIGGER, { since: window.since }).then(
+        (r) => {
+          if (r.success && r.data?.noted !== false) misses = 0;
+          else missed();
+        },
+        () => missed()
+      );
       return 'started';
     } finally {
       deciding = false;

@@ -21,9 +21,10 @@ import {
  * (a connector found), and `tile(id)` claims one tile for one thing being
  * read, then settles it to an end glyph.
  *
- * One canvas, drawn only on the matrix clock and only while on screen and
- * the window is visible. With reduced motion the clock never ticks, so it
- * draws one still frame, again after each change.
+ * One canvas, drawn on the matrix clock only while something on it moves
+ * (ambient tiles, or a claimed tile still at work), it's on screen, and the
+ * window is visible; otherwise once after each change. With reduced motion
+ * the clock never ticks, so it draws one still frame, again after each change.
  */
 
 export type AgentFieldMode = 'ambient' | 'idle';
@@ -76,6 +77,8 @@ const TILE = CELL * 3 + GAP * 2;
 const REST_FRAME = Array<number>(9).fill(0.1);
 /** After a gather, how long the empty field takes to let its rest grid back in. */
 const GATHER_REST_MS = 1600;
+/** At most this many claimed tiles: past it, the oldest (a settled one first) goes back to the field. */
+export const MAX_CLAIMED_TILES = 40;
 
 const easeInOut = (p: number) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -116,6 +119,7 @@ export const AgentField = forwardRef<
     mode: AgentFieldMode;
     claims: Map<string, { index: number; run: Fixed | null }>;
     gather: { start: number; ms: number; x: number; y: number } | null;
+    /** Draws now, after a change, and starts or stops the clock for what's moving. */
     draw: () => void;
   }>({ tiles: [], width: 0, height: 0, mode, claims: new Map(), gather: null, draw: () => {} });
 
@@ -124,6 +128,15 @@ export const AgentField = forwardRef<
     const claim = (id: string, region?: AgentFieldRegion): number => {
       const existing = f.claims.get(id);
       if (existing) return existing.index;
+      if (f.claims.size >= MAX_CLAIMED_TILES) {
+        // The oldest settled one goes back to the field, else the oldest.
+        const held = [...f.claims.entries()];
+        const [oldest, { index: freed }] =
+          held.find(([, c]) => c.run && isDotMatrixEnd(c.run.state)) ?? held[0]!;
+        f.claims.delete(oldest);
+        const tile = f.tiles[freed];
+        if (tile) tile.run = null;
+      }
       const taken = new Set([...f.claims.values()].map((c) => c.index));
       if (region) {
         const inside = f.tiles
@@ -230,13 +243,21 @@ export const AgentField = forwardRef<
     const f = field.current;
     const still = prefersReducedMotion();
     const colors = { accent: '', rest: '', ok: '' };
+    /** Custom properties read off the page, kept until the theme changes (never read per tile per frame). */
+    const read = new Map<string, string>();
 
     const resolve = (color: AgentFieldColor | null, fallback: string) => {
       if (!color) return fallback;
       if (!color.startsWith('--')) return color;
-      return getComputedStyle(canvas).getPropertyValue(color).trim() || fallback;
+      let value = read.get(color);
+      if (value === undefined) {
+        value = getComputedStyle(canvas).getPropertyValue(color).trim();
+        read.set(color, value);
+      }
+      return value || fallback;
     };
     const readColors = () => {
+      read.clear();
       colors.accent = resolve('--accent', '#62a4f5');
       colors.rest = resolve('--text-muted', '#6b7480');
       colors.ok = resolve('--status-ok', '#4ade80');
@@ -422,23 +443,33 @@ export const AgentField = forwardRef<
       }
       ctx.globalAlpha = 1;
     };
-    f.draw = draw;
 
-    readColors();
-    layout();
-    draw();
+    /** Ambient tiles, or a claimed tile still at work (an end glyph holds still). */
+    const moving = () =>
+      f.mode === 'ambient' ||
+      f.tiles.some((tile) => tile.run?.kind === 'fixed' && !isDotMatrixEnd(tile.run.state));
 
-    // Ticks only while the field is on screen and the window is showing.
+    // Ticks only while something moves, the field is on screen and the window is showing.
     let onScreen = false;
     let unsubscribe: (() => void) | null = null;
     const sync = () => {
-      const run = onScreen && document.visibilityState === 'visible' && !still;
-      if (run && !unsubscribe) unsubscribe = subscribeMatrixClock(draw);
+      const run = onScreen && document.visibilityState === 'visible' && !still && moving();
+      if (run && !unsubscribe) unsubscribe = subscribeMatrixClock(tick);
       else if (!run && unsubscribe) {
         unsubscribe();
         unsubscribe = null;
       }
     };
+    const tick = () => {
+      draw();
+      sync();
+    };
+    f.draw = tick;
+
+    readColors();
+    layout();
+    draw();
+
     const io = new IntersectionObserver(([entry]) => {
       onScreen = entry?.isIntersecting ?? false;
       sync();
@@ -471,6 +502,7 @@ export const AgentField = forwardRef<
       mo.disconnect();
       scheme.removeEventListener('change', recolor);
       document.removeEventListener('visibilitychange', sync);
+      unsubscribe = null;
       f.draw = () => {};
     };
   }, []);
