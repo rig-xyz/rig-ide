@@ -203,3 +203,17 @@ export function sinceWords(since: string | null, now = Date.now()): string | nul
     return `since ${at.toLocaleDateString(undefined, { weekday: 'long' })}`;
   return `since ${at.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
 }
+
+/**
+ * The catch-up's window as the person's last catch-up, which is what it is:
+ * "your last catch-up, at 9:40" today, "your last catch-up yesterday", "your
+ * last catch-up on Tuesday" this week, else "your last catch-up on 14 Oct".
+ */
+export function lastCatchUpWords(since: string | null, now = Date.now()): string | null {
+  const words = sinceWords(since, now);
+  if (!words) return null;
+  const when = words.replace(/^since /, '');
+  if (when === 'yesterday') return 'your last catch-up yesterday';
+  // Today it's a time; any other day, a day.
+  return /\d:\d\d/.test(when) ? `your last catch-up, at ${when}` : `your last catch-up on ${when}`;
+}

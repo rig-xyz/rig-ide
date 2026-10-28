@@ -223,7 +223,7 @@ describe('ReadStep', () => {
       );
     });
     await vi.waitFor(() =>
-      expect(host.querySelector('[data-testid="read-now"]')!.textContent).toMatch(/^Catching you up since /)
+      expect(host.querySelector('[data-testid="read-now"]')!.textContent).toMatch(/^Reading what’s new since your last catch-up on /)
     );
   });
 

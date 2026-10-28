@@ -12,7 +12,7 @@ import {
   firstForYou,
   initialRead,
   readReducer,
-  sinceWords,
+  lastCatchUpWords,
   type ReadLine,
   type ReadState,
   tickerLines,
@@ -320,21 +320,22 @@ export function ReadStep({
   );
 }
 
-/** How far back it reads, in words: "since Tuesday" for a catch-up, else the last 3 days. */
+/** How far back it reads, in words: "since your last catch-up on Tuesday", else the last 3 days. */
 export function windowWords(state: Pick<ReadState, 'since'>): string {
-  return sinceWords(state.since) ?? 'from your last 3 days';
+  const last = lastCatchUpWords(state.since);
+  return last ? `since ${last}` : 'from your last 3 days';
 }
 
 /** One line under the title: what it's doing this moment, or how it went. */
 function status(state: ReadState, current: ReadLine | null, thinking: boolean): string {
   const { ended } = state;
   const checked = state.counts.read;
-  const reading = state.since ? `Catching you up ${windowWords(state)}…` : 'Reading your last 3 days…';
+  const reading = state.since ? `Reading what’s new ${windowWords(state)}…` : 'Reading your last 3 days…';
   if (ended && !ended.ok) return stoppedCopy(ended.problem, ended.error).detail;
   if (ended) return `Checked ${checked} ${checked === 1 ? 'place' : 'places'} in your tools.`;
   if (current) return `${current.label}…`;
   if (!state.lines.length)
-    return state.since ? `Catching you up ${windowWords(state)}…` : 'Starting to read your last 3 days…';
+    return state.since ? `Reading what’s new ${windowWords(state)}…` : 'Starting to read your last 3 days…';
   if (thinking) {
     // What Claude says it's thinking, when it says; else what it has done so far.
     if (state.thought) return `${state.thought}…`;

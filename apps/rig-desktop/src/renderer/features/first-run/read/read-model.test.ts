@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { OrchProgressEvent } from '@shared/rig/orch-progress';
-import { initialRead, progressOf, readReducer, tickerLines } from './read-model';
+import { initialRead, lastCatchUpWords, progressOf, readReducer, tickerLines } from './read-model';
 
 const run = 'run_1';
 const line = (
@@ -117,5 +117,16 @@ describe('a catch-up', () => {
     const state = events.reduce(readReducer, initialRead);
     expect(state.counts.forYou).toBe(1);
     expect(state.since).toBe('2026-10-27T04:53:04.000Z');
+  });
+});
+
+describe('lastCatchUpWords', () => {
+  const now = new Date(2026, 9, 28, 13, 5).getTime();
+  const at = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).toISOString();
+  it('names the window as the last catch-up: a time today, else a day', () => {
+    expect(lastCatchUpWords(at(28, 12, 20), now)).toMatch(/^your last catch-up, at 12:20/);
+    expect(lastCatchUpWords(at(27, 9), now)).toBe('your last catch-up yesterday');
+    expect(lastCatchUpWords(at(26, 9), now)).toMatch(/^your last catch-up on \S/);
+    expect(lastCatchUpWords(null, now)).toBeNull();
   });
 });

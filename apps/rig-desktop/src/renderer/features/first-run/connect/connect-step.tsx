@@ -11,7 +11,7 @@ import {
   type KnownTool,
 } from '@shared/rig/first-run';
 import { StepFrame, type StepProps } from '../first-run';
-import { sinceWords } from '../read/read-model';
+import { lastCatchUpWords } from '../read/read-model';
 import { readingNow, readsNow, watched, withWatched, type Watching } from './sources';
 import { ToolMark } from './tool-mark';
 import './connect.css';
@@ -231,7 +231,7 @@ export function ConnectStep({ env, position, onNext, setFieldLook, field }: Step
                 : on.length === 0
                   ? 'Connect one tool to begin'
                   : existing
-                    ? `Catches you up ${sinceWords(since) ?? 'since your last read'} from ${on.length} tool${on.length > 1 ? 's' : ''}`
+                    ? `Reads ${on.length} tool${on.length > 1 ? 's' : ''} for what’s new since ${lastCatchUpWords(since) ?? 'your last catch-up'}`
                     : `Reads the last 3 days of ${on.length} tool${on.length > 1 ? 's' : ''}`}
             </span>
           </div>

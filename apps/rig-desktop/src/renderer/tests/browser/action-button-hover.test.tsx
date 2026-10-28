@@ -37,7 +37,7 @@ describe('ActionButton on hover', () => {
             Catch me up
           </ActionButton>
           <span className="text-meta whitespace-nowrap" data-testid="hint">
-            Catches you up since 10:53 AM from 2 tools
+            Reads 2 tools for what’s new since your last catch-up, at 10:53 AM
           </span>
         </div>
       );
