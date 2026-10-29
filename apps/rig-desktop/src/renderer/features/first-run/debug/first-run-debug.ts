@@ -166,14 +166,18 @@ export function firstRunDebugAvailable(debugMode: boolean): boolean {
  * Starts the first run again, and App opens it. With a simulation, the flow
  * sees that instead of the real account and agent, and nothing is written:
  * the real first run's seen and progress stay as they were. A real replay
- * clears them, as the real first run would start.
+ * clears them, as the real first run would start, but only with Rig Alpha on:
+ * off, the flow only simulates (first-run.tsx), so there's nothing to clear.
  */
-export function replayFirstRun(
+export async function replayFirstRun(
   simulation: FirstRunSimulation | null = null,
   startAt: FirstRunStepId | null = null
 ): Promise<unknown> {
   emit({ simulation, startAt, run: state.run + 1, replaying: true });
-  return simulation ? Promise.resolve() : rpc.rig.settings.set({ firstRunSeen: 0, firstRunProgress: null });
+  if (simulation) return;
+  const settings = await rpc.rig.settings.get();
+  if (!settings.alphaEnabled) return;
+  return rpc.rig.settings.set({ firstRunSeen: 0, firstRunProgress: null });
 }
 
 /** Back to the real account and agent, from the start: a real replay. */

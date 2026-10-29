@@ -57,7 +57,7 @@ vi.mock('@renderer/lib/ipc', () => {
 });
 
 import { App } from '@renderer/App';
-import { FIRST_RUN_CASES, replayFirstRun } from '@renderer/features/first-run/debug/first-run-debug';
+import { FIRST_RUN_CASES, replayFirstRun, stopSimulating } from '@renderer/features/first-run/debug/first-run-debug';
 
 beforeAll(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -153,6 +153,20 @@ describe('a simulated replay', () => {
     await vi.waitFor(() => expect(q('[data-testid="first-run-setup-rows"]')).toBeNull(), { timeout: 3000 });
     expect(mocks.calls).not.toContain('rig.settings.set');
     expect(mocks.settings.firstRunSeen).toBe(1);
+  });
+
+  it('with Rig Alpha off, Real writes nothing either: the flow still only simulates', async () => {
+    const progress = { step: 'setup' as const, readStarted: false };
+    await mount({ alphaEnabled: false, hasSeenOnboarding: true, firstRunSeen: 1, firstRunProgress: progress, debugMode: true });
+    await vi.waitFor(() => expect(mocks.calls).toContain('rig.auth.status'));
+    mocks.calls = [];
+    await act(async () => void replayFirstRun(FIRST_RUN_CASES[0]!.simulation));
+    await vi.waitFor(() => expect(q('[data-testid="first-run-get-started"]')).not.toBeNull());
+    await act(async () => stopSimulating());
+    await vi.waitFor(() => expect(q('[data-testid="first-run-debug"]')!.textContent).toContain('simulated'));
+    expect(mocks.calls).not.toContain('rig.settings.set');
+    expect(mocks.settings.firstRunSeen).toBe(1);
+    expect(mocks.settings.firstRunProgress).toEqual(progress);
   });
 
   it('with Rig Alpha on, over a first run not yet seen, still writes nothing', async () => {
