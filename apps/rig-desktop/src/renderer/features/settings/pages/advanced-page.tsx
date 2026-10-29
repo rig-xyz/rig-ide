@@ -66,7 +66,7 @@ function FirstRunRow({ alpha }: { alpha: boolean }) {
       control={
         <div className="flex gap-1.5">
           {alpha && (
-            <Button variant="outline" size="xs" onClick={() => void replayFirstRun()} data-testid="first-run-replay">
+            <Button variant="outline" size="xs" onClick={() => void replayFirstRun().catch(() => undefined)} data-testid="first-run-replay">
               Replay
             </Button>
           )}

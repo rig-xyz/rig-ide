@@ -182,7 +182,8 @@ export async function replayFirstRun(
 
 /** Back to the real account and agent, from the start: a real replay. */
 export function stopSimulating(): void {
-  void replayFirstRun(null);
+  // A settings read or write that fails leaves the replay as it was: nothing to report.
+  replayFirstRun(null).catch(() => undefined);
 }
 
 /** Called when a first run finishes, so the next replay starts clean. */
