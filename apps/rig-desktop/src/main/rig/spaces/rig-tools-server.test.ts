@@ -3,7 +3,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ok } from '@emdash/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AcpHttpMcpServerWire } from '@emdash/core/acp';
-import { FEED_RIG_TOOLS, ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, READER_BINDING, type RigToolScope, type RigToolsBackend } from './rig-tools';
+import { FEED_RIG_TOOLS, ORCHESTRATOR_BINDING, ORCHESTRATOR_RIG_TOOLS, readerScope, type RigToolScope, type RigToolsBackend } from './rig-tools';
 import { createRigToolsServer, type RigToolsServer } from './rig-tools-server';
 
 const DYLAN: RigToolScope = { bindingId: 'b1', ownerUserId: 'u-dylan', agent: 'claude', cwd: '/rigs/one' };
@@ -213,11 +213,21 @@ describe('rig tools server', () => {
   it('gives a reading session (a source run, a check) rig_github only, and runs it there', async () => {
     const github = vi.fn(async () => ok('{"state":"MERGED"}'));
     server = createRigToolsServer({ backend: { ...fakeBackend(), orch: { github } as unknown as RigToolsBackend['orch'] } });
-    const client = await connect(await server.serverFor({ ...DYLAN, bindingId: READER_BINDING }));
+    const client = await connect(await server.serverFor(readerScope('u-dylan', '/w')));
     expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['rig_github']);
     const res = await client.callTool({ name: 'rig_github', arguments: { command: 'gh pr view 555 --repo acme/ramps --json state' } });
     expect(github).toHaveBeenCalledWith('gh pr view 555 --repo acme/ramps --json state');
     expect(JSON.stringify(res.content)).toContain('MERGED');
+    await client.close();
+  });
+
+  it('refuses a reading session owned by anyone but the person signed in', async () => {
+    const github = vi.fn(async () => ok('{"state":"MERGED"}'));
+    server = createRigToolsServer({ backend: { ...fakeBackend(), orch: { github } as unknown as RigToolsBackend['orch'] } });
+    const client = await connect(await server.serverFor(readerScope('rig-reader', '/w')));
+    const res = await client.callTool({ name: 'rig_github', arguments: { command: 'gh pr view 555 --repo acme/ramps --json state' } });
+    expect(github).not.toHaveBeenCalled();
+    expect(JSON.stringify(res.content)).toContain('someone else');
     await client.close();
   });
 

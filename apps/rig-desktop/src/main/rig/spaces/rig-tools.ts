@@ -195,6 +195,14 @@ export const READER_BINDING = 'reader';
 /** A reading session's Rig tools: GitHub reads, checked and run with no shell. */
 export const READER_RIG_TOOLS: ReadonlySet<string> = new Set(['rig_github']);
 
+/**
+ * A reading session's scope, as the person signed in: `runRigTool` runs a tool
+ * only for the scope's owner, so any other owner would refuse every read.
+ */
+export function readerScope(ownerUserId: string, cwd: string): RigToolScope {
+  return { bindingId: READER_BINDING, ownerUserId, agent: 'claude', cwd };
+}
+
 /** The Feed's tools a space session gets (`orchestratorTools`): listed only with Rig Alpha on. */
 export const FEED_RIG_TOOLS: ReadonlySet<string> = new Set(['rig_query', 'rig_get', 'rig_act', 'rig_start']);
 
@@ -1692,7 +1700,7 @@ export function createAgentRigTools(backend: RigToolsBackend): RigTool[] {
     {
       name: 'rig_github',
       description:
-        'Read GitHub with one gh read command, as you would type it: gh pr view/list/status/checks/diff, gh issue view/list/status, gh search prs/issues, gh run view/list or gh repo view, with an optional trailing --jq \'…\' filter. ' +
+        'Read GitHub with one gh read command, as you would type it: gh pr view/list/status/checks/diff, gh issue view/list/status, gh search prs/issues, gh run view/list or gh repo view, with an optional trailing --jq \'…\' filter on the JSON gh returns. Repositories as owner/repo, links only on github.com. ' +
         'Nothing else runs, and it never goes through a shell. Example: gh pr view 342 --repo ulys/mobile-ios --json state,reviews,mergedAt',
       inputSchema: { command: z.string().describe('The gh command, starting with "gh ".') },
       annotations: { title: 'Read GitHub', readOnlyHint: true, openWorldHint: true },
