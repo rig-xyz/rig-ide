@@ -22,7 +22,7 @@ import { createRuntimeAcpSessions } from '../spaces/dispatch';
 import { createHttpSpacesRelayApi } from '../spaces/relay-api';
 import { readerScope } from '../spaces/rig-tools';
 import { createActions, type StartInput } from './actions';
-import { alphaOnly, mayAskRelay, readsOnItsOwn } from './alpha';
+import { alphaOnly, createReadBefore, mayAskRelay, readsOnItsOwn } from './alpha';
 import { createSender } from './send';
 import { rigSpaceSetupController } from '../space-setup';
 import { rigSettingsStore } from '../settings-instance';
@@ -367,14 +367,14 @@ const catchUp = createCatchUp({
   log,
 });
 
-/** Rig has read for them at least once (a noted run: the first run's read, or Catch me up). Once seen, kept. */
-let readBefore = false;
-async function hasReadBefore(): Promise<boolean> {
-  if (readBefore) return true;
-  const state = await feedRelay.orchAgentState();
-  readBefore = state.success && readWindow(state.data, Date.now()).lastRead !== null;
-  return readBefore;
-}
+/** Rig has read for them at least once (a noted run: the first run's read, or Catch me up). Kept per account. */
+const hasReadBefore = createReadBefore({
+  whoami: resolveSelfUserId,
+  hasRead: async () => {
+    const state = await feedRelay.orchAgentState();
+    return state.success && readWindow(state.data, Date.now()).lastRead !== null;
+  },
+});
 /**
  * Rig reads on its own only with Rig Alpha on, the first run done, and a read they've had
  * (alpha.ts): after Not now it waits for Catch me up on Home. The relay is asked only when

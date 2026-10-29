@@ -31,3 +31,25 @@ export function readsOnItsOwn(settings: { alphaEnabled: boolean; firstRunSeen: n
 export function mayAskRelay(settings: { alphaEnabled: boolean; firstRunSeen: number }): boolean {
   return settings.alphaEnabled && settings.firstRunSeen >= FIRST_RUN_VERSION;
 }
+
+/**
+ * Whether Rig has read for the person signed in: asked of the relay until it has, then kept
+ * for that account only, so another account on this Mac (one that chose Not now) asks afresh.
+ * An account switch while the relay answers counts as no read.
+ */
+export function createReadBefore(deps: {
+  whoami: () => Promise<Result<string, unknown>>;
+  hasRead: () => Promise<boolean>;
+}): () => Promise<boolean> {
+  const seen = new Set<string>();
+  return async () => {
+    const me = await deps.whoami();
+    if (!me.success) return false;
+    if (seen.has(me.data)) return true;
+    if (!(await deps.hasRead())) return false;
+    const still = await deps.whoami();
+    if (!still.success || still.data !== me.data) return false;
+    seen.add(me.data);
+    return true;
+  };
+}

@@ -1,7 +1,7 @@
 import { ok } from '@emdash/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { FIRST_RUN_VERSION } from '@shared/rig/first-run';
-import { ALPHA_OFF, alphaOnly, readsOnItsOwn } from './alpha';
+import { ALPHA_OFF, alphaOnly, createReadBefore, readsOnItsOwn } from './alpha';
 
 describe('Rig Alpha', () => {
   it('refuses a click on something of its own while it is off, and lets it through when on', async () => {
@@ -21,5 +21,35 @@ describe('Rig Alpha', () => {
     // Not now: the first run is done, but nothing was ever read.
     expect(readsOnItsOwn(done, false)).toBe(false);
     expect(readsOnItsOwn(done, true)).toBe(true);
+  });
+
+  it('keeps "has read before" per account: one that chose Not now asks afresh', async () => {
+    let who = 'u-a';
+    const read = new Set(['u-a']);
+    const hasRead = vi.fn(async () => read.has(who));
+    const readBefore = createReadBefore({ whoami: async () => ok(who), hasRead });
+    expect(await readBefore()).toBe(true);
+    expect(await readBefore()).toBe(true);
+    expect(hasRead).toHaveBeenCalledTimes(1);
+    who = 'u-b';
+    expect(await readBefore()).toBe(false);
+    expect(await readBefore()).toBe(false);
+    // B does Catch me up: from then on, B reads on its own too.
+    read.add('u-b');
+    expect(await readBefore()).toBe(true);
+    who = 'u-a';
+    expect(await readBefore()).toBe(true);
+  });
+
+  it('counts an account switch while the relay answers as no read', async () => {
+    let who = 'u-a';
+    const readBefore = createReadBefore({
+      whoami: async () => ok(who),
+      hasRead: async () => {
+        who = 'u-b';
+        return true;
+      },
+    });
+    expect(await readBefore()).toBe(false);
   });
 });
