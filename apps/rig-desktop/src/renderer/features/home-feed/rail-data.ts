@@ -161,13 +161,16 @@ export function realSpaceToRail(
     (a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0)
   );
   const runIds = new Set(running.map((r) => r.runId));
-  const runs = running.map((run) => runToSession(input.bindingId, run, selfUserId, now));
+  // A stalled run (nothing is running it any more) isn't listed: a row per dead run only buries the live
+  // ones. It still shows in the space's chat, as stalled. Nor does it make the space look active.
+  const live = running.filter((run) => runToSession(input.bindingId, run, selfUserId, now).state !== 'paused');
+  const runs = live.map((run) => runToSession(input.bindingId, run, selfUserId, now));
   // The space's own chats: what still runs first, then newest first.
   const recent = input.chats
     .filter((c) => !runIds.has(c.id) && (c.live || isRecent(c.updatedAt, now)))
     .sort((a, b) => Number(!!b.live) - Number(!!a.live) || b.updatedAt - a.updatedAt);
   const activity = [
-    ...running.map((r) => Date.parse(r.startedAt) || 0),
+    ...live.map((r) => Date.parse(r.startedAt) || 0),
     ...input.chats.map((c) => (c.live ? now : c.updatedAt)),
   ].filter((t) => t > 0);
   const chats = recent.slice(0, CHATS_PER_SPACE).map((c) => chatToSession(input.bindingId, c, now));

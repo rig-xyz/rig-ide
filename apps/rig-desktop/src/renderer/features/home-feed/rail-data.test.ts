@@ -74,6 +74,32 @@ describe('real spaces in the rail', () => {
     expect(waiting).toMatchObject({ state: 'waiting_on_person', short: 'Waiting on Enes · 6d' });
   });
 
+  it('lists no stalled runs, however many, and they never make the space look active', () => {
+    const H = 3_600_000;
+    const dead = (id: string) => ({ runId: id, agent: 'claude' as const, ownerUserId: 'e', ownerName: 'Enes', startedAt: new Date(NOW - 154 * H).toISOString(), activity: null });
+    const space = realSpaceToRail(
+      {
+        bindingId: 'b1',
+        name: 'enes-onboarding',
+        path: '/x',
+        unread: 0,
+        members: null,
+        chats: [],
+        status: {
+          bindingId: 'b1',
+          running: [dead('r1'), dead('r2'), dead('r3'), { ...dead('r4'), startedAt: new Date(NOW - 60_000).toISOString(), activity: 'reading' as const }],
+        },
+      },
+      'me',
+      NOW
+    );
+    expect(space.sessions.map((s) => s.id)).toEqual(['run:r4']);
+    expect(space.lastActivityAt).toBe(NOW - 60_000);
+    const allDead = realSpaceToRail({ bindingId: 'b1', name: 'x', path: null, unread: 0, members: null, chats: [], status: { bindingId: 'b1', running: [dead('r1'), dead('r2')] } }, 'me', NOW);
+    expect(allDead.sessions).toEqual([]);
+    expect(allDead.lastActivityAt).toBeNull();
+  });
+
   it('lists at most two recent chats, and none older than three days', () => {
     const day = 24 * 60 * 60 * 1000;
     const space = realSpaceToRail(

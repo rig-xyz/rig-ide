@@ -399,15 +399,10 @@ export function dockTasks(
     let step: string;
     let label: string;
     const liveness = cardLiveness(meta, card, status, now);
-    if (liveness?.kind === 'stalled') {
-      // Still "running" on the relay, but nothing has run it for longer than any working run
-      // goes quiet: it sits with the finished ones, said as stalled, and goes once you've seen it.
-      if (finishedSeen({ runId: meta.id, seq: message.seq, endedAt: liveness.since })) continue;
-      state = 'done';
-      matrix = 'stopped';
-      label = `Stalled · ${quietFor(liveness.since, now)}`;
-      step = own ? `Nothing from your agent for ${quietFor(liveness.since, now)}` : `Nothing from ${ownerName}'s agent for ${quietFor(liveness.since, now)}`;
-    } else if (status === 'running' || status === 'waiting') {
+    // Still "running" on the relay, but nothing has run it for longer than any working run goes
+    // quiet: not a task in progress. Left out, however many there are; its card in the chat says stalled.
+    if (liveness?.kind === 'stalled') continue;
+    if (status === 'running' || status === 'waiting') {
       const pending = card.permissions.pending.length > 0;
       const hidden = !own && (card.privacy === 'answer' || card.detailsHidden);
       state = pending ? 'waiting' : 'working';
